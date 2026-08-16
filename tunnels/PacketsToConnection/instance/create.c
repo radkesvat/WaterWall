@@ -64,11 +64,12 @@ tunnel_t *ptcTunnelCreate(node_t *node)
     t->fnPauseD   = &ptcTunnelDownStreamPause;
     t->fnResumeD  = &ptcTunnelDownStreamResume;
 
-    t->onStart      = &ptcTunnelOnStart;
-    t->onPreStop    = &ptcTunnelOnPreStop;
-    t->onStop       = &ptcTunnelOnStop;
-    t->onWorkerStop = &ptcTunnelOnWorkerStop;
-    t->onDestroy    = &ptcTunnelDestroy;
+    t->onStart          = &ptcTunnelOnStart;
+    t->onQuiesceRequest = &ptcTunnelOnQuiesceRequest;
+    t->onQuiesceWait    = &ptcTunnelOnQuiesceWait;
+    t->onStop           = &ptcTunnelOnStop;
+    t->onWorkerStop     = &ptcTunnelOnWorkerStop;
+    t->onDestroy        = &ptcTunnelDestroy;
 
     *ts = (ptc_tstate_t) {
         .max_pending_bytes   = kPtcDefaultMaxPendingBytes,
@@ -90,11 +91,10 @@ tunnel_t *ptcTunnelCreate(node_t *node)
 
     deviceLifetimeGateInit(&ts->output_gate);
     deviceLifetimeGateInit(&ts->next_gate);
-    atomic_init(&ts->config_drain_remaining, 0);
     atomic_init(&ts->stopping, false);
     if (UNLIKELY(! mutexTryInit(&ts->owned_lines_lock)))
     {
-        ptcTunnelDestroy(t);
+        ptcTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
     ts->owned_lines_lock_initialized = true;
@@ -105,7 +105,7 @@ tunnel_t *ptcTunnelCreate(node_t *node)
     ts->async_session = tunnelasyncsessionCreate(t, "PacketsToConnection");
     if (UNLIKELY(ts->async_session == NULL))
     {
-        ptcTunnelDestroy(t);
+        ptcTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 

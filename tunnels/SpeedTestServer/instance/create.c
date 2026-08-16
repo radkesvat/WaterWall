@@ -48,7 +48,7 @@ tunnel_t *speedtestserverTunnelCreate(node_t *node)
     if (report_interval_ms <= 0)
     {
         LOGF("JSON Error: SpeedTestServer->settings->report-interval-ms (int field) : expected a positive value");
-        speedtestserverTunnelDestroy(t);
+        speedtestserverTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 

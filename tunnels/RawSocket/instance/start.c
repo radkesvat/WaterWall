@@ -36,7 +36,8 @@ void rawsocketOnStart(tunnel_t *t)
     if (! packettunnelLifecycleAnchorBind(t))
     {
         LOGF("RawSocket: packet publication side is not chained");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     state->capture_device = caputredeviceCreate(
@@ -45,7 +46,8 @@ void rawsocketOnStart(tunnel_t *t)
     if (state->capture_device == NULL)
     {
         LOGF("CaptureDevice: could not create device");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     // we are not going to read, so pass read call back as null therfore no buffers for read will be allocated
@@ -54,7 +56,8 @@ void rawsocketOnStart(tunnel_t *t)
     {
         rawsocketDestroyStartupDevices(state);
         LOGF("RawDevice: could not create device");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     // The writer must be operational before any NFQUEUE rule can become active.
@@ -64,13 +67,15 @@ void rawsocketOnStart(tunnel_t *t)
     {
         rawsocketDestroyStartupDevices(state);
         LOGF("RawDevice: could not bring device up");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
     if (! caputredeviceBringUp(state->capture_device))
     {
         rawsocketStopStartupDevices(state);
         rawsocketDestroyStartupDevices(state);
         LOGF("CaptureDevice: could not bring device up");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 }

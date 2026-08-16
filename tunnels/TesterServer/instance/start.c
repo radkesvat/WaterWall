@@ -13,11 +13,6 @@ static void testerserverStartPacketWorker(void *worker, void *arg1, void *arg2, 
     discard arg2;
     discard arg3;
 
-    if (UNLIKELY(isApplicationTerminating()))
-    {
-        return;
-    }
-
     if (ls->read_stream.pool != NULL)
     {
         return;
@@ -39,10 +34,11 @@ void testerserverTunnelOnStart(tunnel_t *t)
 
     for (wid_t wi = 0; wi < tc->workers_count; ++wi)
     {
-        if (UNLIKELY(! sendWorkerMessageForceQueueWithCleanup(wi, testerserverStartPacketWorker, NULL, t, NULL, NULL)))
+        if (UNLIKELY(sendWorkerMessageForceQueueWithCleanup(wi, testerserverStartPacketWorker, NULL, t, NULL, NULL) !=
+                     kWorkerMessageSubmitAccepted))
         {
             LOGF("TesterServer: failed to admit required packet-worker startup on worker %u", (unsigned int) wi);
-            terminateProgram(1);
+            startupFailureRecord(1);
             return;
         }
     }

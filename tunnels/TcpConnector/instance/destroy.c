@@ -14,7 +14,7 @@ static void tcpconnectorDestroyInternalDomainResolverChain(tcpconnector_tstate_t
 {
     if (ts->domain_resolver_tunnel != NULL)
     {
-        ts->domain_resolver_tunnel->onDestroy(ts->domain_resolver_tunnel);
+        tunnelOwnedChildDestroy(ts->domain_resolver_tunnel);
         ts->domain_resolver_tunnel = NULL;
     }
 
@@ -27,8 +27,9 @@ static void tcpconnectorDestroyInternalDomainResolverChain(tcpconnector_tstate_t
     tcpconnectorClearInternalNode(&ts->domain_resolver_node);
 }
 
-void tcpconnectorTunnelDestroy(tunnel_t *t)
+void tcpconnectorTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context)
 {
+    discard                context;
     tcpconnector_tstate_t *ts = tunnelGetState(t);
 
     tcpconnectorDestroyInternalDomainResolverChain(ts);

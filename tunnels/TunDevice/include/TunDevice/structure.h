@@ -53,12 +53,13 @@ enum
     kTunnelStateSize = sizeof(tundevice_tstate_t)
 };
 
-WW_EXPORT void         tundeviceTunnelDestroy(tunnel_t *t);
+WW_EXPORT void         tundeviceTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context);
 WW_EXPORT tunnel_t    *tundeviceTunnelCreate(node_t *node);
 WW_EXPORT api_result_t tundeviceTunnelApi(tunnel_t *instance, sbuf_t *message);
 
 void tundeviceTunnelOnStart(tunnel_t *t);
-void tundeviceTunnelOnStop(tunnel_t *t);
+void tundeviceTunnelOnQuiesceRequest(tunnel_t *t, const ww_lifecycle_context_t *context);
+void tundeviceTunnelOnQuiesceWait(tunnel_t *t, const ww_lifecycle_context_t *context);
 
 bool tundeviceLoadRouteSettings(tundevice_tstate_t *state, const cJSON *settings);
 bool tundeviceApplySystemRoutes(tundevice_tstate_t *state);

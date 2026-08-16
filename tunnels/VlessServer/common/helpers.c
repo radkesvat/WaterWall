@@ -860,8 +860,7 @@ static void vlessserverCloseLine(tunnel_t *t, line_t *l, vlessserver_close_origi
     bool      use_target = ls->phase == kVlessServerPhaseFallback;
     tunnel_t *target     = use_target ? ((vlessserver_tstate_t *) tunnelGetState(t))->fallback_tunnel : NULL;
 
-    if (origin == kVlessServerCloseFromPrev && use_target && target != NULL &&
-        vlessserverFallbackPendingCount(ls) > 0)
+    if (origin == kVlessServerCloseFromPrev && use_target && target != NULL && vlessserverFallbackPendingCount(ls) > 0)
     {
         ls->fallback_up_finish_pending = true;
         return;
@@ -1025,7 +1024,7 @@ void vlessserverTunnelstateDestroy(vlessserver_tstate_t *ts)
 {
     if (ts->user_controller_tunnel != NULL)
     {
-        ts->user_controller_tunnel->onDestroy(ts->user_controller_tunnel);
+        tunnelOwnedChildDestroy(ts->user_controller_tunnel);
         ts->user_controller_tunnel = NULL;
     }
 

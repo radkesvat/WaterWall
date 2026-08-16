@@ -59,7 +59,7 @@ enum
     kLineStateSize   = sizeof(halfduplexserver_lstate_t)
 };
 
-WW_EXPORT void         halfduplexserverTunnelDestroy(tunnel_t *t);
+WW_EXPORT void         halfduplexserverTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context);
 WW_EXPORT tunnel_t    *halfduplexserverTunnelCreate(node_t *node);
 WW_EXPORT api_result_t halfduplexserverTunnelApi(tunnel_t *instance, sbuf_t *message);
 
@@ -67,7 +67,7 @@ void halfduplexserverTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_of
 void halfduplexserverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void halfduplexserverTunnelOnPrepair(tunnel_t *t);
 void halfduplexserverTunnelOnStart(tunnel_t *t);
-void halfduplexserverTunnelOnStop(tunnel_t *t);
+void halfduplexserverTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context);
 
 void halfduplexserverTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void halfduplexserverTunnelUpStreamEst(tunnel_t *t, line_t *l);

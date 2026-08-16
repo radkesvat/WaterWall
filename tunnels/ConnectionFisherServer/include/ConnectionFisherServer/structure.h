@@ -29,10 +29,10 @@ enum
     kLineStateSize                           = sizeof(connectionfisherserver_lstate_t)
 };
 
-WW_EXPORT void         connectionfisherserverTunnelDestroy(tunnel_t *t);
+WW_EXPORT void         connectionfisherserverTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context);
 WW_EXPORT tunnel_t    *connectionfisherserverTunnelCreate(node_t *node);
 WW_EXPORT api_result_t connectionfisherserverTunnelApi(tunnel_t *instance, sbuf_t *message);
-void                   connectionfisherserverTunnelOnStop(tunnel_t *t);
+void                   connectionfisherserverTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context);
 
 void connectionfisherserverTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void connectionfisherserverTunnelUpStreamEst(tunnel_t *t, line_t *l);

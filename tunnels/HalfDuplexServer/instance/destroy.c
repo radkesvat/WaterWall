@@ -2,8 +2,9 @@
 
 #include "loggers/network_logger.h"
 
-void halfduplexserverTunnelDestroy(tunnel_t *t)
+void halfduplexserverTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context)
 {
+    discard                    context;
     halfduplexserver_tstate_t *ts = tunnelGetState(t);
 
     if (ts->download_line_map_mutex_initialized)

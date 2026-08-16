@@ -15,8 +15,29 @@
 #include "overlapio.h"
 #include "werr.h"
 #include "wevent.h"
+#include "wloop_internal.h"
+#include "worker.h"
 
 #define ACCEPTEX_NUM 10
+
+#if defined(WATERWALL_IOCP_TEST_HOOKS)
+static void (*after_direct_send_hook)(wio_t *io);
+
+void wioIocpTestSetAfterDirectSendHook(void (*hook)(wio_t *io))
+{
+    after_direct_send_hook = hook;
+}
+
+static void runAfterDirectSendHook(wio_t *io)
+{
+    if (after_direct_send_hook != NULL)
+    {
+        after_direct_send_hook(io);
+    }
+}
+#else
+#define runAfterDirectSendHook(io) discard(io)
+#endif
 
 // AcceptEx replenishment policy. A transient immediate submission failure (for
 // example WSAENOBUFS under resource pressure) must not permanently cost the
@@ -319,6 +340,11 @@ static int post_recv(wio_t *io, woverlapped_t *record)
     DWORD flags   = 0;
     int   ret     = 0;
 
+    if (! wloopNormalAdmissionBegin(io->loop))
+    {
+        recordRetire(record);
+        return WSA_OPERATION_ABORTED;
+    }
     recordMarkPosted(record);
     if (io->io_type == WIO_TYPE_TCP)
     {
@@ -341,6 +367,7 @@ static int post_recv(wio_t *io, woverlapped_t *record)
         WSASetLastError(WSAEINVAL);
         ret = -1;
     }
+    wloopNormalAdmissionEnd(io->loop);
 
     if (ret != 0)
     {
@@ -481,6 +508,11 @@ static int post_acceptex(wio_t *listenio, woverlapped_t *record)
     record->completed     = false;
     record->fd            = connfd; // provisional accepted socket
 
+    if (! wloopNormalAdmissionBegin(listenio->loop))
+    {
+        recordRetire(record);
+        return WSA_OPERATION_ABORTED;
+    }
     recordMarkPosted(record);
 #if defined(WATERWALL_IOCP_TEST_HOOKS)
     int forced_error = 0;
@@ -489,19 +521,22 @@ static int post_acceptex(wio_t *listenio, woverlapped_t *record)
         // Same unpost/retire path as a real immediate AcceptEx failure, without
         // having to exhaust real Windows socket resources in a unit test.
         printError("AcceptEx error (injected): %d\n", forced_error);
+        wloopNormalAdmissionEnd(listenio->loop);
         recordUnpost(record);
         recordRetire(record); // closes connfd, frees buffer, drops live ref
         return forced_error;
     }
 #endif
-    if (AcceptEx(listenio->fd,
-                 connfd,
-                 record->buf.buf,
-                 0,
-                 record->accept_address_length,
-                 record->accept_address_length,
-                 &dwbytes,
-                 &record->ovlp) != TRUE)
+    const BOOL accepted_posted = AcceptEx(listenio->fd,
+                                          connfd,
+                                          record->buf.buf,
+                                          0,
+                                          record->accept_address_length,
+                                          record->accept_address_length,
+                                          &dwbytes,
+                                          &record->ovlp);
+    wloopNormalAdmissionEnd(listenio->loop);
+    if (accepted_posted != TRUE)
     {
         int err = WSAGetLastError();
         if (err != ERROR_IO_PENDING)
@@ -656,6 +691,11 @@ static void acceptRetryTimerCb(wtimer_t *timer)
 // shrinking its capacity forever.
 static void repostAcceptOrScheduleRetry(wio_t *io, woverlapped_t *record)
 {
+    if (! wloopNormalDispatchAllowed(io->loop))
+    {
+        recordRetire(record);
+        return;
+    }
     if (io->closed || record->io_id != io->id || (io->events & WW_READ) == 0)
     {
         recordRetire(record);
@@ -673,7 +713,7 @@ static void repostAcceptOrScheduleRetry(wio_t *io, woverlapped_t *record)
     scheduleAcceptExRetry(io, post_error);
 }
 
-static int post_send(wio_t *io, woverlapped_t *record)
+static int post_send(wio_t *io, woverlapped_t *record, bool already_admitted)
 {
     assert(record == io->iocp_send_active);
     assert(record->kind == WOVERLAPPED_SEND);
@@ -686,8 +726,16 @@ static int post_send(wio_t *io, woverlapped_t *record)
     record->completed     = false;
 
     DWORD dwbytes = 0;
+    if (! already_admitted && ! wloopNormalAdmissionBegin(io->loop))
+    {
+        return WSA_OPERATION_ABORTED;
+    }
     recordMarkPosted(record);
     int ret = WSASend(io->fd, &record->buf, 1, &dwbytes, 0, &record->ovlp, NULL);
+    if (! already_admitted)
+    {
+        wloopNormalAdmissionEnd(io->loop);
+    }
     if (ret != 0)
     {
         int err = WSAGetLastError();
@@ -701,7 +749,7 @@ static int post_send(wio_t *io, woverlapped_t *record)
     return 0;
 }
 
-static int start_next_send(wio_t *io)
+static int start_next_send(wio_t *io, bool already_admitted)
 {
     if (io->iocp_send_active != NULL || write_queue_empty(&io->write_queue))
     {
@@ -722,7 +770,7 @@ static int start_next_send(wio_t *io)
     bufferpoolReuseBuffer(io->loop->bufpool, buf);
 
     io->iocp_send_active = record;
-    int err              = post_send(io, record);
+    int err              = post_send(io, record, already_admitted);
     if (UNLIKELY(err != 0))
     {
         // No completion will arrive after an immediate submission failure.
@@ -765,7 +813,7 @@ static int enqueue_send(wio_t *io, sbuf_t *buf)
 
 static void dispatch_recv(wio_t *io, woverlapped_t *record)
 {
-    if (record->cancel_reason != WOVERLAPPED_NOT_CANCELED)
+    if (record->cancel_reason != WOVERLAPPED_NOT_CANCELED || ! wloopNormalDispatchAllowed(io->loop))
     {
         // Stop/close/shutdown: recycle the buffer, no callback, no repost, and do
         // not treat it as a socket failure.
@@ -810,7 +858,7 @@ static void dispatch_recv(wio_t *io, woverlapped_t *record)
     }
 
     // Repost only if still open, same generation, and read is still enabled.
-    if (! io->closed && record->io_id == io->id && (io->events & WW_READ))
+    if (! io->closed && record->io_id == io->id && (io->events & WW_READ) && wloopNormalDispatchAllowed(io->loop))
     {
         if (hasUncancelledReceive(io))
         {
@@ -838,7 +886,7 @@ static void dispatch_recv(wio_t *io, woverlapped_t *record)
 
 static void dispatch_send(wio_t *io, woverlapped_t *record)
 {
-    if (record->cancel_reason != WOVERLAPPED_NOT_CANCELED)
+    if (record->cancel_reason != WOVERLAPPED_NOT_CANCELED || ! wloopNormalDispatchAllowed(io->loop))
     {
         recordRetire(record);
         return;
@@ -863,10 +911,10 @@ static void dispatch_send(wio_t *io, woverlapped_t *record)
     if (io->write_cb != NULL)
     {
         io->last_write_hrtime = io->loop->cur_hrtime;
-        io->write_cb(io); // may close io synchronously
+        discard wloopInvokeWriteCallback(io, io->write_cb); // may close io synchronously
     }
 
-    if (io->closed || record->io_id != io->id || (io->events & WW_WRITE) == 0)
+    if (io->closed || record->io_id != io->id || (io->events & WW_WRITE) == 0 || ! wloopNormalDispatchAllowed(io->loop))
     {
         recordRetire(record);
         return;
@@ -874,7 +922,7 @@ static void dispatch_send(wio_t *io, woverlapped_t *record)
 
     if (record->buf.len > 0)
     {
-        int err = post_send(io, record);
+        int err = post_send(io, record, wloopCurrentThreadInNormalCallback(io->loop));
         if (UNLIKELY(err != 0))
         {
             io->error = err;
@@ -886,7 +934,7 @@ static void dispatch_send(wio_t *io, woverlapped_t *record)
 
     recordRetire(record);
 
-    int err = start_next_send(io);
+    int err = start_next_send(io, wloopCurrentThreadInNormalCallback(io->loop));
     if (UNLIKELY(err != 0))
     {
         io->error = err;
@@ -923,7 +971,7 @@ static void dispatch_connect(wio_t *io, woverlapped_t *record)
         wioDel(io, WW_WRITE);
     }
 
-    if (canceled)
+    if (canceled || ! wloopNormalDispatchAllowed(io->loop))
     {
         recordRetire(record);
         return;
@@ -957,7 +1005,7 @@ static void dispatch_connect(wio_t *io, woverlapped_t *record)
 
 static void dispatch_accept(wio_t *io, woverlapped_t *record)
 {
-    if (record->cancel_reason != WOVERLAPPED_NOT_CANCELED)
+    if (record->cancel_reason != WOVERLAPPED_NOT_CANCELED || ! wloopNormalDispatchAllowed(io->loop))
     {
         // Expected cleanup (listener stop/close/shutdown): close the provisional
         // accepted socket and retire without parsing addresses or reposting.
@@ -1054,7 +1102,14 @@ static void dispatch_accept(wio_t *io, woverlapped_t *record)
     {
         // A close of the listener inside accept_cb drains the other posted accept
         // records without callbacks; this record stays local and safe.
-        io->accept_cb(connio);
+        if (wloopNormalDispatchAllowed(io->loop))
+        {
+            io->accept_cb(connio);
+        }
+        else
+        {
+            wioClose(connio);
+        }
     }
 
     // Repost only if the listener is still open, the generation matches, and
@@ -1073,6 +1128,11 @@ static void wioIocpDispatchCompleted(wio_t *io)
         if (record == NULL)
         {
             break;
+        }
+        if (! wloopNormalDispatchAllowed(io->loop))
+        {
+            recordRetire(record);
+            continue;
         }
         switch (record->kind)
         {
@@ -1355,8 +1415,17 @@ int wioConnect(wio_t *io)
     recordAttach(io, record, WOVERLAPPED_CONNECT);
     record->fd = io->fd;
 
+    if (! wloopNormalAdmissionBegin(io->loop))
+    {
+        recordRetire(record);
+        connect_error = WSA_OPERATION_ABORTED;
+        goto error;
+    }
     recordMarkPosted(record);
-    if (ConnectEx(io->fd, io->peeraddr, (int) SOCKADDR_LEN(io->peeraddr), NULL, 0, &dwbytes, &record->ovlp) != TRUE)
+    const BOOL connect_posted =
+        ConnectEx(io->fd, io->peeraddr, (int) SOCKADDR_LEN(io->peeraddr), NULL, 0, &dwbytes, &record->ovlp);
+    wloopNormalAdmissionEnd(io->loop);
+    if (connect_posted != TRUE)
     {
         int err = WSAGetLastError();
         if (err != ERROR_IO_PENDING)
@@ -1386,7 +1455,12 @@ int wioConnect(wio_t *io)
         // clears io->connect_timeout, so the effective value is read above.
         wioDelConnectTimer(io);
     }
-    io->connect_timer           = wtimerAdd(io->loop, __connect_timeout_cb, (uint32_t) connect_timeout_ms, 1);
+    io->connect_timer = wtimerAdd(io->loop, __connect_timeout_cb, (uint32_t) connect_timeout_ms, 1);
+    if (UNLIKELY(io->connect_timer == NULL))
+    {
+        connect_error = WSA_OPERATION_ABORTED;
+        goto error;
+    }
     io->connect_timer->privdata = io;
     return 0;
 
@@ -1442,8 +1516,21 @@ int wioWriteDatagram(wio_t *io, sbuf_t *buf, const sockaddr_u *peer_addr)
     // One-shot nonblocking send with an explicit destination. A datagram that
     // cannot be sent immediately is dropped and recycled; no overlapped retry is
     // created and io->peeraddr is not read or written.
+    const bool nested_callback = wloopCurrentThreadInNormalCallback(io->loop);
+    if (! nested_callback && ! wloopNormalAdmissionBegin(io->loop))
+    {
+        bufferpoolReuseBuffer(io->loop->bufpool, buf);
+        return -1;
+    }
+
     int len    = (int) sbufGetLength(buf);
     int nwrite = sendto(io->fd, (const char *) sbufGetRawPtr(buf), len, 0, &peer_addr->sa, SOCKADDR_LEN(peer_addr));
+    bufferpoolReuseBuffer(io->loop->bufpool, buf);
+    if (! nested_callback)
+    {
+        wloopNormalAdmissionEnd(io->loop);
+    }
+    runAfterDirectSendHook(io);
     if (nwrite < 0)
     {
         int err = socketERRNO();
@@ -1451,19 +1538,30 @@ int wioWriteDatagram(wio_t *io, sbuf_t *buf, const sockaddr_u *peer_addr)
         {
             // Transient pressure: drop without logging; the pressure path must not
             // amplify overload.
-            bufferpoolReuseBuffer(io->loop->bufpool, buf);
             return 0;
         }
         io->error = err;
-        bufferpoolReuseBuffer(io->loop->bufpool, buf);
         return -1;
     }
-    bufferpoolReuseBuffer(io->loop->bufpool, buf);
-    if (io->write_cb != NULL)
+    if (io->write_cb != NULL && (nested_callback || wloopNormalDispatchAllowed(io->loop)))
     {
-        io->write_cb(io);
+        discard wloopInvokeWriteCallback(io, io->write_cb);
     }
     return nwrite;
+}
+
+static bool wioSettleWriteClose(wio_t *io, bool target_callback)
+{
+    /* Exact-loop callback authority is logical, not physical: a synchronous
+     * cross-loop write callback temporarily receives the target loop's
+     * authority while it is still executing on the source worker. Only close
+     * inline when both kinds of ownership agree. */
+    if (target_callback && currentThreadIsEventWorkerWID((wid_t) wloopGetWID(io->loop)))
+    {
+        wioClose(io);
+        return true;
+    }
+    return wioCloseAsync(io) == 0;
 }
 
 int wioWrite(wio_t *io, sbuf_t *buf)
@@ -1488,37 +1586,62 @@ int wioWrite(wio_t *io, sbuf_t *buf)
         return -1;
     }
 
+    const bool nested_callback = wloopCurrentThreadInNormalCallback(io->loop);
+    if (! nested_callback && ! wloopNormalAdmissionBegin(io->loop))
+    {
+        bufferpoolReuseBuffer(io->loop->bufpool, buf);
+        return -1;
+    }
+
     int len = (int) sbufGetLength(buf);
     if (len == 0)
     {
         bufferpoolReuseBuffer(io->loop->bufpool, buf);
-        wioClose(io);
-        return 0;
+        if (! nested_callback)
+        {
+            wloopNormalAdmissionEnd(io->loop);
+        }
+        return wioSettleWriteClose(io, nested_callback) ? 0 : -1;
     }
 
     // Once an overlapped send exists, every later TCP buffer joins the existing
     // stream queue. This prevents out-of-order concurrent WSASend records.
     if (io->iocp_send_active != NULL || ! write_queue_empty(&io->write_queue))
     {
-        int add_error = wioAdd(io, wio_handle_events, WW_WRITE);
+        int add_error = wioAddAlreadyAdmitted(io, wio_handle_events, WW_WRITE);
         if (UNLIKELY(add_error != 0))
         {
             io->error = add_error < 0 ? -add_error : add_error;
             bufferpoolReuseBuffer(io->loop->bufpool, buf);
-            wioClose(io);
-            return add_error;
+            if (! nested_callback)
+            {
+                wloopNormalAdmissionEnd(io->loop);
+            }
+            return wioSettleWriteClose(io, nested_callback) ? add_error : -1;
         }
         if (UNLIKELY(enqueue_send(io, buf) != 0))
         {
-            wioClose(io);
+            if (! nested_callback)
+            {
+                wloopNormalAdmissionEnd(io->loop);
+            }
+            discard wioSettleWriteClose(io, nested_callback);
             return -1;
         }
-        int send_error = start_next_send(io);
+        int send_error = start_next_send(io, true);
         if (UNLIKELY(send_error != 0))
         {
             io->error = send_error;
-            wioClose(io);
+            if (! nested_callback)
+            {
+                wloopNormalAdmissionEnd(io->loop);
+            }
+            discard wioSettleWriteClose(io, nested_callback);
             return -1;
+        }
+        if (! nested_callback)
+        {
+            wloopNormalAdmissionEnd(io->loop);
         }
         return 0;
     }
@@ -1538,15 +1661,24 @@ int wioWrite(wio_t *io, sbuf_t *buf)
             printError("write");
             io->error = err;
             bufferpoolReuseBuffer(io->loop->bufpool, buf);
-            wioClose(io);
+            if (! nested_callback)
+            {
+                wloopNormalAdmissionEnd(io->loop);
+            }
+            runAfterDirectSendHook(io);
+            discard wioSettleWriteClose(io, nested_callback);
             return -1;
         }
     }
     if (nwrite == 0 && ! send_blocked)
     {
         bufferpoolReuseBuffer(io->loop->bufpool, buf);
-        wioClose(io);
-        return 0;
+        if (! nested_callback)
+        {
+            wloopNormalAdmissionEnd(io->loop);
+        }
+        runAfterDirectSendHook(io);
+        return wioSettleWriteClose(io, nested_callback) ? 0 : -1;
     }
 
     if (nwrite == len)
@@ -1557,9 +1689,14 @@ int wioWrite(wio_t *io, sbuf_t *buf)
         wwrite_cb      cb     = io->write_cb;
         io->last_write_hrtime = io->loop->cur_hrtime;
         bufferpoolReuseBuffer(pool, buf);
-        if (cb != NULL)
+        if (! nested_callback)
         {
-            cb(io);
+            wloopNormalAdmissionEnd(io->loop);
+        }
+        runAfterDirectSendHook(io);
+        if (cb != NULL && (nested_callback || wloopNormalDispatchAllowed(io->loop)))
+        {
+            discard wloopInvokeWriteCallback(io, cb);
         }
         return nwrite;
     }
@@ -1569,35 +1706,55 @@ int wioWrite(wio_t *io, sbuf_t *buf)
         sbufShiftRight(buf, (uint32_t) nwrite);
     }
 
-    int add_error = wioAdd(io, wio_handle_events, WW_WRITE);
+    int add_error = wioAddAlreadyAdmitted(io, wio_handle_events, WW_WRITE);
     if (UNLIKELY(add_error != 0))
     {
         io->error = add_error < 0 ? -add_error : add_error;
         bufferpoolReuseBuffer(io->loop->bufpool, buf);
-        wioClose(io);
-        return add_error;
+        if (! nested_callback)
+        {
+            wloopNormalAdmissionEnd(io->loop);
+        }
+        runAfterDirectSendHook(io);
+        return wioSettleWriteClose(io, nested_callback) ? add_error : -1;
     }
     if (UNLIKELY(enqueue_send(io, buf) != 0))
     {
-        wioClose(io);
+        if (! nested_callback)
+        {
+            wloopNormalAdmissionEnd(io->loop);
+        }
+        runAfterDirectSendHook(io);
+        discard wioSettleWriteClose(io, nested_callback);
         return -1;
     }
-    int send_error = start_next_send(io);
+    int send_error = start_next_send(io, true);
     if (UNLIKELY(send_error != 0))
     {
         io->error = send_error;
-        wioClose(io);
+        if (! nested_callback)
+        {
+            wloopNormalAdmissionEnd(io->loop);
+        }
+        runAfterDirectSendHook(io);
+        discard wioSettleWriteClose(io, nested_callback);
         return -1;
     }
+
+    if (! nested_callback)
+    {
+        wloopNormalAdmissionEnd(io->loop);
+    }
+    runAfterDirectSendHook(io);
 
     if (nwrite > 0)
     {
         // The active record holds io alive through a callback-driven wioFree().
         wwrite_cb cb          = io->write_cb;
         io->last_write_hrtime = io->loop->cur_hrtime;
-        if (cb != NULL)
+        if (cb != NULL && (nested_callback || wloopNormalDispatchAllowed(io->loop)))
         {
-            cb(io);
+            discard wloopInvokeWriteCallback(io, cb);
         }
     }
     return nwrite;
@@ -1638,10 +1795,15 @@ int wioClose(wio_t *io)
     {
         io->close = 1;
         wlogd("write_queue not empty, close later.");
-        int timeout_ms            = io->close_timeout ? io->close_timeout : WIO_DEFAULT_CLOSE_TIMEOUT;
-        io->close_timer           = wtimerAdd(io->loop, __close_timeout_cb, (uint32_t) timeout_ms, 1);
-        io->close_timer->privdata = io;
-        return 0;
+        int timeout_ms  = io->close_timeout ? io->close_timeout : WIO_DEFAULT_CLOSE_TIMEOUT;
+        io->close_timer = wtimerAdd(io->loop, __close_timeout_cb, (uint32_t) timeout_ms, 1);
+        if (io->close_timer != NULL)
+        {
+            io->close_timer->privdata = io;
+            return 0;
+        }
+        io->close = 0;
+        io->error = WSA_OPERATION_ABORTED;
     }
 
     io->iocp_close_in_progress = 1;

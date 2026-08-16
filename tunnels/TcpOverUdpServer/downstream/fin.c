@@ -13,7 +13,8 @@ void tcpoverudpserverTunnelDownStreamFinish(tunnel_t *t, line_t *l)
 
     lineLock(l);
 
-    if (UNLIKELY(isApplicationTerminating()))
+    tcpoverudpserver_tstate_t *state = tunnelGetState(t);
+    if (UNLIKELY(atomicLoadRelaxed(&state->stopping)))
     {
         tcpoverudpserverLinestateDestroy(ls);
         if (lineIsAlive(l))

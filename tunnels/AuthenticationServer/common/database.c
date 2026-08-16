@@ -814,7 +814,7 @@ bool authenticationserverLoadDatabase(authenticationserver_tstate_t *ts)
 void authenticationserverSaveTimerCallback(wtimer_t *timer)
 {
     tunnel_t *t = weventGetUserdata(timer);
-    if (UNLIKELY(t == NULL || isApplicationTerminating()))
+    if (UNLIKELY(t == NULL))
     {
         return;
     }

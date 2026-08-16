@@ -2,7 +2,9 @@
 
 #include "loggers/network_logger.h"
 
-void tcpoverudpclientTunnelOnStop(tunnel_t *t)
+void tcpoverudpclientTunnelOnQuiesceRequest(tunnel_t *t, const ww_lifecycle_context_t *context)
 {
-    discard t;
+    discard                    context;
+    tcpoverudpclient_tstate_t *state = tunnelGetState(t);
+    atomicStoreRelaxed(&state->stopping, true);
 }

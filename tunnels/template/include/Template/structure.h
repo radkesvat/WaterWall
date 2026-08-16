@@ -18,7 +18,7 @@ enum
     kLineStateSize   = sizeof(template_lstate_t)
 };
 
-WW_EXPORT void         templateTunnelDestroy(tunnel_t *t);
+WW_EXPORT void         templateTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context);
 WW_EXPORT tunnel_t    *templateTunnelCreate(node_t *node);
 WW_EXPORT api_result_t templateTunnelApi(tunnel_t *instance, sbuf_t *message);
 
@@ -26,7 +26,7 @@ void templateTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offset);
 void templateTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void templateTunnelOnPrepair(tunnel_t *t);
 void templateTunnelOnStart(tunnel_t *t);
-void templateTunnelOnStop(tunnel_t *t);
+void templateTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context);
 
 void templateTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void templateTunnelUpStreamEst(tunnel_t *t, line_t *l);

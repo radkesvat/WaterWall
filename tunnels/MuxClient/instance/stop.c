@@ -2,8 +2,9 @@
 
 #include "loggers/network_logger.h"
 
-void muxclientTunnelOnStop(tunnel_t *t)
+void muxclientTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context)
 {
+    discard context;
     discard t;
 }
 
@@ -23,8 +24,9 @@ static void muxclientCloseSelectedParentLine(tunnel_t *t, muxclient_tstate_t *ts
     muxclientCloseIdleExhaustedParentLine(t, ts, wid, parent_l, parent_ls);
 }
 
-void muxclientTunnelOnWorkerStop(tunnel_t *t, wid_t wid)
+void muxclientTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context)
 {
+    discard context;
     assert(currentThreadIsEventWorkerWID(wid));
 
     muxclient_tstate_t *ts = tunnelGetState(t);

@@ -79,7 +79,7 @@ enum
     kSocks5ClientUdpHeaderMaxLen   = 4 + 1 + UINT8_MAX + 2
 };
 
-WW_EXPORT void         socks5clientTunnelDestroy(tunnel_t *t);
+WW_EXPORT void         socks5clientTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context);
 WW_EXPORT tunnel_t    *socks5clientTunnelCreate(node_t *node);
 WW_EXPORT api_result_t socks5clientTunnelApi(tunnel_t *instance, sbuf_t *message);
 
@@ -87,7 +87,7 @@ void socks5clientTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offset
 void socks5clientTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void socks5clientTunnelOnPrepair(tunnel_t *t);
 void socks5clientTunnelOnStart(tunnel_t *t);
-void socks5clientTunnelOnStop(tunnel_t *t);
+void socks5clientTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context);
 
 void socks5clientTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void socks5clientTunnelUpStreamEst(tunnel_t *t, line_t *l);

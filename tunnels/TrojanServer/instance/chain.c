@@ -21,13 +21,15 @@ static void trojanserverBindFallbackTarget(tunnel_t *t, tunnel_chain_t *chain)
     if (target == NULL)
     {
         LOGF("TrojanServer: fallback tunnel \"%s\" is not available", ts->fallback_node->name);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     if (target == t || target == ts->user_controller_tunnel)
     {
         LOGF("TrojanServer: fallback target must be different from TrojanServer and its internal UserController");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     ts->fallback_tunnel = target;
@@ -42,7 +44,8 @@ static void trojanserverBindFallbackTarget(tunnel_t *t, tunnel_chain_t *chain)
         LOGF("TrojanServer: fallback target node \"%s\" is already bound to previous node \"%s\"",
              target->node->name,
              target->prev->node->name);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     if (target->chain == chain)
@@ -53,7 +56,8 @@ static void trojanserverBindFallbackTarget(tunnel_t *t, tunnel_chain_t *chain)
         }
 
         LOGF("TrojanServer: fallback target node \"%s\" is already in the TrojanServer chain", target->node->name);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     if (target->prev == NULL)
@@ -77,7 +81,8 @@ static void trojanserverBindFallbackTarget(tunnel_t *t, tunnel_chain_t *chain)
     if (ts->fallback_tunnel == NULL)
     {
         LOGF("TrojanServer: fallback target node \"%s\" is not reachable from TrojanServer", target->node->name);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 }
 
@@ -98,14 +103,16 @@ void trojanserverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
     if (node->hash_next == 0)
     {
         LOGF("TrojanServer: a next node is required");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     node_t *next_node = nodemanagerGetConfigNodeByHash(node->node_manager_config, node->hash_next);
     if (next_node == NULL)
     {
         LOGF("Node Map Failure: node (\"%s\")->next (\"%s\") not found", node->name, node->next);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     if (next_node->hash_type == trojanserverUserControllerTypeHash())
@@ -113,19 +120,22 @@ void trojanserverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
         LOGF("TrojanServer: authenticated mode creates an internal UserController; remove the manual next "
              "UserController node \"%s\" and point TrojanServer to the real outbound node",
              next_node->name);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     if (controller->prev != NULL && controller->prev != t)
     {
         LOGF("TrojanServer: internal UserController is already bound downstream by %s", controller->prev->node->name);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     if (t->next != NULL && t->next != controller)
     {
         LOGF("TrojanServer: node \"%s\" is already bound upstream by %s", node->name, t->next->node->name);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     tunnelBind(t, controller);

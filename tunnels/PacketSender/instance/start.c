@@ -11,10 +11,11 @@ void packetsenderTunnelOnStart(tunnel_t *t)
 
     for (wid_t wi = 0; wi < state->workers_count; ++wi)
     {
-        if (UNLIKELY(! sendWorkerMessageForceQueueWithCleanup(wi, packetsenderStartWorker, NULL, t, NULL, NULL)))
+        if (UNLIKELY(sendWorkerMessageForceQueueWithCleanup(wi, packetsenderStartWorker, NULL, t, NULL, NULL) !=
+                     kWorkerMessageSubmitAccepted))
         {
             LOGF("PacketSender: failed to admit required worker startup on worker %u", (unsigned int) wi);
-            terminateProgram(1);
+            startupFailureRecord(1);
             return;
         }
     }

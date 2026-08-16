@@ -100,11 +100,12 @@ tunnel_t *packetstostreamTunnelCreate(node_t *node)
     t->fnPauseD   = &packetstostreamTunnelDownStreamPause;
     t->fnResumeD  = &packetstostreamTunnelDownStreamResume;
 
-    t->onPrepare    = &packetstostreamTunnelOnPrepair;
-    t->onStart      = &packetstostreamTunnelOnStart;
-    t->onStop       = &packetstostreamTunnelOnStop;
-    t->onWorkerStop = &packetstostreamTunnelOnWorkerStop;
-    t->onDestroy    = &packetstostreamTunnelDestroy;
+    t->onPrepare       = &packetstostreamTunnelOnPrepair;
+    t->onStart         = &packetstostreamTunnelOnStart;
+    t->onStop          = &packetstostreamTunnelOnStop;
+    t->onWorkerQuiesce = &packetstostreamTunnelOnWorkerQuiesce;
+    t->onWorkerStop    = &packetstostreamTunnelOnWorkerStop;
+    t->onDestroy       = &packetstostreamTunnelDestroy;
 
     ts->worker_timers           = NULL;
     ts->worker_timeout_timers   = NULL;

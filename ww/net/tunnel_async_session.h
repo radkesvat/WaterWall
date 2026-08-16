@@ -10,7 +10,7 @@
  *
  * The session solves that with two independent pieces:
  *
- *   - a lifetime gate, which admits callbacks until pre-stop closes it and then
+ *   - a lifetime gate, which admits callbacks until quiesce closes it and then
  *     waits for the ones already inside to leave; and
  *   - a reference count on the allocation itself, so a callback that is holding
  *     the session survives the node's destruction and frees it on its way out.
@@ -86,6 +86,8 @@ bool tunnelasyncsessionOpen(tunnel_async_session_t *session);
  * observing the tunnel and none can start.
  */
 void tunnelasyncsessionCloseAndQuiesce(tunnel_async_session_t *session);
+void tunnelasyncsessionClose(tunnel_async_session_t *session);
+void tunnelasyncsessionWaitQuiesced(tunnel_async_session_t *session);
 
 /**
  * @brief Advisory check used by a callback that already owns a gate entry.

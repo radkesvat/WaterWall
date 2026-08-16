@@ -1,4 +1,5 @@
 #include "worker.h"
+#include "application_shutdown.h"
 #include "context.h"
 #include "global_state.h"
 #include "managers/node_manager.h"
@@ -83,147 +84,223 @@ void workerUnbindCurrentThread(void)
     tl_wid = kInvalidWID;
 }
 
-/**
- * @brief Advance the worker lifecycle to at least @p target. Never goes back.
- */
-static void workerLifecycleAdvance(worker_t *worker, worker_lifecycle_e target)
+static void workerPublishLifecycleLocked(worker_t *worker, worker_lifecycle_e phase)
 {
-    w_atomic_int_value_t current = atomicLoadExplicit(&worker->lifecycle, memory_order_acquire);
-
-    while (current < (w_atomic_int_value_t) target)
+    condmutexLock(&worker->control_condition_mutex);
+    const worker_lifecycle_e current =
+        (worker_lifecycle_e) atomicLoadExplicit(&worker->lifecycle, memory_order_relaxed);
+    if (current < phase)
     {
-        if (atomicCompareExchangeExplicit(&worker->lifecycle,
-                                          &current,
-                                          (w_atomic_int_value_t) target,
-                                          memory_order_acq_rel,
-                                          memory_order_acquire))
+        // Publishes the lifecycle context installed before this phase.
+        atomicStoreExplicit(&worker->lifecycle, (w_atomic_int_value_t) phase, memory_order_release);
+        condvarBroadCast(&worker->control_condition);
+    }
+    condmutexUnlock(&worker->control_condition_mutex);
+}
+
+worker_lifecycle_e workerGetLifecycle(const worker_t *worker)
+{
+    return worker == NULL
+               ? kWorkerLifecycleInitialized
+               : (worker_lifecycle_e) atomicLoadExplicit(&((worker_t *) worker)->lifecycle, memory_order_acquire);
+}
+
+bool workerQuiesceRequested(const worker_t *worker)
+{
+    return worker != NULL && workerGetLifecycle(worker) >= kWorkerLifecycleQuiesceRequested;
+}
+
+static worker_quiesce_request_result_e workerRequestQuiesceInternal(worker_t                     *worker,
+                                                                    const ww_lifecycle_context_t *context,
+                                                                    bool application_controller)
+{
+    if (worker == NULL || context == NULL)
+    {
+        return kWorkerQuiesceRequestUnavailable;
+    }
+
+    if (worker->wid == 0 && ! application_controller)
+    {
+        return kWorkerQuiesceRequestUnavailable;
+    }
+
+    bool               woken = true;
+    worker_lifecycle_e lifecycle;
+    mutexLock(&worker->control_mutex);
+    lifecycle = workerGetLifecycle(worker);
+    if (lifecycle >= kWorkerLifecycleTeardownRequested || (worker->has_event_loop && worker->loop == NULL))
+    {
+        mutexUnlock(&worker->control_mutex);
+        return kWorkerQuiesceRequestUnavailable;
+    }
+    const bool already_requested = lifecycle >= kWorkerLifecycleQuiesceRequested;
+    if (already_requested && (! worker->lifecycle_context_set || worker->lifecycle_context.scope != context->scope ||
+                              worker->lifecycle_context.close_policy != context->close_policy))
+    {
+        mutexUnlock(&worker->control_mutex);
+        return kWorkerQuiesceRequestUnavailable;
+    }
+    if (! worker->lifecycle_context_set)
+    {
+        worker->lifecycle_context     = *context;
+        worker->lifecycle_context_set = true;
+    }
+    workerPublishLifecycleLocked(worker, kWorkerLifecycleQuiesceRequested);
+    workerMessagesCloseAdmissionLocked(worker);
+    if (worker->loop != NULL)
+    {
+        woken = wloopRequestQuiesce(worker->loop);
+    }
+    mutexUnlock(&worker->control_mutex);
+    if (already_requested)
+    {
+        return kWorkerQuiesceRequestAlreadyAccepted;
+    }
+    return woken ? kWorkerQuiesceRequestAcceptedWakeDelivered : kWorkerQuiesceRequestAcceptedWakeDegraded;
+}
+
+worker_quiesce_request_result_e workerRequestQuiesceWithContextResult(worker_t                     *worker,
+                                                                      const ww_lifecycle_context_t *context)
+{
+    return workerRequestQuiesceInternal(worker, context, false);
+}
+
+worker_quiesce_request_result_e workerInstallApplicationQuiesceRequest(worker_t                     *worker,
+                                                                       const ww_lifecycle_context_t *context)
+{
+    if (worker == NULL || worker->wid != 0)
+    {
+        return kWorkerQuiesceRequestUnavailable;
+    }
+    return workerRequestQuiesceInternal(worker, context, true);
+}
+
+bool workerRequestQuiesceWithContext(worker_t *worker, const ww_lifecycle_context_t *context)
+{
+    return workerRequestQuiesceWithContextResult(worker, context) != kWorkerQuiesceRequestUnavailable;
+}
+
+worker_quiesce_request_result_e workerRequestQuiesceResult(worker_t *worker)
+{
+    return workerRequestQuiesceWithContextResult(worker, wwLifecycleProcessShutdown());
+}
+
+bool workerRequestQuiesce(worker_t *worker)
+{
+    return workerRequestQuiesceResult(worker) != kWorkerQuiesceRequestUnavailable;
+}
+
+static bool workerRequestPhase(worker_t *worker, worker_lifecycle_e required, worker_lifecycle_e requested)
+{
+    if (worker == NULL)
+    {
+        return false;
+    }
+
+    mutexLock(&worker->control_mutex);
+    const worker_lifecycle_e current = workerGetLifecycle(worker);
+    const bool               valid   = current >= required;
+    if (valid)
+    {
+        workerPublishLifecycleLocked(worker, requested);
+    }
+    mutexUnlock(&worker->control_mutex);
+    return valid;
+}
+
+bool workerRequestDrain(worker_t *worker)
+{
+    return workerRequestPhase(worker, kWorkerLifecycleQuiesced, kWorkerLifecycleDrainRequested);
+}
+
+bool workerRequestTeardown(worker_t *worker)
+{
+    return workerRequestPhase(worker, kWorkerLifecycleDrained, kWorkerLifecycleTeardownRequested);
+}
+
+bool workerWaitForPhase(worker_t *worker, worker_lifecycle_e phase, uint32_t timeout_ms)
+{
+    if (worker == NULL)
+    {
+        return false;
+    }
+
+    const unsigned int started = getTickMS();
+    condmutexLock(&worker->control_condition_mutex);
+    while (workerGetLifecycle(worker) < phase)
+    {
+        const unsigned int elapsed = getTickMS() - started;
+        if (elapsed >= timeout_ms ||
+            ! condvarWaitFor(&worker->control_condition, &worker->control_condition_mutex, timeout_ms - elapsed))
         {
-            return;
+            condmutexUnlock(&worker->control_condition_mutex);
+            return workerGetLifecycle(worker) >= phase;
         }
     }
+    condmutexUnlock(&worker->control_condition_mutex);
+    return true;
 }
 
-bool workerStopRequested(const worker_t *worker)
+static void workerWaitForPhaseIndefinite(worker_t *worker, worker_lifecycle_e phase)
 {
-    if (worker == NULL)
+    condmutexLock(&worker->control_condition_mutex);
+    while (workerGetLifecycle(worker) < phase)
     {
-        return false;
+        condvarWait(&worker->control_condition, &worker->control_condition_mutex);
     }
-
-    return atomicLoadExplicit(&((worker_t *) worker)->lifecycle, memory_order_acquire) >=
-           (w_atomic_int_value_t) kWorkerLifecycleStopRequested;
+    condmutexUnlock(&worker->control_condition_mutex);
 }
 
-bool workerRequestStop(worker_t *worker)
+static void workerPublishLifecycle(worker_t *worker, worker_lifecycle_e phase)
 {
-    if (worker == NULL)
-    {
-        return false;
-    }
-
-    workerLifecycleAdvance(worker, kWorkerLifecycleStopRequested);
-
-    if (! worker->has_event_loop)
-    {
-        // Pseudo-worker: no loop to wake. Its resources are destroyed explicitly
-        // by the shutdown sequence.
-        return true;
-    }
-
-    /*
-     * The loop pointer is only stable while control_mutex is held: the owning
-     * thread detaches it under the same lock before destroying it. Waking inside
-     * the lock is what makes both orderings safe - either this call wakes a live
-     * loop and the owner waits, or the owner already detached and there is
-     * nothing left to wake.
-     */
-    bool woken = true;
     mutexLock(&worker->control_mutex);
-    if (worker->loop != NULL)
-    {
-        woken = wloopRequestStop(worker->loop);
-    }
+    workerPublishLifecycleLocked(worker, phase);
     mutexUnlock(&worker->control_mutex);
-
-    return woken;
 }
 
-bool workerPostControlEvent(worker_t *worker, wevent_t *ev)
+void workerPerformQuiesce(worker_t *worker, const ww_lifecycle_context_t *context)
 {
-    if (worker == NULL || ev == NULL || ! worker->has_event_loop)
-    {
-        return false;
-    }
+    assert(worker != NULL);
+    assert(worker->has_event_loop);
+    assert(currentThreadIsEventWorkerWID(worker->wid));
 
-    /*
-     * Same rule as workerRequestStop(): worker->loop is only stable while
-     * control_mutex is held, because the owning thread detaches it under this
-     * lock before destroying it. Posting inside the lock is what keeps a control
-     * event from reaching a loop that is being torn down.
-     */
-    bool posted = false;
-    mutexLock(&worker->control_mutex);
-    if (worker->loop != NULL)
-    {
-        ev->loop = worker->loop;
-        posted   = wloopPostControlEvent(worker->loop, ev);
-    }
-    mutexUnlock(&worker->control_mutex);
-
-    return posted;
-}
-
-void workerDestroyOwnResources(worker_t *worker)
-{
-    if (worker == NULL)
+    if (workerGetLifecycle(worker) >= kWorkerLifecycleQuiesced)
     {
         return;
     }
 
-    // One-shot: a worker that already tore itself down must not be torn down
-    // again by the shutdown sequence.
-    if (atomicExchangeExplicit(&worker->resources_destroyed, true, memory_order_acq_rel))
+    if (worker->wid == 0)
+    {
+        globalstateStopSystemLoadSampler();
+        socketmanagerCloseListenersForLoop(worker->loop);
+    }
+    socketmanagerQuiesceWorker(worker->wid);
+    nodemanagerQuiesceWorker(worker->wid, context);
+    asyncdnsCleanup(&worker->dns_resolver);
+    workerMessagesCleanupPending(worker);
+    wloopQuiesceNormalWork(worker->loop);
+    workerPublishLifecycle(worker, kWorkerLifecycleQuiesced);
+}
+
+void workerPerformDrain(worker_t *worker, const ww_lifecycle_context_t *context)
+{
+    assert(worker != NULL);
+    assert(worker->has_event_loop);
+    assert(currentThreadIsEventWorkerWID(worker->wid));
+    assert(workerGetLifecycle(worker) >= kWorkerLifecycleDrainRequested);
+
+    if (workerGetLifecycle(worker) >= kWorkerLifecycleDrained)
     {
         return;
     }
 
-    /*
-     * Detach message admission and loop access atomically. Foreign posters use
-     * the same lifetime lock and then the queue mutex, so after this unlock no
-     * new poster can hold either detached resource. Already accepted messages
-     * remain in `message_queue` and are cleaned exactly once below.
-     */
-    wloop_t                *loop          = NULL;
-    worker_message_queue_t *message_queue = NULL;
-    workerMessagesCloseAdmissionAndDetach(worker, &loop, &message_queue);
+    socketmanagerDrainUdpIdleForWorker(worker->wid);
+    nodemanagerStopWorkerResources(worker->wid, context);
+    workerPublishLifecycle(worker, kWorkerLifecycleDrained);
+}
 
-    if (loop != NULL)
-    {
-        if (worker->wid == 0)
-        {
-            globalstateStopSystemLoadSampler();
-        }
-
-        /*
-         * Source-owner inventories drain before any tunnel worker-stop hook.
-         * SocketManager is the authoritative inventory for UdpListener lines;
-         * draining it first lets each real owner close its borrowed path while
-         * every middle/end tunnel, the loop, and all line/buffer pools remain
-         * alive. Middle tunnels may then require their borrowed child set to be
-         * empty in onWorkerStop without enumerating those children themselves.
-         *
-         * Keep asyncdnsCleanup() later: it still owns timers and c-ares socket
-         * watches registered on the loop, so it must run while the event loop
-         * and its wio/timer storage are alive.
-         */
-        socketmanagerDrainUdpIdleForWorker(worker->wid);
-        nodemanagerStopWorkerResources(worker->wid);
-        socketmanagerCloseListenersForLoop(loop);
-        asyncdnsCleanup(&worker->dns_resolver);
-        workerMessagesCleanupPendingDetached(message_queue);
-        wloopDestroy(&loop);
-    }
-    workerMessagesDestroyDetached(message_queue);
+static void workerDestroyPools(worker_t *worker)
+{
     if (worker->wios_pool)
     {
         threadsafegenericpoolDestroy(worker->wios_pool);
@@ -240,8 +317,64 @@ void workerDestroyOwnResources(worker_t *worker)
     worker->wios_pool    = NULL;
     worker->context_pool = NULL;
     worker->buffer_pool  = NULL;
+}
 
-    workerLifecycleAdvance(worker, kWorkerLifecycleExited);
+void workerPerformTeardown(worker_t *worker)
+{
+    assert(worker != NULL);
+    assert(worker->has_event_loop);
+    assert(currentThreadIsEventWorkerWID(worker->wid));
+    assert(workerGetLifecycle(worker) >= kWorkerLifecycleTeardownRequested);
+
+    if (atomicExchangeExplicit(&worker->resources_destroyed, true, memory_order_relaxed))
+    {
+        return;
+    }
+
+    wloop_t                *loop  = NULL;
+    worker_message_queue_t *queue = NULL;
+    workerMessagesCloseAdmissionAndDetach(worker, &loop, &queue);
+    workerMessagesDestroyDetached(queue);
+    wloopDestroy(&loop);
+    workerDestroyPools(worker);
+    workerPublishLifecycle(worker, kWorkerLifecycleExited);
+}
+
+void workerDestroyPseudoWorkerResources(worker_t *worker)
+{
+    assert(worker != NULL);
+    assert(! worker->has_event_loop);
+
+    if (atomicExchangeExplicit(&worker->resources_destroyed, true, memory_order_relaxed))
+    {
+        return;
+    }
+
+    workerMessagesDestroy(worker);
+    workerDestroyPools(worker);
+    workerPublishLifecycle(worker, kWorkerLifecycleExited);
+}
+
+void workerDestroyUnstartedResources(worker_t *worker)
+{
+    assert(worker != NULL);
+    assert(worker->has_event_loop);
+    assert(! worker->thread_valid);
+    assert(workerGetLifecycle(worker) == kWorkerLifecycleInitialized);
+
+    if (atomicExchangeExplicit(&worker->resources_destroyed, true, memory_order_relaxed))
+    {
+        return;
+    }
+
+    asyncdnsCleanup(&worker->dns_resolver);
+    wloop_t                *loop  = NULL;
+    worker_message_queue_t *queue = NULL;
+    workerMessagesCloseAdmissionAndDetach(worker, &loop, &queue);
+    workerMessagesDestroyDetached(queue);
+    wloopDestroy(&loop);
+    workerDestroyPools(worker);
+    workerPublishLifecycle(worker, kWorkerLifecycleJoined);
 }
 
 bool workerJoin(worker_t *worker)
@@ -254,13 +387,18 @@ bool workerJoin(worker_t *worker)
         }
         worker->thread_valid = false;
     }
-    workerLifecycleAdvance(worker, kWorkerLifecycleJoined);
+    workerPublishLifecycle(worker, kWorkerLifecycleJoined);
     return true;
 }
 
 bool workerExitJoin(worker_t *worker)
 {
-    discard workerRequestStop(worker);
+    discard workerRequestQuiesce(worker);
+    if (! workerWaitForPhase(worker, kWorkerLifecycleQuiesced, 30000) || ! workerRequestDrain(worker) ||
+        ! workerWaitForPhase(worker, kWorkerLifecycleDrained, 30000) || ! workerRequestTeardown(worker))
+    {
+        return false;
+    }
     return workerJoin(worker);
 }
 
@@ -304,32 +442,48 @@ bool workerTryCreateBufferPool(worker_t *worker)
     return true;
 }
 
-void workerInit(worker_t *worker, wid_t wid, bool eventloop)
+static void workerRollbackInitialization(worker_t *worker)
+{
+    if (worker->has_event_loop)
+    {
+        workerDestroyUnstartedResources(worker);
+    }
+    else
+    {
+        workerDestroyPseudoWorkerResources(worker);
+    }
+}
+
+bool workerInit(worker_t *worker, wid_t wid, bool eventloop)
 {
     *worker = (worker_t) {.wid = wid, .has_event_loop = eventloop};
 
     mutexInit(&worker->control_mutex);
+    condmutexInit(&worker->control_condition_mutex);
+    condvarInit(&worker->control_condition);
     atomicStoreRelaxed(&worker->lifecycle, (w_atomic_int_value_t) kWorkerLifecycleInitialized);
     atomicStoreRelaxed(&worker->resources_destroyed, false);
-    atomicStoreRelaxed(&worker->loop_stopped, false);
     atomicStoreRelaxed(&worker->message_admission_open, false);
 
     if (UNLIKELY(! workerMessagesInit(worker)))
     {
         LOGF("Worker %d: failed to construct worker-message queue metadata", (int) wid);
-        abortProgramNow(1);
+        workerRollbackInitialization(worker);
+        return false;
     }
 
     if (UNLIKELY(! workerTryCreateCorePools(worker)))
     {
         LOGF("Worker %d: failed to construct WIO/context pool metadata", (int) wid);
-        abortProgramNow(1);
+        workerRollbackInitialization(worker);
+        return false;
     }
 
     if (UNLIKELY(! workerTryCreateBufferPool(worker)))
     {
         LOGF("Worker %d: failed to construct buffer-pool metadata", (int) wid);
-        abortProgramNow(1);
+        workerRollbackInitialization(worker);
+        return false;
     }
 
     if (eventloop)
@@ -345,18 +499,21 @@ void workerInit(worker_t *worker, wid_t wid, bool eventloop)
                         "Worker %d failed to initialize async DNS resolver: %s",
                         wid,
                         ares_strerror(dns_rc));
-            terminateProgram(1);
+            workerRollbackInitialization(worker);
+            return false;
         }
         if (UNLIKELY(! workerMessagesOpenAdmission(worker)))
         {
             LOGF("Worker %d: message admission could not be opened from the initialized state", (int) wid);
-            abortProgramNow(1);
+            workerRollbackInitialization(worker);
+            return false;
         }
     }
     else
     {
         worker->loop = NULL;
     }
+    return true;
 }
 
 void workerRun(worker_t *worker)
@@ -365,57 +522,61 @@ void workerRun(worker_t *worker)
     wid_t wid = worker->wid;
     frandInit();
 
-    workerLifecycleAdvance(worker, kWorkerLifecycleRunning);
+    workerPublishLifecycle(worker, kWorkerLifecycleRunning);
 
-    // Consumes global/worker state published by runMainThread().
+    bool runtime_published = false;
+    // Acquires the fully initialized global and worker registries published by worker 0.
     while (atomicLoadExplicit(&GSTATE.workers_run_flag, memory_order_acquire) == false)
     {
-        if (UNLIKELY(workerStopRequested(worker) || isApplicationTerminating()))
+        if (UNLIKELY(workerQuiesceRequested(worker)))
         {
-            workerDestroyOwnResources(worker);
-            LOGD("Worker %d exited", wid);
-            if (wid != 0)
-            {
-                workerUnbindCurrentThread();
-            }
-            return;
+            break;
         }
-        // wait for the main thread to set the flag
         wwSleepMS(10);
     }
+    runtime_published = atomicLoadExplicit(&GSTATE.workers_run_flag, memory_order_acquire);
 
-    int loop_result = wloopRun(worker->loop);
-    atomicStoreExplicit(&worker->loop_stopped, true, memory_order_release);
-    if (UNLIKELY(worker->loop_stopped_test_seam != NULL))
+    wloop_run_result_e loop_result = kWLoopRunQuiesced;
+    if (runtime_published && ! workerQuiesceRequested(worker))
     {
-        worker->loop_stopped_test_seam(worker);
+        loop_result = wloopRun(worker->loop);
     }
-    if (UNLIKELY(loop_result != kWLoopRunOk && ! isApplicationTerminating()))
+    if (UNLIKELY(loop_result != kWLoopRunQuiesced))
     {
-        /*
-         * Category B (orderly runtime failure): the loop is gone but this
-         * thread's state is structurally valid, so log, request an orderly
-         * process shutdown and unwind through the normal cleanup path below.
-         * Worker 0 runs the real teardown and joins this thread; terminating
-         * here would skip every registered cleanup callback.
-         */
         LOGF("Worker %d event loop exited with error %d", wid, loop_result);
-        if (! requestProgramShutdown(1))
+        if (wid != 0)
         {
-            // No worker-0 handoff is available: release what this thread owns,
-            // then hard-abort rather than continue with a dead event loop.
-            workerDestroyOwnResources(worker);
+            discard workerRequestQuiesceWithContextResult(worker, wwLifecycleProcessShutdown());
+        }
+        if (applicationShutdownRequestTyped(1, kApplicationShutdownReasonWorkerFailure) ==
+            kApplicationShutdownRequestUnavailable)
+        {
             abortProgramNow(1);
         }
     }
 
-    workerDestroyOwnResources(worker);
+    if (wid == 0)
+    {
+        return;
+    }
+
+    mutexLock(&worker->control_mutex);
+    if (! worker->lifecycle_context_set)
+    {
+        worker->lifecycle_context     = *wwLifecycleProcessShutdown();
+        worker->lifecycle_context_set = true;
+    }
+    const ww_lifecycle_context_t context = worker->lifecycle_context;
+    mutexUnlock(&worker->control_mutex);
+
+    workerPerformQuiesce(worker, &context);
+    workerWaitForPhaseIndefinite(worker, kWorkerLifecycleDrainRequested);
+    workerPerformDrain(worker, &context);
+    workerWaitForPhaseIndefinite(worker, kWorkerLifecycleTeardownRequested);
+    workerPerformTeardown(worker);
 
     LOGD("Worker %d exited", wid);
-    if (wid != 0)
-    {
-        workerUnbindCurrentThread();
-    }
+    workerUnbindCurrentThread();
 }
 
 int workerResolveDomainServiceAsync(wid_t wid, const char *domain, const char *service, int socktype, dns_resolve_cb cb,
@@ -435,10 +596,10 @@ int workerResolveDomainServiceAsync(wid_t wid, const char *domain, const char *s
     }
 
     worker_t *worker = getWorker(wid);
-    if (UNLIKELY(worker->loop == NULL))
+    if (UNLIKELY(worker->loop == NULL || ! wloopNormalDispatchAllowed(worker->loop)))
     {
         // The worker is tearing down; its resolver was already cleaned up.
-        return ARES_ENOTINITIALIZED;
+        return ARES_ECANCELLED;
     }
 
     return asyncdnsResolve(&worker->dns_resolver, domain, service, socktype, cb, userdata);

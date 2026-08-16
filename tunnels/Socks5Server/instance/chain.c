@@ -23,20 +23,23 @@ void socks5serverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
     if (controller == NULL)
     {
         LOGF("Socks5Server: authenticated mode requires an internal UserController");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     if (node->hash_next == 0)
     {
         LOGF("Socks5Server: a next node is required");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     node_t *next_node = nodemanagerGetConfigNodeByHash(node->node_manager_config, node->hash_next);
     if (next_node == NULL)
     {
         LOGF("Node Map Failure: node (\"%s\")->next (\"%s\") not found", node->name, node->next);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     if (next_node->hash_type == socks5serverUserControllerTypeHashForChain())
@@ -44,19 +47,22 @@ void socks5serverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
         LOGF("Socks5Server: authenticated mode creates an internal UserController; remove the manual next "
              "UserController node \"%s\" and point Socks5Server to the real outbound node",
              next_node->name);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     if (controller->prev != NULL && controller->prev != t)
     {
         LOGF("Socks5Server: internal UserController is already bound downstream by %s", controller->prev->node->name);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     if (t->next != NULL && t->next != controller)
     {
         LOGF("Socks5Server: node \"%s\" is already bound upstream by %s", node->name, t->next->node->name);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     tunnelBind(t, controller);

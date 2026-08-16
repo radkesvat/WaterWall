@@ -14,13 +14,15 @@ void socks5serverTunnelOnPrepair(tunnel_t *t)
     if (ts->auth_client_node == NULL)
     {
         LOGF("Socks5Server: auth-client-node-name was not resolved during create");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     ts->auth_client_tunnel = ts->auth_client_node->instance;
     if (ts->auth_client_tunnel == NULL)
     {
         LOGF("Socks5Server: AuthenticationClient node \"%s\" instance is not available", ts->auth_client_node->name);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 }

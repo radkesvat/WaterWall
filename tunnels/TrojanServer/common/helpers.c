@@ -1258,7 +1258,7 @@ void trojanserverTunnelstateDestroy(trojanserver_tstate_t *ts)
 {
     if (ts->user_controller_tunnel != NULL)
     {
-        ts->user_controller_tunnel->onDestroy(ts->user_controller_tunnel);
+        tunnelOwnedChildDestroy(ts->user_controller_tunnel);
         ts->user_controller_tunnel = NULL;
     }
 

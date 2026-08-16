@@ -139,15 +139,15 @@ static inline bool udpconnectorDestinationUsesLineContext(const dynamic_value_t 
            udpconnectorDynamicValueUsesLineContext(dest_port_selected);
 }
 
-WW_EXPORT void         udpconnectorTunnelDestroy(tunnel_t *t);
+WW_EXPORT void         udpconnectorTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context);
 WW_EXPORT tunnel_t    *udpconnectorTunnelCreate(node_t *node);
 WW_EXPORT api_result_t udpconnectorTunnelApi(tunnel_t *instance, sbuf_t *message);
 
 void udpconnectorTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void udpconnectorTunnelOnPrepair(tunnel_t *t);
 void udpconnectorTunnelOnStart(tunnel_t *t);
-void udpconnectorTunnelOnStop(tunnel_t *t);
-void udpconnectorTunnelOnWorkerStop(tunnel_t *t, wid_t wid);
+void udpconnectorTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context);
+void udpconnectorTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);
 
 void udpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void udpconnectorTunnelUpStreamEst(tunnel_t *t, line_t *l);
@@ -158,8 +158,7 @@ void udpconnectorTunnelUpStreamResume(tunnel_t *t, line_t *l);
 
 bool udpconnectorDomainResolverPrepare(tunnel_t *resolver, tunnel_t *connector, line_t *l,
                                        domainresolver_direction_t direction, void *user_lstate);
-void udpconnectorDomainResolverUserStateDestroy(tunnel_t *resolver, tunnel_t *connector, line_t *l,
-                                                void *user_lstate);
+void udpconnectorDomainResolverUserStateDestroy(tunnel_t *resolver, tunnel_t *connector, line_t *l, void *user_lstate);
 
 void   udpconnectorLinestateInitialize(udpconnector_lstate_t *ls, tunnel_t *t, line_t *l, wio_t *io);
 void   udpconnectorLinestateDestroy(udpconnector_lstate_t *ls);
@@ -187,3 +186,4 @@ void                              udpconnectorSetupDestinationPort(const dynamic
 const dns_resolved_addr_t        *udpconnectorSelectResolvedAddress(const dns_resolved_addr_t *addrs, size_t naddrs,
                                                                     int strategy);
 bool udpconnectorApplyResolvedAddress(address_context_t *dest_ctx, const dns_resolved_addr_t *resolved);
+void udpconnectorTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);

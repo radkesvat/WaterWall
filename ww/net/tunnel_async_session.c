@@ -83,7 +83,18 @@ bool tunnelasyncsessionOpen(tunnel_async_session_t *session)
 
 void tunnelasyncsessionCloseAndQuiesce(tunnel_async_session_t *session)
 {
-    deviceLifetimeGateCloseAndQuiesce(&session->callback_gate, deviceLifetimeYieldThread, NULL);
+    tunnelasyncsessionClose(session);
+    tunnelasyncsessionWaitQuiesced(session);
+}
+
+void tunnelasyncsessionClose(tunnel_async_session_t *session)
+{
+    deviceLifetimeGateClose(&session->callback_gate);
+}
+
+void tunnelasyncsessionWaitQuiesced(tunnel_async_session_t *session)
+{
+    deviceLifetimeGateWaitQuiesced(&session->callback_gate, deviceLifetimeYieldThread, NULL);
 }
 
 bool tunnelasyncsessionIsAccepting(const tunnel_async_session_t *session)

@@ -2,40 +2,49 @@
 
 #include "loggers/network_logger.h"
 
-static void udpstatelesssocketStopIo(udpstatelesssocket_tstate_t *state)
+static void udpstatelesssocketCloseExternalAdmission(udpstatelesssocket_tstate_t *state)
 {
     if (state->async_session != NULL)
     {
-        tunnelasyncsessionCloseAndQuiesce(state->async_session);
+        tunnelasyncsessionClose(state->async_session);
     }
+}
 
-    wio_t *io = state->socket.io;
-    if (io == NULL)
+void udpstatelesssocketTunnelOnQuiesceRequest(tunnel_t *t, const ww_lifecycle_context_t *context)
+{
+    discard context;
+    udpstatelesssocketCloseExternalAdmission(tunnelGetState(t));
+}
+
+void udpstatelesssocketTunnelOnQuiesceWait(tunnel_t *t, const ww_lifecycle_context_t *context)
+{
+    discard                      context;
+    udpstatelesssocket_tstate_t *state = tunnelGetState(t);
+    if (state->async_session != NULL)
     {
-        return;
+        tunnelasyncsessionWaitQuiesced(state->async_session);
     }
-
-    /* Normal construction is pinned to worker 0; never lose a foreign WIO. */
-    assert(state->io_wid == 0);
-    assert(currentThreadIsEventWorkerWID(state->io_wid));
-    assert(getWorker(state->io_wid)->loop != NULL);
-    wioClose(io);
-    state->socket.io = NULL;
 }
 
-void udpstatelesssocketTunnelOnPreStop(tunnel_t *t)
+void udpstatelesssocketTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context)
 {
-    udpstatelesssocketStopIo(tunnelGetState(t));
+    discard context;
+    assert(currentThreadIsEventWorkerWID(wid));
+    udpstatelesssocket_tstate_t *state = tunnelGetState(t);
+    if (wid == state->io_wid && state->socket.io != NULL)
+    {
+        wioClose(state->socket.io);
+        state->socket.io = NULL;
+    }
+    if (state->socket.idle_tables != NULL && state->socket.idle_tables[wid] != NULL)
+    {
+        localidletableQuiesce(state->socket.idle_tables[wid]);
+    }
 }
 
-void udpstatelesssocketTunnelOnStop(tunnel_t *t)
+void udpstatelesssocketTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context)
 {
-    udpstatelesssocketStopIo(tunnelGetState(t));
-}
-
-void udpstatelesssocketTunnelOnWorkerStop(tunnel_t *t, wid_t wid)
-{
-    // onWorkerStop runs on the worker being stopped, for its own slot only.
+    discard context;
     assert(currentThreadIsEventWorkerWID(wid));
 
     udpstatelesssocket_tstate_t *state = tunnelGetState(t);

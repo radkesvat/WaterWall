@@ -4,7 +4,7 @@
 
 static tunnel_t *tundeviceTunnelCreateFail(tunnel_t *t)
 {
-    tundeviceTunnelDestroy(t);
+    tundeviceTunnelDestroy(t, wwLifecycleStartupRollback());
     return NULL;
 }
 
@@ -36,9 +36,10 @@ tunnel_t *tundeviceTunnelCreate(node_t *node)
         return NULL;
     }
 
-    t->onStart   = &tundeviceTunnelOnStart;
-    t->onStop    = &tundeviceTunnelOnStop;
-    t->onDestroy = &tundeviceTunnelDestroy;
+    t->onStart          = &tundeviceTunnelOnStart;
+    t->onQuiesceRequest = &tundeviceTunnelOnQuiesceRequest;
+    t->onQuiesceWait    = &tundeviceTunnelOnQuiesceWait;
+    t->onDestroy        = &tundeviceTunnelDestroy;
 
     const packet_lifecycle_anchor_direction_t direction =
         node->hash_next != 0 ? kPacketLifecycleAnchorPublishUpstream : kPacketLifecycleAnchorPublishDownstream;
@@ -122,14 +123,9 @@ tunnel_t *tundeviceTunnelCreate(node_t *node)
     if (! isAdmin())
     {
         MessageBox(NULL, fail_msg, "Error", MB_OK | MB_ICONERROR);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return tundeviceTunnelCreateFail(t);
     }
-    // if (! elevatePrivileges(
-    //         FINAL_EXECUTABLE_NAME,
-    //         fail_msg))
-    // {
-    //     terminateProgram(1);
-    // }
 #else
     discard fail_msg;
 #endif

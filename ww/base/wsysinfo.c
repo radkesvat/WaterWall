@@ -329,7 +329,7 @@ static bool readMemoryLoad(double *load)
 static void systemLoadTimerHandle(wtimer_t *timer)
 {
     system_load_state_t *state = weventGetUserdata(timer);
-    if (state == NULL || isApplicationTerminating())
+    if (state == NULL)
     {
         return;
     }

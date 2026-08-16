@@ -4,42 +4,38 @@
 
 void reverseclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    reverseclient_tstate_t *ts  = tunnelGetState(t);
-    reverseclient_lstate_t *uls = lineGetState(l, t);
+    reverseclient_tstate_t *ts   = tunnelGetState(t);
+    reverseclient_pair_t   *pair = ((reverseclient_lstate_t *) lineGetState(l, t))->pair;
 
-    wid_t wid = lineGetWID(l);
-
-    if (uls->pair_connected)
+    if (pair->phase == kReverseClientPairActive)
     {
-        tunnelPrevDownStreamPayload(t, uls->d, buf);
+        tunnelPrevDownStreamPayload(t, pair->d, buf);
+        return;
     }
-    else
+
+    assert(pair->phase == kReverseClientPairUnused);
+    assert(pair->idle_handle != NULL);
+
+    const wid_t wid = lineGetWID(pair->u);
+    if (! idletableRemoveIdleItemByHash(wid, ts->starved_connections, (hash_t) (uintptr_t) pair))
     {
-        line_t *dl = uls->d;
-
-        ts->threadlocal_pool[wid].unused_cons_count -= 1;
-        reverseclientInitiateConnectOnWorker(t, wid, false);
-
-        assert(uls->idle_handle);
-        bool removed = idletableRemoveIdleItemByHash(uls->u->wid, ts->starved_connections, (hash_t) (uintptr_t) (uls));
-        if (! removed)
-        {
-            LOGF("ReverseClient: failed to remove idle item while pairing connection");
-            abortProgramNow(1);
-            return;
-        }
-        uls->idle_handle = NULL;
-
-        atomicIncRelaxed(&(ts->reverse_cons));
-
-        if (! withLineLocked(dl, tunnelPrevDownStreamInit, t))
-        {
-            reuseBuffer(buf);
-            return;
-        }
-
-        uls->pair_connected = true;
-
-        tunnelPrevDownStreamPayload(t, dl, buf);
+        LOGF("ReverseClient: failed to remove an idle pair while activating it");
+        abortProgramNow(1);
     }
+    pair->idle_handle = NULL;
+
+    reverseclient_thread_box_t *box = &ts->threadlocal_pool[wid];
+    assert(box->unused_cons_count > 0);
+    box->unused_cons_count--;
+    pair->phase = kReverseClientPairActive;
+    atomicIncRelaxed(&ts->reverse_cons);
+    reverseclientInitiateConnectOnWorker(t, wid, false);
+
+    pair->downstream_init_sent = true;
+    if (! withLineLocked(pair->d, tunnelPrevDownStreamInit, t))
+    {
+        reuseBuffer(buf);
+        return;
+    }
+    tunnelPrevDownStreamPayload(t, pair->d, buf);
 }

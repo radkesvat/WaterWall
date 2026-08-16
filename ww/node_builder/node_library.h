@@ -8,6 +8,11 @@
 
 #include "objects/node.h"
 
+#define WW_EXTERNAL_NODE_LIFECYCLE_ABI_VERSION 2u
+#define WW_EXTERNAL_NODE_LIFECYCLE_ABI_SYMBOL  "waterwallNodeLifecycleAbiVersion"
+
+typedef uint32_t (*node_lifecycle_abi_version_fn)(void);
+
 /**
  * @brief Load a node library entry by node type name.
  *
@@ -29,7 +34,7 @@ node_t nodelibraryLoadByTypeHash(hash_t htype);
  *
  * @param path Search path, or NULL to clear.
  */
-void   nodelibrarySetSearchPath(const char *path);
+void nodelibrarySetSearchPath(const char *path);
 
 /**
  * @brief Register a statically provided node library entry.

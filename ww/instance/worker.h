@@ -1,6 +1,7 @@
 #pragma once
 
 #include "async_dns.h"
+#include "lifecycle.h"
 #include "threadsafe_generic_pool.h"
 #include "watomic.h"
 #include "wlibc.h"
@@ -20,17 +21,20 @@ typedef struct worker_message_queue_s worker_message_queue_t;
 /**
  * @brief Worker lifecycle state, stored atomically and only ever advanced.
  *
- * The states are ordered so a transition is a monotonic "advance to at least
- * this state". That makes a stop request racing a worker's own exit safe in
- * both orderings, and prevents double destruction.
+ * Requests are published by the main coordinator. Acknowledgements are
+ * published by the owner worker after the represented work is complete.
  */
 typedef enum
 {
     kWorkerLifecycleInitialized = 0, // resources created, thread not running yet
     kWorkerLifecycleRunning,         // worker routine entered
-    kWorkerLifecycleStopRequested,   // a stop was requested (possibly before running)
-    kWorkerLifecycleExited,          // loop returned and own resources destroyed
-    kWorkerLifecycleJoined           // OS thread joined
+    kWorkerLifecycleQuiesceRequested,
+    kWorkerLifecycleQuiesced,
+    kWorkerLifecycleDrainRequested,
+    kWorkerLifecycleDrained,
+    kWorkerLifecycleTeardownRequested,
+    kWorkerLifecycleExited,
+    kWorkerLifecycleJoined
 } worker_lifecycle_e;
 
 /**
@@ -55,20 +59,14 @@ typedef struct worker_s
     generic_pool_t         *context_pool;  // Generic pool for managing context objects.
     worker_message_queue_t *message_queue; // Worker-owned queued/timed messages.
     wthread_t               thread;        // Thread associated with the worker.
-    // Lifetime lock for loop and message_queue. It serializes remote stop/event
-    // posting and message admission against workerDestroyOwnResources().
-    wmutex_t    control_mutex;
-    atomic_int  lifecycle;           // worker_lifecycle_e
-    atomic_bool resources_destroyed; // guards one-shot own-resource teardown
-    /*
-     * Published immediately after wloopRun() returns and before resource
-     * teardown takes control_mutex. Tests use this one-way state to order the
-     * enqueue-wins race without timing assumptions.
-     */
-    atomic_bool loop_stopped;
-    /* Optional test seam run after loop_stopped publication and before own
-     * resource teardown. Production workers leave this NULL. */
-    void (*loop_stopped_test_seam)(struct worker_s *worker);
+    // Lifetime lock for loop/message_queue and the worker phase protocol.
+    wmutex_t               control_mutex;
+    wcond_mutex_t          control_condition_mutex;
+    wcondvar_t             control_condition;
+    atomic_int             lifecycle;           // worker_lifecycle_e
+    atomic_bool            resources_destroyed; // guards one-shot own-resource teardown
+    ww_lifecycle_context_t lifecycle_context;
+    bool                   lifecycle_context_set;
     /*
      * The authoritative admission gate for every worker-message delivery
      * shape: inline, queued, and timed. It is closed before loop/queue
@@ -94,7 +92,7 @@ extern thread_local wid_t tl_wid; // Thread-local worker ID. */
  * @param tid Worker ID.
  * @param eventloop  create eventloop for this thread
  */
-void workerInit(worker_t *worker, wid_t wid, bool eventloop);
+bool workerInit(worker_t *worker, wid_t wid, bool eventloop);
 
 /**
  * Transactionally construct the worker's WIO and context pool metadata.
@@ -210,39 +208,57 @@ static inline wid_t getWID(void)
 }
 
 /**
- * @brief Ask a worker to stop. Thread-safe, never waits, never destroys.
+ * @brief Close normal admission and request worker quiescence.
  *
- * Advances the lifecycle to kWorkerLifecycleStopRequested and wakes the worker's
- * event loop through the shutdown-control path. Safe before the loop starts
+ * Advances the lifecycle to kWorkerLifecycleQuiesceRequested and wakes the
+ * worker's event loop through its lifecycle-control path. Safe before the loop starts
  * running, safe while it is blocked in the poller, safe when the worker already
  * exited, and safe to repeat.
  *
- * The caller must not assume the worker stopped when this returns; use
- * workerJoin() for that. Requesting every worker to stop before joining the
- * first one is what keeps shutdown from serializing on one slow worker.
+ * The caller must not assume the worker quiesced when this returns; wait for
+ * kWorkerLifecycleQuiesced before releasing external producers.
  *
  * @param worker Pointer to the worker structure.
- * @return false only when the loop could not be woken.
+ * The boolean wrappers return false only when the request is unavailable. Use
+ * the typed result when immediate wake delivery matters diagnostically.
  */
-bool workerRequestStop(worker_t *worker);
+typedef enum worker_quiesce_request_result_e
+{
+    kWorkerQuiesceRequestUnavailable = 0,
+    kWorkerQuiesceRequestAcceptedWakeDelivered,
+    kWorkerQuiesceRequestAcceptedWakeDegraded,
+    kWorkerQuiesceRequestAlreadyAccepted
+} worker_quiesce_request_result_e;
+
+worker_quiesce_request_result_e workerRequestQuiesceResult(worker_t *worker);
+worker_quiesce_request_result_e workerRequestQuiesceWithContextResult(worker_t                     *worker,
+                                                                      const ww_lifecycle_context_t *context);
+worker_quiesce_request_result_e workerInstallApplicationQuiesceRequest(worker_t                     *worker,
+                                                                       const ww_lifecycle_context_t *context);
+bool                            workerRequestQuiesce(worker_t *worker);
+bool workerRequestQuiesceWithContext(worker_t *worker, const ww_lifecycle_context_t *context);
 
 /**
  * @brief Whether this worker has been asked to stop.
  */
-bool workerStopRequested(const worker_t *worker);
+bool workerQuiesceRequested(const worker_t *worker);
 
 /**
- * @brief Post a shutdown-control event to a worker's loop. Thread-safe.
- *
- * Resolves the target loop under the worker's control mutex, so the event can
- * never be posted through a loop pointer that the owning thread is concurrently
- * detaching and destroying. The event is admitted even after normal application
- * event posting has been closed, and it is copied into the loop's queue, so a
- * stack-allocated wevent_t is fine.
- *
- * @return false when the worker has no event loop, or its loop is already gone.
+ * @brief Publish a drain or teardown release to a parked worker.
  */
-bool workerPostControlEvent(worker_t *worker, wevent_t *ev);
+bool workerRequestDrain(worker_t *worker);
+bool workerRequestTeardown(worker_t *worker);
+
+/** @brief Wait until the worker reaches at least @p phase. */
+bool workerWaitForPhase(worker_t *worker, worker_lifecycle_e phase, uint32_t timeout_ms);
+
+/** @brief Current worker lifecycle phase. */
+worker_lifecycle_e workerGetLifecycle(const worker_t *worker);
+
+/** Owner-worker lifecycle stages. */
+void workerPerformQuiesce(worker_t *worker, const ww_lifecycle_context_t *context);
+void workerPerformDrain(worker_t *worker, const ww_lifecycle_context_t *context);
+void workerPerformTeardown(worker_t *worker);
 
 /**
  * @brief Destroy the worker's own event-loop-local resources. Runs at most once.
@@ -257,13 +273,16 @@ bool workerPostControlEvent(worker_t *worker, wevent_t *ev);
  *
  * @param worker Pointer to the worker structure.
  */
-void workerDestroyOwnResources(worker_t *worker);
+void workerDestroyPseudoWorkerResources(worker_t *worker);
+
+/** Destroy an event worker whose OS thread was never created. */
+void workerDestroyUnstartedResources(worker_t *worker);
 
 /**
  * @brief Waits for a worker's spawned OS thread to exit.
  *
- * Does not signal the worker to stop. Use after workerRequestStop() when
- * multiple workers should be notified before joining.
+ * Does not advance the worker lifecycle. Use only after the worker has reached
+ * kWorkerLifecycleExited.
  *
  * @param worker Pointer to the worker structure.
  * @return true after a confirmed join, false while thread ownership remains.
@@ -271,7 +290,7 @@ void workerDestroyOwnResources(worker_t *worker);
 bool workerJoin(worker_t *worker);
 
 /**
- * @brief Request stop and then join, for a single worker.
+ * @brief Advance a single worker through quiesce, drain, and teardown, then join.
  *
  * Convenience wrapper; prefer requesting every worker to stop before joining any
  * of them.

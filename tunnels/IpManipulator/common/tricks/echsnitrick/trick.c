@@ -962,8 +962,10 @@ static void echsnitrickRunDelayedOriginalRelease(worker_t *worker, void *arg1, v
     echsnitrickDrainPendingOriginals(t, &identity, release_phase, next_delay_ms);
 }
 
-static void echsnitrickCleanupDelayedOriginalRelease(void *arg1, void *arg2, void *arg3)
+static void echsnitrickCleanupDelayedOriginalRelease(void *arg1, void *arg2, void *arg3,
+                                                     worker_message_cancel_reason_e reason)
 {
+    discard reason;
     discard arg2;
 
     tunnel_t                      *t       = arg1;
@@ -1093,7 +1095,7 @@ static bool echsnitrickScheduleOriginalRelease(tunnel_t *t, const echsnitrick_fl
                                              delay_ms,
                                              t,
                                              NULL,
-                                             release);
+                                             release) == kWorkerMessageSubmitAccepted;
 #endif
 }
 

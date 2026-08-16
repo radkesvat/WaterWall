@@ -91,6 +91,8 @@ typedef struct speedtestclient_tstate_s
     bool     json_summary;
     bool     terminate_on_complete;
 
+    atomic_bool             stopping;
+    line_t                **owned_lines;
     atomic_uint             completed_streams;
     atomic_uint             failed_streams;
     wmutex_t                aggregate_mutex;
@@ -133,17 +135,20 @@ typedef struct speedtestclient_lstate_s
     bool                    receiver_finished;
     bool                    remote_sender_report_received;
     bool                    remote_receiver_report_received;
+    bool                    upstream_init_sent;
     bool                    line_complete;
     bool                    failed;
 } speedtestclient_lstate_t;
 
-WW_EXPORT void         speedtestclientTunnelDestroy(tunnel_t *t);
+WW_EXPORT void         speedtestclientTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context);
 WW_EXPORT tunnel_t    *speedtestclientTunnelCreate(node_t *node);
 WW_EXPORT api_result_t speedtestclientTunnelApi(tunnel_t *instance, sbuf_t *message);
 
 void speedtestclientTunnelOnPrepair(tunnel_t *t);
 void speedtestclientTunnelOnStart(tunnel_t *t);
-void speedtestclientTunnelOnStop(tunnel_t *t);
+void speedtestclientTunnelOnQuiesceRequest(tunnel_t *t, const ww_lifecycle_context_t *context);
+void speedtestclientTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context);
+void speedtestclientTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);
 
 void speedtestclientTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void speedtestclientTunnelUpStreamEst(tunnel_t *t, line_t *l);
@@ -185,3 +190,10 @@ void    speedtestclientProcessIncoming(tunnel_t *t, line_t *l, sbuf_t *buf);
 void    speedtestclientMaybeComplete(tunnel_t *t, line_t *l);
 void    speedtestclientFailLine(tunnel_t *t, line_t *l, const char *reason);
 void    speedtestclientFinishFromDownstreamFinish(tunnel_t *t, line_t *l, bool success, const char *reason);
+void     speedtestclientRemoveOwnedLine(tunnel_t *t, line_t *l, uint32_t stream_id);
+
+#ifdef WW_SPEEDTESTCLIENT_SHUTDOWN_TEST_SEAM
+void speedtestclientTestStartStream(void *worker, void *arg1, void *arg2, void *arg3);
+void speedtestclientTestCleanupStartStream(void *arg1, void *arg2, void *arg3, worker_message_cancel_reason_e reason);
+void speedtestclientTestRequiredStartFailure(const char *reason);
+#endif

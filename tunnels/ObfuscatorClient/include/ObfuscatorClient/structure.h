@@ -35,7 +35,7 @@ enum
     kObfuscatorTlsRecordHeaderSize = 5
 };
 
-WW_EXPORT void         obfuscatorclientTunnelDestroy(tunnel_t *t);
+WW_EXPORT void         obfuscatorclientTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context);
 WW_EXPORT tunnel_t    *obfuscatorclientTunnelCreate(node_t *node);
 WW_EXPORT api_result_t obfuscatorclientTunnelApi(tunnel_t *instance, sbuf_t *message);
 
@@ -43,7 +43,7 @@ void obfuscatorclientTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_of
 void obfuscatorclientTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void obfuscatorclientTunnelOnPrepair(tunnel_t *t);
 void obfuscatorclientTunnelOnStart(tunnel_t *t);
-void obfuscatorclientTunnelOnStop(tunnel_t *t);
+void obfuscatorclientTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context);
 
 void obfuscatorclientTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void obfuscatorclientTunnelUpStreamEst(tunnel_t *t, line_t *l);

@@ -13,13 +13,15 @@ void realityserverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
     if (destination == NULL)
     {
         LOGF("RealityServer: destination tunnel is not available");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     if (destination == t || destination == t->next)
     {
         LOGF("RealityServer: destination node must differ from RealityServer and its authorized next node");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     if (destination->prev != NULL && destination->prev != t)
@@ -27,7 +29,8 @@ void realityserverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
         LOGF("RealityServer: destination node \"%s\" is already bound to previous node \"%s\"",
              destination->node->name,
              destination->prev->node->name);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     if (destination->prev == NULL)
@@ -55,7 +58,8 @@ void realityserverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
     if (entry == NULL)
     {
         LOGF("RealityServer: destination node \"%s\" is not reachable from RealityServer", destination->node->name);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     ts->destination_tunnel = entry;

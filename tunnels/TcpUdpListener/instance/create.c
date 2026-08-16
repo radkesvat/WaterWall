@@ -86,20 +86,20 @@ tunnel_t *tcpudplistenerTunnelCreate(node_t *node)
     if (! nodeHasNext(node))
     {
         LOGF("TcpUdpListener: a next node is required");
-        tcpudplistenerTunnelDestroy(t);
+        tcpudplistenerTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
     if (! checkJsonIsObjectAndHasChild(node->node_settings_json))
     {
         LOGF("JSON Error: TcpUdpListener->settings (object field) : The object was empty or invalid");
-        tcpudplistenerTunnelDestroy(t);
+        tcpudplistenerTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
     if (! tcpudplistenerCreateChildTunnels(t, node))
     {
-        tcpudplistenerTunnelDestroy(t);
+        tcpudplistenerTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 

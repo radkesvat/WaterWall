@@ -309,6 +309,10 @@ static bool testerclientLoadInitialDestContext(testerclient_tstate_t *ts, const 
 tunnel_t *testerclientTunnelCreate(node_t *node)
 {
     tunnel_t *t = tunnelCreate(node, sizeof(testerclient_tstate_t), sizeof(testerclient_lstate_t));
+    if (! t)
+    {
+        return NULL;
+    }
 
     t->fnInitU    = &testerclientTunnelUpStreamInit;
     t->fnEstU     = &testerclientTunnelUpStreamEst;
@@ -324,10 +328,11 @@ tunnel_t *testerclientTunnelCreate(node_t *node)
     t->fnPauseD   = &testerclientTunnelDownStreamPause;
     t->fnResumeD  = &testerclientTunnelDownStreamResume;
 
-    t->onPrepare = &testerclientTunnelOnPrepair;
-    t->onStart   = &testerclientTunnelOnStart;
-    t->onStop    = &testerclientTunnelOnStop;
-    t->onDestroy = &testerclientTunnelDestroy;
+    t->onPrepare    = &testerclientTunnelOnPrepair;
+    t->onStart      = &testerclientTunnelOnStart;
+    t->onStop       = &testerclientTunnelOnStop;
+    t->onWorkerStop = &testerclientTunnelOnWorkerStop;
+    t->onDestroy    = &testerclientTunnelDestroy;
 
     testerclient_tstate_t *ts                     = tunnelGetState(t);
     const cJSON           *settings               = node->node_settings_json;
@@ -352,7 +357,7 @@ tunnel_t *testerclientTunnelCreate(node_t *node)
     if (packet_start_delay_ms < 0)
     {
         LOGF("JSON Error: TesterClient->settings->packet-start-delay-ms (int field) : expected a non-negative value");
-        testerclientTunnelDestroy(t);
+        testerclientTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
@@ -362,7 +367,7 @@ tunnel_t *testerclientTunnelCreate(node_t *node)
     {
         LOGF("JSON Error: TesterClient->settings->chunk-count (int field) : expected a value between 1 and %u",
              (unsigned int) kTesterClientChunkCount);
-        testerclientTunnelDestroy(t);
+        testerclientTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
@@ -371,7 +376,7 @@ tunnel_t *testerclientTunnelCreate(node_t *node)
     if (max_payload_size < 0)
     {
         LOGF("JSON Error: TesterClient->settings->max-payload-size (int field) : expected a non-negative value");
-        testerclientTunnelDestroy(t);
+        testerclientTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
@@ -380,7 +385,7 @@ tunnel_t *testerclientTunnelCreate(node_t *node)
     if (split_payload_delay_ms < 0)
     {
         LOGF("JSON Error: TesterClient->settings->split-payload-delay-ms (int field) : expected a non-negative value");
-        testerclientTunnelDestroy(t);
+        testerclientTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
@@ -389,7 +394,7 @@ tunnel_t *testerclientTunnelCreate(node_t *node)
     if (split_payload_burst < 1)
     {
         LOGF("JSON Error: TesterClient->settings->split-payload-burst (int field) : expected a positive value");
-        testerclientTunnelDestroy(t);
+        testerclientTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
@@ -398,27 +403,27 @@ tunnel_t *testerclientTunnelCreate(node_t *node)
     if ((ts->packet_start_immediately || ts->packet_start_delay_ms > 0) && ! ts->packet_mode)
     {
         LOGF("TesterClient: packet-start-immediately and packet-start-delay-ms require packet-mode=true");
-        testerclientTunnelDestroy(t);
+        testerclientTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
     if (ts->packet_stateless && ! ts->packet_mode)
     {
         LOGF("TesterClient: settings->packet-stateless requires packet-mode=true");
-        testerclientTunnelDestroy(t);
+        testerclientTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
     if (ts->max_payload_size > 0 && ts->packet_stateless)
     {
         LOGF("TesterClient: settings->max-payload-size is not supported with packet-stateless=true");
-        testerclientTunnelDestroy(t);
+        testerclientTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
     if (! testerclientLoadPacketIpv4Settings(ts, settings) || ! testerclientLoadInitialDestContext(ts, settings))
     {
-        testerclientTunnelDestroy(t);
+        testerclientTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
@@ -426,7 +431,7 @@ tunnel_t *testerclientTunnelCreate(node_t *node)
         ts->max_payload_size < testerclientPacketIpv4MinimumPacketSize(ts))
     {
         LOGF("TesterClient: settings->max-payload-size is too small for the configured packet-ipv4 headers");
-        testerclientTunnelDestroy(t);
+        testerclientTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 

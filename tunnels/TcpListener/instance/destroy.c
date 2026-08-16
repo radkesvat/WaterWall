@@ -2,8 +2,9 @@
 
 #include "loggers/network_logger.h"
 
-void tcplistenerTunnelDestroy(tunnel_t *t)
+void tcplistenerTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context)
 {
+    discard               context;
     tcplistener_tstate_t *tstate = tunnelGetState(t);
 
     if (tstate->idle_tables)

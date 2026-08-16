@@ -74,12 +74,12 @@ typedef struct tcpconnector_destination_s
 
 typedef struct tcpconnector_lstate_s
 {
-    tunnel_t                      *tunnel;      // reference to the tunnel (TcpConnector)
-    line_t                        *line;        // reference to the line
-    wio_t                         *io;          // IO handle for the connection (socket)
-    local_idle_item_t             *idle_handle; // reference to the idle item for this connection
-    uint64_t                       outbound_ip_range;
-    tcpconnector_socket_options_t  socket_options;
+    tunnel_t                     *tunnel;      // reference to the tunnel (TcpConnector)
+    line_t                       *line;        // reference to the line
+    wio_t                        *io;          // IO handle for the connection (socket)
+    local_idle_item_t            *idle_handle; // reference to the idle item for this connection
+    uint64_t                      outbound_ip_range;
+    tcpconnector_socket_options_t socket_options;
     // These fields are used internally for the queue implementation for TCP
     buffer_queue_t pause_queue;
     buffer_pool_t *buffer_pool;
@@ -130,15 +130,15 @@ enum
     kFwMarkInvalid = -1
 };
 
-WW_EXPORT void         tcpconnectorTunnelDestroy(tunnel_t *t);
+WW_EXPORT void         tcpconnectorTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context);
 WW_EXPORT tunnel_t    *tcpconnectorTunnelCreate(node_t *node);
 WW_EXPORT api_result_t tcpconnectorTunnelApi(tunnel_t *instance, sbuf_t *message);
 
 void tcpconnectorTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void tcpconnectorTunnelOnPrepair(tunnel_t *t);
 void tcpconnectorTunnelOnStart(tunnel_t *t);
-void tcpconnectorTunnelOnStop(tunnel_t *t);
-void tcpconnectorTunnelOnWorkerStop(tunnel_t *t, wid_t wid);
+void tcpconnectorTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context);
+void tcpconnectorTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);
 
 void tcpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void tcpconnectorTunnelUpStreamEst(tunnel_t *t, line_t *l);
@@ -161,3 +161,4 @@ void tcpconnectorOnOutBoundConnected(wio_t *upstream_io);
 void tcpconnectorOnWriteComplete(wio_t *io);
 void tcpconnectorOnClose(wio_t *io);
 void tcpconnectorOnIdleConnectionExpire(local_idle_item_t *idle_tcp);
+void tcpconnectorTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);

@@ -79,7 +79,7 @@ static bool processHandshakeD(tunnel_t *t, line_t *d, reverseserver_lstate_t *dl
 static bool pairWithLocalUpstreamConnection(tunnel_t *t, line_t *d, reverseserver_lstate_t *dls,
                                             reverseserver_thread_box_t *this_tb)
 {
-    if (this_tb->u_count <= 0)
+    if (atomicLoadRelaxed(&this_tb->u_count) == 0)
     {
         return false;
     }
@@ -125,7 +125,7 @@ static bool pairWithLocalUpstreamConnection(tunnel_t *t, line_t *d, reverseserve
 static sbuf_t *createHandshakeBuffer(line_t *d, reverseserver_tstate_t *ts)
 {
     sbuf_t *handshake_buf = bufferpoolGetLargeBuffer(lineGetBufferPool(d));
-    handshake_buf = sbufReserveSpace(handshake_buf, ts->handshake_length);
+    handshake_buf         = sbufReserveSpace(handshake_buf, ts->handshake_length);
     sbufSetLength(handshake_buf, ts->handshake_length);
     memoryCopy(sbufGetMutablePtr(handshake_buf), ts->handshake_bytes, ts->handshake_length);
     return handshake_buf;
@@ -170,7 +170,7 @@ static bool tryPairWithRemoteUpstreamConnection(tunnel_t *t, line_t *d, reverses
 
     for (wid_t wi = 0; wi < getWorkersCount(); wi++)
     {
-        if (wi != lineGetWID(d) && ts->threadlocal_pool[wi].u_count > 0)
+        if (wi != lineGetWID(d) && atomicLoadRelaxed(&ts->threadlocal_pool[wi].u_count) > 0)
         {
             if (pipeToRemoteWorker(t, d, dls, this_tb, ts, wi, dbuf))
             {

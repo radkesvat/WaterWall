@@ -14,14 +14,15 @@ static void usercontrollerDeleteTimer(wtimer_t **timer)
     *timer = NULL;
 }
 
-void usercontrollerTunnelOnStop(tunnel_t *t)
+void usercontrollerTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context)
 {
+    discard context;
     discard t;
 }
 
-void usercontrollerTunnelOnWorkerStop(tunnel_t *t, wid_t wid)
+void usercontrollerTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context)
 {
-    // onWorkerStop runs on the worker being stopped, for its own slot only.
+    discard context;
     assert(currentThreadIsEventWorkerWID(wid));
 
     usercontroller_tstate_t *ts = tunnelGetState(t);
@@ -31,5 +32,16 @@ void usercontrollerTunnelOnWorkerStop(tunnel_t *t, wid_t wid)
     }
 
     usercontrollerDeleteTimer(&ts->worker_states[wid].sweep_timer);
+}
+
+void usercontrollerTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context)
+{
+    discard context;
+    assert(currentThreadIsEventWorkerWID(wid));
+    usercontroller_tstate_t *ts = tunnelGetState(t);
+    if (ts->worker_states == NULL || wid >= ts->worker_count)
+    {
+        return;
+    }
     usercontrollerWorkerClearRegistry(t, wid);
 }

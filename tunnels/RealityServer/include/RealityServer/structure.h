@@ -184,7 +184,7 @@ enum
     kRealityServerLineStateSize   = sizeof(realityserver_lstate_t)
 };
 
-WW_EXPORT void         realityserverTunnelDestroy(tunnel_t *t);
+WW_EXPORT void         realityserverTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context);
 WW_EXPORT tunnel_t    *realityserverTunnelCreate(node_t *node);
 WW_EXPORT api_result_t realityserverTunnelApi(tunnel_t *instance, sbuf_t *message);
 
@@ -192,7 +192,7 @@ void realityserverTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offse
 void realityserverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void realityserverTunnelOnPrepair(tunnel_t *t);
 void realityserverTunnelOnStart(tunnel_t *t);
-void realityserverTunnelOnStop(tunnel_t *t);
+void realityserverTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context);
 
 void realityserverTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void realityserverTunnelUpStreamEst(tunnel_t *t, line_t *l);

@@ -417,7 +417,11 @@ void speedtestclientScheduleSend(tunnel_t *t, line_t *l, speedtestclient_lstate_
     }
 
     ls->send_scheduled = true;
-    lineScheduleTask(l, speedtestclientSendTask, ls->tunnel);
+    if (UNLIKELY(! lineScheduleTask(l, speedtestclientSendTask, ls->tunnel)))
+    {
+        ls->send_scheduled = false;
+        speedtestclientFailLine(t, l, "failed to schedule send progress");
+    }
 }
 
 void speedtestclientScheduleReport(tunnel_t *t, line_t *l, speedtestclient_lstate_t *ls)
@@ -430,7 +434,11 @@ void speedtestclientScheduleReport(tunnel_t *t, line_t *l, speedtestclient_lstat
     }
 
     ls->report_scheduled = true;
-    lineScheduleDelayedTask(l, speedtestclientReportTask, state->report_interval_ms, t);
+    if (UNLIKELY(! lineScheduleDelayedTask(l, speedtestclientReportTask, state->report_interval_ms, t)))
+    {
+        ls->report_scheduled = false;
+        speedtestclientFailLine(t, l, "failed to schedule report progress");
+    }
 }
 
 void speedtestclientSendTask(tunnel_t *t, line_t *l)
@@ -471,7 +479,11 @@ void speedtestclientSendTask(tunnel_t *t, line_t *l)
                 retry_ms = 1;
             }
             ls->send_scheduled = true;
-            lineScheduleDelayedTask(l, speedtestclientSendTask, retry_ms, t);
+            if (UNLIKELY(! lineScheduleDelayedTask(l, speedtestclientSendTask, retry_ms, t)))
+            {
+                ls->send_scheduled = false;
+                speedtestclientFailLine(t, l, "failed to schedule UDP handshake retry");
+            }
         }
         return;
     }
@@ -497,7 +509,11 @@ void speedtestclientSendTask(tunnel_t *t, line_t *l)
         if (speedtestclientShouldWaitForPace(state, ls, now_us, &delay_ms))
         {
             ls->send_scheduled = true;
-            lineScheduleDelayedTask(l, speedtestclientSendTask, delay_ms, t);
+            if (UNLIKELY(! lineScheduleDelayedTask(l, speedtestclientSendTask, delay_ms, t)))
+            {
+                ls->send_scheduled = false;
+                speedtestclientFailLine(t, l, "failed to schedule paced send");
+            }
             return;
         }
 
@@ -787,7 +803,11 @@ static void speedtestclientHandleFrame(tunnel_t *t, line_t *l, const speedtestcl
             if (! ls->send_paused && ! ls->sender_finished)
             {
                 ls->send_scheduled = true;
-                lineScheduleTask(l, speedtestclientSendTask, t);
+                if (UNLIKELY(! lineScheduleTask(l, speedtestclientSendTask, t)))
+                {
+                    ls->send_scheduled = false;
+                    speedtestclientFailLine(t, l, "failed to schedule acknowledged send");
+                }
             }
         }
         return;
@@ -948,6 +968,17 @@ static void speedtestclientLogAggregate(tunnel_t *t, bool success)
     }
 }
 
+void speedtestclientRemoveOwnedLine(tunnel_t *t, line_t *l, uint32_t stream_id)
+{
+    speedtestclient_tstate_t *state = tunnelGetState(t);
+    if (UNLIKELY(stream_id >= state->connection_count || state->owned_lines[stream_id] != l))
+    {
+        LOGF("SpeedTestClient: stream %u is not published in its owner inventory", (unsigned int) stream_id);
+        abortProgramNow(1);
+    }
+    state->owned_lines[stream_id] = NULL;
+}
+
 static void speedtestclientFinishLine(tunnel_t *t, line_t *l, bool success, bool send_upstream_finish)
 {
     speedtestclient_tstate_t *state = tunnelGetState(t);
@@ -984,6 +1015,7 @@ static void speedtestclientFinishLine(tunnel_t *t, line_t *l, bool success, bool
     const bool         final_success = atomicLoadRelaxed(&state->failed_streams) == 0;
 
     lineLock(l);
+    speedtestclientRemoveOwnedLine(t, l, ls->stream_id);
     speedtestclientLinestateDestroy(ls);
 
     if (send_upstream_finish && lineIsAlive(l))
@@ -1000,7 +1032,7 @@ static void speedtestclientFinishLine(tunnel_t *t, line_t *l, bool success, bool
     if (all_done)
     {
         speedtestclientLogAggregate(t, final_success);
-        if (state->terminate_on_complete && ! isApplicationTerminating())
+        if (state->terminate_on_complete)
         {
             /*
              * Category A (expected test-driver completion). The last stream can

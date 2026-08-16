@@ -23,11 +23,11 @@ bool ctpTunnelIsStopping(tunnel_t *t)
 
 static bool ctpGateEnter(tunnel_t *t, device_lifetime_gate_t *gate)
 {
-    if (UNLIKELY(ctpTunnelIsStopping(t) || isApplicationTerminating() || ! deviceLifetimeGateEnter(gate)))
+    if (UNLIKELY(ctpTunnelIsStopping(t) || ! deviceLifetimeGateEnter(gate)))
     {
         return false;
     }
-    if (UNLIKELY(ctpTunnelIsStopping(t) || isApplicationTerminating()))
+    if (UNLIKELY(ctpTunnelIsStopping(t)))
     {
         deviceLifetimeGateLeave(gate);
         return false;

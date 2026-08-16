@@ -1,4 +1,5 @@
 #include "iowatcher.h"
+#include "wloop_internal.h"
 #include "worker.h"
 #ifndef EVENT_IOCP
 #include "loggers/internal_logger.h"
@@ -81,7 +82,7 @@ static void __write_cb(wio_t *io)
 {
     // printd("< %.*s\n", writebytes, buf);
     io->last_write_hrtime = io->loop->cur_hrtime;
-    wioWriteCallBack(io);
+    discard wloopInvokeWriteCallback(io, io->write_cb);
 }
 
 static void __close_cb(wio_t *io)
@@ -104,6 +105,10 @@ static void nio_accept(wio_t *io)
     wio_t    *connio = NULL;
     while (accept_cnt++ < 3)
     {
+        if (! wloopNormalDispatchAllowed(io->loop))
+        {
+            return;
+        }
         addrlen = sizeof(sockaddr_u);
         connfd  = socketToFd(accept(io->fd, io->peeraddr, &addrlen));
         if (connfd < 0)
@@ -137,6 +142,11 @@ static void nio_accept(wio_t *io)
         connio->accept_cb = io->accept_cb;
         connio->userdata  = io->userdata;
 
+        if (! wloopNormalDispatchAllowed(io->loop))
+        {
+            wioClose(connio);
+            return;
+        }
         __accept_cb(connio);
     }
     return;
@@ -162,7 +172,10 @@ static void nio_connect(wio_t *io)
         addrlen = sizeof(sockaddr_u);
         getsockname(io->fd, io->localaddr, &addrlen);
 
-        __connect_cb(io);
+        if (wloopNormalDispatchAllowed(io->loop))
+        {
+            __connect_cb(io);
+        }
 
         return;
     }
@@ -188,8 +201,7 @@ static int nio_connect_async(wio_t *io)
     ev.cb       = nio_connect_event_cb;
     ev.userdata = io;
     ev.privdata = (void *) (uintptr_t) io->id;
-    wloopPostEvent(io->loop, &ev);
-    return 0;
+    return wloopPostEvent(io->loop, &ev) ? 0 : -1;
 }
 
 static int __nio_read_udp(wio_t *io, void *buf, unsigned int len)
@@ -367,6 +379,11 @@ static void nio_read(wio_t *io)
     // #endif
 
     sbufSetLength(buf, min(available, (uint32_t) nread));
+    if (! wloopNormalDispatchAllowed(io->loop))
+    {
+        bufferpoolReuseBuffer(io->loop->bufpool, buf);
+        return;
+    }
     __read_cb(io, buf);
     // user consumed buffer
     return;
@@ -431,9 +448,13 @@ write:
         bufferpoolReuseBuffer(io->loop->bufpool, buf);
         // #endif
         write_queue_pop_front(&io->write_queue);
+        if (! wloopNormalDispatchAllowed(io->loop))
+        {
+            return;
+        }
         __write_cb(io);
 
-        if (! io->closed)
+        if (! io->closed && wloopNormalDispatchAllowed(io->loop))
         {
             // write continue
             goto write;
@@ -441,7 +462,10 @@ write:
     }
     else
     {
-        __write_cb(io);
+        if (wloopNormalDispatchAllowed(io->loop))
+        {
+            __write_cb(io);
+        }
     }
 
     return;
@@ -456,6 +480,11 @@ disconnect:
 
 static void wio_handle_events(wio_t *io)
 {
+    if (! wloopNormalDispatchAllowed(io->loop))
+    {
+        io->revents = 0;
+        return;
+    }
     if ((io->events & WW_READ) && (io->revents & WW_READ))
     {
         if (io->accept)
@@ -468,6 +497,11 @@ static void wio_handle_events(wio_t *io)
         }
     }
 
+    if (! wloopNormalDispatchAllowed(io->loop))
+    {
+        io->revents = 0;
+        return;
+    }
     if ((io->events & WW_WRITE) && (io->revents & WW_WRITE))
     {
         // NOTE: del WW_WRITE, if write_queue empty
@@ -508,7 +542,12 @@ int wioAccept(wio_t *io)
 
 int wioConnect(wio_t *io)
 {
+    if (! wloopNormalAdmissionBegin(io->loop))
+    {
+        return -1;
+    }
     int ret = connect(io->fd, io->peeraddr, SOCKADDR_LEN(io->peeraddr));
+    wloopNormalAdmissionEnd(io->loop);
 #ifdef OS_WIN
     if (ret < 0 && socketERRNO() != WSAEWOULDBLOCK)
     {
@@ -518,17 +557,26 @@ int wioConnect(wio_t *io)
 #endif
         // printError("connect");
         io->error = socketERRNO();
-        wioCloseAsync(io);
-        return ret;
+        return wioCloseAsync(io) == 0 ? ret : -1;
     }
     if (ret == 0)
     {
         // connect ok
-        nio_connect_async(io);
+        if (UNLIKELY(nio_connect_async(io) != 0))
+        {
+            wioClose(io);
+            return -1;
+        }
         return 0;
     }
-    int timeout                 = io->connect_timeout ? io->connect_timeout : WIO_DEFAULT_CONNECT_TIMEOUT;
-    io->connect_timer           = wtimerAdd(io->loop, __connect_timeout_cb, (uint32_t) timeout, 1);
+    int timeout       = io->connect_timeout ? io->connect_timeout : WIO_DEFAULT_CONNECT_TIMEOUT;
+    io->connect_timer = wtimerAdd(io->loop, __connect_timeout_cb, (uint32_t) timeout, 1);
+    if (UNLIKELY(io->connect_timer == NULL))
+    {
+        io->error = ECANCELED;
+        wioClose(io);
+        return -1;
+    }
     io->connect_timer->privdata = io;
     io->connect                 = 1;
     int add_error               = wioAdd(io, wio_handle_events, WW_WRITE);
@@ -603,6 +651,13 @@ int wioWriteDatagram(wio_t *io, sbuf_t *buf, const sockaddr_u *peer_addr)
     // Datagram writes never enter the stream write_queue.
     assert(write_queue_empty(&io->write_queue));
 
+    const bool nested_callback = wloopCurrentThreadInNormalCallback(io->loop);
+    if (! nested_callback && ! wloopNormalAdmissionBegin(io->loop))
+    {
+        bufferpoolReuseBuffer(io->loop->bufpool, buf);
+        return -1;
+    }
+
     int len = (int) sbufGetLength(buf);
     int nwrite =
         sendto(io->fd, (const char *) sbufGetRawPtr(buf), (size_t) len, 0, &peer_addr->sa, SOCKADDR_LEN(peer_addr));
@@ -614,16 +669,31 @@ int wioWriteDatagram(wio_t *io, sbuf_t *buf, const sockaddr_u *peer_addr)
             // Drop-on-pressure policy: no logging here, the pressure path must
             // not amplify overload.
             bufferpoolReuseBuffer(io->loop->bufpool, buf);
+            if (! nested_callback)
+            {
+                wloopNormalAdmissionEnd(io->loop);
+            }
             return 0;
         }
         io->error = err;
         bufferpoolReuseBuffer(io->loop->bufpool, buf);
+        if (! nested_callback)
+        {
+            wloopNormalAdmissionEnd(io->loop);
+        }
         return -1;
     }
     // Datagram sends are atomic: the kernel accepts the whole payload or fails.
     assert(nwrite == len);
     bufferpoolReuseBuffer(io->loop->bufpool, buf);
-    __write_cb(io);
+    if (! nested_callback)
+    {
+        wloopNormalAdmissionEnd(io->loop);
+    }
+    if (nested_callback || wloopNormalDispatchAllowed(io->loop))
+    {
+        __write_cb(io);
+    }
     return nwrite;
 }
 
@@ -642,9 +712,15 @@ int wioWrite(wio_t *io, sbuf_t *buf)
         sockaddr_u peer_addr = *io->peeraddr_u;
         return wioWriteDatagram(io, buf, &peer_addr);
     }
-    int nwrite = 0, err = 0, add_error = 0;
-    //
-    int len = (int) sbufGetLength(buf);
+    int        nwrite = 0, err = 0, add_error = 0;
+    int        len             = (int) sbufGetLength(buf);
+    const bool nested_callback = wloopCurrentThreadInNormalCallback(io->loop);
+    if (! nested_callback && ! wloopNormalAdmissionBegin(io->loop))
+    {
+        bufferpoolReuseBuffer(io->loop->bufpool, buf);
+        return -1;
+    }
+
     if (write_queue_empty(&io->write_queue))
     {
         //    try_write:
@@ -675,10 +751,10 @@ int wioWrite(wio_t *io, sbuf_t *buf)
             goto write_done;
         }
     enqueue:
-        add_error = wioAdd(io, wio_handle_events, WW_WRITE);
+        add_error = wioAddAlreadyAdmitted(io, wio_handle_events, WW_WRITE);
         if (UNLIKELY(add_error != 0))
         {
-            io->error = -add_error;
+            io->error = add_error < 0 ? -add_error : add_error;
             nwrite    = add_error;
             goto write_error;
         }
@@ -734,7 +810,19 @@ write_done:
         {
             bufferpoolReuseBuffer(io->loop->bufpool, buf);
         }
-        __write_cb(io);
+        if (! nested_callback)
+        {
+            wloopNormalAdmissionEnd(io->loop);
+        }
+        if (nested_callback || wloopNormalDispatchAllowed(io->loop))
+        {
+            __write_cb(io);
+        }
+        return nwrite;
+    }
+    if (! nested_callback)
+    {
+        wloopNormalAdmissionEnd(io->loop);
     }
     return nwrite;
 write_error:
@@ -746,6 +834,10 @@ disconnect:
      * But if wioCloseAsync, we do not have to worry about this.
      */
     bufferpoolReuseBuffer(io->loop->bufpool, buf);
+    if (! nested_callback)
+    {
+        wloopNormalAdmissionEnd(io->loop);
+    }
     if (io->io_type & WIO_TYPE_SOCK_STREAM)
     {
         wioCloseAsync(io);
@@ -770,10 +862,18 @@ int wioClose(wio_t *io)
         io->close = 1;
 
         wlogd("write_queue not empty, close later.");
-        int timeout_ms            = io->close_timeout ? io->close_timeout : WIO_DEFAULT_CLOSE_TIMEOUT;
-        io->close_timer           = wtimerAdd(io->loop, __close_timeout_cb, (uint32_t) timeout_ms, 1);
-        io->close_timer->privdata = io;
-        return 0;
+        int timeout_ms  = io->close_timeout ? io->close_timeout : WIO_DEFAULT_CLOSE_TIMEOUT;
+        io->close_timer = wtimerAdd(io->loop, __close_timeout_cb, (uint32_t) timeout_ms, 1);
+        if (UNLIKELY(io->close_timer == NULL))
+        {
+            io->close = 0;
+            io->error = ECANCELED;
+        }
+        else
+        {
+            io->close_timer->privdata = io;
+            return 0;
+        }
     }
     // bool has_pending = io->pending;
 

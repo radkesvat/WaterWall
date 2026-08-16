@@ -45,6 +45,7 @@ typedef struct raw_device_s
 
 bool rawdeviceIsUp(const raw_device_t *rdev);
 bool rawdeviceBringUp(raw_device_t *rdev);
+void rawdeviceRequestStop(raw_device_t *rdev);
 bool rawdeviceBringDown(raw_device_t *rdev);
 bool rawdeviceWrite(raw_device_t *rdev, sbuf_t *buf);
 

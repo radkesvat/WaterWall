@@ -374,8 +374,9 @@ static void streamtopacketsCloseEvictedLineOnWorker(worker_t *worker, void *arg1
     lineUnlock(l);
 }
 
-static void streamtopacketsCleanupEvictedLine(void *arg1, void *arg2, void *arg3)
+static void streamtopacketsCleanupEvictedLine(void *arg1, void *arg2, void *arg3, worker_message_cancel_reason_e reason)
 {
+    discard reason;
     discard arg1;
     discard arg3;
 
@@ -392,7 +393,11 @@ static void streamtopacketsCleanupEvictedLine(void *arg1, void *arg2, void *arg3
  */
 static void streamtopacketsRecoverFailedEvictionClose(tunnel_t *t, line_t *l, wid_t wid)
 {
-    if (isApplicationTerminating())
+    streamtopackets_tstate_t *ts = tunnelGetState(t);
+    rwlockReadLock(&ts->lines_lock);
+    const bool stopping = ts->stopping;
+    rwlockReadUnlock(&ts->lines_lock);
+    if (stopping)
     {
         // Shutdown drops queued work by design, and every line is being torn down
         // by its own owner anyway.
@@ -449,13 +454,13 @@ static void streamtopacketsQueueEvictedCloses(tunnel_t *t, streamtopackets_line_
         // a rejected message has already run its cleanup.
         lineLock(l);
 
-        if (UNLIKELY(! sendWorkerMessageForceQueueWithCleanup(
-                wid,
-                (WorkerMessageCallback) streamtopacketsCloseEvictedLineOnWorker,
-                streamtopacketsCleanupEvictedLine,
-                t,
-                l,
-                NULL)))
+        if (UNLIKELY(
+                sendWorkerMessageForceQueueWithCleanup(wid,
+                                                       (WorkerMessageCallback) streamtopacketsCloseEvictedLineOnWorker,
+                                                       streamtopacketsCleanupEvictedLine,
+                                                       t,
+                                                       l,
+                                                       NULL) != kWorkerMessageSubmitAccepted))
         {
             streamtopacketsRecoverFailedEvictionClose(t, l, wid);
         }
@@ -783,8 +788,10 @@ static void streamtopacketsWriteSelectedLineOnWorker(worker_t *worker, void *arg
     memoryFree(msg);
 }
 
-static void streamtopacketsCleanupSelectedWrite(void *arg1, void *arg2, void *arg3)
+static void streamtopacketsCleanupSelectedWrite(void *arg1, void *arg2, void *arg3,
+                                                worker_message_cancel_reason_e reason)
 {
+    discard                           reason;
     streamtopackets_line_write_msg_t *msg = arg1;
     discard                           arg2;
     discard                           arg3;

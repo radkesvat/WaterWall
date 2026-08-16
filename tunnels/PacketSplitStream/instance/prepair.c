@@ -9,7 +9,7 @@ void packetsplitstreamTunnelOnPrepair(tunnel_t *t)
     {
         LOGF("PacketSplitStream: onPrepare called but up or down tunnel is not set "
         "(up: %s, down: %s)", ts->up_tunnel ? "set" : "not set", ts->down_tunnel ? "set" : "not set");
-        terminateProgram(1);
+        startupFailureRecord(1);
         return;
     }
 

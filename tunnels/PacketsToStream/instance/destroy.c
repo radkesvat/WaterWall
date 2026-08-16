@@ -2,8 +2,9 @@
 
 #include "loggers/network_logger.h"
 
-void packetstostreamTunnelDestroy(tunnel_t *t)
+void packetstostreamTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context)
 {
+    discard                   context;
     packetstostream_tstate_t *ts    = tunnelGetState(t);
     tunnel_chain_t           *chain = tunnelGetChain(t);
 

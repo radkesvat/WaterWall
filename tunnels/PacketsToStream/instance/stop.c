@@ -42,24 +42,18 @@ static void packetstostreamCloseWorkerOutputLine(tunnel_t *t, wid_t wid)
     lineUnlock(stream_line);
 }
 
-void packetstostreamTunnelOnStop(tunnel_t *t)
+void packetstostreamTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context)
 {
+    discard context;
     discard t;
 }
 
-void packetstostreamTunnelOnWorkerStop(tunnel_t *t, wid_t wid)
+void packetstostreamTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context)
 {
-    // onWorkerStop runs on the worker being stopped, for its own slot only.
+    discard context;
     assert(currentThreadIsEventWorkerWID(wid));
 
     packetstostream_tstate_t *ts = tunnelGetState(t);
-
-    /*
-     * PacketsToStream created this normal stream line, so worker shutdown must
-     * detach it from packet-line state, finish away from the packet side, and
-     * leave it logically dead before the chain destroys its line pools.
-     */
-    packetstostreamCloseWorkerOutputLine(t, wid);
 
     if (ts->worker_timers != NULL)
     {
@@ -70,4 +64,11 @@ void packetstostreamTunnelOnWorkerStop(tunnel_t *t, wid_t wid)
     {
         packetstostreamDeleteTimer(&ts->worker_timeout_timers[wid]);
     }
+}
+
+void packetstostreamTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context)
+{
+    discard context;
+    assert(currentThreadIsEventWorkerWID(wid));
+    packetstostreamCloseWorkerOutputLine(t, wid);
 }

@@ -2,7 +2,8 @@
 
 #include "loggers/network_logger.h"
 
-void tlsclientTunnelOnStop(tunnel_t *t)
+void tlsclientTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context)
 {
+    discard context;
     discard t;
 }

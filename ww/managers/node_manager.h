@@ -7,6 +7,7 @@
 #include "cJSON.h"
 #include "node_builder/config_file.h"
 #include "node_builder/node_library.h"
+#include "startup.h"
 #include "wlibc.h"
 #include "worker.h"
 
@@ -95,12 +96,15 @@ tunnel_t *nodemanagerCreateTunnelInstance(node_t *node);
  *
  * @param config_file Parsed config file.
  */
-void nodemanagerRunConfigFile(config_file_t *config_file);
+ww_startup_result_t nodemanagerRunConfigFile(config_file_t *config_file);
 
 /**
  * @brief Stop all loaded chained tunnel runtime instances.
  */
-void nodemanagerStop(void);
+void nodemanagerQuiesceRequest(const ww_lifecycle_context_t *context);
+void nodemanagerQuiesceWorker(wid_t wid, const ww_lifecycle_context_t *context);
+void nodemanagerQuiesceWait(const ww_lifecycle_context_t *context);
+void nodemanagerStop(const ww_lifecycle_context_t *context);
 
 /**
  * @brief Stop worker-local resources owned by all loaded tunnel instances.
@@ -110,7 +114,7 @@ void nodemanagerStop(void);
  *
  * @param wid Worker whose local tunnel resources should be stopped.
  */
-void nodemanagerStopWorkerResources(wid_t wid);
+void nodemanagerStopWorkerResources(wid_t wid, const ww_lifecycle_context_t *context);
 
 /* Internal worker task, exposed so the packet-line death contract can be
  * exercised against the production callback rather than a copied model. */

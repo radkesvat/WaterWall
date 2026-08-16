@@ -341,7 +341,7 @@ tunnel_t *sniffrouterTunnelCreate(node_t *node)
     if (! nodeHasNext(node))
     {
         LOGF("SniffRouter: must have a \"next\" fallback node");
-        sniffrouterTunnelDestroy(t);
+        sniffrouterTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
@@ -349,7 +349,7 @@ tunnel_t *sniffrouterTunnelCreate(node_t *node)
     if (settings != NULL && ! cJSON_IsObject(settings))
     {
         LOGF("JSON Error: SniffRouter->settings (object field) : expected an object");
-        sniffrouterTunnelDestroy(t);
+        sniffrouterTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
@@ -357,13 +357,13 @@ tunnel_t *sniffrouterTunnelCreate(node_t *node)
     if (! reverseclientHandshakeBuildFromSettings(
             settings, "SniffRouter", &ts->reverse_handshake_bytes, &ts->reverse_handshake_length))
     {
-        sniffrouterTunnelDestroy(t);
+        sniffrouterTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
     if (settings != NULL && ! loadRoutes(ts, node, settings))
     {
-        sniffrouterTunnelDestroy(t);
+        sniffrouterTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 

@@ -2,7 +2,8 @@
 
 #include "loggers/network_logger.h"
 
-void connectionfisherclientTunnelOnStop(tunnel_t *t)
+void connectionfisherclientTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context)
 {
+    discard context;
     discard t;
 }

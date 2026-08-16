@@ -10,8 +10,9 @@ typedef struct ptc_packet_emit_msg_s
 
 static void ptcEmitPacketOnWorker(worker_t *worker, void *arg1, void *arg2, void *arg3);
 
-static void ptcEmitPacketCleanup(void *arg1, void *arg2, void *arg3)
+static void ptcEmitPacketCleanup(void *arg1, void *arg2, void *arg3, worker_message_cancel_reason_e reason)
 {
+    discard reason;
     discard arg3;
     memoryFree(arg2);
     tunnelasyncsessionUnref(arg1);
@@ -40,14 +41,13 @@ bool ptcEmitPacketBuffer(tunnel_t *t, line_t *packet_line, sbuf_t *buf)
 {
     ptc_tstate_t *state = tunnelGetState(t);
 
-    if (UNLIKELY(ptcTunnelIsStopping(t) || isApplicationTerminating() ||
-                 ! deviceLifetimeGateEnter(&state->output_gate)))
+    if (UNLIKELY(ptcTunnelIsStopping(t) || ! deviceLifetimeGateEnter(&state->output_gate)))
     {
         lineReuseBuffer(packet_line, buf);
         return false;
     }
 
-    if (UNLIKELY(ptcTunnelIsStopping(t) || isApplicationTerminating()))
+    if (UNLIKELY(ptcTunnelIsStopping(t)))
     {
         deviceLifetimeGateLeave(&state->output_gate);
         lineReuseBuffer(packet_line, buf);
@@ -82,8 +82,7 @@ static void ptcEmitPacketOnWorker(worker_t *worker, void *arg1, void *arg2, void
      * that has stopped is a composability violation whether or not that
      * particular neighbour tolerates it.
      */
-    if (UNLIKELY(ptcTunnelIsStopping(t) || isApplicationTerminating() ||
-                 ! deviceLifetimeGateEnter(&state->output_gate)))
+    if (UNLIKELY(ptcTunnelIsStopping(t) || ! deviceLifetimeGateEnter(&state->output_gate)))
     {
         memoryFree(packet_msg);
         tunnelasyncsessionLeave(session);
@@ -94,7 +93,7 @@ static void ptcEmitPacketOnWorker(worker_t *worker, void *arg1, void *arg2, void
     // The message was delivered to exactly one worker; take the packet line from
     // that worker instead of re-reading TLS.
     line_t *packet_line = tunnelchainGetWorkerPacketLine(tunnelGetChain(t), worker->wid);
-    if (UNLIKELY(packet_line == NULL || ptcTunnelIsStopping(t) || isApplicationTerminating()))
+    if (UNLIKELY(packet_line == NULL || ptcTunnelIsStopping(t)))
     {
         deviceLifetimeGateLeave(&state->output_gate);
         memoryFree(packet_msg);
@@ -407,8 +406,7 @@ err_t ptcNetifOutput(struct netif *netif, struct pbuf *p, const ip4_addr_t *ipad
      * reach an output callback, and a packet published then would arrive at a
      * neighbour that has already stopped.
      */
-    if (UNLIKELY(ptcTunnelIsStopping(t) || isApplicationTerminating() ||
-                 ! deviceLifetimeGateEnter(&state->output_gate)))
+    if (UNLIKELY(ptcTunnelIsStopping(t) || ! deviceLifetimeGateEnter(&state->output_gate)))
     {
         return ERR_IF;
     }
@@ -434,14 +432,15 @@ err_t ptcNetifOutput(struct netif *netif, struct pbuf *p, const ip4_addr_t *ipad
     // one global-allocator block and touches no worker-local pool - the only
     // release that is legal from this thread.
     tunnelasyncsessionRef(state->async_session);
-    const bool queued = sendWorkerMessageForceQueueWithCleanup(packet_wid,
-                                                               (WorkerMessageCallback) ptcEmitPacketOnWorker,
-                                                               ptcEmitPacketCleanup,
-                                                               state->async_session,
-                                                               packet_msg,
-                                                               NULL);
+    const worker_message_submit_result_e queued =
+        sendWorkerMessageForceQueueWithCleanup(packet_wid,
+                                               (WorkerMessageCallback) ptcEmitPacketOnWorker,
+                                               ptcEmitPacketCleanup,
+                                               state->async_session,
+                                               packet_msg,
+                                               NULL);
     deviceLifetimeGateLeave(&state->output_gate);
-    if (! queued)
+    if (queued != kWorkerMessageSubmitAccepted)
     {
         return ERR_MEM;
     }

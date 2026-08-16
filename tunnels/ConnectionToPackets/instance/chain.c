@@ -22,7 +22,8 @@ void ctpTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
         if (chain->tunnels.len != 0)
         {
             LOGF("ConnectionToPackets: cannot defer internal DomainResolver insertion on a non-empty chain");
-            terminateProgram(1);
+            startupFailureRecord(1);
+            return;
         }
         tunnelchainDestroy(chain);
         return;
@@ -31,14 +32,16 @@ void ctpTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
     if (node->hash_next == 0)
     {
         LOGF("ConnectionToPackets: a next node is required, it is where the raw packets go");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     node_t *next_node = nodemanagerGetConfigNodeByHash(node->node_manager_config, node->hash_next);
     if (next_node == NULL)
     {
         LOGF("Node Map Failure: node (\"%s\")->next (\"%s\") not found", node->name, node->next);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     tunnel_t *resolver    = ts->domain_resolver_tunnel;
@@ -48,17 +51,20 @@ void ctpTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
     if (next_tunnel == NULL)
     {
         LOGF("ConnectionToPackets: next node \"%s\" has no tunnel instance", next_node->name);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
     if (resolver == NULL)
     {
         LOGF("ConnectionToPackets: internal DomainResolver was not created");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
     if (resolver->prev != NULL || resolver->next != NULL)
     {
         LOGF("ConnectionToPackets: internal DomainResolver tunnel is already bound");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
     if (next_tunnel->prev != NULL && next_tunnel->prev != t)
     {
@@ -66,7 +72,8 @@ void ctpTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
              t->node->name,
              next_tunnel->node->name,
              next_tunnel->prev->node->name);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     if (prev->next == t)

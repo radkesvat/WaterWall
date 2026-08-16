@@ -894,8 +894,9 @@ static void testerclientScheduleCompletedStreamClose(tunnel_t *t)
         // A line and its worker slot have the same owner worker. Queue the slot
         // inspection there so a concurrent Finish cannot destroy the line
         // between a foreign worker's pointer load and lineScheduleTask().
-        if (UNLIKELY(! sendWorkerMessageForceQueueWithCleanup(
-                wi, testerclientScheduleCompletedStreamCloseOnWorker, NULL, t, NULL, NULL)))
+        if (UNLIKELY(sendWorkerMessageForceQueueWithCleanup(
+                         wi, testerclientScheduleCompletedStreamCloseOnWorker, NULL, t, NULL, NULL) !=
+                     kWorkerMessageSubmitAccepted))
         {
             LOGE("TesterClient: failed to schedule completed-line inspection on worker %u", (unsigned int) wi);
             if (! requestProgramShutdown(1))

@@ -150,7 +150,8 @@ void tunnelDefaultOnChain(tunnel_t *t, tunnel_chain_t *tc)
     if (next == NULL)
     {
         LOGF("Node Map Failure: node (\"%s\")->next (\"%s\") not found", node->name, node->next);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     assert(next->instance); // every node in node map is created before chaining
@@ -162,7 +163,8 @@ void tunnelDefaultOnChain(tunnel_t *t, tunnel_chain_t *tc)
              t->node->name,
              tnext->node->name,
              tnext->prev->node->name);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     tunnelBind(t, tnext);
@@ -177,6 +179,10 @@ void tunnelDefaultOnChain(tunnel_t *t, tunnel_chain_t *tc)
     else
     {
         tnext->onChain(tnext, tc);
+        if (UNLIKELY(startupFailurePending()))
+        {
+            return;
+        }
     }
 }
 
@@ -201,20 +207,72 @@ void tunnelDefaultOnStart(tunnel_t *t)
     discard t;
 }
 
-void tunnelDefaultOnStop(tunnel_t *t)
+void tunnelDefaultOnQuiesceRequest(tunnel_t *t, const ww_lifecycle_context_t *context)
 {
     discard t;
+    discard context;
 }
 
-void tunnelDefaultOnPreStop(tunnel_t *t)
-{
-    discard t;
-}
-
-void tunnelDefaultOnWorkerStop(tunnel_t *t, wid_t wid)
+void tunnelDefaultOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context)
 {
     discard t;
     discard wid;
+    discard context;
+}
+
+void tunnelDefaultOnQuiesceWait(tunnel_t *t, const ww_lifecycle_context_t *context)
+{
+    discard t;
+    discard context;
+}
+
+void tunnelDefaultOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context)
+{
+    discard t;
+    discard wid;
+    discard context;
+}
+
+void tunnelDefaultOnStop(tunnel_t *t, const ww_lifecycle_context_t *context)
+{
+    discard t;
+    discard context;
+}
+
+void tunnelDefaultOnDestroy(tunnel_t *t, const ww_lifecycle_context_t *context)
+{
+    discard context;
+    tunnelDestroy(t);
+}
+
+void tunnelOwnedChildQuiesceRequest(tunnel_t *child)
+{
+    child->onQuiesceRequest(child, wwLifecycleOwnedChildStop());
+}
+
+void tunnelOwnedChildWorkerQuiesce(tunnel_t *child, wid_t wid)
+{
+    child->onWorkerQuiesce(child, wid, wwLifecycleOwnedChildStop());
+}
+
+void tunnelOwnedChildQuiesceWait(tunnel_t *child)
+{
+    child->onQuiesceWait(child, wwLifecycleOwnedChildStop());
+}
+
+void tunnelOwnedChildWorkerStop(tunnel_t *child, wid_t wid)
+{
+    child->onWorkerStop(child, wid, wwLifecycleOwnedChildStop());
+}
+
+void tunnelOwnedChildStop(tunnel_t *child)
+{
+    child->onStop(child, wwLifecycleOwnedChildStop());
+}
+
+void tunnelOwnedChildDestroy(tunnel_t *child)
+{
+    child->onDestroy(child, wwLifecycleOwnedChildStop());
 }
 
 // Creates a new tunnel instance
@@ -250,29 +308,31 @@ tunnel_t *tunnelCreate(node_t *node, size_t tstate_size, size_t lstate_size)
         return NULL;
     }
 
-    *tunnel_ptr = (tunnel_t) {.fnInitU      = &tunnelDefaultUpStreamInit,
-                              .fnInitD      = &tunnelDefaultDownStreamInit,
-                              .fnPayloadU   = &tunnelDefaultUpStreamPayload,
-                              .fnPayloadD   = &tunnelDefaultDownStreamPayload,
-                              .fnEstU       = &tunnelDefaultUpStreamEst,
-                              .fnEstD       = &tunnelDefaultDownStreamEst,
-                              .fnFinU       = &tunnelDefaultUpStreamFin,
-                              .fnFinD       = &tunnelDefaultDownStreamFinish,
-                              .fnPauseU     = &tunnelDefaultUpStreamPause,
-                              .fnPauseD     = &tunnelDefaultDownStreamPause,
-                              .fnResumeU    = &tunnelDefaultUpStreamResume,
-                              .fnResumeD    = &tunnelDefaultDownStreamResume,
-                              .onChain      = &tunnelDefaultOnChain,
-                              .onIndex      = &tunnelDefaultOnIndex,
-                              .onPrepare    = &tunnelDefaultOnPrepare,
-                              .onStart      = &tunnelDefaultOnStart,
-                              .onPreStop    = &tunnelDefaultOnPreStop,
-                              .onStop       = &tunnelDefaultOnStop,
-                              .onWorkerStop = &tunnelDefaultOnWorkerStop,
-                              .onDestroy    = &tunnelDestroy,
-                              .tstate_size  = aligned_tstate_size,
-                              .lstate_size  = aligned_lstate_size,
-                              .node         = node};
+    *tunnel_ptr = (tunnel_t) {.fnInitU          = &tunnelDefaultUpStreamInit,
+                              .fnInitD          = &tunnelDefaultDownStreamInit,
+                              .fnPayloadU       = &tunnelDefaultUpStreamPayload,
+                              .fnPayloadD       = &tunnelDefaultDownStreamPayload,
+                              .fnEstU           = &tunnelDefaultUpStreamEst,
+                              .fnEstD           = &tunnelDefaultDownStreamEst,
+                              .fnFinU           = &tunnelDefaultUpStreamFin,
+                              .fnFinD           = &tunnelDefaultDownStreamFinish,
+                              .fnPauseU         = &tunnelDefaultUpStreamPause,
+                              .fnPauseD         = &tunnelDefaultDownStreamPause,
+                              .fnResumeU        = &tunnelDefaultUpStreamResume,
+                              .fnResumeD        = &tunnelDefaultDownStreamResume,
+                              .onChain          = &tunnelDefaultOnChain,
+                              .onIndex          = &tunnelDefaultOnIndex,
+                              .onPrepare        = &tunnelDefaultOnPrepare,
+                              .onStart          = &tunnelDefaultOnStart,
+                              .onQuiesceRequest = &tunnelDefaultOnQuiesceRequest,
+                              .onWorkerQuiesce  = &tunnelDefaultOnWorkerQuiesce,
+                              .onQuiesceWait    = &tunnelDefaultOnQuiesceWait,
+                              .onWorkerStop     = &tunnelDefaultOnWorkerStop,
+                              .onStop           = &tunnelDefaultOnStop,
+                              .onDestroy        = &tunnelDefaultOnDestroy,
+                              .tstate_size      = aligned_tstate_size,
+                              .lstate_size      = aligned_lstate_size,
+                              .node             = node};
 
     return tunnel_ptr;
 }

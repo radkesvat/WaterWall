@@ -14,7 +14,7 @@ static void socks5clientDestroyInternalDomainResolverChain(socks5client_tstate_t
 {
     if (ts->domain_resolver_tunnel != NULL)
     {
-        ts->domain_resolver_tunnel->onDestroy(ts->domain_resolver_tunnel);
+        tunnelOwnedChildDestroy(ts->domain_resolver_tunnel);
         ts->domain_resolver_tunnel = NULL;
     }
 
@@ -27,8 +27,9 @@ static void socks5clientDestroyInternalDomainResolverChain(socks5client_tstate_t
     socks5clientClearInternalNode(&ts->domain_resolver_node);
 }
 
-void socks5clientTunnelDestroy(tunnel_t *t)
+void socks5clientTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context)
 {
+    discard context;
     if (t == NULL)
     {
         return;

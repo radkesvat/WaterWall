@@ -28,13 +28,16 @@ tunnel_t *reverseclientTunnelCreate(node_t *node)
     t->fnPauseD   = &reverseclientTunnelDownStreamPause;
     t->fnResumeD  = &reverseclientTunnelDownStreamResume;
 
-    t->onPrepare = &reverseclientTunnelOnPrepair;
-    t->onStart   = &reverseclientTunnelOnStart;
-    t->onStop    = &reverseclientTunnelOnStop;
-    t->onDestroy = &reverseclientTunnelDestroy;
+    t->onPrepare        = &reverseclientTunnelOnPrepair;
+    t->onStart          = &reverseclientTunnelOnStart;
+    t->onQuiesceRequest = &reverseclientTunnelOnQuiesceRequest;
+    t->onWorkerStop     = &reverseclientTunnelOnWorkerStop;
+    t->onStop           = &reverseclientTunnelOnStop;
+    t->onDestroy        = &reverseclientTunnelDestroy;
 
     const cJSON            *settings = node->node_settings_json;
     reverseclient_tstate_t *ts       = tunnelGetState(t);
+    atomic_init(&ts->stopping, false);
 
     if (settings != NULL && ! cJSON_IsObject(settings))
     {

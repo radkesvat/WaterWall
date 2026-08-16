@@ -4,4 +4,6 @@
 
 
 
-void loadImportedTunnelsIntoCore(void);
+#include "instance/startup.h"
+
+ww_startup_result_t loadImportedTunnelsIntoCore(void);

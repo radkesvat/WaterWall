@@ -48,7 +48,7 @@ enum
     kMuxMainLineStatsLogIntervalMs       = 5000,
 };
 
-WW_EXPORT void         muxserverTunnelDestroy(tunnel_t *t);
+WW_EXPORT void         muxserverTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context);
 WW_EXPORT tunnel_t    *muxserverTunnelCreate(node_t *node);
 WW_EXPORT api_result_t muxserverTunnelApi(tunnel_t *instance, sbuf_t *message);
 
@@ -56,7 +56,7 @@ void muxserverTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offset);
 void muxserverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void muxserverTunnelOnPrepair(tunnel_t *t);
 void muxserverTunnelOnStart(tunnel_t *t);
-void muxserverTunnelOnStop(tunnel_t *t);
+void muxserverTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context);
 
 void muxserverTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void muxserverTunnelUpStreamEst(tunnel_t *t, line_t *l);

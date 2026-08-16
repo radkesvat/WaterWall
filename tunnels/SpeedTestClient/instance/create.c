@@ -164,7 +164,7 @@ tunnel_t *speedtestclientTunnelCreate(node_t *node)
 {
     tunnel_t *t = tunnelCreate(node, sizeof(speedtestclient_tstate_t), sizeof(speedtestclient_lstate_t));
 
-    if (t == NULL)
+    if (! t)
     {
         return NULL;
     }
@@ -183,10 +183,12 @@ tunnel_t *speedtestclientTunnelCreate(node_t *node)
     t->fnPauseD   = &speedtestclientTunnelDownStreamPause;
     t->fnResumeD  = &speedtestclientTunnelDownStreamResume;
 
-    t->onPrepare = &speedtestclientTunnelOnPrepair;
-    t->onStart   = &speedtestclientTunnelOnStart;
-    t->onStop    = &speedtestclientTunnelOnStop;
-    t->onDestroy = &speedtestclientTunnelDestroy;
+    t->onPrepare        = &speedtestclientTunnelOnPrepair;
+    t->onStart          = &speedtestclientTunnelOnStart;
+    t->onQuiesceRequest = &speedtestclientTunnelOnQuiesceRequest;
+    t->onStop           = &speedtestclientTunnelOnStop;
+    t->onWorkerStop     = &speedtestclientTunnelOnWorkerStop;
+    t->onDestroy        = &speedtestclientTunnelDestroy;
 
     speedtestclient_tstate_t *state            = tunnelGetState(t);
     const cJSON              *settings         = node->node_settings_json;
@@ -198,7 +200,12 @@ tunnel_t *speedtestclientTunnelCreate(node_t *node)
     int                       payload_size     = 0;
     int                       connection_count = 1;
 
-    mutexInit(&state->aggregate_mutex);
+    if (UNLIKELY(! mutexTryInit(&state->aggregate_mutex)))
+    {
+        LOGF("SpeedTestClient: failed to initialize aggregate mutex");
+        tunnelDestroy(t);
+        return NULL;
+    }
     getBoolFromJsonObjectOrDefault(&state->json_summary, settings, "json-summary", false);
     getBoolFromJsonObjectOrDefault(&state->terminate_on_complete, settings, "terminate-on-complete", true);
 
@@ -220,7 +227,7 @@ tunnel_t *speedtestclientTunnelCreate(node_t *node)
                                           &connection_count,
                                           "SpeedTestClient->settings->connection-count"))
     {
-        speedtestclientTunnelDestroy(t);
+        speedtestclientTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
@@ -234,7 +241,7 @@ tunnel_t *speedtestclientTunnelCreate(node_t *node)
     {
         LOGF("JSON Error: SpeedTestClient->settings->payload-size (int field) : expected a value between 1 and %u",
              (unsigned int) kSpeedTestClientMaxPayloadSize);
-        speedtestclientTunnelDestroy(t);
+        speedtestclientTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
@@ -242,7 +249,7 @@ tunnel_t *speedtestclientTunnelCreate(node_t *node)
     {
         LOGF("SpeedTestClient: UDP payload-size must be at most %u bytes",
              (unsigned int) kSpeedTestClientMaxUdpPayloadSize);
-        speedtestclientTunnelDestroy(t);
+        speedtestclientTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
@@ -251,7 +258,7 @@ tunnel_t *speedtestclientTunnelCreate(node_t *node)
     {
         LOGF("JSON Error: SpeedTestClient->settings->timeout-ms (int field) : expected a value greater than warmup-ms "
              "+ duration-ms");
-        speedtestclientTunnelDestroy(t);
+        speedtestclientTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
@@ -265,10 +272,26 @@ tunnel_t *speedtestclientTunnelCreate(node_t *node)
 
     if (! speedtestclientLoadBandwidth(state, settings))
     {
-        speedtestclientTunnelDestroy(t);
+        speedtestclientTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
+    size_t owned_lines_bytes;
+    if (! memoryTryComputeArraySize(state->connection_count, sizeof(*state->owned_lines), &owned_lines_bytes))
+    {
+        LOGF("SpeedTestClient: connection inventory geometry is not representable");
+        speedtestclientTunnelDestroy(t, wwLifecycleStartupRollback());
+        return NULL;
+    }
+    state->owned_lines = memoryAllocateZero(owned_lines_bytes);
+    if (state->owned_lines == NULL)
+    {
+        LOGF("SpeedTestClient: failed to allocate the connection owner inventory");
+        speedtestclientTunnelDestroy(t, wwLifecycleStartupRollback());
+        return NULL;
+    }
+
+    atomicStoreExplicit(&state->stopping, false, memory_order_relaxed);
     atomicStoreRelaxed(&state->completed_streams, 0);
     atomicStoreRelaxed(&state->failed_streams, 0);
 

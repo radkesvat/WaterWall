@@ -46,28 +46,15 @@ typedef struct node_manager_config_s
 
 typedef struct node_manager_s
 {
-    vec_configs_t configs;
-    // Guarantees node onStop hooks, external cleanup scripts and device shutdown
-    // run at most once even if a second stop request reaches the manager.
-    atomic_bool stop_started;
+    vec_configs_t          configs;
+    atomic_bool            quiesce_request_started;
+    atomic_bool            quiesce_wait_started;
+    atomic_bool            stop_started;
+    ww_lifecycle_context_t stop_context;
+    bool                   stop_context_set;
 } node_manager_t;
 
 static node_manager_t *nodemanager_gstate;
-
-static void normalizeLegacyTunnelCallbacks(tunnel_t *tunnel)
-{
-    /*
-     * onPreStop was added in historical pre-state padding.  A node library
-     * built against the preceding ABI returns zero in that padding, which is
-     * the legacy representation of the newly introduced no-op hook.  Normalize
-     * that one slot at the construction boundary; every callback is total
-     * after this point and lifecycle invocation remains unconditional.
-     */
-    if (tunnel->onPreStop == NULL)
-    {
-        tunnel->onPreStop = tunnelDefaultOnPreStop;
-    }
-}
 
 static const char *findMissingTunnelCallback(const tunnel_t *tunnel)
 {
@@ -93,9 +80,11 @@ static const char *findMissingTunnelCallback(const tunnel_t *tunnel)
     RETURN_MISSING_TUNNEL_CALLBACK(onIndex)
     RETURN_MISSING_TUNNEL_CALLBACK(onPrepare)
     RETURN_MISSING_TUNNEL_CALLBACK(onStart)
-    RETURN_MISSING_TUNNEL_CALLBACK(onPreStop)
-    RETURN_MISSING_TUNNEL_CALLBACK(onStop)
+    RETURN_MISSING_TUNNEL_CALLBACK(onQuiesceRequest)
+    RETURN_MISSING_TUNNEL_CALLBACK(onWorkerQuiesce)
+    RETURN_MISSING_TUNNEL_CALLBACK(onQuiesceWait)
     RETURN_MISSING_TUNNEL_CALLBACK(onWorkerStop)
+    RETURN_MISSING_TUNNEL_CALLBACK(onStop)
     RETURN_MISSING_TUNNEL_CALLBACK(onDestroy)
 
 #undef RETURN_MISSING_TUNNEL_CALLBACK
@@ -108,7 +97,7 @@ tunnel_t *nodemanagerCreateTunnelInstance(node_t *node)
     if (node == NULL || node->createHandle == NULL)
     {
         LOGF("NodeManager: node instance construction received an invalid node or createHandle");
-        terminateProgram(1);
+        startupFailureRecord(1);
         return NULL;
     }
 
@@ -118,13 +107,13 @@ tunnel_t *nodemanagerCreateTunnelInstance(node_t *node)
         return NULL;
     }
 
-    normalizeLegacyTunnelCallbacks(tunnel);
-
     const char *missing_callback = findMissingTunnelCallback(tunnel);
     if (missing_callback != NULL)
     {
         LOGF("NodeManager: node (\"%s\") returned an instance with NULL callback \"%s\"", node->name, missing_callback);
-        terminateProgram(1);
+        tunnelDestroy(tunnel);
+        startupFailureRecord(1);
+        return NULL;
     }
 
     return tunnel;
@@ -143,7 +132,8 @@ static int createTunnelInstances(node_manager_config_t *cfg, tunnel_t **t_array,
     if (cfg->node_map_phase != kNodeMapPhaseFrozen)
     {
         LOGF("NodeManager: config node map must be frozen before tunnel creation");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return -1;
     }
 
     const isize_t expected_map_size         = map_node_t_size(&cfg->node_map);
@@ -158,10 +148,17 @@ static int createTunnelInstances(node_manager_config_t *cfg, tunnel_t **t_array,
         if (index >= max_size)
         {
             LOGF("NodeManager: too many nodes in config");
-            terminateProgram(1);
+            startupFailureRecord(1);
+            return -1;
         }
 
         t_array[index++] = n1->instance = nodemanagerCreateTunnelInstance(n1);
+        if (UNLIKELY(startupFailurePending() || n1->instance == NULL))
+        {
+            LOGF("NodeManager: node startup failure: node (\"%s\") create() returned NULL handle", n1->name);
+            startupFailureRecord(1);
+            return -1;
+        }
 
         if (cfg->node_map_phase != kNodeMapPhaseFrozen || map_node_t_size(&cfg->node_map) != expected_map_size ||
             map_node_t_bucket_count(&cfg->node_map) != expected_map_bucket_count)
@@ -169,13 +166,8 @@ static int createTunnelInstances(node_manager_config_t *cfg, tunnel_t **t_array,
             LOGF("NodeManager: node \"%s\" mutated the frozen config node map during tunnel creation; "
                  "internal child nodes must be private and owned by their parent tunnel",
                  n1->name);
-            terminateProgram(1);
-        }
-
-        if (n1->instance == NULL)
-        {
-            LOGF("NodeManager: node startup failure: node (\"%s\") create() returned NULL handle", n1->name);
-            terminateProgram(1);
+            startupFailureRecord(1);
+            return -1;
         }
     }
     return index;
@@ -198,10 +190,14 @@ static void assignChainsToTunnels(tunnel_t **t_array, int tunnels_count)
             if (UNLIKELY(tc == NULL))
             {
                 LOGF("NodeManager: failed to allocate tunnel-chain metadata for node \"%s\"", tunnel->node->name);
-                terminateProgram(1);
+                startupFailureRecord(1);
                 return;
             }
             tunnel->onChain(tunnel, tc);
+            if (UNLIKELY(startupFailurePending()))
+            {
+                return;
+            }
         }
     }
 }
@@ -234,7 +230,8 @@ static void finalizeTunnelChains(node_manager_config_t *cfg, tunnel_t **t_array,
                 if (UNLIKELY(tunnel_in_chain->lstate_size > UINT32_MAX - mem_offset))
                 {
                     LOGF("NodeManager: total line-state size overflow while indexing chain");
-                    terminateProgram(1);
+                    startupFailureRecord(1);
+                    return;
                 }
 
                 uint32_t expected_offset = mem_offset + tunnel_in_chain->lstate_size;
@@ -243,13 +240,15 @@ static void finalizeTunnelChains(node_manager_config_t *cfg, tunnel_t **t_array,
                 {
                     LOGF("NodeManager: invalid line-state offset after indexing node (\"%s\")",
                          tunnel_in_chain->node->name);
-                    terminateProgram(1);
+                    startupFailureRecord(1);
+                    return;
                 }
             }
             if (UNLIKELY(mem_offset != chain->sum_line_state_size))
             {
                 LOGF("NodeManager: indexed line-state size does not match chain total");
-                terminateProgram(1);
+                startupFailureRecord(1);
+                return;
             }
 
             tunnelchainFinalize(chain);
@@ -258,7 +257,7 @@ static void finalizeTunnelChains(node_manager_config_t *cfg, tunnel_t **t_array,
                          vec_chains_t_size(&cfg->chains) != size_before + 1))
             {
                 LOGF("NodeManager: failed to publish finalized tunnel chain");
-                terminateProgram(1);
+                startupFailureRecord(1);
                 return;
             }
         }
@@ -278,7 +277,8 @@ static void validateTunnelChains(tunnel_t **t_array, int tunnels_count)
         if (t_array[i]->next == NULL && t_array[i]->prev == NULL && ! (t_array[i]->node->flags & kNodeFlagNoChain))
         {
             LOGF("NodeManager: node startup failure: node (\"%s\") is not chained", t_array[i]->node->name);
-            terminateProgram(1);
+            startupFailureRecord(1);
+            return;
         }
 
         if (t_array[i]->next == NULL && ! (t_array[i]->node->flags & kNodeFlagChainEnd) &&
@@ -287,7 +287,8 @@ static void validateTunnelChains(tunnel_t **t_array, int tunnels_count)
             LOGF("NodeManager: node startup failure: node (\"%s\") at the end of the chain but dose not have "
                  "flagkNodeFlagChainEnd",
                  t_array[i]->node->name);
-            terminateProgram(1);
+            startupFailureRecord(1);
+            return;
         }
         if (t_array[i]->prev == NULL && ! (t_array[i]->node->flags & kNodeFlagChainHead) &&
             ! (t_array[i]->node->flags & kNodeFlagNoChain))
@@ -295,7 +296,8 @@ static void validateTunnelChains(tunnel_t **t_array, int tunnels_count)
             LOGF("NodeManager: node startup failure: node (\"%s\") at the start of the chain but dose not have "
                  "flagkNodeFlagChainHead",
                  t_array[i]->node->name);
-            terminateProgram(1);
+            startupFailureRecord(1);
+            return;
         }
     }
 }
@@ -304,7 +306,10 @@ typedef void (*TunnelLifecycleFn)(tunnel_t *t);
 
 static void runTunnelOnPrepare(tunnel_t *t)
 {
+    ww_startup_context_t callback_scope = {0};
+    wwStartupContextBegin(&callback_scope);
     t->onPrepare(t);
+    discard wwStartupContextEnd(&callback_scope);
 }
 
 /**
@@ -325,6 +330,10 @@ static void runTunnelLifecycleOnChains(node_manager_config_t *cfg, TunnelLifecyc
             tunnel_t *tunnel = tunnel_chain->tunnels.tuns[i];
             assert(tunnel != NULL);
             callback(tunnel);
+            if (UNLIKELY(startupFailurePending()))
+            {
+                return;
+            }
         }
     }
 }
@@ -357,7 +366,14 @@ static void startTunnels(node_manager_config_t *cfg)
         {
             tunnel_t *tunnel = tunnel_chain->tunnels.tuns[i];
             assert(tunnel != NULL);
+            ww_startup_context_t callback_scope = {0};
+            wwStartupContextBegin(&callback_scope);
             tunnel->onStart(tunnel);
+            discard wwStartupContextEnd(&callback_scope);
+            if (UNLIKELY(startupFailurePending()))
+            {
+                return;
+            }
         }
     }
 }
@@ -411,8 +427,9 @@ static bool initializePacketTunnels(tunnel_t **t_array, int tunnels_count)
             for (wid_t wi = 0; wi < getWorkersCount(); wi++)
             {
                 line_t *l = tunnelchainGetWorkerPacketLine(tunnelGetChain(tunnel), wi);
-                if (UNLIKELY(! sendWorkerMessageForceQueueWithCleanup(
-                        wi, &nodemanagerInitializeLineOnTargetWorker, NULL, tunnel, l, NULL)))
+                if (UNLIKELY(sendWorkerMessageForceQueueWithCleanup(
+                                 wi, &nodemanagerInitializeLineOnTargetWorker, NULL, tunnel, l, NULL) !=
+                             kWorkerMessageSubmitAccepted))
                 {
                     admitted_all = false;
                     LOGF("NodeManager: failed to admit packet-chain Init for node \"%s\" on worker %d",
@@ -446,6 +463,10 @@ static void runNodes(node_manager_config_t *cfg)
     tunnel_t *t_array[kMaxNodesPerConfig] = {0};
     int       tunnels_count               = createTunnelInstances(cfg, t_array, kMaxNodesPerConfig);
 
+    if (tunnels_count < 0)
+    {
+        return;
+    }
     if (tunnels_count == 0)
     {
         LOGW("NodeManager:  0 nodes in config");
@@ -453,18 +474,34 @@ static void runNodes(node_manager_config_t *cfg)
     }
 
     assignChainsToTunnels(t_array, tunnels_count);
+    if (UNLIKELY(startupFailurePending()))
+    {
+        return;
+    }
     finalizeTunnelChains(cfg, t_array, tunnels_count);
+    if (UNLIKELY(startupFailurePending()))
+    {
+        return;
+    }
     validateTunnelChains(t_array, tunnels_count);
+    if (UNLIKELY(startupFailurePending()))
+    {
+        return;
+    }
     if (UNLIKELY(! initializePacketTunnels(t_array, tunnels_count)))
     {
         /* Already-admitted messages remain owned by their worker queues and are
          * reclaimed by startup-failure teardown. Packet lines themselves stay
          * chain-owned and are released only by tunnelchainDestroy(). */
-        terminateProgram(1);
+        startupFailureRecord(1);
         return;
     }
 
     prepareTunnels(cfg);
+    if (UNLIKELY(startupFailurePending()))
+    {
+        return;
+    }
     startTunnels(cfg);
 }
 
@@ -491,13 +528,15 @@ static void validateNodeChainPath(node_t *start_node, node_manager_config_t *cfg
             LOGF("Node Map Failure: node \"%s\" could not find it's next node \"%s\"",
                  current_node->name,
                  current_node->next);
-            terminateProgram(1);
+            startupFailureRecord(1);
+            return;
         }
         current_node = next_node;
         if (path_length > 200)
         {
             LOGF("Node Map Failure: circular reference deteceted");
-            terminateProgram(1);
+            startupFailureRecord(1);
+            return;
         }
     }
 }
@@ -513,6 +552,10 @@ static void pathWalk(node_manager_config_t *cfg)
     {
         node_t *node = p1.ref->second;
         validateNodeChainPath(node, cfg);
+        if (UNLIKELY(startupFailurePending()))
+        {
+            return;
+        }
     }
 }
 
@@ -531,7 +574,7 @@ static void validateChainHeadNodes(node_manager_config_t *cfg)
         }
     }
     LOGF("NodeMap: detecetd 0 chainhead nodes");
-    terminateProgram(1);
+    startupFailureRecord(1);
 }
 
 /**
@@ -570,14 +613,16 @@ static void parseNodeJsonFields(cJSON *node_json, node_manager_config_t *cfg, ch
     {
         LOGF("JSON Error: config file \"%s\" -> nodes[x]->name (string field) was empty or invalid",
              cfg->config_file->file_path);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     if (! getStringFromJsonObject(node_type, node_json, "type"))
     {
         LOGF("JSON Error: config file \"%s\" -> nodes[x]->type (string field) was empty or invalid",
              cfg->config_file->file_path);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     getStringFromJsonObject(node_next, node_json, "next");
@@ -597,7 +642,7 @@ static node_t *createAndLoadNode(const char *node_type, hash_t hash_type)
     if (UNLIKELY(new_node == NULL))
     {
         LOGF("NodeManager: failed to allocate node metadata for type \"%s\"", node_type);
-        terminateProgram(1);
+        startupFailureRecord(1);
         return NULL;
     }
     *new_node = nodelibraryLoadByTypeHash(hash_type);
@@ -607,7 +652,9 @@ static node_t *createAndLoadNode(const char *node_type, hash_t hash_type)
         LOGF("NodeManager: node creation failure: library \"%s\" (hash: %lx) could not be loaded ",
              node_type,
              hash_type);
-        terminateProgram(1);
+        memoryFree(new_node);
+        startupFailureRecord(1);
+        return NULL;
     }
 
     return new_node;
@@ -670,7 +717,8 @@ static void validateSingletonNodeType(node_t *node, node_manager_config_t *cfg)
              cfg->config_file->file_path,
              existing_node->name,
              node->name);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 }
 
@@ -695,13 +743,15 @@ static void registerNodeInMap(node_t *node, node_manager_config_t *cfg)
         LOGF("NodeManager: cannot register node \"%s\" after the config node map was frozen; "
              "internal child nodes must remain private to their parent tunnel",
              node->name);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     if (map_node_t_contains(map, node->hash_name))
     {
         LOGF("NodeManager: duplicate node \"%s\" (hash: %lx) ", node->name, node->hash_name);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     const isize_t size_before         = map_node_t_size(map);
@@ -711,22 +761,28 @@ static void registerNodeInMap(node_t *node, node_manager_config_t *cfg)
         LOGF("NodeManager: config file \"%s\" exceeds the maximum of %d nodes",
              cfg->config_file->file_path,
              kMaxNodesPerConfig);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
     if (bucket_count_before != cfg->node_map_bucket_count)
     {
         LOGF("NodeManager: config node map capacity changed before registering node \"%s\"", node->name);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     validateSingletonNodeType(node, cfg);
+    if (UNLIKELY(startupFailurePending()))
+    {
+        return;
+    }
     map_node_t_result result = map_node_t_insert(map, node->hash_name, node);
 
     if (result.ref == NULL || ! result.inserted || map_node_t_size(map) != size_before + 1 ||
         map_node_t_bucket_count(map) != cfg->node_map_bucket_count)
     {
         LOGF("NodeManager: fixed config node map invariant failed while registering node \"%s\"", node->name);
-        terminateProgram(1);
+        startupFailureRecord(1);
     }
 }
 
@@ -738,15 +794,33 @@ void nodemanagerCreateNodeInstance(node_manager_config_t *cfg, cJSON *node_json)
     int   node_version = 0;
 
     parseNodeJsonFields(node_json, cfg, &node_name, &node_type, &node_next, &node_version);
+    if (UNLIKELY(startupFailurePending()))
+    {
+        memoryFree(node_name);
+        memoryFree(node_type);
+        memoryFree(node_next);
+        return;
+    }
 
     hash_t hash_name = calcHashBytes(node_name, strlen(node_name));
     hash_t hash_type = calcHashBytes(node_type, strlen(node_type));
     hash_t hash_next = node_next != NULL ? calcHashBytes(node_next, strlen(node_next)) : 0x0;
 
     node_t *new_node = createAndLoadNode(node_type, hash_type);
+    if (UNLIKELY(new_node == NULL))
+    {
+        memoryFree(node_name);
+        memoryFree(node_type);
+        memoryFree(node_next);
+        return;
+    }
     setupNodeProperties(
         new_node, node_name, node_type, node_next, node_version, hash_name, hash_type, hash_next, node_json, cfg);
     registerNodeInMap(new_node, cfg);
+    if (UNLIKELY(startupFailurePending() && ! map_node_t_contains(&cfg->node_map, new_node->hash_name)))
+    {
+        nodemanagerDestroyNode(new_node);
+    }
 }
 
 node_t *nodemanagerGetConfigNodeByHash(node_manager_config_t *cfg, hash_t hash_node_name)
@@ -787,12 +861,17 @@ static void createAllNodeInstances(node_manager_config_t *cfg)
              cfg->config_file->file_path,
              nodes_count,
              kMaxNodesPerConfig);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     cJSON_ArrayForEach(node_json, nodes_json)
     {
         nodemanagerCreateNodeInstance(cfg, node_json);
+        if (UNLIKELY(startupFailurePending()))
+        {
+            return;
+        }
     }
 }
 
@@ -804,7 +883,8 @@ static void freezeNodeMap(node_manager_config_t *cfg)
         map_node_t_size(&cfg->node_map) > kMaxNodesPerConfig)
     {
         LOGF("NodeManager: config node map invariant failed before freezing");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     cfg->node_map_phase = kNodeMapPhaseFrozen;
@@ -818,9 +898,25 @@ static void freezeNodeMap(node_manager_config_t *cfg)
 static void startInstallingConfigFile(node_manager_config_t *cfg)
 {
     createAllNodeInstances(cfg);
+    if (UNLIKELY(startupFailurePending()))
+    {
+        return;
+    }
     freezeNodeMap(cfg);
+    if (UNLIKELY(startupFailurePending()))
+    {
+        return;
+    }
     cycleProcess(cfg);
+    if (UNLIKELY(startupFailurePending()))
+    {
+        return;
+    }
     pathWalk(cfg);
+    if (UNLIKELY(startupFailurePending()))
+    {
+        return;
+    }
     runNodes(cfg);
 }
 
@@ -870,14 +966,17 @@ static node_manager_config_t *createNodeManagerConfig(config_file_t *config_file
     return cfg;
 }
 
-void nodemanagerRunConfigFile(config_file_t *config_file)
+ww_startup_result_t nodemanagerRunConfigFile(config_file_t *config_file)
 {
+    ww_startup_context_t startup = {0};
+    wwStartupContextBegin(&startup);
+
     node_manager_config_t *cfg = createNodeManagerConfig(config_file);
     if (UNLIKELY(cfg == NULL))
     {
         configfileDestroy(config_file);
-        terminateProgram(1);
-        return;
+        startupFailureRecord(1);
+        return wwStartupContextEnd(&startup);
     }
 
     const isize_t size_before = vec_configs_t_size(&nodemanager_gstate->configs);
@@ -886,84 +985,125 @@ void nodemanagerRunConfigFile(config_file_t *config_file)
     {
         nodemanagerDestroyConfig(cfg);
         LOGF("NodeManager: failed to publish config metadata");
-        terminateProgram(1);
-        return;
+        startupFailureRecord(1);
+        return wwStartupContextEnd(&startup);
     }
     startInstallingConfigFile(cfg);
+    return wwStartupContextEnd(&startup);
 }
 
-static void nodemanagerPreStopConfig(node_manager_config_t *cfg)
+void nodemanagerQuiesceRequest(const ww_lifecycle_context_t *context)
 {
-    if (cfg == NULL)
+    if (nodemanager_gstate == NULL ||
+        atomicExchangeExplicit(&nodemanager_gstate->quiesce_request_started, true, memory_order_relaxed))
     {
         return;
     }
 
-    c_foreach(chain, vec_chains_t, cfg->chains)
+    c_foreach(conf, vec_configs_t, nodemanager_gstate->configs)
     {
-        tunnel_chain_t *tunnel_chain = *chain.ref;
-        assert(tunnel_chain != NULL);
-
-        for (uint16_t i = 0; i < tunnel_chain->tunnels.len; i++)
+        node_manager_config_t *cfg = *conf.ref;
+        if (cfg == NULL)
         {
-            tunnel_t *tunnel = tunnel_chain->tunnels.tuns[i];
-            assert(tunnel != NULL);
-            tunnel->onPreStop(tunnel);
+            continue;
+        }
+        c_foreach(chain, vec_chains_t, cfg->chains)
+        {
+            tunnel_chain_t *tunnel_chain = *chain.ref;
+            for (uint16_t i = 0; i < tunnel_chain->tunnels.len; i++)
+            {
+                tunnel_t *tunnel = tunnel_chain->tunnels.tuns[i];
+                tunnel->onQuiesceRequest(tunnel, context);
+            }
         }
     }
 }
 
-static void nodemanagerStopConfigHooks(node_manager_config_t *cfg)
+void nodemanagerQuiesceWait(const ww_lifecycle_context_t *context)
 {
-    if (cfg == NULL)
+    if (nodemanager_gstate == NULL ||
+        atomicExchangeExplicit(&nodemanager_gstate->quiesce_wait_started, true, memory_order_relaxed))
     {
         return;
     }
 
-    c_foreach(chain, vec_chains_t, cfg->chains)
+    c_foreach(conf, vec_configs_t, nodemanager_gstate->configs)
     {
-        tunnel_chain_t *tunnel_chain = *chain.ref;
-        assert(tunnel_chain != NULL);
-
-        for (uint16_t i = 0; i < tunnel_chain->tunnels.len; i++)
+        node_manager_config_t *cfg = *conf.ref;
+        if (cfg == NULL)
         {
-            tunnel_t *tunnel = tunnel_chain->tunnels.tuns[i];
-            assert(tunnel != NULL);
-            tunnel->onStop(tunnel);
+            continue;
+        }
+        c_foreach(chain, vec_chains_t, cfg->chains)
+        {
+            tunnel_chain_t *tunnel_chain = *chain.ref;
+            for (uint16_t i = 0; i < tunnel_chain->tunnels.len; i++)
+            {
+                tunnel_t *tunnel = tunnel_chain->tunnels.tuns[i];
+                tunnel->onQuiesceWait(tunnel, context);
+            }
         }
     }
 }
 
-void nodemanagerStop(void)
+void nodemanagerStop(const ww_lifecycle_context_t *context)
+{
+    if (nodemanager_gstate == NULL ||
+        atomicExchangeExplicit(&nodemanager_gstate->stop_started, true, memory_order_relaxed))
+    {
+        return;
+    }
+    nodemanager_gstate->stop_context     = *context;
+    nodemanager_gstate->stop_context_set = true;
+
+    c_foreach(conf, vec_configs_t, nodemanager_gstate->configs)
+    {
+        node_manager_config_t *cfg = *conf.ref;
+        if (cfg == NULL)
+        {
+            continue;
+        }
+        c_foreach(chain, vec_chains_t, cfg->chains)
+        {
+            tunnel_chain_t *tunnel_chain = *chain.ref;
+            for (uint16_t i = 0; i < tunnel_chain->tunnels.len; i++)
+            {
+                tunnel_t *tunnel = tunnel_chain->tunnels.tuns[i];
+                tunnel->onStop(tunnel, context);
+            }
+        }
+    }
+}
+
+void nodemanagerQuiesceWorker(wid_t wid, const ww_lifecycle_context_t *context)
 {
     if (nodemanager_gstate == NULL)
     {
         return;
     }
+    assert(currentThreadIsEventWorkerWID(wid));
 
-    /*
-     * Defensive stop-once guard. The call graph should still contain exactly one
-     * normal invocation (the global-state shutdown callback); this only makes a
-     * duplicate harmless instead of running node onStop hooks, external cleanup
-     * scripts and device shutdown twice.
-     */
-    if (atomicExchangeExplicit(&nodemanager_gstate->stop_started, true, memory_order_acq_rel))
-    {
-        return;
-    }
-
-    /* Close every producer gate before any neighbour can complete onStop. */
     c_foreach(conf, vec_configs_t, nodemanager_gstate->configs)
     {
-        nodemanagerPreStopConfig(*conf.ref);
-    }
-    c_foreach(conf, vec_configs_t, nodemanager_gstate->configs)
-    {
-        nodemanagerStopConfigHooks(*conf.ref);
+        node_manager_config_t *cfg = *conf.ref;
+        if (cfg == NULL)
+        {
+            continue;
+        }
+
+        c_foreach(chain, vec_chains_t, cfg->chains)
+        {
+            tunnel_chain_t *tunnel_chain = *chain.ref;
+            for (uint16_t i = 0; i < tunnel_chain->tunnels.len; i++)
+            {
+                tunnel_t *tunnel = tunnel_chain->tunnels.tuns[i];
+                tunnel->onWorkerQuiesce(tunnel, wid, context);
+            }
+        }
     }
 }
 
-void nodemanagerStopWorkerResources(wid_t wid)
+void nodemanagerStopWorkerResources(wid_t wid, const ww_lifecycle_context_t *context)
 {
     /*
      * The worker has already closed producer/message admission and drained
@@ -997,7 +1137,7 @@ void nodemanagerStopWorkerResources(wid_t wid)
             {
                 tunnel_t *tunnel = tunnel_chain->tunnels.tuns[i];
                 assert(tunnel != NULL);
-                tunnel->onWorkerStop(tunnel, wid);
+                tunnel->onWorkerStop(tunnel, wid, context);
             }
         }
     }
@@ -1021,6 +1161,8 @@ node_manager_t *nodemanagerCreate(void)
         memoryFree(state);
         return NULL;
     }
+    atomicStoreRelaxed(&state->quiesce_request_started, false);
+    atomicStoreRelaxed(&state->quiesce_wait_started, false);
     atomicStoreRelaxed(&state->stop_started, false);
 
     nodemanager_gstate = state;
@@ -1032,7 +1174,10 @@ void nodemanagerDestroyNode(node_t *node)
     tunnel_t *t = node->instance;
     if (t)
     {
-        t->onDestroy(t);
+        const ww_lifecycle_context_t *context = nodemanager_gstate != NULL && nodemanager_gstate->stop_context_set
+                                                    ? &nodemanager_gstate->stop_context
+                                                    : wwLifecycleStartupRollback();
+        t->onDestroy(t, context);
         node->instance = NULL;
     }
     memoryFree(node->name);

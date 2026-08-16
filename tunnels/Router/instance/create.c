@@ -90,7 +90,7 @@ tunnel_t *routerTunnelCreate(node_t *node)
     if (! nodeHasNext(node))
     {
         LOGF("Router: must have a \"next\" fallback node (the default route)");
-        routerTunnelDestroy(t);
+        routerTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
@@ -98,32 +98,32 @@ tunnel_t *routerTunnelCreate(node_t *node)
     if (settings != NULL && ! cJSON_IsObject(settings))
     {
         LOGF("JSON Error: Router->settings (object field) : expected an object");
-        routerTunnelDestroy(t);
+        routerTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
     router_tstate_t *ts = tunnelGetState(t);
     if (! routerLoadResolveDomains(ts, settings))
     {
-        routerTunnelDestroy(t);
+        routerTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
     if (! routerCreateInternalDomainResolver(t, node))
     {
-        routerTunnelDestroy(t);
+        routerTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
     if (! routerLoadSniffing(ts, settings))
     {
-        routerTunnelDestroy(t);
+        routerTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
     if (settings != NULL && ! routerRuleTableLoad(ts, node, settings))
     {
-        routerTunnelDestroy(t);
+        routerTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
@@ -134,13 +134,13 @@ tunnel_t *routerTunnelCreate(node_t *node)
 
     if (! routerGeositeOpenIfNeeded(ts, settings))
     {
-        routerTunnelDestroy(t);
+        routerTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
     if (! routerGeoipOpenIfNeeded(ts, settings))
     {
-        routerTunnelDestroy(t);
+        routerTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 

@@ -14,8 +14,9 @@ static void authenticationclientDeleteTimer(wtimer_t **timer)
     *timer = NULL;
 }
 
-void authenticationclientTunnelOnStop(tunnel_t *t)
+void authenticationclientTunnelOnQuiesceRequest(tunnel_t *t, const ww_lifecycle_context_t *context)
 {
+    discard                        context;
     authenticationclient_tstate_t *ts = tunnelGetState(t);
 
     mutexLock(&ts->control_mutex);
@@ -28,9 +29,9 @@ void authenticationclientTunnelOnStop(tunnel_t *t)
     }
 }
 
-void authenticationclientTunnelOnWorkerStop(tunnel_t *t, wid_t wid)
+void authenticationclientTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context)
 {
-    // onWorkerStop runs on the worker being stopped, for its own slot only.
+    discard context;
     assert(currentThreadIsEventWorkerWID(wid));
 
     if (UNLIKELY(wid != 0))
@@ -48,8 +49,19 @@ void authenticationclientTunnelOnWorkerStop(tunnel_t *t, wid_t wid)
     authenticationclientDeleteTimer(&ts->ping_timer);
     authenticationclientDeleteTimer(&ts->sync_timer);
     authenticationclientDeleteTimer(&ts->reconnect_timer);
+}
 
-    line_t *line = NULL;
+void authenticationclientTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context)
+{
+    discard context;
+    assert(currentThreadIsEventWorkerWID(wid));
+    if (wid != 0)
+    {
+        return;
+    }
+
+    authenticationclient_tstate_t *ts   = tunnelGetState(t);
+    line_t                        *line = NULL;
     mutexLock(&ts->control_mutex);
     line = ts->control_line;
     mutexUnlock(&ts->control_mutex);

@@ -14,7 +14,7 @@ static void trojanclientDestroyInternalDomainResolverChain(trojanclient_tstate_t
 {
     if (ts->domain_resolver_tunnel != NULL)
     {
-        ts->domain_resolver_tunnel->onDestroy(ts->domain_resolver_tunnel);
+        tunnelOwnedChildDestroy(ts->domain_resolver_tunnel);
         ts->domain_resolver_tunnel = NULL;
     }
 
@@ -27,8 +27,9 @@ static void trojanclientDestroyInternalDomainResolverChain(trojanclient_tstate_t
     trojanclientClearInternalNode(&ts->domain_resolver_node);
 }
 
-void trojanclientTunnelDestroy(tunnel_t *t)
+void trojanclientTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context)
 {
+    discard context;
     if (t == NULL)
     {
         return;

@@ -28,6 +28,7 @@ typedef struct tun_default_route_s
 tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void *userdata, TunReadEventHandle cb);
 void          tundeviceDestroy(tun_device_t *tdev);
 bool          tundeviceBringUp(tun_device_t *tdev);
+bool          tundeviceRequestStop(tun_device_t *tdev);
 bool          tundeviceBringDown(tun_device_t *tdev);
 bool          tundeviceIsUp(const tun_device_t *tdev);
 bool          tundeviceAssignIP(tun_device_t *tdev, const char *ip_presentation, unsigned int subnet);

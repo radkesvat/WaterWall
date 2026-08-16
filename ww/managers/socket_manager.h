@@ -7,6 +7,7 @@
 #include "local_widle_table.h"
 #include "shiftbuffer.h"
 #include "socket_filter_option.h"
+#include "startup.h"
 #include "tunnel.h"
 #include "widle_table.h"
 #include "wlibc.h"
@@ -107,6 +108,7 @@ void socketmanagerDestroy(void);
  * @param loop Event loop that is about to be destroyed.
  */
 void socketmanagerCloseListenersForLoop(wloop_t *loop);
+void socketmanagerQuiesceWorker(wid_t wid);
 
 /**
  * @brief Drain UDP idle entries owned by a worker before its line pools are destroyed.
@@ -125,7 +127,7 @@ void socketmanagerSet(struct socket_manager_s *state);
 /**
  * @brief Start listening sockets for all registered filters.
  */
-void socketmanagerStart(void);
+ww_startup_result_t socketmanagerStart(void);
 
 /**
  * @brief Register one socket accept/filter rule for a tunnel.

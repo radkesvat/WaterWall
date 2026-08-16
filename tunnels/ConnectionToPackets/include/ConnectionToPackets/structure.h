@@ -646,16 +646,17 @@ enum
     kLineStateSize   = sizeof(ctp_lstate_t)
 };
 
-WW_EXPORT void         ctpTunnelDestroy(tunnel_t *t);
+WW_EXPORT void         ctpTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context);
 WW_EXPORT tunnel_t    *ctpTunnelCreate(node_t *node);
 WW_EXPORT api_result_t ctpTunnelApi(tunnel_t *instance, sbuf_t *message);
 
 void ctpTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void ctpTunnelOnStart(tunnel_t *t);
 void ctpQueueWorkerPacketInit(void *worker, void *arg1, void *arg2, void *arg3);
-void ctpTunnelOnPreStop(tunnel_t *t);
-void ctpTunnelOnStop(tunnel_t *t);
-void ctpTunnelOnWorkerStop(tunnel_t *t, wid_t wid);
+void ctpTunnelOnQuiesceRequest(tunnel_t *t, const ww_lifecycle_context_t *context);
+void ctpTunnelOnQuiesceWait(tunnel_t *t, const ww_lifecycle_context_t *context);
+void ctpTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context);
+void ctpTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);
 bool ctpLoadSettings(ctp_tstate_t *ts, const cJSON *settings);
 
 void ctpTunnelUpStreamInit(tunnel_t *t, line_t *l);

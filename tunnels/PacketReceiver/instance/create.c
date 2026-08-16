@@ -209,7 +209,7 @@ tunnel_t *packetreceiverTunnelCreate(node_t *node)
     if (! checkJsonIsObjectAndHasChild(settings))
     {
         LOGF("JSON Error: PacketReceiver->settings (object field) : The object was empty or invalid");
-        packetreceiverTunnelDestroy(t);
+        packetreceiverTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
     state->expected_packets_per_ip = 1;
@@ -218,7 +218,7 @@ tunnel_t *packetreceiverTunnelCreate(node_t *node)
         ! packetreceiverLoadExpectedPacketsPerIp(state, settings) || ! packetreceiverLoadOutputFile(state, settings) ||
         ! packetreceiverLoadReportAfterMs(state, settings))
     {
-        packetreceiverTunnelDestroy(t);
+        packetreceiverTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 

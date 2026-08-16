@@ -6,11 +6,11 @@ bool ptcNextGateEnter(tunnel_t *t)
 {
     ptc_tstate_t *state = tunnelGetState(t);
 
-    if (UNLIKELY(ptcTunnelIsStopping(t) || isApplicationTerminating() || ! deviceLifetimeGateEnter(&state->next_gate)))
+    if (UNLIKELY(ptcTunnelIsStopping(t) || ! deviceLifetimeGateEnter(&state->next_gate)))
     {
         return false;
     }
-    if (UNLIKELY(ptcTunnelIsStopping(t) || isApplicationTerminating()))
+    if (UNLIKELY(ptcTunnelIsStopping(t)))
     {
         deviceLifetimeGateLeave(&state->next_gate);
         return false;

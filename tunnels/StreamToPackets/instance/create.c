@@ -74,10 +74,10 @@ tunnel_t *streamtopacketsTunnelCreate(node_t *node)
     t->fnPauseD   = &streamtopacketsTunnelDownStreamPause;
     t->fnResumeD  = &streamtopacketsTunnelDownStreamResume;
 
-    t->onPrepare = &streamtopacketsTunnelOnPrepair;
-    t->onStart   = &streamtopacketsTunnelOnStart;
-    t->onStop    = &streamtopacketsTunnelOnStop;
-    t->onDestroy = &streamtopacketsTunnelDestroy;
+    t->onPrepare        = &streamtopacketsTunnelOnPrepair;
+    t->onStart          = &streamtopacketsTunnelOnStart;
+    t->onQuiesceRequest = &streamtopacketsTunnelOnQuiesceRequest;
+    t->onDestroy        = &streamtopacketsTunnelDestroy;
 
     ts->packet_validation_level = kStreamToPacketsPacketValidationNone;
     ts->sensitive_mode          = false;

@@ -2,11 +2,24 @@
 
 #include "loggers/network_logger.h"
 
-static void ctpQueueWorkerPacketInitCleanup(void *arg1, void *arg2, void *arg3)
+static void ctpQueueWorkerPacketInitCleanup(void *arg1, void *arg2, void *arg3, worker_message_cancel_reason_e reason)
 {
+    discard reason;
     discard arg2;
     discard arg3;
     tunnelasyncsessionUnref(arg1);
+}
+
+static void ctpRollbackStart(ctp_tstate_t *ts)
+{
+    atomicStoreRelaxed(&ts->stopping, true);
+    deviceLifetimeGateCloseAndQuiesce(&ts->prev_gate, deviceLifetimeYieldThread, NULL);
+    deviceLifetimeGateCloseAndQuiesce(&ts->next_gate, deviceLifetimeYieldThread, NULL);
+    deviceLifetimeGateCloseAndQuiesce(&ts->packet_ingress_gate, deviceLifetimeYieldThread, NULL);
+    if (ts->async_session != NULL)
+    {
+        tunnelasyncsessionCloseAndQuiesce(ts->async_session);
+    }
 }
 
 void ctpQueueWorkerPacketInit(void *worker, void *arg1, void *arg2, void *arg3)
@@ -62,7 +75,9 @@ void ctpTunnelOnStart(tunnel_t *t)
                  ! deviceLifetimeGateOpen(&ts->packet_ingress_gate) || ! tunnelasyncsessionOpen(ts->async_session)))
     {
         LOGF("ConnectionToPackets: failed to open callback admission gates");
-        abortProgramNow(1);
+        ctpRollbackStart(ts);
+        startupFailureRecord(1);
+        return;
     }
 
     /*
@@ -74,11 +89,14 @@ void ctpTunnelOnStart(tunnel_t *t)
     for (wid_t wi = 0; wi < getWorkersCount(); wi++)
     {
         tunnelasyncsessionRef(ts->async_session);
-        if (! sendWorkerMessageForceQueueWithCleanup(
-                wi, ctpQueueWorkerPacketInit, ctpQueueWorkerPacketInitCleanup, ts->async_session, NULL, NULL))
+        if (sendWorkerMessageForceQueueWithCleanup(
+                wi, ctpQueueWorkerPacketInit, ctpQueueWorkerPacketInitCleanup, ts->async_session, NULL, NULL) !=
+            kWorkerMessageSubmitAccepted)
         {
             LOGF("ConnectionToPackets: required packet-line Init was refused on worker %u", (unsigned int) wi);
-            abortProgramNow(1);
+            ctpRollbackStart(ts);
+            startupFailureRecord(1);
+            return;
         }
     }
 }

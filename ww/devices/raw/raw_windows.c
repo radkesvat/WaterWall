@@ -288,6 +288,12 @@ rollback:
     return false;
 }
 
+void rawdeviceRequestStop(raw_device_t *rdev)
+{
+    rawLifecycleTransitionToStopping(&rdev->lifecycle);
+    deviceWriterChannelClose(&rdev->writer_channel);
+}
+
 bool rawdeviceBringDown(raw_device_t *rdev)
 {
     if (rawLifecycleLoad(&rdev->lifecycle) == kRawLifecycleDown && ! rdev->writer_joinable &&
@@ -297,8 +303,7 @@ bool rawdeviceBringDown(raw_device_t *rdev)
         return true;
     }
 
-    rawLifecycleTransitionToStopping(&rdev->lifecycle);
-    deviceWriterChannelClose(&rdev->writer_channel);
+    rawdeviceRequestStop(rdev);
 
     bool bring_down_ok = true;
     if (rdev->writer_joinable)

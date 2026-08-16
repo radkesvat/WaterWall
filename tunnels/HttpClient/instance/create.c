@@ -460,7 +460,7 @@ tunnel_t *httpclientTunnelCreate(node_t *node)
     if (! parseHttpVersionMode(ts, settings) || ! parseHttp1TransportMode(ts, settings) ||
         ! parseRequiredFields(ts, settings))
     {
-        httpclientTunnelDestroy(t);
+        httpclientTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
@@ -469,19 +469,19 @@ tunnel_t *httpclientTunnelCreate(node_t *node)
 
     if (! parseHttp1SplitSettings(ts, settings))
     {
-        httpclientTunnelDestroy(t);
+        httpclientTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
     if (! initializeNghttp2State(ts))
     {
-        httpclientTunnelDestroy(t);
+        httpclientTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
     if (! buildUpgradeSettings(ts))
     {
-        httpclientTunnelDestroy(t);
+        httpclientTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 

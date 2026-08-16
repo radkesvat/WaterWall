@@ -440,7 +440,7 @@ tunnel_t *httpserverTunnelCreate(node_t *node)
     if (! parseHttpVersionMode(ts, settings) || ! parseHttp1TransportMode(ts, settings) ||
         ! parseBasicFields(ts, settings))
     {
-        httpserverTunnelDestroy(t);
+        httpserverTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
@@ -449,13 +449,13 @@ tunnel_t *httpserverTunnelCreate(node_t *node)
 
     if (! parseHttp1SplitSettings(ts, settings))
     {
-        httpserverTunnelDestroy(t);
+        httpserverTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
     if (! initializeNghttp2State(ts))
     {
-        httpserverTunnelDestroy(t);
+        httpserverTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
@@ -465,7 +465,7 @@ tunnel_t *httpserverTunnelCreate(node_t *node)
         if (! pipe_tunnel)
         {
             /* pipetunnelCreate() did not take ownership of the child. */
-            httpserverTunnelDestroy(t);
+            httpserverTunnelDestroy(t, wwLifecycleStartupRollback());
             return NULL;
         }
         return pipe_tunnel;

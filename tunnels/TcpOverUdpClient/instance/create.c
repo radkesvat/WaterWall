@@ -153,10 +153,10 @@ tunnel_t *tcpoverudpclientTunnelCreate(node_t *node)
     t->fnPauseD   = &tcpoverudpclientTunnelDownStreamPause;
     t->fnResumeD  = &tcpoverudpclientTunnelDownStreamResume;
 
-    t->onPrepare = &tcpoverudpclientTunnelOnPrepair;
-    t->onStart   = &tcpoverudpclientTunnelOnStart;
-    t->onStop    = &tcpoverudpclientTunnelOnStop;
-    t->onDestroy = &tcpoverudpclientTunnelDestroy;
+    t->onPrepare        = &tcpoverudpclientTunnelOnPrepair;
+    t->onStart          = &tcpoverudpclientTunnelOnStart;
+    t->onQuiesceRequest = &tcpoverudpclientTunnelOnQuiesceRequest;
+    t->onDestroy        = &tcpoverudpclientTunnelDestroy;
 
     tcpoverudpclient_tstate_t *ts = tunnelGetState(t);
 
@@ -165,6 +165,7 @@ tunnel_t *tcpoverudpclientTunnelCreate(node_t *node)
         tunnelDestroy(t);
         return NULL;
     }
+    atomic_init(&ts->stopping, false);
 
     ikcp_allocator(&memoryAllocate, &memoryFree);
 

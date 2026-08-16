@@ -487,8 +487,9 @@ static void synfinsnitrickRunHoldTimeout(worker_t *worker, void *arg1, void *arg
     lineUnlock(l);
 }
 
-static void synfinsnitrickCleanupHoldTimeout(void *arg1, void *arg2, void *arg3)
+static void synfinsnitrickCleanupHoldTimeout(void *arg1, void *arg2, void *arg3, worker_message_cancel_reason_e reason)
 {
+    discard                        reason;
     tunnel_t                      *t       = arg1;
     line_t                        *l       = arg2;
     synfinsnitrick_hold_timeout_t *context = arg3;
@@ -540,7 +541,7 @@ static bool synfinsnitrickScheduleHoldTimeout(tunnel_t *t, line_t *l, const ipma
                                                        delay_ms,
                                                        t,
                                                        l,
-                                                       context);
+                                                       context) == kWorkerMessageSubmitAccepted;
 #endif
     if (! scheduled && recover_on_caller)
     {

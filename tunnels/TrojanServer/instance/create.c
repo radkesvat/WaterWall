@@ -366,14 +366,14 @@ tunnel_t *trojanserverTunnelCreate(node_t *node)
     if (! nodeHasNext(node))
     {
         LOGF("TrojanServer: a next node is required for authenticated Trojan traffic");
-        trojanserverTunnelDestroy(t);
+        trojanserverTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
     if (! checkJsonIsObjectAndHasChild(settings))
     {
         LOGF("JSON Error: TrojanServer->settings (object field) : The object was empty or invalid");
-        trojanserverTunnelDestroy(t);
+        trojanserverTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
@@ -396,7 +396,7 @@ tunnel_t *trojanserverTunnelCreate(node_t *node)
     if (! ts->allow_connect && ! ts->allow_udp)
     {
         LOGF("JSON Error: TrojanServer must enable at least one of connect/udp");
-        trojanserverTunnelDestroy(t);
+        trojanserverTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
@@ -404,7 +404,7 @@ tunnel_t *trojanserverTunnelCreate(node_t *node)
     {
         LOGF(
             "JSON Error: TrojanServer->settings->fallback-intentional-delay-ms (number field) : The value was invalid");
-        trojanserverTunnelDestroy(t);
+        trojanserverTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
     ts->fallback_intentional_delay_ms = (uint32_t) fallback_intentional_delay_ms;
@@ -413,7 +413,7 @@ tunnel_t *trojanserverTunnelCreate(node_t *node)
     {
         LOGF("JSON Error: TrojanServer->settings->fallback-intentional-delay-jitter-ms (number field) : The value was "
              "invalid");
-        trojanserverTunnelDestroy(t);
+        trojanserverTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
     ts->fallback_intentional_delay_jitter_ms = (uint32_t) fallback_intentional_delay_jitter_ms;
@@ -426,7 +426,7 @@ tunnel_t *trojanserverTunnelCreate(node_t *node)
 
     if (! trojanserverParseAuthMode(ts, t, node, settings) || ! parseFallbackNode(ts, node, settings))
     {
-        trojanserverTunnelDestroy(t);
+        trojanserverTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 

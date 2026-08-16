@@ -45,11 +45,11 @@ tunnel_t *keepaliveclientTunnelCreate(node_t *node)
     t->fnPauseD   = &keepaliveclientTunnelDownStreamPause;
     t->fnResumeD  = &keepaliveclientTunnelDownStreamResume;
 
-    t->onPrepare    = &keepaliveclientTunnelOnPrepair;
-    t->onStart      = &keepaliveclientTunnelOnStart;
-    t->onStop       = &keepaliveclientTunnelOnStop;
-    t->onWorkerStop = &keepaliveclientTunnelOnWorkerStop;
-    t->onDestroy    = &keepaliveclientTunnelDestroy;
+    t->onPrepare       = &keepaliveclientTunnelOnPrepair;
+    t->onStart         = &keepaliveclientTunnelOnStart;
+    t->onStop          = &keepaliveclientTunnelOnStop;
+    t->onWorkerQuiesce = &keepaliveclientTunnelOnWorkerQuiesce;
+    t->onDestroy       = &keepaliveclientTunnelDestroy;
 
     if (UNLIKELY(! mutexTryInit(&ts->lines_mutex)))
     {
@@ -64,13 +64,13 @@ tunnel_t *keepaliveclientTunnelCreate(node_t *node)
     if (UNLIKELY(ts->worker_timers == NULL))
     {
         LOGF("KeepAliveClient: failed to allocate worker timers");
-        keepaliveclientTunnelDestroy(t);
+        keepaliveclientTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
     if (! keepaliveclientLoadPingInterval(ts, node->node_settings_json))
     {
-        keepaliveclientTunnelDestroy(t);
+        keepaliveclientTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 

@@ -326,7 +326,7 @@ tunnel_t *vlessclientTunnelCreate(node_t *node)
 
     if (! vlessclientCreateInternalDomainResolver(t, node))
     {
-        vlessclientTunnelDestroy(t);
+        vlessclientTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 

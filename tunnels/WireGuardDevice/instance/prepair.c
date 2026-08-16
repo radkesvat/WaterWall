@@ -49,7 +49,8 @@ static uint16_t wireguarddeviceCountMatchingConfiguredNext(const node_t *start_n
         if (next_node == NULL)
         {
             LOGF("Node Map Failure: node (\"%s\")->next (\"%s\") not found", node->name, node->next);
-            terminateProgram(1);
+            startupFailureRecord(1);
+            return 0;
         }
 
         if (match(next_node->instance))
@@ -92,6 +93,10 @@ void wireguarddeviceResolveTransportSide(tunnel_t *t)
     const uint16_t prev_udp_count =
         wireguarddeviceCountMatchingTunnels(t->prev, false, wireguarddeviceTunnelIsUdpStatelessSocket);
     const uint16_t next_udp_count = wireguarddeviceCountMatchingNext(t, wireguarddeviceTunnelIsUdpStatelessSocket);
+    if (UNLIKELY(startupFailurePending()))
+    {
+        return;
+    }
 
     state->transport_side_is_next = true;
 
@@ -99,7 +104,8 @@ void wireguarddeviceResolveTransportSide(tunnel_t *t)
     {
         LOGF("WireGuardDevice: settings->transport-direction is required when UdpStatelessSocket is reachable in "
              "both directions");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     if (prev_udp_count > 0)
@@ -119,6 +125,10 @@ void wireguarddeviceResolveTransportSide(tunnel_t *t)
     const bool prev_has_layer4 =
         wireguarddeviceCountMatchingTunnels(t->prev, false, wireguarddeviceTunnelHasLayer4) > 0;
     const bool next_has_layer4 = wireguarddeviceCountMatchingNext(t, wireguarddeviceTunnelHasLayer4) > 0;
+    if (UNLIKELY(startupFailurePending()))
+    {
+        return;
+    }
 
     if (prev_has_layer4 && ! next_has_layer4)
     {

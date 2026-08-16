@@ -75,7 +75,7 @@ void tundeviceOnIPPacketReceived(tun_device_t *tdev, void *userdata, sbuf_t *buf
 
     tunnel_t *t = userdata;
 
-    if (UNLIKELY(isApplicationTerminating() || ! tundeviceIsUp(tdev)))
+    if (UNLIKELY(! tundeviceIsUp(tdev)))
     {
         bufferpoolReuseBuffer(getWorkerBufferPool(wid), buf);
         return;
@@ -124,7 +124,7 @@ void tundeviceTunnelWritePayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     printIPPacketInfo("TunDevice write", sbufGetRawPtr(buf));
 #endif
 
-    if (UNLIKELY(isApplicationTerminating()))
+    if (UNLIKELY(! tundeviceIsUp(tdev)))
     {
         lineReuseBuffer(l, buf);
         return;

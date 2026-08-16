@@ -2,15 +2,9 @@
 
 #include "loggers/network_logger.h"
 
-void ctpTunnelOnStop(tunnel_t *t)
+void ctpTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context)
 {
-    /*
-     * Publish the gate before waiting for the core lock. A flow open, a packet
-     * injection or a netif output that was already waiting on that lock rechecks
-     * the gate after acquiring it, so none of them can republish state after the
-     * cleanup below. The core lock, not this atomic, supplies the ordering.
-     */
-    ctpTunnelOnPreStop(t);
+    discard context;
 
     /*
      * Process-level lwIP shutdown follows node Stop, so this node's pcbs, flow
@@ -21,8 +15,9 @@ void ctpTunnelOnStop(tunnel_t *t)
     ctpDestroyLwipResources(t);
 }
 
-void ctpTunnelOnWorkerStop(tunnel_t *t, wid_t wid)
+void ctpTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context)
 {
+    discard context;
     assert(currentThreadIsEventWorkerWID(wid));
     ctpDrainTerminalLinesOnCurrentWorker(t, wid);
 }

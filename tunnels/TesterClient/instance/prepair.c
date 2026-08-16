@@ -11,12 +11,14 @@ void testerclientTunnelOnPrepair(tunnel_t *t)
     {
         LOGF("TesterClient: supports at most %u workers, but the chain has %u",
              (unsigned int) kTesterClientMaxWorkers, (unsigned int) tc->workers_count);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     if (ts->packet_mode && tc->packet_lines == NULL)
     {
         LOGF("TesterClient: packet-mode requires packet lines; add a packet-layer tunnel in the chain");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 }

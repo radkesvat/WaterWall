@@ -20,12 +20,13 @@ static void initializeTunnelCallbacks(tunnel_t *t)
     t->fnPauseD   = &ctpTunnelDownStreamPause;
     t->fnResumeD  = &ctpTunnelDownStreamResume;
 
-    t->onChain      = &ctpTunnelOnChain;
-    t->onStart      = &ctpTunnelOnStart;
-    t->onPreStop    = &ctpTunnelOnPreStop;
-    t->onStop       = &ctpTunnelOnStop;
-    t->onWorkerStop = &ctpTunnelOnWorkerStop;
-    t->onDestroy    = &ctpTunnelDestroy;
+    t->onChain          = &ctpTunnelOnChain;
+    t->onStart          = &ctpTunnelOnStart;
+    t->onQuiesceRequest = &ctpTunnelOnQuiesceRequest;
+    t->onQuiesceWait    = &ctpTunnelOnQuiesceWait;
+    t->onStop           = &ctpTunnelOnStop;
+    t->onWorkerStop     = &ctpTunnelOnWorkerStop;
+    t->onDestroy        = &ctpTunnelDestroy;
 }
 
 static bool ctpAddDomainStrategySetting(cJSON *settings, enum domain_strategy strategy)
@@ -289,26 +290,26 @@ tunnel_t *ctpTunnelCreate(node_t *node)
     ts->terminal_lines = memoryAllocateZero(sizeof(*ts->terminal_lines) * ts->netifs_count);
     if (UNLIKELY(ts->netifs == NULL || ts->terminal_lines == NULL))
     {
-        ctpTunnelDestroy(t);
+        ctpTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
     if (UNLIKELY(! ctpFlowRegistryInitialize(ts)))
     {
-        ctpTunnelDestroy(t);
+        ctpTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
     ts->async_session = tunnelasyncsessionCreate(t, "ConnectionToPackets");
     if (UNLIKELY(ts->async_session == NULL))
     {
-        ctpTunnelDestroy(t);
+        ctpTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
     if (! ctpLoadSettings(ts, settings) || ! ctpCreateInternalDomainResolver(t, node))
     {
-        ctpTunnelDestroy(t);
+        ctpTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 

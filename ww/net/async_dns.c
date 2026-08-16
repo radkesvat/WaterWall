@@ -280,7 +280,10 @@ static void asyncdnsRefreshTimer(dns_resolver_t *r)
     }
     else
     {
-        wtimerReset(r->timer, timeout_ms);
+        if (! wtimerReset(r->timer, timeout_ms))
+        {
+            r->timer = NULL;
+        }
     }
 }
 

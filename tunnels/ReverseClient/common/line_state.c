@@ -2,20 +2,13 @@
 
 #include "loggers/network_logger.h"
 
-void reverseclientLinestateInitialize(reverseclient_lstate_t *ls, tunnel_t *t, line_t *u, line_t *d)
+void reverseclientLinestateInitialize(reverseclient_lstate_t *ls, reverseclient_pair_t *pair)
 {
-    *ls = (reverseclient_lstate_t) {.t = t, .u = u, .d = d, .idle_handle = NULL};
+    *ls = (reverseclient_lstate_t) {.pair = pair};
 }
 
 void reverseclientLinestateDestroy(reverseclient_lstate_t *ls)
 {
-
-    if (ls->idle_handle != NULL)
-    {
-        LOGF("ReverseClient: LinestateDestroy called with non NULL idle_handle");
-        abortProgramNow(1);
-        return;
-    }
 
     memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(reverseclient_lstate_t)));
 }

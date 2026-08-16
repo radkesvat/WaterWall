@@ -14,8 +14,9 @@ static void authenticationserverDeleteTimer(wtimer_t **timer)
     *timer = NULL;
 }
 
-void authenticationserverTunnelOnStop(tunnel_t *t)
+void authenticationserverTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context)
 {
+    discard                        context;
     authenticationserver_tstate_t *ts = tunnelGetState(t);
 
     if (ts->verbose)
@@ -24,9 +25,9 @@ void authenticationserverTunnelOnStop(tunnel_t *t)
     }
 }
 
-void authenticationserverTunnelOnWorkerStop(tunnel_t *t, wid_t wid)
+void authenticationserverTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context)
 {
-    // onWorkerStop runs on the worker being stopped, for its own slot only.
+    discard context;
     assert(currentThreadIsEventWorkerWID(wid));
 
     if (UNLIKELY(wid != 0))

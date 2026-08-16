@@ -14,7 +14,7 @@ static void ctpDestroyInternalDomainResolver(ctp_tstate_t *ts)
 {
     if (ts->domain_resolver_tunnel != NULL)
     {
-        ts->domain_resolver_tunnel->onDestroy(ts->domain_resolver_tunnel);
+        tunnelOwnedChildDestroy(ts->domain_resolver_tunnel);
         ts->domain_resolver_tunnel = NULL;
     }
 
@@ -27,8 +27,9 @@ static void ctpDestroyInternalDomainResolver(ctp_tstate_t *ts)
     ctpClearInternalNode(&ts->domain_resolver_node);
 }
 
-void ctpTunnelDestroy(tunnel_t *t)
+void ctpTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context)
 {
+    discard       context;
     ctp_tstate_t *ts = tunnelGetState(t);
 
     // Idempotent: Stop already ran this on the normal shutdown path.

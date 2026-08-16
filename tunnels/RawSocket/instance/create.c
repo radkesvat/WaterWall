@@ -161,9 +161,10 @@ tunnel_t *rawsocketCreate(node_t *node)
         return NULL;
     }
 
-    t->onStart   = &rawsocketOnStart;
-    t->onStop    = &rawsocketOnStop;
-    t->onDestroy = &rawsocketDestroy;
+    t->onStart          = &rawsocketOnStart;
+    t->onQuiesceRequest = &rawsocketOnQuiesceRequest;
+    t->onQuiesceWait    = &rawsocketOnQuiesceWait;
+    t->onDestroy        = &rawsocketDestroy;
 
     const packet_lifecycle_anchor_direction_t direction =
         node->hash_next != 0 ? kPacketLifecycleAnchorPublishUpstream : kPacketLifecycleAnchorPublishDownstream;
@@ -183,7 +184,7 @@ tunnel_t *rawsocketCreate(node_t *node)
     if (state->capture_device_name == NULL || state->raw_device_name == NULL)
     {
         LOGE("RawSocket: failed to allocate device names");
-        rawsocketDestroy(t);
+        rawsocketDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
@@ -192,7 +193,7 @@ tunnel_t *rawsocketCreate(node_t *node)
     if (fmode.status < kDvsSourceIp)
     {
         LOGF("JSON Error: RawSocket->settings->capture-filter-mode (string field) : mode is not specified or invalid");
-        rawsocketDestroy(t);
+        rawsocketDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
@@ -203,13 +204,13 @@ tunnel_t *rawsocketCreate(node_t *node)
     else
     {
         LOGF("RawSocket cannot yet capture outgoing, use tun device for that");
-        rawsocketDestroy(t);
+        rawsocketDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
     if (! rawsocketLoadCaptureRanges(state, settings))
     {
-        rawsocketDestroy(t);
+        rawsocketDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 

@@ -2,14 +2,15 @@
 
 #include "loggers/network_logger.h"
 
-void packetsenderTunnelOnStop(tunnel_t *t)
+void packetsenderTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context)
 {
+    discard context;
     discard t;
 }
 
-void packetsenderTunnelOnWorkerStop(tunnel_t *t, wid_t wid)
+void packetsenderTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context)
 {
-    // onWorkerStop runs on the worker being stopped, for its own slot only.
+    discard context;
     assert(currentThreadIsEventWorkerWID(wid));
 
     packetsender_tstate_t *state = tunnelGetState(t);

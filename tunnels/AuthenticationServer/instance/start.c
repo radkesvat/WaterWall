@@ -18,7 +18,7 @@ void authenticationserverTunnelOnStart(tunnel_t *t)
         if (UNLIKELY(ts->save_timer == NULL))
         {
             LOGF("AuthenticationServer: failed to create periodic save timer");
-            terminateProgram(1);
+            startupFailureRecord(1);
             return;
         }
 
@@ -35,7 +35,7 @@ void authenticationserverTunnelOnStart(tunnel_t *t)
         if (UNLIKELY(ts->session_expiry_timer == NULL))
         {
             LOGF("AuthenticationServer: failed to create session expiry timer");
-            terminateProgram(1);
+            startupFailureRecord(1);
             return;
         }
 

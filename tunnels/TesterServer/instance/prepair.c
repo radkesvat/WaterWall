@@ -9,6 +9,7 @@ void testerserverTunnelOnPrepair(tunnel_t *t)
     if (ts->packet_mode && tunnelGetChain(t)->packet_lines == NULL)
     {
         LOGF("TesterServer: packet-mode requires packet lines; add a packet-layer tunnel in the chain");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 }

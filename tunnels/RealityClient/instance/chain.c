@@ -9,13 +9,15 @@ void realityclientTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
     if (ts->tls_tunnel == NULL)
     {
         LOGF("RealityClient: internal TlsClient is not available");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     if (ts->tls_tunnel->prev != NULL && ts->tls_tunnel->prev != t)
     {
         LOGF("RealityClient: internal TlsClient is already bound");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     tunnelBind(t, ts->tls_tunnel);

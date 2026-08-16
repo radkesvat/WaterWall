@@ -2,9 +2,11 @@
 
 #include "wlibc.h"
 
+#include "application_shutdown.h"
 #include "buffer_pool.h"
 #include "generic_pool.h"
 #include "net/address_context.h"
+#include "startup.h"
 #include "threadsafe_generic_pool.h"
 #include "wloop.h"
 #include "worker.h"
@@ -46,48 +48,48 @@ typedef struct secure_random_state_s
 
 typedef struct ww_global_state_s
 {
-    wloop_t                   **shortcut_loops;
-    buffer_pool_t             **shortcut_buffer_pools;
-    threadsafe_generic_pool_t **shortcut_wios_pools;
-    generic_pool_t            **shortcut_context_pools;
-    master_pool_t              *masterpool_buffer_pools_large;
-    master_pool_t              *masterpool_buffer_pools_small;
-    master_pool_t              *masterpool_wios;
-    master_pool_t              *masterpool_context_pools;
-    master_pool_t              *masterpool_messages;
-    worker_t                   *workers;
-    struct signal_manager_s    *signal_manager;
-    struct socket_manager_s    *socekt_manager;
-    struct node_manager_s      *node_manager;
-    struct logger_s            *core_logger;
-    struct logger_s            *network_logger;
-    struct logger_s            *dns_logger;
-    struct logger_s            *internal_logger;
-    struct dedicated_memory_s  *openssl_dedicated_memory;
-    LwipV4Hook                  lwip_process_v4_hook;
-    secure_random_state_t       secure_random;
-    system_load_state_t        *system_load;
-    void                       *wintun_dll_handle;
-    void                       *wintun_dll_path;
-    void                       *windivert_dll_handle;
-    uint32_t                    workers_count;
-    uint32_t                    ram_profile;
-    asyncdns_options_t          dns_options;
-    enum domain_strategy        domain_strategy;
-    uint64_t                    main_thread_id;
-    wid_t                       lwip_wid;
-    atomic_wid_t                distribute_wid;
-    uint16_t                    buffer_allocation_padding;
-    uint16_t                    capturedevice_queue_start_number;
-    uint16_t                    mtu_size;
-    uint8_t                     flag_initialized : 1;
-    uint8_t                     flag_buffers_calculated : 1;
-    uint8_t                     flag_tundev_windows_initialized : 1;
-    uint8_t                     flag_openssl_initialized : 1;
-    uint8_t                     flag_libsodium_initialized : 1;
-    uint8_t                     flag_lwip_initialized : 1;
-    atomic_bool                 application_stopping_flag; // prevent threads sending messages to each other
-    atomic_bool                 workers_run_flag;          // main thread sets this to true when it started its loop
+    wloop_t                      **shortcut_loops;
+    buffer_pool_t                **shortcut_buffer_pools;
+    threadsafe_generic_pool_t    **shortcut_wios_pools;
+    generic_pool_t               **shortcut_context_pools;
+    master_pool_t                 *masterpool_buffer_pools_large;
+    master_pool_t                 *masterpool_buffer_pools_small;
+    master_pool_t                 *masterpool_wios;
+    master_pool_t                 *masterpool_context_pools;
+    master_pool_t                 *masterpool_messages;
+    worker_t                      *workers;
+    struct application_shutdown_s *application_shutdown;
+    struct signal_manager_s       *signal_manager;
+    struct socket_manager_s       *socekt_manager;
+    struct node_manager_s         *node_manager;
+    struct logger_s               *core_logger;
+    struct logger_s               *network_logger;
+    struct logger_s               *dns_logger;
+    struct logger_s               *internal_logger;
+    struct dedicated_memory_s     *openssl_dedicated_memory;
+    LwipV4Hook                     lwip_process_v4_hook;
+    secure_random_state_t          secure_random;
+    system_load_state_t           *system_load;
+    void                          *wintun_dll_handle;
+    void                          *wintun_dll_path;
+    void                          *windivert_dll_handle;
+    void (*application_finalizer)(void);
+    uint32_t             workers_count;
+    uint32_t             ram_profile;
+    asyncdns_options_t   dns_options;
+    enum domain_strategy domain_strategy;
+    uint64_t             main_thread_id;
+    wid_t                lwip_wid;
+    atomic_wid_t         distribute_wid;
+    uint16_t             buffer_allocation_padding;
+    uint16_t             capturedevice_queue_start_number;
+    uint16_t             mtu_size;
+    uint8_t              flag_initialized : 1;
+    uint8_t              flag_tundev_windows_initialized : 1;
+    uint8_t              flag_openssl_initialized : 1;
+    uint8_t              flag_libsodium_initialized : 1;
+    uint8_t              flag_lwip_initialized : 1;
+    atomic_bool          workers_run_flag; // main thread sets this to true when it started its loop
 
     // Published by a TunDevice in system-route mode before worker traffic runs.
     // Outbound connector sockets use this to pin WaterWall's own egress to the
@@ -111,6 +113,7 @@ typedef struct
     logger_construction_data_t core_logger_data;
     logger_construction_data_t network_logger_data;
     logger_construction_data_t dns_logger_data;
+    void (*application_finalizer)(void);
 
 } ww_construction_data_t;
 
@@ -434,14 +437,15 @@ WW_EXPORT void runMainThread(void);
  *
  * This function exits the main thread
  */
-WW_EXPORT void finishGlobalState(void);
+WW_EXPORT void finishGlobalState(const application_shutdown_snapshot_t *snapshot);
+WW_EXPORT void globalstateRunShutdownSequence(void);
 
 /*!
  * @brief Creates the global state.
  *
  * @param data The construction data for the global state.
  */
-WW_EXPORT void createGlobalState(ww_construction_data_t data);
+WW_EXPORT ww_startup_result_t createGlobalState(ww_construction_data_t data);
 /*!
  * @brief Gets the global state.
  *

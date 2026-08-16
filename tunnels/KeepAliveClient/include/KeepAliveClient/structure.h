@@ -37,7 +37,7 @@ enum
     kLineStateSize                = sizeof(keepaliveclient_lstate_t)
 };
 
-WW_EXPORT void         keepaliveclientTunnelDestroy(tunnel_t *t);
+WW_EXPORT void         keepaliveclientTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context);
 WW_EXPORT tunnel_t    *keepaliveclientTunnelCreate(node_t *node);
 WW_EXPORT api_result_t keepaliveclientTunnelApi(tunnel_t *instance, sbuf_t *message);
 
@@ -45,8 +45,8 @@ void keepaliveclientTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_off
 void keepaliveclientTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void keepaliveclientTunnelOnPrepair(tunnel_t *t);
 void keepaliveclientTunnelOnStart(tunnel_t *t);
-void keepaliveclientTunnelOnStop(tunnel_t *t);
-void keepaliveclientTunnelOnWorkerStop(tunnel_t *t, wid_t wid);
+void keepaliveclientTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context);
+void keepaliveclientTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);
 
 void keepaliveclientTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void keepaliveclientTunnelUpStreamEst(tunnel_t *t, line_t *l);

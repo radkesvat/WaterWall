@@ -518,8 +518,10 @@ static void smugglefintrickRunDelayedRelease(worker_t *worker, void *arg1, void 
     lineUnlock(l);
 }
 
-static void smugglefintrickCleanupDelayedRelease(void *arg1, void *arg2, void *arg3)
+static void smugglefintrickCleanupDelayedRelease(void *arg1, void *arg2, void *arg3,
+                                                 worker_message_cancel_reason_e reason)
 {
+    discard                            reason;
     tunnel_t                          *t       = arg1;
     line_t                            *l       = arg2;
     smugglefintrick_release_context_t *context = arg3;
@@ -563,7 +565,7 @@ static bool smugglefintrickScheduleQueuedRelease(tunnel_t *t, line_t *l, uint32_
                                                        delay_ms,
                                                        t,
                                                        l,
-                                                       context);
+                                                       context) == kWorkerMessageSubmitAccepted;
 #endif
     if (! scheduled && recover_on_caller)
     {
@@ -623,8 +625,10 @@ static sbuf_t *smugglefintrickCreateHandoffBuffer(line_t *owner_line, uint32_t p
     return buf;
 }
 
-static void smugglefintrickCleanupHandoffMessage(void *arg1, void *arg2, void *arg3)
+static void smugglefintrickCleanupHandoffMessage(void *arg1, void *arg2, void *arg3,
+                                                 worker_message_cancel_reason_e reason)
 {
+    discard reason;
     discard arg1;
 
     memoryFree(arg3);
@@ -1074,7 +1078,7 @@ bool smugglefintrickDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
                                                            smugglefintrickCleanupHandoffMessage,
                                                            t,
                                                            owner_line,
-                                                           message);
+                                                           message) == kWorkerMessageSubmitAccepted;
 #endif
                 if (! submitted)
                 {

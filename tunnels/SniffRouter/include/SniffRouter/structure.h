@@ -1,7 +1,7 @@
 #pragma once
 
-#include "wwapi.h"
 #include "ReverseClient/reverseclient_handshake.h"
+#include "wwapi.h"
 
 /*
  * SniffRouter
@@ -38,13 +38,13 @@ enum sniffrouter_classify_result_e
 
 enum sniffrouter_detection_e
 {
-    kSniffDetectionHttp1           = 1U << 0U,
+    kSniffDetectionHttp1          = 1U << 0U,
     kSniffDetectionTlsClientHello = 1U << 1U,
     // Recognizes the ReverseClient/ReverseServer reverse-link handshake on the
     // decrypted stream. Unlike http1/tls detection this is a binary signature,
     // so a route using it matches purely on the handshake and does not consult
     // "domains".
-    kSniffDetectionReverse        = 1U << 2U
+    kSniffDetectionReverse = 1U << 2U
 };
 
 typedef struct sniffrouter_route_s
@@ -72,9 +72,9 @@ typedef struct sniffrouter_tstate_s
 
 typedef struct sniffrouter_lstate_s
 {
-    sbuf_t   *pending;       // bytes buffered before a routing decision is made
-    tunnel_t *target;        // selected route tunnel; NULL means normal next branch
-    uint8_t   decided;       // enum sniffrouter_route_e
+    sbuf_t   *pending; // bytes buffered before a routing decision is made
+    tunnel_t *target;  // selected route tunnel; NULL means normal next branch
+    uint8_t   decided; // enum sniffrouter_route_e
 } sniffrouter_lstate_t;
 
 enum
@@ -87,7 +87,7 @@ enum
     // drift apart when the default reverse-link handshake changes.
 };
 
-WW_EXPORT void         sniffrouterTunnelDestroy(tunnel_t *t);
+WW_EXPORT void         sniffrouterTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context);
 WW_EXPORT tunnel_t    *sniffrouterTunnelCreate(node_t *node);
 WW_EXPORT api_result_t sniffrouterTunnelApi(tunnel_t *instance, sbuf_t *message);
 
@@ -101,7 +101,7 @@ void sniffrouterTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offset)
 void sniffrouterTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void sniffrouterTunnelOnPrepair(tunnel_t *t);
 void sniffrouterTunnelOnStart(tunnel_t *t);
-void sniffrouterTunnelOnStop(tunnel_t *t);
+void sniffrouterTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context);
 
 void sniffrouterTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void sniffrouterTunnelUpStreamEst(tunnel_t *t, line_t *l);

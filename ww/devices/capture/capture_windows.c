@@ -303,6 +303,15 @@ static bool capturedeviceShutdownHandle(void *context)
     return true;
 }
 
+bool capturedeviceRequestStop(capture_device_t *cdev)
+{
+    captureLifecycleTransitionToStopping(&cdev->lifecycle);
+    atomicStoreRelaxed(&cdev->running, false);
+    atomicStoreRelaxed(&cdev->up, false);
+    deviceReaderSessionEndRequest(cdev->reader_session);
+    return capturedeviceShutdownHandle(cdev);
+}
+
 static capture_windows_join_result_e capturedeviceJoinReader(void *context)
 {
     capture_device_t *cdev = context;

@@ -362,8 +362,9 @@ static void lineReleaseScheduledTaskBuffer(line_t *line, sbuf_t *buf)
     sbufDestroy(buf);
 }
 
-static void lineCleanupScheduledTaskNoBuf(void *arg1, void *arg2, void *arg3)
+static void lineCleanupScheduledTaskNoBuf(void *arg1, void *arg2, void *arg3, worker_message_cancel_reason_e reason)
 {
+    discard reason;
     discard arg2;
     discard arg3;
 
@@ -374,8 +375,9 @@ static void lineCleanupScheduledTaskNoBuf(void *arg1, void *arg2, void *arg3)
     lineTaskMessageRelease(msg);
 }
 
-static void lineCleanupScheduledTaskWithBuf(void *arg1, void *arg2, void *arg3)
+static void lineCleanupScheduledTaskWithBuf(void *arg1, void *arg2, void *arg3, worker_message_cancel_reason_e reason)
 {
+    discard reason;
     discard arg2;
     discard arg3;
 
@@ -485,7 +487,7 @@ bool lineScheduleTask(line_t *const line, LineTaskFnNoBuf task, tunnel_t *t)
                                                   lineCleanupScheduledTaskNoBuf,
                                                   msg,
                                                   NULL,
-                                                  NULL);
+                                                  NULL) == kWorkerMessageSubmitAccepted;
 }
 
 bool lineScheduleTaskWithBuf(line_t *const line, LineTaskFnWithBuf task, tunnel_t *t, sbuf_t *buf)
@@ -501,7 +503,7 @@ bool lineScheduleTaskWithBuf(line_t *const line, LineTaskFnWithBuf task, tunnel_
                                                   lineCleanupScheduledTaskWithBuf,
                                                   msg,
                                                   NULL,
-                                                  NULL);
+                                                  NULL) == kWorkerMessageSubmitAccepted;
 }
 
 bool lineScheduleDelayedTask(line_t *const line, LineTaskFnNoBuf task, uint32_t delay_ms, tunnel_t *t)
@@ -524,7 +526,7 @@ bool lineScheduleDelayedTask(line_t *const line, LineTaskFnNoBuf task, uint32_t 
                                              delay_ms,
                                              (void *) msg,
                                              NULL,
-                                             NULL);
+                                             NULL) == kWorkerMessageSubmitAccepted;
 }
 
 bool lineScheduleDelayedTaskWithBuf(line_t *const line, LineTaskFnWithBuf task, uint32_t delay_ms, tunnel_t *t,
@@ -549,7 +551,7 @@ bool lineScheduleDelayedTaskWithBuf(line_t *const line, LineTaskFnWithBuf task, 
                                              delay_ms,
                                              (void *) msg,
                                              NULL,
-                                             NULL);
+                                             NULL) == kWorkerMessageSubmitAccepted;
 }
 
 int lineResolveDomainServiceAsync(line_t *const line, const char *domain, const char *service, int socktype,

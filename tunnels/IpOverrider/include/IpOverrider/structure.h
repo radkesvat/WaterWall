@@ -58,7 +58,7 @@ enum
     kLineStateSize   = sizeof(ipoverrider_lstate_t)
 };
 
-WW_EXPORT void         ipoverriderDestroy(tunnel_t *t);
+WW_EXPORT void         ipoverriderDestroy(tunnel_t *t, const ww_lifecycle_context_t *context);
 WW_EXPORT tunnel_t    *ipoverriderCreate(node_t *node);
 WW_EXPORT api_result_t ipoverriderApi(tunnel_t *instance, sbuf_t *message);
 
@@ -66,7 +66,7 @@ void ipoverriderOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offset);
 void ipoverriderOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void ipoverriderOnPrepair(tunnel_t *t);
 void ipoverriderOnStart(tunnel_t *t);
-void ipoverriderOnStop(tunnel_t *t);
+void ipoverriderOnStop(tunnel_t *t, const ww_lifecycle_context_t *context);
 
 void ipoverriderUpStreamInit(tunnel_t *t, line_t *l);
 void ipoverriderUpStreamEst(tunnel_t *t, line_t *l);

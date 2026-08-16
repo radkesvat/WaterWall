@@ -19,9 +19,10 @@ void ptcDestroyLwipResources(tunnel_t *t)
     UNLOCK_TCPIP_CORE();
 }
 
-void ptcTunnelDestroy(tunnel_t *t)
+void ptcTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context)
 {
-    ptcTunnelOnStop(t);
+    discard context;
+    ptcTunnelOnStop(t, context);
 
     ptc_tstate_t *state = tunnelGetState(t);
     if (state->owned_lines != NULL)

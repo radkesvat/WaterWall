@@ -2,7 +2,8 @@
 
 #include "loggers/network_logger.h"
 
-void halfduplexclientTunnelOnStop(tunnel_t *t)
+void halfduplexclientTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context)
 {
+    discard context;
     discard t;
 }

@@ -207,11 +207,11 @@ static bool startUdpListener(wio_t *io, wread_cb read_cb)
 }
 
 static void runAcceptedSocketCallback(void *worker_ptr, void *arg1, void *arg2, void *arg3);
-static void cleanupAcceptedSocketDispatch(void *arg1, void *arg2, void *arg3);
+static void cleanupAcceptedSocketDispatch(void *arg1, void *arg2, void *arg3, worker_message_cancel_reason_e reason);
 static void runUdpPayloadCallback(void *worker_ptr, void *arg1, void *arg2, void *arg3);
-static void cleanupUdpPayloadDispatch(void *arg1, void *arg2, void *arg3);
+static void cleanupUdpPayloadDispatch(void *arg1, void *arg2, void *arg3, worker_message_cancel_reason_e reason);
 static void runUdpWriteCallback(void *worker_ptr, void *arg1, void *arg2, void *arg3);
-static void cleanupUdpWriteDispatch(void *arg1, void *arg2, void *arg3);
+static void cleanupUdpWriteDispatch(void *arg1, void *arg2, void *arg3, worker_message_cancel_reason_e reason);
 
 /**
  * @brief Allocate a pooled TCP accept result.
@@ -881,14 +881,16 @@ static void enforceIptablesReconciliationForPendingRules(void)
         (! socketmanager_gstate->iptables_reconciliation_attempted || ! socketmanager_gstate->iptables_v4_reconciled))
     {
         LOGF("SocketManager: refusing to install ipv4 iptables rules after failed startup recovery");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 #if SUPPORT_V6
     if (pendingIptablesNeedsFamily(6) &&
         (! socketmanager_gstate->iptables_reconciliation_attempted || ! socketmanager_gstate->iptables_v6_reconciled))
     {
         LOGF("SocketManager: refusing to install ipv6 iptables rules after failed startup recovery");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 #endif
 }
@@ -916,19 +918,25 @@ static void queueIptablesRule(uint8_t protocol, socket_filter_t *filter, uint16_
     if (rule.iface_name != NULL && ! isSafeIptablesToken(rule.iface_name))
     {
         LOGF("SocketManager: unsafe interface name \"%s\" for iptables rule", rule.iface_name);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     if (! filter->bind_is_wildcard)
     {
         char        host_if[INET_ADDRSTRLEN] = {0};
         const char *host                     = getSocketBindHost(filter, filter->option.host, host_if);
+        if (UNLIKELY(startupFailurePending()))
+        {
+            return;
+        }
         if (host != NULL && host[0] != '\0')
         {
             if (! isSafeIptablesToken(host))
             {
                 LOGF("SocketManager: unsafe destination host \"%s\" for iptables rule", host);
-                terminateProgram(1);
+                startupFailureRecord(1);
+                return;
             }
             rule.has_dest = true;
             snprintf(rule.dest, sizeof(rule.dest), "%s", host);
@@ -940,7 +948,8 @@ static void queueIptablesRule(uint8_t protocol, socket_filter_t *filter, uint16_
     if (UNLIKELY(pending_rules_t_push(&socketmanager_gstate->pending_rules, rule) == NULL))
     {
         LOGF("SocketManager: failed to record a required pending iptables rule");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 }
 
@@ -1001,18 +1010,24 @@ static void installPendingIptablesRules(void)
     }
 
     enforceIptablesReconciliationForPendingRules();
+    if (UNLIKELY(startupFailurePending()))
+    {
+        return;
+    }
 
     int lock_fd = -1;
     if (! socketManagerIptablesAcquireReconcileLock(&lock_fd, 5000))
     {
         LOGF("SocketManager: failed to acquire iptables reconciliation lock for rule publication");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     if (! acquireIptablesOwnerLease())
     {
         socketManagerIptablesReleaseLease(&lock_fd);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     const bool needs_v4 = pendingIptablesNeedsFamily(4);
@@ -1022,7 +1037,8 @@ static void installPendingIptablesRules(void)
     {
         LOGF("SocketManager: failed to create ipv4 iptables chain %s", socketmanager_gstate->iptables_v4_chain.name);
         socketManagerIptablesReleaseLease(&lock_fd);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 #if SUPPORT_V6
     if (needs_v6 && ! createOwnedIptablesChain("ip6tables", &socketmanager_gstate->iptables_v6_chain))
@@ -1030,7 +1046,8 @@ static void installPendingIptablesRules(void)
         LOGF("SocketManager: failed to create ipv6 iptables chain %s", socketmanager_gstate->iptables_v6_chain.name);
         cleanupOwnedIptablesChains(false);
         socketManagerIptablesReleaseLease(&lock_fd);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 #endif
 
@@ -1054,7 +1071,8 @@ static void installPendingIptablesRules(void)
                     LOGE("SocketManager: failed to fully roll back owned iptables rules");
                 }
                 socketManagerIptablesReleaseLease(&lock_fd);
-                terminateProgram(1);
+                startupFailureRecord(1);
+                return;
             }
         }
     }
@@ -1064,7 +1082,8 @@ static void installPendingIptablesRules(void)
         LOGF("SocketManager: failed to publish ipv4 iptables chain %s", socketmanager_gstate->iptables_v4_chain.name);
         cleanupOwnedIptablesChains(false);
         socketManagerIptablesReleaseLease(&lock_fd);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 #if SUPPORT_V6
     if (needs_v6 && ! publishOwnedIptablesChain("ip6tables", &socketmanager_gstate->iptables_v6_chain))
@@ -1072,7 +1091,8 @@ static void installPendingIptablesRules(void)
         LOGF("SocketManager: failed to publish ipv6 iptables chain %s", socketmanager_gstate->iptables_v6_chain.name);
         cleanupOwnedIptablesChains(false);
         socketManagerIptablesReleaseLease(&lock_fd);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 #endif
 
@@ -1272,7 +1292,8 @@ void socketacceptorRegister(tunnel_t *tunnel, socket_filter_option_t option, onA
     if (socketmanager_gstate->started)
     {
         LOGF("SocketManager: cannot register after accept thread starts");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     socket_filter_t *filter   = memoryAllocate(sizeof(socket_filter_t));
@@ -1281,7 +1302,7 @@ void socketacceptorRegister(tunnel_t *tunnel, socket_filter_option_t option, onA
     if (UNLIKELY(filter == NULL))
     {
         LOGF("SocketManager: failed to allocate listener filter metadata");
-        terminateProgram(1);
+        startupFailureRecord(1);
         return;
     }
 
@@ -1292,7 +1313,7 @@ void socketacceptorRegister(tunnel_t *tunnel, socket_filter_option_t option, onA
         {
             memoryFree(filter);
             LOGF("SocketManager: failed to create balance-group metadata");
-            terminateProgram(1);
+            startupFailureRecord(1);
             return;
         }
     }
@@ -1308,7 +1329,7 @@ void socketacceptorRegister(tunnel_t *tunnel, socket_filter_option_t option, onA
         mutexUnlock(&(socketmanager_gstate->mutex));
         memoryFree(filter);
         LOGF("SocketManager: failed to publish listener filter metadata");
-        terminateProgram(1);
+        startupFailureRecord(1);
         return;
     }
     if (option.fwmark >= 0)
@@ -1374,8 +1395,9 @@ static void runAcceptedSocketCallback(void *worker_ptr, void *arg1, void *arg2, 
 /**
  * @brief Release an accepted socket dispatch message if delivery fails.
  */
-static void cleanupAcceptedSocketDispatch(void *arg1, void *arg2, void *arg3)
+static void cleanupAcceptedSocketDispatch(void *arg1, void *arg2, void *arg3, worker_message_cancel_reason_e reason)
 {
+    discard                 reason;
     socket_accept_result_t *result = arg2;
     discard                 arg1;
     discard                 arg3;
@@ -1854,7 +1876,7 @@ static bool getInterfaceHostString(const char *if_name, char *host_if)
     if (! getInterfaceIpString(if_name, host_if, INET_ADDRSTRLEN))
     {
         LOGF("SocketManager: Could not get interface \"%s\" ip", if_name);
-        terminateProgram(1);
+        startupFailureRecord(1);
         return false;
     }
     return true;
@@ -1870,7 +1892,10 @@ static const char *getSocketBindHost(socket_filter_t *filter, const char *host, 
         return host;
     }
 
-    getInterfaceHostString(filter->option.interface_name, host_if);
+    if (! getInterfaceHostString(filter->option.interface_name, host_if))
+    {
+        return NULL;
+    }
     return host_if;
 }
 
@@ -1886,6 +1911,10 @@ static void computeFilterBindEndpoint(socket_filter_t *filter)
 
     char        host_if[INET_ADDRSTRLEN] = {0};
     const char *host                     = getSocketBindHost(filter, filter->option.host, host_if);
+    if (UNLIKELY(startupFailurePending()))
+    {
+        return;
+    }
 
     ip_addr_t addr;
     memoryZero(&addr, sizeof(addr));
@@ -2010,7 +2039,8 @@ static void endpointRegistryReserve(endpoint_registry_t *reg, uint8_t protocol, 
     if (UNLIKELY(endpoint_registry_t_push(reg, ep) == NULL))
     {
         LOGF("SocketManager: failed to publish ownership for a bound listener endpoint");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 }
 
@@ -2029,7 +2059,8 @@ static void ensureUdpSharedEndpointCompatible(const listener_endpoint_t *ep, con
              (unsigned int) port,
              ep->fwmark,
              filter->option.fwmark);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     // Buffer mismatch is visible but not a correctness problem.
@@ -2055,6 +2086,10 @@ static void ensureUdpRedirectRangeCompatible(endpoint_registry_t *reg, socket_fi
         if (shared != NULL)
         {
             ensureUdpSharedEndpointCompatible(shared, filter, host, (uint16_t) p);
+            if (UNLIKELY(startupFailurePending()))
+            {
+                return;
+            }
         }
     }
 }
@@ -2114,6 +2149,10 @@ static wio_t *createTcpServerWithSocketOptions(wloop_t *loop, socket_filter_t *f
 {
     char        host_if[INET_ADDRSTRLEN] = {0};
     const char *bind_host                = getSocketBindHost(filter, host, host_if);
+    if (UNLIKELY(startupFailurePending()))
+    {
+        return NULL;
+    }
     return wloopCreateTcpServerWithOptions(
         loop, bind_host, port, callback, filter->option.interface_name, filter->option.fwmark);
 }
@@ -2125,7 +2164,11 @@ static wio_t *createUdpServerWithSocketOptions(wloop_t *loop, socket_filter_t *f
 {
     char        host_if[INET_ADDRSTRLEN] = {0};
     const char *bind_host                = getSocketBindHost(filter, host, host_if);
-    wio_t      *io                       = wloopCreateUdpServerWithBufferOptions(loop,
+    if (UNLIKELY(startupFailurePending()))
+    {
+        return NULL;
+    }
+    wio_t *io = wloopCreateUdpServerWithBufferOptions(loop,
                                                       bind_host,
                                                       port,
                                                       filter->option.interface_name,
@@ -2207,7 +2250,7 @@ static uint16_t selectMainPortForIptables(socket_filter_t *filter, wloop_t *loop
     }
 
     LOGF("SocketManager: stopping due to null socket handle");
-    terminateProgram(1);
+    startupFailureRecord(1);
     return 0;
 }
 
@@ -2219,7 +2262,8 @@ static void initializeIptablesIfNeeded(void)
     if (! socketmanager_gstate->iptables_installed)
     {
         LOGF("SocketManager: multi port backend \"iptables\" colud not start, error: not installed");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 #if SUPPORT_V6
     if (! socketmanager_gstate->ip6tables_installed)
@@ -2247,10 +2291,22 @@ static void listenTcpMultiPortIptables(wloop_t *loop, socket_filter_t *filter, c
     }
 
     initializeIptablesIfNeeded();
+    if (UNLIKELY(startupFailurePending()))
+    {
+        return;
+    }
 
     uint16_t main_port = selectMainPortForIptables(filter, loop, host, port_min, port_max, reg);
+    if (UNLIKELY(startupFailurePending()))
+    {
+        return;
+    }
 
     queueIptablesRule(IPPROTO_TCP, filter, port_min, port_max, main_port);
+    if (UNLIKELY(startupFailurePending()))
+    {
+        return;
+    }
     LOGI("SocketManager: listening on %s:[%u - %u] >> %d (%s)", host, port_min, port_max, main_port, "TCP");
 }
 
@@ -2265,7 +2321,7 @@ static void listenTcpMultiPortSockets(wloop_t *loop, socket_filter_t *filter, ch
     if (UNLIKELY(filter->listen_ios == NULL))
     {
         LOGF("SocketManager: failed to allocate TCP range listener ownership slots");
-        terminateProgram(1);
+        startupFailureRecord(1);
         return;
     }
     int i = 0;
@@ -2296,6 +2352,10 @@ static void listenTcpMultiPortSockets(wloop_t *loop, socket_filter_t *filter, ch
         filter->listen_ios[i]    = io;
         filter->listen_ios_count = (size_t) i + 1U;
         endpointRegistryReserve(reg, IPPROTO_TCP, filter, port, io, NULL);
+        if (UNLIKELY(startupFailurePending()))
+        {
+            return;
+        }
         filter->v6_dualstack = wioGetLocaladdr(io)->sa_family == AF_INET6;
 
         i++;
@@ -2315,7 +2375,7 @@ static void listenTcpPortListSockets(wloop_t *loop, socket_filter_t *filter, cha
     if (UNLIKELY(filter->listen_ios == NULL))
     {
         LOGF("SocketManager: failed to allocate TCP list listener ownership slots");
-        terminateProgram(1);
+        startupFailureRecord(1);
         return;
     }
     int i = 0;
@@ -2346,6 +2406,10 @@ static void listenTcpPortListSockets(wloop_t *loop, socket_filter_t *filter, cha
         filter->listen_ios[i]    = io;
         filter->listen_ios_count = (size_t) i + 1U;
         endpointRegistryReserve(reg, IPPROTO_TCP, filter, p, io, NULL);
+        if (UNLIKELY(startupFailurePending()))
+        {
+            return;
+        }
         filter->v6_dualstack = wioGetLocaladdr(io)->sa_family == AF_INET6;
 
         i++;
@@ -2377,9 +2441,14 @@ static void listenTcpSinglePort(wloop_t *loop, socket_filter_t *filter, char *ho
     if (filter->listen_io == NULL)
     {
         LOGF("SocketManager: stopping due to null socket handle");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
     endpointRegistryReserve(reg, IPPROTO_TCP, filter, port, filter->listen_io, NULL);
+    if (UNLIKELY(startupFailurePending()))
+    {
+        return;
+    }
     filter->v6_dualstack = wioGetLocaladdr(filter->listen_io)->sa_family == AF_INET6;
     LOGI("SocketManager: listening on %s:[%u] (%s)", host, port, "TCP");
 }
@@ -2404,7 +2473,8 @@ static void listenOneTcpFilter(wloop_t *loop, socket_filter_t *filter, endpoint_
     if (port_min > port_max)
     {
         LOGF("SocketManager: port min must be lower than port max");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
     else if (port_min == port_max)
     {
@@ -2463,6 +2533,10 @@ static void listenTcp(wloop_t *loop, endpoint_registry_t *reg)
                     continue;
                 }
                 listenOneTcpFilter(loop, filter, reg);
+                if (UNLIKELY(startupFailurePending()))
+                {
+                    return;
+                }
             }
         }
     }
@@ -2497,8 +2571,9 @@ static void runUdpPayloadCallback(void *worker_ptr, void *arg1, void *arg2, void
 /**
  * @brief Release a UDP payload dispatch message if delivery fails.
  */
-static void cleanupUdpPayloadDispatch(void *arg1, void *arg2, void *arg3)
+static void cleanupUdpPayloadDispatch(void *arg1, void *arg2, void *arg3, worker_message_cancel_reason_e reason)
 {
+    discard        reason;
     udp_payload_t *pl = arg2;
     discard        arg1;
     discard        arg3;
@@ -2726,12 +2801,6 @@ static void onUdpPacketReceived(wio_t *io, sbuf_t *buf)
     uint16_t   remote_port = sockaddrPort(wioGetPeerAddrU(io));
     wid_t      target_wid  = (wid_t) remote_port % (getWorkersCount());
 
-    if (UNLIKELY(isApplicationTerminating()))
-    {
-        sbufDestroy(buf);
-        return;
-    }
-
     udp_payload_t item = (udp_payload_t) {.sock           = socket,
                                           .buf            = buf,
                                           .wid            = target_wid,
@@ -2754,12 +2823,6 @@ static void onUdpPacketReceivedMultiPort(wio_t *io, sbuf_t *buf)
     uint16_t   remote_port     = sockaddrPort(wioGetPeerAddrU(io));
     wid_t      target_wid      = (wid_t) remote_port % (getWorkersCount());
     uint16_t   real_local_port = sockaddrPort(&local_addr); // default fallback
-
-    if (UNLIKELY(isApplicationTerminating()))
-    {
-        sbufDestroy(buf);
-        return;
-    }
 
     ip_addr_t paddr;
     if (sockaddrToIpAddr(wioGetPeerAddrU(io), &paddr))
@@ -2810,6 +2873,10 @@ static void listenUdpSinglePort(wloop_t *loop, socket_filter_t *filter, char *ho
     if (shared != NULL)
     {
         ensureUdpSharedEndpointCompatible(shared, filter, host, port);
+        if (UNLIKELY(startupFailurePending()))
+        {
+            return;
+        }
         LOGI("SocketManager: %s:[%u] shares an existing UDP listener", host, port);
         return;
     }
@@ -2819,14 +2886,16 @@ static void listenUdpSinglePort(wloop_t *loop, socket_filter_t *filter, char *ho
     if (filter->listen_io == NULL)
     {
         LOGF("SocketManager: stopping due to null socket handle");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
     if (UNLIKELY(! startUdpListener(filter->listen_io, onUdpPacketReceived)))
     {
         wioClose(filter->listen_io);
         filter->listen_io = NULL;
         LOGF("SocketManager: could not register UDP listener on %s:[%u]", host, port);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
     udpsock_t *socket = createUdpSocketSideData(filter->listen_io);
     if (UNLIKELY(socket == NULL))
@@ -2834,12 +2903,16 @@ static void listenUdpSinglePort(wloop_t *loop, socket_filter_t *filter, char *ho
         wioClose(filter->listen_io);
         filter->listen_io = NULL;
         LOGF("SocketManager: failed to allocate UDP listener side data");
-        terminateProgram(1);
+        startupFailureRecord(1);
         return;
     }
     filter->listen_udp_socket = socket;
     weventSetUserData(filter->listen_io, socket);
     endpointRegistryReserve(reg, IPPROTO_UDP, filter, port, filter->listen_io, socket);
+    if (UNLIKELY(startupFailurePending()))
+    {
+        return;
+    }
     LOGI("SocketManager: listening on %s:[%u] (%s)", host, port, "UDP");
 }
 
@@ -2855,11 +2928,20 @@ static void listenUdpMultiPortIptables(wloop_t *loop, socket_filter_t *filter, c
         LOGF("SocketManager: UDP iptables multiport does not support a specific bind address (%s); "
              "use the socket-per-port backend for listen-aware UDP",
              host);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     ensureUdpRedirectRangeCompatible(reg, filter, host, port_min, port_max);
+    if (UNLIKELY(startupFailurePending()))
+    {
+        return;
+    }
     initializeIptablesIfNeeded();
+    if (UNLIKELY(startupFailurePending()))
+    {
+        return;
+    }
 
     int main_port = -1;
     for (int p = (int) port_max; p >= (int) port_min; --p)
@@ -2880,7 +2962,8 @@ static void listenUdpMultiPortIptables(wloop_t *loop, socket_filter_t *filter, c
     if (filter->listen_io == NULL)
     {
         LOGF("SocketManager: stopping due to null UDP socket handle");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     filter->v6_dualstack = wioGetLocaladdr(filter->listen_io)->sa_family == AF_INET6;
@@ -2890,7 +2973,8 @@ static void listenUdpMultiPortIptables(wloop_t *loop, socket_filter_t *filter, c
         wioClose(filter->listen_io);
         filter->listen_io = NULL;
         LOGF("SocketManager: could not register UDP redirect listener on %s:[%d]", host, main_port);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
     udpsock_t *socket = createUdpSocketSideData(filter->listen_io);
     if (UNLIKELY(socket == NULL))
@@ -2898,14 +2982,22 @@ static void listenUdpMultiPortIptables(wloop_t *loop, socket_filter_t *filter, c
         wioClose(filter->listen_io);
         filter->listen_io = NULL;
         LOGF("SocketManager: failed to allocate redirected UDP listener side data");
-        terminateProgram(1);
+        startupFailureRecord(1);
         return;
     }
     filter->listen_udp_socket = socket;
     weventSetUserData(filter->listen_io, socket);
     endpointRegistryReserve(reg, IPPROTO_UDP, filter, (uint16_t) main_port, filter->listen_io, socket);
+    if (UNLIKELY(startupFailurePending()))
+    {
+        return;
+    }
 
     queueIptablesRule(IPPROTO_UDP, filter, port_min, port_max, (uint16_t) main_port);
+    if (UNLIKELY(startupFailurePending()))
+    {
+        return;
+    }
     LOGI("SocketManager: listening on %s:[%u - %u] >> %d (%s)", host, port_min, port_max, main_port, "UDP");
 }
 
@@ -2925,7 +3017,7 @@ static void listenUdpMultiPortSockets(wloop_t *loop, socket_filter_t *filter, ch
         filter->listen_ios         = NULL;
         filter->listen_udp_sockets = NULL;
         LOGF("SocketManager: failed to allocate UDP range listener ownership slots");
-        terminateProgram(1);
+        startupFailureRecord(1);
         return;
     }
     int i = 0;
@@ -2937,6 +3029,10 @@ static void listenUdpMultiPortSockets(wloop_t *loop, socket_filter_t *filter, ch
         if (shared != NULL)
         {
             ensureUdpSharedEndpointCompatible(shared, filter, host, port);
+            if (UNLIKELY(startupFailurePending()))
+            {
+                return;
+            }
             LOGI("SocketManager: %s:[%u] shares an existing UDP listener", host, port);
             continue;
         }
@@ -2964,7 +3060,7 @@ static void listenUdpMultiPortSockets(wloop_t *loop, socket_filter_t *filter, ch
             wioClose(udp_io);
             filter->listen_ios[i] = NULL;
             LOGF("SocketManager: failed to allocate UDP range listener side data");
-            terminateProgram(1);
+            startupFailureRecord(1);
             return;
         }
         filter->listen_udp_sockets[i]    = socket;
@@ -2972,6 +3068,10 @@ static void listenUdpMultiPortSockets(wloop_t *loop, socket_filter_t *filter, ch
         filter->listen_udp_sockets_count = (size_t) i + 1U;
         weventSetUserData(udp_io, socket);
         endpointRegistryReserve(reg, IPPROTO_UDP, filter, port, udp_io, socket);
+        if (UNLIKELY(startupFailurePending()))
+        {
+            return;
+        }
 
         i++;
         LOGI("SocketManager: listening on %s:[%u] (%s)", host, port, "UDP");
@@ -2996,7 +3096,7 @@ static void listenUdpPortListSockets(wloop_t *loop, socket_filter_t *filter, cha
         filter->listen_ios         = NULL;
         filter->listen_udp_sockets = NULL;
         LOGF("SocketManager: failed to allocate UDP list listener ownership slots");
-        terminateProgram(1);
+        startupFailureRecord(1);
         return;
     }
     int i = 0;
@@ -3009,6 +3109,10 @@ static void listenUdpPortListSockets(wloop_t *loop, socket_filter_t *filter, cha
         if (shared != NULL)
         {
             ensureUdpSharedEndpointCompatible(shared, filter, host, p);
+            if (UNLIKELY(startupFailurePending()))
+            {
+                return;
+            }
             LOGI("SocketManager: %s:[%u] shares an existing UDP listener", host, p);
             continue;
         }
@@ -3036,7 +3140,7 @@ static void listenUdpPortListSockets(wloop_t *loop, socket_filter_t *filter, cha
             wioClose(udp_io);
             filter->listen_ios[i] = NULL;
             LOGF("SocketManager: failed to allocate UDP list listener side data");
-            terminateProgram(1);
+            startupFailureRecord(1);
             return;
         }
         filter->listen_udp_sockets[i]    = socket;
@@ -3044,6 +3148,10 @@ static void listenUdpPortListSockets(wloop_t *loop, socket_filter_t *filter, cha
         filter->listen_udp_sockets_count = (size_t) i + 1U;
         weventSetUserData(udp_io, socket);
         endpointRegistryReserve(reg, IPPROTO_UDP, filter, p, udp_io, socket);
+        if (UNLIKELY(startupFailurePending()))
+        {
+            return;
+        }
 
         i++;
         LOGI("SocketManager: listening on %s:[%u] (%s)", host, p, "UDP");
@@ -3080,7 +3188,8 @@ static void listenUdp(wloop_t *loop, endpoint_registry_t *reg)
             if (port_min > port_max)
             {
                 LOGF("SocketManager: port min must be lower than port max");
-                terminateProgram(1);
+                startupFailureRecord(1);
+                return;
             }
             else if (port_min == port_max)
             {
@@ -3102,6 +3211,10 @@ static void listenUdp(wloop_t *loop, endpoint_registry_t *reg)
                 else
                 {
                     listenUdpSinglePort(loop, filter, option.host, port_min, reg);
+                }
+                if (UNLIKELY(startupFailurePending()))
+                {
+                    return;
                 }
             }
         }
@@ -3135,8 +3248,9 @@ static void runUdpWriteCallback(void *worker_ptr, void *arg1, void *arg2, void *
 /**
  * @brief Release a queued UDP write if delivery fails.
  */
-static void cleanupUdpWriteDispatch(void *arg1, void *arg2, void *arg3)
+static void cleanupUdpWriteDispatch(void *arg1, void *arg2, void *arg3, worker_message_cancel_reason_e reason)
 {
+    discard        reason;
     udp_payload_t *upl = arg1;
     discard        arg2;
     discard        arg3;
@@ -3204,8 +3318,11 @@ static isize_t socketmanagerListenerReservationBound(void)
     return (isize_t) total;
 }
 
-void socketmanagerStart(void)
+ww_startup_result_t socketmanagerStart(void)
 {
+    ww_startup_context_t startup = {0};
+    wwStartupContextBegin(&startup);
+
     assert(socketmanager_gstate != NULL);
 
     assert(socketmanager_gstate && socketmanager_gstate->worker->loop && ! socketmanager_gstate->started);
@@ -3228,20 +3345,38 @@ void socketmanagerStart(void)
         endpoint_registry_t_drop(&registry);
         mutexUnlock(&(socketmanager_gstate->mutex));
         LOGF("SocketManager: failed to reserve listener ownership metadata before binding");
-        terminateProgram(1);
-        return;
+        startupFailureRecord(1);
+        return wwStartupContextEnd(&startup);
     }
 
     listenTcp(socketmanager_gstate->worker->loop, &registry);
+    if (UNLIKELY(startupFailurePending()))
+    {
+        goto startup_failed;
+    }
     listenUdp(socketmanager_gstate->worker->loop, &registry);
+    if (UNLIKELY(startupFailurePending()))
+    {
+        goto startup_failed;
+    }
 
     // Install NAT rules specific-before-wildcard after all redirect sockets are known.
     installPendingIptablesRules();
+    if (UNLIKELY(startupFailurePending()))
+    {
+        goto startup_failed;
+    }
 
     endpoint_registry_t_drop(&registry);
 
     socketmanager_gstate->started = true;
     mutexUnlock(&(socketmanager_gstate->mutex));
+    return wwStartupContextEnd(&startup);
+
+startup_failed:
+    endpoint_registry_t_drop(&registry);
+    mutexUnlock(&(socketmanager_gstate->mutex));
+    return wwStartupContextEnd(&startup);
 }
 
 /**
@@ -3495,7 +3630,10 @@ static void drainFilterUdpSocketsForWorker(socket_filter_t *filter, wid_t wid)
 
 void socketmanagerDrainUdpIdleForWorker(wid_t wid)
 {
-    assert(socketmanager_gstate != NULL);
+    if (socketmanager_gstate == NULL)
+    {
+        return;
+    }
 
     for (size_t i = 0; i < kFilterLevels; i++)
     {
@@ -3551,6 +3689,24 @@ void socketmanagerCloseListenersForLoop(wloop_t *loop)
     }
 }
 
+void socketmanagerQuiesceWorker(wid_t wid)
+{
+    if (socketmanager_gstate == NULL || wid != 0)
+    {
+        return;
+    }
+    assert(currentThreadIsEventWorkerWID(wid));
+
+    c_foreach(bg, balancegroup_registry_t, socketmanager_gstate->balance_groups)
+    {
+        if (bg.ref->second != NULL)
+        {
+            idletableDestroy(bg.ref->second);
+            bg.ref->second = NULL;
+        }
+    }
+}
+
 /**
  * @brief Destroy all registered filters and associated listener sockets.
  */
@@ -3595,7 +3751,10 @@ static void destroyBalanceGroups(void)
 {
     c_foreach(bg, balancegroup_registry_t, socketmanager_gstate->balance_groups)
     {
-        idletableDestroy(bg.ref->second);
+        if (bg.ref->second != NULL)
+        {
+            idletableDestroy(bg.ref->second);
+        }
     }
     balancegroup_registry_t_drop(&socketmanager_gstate->balance_groups);
 }
@@ -3621,7 +3780,10 @@ static void destroyPools(void)
 
 void socketmanagerDestroy(void)
 {
-    assert(socketmanager_gstate != NULL);
+    if (socketmanager_gstate == NULL)
+    {
+        return;
+    }
 
     if (socketmanager_gstate->iptables_used || socketmanager_gstate->iptables_published)
     {

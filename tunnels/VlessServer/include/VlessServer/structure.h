@@ -95,14 +95,14 @@ enum
     kVlessServerInitialMaxReqLen       = 1 + kVlessServerUuidLen + 1 + UINT8_MAX + 1 + 2 + 1 + 1 + UINT8_MAX
 };
 
-WW_EXPORT void         vlessserverTunnelDestroy(tunnel_t *t);
+WW_EXPORT void         vlessserverTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context);
 WW_EXPORT tunnel_t    *vlessserverTunnelCreate(node_t *node);
 WW_EXPORT api_result_t vlessserverTunnelApi(tunnel_t *instance, sbuf_t *message);
 
 void vlessserverTunnelOnPrepair(tunnel_t *t);
 void vlessserverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void vlessserverTunnelOnStart(tunnel_t *t);
-void vlessserverTunnelOnStop(tunnel_t *t);
+void vlessserverTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context);
 
 void vlessserverTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void vlessserverTunnelUpStreamEst(tunnel_t *t, line_t *l);

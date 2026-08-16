@@ -79,6 +79,7 @@ typedef struct capture_device_s
 } capture_device_t;
 
 bool caputredeviceBringUp(capture_device_t *cdev);
+bool capturedeviceRequestStop(capture_device_t *cdev);
 bool caputredeviceBringDown(capture_device_t *cdev);
 
 capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_ranges, uint32_t capture_range_count,

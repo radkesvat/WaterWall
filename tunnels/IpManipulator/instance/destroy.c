@@ -12,7 +12,7 @@ static void destroyInternalTlsClient(ipmanipulator_tstate_t *state)
 {
     if (state->internal_tls_client_tunnel != NULL)
     {
-        state->internal_tls_client_tunnel->onDestroy(state->internal_tls_client_tunnel);
+        tunnelOwnedChildDestroy(state->internal_tls_client_tunnel);
         state->internal_tls_client_tunnel = NULL;
     }
     state->internal_tls_client_node.instance = NULL;
@@ -33,8 +33,9 @@ static void destroyInternalTlsClient(ipmanipulator_tstate_t *state)
     state->trick_synfin_sni_tls_client_tunnel  = NULL;
 }
 
-void ipmanipulatorDestroy(tunnel_t *t)
+void ipmanipulatorDestroy(tunnel_t *t, const ww_lifecycle_context_t *context)
 {
+    discard                 context;
     ipmanipulator_tstate_t *state = tunnelGetState(t);
 
     destroyInternalTlsClient(state);

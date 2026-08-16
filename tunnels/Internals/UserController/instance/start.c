@@ -11,11 +11,6 @@ static void usercontrollerStartWorkerTimer(void *worker_ptr, void *arg1, void *a
     tunnel_t                *t      = arg1;
     usercontroller_tstate_t *ts     = tunnelGetState(t);
 
-    if (UNLIKELY(isApplicationTerminating()))
-    {
-        return;
-    }
-
     wtimer_t *timer = wtimerAdd(worker->loop, usercontrollerSweepTimerCallback, ts->sweep_interval_ms, INFINITE);
     if (timer == NULL)
     {
@@ -36,11 +31,11 @@ void usercontrollerTunnelOnStart(tunnel_t *t)
 {
     for (wid_t wid = 0; wid < getWorkersCount(); ++wid)
     {
-        if (UNLIKELY(
-                ! sendWorkerMessageForceQueueWithCleanup(wid, usercontrollerStartWorkerTimer, NULL, t, NULL, NULL)))
+        if (UNLIKELY(sendWorkerMessageForceQueueWithCleanup(wid, usercontrollerStartWorkerTimer, NULL, t, NULL, NULL) !=
+                     kWorkerMessageSubmitAccepted))
         {
             LOGF("UserController: failed to admit required sweep timer on worker %u", (unsigned int) wid);
-            terminateProgram(1);
+            startupFailureRecord(1);
             return;
         }
     }

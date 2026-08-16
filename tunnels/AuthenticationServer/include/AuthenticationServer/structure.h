@@ -123,7 +123,7 @@ typedef sbuf_t *(*authenticationserver_module_handler_fn)(
     const uint8_t correlation_id[kAuthenticationServerCorrelationIdSize], tunnel_t *t, line_t *l,
     authenticationserver_session_t *session, const uint8_t *request_data, uint32_t request_data_len);
 
-WW_EXPORT void         authenticationserverTunnelDestroy(tunnel_t *t);
+WW_EXPORT void         authenticationserverTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context);
 WW_EXPORT tunnel_t    *authenticationserverTunnelCreate(node_t *node);
 WW_EXPORT api_result_t authenticationserverTunnelApi(tunnel_t *instance, sbuf_t *message);
 
@@ -131,8 +131,8 @@ void authenticationserverTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *me
 void authenticationserverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void authenticationserverTunnelOnPrepair(tunnel_t *t);
 void authenticationserverTunnelOnStart(tunnel_t *t);
-void authenticationserverTunnelOnStop(tunnel_t *t);
-void authenticationserverTunnelOnWorkerStop(tunnel_t *t, wid_t wid);
+void authenticationserverTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context);
+void authenticationserverTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);
 
 void authenticationserverTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void authenticationserverTunnelUpStreamEst(tunnel_t *t, line_t *l);

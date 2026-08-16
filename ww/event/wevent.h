@@ -34,13 +34,12 @@ struct woverlapped_s;
 
 struct wloop_s
 {
-    uint32_t       flags;
-    wloop_status_e status;
-    // Shutdown-control stop request. Written by any thread through
-    // wloopRequestStop() with release ordering and read by the loop thread with
-    // acquire ordering; it replaces the cross-thread non-atomic writes to
-    // `flags` that the worker teardown used to perform.
+    uint32_t   flags;
+    atomic_int status;
+    // Shutdown-control level trigger. The worker control mutex publishes the
+    // lifecycle context; the wake descriptor supplies progress only.
     atomic_bool stop_requested;
+    atomic_bool normal_admission_open;
     uint64_t    start_ms;     // ms
     uint64_t    start_hrtime; // us
     uint64_t    end_hrtime;
@@ -63,9 +62,10 @@ struct wloop_s
     struct list_head idles;
     uint32_t         nidles;
     // timers
-    struct heap timers;     // monotonic time
-    struct heap realtimers; // realtime
-    uint32_t    ntimers;
+    struct heap      timers;     // monotonic time
+    struct heap      realtimers; // realtime
+    struct list_head quiesced_timers;
+    uint32_t         ntimers;
     // ios: with fd as array.index
     struct io_array ios;
     uint32_t        nios;
@@ -79,14 +79,19 @@ struct wloop_s
     uint32_t iocp_posted_operations; // records currently posted to the kernel
 #endif
     // custom_events
-    // custom_events_mutex protects eventfds, custom_events, wakeup_pending, and
-    // the cross-thread wake-channel initialization update to intern_nevents.
+    // custom_events_mutex protects eventfds, both custom event queues,
+    // control_admission_open, wakeup_pending, and wake-channel initialization.
     // wakeup_pending means that one readiness notification is armed for the
     // loop; it is not a count of queued events.
     int         eventfds[2];
     bool        wakeup_pending;
+    bool        control_admission_open;
     event_queue custom_events;
-    wmutex_t    custom_events_mutex;
+    event_queue control_events;
+    // Serializes the final positive decision for every normal asynchronous
+    // root with admission closure.
+    wmutex_t normal_admission_mutex;
+    wmutex_t custom_events_mutex;
 };
 
 uint64_t wloopGetNextEventID(void);
@@ -103,7 +108,9 @@ struct widle_s
     WEVENT_FIELDS                                                                                                      \
     uint32_t         repeat;                                                                                           \
     uint64_t         next_timeout;                                                                                     \
-    struct heap_node node;
+    struct heap_node node;                                                                                             \
+    struct list_node quiesced_node;                                                                                    \
+    unsigned         quiesced : 1;
 
 struct wtimer_s
 {

@@ -26,9 +26,9 @@ typedef struct tcplistener_tstate_s
 
 typedef struct tcplistener_lstate_s
 {
-    tunnel_t    *tunnel;      // reference to the tunnel (TcpListener)
-    line_t      *line;        // reference to the line
-    wio_t       *io;          // IO handle for the connection (socket)
+    tunnel_t          *tunnel;      // reference to the tunnel (TcpListener)
+    line_t            *line;        // reference to the line
+    wio_t             *io;          // IO handle for the connection (socket)
     local_idle_item_t *idle_handle; // reference to the idle item for this connection
 
     // These fields are used internally for the queue implementation for TCP
@@ -55,14 +55,15 @@ static inline hash_t tcplistenerIdleKey(const wio_t *io)
     return (hash_t) wioGetID((wio_t *) io);
 }
 
-WW_EXPORT void         tcplistenerTunnelDestroy(tunnel_t *t);
+WW_EXPORT void         tcplistenerTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context);
 WW_EXPORT tunnel_t    *tcplistenerTunnelCreate(node_t *node);
 WW_EXPORT api_result_t tcplistenerTunnelApi(tunnel_t *instance, sbuf_t *message);
 
 void tcplistenerTunnelOnPrepair(tunnel_t *t);
 void tcplistenerTunnelOnStart(tunnel_t *t);
-void tcplistenerTunnelOnStop(tunnel_t *t);
-void tcplistenerTunnelOnWorkerStop(tunnel_t *t, wid_t wid);
+void tcplistenerTunnelOnQuiesceRequest(tunnel_t *t, const ww_lifecycle_context_t *context);
+void tcplistenerTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);
+void tcplistenerTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);
 
 void tcplistenerTunnelDownStreamInit(tunnel_t *t, line_t *l);
 void tcplistenerTunnelDownStreamEst(tunnel_t *t, line_t *l);
@@ -76,8 +77,8 @@ void tcplistenerLinestateDestroy(tcplistener_lstate_t *ls);
 
 local_idle_table_t *tcplistenerGetWorkerIdleTable(tcplistener_tstate_t *ts);
 local_idle_table_t *tcplistenerGetLineIdleTable(tcplistener_tstate_t *ts, line_t *l);
-void tcplistenerFlushWriteQueue(tcplistener_lstate_t *lstate);
-void tcplistenerOnInboundConnected(wevent_t *ev);
-void tcplistenerOnWriteComplete(wio_t *io);
+void                tcplistenerFlushWriteQueue(tcplistener_lstate_t *lstate);
+void                tcplistenerOnInboundConnected(wevent_t *ev);
+void                tcplistenerOnWriteComplete(wio_t *io);
 
 void tcplistenerOnIdleConnectionExpire(local_idle_item_t *idle_tcp);

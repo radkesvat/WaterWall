@@ -289,8 +289,9 @@ static void wireguarddeviceReplayInnerPacketOnWorker(worker_t *worker, void *arg
     lineUnlock(line);
 }
 
-static void wireguarddeviceCleanupInnerPacket(void *arg1, void *arg2, void *arg3)
+static void wireguarddeviceCleanupInnerPacket(void *arg1, void *arg2, void *arg3, worker_message_cancel_reason_e reason)
 {
+    discard reason;
     discard arg1;
 
     line_t *line = arg2;

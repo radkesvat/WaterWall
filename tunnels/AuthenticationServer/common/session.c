@@ -353,7 +353,7 @@ void authenticationserverSessionsExpireIdle(tunnel_t *t)
 void authenticationserverSessionExpiryTimerCallback(wtimer_t *timer)
 {
     tunnel_t *t = weventGetUserdata(timer);
-    if (UNLIKELY(t == NULL || isApplicationTerminating()))
+    if (UNLIKELY(t == NULL))
     {
         return;
     }

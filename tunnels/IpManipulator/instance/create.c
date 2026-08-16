@@ -299,15 +299,19 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
         return NULL;
     }
 
-    t->fnInitU    = &ipmanipulatorUpStreamInit;
-    t->fnInitD    = &ipmanipulatorDownStreamInit;
-    t->fnPayloadU = &ipmanipulatorUpStreamPayload;
-    t->fnPayloadD = &ipmanipulatorDownStreamPayload;
-    t->onChain    = &ipmanipulatorOnChain;
-    t->onPrepare  = &ipmanipulatorOnPrepair;
-    t->onStart    = &ipmanipulatorOnStart;
-    t->onStop     = &ipmanipulatorOnStop;
-    t->onDestroy  = &ipmanipulatorDestroy;
+    t->fnInitU          = &ipmanipulatorUpStreamInit;
+    t->fnInitD          = &ipmanipulatorDownStreamInit;
+    t->fnPayloadU       = &ipmanipulatorUpStreamPayload;
+    t->fnPayloadD       = &ipmanipulatorDownStreamPayload;
+    t->onChain          = &ipmanipulatorOnChain;
+    t->onPrepare        = &ipmanipulatorOnPrepair;
+    t->onStart          = &ipmanipulatorOnStart;
+    t->onQuiesceRequest = &ipmanipulatorOnQuiesceRequest;
+    t->onWorkerQuiesce  = &ipmanipulatorOnWorkerQuiesce;
+    t->onQuiesceWait    = &ipmanipulatorOnQuiesceWait;
+    t->onWorkerStop     = &ipmanipulatorOnWorkerStop;
+    t->onStop           = &ipmanipulatorOnStop;
+    t->onDestroy        = &ipmanipulatorDestroy;
 
     ipmanipulator_tstate_t *state    = tunnelGetState(t);
     const cJSON            *settings = node->node_settings_json;
@@ -960,7 +964,7 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
 
     if (! createConfiguredTlsClient(t, node))
     {
-        ipmanipulatorDestroy(t);
+        ipmanipulatorDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
@@ -969,7 +973,7 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
         if (UNLIKELY(! mutexTryInit(&state->tls_capture_mutex)))
         {
             LOGF("IpManipulator: failed to initialize TLS ClientHello capture mutex");
-            ipmanipulatorDestroy(t);
+            ipmanipulatorDestroy(t, wwLifecycleStartupRollback());
             return NULL;
         }
         state->tls_capture_slots_count = (uint32_t) getTotalWorkersCount() * kIpManipulatorTlsCaptureSlotsPerWorker;
@@ -990,14 +994,14 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
             mutexDestroy(&state->tls_capture_mutex);
 
             LOGF("IpManipulator: failed to allocate the TLS ClientHello capture slots");
-            ipmanipulatorDestroy(t);
+            ipmanipulatorDestroy(t, wwLifecycleStartupRollback());
             return NULL;
         }
     }
 
     if (! initializeStatefulTrickTables(t))
     {
-        ipmanipulatorDestroy(t);
+        ipmanipulatorDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 

@@ -246,30 +246,19 @@ static inline void deviceLifetimeYieldThread(void *context)
 #endif
 }
 
-static inline void deviceLifetimeGateCloseAndQuiesce(device_lifetime_gate_t *gate, DeviceLifetimeYieldFn yield_fn,
-                                                     void *yield_context)
+static inline void deviceLifetimeGateClose(device_lifetime_gate_t *gate)
 {
-    assert(yield_fn != NULL);
-
 #ifndef NDEBUG
     assert(! deviceLifetimeThreadIsInsideGate(gate));
 #endif
+    discard atomic_fetch_or_explicit(&gate->state, DEVICE_LIFETIME_GATE_CLOSED, memory_order_acq_rel);
+}
 
-    /*
-     * Admission and close share one atomic modification order:
-     * - an Enter CAS that wins first contributes to the count and Close waits
-     *   for its Leave;
-     * - a Close RMW that wins first sets CLOSED and the Enter rejects;
-     * - Open-release publishes protected fields to Enter-acquire;
-     * - Leave-release publishes completed work to the acquire close/load that
-     *   observes the final zero count.
-     */
-    w_atomic_uint_value_t state =
-        atomic_fetch_or_explicit(&gate->state, DEVICE_LIFETIME_GATE_CLOSED, memory_order_acquire);
-    if ((state & DEVICE_LIFETIME_GATE_COUNT_MASK) == 0)
-    {
-        return;
-    }
+static inline void deviceLifetimeGateWaitQuiesced(device_lifetime_gate_t *gate, DeviceLifetimeYieldFn yield_fn,
+                                                  void *yield_context)
+{
+    assert(yield_fn != NULL);
+    assert((atomicLoadRelaxed(&gate->state) & DEVICE_LIFETIME_GATE_CLOSED) != 0);
 
     unsigned int wait_started_at = getTickMS();
     unsigned int yields          = 0;
@@ -277,7 +266,7 @@ static inline void deviceLifetimeGateCloseAndQuiesce(device_lifetime_gate_t *gat
     for (;;)
     {
         // Acquire pairs with the final entrant's release Leave before reclamation.
-        state                                 = atomicLoadExplicit(&gate->state, memory_order_acquire);
+        const w_atomic_uint_value_t state     = atomicLoadExplicit(&gate->state, memory_order_acquire);
         const w_atomic_uint_value_t in_flight = state & DEVICE_LIFETIME_GATE_COUNT_MASK;
         if (in_flight == 0)
         {
@@ -294,4 +283,11 @@ static inline void deviceLifetimeGateCloseAndQuiesce(device_lifetime_gate_t *gat
             warned = true;
         }
     }
+}
+
+static inline void deviceLifetimeGateCloseAndQuiesce(device_lifetime_gate_t *gate, DeviceLifetimeYieldFn yield_fn,
+                                                     void *yield_context)
+{
+    deviceLifetimeGateClose(gate);
+    deviceLifetimeGateWaitQuiesced(gate, yield_fn, yield_context);
 }

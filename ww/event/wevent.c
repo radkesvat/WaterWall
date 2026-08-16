@@ -599,7 +599,10 @@ static void __read_timeout_cb(wtimer_t *timer)
     uint64_t inactive_ms = (io->loop->cur_hrtime - io->last_read_hrtime) / 1000;
     if (inactive_ms + 100 < (uint64_t) io->read_timeout)
     {
-        wtimerReset(io->read_timer, (uint32_t) ((uint64_t) io->read_timeout - inactive_ms));
+        if (! wtimerReset(io->read_timer, (uint32_t) ((uint64_t) io->read_timeout - inactive_ms)))
+        {
+            io->read_timer = NULL;
+        }
     }
     else
     {
@@ -634,7 +637,10 @@ void wioSetReadTimeout(wio_t *io, int timeout_ms)
     {
         // add
         io->read_timer           = wtimerAdd(io->loop, __read_timeout_cb, (uint32_t) timeout_ms, 1);
-        io->read_timer->privdata = io;
+        if (io->read_timer != NULL)
+        {
+            io->read_timer->privdata = io;
+        }
     }
     io->read_timeout = timeout_ms;
 }
@@ -645,7 +651,10 @@ static void __write_timeout_cb(wtimer_t *timer)
     uint64_t inactive_ms = (io->loop->cur_hrtime - io->last_write_hrtime) / 1000;
     if (inactive_ms + 100 < (uint64_t) io->write_timeout)
     {
-        wtimerReset(io->write_timer, (uint32_t) ((uint64_t) io->write_timeout - inactive_ms));
+        if (! wtimerReset(io->write_timer, (uint32_t) ((uint64_t) io->write_timeout - inactive_ms)))
+        {
+            io->write_timer = NULL;
+        }
     }
     else
     {
@@ -680,7 +689,10 @@ void wiosSetWriteTimeout(wio_t *io, int timeout_ms)
     {
         // add
         io->write_timer           = wtimerAdd(io->loop, __write_timeout_cb, (uint32_t) timeout_ms, 1);
-        io->write_timer->privdata = io;
+        if (io->write_timer != NULL)
+        {
+            io->write_timer->privdata = io;
+        }
     }
     io->write_timeout = timeout_ms;
 }
@@ -692,7 +704,10 @@ static void __keepalive_timeout_cb(wtimer_t *timer)
     uint64_t inactive_ms    = (io->loop->cur_hrtime - last_rw_hrtime) / 1000;
     if (inactive_ms + 100 < (uint64_t) io->keepalive_timeout)
     {
-        wtimerReset(io->keepalive_timer, (uint32_t) ((uint64_t) io->keepalive_timeout - inactive_ms));
+        if (! wtimerReset(io->keepalive_timer, (uint32_t) ((uint64_t) io->keepalive_timeout - inactive_ms)))
+        {
+            io->keepalive_timer = NULL;
+        }
     }
     else
     {
@@ -727,7 +742,10 @@ void wioSetKeepaliveTimeout(wio_t *io, int timeout_ms)
     {
         // add
         io->keepalive_timer           = wtimerAdd(io->loop, __keepalive_timeout_cb, (uint32_t) timeout_ms, 1);
-        io->keepalive_timer->privdata = io;
+        if (io->keepalive_timer != NULL)
+        {
+            io->keepalive_timer->privdata = io;
+        }
     }
     io->keepalive_timeout = timeout_ms;
 }
@@ -759,7 +777,10 @@ void wioSetHeartBeat(wio_t *io, int interval_ms, wio_send_heartbeat_fn fn)
     {
         // add
         io->heartbeat_timer           = wtimerAdd(io->loop, __heartbeat_timer_cb, (uint32_t) interval_ms, INFINITE);
-        io->heartbeat_timer->privdata = io;
+        if (io->heartbeat_timer != NULL)
+        {
+            io->heartbeat_timer->privdata = io;
+        }
     }
     io->heartbeat_interval = interval_ms;
     io->heartbeat_fn       = fn;

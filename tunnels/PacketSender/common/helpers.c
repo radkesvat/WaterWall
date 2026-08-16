@@ -379,12 +379,32 @@ void packetsenderStopWorker(packetsender_worker_state_t *slot)
     }
 }
 
-/*
- * Category B: without its deadline timer this worker can neither pace nor
- * resume the remaining packets. Nothing is owned at this point - no packet
- * buffer has been allocated for the pending index - so request an orderly
- * shutdown, leave slot->timer NULL and report the failure to the send loop.
- */
+static void packetsenderReportInitialTimerFailure(packetsender_worker_state_t *slot)
+{
+    if (! wloopNormalDispatchAllowed(getWorkerLoop(slot->wid)))
+    {
+        return;
+    }
+    LOGF("PacketSender: failed to create worker timer on worker %u", (unsigned int) slot->wid);
+    if (! requestProgramShutdown(1))
+    {
+        abortProgramNow(1);
+    }
+}
+
+static void packetsenderReportTimerRearmFailure(packetsender_worker_state_t *slot)
+{
+    if (! wloopNormalDispatchAllowed(getWorkerLoop(slot->wid)))
+    {
+        return;
+    }
+    LOGF("PacketSender: failed to rearm worker timer on worker %u", (unsigned int) slot->wid);
+    if (! requestProgramShutdown(1))
+    {
+        abortProgramNow(1);
+    }
+}
+
 static bool packetsenderArmWorkerTimer(packetsender_worker_state_t *slot, uint32_t delay_ms)
 {
     assert(delay_ms > 0);
@@ -399,11 +419,7 @@ static bool packetsenderArmWorkerTimer(packetsender_worker_state_t *slot, uint32
         slot->timer = wtimerAdd(getWorkerLoop(slot->wid), packetsenderWorkerTimerCallback, delay_ms, 1);
         if (slot->timer == NULL)
         {
-            LOGF("PacketSender: failed to create worker timer on worker %u", (unsigned int) slot->wid);
-            if (! requestProgramShutdown(1))
-            {
-                abortProgramNow(1);
-            }
+            packetsenderReportInitialTimerFailure(slot);
             return false;
         }
 
@@ -411,8 +427,16 @@ static bool packetsenderArmWorkerTimer(packetsender_worker_state_t *slot, uint32
         return true;
     }
 
-    wtimerReset(slot->timer, delay_ms);
-    return true;
+    if (wtimerReset(slot->timer, delay_ms))
+    {
+        return true;
+    }
+
+    wtimer_t *timer = slot->timer;
+    slot->timer     = NULL;
+    weventSetUserData(timer, NULL);
+    packetsenderReportTimerRearmFailure(slot);
+    return false;
 }
 
 typedef enum
@@ -522,25 +546,29 @@ void packetsenderPrepareRuntime(tunnel_t *t)
     if (t->next == NULL)
     {
         LOGF("PacketSender: must have a next tunnel");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     if (chain == NULL || chain->packet_lines == NULL)
     {
         LOGF("PacketSender: packet lines are required for this layer-3 chain head");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     if (chain->workers_count == 0)
     {
         LOGF("PacketSender: the chain has zero workers");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     if (state->packets_per_ip == 0)
     {
         LOGF("PacketSender: internal error, packets-per-ip is zero");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     if (state->protocol_mode == kPacketSenderProtocolAll)
@@ -567,13 +595,15 @@ void packetsenderPrepareRuntime(tunnel_t *t)
     if (state->bytes_per_source_repeat == 0)
     {
         LOGF("PacketSender: internal error, computed zero bytes per source repeat");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     if (state->packets_per_ip > 1U && state->bytes_per_source_repeat > (SIZE_MAX / (size_t) state->packets_per_ip))
     {
         LOGF("PacketSender: generated packet store exceeds addressable memory");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     bytes_per_source        = state->bytes_per_source_repeat * (size_t) state->packets_per_ip;
@@ -582,7 +612,8 @@ void packetsenderPrepareRuntime(tunnel_t *t)
     if (state->source_count > 0 && bytes_per_source > (SIZE_MAX / (size_t) state->source_count))
     {
         LOGF("PacketSender: generated packet store exceeds addressable memory");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     state->total_packet_bytes = (size_t) state->source_count * bytes_per_source;
@@ -595,7 +626,8 @@ void packetsenderPrepareRuntime(tunnel_t *t)
             if (packets_per_source > (UINT64_MAX / kPacketSenderProtocolsPerSource))
             {
                 LOGF("PacketSender: total packet count would overflow");
-                terminateProgram(1);
+                startupFailureRecord(1);
+                return;
             }
 
             packets_per_source *= kPacketSenderProtocolsPerSource;
@@ -604,7 +636,8 @@ void packetsenderPrepareRuntime(tunnel_t *t)
         if (state->source_count > (UINT64_MAX / packets_per_source))
         {
             LOGF("PacketSender: total packet count would overflow");
-            terminateProgram(1);
+            startupFailureRecord(1);
+            return;
         }
 
         state->total_packets = state->source_count * packets_per_source;
@@ -613,7 +646,8 @@ void packetsenderPrepareRuntime(tunnel_t *t)
     if (state->total_packet_bytes == 0 || state->total_packets == 0)
     {
         LOGF("PacketSender: internal error, computed zero packets or zero bytes per source");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
     const uint64_t total_packet_bytes_u64 = (uint64_t) state->total_packet_bytes;
 
@@ -623,7 +657,8 @@ void packetsenderPrepareRuntime(tunnel_t *t)
              "source-ipv4-range or split traffic across multiple PacketSender nodes",
              (unsigned long long) total_packet_bytes_u64,
              (unsigned long long) kPacketSenderMaxMaterializedBytes);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     state->packet_bytes = memoryAllocate(state->total_packet_bytes);
@@ -698,7 +733,7 @@ void packetsenderStartWorker(void *worker_ptr, void *arg1, void *arg2, void *arg
     discard arg2;
     discard arg3;
 
-    if (UNLIKELY(isApplicationTerminating()) || slot->stopped)
+    if (UNLIKELY(slot->stopped))
     {
         return;
     }
@@ -724,7 +759,7 @@ void packetsenderStartWorker(void *worker_ptr, void *arg1, void *arg2, void *arg
 void packetsenderWorkerTimerCallback(wtimer_t *timer)
 {
     packetsender_worker_state_t *slot = weventGetUserdata(timer);
-    if (slot == NULL || slot->stopped || isApplicationTerminating())
+    if (slot == NULL || slot->stopped)
     {
         return;
     }

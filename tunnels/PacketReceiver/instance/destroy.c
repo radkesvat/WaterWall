@@ -2,8 +2,9 @@
 
 #include "loggers/network_logger.h"
 
-void packetreceiverTunnelDestroy(tunnel_t *t)
+void packetreceiverTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context)
 {
+    discard                  context;
     packetreceiver_tstate_t *state = tunnelGetState(t);
     bool                     should_finalize;
 

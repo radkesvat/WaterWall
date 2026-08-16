@@ -201,7 +201,7 @@ void keepaliveclientUntrackLine(tunnel_t *t, line_t *l)
 void keepaliveclientWorkerTimerCallback(wtimer_t *timer)
 {
     tunnel_t *t = weventGetUserdata(timer);
-    if (t == NULL || isApplicationTerminating())
+    if (t == NULL)
     {
         return;
     }

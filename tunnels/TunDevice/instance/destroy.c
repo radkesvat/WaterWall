@@ -2,8 +2,9 @@
 
 #include "loggers/network_logger.h"
 
-void tundeviceTunnelDestroy(tunnel_t *t)
+void tundeviceTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context)
 {
+    discard             context;
     tundevice_tstate_t *state = tunnelGetState(t);
     tun_device_t       *tdev  = state->tdev;
 

@@ -326,7 +326,7 @@ static void localIdleCallBack(wtimer_t *timer)
     wtimerReset(timer, (uint32_t) next_timeout);
 }
 
-void localidletableDestroy(local_idle_table_t *self)
+void localidletableQuiesce(local_idle_table_t *self)
 {
     localidletableAssertOwner(self);
 
@@ -336,6 +336,11 @@ void localidletableDestroy(local_idle_table_t *self)
         wtimerDelete(self->idle_handle);
         self->idle_handle = NULL;
     }
+}
+
+void localidletableDestroy(local_idle_table_t *self)
+{
+    localidletableQuiesce(self);
 
     while (local_heapq_idles_t_size(&(self->hqueue)) > 0)
     {

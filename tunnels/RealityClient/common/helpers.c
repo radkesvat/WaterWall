@@ -723,7 +723,7 @@ void realityclientTunnelstateDestroy(realityclient_tstate_t *ts)
 {
     if (ts->tls_tunnel != NULL)
     {
-        ts->tls_tunnel->onDestroy(ts->tls_tunnel);
+        tunnelOwnedChildDestroy(ts->tls_tunnel);
         ts->tls_tunnel = NULL;
     }
 

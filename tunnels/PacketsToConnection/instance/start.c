@@ -11,7 +11,8 @@ void ptcTunnelOnStart(tunnel_t *t)
     if (UNLIKELY(state->routes_v4 == NULL))
     {
         LOGF("PacketsToConnection: failed to allocate the worker route table");
-        abortProgramNow(1);
+        startupFailureRecord(1);
+        return;
     }
 
     state->owned_worker_count = state->route_worker_count;
@@ -21,7 +22,8 @@ void ptcTunnelOnStart(tunnel_t *t)
         memoryFree(state->routes_v4);
         state->routes_v4 = NULL;
         LOGF("PacketsToConnection: failed to allocate the owned-line registry");
-        abortProgramNow(1);
+        startupFailureRecord(1);
+        return;
     }
 
     if (UNLIKELY(! deviceLifetimeGateOpen(&state->output_gate)))
@@ -31,7 +33,8 @@ void ptcTunnelOnStart(tunnel_t *t)
         state->owned_lines = NULL;
         state->routes_v4   = NULL;
         LOGF("PacketsToConnection: failed to open the output admission gate");
-        abortProgramNow(1);
+        startupFailureRecord(1);
+        return;
     }
     if (UNLIKELY(! deviceLifetimeGateOpen(&state->next_gate)))
     {
@@ -41,7 +44,8 @@ void ptcTunnelOnStart(tunnel_t *t)
         state->owned_lines = NULL;
         state->routes_v4   = NULL;
         LOGF("PacketsToConnection: failed to open the next-side admission gate");
-        abortProgramNow(1);
+        startupFailureRecord(1);
+        return;
     }
     if (UNLIKELY(state->async_session == NULL || ! tunnelasyncsessionOpen(state->async_session)))
     {
@@ -52,6 +56,7 @@ void ptcTunnelOnStart(tunnel_t *t)
         state->owned_lines = NULL;
         state->routes_v4   = NULL;
         LOGF("PacketsToConnection: failed to open the asynchronous callback gate");
-        abortProgramNow(1);
+        startupFailureRecord(1);
+        return;
     }
 }

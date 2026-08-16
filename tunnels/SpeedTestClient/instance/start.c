@@ -13,26 +13,74 @@ static void speedtestclientStartStream(void *worker, void *arg1, void *arg2, voi
     discard arg3;
     memoryFree(stream_id_ptr);
 
+    if (atomicLoadRelaxed(&state->stopping))
+    {
+        return;
+    }
+
     line_t                   *l  = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), real_worker->wid);
     speedtestclient_lstate_t *ls = lineGetState(l, t);
 
     speedtestclientLinestateInitialize(ls, t, l, stream_id);
+    assert(state->owned_lines[stream_id] == NULL);
+    state->owned_lines[stream_id] = l;
+    ls->upstream_init_sent        = true;
 
     if (! withLineLocked(l, tunnelNextUpStreamInit, t))
     {
         return;
     }
 
-    lineScheduleDelayedTask(l, speedtestclientWatchdogTask, state->timeout_ms, t);
+    if (UNLIKELY(! lineScheduleDelayedTask(l, speedtestclientWatchdogTask, state->timeout_ms, t)))
+    {
+        speedtestclientFailLine(t, l, "failed to arm watchdog");
+    }
 }
 
-static void speedtestclientCleanupStartStream(void *arg1, void *arg2, void *arg3)
+static void speedtestclientCleanupStartStream(void *arg1, void *arg2, void *arg3, worker_message_cancel_reason_e reason)
 {
-    discard arg1;
-    discard arg3;
+    tunnel_t                 *t     = arg1;
+    speedtestclient_tstate_t *state = tunnelGetState(t);
+    discard                   arg3;
 
     memoryFree(arg2);
+    if (atomicLoadRelaxed(&state->stopping))
+    {
+        return;
+    }
+    if (reason != kWorkerMessageCancelResourceFailure)
+    {
+        return;
+    }
+    LOGF("SpeedTestClient: delayed stream creation failed after admission");
+    if (! requestProgramShutdown(1))
+    {
+        abortProgramNow(1);
+    }
 }
+
+static void speedtestclientRequiredStartFailure(const char *reason)
+{
+    LOGF("SpeedTestClient: %s", reason);
+    startupFailureRecord(1);
+}
+
+#ifdef WW_SPEEDTESTCLIENT_SHUTDOWN_TEST_SEAM
+void speedtestclientTestStartStream(void *worker, void *arg1, void *arg2, void *arg3)
+{
+    speedtestclientStartStream(worker, arg1, arg2, arg3);
+}
+
+void speedtestclientTestCleanupStartStream(void *arg1, void *arg2, void *arg3, worker_message_cancel_reason_e reason)
+{
+    speedtestclientCleanupStartStream(arg1, arg2, arg3, reason);
+}
+
+void speedtestclientTestRequiredStartFailure(const char *reason)
+{
+    speedtestclientRequiredStartFailure(reason);
+}
+#endif
 
 void speedtestclientTunnelOnStart(tunnel_t *t)
 {
@@ -44,21 +92,25 @@ void speedtestclientTunnelOnStart(tunnel_t *t)
         uint32_t *stream_id_ptr = memoryAllocate(sizeof(*stream_id_ptr));
         if (stream_id_ptr == NULL)
         {
-            LOGF("SpeedTestClient: failed to allocate startup stream id");
-            terminateProgram(1);
+            speedtestclientRequiredStartFailure("failed to allocate startup stream id");
             return;
         }
         *stream_id_ptr = stream_id;
 
         wid_t wid = (wid_t) (stream_id % chain->workers_count);
-        if (UNLIKELY(! sendWorkerMessageTimedWithCleanup(wid,
-                                                         speedtestclientStartStream,
-                                                         speedtestclientCleanupStartStream,
-                                                         state->start_delay_ms,
-                                                         t,
-                                                         stream_id_ptr,
-                                                         NULL)))
+        if (UNLIKELY(sendWorkerMessageTimedRetainOnRefusal(wid,
+                                                           speedtestclientStartStream,
+                                                           speedtestclientCleanupStartStream,
+                                                           state->start_delay_ms,
+                                                           t,
+                                                           stream_id_ptr,
+                                                           NULL) != kWorkerMessageSubmitAccepted))
         {
+            memoryFree(stream_id_ptr);
+            if (! atomicLoadRelaxed(&state->stopping))
+            {
+                startupFailureRecord(1);
+            }
             return;
         }
     }

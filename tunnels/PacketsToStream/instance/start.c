@@ -11,11 +11,6 @@ static void packetstostreamStartWorkerTimer(void *worker_ptr, void *arg1, void *
     tunnel_t                 *t      = arg1;
     packetstostream_tstate_t *ts     = tunnelGetState(t);
 
-    if (UNLIKELY(isApplicationTerminating()))
-    {
-        return;
-    }
-
     wtimer_t *timer = wtimerAdd(worker->loop, packetstostreamHeartbeatTimerCallback, ts->interval_ms, INFINITE);
     if (timer == NULL)
     {
@@ -47,11 +42,11 @@ void packetstostreamTunnelOnStart(tunnel_t *t)
 
     for (wid_t wi = 0; wi < getWorkersCount(); ++wi)
     {
-        if (UNLIKELY(
-                ! sendWorkerMessageForceQueueWithCleanup(wi, packetstostreamStartWorkerTimer, NULL, t, NULL, NULL)))
+        if (UNLIKELY(sendWorkerMessageForceQueueWithCleanup(wi, packetstostreamStartWorkerTimer, NULL, t, NULL, NULL) !=
+                     kWorkerMessageSubmitAccepted))
         {
             LOGF("PacketsToStream: failed to admit required timer startup on worker %u", (unsigned int) wi);
-            terminateProgram(1);
+            startupFailureRecord(1);
             return;
         }
     }

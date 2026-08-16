@@ -2,8 +2,8 @@
 
 #include "loggers/network_logger.h"
 
-void tcpoverudpserverTunnelDestroy(tunnel_t *t)
+void tcpoverudpserverTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context)
 {
+    discard context;
     tunnelDestroy(t);
 }
-

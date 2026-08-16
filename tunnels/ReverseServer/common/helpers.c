@@ -4,14 +4,14 @@
 
 void reverseserverAddConnectionU(reverseserver_thread_box_t *box, reverseserver_lstate_t *con)
 {
-    con->next   = box->u_root;
-    con->prev   = NULL;  // New head has no previous node
+    con->next = box->u_root;
+    con->prev = NULL; // New head has no previous node
     if (box->u_root)
     {
         box->u_root->prev = con;
     }
     box->u_root = con;
-    box->u_count += 1;
+    atomicIncRelaxed(&box->u_count);
 }
 void reverseserverRemoveConnectionU(reverseserver_thread_box_t *box, reverseserver_lstate_t *con)
 {
@@ -24,18 +24,18 @@ void reverseserverRemoveConnectionU(reverseserver_thread_box_t *box, reverseserv
         // con is the head, update root pointer
         box->u_root = con->next;
     }
-    
+
     if (con->next)
     {
         con->next->prev = con->prev;
     }
-    box->u_count -= 1;
+    atomicDecRelaxed(&box->u_count);
 }
 
 void reverseserverAddConnectionD(reverseserver_thread_box_t *box, reverseserver_lstate_t *con)
 {
-    con->next   = box->d_root;
-    con->prev   = NULL;  // New head has no previous node
+    con->next = box->d_root;
+    con->prev = NULL; // New head has no previous node
     if (box->d_root)
     {
         box->d_root->prev = con;
@@ -54,7 +54,7 @@ void reverseserverRemoveConnectionD(reverseserver_thread_box_t *box, reverseserv
         // con is the head, update root pointer
         box->d_root = con->next;
     }
-    
+
     if (con->next)
     {
         con->next->prev = con->prev;

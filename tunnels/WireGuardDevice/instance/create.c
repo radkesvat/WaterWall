@@ -105,18 +105,19 @@ static tunnel_t *createBaseTunnel(node_t *node)
     t->fnPauseU   = &wireguarddeviceTunnelUpStreamPause;
     t->fnResumeU  = &wireguarddeviceTunnelUpStreamResume;
 
-    t->fnInitD      = &wireguarddeviceTunnelDownStreamInit;
-    t->fnEstD       = &wireguarddeviceTunnelDownStreamEst;
-    t->fnFinD       = &wireguarddeviceTunnelDownStreamFinish;
-    t->fnPayloadD   = &wireguarddeviceTunnelDownStreamPayload;
-    t->fnPauseD     = &wireguarddeviceTunnelDownStreamPause;
-    t->fnResumeD    = &wireguarddeviceTunnelDownStreamResume;
-    t->onChain      = &wireguarddeviceTunnelOnChain;
-    t->onPrepare    = &wireguarddeviceTunnelOnPrepair;
-    t->onStart      = &wireguarddeviceTunnelOnStart;
-    t->onStop       = &wireguarddeviceTunnelOnStop;
-    t->onWorkerStop = &wireguarddeviceTunnelOnWorkerStop;
-    t->onDestroy    = &wireguarddeviceTunnelDestroy;
+    t->fnInitD         = &wireguarddeviceTunnelDownStreamInit;
+    t->fnEstD          = &wireguarddeviceTunnelDownStreamEst;
+    t->fnFinD          = &wireguarddeviceTunnelDownStreamFinish;
+    t->fnPayloadD      = &wireguarddeviceTunnelDownStreamPayload;
+    t->fnPauseD        = &wireguarddeviceTunnelDownStreamPause;
+    t->fnResumeD       = &wireguarddeviceTunnelDownStreamResume;
+    t->onChain         = &wireguarddeviceTunnelOnChain;
+    t->onPrepare       = &wireguarddeviceTunnelOnPrepair;
+    t->onStart         = &wireguarddeviceTunnelOnStart;
+    t->onStop          = &wireguarddeviceTunnelOnStop;
+    t->onWorkerQuiesce = &wireguarddeviceTunnelOnWorkerQuiesce;
+    t->onWorkerStop    = &wireguarddeviceTunnelOnWorkerStop;
+    t->onDestroy       = &wireguarddeviceTunnelDestroy;
 
     wgd_tstate_t *state = tunnelGetState(t);
     state->tunnel       = t;
@@ -590,6 +591,6 @@ tunnel_t *wireguarddeviceTunnelCreate(node_t *node)
     return t;
 
 fail:
-    wireguarddeviceTunnelDestroy(t);
+    wireguarddeviceTunnelDestroy(t, wwLifecycleStartupRollback());
     return NULL;
 }

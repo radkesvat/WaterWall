@@ -16,7 +16,8 @@ static void failInvalidPortValue(const char *field_name, int index)
         LOGF("JSON Error: TcpListener->settings->%s (positive-integer port field) : The data was empty or invalid",
              field_name);
     }
-    terminateProgram(1);
+    startupFailureRecord(1);
+    return;
 }
 
 static uint16_t parsePortNumber(const cJSON *port_json, const char *field_name, int index)
@@ -99,7 +100,8 @@ static void parsePortRange(tcplistener_tstate_t *state, const cJSON *port_range_
     {
         LOGF("JSON Error: TcpListener->settings->port-range (array[2] field) : min port must be lower than or equal "
              "to max port");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     state->listen_port_min = port_min;
@@ -114,7 +116,8 @@ static void parsePortSection(tcplistener_tstate_t *state, socket_filter_option_t
     if (port_json != NULL && port_range_json != NULL)
     {
         LOGF("JSON Error: TcpListener->settings : use either \"port\" or \"port-range\", not both");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     if (port_range_json != NULL)
@@ -137,7 +140,8 @@ static void parsePortSection(tcplistener_tstate_t *state, socket_filter_option_t
 
     LOGF("JSON Error: TcpListener->settings->port (positive-integer port or array of positive-integer ports field) : "
          "The data was empty or invalid");
-    terminateProgram(1);
+    startupFailureRecord(1);
+    return;
 }
 
 static bool hasMultiplePorts(const tcplistener_tstate_t *state, const socket_filter_option_t *filter_opt)
@@ -158,11 +162,12 @@ static void initializeTunnelCallbacks(tunnel_t *t)
     t->fnPauseD   = &tcplistenerTunnelDownStreamPause;
     t->fnResumeD  = &tcplistenerTunnelDownStreamResume;
 
-    t->onPrepare    = &tcplistenerTunnelOnPrepair;
-    t->onStart      = &tcplistenerTunnelOnStart;
-    t->onStop       = &tcplistenerTunnelOnStop;
-    t->onWorkerStop = &tcplistenerTunnelOnWorkerStop;
-    t->onDestroy    = &tcplistenerTunnelDestroy;
+    t->onPrepare        = &tcplistenerTunnelOnPrepair;
+    t->onStart          = &tcplistenerTunnelOnStart;
+    t->onQuiesceRequest = &tcplistenerTunnelOnQuiesceRequest;
+    t->onWorkerQuiesce  = &tcplistenerTunnelOnWorkerQuiesce;
+    t->onWorkerStop     = &tcplistenerTunnelOnWorkerStop;
+    t->onDestroy        = &tcplistenerTunnelDestroy;
 }
 
 static bool parseBasicSettings(tcplistener_tstate_t *state, const cJSON *settings)
@@ -271,14 +276,16 @@ static void parseIpMaskListEntry(const cJSON *list_item, vec_ipmask_t *target_li
         LOGF("JSON Error: TcpListener->settings->%s (array of strings field) index %d : The data was empty or invalid",
              list_name,
              index);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     int parse_result = parseIPWithSubnetMask(ip_str, &(ipmask.ip), &(ipmask.mask));
     if (parse_result != 4 && parse_result != 6)
     {
         LOGF("TcpListener: stopping due to %s address [%d] \"%s\" parse failure", list_name, index, ip_str);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     vec_ipmask_t_push(target_list, ipmask);

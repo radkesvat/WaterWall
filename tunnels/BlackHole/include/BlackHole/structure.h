@@ -24,10 +24,10 @@ enum blackhole_mode_e
     kBlackHoleModeActive  = 1
 };
 
-WW_EXPORT void         blackholeTunnelDestroy(tunnel_t *t);
+WW_EXPORT void         blackholeTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context);
 WW_EXPORT tunnel_t    *blackholeTunnelCreate(node_t *node);
 WW_EXPORT api_result_t blackholeTunnelApi(tunnel_t *instance, sbuf_t *message);
-void                   blackholeTunnelOnStop(tunnel_t *t);
+void                   blackholeTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context);
 
 void blackholeTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void blackholeTunnelUpStreamEst(tunnel_t *t, line_t *l);

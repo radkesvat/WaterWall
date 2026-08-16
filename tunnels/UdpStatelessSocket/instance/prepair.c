@@ -111,7 +111,8 @@ void udpstatelesssocketTunnelOnPrepair(tunnel_t *t)
         if (! getInterfaceIpString(state->interface_name, interface_ip, sizeof(interface_ip)))
         {
             LOGF("UdpStatelessSocket: could not get interface \"%s\" ip", state->interface_name);
-            terminateProgram(1);
+            startupFailureRecord(1);
+            return;
         }
         bind_address = interface_ip;
     }
@@ -121,7 +122,8 @@ void udpstatelesssocketTunnelOnPrepair(tunnel_t *t)
     if (! state->socket.io)
     {
         LOGF("UdpStatelessSocket: could not create udp socket");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     udpstatelesssocketRefreshLocalAddress(state->socket.io);
@@ -136,6 +138,7 @@ void udpstatelesssocketTunnelOnPrepair(tunnel_t *t)
         wioClose(state->socket.io);
         state->socket.io = NULL;
         LOGF("UdpStatelessSocket: could not register udp socket with the event loop");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 }

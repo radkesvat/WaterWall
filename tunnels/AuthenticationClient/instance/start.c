@@ -44,10 +44,6 @@ static void authenticationclientStartOnWorker0(void *worker_ptr, void *arg1, voi
     discard arg2;
     discard arg3;
 
-    if (UNLIKELY(isApplicationTerminating()))
-    {
-        return;
-    }
     if (UNLIKELY(worker->wid != 0))
     {
         LOGF("AuthenticationClient: startup control task ran on worker %u", (unsigned int) worker->wid);
@@ -88,9 +84,11 @@ void authenticationclientTunnelOnStart(tunnel_t *t)
         LOGD("AuthenticationClient: queueing startup control task on worker 0");
     }
 
-    if (UNLIKELY(! sendWorkerMessageForceQueueWithCleanup(0, authenticationclientStartOnWorker0, NULL, t, NULL, NULL)))
+    if (UNLIKELY(sendWorkerMessageForceQueueWithCleanup(0, authenticationclientStartOnWorker0, NULL, t, NULL, NULL) !=
+                 kWorkerMessageSubmitAccepted))
     {
         LOGF("AuthenticationClient: failed to admit required worker-0 startup control task");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 }

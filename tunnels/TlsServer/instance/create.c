@@ -97,7 +97,7 @@ static bool parseFallbackNode(tlsserver_tstate_t *ts, tunnel_t *t, node_t *node,
     if (! cJSON_IsString(fallback_json) || fallback_json->valuestring == NULL || fallback_json->valuestring[0] == '\0')
     {
         LOGF("JSON Error: TlsServer->settings->fallback-node-name (string field) must be a non-empty string");
-        tlsserverTunnelDestroy(t);
+        tlsserverTunnelDestroy(t, wwLifecycleStartupRollback());
         return false;
     }
 
@@ -105,14 +105,14 @@ static bool parseFallbackNode(tlsserver_tstate_t *ts, tunnel_t *t, node_t *node,
     if (fallback_node == NULL)
     {
         LOGF("TlsServer: fallback node \"%s\" was not found", fallback_json->valuestring);
-        tlsserverTunnelDestroy(t);
+        tlsserverTunnelDestroy(t, wwLifecycleStartupRollback());
         return false;
     }
 
     if (fallback_node == node)
     {
         LOGF("TlsServer: fallback node must not point back to TlsServer itself");
-        tlsserverTunnelDestroy(t);
+        tlsserverTunnelDestroy(t, wwLifecycleStartupRollback());
         return false;
     }
 
@@ -132,7 +132,7 @@ static bool validateFallbackCompatibility(tlsserver_tstate_t *ts, tunnel_t *t)
         LOGF(
             "TlsServer: fallback-node-name/fallback-node/fallback cannot be combined with sni because mismatched valid "
             "ClientHellos would be routed to fallback as plaintext");
-        tlsserverTunnelDestroy(t);
+        tlsserverTunnelDestroy(t, wwLifecycleStartupRollback());
         return false;
     }
 
@@ -144,7 +144,7 @@ static bool parseRequiredString(char **dest, const cJSON *settings, const char *
     if (! getStringFromJsonObject(dest, settings, key) || stringLength(*dest) == 0)
     {
         LOGF("JSON Error: TlsServer->settings->%s (string field) : The data was empty or invalid", key);
-        tlsserverTunnelDestroy(t);
+        tlsserverTunnelDestroy(t, wwLifecycleStartupRollback());
         return false;
     }
 
@@ -161,7 +161,7 @@ static bool parseOptionalString(char **dest, const cJSON *settings, const char *
     if (stringLength(*dest) == 0)
     {
         LOGF("JSON Error: TlsServer->settings->%s (string field) : The data was empty or invalid", key);
-        tlsserverTunnelDestroy(t);
+        tlsserverTunnelDestroy(t, wwLifecycleStartupRollback());
         return false;
     }
 
@@ -216,7 +216,7 @@ static bool parseTlsVersionSetting(const cJSON *settings, const char *key, int *
     {
         LOGF("JSON Error: TlsServer->settings->%s (string field) : Unsupported TLS version \"%s\"", key, value);
         memoryFree(value);
-        tlsserverTunnelDestroy(t);
+        tlsserverTunnelDestroy(t, wwLifecycleStartupRollback());
         return false;
     }
 
@@ -237,7 +237,7 @@ static bool parseSessionCacheSetting(tlsserver_tstate_t *ts, const cJSON *settin
         if (ts->session_cache_size < 0)
         {
             LOGF("JSON Error: TlsServer->settings->session-cache-size (number field) : The value was invalid");
-            tlsserverTunnelDestroy(t);
+            tlsserverTunnelDestroy(t, wwLifecycleStartupRollback());
             return false;
         }
         return true;
@@ -263,7 +263,7 @@ static bool parseSessionCacheSetting(tlsserver_tstate_t *ts, const cJSON *settin
             {
                 LOGF("JSON Error: TlsServer->settings->session-cache (string field) : Invalid builtin cache size");
                 memoryFree(value);
-                tlsserverTunnelDestroy(t);
+                tlsserverTunnelDestroy(t, wwLifecycleStartupRollback());
                 return false;
             }
             ts->session_cache_size = (int) sz;
@@ -272,7 +272,7 @@ static bool parseSessionCacheSetting(tlsserver_tstate_t *ts, const cJSON *settin
         {
             LOGF("JSON Error: TlsServer->settings->session-cache (string field) : Unsupported value \"%s\"", value);
             memoryFree(value);
-            tlsserverTunnelDestroy(t);
+            tlsserverTunnelDestroy(t, wwLifecycleStartupRollback());
             return false;
         }
     }
@@ -280,14 +280,14 @@ static bool parseSessionCacheSetting(tlsserver_tstate_t *ts, const cJSON *settin
     {
         LOGF("JSON Error: TlsServer->settings->session-cache (string field) : shared cache is not supported yet");
         memoryFree(value);
-        tlsserverTunnelDestroy(t);
+        tlsserverTunnelDestroy(t, wwLifecycleStartupRollback());
         return false;
     }
     else
     {
         LOGF("JSON Error: TlsServer->settings->session-cache (string field) : Unsupported value \"%s\"", value);
         memoryFree(value);
-        tlsserverTunnelDestroy(t);
+        tlsserverTunnelDestroy(t, wwLifecycleStartupRollback());
         return false;
     }
 
@@ -297,7 +297,7 @@ static bool parseSessionCacheSetting(tlsserver_tstate_t *ts, const cJSON *settin
     if (ts->session_cache_size < 0)
     {
         LOGF("JSON Error: TlsServer->settings->session-cache-size (number field) : The value was invalid");
-        tlsserverTunnelDestroy(t);
+        tlsserverTunnelDestroy(t, wwLifecycleStartupRollback());
         return false;
     }
 
@@ -333,7 +333,7 @@ static bool parseAlpnList(struct tlsserver_alpn_item_s **out, unsigned int *out_
     if (! cJSON_IsArray(alpns))
     {
         LOGF("JSON Error: TlsServer->settings->%s (array field) : The value was invalid", key);
-        tlsserverTunnelDestroy(t);
+        tlsserverTunnelDestroy(t, wwLifecycleStartupRollback());
         return false;
     }
 
@@ -370,7 +370,7 @@ static bool parseAlpnList(struct tlsserver_alpn_item_s **out, unsigned int *out_
             memoryFree(name);
             *out_length = (unsigned int) i;
             LOGF("JSON Error: TlsServer->settings->%s[%d] : The value was empty or invalid", key, i);
-            tlsserverTunnelDestroy(t);
+            tlsserverTunnelDestroy(t, wwLifecycleStartupRollback());
             return false;
         }
 
@@ -414,7 +414,7 @@ static bool parseAlpns(tlsserver_tstate_t *ts, const cJSON *settings, tunnel_t *
     if (ts->alpns_length > 0 && ts->select_alpns_length > 0)
     {
         LOGF("TlsServer: alpns and select-alpns cannot be combined");
-        tlsserverTunnelDestroy(t);
+        tlsserverTunnelDestroy(t, wwLifecycleStartupRollback());
         return false;
     }
 
@@ -450,14 +450,14 @@ static bool parseTlsDefaults(tlsserver_tstate_t *ts, const cJSON *settings, tunn
     if (ts->session_timeout < 0)
     {
         LOGF("JSON Error: TlsServer->settings->session-timeout (number field) : The value was invalid");
-        tlsserverTunnelDestroy(t);
+        tlsserverTunnelDestroy(t, wwLifecycleStartupRollback());
         return false;
     }
 
     if (handshake_timeout_ms < 0)
     {
         LOGF("JSON Error: TlsServer->settings->handshake-timeout-ms (number field) : The value was invalid");
-        tlsserverTunnelDestroy(t);
+        tlsserverTunnelDestroy(t, wwLifecycleStartupRollback());
         return false;
     }
     ts->handshake_timeout_ms = (uint32_t) handshake_timeout_ms;
@@ -465,7 +465,7 @@ static bool parseTlsDefaults(tlsserver_tstate_t *ts, const cJSON *settings, tunn
     if (fallback_intentional_delay_ms < 0)
     {
         LOGF("JSON Error: TlsServer->settings->fallback-intentional-delay-ms (number field) : The value was invalid");
-        tlsserverTunnelDestroy(t);
+        tlsserverTunnelDestroy(t, wwLifecycleStartupRollback());
         return false;
     }
     ts->fallback_intentional_delay_ms = (uint32_t) fallback_intentional_delay_ms;
@@ -474,7 +474,7 @@ static bool parseTlsDefaults(tlsserver_tstate_t *ts, const cJSON *settings, tunn
     {
         LOGF("JSON Error: TlsServer->settings->fallback-intentional-delay-jitter-ms (number field) : The value was "
              "invalid");
-        tlsserverTunnelDestroy(t);
+        tlsserverTunnelDestroy(t, wwLifecycleStartupRollback());
         return false;
     }
     ts->fallback_intentional_delay_jitter_ms = (uint32_t) fallback_intentional_delay_jitter_ms;
@@ -493,7 +493,7 @@ static bool parseTlsDefaults(tlsserver_tstate_t *ts, const cJSON *settings, tunn
     if (ts->min_proto_version > ts->max_proto_version)
     {
         LOGF("TlsServer: min-version cannot be greater than max-version");
-        tlsserverTunnelDestroy(t);
+        tlsserverTunnelDestroy(t, wwLifecycleStartupRollback());
         return false;
     }
 
@@ -630,7 +630,7 @@ tunnel_t *tlsserverTunnelCreate(node_t *node)
     if (! checkJsonIsObjectAndHasChild(settings))
     {
         LOGF("JSON Error: TlsServer->settings (object field) : The object was empty or invalid");
-        tlsserverTunnelDestroy(t);
+        tlsserverTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
@@ -640,7 +640,7 @@ tunnel_t *tlsserverTunnelCreate(node_t *node)
     if (! tlsrecordshapingParse(settings, kTlsRecordShapingSenderServer, &ts->record_shaping, shaping_error))
     {
         LOGF("TlsServer: invalid tls13-record-shaping configuration: %s", shaping_error);
-        tlsserverTunnelDestroy(t);
+        tlsserverTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
@@ -695,7 +695,7 @@ tunnel_t *tlsserverTunnelCreate(node_t *node)
         if (ts->threadlocal_ssl_contexts[i] == NULL)
         {
             LOGF("TlsServer: failed to create OpenSSL server context for worker %d", i);
-            tlsserverTunnelDestroy(t);
+            tlsserverTunnelDestroy(t, wwLifecycleStartupRollback());
             return NULL;
         }
         if (ts->verbose)

@@ -177,20 +177,22 @@ uint32_t deviceReaderSessionBegin(device_reader_session_t *session)
     return generation;
 }
 
-/*
- * Closes the generation for both producers: the workers this session posts to,
- * and the reader thread that classifies fragments before it posts anything.
- *
- * Deliberately waits on neither the reader thread nor a producer gate. The fatal
- * partial-publication path in deviceFlowAffinityPostBatch() calls this from the
- * reader thread itself, so anything End waited for there would be a self-join.
- * Closing the fragment generation under the table's own lock is enough: an offer
- * already inside it finishes, and every later one is refused.
- */
+/* Convenience form for callers that are allowed to wait for admitted delivery. */
 void deviceReaderSessionEnd(device_reader_session_t *session)
 {
-    atomicStoreExplicit(&session->producer_admission, false, memory_order_release);
-    deviceLifetimeGateCloseAndQuiesce(&session->delivery_gate, deviceLifetimeYieldThread, NULL);
+    deviceReaderSessionEndRequest(session);
+    deviceReaderSessionEndWait(session);
+}
+
+void deviceReaderSessionEndRequest(device_reader_session_t *session)
+{
+    atomicStoreExplicit(&session->producer_admission, false, memory_order_relaxed);
+    deviceLifetimeGateClose(&session->delivery_gate);
+}
+
+void deviceReaderSessionEndWait(device_reader_session_t *session)
+{
+    deviceLifetimeGateWaitQuiesced(&session->delivery_gate, deviceLifetimeYieldThread, NULL);
     /* A late receipt holds the delivery gate across its final admission, lwIP
      * input, and exact residue query. Closing the fragment generation only after
      * those entrants leave makes "may enter" atomic with generation shutdown. */
@@ -279,8 +281,9 @@ void deviceReaderSessionMessageReceived(void *worker, void *arg1, void *arg2, vo
     deviceReaderSessionUnref(session);
 }
 
-void deviceReaderSessionCleanupPostedMessage(void *arg1, void *arg2, void *arg3)
+void deviceReaderSessionCleanupPostedMessage(void *arg1, void *arg2, void *arg3, worker_message_cancel_reason_e reason)
 {
+    discard                  reason;
     device_reader_message_t *message = arg1;
     discard                  arg2;
     discard                  arg3;
@@ -317,8 +320,9 @@ bool deviceReaderSessionPostTracked(device_reader_session_t *session, wid_t targ
     assert(count > 0);
     assert(count <= session->batch_capacity);
 
+    // Acquires the generation and affinity state published when admission opened.
     if (UNLIKELY(! atomicLoadExplicit(&session->producer_admission, memory_order_acquire) ||
-                 isApplicationTerminating() || GSTATE.shortcut_loops == NULL))
+                 GSTATE.shortcut_loops == NULL))
     {
         for (unsigned int i = 0; i < count; ++i)
         {
@@ -348,6 +352,10 @@ bool deviceReaderSessionPostTracked(device_reader_session_t *session, wid_t targ
     }
 
     deviceReaderSessionRef(session);
-    return sendWorkerMessageForceQueueWithCleanup(
-        target_wid, deviceReaderSessionMessageReceived, deviceReaderSessionCleanupPostedMessage, message, NULL, NULL);
+    return sendWorkerMessageForceQueueWithCleanup(target_wid,
+                                                  deviceReaderSessionMessageReceived,
+                                                  deviceReaderSessionCleanupPostedMessage,
+                                                  message,
+                                                  NULL,
+                                                  NULL) == kWorkerMessageSubmitAccepted;
 }

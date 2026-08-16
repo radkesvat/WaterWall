@@ -43,13 +43,15 @@ typedef enum
     WLOOP_STATUS_DESTROY
 } wloop_status_e;
 
-enum
+typedef enum wloop_run_result_e
 {
-    kWLoopRunOk                  = 0,
+    kWLoopRunNoEvents            = 0,
+    kWLoopRunQuiesced            = 1,
     kWLoopRunErrorNull           = -1,
     kWLoopRunErrorAlreadyRunning = -2,
-    kWLoopRunErrorWakeupInit     = -3
-};
+    kWLoopRunErrorWakeupInit     = -3,
+    kWLoopRunErrorBackend        = -4
+} wloop_run_result_e;
 
 typedef enum
 {
@@ -153,7 +155,7 @@ WW_EXPORT void wloopDestroy(wloop_t **pp);
 WW_EXPORT int wloopProcessEvents(wloop_t *loop, int timeout_ms DEFAULT(0));
 
 // NOTE: when no active events, loop will quit if WLOOP_FLAG_QUIT_WHEN_NO_ACTIVE_EVENTS set.
-WW_EXPORT int wloopRun(wloop_t *loop);
+WW_EXPORT wloop_run_result_e wloopRun(wloop_t *loop);
 // NOTE: wloopStop called in loop-thread just set flag to quit in next loop,
 // if called in other thread, it will wakeup loop-thread from blocking poll system call,
 // then you should join loop thread to safely exit loop thread.
@@ -166,27 +168,37 @@ WW_EXPORT wloop_status_e wloopStatus(wloop_t *loop);
 /**
  * @brief Dedicated shutdown-control stop request. Thread-safe.
  *
- * Publishes the loop's level-triggered atomic stop_requested flag with release
- * ordering and ensures that the poller has a pending eventfd/pipe/socketpair
- * wake. Repeated requests coalesce without writing additional wake tokens. It
- * does not enqueue or allocate an application callback and is not subject to
- * the event-admission gate that rejects normal work during shutdown, so it
- * stays usable while the application is stopping.
+ * Closes normal admission and publishes the level-triggered stop request while
+ * holding the admission lock, then ensures that the poller has a pending
+ * eventfd/pipe/socketpair wake. Repeated requests coalesce without writing
+ * additional wake tokens.
  *
- * The loop checks the flag with acquire ordering before starting another
- * iteration, which makes a request issued before wloopRun() started equally
- * effective. Repeated requests are idempotent.
+ * The control lock, not the relaxed atomic flag, linearizes shutdown against
+ * creation of new normal roots. A request issued before wloopRun() starts is
+ * still observed, and repeated requests are idempotent.
  *
  * @return false only when the immediate wake could not be armed. The atomic
  * stop condition remains published and is still observed by the loop's bounded
  * polling/check path.
  */
-WW_EXPORT bool wloopRequestStop(wloop_t *loop);
+WW_EXPORT bool wloopRequestQuiesce(wloop_t *loop);
 
 /**
  * @brief Whether a shutdown-control stop was requested for this loop.
  */
-WW_EXPORT bool wloopStopRequested(wloop_t *loop);
+WW_EXPORT bool wloopQuiesceRequested(wloop_t *loop);
+
+/** Close normal event/timer/idle admission without waiting. */
+WW_EXPORT bool wloopCloseNormalAdmission(wloop_t *loop);
+
+/** Whether another normal callback root may begin on this loop. */
+WW_EXPORT bool wloopNormalDispatchAllowed(wloop_t *loop);
+
+/** Settle loop-owned pending normal work after dispatch has returned. */
+WW_EXPORT void wloopQuiesceNormalWork(wloop_t *loop);
+
+/** Whether the current call tree is inside a normal callback admitted by this exact loop. */
+WW_EXPORT bool wloopCurrentThreadInNormalCallback(wloop_t *loop);
 
 WW_EXPORT void     wloopUpdateTime(wloop_t *loop);
 WW_EXPORT uint64_t wloopNow(wloop_t *loop);            // s
@@ -219,32 +231,6 @@ WW_EXPORT long wloopGetWID(wloop_t *loop);
 // userdata
 WW_EXPORT void  wloopSetUserData(wloop_t *loop, void *userdata);
 WW_EXPORT void *wloopGetUserData(wloop_t *loop);
-
-// custom_event
-/*
- * wevent_t ev;
- * memorySet(&ev, 0, sizeof(wevent_t));
- * ev.event_type = (wevent_type_e)(WEVENT_TYPE_CUSTOM + 1);
- * ev.cb = custom_event_cb;
- * ev.userdata = userdata;
- * wloopPostEvent(loop, &ev);
- */
-// NOTE: wloopPostEvent is thread-safe, used to post an event from another
-// thread to the loop thread. The event is copied into a FIFO queue, and its
-// nonblocking transport wake may be coalesced with other accepted events. Every
-// accepted event is covered by a current or newly armed wake. It rejects new
-// work once the application is stopping.
-WW_EXPORT bool wloopPostEvent(wloop_t *loop, wevent_t *ev);
-
-/**
- * @brief Post a shutdown-control event, bypassing the stopping-state gate.
- *
- * Same thread-safety, copied-event, FIFO, and coalesced-wake contract as
- * wloopPostEvent (so a stack object is fine), but it is admitted even after
- * normal application event posting has been closed. Reserved for
- * shutdown-control traffic that must not be discarded during teardown.
- */
-WW_EXPORT bool wloopPostControlEvent(wloop_t *loop, wevent_t *ev);
 
 #ifdef WATERWALL_WLOOP_TEST_HOOKS
 typedef enum wloop_test_wake_backend_e
@@ -283,7 +269,14 @@ WW_EXPORT wtimer_t *wtimerAddPeriod(wloop_t *loop, wtimer_cb cb, int8_t minute D
                                     uint32_t repeat DEFAULT(INFINITE));
 
 WW_EXPORT void wtimerDelete(wtimer_t *timer);
-WW_EXPORT void wtimerReset(wtimer_t *timer, uint32_t timeout_ms DEFAULT(0));
+/*
+ * A due one-shot is already detached and marked for reclamation before its
+ * callback runs. A successful reset revives it. If reset is refused, the
+ * callback must clear every owner slot and represented work, then return
+ * without deleting or retaining the executing timer. A callback suppressed by
+ * quiescence is retained separately for owner-worker cleanup.
+ */
+WW_EXPORT bool wtimerReset(wtimer_t *timer, uint32_t timeout_ms DEFAULT(0));
 
 // io
 //-----------------------low-level apis---------------------------------------
@@ -327,26 +320,7 @@ WW_EXPORT wio_t *wioGet(wloop_t *loop, int fd);
 WW_EXPORT int    wioAdd(wio_t *io, wio_cb cb, int events DEFAULT(WW_READ));
 WW_EXPORT int    wioDel(wio_t *io, int events DEFAULT(WW_RDWR));
 
-// NOTE: io detach from old loop and attach to new loop
-/* @see examples/multi-thread/one-acceptor-multi-workers.c
-void new_conn_event(wevent_t* ev) {
-    wloop_t* loop = ev->loop;
-    wio_t* io = (wio_t*)weventGetUserdata(ev);
-    wioAttach(loop, io);
-}
-
-void on_accpet(wio_t* io) {
-    wioDetach(io);
-
-    wloop_t* worker_loop = get_one_loop();
-    wevent_t ev;
-    memorySet(&ev, 0, sizeof(ev));
-    ev.loop = worker_loop;
-    ev.cb = new_conn_event;
-    ev.userdata = io;
-    wloopPostEvent(worker_loop, &ev);
-}
- */
+// NOTE: io detach from old loop and attach to new loop.
 WW_EXPORT void wioDetach(/*wloop_t* loop,*/ wio_t *io);
 WW_EXPORT void wioAttach(wloop_t *loop, wio_t *io);
 // Release a Waterwall watcher for an fd owned by another subsystem.
@@ -447,7 +421,8 @@ WW_EXPORT int wioReadRemain(wio_t *io);
 #define wioReadBytes(io, len)  wioReadUntillLength(io, len)
 #define wioReadUntill(io, len) wioReadUntillLength(io, len)
 
-// NOTE: wioWrite is thread-safe, locked by recursive_mutex, allow to be called by other threads.
+// Independent writes may be called from another thread, but callers must serialize writes for one
+// wio_t. The backend admits each call against the target loop and owns the transferred buffer.
 // wio_try_write => wioAdd(io, WW_WRITE) => write => wwrite_cb
 // NOTE: The internal retry queue is a stream (TCP) behavior only. For UDP/raw io,
 // wioWrite snapshots the current default peer address and delegates to
@@ -475,7 +450,7 @@ WW_EXPORT int wioWriteDatagram(wio_t *io, sbuf_t *buf, const sockaddr_u *peer_ad
 // NOTE: wioClose is thread-safe, wioCloseAsync will be called actually in other thread.
 // wioDel(io, WW_RDWR) => close => wclose_cb
 WW_EXPORT int wioClose(wio_t *io);
-// NOTE: wloopPostEvent(wio_close_event)
+// Cross-thread close uses the internal cleanup-control queue.
 WW_EXPORT int wioCloseAsync(wio_t *io);
 
 //------------------high-level apis-------------------------------------------

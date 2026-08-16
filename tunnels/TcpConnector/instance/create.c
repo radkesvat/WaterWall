@@ -13,12 +13,13 @@ static void initializeTunnelCallbacks(tunnel_t *t)
     t->fnPauseU   = &tcpconnectorTunnelUpStreamPause;
     t->fnResumeU  = &tcpconnectorTunnelUpStreamResume;
 
-    t->onPrepare    = &tcpconnectorTunnelOnPrepair;
-    t->onChain      = &tcpconnectorTunnelOnChain;
-    t->onStart      = &tcpconnectorTunnelOnStart;
-    t->onStop       = &tcpconnectorTunnelOnStop;
-    t->onWorkerStop = &tcpconnectorTunnelOnWorkerStop;
-    t->onDestroy    = &tcpconnectorTunnelDestroy;
+    t->onPrepare       = &tcpconnectorTunnelOnPrepair;
+    t->onChain         = &tcpconnectorTunnelOnChain;
+    t->onStart         = &tcpconnectorTunnelOnStart;
+    t->onStop          = &tcpconnectorTunnelOnStop;
+    t->onWorkerQuiesce = &tcpconnectorTunnelOnWorkerQuiesce;
+    t->onWorkerStop    = &tcpconnectorTunnelOnWorkerStop;
+    t->onDestroy       = &tcpconnectorTunnelDestroy;
 }
 
 static bool tcpconnectorAddDomainStrategySetting(cJSON *settings, enum domain_strategy strategy)
@@ -242,7 +243,8 @@ static const cJSON *getDestinationArraySettings(const cJSON *settings)
     if (jaddresses != NULL && jadresses != NULL)
     {
         LOGF("JSON Error: TcpConnector->settings : Use either \"addresses\" or \"adresses\", not both");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return NULL;
     }
 
     if (jaddresses != NULL)
@@ -258,7 +260,8 @@ static void configureIpv4RangeValue(uint64_t *outbound_ip_range, int prefix_leng
     if (prefix_length > 32)
     {
         LOGF("TcpConnector: outbound ip/subnet range is invalid");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
     else if (prefix_length == 32)
     {
@@ -275,7 +278,8 @@ static void configureIpv6RangeValue(uint64_t *outbound_ip_range, int prefix_leng
     if (64 > prefix_length)
     {
         LOGF("TcpConnector: outbound ip/subnet range is invalid");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
     else if (prefix_length == 64)
     {
@@ -328,7 +332,8 @@ static bool parseDestinationAddress(dynamic_value_t *dest_addr_selected, address
             if (prefix_length < 0)
             {
                 LOGF("TcpConnector: outbound ip/subnet range is invalid");
-                terminateProgram(1);
+                startupFailureRecord(1);
+                return false;
             }
 
             if (constant_dest_addr->ip_address.type == IPADDR_TYPE_V4)
@@ -338,6 +343,10 @@ static bool parseDestinationAddress(dynamic_value_t *dest_addr_selected, address
             else if (constant_dest_addr->ip_address.type == IPADDR_TYPE_V6)
             {
                 configureIpv6RangeValue(outbound_ip_range, prefix_length);
+            }
+            if (UNLIKELY(startupFailurePending()))
+            {
+                return false;
             }
         }
     }
@@ -410,14 +419,16 @@ static bool parseDestinationArray(tcpconnector_tstate_t *state, const cJSON *set
     if (! cJSON_IsArray(jaddresses) || cJSON_GetArraySize(jaddresses) <= 0)
     {
         LOGF("JSON Error: TcpConnector->settings->addresses (array field) : The value was empty or invalid");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return false;
     }
 
     if (cJSON_GetObjectItemCaseSensitive(settings, "address") != NULL ||
         cJSON_GetObjectItemCaseSensitive(settings, "port") != NULL)
     {
         LOGF("JSON Error: TcpConnector->settings : Use either \"address\"/\"port\" or \"addresses\", not both");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return false;
     }
 
     const int destination_count = cJSON_GetArraySize(jaddresses);
@@ -433,7 +444,8 @@ static bool parseDestinationArray(tcpconnector_tstate_t *state, const cJSON *set
             LOGF("JSON Error: TcpConnector->settings->addresses[%d] (object field) : The value was empty or invalid",
                  index);
             cleanupDestinationArray(state);
-            terminateProgram(1);
+            startupFailureRecord(1);
+            return false;
         }
 
         tcpconnector_destination_t *destination = &state->destinations[index];
@@ -475,15 +487,21 @@ tunnel_t *tcpconnectorTunnelCreate(node_t *node)
 
     if (! parseBasicSettings(state, settings))
     {
-        tcpconnectorTunnelDestroy(t);
+        tcpconnectorTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
-    if (getDestinationArraySettings(settings) != NULL)
+    const cJSON *destination_array_settings = getDestinationArraySettings(settings);
+    if (UNLIKELY(startupFailurePending()))
+    {
+        tcpconnectorTunnelDestroy(t, wwLifecycleStartupRollback());
+        return NULL;
+    }
+    if (destination_array_settings != NULL)
     {
         if (! parseDestinationArray(state, settings))
         {
-            tcpconnectorTunnelDestroy(t);
+            tcpconnectorTunnelDestroy(t, wwLifecycleStartupRollback());
             return NULL;
         }
     }
@@ -495,21 +513,21 @@ tunnel_t *tcpconnectorTunnelCreate(node_t *node)
                                       settings,
                                       "TcpConnector->settings"))
         {
-            tcpconnectorTunnelDestroy(t);
+            tcpconnectorTunnelDestroy(t, wwLifecycleStartupRollback());
             return NULL;
         }
 
         if (! parseDestinationPort(
                 &state->dest_port_selected, &state->constant_dest_addr, settings, "TcpConnector->settings"))
         {
-            tcpconnectorTunnelDestroy(t);
+            tcpconnectorTunnelDestroy(t, wwLifecycleStartupRollback());
             return NULL;
         }
     }
 
     if (! tcpconnectorCreateInternalDomainResolver(t, node))
     {
-        tcpconnectorTunnelDestroy(t);
+        tcpconnectorTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 

@@ -89,7 +89,7 @@ void tcplistenerOnInboundConnected(wevent_t *ev)
     tunnel_t               *t    = data->tunnel;
     tcplistener_tstate_t   *ts   = tunnelGetState(t);
 
-    if (UNLIKELY(atomicLoadExplicit(&ts->stopping, memory_order_acquire)))
+    if (UNLIKELY(atomicLoadRelaxed(&ts->stopping)))
     {
         LOGD("TcpListener: rejecting accepted FD:%x because tunnel is stopping", wioGetFD(io));
         wioFree(io);

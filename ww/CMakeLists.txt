@@ -120,7 +120,9 @@ add_library(ww STATIC
     event/select.c
     
     # Instance management
+    instance/application_shutdown.c
     instance/global_state.c
+    instance/startup_status.c
     instance/worker.c
     instance/worker_messages.c
     instance/wversion.c

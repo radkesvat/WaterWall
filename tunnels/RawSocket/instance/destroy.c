@@ -2,8 +2,9 @@
 
 #include "loggers/network_logger.h"
 
-void rawsocketDestroy(tunnel_t *t)
+void rawsocketDestroy(tunnel_t *t, const ww_lifecycle_context_t *context)
 {
+    discard             context;
     rawsocket_tstate_t *state = tunnelGetState(t);
 
     if (state->capture_ranges)

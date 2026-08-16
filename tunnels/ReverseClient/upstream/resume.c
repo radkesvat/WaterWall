@@ -1,9 +1,7 @@
 #include "structure.h"
 
-#include "loggers/network_logger.h"
-
 void reverseclientTunnelUpStreamResume(tunnel_t *t, line_t *l)
 {
-    reverseclient_lstate_t *dls = lineGetState(l, t);
-    tunnelNextUpStreamResume(t, dls->u);
+    reverseclient_pair_t *pair = ((reverseclient_lstate_t *) lineGetState(l, t))->pair;
+    tunnelNextUpStreamResume(t, pair->u);
 }

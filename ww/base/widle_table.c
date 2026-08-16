@@ -23,6 +23,7 @@ enum
 
 static uint64_t idleItemGetExpireAt(const idle_item_t *item);
 static void     idleItemKeepExpireAtForAtleast(idle_item_t *item, uint64_t expire_at_ms);
+static void     idletableEraseItemFromMapLocked(idle_table_t *table, idle_item_t *item);
 
 #define i_type                    heapq_idles_t
 #define i_key                     idle_item_t *
@@ -59,6 +60,66 @@ typedef MSVC_ATTR_ALIGNED_LINE_CACHE struct idle_table_s
 } GNU_ATTR_ALIGNED_LINE_CACHE idle_table_t;
 
 void idleCallBack(wtimer_t *timer);
+#ifdef WW_IDLE_TABLE_TEST_SEAM
+void idletableTestRefuseNextInitialStagingReserve(void);
+void idletableTestRefuseNextStagingGrowth(void);
+void idletableTestRefuseNextCreateHeapPublication(void);
+
+static bool refuse_next_initial_staging_reserve;
+static bool refuse_next_staging_growth;
+static bool refuse_next_create_heap_publication;
+
+void idletableTestRefuseNextInitialStagingReserve(void)
+{
+    refuse_next_initial_staging_reserve = true;
+}
+
+void idletableTestRefuseNextStagingGrowth(void)
+{
+    refuse_next_staging_growth = true;
+}
+
+void idletableTestRefuseNextCreateHeapPublication(void)
+{
+    refuse_next_create_heap_publication = true;
+}
+#endif
+
+static bool idletableTestTakeInitialStagingReserveRefusal(void)
+{
+#ifdef WW_IDLE_TABLE_TEST_SEAM
+    if (refuse_next_initial_staging_reserve)
+    {
+        refuse_next_initial_staging_reserve = false;
+        return true;
+    }
+#endif
+    return false;
+}
+
+static bool idletableTestTakeStagingGrowthRefusal(void)
+{
+#ifdef WW_IDLE_TABLE_TEST_SEAM
+    if (refuse_next_staging_growth)
+    {
+        refuse_next_staging_growth = false;
+        return true;
+    }
+#endif
+    return false;
+}
+
+static bool idletableTestTakeCreateHeapPublicationRefusal(void)
+{
+#ifdef WW_IDLE_TABLE_TEST_SEAM
+    if (refuse_next_create_heap_publication)
+    {
+        refuse_next_create_heap_publication = false;
+        return true;
+    }
+#endif
+    return false;
+}
 
 // Detaching the table hands the item memory to whoever observes NULL, and that observer frees it
 // without holding the mutex. The release/acquire pair is what keeps the detaching thread's last
@@ -92,6 +153,20 @@ static bool idleItemHasWorkerMessagePending(const idle_item_t *item)
 static void idleItemSetWorkerMessagePending(idle_item_t *item, bool pending)
 {
     atomicStoreExplicit(&(item->worker_message_pending), pending, memory_order_release);
+}
+
+static void idletableRestoreItemToHeapLocked(idle_table_t *table, idle_item_t *item)
+{
+    if (UNLIKELY(heapq_idles_t_size(&table->hqueue) >= heapq_idles_t_capacity(&table->hqueue)))
+    {
+        assert(false && "IdleTable pending delivery lost its reserved restoration slot");
+        abortProgramNow(1);
+    }
+    if (UNLIKELY(heapq_idles_t_push(&table->hqueue, item) == NULL))
+    {
+        assert(false && "IdleTable restoration must not allocate");
+        abortProgramNow(1);
+    }
 }
 
 // The expiration stamp gates no other memory: every reader wants the timestamp itself and nothing
@@ -172,9 +247,12 @@ idle_item_t *idletableCreateItem(idle_table_t *self, hash_t key, void *userdata,
 {
     assert(self);
     idle_item_t *item = memoryAllocate(sizeof(idle_item_t));
-    mutexLock(&(self->mutex));
+    if (UNLIKELY(item == NULL))
+    {
+        return NULL;
+    }
 
-    *item = (idle_item_t) {.expire_at_ms           = wloopNowMS(self->loop) + age_ms,
+    *item = (idle_item_t) {.expire_at_ms           = getTimeOfDayMS() + age_ms,
                            .hash                   = key,
                            .wid                    = wid,
                            .userdata               = userdata,
@@ -182,6 +260,8 @@ idle_item_t *idletableCreateItem(idle_table_t *self, hash_t key, void *userdata,
                            .table                  = (uintptr_t) self,
                            .removed                = false,
                            .worker_message_pending = false};
+
+    mutexLock(&(self->mutex));
 
     // LOGD("add to expire on idle table, wid: %ld, hash: %lx", wid, key);
     if (! hmap_idles_t_insert(&(self->hmap), item->hash, item).inserted)
@@ -191,7 +271,51 @@ idle_item_t *idletableCreateItem(idle_table_t *self, hash_t key, void *userdata,
         memoryFree(item);
         return NULL;
     }
-    heapq_idles_t_push(&(self->hqueue), item);
+
+    const isize_t heap_size = heapq_idles_t_size(&(self->hqueue));
+    const bool    restoration_capacity_overflow =
+        heap_size >= ISIZE_MAX || self->posted_messages > (size_t) (ISIZE_MAX - heap_size - 1);
+    const isize_t required_heap_capacity =
+        restoration_capacity_overflow ? 0 : heap_size + (isize_t) self->posted_messages + 1;
+    bool heap_capacity_ready = ! restoration_capacity_overflow;
+    if (heap_capacity_ready && required_heap_capacity > heapq_idles_t_capacity(&(self->hqueue)))
+    {
+        const isize_t current_capacity = heapq_idles_t_capacity(&(self->hqueue));
+        const isize_t half_capacity    = current_capacity / 2;
+        isize_t       grown_capacity   = ISIZE_MAX;
+        if (current_capacity <= ISIZE_MAX - half_capacity - 4)
+        {
+            grown_capacity = current_capacity + half_capacity + 4;
+        }
+        if (grown_capacity < required_heap_capacity)
+        {
+            grown_capacity = required_heap_capacity;
+        }
+        heap_capacity_ready = heapq_idles_t_reserve(&(self->hqueue), grown_capacity);
+    }
+    if (UNLIKELY(! heap_capacity_ready))
+    {
+        idletableEraseItemFromMapLocked(self, item);
+        idleItemSetTable(item, NULL);
+        mutexUnlock(&(self->mutex));
+        memoryFree(item);
+        return NULL;
+    }
+
+    idle_item_t **heap_slot = NULL;
+    if (! idletableTestTakeCreateHeapPublicationRefusal())
+    {
+        heap_slot = heapq_idles_t_push(&(self->hqueue), item);
+    }
+    if (UNLIKELY(heap_slot == NULL))
+    {
+        idletableEraseItemFromMapLocked(self, item);
+        idleItemSetTable(item, NULL);
+        mutexUnlock(&(self->mutex));
+        memoryFree(item);
+        return NULL;
+    }
+
     mutexUnlock(&(self->mutex));
     return item;
 }
@@ -253,6 +377,12 @@ static void idletableEraseItemFromMapLocked(idle_table_t *table, idle_item_t *it
     idleItemSetRemoved(item);
 }
 
+static bool idletableMapsItemLocked(idle_table_t *table, idle_item_t *item)
+{
+    hmap_idles_t_iter find_result = hmap_idles_t_find(&(table->hmap), item->hash);
+    return find_result.ref != hmap_idles_t_end(&(table->hmap)).ref && find_result.ref->second == item;
+}
+
 bool idletableRemoveIdleItemByHash(wid_t wid, idle_table_t *self, hash_t key)
 {
     mutexLock(&(self->mutex));
@@ -312,22 +442,32 @@ static void idletableReleaseMessageRef(idle_table_t *self)
     }
 }
 
-static void idlePostedCloseMessageCleanup(void *arg1, void *arg2, void *arg3)
+static void idlePostedCloseMessageCleanup(void *arg1, void *arg2, void *arg3, worker_message_cancel_reason_e reason)
 {
+    discard reason;
     discard arg3;
 
     idle_item_t  *item  = arg1;
     idle_table_t *table = arg2; // carried by the message, so it is reachable even once item detaches
 
-    if (item != NULL)
+    bool should_free = item != NULL;
+    if (item != NULL && table != NULL)
     {
-        if (table != NULL)
+        mutexLock(&(table->mutex));
+        if (! table->destroy_requested && ! idleItemIsRemoved(item) && idleItemGetTable(item) == table &&
+            idletableMapsItemLocked(table, item))
         {
-            mutexLock(&(table->mutex));
-            idletableEraseItemFromMapLocked(table, item);
-            mutexUnlock(&(table->mutex));
+            assert(idleItemHasWorkerMessagePending(item));
+            idleItemSetWorkerMessagePending(item, false);
+            idletableRestoreItemToHeapLocked(table, item);
+            should_free = false;
         }
-        // worker_message_pending is still set, so no table path will race us to this free.
+        mutexUnlock(&(table->mutex));
+    }
+
+    if (should_free)
+    {
+        // Detached items remain message-owned until this cleanup runs.
         memoryFree(item);
     }
 
@@ -471,7 +611,7 @@ static void beforeCloseWorkerMessage(void *worker_arg, void *arg1, void *arg2, v
         if (! idleItemIsRemoved(item) && idleItemGetTable(item) == table)
         {
             idleItemSetWorkerMessagePending(item, false);
-            heapq_idles_t_push(&(table->hqueue), item);
+            idletableRestoreItemToHeapLocked(table, item);
         }
         else
         {
@@ -498,7 +638,7 @@ static void beforeCloseWorkerMessage(void *worker_arg, void *arg1, void *arg2, v
         if (! removed && keep_alive)
         {
             idleItemSetWorkerMessagePending(item, false);
-            heapq_idles_t_push(&(table->hqueue), item);
+            idletableRestoreItemToHeapLocked(table, item);
         }
         else
         {
@@ -530,7 +670,19 @@ void idleCallBack(wtimer_t *timer)
     }
 
     const uint64_t    now           = wloopNowMS(self->loop);
-    idle_item_deque_t expired_items = idle_item_deque_t_with_capacity(8);
+    idle_item_deque_t expired_items = idle_item_deque_t_init();
+    bool              staging_ready = false;
+    if (! idletableTestTakeInitialStagingReserveRefusal())
+    {
+        staging_ready = idle_item_deque_t_reserve(&expired_items, 8);
+    }
+    if (UNLIKELY(! staging_ready))
+    {
+        idle_item_deque_t_drop(&expired_items);
+        discard wtimerReset(timer, kDefaultTimeout);
+        return;
+    }
+
     mutexLock(&(self->mutex));
     // LOGD("idleCallBack called, wid: %ld , loop current ms: %lu", getWID(), wloopNowMS(self->loop));
 
@@ -553,11 +705,20 @@ void idleCallBack(wtimer_t *timer)
             else
             {
                 idleItemSetWorkerMessagePending(item, true);
-                if (UNLIKELY(idle_item_deque_t_push_back(&expired_items, item) == NULL))
+                idle_item_t **staged = NULL;
+                const bool    needs_growth =
+                    idle_item_deque_t_size(&expired_items) > 0 &&
+                    idle_item_deque_t_size(&expired_items) == idle_item_deque_t_capacity(&expired_items);
+                if (! (needs_growth && idletableTestTakeStagingGrowthRefusal()))
                 {
-                    idletableEraseItemFromMapLocked(self, item);
+                    staged = idle_item_deque_t_push_back(&expired_items, item);
+                }
+                if (UNLIKELY(staged == NULL))
+                {
                     idleItemSetWorkerMessagePending(item, false);
-                    memoryFree(item);
+                    idletableRestoreItemToHeapLocked(self, item);
+                    next_timeout = kDefaultTimeout;
+                    break;
                 }
                 else
                 {
@@ -590,11 +751,11 @@ void idletableDestroy(idle_table_t *self)
 {
     assert(self != NULL);
 
-    // if our loop is destroyed then the loop it self has freed the timer handle
-    if (LIKELY(! isApplicationTerminating()))
+    if (self->idle_handle != NULL)
     {
         weventSetUserData(self->idle_handle, NULL);
         wtimerDelete(self->idle_handle);
+        self->idle_handle = NULL;
     }
 
     // Free heap-owned idle items before dropping the containers.

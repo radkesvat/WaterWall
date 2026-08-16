@@ -152,11 +152,11 @@ static void authenticationserverInitializeCallbacks(tunnel_t *t)
     t->fnPauseD   = &authenticationserverTunnelDownStreamPause;
     t->fnResumeD  = &authenticationserverTunnelDownStreamResume;
 
-    t->onPrepare    = &authenticationserverTunnelOnPrepair;
-    t->onStart      = &authenticationserverTunnelOnStart;
-    t->onStop       = &authenticationserverTunnelOnStop;
-    t->onWorkerStop = &authenticationserverTunnelOnWorkerStop;
-    t->onDestroy    = &authenticationserverTunnelDestroy;
+    t->onPrepare       = &authenticationserverTunnelOnPrepair;
+    t->onStart         = &authenticationserverTunnelOnStart;
+    t->onStop          = &authenticationserverTunnelOnStop;
+    t->onWorkerQuiesce = &authenticationserverTunnelOnWorkerQuiesce;
+    t->onDestroy       = &authenticationserverTunnelDestroy;
 }
 
 static bool authenticationserverParseSettings(authenticationserver_tstate_t *ts, node_t *node)
@@ -307,7 +307,7 @@ tunnel_t *authenticationserverTunnelCreate(node_t *node)
 
     if (UNLIKELY(! authenticationserverParseSettings(ts, node)))
     {
-        authenticationserverTunnelDestroy(t);
+        authenticationserverTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
@@ -319,7 +319,7 @@ tunnel_t *authenticationserverTunnelCreate(node_t *node)
     if (UNLIKELY(! authenticationserverLoadDatabase(ts)))
     {
         LOGE("AuthenticationServer: failed to load users database");
-        authenticationserverTunnelDestroy(t);
+        authenticationserverTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
     ts->database_loaded = true;

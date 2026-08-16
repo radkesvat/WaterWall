@@ -21,13 +21,15 @@ static void vlessserverBindFallbackTarget(tunnel_t *t, tunnel_chain_t *chain)
     if (target == NULL)
     {
         LOGF("VlessServer: fallback tunnel \"%s\" is not available", ts->fallback_node->name);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     if (target == t || target == ts->user_controller_tunnel)
     {
         LOGF("VlessServer: fallback target must be different from VlessServer and its internal UserController");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     ts->fallback_tunnel = target;
@@ -42,7 +44,8 @@ static void vlessserverBindFallbackTarget(tunnel_t *t, tunnel_chain_t *chain)
         LOGF("VlessServer: fallback target node \"%s\" is already bound to previous node \"%s\"",
              target->node->name,
              target->prev->node->name);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     if (target->chain == chain)
@@ -53,7 +56,8 @@ static void vlessserverBindFallbackTarget(tunnel_t *t, tunnel_chain_t *chain)
         }
 
         LOGF("VlessServer: fallback target node \"%s\" is already in the VlessServer chain", target->node->name);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     if (target->prev == NULL)
@@ -77,7 +81,8 @@ static void vlessserverBindFallbackTarget(tunnel_t *t, tunnel_chain_t *chain)
     if (ts->fallback_tunnel == NULL)
     {
         LOGF("VlessServer: fallback target node \"%s\" is not reachable from VlessServer", target->node->name);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 }
 
@@ -98,14 +103,16 @@ void vlessserverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
     if (node->hash_next == 0)
     {
         LOGF("VlessServer: a next node is required");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     node_t *next_node = nodemanagerGetConfigNodeByHash(node->node_manager_config, node->hash_next);
     if (next_node == NULL)
     {
         LOGF("Node Map Failure: node (\"%s\")->next (\"%s\") not found", node->name, node->next);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     if (next_node->hash_type == vlessserverUserControllerTypeHash())
@@ -113,19 +120,22 @@ void vlessserverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
         LOGF("VlessServer: authenticated mode creates an internal UserController; remove the manual next "
              "UserController node \"%s\" and point VlessServer to the real outbound node",
              next_node->name);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     if (controller->prev != NULL && controller->prev != t)
     {
         LOGF("VlessServer: internal UserController is already bound downstream by %s", controller->prev->node->name);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     if (t->next != NULL && t->next != controller)
     {
         LOGF("VlessServer: node \"%s\" is already bound upstream by %s", node->name, t->next->node->name);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     tunnelBind(t, controller);

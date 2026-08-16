@@ -17,14 +17,16 @@ void ipmanipulatorOnChain(tunnel_t *t, tunnel_chain_t *chain)
     if (node->hash_next == 0x0)
     {
         LOGF("IpManipulator: smuggle helper tricks require a normal next node");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     node_t *normal_next_node = nodemanagerGetConfigNodeByHash(node->node_manager_config, node->hash_next);
     if (normal_next_node == NULL)
     {
         LOGF("IpManipulator: normal next node \"%s\" not found", node->next);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     tunnel_t *normal_next_tunnel = normal_next_node->instance;
@@ -39,43 +41,50 @@ void ipmanipulatorOnChain(tunnel_t *t, tunnel_chain_t *chain)
     if (normal_next_tunnel == NULL)
     {
         LOGF("IpManipulator: referenced normal next tunnel instance is not available");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     if (state->trick_smuggle_sni && (real_sni_upstream_tunnel == NULL || real_sni_tls_client_tunnel == NULL))
     {
         LOGF("IpManipulator: smuggle-sni referenced tunnel instances are not available");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     if (state->trick_overlap_sni && overlap_sni_tls_client_tunnel == NULL)
     {
         LOGF("IpManipulator: overlap-sni referenced tunnel instances are not available");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     if (state->trick_synfin_sni && synfin_sni_tls_client_tunnel == NULL)
     {
         LOGF("IpManipulator: synfin-sni referenced tunnel instances are not available");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     if (state->trick_smuggle_fin && real_fin_upstream_tunnel == NULL)
     {
         LOGF("IpManipulator: smuggle-fin referenced tunnel instances are not available");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     if (real_sni_upstream_tunnel != NULL && normal_next_tunnel == real_sni_upstream_tunnel)
     {
         LOGF("IpManipulator: real-sni-upstream-node must differ from the normal next node");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     if (real_fin_upstream_tunnel != NULL && normal_next_tunnel == real_fin_upstream_tunnel)
     {
         LOGF("IpManipulator: real-fin-upstream-node must differ from the normal next node");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     if ((normal_next_tunnel->prev != NULL && normal_next_tunnel->prev != t) ||
@@ -85,13 +94,15 @@ void ipmanipulatorOnChain(tunnel_t *t, tunnel_chain_t *chain)
          real_fin_upstream_tunnel->prev != t))
     {
         LOGF("IpManipulator: smuggle helper upstream nodes are already bound to another previous tunnel");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     if (t->next != NULL && t->next != normal_next_tunnel)
     {
         LOGF("IpManipulator: tunnel already has a different chained next tunnel");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     state->trick_real_sni_upstream_tunnel      = real_sni_upstream_tunnel;
@@ -160,7 +171,8 @@ void ipmanipulatorOnChain(tunnel_t *t, tunnel_chain_t *chain)
         if (state->trick_real_sni_upstream_tunnel == NULL)
         {
             LOGF("IpManipulator: real-sni-upstream node is not reachable from IpManipulator");
-            terminateProgram(1);
+            startupFailureRecord(1);
+            return;
         }
     }
     if (real_fin_upstream_tunnel != NULL)
@@ -169,7 +181,8 @@ void ipmanipulatorOnChain(tunnel_t *t, tunnel_chain_t *chain)
         if (state->trick_real_fin_upstream_tunnel == NULL)
         {
             LOGF("IpManipulator: real-fin-upstream node is not reachable from IpManipulator");
-            terminateProgram(1);
+            startupFailureRecord(1);
+            return;
         }
     }
 }

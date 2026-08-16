@@ -94,8 +94,13 @@ static inline void rwlockinit(wrwlock_t *lock)
 // false: WAIT_OBJECT_TIMEOUT
 #define timedmutexLockFor(pmutex, ms) (WaitForSingleObject(*(pmutex), ms) == WAIT_OBJECT_0)
 
-#define wcondvar_t  CONDITION_VARIABLE
-#define condvarInit InitializeConditionVariable
+#define wcondvar_t       CONDITION_VARIABLE
+#define wcond_mutex_t    CRITICAL_SECTION
+#define condmutexInit    InitializeCriticalSection
+#define condmutexDestroy DeleteCriticalSection
+#define condmutexLock    EnterCriticalSection
+#define condmutexUnlock  LeaveCriticalSection
+#define condvarInit      InitializeConditionVariable
 #define contvarDestroy(pcond)
 #define condvarWait(pcond, pmutex)        SleepConditionVariableCS(pcond, pmutex, INFINITE)
 #define condvarWaitFor(pcond, pmutex, ms) SleepConditionVariableCS(pcond, pmutex, ms)
@@ -286,12 +291,17 @@ static inline int timedmutexLockFor(wtimed_mutex_t *mutex, unsigned int ms)
 #endif
 }
 
-#define wcondvar_t         pthread_cond_t
-#define condvarInit(pcond) pthread_cond_init(pcond, NULL)
-#define contvarDestroy     pthread_cond_destroy
-#define condvarWait        pthread_cond_wait
-#define condvarSignal      pthread_cond_signal
-#define condvarBroadCast   pthread_cond_broadcast
+#define wcondvar_t            pthread_cond_t
+#define wcond_mutex_t         pthread_mutex_t
+#define condmutexInit(pmutex) pthread_mutex_init(pmutex, NULL)
+#define condmutexDestroy      pthread_mutex_destroy
+#define condmutexLock         pthread_mutex_lock
+#define condmutexUnlock       pthread_mutex_unlock
+#define condvarInit(pcond)    pthread_cond_init(pcond, NULL)
+#define contvarDestroy        pthread_cond_destroy
+#define condvarWait           pthread_cond_wait
+#define condvarSignal         pthread_cond_signal
+#define condvarBroadCast      pthread_cond_broadcast
 // true:  OK
 // false: ETIMEDOUT
 /**

@@ -39,13 +39,13 @@ enum
     kLineStateSize   = sizeof(bgp4server_lstate_t)
 };
 
-WW_EXPORT void         bgp4serverTunnelDestroy(tunnel_t *t);
+WW_EXPORT void         bgp4serverTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context);
 WW_EXPORT tunnel_t    *bgp4serverTunnelCreate(node_t *node);
 WW_EXPORT api_result_t bgp4serverTunnelApi(tunnel_t *instance, sbuf_t *message);
 
 void bgp4serverTunnelOnPrepair(tunnel_t *t);
 void bgp4serverTunnelOnStart(tunnel_t *t);
-void bgp4serverTunnelOnStop(tunnel_t *t);
+void bgp4serverTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context);
 
 void bgp4serverTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void bgp4serverTunnelUpStreamEst(tunnel_t *t, line_t *l);

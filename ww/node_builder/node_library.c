@@ -24,9 +24,9 @@
 
 static struct
 {
-    char             *search_path;
-    vec_static_libs   slibs;
-    vec_dynamic_libs  dlibs;
+    char            *search_path;
+    vec_static_libs  slibs;
+    vec_dynamic_libs dlibs;
 } *nodelib_state;
 
 enum
@@ -46,7 +46,7 @@ static void nodelibraryEnsureStateInitialized(void)
     {
         return;
     }
-    nodelib_state = memoryAllocateZero(sizeof(*nodelib_state));
+    nodelib_state        = memoryAllocateZero(sizeof(*nodelib_state));
     nodelib_state->slibs = vec_static_libs_init();
     nodelib_state->dlibs = vec_dynamic_libs_init();
 }
@@ -240,8 +240,8 @@ static node_t dynLoadNodeLib(hash_t htype)
     char exe_libs_dir[MAX_PATH] = {0};
     char run_libs_dir[MAX_PATH] = {0};
 
-    char file_candidates[kFileCandidatesCount][MAX_PATH] = {0};
-    size_t file_candidates_len                            = 0;
+    char   file_candidates[kFileCandidatesCount][MAX_PATH] = {0};
+    size_t file_candidates_len                             = 0;
 
     const char *env_libs_path = getenv("WW_LIBS_PATH");
     const char *dirs[kDirCandidatesCount];
@@ -257,15 +257,15 @@ static node_t dynLoadNodeLib(hash_t htype)
 
     unsigned long long hv = (unsigned long long) htype;
 
-#define PUSH_LIB_CANDIDATE(fmt, val, ext)                                                                     \
-    do                                                                                                        \
-    {                                                                                                         \
-        if (file_candidates_len < kFileCandidatesCount)                                                       \
-        {                                                                                                     \
-            snprintf(file_candidates[file_candidates_len], sizeof(file_candidates[file_candidates_len]), fmt, \
-                     val, ext);                                                                               \
-            file_candidates_len++;                                                                            \
-        }                                                                                                     \
+#define PUSH_LIB_CANDIDATE(fmt, val, ext)                                                                              \
+    do                                                                                                                 \
+    {                                                                                                                  \
+        if (file_candidates_len < kFileCandidatesCount)                                                                \
+        {                                                                                                              \
+            snprintf(                                                                                                  \
+                file_candidates[file_candidates_len], sizeof(file_candidates[file_candidates_len]), fmt, val, ext);    \
+            file_candidates_len++;                                                                                     \
+        }                                                                                                              \
     } while (0)
 
     PUSH_LIB_CANDIDATE("ww-node-%016llx%s", hv, lib_ext);
@@ -319,6 +319,25 @@ static node_t dynLoadNodeLib(hash_t htype)
             void *handle = dynOpenLibrary(full_path);
             if (handle == NULL)
             {
+                continue;
+            }
+
+            node_lifecycle_abi_version_fn lifecycle_abi = NULL;
+            if (! dynGetSymbol(handle, WW_EXTERNAL_NODE_LIFECYCLE_ABI_SYMBOL, &lifecycle_abi, sizeof(lifecycle_abi)) ||
+                lifecycle_abi == NULL)
+            {
+                LOGE("NodeLibrary: rejecting \"%s\": missing lifecycle ABI v2 descriptor", full_path);
+                dynCloseLibrary(handle);
+                continue;
+            }
+            const uint32_t lifecycle_version = lifecycle_abi();
+            if (lifecycle_version != WW_EXTERNAL_NODE_LIFECYCLE_ABI_VERSION)
+            {
+                LOGE("NodeLibrary: rejecting \"%s\": lifecycle ABI %u is incompatible with required ABI %u",
+                     full_path,
+                     lifecycle_version,
+                     WW_EXTERNAL_NODE_LIFECYCLE_ABI_VERSION);
+                dynCloseLibrary(handle);
                 continue;
             }
 

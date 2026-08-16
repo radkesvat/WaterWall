@@ -20,7 +20,7 @@ tunnel_t *pipetunnelCreate(tunnel_t *child);
  *
  * @param t Pointer to the tunnel.
  */
-void pipetunnelDestroy(tunnel_t *t);
+void pipetunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context);
 
 /**
  * @brief Pipe to a specific WID.

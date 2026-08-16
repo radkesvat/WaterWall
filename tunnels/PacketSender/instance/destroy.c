@@ -2,8 +2,9 @@
 
 #include "loggers/network_logger.h"
 
-void packetsenderTunnelDestroy(tunnel_t *t)
+void packetsenderTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context)
 {
+    discard                context;
     packetsender_tstate_t *state = tunnelGetState(t);
 
     if (state->source_ranges != NULL)

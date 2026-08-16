@@ -25,7 +25,8 @@ static void wireguarddeviceSetInternalUserControllerNext(wgd_tstate_t *state, co
     if (controller_node->next == NULL)
     {
         LOGF("WireGuardDevice: failed to set internal UserController next node");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
     controller_node->hash_next = hash_next;
 }
@@ -37,14 +38,16 @@ static node_t *wireguarddeviceGetNextNode(tunnel_t *t)
     if (node->hash_next == 0)
     {
         LOGF("WireGuardDevice: a next node is required when its transport side is next");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return NULL;
     }
 
     node_t *next_node = nodemanagerGetConfigNodeByHash(node->node_manager_config, node->hash_next);
     if (next_node == NULL)
     {
         LOGF("Node Map Failure: node (\"%s\")->next (\"%s\") not found", node->name, node->next);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return NULL;
     }
 
     return next_node;
@@ -56,29 +59,40 @@ static void wireguarddeviceInsertUserControllerNext(tunnel_t *t, tunnel_chain_t 
     node_t       *node       = tunnelGetNode(t);
     tunnel_t     *controller = state->user_controller_tunnel;
     node_t       *next_node  = wireguarddeviceGetNextNode(t);
+    if (UNLIKELY(next_node == NULL))
+    {
+        return;
+    }
 
     if (next_node->hash_type == wireguarddeviceUserControllerTypeHash())
     {
         LOGF("WireGuardDevice: authenticated mode creates an internal UserController on the transport side; remove "
              "the manual next UserController node \"%s\" and point WireGuardDevice to the real transport node",
              next_node->name);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     if (controller->prev != NULL && controller->prev != t)
     {
         LOGF("WireGuardDevice: internal UserController is already bound downstream by %s",
              controller->prev->node->name);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     if (t->next != NULL && t->next != controller)
     {
         LOGF("WireGuardDevice: node \"%s\" is already bound upstream by %s", node->name, t->next->node->name);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     wireguarddeviceSetInternalUserControllerNext(state, node->next, node->hash_next);
+    if (UNLIKELY(startupFailurePending()))
+    {
+        return;
+    }
     tunnelBind(t, controller);
 
     tunnelchainInsert(chain, t);
@@ -95,7 +109,8 @@ static void wireguarddeviceInsertUserControllerPrev(tunnel_t *t, tunnel_chain_t 
     if (prev == NULL)
     {
         LOGF("WireGuardDevice: cannot insert transport-side UserController before the previous tunnel is bound");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     if (prev->node != NULL && prev->node->hash_type == wireguarddeviceUserControllerTypeHash())
@@ -103,29 +118,37 @@ static void wireguarddeviceInsertUserControllerPrev(tunnel_t *t, tunnel_chain_t 
         LOGF("WireGuardDevice: authenticated mode creates an internal UserController on the transport side; remove "
              "the manual previous UserController node \"%s\"",
              prev->node->name);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     if (controller->prev != NULL && controller->prev != prev)
     {
         LOGF("WireGuardDevice: internal UserController is already bound downstream by %s",
              controller->prev->node->name);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     if (controller->next != NULL && controller->next != t)
     {
         LOGF("WireGuardDevice: internal UserController is already bound upstream by %s", controller->next->node->name);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     if (prev->next != t && prev->next != controller)
     {
         LOGF("WireGuardDevice: previous tunnel \"%s\" is not bound directly to WireGuardDevice", prev->node->name);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     wireguarddeviceSetInternalUserControllerNext(state, node->name, node->hash_name);
+    if (UNLIKELY(startupFailurePending()))
+    {
+        return;
+    }
 
     prev->next       = controller;
     controller->prev = prev;
@@ -151,13 +174,18 @@ void wireguarddeviceTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
         if (chain->tunnels.len != 0)
         {
             LOGF("WireGuardDevice: cannot defer internal UserController insertion on a non-empty chain");
-            terminateProgram(1);
+            startupFailureRecord(1);
+            return;
         }
         tunnelchainDestroy(chain);
         return;
     }
 
     wireguarddeviceResolveTransportSide(t);
+    if (UNLIKELY(startupFailurePending()))
+    {
+        return;
+    }
     if (wireguarddeviceTransportSideIsNext(state))
     {
         wireguarddeviceInsertUserControllerNext(t, chain);

@@ -11,11 +11,6 @@ static void keepaliveclientStartWorkerTimer(void *worker_ptr, void *arg1, void *
     tunnel_t                 *t      = arg1;
     keepaliveclient_tstate_t *ts     = tunnelGetState(t);
 
-    if (UNLIKELY(isApplicationTerminating()))
-    {
-        return;
-    }
-
     wtimer_t *timer = wtimerAdd(worker->loop, keepaliveclientWorkerTimerCallback, ts->ping_interval_ms, INFINITE);
     if (timer == NULL)
     {
@@ -41,11 +36,11 @@ void keepaliveclientTunnelOnStart(tunnel_t *t)
 {
     for (wid_t wi = 0; wi < getWorkersCount(); ++wi)
     {
-        if (UNLIKELY(
-                ! sendWorkerMessageForceQueueWithCleanup(wi, keepaliveclientStartWorkerTimer, NULL, t, NULL, NULL)))
+        if (UNLIKELY(sendWorkerMessageForceQueueWithCleanup(wi, keepaliveclientStartWorkerTimer, NULL, t, NULL, NULL) !=
+                     kWorkerMessageSubmitAccepted))
         {
             LOGF("KeepAliveClient: failed to admit required timer startup on worker %u", (unsigned int) wi);
-            terminateProgram(1);
+            startupFailureRecord(1);
             return;
         }
     }

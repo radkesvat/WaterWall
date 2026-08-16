@@ -117,7 +117,7 @@ enum
     kAuthenticationClientDefaultMaxPendingRequests  = 64U
 };
 
-WW_EXPORT void         authenticationclientTunnelDestroy(tunnel_t *t);
+WW_EXPORT void         authenticationclientTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context);
 WW_EXPORT tunnel_t    *authenticationclientTunnelCreate(node_t *node);
 WW_EXPORT api_result_t authenticationclientTunnelApi(tunnel_t *instance, sbuf_t *message);
 
@@ -125,8 +125,9 @@ void authenticationclientTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *me
 void authenticationclientTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void authenticationclientTunnelOnPrepair(tunnel_t *t);
 void authenticationclientTunnelOnStart(tunnel_t *t);
-void authenticationclientTunnelOnStop(tunnel_t *t);
-void authenticationclientTunnelOnWorkerStop(tunnel_t *t, wid_t wid);
+void authenticationclientTunnelOnQuiesceRequest(tunnel_t *t, const ww_lifecycle_context_t *context);
+void authenticationclientTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);
+void authenticationclientTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);
 
 void authenticationclientTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void authenticationclientTunnelUpStreamEst(tunnel_t *t, line_t *l);

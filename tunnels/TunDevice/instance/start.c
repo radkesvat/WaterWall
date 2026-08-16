@@ -13,7 +13,8 @@ void tundeviceTunnelOnStart(tunnel_t *t)
     if (! packettunnelLifecycleAnchorBind(t))
     {
         LOGF("TunDevice: packet publication side is not chained");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     state->tdev = tundeviceCreate(state->name, false, state->mtu, t, tundeviceOnIPPacketReceived);
@@ -92,5 +93,6 @@ rollback:
         state->tdev = NULL;
     }
     LOGF("%s", failure);
-    terminateProgram(1);
+    startupFailureRecord(1);
+    return;
 }

@@ -347,7 +347,7 @@ tunnel_t *socks5clientTunnelCreate(node_t *node)
 
     if (! socks5clientCreateInternalDomainResolver(t, node))
     {
-        socks5clientTunnelDestroy(t);
+        socks5clientTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 

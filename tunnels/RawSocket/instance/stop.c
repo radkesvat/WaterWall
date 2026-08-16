@@ -2,8 +2,24 @@
 
 #include "loggers/network_logger.h"
 
-static void rawsocketStopDevices(rawsocket_tstate_t *state)
+void rawsocketOnQuiesceRequest(tunnel_t *t, const ww_lifecycle_context_t *context)
 {
+    discard             context;
+    rawsocket_tstate_t *state = tunnelGetState(t);
+    if (state->capture_device != NULL && ! capturedeviceRequestStop(state->capture_device))
+    {
+        LOGW("RawSocket: capture device stop request failed");
+    }
+    if (state->raw_device != NULL)
+    {
+        rawdeviceRequestStop(state->raw_device);
+    }
+}
+
+void rawsocketOnQuiesceWait(tunnel_t *t, const ww_lifecycle_context_t *context)
+{
+    discard             context;
+    rawsocket_tstate_t *state = tunnelGetState(t);
     if (state->capture_device)
     {
         if (! caputredeviceBringDown(state->capture_device))
@@ -15,9 +31,4 @@ static void rawsocketStopDevices(rawsocket_tstate_t *state)
     {
         LOGW("RawSocket: raw device bring down completed with cleanup errors");
     }
-}
-
-void rawsocketOnStop(tunnel_t *t)
-{
-    rawsocketStopDevices(tunnelGetState(t));
 }

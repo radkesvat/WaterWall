@@ -88,12 +88,12 @@ Current defaults:
 
 ### Stop lifecycle
 
-The framework supplies a no-op `onPreStop` by default. A tunnel that starts
-producers should override it to close admission and quiesce new callbacks. The
-node manager completes this pre-stop pass across every configuration before any
-`onStop` hook runs. `onStop` may then join, detach, and release shared resources,
-but it must also remain safe when partial-start cleanup reaches it without the
-global prepass. Worker-local `onWorkerStop` teardown is a separate phase.
+The framework supplies no-op lifecycle-v2 callbacks by default. A tunnel that
+starts producers closes their admission without waiting in `onQuiesceRequest`,
+detaches worker-affine timers and watchers in `onWorkerQuiesce`, and joins direct
+external callback roots in `onQuiesceWait`. `onWorkerStop` drains owned lines;
+main-thread `onStop` releases remaining shared resources after every worker is
+drained. Each stage receives an explicit lifecycle context.
 
 ### Why this folder matters
 

@@ -90,7 +90,7 @@ static void dnsJsonError(const char *key, const char *message)
     {
         printError("CoreSettings: dns.%s %s\n", key, message);
     }
-    terminateProgram(1);
+    startupFailureRecord(1);
 }
 
 static bool dnsJsonGetOptionalInt(const cJSON *json_obj, const char *key, int *dest)
@@ -103,6 +103,7 @@ static bool dnsJsonGetOptionalInt(const cJSON *json_obj, const char *key, int *d
     if (! cJSON_IsNumber(item) || item->valuedouble != (double) item->valueint)
     {
         dnsJsonError(key, "must be an integer");
+        return false;
     }
 
     *dest = (int) item->valueint;
@@ -119,6 +120,7 @@ static bool dnsJsonGetOptionalBool(const cJSON *json_obj, const char *key, bool 
     if (! cJSON_IsBool(item))
     {
         dnsJsonError(key, "must be a boolean");
+        return false;
     }
 
     *dest = cJSON_IsTrue(item);
@@ -135,6 +137,7 @@ static bool dnsJsonGetOptionalString(const cJSON *json_obj, const char *key, cha
     if (! cJSON_IsString(item) || item->valuestring == NULL || item->valuestring[0] == '\0')
     {
         dnsJsonError(key, "must be a non-empty string");
+        return false;
     }
 
     *dest = stringDuplicate(item->valuestring);
@@ -146,6 +149,7 @@ static char **dnsJsonParseStringArray(const cJSON *array, const char *key, int *
     if (! cJSON_IsArray(array))
     {
         dnsJsonError(key, "must be an array of non-empty strings");
+        return NULL;
     }
 
     int          count = 0;
@@ -155,6 +159,7 @@ static char **dnsJsonParseStringArray(const cJSON *array, const char *key, int *
         if (! cJSON_IsString(item) || item->valuestring == NULL || item->valuestring[0] == '\0')
         {
             dnsJsonError(key, "must contain only non-empty strings");
+            return NULL;
         }
         ++count;
     }
@@ -162,6 +167,7 @@ static char **dnsJsonParseStringArray(const cJSON *array, const char *key, int *
     if (count <= 0)
     {
         dnsJsonError(key, "must not be empty");
+        return NULL;
     }
 
     char **values = memoryAllocate(sizeof(*values) * (size_t) count);
@@ -185,6 +191,7 @@ static char *dnsJsonParseStringOrArrayAsCsv(const cJSON *item, const char *key)
     if (! cJSON_IsArray(item))
     {
         dnsJsonError(key, "must be a non-empty string or an array of non-empty strings");
+        return NULL;
     }
 
     size_t       total = 1;
@@ -195,10 +202,12 @@ static char *dnsJsonParseStringOrArrayAsCsv(const cJSON *item, const char *key)
         if (! cJSON_IsString(child) || child->valuestring == NULL || child->valuestring[0] == '\0')
         {
             dnsJsonError(key, "must contain only non-empty strings");
+            return NULL;
         }
         if (strchr(child->valuestring, ',') != NULL)
         {
             dnsJsonError(key, "array items must not contain commas");
+            return NULL;
         }
         total += stringLength(child->valuestring) + (count > 0 ? 1U : 0U);
         ++count;
@@ -207,6 +216,7 @@ static char *dnsJsonParseStringOrArrayAsCsv(const cJSON *item, const char *key)
     if (count <= 0)
     {
         dnsJsonError(key, "must not be empty");
+        return NULL;
     }
 
     char  *csv = memoryAllocate(total);
@@ -240,6 +250,7 @@ static void dnsJsonValidateLookups(const char *lookups)
             if (seen_dns)
             {
                 dnsJsonError("lookups", "must not repeat lookup source 'b'");
+                return;
             }
             seen_dns = true;
         }
@@ -248,12 +259,14 @@ static void dnsJsonValidateLookups(const char *lookups)
             if (seen_hosts)
             {
                 dnsJsonError("lookups", "must not repeat lookup source 'f'");
+                return;
             }
             seen_hosts = true;
         }
         else
         {
             dnsJsonError("lookups", "may only contain 'b' for DNS and 'f' for hosts-file");
+            return;
         }
     }
 }
@@ -321,6 +334,7 @@ static void dnsJsonParseFlags(const cJSON *dns_obj, asyncdns_options_t *options)
             (flags_json->valueint & ~kSupportedDnsFlags) != 0)
         {
             dnsJsonError("flags", "must be a supported c-ares flag bitmask");
+            return;
         }
         flags = (int) flags_json->valueint;
     }
@@ -330,6 +344,7 @@ static void dnsJsonParseFlags(const cJSON *dns_obj, asyncdns_options_t *options)
         if (! dnsJsonFlagFromName(flags_json->valuestring, &flag))
         {
             dnsJsonError("flags", "contains an unknown flag name");
+            return;
         }
         flags = flag;
     }
@@ -341,11 +356,13 @@ static void dnsJsonParseFlags(const cJSON *dns_obj, asyncdns_options_t *options)
             if (! cJSON_IsString(item) || item->valuestring == NULL || item->valuestring[0] == '\0')
             {
                 dnsJsonError("flags", "array must contain only non-empty flag names");
+                return;
             }
             int flag = 0;
             if (! dnsJsonFlagFromName(item->valuestring, &flag))
             {
                 dnsJsonError("flags", "contains an unknown flag name");
+                return;
             }
             flags |= flag;
         }
@@ -358,11 +375,13 @@ static void dnsJsonParseFlags(const cJSON *dns_obj, asyncdns_options_t *options)
             if (item->string == NULL || ! cJSON_IsBool(item))
             {
                 dnsJsonError("flags", "object values must be booleans");
+                return;
             }
             int flag = 0;
             if (! dnsJsonFlagFromName(item->string, &flag))
             {
                 dnsJsonError("flags", "contains an unknown flag name");
+                return;
             }
             if (cJSON_IsTrue(item))
             {
@@ -373,6 +392,7 @@ static void dnsJsonParseFlags(const cJSON *dns_obj, asyncdns_options_t *options)
     else
     {
         dnsJsonError("flags", "must be a bitmask, flag name, flag-name array, or boolean object");
+        return;
     }
 
     options->flags_set = true;
@@ -391,6 +411,7 @@ static void parseDnsPartOfJson(const cJSON *dns_obj)
     if (! cJSON_IsObject(dns_obj))
     {
         dnsJsonError("", "block must be an object");
+        return;
     }
     if (dns_obj->child == NULL)
     {
@@ -406,6 +427,7 @@ static void parseDnsPartOfJson(const cJSON *dns_obj)
         dnsJsonError("domain-strategy",
                      "must be one of \"accept-dns-returned-order\", \"prefer-ipv4\", \"prefer-ipv6\", "
                      "\"only-ipv4\", or \"only-ipv6\"");
+        return;
     }
 
     if (dnsJsonGetOptionalInt(dns_obj, "timeout-ms", &value))
@@ -413,6 +435,7 @@ static void parseDnsPartOfJson(const cJSON *dns_obj)
         if (value <= 0)
         {
             dnsJsonError("timeout-ms", "must be greater than 0");
+            return;
         }
         options->timeout_ms = value;
     }
@@ -421,6 +444,7 @@ static void parseDnsPartOfJson(const cJSON *dns_obj)
         if (value <= 0)
         {
             dnsJsonError("max-timeout-ms", "must be greater than 0");
+            return;
         }
         options->max_timeout_ms = value;
     }
@@ -429,6 +453,7 @@ static void parseDnsPartOfJson(const cJSON *dns_obj)
         if (value <= 0)
         {
             dnsJsonError("tries", "must be greater than 0");
+            return;
         }
         options->tries = value;
     }
@@ -437,6 +462,7 @@ static void parseDnsPartOfJson(const cJSON *dns_obj)
         if (value < 0)
         {
             dnsJsonError("query-cache-max-ttl", "must be zero or greater");
+            return;
         }
         options->query_cache_max_ttl = (unsigned int) value;
     }
@@ -445,6 +471,7 @@ static void parseDnsPartOfJson(const cJSON *dns_obj)
         if (value < 0 || value > 15)
         {
             dnsJsonError("ndots", "must be in range [0, 15]");
+            return;
         }
         options->ndots_set = true;
         options->ndots     = value;
@@ -454,6 +481,7 @@ static void parseDnsPartOfJson(const cJSON *dns_obj)
         if (value <= 0 || value > 65535)
         {
             dnsJsonError("udp-port", "must be in range [1, 65535]");
+            return;
         }
         options->udp_port_set = true;
         options->udp_port     = (unsigned short) value;
@@ -463,6 +491,7 @@ static void parseDnsPartOfJson(const cJSON *dns_obj)
         if (value <= 0 || value > 65535)
         {
             dnsJsonError("tcp-port", "must be in range [1, 65535]");
+            return;
         }
         options->tcp_port_set = true;
         options->tcp_port     = (unsigned short) value;
@@ -472,6 +501,7 @@ static void parseDnsPartOfJson(const cJSON *dns_obj)
         if (value <= 0)
         {
             dnsJsonError("socket-send-buffer-size", "must be greater than 0");
+            return;
         }
         options->socket_send_buffer_size_set = true;
         options->socket_send_buffer_size     = value;
@@ -481,6 +511,7 @@ static void parseDnsPartOfJson(const cJSON *dns_obj)
         if (value <= 0)
         {
             dnsJsonError("socket-receive-buffer-size", "must be greater than 0");
+            return;
         }
         options->socket_receive_buffer_size_set = true;
         options->socket_receive_buffer_size     = value;
@@ -490,6 +521,7 @@ static void parseDnsPartOfJson(const cJSON *dns_obj)
         if (value <= 0 || value > 65535)
         {
             dnsJsonError("edns-packet-size", "must be in range [1, 65535]");
+            return;
         }
         options->ednspsz_set = true;
         options->ednspsz     = value;
@@ -499,6 +531,7 @@ static void parseDnsPartOfJson(const cJSON *dns_obj)
         if (value < 0)
         {
             dnsJsonError("udp-max-queries", "must be zero or greater");
+            return;
         }
         options->udp_max_queries_set = true;
         options->udp_max_queries     = value;
@@ -537,6 +570,7 @@ static void parseDnsPartOfJson(const cJSON *dns_obj)
         if (! cJSON_IsObject(failover_json))
         {
             dnsJsonError("server-failover", "must be an object");
+            return;
         }
         options->server_failover_set = true;
 
@@ -545,6 +579,7 @@ static void parseDnsPartOfJson(const cJSON *dns_obj)
             if (value < 0 || value > 65535)
             {
                 dnsJsonError("server-failover.retry-chance", "must be in range [0, 65535]");
+                return;
             }
             options->server_failover_retry_chance = (unsigned short) value;
         }
@@ -553,6 +588,7 @@ static void parseDnsPartOfJson(const cJSON *dns_obj)
             if (value < 0)
             {
                 dnsJsonError("server-failover.retry-delay-ms", "must be zero or greater");
+                return;
             }
             options->server_failover_retry_delay_ms = (size_t) value;
         }
@@ -681,7 +717,8 @@ static void parseConfigPartOfJson(const cJSON *config_array)
     if (! cJSON_IsArray(config_array) || (config_array->child == NULL))
     {
         printError("Error: \"configs\" array in core json is empty or invalid \n");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
     const cJSON *path      = NULL;
     bool         had_child = false;
@@ -704,7 +741,7 @@ static void parseConfigPartOfJson(const cJSON *config_array)
     if (! had_child)
     {
         printError("Error: \"configs\" array in core json is empty or invalid \n");
-        terminateProgram(1);
+        startupFailureRecord(1);
     }
 }
 
@@ -728,7 +765,8 @@ static void parseMtuOfMiscJson(const cJSON *misc_obj)
     {
         printError(
             "CoreSettings: \"mtu\" must be a whole number between %d and %d\n", MIN_MTU_PROFILE, MAX_MTU_PROFILE);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     settings->mtu_size = (uint16_t) mtu_size;
@@ -753,7 +791,8 @@ static void parseWorkersOfMiscJson(const cJSON *misc_obj)
     if (worker_status == kJsonValueInvalid)
     {
         printError("CoreSettings: \"workers\" must be a whole number\n");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     if (worker_status == kJsonValueMissing)
@@ -790,7 +829,8 @@ static void parseRamProfileOfMiscJson(const cJSON *misc_obj)
                        "or one of \"server\", \"client\", \"client-larger\", \"minimal\", \"ultralow\"\n",
                        MIN_RAM_PROFILE_INDEX,
                        MAX_RAM_PROFILE_INDEX);
-            terminateProgram(1);
+            startupFailureRecord(1);
+            return;
         }
 
         int profile = (int) wide;
@@ -820,8 +860,8 @@ static void parseRamProfileOfMiscJson(const cJSON *misc_obj)
             printError("CoreSettings: ram-profile must be a whole number between %d and %d\n",
                        MIN_RAM_PROFILE_INDEX,
                        MAX_RAM_PROFILE_INDEX);
-            terminateProgram(1);
-            break;
+            startupFailureRecord(1);
+            return;
         }
     }
     else if (cJSON_IsString(json_ram_profile))
@@ -853,7 +893,9 @@ static void parseRamProfileOfMiscJson(const cJSON *misc_obj)
             printError("CoreSettings: ram-profile can hold \"server\" or \"client\" "
                        "or \"client-larger\" or \"minimal\" or \"ultralow\" \n");
 
-            terminateProgram(1);
+            memoryFree(string_ram_profile);
+            startupFailureRecord(1);
+            return;
         }
         settings->ram_profile = (unsigned int) parsed_ram_profile;
         memoryFree(string_ram_profile);
@@ -865,7 +907,8 @@ static void parseRamProfileOfMiscJson(const cJSON *misc_obj)
     else
     {
         printError("CoreSettings: ram-profile must be a string alias or an integer in range [0 - 6]\n");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 }
 
@@ -879,7 +922,8 @@ static void parseMiscPartOfJson(cJSON *misc_obj)
     if (misc_obj != NULL && ! cJSON_IsObject(misc_obj))
     {
         printError("CoreSettings: \"misc\" must be an object\n");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     if (cJSON_IsObject(misc_obj) && (misc_obj->child != NULL))
@@ -890,7 +934,8 @@ static void parseMiscPartOfJson(cJSON *misc_obj)
         if (json_bbr != NULL && ! cJSON_IsBool(json_bbr))
         {
             printError("CoreSettings: \"try-enabling-bbr\" must be true or false\n");
-            terminateProgram(1);
+            startupFailureRecord(1);
+            return;
         }
         getBoolFromJsonObjectOrDefault(
             &settings->try_enabling_bbr, misc_obj, "try-enabling-bbr", DEFAULT_TRY_ENABLING_BBR);
@@ -899,7 +944,8 @@ static void parseMiscPartOfJson(cJSON *misc_obj)
         if (json_libs_path != NULL && ! cJSON_IsString(json_libs_path))
         {
             printError("CoreSettings: \"libs-path\" must be a string\n");
-            terminateProgram(1);
+            startupFailureRecord(1);
+            return;
         }
         getStringFromJsonObjectOrDefault(&(settings->libs_path), misc_obj, "libs-path", DEFAULT_LIBS_PATH);
 
@@ -918,7 +964,7 @@ static void parseMiscPartOfJson(cJSON *misc_obj)
     }
 }
 
-void parseCoreSettings(const char *data_json)
+bool parseCoreSettings(const char *data_json)
 {
     if (settings == NULL)
     {
@@ -933,24 +979,34 @@ void parseCoreSettings(const char *data_json)
         {
             printError("JSON Error before: %s\n", error_ptr);
         }
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return false;
     }
 
     if (cJSON_GetObjectItemCaseSensitive(json, "domain-strategy") != NULL)
     {
         printError("CoreSettings: domain-strategy must be configured inside the dns object as dns.domain-strategy\n");
-        terminateProgram(1);
+        cJSON_Delete(json);
+        startupFailureRecord(1);
+        return false;
     }
 
     parseLogPartOfJson(cJSON_GetObjectItemCaseSensitive(json, "log"));
     parseConfigPartOfJson(cJSON_GetObjectItemCaseSensitive(json, "configs"));
     parseMiscPartOfJson(cJSON_GetObjectItemCaseSensitive(json, "misc"));
     parseDnsPartOfJson(cJSON_GetObjectItemCaseSensitive(json, "dns"));
+    if (startupFailurePending())
+    {
+        cJSON_Delete(json);
+        return false;
+    }
 
     if (settings->workers_count <= 0)
     {
         printError("CoreSettings: the workers count is invalid");
-        terminateProgram(1);
+        cJSON_Delete(json);
+        startupFailureRecord(1);
+        return false;
     }
     if (settings->workers_count > 254)
     {
@@ -959,6 +1015,7 @@ void parseCoreSettings(const char *data_json)
     }
 
     cJSON_Delete(json);
+    return true;
 }
 
 struct core_settings_s *getCoreSettings(void)

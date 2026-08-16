@@ -53,7 +53,7 @@ tunnel_t *connectionfisherclientTunnelCreate(node_t *node)
 
     if (! connectionfisherclientLoadTries(ts, node->node_settings_json))
     {
-        connectionfisherclientTunnelDestroy(t);
+        connectionfisherclientTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 

@@ -14,7 +14,7 @@ static void wireguarddeviceDestroyInternalUserController(wgd_tstate_t *state)
 {
     if (state->user_controller_tunnel != NULL)
     {
-        state->user_controller_tunnel->onDestroy(state->user_controller_tunnel);
+        tunnelOwnedChildDestroy(state->user_controller_tunnel);
         state->user_controller_tunnel = NULL;
     }
 
@@ -22,8 +22,9 @@ static void wireguarddeviceDestroyInternalUserController(wgd_tstate_t *state)
     wireguarddeviceClearInternalNode(&state->user_controller_node);
 }
 
-void wireguarddeviceTunnelDestroy(tunnel_t *t)
+void wireguarddeviceTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context)
 {
+    discard       context;
     wgd_tstate_t *state = tunnelGetState(t);
     wireguarddeviceDestroyInternalUserController(state);
 

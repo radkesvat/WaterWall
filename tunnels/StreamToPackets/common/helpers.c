@@ -472,8 +472,10 @@ static void streamtopacketsReplayDecodedPacketOnWorker(worker_t *worker, void *a
     memoryFree(msg);
 }
 
-static void streamtopacketsCleanupDecodedPacket(void *arg1, void *arg2, void *arg3)
+static void streamtopacketsCleanupDecodedPacket(void *arg1, void *arg2, void *arg3,
+                                                worker_message_cancel_reason_e reason)
 {
+    discard                       reason;
     streamtopackets_packet_msg_t *msg = arg1;
     discard                       arg2;
     discard                       arg3;

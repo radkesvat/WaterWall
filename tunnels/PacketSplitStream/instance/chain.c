@@ -12,26 +12,30 @@ void packetsplitstreamTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
     if (state->up_tunnel == NULL || state->down_tunnel == NULL)
     {
         LOGF("PacketSplitStream: referenced up/down tunnel instances are not available");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     if (state->up_tunnel == state->down_tunnel)
     {
         LOGF("PacketSplitStream: up/down tunnel instances must be different");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     if ((state->up_tunnel->prev != NULL && state->up_tunnel->prev != t) ||
         (state->down_tunnel->prev != NULL && state->down_tunnel->prev != t))
     {
         LOGF("PacketSplitStream: configured up/down nodes are already bound to another previous tunnel");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     if (t->next != NULL && t->next != state->down_tunnel)
     {
         LOGF("PacketSplitStream: tunnel already has a different chained next tunnel");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     tunnelBindDown(t, state->up_tunnel);
@@ -68,7 +72,8 @@ void packetsplitstreamTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
     if (up_entry == NULL || down_entry == NULL)
     {
         LOGF("PacketSplitStream: configured up/down node is not reachable from the split tunnel");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
     state->up_tunnel   = up_entry;
     state->down_tunnel = down_entry;

@@ -11,18 +11,55 @@
 // #include <crtdbg.h>
 // #endif
 
-static void exitHandle(void *userdata, int signum)
-{
-    discard signum;
-    discard userdata;
-    destroyCoreSettings();
-}
-
 static bool isVersionArgument(const char *arg)
 {
     return stringCompare(arg, "-v") == 0 || stringCompare(arg, "-version") == 0 ||
            stringCompare(arg, "--version") == 0 || stringCompare(arg, "--v") == 0 || stringCompare(arg, "version") == 0;
 }
+
+static bool waterwallStartupCheckpoint(void)
+{
+    signalmanagerConsumePendingShutdownSignal();
+    return ! applicationShutdownWasRequested();
+}
+
+#if defined(WATERWALL_TEST_HOOKS) && ! defined(OS_WIN)
+static bool         startup_boundary_signal_injected;
+static unsigned int startup_boundary_observer_calls;
+
+static bool waterwallStartupBoundarySignalTestEnabled(void)
+{
+    return getenv("WATERWALL_TEST_SIGNAL_ON_STARTUP_FAILURE") != NULL;
+}
+
+static void waterwallStartupBoundaryObserver(void *userdata, int signum)
+{
+    discard userdata;
+    discard signum;
+
+    ww_lifecycle_context_t context;
+    const bool             has_context = applicationShutdownGetSelectedContext(&context);
+    startup_boundary_observer_calls++;
+    fprintf(stderr,
+            "startup-boundary-observer reason=%d scope=%d status=%d count=%u\n",
+            (int) applicationShutdownGetReason(),
+            has_context ? (int) context.scope : -1,
+            applicationShutdownGetExitCode(),
+            startup_boundary_observer_calls);
+}
+
+static void waterwallStartupFailureBoundaryTestHook(ww_startup_result_t result)
+{
+    if (! startup_boundary_signal_injected && ! wwStartupSucceeded(result) &&
+        waterwallStartupBoundarySignalTestEnabled())
+    {
+        startup_boundary_signal_injected = true;
+        discard raise(SIGTERM);
+    }
+}
+#else
+#define waterwallStartupFailureBoundaryTestHook(result) discard(result)
+#endif
 
 int waterwallInnerMain(int argc, char **argv);
 
@@ -50,6 +87,8 @@ int waterwallInnerMain(int argc, char **argv)
 
     initWLibc();
 
+    ww_startup_result_t startup_result = wwStartupSuccess();
+
     static const char *core_file_name    = "core.json";
     char              *core_file_content = readFile(core_file_name);
 
@@ -58,10 +97,18 @@ int waterwallInnerMain(int argc, char **argv)
         printError("Waterwall version %s\nCould not read core settings file \"%s\" \n",
                    TOSTRING(WATERWALL_VERSION),
                    core_file_name);
-        terminateProgram(1);
+        return 1;
     }
-    parseCoreSettings(core_file_content);
+    ww_startup_context_t core_settings_scope = {0};
+    wwStartupContextBegin(&core_settings_scope);
+    const bool core_settings_parsed = parseCoreSettings(core_file_content);
+    startup_result                  = wwStartupContextEnd(&core_settings_scope);
     memoryFree(core_file_content);
+    if (! core_settings_parsed)
+    {
+        destroyCoreSettings();
+        return startup_result.exit_code;
+    }
 
     //  [Runtime setup]
     createDirIfNotExists(getCoreSettings()->log_path);
@@ -89,10 +136,26 @@ int waterwallInnerMain(int argc, char **argv)
         .dns_logger_data = (logger_construction_data_t) {.log_file_path = getCoreSettings()->dns_log_file_fullpath,
                                                          .log_level     = getCoreSettings()->dns_log_level,
                                                          .log_console   = getCoreSettings()->dns_log_console},
+        .application_finalizer = destroyCoreSettings,
     };
 
     // core logger is available after ww setup
-    createGlobalState(runtime_data);
+    startup_result = createGlobalState(runtime_data);
+    if (UNLIKELY(! wwStartupSucceeded(startup_result)))
+    {
+        if (GSTATE.application_shutdown == NULL)
+        {
+            destroyCoreSettings();
+            return startup_result.exit_code;
+        }
+        goto startup_failed;
+    }
+#if defined(WATERWALL_TEST_HOOKS) && ! defined(OS_WIN)
+    if (waterwallStartupBoundarySignalTestEnabled())
+    {
+        registerAtExitCallBack(waterwallStartupBoundaryObserver, NULL);
+    }
+#endif
 #if defined(WATERWALL_TEST_HOOKS)
     const char *expected_ram_profile = getenv("WATERWALL_TEST_EXPECT_RAM_PROFILE");
     if (expected_ram_profile != NULL)
@@ -103,7 +166,8 @@ int waterwallInnerMain(int argc, char **argv)
         {
             printError(
                 "test hook: expected effective ram profile %s, got %s\n", expected_ram_profile, actual_ram_profile);
-            terminateProgram(1);
+            startup_result = wwStartupFailure(1);
+            goto startup_failed;
         }
     }
     if (getenv("WATERWALL_TEST_FORCE_SYSTEM_LOAD") != NULL)
@@ -115,39 +179,97 @@ int waterwallInnerMain(int argc, char **argv)
 
     LOGI("Starting Waterwall version %s", TOSTRING(WATERWALL_VERSION));
     LOGI("Parsing core file complete");
-    registerAtExitCallBack(exitHandle, NULL);
     if (getCoreSettings()->try_enabling_bbr)
     {
         tryEnableBbr();
     }
 
     increaseFileLimit();
-    loadImportedTunnelsIntoCore();
+    startup_result = loadImportedTunnelsIntoCore();
+    waterwallStartupFailureBoundaryTestHook(startup_result);
+    const bool imported_tunnels_checkpoint_ok = waterwallStartupCheckpoint();
+    if (UNLIKELY(! wwStartupSucceeded(startup_result) || ! imported_tunnels_checkpoint_ok))
+    {
+        goto startup_failed;
+    }
 
     //  [Parse ConfigFiles]
     {
         c_foreach(k, vec_config_path_t, getCoreSettings()->config_paths)
         {
+            if (UNLIKELY(! waterwallStartupCheckpoint()))
+            {
+                goto startup_failed;
+            }
+
             LOGD("Core: begin parsing config file \"%s\"", *k.ref);
             config_file_t *cfile = configfileParse(*k.ref);
+            if (cfile == NULL)
+            {
+                startup_result = wwStartupFailure(1);
+            }
+            waterwallStartupFailureBoundaryTestHook(startup_result);
+            const bool config_parse_checkpoint_ok = waterwallStartupCheckpoint();
 
             /*
                 in case of error in config file, the details are already printed out
             */
-            if (! cfile)
+            if (! cfile || ! config_parse_checkpoint_ok)
             {
-                terminateProgram(1);
+                if (cfile == NULL)
+                {
+                    assert(! wwStartupSucceeded(startup_result));
+                }
+                else
+                {
+                    configfileDestroy(cfile);
+                }
+                goto startup_failed;
             }
 
             LOGI("Core: parsing config file \"%s\" complete", *k.ref);
-            nodemanagerRunConfigFile(cfile);
+            startup_result = nodemanagerRunConfigFile(cfile);
+            waterwallStartupFailureBoundaryTestHook(startup_result);
+            const bool config_install_checkpoint_ok = waterwallStartupCheckpoint();
+            if (UNLIKELY(! wwStartupSucceeded(startup_result) || ! config_install_checkpoint_ok))
+            {
+                goto startup_failed;
+            }
         }
     }
 
+    if (UNLIKELY(! waterwallStartupCheckpoint()))
+    {
+        goto startup_failed;
+    }
+
     LOGD("Core: starting workers ...");
-    socketmanagerStart();
+    startup_result = socketmanagerStart();
+    waterwallStartupFailureBoundaryTestHook(startup_result);
+    const bool socket_manager_checkpoint_ok = waterwallStartupCheckpoint();
+    if (UNLIKELY(! wwStartupSucceeded(startup_result) || ! socket_manager_checkpoint_ok))
+    {
+        goto startup_failed;
+    }
     runMainThread();
     return 0;
+
+startup_failed:
+    if (! wwStartupSucceeded(startup_result))
+    {
+        const application_shutdown_request_result_e request_result =
+            signalmanagerArbitrateStartupFailure(startup_result.exit_code);
+        if (request_result == kApplicationShutdownRequestUnavailable && ! applicationShutdownWasRequested())
+        {
+            abortProgramNow(startup_result.exit_code);
+        }
+    }
+    else if (! applicationShutdownWasRequested())
+    {
+        abortProgramNow(1);
+    }
+    applicationShutdownCoordinate();
+    abortProgramNow(startup_result.exit_code);
 }
 
 #ifndef WATERWALL_HAS_STARTUP_GUARD

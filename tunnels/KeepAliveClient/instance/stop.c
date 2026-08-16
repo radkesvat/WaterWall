@@ -14,14 +14,15 @@ static void keepaliveclientDeleteTimer(wtimer_t **timer)
     *timer = NULL;
 }
 
-void keepaliveclientTunnelOnStop(tunnel_t *t)
+void keepaliveclientTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context)
 {
+    discard context;
     discard t;
 }
 
-void keepaliveclientTunnelOnWorkerStop(tunnel_t *t, wid_t wid)
+void keepaliveclientTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context)
 {
-    // onWorkerStop runs on the worker being stopped, for its own slot only.
+    discard context;
     assert(currentThreadIsEventWorkerWID(wid));
 
     keepaliveclient_tstate_t *ts = tunnelGetState(t);

@@ -34,7 +34,8 @@
 enum
 {
     kTunWriteChannelQueueMax    = 1024,
-    kMaxReadDistributeQueueSize = 128
+    kMaxReadDistributeQueueSize = 128,
+    kTunReaderStopPollMs        = 100
 };
 
 static_assert(kMaxReadDistributeQueueSize <= UINT16_MAX, "TUN read batch count must fit in the reader session");
@@ -68,6 +69,7 @@ struct tun_device_s
     // already exited on its own is still torn down completely. Owner-thread only.
     bool reader_joinable;
     bool writer_joinable;
+    bool reader_generation_open;
 };
 
 static inline uint16_t tunDeviceMtu(const tun_device_t *tdev)
@@ -128,6 +130,30 @@ static bool tunSetNonBlocking(int fd)
     }
 
     return true;
+}
+
+static bool tunSetCloseOnExec(int fd)
+{
+    int flags = fcntl(fd, F_GETFD, 0);
+    return flags >= 0 && fcntl(fd, F_SETFD, flags | FD_CLOEXEC) == 0;
+}
+
+static bool tunCreateStopPipe(int fds[2])
+{
+    if (pipe(fds) != 0)
+    {
+        return false;
+    }
+    if (tunSetNonBlocking(fds[0]) && tunSetNonBlocking(fds[1]) && tunSetCloseOnExec(fds[0]) &&
+        tunSetCloseOnExec(fds[1]))
+    {
+        return true;
+    }
+    discard close(fds[0]);
+    discard close(fds[1]);
+    fds[0] = -1;
+    fds[1] = -1;
+    return false;
 }
 
 static bool tunSetMtuByName(const char *name, uint16_t mtu)
@@ -349,7 +375,7 @@ static WTHREAD_ROUTINE(routineReadFromTun)
 
     while (tunLifecycleIsActive(tunLifecycleLoad(&tdev->lifecycle)))
     {
-        int ret = poll(fds, 2, -1);
+        int ret = poll(fds, 2, kTunReaderStopPollMs);
 
         if (ret < 0)
         {
@@ -359,6 +385,11 @@ static WTHREAD_ROUTINE(routineReadFromTun)
             }
             LOGE("TunDevice: Exit read routine due to poll failed with error %d (%s)", errno, strerror(errno));
             break;
+        }
+
+        if (ret == 0)
+        {
+            continue;
         }
 
         if (fds[1].revents & POLLIN)
@@ -552,7 +583,34 @@ bool tundeviceWrite(tun_device_t *tdev, sbuf_t *buf)
 static void tundeviceCloseLifetimeGates(tun_device_t *tdev)
 {
     deviceWriterChannelClose(&tdev->writer_channel);
-    deviceReaderSessionEnd(tdev->reader_session);
+    deviceReaderSessionEndRequest(tdev->reader_session);
+}
+
+static void tundeviceRetireReaderGeneration(tun_device_t *tdev)
+{
+    if (! tdev->reader_generation_open)
+    {
+        return;
+    }
+    bufferpoolResetThreadOwnership(tdev->reader_buffer_pool);
+    deviceReaderSessionRetireGenerationBuffers(tdev->reader_session);
+    tdev->reader_generation_open = false;
+}
+
+static bool tundeviceSignalReaderStop(tun_device_t *tdev)
+{
+    if (! tdev->reader_joinable)
+    {
+        return true;
+    }
+
+    ssize_t write_res;
+    do
+    {
+        write_res = write(tdev->linux_pipe_fds[1], "x", 1);
+    } while (write_res < 0 && errno == EINTR);
+
+    return write_res == 1 || (write_res < 0 && (errno == EAGAIN || errno == EWOULDBLOCK));
 }
 
 static void tundeviceDrainStopPipe(tun_device_t *tdev)
@@ -844,7 +902,7 @@ bool tundeviceClearDnsServers(tun_device_t *tdev)
  * Deliberately NOT done here: closing channels, waking the peer,
  * tundeviceBringDown(), pre-down scripts, route/DNS restoration, or joining
  * threads. A device thread that did any of those would eventually join itself.
- * Worker 0 reaches all of it through nodemanagerStop() and TunDevice::onStop.
+ * The lifecycle coordinator reaches all of it through the quiesce/wait hooks.
  */
 static void tundeviceNoteUnexpectedThreadExit(tun_device_t *tdev, const char *which)
 {
@@ -935,11 +993,14 @@ bool tundeviceBringUp(tun_device_t *tdev)
         tunLifecycleTransitionStoppingToDown(&tdev->lifecycle);
         return false;
     }
+    tdev->reader_generation_open = true;
 
     if (! tunSetStateByName(tdev->name, true))
     {
         LOGE("TunDevice: error bringing device %s up", tdev->name);
         tundeviceCloseLifetimeGates(tdev);
+        deviceReaderSessionEndWait(tdev->reader_session);
+        tundeviceRetireReaderGeneration(tdev);
         discard deviceWriterChannelRetireCurrent(&tdev->writer_channel);
         tunLifecycleTransitionStoppingToDown(&tdev->lifecycle);
         return false;
@@ -983,6 +1044,8 @@ bool tundeviceBringUp(tun_device_t *tdev)
 rollback:
     tunLifecycleTransitionToStopping(&tdev->lifecycle);
     tundeviceCloseLifetimeGates(tdev);
+    discard tundeviceSignalReaderStop(tdev);
+    deviceReaderSessionEndWait(tdev->reader_session);
 
     bool rollback_ok = tunSetStateByName(tdev->name, false);
     if (! rollback_ok)
@@ -992,9 +1055,6 @@ rollback:
 
     if (tdev->reader_joinable)
     {
-        ssize_t write_res = write(tdev->linux_pipe_fds[1], "x", 1);
-        discard write_res;
-
         if (safeThreadJoin(tdev->read_thread))
         {
             tundeviceDrainStopPipe(tdev);
@@ -1002,14 +1062,16 @@ rollback:
             // Close, join, retire: End poisons the fragment generation but leaves
             // its staged reader buffers alone, because the reader still owned this
             // pool. Only here does the lifecycle thread own it.
-            bufferpoolResetThreadOwnership(tdev->reader_buffer_pool);
-            deviceReaderSessionRetireGenerationBuffers(tdev->reader_session);
         }
         else
         {
             LOGE("TunDevice: failed to join reader during startup rollback");
             rollback_ok = false;
         }
+    }
+    if (! tdev->reader_joinable)
+    {
+        tundeviceRetireReaderGeneration(tdev);
     }
     if (tdev->writer_joinable)
     {
@@ -1037,6 +1099,14 @@ rollback:
     return false;
 }
 
+bool tundeviceRequestStop(tun_device_t *tdev)
+{
+    tunLifecycleTransitionToStopping(&tdev->lifecycle);
+    tundeviceCloseLifetimeGates(tdev);
+
+    return tundeviceSignalReaderStop(tdev);
+}
+
 bool tundeviceBringDown(tun_device_t *tdev)
 {
     // A previous interface-down failure retains STOPPING after the threads and
@@ -1049,10 +1119,8 @@ bool tundeviceBringDown(tun_device_t *tdev)
         return true;
     }
 
-    tunLifecycleTransitionToStopping(&tdev->lifecycle);
-    tundeviceCloseLifetimeGates(tdev);
-
-    bool bring_down_ok = true;
+    bool bring_down_ok = tundeviceRequestStop(tdev);
+    deviceReaderSessionEndWait(tdev->reader_session);
     if (! tunSetStateByName(tdev->name, false))
     {
         LOGE("TunDevice: error bringing %s down", tdev->name);
@@ -1065,9 +1133,6 @@ bool tundeviceBringDown(tun_device_t *tdev)
 
     if (tdev->reader_joinable)
     {
-        ssize_t write_res = write(tdev->linux_pipe_fds[1], "x", 1);
-        discard write_res;
-
         if (safeThreadJoin(tdev->read_thread))
         {
             tundeviceDrainStopPipe(tdev);
@@ -1075,14 +1140,16 @@ bool tundeviceBringDown(tun_device_t *tdev)
             // Close, join, retire: End poisons the fragment generation but leaves
             // its staged reader buffers alone, because the reader still owned this
             // pool. Only here does the lifecycle thread own it.
-            bufferpoolResetThreadOwnership(tdev->reader_buffer_pool);
-            deviceReaderSessionRetireGenerationBuffers(tdev->reader_session);
         }
         else
         {
             LOGE("TunDevice: failed to join reader thread; retaining reader resources");
             bring_down_ok = false;
         }
+    }
+    if (! tdev->reader_joinable)
+    {
+        tundeviceRetireReaderGeneration(tdev);
     }
     if (tdev->writer_joinable)
     {
@@ -1275,7 +1342,7 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void
         return NULL;
     }
 
-    if (pipe(tdev->linux_pipe_fds) != 0)
+    if (! tunCreateStopPipe(tdev->linux_pipe_fds))
     {
         LOGE("TunDevice: failed to create stop pipe");
         memoryFree(tdev->name);

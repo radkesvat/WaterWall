@@ -340,8 +340,10 @@
 #include "UserController/interface.h"
 #endif
 
-void loadImportedTunnelsIntoCore(void)
+ww_startup_result_t loadImportedTunnelsIntoCore(void)
 {
+    ww_startup_context_t startup = {0};
+    wwStartupContextBegin(&startup);
 
 #if INCLUDE_TEMPLATE
     USING(Template);
@@ -678,4 +680,6 @@ void loadImportedTunnelsIntoCore(void)
 #ifdef INCLUDE_USER_CONTROLLER
     USING(UserController);
 #endif
+
+    return wwStartupContextEnd(&startup);
 }

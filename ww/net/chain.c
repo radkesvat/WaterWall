@@ -39,7 +39,8 @@ void tunnelarrayInsert(tunnel_array_t *tc, tunnel_t *t)
     if (tc->len >= kMaxChainLen)
     {
         LOGF("tunnelarrayInsert overflow!");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     tc->tuns[tc->len++] = t;
@@ -52,7 +53,8 @@ void tunnelchainInsert(tunnel_chain_t *tci, tunnel_t *t)
             ! tunnelchainTryAddPadding(tci->sum_padding_left, tunnelGetNode(t)->required_padding_left, &next_padding)))
     {
         LOGF("tunnelchainInsert: total left-padding size overflow");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     uint32_t next_line_state_size;
@@ -60,13 +62,15 @@ void tunnelchainInsert(tunnel_chain_t *tci, tunnel_t *t)
     if (UNLIKELY(t->lstate_size > UINT32_MAX - tci->sum_line_state_size))
     {
         LOGF("tunnelchainInsert: total line-state size overflow");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
     next_line_state_size = tci->sum_line_state_size + t->lstate_size;
     if (UNLIKELY(! tunnelchainTryComputeLineItemSize(next_line_state_size, &line_item_size)))
     {
         LOGF("tunnelchainInsert: complete line-pool item size exceeds uint32_t");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
     discard line_item_size;
 
@@ -114,14 +118,16 @@ void tunnelchainFinalize(tunnel_chain_t *tc)
     if (UNLIKELY(! tunnelchainTryComputeLineItemSize(tc->sum_line_state_size, &line_item_size)))
     {
         LOGF("tunnelchainFinalize: complete line-pool item size exceeds uint32_t");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     master_pool_t *master_pool = masterpoolCreateWithCapacity(2 * ((8) + GSTATE.ram_profile));
     if (UNLIKELY(master_pool == NULL))
     {
         LOGF("TunnelChain: failed to construct line master-pool metadata");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     line_t **packet_lines = memoryAllocate(sizeof(*packet_lines) * tc->workers_count);
@@ -129,7 +135,8 @@ void tunnelchainFinalize(tunnel_chain_t *tc)
     {
         masterpoolDestroy(master_pool);
         LOGF("TunnelChain: failed to allocate packet-line slots");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     for (wid_t i = 0; i < tc->workers_count; i++)
@@ -147,7 +154,8 @@ void tunnelchainFinalize(tunnel_chain_t *tc)
             memoryFree(packet_lines);
             masterpoolDestroy(master_pool);
             LOGF("TunnelChain: failed to construct line-pool metadata for worker %d", (int) i);
-            terminateProgram(1);
+            startupFailureRecord(1);
+            return;
         }
     }
 
@@ -231,7 +239,8 @@ void tunnelchainCombine(tunnel_chain_t *destination, tunnel_chain_t *source)
              destination->tunnels.len,
              source->tunnels.len,
              kMaxChainLen);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     // Check if worker counts match
@@ -240,7 +249,8 @@ void tunnelchainCombine(tunnel_chain_t *destination, tunnel_chain_t *source)
         LOGF("tunnelchainCombine: Worker counts don't match (%d != %d)",
              destination->workers_count,
              source->workers_count);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     uint16_t combined_padding;
@@ -248,7 +258,8 @@ void tunnelchainCombine(tunnel_chain_t *destination, tunnel_chain_t *source)
             ! tunnelchainTryAddPadding(destination->sum_padding_left, source->sum_padding_left, &combined_padding)))
     {
         LOGF("tunnelchainCombine: combined left-padding size overflow");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
     discard combined_padding;
 
@@ -257,13 +268,15 @@ void tunnelchainCombine(tunnel_chain_t *destination, tunnel_chain_t *source)
     if (UNLIKELY(source->sum_line_state_size > UINT32_MAX - destination->sum_line_state_size))
     {
         LOGF("tunnelchainCombine: combined line-state size overflow");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
     combined_line_state_size = destination->sum_line_state_size + source->sum_line_state_size;
     if (UNLIKELY(! tunnelchainTryComputeLineItemSize(combined_line_state_size, &line_item_size)))
     {
         LOGF("tunnelchainCombine: complete line-pool item size exceeds uint32_t");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
     discard line_item_size;
 
@@ -272,6 +285,10 @@ void tunnelchainCombine(tunnel_chain_t *destination, tunnel_chain_t *source)
     {
         tunnel_t *tunnel = source->tunnels.tuns[i];
         tunnelchainInsert(destination, tunnel);
+        if (UNLIKELY(startupFailurePending()))
+        {
+            return;
+        }
     }
 
     // Clear the source chain (tunnels are now owned by destination)

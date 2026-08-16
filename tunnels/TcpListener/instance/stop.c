@@ -2,19 +2,31 @@
 
 #include "loggers/network_logger.h"
 
-void tcplistenerTunnelOnStop(tunnel_t *t)
+void tcplistenerTunnelOnQuiesceRequest(tunnel_t *t, const ww_lifecycle_context_t *context)
 {
+    discard               context;
     tcplistener_tstate_t *ts = tunnelGetState(t);
-    atomicStoreExplicit(&ts->stopping, true, memory_order_release);
+    atomicStoreRelaxed(&ts->stopping, true);
 }
 
-void tcplistenerTunnelOnWorkerStop(tunnel_t *t, wid_t wid)
+void tcplistenerTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context)
 {
-    // onWorkerStop runs on the worker being stopped, for its own slot only.
+    discard context;
+    assert(currentThreadIsEventWorkerWID(wid));
+    tcplistener_tstate_t *ts = tunnelGetState(t);
+    if (ts->idle_tables != NULL && ts->idle_tables[wid] != NULL)
+    {
+        localidletableQuiesce(ts->idle_tables[wid]);
+    }
+}
+
+void tcplistenerTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context)
+{
+    discard context;
     assert(currentThreadIsEventWorkerWID(wid));
 
     tcplistener_tstate_t *ts = tunnelGetState(t);
-    atomicStoreExplicit(&ts->stopping, true, memory_order_release);
+    atomicStoreRelaxed(&ts->stopping, true);
 
     if (ts->idle_tables == NULL)
     {

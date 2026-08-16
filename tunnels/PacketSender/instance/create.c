@@ -340,11 +340,11 @@ tunnel_t *packetsenderTunnelCreate(node_t *node)
     t->fnPauseD   = &packetsenderTunnelDownStreamPause;
     t->fnResumeD  = &packetsenderTunnelDownStreamResume;
 
-    t->onPrepare    = &packetsenderTunnelOnPrepair;
-    t->onStart      = &packetsenderTunnelOnStart;
-    t->onStop       = &packetsenderTunnelOnStop;
-    t->onWorkerStop = &packetsenderTunnelOnWorkerStop;
-    t->onDestroy    = &packetsenderTunnelDestroy;
+    t->onPrepare       = &packetsenderTunnelOnPrepair;
+    t->onStart         = &packetsenderTunnelOnStart;
+    t->onStop          = &packetsenderTunnelOnStop;
+    t->onWorkerQuiesce = &packetsenderTunnelOnWorkerQuiesce;
+    t->onDestroy       = &packetsenderTunnelDestroy;
 
     packetsender_tstate_t *state    = tunnelGetState(t);
     const cJSON           *settings = node->node_settings_json;
@@ -352,7 +352,7 @@ tunnel_t *packetsenderTunnelCreate(node_t *node)
     if (! checkJsonIsObjectAndHasChild(settings))
     {
         LOGF("JSON Error: PacketSender->settings (object field) : The object was empty or invalid");
-        packetsenderTunnelDestroy(t);
+        packetsenderTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
@@ -363,7 +363,7 @@ tunnel_t *packetsenderTunnelCreate(node_t *node)
         ! packetsenderLoadDuration(state, settings) || ! packetsenderLoadDestPort(state, settings) ||
         ! packetsenderLoadSrcPort(state, settings))
     {
-        packetsenderTunnelDestroy(t);
+        packetsenderTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 

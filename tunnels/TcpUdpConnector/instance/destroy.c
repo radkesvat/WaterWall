@@ -4,7 +4,7 @@ static void tcpudpconnectorDestroyChildTunnel(tunnel_t **child_tunnel, node_t *c
 {
     if (*child_tunnel != NULL)
     {
-        (*child_tunnel)->onDestroy(*child_tunnel);
+        tunnelOwnedChildDestroy(*child_tunnel);
         *child_tunnel = NULL;
     }
     child_node->instance = NULL;
@@ -27,8 +27,9 @@ void tcpudpconnectorTunnelstateDestroy(tcpudpconnector_tstate_t *ts)
     tcpudpconnectorClearChildNode(&ts->udp_node);
 }
 
-void tcpudpconnectorTunnelDestroy(tunnel_t *t)
+void tcpudpconnectorTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context)
 {
+    discard                   context;
     tcpudpconnector_tstate_t *ts = tunnelGetState(t);
     tcpudpconnectorTunnelstateDestroy(ts);
     tunnelDestroy(t);

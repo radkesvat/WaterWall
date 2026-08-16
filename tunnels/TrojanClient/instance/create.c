@@ -365,7 +365,7 @@ tunnel_t *trojanclientTunnelCreate(node_t *node)
 
     if (! trojanclientCreateInternalDomainResolver(t, node))
     {
-        trojanclientTunnelDestroy(t);
+        trojanclientTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 

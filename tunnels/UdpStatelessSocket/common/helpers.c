@@ -14,7 +14,8 @@ typedef struct udpstatelesssocket_dns_request_s
     int                     strategy;
 } udpstatelesssocket_dns_request_t;
 
-static void udpstatelesssocketCleanupSendRequest(void *arg1, void *arg2, void *arg3);
+static void udpstatelesssocketCleanupSendRequest(void *arg1, void *arg2, void *arg3,
+                                                 worker_message_cancel_reason_e reason);
 
 #ifdef UDPSTATELESSSOCKET_DISPATCH_TEST_HOOKS
 static UdpStatelessSocketForeignAdmissionHook udpstatelesssocket_foreign_admission_hook;
@@ -238,7 +239,7 @@ static void udpstatelesssocketWriteOwnerPeer(tunnel_t *t, sbuf_t *buf, const soc
     // Only the worker owning the socket's wio may write to it.
     assert(currentThreadIsEventWorkerWID(state->io_wid));
 
-    if (UNLIKELY(isApplicationTerminating() || io == NULL))
+    if (UNLIKELY(io == NULL))
     {
         udpstatelesssocketReleaseWrittenBuffer(buf, detached_from_origin_worker);
         return;
@@ -301,7 +302,7 @@ void udpstatelesssocketDispatchToPeer(tunnel_t *t, sbuf_t *buf, const sockaddr_u
     }
 
     udpstatelesssocket_tstate_t *state = tunnelGetState(observed_tunnel);
-    if (UNLIKELY(isApplicationTerminating()))
+    if (UNLIKELY(! tunnelasyncsessionIsAccepting(session)))
     {
         tunnelasyncsessionLeave(session);
         reuseBuffer(buf);
@@ -345,8 +346,10 @@ void udpstatelesssocketDispatchToPeer(tunnel_t *t, sbuf_t *buf, const sockaddr_u
     tunnelasyncsessionLeave(session);
 }
 
-static void udpstatelesssocketCleanupSendRequest(void *arg1, void *arg2, void *arg3)
+static void udpstatelesssocketCleanupSendRequest(void *arg1, void *arg2, void *arg3,
+                                                 worker_message_cancel_reason_e reason)
 {
+    discard reason;
     discard arg2;
     discard arg3;
 
@@ -366,7 +369,8 @@ static void udpstatelesssocketCleanupSendRequest(void *arg1, void *arg2, void *a
 
 static void udpstatelesssocketHandleRecvFrom(tunnel_t *t, wio_t *io, sbuf_t *buf, wid_t wid)
 {
-    if (UNLIKELY(isApplicationTerminating()))
+    udpstatelesssocket_tstate_t *state = tunnelGetState(t);
+    if (UNLIKELY(state->async_session == NULL || ! tunnelasyncsessionIsAccepting(state->async_session)))
     {
         bufferpoolReuseBuffer(getWorkerBufferPool(wid), buf);
         return;
@@ -381,8 +385,6 @@ static void udpstatelesssocketHandleRecvFrom(tunnel_t *t, wio_t *io, sbuf_t *buf
         bufferpoolReuseBuffer(getWorkerBufferPool(wid), buf);
         return;
     }
-
-    udpstatelesssocket_tstate_t *state = tunnelGetState(t);
 
     if (UNLIKELY(wid != state->io_wid))
     {
@@ -494,16 +496,16 @@ void udpstatelesssocketLocalThreadSocketUpStream(void *worker, void *arg1, void 
 
     if (UNLIKELY(! tunnelasyncsessionEnter(request->session, &t)))
     {
-        udpstatelesssocketCleanupSendRequest(request, NULL, NULL);
+        udpstatelesssocketCleanupSendRequest(request, NULL, NULL, kWorkerMessageCancelAdmissionClosed);
         return;
     }
 
     udpstatelesssocket_tstate_t *state = tunnelGetState(t);
     wio_t                       *io    = udpstatelesssocketGetOwnerIo(state);
-    if (UNLIKELY(isApplicationTerminating() || io == NULL))
+    if (UNLIKELY(io == NULL || ! tunnelasyncsessionIsAccepting(request->session)))
     {
         tunnelasyncsessionLeave(request->session);
-        udpstatelesssocketCleanupSendRequest(request, NULL, NULL);
+        udpstatelesssocketCleanupSendRequest(request, NULL, NULL, kWorkerMessageCancelAdmissionClosed);
         return;
     }
 

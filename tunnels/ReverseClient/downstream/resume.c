@@ -1,12 +1,10 @@
 #include "structure.h"
 
-#include "loggers/network_logger.h"
-
 void reverseclientTunnelDownStreamResume(tunnel_t *t, line_t *l)
 {
-    reverseclient_lstate_t *uls = lineGetState(l, t);
-    if (uls->pair_connected)
+    reverseclient_pair_t *pair = ((reverseclient_lstate_t *) lineGetState(l, t))->pair;
+    if (pair->phase == kReverseClientPairActive)
     {
-        tunnelPrevDownStreamResume(t, uls->d);
+        tunnelPrevDownStreamResume(t, pair->d);
     }
 }

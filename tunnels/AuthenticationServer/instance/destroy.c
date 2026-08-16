@@ -2,8 +2,9 @@
 
 #include "loggers/network_logger.h"
 
-void authenticationserverTunnelDestroy(tunnel_t *t)
+void authenticationserverTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context)
 {
+    discard                        context;
     authenticationserver_tstate_t *ts = tunnelGetState(t);
 
     if (UNLIKELY(ts->database_loaded && ! authenticationserverSaveDatabase(ts)))

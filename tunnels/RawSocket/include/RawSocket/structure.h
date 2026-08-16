@@ -43,12 +43,13 @@ enum
     kTunnelStateSize = sizeof(rawsocket_tstate_t)
 };
 
-WW_EXPORT void         rawsocketDestroy(tunnel_t *t);
+WW_EXPORT void         rawsocketDestroy(tunnel_t *t, const ww_lifecycle_context_t *context);
 WW_EXPORT tunnel_t    *rawsocketCreate(node_t *node);
 WW_EXPORT api_result_t rawsocketApi(tunnel_t *instance, sbuf_t *message);
 
 void rawsocketOnStart(tunnel_t *t);
-void rawsocketOnStop(tunnel_t *t);
+void rawsocketOnQuiesceRequest(tunnel_t *t, const ww_lifecycle_context_t *context);
+void rawsocketOnQuiesceWait(tunnel_t *t, const ww_lifecycle_context_t *context);
 
 void rawsocketExitHook(void *userdata, int sig);
 void rawsocketOnIPPacketReceived(struct capture_device_s *cdev, void *userdata, sbuf_t *buf, wid_t wid);

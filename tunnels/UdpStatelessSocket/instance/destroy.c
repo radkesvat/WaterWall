@@ -2,12 +2,13 @@
 
 #include "loggers/network_logger.h"
 
-void udpstatelesssocketTunnelDestroy(tunnel_t *t)
+void udpstatelesssocketTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context)
 {
+    discard                      context;
     udpstatelesssocket_tstate_t *state = tunnelGetState(t);
 
-    /* Partial-start/failure cleanup may reach destruction without pre-stop. */
-    udpstatelesssocketTunnelOnStop(t);
+    udpstatelesssocketTunnelOnQuiesceRequest(t, context);
+    udpstatelesssocketTunnelOnQuiesceWait(t, context);
 
     if (state->socket.idle_tables != NULL)
     {

@@ -1624,8 +1624,9 @@ void authenticationclientScheduleReconnect(tunnel_t *t)
         {
             LOGD("AuthenticationClient: queued reconnect on worker 0 from worker %d", workerWIDForLog(getWID()));
         }
-        if (UNLIKELY(! sendWorkerMessageForceQueueWithCleanup(
-                0, authenticationclientOpenControlLineOnWorker0, NULL, t, NULL, NULL)))
+        if (UNLIKELY(sendWorkerMessageForceQueueWithCleanup(
+                         0, authenticationclientOpenControlLineOnWorker0, NULL, t, NULL, NULL) !=
+                     kWorkerMessageSubmitAccepted))
         {
             authenticationclientFailReconnectTaskAdmission();
         }

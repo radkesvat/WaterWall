@@ -74,15 +74,15 @@ enum
     kLineStateSize   = sizeof(udpstatelesssocket_lstate_t)
 };
 
-WW_EXPORT void         udpstatelesssocketTunnelDestroy(tunnel_t *t);
+WW_EXPORT void         udpstatelesssocketTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context);
 WW_EXPORT tunnel_t    *udpstatelesssocketTunnelCreate(node_t *node);
 WW_EXPORT api_result_t udpstatelesssocketTunnelApi(tunnel_t *instance, sbuf_t *message);
 
 void udpstatelesssocketTunnelOnPrepair(tunnel_t *t);
 void udpstatelesssocketTunnelOnStart(tunnel_t *t);
-void udpstatelesssocketTunnelOnPreStop(tunnel_t *t);
-void udpstatelesssocketTunnelOnStop(tunnel_t *t);
-void udpstatelesssocketTunnelOnWorkerStop(tunnel_t *t, wid_t wid);
+void udpstatelesssocketTunnelOnQuiesceRequest(tunnel_t *t, const ww_lifecycle_context_t *context);
+void udpstatelesssocketTunnelOnQuiesceWait(tunnel_t *t, const ww_lifecycle_context_t *context);
+void udpstatelesssocketTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);
 
 void udpstatelesssocketTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void udpstatelesssocketTunnelUpStreamEst(tunnel_t *t, line_t *l);
@@ -122,3 +122,4 @@ void udpstatelesssocketDnsCacheClear(udpstatelesssocket_tstate_t *state);
 typedef void (*UdpStatelessSocketForeignAdmissionHook)(void *context);
 void udpstatelesssocketInstallForeignAdmissionHook(UdpStatelessSocketForeignAdmissionHook hook, void *context);
 #endif
+void udpstatelesssocketTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);

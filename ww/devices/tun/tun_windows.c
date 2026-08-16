@@ -56,6 +56,7 @@ struct tun_device_s
     void     *userdata;
     wthread_t read_thread;
     wthread_t write_thread;
+    bool      reader_generation_open;
 
     wthread_routine routine_reader;
     wthread_routine routine_writer;
@@ -1021,7 +1022,7 @@ static WTHREAD_ROUTINE(routineWriteToTun)
 static void tundeviceCloseLifetimeGates(tun_device_t *tdev)
 {
     deviceWriterChannelClose(&tdev->writer_channel);
-    deviceReaderSessionEnd(tdev->reader_session);
+    deviceReaderSessionEndRequest(tdev->reader_session);
 }
 
 static bool tundeviceJoinThread(wthread_t *thread, const char *name)
@@ -1097,11 +1098,25 @@ static bool tundeviceJoinReader(void *context)
     {
         return false;
     }
-    // Close, join, retire: End poisons the fragment generation but leaves its
-    // staged reader buffers alone, because the reader still owned this pool.
-    // Only here does the lifecycle thread own it.
+    return true;
+}
+
+static void tundeviceWaitReaderDelivery(void *context)
+{
+    tun_device_t *tdev = context;
+    deviceReaderSessionEndWait(tdev->reader_session);
+}
+
+static bool tundeviceRetireReader(void *context)
+{
+    tun_device_t *tdev = context;
+    if (! tdev->reader_generation_open)
+    {
+        return true;
+    }
     bufferpoolResetThreadOwnership(tdev->reader_buffer_pool);
     deviceReaderSessionRetireGenerationBuffers(tdev->reader_session);
+    tdev->reader_generation_open = false;
     return true;
 }
 
@@ -1139,15 +1154,23 @@ static void tundeviceEndSession(void *context)
 static bool tundeviceShutdownSession(tun_device_t *tdev)
 {
     static const tun_windows_lifetime_ops_t ops = {
-        .begin_shutdown = tundeviceBeginSessionShutdown,
-        .signal_reader  = tundeviceSignalStopEvent,
-        .join_reader    = tundeviceJoinReader,
-        .join_writer    = tundeviceJoinWriter,
-        .release_writer = tundeviceReleaseWriter,
-        .end_session    = tundeviceEndSession,
+        .begin_shutdown       = tundeviceBeginSessionShutdown,
+        .signal_reader        = tundeviceSignalStopEvent,
+        .wait_reader_delivery = tundeviceWaitReaderDelivery,
+        .join_reader          = tundeviceJoinReader,
+        .retire_reader        = tundeviceRetireReader,
+        .join_writer          = tundeviceJoinWriter,
+        .release_writer       = tundeviceReleaseWriter,
+        .end_session          = tundeviceEndSession,
     };
 
     return tunWindowsLifetimeShutdown(tdev, &ops);
+}
+
+bool tundeviceRequestStop(tun_device_t *tdev)
+{
+    tundeviceBeginSessionShutdown(tdev);
+    return tundeviceSignalStopEvent(tdev);
 }
 
 /*
@@ -1167,7 +1190,7 @@ static bool tundeviceShutdownSession(tun_device_t *tdev)
  * Deliberately NOT done here: closing channels, waking the peer,
  * tundeviceBringDown(), pre-down scripts, route/DNS restoration, or joining
  * threads. A device thread that did any of those would eventually join itself.
- * Worker 0 reaches all of it through nodemanagerStop() and TunDevice::onStop.
+ * The lifecycle coordinator reaches all of it through the quiesce/wait hooks.
  */
 static void tundeviceNoteUnexpectedThreadExit(tun_device_t *tdev, const char *which)
 {
@@ -1278,6 +1301,7 @@ bool tundeviceBringUp(tun_device_t *tdev)
         tunLifecycleTransitionStoppingToDown(&tdev->lifecycle);
         return false;
     }
+    tdev->reader_generation_open = true;
 
     LOGI("TunDevice: Starting WinTun session");
     WINTUN_SESSION_HANDLE Session = WintunStartSession(tdev->adapter_handle, 0x400000);
@@ -1286,6 +1310,8 @@ bool tundeviceBringUp(tun_device_t *tdev)
         DWORD lastError = GetLastError();
         LOGE("TunDevice: Failed to start session, code: %lu", lastError);
         tundeviceCloseLifetimeGates(tdev);
+        deviceReaderSessionEndWait(tdev->reader_session);
+        discard tundeviceRetireReader(tdev);
         discard deviceWriterChannelRetireCurrent(&tdev->writer_channel);
         tunLifecycleTransitionStoppingToDown(&tdev->lifecycle);
         return false;
@@ -1344,7 +1370,8 @@ bool tundeviceBringDown(tun_device_t *tdev)
         return true;
     }
 
-    bool res = tundeviceShutdownSession(tdev);
+    discard tundeviceRequestStop(tdev);
+    bool    res = tundeviceShutdownSession(tdev);
     if (res)
     {
         tunLifecycleTransitionStoppingToDown(&tdev->lifecycle);

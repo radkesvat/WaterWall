@@ -35,13 +35,13 @@ enum
     kLineStateSize                             = sizeof(junkdatagramsender_lstate_t)
 };
 
-WW_EXPORT void         junkdatagramsenderTunnelDestroy(tunnel_t *t);
+WW_EXPORT void         junkdatagramsenderTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context);
 WW_EXPORT tunnel_t    *junkdatagramsenderTunnelCreate(node_t *node);
 WW_EXPORT api_result_t junkdatagramsenderTunnelApi(tunnel_t *instance, sbuf_t *message);
 
 void junkdatagramsenderTunnelOnPrepair(tunnel_t *t);
 void junkdatagramsenderTunnelOnStart(tunnel_t *t);
-void junkdatagramsenderTunnelOnStop(tunnel_t *t);
+void junkdatagramsenderTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context);
 
 void junkdatagramsenderTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void junkdatagramsenderTunnelUpStreamEst(tunnel_t *t, line_t *l);

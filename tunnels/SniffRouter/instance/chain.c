@@ -8,13 +8,15 @@ static void sniffrouterBindRouteTarget(tunnel_t *t, tunnel_chain_t *chain, sniff
     if (target == NULL)
     {
         LOGF("SniffRouter: referenced route tunnel \"%s\" is not available", route->node->name);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     if (target == t)
     {
         LOGF("SniffRouter: route target must be different from the router");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     route->tunnel = target;
@@ -29,7 +31,8 @@ static void sniffrouterBindRouteTarget(tunnel_t *t, tunnel_chain_t *chain, sniff
         LOGF("SniffRouter: route target node \"%s\" is already bound to previous node \"%s\"",
              target->node->name,
              target->prev->node->name);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     if (target->chain == chain)
@@ -40,7 +43,8 @@ static void sniffrouterBindRouteTarget(tunnel_t *t, tunnel_chain_t *chain, sniff
         }
 
         LOGF("SniffRouter: route target node \"%s\" is already in the router chain", target->node->name);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     if (target->prev == NULL)
@@ -64,7 +68,8 @@ static void sniffrouterBindRouteTarget(tunnel_t *t, tunnel_chain_t *chain, sniff
     if (route->tunnel == NULL)
     {
         LOGF("SniffRouter: route target node \"%s\" is not reachable from the router", target->node->name);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 }
 

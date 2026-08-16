@@ -49,8 +49,8 @@ enum router_classify_result_e
 
 typedef struct router_tstate_s
 {
-    node_t                         domain_resolver_node;
-    tunnel_t                      *domain_resolver_tunnel;
+    node_t                          domain_resolver_node;
+    tunnel_t                       *domain_resolver_tunnel;
     router_rule_t                  *rules;
     uint32_t                        rules_count;
     char                           *geoip_db_path;
@@ -96,7 +96,7 @@ typedef struct router_match_s
     tunnel_t                     *target;
 } router_match_t;
 
-WW_EXPORT void         routerTunnelDestroy(tunnel_t *t);
+WW_EXPORT void         routerTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context);
 WW_EXPORT tunnel_t    *routerTunnelCreate(node_t *node);
 WW_EXPORT api_result_t routerTunnelApi(tunnel_t *instance, sbuf_t *message);
 
@@ -137,7 +137,7 @@ void routerTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offset);
 void routerTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void routerTunnelOnPrepair(tunnel_t *t);
 void routerTunnelOnStart(tunnel_t *t);
-void routerTunnelOnStop(tunnel_t *t);
+void routerTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context);
 
 // --- upstream callbacks ---
 void routerTunnelUpStreamInit(tunnel_t *t, line_t *l);

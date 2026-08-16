@@ -2,8 +2,9 @@
 
 #include "loggers/network_logger.h"
 
-void keepaliveclientTunnelDestroy(tunnel_t *t)
+void keepaliveclientTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context)
 {
+    discard                   context;
     keepaliveclient_tstate_t *ts   = tunnelGetState(t);
     keepaliveclient_lstate_t *ls   = NULL;
     keepaliveclient_lstate_t *next = NULL;

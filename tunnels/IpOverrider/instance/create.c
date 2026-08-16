@@ -157,7 +157,9 @@ static bool ipoverriderParseLegacySettings(ipoverrider_tstate_t *state, const cJ
     if (directon_dv.status != kDvsUp && directon_dv.status != kDvsDown)
     {
         LOGF("IpOverrider: IpOverrider->settings->direction (string field)  must be either up or down ");
-        terminateProgram(1);
+        dynamicvalueDestroy(directon_dv);
+        startupFailureRecord(1);
+        return false;
     }
 
     dynamic_value_t mode_dv = parseDynamicNumericValueFromJsonObject(settings, "mode", 2, "source-ip", "dest-ip");
@@ -165,7 +167,10 @@ static bool ipoverriderParseLegacySettings(ipoverrider_tstate_t *state, const cJ
     {
         LOGF("IpOverrider: IpOverrider->settings->mode (string field)  mode is not set or invalid, do you "
              "want to override source ip or dest ip?");
-        terminateProgram(1);
+        dynamicvalueDestroy(directon_dv);
+        dynamicvalueDestroy(mode_dv);
+        startupFailureRecord(1);
+        return false;
     }
 
     uint8_t direction_index = (directon_dv.status == kDvsUp) ? kIpOverriderDirectionUp : kIpOverriderDirectionDown;
@@ -268,13 +273,13 @@ tunnel_t *ipoverriderCreate(node_t *node)
     if (! (cJSON_IsObject(settings) && settings->child != NULL))
     {
         LOGF("JSON Error: IpOverrider->settings (object field) : The object was empty or invalid");
-        ipoverriderDestroy(t);
+        ipoverriderDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
     if (! ipoverriderParseOnly120(state, settings) || ! ipoverriderParseChance(state, settings))
     {
-        ipoverriderDestroy(t);
+        ipoverriderDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
@@ -283,13 +288,13 @@ tunnel_t *ipoverriderCreate(node_t *node)
     {
         if (! ipoverriderParseDirectionalSettings(state, settings))
         {
-            ipoverriderDestroy(t);
+            ipoverriderDestroy(t, wwLifecycleStartupRollback());
             return NULL;
         }
     }
     else if (! ipoverriderParseLegacySettings(state, settings))
     {
-        ipoverriderDestroy(t);
+        ipoverriderDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 

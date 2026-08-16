@@ -189,13 +189,13 @@ tunnel_t *loggertunnelTunnelCreate(node_t *node)
     if (! checkJsonIsObjectAndHasChild(settings))
     {
         LOGF("LoggerTunnel: settings must be a non-empty object");
-        loggertunnelTunnelDestroy(t);
+        loggertunnelTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
     if (! loggertunnelParseMode(state, settings) || ! loggertunnelInitializePrefix(state, node))
     {
-        loggertunnelTunnelDestroy(t);
+        loggertunnelTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
@@ -203,7 +203,7 @@ tunnel_t *loggertunnelTunnelCreate(node_t *node)
     {
         if (! loggertunnelParseLevel(state, settings))
         {
-            loggertunnelTunnelDestroy(t);
+            loggertunnelTunnelDestroy(t, wwLifecycleStartupRollback());
             return NULL;
         }
     }
@@ -211,7 +211,7 @@ tunnel_t *loggertunnelTunnelCreate(node_t *node)
     {
         if (! loggertunnelParseOutputMode(state, settings) || ! loggertunnelInitializeFilePaths(state))
         {
-            loggertunnelTunnelDestroy(t);
+            loggertunnelTunnelDestroy(t, wwLifecycleStartupRollback());
             return NULL;
         }
     }

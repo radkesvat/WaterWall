@@ -11,7 +11,7 @@ static void loopHandle(wtimer_t *timer)
     }
 
     wireguarddeviceStateLock(state);
-    const bool active = state->wg_device.loop_timer == timer && ! isApplicationTerminating();
+    const bool active = state->wg_device.loop_timer == timer;
     wireguarddeviceStateUnlock(state);
 
     if (! active)
@@ -32,11 +32,6 @@ void wireguarddeviceQueueWorkerPacketInit(void *worker, void *arg1, void *arg2, 
     const wid_t wid = ((worker_t *) worker)->wid;
     assert(currentThreadIsEventWorkerWID(wid));
 
-    if (UNLIKELY(isApplicationTerminating()))
-    {
-        return;
-    }
-
     tunnel_t *t = arg1;
     line_t   *l = tunnelchainGetWorkerPacketLine(tunnelGetChain(t), wid);
 
@@ -54,11 +49,6 @@ static void wireguarddeviceQueueWorkerTransportLineInit(void *worker, void *arg1
 
     const wid_t wid = ((worker_t *) worker)->wid;
     assert(currentThreadIsEventWorkerWID(wid));
-
-    if (UNLIKELY(isApplicationTerminating()))
-    {
-        return;
-    }
 
     tunnel_t     *t     = arg1;
     wgd_tstate_t *state = tunnelGetState(t);
@@ -106,7 +96,7 @@ static bool wireguarddeviceEnsureTransportLineStorage(tunnel_t *t, wgd_tstate_t 
     if (tc == NULL || tc->workers_count == 0)
     {
         LOGF("WireGuardDevice: transport line storage requires a finalized tunnel chain");
-        terminateProgram(1);
+        startupFailureRecord(1);
         return false;
     }
 
@@ -115,7 +105,7 @@ static bool wireguarddeviceEnsureTransportLineStorage(tunnel_t *t, wgd_tstate_t 
             tc->workers_count, SIZE_MAX, sizeof(*state->transport_lines), &storage_bytes))
     {
         LOGF("WireGuardDevice: transport line storage geometry overflows size_t");
-        terminateProgram(1);
+        startupFailureRecord(1);
         return false;
     }
 
@@ -123,7 +113,7 @@ static bool wireguarddeviceEnsureTransportLineStorage(tunnel_t *t, wgd_tstate_t 
     if (UNLIKELY(storage == NULL))
     {
         LOGF("WireGuardDevice: failed to allocate mandatory transport line storage");
-        terminateProgram(1);
+        startupFailureRecord(1);
         return false;
     }
     state->transport_lines = storage;
@@ -140,11 +130,12 @@ static bool wireguarddeviceEnsureTransportLineInit(tunnel_t *t, wgd_tstate_t *st
     }
     for (wid_t wi = 0; wi < tc->workers_count; ++wi)
     {
-        if (UNLIKELY(! sendWorkerMessageForceQueueWithCleanup(
-                wi, wireguarddeviceQueueWorkerTransportLineInit, NULL, t, NULL, NULL)))
+        if (UNLIKELY(sendWorkerMessageForceQueueWithCleanup(
+                         wi, wireguarddeviceQueueWorkerTransportLineInit, NULL, t, NULL, NULL) !=
+                     kWorkerMessageSubmitAccepted))
         {
             LOGF("WireGuardDevice: failed to admit required transport-line startup on worker %u", (unsigned int) wi);
-            terminateProgram(1);
+            startupFailureRecord(1);
             return false;
         }
     }
@@ -164,17 +155,18 @@ static bool wireguarddeviceEnsureInnerPacketInit(tunnel_t *t, wgd_tstate_t *stat
     if (t->next == NULL)
     {
         LOGF("WireGuardDevice: transport-direction=prev requires a next packet-side tunnel");
-        terminateProgram(1);
+        startupFailureRecord(1);
         return false;
     }
 
     for (wid_t wi = 0; wi < tc->workers_count; ++wi)
     {
-        if (UNLIKELY(! sendWorkerMessageForceQueueWithCleanup(
-                wi, wireguarddeviceQueueWorkerPacketInit, NULL, t, NULL, NULL)))
+        if (UNLIKELY(
+                sendWorkerMessageForceQueueWithCleanup(wi, wireguarddeviceQueueWorkerPacketInit, NULL, t, NULL, NULL) !=
+                kWorkerMessageSubmitAccepted))
         {
             LOGF("WireGuardDevice: failed to admit required packet-side Init on worker %u", (unsigned int) wi);
-            terminateProgram(1);
+            startupFailureRecord(1);
             return false;
         }
     }
@@ -200,7 +192,7 @@ void wireguarddeviceTunnelOnStart(tunnel_t *t)
             if (wireguardifConnect(device, i) != ERR_OK)
             {
                 LOGF("Error: wireguardifConnect failed");
-                terminateProgram(1);
+                startupFailureRecord(1);
                 return;
             }
         }
@@ -215,7 +207,8 @@ void wireguarddeviceTunnelOnStart(tunnel_t *t)
     if (state->wg_device.loop_timer == NULL)
     {
         LOGF("WireGuardDevice: failed to create periodic timer");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
     weventSetUserData(state->wg_device.loop_timer, state);
 

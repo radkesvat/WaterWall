@@ -2,8 +2,9 @@
 
 #include "loggers/network_logger.h"
 
-void loggertunnelTunnelDestroy(tunnel_t *t)
+void loggertunnelTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context)
 {
+    discard                context;
     loggertunnel_tstate_t *state = tunnelGetState(t);
 
     if (state->file_prefix != NULL)

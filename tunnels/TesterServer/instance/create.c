@@ -254,7 +254,7 @@ tunnel_t *testerserverTunnelCreate(node_t *node)
     if (nodeHasNext(node) && ! ts->packet_mode)
     {
         LOGF("TesterServer: using a next node is supported only when packet-mode=true");
-        testerserverTunnelDestroy(t);
+        testerserverTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
@@ -262,7 +262,7 @@ tunnel_t *testerserverTunnelCreate(node_t *node)
     {
         LOGF("JSON Error: TesterServer->settings->chunk-count (int field) : expected a value between 1 and %u",
              (unsigned int) kTesterServerChunkCount);
-        testerserverTunnelDestroy(t);
+        testerserverTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
@@ -271,7 +271,7 @@ tunnel_t *testerserverTunnelCreate(node_t *node)
     if (max_payload_size < 0)
     {
         LOGF("JSON Error: TesterServer->settings->max-payload-size (int field) : expected a non-negative value");
-        testerserverTunnelDestroy(t);
+        testerserverTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
@@ -280,7 +280,7 @@ tunnel_t *testerserverTunnelCreate(node_t *node)
     if (split_payload_delay_ms < 0)
     {
         LOGF("JSON Error: TesterServer->settings->split-payload-delay-ms (int field) : expected a non-negative value");
-        testerserverTunnelDestroy(t);
+        testerserverTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
@@ -289,7 +289,7 @@ tunnel_t *testerserverTunnelCreate(node_t *node)
     if (split_payload_burst < 1)
     {
         LOGF("JSON Error: TesterServer->settings->split-payload-burst (int field) : expected a positive value");
-        testerserverTunnelDestroy(t);
+        testerserverTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
@@ -298,27 +298,27 @@ tunnel_t *testerserverTunnelCreate(node_t *node)
     if (ts->packet_init_on_start && ! ts->packet_mode)
     {
         LOGF("TesterServer: settings->packet-init-on-start requires packet-mode=true");
-        testerserverTunnelDestroy(t);
+        testerserverTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
     if (ts->packet_stateless && ! ts->packet_mode)
     {
         LOGF("TesterServer: settings->packet-stateless requires packet-mode=true");
-        testerserverTunnelDestroy(t);
+        testerserverTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
     if (ts->max_payload_size > 0 && ts->packet_stateless)
     {
         LOGF("TesterServer: settings->max-payload-size is not supported with packet-stateless=true");
-        testerserverTunnelDestroy(t);
+        testerserverTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
     if (! testerserverLoadPacketIpv4Settings(ts, settings))
     {
-        testerserverTunnelDestroy(t);
+        testerserverTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
@@ -326,7 +326,7 @@ tunnel_t *testerserverTunnelCreate(node_t *node)
         ts->max_payload_size < testerserverPacketIpv4MinimumPacketSize(ts))
     {
         LOGF("TesterServer: settings->max-payload-size is too small for the configured packet-ipv4 headers");
-        testerserverTunnelDestroy(t);
+        testerserverTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 

@@ -579,8 +579,10 @@ static void packetstostreamReplayDecodedPacketOnWorker(worker_t *worker, void *a
     lineUnlock(packet_line);
 }
 
-static void packetstostreamCleanupDecodedPacket(void *arg1, void *arg2, void *arg3)
+static void packetstostreamCleanupDecodedPacket(void *arg1, void *arg2, void *arg3,
+                                                worker_message_cancel_reason_e reason)
 {
+    discard reason;
     discard arg1;
 
     line_t *packet_line = arg2;
@@ -747,7 +749,7 @@ line_t *packetstostreamEnsureOutputLine(tunnel_t *t, line_t *packet_line, packet
 void packetstostreamHeartbeatTimerCallback(wtimer_t *timer)
 {
     tunnel_t *t = weventGetUserdata(timer);
-    if (t == NULL || isApplicationTerminating())
+    if (t == NULL)
     {
         return;
     }
@@ -792,7 +794,7 @@ void packetstostreamHeartbeatTimerCallback(wtimer_t *timer)
 void packetstostreamTimeoutTimerCallback(wtimer_t *timer)
 {
     tunnel_t *t = weventGetUserdata(timer);
-    if (t == NULL || isApplicationTerminating())
+    if (t == NULL)
     {
         return;
     }
@@ -829,7 +831,11 @@ void packetstostreamTimeoutTimerCallback(wtimer_t *timer)
          * Re-arm the same one-shot timer instead of clearing the slot, otherwise
          * awaiting_pong could remain stuck forever after a lost ping.
          */
-        wtimerReset(timer, (remaining_ms == 0) ? 1U : remaining_ms);
+        if (! wtimerReset(timer, (remaining_ms == 0) ? 1U : remaining_ms))
+        {
+            ts->worker_timeout_timers[wid] = NULL;
+            weventSetUserData(timer, NULL);
+        }
         return;
     }
 

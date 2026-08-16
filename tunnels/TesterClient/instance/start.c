@@ -44,7 +44,12 @@ static void testerclientStartWorker(void *worker, void *arg1, void *arg2, void *
         if (ts->packet_start_delay_ms > 0)
         {
             ls->request_send_scheduled = true;
-            lineScheduleDelayedTask(l, testerclientRequestSendTask, ts->packet_start_delay_ms, t);
+            if (UNLIKELY(! lineScheduleDelayedTask(l, testerclientRequestSendTask, ts->packet_start_delay_ms, t)))
+            {
+                ls->request_send_scheduled = false;
+                testerclientFail(t, l, "failed to schedule packet-mode request start");
+                return;
+            }
         }
         else
         {
@@ -52,7 +57,33 @@ static void testerclientStartWorker(void *worker, void *arg1, void *arg2, void *
         }
     }
 
-    lineScheduleDelayedTask(l, testerclientWatchdogTask, kTesterClientWatchdogMs, t);
+    if (UNLIKELY(! lineScheduleDelayedTask(l, testerclientWatchdogTask, kTesterClientWatchdogMs, t)))
+    {
+        if (ts->packet_mode)
+        {
+            testerclientFail(t, l, "failed to arm watchdog");
+        }
+        else
+        {
+            testerclientFailOwnedLine(t, l, "failed to arm watchdog", true);
+        }
+    }
+}
+
+static void testerclientCleanupStartWorker(void *arg1, void *arg2, void *arg3, worker_message_cancel_reason_e reason)
+{
+    discard arg1;
+    discard arg2;
+    discard arg3;
+    if (reason != kWorkerMessageCancelResourceFailure)
+    {
+        return;
+    }
+    LOGE("TesterClient: worker start task failed after admission");
+    if (! requestProgramShutdown(1))
+    {
+        abortProgramNow(1);
+    }
 }
 
 void testerclientTunnelOnStart(tunnel_t *t)
@@ -61,6 +92,16 @@ void testerclientTunnelOnStart(tunnel_t *t)
 
     for (wid_t wi = 0; wi < tc->workers_count; ++wi)
     {
-        sendWorkerMessageTimed(wi, testerclientStartWorker, kTesterClientStartDelayMs, t, NULL, NULL);
+        if (UNLIKELY(sendWorkerMessageTimedRetainOnRefusal(wi,
+                                                           testerclientStartWorker,
+                                                           testerclientCleanupStartWorker,
+                                                           kTesterClientStartDelayMs,
+                                                           t,
+                                                           NULL,
+                                                           NULL) != kWorkerMessageSubmitAccepted))
+        {
+            startupFailureRecord(1);
+            return;
+        }
     }
 }

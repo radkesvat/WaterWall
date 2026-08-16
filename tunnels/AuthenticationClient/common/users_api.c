@@ -734,8 +734,9 @@ static authenticationclient_first_usage_push_result_t authenticationclientReques
 
     if (result == kAuthenticationClientFirstUsagePushQueued)
     {
-        if (UNLIKELY(! sendWorkerMessageForceQueueWithCleanup(
-                0, authenticationclientFirstUsagePushOnWorker0, NULL, t, NULL, NULL)))
+        if (UNLIKELY(sendWorkerMessageForceQueueWithCleanup(
+                         0, authenticationclientFirstUsagePushOnWorker0, NULL, t, NULL, NULL) !=
+                     kWorkerMessageSubmitAccepted))
         {
             authenticationclientResetFirstUsagePushState(t);
             result = kAuthenticationClientFirstUsagePushNotReady;

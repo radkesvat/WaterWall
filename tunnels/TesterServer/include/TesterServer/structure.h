@@ -71,13 +71,13 @@ enum
     kLineStateSize   = sizeof(testerserver_lstate_t)
 };
 
-WW_EXPORT void         testerserverTunnelDestroy(tunnel_t *t);
+WW_EXPORT void         testerserverTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context);
 WW_EXPORT tunnel_t    *testerserverTunnelCreate(node_t *node);
 WW_EXPORT api_result_t testerserverTunnelApi(tunnel_t *instance, sbuf_t *message);
 
 void testerserverTunnelOnPrepair(tunnel_t *t);
 void testerserverTunnelOnStart(tunnel_t *t);
-void testerserverTunnelOnStop(tunnel_t *t);
+void testerserverTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context);
 
 void testerserverTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void testerserverTunnelUpStreamEst(tunnel_t *t, line_t *l);

@@ -29,12 +29,12 @@ typedef void (*LocalIdleExpireCallBack)(local_idle_item_t *);
  */
 struct local_idle_item_s
 {
-    void                    *userdata;     ///< User data associated with the item.
-    local_idle_table_t      *table;        ///< Parent local idle table.
-    uint64_t                 expire_at_ms; ///< Expiration time in milliseconds.
-    LocalIdleExpireCallBack  cb;           ///< Expiration callback.
-    hash_t                   hash;         ///< Hash used for item lookup.
-    bool                     removed;      ///< Lazy removal flag.
+    void                   *userdata;     ///< User data associated with the item.
+    local_idle_table_t     *table;        ///< Parent local idle table.
+    uint64_t                expire_at_ms; ///< Expiration time in milliseconds.
+    LocalIdleExpireCallBack cb;           ///< Expiration callback.
+    hash_t                  hash;         ///< Hash used for item lookup.
+    bool                    removed;      ///< Lazy removal flag.
 };
 
 /**
@@ -57,6 +57,7 @@ local_idle_table_t *localIdleTableCreate(wloop_t *loop);
  * @param self Local idle table.
  */
 void localidletableDestroy(local_idle_table_t *self);
+void localidletableQuiesce(local_idle_table_t *self);
 
 /**
  * @brief Create and add one worker-local idle item.

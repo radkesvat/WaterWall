@@ -249,8 +249,10 @@ static void ipmanipulatorCleanupPacketBuffer(line_t *l, sbuf_t *buf)
     sbufDestroy(buf);
 }
 
-static void ipmanipulatorCleanupCapturedPacketNormal(void *arg1, void *arg2, void *arg3)
+static void ipmanipulatorCleanupCapturedPacketNormal(void *arg1, void *arg2, void *arg3,
+                                                     worker_message_cancel_reason_e reason)
 {
+    discard reason;
     discard arg1;
 
     line_t *l   = arg2;
@@ -260,8 +262,10 @@ static void ipmanipulatorCleanupCapturedPacketNormal(void *arg1, void *arg2, voi
     lineUnlock(l);
 }
 
-static void ipmanipulatorCleanupCapturedPacketReuse(void *arg1, void *arg2, void *arg3)
+static void ipmanipulatorCleanupCapturedPacketReuse(void *arg1, void *arg2, void *arg3,
+                                                    worker_message_cancel_reason_e reason)
 {
+    discard reason;
     discard arg3;
 
     line_t *l   = arg1;
@@ -400,8 +404,10 @@ static void ipmanipulatorReleasePendingPrestartOnWorker(worker_t *worker, void *
     memoryFree(msg);
 }
 
-static void ipmanipulatorCleanupPendingPrestartMessage(void *arg1, void *arg2, void *arg3)
+static void ipmanipulatorCleanupPendingPrestartMessage(void *arg1, void *arg2, void *arg3,
+                                                       worker_message_cancel_reason_e reason)
 {
+    discard reason;
     discard arg1;
     discard arg3;
 
@@ -428,7 +434,7 @@ static bool ipmanipulatorSchedulePrestartTimeout(tunnel_t *t, uint32_t slot_inde
                                              kIpManipulatorTlsPrestartTimeoutMs,
                                              t,
                                              msg,
-                                             NULL);
+                                             NULL) == kWorkerMessageSubmitAccepted;
 }
 
 void ipmanipulatorReleasePendingCaptureOnWorker(worker_t *worker, void *arg1, void *arg2, void *arg3)
@@ -464,8 +470,10 @@ void ipmanipulatorReleasePendingCaptureOnWorker(worker_t *worker, void *arg1, vo
     memoryFree(msg);
 }
 
-static void ipmanipulatorCleanupPendingCaptureMessage(void *arg1, void *arg2, void *arg3)
+static void ipmanipulatorCleanupPendingCaptureMessage(void *arg1, void *arg2, void *arg3,
+                                                      worker_message_cancel_reason_e reason)
 {
+    discard reason;
     discard arg1;
     discard arg3;
 
@@ -497,7 +505,7 @@ static bool ipmanipulatorScheduleCaptureTimeout(tunnel_t *t, uint32_t slot_index
                                              kIpManipulatorTlsCaptureTimeoutMs,
                                              t,
                                              msg,
-                                             NULL);
+                                             NULL) == kWorkerMessageSubmitAccepted;
 }
 
 void ipmanipulatorReleaseCapturedPacketsNormal(tunnel_t *t, ipmanipulator_tls_capture_slot_t *slot)
@@ -1986,8 +1994,10 @@ void ipmanipulatorDelayBarrierFailOpen(tunnel_t *t, const ipmanipulator_flow_key
     discard ipmanipulatorDelayBatchSendUpstream(t, &release_batch);
 }
 
-static void ipmanipulatorDelayBarrierCleanupTimer(void *arg1, void *arg2, void *arg3)
+static void ipmanipulatorDelayBarrierCleanupTimer(void *arg1, void *arg2, void *arg3,
+                                                  worker_message_cancel_reason_e reason)
 {
+    discard reason;
     discard arg3;
 
     tunnel_t                            *t   = arg1;
@@ -2194,7 +2204,7 @@ bool ipmanipulatorDelayBarrierSchedule(tunnel_t *t, const ipmanipulator_flow_key
                                              delay_ms,
                                              t,
                                              msg,
-                                             NULL);
+                                             NULL) == kWorkerMessageSubmitAccepted;
 }
 
 ipmanipulator_tls_capture_status_e ipmanipulatorCaptureTlsClientHello(tunnel_t *t, line_t *l, sbuf_t *buf,

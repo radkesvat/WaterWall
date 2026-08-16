@@ -20,8 +20,9 @@ typedef struct ctp_packet_emit_msg_s
     uint8_t  data[];
 } ctp_packet_emit_msg_t;
 
-static void ctpEmitPacketCleanup(void *arg1, void *arg2, void *arg3)
+static void ctpEmitPacketCleanup(void *arg1, void *arg2, void *arg3, worker_message_cancel_reason_e reason)
 {
+    discard reason;
     discard arg3;
     memoryFree(arg2);
     tunnelasyncsessionUnref(arg1);
@@ -194,12 +195,12 @@ err_t ctpNetifOutput(struct netif *netif, struct pbuf *p, const ip4_addr_t *ipad
     const wid_t packet_wid = ctpSelectPacketWorkerLocked(ctx, packet_msg->data, packet_msg->len);
 
     tunnelasyncsessionRef(ts->async_session);
-    if (! sendWorkerMessageForceQueueWithCleanup(packet_wid,
-                                                 (WorkerMessageCallback) ctpEmitPacketOnWorker,
-                                                 ctpEmitPacketCleanup,
-                                                 ts->async_session,
-                                                 packet_msg,
-                                                 NULL))
+    if (sendWorkerMessageForceQueueWithCleanup(packet_wid,
+                                               (WorkerMessageCallback) ctpEmitPacketOnWorker,
+                                               ctpEmitPacketCleanup,
+                                               ts->async_session,
+                                               packet_msg,
+                                               NULL) != kWorkerMessageSubmitAccepted)
     {
         return ERR_MEM;
     }

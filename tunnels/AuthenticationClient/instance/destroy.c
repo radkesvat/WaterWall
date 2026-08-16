@@ -13,8 +13,9 @@ static void authenticationclientDestroyUsersSnapshot(users_t *users)
     memoryFreeAligned(users);
 }
 
-void authenticationclientTunnelDestroy(tunnel_t *t)
+void authenticationclientTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context)
 {
+    discard                        context;
     authenticationclient_tstate_t *ts = tunnelGetState(t);
 
     memoryFree(ts->pending_requests);

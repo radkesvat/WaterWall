@@ -1659,7 +1659,7 @@ WTHREAD_ROUTINE(captureLinuxReadRoutine) // NOLINT
                 // Stop may be requested after poll() made the socket readable.
                 // Observe it before every packet so one wakeup cannot multiply
                 // the verdict deadline across an entire RAM_PROFILE batch.
-                if (! atomicLoadExplicit(&cdev->running, memory_order_acquire))
+                if (! atomicLoadExplicit(&cdev->running, memory_order_relaxed))
                 {
                     break;
                 }
@@ -2172,6 +2172,15 @@ bool caputredeviceBringUp(capture_device_t *cdev)
 
     assert(capturedevicePendingRuleCount(cdev) == cdev->capture_range_count);
     LOGI("CaptureDevice: device %s is now up", cdev->name);
+    return true;
+}
+
+bool capturedeviceRequestStop(capture_device_t *cdev)
+{
+    captureLifecycleTransitionToStopping(&cdev->lifecycle);
+    atomicStoreRelaxed(&cdev->capture_active, false);
+    atomicStoreRelaxed(&cdev->up, false);
+    deviceReaderSessionEndRequest(cdev->reader_session);
     return true;
 }
 

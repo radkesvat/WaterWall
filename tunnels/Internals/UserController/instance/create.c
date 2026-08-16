@@ -84,11 +84,12 @@ tunnel_t *usercontrollerTunnelCreate(node_t *node)
     t->fnPauseD   = &usercontrollerTunnelDownStreamPause;
     t->fnResumeD  = &usercontrollerTunnelDownStreamResume;
 
-    t->onPrepare    = &usercontrollerTunnelOnPrepair;
-    t->onStart      = &usercontrollerTunnelOnStart;
-    t->onStop       = &usercontrollerTunnelOnStop;
-    t->onWorkerStop = &usercontrollerTunnelOnWorkerStop;
-    t->onDestroy    = &usercontrollerTunnelDestroy;
+    t->onPrepare       = &usercontrollerTunnelOnPrepair;
+    t->onStart         = &usercontrollerTunnelOnStart;
+    t->onStop          = &usercontrollerTunnelOnStop;
+    t->onWorkerQuiesce = &usercontrollerTunnelOnWorkerQuiesce;
+    t->onWorkerStop    = &usercontrollerTunnelOnWorkerStop;
+    t->onDestroy       = &usercontrollerTunnelDestroy;
 
     if (! checkJsonIsObjectAndHasChild(settings))
     {

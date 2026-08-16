@@ -4,7 +4,7 @@
 
 static tunnel_t *udpstatelesssocketTunnelCreateFail(tunnel_t *t)
 {
-    udpstatelesssocketTunnelDestroy(t);
+    udpstatelesssocketTunnelDestroy(t, wwLifecycleStartupRollback());
     return NULL;
 }
 
@@ -31,12 +31,13 @@ tunnel_t *udpstatelesssocketTunnelCreate(node_t *node)
     t->fnPauseD   = &udpstatelesssocketTunnelDownStreamPause;
     t->fnResumeD  = &udpstatelesssocketTunnelDownStreamResume;
 
-    t->onPrepare    = &udpstatelesssocketTunnelOnPrepair;
-    t->onStart      = &udpstatelesssocketTunnelOnStart;
-    t->onPreStop    = &udpstatelesssocketTunnelOnPreStop;
-    t->onStop       = &udpstatelesssocketTunnelOnStop;
-    t->onWorkerStop = &udpstatelesssocketTunnelOnWorkerStop;
-    t->onDestroy    = &udpstatelesssocketTunnelDestroy;
+    t->onPrepare        = &udpstatelesssocketTunnelOnPrepair;
+    t->onStart          = &udpstatelesssocketTunnelOnStart;
+    t->onQuiesceRequest = &udpstatelesssocketTunnelOnQuiesceRequest;
+    t->onQuiesceWait    = &udpstatelesssocketTunnelOnQuiesceWait;
+    t->onWorkerQuiesce  = &udpstatelesssocketTunnelOnWorkerQuiesce;
+    t->onWorkerStop     = &udpstatelesssocketTunnelOnWorkerStop;
+    t->onDestroy        = &udpstatelesssocketTunnelDestroy;
 
     udpstatelesssocket_tstate_t *state = tunnelGetState(t);
     if (UNLIKELY(! mutexTryInit(&state->dns_cache_mutex)))

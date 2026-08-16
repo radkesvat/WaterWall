@@ -40,7 +40,7 @@ enum
     kLineStateSize   = sizeof(wgd_lstate_t)
 };
 
-WW_EXPORT void         wireguarddeviceTunnelDestroy(tunnel_t *t);
+WW_EXPORT void         wireguarddeviceTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context);
 WW_EXPORT tunnel_t    *wireguarddeviceTunnelCreate(node_t *node);
 WW_EXPORT api_result_t wireguarddeviceTunnelApi(tunnel_t *instance, sbuf_t *message);
 
@@ -49,8 +49,9 @@ void wireguarddeviceTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void wireguarddeviceTunnelOnPrepair(tunnel_t *t);
 void wireguarddeviceTunnelOnStart(tunnel_t *t);
 void wireguarddeviceQueueWorkerPacketInit(void *worker, void *arg1, void *arg2, void *arg3);
-void wireguarddeviceTunnelOnStop(tunnel_t *t);
-void wireguarddeviceTunnelOnWorkerStop(tunnel_t *t, wid_t wid);
+void wireguarddeviceTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context);
+void wireguarddeviceTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);
+void wireguarddeviceTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);
 
 void wireguarddeviceTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void wireguarddeviceTunnelUpStreamEst(tunnel_t *t, line_t *l);

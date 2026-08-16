@@ -100,8 +100,9 @@ static void ctpInjectPbufFree(struct pbuf *p)
     ctpInjectMessageDestroy(p);
 }
 
-static void ctpInjectPacketCleanup(void *arg1, void *arg2, void *arg3)
+static void ctpInjectPacketCleanup(void *arg1, void *arg2, void *arg3, worker_message_cancel_reason_e reason)
 {
+    discard                 reason;
     discard                 arg2;
     discard                 arg3;
     ctp_inject_msg_t       *msg           = arg1;
@@ -304,7 +305,8 @@ static ctp_frag_publish_result_t ctpInjectPublish(tunnel_t *t, const ctp_flow_ke
      * The cleanup callback releases the message if the queue refuses it.
      */
     if (sendWorkerMessageForceQueueRetainOnRefusal(
-            wid, (WorkerMessageCallback) ctpInjectPacketOnWorker, ctpInjectPacketCleanup, msg, NULL, NULL))
+            wid, (WorkerMessageCallback) ctpInjectPacketOnWorker, ctpInjectPacketCleanup, msg, NULL, NULL) ==
+        kWorkerMessageSubmitAccepted)
     {
         return (ctp_frag_publish_result_t) {.accepted = true};
     }
@@ -316,8 +318,9 @@ static ctp_frag_publish_result_t ctpInjectPublish(tunnel_t *t, const ctp_flow_ke
     return (ctp_frag_publish_result_t) {.refused_receipt = refused_claim, .accepted = false};
 }
 
-static void ctpFragPurgeCleanup(void *arg1, void *arg2, void *arg3)
+static void ctpFragPurgeCleanup(void *arg1, void *arg2, void *arg3, worker_message_cancel_reason_e reason)
 {
+    discard               reason;
     discard               arg2;
     discard               arg3;
     ctp_frag_purge_msg_t *msg = arg1;
@@ -388,7 +391,8 @@ static bool ctpFragSchedulePurge(tunnel_t *t, const ctp_frag_key_t *frag_key, ui
     tunnelasyncsessionRef(msg->session);
 
     return sendWorkerMessageForceQueueWithCleanup(
-        wid, (WorkerMessageCallback) ctpFragPurgeOnWorker, ctpFragPurgeCleanup, msg, NULL, NULL);
+               wid, (WorkerMessageCallback) ctpFragPurgeOnWorker, ctpFragPurgeCleanup, msg, NULL, NULL) ==
+           kWorkerMessageSubmitAccepted;
 }
 
 static bool ctpValidateIpv4Packet(const uint8_t *packet, uint32_t packet_len, const struct ip_hdr *iphdr,

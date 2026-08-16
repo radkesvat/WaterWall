@@ -18,13 +18,15 @@ void tlsserverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
     if (target == NULL)
     {
         LOGF("TlsServer: fallback tunnel \"%s\" is not available", ts->fallback_node->name);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     if (target == t)
     {
         LOGF("TlsServer: fallback target must be different from TlsServer");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     ts->fallback_tunnel = target;
@@ -39,7 +41,8 @@ void tlsserverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
         LOGF("TlsServer: fallback target node \"%s\" is already bound to previous node \"%s\"",
              target->node->name,
              target->prev->node->name);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     if (target->chain == chain)
@@ -50,7 +53,8 @@ void tlsserverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
         }
 
         LOGF("TlsServer: fallback target node \"%s\" is already in the TlsServer chain", target->node->name);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     if (target->prev == NULL)
@@ -74,6 +78,7 @@ void tlsserverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
     if (ts->fallback_tunnel == NULL)
     {
         LOGF("TlsServer: fallback target node \"%s\" is not reachable from TlsServer", target->node->name);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 }

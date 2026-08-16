@@ -35,7 +35,6 @@ typedef struct pipetunnel_state_s
     tunnel_t    *child;
     pipe_pair_t *pairs;
     wmutex_t     pairs_lock;
-    atomic_uint  config_drain_remaining;
     atomic_bool  stopping;
     bool         pairs_lock_initialized;
 } pipetunnel_state_t;
@@ -274,8 +273,9 @@ static void pipeDiscardPayload(sbuf_t *payload)
     }
 }
 
-static void cleanupQueuedPipeMessage(void *arg1, void *arg2, void *arg3)
+static void cleanupQueuedPipeMessage(void *arg1, void *arg2, void *arg3, worker_message_cancel_reason_e reason)
 {
+    discard      reason;
     pipe_pair_t *pair    = arg1;
     line_t      *line_to = arg2;
     sbuf_t      *payload = arg3;
@@ -493,7 +493,8 @@ static pipe_send_result_t pipeSend(pipe_pair_t *pair, line_t *line_to, pipe_mess
     pipePairRef(pair);
     lineLockForce(line_to);
     if (sendWorkerMessageForceQueueWithCleanup(
-            lineGetWID(line_to), callback, cleanupQueuedPipeMessage, pair, line_to, payload))
+            lineGetWID(line_to), callback, cleanupQueuedPipeMessage, pair, line_to, payload) ==
+        kWorkerMessageSubmitAccepted)
     {
         return kPipeSendAdmitted;
     }
@@ -764,8 +765,9 @@ static void pipetunnelDefaultOnStart(tunnel_t *t)
     atomicStoreExplicit(&pipeTunnelState(t)->stopping, false, memory_order_release);
 }
 
-static void pipetunnelDefaultOnPreStop(tunnel_t *t)
+static void pipetunnelDefaultOnQuiesceRequest(tunnel_t *t, const ww_lifecycle_context_t *context)
 {
+    discard             context;
     pipetunnel_state_t *state = pipeTunnelState(t);
 
     mutexLock(&state->pairs_lock);
@@ -834,71 +836,20 @@ static void pipeDrainWorker(tunnel_t *t, wid_t wid)
     }
 }
 
-static void pipeConfigDrainComplete(pipetunnel_state_t *state)
-{
-    const w_atomic_uint_value_t previous = atomicSubExplicit(&state->config_drain_remaining, 1, memory_order_release);
-    assert(previous > 0);
-    discard previous;
-}
-
-static void pipeDrainWorkerMessage(worker_t *worker, void *arg1, void *arg2, void *arg3)
-{
-    discard   arg2;
-    discard   arg3;
-    tunnel_t *t = arg1;
-    pipeDrainWorker(t, worker->wid);
-    pipeConfigDrainComplete(pipeTunnelState(t));
-}
-
-static void pipeDrainWorkerCleanup(void *arg1, void *arg2, void *arg3)
-{
-    discard arg2;
-    discard arg3;
-    pipeConfigDrainComplete(pipeTunnelState(arg1));
-}
-
-static void pipetunnelDefaultOnStop(tunnel_t *t)
+static void pipetunnelDefaultOnStop(tunnel_t *t, const ww_lifecycle_context_t *context)
 {
     pipetunnel_state_t *state = pipeTunnelState(t);
-    pipetunnelDefaultOnPreStop(t);
-
-    if (isApplicationTerminating())
+    discard             context;
+    if (state->pairs != NULL)
     {
-        return;
-    }
-
-    uint32_t queued = 0;
-    for (wid_t wid = 0; wid < getWorkersCount(); ++wid)
-    {
-        if (! currentThreadIsEventWorkerWID(wid))
-        {
-            ++queued;
-        }
-    }
-    atomicStoreExplicit(&state->config_drain_remaining, queued, memory_order_release);
-
-    for (wid_t wid = 0; wid < getWorkersCount(); ++wid)
-    {
-        if (currentThreadIsEventWorkerWID(wid))
-        {
-            pipeDrainWorker(t, wid);
-        }
-        else if (! sendWorkerMessageForceQueueWithCleanup(
-                     wid, (WorkerMessageCallback) pipeDrainWorkerMessage, pipeDrainWorkerCleanup, t, NULL, NULL))
-        {
-            LOGF("PipeTunnel: failed to queue configuration-stop drain on worker %u", (unsigned int) wid);
-            abortProgramNow(1);
-        }
-    }
-
-    while (atomicLoadExplicit(&state->config_drain_remaining, memory_order_acquire) != 0)
-    {
-        deviceLifetimeYieldThread(NULL);
+        LOGF("PipeTunnel: final stop reached with live cross-worker pairs");
+        abortProgramNow(1);
     }
 }
 
-static void pipetunnelDefaultOnWorkerStop(tunnel_t *t, wid_t wid)
+static void pipetunnelDefaultOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context)
 {
+    discard context;
     pipeDrainWorker(t, wid);
 }
 
@@ -919,7 +870,6 @@ tunnel_t *pipetunnelCreate(tunnel_t *child)
 
     pipetunnel_state_t *state = pipeTunnelState(pt);
     *state                    = (pipetunnel_state_t) {.child = child};
-    atomic_init(&state->config_drain_remaining, 0);
     atomic_init(&state->stopping, false);
     if (! mutexTryInit(&state->pairs_lock))
     {
@@ -928,31 +878,32 @@ tunnel_t *pipetunnelCreate(tunnel_t *child)
     }
     state->pairs_lock_initialized = true;
 
-    pt->fnInitU      = &pipetunnelDefaultUpStreamInit;
-    pt->fnInitD      = &pipetunnelDefaultDownStreamInit;
-    pt->fnPayloadU   = &pipetunnelDefaultUpStreamPayload;
-    pt->fnPayloadD   = &pipetunnelDefaultDownStreamPayload;
-    pt->fnEstU       = &pipetunnelDefaultUpStreamEst;
-    pt->fnEstD       = &pipetunnelDefaultDownStreamEst;
-    pt->fnFinU       = &pipetunnelDefaultUpStreamFin;
-    pt->fnFinD       = &pipetunnelDefaultDownStreamFin;
-    pt->fnPauseU     = &pipetunnelDefaultUpStreamPause;
-    pt->fnPauseD     = &pipetunnelDefaultDownStreamPause;
-    pt->fnResumeU    = &pipetunnelDefaultUpStreamResume;
-    pt->fnResumeD    = &pipetunnelDefaultDownStreamResume;
-    pt->onChain      = &pipetunnelDefaultOnChain;
-    pt->onIndex      = &pipetunnelDefaultOnIndex;
-    pt->onPrepare    = &pipetunnelDefaultOnPrepair;
-    pt->onStart      = &pipetunnelDefaultOnStart;
-    pt->onPreStop    = &pipetunnelDefaultOnPreStop;
-    pt->onStop       = &pipetunnelDefaultOnStop;
-    pt->onWorkerStop = &pipetunnelDefaultOnWorkerStop;
-    pt->onDestroy    = &pipetunnelDestroy;
+    pt->fnInitU          = &pipetunnelDefaultUpStreamInit;
+    pt->fnInitD          = &pipetunnelDefaultDownStreamInit;
+    pt->fnPayloadU       = &pipetunnelDefaultUpStreamPayload;
+    pt->fnPayloadD       = &pipetunnelDefaultDownStreamPayload;
+    pt->fnEstU           = &pipetunnelDefaultUpStreamEst;
+    pt->fnEstD           = &pipetunnelDefaultDownStreamEst;
+    pt->fnFinU           = &pipetunnelDefaultUpStreamFin;
+    pt->fnFinD           = &pipetunnelDefaultDownStreamFin;
+    pt->fnPauseU         = &pipetunnelDefaultUpStreamPause;
+    pt->fnPauseD         = &pipetunnelDefaultDownStreamPause;
+    pt->fnResumeU        = &pipetunnelDefaultUpStreamResume;
+    pt->fnResumeD        = &pipetunnelDefaultDownStreamResume;
+    pt->onChain          = &pipetunnelDefaultOnChain;
+    pt->onIndex          = &pipetunnelDefaultOnIndex;
+    pt->onPrepare        = &pipetunnelDefaultOnPrepair;
+    pt->onStart          = &pipetunnelDefaultOnStart;
+    pt->onQuiesceRequest = &pipetunnelDefaultOnQuiesceRequest;
+    pt->onStop           = &pipetunnelDefaultOnStop;
+    pt->onWorkerStop     = &pipetunnelDefaultOnWorkerStop;
+    pt->onDestroy        = &pipetunnelDestroy;
     return pt;
 }
 
-void pipetunnelDestroy(tunnel_t *t)
+void pipetunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context)
 {
+    discard             context;
     pipetunnel_state_t *state = pipeTunnelState(t);
     assert(state->pairs == NULL);
     if (state->pairs_lock_initialized)
@@ -960,7 +911,7 @@ void pipetunnelDestroy(tunnel_t *t)
         mutexDestroy(&state->pairs_lock);
         state->pairs_lock_initialized = false;
     }
-    state->child->onDestroy(state->child);
+    tunnelOwnedChildDestroy(state->child);
     state->child = NULL;
     tunnelDestroy(t);
 }

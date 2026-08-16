@@ -2,9 +2,21 @@
 
 #include "loggers/network_logger.h"
 
-static void tundeviceTunnelStopDevice(tundevice_tstate_t *state)
+void tundeviceTunnelOnQuiesceRequest(tunnel_t *t, const ww_lifecycle_context_t *context)
 {
-    tun_device_t *tdev = state->tdev;
+    discard             context;
+    tundevice_tstate_t *state = tunnelGetState(t);
+    if (state->tdev != NULL && ! tundeviceRequestStop(state->tdev))
+    {
+        LOGW("TunDevice: failed to wake the device reader during quiescence");
+    }
+}
+
+void tundeviceTunnelOnQuiesceWait(tunnel_t *t, const ww_lifecycle_context_t *context)
+{
+    discard             context;
+    tundevice_tstate_t *state = tunnelGetState(t);
+    tun_device_t       *tdev  = state->tdev;
 
     if (tdev == NULL)
     {
@@ -22,9 +34,4 @@ static void tundeviceTunnelStopDevice(tundevice_tstate_t *state)
     {
         LOGW("TunDevice: Bring down failed");
     }
-}
-
-void tundeviceTunnelOnStop(tunnel_t *t)
-{
-    tundeviceTunnelStopDevice(tunnelGetState(t));
 }

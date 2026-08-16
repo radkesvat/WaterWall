@@ -46,7 +46,8 @@ typedef struct tunnel_chain_s tunnel_chain_t;
 typedef struct tunnel_array_s tunnel_array_t;
 
 typedef void (*TunnelStatusCb)(tunnel_t *);
-typedef void (*TunnelWorkerCb)(tunnel_t *, wid_t wid);
+typedef void (*TunnelLifecycleCb)(tunnel_t *, const ww_lifecycle_context_t *context);
+typedef void (*TunnelWorkerLifecycleCb)(tunnel_t *, wid_t wid, const ww_lifecycle_context_t *context);
 typedef void (*TunnelChainFn)(tunnel_t *, tunnel_chain_t *chain);
 typedef void (*TunnelIndexFn)(tunnel_t *, uint16_t index, uint32_t *mem_offset);
 typedef void (*TunnelFlowRoutineInit)(tunnel_t *, line_t *line);
@@ -86,13 +87,16 @@ struct tunnel_s
     TunnelFlowRoutineResume  fnResumeU;
     TunnelFlowRoutineResume  fnResumeD;
 
-    TunnelChainFn  onChain;
-    TunnelIndexFn  onIndex;
-    TunnelStatusCb onPrepare;
-    TunnelStatusCb onStart;
-    TunnelStatusCb onStop;
-    TunnelWorkerCb onWorkerStop;
-    TunnelStatusCb onDestroy;
+    TunnelChainFn           onChain;
+    TunnelIndexFn           onIndex;
+    TunnelStatusCb          onPrepare;
+    TunnelStatusCb          onStart;
+    TunnelLifecycleCb       onQuiesceRequest;
+    TunnelWorkerLifecycleCb onWorkerQuiesce;
+    TunnelLifecycleCb       onQuiesceWait;
+    TunnelWorkerLifecycleCb onWorkerStop;
+    TunnelLifecycleCb       onStop;
+    TunnelLifecycleCb       onDestroy;
 
     uint32_t tstate_size;
     uint32_t lstate_size;
@@ -102,20 +106,6 @@ struct tunnel_s
 
     node_t         *node;
     tunnel_chain_t *chain;
-
-    /*
-     * Producer admission closes here before any tunnel's onStop runs. This
-     * member deliberately occupies historical pre-state alignment padding so
-     * every older public member and the state[] offset retain their ABI.
-     */
-    TunnelStatusCb onPreStop;
-
-    /*
-     * Current factories initialize every callback.  At the external-node
-     * boundary only, NodeManager also accepts NULL in this padding-backed slot
-     * as the frozen pre-onPreStop ABI representation and normalizes it to the
-     * framework no-op before validating the otherwise-total callback table.
-     */
 
     // tunnel itself will be aligned to cache line when allocating memory
     MSVC_ATTR_ALIGNED_LINE_CACHE uint8_t state[] GNU_ATTR_ALIGNED_LINE_CACHE;
@@ -334,8 +324,10 @@ void tunnelDefaultOnStart(tunnel_t *t);
  *
  * @param t Pointer to the tunnel.
  */
-void tunnelDefaultOnStop(tunnel_t *t);
-void tunnelDefaultOnPreStop(tunnel_t *t);
+void tunnelDefaultOnQuiesceRequest(tunnel_t *t, const ww_lifecycle_context_t *context);
+void tunnelDefaultOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);
+void tunnelDefaultOnQuiesceWait(tunnel_t *t, const ww_lifecycle_context_t *context);
+void tunnelDefaultOnStop(tunnel_t *t, const ww_lifecycle_context_t *context);
 
 /**
  * @brief Default function to stop worker-local tunnel resources.
@@ -343,7 +335,15 @@ void tunnelDefaultOnPreStop(tunnel_t *t);
  * @param t Tunnel instance.
  * @param wid Worker whose local resources are being stopped.
  */
-void tunnelDefaultOnWorkerStop(tunnel_t *t, wid_t wid);
+void tunnelDefaultOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);
+void tunnelDefaultOnDestroy(tunnel_t *t, const ww_lifecycle_context_t *context);
+
+void tunnelOwnedChildQuiesceRequest(tunnel_t *child);
+void tunnelOwnedChildWorkerQuiesce(tunnel_t *child, wid_t wid);
+void tunnelOwnedChildQuiesceWait(tunnel_t *child);
+void tunnelOwnedChildWorkerStop(tunnel_t *child, wid_t wid);
+void tunnelOwnedChildStop(tunnel_t *child);
+void tunnelOwnedChildDestroy(tunnel_t *child);
 
 /**
  * @brief Retrieves the state of the tunnel.

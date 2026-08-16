@@ -192,13 +192,15 @@ void packetreceiverPrepareRuntime(tunnel_t *t)
     if (t->prev == NULL && t->next == NULL)
     {
         LOGF("PacketReceiver: must have a previous or next tunnel to receive packets from");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     if (chain == NULL || chain->workers_count == 0)
     {
         LOGF("PacketReceiver: the chain has zero workers");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     state->workers_count = chain->workers_count;
@@ -206,7 +208,8 @@ void packetreceiverPrepareRuntime(tunnel_t *t)
     if (state->source_count > (SIZE_MAX / (uint64_t) sizeof(uint64_t)))
     {
         LOGF("PacketReceiver: expected source count exceeds addressable memory");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     state->received_counts = memoryAllocateZero((size_t) state->source_count * sizeof(uint64_t));
@@ -214,7 +217,8 @@ void packetreceiverPrepareRuntime(tunnel_t *t)
     if (state->source_count > (UINT64_MAX / (uint64_t) state->expected_packets_per_ip))
     {
         LOGF("PacketReceiver: total expected packet count would overflow");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     state->total_expected_packets = state->source_count * (uint64_t) state->expected_packets_per_ip;

@@ -102,6 +102,7 @@ void wioIocpFinalizeDeferred(wio_t *io);
 // are real. Never compiled into production builds.
 void     wioIocpTestForceAcceptExFailures(uint32_t count, int error);
 uint32_t wioIocpTestPendingAcceptExFailures(void);
+void     wioIocpTestSetAfterDirectSendHook(void (*hook)(wio_t *io));
 #endif
 
 #endif

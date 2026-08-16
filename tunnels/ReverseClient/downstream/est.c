@@ -4,22 +4,24 @@
 
 void reverseclientTunnelDownStreamEst(tunnel_t *t, line_t *l)
 {
-    reverseclient_tstate_t *ts = tunnelGetState(t);
+    reverseclient_tstate_t     *ts   = tunnelGetState(t);
+    reverseclient_pair_t       *pair = ((reverseclient_lstate_t *) lineGetState(l, t))->pair;
+    reverseclient_thread_box_t *box  = &ts->threadlocal_pool[lineGetWID(l)];
 
-    wid_t wid = lineGetWID(l);
-
-    if (! lineIsEstablished(l))
+    if (pair->phase != kReverseClientPairConnecting)
     {
-        lineMarkEstablished(l);
-
-        ts->threadlocal_pool[wid].connecting_cons_count -= 1;
-        ts->threadlocal_pool[wid].unused_cons_count += 1;
-
-        LOGI("ReverseClient: connected,    tid: %d unused: %u active: %d",
-             wid,
-             ts->threadlocal_pool[wid].unused_cons_count,
-             atomicLoadExplicit(&(ts->reverse_cons), memory_order_relaxed));
-
-        reverseclientInitiateConnectOnWorker(t, wid, false);
+        return;
     }
+
+    lineMarkEstablished(l);
+    assert(box->connecting_cons_count > 0);
+    box->connecting_cons_count--;
+    box->unused_cons_count++;
+    pair->phase = kReverseClientPairUnused;
+
+    LOGI("ReverseClient: connected, wid: %d unused: %u active: %d",
+         lineGetWID(l),
+         box->unused_cons_count,
+         atomicLoadRelaxed(&ts->reverse_cons));
+    reverseclientInitiateConnectOnWorker(t, lineGetWID(l), false);
 }

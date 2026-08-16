@@ -7,20 +7,21 @@
 
 typedef struct tcpoverudpclient_tstate_s
 {
-    bool     fec_enabled;
-    uint8_t  fec_data_shards;
-    uint8_t  fec_parity_shards;
-    bool     kcp_nodelay;
-    bool     kcp_no_congestion_control;
-    int      kcp_interval_ms;
-    int      kcp_resend;
-    int      kcp_send_window;
-    int      kcp_recv_window;
-    int      kcp_initial_cwnd;
-    int      kcp_rx_minrto_ms;
-    int      kcp_send_buffer_limit;
-    uint32_t ping_interval_ms;
-    uint32_t no_recv_timeout_ms;
+    atomic_bool stopping;
+    bool        fec_enabled;
+    uint8_t     fec_data_shards;
+    uint8_t     fec_parity_shards;
+    bool        kcp_nodelay;
+    bool        kcp_no_congestion_control;
+    int         kcp_interval_ms;
+    int         kcp_resend;
+    int         kcp_send_window;
+    int         kcp_recv_window;
+    int         kcp_initial_cwnd;
+    int         kcp_rx_minrto_ms;
+    int         kcp_send_buffer_limit;
+    uint32_t    ping_interval_ms;
+    uint32_t    no_recv_timeout_ms;
 } tcpoverudpclient_tstate_t;
 
 typedef struct tcpoverudpclient_lstate_s
@@ -99,7 +100,7 @@ static inline int tcpoverudpclientGetKcpSendBufferLimit(const tcpoverudpclient_l
     return (int) (ls->k_handle->snd_wnd + ls->k_handle->rmt_wnd + 10U);
 }
 
-WW_EXPORT void         tcpoverudpclientTunnelDestroy(tunnel_t *t);
+WW_EXPORT void         tcpoverudpclientTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context);
 WW_EXPORT tunnel_t    *tcpoverudpclientTunnelCreate(node_t *node);
 WW_EXPORT api_result_t tcpoverudpclientTunnelApi(tunnel_t *instance, sbuf_t *message);
 
@@ -107,7 +108,7 @@ void tcpoverudpclientTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_of
 void tcpoverudpclientTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void tcpoverudpclientTunnelOnPrepair(tunnel_t *t);
 void tcpoverudpclientTunnelOnStart(tunnel_t *t);
-void tcpoverudpclientTunnelOnStop(tunnel_t *t);
+void tcpoverudpclientTunnelOnQuiesceRequest(tunnel_t *t, const ww_lifecycle_context_t *context);
 
 void tcpoverudpclientTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void tcpoverudpclientTunnelUpStreamEst(tunnel_t *t, line_t *l);

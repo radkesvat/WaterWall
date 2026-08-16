@@ -39,6 +39,7 @@ void speedtestclientLinestateInitialize(speedtestclient_lstate_t *ls, tunnel_t *
         .receiver_finished               = ! state->download,
         .remote_sender_report_received   = false,
         .remote_receiver_report_received = false,
+        .upstream_init_sent              = false,
         .line_complete                   = false,
         .failed                          = false,
     };

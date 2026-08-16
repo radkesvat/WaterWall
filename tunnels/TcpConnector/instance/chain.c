@@ -16,7 +16,8 @@ void tcpconnectorTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
         if (chain->tunnels.len != 0)
         {
             LOGF("TcpConnector: cannot defer internal DomainResolver insertion on a non-empty chain");
-            terminateProgram(1);
+            startupFailureRecord(1);
+            return;
         }
         tunnelchainDestroy(chain);
         return;
@@ -28,13 +29,15 @@ void tcpconnectorTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
     if (resolver == NULL)
     {
         LOGF("TcpConnector: internal DomainResolver was not created");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     if (resolver->prev != NULL || resolver->next != NULL)
     {
         LOGF("TcpConnector: internal DomainResolver tunnel is already bound");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     if (prev->next == t)

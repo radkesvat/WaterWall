@@ -61,7 +61,7 @@ tunnel_t *blackholeTunnelCreate(node_t *node)
 
     if (! parseBlackHoleMode(state, node->node_settings_json))
     {
-        blackholeTunnelDestroy(t);
+        blackholeTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 

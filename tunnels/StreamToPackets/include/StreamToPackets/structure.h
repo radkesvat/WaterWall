@@ -111,7 +111,7 @@ enum
     kSensitivePongByte    = 0xDD
 };
 
-WW_EXPORT void         streamtopacketsTunnelDestroy(tunnel_t *t);
+WW_EXPORT void         streamtopacketsTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context);
 WW_EXPORT tunnel_t    *streamtopacketsTunnelCreate(node_t *node);
 WW_EXPORT api_result_t streamtopacketsTunnelApi(tunnel_t *instance, sbuf_t *message);
 
@@ -120,7 +120,7 @@ void streamtopacketsTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void streamtopacketsTunnelOnPrepair(tunnel_t *t);
 void streamtopacketsTunnelOnStart(tunnel_t *t);
 void streamtopacketsQueueWorkerPacketInit(void *worker, void *arg1, void *arg2, void *arg3);
-void streamtopacketsTunnelOnStop(tunnel_t *t);
+void streamtopacketsTunnelOnQuiesceRequest(tunnel_t *t, const ww_lifecycle_context_t *context);
 
 void streamtopacketsTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void streamtopacketsTunnelUpStreamEst(tunnel_t *t, line_t *l);

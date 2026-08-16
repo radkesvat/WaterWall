@@ -42,7 +42,8 @@ struct idle_item_s
     hash_t           hash;                   ///< Hash used for item lookup.
     wid_t            wid;                    ///< Worker ID that owns this item.
     atomic_bool      removed;                ///< Flag indicating if the item is removed.
-    atomic_bool      worker_message_pending; ///< An expiration worker message owns the item memory.
+    atomic_bool      worker_message_pending; ///< A posted expiration message temporarily owns delivery. Cancellation
+                                             ///< restores an attached item to the table; detached items are freed.
 };
 typedef struct idle_table_s idle_table_t;
 
@@ -74,7 +75,8 @@ void idletableDestroy(idle_table_t *self);
  * @param cb Expiration callback.
  * @param wid Worker ID of the caller.
  * @param age_ms Expiration age (in milliseconds).
- * @return Pointer to the new idle item; NULL if key already exists.
+ * @return Pointer to the new idle item; NULL if allocation or either index
+ * publication fails, or if the key already exists.
  */
 idle_item_t *idletableCreateItem(idle_table_t *self, hash_t key, void *userdata, ExpireCallBack cb, wid_t wid,
                                  uint64_t age_ms);
@@ -126,3 +128,10 @@ void idletableDrainWorkerItems(idle_table_t *self, wid_t wid);
  * @return true if the item was removed; false otherwise.
  */
 bool idletableRemoveIdleItemByHash(wid_t wid, idle_table_t *self, hash_t key);
+
+#ifdef WW_IDLE_TABLE_TEST_SEAM
+void idleCallBack(wtimer_t *timer);
+void idletableTestRefuseNextInitialStagingReserve(void);
+void idletableTestRefuseNextStagingGrowth(void);
+void idletableTestRefuseNextCreateHeapPublication(void);
+#endif

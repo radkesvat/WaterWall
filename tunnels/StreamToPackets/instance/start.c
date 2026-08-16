@@ -8,11 +8,6 @@ void streamtopacketsQueueWorkerPacketInit(void *worker, void *arg1, void *arg2, 
     discard arg2;
     discard arg3;
 
-    if (UNLIKELY(isApplicationTerminating()))
-    {
-        return;
-    }
-
     tunnel_t *t = arg1;
     line_t   *l = tunnelchainGetWorkerPacketLine(tunnelGetChain(t), getCurrentEventWorkerWID());
 
@@ -31,11 +26,12 @@ void streamtopacketsTunnelOnStart(tunnel_t *t)
 
     for (wid_t wi = 0; wi < getWorkersCount(); wi++)
     {
-        if (UNLIKELY(! sendWorkerMessageForceQueueWithCleanup(
-                wi, streamtopacketsQueueWorkerPacketInit, NULL, t, NULL, NULL)))
+        if (UNLIKELY(
+                sendWorkerMessageForceQueueWithCleanup(wi, streamtopacketsQueueWorkerPacketInit, NULL, t, NULL, NULL) !=
+                kWorkerMessageSubmitAccepted))
         {
             LOGF("StreamToPackets: failed to admit required packet-side Init on worker %u", (unsigned int) wi);
-            terminateProgram(1);
+            startupFailureRecord(1);
             return;
         }
     }

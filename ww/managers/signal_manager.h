@@ -4,8 +4,9 @@
  * Signal manager API for shutdown handlers and process termination flow.
  */
 
+#include "application_shutdown.h"
 #include "wlibc.h"
-#include "worker.h"
+#include "wmutex.h"
 
 typedef void (*SignalHandler)(void *userdata, int signum);
 
@@ -20,57 +21,23 @@ enum
     kMaxSigHandles = 500
 };
 
-/**
- * @brief Explicit process shutdown phase.
- *
- * The phase is the single source of truth for shutdown progress.
- * GSTATE.application_stopping_flag is a published compatibility flag derived
- * from it: it stays false while shutdown is merely kProgramShutdownRequested so
- * the control wakeup can still be delivered and the requesting thread can
- * unwind, and worker 0 sets it true when it enters kProgramShutdownStopping.
- *
- * RUNNING -> REQUESTED   requestProgramShutdown() / OS signal / console event
- * REQUESTED -> STOPPING  worker 0 only, exactly once
- * STOPPING -> FINALIZING workers stopped and joined
- * FINALIZING -> exit()   global resources destroyed
- */
-typedef enum program_shutdown_phase_e
-{
-    kProgramShutdownRunning = 0,
-    kProgramShutdownRequested,
-    kProgramShutdownStopping,
-    kProgramShutdownFinalizing
-} program_shutdown_phase_e;
-
 typedef struct signal_manager_s
 {
     signal_handler_t handlers[kMaxSigHandles];
     unsigned int     handlers_len;
-    // Deterministic result of exit-code arbitration: the first non-zero code
-    // wins and a later zero can never overwrite it.
-    atomic_int exit_code;
-    // program_shutdown_phase_e stored atomically.
-    atomic_int shutdown_phase;
 #ifdef OS_WIN
     // Signaled near the end of teardown so a console close/logoff/shutdown
     // handler can return only after the main thread finished cleanup.
     void *shutdown_complete_event; // HANDLE
+    bool  console_handler_registered;
 #else
-    // Shutdown-control self-pipe. The POSIX signal handler writes the signal
-    // number to [1] and requestProgramShutdown() writes a programmatic-request
-    // marker to it; worker 0's loop reads [0] from a high-priority callback and
-    // runs the real shutdown. It is dedicated control traffic and is therefore
-    // never subject to the normal application event-admission gate.
+    // Shutdown-control self-pipe. The POSIX handler publishes a signal-safe
+    // mailbox value and writes a best-effort wake edge to [1].
     int shutdown_pipe[2];
 #endif
     wmutex_t mutex;
-    // Serializes the "claim the phase + hand off to worker 0" decision in
-    // requestProgramShutdown(), so a concurrent requester observes the published
-    // outcome of an in-flight handoff instead of inferring acceptance from a
-    // phase whose wakeup may still fail.
-    wmutex_t request_mutex;
-    // Guarded by mutex. Set before worker 0 traverses the callback list so the
-    // list cannot change under it, and so callbacks run exactly once.
+    // Guarded by mutex. Set before the late observer traversal so the list
+    // cannot change under it and every observer runs exactly once.
     bool     callbacks_frozen;
     uint32_t started : 1;
     uint32_t raise_defaults : 1;
@@ -116,7 +83,7 @@ void signalmanagerSet(signal_manager_t *sm);
 /**
  * @brief Install configured signal handlers for current process.
  */
-void signalmanagerStart(void);
+bool signalmanagerStart(void);
 
 /**
  * @brief Block the graceful (shutdown-routed) signals on the calling thread.
@@ -135,11 +102,30 @@ void signalmanagerStart(void);
  */
 void signalmanagerBlockHandledSignalsForCurrentThread(void);
 
+/** Translate any signal-safe mailbox value into the durable controller state. */
+void signalmanagerConsumePendingShutdownSignal(void);
+
 /**
- * @brief Register a shutdown callback, executed once on worker 0 in LIFO order.
+ * @brief Arbitrate a startup failure against any already-pending graceful signal.
  *
- * Registrations are rejected once the callback list has been frozen for the
- * shutdown traversal (phase kProgramShutdownStopping and later).
+ * On POSIX, the graceful set remains blocked across mailbox consumption and
+ * both typed controller publications. The caller's exact previous mask is
+ * restored before return. On Windows, the controller mutex provides the
+ * corresponding arbitration boundary against console requests.
+ */
+application_shutdown_request_result_e signalmanagerArbitrateStartupFailure(int exit_code);
+
+#if defined(SIGNAL_MANAGER_TEST_HOOKS) && defined(OS_WIN)
+bool signalmanagerTestDispatchWindowsConsoleEvent(unsigned long ctrl_type);
+void signalmanagerTestSetWindowsBeforeEntryHook(void (*hook)(void *), void *context);
+#elif defined(SIGNAL_MANAGER_TEST_HOOKS)
+void signalmanagerTestSetPosixMailboxHook(void (*hook)(void));
+#endif
+
+/**
+ * @brief Register a late non-owning exit observer, executed once in LIFO order.
+ *
+ * Registrations are rejected once the callback list has been frozen.
  *
  * @param handle Callback function.
  * @param userdata Opaque callback context.
@@ -157,35 +143,14 @@ void registerAtExitCallBack(SignalHandler handle, void *userdata);
 void removeAtExitCallBack(SignalHandler handle, void *userdata);
 
 /*
- * The three shutdown entry points (requestProgramShutdown, abortProgramNow and
- * the legacy terminateProgram) are declared in wlibc.h so every translation
- * unit sees them.
+ * Shutdown entry points are declared in wlibc.h so every translation unit sees
+ * them.
  */
 
 /**
- * @brief Run the once-only main-thread shutdown sequence.
- *
- * Must only be called on WaterWall's main thread (worker 0). Normally the
- * process exits from inside this call. It returns only when another worker-0
- * pass already owns the shutdown sequence, in which case the caller must not
- * run cleanup itself.
+ * @brief Run retained late, non-owning exit observers exactly once.
  */
-void signalmanagerRunShutdownOnMainThread(void);
-
-/**
- * @brief Publish the transition into kProgramShutdownFinalizing.
- *
- * Called by the global-state teardown right before global resources are
- * destroyed. Idempotent.
- */
-void signalmanagerEnterFinalizing(void);
-
-/**
- * @brief Current process shutdown phase.
- */
-program_shutdown_phase_e signalmanagerGetShutdownPhase(void);
-
-bool signalmanagerIsTerminating(void);
+void signalmanagerRunExitObservers(void);
 
 /**
  * @brief Request shutdown for a local failure without racing an accepted result.
@@ -203,5 +168,3 @@ bool signalmanagerRequestShutdownPreservingAcceptedStatus(int exit_code);
  * The first non-zero code wins; zero never overwrites a recorded error. Safe to
  * call concurrently from any thread.
  */
-void signalmanagerSetExitCode(int exit_code);
-int  signalmanagerGetExitCode(void);

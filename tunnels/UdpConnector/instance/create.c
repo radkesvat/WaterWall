@@ -13,12 +13,13 @@ static void initializeTunnelCallbacks(tunnel_t *t)
     t->fnPauseU   = &udpconnectorTunnelUpStreamPause;
     t->fnResumeU  = &udpconnectorTunnelUpStreamResume;
 
-    t->onPrepare    = &udpconnectorTunnelOnPrepair;
-    t->onChain      = &udpconnectorTunnelOnChain;
-    t->onStart      = &udpconnectorTunnelOnStart;
-    t->onStop       = &udpconnectorTunnelOnStop;
-    t->onWorkerStop = &udpconnectorTunnelOnWorkerStop;
-    t->onDestroy    = &udpconnectorTunnelDestroy;
+    t->onPrepare       = &udpconnectorTunnelOnPrepair;
+    t->onChain         = &udpconnectorTunnelOnChain;
+    t->onStart         = &udpconnectorTunnelOnStart;
+    t->onStop          = &udpconnectorTunnelOnStop;
+    t->onWorkerQuiesce = &udpconnectorTunnelOnWorkerQuiesce;
+    t->onWorkerStop    = &udpconnectorTunnelOnWorkerStop;
+    t->onDestroy       = &udpconnectorTunnelDestroy;
 }
 
 static bool udpconnectorAddDomainStrategySetting(cJSON *settings, enum domain_strategy strategy)
@@ -146,7 +147,8 @@ static const cJSON *getDestinationArraySettings(const cJSON *settings)
     if (jaddresses != NULL && jadresses != NULL)
     {
         LOGF("JSON Error: UdpConnector->settings : Use either \"addresses\" or \"adresses\", not both");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return NULL;
     }
 
     if (jaddresses != NULL)
@@ -372,14 +374,16 @@ static bool parseDestinationArray(udpconnector_tstate_t *state, const cJSON *set
     if (! cJSON_IsArray(jaddresses) || cJSON_GetArraySize(jaddresses) <= 0)
     {
         LOGF("JSON Error: UdpConnector->settings->addresses (array field) : The value was empty or invalid");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return false;
     }
 
     if (cJSON_GetObjectItemCaseSensitive(settings, "address") != NULL ||
         cJSON_GetObjectItemCaseSensitive(settings, "port") != NULL)
     {
         LOGF("JSON Error: UdpConnector->settings : Use either \"address\"/\"port\" or \"addresses\", not both");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return false;
     }
 
     const int destination_count = cJSON_GetArraySize(jaddresses);
@@ -395,7 +399,8 @@ static bool parseDestinationArray(udpconnector_tstate_t *state, const cJSON *set
             LOGF("JSON Error: UdpConnector->settings->addresses[%d] (object field) : The value was empty or invalid",
                  index);
             cleanupDestinationArray(state);
-            terminateProgram(1);
+            startupFailureRecord(1);
+            return false;
         }
 
         udpconnector_destination_t *destination = &state->destinations[index];
@@ -484,7 +489,13 @@ tunnel_t *udpconnectorTunnelCreate(node_t *node)
         return NULL;
     }
 
-    if (getDestinationArraySettings(settings) != NULL)
+    const cJSON *destination_array_settings = getDestinationArraySettings(settings);
+    if (UNLIKELY(startupFailurePending()))
+    {
+        udpconnectorTunnelDestroy(t, wwLifecycleStartupRollback());
+        return NULL;
+    }
+    if (destination_array_settings != NULL)
     {
         if (! parseDestinationArray(state, settings))
         {
@@ -512,7 +523,7 @@ tunnel_t *udpconnectorTunnelCreate(node_t *node)
 
     if (! udpconnectorCreateInternalDomainResolver(t, node))
     {
-        udpconnectorTunnelDestroy(t);
+        udpconnectorTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 

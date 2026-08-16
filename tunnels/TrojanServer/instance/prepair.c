@@ -15,6 +15,7 @@ void trojanserverTunnelOnPrepair(tunnel_t *t)
     if (ts->auth_client_tunnel == NULL)
     {
         LOGF("TrojanServer: AuthenticationClient node \"%s\" instance is not available", ts->auth_client_node->name);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 }

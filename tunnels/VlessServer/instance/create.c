@@ -369,14 +369,14 @@ tunnel_t *vlessserverTunnelCreate(node_t *node)
     if (! nodeHasNext(node))
     {
         LOGF("VlessServer: a next node is required for accepted VLESS traffic");
-        vlessserverTunnelDestroy(t);
+        vlessserverTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
     if (! checkJsonIsObjectAndHasChild(settings))
     {
         LOGF("JSON Error: VlessServer->settings (object field) : The object was empty or invalid");
-        vlessserverTunnelDestroy(t);
+        vlessserverTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
@@ -399,14 +399,14 @@ tunnel_t *vlessserverTunnelCreate(node_t *node)
     if (! ts->allow_connect && ! ts->allow_udp)
     {
         LOGF("JSON Error: VlessServer must enable at least one of connect/udp");
-        vlessserverTunnelDestroy(t);
+        vlessserverTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
     if (fallback_intentional_delay_ms < 0)
     {
         LOGF("JSON Error: VlessServer->settings->fallback-intentional-delay-ms (number field) : The value was invalid");
-        vlessserverTunnelDestroy(t);
+        vlessserverTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
     ts->fallback_intentional_delay_ms = (uint32_t) fallback_intentional_delay_ms;
@@ -415,7 +415,7 @@ tunnel_t *vlessserverTunnelCreate(node_t *node)
     {
         LOGF("JSON Error: VlessServer->settings->fallback-intentional-delay-jitter-ms (number field) : The value was "
              "invalid");
-        vlessserverTunnelDestroy(t);
+        vlessserverTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
     ts->fallback_intentional_delay_jitter_ms = (uint32_t) fallback_intentional_delay_jitter_ms;
@@ -427,7 +427,7 @@ tunnel_t *vlessserverTunnelCreate(node_t *node)
 
     if (! vlessserverParseAuthMode(ts, t, node, settings) || ! vlessserverParseFallbackNode(ts, node, settings))
     {
-        vlessserverTunnelDestroy(t);
+        vlessserverTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 

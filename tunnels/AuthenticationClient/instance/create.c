@@ -18,11 +18,12 @@ static void authenticationclientInitializeCallbacks(tunnel_t *t)
     t->fnPauseD   = &authenticationclientTunnelDownStreamPause;
     t->fnResumeD  = &authenticationclientTunnelDownStreamResume;
 
-    t->onPrepare    = &authenticationclientTunnelOnPrepair;
-    t->onStart      = &authenticationclientTunnelOnStart;
-    t->onStop       = &authenticationclientTunnelOnStop;
-    t->onWorkerStop = &authenticationclientTunnelOnWorkerStop;
-    t->onDestroy    = &authenticationclientTunnelDestroy;
+    t->onPrepare        = &authenticationclientTunnelOnPrepair;
+    t->onStart          = &authenticationclientTunnelOnStart;
+    t->onQuiesceRequest = &authenticationclientTunnelOnQuiesceRequest;
+    t->onWorkerQuiesce  = &authenticationclientTunnelOnWorkerQuiesce;
+    t->onWorkerStop     = &authenticationclientTunnelOnWorkerStop;
+    t->onDestroy        = &authenticationclientTunnelDestroy;
 }
 
 static bool authenticationclientReadInterval(const cJSON *settings, const char *name, int default_value, uint32_t *out)
@@ -129,7 +130,7 @@ tunnel_t *authenticationclientTunnelCreate(node_t *node)
 
     if (UNLIKELY(! authenticationclientParseSettings(ts, node)))
     {
-        authenticationclientTunnelDestroy(t);
+        authenticationclientTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
@@ -143,7 +144,7 @@ tunnel_t *authenticationclientTunnelCreate(node_t *node)
     if (UNLIKELY(users == NULL))
     {
         LOGE("AuthenticationClient: failed to create local users table");
-        authenticationclientTunnelDestroy(t);
+        authenticationclientTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
@@ -151,7 +152,7 @@ tunnel_t *authenticationclientTunnelCreate(node_t *node)
     {
         LOGE("AuthenticationClient: failed to create local users table");
         memoryFreeAligned(users);
-        authenticationclientTunnelDestroy(t);
+        authenticationclientTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
     ts->users = users;

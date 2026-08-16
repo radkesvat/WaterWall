@@ -1,4 +1,5 @@
 #include "global_state.h"
+#include "application_shutdown.h"
 #include "buffer_pool.h"
 #include "bufio/buffer_pool.h"
 #include "bufio/master_pool.h"
@@ -33,6 +34,29 @@ ww_global_state_t global_ww_state = {0};
 
 // --- Static helper functions ---
 
+static void globalstateDestroyWorkersThatNeverStarted(wid_t first);
+
+static void globalstateDestroyMasterPools(void)
+{
+    masterpoolMakeEmpty(GSTATE.masterpool_buffer_pools_large);
+    masterpoolMakeEmpty(GSTATE.masterpool_buffer_pools_small);
+    masterpoolMakeEmpty(GSTATE.masterpool_wios);
+    masterpoolMakeEmpty(GSTATE.masterpool_context_pools);
+    masterpoolMakeEmpty(GSTATE.masterpool_messages);
+
+    masterpoolDestroy(GSTATE.masterpool_buffer_pools_large);
+    masterpoolDestroy(GSTATE.masterpool_buffer_pools_small);
+    masterpoolDestroy(GSTATE.masterpool_wios);
+    masterpoolDestroy(GSTATE.masterpool_context_pools);
+    masterpoolDestroy(GSTATE.masterpool_messages);
+
+    GSTATE.masterpool_buffer_pools_large = NULL;
+    GSTATE.masterpool_buffer_pools_small = NULL;
+    GSTATE.masterpool_wios               = NULL;
+    GSTATE.masterpool_context_pools      = NULL;
+    GSTATE.masterpool_messages           = NULL;
+}
+
 static err_t wwDefaultInternalLwipIpv4Hook(struct pbuf *p, struct netif *inp)
 {
     discard inp;
@@ -40,7 +64,7 @@ static err_t wwDefaultInternalLwipIpv4Hook(struct pbuf *p, struct netif *inp)
     return 0;
 }
 
-static void initializeMasterPools(void)
+static bool initializeMasterPools(void)
 {
     master_pool_t *large    = masterpoolCreateWithCapacity(2 * RAM_PROFILE);
     master_pool_t *small    = masterpoolCreateWithCapacity(2 * RAM_PROFILE);
@@ -56,7 +80,7 @@ static void initializeMasterPools(void)
         masterpoolDestroy(contexts);
         masterpoolDestroy(messages);
         printError("GlobalState: failed to construct master-pool metadata");
-        abortProgramNow(1);
+        return false;
     }
 
     GSTATE.masterpool_buffer_pools_large = large;
@@ -66,6 +90,7 @@ static void initializeMasterPools(void)
     GSTATE.masterpool_messages           = messages;
 
     workerMessagesInstallMasterPoolCallbacks(GSTATE.masterpool_messages);
+    return true;
 }
 
 static bool checkedSizeProduct(size_t count, size_t element_size, size_t *out)
@@ -115,79 +140,6 @@ static bool initializeShortCuts(void)
     GSTATE.shortcut_wios_pools    = wios_pools;
     GSTATE.shortcut_context_pools = context_pools;
     return true;
-}
-
-/*
- * Global-state shutdown callback. Registered first, so the LIFO registry runs it
- * last, after every other subsystem callback has had the workers available.
- *
- * It always runs on worker 0 / the main thread: the shutdown manager guarantees
- * the callback traversal happens there, which is what makes joining the other
- * workers safe (a worker can never end up joining itself or waiting for a lock
- * it holds).
- */
-static void exitHandle(void *userdata, int signum)
-{
-    discard signum;
-    discard userdata;
-
-    assert((uint64_t) getTID() == GSTATE.main_thread_id);
-
-    // Node stop hooks, external cleanup scripts and device shutdown run exactly
-    // once; nodemanagerStop() is idempotent and this is its only normal caller.
-    nodemanagerStop();
-
-    // Ask every spawned worker to stop before joining the first one, so shutdown
-    // does not serialize on one slow worker.
-    for (unsigned int wid = 1; wid < WORKERS_COUNT - WORKER_ADDITIONS; ++wid)
-    {
-        discard workerRequestStop(getWorker(wid));
-    }
-    // join only worker threads that were spawned via workerSpawn(); each of them
-    // destroyed its own event-loop-local resources before returning.
-    for (unsigned int wid = 1; wid < WORKERS_COUNT - WORKER_ADDITIONS; ++wid)
-    {
-        if (UNLIKELY(! workerJoin(getWorker(wid))))
-        {
-            /*
-             * A possibly-live worker still owns worker-local and global
-             * resources. Continuing into pool/manager destruction would turn a
-             * join failure into use-after-free, so terminal shutdown must stop
-             * here instead of pretending ownership transferred.
-             */
-            LOGF("Failed to join worker %u during terminal shutdown", wid);
-            abortProgramNow(1);
-        }
-    }
-
-    /*
-     * Worker 0 was not spawned, so the join loop above cannot quiesce its
-     * tunnel callbacks. Destroy its event-loop-local resources now: onWorkerStop
-     * may still close live connections through lwIP and must run while the core
-     * lock exists.
-     */
-    workerDestroyOwnResources(getWorker(0));
-
-    /*
-     * tcpip_init() owns a real OS thread even though WaterWall models its pools
-     * as a pseudo-worker. All ordinary workers are now quiescent, so the
-     * remaining lwIP work can be drained while every global and pseudo-worker
-     * resource it can reference is still alive.
-     */
-    if (GSTATE.flag_lwip_initialized)
-    {
-        if (UNLIKELY(! wwLwipShutdown()))
-        {
-            LOGF("Failed to quiesce and join the lwIP tcpip thread");
-            abortProgramNow(1);
-        }
-        GSTATE.flag_lwip_initialized = 0;
-    }
-    // The joined lwIP thread has no WaterWall event loop. Its pseudo-worker
-    // pools can now be destroyed explicitly without a late pbuf callback.
-    workerDestroyOwnResources(getWorker(getTotalWorkersCount() - 1));
-
-    finishGlobalState();
 }
 
 static void tcpipInitDone(void *arg)
@@ -315,6 +267,76 @@ void globalstateStopSystemLoadSampler(void)
     }
 }
 
+static void globalstateRollbackConstruction(wid_t constructed_workers, bool ares_initialized, bool crypto_initialized,
+                                            bool worker_bound)
+{
+    if (GSTATE.system_load != NULL)
+    {
+        systemLoadSamplerStop(GSTATE.system_load);
+        systemLoadSamplerDestroy(GSTATE.system_load);
+        memoryFree(GSTATE.system_load);
+        GSTATE.system_load = NULL;
+    }
+
+    socketmanagerDestroy();
+    nodemanagerDestroy();
+    signalmanagerDestroy();
+    applicationShutdownDestroy();
+
+    if (worker_bound)
+    {
+        workerUnbindCurrentThread();
+    }
+
+    memoryFree((void *) GSTATE.shortcut_loops);
+    GSTATE.shortcut_loops         = NULL;
+    GSTATE.shortcut_buffer_pools  = NULL;
+    GSTATE.shortcut_wios_pools    = NULL;
+    GSTATE.shortcut_context_pools = NULL;
+
+    for (wid_t wid = 0; wid < constructed_workers; ++wid)
+    {
+        worker_t *worker     = getWorker(wid);
+        worker->thread_valid = false;
+        if (! atomicLoadExplicit(&worker->resources_destroyed, memory_order_relaxed))
+        {
+            if (worker->has_event_loop)
+            {
+                workerDestroyUnstartedResources(worker);
+            }
+            else
+            {
+                workerDestroyPseudoWorkerResources(worker);
+            }
+        }
+        contvarDestroy(&worker->control_condition);
+        condmutexDestroy(&worker->control_condition_mutex);
+        mutexDestroy(&worker->control_mutex);
+    }
+
+    memoryFree(WORKERS);
+    WORKERS              = NULL;
+    GSTATE.workers_count = 0;
+    globalstateDestroyMasterPools();
+
+    coreloggerDestroy();
+    networkloggerDestroy();
+    dnsloggerDestroy();
+    internaloggerDestroy();
+    loggerDestroyDefaultLogger();
+
+    if (ares_initialized)
+    {
+        ares_library_cleanup();
+    }
+    if (crypto_initialized)
+    {
+        wCryptoGlobalCleanup();
+    }
+    globalstateDestroySecureRandom();
+    GSTATE = (ww_global_state_t) {0};
+}
+
 /*!
  * @brief Sets the global state.
  *
@@ -332,6 +354,7 @@ void setGlobalState(struct ww_global_state_s *state)
     setNetworkLogger(GSTATE.network_logger);
     setDnsLogger(GSTATE.dns_logger);
     setInternalLogger(GSTATE.internal_logger);
+    applicationShutdownSet(GSTATE.application_shutdown);
     signalmanagerSet(GSTATE.signal_manager);
     socketmanagerSet(GSTATE.socekt_manager);
     nodemanagerSetState(GSTATE.node_manager);
@@ -351,7 +374,6 @@ void globalstateUpdateAllocationPadding(uint16_t padding)
     {
         bufferpoolUpdateAllocationPaddings(getWorkerBufferPool(wi), padding, padding);
     }
-    GSTATE.flag_buffers_calculated = true;
 }
 
 /*!
@@ -362,29 +384,33 @@ void globalstateUpdateAllocationPadding(uint16_t padding)
  *
  * @param init_data The construction data for the global state, including logger configurations and worker counts.
  */
-void createGlobalState(const ww_construction_data_t init_data)
+ww_startup_result_t createGlobalState(const ww_construction_data_t init_data)
 {
-    GSTATE = (ww_global_state_t) {0};
+    ww_startup_context_t startup = {0};
+    wwStartupContextBegin(&startup);
 
-    GSTATE.flag_initialized = true;
-    // Capture the main thread id early so terminateProgram()/the shutdown handoff
-    // can reliably tell whether it runs on the main worker thread, even during
-    // startup before workers are spawned.
-    GSTATE.main_thread_id  = (uint64_t) getTID();
-    GSTATE.dns_options     = init_data.dns_options;
-    GSTATE.domain_strategy = init_data.domain_strategy;
+    bool  crypto_initialized  = false;
+    bool  ares_initialized    = false;
+    bool  worker_bound        = false;
+    wid_t constructed_workers = 0;
+
+    GSTATE                       = (ww_global_state_t) {0};
+    GSTATE.flag_initialized      = true;
+    GSTATE.main_thread_id        = (uint64_t) getTID();
+    GSTATE.dns_options           = init_data.dns_options;
+    GSTATE.domain_strategy       = init_data.domain_strategy;
+    GSTATE.application_finalizer = init_data.application_finalizer;
     if (! GSTATE.dns_options.defaults_initialized)
     {
         asyncdnsOptionsSetDefaults(&GSTATE.dns_options);
     }
-    atomicStoreRelaxed(&GSTATE.application_stopping_flag, false);
     atomicStoreRelaxed(&GSTATE.workers_run_flag, false);
 
     if (UNLIKELY(! globalstateInitializeSecureRandom()))
     {
         printError("Failed to initialize the operating-system secure random provider\n");
-        GSTATE = (ww_global_state_t) {0};
-        terminateProgram(1);
+        startupFailureRecord(1);
+        goto rollback;
     }
 
     /* Initialize cryptography before any other process-wide subsystem.  If a
@@ -395,21 +421,19 @@ void createGlobalState(const ww_construction_data_t init_data)
     if (crypto_status != kWCryptoOk)
     {
         printError("Failed to initialize cryptography: %s\n", wCryptoStatusString(crypto_status));
-        wCryptoGlobalCleanup();
-        globalstateDestroySecureRandom();
-        GSTATE = (ww_global_state_t) {0};
-        terminateProgram(1);
+        startupFailureRecord(1);
+        goto rollback;
     }
+    crypto_initialized = true;
 
     int ares_rc = ares_library_init(ARES_LIB_INIT_ALL);
     if (ares_rc != ARES_SUCCESS)
     {
         printError("Failed to initialize c-ares: %s\n", ares_strerror(ares_rc));
-        wCryptoGlobalCleanup();
-        globalstateDestroySecureRandom();
-        GSTATE = (ww_global_state_t) {0};
-        terminateProgram(1);
+        startupFailureRecord(1);
+        goto rollback;
     }
+    ares_initialized = true;
 
     // [Section] loggers
     {
@@ -418,7 +442,8 @@ void createGlobalState(const ww_construction_data_t init_data)
         if (UNLIKELY(GSTATE.internal_logger == NULL))
         {
             printError("GlobalState: failed to construct internal logger\n");
-            terminateProgram(1);
+            startupFailureRecord(1);
+            goto rollback;
         }
         stringUpperCase(init_data.internal_logger_data.log_level);
         setInternalLoggerLevelByStr(init_data.internal_logger_data.log_level);
@@ -428,7 +453,8 @@ void createGlobalState(const ww_construction_data_t init_data)
         if (UNLIKELY(GSTATE.core_logger == NULL))
         {
             printError("GlobalState: failed to construct core logger\n");
-            terminateProgram(1);
+            startupFailureRecord(1);
+            goto rollback;
         }
 
         stringUpperCase(init_data.core_logger_data.log_level);
@@ -439,7 +465,8 @@ void createGlobalState(const ww_construction_data_t init_data)
         if (UNLIKELY(GSTATE.network_logger == NULL))
         {
             printError("GlobalState: failed to construct network logger\n");
-            terminateProgram(1);
+            startupFailureRecord(1);
+            goto rollback;
         }
 
         stringUpperCase(init_data.network_logger_data.log_level);
@@ -450,7 +477,8 @@ void createGlobalState(const ww_construction_data_t init_data)
         if (UNLIKELY(GSTATE.dns_logger == NULL))
         {
             printError("GlobalState: failed to construct DNS logger\n");
-            terminateProgram(1);
+            startupFailureRecord(1);
+            goto rollback;
         }
 
         stringUpperCase(init_data.dns_logger_data.log_level);
@@ -479,40 +507,53 @@ void createGlobalState(const ww_construction_data_t init_data)
         if (UNLIKELY(! checkedSizeProduct((size_t) WORKERS_COUNT, sizeof(worker_t), &worker_bytes)))
         {
             LOGF("GlobalState: worker registry size overflow");
-            terminateProgram(1);
+            startupFailureRecord(1);
+            goto rollback;
         }
         worker_t *workers = memoryAllocate(worker_bytes);
         if (UNLIKELY(workers == NULL))
         {
             LOGF("GlobalState: failed to allocate worker registry");
-            terminateProgram(1);
+            startupFailureRecord(1);
+            goto rollback;
         }
         WORKERS = workers;
 
-        initializeMasterPools();
+        if (UNLIKELY(! initializeMasterPools()))
+        {
+            startupFailureRecord(1);
+            goto rollback;
+        }
 
         for (wid_t i = 0; i < getWorkersCount(); ++i)
         {
-            workerInit(getWorker(i), i, true);
+            if (UNLIKELY(! workerInit(getWorker(i), i, true)))
+            {
+                constructed_workers = i + 1;
+                startupFailureRecord(1);
+                goto rollback;
+            }
+            constructed_workers = i + 1;
         }
 
         // WORKER_ADDITIONS 1 : lwip worker dose not have event loop
-        workerInit(getWorker(getTotalWorkersCount() - 1), getTotalWorkersCount() - 1, false);
+        if (UNLIKELY(! workerInit(getWorker(getTotalWorkersCount() - 1), getTotalWorkersCount() - 1, false)))
+        {
+            constructed_workers = getTotalWorkersCount();
+            startupFailureRecord(1);
+            goto rollback;
+        }
+        constructed_workers = getTotalWorkersCount();
 
         worker_t *worker0 = getWorker(0);
-#ifdef OS_WIN
-        worker0->thread = (wthread_t) GetCurrentThread();
-#else
-        worker0->thread = pthread_self();
-#endif
-        worker0->thread_valid = true;
-
         workerBindCurrentThread(worker0);
+        worker_bound = true;
 
         if (UNLIKELY(! initializeShortCuts()))
         {
             LOGF("GlobalState: failed to allocate worker shortcut registry");
-            terminateProgram(1);
+            startupFailureRecord(1);
+            goto rollback;
         }
 
         system_load_state_t *system_load = memoryAllocateZero(sizeof(*system_load));
@@ -534,13 +575,16 @@ void createGlobalState(const ww_construction_data_t init_data)
 
     // managers
     {
-        GSTATE.signal_manager = signalmanagerCreate();
-        GSTATE.socekt_manager = socketmanagerCreate();
-        GSTATE.node_manager   = nodemanagerCreate();
-        if (UNLIKELY(GSTATE.signal_manager == NULL || GSTATE.socekt_manager == NULL || GSTATE.node_manager == NULL))
+        GSTATE.application_shutdown = applicationShutdownCreate();
+        GSTATE.signal_manager       = signalmanagerCreate();
+        GSTATE.socekt_manager       = socketmanagerCreate();
+        GSTATE.node_manager         = nodemanagerCreate();
+        if (UNLIKELY(GSTATE.application_shutdown == NULL || GSTATE.signal_manager == NULL ||
+                     GSTATE.socekt_manager == NULL || GSTATE.node_manager == NULL))
         {
             LOGF("GlobalState: failed to construct mandatory manager metadata");
-            terminateProgram(1);
+            startupFailureRecord(1);
+            goto rollback;
         }
     }
     // misc
@@ -551,6 +595,14 @@ void createGlobalState(const ww_construction_data_t init_data)
 
     // Spawn all workers except main worker which is current thread
     {
+        worker_t *worker0 = getWorker(0);
+#ifdef OS_WIN
+        worker0->thread = (wthread_t) GetCurrentThread();
+#else
+        worker0->thread = pthread_self();
+#endif
+        worker0->thread_valid = true;
+
         // Block graceful (shutdown-routed) signals on the main thread before
         // spawning workers, so the workers inherit the blocked mask; the main
         // thread re-enables them in signalmanagerStart(). This keeps graceful
@@ -568,13 +620,146 @@ void createGlobalState(const ww_construction_data_t init_data)
 #else
                 LOGF("Failed to create worker %u thread: error %u (%s)", i, error, strerror((int) error));
 #endif
-                terminateProgram(1);
+                globalstateDestroyWorkersThatNeverStarted((wid_t) i);
+                startupFailureRecord(1);
+                return wwStartupContextEnd(&startup);
             }
         }
     }
 
-    registerAtExitCallBack(exitHandle, NULL);
-    signalmanagerStart();
+    if (UNLIKELY(! signalmanagerStart()))
+    {
+        startupFailureRecord(1);
+        return wwStartupContextEnd(&startup);
+    }
+    return wwStartupContextEnd(&startup);
+
+rollback:
+    globalstateRollbackConstruction(constructed_workers, ares_initialized, crypto_initialized, worker_bound);
+    return wwStartupContextEnd(&startup);
+}
+
+static void globalstateRequireWorkerPhase(worker_lifecycle_e phase)
+{
+    for (wid_t wid = 0; wid < getWorkersCount(); ++wid)
+    {
+        worker_t *worker = getWorker(wid);
+        if (atomicLoadExplicit(&worker->resources_destroyed, memory_order_relaxed))
+        {
+            continue;
+        }
+        if (! workerWaitForPhase(worker, phase, 30000))
+        {
+            LOGF("Worker %d did not acknowledge lifecycle phase %d", workerWIDForLog(wid), (int) phase);
+            abortProgramNow(1);
+        }
+    }
+}
+
+static void globalstateDestroyWorkersThatNeverStarted(wid_t first)
+{
+    for (wid_t wid = first; wid < getWorkersCount(); ++wid)
+    {
+        worker_t *worker = getWorker(wid);
+        if (! worker->thread_valid && workerGetLifecycle(worker) == kWorkerLifecycleInitialized)
+        {
+            workerDestroyUnstartedResources(worker);
+        }
+    }
+}
+
+void globalstateRunShutdownSequence(void)
+{
+    assert((uint64_t) getTID() == GSTATE.main_thread_id);
+
+    ww_lifecycle_context_t context;
+    if (! applicationShutdownGetSelectedContext(&context))
+    {
+        LOGF("Application shutdown has no selected lifecycle context");
+        abortProgramNow(1);
+    }
+
+    nodemanagerQuiesceRequest(&context);
+    for (wid_t wid = 1; wid < getWorkersCount(); ++wid)
+    {
+        worker_t *worker = getWorker(wid);
+        if (! atomicLoadExplicit(&worker->resources_destroyed, memory_order_relaxed))
+        {
+            discard workerRequestQuiesceWithContext(worker, &context);
+        }
+    }
+
+    applicationShutdownAdvancePhase(kApplicationShutdownQuiescingWorkers);
+    workerPerformQuiesce(getWorker(0), &context);
+    globalstateRequireWorkerPhase(kWorkerLifecycleQuiesced);
+
+    applicationShutdownAdvancePhase(kApplicationShutdownQuiescingExternalProducers);
+    nodemanagerQuiesceWait(&context);
+
+    applicationShutdownAdvancePhase(kApplicationShutdownDrainingWorkers);
+    for (wid_t wid = 0; wid < getWorkersCount(); ++wid)
+    {
+        worker_t *worker = getWorker(wid);
+        if (atomicLoadExplicit(&worker->resources_destroyed, memory_order_relaxed))
+        {
+            continue;
+        }
+        if (! workerRequestDrain(worker))
+        {
+            LOGF("Worker %d could not enter the drain phase", workerWIDForLog(wid));
+            abortProgramNow(1);
+        }
+    }
+    workerPerformDrain(getWorker(0), &context);
+    globalstateRequireWorkerPhase(kWorkerLifecycleDrained);
+
+    applicationShutdownAdvancePhase(kApplicationShutdownStoppingComponents);
+    nodemanagerStop(&context);
+
+    applicationShutdownAdvancePhase(kApplicationShutdownDestroyingWorkers);
+    for (wid_t wid = 0; wid < getWorkersCount(); ++wid)
+    {
+        worker_t *worker = getWorker(wid);
+        if (atomicLoadExplicit(&worker->resources_destroyed, memory_order_relaxed))
+        {
+            continue;
+        }
+        if (! workerRequestTeardown(worker))
+        {
+            LOGF("Worker %d could not enter the teardown phase", workerWIDForLog(wid));
+            abortProgramNow(1);
+        }
+    }
+    workerPerformTeardown(getWorker(0));
+    globalstateRequireWorkerPhase(kWorkerLifecycleExited);
+
+    for (wid_t wid = 1; wid < getWorkersCount(); ++wid)
+    {
+        worker_t *worker = getWorker(wid);
+        if (! workerJoin(worker))
+        {
+            LOGF("Failed to join worker %d during terminal shutdown", workerWIDForLog(wid));
+            abortProgramNow(1);
+        }
+    }
+
+    if (GSTATE.flag_lwip_initialized)
+    {
+        if (! wwLwipShutdown())
+        {
+            LOGF("Failed to quiesce and join the lwIP tcpip thread");
+            abortProgramNow(1);
+        }
+        GSTATE.flag_lwip_initialized = 0;
+    }
+    workerDestroyPseudoWorkerResources(getWorker(getTotalWorkersCount() - 1));
+
+    signalmanagerRunExitObservers();
+    if (GSTATE.application_finalizer != NULL)
+    {
+        GSTATE.application_finalizer();
+        GSTATE.application_finalizer = NULL;
+    }
 }
 
 /*!
@@ -588,22 +773,20 @@ void runMainThread(void)
 {
     assert(GSTATE.flag_initialized);
 
+    signalmanagerConsumePendingShutdownSignal();
+    if (! applicationShutdownCommitRuntime())
+    {
+        applicationShutdownCoordinate();
+        abortProgramNow(1);
+    }
+
     // Publishes fully initialized global/worker state before spawned loops run.
     atomicStoreExplicit(&GSTATE.workers_run_flag, true, memory_order_release);
 
     workerRun(getWorker(0));
-
-    /*
-     * Worker 0's loop returned without the shutdown executor terminating the
-     * process. That is the unexpected path (the normal one exits from inside the
-     * worker-0 shutdown callback), so run the once-only main-thread shutdown
-     * here rather than skipping the registered cleanup. It normally does not
-     * return; finishGlobalState() below only covers a shutdown pass that was
-     * already claimed.
-     */
-    signalmanagerRunShutdownOnMainThread();
-
-    finishGlobalState();
+    signalmanagerConsumePendingShutdownSignal();
+    applicationShutdownCoordinate();
+    abortProgramNow(1);
 }
 
 /*!
@@ -612,17 +795,11 @@ void runMainThread(void)
  * Runs on the main thread at the end of the shutdown sequence, once every other
  * worker has been stopped and joined.
  */
-void finishGlobalState(void)
+void finishGlobalState(const application_shutdown_snapshot_t *snapshot)
 {
-    // its not important which thread called this, at this point only 1 thread is running
-    assert(isApplicationTerminating());
-
-    // Node stop hooks already ran in the shutdown callback; nodemanagerStop() is
-    // deliberately not called a second time here.
-    signalmanagerEnterFinalizing();
-
-    const int exit_code = signalmanagerGetExitCode();
-    atomicThreadFence(memory_order_seq_cst);
+    assert((uint64_t) getTID() == GSTATE.main_thread_id);
+    assert(snapshot != NULL);
+    const int exit_code = snapshot->exit_code;
     destroyGlobalState();
 
     exit(exit_code);
@@ -656,17 +833,7 @@ WW_EXPORT void destroyGlobalState(void)
     internaloggerDestroy();
     loggerDestroyDefaultLogger();
 
-    masterpoolMakeEmpty(GSTATE.masterpool_buffer_pools_large);
-    masterpoolMakeEmpty(GSTATE.masterpool_buffer_pools_small);
-    masterpoolMakeEmpty(GSTATE.masterpool_wios);
-    masterpoolMakeEmpty(GSTATE.masterpool_context_pools);
-    masterpoolMakeEmpty(GSTATE.masterpool_messages);
-
-    masterpoolDestroy(GSTATE.masterpool_buffer_pools_large);
-    masterpoolDestroy(GSTATE.masterpool_buffer_pools_small);
-    masterpoolDestroy(GSTATE.masterpool_wios);
-    masterpoolDestroy(GSTATE.masterpool_context_pools);
-    masterpoolDestroy(GSTATE.masterpool_messages);
+    globalstateDestroyMasterPools();
 
     memoryFree((void *) GSTATE.shortcut_loops);
     GSTATE.shortcut_loops         = NULL;
@@ -680,6 +847,8 @@ WW_EXPORT void destroyGlobalState(void)
         // still take a worker control mutex.
         for (wid_t wi = 0; wi < getTotalWorkersCount(); wi++)
         {
+            contvarDestroy(&getWorker(wi)->control_condition);
+            condmutexDestroy(&getWorker(wi)->control_condition_mutex);
             mutexDestroy(&getWorker(wi)->control_mutex);
         }
     }
@@ -697,6 +866,7 @@ WW_EXPORT void destroyGlobalState(void)
     }
 
     signalmanagerDestroy();
+    applicationShutdownDestroy();
 
     workerUnbindCurrentThread();
     memoryFree(WORKERS);

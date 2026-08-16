@@ -1,10 +1,10 @@
 #include "wloop.h"
 #include "ev_memory.h"
-#include "global_state.h"
 #include "iowatcher.h"
 #include "loggers/internal_logger.h"
 #include "wdef.h"
 #include "wevent.h"
+#include "wloop_internal.h"
 #include "wmath.h"
 #include "wsocket.h"
 #include "wthread.h"
@@ -32,7 +32,130 @@
 
 static void __widle_del(widle_t *idle);
 static void __wtimer_del(wtimer_t *timer);
+static void wtimerQuiesce(wtimer_t *timer);
 static void wioReleaseNoCloseNow(wio_t *io);
+
+static thread_local wloop_t *normal_callback_loop;
+
+static wloop_status_e wloopLoadStatus(const wloop_t *loop)
+{
+    return (wloop_status_e) atomicLoadExplicit(&loop->status, memory_order_relaxed);
+}
+
+static void wloopStoreStatus(wloop_t *loop, wloop_status_e status)
+{
+    atomicStoreExplicit(&loop->status, (int) status, memory_order_relaxed);
+}
+
+bool wloopCurrentThreadInNormalCallback(wloop_t *loop)
+{
+    return loop != NULL && normal_callback_loop == loop;
+}
+
+bool wloopInvokeNormalCallback(wloop_t *loop, wloop_callback_root_cb cb, void *context)
+{
+    if (loop == NULL || cb == NULL)
+    {
+        return false;
+    }
+
+    const bool inherited = normal_callback_loop == loop;
+    if (! inherited)
+    {
+        if (! wloopNormalAdmissionBegin(loop))
+        {
+            return false;
+        }
+        wloopNormalAdmissionEnd(loop);
+    }
+
+    wloop_t *previous_loop = normal_callback_loop;
+    normal_callback_loop   = loop;
+    cb(context);
+    normal_callback_loop = previous_loop;
+    return true;
+}
+
+void wloopInvokeControlCallback(wloop_t *loop, wloop_callback_root_cb cb, void *context)
+{
+    if (loop == NULL || cb == NULL)
+    {
+        return;
+    }
+
+    wloop_t *previous_loop = normal_callback_loop;
+    normal_callback_loop   = NULL;
+    cb(context);
+    normal_callback_loop = previous_loop;
+}
+
+static void wloopEventCallbackRoot(void *context)
+{
+    wevent_t *event = context;
+    event->cb(event);
+}
+
+static bool wloopRunNormalEventCallback(wloop_t *loop, wevent_t *event)
+{
+    assert(event->loop == loop);
+    return wloopInvokeNormalCallback(loop, wloopEventCallbackRoot, event);
+}
+
+static void wloopRunControlEventCallback(wloop_t *loop, wevent_t *event)
+{
+    assert(event->loop == loop);
+    wloopInvokeControlCallback(loop, wloopEventCallbackRoot, event);
+}
+
+typedef struct wloop_write_callback_context_s
+{
+    wio_t    *io;
+    wwrite_cb cb;
+} wloop_write_callback_context_t;
+
+static void wloopWriteCallbackRoot(void *context)
+{
+    wloop_write_callback_context_t *write_context = context;
+    write_context->cb(write_context->io);
+}
+
+bool wloopInvokeWriteCallback(wio_t *io, wwrite_cb cb)
+{
+    if (io == NULL || cb == NULL)
+    {
+        return false;
+    }
+
+    wloop_write_callback_context_t context = {.io = io, .cb = cb};
+    return wloopInvokeNormalCallback(io->loop, wloopWriteCallbackRoot, &context);
+}
+
+bool wloopNormalDispatchAllowed(wloop_t *loop)
+{
+    return loop != NULL && atomicLoadExplicit(&loop->normal_admission_open, memory_order_relaxed) &&
+           ! atomicLoadExplicit(&loop->stop_requested, memory_order_relaxed);
+}
+
+bool wloopNormalAdmissionBegin(wloop_t *loop)
+{
+    if (loop == NULL)
+    {
+        return false;
+    }
+
+    mutexLock(&loop->normal_admission_mutex);
+    if (! wloopNormalDispatchAllowed(loop))
+    {
+        mutexUnlock(&loop->normal_admission_mutex);
+        return false;
+    }
+    return true;
+}
+
+void wloopNormalAdmissionEnd(wloop_t *loop)
+{
+    mutexUnlock(&loop->normal_admission_mutex);
+}
 
 #ifdef WATERWALL_WLOOP_TEST_HOOKS
 static int      s_wloop_test_next_wake_write_error;
@@ -151,7 +274,53 @@ static int wloopProcessIOS(wloop_t *loop, int timeout)
     {
         wlogd("poll_events error=%d", -nevents);
     }
-    return nevents < 0 ? 0 : nevents;
+    return nevents;
+}
+
+static void wloopReleasePending(wevent_t *event, bool callback_suppressed)
+{
+#ifndef EVENT_IOCP
+    discard callback_suppressed;
+#endif
+    event->pending = 0;
+
+    if (callback_suppressed && event->destroy && (event->event_type & WEVENT_TYPE_TIMER) != 0)
+    {
+        wtimer_t *timer = (wtimer_t *) event;
+
+        /* A one-shot timer is removed from its heap before becoming pending.
+         * Retain its allocation when quiesce suppresses the callback so an
+         * owning component can still delete the timer during drain. */
+        EVENT_INACTIVE(timer);
+        timer->cb       = NULL;
+        timer->userdata = NULL;
+        timer->quiesced = 1;
+        list_add_tail(&timer->quiesced_node, &timer->loop->quiesced_timers);
+        return;
+    }
+#ifdef EVENT_IOCP
+    if (event->event_type == WEVENT_TYPE_IO)
+    {
+        wio_t *io                 = (wio_t *) event;
+        io->iocp_pending_dispatch = 0;
+        if (callback_suppressed)
+        {
+            wioIocpRetireCompletedWithoutCallbacks(io);
+            return;
+        }
+    }
+#endif
+    if (event->destroy)
+    {
+#ifdef EVENT_IOCP
+        if (event->event_type == WEVENT_TYPE_IO && ((wio_t *) event)->iocp_deferred_finalize)
+        {
+            wioIocpFinalizeDeferred((wio_t *) event);
+            return;
+        }
+#endif
+        EVENT_DEL(event);
+    }
 }
 
 static int wloopProcessPendings(wloop_t *loop)
@@ -168,46 +337,34 @@ static int wloopProcessPendings(wloop_t *loop)
         cur = loop->pendings[i];
         while (cur)
         {
-            // #ifdef DEBUG
-            //             if (! (cur->loop->wid == loop->wid && loop->wid == getWID()))
-            //             {
-            //                 printError("The multi-threading bug still present, sorry");
-            //                 terminateProgram(1);
-            //             }
-            // #endif
             next = cur->pending_next;
             if (cur->pending && cur->loop == loop)
             {
+                if (! wloopNormalDispatchAllowed(loop))
+                {
+                    wloopReleasePending(cur, true);
+                    cur = next;
+                    continue;
+                }
                 if (cur->active && cur->cb)
                 {
-                    cur->cb(cur);
-                    ++ncbs;
-                }
-                cur->pending = 0;
-#ifdef EVENT_IOCP
-                if (cur->event_type == WEVENT_TYPE_IO)
-                {
-                    ((wio_t *) cur)->iocp_pending_dispatch = 0;
-                }
-#endif
-                // NOTE: Now we can safely delete event marked as destroy.
-                if (cur->destroy)
-                {
-#ifdef EVENT_IOCP
-                    if (cur->event_type == WEVENT_TYPE_IO && ((wio_t *) cur)->iocp_deferred_finalize)
+                    if (wloopRunNormalEventCallback(loop, cur))
                     {
-                        // Completion callbacks may call wioFree(). The local
-                        // operation record kept the object alive through the
-                        // callback; now that this pending cursor is released, the
-                        // last record may safely return it to the wio pool.
-                        wioIocpFinalizeDeferred((wio_t *) cur);
+                        ++ncbs;
                     }
                     else
-#endif
                     {
-                        EVENT_DEL(cur);
+                        /* Admission can close after the fast check above but
+                         * before the callback root takes the admission mutex.
+                         * Preserve the same cancellation semantics as the
+                         * already-closed path, especially for owner-retained
+                         * one-shot timers and IOCP completions. */
+                        wloopReleasePending(cur, true);
+                        cur = next;
+                        continue;
                     }
                 }
+                wloopReleasePending(cur, false);
             }
             cur = next;
         }
@@ -249,20 +406,24 @@ int wloopProcessEvents(wloop_t *loop, int timeout_ms)
     if (loop->nios)
     {
         nios = wloopProcessIOS(loop, blocktime_ms);
+        if (nios < 0)
+        {
+            return kWLoopRunErrorBackend;
+        }
     }
     else
     {
         wwSleepMS((unsigned int) blocktime_ms);
     }
     wloopUpdateTime(loop);
-    // wakeup by wloopStop
-    if (loop->status == WLOOP_STATUS_STOP)
+    if (wloopLoadStatus(loop) == WLOOP_STATUS_STOP || ! wloopNormalDispatchAllowed(loop))
     {
+        discard wloopProcessPendings(loop);
         return 0;
     }
 
 process_timers:
-    if (loop->ntimers)
+    if (loop->ntimers && wloopNormalDispatchAllowed(loop))
     {
         ntimers = wloopProcessTimers(loop);
     }
@@ -270,7 +431,7 @@ process_timers:
     uint32_t npendings = loop->npendings;
     if (npendings == 0)
     {
-        if (loop->nidles)
+        if (loop->nidles && wloopNormalDispatchAllowed(loop))
         {
             nidles = wloopProcessIdles(loop);
         }
@@ -336,16 +497,41 @@ static void eventFDReadCB(wio_t *io, sbuf_t *buf)
     mutexLock(&loop->custom_events_mutex);
     // Clearing this before taking the bounded snapshot lets a concurrent or
     // recursive post arm the next wake without extending the current batch.
-    loop->wakeup_pending     = false;
-    const size_t batch_count = loop->custom_events.size;
+    loop->wakeup_pending             = false;
+    const size_t control_batch_count = loop->control_events.size;
+    const size_t normal_batch_count  = loop->custom_events.size;
     mutexUnlock(&loop->custom_events_mutex);
 
-    for (size_t i = 0; i < batch_count; ++i)
+    for (size_t i = 0; i < control_batch_count; ++i)
+    {
+        wevent_t ev;
+
+        mutexLock(&loop->custom_events_mutex);
+        if (event_queue_empty(&loop->control_events))
+        {
+            mutexUnlock(&loop->custom_events_mutex);
+            break;
+        }
+        ev = *event_queue_front(&loop->control_events);
+        event_queue_pop_front(&loop->control_events);
+        mutexUnlock(&loop->custom_events_mutex);
+        if (ev.cb)
+        {
+            wloopRunControlEventCallback(loop, &ev);
+        }
+    }
+
+    for (size_t i = 0; i < normal_batch_count; ++i)
     {
         wevent_t  ev;
         wevent_t *pev;
 
         mutexLock(&loop->custom_events_mutex);
+        if (! wloopNormalDispatchAllowed(loop))
+        {
+            mutexUnlock(&loop->custom_events_mutex);
+            break;
+        }
         assert(! event_queue_empty(&loop->custom_events));
         pev = event_queue_front(&loop->custom_events);
         if (UNLIKELY(pev == NULL))
@@ -360,7 +546,7 @@ static void eventFDReadCB(wio_t *io, sbuf_t *buf)
         mutexUnlock(&loop->custom_events_mutex);
         if (ev.cb)
         {
-            ev.cb(&ev);
+            discard wloopRunNormalEventCallback(loop, &ev);
         }
     }
     bufferpoolReuseBuffer(io->loop->bufpool, buf);
@@ -627,22 +813,29 @@ classify:
     return true;
 }
 
-bool wloopPostControlEvent(wloop_t *loop, wevent_t *ev)
+bool wloopPostEvent(wloop_t *loop, wevent_t *ev)
 {
-    if (ev->loop == NULL)
+    if (loop == NULL || ev == NULL)
     {
-        ev->loop = loop;
+        return false;
     }
-    if (ev->event_type == 0)
+
+    wevent_t queued = *ev;
+    queued.loop     = loop;
+    if (queued.event_type == 0)
     {
-        ev->event_type = WEVENT_TYPE_CUSTOM;
+        queued.event_type = WEVENT_TYPE_CUSTOM;
     }
-    if (ev->event_id == 0)
+    if (queued.event_id == 0)
     {
-        ev->event_id = wloopGetNextEventID();
+        queued.event_id = wloopGetNextEventID();
     }
 
     bool success = false;
+    if (! wloopNormalAdmissionBegin(loop))
+    {
+        return false;
+    }
     mutexLock(&loop->custom_events_mutex);
     if (! wloopArmWakeupLocked(loop))
     {
@@ -655,24 +848,51 @@ bool wloopPostControlEvent(wloop_t *loop, wevent_t *ev)
     }
     // Ownership contract: the queue stores a copy of *ev, so the caller may pass
     // a stack object and does not need to keep it alive after this returns.
-    event_queue_push_back(&loop->custom_events, ev);
+    event_queue_push_back(&loop->custom_events, &queued);
     success = true;
 unlock:
     mutexUnlock(&loop->custom_events_mutex);
+    wloopNormalAdmissionEnd(loop);
     return success;
 }
 
-bool wloopPostEvent(wloop_t *loop, wevent_t *ev)
+bool wloopPostControlEvent(wloop_t *loop, wevent_t *ev)
 {
-    // Ordinary application work is rejected once shutdown began. Shutdown
-    // control traffic must not go through here; it uses wloopPostControlEvent()
-    // or wloopRequestStop() instead.
-    if (UNLIKELY(isApplicationTerminating()))
+    if (loop == NULL || ev == NULL)
     {
         return false;
     }
 
-    return wloopPostControlEvent(loop, ev);
+    wevent_t queued = *ev;
+    queued.loop     = loop;
+    if (queued.event_type == 0)
+    {
+        queued.event_type = WEVENT_TYPE_CUSTOM;
+    }
+    if (queued.event_id == 0)
+    {
+        queued.event_id = wloopGetNextEventID();
+    }
+
+    bool success = false;
+    mutexLock(&loop->custom_events_mutex);
+    if (! loop->control_admission_open)
+    {
+        goto unlock;
+    }
+    if (! wloopArmWakeupLocked(loop))
+    {
+        goto unlock;
+    }
+    if (loop->control_events.maxsize == 0)
+    {
+        event_queue_init(&loop->control_events, CUSTOM_EVENT_QUEUE_INIT_SIZE);
+    }
+    event_queue_push_back(&loop->control_events, &queued);
+    success = true;
+unlock:
+    mutexUnlock(&loop->custom_events_mutex);
+    return success;
 }
 
 static void wloopInit(wloop_t *loop)
@@ -685,8 +905,11 @@ static void wloopInit(wloop_t *loop)
     signal(SIGPIPE, SIG_IGN);
 #endif
 
-    loop->status = WLOOP_STATUS_STOP;
-    loop->pid    = getTID();
+    atomic_init(&loop->status, WLOOP_STATUS_STOP);
+    loop->pid = getTID();
+    atomicStoreExplicit(&loop->stop_requested, false, memory_order_relaxed);
+    atomicStoreExplicit(&loop->normal_admission_open, true, memory_order_relaxed);
+    loop->control_admission_open = true;
     // loop->tid = getTID();  tid is taken at wloop_create
 
     // idles
@@ -695,6 +918,7 @@ static void wloopInit(wloop_t *loop)
     // timers
     heap_init(&loop->timers, timersCompare);
     heap_init(&loop->realtimers, timersCompare);
+    list_init(&loop->quiesced_timers);
 
     // ios
     // NOTE: io_array_init when wioGet -> io_array_resize
@@ -704,6 +928,7 @@ static void wloopInit(wloop_t *loop)
     // iowatcherInit(loop);
 
     // custom_events
+    mutexInit(&loop->normal_admission_mutex);
     mutexInit(&loop->custom_events_mutex);
     // NOTE: wloopCreateEventFDS when wloopPostEvent or wloopRun
     loop->eventfds[0] = loop->eventfds[1] = -1;
@@ -841,6 +1066,14 @@ static bool wloopCleanup(wloop_t *loop)
         EVENTLOOP_FREE(timer);
     }
     heap_init(&loop->realtimers, NULL);
+    while (! list_empty(&loop->quiesced_timers))
+    {
+        struct list_node *timer_node = loop->quiesced_timers.next;
+        list_del(timer_node);
+        timer = container_of(timer_node, wtimer_t, quiesced_node);
+        EVENTLOOP_FREE(timer);
+    }
+    list_init(&loop->quiesced_timers);
 
     // iowatcher
     iowatcherCleanUp(loop);
@@ -849,9 +1082,57 @@ static bool wloopCleanup(wloop_t *loop)
     mutexLock(&loop->custom_events_mutex);
     wloopDestroyEventFDS(loop);
     event_queue_cleanup(&loop->custom_events);
+    event_queue_cleanup(&loop->control_events);
     mutexUnlock(&loop->custom_events_mutex);
     mutexDestroy(&loop->custom_events_mutex);
+    mutexDestroy(&loop->normal_admission_mutex);
     return true;
+}
+
+void wloopQuiesceNormalWork(wloop_t *loop)
+{
+    if (loop == NULL)
+    {
+        return;
+    }
+
+    assert(currentThreadIsEventWorkerWID((wid_t) loop->wid));
+    assert(! wloopNormalDispatchAllowed(loop));
+
+    discard wloopProcessPendings(loop);
+
+    mutexLock(&loop->custom_events_mutex);
+    loop->control_admission_open = false;
+    while (! event_queue_empty(&loop->control_events))
+    {
+        wevent_t ev = *event_queue_front(&loop->control_events);
+        event_queue_pop_front(&loop->control_events);
+        mutexUnlock(&loop->custom_events_mutex);
+        if (ev.cb)
+        {
+            wloopRunControlEventCallback(loop, &ev);
+        }
+        mutexLock(&loop->custom_events_mutex);
+    }
+    while (! event_queue_empty(&loop->custom_events))
+    {
+        event_queue_pop_front(&loop->custom_events);
+    }
+    loop->wakeup_pending = false;
+    mutexUnlock(&loop->custom_events_mutex);
+
+    while (! list_empty(&loop->idles))
+    {
+        widleDelete(IDLE_ENTRY(loop->idles.next));
+    }
+    while (loop->timers.root != NULL)
+    {
+        wtimerQuiesce(TIMER_ENTRY(loop->timers.root));
+    }
+    while (loop->realtimers.root != NULL)
+    {
+        wtimerQuiesce(TIMER_ENTRY(loop->realtimers.root));
+    }
 }
 
 wloop_t *wloopCreate(int flags, buffer_pool_t *swimmingpool, long wid)
@@ -871,9 +1152,9 @@ void wloopDestroy(wloop_t **pp)
     if (pp == NULL || *pp == NULL)
         return;
     wloop_t *loop = *pp;
-    if (loop->status == WLOOP_STATUS_DESTROY)
+    if (wloopLoadStatus(loop) == WLOOP_STATUS_DESTROY)
         return;
-    loop->status = WLOOP_STATUS_DESTROY;
+    wloopStoreStatus(loop, WLOOP_STATUS_DESTROY);
     // wlogd("Eventloop shutdown worker=%ld", loop->wid);
     if (! wloopCleanup(loop))
     {
@@ -896,21 +1177,21 @@ thread_local wtimer_t *_loop_debug_timer = NULL;
 #endif
 
 // while (loop->status) { wloopProcessEvents(loop); }
-int wloopRun(wloop_t *loop)
+wloop_run_result_e wloopRun(wloop_t *loop)
 {
     if (loop == NULL)
         return kWLoopRunErrorNull;
-    if (loop->status == WLOOP_STATUS_RUNNING)
+    if (wloopLoadStatus(loop) == WLOOP_STATUS_RUNNING)
         return kWLoopRunErrorAlreadyRunning;
 
-    loop->status = WLOOP_STATUS_RUNNING;
-    loop->pid    = getTID();
+    wloopStoreStatus(loop, WLOOP_STATUS_RUNNING);
+    loop->pid = getTID();
     // loop->tid = getTID();  tid is taken at wloop_create
     // wlogd("wloopRun tid=%ld", loop->tid);
 
-    int  result = kWLoopRunOk;
-    int  eventfds_result;
-    bool initialize_internal_events;
+    wloop_run_result_e result = kWLoopRunNoEvents;
+    int                eventfds_result;
+    bool               initialize_internal_events;
 
     mutexLock(&loop->custom_events_mutex);
     initialize_internal_events = loop->intern_nevents == 0;
@@ -934,16 +1215,14 @@ int wloopRun(wloop_t *loop)
     }
 #endif
 
-    while (loop->status != WLOOP_STATUS_STOP)
+    while (wloopLoadStatus(loop) != WLOOP_STATUS_STOP)
     {
-        // Shutdown-control stop request, checked with acquire ordering before
-        // every iteration so a request issued before the loop started running is
-        // honored immediately.
-        if (atomicLoadExplicit(&loop->stop_requested, memory_order_acquire))
+        if (atomicLoadExplicit(&loop->stop_requested, memory_order_relaxed))
         {
+            result = kWLoopRunQuiesced;
             break;
         }
-        if (loop->status == WLOOP_STATUS_PAUSE)
+        if (wloopLoadStatus(loop) == WLOOP_STATUS_PAUSE)
         {
             wwSleepMS(WLOOP_PAUSE_TIME);
             wloopUpdateTime(loop);
@@ -954,11 +1233,17 @@ int wloopRun(wloop_t *loop)
         {
             break;
         }
-        wloopProcessEvents(loop, WLOOP_MAX_BLOCK_TIME);
-        // The poller may have been woken by wloopRequestStop(); re-check before
-        // blocking again.
-        if (atomicLoadExplicit(&loop->stop_requested, memory_order_acquire))
+        const int process_result = wloopProcessEvents(loop, WLOOP_MAX_BLOCK_TIME);
+        if (process_result < 0)
         {
+            result = (wloop_run_result_e) process_result;
+            break;
+        }
+        // The poller may have been woken by wloopRequestQuiesce(); re-check before
+        // blocking again.
+        if (atomicLoadExplicit(&loop->stop_requested, memory_order_relaxed))
+        {
+            result = kWLoopRunQuiesced;
             break;
         }
         if (loop->flags & WLOOP_FLAG_RUN_ONCE)
@@ -968,7 +1253,7 @@ int wloopRun(wloop_t *loop)
     }
 
 exit_loop:
-    loop->status     = WLOOP_STATUS_STOP;
+    wloopStoreStatus(loop, WLOOP_STATUS_STOP);
     loop->end_hrtime = getHRTimeUs();
 
     if (loop->flags & WLOOP_FLAG_AUTO_FREE)
@@ -982,36 +1267,36 @@ int wloopWakeup(wloop_t *loop)
 {
     wevent_t ev;
     memoryZero(&ev, sizeof(ev));
-    wloopPostEvent(loop, &ev);
-    return 0;
+    return wloopPostEvent(loop, &ev) ? 0 : -1;
 }
 
-bool wloopRequestStop(wloop_t *loop)
+bool wloopCloseNormalAdmission(wloop_t *loop)
 {
     if (loop == NULL)
     {
         return false;
     }
 
-    if (atomicLoadExplicit(&loop->stop_requested, memory_order_acquire))
+    mutexLock(&loop->normal_admission_mutex);
+    if (! atomicLoadExplicit(&loop->normal_admission_open, memory_order_relaxed))
     {
+        mutexUnlock(&loop->normal_admission_mutex);
         return true;
     }
 
+    atomicStoreExplicit(&loop->normal_admission_open, false, memory_order_relaxed);
+    atomicStoreExplicit(&loop->stop_requested, true, memory_order_relaxed);
     mutexLock(&loop->custom_events_mutex);
-    if (atomicLoadExplicit(&loop->stop_requested, memory_order_acquire))
-    {
-        mutexUnlock(&loop->custom_events_mutex);
-        return true;
-    }
-
-    // Publish the level-triggered condition before arming the edge that wakes a
-    // blocked poller. A hard wake failure does not retract the stop request.
-    atomicStoreExplicit(&loop->stop_requested, true, memory_order_release);
     const bool woken = wloopArmWakeupLocked(loop);
     mutexUnlock(&loop->custom_events_mutex);
+    mutexUnlock(&loop->normal_admission_mutex);
 
     return woken;
+}
+
+bool wloopRequestQuiesce(wloop_t *loop)
+{
+    return wloopCloseNormalAdmission(loop);
 }
 
 #ifdef WATERWALL_WLOOP_TEST_HOOKS
@@ -1057,47 +1342,43 @@ wloop_test_wake_backend_e wloopTestWakeBackend(void)
 }
 #endif
 
-bool wloopStopRequested(wloop_t *loop)
+bool wloopQuiesceRequested(wloop_t *loop)
 {
-    return loop != NULL && atomicLoadExplicit(&loop->stop_requested, memory_order_acquire);
+    return loop != NULL && atomicLoadExplicit(&loop->stop_requested, memory_order_relaxed);
 }
 
 int wloopStop(wloop_t *loop)
 {
     if (loop == NULL)
         return -1;
-    if (loop->status == WLOOP_STATUS_STOP)
+    if (wloopLoadStatus(loop) == WLOOP_STATUS_STOP)
         return -2;
     wlogd("wloopStop tid=%ld", getTID());
-    if (getTID() != loop->pid)
-    {
-        wloopWakeup(loop);
-    }
-    loop->status = WLOOP_STATUS_STOP;
+    discard wloopRequestQuiesce(loop);
     return 0;
 }
 
 int wloopPause(wloop_t *loop)
 {
-    if (loop->status == WLOOP_STATUS_RUNNING)
+    if (wloopLoadStatus(loop) == WLOOP_STATUS_RUNNING)
     {
-        loop->status = WLOOP_STATUS_PAUSE;
+        wloopStoreStatus(loop, WLOOP_STATUS_PAUSE);
     }
     return 0;
 }
 
 int wloopResume(wloop_t *loop)
 {
-    if (loop->status == WLOOP_STATUS_PAUSE)
+    if (wloopLoadStatus(loop) == WLOOP_STATUS_PAUSE)
     {
-        loop->status = WLOOP_STATUS_RUNNING;
+        wloopStoreStatus(loop, WLOOP_STATUS_RUNNING);
     }
     return 0;
 }
 
 wloop_status_e wloopStatus(wloop_t *loop)
 {
-    return loop->status;
+    return wloopLoadStatus(loop);
 }
 
 void wloopUpdateTime(wloop_t *loop)
@@ -1202,6 +1483,16 @@ void *wloopGetUserData(wloop_t *loop)
 
 widle_t *widleAdd(wloop_t *loop, widle_cb cb, uint32_t repeat)
 {
+    if (loop == NULL)
+    {
+        return NULL;
+    }
+    mutexLock(&loop->normal_admission_mutex);
+    if (! wloopNormalDispatchAllowed(loop))
+    {
+        mutexUnlock(&loop->normal_admission_mutex);
+        return NULL;
+    }
     widle_t *idle;
     EVENTLOOP_ALLOC_SIZEOF(idle);
     idle->event_type = WEVENT_TYPE_IDLE;
@@ -1210,6 +1501,7 @@ widle_t *widleAdd(wloop_t *loop, widle_cb cb, uint32_t repeat)
     list_add(&idle->node, &loop->idles);
     EVENT_ADD(loop, idle, cb);
     loop->nidles++;
+    mutexUnlock(&loop->normal_admission_mutex);
     return idle;
 }
 
@@ -1232,8 +1524,14 @@ void widleDelete(widle_t *idle)
 
 wtimer_t *wtimerAdd(wloop_t *loop, wtimer_cb cb, uint32_t timeout_ms, uint32_t repeat)
 {
-    if (timeout_ms == 0)
+    if (loop == NULL || timeout_ms == 0)
         return NULL;
+    mutexLock(&loop->normal_admission_mutex);
+    if (! wloopNormalDispatchAllowed(loop))
+    {
+        mutexUnlock(&loop->normal_admission_mutex);
+        return NULL;
+    }
     wtimeout_t *timer;
     EVENTLOOP_ALLOC_SIZEOF(timer);
     timer->event_type = WEVENT_TYPE_TIMEOUT;
@@ -1250,16 +1548,28 @@ wtimer_t *wtimerAdd(wloop_t *loop, wtimer_cb cb, uint32_t timeout_ms, uint32_t r
     heap_insert(&loop->timers, &timer->node);
     EVENT_ADD(loop, timer, cb);
     loop->ntimers++;
+    mutexUnlock(&loop->normal_admission_mutex);
     return (wtimer_t *) timer;
 }
 
-void wtimerReset(wtimer_t *timer, uint32_t timeout_ms)
+bool wtimerReset(wtimer_t *timer, uint32_t timeout_ms)
 {
+    if (timer == NULL || timer->quiesced)
+    {
+        return false;
+    }
+    wloop_t *loop = timer->loop;
+    mutexLock(&loop->normal_admission_mutex);
+    if (! wloopNormalDispatchAllowed(loop))
+    {
+        mutexUnlock(&loop->normal_admission_mutex);
+        return false;
+    }
     if (timer->event_type != WEVENT_TYPE_TIMEOUT)
     {
-        return;
+        mutexUnlock(&loop->normal_admission_mutex);
+        return false;
     }
-    wloop_t    *loop    = timer->loop;
     wtimeout_t *timeout = (wtimeout_t *) timer;
     if (timer->destroy)
     {
@@ -1285,13 +1595,21 @@ void wtimerReset(wtimer_t *timer, uint32_t timeout_ms)
     }
     heap_insert(&loop->timers, &timer->node);
     EVENT_RESET(timer);
+    mutexUnlock(&loop->normal_admission_mutex);
+    return true;
 }
 
 wtimer_t *wtimerAddPeriod(wloop_t *loop, wtimer_cb cb, int8_t minute, int8_t hour, int8_t day, int8_t week,
                           int8_t month, uint32_t repeat)
 {
-    if (minute > 59 || hour > 23 || day > 31 || week > 6 || month > 12)
+    if (loop == NULL || minute > 59 || hour > 23 || day > 31 || week > 6 || month > 12)
     {
+        return NULL;
+    }
+    mutexLock(&loop->normal_admission_mutex);
+    if (! wloopNormalDispatchAllowed(loop))
+    {
+        mutexUnlock(&loop->normal_admission_mutex);
         return NULL;
     }
     wperiod_t *timer;
@@ -1308,6 +1626,7 @@ wtimer_t *wtimerAddPeriod(wloop_t *loop, wtimer_cb cb, int8_t minute, int8_t hou
     heap_insert(&loop->realtimers, &timer->node);
     EVENT_ADD(loop, timer, cb);
     loop->ntimers++;
+    mutexUnlock(&loop->normal_admission_mutex);
     return (wtimer_t *) timer;
 }
 
@@ -1327,8 +1646,37 @@ static void __wtimer_del(wtimer_t *timer)
     timer->destroy = 1;
 }
 
+static void wtimerQuiesce(wtimer_t *timer)
+{
+    assert(timer != NULL);
+    assert(! timer->quiesced);
+
+    if (timer->event_type == WEVENT_TYPE_TIMEOUT)
+    {
+        heap_remove(&timer->loop->timers, &timer->node);
+    }
+    else
+    {
+        assert(timer->event_type == WEVENT_TYPE_PERIOD);
+        heap_remove(&timer->loop->realtimers, &timer->node);
+    }
+    timer->loop->ntimers--;
+    EVENT_INACTIVE(timer);
+    timer->cb       = NULL;
+    timer->userdata = NULL;
+    timer->quiesced = 1;
+    list_add_tail(&timer->quiesced_node, &timer->loop->quiesced_timers);
+}
+
 void wtimerDelete(wtimer_t *timer)
 {
+    if (timer->quiesced)
+    {
+        list_del(&timer->quiesced_node);
+        timer->quiesced = 0;
+        EVENTLOOP_FREE(timer);
+        return;
+    }
     if (! timer->active)
         return;
     __wtimer_del(timer);
@@ -1553,8 +1901,9 @@ static void wioReleaseNoCloseMessageRun(void *worker_arg, void *arg1, void *arg2
     memoryFree(msg);
 }
 
-static void wioReleaseNoCloseMessageCleanup(void *arg1, void *arg2, void *arg3)
+static void wioReleaseNoCloseMessageCleanup(void *arg1, void *arg2, void *arg3, worker_message_cancel_reason_e reason)
 {
+    discard reason;
     discard arg2;
     discard arg3;
 
@@ -1610,7 +1959,8 @@ void wioReleaseNoClose(wio_t *io)
         *msg                            = (wio_release_no_close_msg_t) {.io = io, .id = io->id};
 
         if (sendWorkerMessageForceQueueWithCleanup(
-                (wid_t) loop->wid, wioReleaseNoCloseMessageRun, wioReleaseNoCloseMessageCleanup, msg, NULL, NULL))
+                (wid_t) loop->wid, wioReleaseNoCloseMessageRun, wioReleaseNoCloseMessageCleanup, msg, NULL, NULL) ==
+            kWorkerMessageSubmitAccepted)
         {
             msg->detached = true;
             if (loop != NULL && fd >= 0 && fd < (int) loop->ios.maxsize && loop->ios.ptr[fd] == io)
@@ -1639,7 +1989,7 @@ bool wioExists(wloop_t *loop, int fd)
     return loop->ios.ptr[fd] != NULL;
 }
 
-int wioAdd(wio_t *io, wio_cb cb, int events)
+static int wioAddWithNormalAuthority(wio_t *io, wio_cb cb, int events, bool already_admitted)
 {
     printd("wioAdd fd=%d io->events=%d events=%d\n", io->fd, io->events, events);
 #ifdef OS_WIN
@@ -1648,6 +1998,20 @@ int wioAdd(wio_t *io, wio_cb cb, int events)
         return -1;
 #endif
     wloop_t *loop = io->loop;
+    if (loop == NULL)
+    {
+        return -1;
+    }
+    const bool control_io = io->fd == loop->eventfds[EVENTFDS_READ_INDEX] && io->read_cb == eventFDReadCB;
+    if (! control_io && ! already_admitted)
+    {
+        mutexLock(&loop->normal_admission_mutex);
+        if (! wloopNormalDispatchAllowed(loop))
+        {
+            mutexUnlock(&loop->normal_admission_mutex);
+            return -1;
+        }
+    }
     if (! io->ready)
     {
         wioReady(io);
@@ -1660,6 +2024,10 @@ int wioAdd(wio_t *io, wio_cb cb, int events)
         if (UNLIKELY(add_error != 0))
         {
             io->error = add_error < 0 ? -add_error : add_error;
+            if (! control_io && ! already_admitted)
+            {
+                mutexUnlock(&loop->normal_admission_mutex);
+            }
             return add_error;
         }
         io->events |= events;
@@ -1675,7 +2043,21 @@ int wioAdd(wio_t *io, wio_cb cb, int events)
     {
         io->cb = (wevent_cb) cb;
     }
+    if (! control_io && ! already_admitted)
+    {
+        mutexUnlock(&loop->normal_admission_mutex);
+    }
     return 0;
+}
+
+int wioAdd(wio_t *io, wio_cb cb, int events)
+{
+    return wioAddWithNormalAuthority(io, cb, events, false);
+}
+
+int wioAddAlreadyAdmitted(wio_t *io, wio_cb cb, int events)
+{
+    return wioAddWithNormalAuthority(io, cb, events, true);
 }
 
 int wioDel(wio_t *io, int events)
@@ -1741,8 +2123,7 @@ int wioCloseAsync(wio_t *io)
     ev.cb       = wio_close_event_cb;
     ev.userdata = io;
     ev.privdata = (void *) (uintptr_t) io->id;
-    wloopPostEvent(io->loop, &ev);
-    return 0;
+    return wloopPostControlEvent(io->loop, &ev) ? 0 : -1;
 }
 
 //------------------high-level apis-------------------------------------------

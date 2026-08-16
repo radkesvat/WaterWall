@@ -386,8 +386,9 @@ static void overlapsnitrickRunHoldTimeout(worker_t *worker, void *arg1, void *ar
     lineUnlock(l);
 }
 
-static void overlapsnitrickCleanupHoldTimeout(void *arg1, void *arg2, void *arg3)
+static void overlapsnitrickCleanupHoldTimeout(void *arg1, void *arg2, void *arg3, worker_message_cancel_reason_e reason)
 {
+    discard                         reason;
     tunnel_t                       *t       = arg1;
     line_t                         *l       = arg2;
     overlapsnitrick_hold_timeout_t *context = arg3;
@@ -439,7 +440,7 @@ static bool overlapsnitrickScheduleHoldTimeout(tunnel_t *t, line_t *l, const ipm
                                                        delay_ms,
                                                        t,
                                                        l,
-                                                       context);
+                                                       context) == kWorkerMessageSubmitAccepted;
 #endif
     if (! scheduled && recover_on_caller)
     {

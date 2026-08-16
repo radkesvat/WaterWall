@@ -222,7 +222,6 @@ typedef struct ptc_tstate_s
     wmutex_t                    owned_lines_lock;
     line_t                    **owned_lines;
     uint32_t                    owned_worker_count;
-    atomic_uint                 config_drain_remaining;
     atomic_bool                 stopping;
     bool                        lwip_resources_destroyed;
     bool                        owned_lines_lock_initialized;
@@ -302,14 +301,15 @@ enum
     kLineStateSize   = sizeof(ptc_lstate_t)
 };
 
-WW_EXPORT void         ptcTunnelDestroy(tunnel_t *t);
+WW_EXPORT void         ptcTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context);
 WW_EXPORT tunnel_t    *ptcTunnelCreate(node_t *node);
 WW_EXPORT api_result_t ptcTunnelApi(tunnel_t *instance, sbuf_t *message);
 
 void ptcTunnelOnStart(tunnel_t *t);
-void ptcTunnelOnPreStop(tunnel_t *t);
-void ptcTunnelOnStop(tunnel_t *t);
-void ptcTunnelOnWorkerStop(tunnel_t *t, wid_t wid);
+void ptcTunnelOnQuiesceRequest(tunnel_t *t, const ww_lifecycle_context_t *context);
+void ptcTunnelOnQuiesceWait(tunnel_t *t, const ww_lifecycle_context_t *context);
+void ptcTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context);
+void ptcTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);
 
 void ptcTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void ptcTunnelUpStreamEst(tunnel_t *t, line_t *l);
@@ -325,7 +325,7 @@ void ptcTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void ptcTunnelDownStreamPause(tunnel_t *t, line_t *l);
 void ptcTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
-/* Takes ownership of buf and emits it only while the pre-stop gate is admitted. */
+/* Takes ownership of buf and emits it only while the quiesce gate is admitted. */
 bool ptcEmitPacketBuffer(tunnel_t *t, line_t *packet_line, sbuf_t *buf);
 
 /* False when the line could not be made usable; it took and released no reference. */

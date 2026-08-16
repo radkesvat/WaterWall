@@ -95,14 +95,13 @@ enum
 static const uint64_t kPacketSenderMaxMaterializedBytes =
     UINT64_C(8) * UINT64_C(1024) * UINT64_C(1024) * UINT64_C(1024);
 
-WW_EXPORT void         packetsenderTunnelDestroy(tunnel_t *t);
+WW_EXPORT void         packetsenderTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context);
 WW_EXPORT tunnel_t    *packetsenderTunnelCreate(node_t *node);
 WW_EXPORT api_result_t packetsenderTunnelApi(tunnel_t *instance, sbuf_t *message);
 
 void packetsenderTunnelOnPrepair(tunnel_t *t);
 void packetsenderTunnelOnStart(tunnel_t *t);
-void packetsenderTunnelOnStop(tunnel_t *t);
-void packetsenderTunnelOnWorkerStop(tunnel_t *t, wid_t wid);
+void packetsenderTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context);
 
 void packetsenderTunnelDownStreamInit(tunnel_t *t, line_t *l);
 void packetsenderTunnelDownStreamEst(tunnel_t *t, line_t *l);
@@ -119,3 +118,4 @@ void packetsenderStopWorker(packetsender_worker_state_t *slot);
 void packetsenderStartWorker(void *worker_ptr, void *arg1, void *arg2, void *arg3);
 void packetsenderWorkerTimerCallback(wtimer_t *timer);
 void packetsenderHandleUnexpectedDownstreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
+void packetsenderTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);

@@ -36,14 +36,14 @@ tunnel_t *halfduplexserverTunnelCreate(node_t *node)
 
     if (UNLIKELY(! mutexTryInit(&ts->upload_line_map_mutex)))
     {
-        halfduplexserverTunnelDestroy(t);
+        halfduplexserverTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
     ts->upload_line_map_mutex_initialized = true;
 
     if (UNLIKELY(! mutexTryInit(&ts->download_line_map_mutex)))
     {
-        halfduplexserverTunnelDestroy(t);
+        halfduplexserverTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
     ts->download_line_map_mutex_initialized = true;
@@ -53,7 +53,7 @@ tunnel_t *halfduplexserverTunnelCreate(node_t *node)
                  ! hmap_cons_t_reserve(&ts->upload_line_map, kHmapCap) ||
                  hmap_cons_t_capacity(&ts->upload_line_map) < kHmapCap))
     {
-        halfduplexserverTunnelDestroy(t);
+        halfduplexserverTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
@@ -61,7 +61,7 @@ tunnel_t *halfduplexserverTunnelCreate(node_t *node)
     if (! pipe_tunnel)
     {
         // The wrapper never took ownership, so the child is still this call's.
-        halfduplexserverTunnelDestroy(t);
+        halfduplexserverTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 

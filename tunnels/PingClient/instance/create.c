@@ -243,7 +243,7 @@ tunnel_t *pingclientCreate(node_t *node)
     if (settings != NULL && ! cJSON_IsObject(settings))
     {
         LOGF("JSON Error: PingClient->settings (object field) : expected an object when settings is provided");
-        pingclientDestroy(t);
+        pingclientDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
@@ -268,7 +268,7 @@ tunnel_t *pingclientCreate(node_t *node)
                                                "xor-byte",
                                                "PingClient->settings->xor-byte"))
     {
-        pingclientDestroy(t);
+        pingclientDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
@@ -295,7 +295,7 @@ tunnel_t *pingclientCreate(node_t *node)
                                       kPingClientDefaultIpv4IdStart,
                                       "PingClient->settings->ipv4-id-start"))
     {
-        pingclientDestroy(t);
+        pingclientDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
@@ -312,7 +312,7 @@ tunnel_t *pingclientCreate(node_t *node)
             ! pingclientLoadOptionalIpv4Setting(
                 &state->dest_addr, &state->dest_addr_configured, settings, "dest", "PingClient->settings->dest"))
         {
-            pingclientDestroy(t);
+            pingclientDestroy(t, wwLifecycleStartupRollback());
             return NULL;
         }
     }
@@ -320,7 +320,7 @@ tunnel_t *pingclientCreate(node_t *node)
     if (state->strategy == kPingClientStrategyChangeOnlyIpv4ProtocolNumber &&
         ! pingclientLoadSwapProtocol(&state->swap_protocol, settings))
     {
-        pingclientDestroy(t);
+        pingclientDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 

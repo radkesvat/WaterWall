@@ -12,7 +12,8 @@ static bool routerDeferUntilPrevious(tunnel_t *t, tunnel_chain_t *chain)
     if (chain->tunnels.len != 0)
     {
         LOGF("Router: cannot defer internal DomainResolver insertion on a non-empty chain");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return true;
     }
 
     tunnelchainDestroy(chain);
@@ -28,13 +29,15 @@ static void routerInsertDomainResolverBeforeSelf(tunnel_t *t, tunnel_chain_t *ch
     if (resolver == NULL)
     {
         LOGF("Router: internal DomainResolver tunnel was not created");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     if (resolver->prev != NULL || resolver->next != NULL)
     {
         LOGF("Router: internal DomainResolver tunnel is already bound");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     if (prev->next == t)
@@ -55,7 +58,8 @@ static void routerSetRuleTargetEntry(tunnel_t *t, router_rule_t *rule, tunnel_t 
     if (entry == NULL)
     {
         LOGF("Router: rule target node \"%s\" is not reachable from the router", target->node->name);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     rule->target_tunnel = entry;
@@ -71,13 +75,15 @@ static void routerBindRuleTarget(tunnel_t *t, tunnel_chain_t *chain, router_rule
     if (target == NULL)
     {
         LOGF("Router: referenced target tunnel \"%s\" is not available", rule->target_node->name);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     if (target == t)
     {
         LOGF("Router: rule target must be different from the router");
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     if (target->chain == chain)
@@ -91,7 +97,8 @@ static void routerBindRuleTarget(tunnel_t *t, tunnel_chain_t *chain, router_rule
         LOGF("Router: rule target node \"%s\" is already bound to previous node \"%s\"",
              target->node->name,
              target->prev->node->name);
-        terminateProgram(1);
+        startupFailureRecord(1);
+        return;
     }
 
     if (target->prev == NULL)
@@ -106,6 +113,10 @@ static void routerBindRuleTarget(tunnel_t *t, tunnel_chain_t *chain, router_rule
     else
     {
         target->onChain(target, chain);
+    }
+    if (UNLIKELY(startupFailurePending()))
+    {
+        return;
     }
 
     routerSetRuleTargetEntry(t, rule, target);
@@ -123,14 +134,26 @@ void routerTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
         }
 
         routerInsertDomainResolverBeforeSelf(t, chain);
+        if (UNLIKELY(startupFailurePending()))
+        {
+            return;
+        }
     }
 
     tunnelDefaultOnChain(t, chain);
+    if (UNLIKELY(startupFailurePending()))
+    {
+        return;
+    }
     chain = tunnelGetChain(t);
 
     for (uint32_t i = 0; i < ts->rules_count; ++i)
     {
         routerBindRuleTarget(t, chain, &ts->rules[i]);
+        if (UNLIKELY(startupFailurePending()))
+        {
+            return;
+        }
 
         // A target's onChain may merge this chain into an already-built downstream chain,
         // destroying the local pointer while updating t->chain. Reacquire it before the

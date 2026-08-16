@@ -9,6 +9,7 @@
 #include "devices/device_lifetime.h"
 #include "master_pool.h"
 #include "worker.h"
+#include "worker_messages.h"
 
 /*
  * Hands one packet to the packet chain. Fragment settlement follows the sbuf's
@@ -49,6 +50,8 @@ void                     deviceReaderSessionUnref(device_reader_session_t *sessi
  */
 uint32_t deviceReaderSessionBegin(device_reader_session_t *session);
 void     deviceReaderSessionEnd(device_reader_session_t *session);
+void     deviceReaderSessionEndRequest(device_reader_session_t *session);
+void     deviceReaderSessionEndWait(device_reader_session_t *session);
 
 /*
  * Called after End and producer join, and after the reader pool's thread
@@ -85,4 +88,4 @@ bool deviceReaderSessionPostTracked(device_reader_session_t *session, wid_t targ
  * post through deviceReaderSessionPost().
  */
 void deviceReaderSessionMessageReceived(void *worker, void *arg1, void *arg2, void *arg3);
-void deviceReaderSessionCleanupPostedMessage(void *arg1, void *arg2, void *arg3);
+void deviceReaderSessionCleanupPostedMessage(void *arg1, void *arg2, void *arg3, worker_message_cancel_reason_e reason);
