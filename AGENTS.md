@@ -5,7 +5,7 @@ Operating manual for AI coding agents (and new contributors) working on
 
 This file is the field manual: the rules you must follow, the commands you must
 run, and where to look. For the full reasoning behind every rule, read the
-six-part **Developer Guide** in `WaterWall-Docs/docs/05-devguides/` (linked at the
+seven-part **Developer Guide** in `WaterWall-Docs/docs/05-devguides/` (linked at the
 [end of this file](#deep-dive-index)). When this file and the guide disagree, the
 **source code in `ww/net/` wins** — it owns every contract.
 
@@ -67,10 +67,13 @@ A correct tunnel is never "just" a parser or encoder. It must preserve callback
     `PacketReceiver` are absorbers, not fatal anchors. Never `lineDestroy()` in
     any category.
 12. **Validate through the CMake preset**, not hand-rolled compiler commands.
-    Prefer a focused set of tests selected for the files, tunnel, and behavior
-    changed; the full suite takes roughly 10–15 minutes and is not the default for
-    basic or narrowly scoped tasks. Running the full suite is allowed whenever the
-    scope, risk, or nature of the change warrants it.
+    Start with the cheapest relevant check and prefer existing focused tests for
+    the files, tunnel, and behavior changed. Do not create or update a test merely
+    because a file changed; add coverage only when it provides meaningful regression
+    protection for new or changed behavior. A complete validation currently takes
+    about 30 minutes or more, so reserve it for broad/high-risk changes, shared-core
+    work, release-level validation, or an explicit request. It is not a routine
+    completion step for simple or narrowly scoped tasks.
 13. **Worker identity is explicit (`WID`) and invalid by default (`kInvalidWID`).**
     WID represents a registered worker slot index (`0 .. WORKERS_COUNT - 1`), not
     an OS thread ID (`getTID()`). Unregistered threads (device reader/writer
@@ -92,6 +95,40 @@ A correct tunnel is never "just" a parser or encoder. It must preserve callback
     (`-1` means an unregistered thread). See
     §"Choosing a Worker-Context Helper" in the developer guide;
     `tests/worker_identity_source_policy_test.py` enforces it.
+15. **Every autonomous normal-line owner must be shutdown-complete.** Publish a
+    newly created line in exactly one owner-worker inventory before any
+    re-entrant `Init`/publication, remove it exactly once before invoking
+    `Finish`, and drain every remaining slot while the event loop, chain, tunnel
+    state, and line pools are alive. Connection-admitting/source owners finish
+    and destroy their own lines; connection-holding tail adapters enumerate
+    every line whose `Init` reached them, close their OS state, destroy adapter
+    state, and send exactly one downstream `Finish` to the true owner. A tail is
+    not responsible before its `Init`; the upstream/autonomous owner covers that
+    interval. Source inventories drain before middle/end `onWorkerStop` hooks.
+    A shared idle table indexing worker-owned lines remains alive through every
+    worker's drain; drain its worker items in `onWorkerStop`, then destroy its
+    owner-loop timer and table in main-thread `onStop`.
+    Middle tunnels never duplicate inventories for borrowed lines, but remain
+    responsible for internal normal lines they create. Packet lines and
+    documented resource-free terminal absorbers are explicit exceptions.
+16. **Do not create proofs of proofs.** Validation exists to catch realistic
+    regressions in the requested behavior, not to authenticate the validator,
+    compiler, shell, CI runner, filesystem, or every possible descendant process.
+    Once a direct, maintainable check demonstrates the scoped invariant, stop.
+    Do not recursively add transaction attestations, verifier replay, tool hashes,
+    adversarial mutation frameworks, complete command-language parsers, or
+    cross-platform binary parsers unless the user explicitly approves a separate
+    security threat model and its maintenance cost. A newly discovered weakness
+    in optional proof machinery is normally a reason to simplify or remove that
+    machinery, not to build another layer around it.
+17. **Application termination has one coordinator.** Leaf callbacks close their
+    local ownership, publish a typed orderly request, and unwind; they do not
+    inspect a global termination phase or assume the request ran cleanup.
+    Origin and cleanup scope are separate: requests before the explicit runtime
+    commit select `StartupRollback`, requests after it select `ProcessShutdown`.
+    Startup failures propagate through scoped results to the top boundary.
+    `abortProgramNow()` is the independent lock-free fatal path and deliberately
+    skips orderly cleanup and logging.
 
 > If a proposed change cannot explain how it preserves all of the above, it is not
 > ready.
@@ -105,9 +142,9 @@ A correct tunnel is never "just" a parser or encoder. It must preserve callback
 | `ww/net/` | **Core contracts.** `tunnel.{h,c}`, `line.{h,c}`, `chain.{h,c}`, `packet_tunnel.{h,c}`. Read these first. |
 | `ww/bufio/` | Buffers: `shiftbuffer.{h,c}` (`sbuf_t`), `buffer_pool.{h,c}`. |
 | `ww/objects/` | `node.h` (node metadata, flags, layer groups), user/auth handles. |
-| `tunnels/` | All 70 tunnels, one directory each. `tunnels/template/` is the skeleton. |
+| `tunnels/` | Tunnel implementations, one directory each. `tunnels/template/` is the skeleton. |
 | `tests/` | Integration harness. `tests/cases/<case>/`, `tests/run_waterwall_case.sh`. |
-| `WaterWall-Docs/docs/05-devguides/` | The full six-part Developer Guide. |
+| `WaterWall-Docs/docs/05-devguides/` | The full seven-part Developer Guide. |
 | `WaterWall-Docs/docs/02-noderefs/` | Per-node reference docs (user-facing settings). |
 | `core/`, `scripts/` | Runtime entry and helper scripts. |
 | `CMakePresets.json`, `ww/cmake/preset/` | Build presets (`linux`, `linux-gcc-x64`, …). |
@@ -176,8 +213,26 @@ neighbor.
 **Lifecycle hooks** (per tunnel, not per packet), assigned in `create.c`:
 
 ```text
-createHandle -> onChain -> onIndex -> onPrepare -> onStart -> ... -> onStop/onWorkerStop -> onDestroy
+createHandle -> onChain -> onIndex -> onPrepare -> onStart -> onQuiesceRequest
+             -> onWorkerQuiesce -> onQuiesceWait -> onWorkerStop -> onStop -> onDestroy
 ```
+
+Shutdown uses lifecycle ABI v2 and an explicit context. `onQuiesceRequest` is a
+main-thread, nonblocking source-to-tail pass that closes component and external
+producer admission. Every owner worker then runs `onWorkerQuiesce` to detach its
+timers and watchers before generic pending-work cancellation and the `Quiesced`
+acknowledgement. Once all workers are quiesced, `onQuiesceWait` joins or detaches
+external callback roots without releasing resources required by line closure.
+
+The drain phase first closes SocketManager's worker-owned UDP source inventory,
+then invokes `onWorkerStop` source-to-tail. Source hooks drain owned normal lines
+before middle hooks validate that borrowed children are gone. Tail resources,
+the loop, tunnel state, and line/buffer pools remain alive through this pass.
+After every worker acknowledges `Drained`, main-thread `onStop` releases remaining
+shared resources; `onDestroy` reclaims instances only after workers and external
+producers can no longer reference them. Startup rollback, owned-child stop, and
+device restart use their corresponding explicit lifecycle contexts rather than
+ambient process state.
 
 Most tunnels override only `onPrepare`, `onStart`, `onStop`, `onDestroy`, and the
 flow callbacks; `onChain`/`onIndex` keep the framework defaults.
@@ -406,7 +461,7 @@ tunnels/MyTunnel/
     create.c    # tunnelCreate(node, sizeof(tstate), sizeof(lstate)); assign callbacks; parse+validate settings; cleanup-on-error
     node.c      # node metadata: type, flags, required_padding_left, layer_group, createHandle
     chain.c index.c        # onChain/onIndex (usually the framework default)
-    prepair.c start.c stop.c destroy.c   # onPrepare/onStart/onStop/onDestroy
+    prepair.c start.c stop.c destroy.c   # preparation/start and lifecycle-v2 shutdown hooks
     api.c       # tunnelApi runtime entry (must recycle the message buffer)
   common/
     line_state.c  # LinestateInitialize (from Init) + LinestateDestroy (zero aligned region)
@@ -435,7 +490,7 @@ Prefer the `linux` preset. (The readme's fresh-VPS path uses `linux-gcc-x64`; bo
 are valid — don't mix trees in one verification flow.)
 
 ```bash
-# configure once, then build everything
+# Production lane: configure once, then build the shipped executable/tests.
 cmake --preset linux
 cmake --build --preset linux -j8
 
@@ -445,22 +500,53 @@ cmake --build --preset linux --target TlsClient -j8
 # preferred: run the registered test(s) related to the change
 ctest --preset linux --output-on-failure -R '^waterwall\.tls_roundtrip$'
 
-# allowed when broader validation is warranted: run the full suite (about 10-15 min)
+# Full production lane (exceptional, not a routine completion step).
 ctest --preset linux --output-on-failure
+
+# Native units have a separate Release/no-LTO tree.
+cmake --preset linux-unit-tests
+cmake --build --preset linux-unit-release -j8
+ctest --preset linux-unit-release --output-on-failure
 
 # run a single integration case directly while debugging
 tests/run_waterwall_case.sh build/linux/Release/Waterwall tests/cases/tls_roundtrip 60
 ```
 
+`linux-unit-release` builds the runnable Release unit aggregate in the dedicated
+tree where IPO is disabled before project targets are created. The focused
+no-LTO policy checks the configured cache, reachable build commands, and a small
+set of representative linked archives. It is a regression check, not a build
+attestation system. `linux-unit-debug` remains an optional diagnostic preset.
+
 Build/validation rules:
 
-- The binary is at `build/linux/Release/Waterwall` (also `Debug/`, `RelWithDebInfo/`).
-- **Prefer focused, task-relevant tests over the full test suite.** Select the
-  smallest meaningful set that covers the changed tunnel, code path, and likely
-  regressions. The full suite takes roughly 10–15 minutes, so do not run it by
-  default for basic or narrowly scoped work. It remains fully allowed when broad
-  changes, shared core contracts, cross-tunnel effects, release-level confidence,
-  or an agent's technical judgment make it useful.
+- The production binary is at `build/linux/Release/Waterwall` (also `Debug/`,
+  `RelWithDebInfo/`). `ctest --preset linux` is production-only; complete
+  validation additionally uses `linux-unit-tests` / `linux-unit-release`.
+- **Use the smallest validation that gives useful evidence.** Prefer an existing
+  focused test, target build, policy check, or direct integration case that covers
+  the affected behavior. Documentation-only, comment-only, and other clearly
+  non-behavioral edits may need only inspection or a diff check. Do not run a full
+  test lane merely because code changed, because the lane is available, or as a
+  habitual final step.
+- **Treat full validation as exceptional.** Complete validation currently takes
+  about 30 minutes or more. Run a full lane only when focused checks cannot give
+  credible coverage and the change is broad or high-risk (for example shared core
+  contracts or cross-tunnel behavior), when preparing release-level evidence, or
+  when the user explicitly requests it. Record the reason when choosing it.
+- **Keep validation proportional and finite.** Do not turn a build-property test
+  into a general supply-chain, reproducibility, CI-authority, process-tracing, or
+  object-format verification system. If the requested invariant can be checked
+  from CMake cache values, generated commands, representative artifacts, and the
+  relevant tests, that is sufficient unless an explicit threat model says
+  otherwise. Review the product change; do not recursively review and harden the
+  proof mechanism without a separate request.
+- **Add or update tests only when they are valuable.** Tests make sense for new
+  behavior, bug fixes that need regression protection, meaningful edge cases, or
+  changed contracts. They are not mandatory for every implementation task. Prefer
+  extending an existing focused test over creating a new test harness, and skip
+  test changes when existing coverage is sufficient or the change is mechanical,
+  documentary, or otherwise has no meaningful behavior to assert.
 - **Run clang-format on every C/header file you modify**, using the project's
   `.clang-format` file. The executable in this environment is `clang-format-19`:
 
@@ -501,9 +587,13 @@ Build/validation rules:
 5. **Pick the closest mature tunnel** and stay close to it.
 6. **Implement the smallest change** that preserves composition. Avoid speculative
    abstractions.
-7. **Add/update a focused test** — ideally one that fails if a direction is reversed.
-8. **Validate** with the preset build and a focused set of relevant tests by
-   default; expand to the full suite when the scope or risk warrants it.
+7. **Decide whether test coverage is warranted.** Add or update a focused test
+   only for meaningful new/changed behavior, a regression-prone bug fix, an edge
+   case, or a contract change. Reuse existing coverage where it is sufficient;
+   do not manufacture a test for a simple, mechanical, or documentation-only task.
+8. **Validate proportionally.** Start with inspection and the smallest relevant
+   preset target/test. Do not expand to a full lane unless focused checks are
+   inadequate and the exceptional criteria in §5 apply.
 
 ---
 
@@ -532,9 +622,10 @@ Build/validation rules:
 - Packet lines stay alive at runtime; packet-line state treated as worker-local;
   packet-line init source verified.
 - No `initialized` flag added that the source does not require.
-- The chosen tests cover the changed behavior and likely regressions; the full
-  suite was used only when broader validation was warranted. Validation used
-  preset build metadata.
+- When tests were warranted, the chosen focused coverage exercises the changed
+  behavior and likely regressions; otherwise, the reason existing coverage or
+  non-test validation is sufficient is clear. Full validation was used only under
+  the exceptional criteria in §5. Compilation used preset build metadata.
 
 ---
 
