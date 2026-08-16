@@ -50,6 +50,24 @@ if(WW_BUILD_UNIT_TESTS)
 endif()
 add_subdirectory(benchmarks)
 
+add_test(
+  NAME waterwall.application_shutdown_authority_policy
+  COMMAND "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/application_shutdown_authority_policy_test.py"
+)
+set_tests_properties(waterwall.application_shutdown_authority_policy PROPERTIES LABELS "unit;policy;core;lifecycle;shutdown")
+
+add_test(
+  NAME waterwall.device_reader_retire_order_policy
+  COMMAND "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/device_reader_retire_order_policy_test.py"
+)
+set_tests_properties(waterwall.device_reader_retire_order_policy PROPERTIES LABELS "unit;policy;devices;lifetime;fragments")
+
+add_test(
+  NAME waterwall.udpstatelesssocket_io_owner_policy
+  COMMAND "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/udpstatelesssocket_io_owner_policy_test.py"
+)
+set_tests_properties(waterwall.udpstatelesssocket_io_owner_policy PROPERTIES LABELS "unit;policy;tunnels;udpstatelesssocket;worker;ownership")
+
 # Every runner now copies its case directory into a private run directory, so
 # generated files can no longer collide. The listener ports inside config.json
 # are still a shared resource though: distinct cases pick distinct ports, but
@@ -552,6 +570,8 @@ add_waterwall_integration_test(waterwall.http_upgrade_custom_bidirectional_tcp_l
 add_waterwall_integration_test(waterwall.mux_counter_roundtrip mux_counter_roundtrip)
 add_waterwall_integration_test(waterwall.mux_timer_roundtrip mux_timer_roundtrip)
 add_waterwall_integration_test(waterwall.mux_fixed_connections_count_roundtrip mux_fixed_connections_count_roundtrip)
+add_waterwall_integration_test(waterwall.shutdown_production_sequence shutdown_production_sequence)
+add_waterwall_integration_test_with_timeout(waterwall.startup_signal_failure_boundary startup_signal_failure_boundary 10)
 add_waterwall_integration_test(waterwall.config_variables_roundtrip config_variables_roundtrip)
 # StreamToPackets chooses a return carrier per inner flow by rendezvous hashing,
 # so adding or removing a stream line remaps some flows to a different carrier and

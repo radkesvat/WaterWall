@@ -57,9 +57,9 @@ bool __wrap_procRunArgvWithDeadline(const char *file, const char *const argv[], 
                                     proc_command_result_t *out);
 void __real_procCommandResultDrop(proc_command_result_t *out);
 void __wrap_procCommandResultDrop(proc_command_result_t *out);
-bool __wrap_sendWorkerMessageForceQueueWithCleanup(wid_t wid, WorkerMessageCallback callback,
-                                                   WorkerMessageCleanupCallback cleanup, void *arg1, void *arg2,
-                                                   void *arg3);
+worker_message_submit_result_e __wrap_sendWorkerMessageForceQueueWithCleanup(wid_t wid, WorkerMessageCallback callback,
+                                                                             WorkerMessageCleanupCallback cleanup,
+                                                                             void *arg1, void *arg2, void *arg3);
 void __real_memoryFree(void *ptr);
 void __wrap_memoryFree(void *ptr);
 void __real_masterpoolDestroy(master_pool_t *pool);
@@ -130,9 +130,9 @@ void __wrap_procCommandResultDrop(proc_command_result_t *out)
     __real_procCommandResultDrop(out);
 }
 
-bool __wrap_sendWorkerMessageForceQueueWithCleanup(wid_t wid, WorkerMessageCallback callback,
-                                                   WorkerMessageCleanupCallback cleanup, void *arg1, void *arg2,
-                                                   void *arg3)
+worker_message_submit_result_e __wrap_sendWorkerMessageForceQueueWithCleanup(wid_t wid, WorkerMessageCallback callback,
+                                                                             WorkerMessageCleanupCallback cleanup,
+                                                                             void *arg1, void *arg2, void *arg3)
 {
     discard wid;
     discard callback;
@@ -216,7 +216,6 @@ static void envSetup(test_env_t *env)
     GSTATE.workers_count                 = 1;
     testWorkerRegistryInstall(&g_test_worker_registry);
     GSTATE.ram_profile = 1;
-    atomicStoreExplicit(&GSTATE.application_stopping_flag, false, memory_order_release);
     testWorkerBindWID(0);
 }
 
@@ -290,7 +289,8 @@ static void testQueuedCleanupOutlivesCaptureStartupFailure(test_env_t *env)
     require(tracked_session_free_count == 0 && tracked_pool_destroy_count == 0,
             "Capture destruction freed a session retained by a queued message");
 
-    captured_message.cleanup(captured_message.arg1, captured_message.arg2, captured_message.arg3);
+    captured_message.cleanup(
+        captured_message.arg1, captured_message.arg2, captured_message.arg3, kWorkerMessageCancelQuiesced);
     require(tracked_session_free_count == 1, "queued cleanup did not free the Capture session exactly once");
     require(tracked_pool_destroy_count == 1, "queued cleanup did not destroy the Capture message pool exactly once");
 }

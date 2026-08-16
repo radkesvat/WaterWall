@@ -67,6 +67,7 @@ static inline void testWorkerRegistryInstall(test_worker_registry_t *registry)
     for (wid_t wid = 0; wid < total; ++wid)
     {
         registry->slots[wid] = (worker_t) {.wid = wid, .has_event_loop = (wid < ordinary)};
+        atomicStoreRelaxed(&registry->slots[wid].message_admission_open, false);
     }
 
     GSTATE.workers          = registry->slots;

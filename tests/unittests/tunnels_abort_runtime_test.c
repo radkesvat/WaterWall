@@ -4,8 +4,7 @@
  *
  * The executable runs one named case per invocation and never owns a
  * subprocess: run_tunnels_abort_runtime_test.cmake provides the process
- * boundary and requires an exact result of 1 plus the immediate-abort
- * diagnostic, so a crash can no longer masquerade as a hard abort.
+ * boundary and requires the exact hard-abort result of 1.
  *
  * Every case is compiled in only when its tunnel target exists, so an optional
  * or platform-specific tunnel removes its own case and nothing else.
@@ -32,9 +31,6 @@ void authenticationclientTunnelDownStreamInit(tunnel_t *t, line_t *l);
 #endif
 #if defined(WATERWALL_ABORT_TEST_HAS_PINGCLIENT)
 void pingclientUpStreamInit(tunnel_t *t, line_t *l);
-#endif
-#if defined(WATERWALL_ABORT_TEST_HAS_RAWSOCKET)
-void rawsocketUpStreamFinish(tunnel_t *t, line_t *l);
 #endif
 #if defined(WATERWALL_ABORT_TEST_HAS_TESTERCLIENT)
 void testerclientTunnelUpStreamFinish(tunnel_t *t, line_t *l);
@@ -100,19 +96,40 @@ static int casePingClientImpossiblePacketUpstreamInit(void)
 }
 #endif
 
-#if defined(WATERWALL_ABORT_TEST_HAS_RAWSOCKET)
-// RawSocket reads the line worker id for its diagnostic, so this one needs a
-// real zero-initialized line.
-static int caseRawSocketWorkerPacketLineUpstreamFinish(void)
+static int casePacketLifecycleAnchorFinish(bool upstream)
 {
     line_t line;
     memset(&line, 0, sizeof(line));
     line.wid = 0;
 
-    rawsocketUpStreamFinish(NULL, &line);
+    tunnel_t *anchor = packettunnelCreate(NULL, sizeof(packet_lifecycle_anchor_t), 0);
+    if (anchor == NULL ||
+        ! packettunnelConfigureLifecycleAnchor(
+            anchor, "PacketAnchorTest", tunnelDefaultUpStreamPayload, kPacketLifecycleAnchorPublishUpstream))
+    {
+        return kAbortCaseAllocationFailed;
+    }
+
+    if (upstream)
+    {
+        anchor->fnFinU(anchor, &line);
+    }
+    else
+    {
+        anchor->fnFinD(anchor, &line);
+    }
     return 0;
 }
-#endif
+
+static int casePacketLifecycleAnchorUpstreamFinish(void)
+{
+    return casePacketLifecycleAnchorFinish(true);
+}
+
+static int casePacketLifecycleAnchorDownstreamFinish(void)
+{
+    return casePacketLifecycleAnchorFinish(false);
+}
 
 #if defined(WATERWALL_ABORT_TEST_HAS_TESTERCLIENT)
 // TesterClient is a chain head, so no previous tunnel can invoke this callback.
@@ -142,14 +159,10 @@ static const abort_case_t kAbortCases[] = {
 #if defined(WATERWALL_ABORT_TEST_HAS_PINGCLIENT)
     {"pingclient_impossible_packet_upstream_init", casePingClientImpossiblePacketUpstreamInit},
 #endif
-#if defined(WATERWALL_ABORT_TEST_HAS_RAWSOCKET)
-    {"rawsocket_worker_packet_line_upstream_finish", caseRawSocketWorkerPacketLineUpstreamFinish},
-#endif
+    {"packet_lifecycle_anchor_upstream_finish", casePacketLifecycleAnchorUpstreamFinish},
+    {"packet_lifecycle_anchor_downstream_finish", casePacketLifecycleAnchorDownstreamFinish},
 #if defined(WATERWALL_ABORT_TEST_HAS_TESTERCLIENT)
     {"testerclient_disabled_upstream_finish", caseTesterClientDisabledUpstreamFinish},
-#endif
-#if defined(WATERWALL_ABORT_TEST_HAS_REVERSECLIENT)
-    {"reverseclient_live_idle_handle_linestate_destroy", tunnelsAbortReverseClientLinestateCase},
 #endif
 #if defined(WATERWALL_ABORT_TEST_HAS_UDPSTATELESSSOCKET)
     {"udpstatelesssocket_active_worker_idle_table_destroy", tunnelsAbortUdpStatelessSocketDestroyCase},

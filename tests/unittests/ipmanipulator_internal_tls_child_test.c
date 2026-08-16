@@ -43,7 +43,7 @@ static tunnel_t *createManipulator(node_t *node, const char *name, const char *s
 
 static void destroyManipulator(node_t *node)
 {
-    node->instance->onDestroy(node->instance);
+    node->instance->onDestroy(node->instance, wwLifecycleStartupRollback());
     node->instance = NULL;
     cJSON_Delete(node->node_settings_json);
     memoryFree(node->name);

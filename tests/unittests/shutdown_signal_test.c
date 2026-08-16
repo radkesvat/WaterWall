@@ -11,10 +11,13 @@
  *   - a signal that follows a programmatic success request does not overwrite
  *     the already recorded status (first non-zero wins, zero never overwrites);
  *   - a second stop signal forces an immediate exit while cleanup is blocked.
+ *   - a full wake pipe still leaves a durable mailbox request for worker 0.
  */
 
+#include "wloop_internal.h"
 #include "wwapi.h"
 
+#include <fcntl.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -37,7 +40,7 @@ typedef struct
     // that observes them unblocked therefore cannot be running inside the async
     // handler's context.
     uint8_t stop_signals_blocked;
-    uint8_t phase_is_stopping;
+    uint8_t phase_is_destroying_workers;
 } signal_report_t;
 
 typedef enum
@@ -46,6 +49,7 @@ typedef enum
     kSignalCaseTermBusyWorker,
     kSignalCaseIntStatus,
     kSignalCaseAfterSuccessRequest,
+    kSignalCaseFullPipe,
     kSignalCaseSecondSignalForcesExit
 } signal_case_t;
 
@@ -109,7 +113,8 @@ static void reportingExitCallback(void *userdata, int signum)
     report.worker_was_busy = (uint8_t) atomicLoadExplicit(&worker_is_busy, memory_order_acquire);
     report.stop_signals_blocked =
         (uint8_t) (mask_known && (sigismember(&current, SIGTERM) == 1 || sigismember(&current, SIGINT) == 1));
-    report.phase_is_stopping = (uint8_t) (signalmanagerGetShutdownPhase() == kProgramShutdownStopping);
+    report.phase_is_destroying_workers =
+        (uint8_t) (applicationShutdownGetPhase() == kApplicationShutdownDestroyingWorkers);
 
     ssize_t written = write(child_report_fd, &report, sizeof(report));
     discard written;
@@ -172,6 +177,23 @@ typedef struct
 } child_plan_t;
 
 static child_plan_t child_plan;
+
+static void fillShutdownWakePipe(void)
+{
+    unsigned char bytes[512] = {0};
+    int           fd         = signalmanagerGet()->shutdown_pipe[1];
+    for (;;)
+    {
+        ssize_t result = write(fd, bytes, sizeof(bytes));
+        if (result > 0)
+        {
+            continue;
+        }
+        require(result < 0 && (errno == EAGAIN || errno == EWOULDBLOCK),
+                "failed to fill the shutdown wake pipe deterministically");
+        return;
+    }
+}
 
 /*
  * Helper thread: waits for the scenario to be ready, then sends the signal to
@@ -257,7 +279,7 @@ _Noreturn static void runChild(signal_case_t scenario, int report_fd)
     init_data.network_logger_data.log_level  = child_log_level;
     init_data.dns_logger_data.log_level      = child_log_level;
 
-    createGlobalState(init_data);
+    require(wwStartupSucceeded(createGlobalState(init_data)), "failed to create shutdown-signal fixture");
     registerAtExitCallBack(reportingExitCallback, NULL);
 
     switch (scenario)
@@ -276,6 +298,10 @@ _Noreturn static void runChild(signal_case_t scenario, int report_fd)
     case kSignalCaseSecondSignalForcesExit:
         child_plan = (child_plan_t) {.signal_to_raise = SIGTERM, .raise_twice = true};
         break;
+    case kSignalCaseFullPipe:
+        fillShutdownWakePipe();
+        child_plan = (child_plan_t) {.signal_to_raise = SIGTERM};
+        break;
     case kSignalCaseTermIdle:
     default:
         child_plan = (child_plan_t) {.signal_to_raise = SIGTERM};
@@ -291,10 +317,18 @@ _Noreturn static void runChild(signal_case_t scenario, int report_fd)
         }
     }
 
-    wthread_t sender;
-    if (threadCreate(&sender, signalSenderMain, NULL) != kWThreadErrorNone)
+    if (scenario == kSignalCaseFullPipe)
     {
-        _Exit(82);
+        discard raise(SIGTERM);
+        atomicStoreExplicit(&signal_was_raised, true, memory_order_release);
+    }
+    else
+    {
+        wthread_t sender;
+        if (threadCreate(&sender, signalSenderMain, NULL) != kWThreadErrorNone)
+        {
+            _Exit(82);
+        }
     }
 
     runMainThread();
@@ -379,17 +413,234 @@ static void checkCleanShutdown(const signal_result_t *result, int expected_statu
     snprintf(message, sizeof(message), "%s: the shutdown callback ran inside the async signal handler context", label);
     require(result->first.stop_signals_blocked == 0, message);
 
-    snprintf(message, sizeof(message), "%s: the shutdown callback ran outside the STOPPING phase", label);
-    require(result->first.phase_is_stopping == 1, message);
+    snprintf(message, sizeof(message), "%s: the exit observer ran outside the late worker-destruction phase", label);
+    require(result->first.phase_is_destroying_workers == 1, message);
 
     snprintf(
         message, sizeof(message), "%s: exit status was %d instead of %d", label, result->exit_status, expected_status);
     require(result->exit_status == expected_status, message);
 }
 
+static void publishSignalDuringMailboxTake(void)
+{
+    signalmanagerTestSetPosixMailboxHook(NULL);
+    require(raise(SIGTERM) == 0, "failed to publish the signal during mailbox take");
+}
+
+static bool signalMasksEqual(const sigset_t *lhs, const sigset_t *rhs)
+{
+    for (int signum = 1; signum < NSIG; ++signum)
+    {
+        if (sigismember(lhs, signum) != sigismember(rhs, signum))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+static int startup_boundary_report_fd = -1;
+
+static void reportStartupBoundaryCleanup(void *userdata, int signum)
+{
+    discard             userdata;
+    discard             signum;
+    const unsigned char marker  = 1;
+    const ssize_t       written = write(startup_boundary_report_fd, &marker, sizeof(marker));
+    discard             written;
+}
+
+static void setupStartupBoundaryFixture(void)
+{
+    ww_construction_data_t init_data         = {0};
+    init_data.workers_count                  = 1;
+    init_data.ram_profile                    = kRamProfileS1Memory;
+    init_data.mtu_size                       = 1500;
+    init_data.internal_logger_data.log_level = child_log_level;
+    init_data.core_logger_data.log_level     = child_log_level;
+    init_data.network_logger_data.log_level  = child_log_level;
+    init_data.dns_logger_data.log_level      = child_log_level;
+
+    require(wwStartupSucceeded(createGlobalState(init_data)), "failed to create the startup-boundary fixture");
+    registerAtExitCallBack(reportStartupBoundaryCleanup, NULL);
+}
+
+static void runStartupFailureBoundaryCase(bool signal_before_boundary)
+{
+    int report_pipe[2];
+    require(pipe(report_pipe) == 0, "failed to create the startup-boundary report pipe");
+
+    pid_t child = fork();
+    require(child >= 0, "failed to fork the startup-boundary child");
+    if (child == 0)
+    {
+        discard close(report_pipe[0]);
+        startup_boundary_report_fd = report_pipe[1];
+        setupStartupBoundaryFixture();
+
+        sigset_t extra;
+        sigemptyset(&extra);
+        sigaddset(&extra, SIGUSR1);
+        require(pthread_sigmask(SIG_BLOCK, &extra, NULL) == 0, "failed to install the boundary mask fixture");
+
+        sigset_t mask_before;
+        require(pthread_sigmask(SIG_BLOCK, NULL, &mask_before) == 0, "failed to snapshot the boundary mask");
+
+        if (signal_before_boundary)
+        {
+            require(raise(SIGTERM) == 0, "failed to publish the pre-boundary signal");
+        }
+        else
+        {
+            signalmanagerTestSetPosixMailboxHook(publishSignalDuringMailboxTake);
+        }
+
+        const application_shutdown_request_result_e result = signalmanagerArbitrateStartupFailure(47);
+        require(result != kApplicationShutdownRequestUnavailable, "startup-failure arbitration was unavailable");
+
+        sigset_t mask_after;
+        require(pthread_sigmask(SIG_BLOCK, NULL, &mask_after) == 0, "failed to snapshot the restored boundary mask");
+        require(signalMasksEqual(&mask_before, &mask_after), "startup-failure arbitration changed the signal mask");
+
+        ww_lifecycle_context_t context;
+        require(applicationShutdownGetSelectedContext(&context), "startup arbitration did not select cleanup scope");
+        require(context.scope == kWwLifecycleStartupRollback, "startup arbitration selected runtime cleanup");
+
+        if (signal_before_boundary)
+        {
+            require(applicationShutdownGetReason() == kApplicationShutdownReasonSignal,
+                    "an already-pending signal lost startup-origin arbitration");
+            require(applicationShutdownGetExitCode() == 128 + SIGTERM,
+                    "an already-pending signal lost its exit status");
+        }
+        else
+        {
+            require(applicationShutdownGetReason() == kApplicationShutdownReasonStartupFailure,
+                    "a signal deferred by the boundary replaced startup failure");
+            require(applicationShutdownGetExitCode() == 47, "the deferred signal replaced startup failure status");
+            signalmanagerConsumePendingShutdownSignal();
+            require(applicationShutdownGetReason() == kApplicationShutdownReasonStartupFailure &&
+                        applicationShutdownGetExitCode() == 47,
+                    "later mailbox delivery replaced the accepted startup origin");
+        }
+
+        applicationShutdownCoordinate();
+        _Exit(90);
+    }
+
+    discard       close(report_pipe[1]);
+    unsigned int  cleanup_count = 0;
+    unsigned char marker;
+    while (read(report_pipe[0], &marker, sizeof(marker)) == (ssize_t) sizeof(marker))
+    {
+        cleanup_count += marker == 1;
+    }
+    discard close(report_pipe[0]);
+
+    int status = 0;
+    require(waitpid(child, &status, 0) == child, "failed to wait for the startup-boundary child");
+    const int expected_status = signal_before_boundary ? 128 + SIGTERM : 47;
+    require(WIFEXITED(status) && WEXITSTATUS(status) == expected_status,
+            "startup-boundary child returned the wrong status");
+    require(cleanup_count == 1, "startup-boundary cleanup was not coordinated exactly once");
+}
+
+static void testMailboxTakeDefersConcurrentSignal(void)
+{
+    pid_t child = fork();
+    require(child >= 0, "failed to fork the mailbox race child");
+    if (child == 0)
+    {
+        ww_construction_data_t init_data         = {0};
+        init_data.workers_count                  = 1;
+        init_data.ram_profile                    = kRamProfileS1Memory;
+        init_data.mtu_size                       = 1500;
+        init_data.internal_logger_data.log_level = child_log_level;
+        init_data.core_logger_data.log_level     = child_log_level;
+        init_data.network_logger_data.log_level  = child_log_level;
+        init_data.dns_logger_data.log_level      = child_log_level;
+
+        require(wwStartupSucceeded(createGlobalState(init_data)), "failed to create the mailbox race fixture");
+        signalmanagerTestSetPosixMailboxHook(publishSignalDuringMailboxTake);
+        signalmanagerConsumePendingShutdownSignal();
+        require(applicationShutdownGetPhase() == kApplicationShutdownRunning,
+                "mailbox take consumed a signal that was still blocked");
+
+        signalmanagerConsumePendingShutdownSignal();
+        ww_lifecycle_context_t context;
+        require(applicationShutdownGetPhase() == kApplicationShutdownRequested,
+                "deferred signal was lost by mailbox clear");
+        require(applicationShutdownGetReason() == kApplicationShutdownReasonSignal, "deferred signal lost its origin");
+        require(applicationShutdownGetSelectedContext(&context), "deferred signal did not select cleanup scope");
+        require(context.scope == kWwLifecycleStartupRollback, "pre-commit signal selected runtime shutdown");
+        require(applicationShutdownGetExitCode() == 128 + SIGTERM, "deferred signal selected the wrong status");
+
+        signalmanagerConsumePendingShutdownSignal();
+        require(applicationShutdownGetExitCode() == 128 + SIGTERM,
+                "empty mailbox consumption changed the accepted signal");
+        _Exit(0);
+    }
+
+    int status = 0;
+    require(waitpid(child, &status, 0) == child, "failed to wait for the mailbox race child");
+    require(WIFEXITED(status) && WEXITSTATUS(status) == 0, "mailbox race child failed");
+}
+
+static void testAbortDoesNotBlockOnFullStdout(void)
+{
+    int pipe_fd[2];
+    require(pipe(pipe_fd) == 0, "failed to create the fatal stdout pipe");
+
+    const int write_flags = fcntl(pipe_fd[1], F_GETFL, 0);
+    require(write_flags >= 0 && fcntl(pipe_fd[1], F_SETFL, write_flags | O_NONBLOCK) == 0,
+            "failed to make the fatal stdout pipe nonblocking while filling it");
+    unsigned char bytes[4096] = {0};
+    while (write(pipe_fd[1], bytes, sizeof(bytes)) > 0)
+    {
+    }
+    require(errno == EAGAIN || errno == EWOULDBLOCK, "failed to fill the fatal stdout pipe");
+    require(fcntl(pipe_fd[1], F_SETFL, write_flags & ~O_NONBLOCK) == 0, "failed to restore blocking fatal stdout");
+
+    pid_t child = fork();
+    require(child >= 0, "failed to fork the fatal stdout child");
+    if (child == 0)
+    {
+        require(dup2(pipe_fd[1], STDOUT_FILENO) == STDOUT_FILENO, "failed to redirect fatal stdout");
+        discard close(pipe_fd[0]);
+        discard close(pipe_fd[1]);
+        abortProgramNow(73);
+    }
+    discard close(pipe_fd[1]);
+
+    int   status = 0;
+    pid_t waited = 0;
+    for (unsigned int attempt = 0; attempt < 200U && waited == 0; ++attempt)
+    {
+        waited = waitpid(child, &status, WNOHANG);
+        if (waited == 0)
+        {
+            wwSleepMS(5);
+        }
+    }
+    if (waited == 0)
+    {
+        discard kill(child, SIGKILL);
+        discard waitpid(child, &status, 0);
+    }
+    discard close(pipe_fd[0]);
+
+    require(waited == child, "abortProgramNow blocked on full stdout");
+    require(WIFEXITED(status) && WEXITSTATUS(status) == 73, "abortProgramNow returned the wrong status");
+}
+
 int main(void)
 {
     signal_result_t result;
+
+    runStartupFailureBoundaryCase(true);
+    runStartupFailureBoundaryCase(false);
+    testMailboxTakeDefersConcurrentSignal();
+    testAbortDoesNotBlockOnFullStdout();
 
     // 1. SIGTERM while worker 0 is idle: full cleanup, 128 + SIGTERM.
     result = runSignalCase(kSignalCaseTermIdle);
@@ -412,7 +663,12 @@ int main(void)
     result = runSignalCase(kSignalCaseAfterSuccessRequest);
     checkCleanShutdown(&result, 128 + SIGTERM, "signal after success request");
 
-    // 5. A second stop signal forces an immediate exit through deliberately
+    // 5. A full pipe is only a saturated wake edge; the signal-safe mailbox is
+    //    still translated into the durable request.
+    result = runSignalCase(kSignalCaseFullPipe);
+    checkCleanShutdown(&result, 128 + SIGTERM, "SIGTERM with full wake pipe");
+
+    // 6. A second stop signal forces an immediate exit through deliberately
     //    blocked cleanup, and no report is ever produced.
     result = runSignalCase(kSignalCaseSecondSignalForcesExit);
     require(result.exited_normally, "the forced-exit child did not exit normally");

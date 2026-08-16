@@ -23,6 +23,15 @@ static void require(bool condition, const char *message)
     }
 }
 
+static const ww_lifecycle_context_t *testShutdownContext(void)
+{
+    static const ww_lifecycle_context_t context = {
+        .scope        = kWwLifecycleProcessShutdown,
+        .close_policy = kWwLifecycleCloseGraceful,
+    };
+    return &context;
+}
+
 static WTHREAD_ROUTINE(plainThreadRoutine)
 {
     atomic_bool *ran = userdata;
@@ -119,7 +128,7 @@ static void testWorkerBindingAndPredicates(void)
     init_data.network_logger_data.log_level  = log_off;
     init_data.dns_logger_data.log_level      = log_off;
 
-    createGlobalState(init_data);
+    require(wwStartupSucceeded(createGlobalState(init_data)), "failed to create worker-identity fixture");
 
     // createGlobalState binds main thread to worker 0
     require(getWID() == 0, "main thread was not bound to worker 0 by createGlobalState");
@@ -156,9 +165,21 @@ static void testWorkerBindingAndPredicates(void)
 
     for (unsigned int wid = 1; wid < getWorkersCount(); ++wid)
     {
-        discard workerRequestStop(getWorker(wid));
-        discard workerJoin(getWorker(wid));
+        require(workerExitJoin(getWorker(wid)), "failed to stop a test worker");
     }
+
+    /* Worker 0 is bound to this thread and the lwIP slot has no loop thread;
+     * neither is joined above, so release both worker-owned pool families
+     * explicitly before global teardown checks their outstanding counts. */
+    worker_t *worker0 = getWorker(0);
+    require(workerInstallApplicationQuiesceRequest(worker0, testShutdownContext()) != kWorkerQuiesceRequestUnavailable,
+            "failed to install worker-0 application quiesce request");
+    workerPerformQuiesce(worker0, testShutdownContext());
+    require(workerRequestDrain(worker0), "failed to request worker-0 drain");
+    workerPerformDrain(worker0, testShutdownContext());
+    require(workerRequestTeardown(worker0), "failed to request worker-0 teardown");
+    workerPerformTeardown(worker0);
+    workerDestroyPseudoWorkerResources(getWorker(getTotalWorkersCount() - 1));
 
     destroyGlobalState();
 
@@ -182,7 +203,7 @@ static void testRebindingRejection(void)
         init_data.network_logger_data.log_level  = log_off;
         init_data.dns_logger_data.log_level      = log_off;
 
-        createGlobalState(init_data);
+        require(wwStartupSucceeded(createGlobalState(init_data)), "failed to create rebinding fixture");
         // Current thread is bound to worker 0; attempt rebinding to worker 1 must fail/abort
         workerBindCurrentThread(getWorker(1));
         // Should not reach here
@@ -211,7 +232,7 @@ static void testInvalidAccessorAssertion(void)
         init_data.network_logger_data.log_level  = log_off;
         init_data.dns_logger_data.log_level      = log_off;
 
-        createGlobalState(init_data);
+        require(wwStartupSucceeded(createGlobalState(init_data)), "failed to create accessor fixture");
         workerUnbindCurrentThread();
         // Accessing getWorkerBufferPool with kInvalidWID must assert/abort
         discard getWorkerBufferPool(kInvalidWID);

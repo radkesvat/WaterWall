@@ -2,6 +2,7 @@
 """Pin the ordering barriers that make process-level lwIP teardown safe."""
 
 import os
+import re
 import sys
 
 sys.dont_write_bytecode = True
@@ -34,33 +35,42 @@ def require_order(body, tokens, description):
 
 
 def main():
-    exit_body = function_body("ww/instance/global_state.c", "exitHandle")
+    exit_body = function_body("ww/instance/global_state.c", "globalstateRunShutdownSequence")
     require_order(
         exit_body,
         (
-            "nodemanagerStop()",
-            "workerRequestStop(getWorker(wid))",
-            "workerJoin(getWorker(wid))",
-            "workerDestroyOwnResources(getWorker(0))",
+            "nodemanagerQuiesceRequest(&context)",
+            "workerRequestQuiesceWithContext(worker, &context)",
+            "workerPerformQuiesce(getWorker(0), &context)",
+            "globalstateRequireWorkerPhase(kWorkerLifecycleQuiesced)",
+            "nodemanagerQuiesceWait(&context)",
+            "workerRequestDrain(worker)",
+            "workerPerformDrain(getWorker(0), &context)",
+            "globalstateRequireWorkerPhase(kWorkerLifecycleDrained)",
+            "nodemanagerStop(&context)",
+            "workerRequestTeardown(worker)",
+            "workerPerformTeardown(getWorker(0))",
+            "globalstateRequireWorkerPhase(kWorkerLifecycleExited)",
+            "workerJoin(worker)",
             "wwLwipShutdown()",
-            "workerDestroyOwnResources(getWorker(getTotalWorkersCount() - 1))",
+            "workerDestroyPseudoWorkerResources(getWorker(getTotalWorkersCount() - 1))",
         ),
-        "ingress and every ordinary worker must quiesce before lwIP and its pseudo-worker are destroyed",
+        "the controller must quiesce, drain, stop, tear down, and join workers before lwIP destruction",
     )
 
     structure = read_source("tunnels/PacketsToConnection/include/PacketsToConnection/structure.h")
-    if "atomic_bool               stopping;" not in structure:
+    if re.search(r"\batomic_bool\s+stopping\s*;", structure) is None:
         raise AssertionError("PacketsToConnection stopping gate is not atomic")
 
-    stop_body = function_body("tunnels/PacketsToConnection/instance/stop.c", "ptcTunnelOnStop")
-    require_order(
-        stop_body,
-        (
-            "atomicStoreRelaxed(&state->stopping, true)",
-            "ptcDestroyLwipResources(t)",
-        ),
-        "PacketsToConnection must set its value-only stopping gate before cleanup",
+    quiesce_body = function_body(
+        "tunnels/PacketsToConnection/instance/pre_stop.c", "ptcTunnelOnQuiesceRequest"
     )
+    if "atomicStoreRelaxed(&state->stopping, true)" not in quiesce_body:
+        raise AssertionError("PacketsToConnection does not close its stopping gate during quiesce")
+
+    stop_body = function_body("tunnels/PacketsToConnection/instance/stop.c", "ptcTunnelOnStop")
+    if "ptcDestroyLwipResources(t)" not in stop_body:
+        raise AssertionError("PacketsToConnection does not release lwIP resources during component stop")
 
     payload_body = function_body(
         "tunnels/PacketsToConnection/upstream/payload.c", "ptcTunnelUpStreamPayload"
@@ -83,7 +93,7 @@ def main():
         destroy_body,
         (
             "LOCK_TCPIP_CORE()",
-            "ptcDestroyRouteContexts(&state->route_context4)",
+            "ptcDestroyRouteContexts(t)",
             "state->lwip_resources_destroyed = true",
             "UNLOCK_TCPIP_CORE()",
         ),

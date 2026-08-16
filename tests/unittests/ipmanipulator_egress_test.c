@@ -955,11 +955,11 @@ static void testProtocolSwapConfigurationValidation(void)
 
     tunnel_t *valid = createFromSettings("{\"protoswap-tcp\":143,\"protoswap-udp\":144}");
     require(valid != NULL, "unambiguous TCP/UDP protocol mapping was rejected");
-    ipmanipulatorDestroy(valid);
+    ipmanipulatorDestroy(valid, wwLifecycleStartupRollback());
 
     tunnel_t *tcp_only = createFromSettings("{\"protoswap-tcp\":143}");
     require(tcp_only != NULL, "single-family TCP-to-custom-protocol mapping was rejected");
-    ipmanipulatorDestroy(tcp_only);
+    ipmanipulatorDestroy(tcp_only, wwLifecycleStartupRollback());
 }
 
 int main(void)

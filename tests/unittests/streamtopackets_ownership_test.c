@@ -41,6 +41,9 @@ typedef struct ownership_fixture_s
 
 static ownership_fixture_t g_fixture;
 
+static void fixtureTeardown(void);
+static void pumpAllWorkers(void);
+
 // Records which packet line each next-side payload arrived on, which is the
 // whole point of restoring inner-flow affinity, and which worker thread ran the
 // callback: the right line pointer on the wrong worker is still a defect.
@@ -110,19 +113,22 @@ static void resetObservations(void)
 
 static bool     g_force_queue_fails;
 static uint32_t g_force_queue_failures;
+static int32_t  g_force_queue_fail_at = -1;
+static uint32_t g_force_queue_attempts;
 
-bool __real_sendWorkerMessageForceQueueWithCleanup(wid_t wid, WorkerMessageCallback cb,
-                                                   WorkerMessageCleanupCallback cleanup, void *arg1, void *arg2,
-                                                   void *arg3);
-bool __wrap_sendWorkerMessageForceQueueWithCleanup(wid_t wid, WorkerMessageCallback cb,
-                                                   WorkerMessageCleanupCallback cleanup, void *arg1, void *arg2,
-                                                   void *arg3);
+worker_message_submit_result_e __real_sendWorkerMessageForceQueueWithCleanup(wid_t wid, WorkerMessageCallback cb,
+                                                                             WorkerMessageCleanupCallback cleanup,
+                                                                             void *arg1, void *arg2, void *arg3);
+worker_message_submit_result_e __wrap_sendWorkerMessageForceQueueWithCleanup(wid_t wid, WorkerMessageCallback cb,
+                                                                             WorkerMessageCleanupCallback cleanup,
+                                                                             void *arg1, void *arg2, void *arg3);
 
-bool __wrap_sendWorkerMessageForceQueueWithCleanup(wid_t wid, WorkerMessageCallback cb,
-                                                   WorkerMessageCleanupCallback cleanup, void *arg1, void *arg2,
-                                                   void *arg3)
+worker_message_submit_result_e __wrap_sendWorkerMessageForceQueueWithCleanup(wid_t wid, WorkerMessageCallback cb,
+                                                                             WorkerMessageCleanupCallback cleanup,
+                                                                             void *arg1, void *arg2, void *arg3)
 {
-    if (LIKELY(! g_force_queue_fails))
+    const uint32_t attempt = g_force_queue_attempts++;
+    if (LIKELY(! g_force_queue_fails && (g_force_queue_fail_at < 0 || attempt != (uint32_t) g_force_queue_fail_at)))
     {
         return __real_sendWorkerMessageForceQueueWithCleanup(wid, cb, cleanup, arg1, arg2, arg3);
     }
@@ -132,7 +138,7 @@ bool __wrap_sendWorkerMessageForceQueueWithCleanup(wid_t wid, WorkerMessageCallb
     ++g_force_queue_failures;
     if (cleanup != NULL)
     {
-        cleanup(arg1, arg2, arg3);
+        cleanup(arg1, arg2, arg3, kWorkerMessageCancelEnqueueFailure);
     }
     return false;
 }
@@ -157,6 +163,8 @@ static void fixtureSetup(void)
 {
     memoryZero(&g_fixture, sizeof(g_fixture));
     resetObservations();
+    g_force_queue_fail_at  = -1;
+    g_force_queue_attempts = 0;
 
     tosWorkerEnvSetup(&g_fixture.env, kTestWorkers, kTestLargeBufferSize, kTestSmallBufferSize);
 
@@ -188,6 +196,53 @@ static void fixtureSetup(void)
     {
         g_fixture.packet_lines[wi] = lineCreateOnWorker(g_fixture.s2p->lstate_size, wi);
     }
+}
+
+static void streamToPacketsStartupRefusal(uint32_t failure_position)
+{
+    fixtureSetup();
+    ww_startup_context_t startup = {0};
+    wwStartupContextBegin(&startup);
+    g_force_queue_fail_at = (int32_t) failure_position;
+    streamtopacketsTunnelOnStart(g_fixture.s2p);
+    const ww_startup_result_t result = wwStartupContextEnd(&startup);
+    twfRequire(! wwStartupSucceeded(result), "StreamToPackets did not propagate the startup admission failure");
+    twfRequireEqualU32((uint32_t) result.exit_code, 1, "StreamToPackets propagated the wrong startup status");
+    fixtureTeardown();
+}
+
+static void caseStartupAdmissionIsCheckedForEveryWorker(void)
+{
+    const char *failure_modes[] = {"deque-growth", "wakeup-post"};
+    for (uint32_t mode = 0; mode < ARRAY_SIZE(failure_modes); ++mode)
+    {
+        for (uint32_t position = 0; position < kTestWorkers; ++position)
+        {
+            char test_name[160];
+            snprintf(test_name,
+                     sizeof(test_name),
+                     "StreamToPackets packet Init %s refusal at worker %u fails startup",
+                     failure_modes[mode],
+                     (unsigned int) position);
+            twfSetCase(test_name);
+            streamToPacketsStartupRefusal(position);
+        }
+    }
+
+    twfSetCase("StreamToPackets admits every packet Init before deferred execution");
+    fixtureSetup();
+    ww_startup_context_t startup = {0};
+    wwStartupContextBegin(&startup);
+    streamtopacketsTunnelOnStart(g_fixture.s2p);
+    const ww_startup_result_t result = wwStartupContextEnd(&startup);
+    twfRequire(wwStartupSucceeded(result), "StreamToPackets reported failure after admitting every packet Init");
+    twfRequireEqualU32(
+        g_force_queue_attempts, kTestWorkers, "StreamToPackets did not admit exactly one packet Init per worker");
+    twfRequireEqualU32(g_fixture.trace.next_init, 0, "StreamToPackets ran a queued packet Init during startup");
+    pumpAllWorkers();
+    twfRequireEqualU32(
+        g_fixture.trace.next_init, kTestWorkers, "StreamToPackets omitted or duplicated a worker packet Init");
+    fixtureTeardown();
 }
 
 static void fixtureTeardown(void)
@@ -1055,7 +1110,7 @@ static void caseStoppingRefusesPromotionButLetsOwnersDrain(void)
     line_t *a2 = openStreamLine("10.0.0.1", 1);
     line_t *b1 = openStreamLine("10.0.0.9", 2);
 
-    streamtopacketsTunnelOnStop(g_fixture.s2p);
+    streamtopacketsTunnelOnQuiesceRequest(g_fixture.s2p, wwLifecycleStartupRollback());
     resetObservations();
 
     validateLine(a2, 40001);
@@ -1214,6 +1269,7 @@ static void caseAnonymousLinesShareOneIdentity(void)
 
 int main(void)
 {
+    caseStartupAdmissionIsCheckedForEveryWorker();
     caseCandidateIsNotSelectable();
     caseFirstValidLineEstablishesTheSource();
     caseSameSourceLinesJoinOneGeneration();

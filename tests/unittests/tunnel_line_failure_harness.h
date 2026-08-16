@@ -7,7 +7,7 @@
  * that line through the correct callbacks, and leave the process and every other line running. This header gives
  * each of those properties a machine-checkable form:
  *
- *   - the three process APIs are linker-wrapped and fail the test the moment one of them is reached;
+ *   - the two process APIs are linker-wrapped and fail the test the moment one of them is reached;
  *   - every pooled buffer handed out is tracked, so a leak and a double recycle are both hard errors;
  *   - fake previous/next tunnels record an ordered event trace, so "no Init reached the next branch" and
  *     "upstream Finish came before downstream Finish" are single string comparisons.
@@ -16,7 +16,7 @@
  * translation unit must only ever see the tunnel it is testing. Anything tunnel-specific belongs in the test.
  *
  * Every test that includes this header must link with:
- *   -Wl,--wrap=terminateProgram -Wl,--wrap=abortProgramNow -Wl,--wrap=requestProgramShutdown
+ *   -Wl,--wrap=abortProgramNow -Wl,--wrap=requestProgramShutdown
  *   -Wl,--wrap=bufferpoolGetLargeBuffer -Wl,--wrap=bufferpoolGetSmallBuffer -Wl,--wrap=bufferpoolReuseBuffer
  */
 
@@ -75,16 +75,8 @@ static void twfRequireEqualText(const char *actual, const char *expected, const 
 
 #ifndef TWF_CUSTOM_PROCESS_API_WRAPS
 
-_Noreturn void __wrap_terminateProgram(int exit_code);
 _Noreturn void __wrap_abortProgramNow(int exit_code);
 bool           __wrap_requestProgramShutdown(int exit_code);
-
-_Noreturn void __wrap_terminateProgram(int exit_code)
-{
-    fprintf(stderr, "FAIL [%s]: a line-local failure called terminateProgram(%d)\n", g_twf_case, exit_code);
-    fflush(stderr);
-    _Exit(1);
-}
 
 _Noreturn void __wrap_abortProgramNow(int exit_code)
 {
@@ -439,13 +431,16 @@ static tunnel_t *twfCreateNextTunnel(twf_trace_t *trace)
 
 typedef struct twf_worker_env_s
 {
-    master_pool_t *large_master;
-    master_pool_t *small_master;
-    buffer_pool_t *pool;
-    buffer_pool_t *pool_shortcut[1];
-    wloop_t       *loop;
-    wloop_t       *loop_shortcut[1];
-    worker_t       worker;
+    master_pool_t             *large_master;
+    master_pool_t             *small_master;
+    master_pool_t             *wios_master;
+    buffer_pool_t             *pool;
+    buffer_pool_t             *pool_shortcut[1];
+    threadsafe_generic_pool_t *wios_pool;
+    threadsafe_generic_pool_t *wios_shortcut[1];
+    wloop_t                   *loop;
+    wloop_t                   *loop_shortcut[1];
+    worker_t                   worker;
 } twf_worker_env_t;
 
 enum
@@ -474,7 +469,9 @@ static void twfWorkerEnvSetupWithSmallBuffers(twf_worker_env_t *env, uint32_t la
 
     env->large_master = masterpoolCreateWithCapacity(8);
     env->small_master = masterpoolCreateWithCapacity(8);
-    twfRequire(env->large_master != NULL && env->small_master != NULL, "failed to create the test master pools");
+    env->wios_master  = masterpoolCreateWithCapacity(8);
+    twfRequire(env->large_master != NULL && env->small_master != NULL && env->wios_master != NULL,
+               "failed to create the test master pools");
 
     env->pool = bufferpoolCreate(env->large_master, env->small_master, 4, large_buffer_size, small_buffer_size);
     twfRequire(env->pool != NULL, "failed to create the test buffer pool");
@@ -485,13 +482,19 @@ static void twfWorkerEnvSetupWithSmallBuffers(twf_worker_env_t *env, uint32_t la
     env->pool_shortcut[0]        = env->pool;
     GSTATE.shortcut_buffer_pools = env->pool_shortcut;
 
+    env->wios_pool = threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(env->wios_master, sizeof(wio_t), 8);
+    twfRequire(env->wios_pool != NULL, "failed to create the test wios pool");
+    env->wios_shortcut[0]      = env->wios_pool;
+    GSTATE.shortcut_wios_pools = env->wios_shortcut;
+
     env->loop = wloopCreate(WLOOP_FLAG_AUTO_FREE, env->pool, 0);
     twfRequire(env->loop != NULL, "failed to create the test event loop");
 
     env->loop_shortcut[0] = env->loop;
     GSTATE.shortcut_loops = env->loop_shortcut;
 
-    env->worker    = (worker_t) {.wid = 0, .buffer_pool = env->pool, .loop = env->loop, .has_event_loop = true};
+    env->worker = (worker_t) {
+        .wid = 0, .buffer_pool = env->pool, .wios_pool = env->wios_pool, .loop = env->loop, .has_event_loop = true};
     GSTATE.workers = &env->worker;
     testWorkerBindWID(0);
 
@@ -507,18 +510,22 @@ static void twfWorkerEnvTeardown(twf_worker_env_t *env)
 {
     twfRequireNoLeakedBuffers();
 
+    wloopDestroy(&env->loop);
     testWorkerUnbindWID();
     GSTATE.flag_initialized      = false;
     GSTATE.workers               = NULL;
     GSTATE.shortcut_buffer_pools = NULL;
+    GSTATE.shortcut_wios_pools   = NULL;
     GSTATE.shortcut_loops        = NULL;
 
-    wloopDestroy(&env->loop);
+    threadsafegenericpoolDestroy(env->wios_pool);
     bufferpoolDestroy(env->pool);
     masterpoolMakeEmpty(env->large_master);
     masterpoolMakeEmpty(env->small_master);
+    masterpoolMakeEmpty(env->wios_master);
     masterpoolDestroy(env->large_master);
     masterpoolDestroy(env->small_master);
+    masterpoolDestroy(env->wios_master);
 }
 
 // ---------------------------------------------------------------------------

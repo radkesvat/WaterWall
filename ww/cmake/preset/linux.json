@@ -27,6 +27,13 @@
             "cacheVariables": {}
         },
         {
+            "name": "linux-tsan-unit",
+            "inherits": "linux-unit-tests",
+            "cacheVariables": {
+                "ENABLE_TSAN": true
+            }
+        },
+        {
             "name": "linux-software-crypto-unit",
             "inherits": ["linux-software-crypto", "native-unit-tests"]
         },
@@ -228,6 +235,25 @@
             "configuration": "Debug",
             "targets": [
                 "waterwall_unit_tests"
+            ],
+            "inherits": [
+                "host-linux"
+            ]
+        },
+        {
+            "name": "linux-tsan-unit",
+            "configurePreset": "linux-tsan-unit",
+            "configuration": "Debug",
+            "targets": [
+                "Waterwall",
+                "shutdown_manager_test",
+                "wloop_stop_request_test",
+                "worker_context_helpers_test",
+                "device_reader_session_test",
+                "widle_table_cancellation_test",
+                "reverseclient_owner_drain_test",
+                "packetstostream_orderly_shutdown_test",
+                "packetsender_orderly_shutdown_test"
             ],
             "inherits": [
                 "host-linux"
@@ -461,6 +487,20 @@
             "filter": {
                 "include": {
                     "label": "unit"
+                }
+            },
+            "inherits": [
+                "host-linux",
+                "options"
+            ]
+        },
+        {
+            "name": "linux-tsan-unit",
+            "configurePreset": "linux-tsan-unit",
+            "configuration": "Debug",
+            "filter": {
+                "include": {
+                    "name": "^waterwall\\.((shutdown_manager|wloop_stop_request|worker_context_helpers|device_reader_session|widle_table_cancellation|reverseclient_owner_drain|packetstostream_orderly_shutdown|packetsender_orderly_shutdown)_unit|shutdown_production_sequence|reverse_tcp_bridge_roundtrip)$"
                 }
             },
             "inherits": [

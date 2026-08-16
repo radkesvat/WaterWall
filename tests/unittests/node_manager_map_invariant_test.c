@@ -7,14 +7,6 @@
 
 #include "managers/node_manager.c" // NOLINT: exercises the private map invariants
 
-#include <sys/wait.h>
-#include <unistd.h>
-
-enum
-{
-    kUnexpectedChildReturn = 91
-};
-
 static char test_config_path[] = "node-manager-map-invariant-test.json";
 static char test_config_name[] = "node-manager-map-invariant-test";
 static char test_node_name[]   = "configured-node";
@@ -79,37 +71,29 @@ static void testMaximumFitsWithoutGrowth(void)
     memoryFree(nodes);
 }
 
-static void runFatalChild(void (*child_routine)(void), const char *label)
-{
-    pid_t child = fork();
-    require(child >= 0, "failed to fork NodeManager invariant child");
-
-    if (child == 0)
-    {
-        child_routine();
-        _Exit(kUnexpectedChildReturn);
-    }
-
-    int status = 0;
-    require(waitpid(child, &status, 0) == child, "failed to wait for NodeManager invariant child");
-    require(WIFEXITED(status), label);
-    require(WEXITSTATUS(status) == 1, label);
-}
-
-static void exceedMaximumInChild(void)
+static void testExceedMaximumRecordsStartupFailure(void)
 {
     config_file_t          config_file = {0};
     node_manager_config_t *cfg         = createTestConfig(&config_file);
     node_t                *nodes       = memoryAllocateZero(sizeof(*nodes) * (kMaxNodesPerConfig + 1U));
 
+    ww_startup_context_t startup = {0};
+    wwStartupContextBegin(&startup);
     for (size_t i = 0; i <= kMaxNodesPerConfig; ++i)
     {
         initializeTestNode(&nodes[i], i);
         registerNodeInMap(&nodes[i], cfg);
     }
+    const ww_startup_result_t result = wwStartupContextEnd(&startup);
+    require(result.exit_code == 1, "NodeManager did not report a node beyond the configured maximum");
+    require(map_node_t_size(&cfg->node_map) == kMaxNodesPerConfig,
+            "NodeManager inserted a node beyond the configured maximum");
+
+    destroyTestConfig(cfg);
+    memoryFree(nodes);
 }
 
-static void mutateFrozenMapInChild(void)
+static void testFrozenMapMutationRecordsStartupFailure(void)
 {
     config_file_t          config_file = {0};
     node_manager_config_t *cfg         = createTestConfig(&config_file);
@@ -117,13 +101,20 @@ static void mutateFrozenMapInChild(void)
 
     freezeNodeMap(cfg);
     initializeTestNode(&node, 0);
+    ww_startup_context_t startup = {0};
+    wwStartupContextBegin(&startup);
     registerNodeInMap(&node, cfg);
+    const ww_startup_result_t result = wwStartupContextEnd(&startup);
+    require(result.exit_code == 1, "NodeManager did not report mutation after freezing the config map");
+    require(map_node_t_size(&cfg->node_map) == 0, "NodeManager mutated the frozen config map");
+
+    destroyTestConfig(cfg);
 }
 
 int main(void)
 {
     testMaximumFitsWithoutGrowth();
-    runFatalChild(exceedMaximumInChild, "NodeManager did not reject a node beyond the configured maximum");
-    runFatalChild(mutateFrozenMapInChild, "NodeManager did not reject mutation after freezing the config map");
+    testExceedMaximumRecordsStartupFailure();
+    testFrozenMapMutationRecordsStartupFailure();
     return 0;
 }

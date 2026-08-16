@@ -116,12 +116,12 @@ static void caseWorkerTimerFailure(void)
     // stops run as the worker that owns the slot, which is the only context
     // onWorkerStop accepts.
     wid_t previous = tosSetCurrentWorker(0);
-    keepaliveclientTunnelOnWorkerStop(fixture.keepalive, 0);
+    keepaliveclientTunnelOnWorkerQuiesce(fixture.keepalive, 0, wwLifecycleProcessShutdown());
     twfRequire(fixture.worker_timer_slots[0] == NULL, "onWorkerStop must delete the published timer");
 
     // The worker whose allocation failed must still be safe to stop.
     discard tosSetCurrentWorker(1);
-    keepaliveclientTunnelOnWorkerStop(fixture.keepalive, 1);
+    keepaliveclientTunnelOnWorkerQuiesce(fixture.keepalive, 1, wwLifecycleProcessShutdown());
     twfRequire(fixture.worker_timer_slots[1] == NULL, "stopping a worker with no timer must stay a no-op");
     discard tosSetCurrentWorker(previous);
 

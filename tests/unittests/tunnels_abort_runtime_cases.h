@@ -27,7 +27,6 @@ enum
  * and kLineStateSize enumerators exported by those headers would otherwise
  * collide.
  */
-int tunnelsAbortReverseClientLinestateCase(void);
 int tunnelsAbortUdpStatelessSocketDestroyCase(void);
 int tunnelsAbortTcpOverUdpClientMtuCase(void);
 int tunnelsAbortTcpOverUdpServerMtuCase(void);

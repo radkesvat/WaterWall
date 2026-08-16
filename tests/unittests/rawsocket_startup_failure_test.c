@@ -1,5 +1,4 @@
 #include "RawSocket/structure.h"
-#include <sys/wait.h>
 #include <unistd.h>
 
 static int notify_fd = -1;
@@ -130,8 +129,10 @@ static void runRawSocketStartWithCaptureBringupFailure(int write_fd)
 
     node_t node = {.next = NULL};
 
-    tunnel_t *t = tunnelCreate(&node, sizeof(rawsocket_tstate_t), sizeof(rawsocket_lstate_t));
+    tunnel_t *t = packettunnelCreate(&node, sizeof(rawsocket_tstate_t), 0);
     require(t != NULL, "failed to create RawSocket test tunnel");
+    require(packettunnelConfigureLifecycleAnchor(t, "RawSocket", noopPayload, kPacketLifecycleAnchorPublishDownstream),
+            "failed to configure RawSocket packet anchor");
 
     tunnel_t prev = {.fnPayloadD = noopPayload};
     t->prev       = &prev;
@@ -142,38 +143,28 @@ static void runRawSocketStartWithCaptureBringupFailure(int write_fd)
     char capture_name[] = "capture-test";
     char raw_name[]     = "raw-test";
 
-    rawsocket_tstate_t *state       = tunnelGetState(t);
-    state->capture_device_name      = capture_name;
-    state->raw_device_name          = raw_name;
-    state->capture_ranges           = &capture_range;
-    state->capture_range_count      = 1;
-    state->firewall_mark            = 7;
-    state->write_direction_upstream = false;
+    rawsocket_tstate_t *state  = tunnelGetState(t);
+    state->capture_device_name = capture_name;
+    state->raw_device_name     = raw_name;
+    state->capture_ranges      = &capture_range;
+    state->capture_range_count = 1;
+    state->firewall_mark       = 7;
 
+    ww_startup_context_t startup = {0};
+    wwStartupContextBegin(&startup);
     rawsocketOnStart(t);
-    _Exit(99);
+    const ww_startup_result_t result = wwStartupContextEnd(&startup);
+    require(! wwStartupSucceeded(result), "RawSocket startup failure did not propagate to its owner");
+    require(result.exit_code == 1, "RawSocket startup failure used the wrong status");
+    tunnelDestroy(t);
 }
 
 int main(void)
 {
     int pipe_fds[2];
     require(pipe(pipe_fds) == 0, "failed to create cleanup notification pipe");
-
-    pid_t child = fork();
-    require(child >= 0, "failed to fork RawSocket startup failure child");
-
-    if (child == 0)
-    {
-        close(pipe_fds[0]);
-        runRawSocketStartWithCaptureBringupFailure(pipe_fds[1]);
-    }
-
+    runRawSocketStartWithCaptureBringupFailure(pipe_fds[1]);
     close(pipe_fds[1]);
-
-    int status = 0;
-    require(waitpid(child, &status, 0) == child, "failed to wait for RawSocket startup failure child");
-    require(WIFEXITED(status), "RawSocket startup failure child did not exit normally");
-    require(WEXITSTATUS(status) == EXIT_FAILURE, "RawSocket startup failure used the wrong exit status");
 
     char   events[8];
     size_t event_count = 0;

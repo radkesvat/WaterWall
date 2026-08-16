@@ -12,6 +12,7 @@
 //   * ConnectEx accepts a socket that was already bound to a source address;
 //   * async DNS polls and reads c-ares sockets without IOCP readiness callbacks;
 //   * TCP writes use one active WSASend and preserve queued data across callbacks;
+//   * direct datagram and TCP writes stop at normal-admission closure;
 //   * per-IO and loop-wide operation accounting returns to a clean baseline.
 //
 // The test only builds/runs when the native IOCP backend is selected
@@ -31,9 +32,11 @@ int main(void)
 #include "wwapi.h"
 
 #include "async_dns.h"
+#include "buffer_pool_internal.h"
 #include "iowatcher.h"
 #include "overlapio.h"
 #include "threadsafe_generic_pool.h"
+#include "worker_registry_fixture.h"
 #include "wsocket.h"
 
 #include <winsock2.h>
@@ -59,7 +62,9 @@ typedef struct env_s
     master_pool_t             *wio_master;
     buffer_pool_t             *buffer_pool;
     threadsafe_generic_pool_t *wio_pool;
-    threadsafe_generic_pool_t *wio_pools[1];
+    threadsafe_generic_pool_t *wio_pools[2];
+    test_worker_registry_t     worker_registry;
+    uint32_t                   saved_workers_count;
 } env_t;
 
 static void envSetup(env_t *env)
@@ -70,14 +75,21 @@ static void envSetup(env_t *env)
     env->buffer_pool  = bufferpoolCreate(env->large_master, env->small_master, 64, 8192, 1024);
     env->wio_pool     = threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(env->wio_master, sizeof(wio_t), 64);
     env->wio_pools[0] = env->wio_pool;
+    env->wio_pools[1] = env->wio_pool;
 
+    env->saved_workers_count = GSTATE.workers_count;
+    GSTATE.workers_count     = 3; // two event workers plus the lwIP-style pseudo-worker
+    testWorkerRegistryInstall(&env->worker_registry);
     GSTATE.shortcut_wios_pools = env->wio_pools;
     testWorkerBindWID(0);
 }
 
 static void envTeardown(env_t *env)
 {
+    testWorkerUnbindWID();
     GSTATE.shortcut_wios_pools = NULL;
+    testWorkerRegistryRestore(&env->worker_registry);
+    GSTATE.workers_count = env->saved_workers_count;
     threadsafegenericpoolDestroy(env->wio_pool);
     bufferpoolDestroy(env->buffer_pool);
     masterpoolMakeEmpty(env->wio_master);
@@ -143,6 +155,21 @@ static void setSocketNonblocking(SOCKET socket)
     require(ioctlsocket(socket, FIONBIO, &enabled) == 0, "ioctlsocket(FIONBIO) failed");
 }
 
+static uint32_t largeBufferCacheCount(buffer_pool_t *pool)
+{
+    uint32_t large_count = 0;
+    uint32_t small_count = 0;
+    bufferpoolCachedTierCountsForTest(pool, &large_count, &small_count);
+    discard small_count;
+    return large_count;
+}
+
+static void warmLargeBufferCache(buffer_pool_t *pool)
+{
+    sbuf_t *buf = bufferpoolGetLargeBuffer(pool);
+    bufferpoolReuseBuffer(pool, buf);
+}
+
 // Count the receives that represent a live logical read: not canceled, still
 // owned by the kernel or waiting for dispatch. Mirrors the backend's own
 // invariant so the tests below can assert it directly.
@@ -164,6 +191,470 @@ static uint32_t liveUncancelledReceives(const wio_t *io)
         }
     }
     return count;
+}
+
+typedef struct direct_write_state_s
+{
+    wio_t *conn;
+    int    hook_calls;
+    int    write_callbacks;
+    int    close_callbacks;
+} direct_write_state_t;
+
+static void closeAdmissionAfterDirectSend(wio_t *io)
+{
+    direct_write_state_t *state = weventGetUserdata(io);
+    state->hook_calls++;
+    require(wloopCloseNormalAdmission(io->loop), "failed to close admission after a direct send");
+}
+
+static void closeAdmissionAfterSendPublication(wio_t *io)
+{
+    direct_write_state_t *state = weventGetUserdata(io);
+    state->hook_calls++;
+    if (io->iocp_send_active != NULL && wloopNormalDispatchAllowed(io->loop))
+    {
+        require(wloopCloseNormalAdmission(io->loop), "failed to close admission after send publication");
+    }
+}
+
+static void directWriteCallback(wio_t *io)
+{
+    direct_write_state_t *state = weventGetUserdata(io);
+    state->write_callbacks++;
+}
+
+static void directWriteCloseCallback(wio_t *io)
+{
+    direct_write_state_t *state = weventGetUserdata(io);
+    state->close_callbacks++;
+}
+
+static void directWriteAccept(wio_t *connio)
+{
+    direct_write_state_t *state = weventGetUserdata(connio);
+    require(state->conn == NULL, "direct-write test accepted more than one connection");
+    state->conn = connio;
+}
+
+static void testDirectStreamWriteAdmission(env_t *env)
+{
+    wloop_t *loop = wloopCreate(0, env->buffer_pool, 0);
+    require(loop != NULL, "direct stream-write loop create failed");
+
+    direct_write_state_t state  = {0};
+    wio_t               *server = wloopCreateTcpServer(loop, "127.0.0.1", 0, directWriteAccept);
+    require(server != NULL, "direct stream-write server create failed");
+    weventSetUserData(server, &state);
+
+    SOCKET client = connectClient(boundPort(server));
+    for (int i = 0; i < 200 && state.conn == NULL; ++i)
+    {
+        wloopProcessEvents(loop, 10);
+    }
+    require(state.conn != NULL, "direct stream-write connection was not accepted");
+    wioSetCallBackWrite(state.conn, directWriteCallback);
+    wioSetCallBackClose(state.conn, directWriteCloseCallback);
+
+    warmLargeBufferCache(env->buffer_pool);
+    const uint32_t cached_before = largeBufferCacheCount(env->buffer_pool);
+    wioIocpTestSetAfterDirectSendHook(closeAdmissionAfterDirectSend);
+    require(wioWrite(state.conn, makeFilledBuffer(env->buffer_pool, 's', 1)) == 1,
+            "synchronous stream send did not complete directly");
+    wioIocpTestSetAfterDirectSendHook(NULL);
+
+    char received = 0;
+    require(recv(client, &received, 1, 0) == 1 && received == 's', "direct stream send did not reach the peer");
+    require(state.hook_calls == 1, "direct stream send did not reach the admission boundary");
+    require(state.write_callbacks == 0, "stream write callback ran after normal admission closed");
+    require(largeBufferCacheCount(env->buffer_pool) == cached_before,
+            "direct stream send did not return its buffer exactly once");
+
+    require(wioWrite(state.conn, makeFilledBuffer(env->buffer_pool, 'z', 0)) == -1,
+            "zero-length TCP write was accepted after normal admission closed");
+    require(wioIsOpened(state.conn) && state.close_callbacks == 0,
+            "rejected zero-length TCP write closed the WIO or invoked its close callback");
+    require(largeBufferCacheCount(env->buffer_pool) == cached_before,
+            "rejected zero-length TCP write did not return its buffer exactly once");
+
+    require(wioWrite(state.conn, makeFilledBuffer(env->buffer_pool, 'x', 1)) == -1,
+            "stream write was accepted after normal admission closed");
+    require(largeBufferCacheCount(env->buffer_pool) == cached_before,
+            "rejected stream write did not return its buffer exactly once");
+
+    wloopDestroy(&loop);
+    closesocket(client);
+}
+
+static SOCKET createBoundUdpReceiver(sockaddr_u *address)
+{
+    SOCKET receiver = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    require(receiver != INVALID_SOCKET, "direct datagram receiver socket failed");
+
+    struct sockaddr_in bind_address;
+    memoryZero(&bind_address, sizeof(bind_address));
+    bind_address.sin_family      = AF_INET;
+    bind_address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    require(bind(receiver, (const struct sockaddr *) &bind_address, sizeof(bind_address)) == 0,
+            "direct datagram receiver bind failed");
+
+    socklen_t address_len = sizeof(*address);
+    memoryZero(address, sizeof(*address));
+    require(getsockname(receiver, &address->sa, &address_len) == 0, "direct datagram receiver address lookup failed");
+    DWORD timeout = 2000;
+    setsockopt(receiver, SOL_SOCKET, SO_RCVTIMEO, (const char *) &timeout, sizeof(timeout));
+    return receiver;
+}
+
+static void testDirectDatagramWriteAdmission(env_t *env)
+{
+    wloop_t *loop = wloopCreate(0, env->buffer_pool, 0);
+    require(loop != NULL, "direct datagram-write loop create failed");
+
+    direct_write_state_t state  = {0};
+    wio_t               *sender = wloopCreateUdpServer(loop, "127.0.0.1", 0);
+    require(sender != NULL, "direct datagram sender create failed");
+    weventSetUserData(sender, &state);
+    wioSetCallBackWrite(sender, directWriteCallback);
+
+    sockaddr_u receiver_address;
+    SOCKET     receiver = createBoundUdpReceiver(&receiver_address);
+
+    warmLargeBufferCache(env->buffer_pool);
+    const uint32_t cached_before = largeBufferCacheCount(env->buffer_pool);
+    wioIocpTestSetAfterDirectSendHook(closeAdmissionAfterDirectSend);
+    require(wioWriteDatagram(sender, makeFilledBuffer(env->buffer_pool, 'd', 1), &receiver_address) == 1,
+            "synchronous datagram send did not complete directly");
+    wioIocpTestSetAfterDirectSendHook(NULL);
+
+    char received = 0;
+    require(recv(receiver, &received, 1, 0) == 1 && received == 'd', "direct datagram did not reach the peer");
+    require(state.hook_calls == 1, "direct datagram did not reach the admission boundary");
+    require(state.write_callbacks == 0, "datagram write callback ran after normal admission closed");
+    require(largeBufferCacheCount(env->buffer_pool) == cached_before,
+            "direct datagram send did not return its buffer exactly once");
+
+    require(wioWriteDatagram(sender, makeFilledBuffer(env->buffer_pool, 'x', 1), &receiver_address) == -1,
+            "datagram write was accepted after normal admission closed");
+    require(largeBufferCacheCount(env->buffer_pool) == cached_before,
+            "rejected datagram write did not return its buffer exactly once");
+
+    wloopDestroy(&loop);
+    closesocket(receiver);
+}
+
+typedef struct cross_loop_write_state_s
+{
+    wio_t         *target;
+    buffer_pool_t *pool;
+    int            result;
+} cross_loop_write_state_t;
+
+static void crossLoopWriteEvent(wevent_t *event)
+{
+    cross_loop_write_state_t *state = weventGetUserdata(event);
+    state->result                   = wioWrite(state->target, makeFilledBuffer(state->pool, 'c', 1));
+}
+
+static void testCrossLoopNestedWriteAdmission(env_t *env)
+{
+    wloop_t *loop_a = wloopCreate(0, env->buffer_pool, 0);
+    wloop_t *loop_b = wloopCreate(0, env->buffer_pool, 0);
+    require(loop_a != NULL && loop_b != NULL, "cross-loop IOCP fixture creation failed");
+
+    direct_write_state_t accept_state = {0};
+    wio_t               *server       = wloopCreateTcpServer(loop_b, "127.0.0.1", 0, directWriteAccept);
+    require(server != NULL, "cross-loop IOCP listener creation failed");
+    weventSetUserData(server, &accept_state);
+    SOCKET client = connectClient(boundPort(server));
+    for (int i = 0; i < 200 && accept_state.conn == NULL; ++i)
+    {
+        wloopProcessEvents(loop_b, 10);
+    }
+    require(accept_state.conn != NULL, "cross-loop IOCP connection was not accepted");
+
+    cross_loop_write_state_t write_state = {.target = accept_state.conn, .pool = env->buffer_pool, .result = 0};
+    require(wloopCloseNormalAdmission(loop_b), "failed to close cross-loop IOCP target admission");
+    wevent_t event;
+    memoryZero(&event, sizeof(event));
+    event.loop = loop_a;
+    event.cb   = crossLoopWriteEvent;
+    weventSetUserData(&event, &write_state);
+    require(wloopPostEvent(loop_a, &event), "failed to post cross-loop IOCP write callback");
+    discard wloopProcessEvents(loop_a, 0);
+    require(write_state.result == -1, "a loop-A callback borrowed normal-write authority for loop B");
+    require(wioIsOpened(accept_state.conn), "rejected cross-loop IOCP write closed the target WIO");
+
+    wloopDestroy(&loop_a);
+    wloopDestroy(&loop_b);
+    closesocket(client);
+}
+
+typedef struct accepted_cross_loop_state_s
+{
+    wloop_t       *loop_a;
+    wloop_t       *loop_b;
+    wio_t         *target;
+    buffer_pool_t *pool;
+    int            result;
+    unsigned int   callbacks;
+    bool           callback_saw_a;
+    bool           callback_saw_b;
+    bool           outer_restored_a;
+    bool           outer_retained_b;
+} accepted_cross_loop_state_t;
+
+static void acceptedCrossLoopWriteCallback(wio_t *io)
+{
+    accepted_cross_loop_state_t *state = weventGetUserdata(io);
+    state->callbacks++;
+    state->callback_saw_a = wloopCurrentThreadInNormalCallback(state->loop_a);
+    state->callback_saw_b = wloopCurrentThreadInNormalCallback(state->loop_b);
+}
+
+static void acceptedCrossLoopWriteEvent(wevent_t *event)
+{
+    accepted_cross_loop_state_t *state = weventGetUserdata(event);
+    state->result                      = wioWrite(state->target, makeFilledBuffer(state->pool, 'a', 1));
+    state->outer_restored_a            = wloopCurrentThreadInNormalCallback(state->loop_a);
+    state->outer_retained_b            = wloopCurrentThreadInNormalCallback(state->loop_b);
+}
+
+static void testAcceptedCrossLoopWriteCallbackAuthority(env_t *env)
+{
+    wloop_t *loop_a = wloopCreate(0, env->buffer_pool, 0);
+    wloop_t *loop_b = wloopCreate(0, env->buffer_pool, 0);
+    require(loop_a != NULL && loop_b != NULL, "accepted cross-loop IOCP fixture creation failed");
+
+    direct_write_state_t accept_state = {0};
+    wio_t               *server       = wloopCreateTcpServer(loop_b, "127.0.0.1", 0, directWriteAccept);
+    require(server != NULL, "accepted cross-loop IOCP listener creation failed");
+    weventSetUserData(server, &accept_state);
+    SOCKET client = connectClient(boundPort(server));
+    for (int i = 0; i < 200 && accept_state.conn == NULL; ++i)
+    {
+        wloopProcessEvents(loop_b, 10);
+    }
+    require(accept_state.conn != NULL, "accepted cross-loop IOCP connection was not accepted");
+
+    accepted_cross_loop_state_t state = {
+        .loop_a = loop_a, .loop_b = loop_b, .target = accept_state.conn, .pool = env->buffer_pool};
+    weventSetUserData(accept_state.conn, &state);
+    wioSetCallBackWrite(accept_state.conn, acceptedCrossLoopWriteCallback);
+
+    wevent_t event;
+    memoryZero(&event, sizeof(event));
+    event.loop     = loop_a;
+    event.cb       = acceptedCrossLoopWriteEvent;
+    event.userdata = &state;
+    require(wloopPostEvent(loop_a, &event), "failed to post accepted cross-loop IOCP write");
+    discard wloopProcessEvents(loop_a, 0);
+
+    require(state.result == 1 && state.callbacks == 1, "accepted cross-loop IOCP callback did not run once");
+    require(state.callback_saw_b && ! state.callback_saw_a,
+            "accepted cross-loop IOCP callback inherited source-loop authority");
+    require(state.outer_restored_a && ! state.outer_retained_b,
+            "accepted cross-loop IOCP callback did not restore source-loop authority");
+
+    char received = 0;
+    require(recv(client, &received, 1, 0) == 1 && received == 'a',
+            "accepted cross-loop IOCP write did not reach its peer");
+    wloopDestroy(&loop_a);
+    wloopDestroy(&loop_b);
+    closesocket(client);
+}
+
+typedef struct cross_loop_close_state_s
+{
+    wloop_t       *loop_a;
+    wloop_t       *loop_b;
+    wio_t         *target;
+    buffer_pool_t *pool;
+    uint32_t       target_id;
+    uint32_t       write_length;
+    int            result;
+    unsigned int   close_callbacks;
+    bool           source_event_active;
+    bool           close_ran_in_source_event;
+    bool           close_had_normal_authority;
+    bool           close_generation_matches;
+} cross_loop_close_state_t;
+
+static void crossLoopCloseCallback(wio_t *io)
+{
+    cross_loop_close_state_t *state = weventGetUserdata(io);
+    state->close_callbacks++;
+    state->close_ran_in_source_event = state->source_event_active;
+    state->close_had_normal_authority =
+        wloopCurrentThreadInNormalCallback(state->loop_a) || wloopCurrentThreadInNormalCallback(state->loop_b);
+    state->close_generation_matches = wioGetID(io) == state->target_id;
+}
+
+static void crossLoopZeroLengthWriteEvent(wevent_t *event)
+{
+    cross_loop_close_state_t *state = weventGetUserdata(event);
+    state->source_event_active      = true;
+    state->result                   = wioWrite(state->target, makeFilledBuffer(state->pool, 'z', state->write_length));
+    state->source_event_active      = false;
+}
+
+static void testCrossLoopCloseSettlement(env_t *env, bool immediate_error)
+{
+    wloop_t *loop_a = wloopCreate(0, env->buffer_pool, 0);
+    wloop_t *loop_b = wloopCreate(0, env->buffer_pool, 0);
+    require(loop_a != NULL && loop_b != NULL, "cross-loop close IOCP fixture creation failed");
+
+    direct_write_state_t accept_state = {0};
+    wio_t               *server       = wloopCreateTcpServer(loop_b, "127.0.0.1", 0, directWriteAccept);
+    require(server != NULL, "cross-loop close IOCP listener creation failed");
+    weventSetUserData(server, &accept_state);
+    SOCKET client = connectClient(boundPort(server));
+    for (int i = 0; i < 200 && accept_state.conn == NULL; ++i)
+    {
+        wloopProcessEvents(loop_b, 10);
+    }
+    require(accept_state.conn != NULL, "cross-loop close IOCP connection was not accepted");
+
+    cross_loop_close_state_t state = {.loop_a       = loop_a,
+                                      .loop_b       = loop_b,
+                                      .target       = accept_state.conn,
+                                      .pool         = env->buffer_pool,
+                                      .target_id    = wioGetID(accept_state.conn),
+                                      .write_length = immediate_error ? 1U : 0U};
+    weventSetUserData(accept_state.conn, &state);
+    wioSetCallBackClose(accept_state.conn, crossLoopCloseCallback);
+
+    warmLargeBufferCache(env->buffer_pool);
+    const uint32_t cached_before = largeBufferCacheCount(env->buffer_pool);
+    wevent_t       event;
+    memoryZero(&event, sizeof(event));
+    event.loop     = loop_a;
+    event.cb       = crossLoopZeroLengthWriteEvent;
+    event.userdata = &state;
+    if (immediate_error)
+    {
+        require(closesocket(wioGetFD(state.target)) == 0, "failed to force the cross-loop IOCP send error");
+    }
+    require(wloopPostEvent(loop_a, &event), "failed to post cross-loop zero-length IOCP write");
+    discard wloopProcessEvents(loop_a, 0);
+
+    require(state.result == (immediate_error ? -1 : 0), "cross-loop IOCP close handoff returned the wrong result");
+    require(state.close_callbacks == 0 && wioIsOpened(state.target),
+            "cross-loop IOCP close callback ran on the source call tree");
+    require(largeBufferCacheCount(env->buffer_pool) == cached_before,
+            "cross-loop zero-length IOCP write did not settle its buffer once");
+
+    for (int i = 0; i < 200 && state.close_callbacks == 0; ++i)
+    {
+        wloopProcessEvents(loop_b, 10);
+    }
+    require(state.close_callbacks == 1 && wioIsClosed(state.target),
+            "target loop did not settle the cross-loop IOCP close exactly once");
+    require(! state.close_ran_in_source_event && ! state.close_had_normal_authority,
+            "cross-loop IOCP close callback inherited source normal authority");
+    require(state.close_generation_matches, "cross-loop IOCP close ran on a reused WIO generation");
+
+    wloopDestroy(&loop_a);
+    wloopDestroy(&loop_b);
+    closesocket(client);
+}
+
+typedef struct nested_cross_loop_close_state_s
+{
+    wloop_t       *loop_a;
+    wloop_t       *loop_b;
+    wio_t         *target;
+    buffer_pool_t *pool;
+    int            outer_result;
+    int            nested_result;
+    unsigned int   write_callbacks;
+    unsigned int   close_callbacks;
+    bool           source_event_active;
+    bool           close_ran_in_source_event;
+    bool           close_had_normal_authority;
+} nested_cross_loop_close_state_t;
+
+static void nestedCrossLoopCloseCallback(wio_t *io)
+{
+    nested_cross_loop_close_state_t *state = weventGetUserdata(io);
+    state->close_callbacks++;
+    state->close_ran_in_source_event = state->source_event_active;
+    state->close_had_normal_authority =
+        wloopCurrentThreadInNormalCallback(state->loop_a) || wloopCurrentThreadInNormalCallback(state->loop_b);
+}
+
+static void nestedCrossLoopWriteCallback(wio_t *io)
+{
+    nested_cross_loop_close_state_t *state = weventGetUserdata(io);
+    state->write_callbacks++;
+    require(wloopCurrentThreadInNormalCallback(state->loop_b) && ! wloopCurrentThreadInNormalCallback(state->loop_a),
+            "nested IOCP write callback did not receive exact target-loop authority");
+    state->nested_result = wioWrite(io, makeFilledBuffer(state->pool, 'z', 0));
+}
+
+static void nestedCrossLoopOuterEvent(wevent_t *event)
+{
+    nested_cross_loop_close_state_t *state = weventGetUserdata(event);
+    state->source_event_active             = true;
+    state->outer_result                    = wioWrite(state->target, makeFilledBuffer(state->pool, 'n', 1));
+    state->source_event_active             = false;
+}
+
+static void testNestedCrossLoopCloseUsesOwnerThread(env_t *env)
+{
+    wloop_t *loop_a = wloopCreate(0, env->buffer_pool, 0);
+    testWorkerBindWID(1);
+    wloop_t *loop_b = wloopCreate(0, env->buffer_pool, 1);
+    require(loop_a != NULL && loop_b != NULL, "nested close IOCP fixture creation failed");
+
+    direct_write_state_t accept_state = {0};
+    wio_t               *server       = wloopCreateTcpServer(loop_b, "127.0.0.1", 0, directWriteAccept);
+    require(server != NULL, "nested close IOCP listener creation failed");
+    weventSetUserData(server, &accept_state);
+    SOCKET client = connectClient(boundPort(server));
+    for (int i = 0; i < 200 && accept_state.conn == NULL; ++i)
+    {
+        wloopProcessEvents(loop_b, 10);
+    }
+    require(accept_state.conn != NULL, "nested close IOCP connection was not accepted");
+    testWorkerBindWID(0);
+
+    nested_cross_loop_close_state_t state = {
+        .loop_a = loop_a, .loop_b = loop_b, .target = accept_state.conn, .pool = env->buffer_pool};
+    weventSetUserData(accept_state.conn, &state);
+    wioSetCallBackWrite(accept_state.conn, nestedCrossLoopWriteCallback);
+    wioSetCallBackClose(accept_state.conn, nestedCrossLoopCloseCallback);
+
+    wevent_t event;
+    memoryZero(&event, sizeof(event));
+    event.cb       = nestedCrossLoopOuterEvent;
+    event.userdata = &state;
+    require(wloopPostEvent(loop_a, &event), "failed to post nested cross-loop IOCP write");
+    discard wloopProcessEvents(loop_a, 0);
+
+    require(state.outer_result == 1 && state.write_callbacks == 1 && state.nested_result == 0,
+            "nested cross-loop IOCP write did not reach zero-length close settlement");
+    require(state.close_callbacks == 0 && wioIsOpened(state.target),
+            "nested cross-loop IOCP close ran inline on the source worker");
+
+    char received = 0;
+    require(recv(client, &received, 1, 0) == 1 && received == 'n',
+            "nested cross-loop IOCP fixture did not deliver its outer write");
+
+    testWorkerBindWID(1);
+    for (int i = 0; i < 200 && state.close_callbacks == 0; ++i)
+    {
+        wloopProcessEvents(loop_b, 10);
+    }
+    require(state.close_callbacks == 1 && wioIsClosed(state.target),
+            "target loop did not settle the nested cross-loop close exactly once");
+    require(! state.close_ran_in_source_event && ! state.close_had_normal_authority,
+            "nested cross-loop close callback retained source execution authority");
+
+    wloopDestroy(&loop_b);
+    testWorkerBindWID(0);
+    wloopDestroy(&loop_a);
+    closesocket(client);
 }
 
 // ---------------------------------------------------------------------------
@@ -1342,6 +1833,96 @@ static size_t forceQueuedSend(wio_t *conn, buffer_pool_t *pool, char value, size
     return expected_bytes;
 }
 
+static void testPartialSendPublishesBeforeAdmissionClosure(env_t *env)
+{
+    wloop_t *loop = wloopCreate(0, env->buffer_pool, 0);
+    require(loop != NULL, "partial-send admission loop create failed");
+
+    direct_write_state_t state  = {0};
+    wio_t               *server = wloopCreateTcpServer(loop, "127.0.0.1", 0, directWriteAccept);
+    require(server != NULL, "partial-send admission server create failed");
+    weventSetUserData(server, &state);
+
+    SOCKET client = connectClient(boundPort(server));
+    for (int i = 0; i < 200 && state.conn == NULL; ++i)
+    {
+        wloopProcessEvents(loop, 10);
+    }
+    require(state.conn != NULL, "partial-send admission connection was not accepted");
+
+    int send_buffer_size = 1024;
+    require(
+        setsockopt(
+            wioGetFD(state.conn), SOL_SOCKET, SO_SNDBUF, (const char *) &send_buffer_size, sizeof(send_buffer_size)) ==
+            0,
+        "failed to reduce the partial-send socket buffer");
+    wioSetCallBackClose(state.conn, directWriteCloseCallback);
+
+    warmLargeBufferCache(env->buffer_pool);
+    const uint32_t cached_before = largeBufferCacheCount(env->buffer_pool);
+    wioIocpTestSetAfterDirectSendHook(closeAdmissionAfterSendPublication);
+    for (int i = 0; i < 4096 && wloopNormalDispatchAllowed(loop); ++i)
+    {
+        require(wioWrite(state.conn, makeFilledBuffer(env->buffer_pool, 'p', SEND_TEST_CHUNK_SIZE)) >= 0,
+                "failed while forcing a partial direct send");
+    }
+    wioIocpTestSetAfterDirectSendHook(NULL);
+
+    require(! wloopNormalDispatchAllowed(loop) && state.conn->iocp_send_active != NULL,
+            "admission did not close after publishing the partial send record");
+    require(state.conn->write_bufsize > 0, "partial send did not publish its remaining byte accounting");
+    require(largeBufferCacheCount(env->buffer_pool) == cached_before,
+            "partial-send publication did not settle the transferred buffer exactly once");
+
+    const uint32_t pending_before = state.conn->write_bufsize;
+    require(wioWrite(state.conn, makeFilledBuffer(env->buffer_pool, 'r', 1)) == -1,
+            "a write was admitted after the partial-send boundary closed");
+    require(state.conn->write_bufsize == pending_before && state.close_callbacks == 0 && wioIsOpened(state.conn),
+            "rejected post-boundary write mutated or closed the active send");
+    require(largeBufferCacheCount(env->buffer_pool) == cached_before,
+            "rejected post-boundary write did not settle its buffer exactly once");
+
+    wloopDestroy(&loop);
+    closesocket(client);
+}
+
+static void testClosedAdmissionRejectsExistingActiveQueue(env_t *env)
+{
+    wloop_t *loop = wloopCreate(0, env->buffer_pool, 0);
+    require(loop != NULL, "active-queue admission loop create failed");
+
+    send_queue_state_t state  = {.pool = env->buffer_pool};
+    wio_t             *server = wloopCreateTcpServer(loop, "127.0.0.1", 0, sendQueueAccept);
+    require(server != NULL, "active-queue admission server create failed");
+    weventSetUserData(server, &state);
+
+    SOCKET client = connectClient(boundPort(server));
+    for (int i = 0; i < 200 && state.conn == NULL; ++i)
+    {
+        wloopProcessEvents(loop, 10);
+    }
+    require(state.conn != NULL, "active-queue admission connection was not accepted");
+
+    discard        forceQueuedSend(state.conn, env->buffer_pool, 'q', 2U * SEND_TEST_CHUNK_SIZE);
+    woverlapped_t *active_before    = state.conn->iocp_send_active;
+    const int      queue_before     = write_queue_size(&state.conn->write_queue);
+    const uint32_t write_buf_before = state.conn->write_bufsize;
+    require(wloopCloseNormalAdmission(loop), "failed to close active-queue admission");
+
+    sbuf_t        *rejected          = makeFilledBuffer(env->buffer_pool, 'x', 1);
+    const uint32_t cached_after_take = largeBufferCacheCount(env->buffer_pool);
+    require(wioWrite(state.conn, rejected) == -1, "closed admission accepted an existing-active-send write");
+    require(state.conn->iocp_send_active == active_before &&
+                write_queue_size(&state.conn->write_queue) == queue_before &&
+                state.conn->write_bufsize == write_buf_before && wioIsOpened(state.conn),
+            "rejected existing-active-send write mutated the serialized queue");
+    require(largeBufferCacheCount(env->buffer_pool) == cached_after_take + 1U,
+            "rejected existing-active-send write did not recycle its buffer once");
+
+    wloopDestroy(&loop);
+    closesocket(client);
+}
+
 static void testSerializedSendQueue(env_t *env)
 {
     wloop_t *loop = wloopCreate(0, env->buffer_pool, 0);
@@ -2220,6 +2801,13 @@ int main(void)
     env_t env;
     envSetup(&env);
 
+    testDirectStreamWriteAdmission(&env);
+    testDirectDatagramWriteAdmission(&env);
+    testCrossLoopNestedWriteAdmission(&env);
+    testAcceptedCrossLoopWriteCallbackAuthority(&env);
+    testCrossLoopCloseSettlement(&env, false);
+    testCrossLoopCloseSettlement(&env, true);
+    testNestedCrossLoopCloseUsesOwnerThread(&env);
     testEchoRoundTrip(&env);
     testCloseListenerFromAccept(&env);
     testReadCallbackCloses(&env);
@@ -2230,6 +2818,8 @@ int main(void)
     testAsyncDnsResolvesUnderIocp(&env);
     testAsyncDnsTcpConnectWaitsForReadiness(&env);
     testAsyncDnsPollsEveryWatchedSocket(&env);
+    testPartialSendPublishesBeforeAdmissionClosure(&env);
+    testClosedAdmissionRejectsExistingActiveQueue(&env);
     testSerializedSendQueue(&env);
     testCloseDrainsWriteQueue(&env);
     testCloseTimeoutForcesClose(&env);

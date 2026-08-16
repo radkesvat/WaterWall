@@ -100,9 +100,9 @@ pid_t   __wrap_fork(void);
 int     __wrap_execvp(const char *file, char *const argv[]);
 pid_t   __real_waitpid(pid_t pid, int *status, int options);
 pid_t   __wrap_waitpid(pid_t pid, int *status, int options);
-bool    __wrap_sendWorkerMessageForceQueueWithCleanup(wid_t wid, WorkerMessageCallback callback,
-                                                      WorkerMessageCleanupCallback cleanup, void *arg1, void *arg2,
-                                                      void *arg3);
+worker_message_submit_result_e __wrap_sendWorkerMessageForceQueueWithCleanup(wid_t wid, WorkerMessageCallback callback,
+                                                                             WorkerMessageCleanupCallback cleanup,
+                                                                             void *arg1, void *arg2, void *arg3);
 void    __real_memoryFree(void *ptr);
 void    __wrap_memoryFree(void *ptr);
 void    __real_masterpoolDestroy(master_pool_t *pool);
@@ -367,9 +367,9 @@ pid_t __wrap_waitpid(pid_t pid, int *status, int options)
     return pid;
 }
 
-bool __wrap_sendWorkerMessageForceQueueWithCleanup(wid_t wid, WorkerMessageCallback callback,
-                                                   WorkerMessageCleanupCallback cleanup, void *arg1, void *arg2,
-                                                   void *arg3)
+worker_message_submit_result_e __wrap_sendWorkerMessageForceQueueWithCleanup(wid_t wid, WorkerMessageCallback callback,
+                                                                             WorkerMessageCleanupCallback cleanup,
+                                                                             void *arg1, void *arg2, void *arg3)
 {
     discard wid;
     require(captured_message_count < kMaxCapturedMessages, "captured-message queue overflow");
@@ -498,7 +498,6 @@ static void envSetup(test_env_t *env)
     GSTATE.workers_count                 = 2;
     testWorkerRegistryInstall(&g_test_worker_registry);
     GSTATE.ram_profile = 1;
-    atomicStoreExplicit(&GSTATE.application_stopping_flag, false, memory_order_release);
     testWorkerBindWID(0);
 }
 
@@ -589,7 +588,7 @@ static void deliverMessage(unsigned int index, worker_t *worker)
 static void cleanupMessage(unsigned int index)
 {
     captured_message_t *message = &captured_messages[index];
-    message->cleanup(message->arg1, message->arg2, message->arg3);
+    message->cleanup(message->arg1, message->arg2, message->arg3, kWorkerMessageCancelQuiesced);
 }
 
 static void testQueuedCleanupOutlivesDevice(void)

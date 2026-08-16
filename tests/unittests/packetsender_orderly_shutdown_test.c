@@ -16,10 +16,13 @@
 // wtimerAdd injection
 // ---------------------------------------------------------------------------
 
-static bool g_timer_fails = false;
+static bool g_timer_fails                  = false;
+static bool g_timer_reset_closes_admission = false;
 
 wtimer_t *__real_wtimerAdd(wloop_t *loop, wtimer_cb cb, uint32_t timeout_ms, uint32_t repeat);
 wtimer_t *__wrap_wtimerAdd(wloop_t *loop, wtimer_cb cb, uint32_t timeout_ms, uint32_t repeat);
+bool      __real_wtimerReset(wtimer_t *timer, uint32_t timeout_ms);
+bool      __wrap_wtimerReset(wtimer_t *timer, uint32_t timeout_ms);
 
 wtimer_t *__wrap_wtimerAdd(wloop_t *loop, wtimer_cb cb, uint32_t timeout_ms, uint32_t repeat)
 {
@@ -28,6 +31,16 @@ wtimer_t *__wrap_wtimerAdd(wloop_t *loop, wtimer_cb cb, uint32_t timeout_ms, uin
         return NULL;
     }
     return __real_wtimerAdd(loop, cb, timeout_ms, repeat);
+}
+
+bool __wrap_wtimerReset(wtimer_t *timer, uint32_t timeout_ms)
+{
+    if (g_timer_reset_closes_admission)
+    {
+        g_timer_reset_closes_admission = false;
+        twfRequire(wloopCloseNormalAdmission(weventGetLoop(timer)), "failed to close admission before timer reset");
+    }
+    return __real_wtimerReset(timer, timeout_ms);
 }
 
 // ---------------------------------------------------------------------------
@@ -264,6 +277,34 @@ static void caseDeadlineTimerFailure(void)
     fixtureTeardown(&fixture);
 }
 
+static void caseDueDeadlineTimerRearmRefusalDuringQuiesce(void)
+{
+    twfSetCase("packetsender due deadline timer rearm refusal during quiesce");
+    tosResetProcessApi(true);
+
+    packetsender_fixture_t fixture;
+    fixtureSetup(&fixture);
+    packetsenderStartWorker(&fixture.worker, fixture.sender, NULL, NULL);
+
+    packetsender_worker_state_t *slot  = &fixture.worker_slots[0];
+    wtimer_t                    *timer = slot->timer;
+    twfRequire(timer != NULL, "the pending packet must have armed its timer");
+    const uint32_t timers_before = fixture.env.loop->ntimers;
+    timer->next_timeout          = 0;
+
+    g_timer_reset_closes_admission = true;
+    discard wloopProcessEvents(fixture.env.loop, 0);
+
+    tosRequireNoProcessApiCall();
+    twfRequire(slot->timer == NULL, "reset refusal retained the PacketSender timer slot");
+    twfRequireEqualU32(fixture.trace.next_payload, 0, "reset refusal must not send the pending packet");
+    twfRequireEqualU32((uint32_t) fixture.env.loop->ntimers,
+                       timers_before - 1U,
+                       "the event loop did not reclaim the due one-shot timer exactly once");
+
+    fixtureTeardown(&fixture);
+}
+
 // ---------------------------------------------------------------------------
 // Category B: the worker-0 handoff is refused
 // ---------------------------------------------------------------------------
@@ -291,10 +332,18 @@ static void caseRefusedHandoffAborts(void)
 
 int main(void)
 {
+    if (getenv("WATERWALL_TSAN_POSITIVE_ONLY") != NULL)
+    {
+        caseDueDeadlineTimerRearmRefusalDuringQuiesce();
+        puts("packetsender_orderly_shutdown_test: TSAN-positive case passed");
+        return 0;
+    }
+
     caseHealthyWorkerArmsTheTimer();
     caseDownstreamFinishCancelsPendingTimer();
     caseReentrantFinishStopsReadyBatch();
     caseDeadlineTimerFailure();
+    caseDueDeadlineTimerRearmRefusalDuringQuiesce();
     caseRefusedHandoffAborts();
 
     printf("packetsender_orderly_shutdown_test: all cases passed\n");

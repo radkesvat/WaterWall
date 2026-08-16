@@ -38,7 +38,7 @@ static void require(bool condition, const char *message)
     }
 }
 
-void deviceReaderSessionPost(device_reader_session_t *session, wid_t target_wid, sbuf_t **bufs, unsigned int count)
+bool deviceReaderSessionPost(device_reader_session_t *session, wid_t target_wid, sbuf_t **bufs, unsigned int count)
 {
     discard session;
     require(captured_post_count < kMaxCapturedPosts, "captured-post array overflow");
@@ -51,6 +51,19 @@ void deviceReaderSessionPost(device_reader_session_t *session, wid_t target_wid,
     {
         post->bufs[i] = bufs[i];
     }
+    return true;
+}
+
+bool deviceReaderSessionPostTracked(device_reader_session_t *session, wid_t target_wid, sbuf_t **bufs,
+                                    const device_frag_affinity_publication_t *publications, unsigned int count)
+{
+    discard publications;
+    return deviceReaderSessionPost(session, target_wid, bufs, count);
+}
+
+void deviceReaderSessionEnd(device_reader_session_t *session)
+{
+    discard session;
 }
 
 static sbuf_t *makeIpv4Packet(uint32_t src, uint16_t src_port, uint32_t dst, uint16_t dst_port, uint8_t proto,
@@ -510,7 +523,14 @@ static void testBucketedDispatch(void)
     memoryZero(sbufGetMutablePtr(packets[kPacketCount - 1]), 8);
     expected[kPacketCount - 1] = UINT8_MAX;
 
-    deviceFlowAffinityPostBatch((device_reader_session_t *) (uintptr_t) 1, packets, kPacketCount);
+    // A real session object, because dispatch now reads its fragment-affinity
+    // table. Leaving that table NULL keeps this case about bucketing alone;
+    // device_frag_affinity_test.c is where the table itself is driven.
+    device_reader_session_t session;
+    memoryZero(&session, sizeof(session));
+    session.batch_capacity = kMaxCapturedBuffers;
+
+    deviceFlowAffinityPostBatch(&session, packets, kPacketCount);
 
     unsigned int delivered = 0;
     for (unsigned int pi = 0; pi < captured_post_count; ++pi)

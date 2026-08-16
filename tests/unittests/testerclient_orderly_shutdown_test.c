@@ -12,6 +12,7 @@
  */
 #include "TesterClient/structure.h"
 
+#include "startup.h"
 #include "tunnel_orderly_shutdown_harness.h"
 
 enum
@@ -34,6 +35,21 @@ typedef struct testerclient_fixture_s
     tunnel_t        *next;
     line_t          *line;
 } testerclient_fixture_t;
+
+static bool fail_next_timer_add;
+
+wtimer_t *__real_wtimerAdd(wloop_t *loop, wtimer_cb cb, uint32_t timeout_ms, uint32_t repeat);
+wtimer_t *__wrap_wtimerAdd(wloop_t *loop, wtimer_cb cb, uint32_t timeout_ms, uint32_t repeat);
+
+wtimer_t *__wrap_wtimerAdd(wloop_t *loop, wtimer_cb cb, uint32_t timeout_ms, uint32_t repeat)
+{
+    if (fail_next_timer_add)
+    {
+        fail_next_timer_add = false;
+        return NULL;
+    }
+    return __real_wtimerAdd(loop, cb, timeout_ms, repeat);
+}
 
 static void fixtureSetup(testerclient_fixture_t *fixture, bool packet_mode)
 {
@@ -193,6 +209,57 @@ static void caseRefusedHandoffAborts(void)
     tosRequireChildExit("the refused-handoff verdict", refusedHandoffBody, NULL, kTosChildFallbackAbort);
 
     tosResetProcessApi(true);
+}
+
+static void caseSynchronousStartRefusalPropagatesStartupStatus(void)
+{
+    twfSetCase("testerclient synchronous worker-start refusal");
+    tosResetProcessApi(true);
+
+    tos_worker_env_t env;
+    tosWorkerEnvSetup(&env, 1, kTestLargeBufferSize, kTestSmallBufferSize);
+    tunnel_t *tester = tunnelCreate(NULL, sizeof(testerclient_tstate_t), sizeof(testerclient_lstate_t));
+    twfRequire(tester != NULL, "failed to create the TesterClient startup fixture");
+    tunnel_chain_t chain = {.workers_count = 1};
+    tester->chain        = &chain;
+
+    ww_startup_context_t startup = {0};
+    fail_next_timer_add          = true;
+    wwStartupContextBegin(&startup);
+    testerclientTunnelOnStart(tester);
+    twfRequire(! wwStartupSucceeded(wwStartupContextEnd(&startup)),
+               "TesterClient worker-start refusal reported startup success");
+    tosRequireNoProcessApiCall();
+    tunnelDestroy(tester);
+    tosWorkerEnvTeardown(&env);
+}
+
+static void caseAcceptedQueuedTimerSetupFailureUsesCleanup(void)
+{
+    twfSetCase("testerclient accepted queued timer failure uses runtime cleanup");
+    tosResetProcessApi(true);
+
+    tos_worker_env_t env;
+    tosWorkerEnvSetup(&env, 2, kTestLargeBufferSize, kTestSmallBufferSize);
+    tunnel_t *tester = tunnelCreate(NULL, sizeof(testerclient_tstate_t), sizeof(testerclient_lstate_t));
+    twfRequire(tester != NULL, "failed to create the TesterClient queued-start fixture");
+    tunnel_chain_t chain = {.workers_count = 2};
+    tester->chain        = &chain;
+
+    const wid_t          previous_wid = tosSetCurrentWorker(1);
+    ww_startup_context_t startup      = {0};
+    wwStartupContextBegin(&startup);
+    testerclientTunnelOnStart(tester);
+    twfRequire(wwStartupSucceeded(wwStartupContextEnd(&startup)), "accepted queued setup reported startup failure");
+    tosRequireNoProcessApiCall();
+
+    fail_next_timer_add = true;
+    tosPumpWorker(&env, 0);
+    tosRequireAcceptedRequest(1);
+
+    discard tosSetCurrentWorker(previous_wid);
+    tunnelDestroy(tester);
+    tosWorkerEnvTeardown(&env);
 }
 
 // ---------------------------------------------------------------------------
@@ -360,6 +427,34 @@ static void caseSuccessfulDownstreamFinishClosesBeforeSweep(void)
 }
 
 // ---------------------------------------------------------------------------
+// Required-task terminal fallback: worker Stop owns any unscheduled line
+// ---------------------------------------------------------------------------
+
+static void caseWorkerStopClosesUnscheduledOwnedLine(void)
+{
+    twfSetCase("testerclient worker stop closes an unscheduled owned line");
+    tosResetProcessApi(true);
+
+    testerclient_fixture_t fixture;
+    fixtureSetup(&fixture, false);
+
+    testerclient_tstate_t *ts = tunnelGetState(fixture.tester);
+    lineLock(fixture.line);
+    testerclientTunnelOnWorkerStop(fixture.tester, lineGetWID(fixture.line), wwLifecycleProcessShutdown());
+
+    twfRequire(ts->workers[0].line == NULL, "worker Stop must detach the owned line");
+    twfRequire(ts->workers[0].closed, "worker Stop must mark the owned line closed");
+    twfRequireEqualU32(fixture.trace.next_finish, 1, "worker Stop must finish away from the owning head");
+    tosRequireNoProcessApiCall();
+    twfRequire(! lineIsAlive(fixture.line), "worker Stop returned with the owned line still alive");
+    twfRequireLineStateZeroed(fixture.line, fixture.tester, "worker Stop left TesterClient line state behind");
+    twfRequireOwnedLineReclaimed(fixture.line, "testerclientTunnelOnWorkerStop");
+    fixture.line = NULL;
+
+    fixtureTeardown(&fixture);
+}
+
+// ---------------------------------------------------------------------------
 // Category D: the same Finish on a persistent worker packet line
 // ---------------------------------------------------------------------------
 
@@ -421,6 +516,8 @@ static void casePayloadGeneratorInvariantAborts(void)
 
 int main(void)
 {
+    caseSynchronousStartRefusalPropagatesStartupStatus();
+    caseAcceptedQueuedTimerSetupFailureUsesCleanup();
     casePacketResponseMismatch();
     caseStreamResponseMismatch();
     caseRefusedHandoffAborts();
@@ -428,6 +525,7 @@ int main(void)
     casePacketModeFinishAborts();
     casePayloadGeneratorInvariantAborts();
     caseSuccessfulDownstreamFinishClosesBeforeSweep();
+    caseWorkerStopClosesUnscheduledOwnedLine();
 
     printf("testerclient_orderly_shutdown_test: all cases passed\n");
     return 0;

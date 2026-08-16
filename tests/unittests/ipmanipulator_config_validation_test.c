@@ -306,7 +306,7 @@ static void destroyNode(node_t *node)
 {
     if (node->instance != NULL)
     {
-        node->instance->onDestroy(node->instance);
+        node->instance->onDestroy(node->instance, wwLifecycleStartupRollback());
         node->instance = NULL;
     }
 

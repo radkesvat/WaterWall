@@ -152,6 +152,11 @@ option(ENABLE_ASAN "enable address sanitizer" OFF)
 option(ENABLE_TSAN "enable thread sanitizer" OFF)
 option(ENABLE_LSAN "enable leak sanitizer" OFF)
 option(ENABLE_USAN "enable undefined behaviour sanitizer" OFF)
+option(ALLOCATOR_BYPASS "use the system allocator instead of mimalloc" OFF)
+if(ENABLE_TSAN)
+  # TSAN observes allocation lifetimes through the system allocator interceptors.
+  set(ALLOCATOR_BYPASS ON)
+endif()
 
 #--------------------------------------------------------------------------------
 # Tunnel and Core Feature Inclusion Options
@@ -1191,6 +1196,37 @@ endif()
 # Windows does not add the tests/ subtree, so register the focused interface-name
 # test here as well. The test remains build-on-demand through its CTest runner.
 if(BUILD_TESTING AND WW_BUILD_UNIT_TESTS AND WIN32)
+  target_compile_definitions(ww PUBLIC SIGNAL_MANAGER_TEST_HOOKS=1)
+  add_executable(windows_console_shutdown_test EXCLUDE_FROM_ALL
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests/windows_console_shutdown_test.c)
+  set_target_properties(windows_console_shutdown_test PROPERTIES
+    INTERPROCEDURAL_OPTIMIZATION OFF
+    INTERPROCEDURAL_OPTIMIZATION_DEBUG OFF
+    INTERPROCEDURAL_OPTIMIZATION_RELEASE OFF
+    INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO OFF
+    INTERPROCEDURAL_OPTIMIZATION_MINSIZEREL OFF
+  )
+  target_compile_definitions(windows_console_shutdown_test PRIVATE SIGNAL_MANAGER_TEST_HOOKS=1)
+  target_link_libraries(windows_console_shutdown_test PRIVATE ww)
+  add_test(
+    NAME waterwall.windows_console_shutdown_unit
+    COMMAND
+      "${CMAKE_COMMAND}"
+      "-DUNIT_TEST_TARGET=windows_console_shutdown_test"
+      "-DUNIT_TEST_CONFIG=$<CONFIG>"
+      "-DUNIT_TEST_EXECUTABLE=$<TARGET_FILE:windows_console_shutdown_test>"
+      "-DUNIT_TEST_BUILD_DIR=${CMAKE_BINARY_DIR}"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests/run_unit_test.cmake"
+  )
+  set_tests_properties(waterwall.windows_console_shutdown_unit PROPERTIES
+    TIMEOUT 120
+    LABELS "unit;signal-manager;shutdown;windows"
+    RESOURCE_LOCK waterwall_unit_test_build)
+  waterwall_register_platform_native_unit(
+    waterwall.windows_console_shutdown_unit
+    windows_console_shutdown_test
+    "unit;signal-manager;shutdown;windows")
+
   add_executable(wtime_epoch_test EXCLUDE_FROM_ALL
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests/wtime_epoch_test.c)
   set_target_properties(wtime_epoch_test PROPERTIES

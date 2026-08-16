@@ -83,10 +83,14 @@ CATEGORY_B = [
      ("packetstostreamArmTimeoutTimer(t, lineGetWID(packet_line))",
       "lineReuseBuffer(packet_line, buf);"),
      "sensitive-mode ping: the heartbeat is recycled before the request"),
-    ("tunnels/PacketSender/common/helpers.c", "packetsenderArmWorkerTimer",
+    ("tunnels/PacketSender/common/helpers.c", "packetsenderReportInitialTimerFailure",
      ("1",),
      ("PacketSender: failed to create worker timer on worker %u",),
-     "per-worker task: required deadline timer could not be created"),
+     "per-worker task: initial deadline timer could not be created"),
+    ("tunnels/PacketSender/common/helpers.c", "packetsenderReportTimerRearmFailure",
+     ("1",),
+     ("PacketSender: failed to rearm worker timer on worker %u",),
+     "per-worker task: an existing deadline timer could not be rearmed"),
     ("tunnels/TesterClient/common/helpers.c", "testerclientFail",
      ("1",),
      ("TesterClient: worker %u failed: %s",),
@@ -99,10 +103,6 @@ CATEGORY_B = [
     # Pre-existing implementations this policy was derived from. They are
     # covered here so the reference pattern cannot regress either.
     # ------------------------------------------------------------------
-    ("ww/instance/worker.c", "workerRun",
-     ("1",),
-     ("Worker %d event loop exited with error %d",),
-     "reference: unexpected worker event-loop failure"),
     ("ww/devices/tun/tun_linux.c", "tundeviceNoteUnexpectedThreadExit",
      ("1",),
      ("TunDevice: %s thread for device %s exited unexpectedly; the device is no longer usable",),
@@ -222,7 +222,7 @@ TESTER_INVARIANTS = [
     ("tunnels/TesterServer/downstream/fin.c", "testerserverTunnelDownStreamFinish",
      "TesterServer: downStreamFinish disabled",
      "disabled stream-mode downstream-finish callback"),
-    ("ww/managers/node_manager.c", "initializeLineOnTargetWorker",
+    ("ww/managers/node_manager.c", "nodemanagerInitializeLineOnTargetWorker",
      "NodeManager: node startup failure: line initialization failed for node",
      "persistent packet line died during chain initialization"),
 ]
@@ -274,10 +274,11 @@ RETRYABLE_LOCAL = [
 ]
 
 
-# True main-thread startup failures. They keep Category-E terminateProgram() and
-# must never appear in the Category-B manifest.
+# Synchronous startup failures propagate through the bounded startup-result
+# collector. They do not request process shutdown from inside a startup stage
+# and must never appear in the Category-B manifest.
 #
-#   (relative path, function, expected terminateProgram count, description)
+#   (relative path, function, expected startupFailureRecord count, description)
 
 MAIN_THREAD_STARTUP = [
     ("tunnels/PacketSender/common/helpers.c", "packetsenderPrepareRuntime", 11,
@@ -301,6 +302,7 @@ PROCESS_EXIT_CALLS = ("abortProgramNow", "requestProgramShutdown", "terminatePro
 VERDICT_HELPERS = ("testerclientFail", "testerserverFail")
 
 _REQUEST_CALL_RE = re.compile(r"\brequestProgramShutdown\s*\(")
+_STARTUP_FAILURE_RE = re.compile(r"\bstartupFailureRecord\s*\(")
 _HARD_ABORT_RE = re.compile(r"\babortProgramNow\s*\(\s*1\s*\)\s*;")
 _BRANCH_CALL_RE = re.compile(
     r"\b(%s)\s*\(" % "|".join(PROCESS_EXIT_CALLS + VERDICT_HELPERS)
@@ -578,9 +580,9 @@ def verify_policy(source_overrides=None):
         if missing >= 0:
             errors.append("[%s] %s::%s is missing %r" % (label, rel_path, function, snippets[missing]))
 
-    # 8: true main-thread startup failures stay Category E.
+    # 8: synchronous startup failures report status to the top-level owner.
     for rel_path, function, expected, description in MAIN_THREAD_STARTUP:
-        label = "Category-E: %s" % description
+        label = "startup failure: %s" % description
         if (rel_path, function) in category_b_keys:
             errors.append("[%s] %s::%s is a main-thread startup site and must not be in the "
                           "Category-B manifest" % (label, rel_path, function))
@@ -592,10 +594,16 @@ def verify_policy(source_overrides=None):
 
         checked["startup"] += 1
         masked, _ = analyze(content)
-        actual = count_calls(masked, span, "terminateProgram")
+        actual = len(_STARTUP_FAILURE_RE.findall(masked, span[0], span[1]))
         if actual != expected:
-            errors.append("[%s] %s::%s has %d terminateProgram() call(s), expected %d"
+            errors.append("[%s] %s::%s has %d startupFailureRecord() call(s), expected %d"
                           % (label, rel_path, function, actual, expected))
+
+        for call_name in PROCESS_EXIT_CALLS:
+            used = count_calls(masked, span, call_name)
+            if used != 0:
+                errors.append("[%s] %s::%s calls %s() %d time(s); startup stages must propagate status"
+                              % (label, rel_path, function, call_name, used))
 
     return errors, checked
 
@@ -748,11 +756,11 @@ def run_mutation_tests():
             runner.expect_failure("%s::%s gained %s()" % (rel_path, function, call_name),
                                   rel_path, injected)
 
-    # 7: a main-thread startup site must not silently lose its Category-E call.
+    # 7: a startup site must not silently lose its explicit status report.
     for rel_path, function, _expected, _description in MAIN_THREAD_STARTUP:
         content = read_source(rel_path, None)
-        runner.expect_failure("%s::%s drop one terminateProgram()" % (rel_path, function),
-                              rel_path, mutate_drop_call(content, function, "terminateProgram(1);"))
+        runner.expect_failure("%s::%s drop one startupFailureRecord()" % (rel_path, function),
+                              rel_path, mutate_drop_call(content, function, "startupFailureRecord(1);"))
 
     if runner.escaped:
         print("Mutation testing FAILED: %d mutation(s) were not detected:" % len(runner.escaped))
@@ -775,7 +783,7 @@ def main():
 
     print("Orderly Shutdown Policy Check PASSED: %d request/fallback site(s) across %d Category-B "
           "function(s), %d caller stop(s), %d tester invariant(s), %d buffer-ownership site(s), "
-          "%d retryable path(s), %d Category-E startup site(s)."
+          "%d retryable path(s), %d startup-status site(s)."
           % (checked["requests"], checked["category_b"], checked["callers"], checked["invariants"],
              checked["recycles"], checked["retryable"], checked["startup"]))
 

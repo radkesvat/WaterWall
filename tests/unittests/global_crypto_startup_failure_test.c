@@ -143,13 +143,14 @@ static void runStartupFailure(startup_failure_mode_t mode)
     if (child == 0)
     {
         discard close(pipe_fds[0]);
-        audit_fd = pipe_fds[1];
-        require(atexit(auditFailedStartup) == 0, "failed to register startup audit callback");
+        audit_fd                         = pipe_fds[1];
         failure_mode                     = mode;
         inject_crypto_init_failure       = mode == kStartupFailureBeforeBackends;
         ww_construction_data_t init_data = {0};
-        createGlobalState(init_data);
-        _Exit(99);
+        require(! wwStartupSucceeded(createGlobalState(init_data)),
+                "injected crypto initialization failure unexpectedly succeeded");
+        auditFailedStartup();
+        _Exit(1);
     }
 
     discard close(pipe_fds[1]);

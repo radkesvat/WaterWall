@@ -25,6 +25,67 @@ env:
   CCACHE_DIR: ${{ github.workspace }}/.ccache
 
 jobs:
+  linux-tsan:
+    name: linux-tsan-shutdown
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: |
+            ${{ env.cpm-path }}
+            ${{ github.workspace }}/.ccache
+          key: ${{ env.cpm-key }}-linux-tsan-${{ hashFiles('**/CMakeLists.txt', '**/*.cmake') }}
+          restore-keys: |
+            ${{ env.cpm-key }}-linux-
+            ${{ env.cpm-key }}-
+          enableCrossOsArchive: false
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build ccache
+      - name: Configure focused TSAN units
+        run: cmake --preset linux-tsan-unit -DCPM_SOURCE_CACHE=${{ env.cpm-path }}
+      - name: Build focused TSAN units
+        run: cmake --build --preset linux-tsan-unit -j8
+      - name: Run focused TSAN units
+        env:
+          TSAN_OPTIONS: halt_on_error=1
+        run: ctest --preset linux-tsan-unit --output-on-failure
+
+  windows-shutdown:
+    name: windows-shutdown
+    runs-on: windows-2025-vs2026
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: |
+            ${{ env.cpm-path }}
+            ${{ github.workspace }}/.ccache
+          key: ${{ env.cpm-key }}-windows-shutdown-${{ hashFiles('**/CMakeLists.txt', '**/*.cmake') }}
+          restore-keys: |
+            ${{ env.cpm-key }}-windows-
+            ${{ env.cpm-key }}-
+          enableCrossOsArchive: false
+      - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
+        with:
+          arch: x64
+      - name: Install dependencies
+        run: choco install -y ninja nasm ccache
+      - name: Configure focused Windows shutdown units
+        run: >
+          cmake --preset windows-iocp-unit
+          -DCPM_SOURCE_CACHE="${{ env.cpm-path }}"
+      - name: Build focused Windows shutdown units
+        run: >
+          cmake --build build/windows-iocp-unit --config Release --parallel
+          --target windows_console_shutdown_test iocp_native_test
+      - name: Run focused Windows shutdown units
+        run: >
+          ctest --test-dir build/windows-iocp-unit -C Release --output-on-failure
+          -R '^waterwall\.(windows_console_shutdown_unit|iocp_native)$'
+
   android:
     env:
       ANDROID_NDK_VERSION: "28.2.13676358" # NDK r28c

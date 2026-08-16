@@ -307,7 +307,7 @@ static void testConfiguredSniLengthBounds(void)
     cJSON    *settings = createTlsSettings(maximum_sni, NULL);
     tunnel_t *tunnel   = createTlsClientFromSettings(&node, settings);
     require(tunnel != NULL, "maximum-length TlsClient SNI was rejected");
-    tlsclientTunnelDestroy(tunnel);
+    tlsclientTunnelDestroy(tunnel, wwLifecycleStartupRollback());
     cJSON_Delete(settings);
 
     settings = createTlsSettings(oversized_sni, NULL);
@@ -333,7 +333,7 @@ static void testConfiguredClientHelloFramingBounds(void)
     cJSON    *settings = createTlsSettingsWithAlpnWireLength(kTestLargeAlpnWireSize, NULL);
     tunnel_t *tunnel   = createTlsClientFromSettings(&node, settings);
     require(tunnel != NULL, "a frameable large ALPN configuration was rejected");
-    tlsclientTunnelDestroy(tunnel);
+    tlsclientTunnelDestroy(tunnel, wwLifecycleStartupRollback());
     cJSON_Delete(settings);
 
     settings = createTlsSettingsWithAlpnWireLength(kTlsClientMaxAlpnWireLength, NULL);
@@ -349,7 +349,7 @@ static void testConfiguredClientHelloFramingBounds(void)
     settings = createTlsSettingsWithAlpnWireLength(16, "inner.example.com");
     tunnel   = createTlsClientFromSettings(&node, settings);
     require(tunnel != NULL, "a frameable ECH ClientHello configuration was rejected");
-    tlsclientTunnelDestroy(tunnel);
+    tlsclientTunnelDestroy(tunnel, wwLifecycleStartupRollback());
     cJSON_Delete(settings);
 
     GSTATE.workers_count = saved_workers_count;
@@ -515,7 +515,7 @@ static void testApiSniLengthBounds(void)
     require(result.result_code == kApiResultError && result.buffer == NULL,
             "ClientHello API accepted an oversized SNI");
 
-    tlsclientTunnelDestroy(tunnel);
+    tlsclientTunnelDestroy(tunnel, wwLifecycleStartupRollback());
     cJSON_Delete(settings);
     workerEnvTeardown(&env);
 }
@@ -579,7 +579,7 @@ static void testTypedClientHelloGeneration(void)
             "typed generation let the lwIP pseudo-worker use worker 0's context");
     testWorkerBindWID(0);
 
-    tlsclientTunnelDestroy(tunnel);
+    tlsclientTunnelDestroy(tunnel, wwLifecycleStartupRollback());
     cJSON_Delete(settings);
     workerEnvTeardown(&env);
 }
@@ -842,7 +842,7 @@ static void testHttp11Negotiation(void)
     SSL_free(client);
     SSL_free(server);
     SSL_CTX_free(server_context);
-    tlsclientTunnelDestroy(tunnel);
+    tlsclientTunnelDestroy(tunnel, wwLifecycleStartupRollback());
     GSTATE.workers_count = saved_workers_count;
     testWorkerRegistryRestore(&g_test_worker_registry);
     cJSON_Delete(settings);

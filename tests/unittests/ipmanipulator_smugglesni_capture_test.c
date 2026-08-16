@@ -49,7 +49,9 @@ static void envSetup(test_env_t *env)
         env->workers[wid].buffer_pool    = env->buffer_pools[wid];
         env->workers[wid].wios_pool      = env->wios_pools[wid];
         env->workers[wid].has_event_loop = true;
+        mutexInit(&env->workers[wid].control_mutex);
         workerMessagesInit(&env->workers[wid]);
+        workerMessagesOpenAdmission(&env->workers[wid]);
     }
     env->workers[2].wid = 2;
 
@@ -74,6 +76,7 @@ static void envTeardown(test_env_t *env)
     for (wid_t wid = 0; wid < 2; ++wid)
     {
         workerMessagesDestroy(&env->workers[wid]);
+        mutexDestroy(&env->workers[wid].control_mutex);
         wloopDestroy(&env->loops[wid]);
     }
 

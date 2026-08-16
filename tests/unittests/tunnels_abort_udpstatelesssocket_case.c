@@ -44,7 +44,7 @@ int tunnelsAbortUdpStatelessSocketDestroyCase(void)
 
     state->socket.idle_tables[0] = (local_idle_table_t *) &idle_table_sentinel;
 
-    udpstatelesssocketTunnelDestroy(t);
+    udpstatelesssocketTunnelDestroy(t, wwLifecycleStartupRollback());
 
     return 0;
 }

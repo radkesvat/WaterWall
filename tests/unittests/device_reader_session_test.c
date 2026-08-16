@@ -67,9 +67,9 @@ static unsigned int             tracked_pool_destroy_count;
 static buffer_pool_t           *tracked_reuse_pool;
 static unsigned int             tracked_reuse_count;
 
-bool __wrap_sendWorkerMessageForceQueueWithCleanup(wid_t wid, WorkerMessageCallback callback,
-                                                   WorkerMessageCleanupCallback cleanup, void *arg1, void *arg2,
-                                                   void *arg3);
+worker_message_submit_result_e __wrap_sendWorkerMessageForceQueueWithCleanup(wid_t wid, WorkerMessageCallback callback,
+                                                                             WorkerMessageCleanupCallback cleanup,
+                                                                             void *arg1, void *arg2, void *arg3);
 void __real_memoryFree(void *ptr);
 void __wrap_memoryFree(void *ptr);
 void __real_masterpoolDestroy(master_pool_t *pool);
@@ -86,14 +86,14 @@ static void require(bool condition, const char *message)
     }
 }
 
-bool __wrap_sendWorkerMessageForceQueueWithCleanup(wid_t wid, WorkerMessageCallback callback,
-                                                   WorkerMessageCleanupCallback cleanup, void *arg1, void *arg2,
-                                                   void *arg3)
+worker_message_submit_result_e __wrap_sendWorkerMessageForceQueueWithCleanup(wid_t wid, WorkerMessageCallback callback,
+                                                                             WorkerMessageCleanupCallback cleanup,
+                                                                             void *arg1, void *arg2, void *arg3)
 {
     discard wid;
     if (fail_post)
     {
-        cleanup(arg1, arg2, arg3);
+        cleanup(arg1, arg2, arg3, kWorkerMessageCancelEnqueueFailure);
         return false;
     }
 
@@ -167,7 +167,6 @@ static void envSetup(test_env_t *env)
     GSTATE.masterpool_buffer_pools_small = env->small_master;
     GSTATE.workers_count                 = 2;
     testWorkerRegistryInstall(&g_test_worker_registry);
-    atomicStoreExplicit(&GSTATE.application_stopping_flag, false, memory_order_release);
     testWorkerBindWID(0);
 }
 
@@ -209,7 +208,7 @@ static void deliverMessage(unsigned int index)
 static void cleanupMessage(unsigned int index)
 {
     captured_message_t *message = &captured_messages[index];
-    message->cleanup(message->arg1, message->arg2, message->arg3);
+    message->cleanup(message->arg1, message->arg2, message->arg3, kWorkerMessageCancelQuiesced);
 }
 
 static void *deliverFirstMessageRoutine(void *userdata)

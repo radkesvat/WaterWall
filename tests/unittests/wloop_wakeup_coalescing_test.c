@@ -3,6 +3,7 @@
  * source once with the pipe backend and once with the socketpair backend.
  */
 
+#include "wloop_internal.h"
 #include "wwapi.h"
 
 #include "worker_registry_fixture.h"
@@ -158,7 +159,7 @@ static void postEvent(wloop_t *loop, wevent_cb callback, void *userdata, uintptr
     event.cb       = callback;
     event.userdata = userdata;
     event.privdata = (void *) id;
-    require(wloopPostControlEvent(loop, &event), "custom event post was rejected");
+    require(wloopPostEvent(loop, &event), "custom event post was rejected");
 }
 
 static void testDescriptorConfigurationAndCoalescing(env_t *env)
@@ -190,7 +191,7 @@ static void testDescriptorConfigurationAndCoalescing(env_t *env)
     require(wloopTestWakeWriteAttempts() - attempts_before == 1,
             "posts covered by one pending batch emitted multiple wake tokens");
 
-    require(wloopRequestStop(runner.loop), "stop request was not covered by the existing event wake");
+    require(wloopRequestQuiesce(runner.loop), "stop request was not covered by the existing event wake");
     require(wloopTestWakeWriteAttempts() - attempts_before == 1,
             "stop request emitted a token despite an already-pending event wake");
 
@@ -227,7 +228,7 @@ static void testWakeWriteErrors(env_t *env)
     wloopTestSetNextWakeWriteError(EIO);
     wevent_t event;
     memoryZero(&event, sizeof(event));
-    require(! wloopPostControlEvent(runner.loop, &event), "hard wake error accepted a custom event");
+    require(! wloopPostEvent(runner.loop, &event), "hard wake error accepted a custom event");
     require(wloopTestWakeWriteAttempts() - attempts_before == 1, "hard wake error had an unexpected retry");
     require(! wloopTestWakeupPending(runner.loop), "hard wake error armed the wake state");
     require(runner.loop->custom_events.size == 0, "hard wake error queued a custom event");
@@ -246,7 +247,7 @@ static void testDescriptorConfigurationFailure(env_t *env)
 
     wevent_t event;
     memoryZero(&event, sizeof(event));
-    require(! wloopPostControlEvent(runner.loop, &event), "descriptor configuration failure accepted an event");
+    require(! wloopPostEvent(runner.loop, &event), "descriptor configuration failure accepted an event");
     require(runner.loop->eventfds[0] == -1 && runner.loop->eventfds[1] == -1,
             "descriptor configuration failure retained a wake endpoint");
     require(runner.loop->custom_events.size == 0, "descriptor configuration failure queued an event");
@@ -267,7 +268,7 @@ static void testDescriptorRegistrationRejection(env_t *env)
 
     wevent_t event;
     memoryZero(&event, sizeof(event));
-    require(! wloopPostControlEvent(runner.loop, &event), "descriptor registration rejection accepted an event");
+    require(! wloopPostEvent(runner.loop, &event), "descriptor registration rejection accepted an event");
     require(runner.loop->eventfds[0] == -1 && runner.loop->eventfds[1] == -1,
             "descriptor registration rejection retained a wake endpoint");
     require(runner.loop->custom_events.size == 0, "descriptor registration rejection queued an event");
@@ -285,13 +286,13 @@ static void testStopPublicationAfterWakeFailure(env_t *env)
 
     uint64_t attempts_before = wloopTestWakeWriteAttempts();
     wloopTestSetNextWakeWriteError(EIO);
-    require(! wloopRequestStop(runner.loop), "hard wake error was reported as an immediate stop wake");
-    require(wloopStopRequested(runner.loop), "hard wake error retracted the level-triggered stop condition");
+    require(! wloopRequestQuiesce(runner.loop), "hard wake error was reported as an immediate stop wake");
+    require(wloopQuiesceRequested(runner.loop), "hard wake error retracted the level-triggered stop condition");
     require(wloopTestWakeWriteAttempts() - attempts_before == 1, "failed stop wake had an unexpected retry");
 
     for (size_t i = 0; i < REPEATED_STOPS; ++i)
     {
-        require(wloopRequestStop(runner.loop), "repeated published stop request failed");
+        require(wloopRequestQuiesce(runner.loop), "repeated published stop request failed");
     }
     require(wloopTestWakeWriteAttempts() - attempts_before == 1, "repeated stop requests emitted more wake tokens");
 
@@ -321,7 +322,7 @@ static void orderedDeliveryCallback(wevent_t *event)
     ++delivery->next;
     if (delivery->next == delivery->total)
     {
-        require(wloopRequestStop(delivery->loop), "final ordered callback could not request a stop");
+        require(wloopRequestQuiesce(delivery->loop), "final ordered callback could not request a stop");
     }
 }
 
@@ -369,7 +370,7 @@ static void recursiveDeliveryCallback(wevent_t *event)
     }
     else
     {
-        require(wloopRequestStop(delivery->loop), "recursive callback chain could not request a stop");
+        require(wloopRequestQuiesce(delivery->loop), "recursive callback chain could not request a stop");
     }
 }
 
@@ -431,7 +432,7 @@ static void batchDeliveryCallback(wevent_t *event)
         delivery->failed = true;
     }
     delivery->stage = 3;
-    require(wloopRequestStop(delivery->loop), "subsequent wake batch could not request a stop");
+    require(wloopRequestQuiesce(delivery->loop), "subsequent wake batch could not request a stop");
 }
 
 static void testPostDuringCallbackUsesNextBatch(env_t *env)
@@ -488,7 +489,7 @@ static void concurrentDeliveryCallback(wevent_t *event)
     unsigned int previous = atomicAddExplicit(&delivery->delivered, 1, memory_order_acq_rel);
     if ((size_t) previous + 1 == delivery->total)
     {
-        require(wloopRequestStop(delivery->loop), "concurrent delivery could not request a stop");
+        require(wloopRequestQuiesce(delivery->loop), "concurrent delivery could not request a stop");
     }
 }
 

@@ -10,21 +10,20 @@
  * back to abortProgramNow() only if that handoff is refused, and then return.
  * This header turns each of those properties into a machine-checkable form:
  *
- *   - the three process APIs are linker-wrapped and recorded instead of being
+ *   - the two process APIs are linker-wrapped and recorded instead of being
  *     treated as test failures, so a test can assert the exact call, its exit
  *     code, and that the callback returned afterwards;
  *   - requestProgramShutdown() returns a value the test chooses, so the refused
  *     handoff is reachable without a real signal manager;
- *   - abortProgramNow() and terminateProgram() keep their _Noreturn contract by
- *     leaving the process, which is what makes the refused-handoff case run in a
- *     forked child;
+ *   - abortProgramNow() keeps its _Noreturn contract by leaving the process,
+ *     which is what makes the refused-handoff case run in a forked child;
  *   - everything else (buffer ledger, neighbour trace, worker environment, bare
  *     lines) is reused from tunnel_line_failure_harness.h.
  *
  * Like that header, this one deliberately includes no tunnel structure.h.
  *
  * Every test that includes this header must link with:
- *   -Wl,--wrap=terminateProgram -Wl,--wrap=abortProgramNow
+ *   -Wl,--wrap=abortProgramNow
  *   -Wl,--wrap=requestProgramShutdown -Wl,--wrap=bufferpoolGetLargeBuffer
  *   -Wl,--wrap=bufferpoolGetSmallBuffer -Wl,--wrap=bufferpoolReuseBuffer
  *   -Wl,--wrap=sbufDestroy
@@ -46,8 +45,6 @@ enum
     // requestProgramShutdown(1). This is the only shape a Category-B site may
     // use to leave the process.
     kTosChildFallbackAbort = 71,
-    // The child reached terminateProgram(), which no converted site may do.
-    kTosChildTerminate = 72,
     // The child's production call returned instead of leaving the process.
     kTosChildReturned = 73,
     // abortProgramNow(1) reached without any request first: a Category-D
@@ -67,7 +64,6 @@ typedef struct tos_process_api_s
     uint32_t request_calls;
     int      request_codes[8];
     uint32_t abort_calls;
-    uint32_t terminate_calls;
     // What requestProgramShutdown() reports back. A worker-0 handoff that is
     // refused is what forces the hard fallback.
     bool accept_request;
@@ -75,7 +71,6 @@ typedef struct tos_process_api_s
 
 static tos_process_api_t g_tos_api = {.accept_request = true};
 
-_Noreturn void __wrap_terminateProgram(int exit_code);
 _Noreturn void __wrap_abortProgramNow(int exit_code);
 bool           __wrap_requestProgramShutdown(int exit_code);
 
@@ -103,7 +98,7 @@ _Noreturn void __wrap_abortProgramNow(int exit_code)
             (unsigned) g_tos_api.request_calls);
     fflush(stderr);
 
-    if (exit_code != 1 || g_tos_api.terminate_calls != 0)
+    if (exit_code != 1)
     {
         _Exit(kTosChildBadAbort);
     }
@@ -123,14 +118,6 @@ _Noreturn void __wrap_abortProgramNow(int exit_code)
     _Exit(kTosChildBadAbort);
 }
 
-_Noreturn void __wrap_terminateProgram(int exit_code)
-{
-    ++g_tos_api.terminate_calls;
-    fprintf(stderr, "[%s]: terminateProgram(%d)\n", g_twf_case, exit_code);
-    fflush(stderr);
-    _Exit(kTosChildTerminate);
-}
-
 static void tosResetProcessApi(bool accept_request)
 {
     memoryZero(&g_tos_api, sizeof(g_tos_api));
@@ -139,7 +126,7 @@ static void tosResetProcessApi(bool accept_request)
 
 /**
  * The whole Category-B contract for an accepted handoff: exactly one request
- * with the expected exit code, no hard abort, and no legacy terminate.
+ * with the expected exit code and no hard abort.
  */
 static void tosRequireAcceptedRequest(int expected_code)
 {
@@ -148,14 +135,12 @@ static void tosRequireAcceptedRequest(int expected_code)
                        (uint32_t) expected_code,
                        "requestProgramShutdown() used the wrong exit code");
     twfRequireEqualU32(g_tos_api.abort_calls, 0, "an accepted handoff must not reach abortProgramNow()");
-    twfRequireEqualU32(g_tos_api.terminate_calls, 0, "a converted site must never call terminateProgram()");
 }
 
 static void tosRequireNoProcessApiCall(void)
 {
     twfRequireEqualU32(g_tos_api.request_calls, 0, "this path must not request a process shutdown");
     twfRequireEqualU32(g_tos_api.abort_calls, 0, "this path must not hard-abort");
-    twfRequireEqualU32(g_tos_api.terminate_calls, 0, "this path must not terminate the process");
 }
 
 // ---------------------------------------------------------------------------
@@ -210,6 +195,13 @@ static void tosWorkerEnvSetup(tos_worker_env_t *env, wid_t count, uint32_t large
     env->wios_master = masterpoolCreateWithCapacity(16);
     twfRequire(env->wios_master != NULL, "failed to create the test wios master pool");
 
+    GSTATE.flag_initialized      = true;
+    GSTATE.workers               = env->workers;
+    GSTATE.workers_count         = (uint32_t) count + 1U;
+    GSTATE.shortcut_buffer_pools = env->pools;
+    GSTATE.shortcut_loops        = env->loops;
+    GSTATE.shortcut_wios_pools   = env->wios_pools;
+
     for (wid_t wi = 0; wi < count; ++wi)
     {
         env->large_masters[wi] = masterpoolCreateWithCapacity(8);
@@ -238,15 +230,11 @@ static void tosWorkerEnvSetup(tos_worker_env_t *env, wid_t count, uint32_t large
         env->workers[wi].buffer_pool    = env->pools[wi];
         env->workers[wi].wios_pool      = env->wios_pools[wi];
         env->workers[wi].has_event_loop = true;
+        mutexInit(&env->workers[wi].control_mutex);
         workerMessagesInit(&env->workers[wi]);
+        workerMessagesOpenAdmission(&env->workers[wi]);
     }
 
-    GSTATE.flag_initialized      = true;
-    GSTATE.workers               = env->workers;
-    GSTATE.workers_count         = (uint32_t) count + 1U; // + the lwIP pseudo-worker
-    GSTATE.shortcut_buffer_pools = env->pools;
-    GSTATE.shortcut_loops        = env->loops;
-    GSTATE.shortcut_wios_pools   = env->wios_pools;
     testWorkerBindWID(0);
 
     twfRequire(getWorkersCount() == count, "the published worker count is not what getWorkersCount() reports");
@@ -269,7 +257,7 @@ static wid_t tosSetCurrentWorker(wid_t wid)
 }
 
 /**
- * Run everything sendWorkerMessageForceQueue() posted to @p wid, which is what
+ * Run everything sendWorkerMessageForceQueueBestEffort() posted to @p wid, which is what
  * executes a task that onStart only enqueued.
  */
 static void tosPumpWorker(tos_worker_env_t *env, wid_t wid)
@@ -301,6 +289,7 @@ static void tosWorkerEnvTeardown(tos_worker_env_t *env)
     for (wid_t wi = 0; wi < env->count; ++wi)
     {
         workerMessagesDestroy(&env->workers[wi]);
+        mutexDestroy(&env->workers[wi].control_mutex);
     }
 }
 
@@ -308,8 +297,8 @@ static void tosWorkerEnvTeardown(tos_worker_env_t *env)
 // forked sub-cases
 // ---------------------------------------------------------------------------
 //
-// abortProgramNow() and terminateProgram() must not return, so any case that
-// can reach one needs its own process. fork() is not wrapped by this harness,
+// abortProgramNow() must not return, so any case that can reach it needs its
+// own process. fork() is not wrapped by this harness,
 // so the plain libc entry points are the real ones.
 
 /**

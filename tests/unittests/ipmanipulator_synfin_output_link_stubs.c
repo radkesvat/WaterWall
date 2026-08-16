@@ -42,6 +42,6 @@ bool ipmanipulatorSynfinTestScheduleTimed(wid_t wid, WorkerMessageCallback callb
     discard wid;
     discard callback;
     discard delay_ms;
-    cleanup(arg1, arg2, arg3);
+    cleanup(arg1, arg2, arg3, kWorkerMessageCancelEnqueueFailure);
     return false;
 }

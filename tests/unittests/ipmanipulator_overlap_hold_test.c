@@ -88,7 +88,7 @@ bool ipmanipulatorOverlapTestScheduleTimed(wid_t wid, WorkerMessageCallback call
 {
     if (g_schedule_should_fail)
     {
-        cleanup(arg1, arg2, arg3);
+        cleanup(arg1, arg2, arg3, kWorkerMessageCancelEnqueueFailure);
         return false;
     }
 
@@ -278,7 +278,7 @@ static void cleanupTimedMessage(uint32_t index)
     timed_message_t *message = &timed_messages[index];
     message->consumed        = true;
     testWorkerBindWID(message->wid);
-    message->cleanup(message->arg1, message->arg2, message->arg3);
+    message->cleanup(message->arg1, message->arg2, message->arg3, kWorkerMessageCancelQuiesced);
 }
 
 static void setupEnv(test_env_t *env)
@@ -306,7 +306,9 @@ static void setupEnv(test_env_t *env)
         env->workers[wid].buffer_pool    = env->buffer_pools[wid];
         env->workers[wid].wios_pool      = env->wios_pools[wid];
         env->workers[wid].has_event_loop = true;
+        mutexInit(&env->workers[wid].control_mutex);
         workerMessagesInit(&env->workers[wid]);
+        workerMessagesOpenAdmission(&env->workers[wid]);
 
         env->lines[wid] = memoryAllocateZero(sizeof(*env->lines[wid]));
         require(env->lines[wid] != NULL, "failed to allocate an overlap-sni test line");
@@ -365,6 +367,8 @@ static void destroyEnv(test_env_t *env)
 
     workerMessagesDestroy(&env->workers[0]);
     workerMessagesDestroy(&env->workers[1]);
+    mutexDestroy(&env->workers[0].control_mutex);
+    mutexDestroy(&env->workers[1].control_mutex);
     wloopDestroy(&env->loops[0]);
     wloopDestroy(&env->loops[1]);
     testWorkerRegistryRestore(&g_test_worker_registry);

@@ -115,7 +115,7 @@ bool ipmanipulatorSmuggleFinTestScheduleTimed(wid_t wid, WorkerMessageCallback c
 {
     if (g_schedule_should_fail)
     {
-        cleanup(arg1, arg2, arg3);
+        cleanup(arg1, arg2, arg3, kWorkerMessageCancelEnqueueFailure);
         return false;
     }
 
@@ -138,7 +138,7 @@ bool ipmanipulatorSmuggleFinTestScheduleImmediate(wid_t wid, WorkerMessageCallba
 {
     if (reject_immediate_messages)
     {
-        cleanup(arg1, arg2, arg3);
+        cleanup(arg1, arg2, arg3, kWorkerMessageCancelEnqueueFailure);
         return false;
     }
 
@@ -436,7 +436,7 @@ static void cleanupTimedMessages(void)
         timed_message_t *message = &timed_messages[i];
         if (! message->consumed)
         {
-            message->cleanup(message->arg1, message->arg2, message->arg3);
+            message->cleanup(message->arg1, message->arg2, message->arg3, kWorkerMessageCancelQuiesced);
             message->consumed = true;
         }
     }
@@ -449,7 +449,7 @@ static void cleanupImmediateMessages(void)
         immediate_message_t *message = &immediate_messages[i];
         if (! message->consumed)
         {
-            message->cleanup(message->arg1, message->arg2, message->arg3);
+            message->cleanup(message->arg1, message->arg2, message->arg3, kWorkerMessageCancelQuiesced);
             message->consumed = true;
         }
     }
@@ -519,7 +519,7 @@ static void cancelImmediateMessage(uint32_t index)
     immediate_message_t *message = &immediate_messages[index];
     require(! message->consumed, "immediate message was already consumed");
 
-    message->cleanup(message->arg1, message->arg2, message->arg3);
+    message->cleanup(message->arg1, message->arg2, message->arg3, kWorkerMessageCancelQuiesced);
     message->consumed = true;
 }
 

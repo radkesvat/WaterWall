@@ -242,6 +242,38 @@ static void casePingTimerFailureStopsStartup(void)
     tosWorkerEnvTeardown(&g_env);
 }
 
+static void caseWorkerStopClosesPublishedControlLineExactlyOnce(void)
+{
+    twfSetCase("authenticationclient worker stop closes its published control line exactly once");
+    tosResetProcessApi(true);
+
+    authenticationclient_fixture_t fixture;
+    fixtureSetup(&fixture);
+
+    twf_line_pool_t line_pool;
+    twfLinePoolSetup(&line_pool, fixture.client->lstate_size, 2);
+    line_t *line = twfLinePoolCreateLine(&line_pool);
+    lineLock(line);
+
+    authenticationclient_lstate_t *ls = lineGetState(line, fixture.client);
+    authenticationclientLinestateInitialize(ls, lineGetBufferPool(line));
+
+    authenticationclient_tstate_t *ts = tunnelGetState(fixture.client);
+    ts->control_line                  = line;
+    authenticationclientTunnelOnWorkerStop(fixture.client, 0, wwLifecycleProcessShutdown());
+
+    twfRequire(ts->control_line == NULL, "worker stop retained the control-line inventory slot");
+    twfRequire(! lineIsAlive(line), "worker stop left the owned control line logically alive");
+    twfRequireEqualU32(fixture.trace.next_finish, 1, "worker stop did not finish the control line exactly once");
+
+    authenticationclientTunnelOnWorkerStop(fixture.client, 0, wwLifecycleProcessShutdown());
+    twfRequireEqualU32(fixture.trace.next_finish, 1, "repeated worker stop finished the control line twice");
+
+    lineUnlock(line);
+    twfLinePoolTeardown(&line_pool);
+    fixtureTeardown(&fixture);
+}
+
 int main(void)
 {
     caseHealthyTimersAreArmed();
@@ -249,6 +281,7 @@ int main(void)
     caseReconnectTimerFailure();
     caseRefusedHandoffAborts();
     casePingTimerFailureStopsStartup();
+    caseWorkerStopClosesPublishedControlLineExactlyOnce();
 
     printf("authenticationclient_orderly_shutdown_test: all cases passed\n");
     return 0;

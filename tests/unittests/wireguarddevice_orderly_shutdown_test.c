@@ -20,6 +20,72 @@ enum
 
 static tos_worker_env_t g_env;
 
+static bool      g_fail_transport_storage;
+static int       g_refuse_queue_at = -1;
+static uint32_t  g_queue_attempts;
+static uint32_t  g_timer_attempts;
+static tunnel_t *g_start_tunnel;
+static wtimer_t  g_fake_timer;
+
+void                          *__real_memoryAllocateZero(size_t size);
+worker_message_submit_result_e __real_sendWorkerMessageForceQueueWithCleanup(wid_t wid, WorkerMessageCallback cb,
+                                                                             WorkerMessageCleanupCallback cleanup,
+                                                                             void *arg1, void *arg2, void *arg3);
+wtimer_t                      *__real_wtimerAdd(wloop_t *loop, wtimer_cb cb, uint32_t timeout_ms, uint32_t repeat);
+void                          *__wrap_memoryAllocateZero(size_t size);
+worker_message_submit_result_e __wrap_sendWorkerMessageForceQueueWithCleanup(wid_t wid, WorkerMessageCallback cb,
+                                                                             WorkerMessageCleanupCallback cleanup,
+                                                                             void *arg1, void *arg2, void *arg3);
+wtimer_t                      *__wrap_wtimerAdd(wloop_t *loop, wtimer_cb cb, uint32_t timeout_ms, uint32_t repeat);
+
+void *__wrap_memoryAllocateZero(size_t size)
+{
+    if (g_fail_transport_storage)
+    {
+        g_fail_transport_storage = false;
+        twfRequireEqualU32(g_queue_attempts, 0, "WireGuard storage failure queued worker work");
+        twfRequireEqualU32(g_timer_attempts, 0, "WireGuard storage failure published its timer");
+        twfRequire(tunnelGetState(g_start_tunnel) != NULL, "WireGuard storage failure lost tunnel state");
+        twfRequire(((wgd_tstate_t *) tunnelGetState(g_start_tunnel))->transport_lines == NULL,
+                   "WireGuard storage failure published a partial line table");
+        return NULL;
+    }
+    return __real_memoryAllocateZero(size);
+}
+
+worker_message_submit_result_e __wrap_sendWorkerMessageForceQueueWithCleanup(wid_t wid, WorkerMessageCallback cb,
+                                                                             WorkerMessageCleanupCallback cleanup,
+                                                                             void *arg1, void *arg2, void *arg3)
+{
+    discard wid;
+    discard cb;
+    discard cleanup;
+    discard arg1;
+    discard arg2;
+    discard arg3;
+
+    const uint32_t attempt = g_queue_attempts++;
+    if (g_refuse_queue_at >= 0 && attempt == (uint32_t) g_refuse_queue_at)
+    {
+        tunnel_chain_t *chain = tunnelGetChain(g_start_tunnel);
+        twfRequire(! chain->packet_chain_init_sent,
+                   "WireGuard published all-worker packet readiness before admission completed");
+        twfRequireEqualU32(g_timer_attempts, 0, "WireGuard admission failure published its timer");
+        return false;
+    }
+    return true;
+}
+
+wtimer_t *__wrap_wtimerAdd(wloop_t *loop, wtimer_cb cb, uint32_t timeout_ms, uint32_t repeat)
+{
+    discard loop;
+    discard cb;
+    discard timeout_ms;
+    discard repeat;
+    ++g_timer_attempts;
+    return &g_fake_timer;
+}
+
 typedef struct wireguarddevice_fixture_s
 {
     twf_trace_t     trace;
@@ -218,8 +284,134 @@ static void caseTransportLineFinishKillsLine(void)
     fixtureTeardown(&fixture);
 }
 
+typedef struct wireguarddevice_start_fixture_s
+{
+    tunnel_t       *wgd;
+    tunnel_t       *next;
+    tunnel_chain_t *chain;
+    line_t        **packet_lines;
+} wireguarddevice_start_fixture_t;
+
+static wireguarddevice_start_fixture_t startFixtureCreate(bool transport_side_is_next)
+{
+    wireguarddevice_start_fixture_t fixture = {0};
+    fixture.wgd                             = tunnelCreate(NULL, sizeof(wgd_tstate_t), 0);
+    fixture.next                            = tunnelCreate(NULL, 0, 0);
+    fixture.chain        = memoryAllocateZero(sizeof(tunnel_chain_t) + 3U * sizeof(generic_pool_t *));
+    fixture.packet_lines = memoryAllocateZero(3U * sizeof(*fixture.packet_lines));
+    twfRequire(fixture.wgd != NULL && fixture.next != NULL && fixture.chain != NULL && fixture.packet_lines != NULL,
+               "failed to allocate the WireGuard startup fixture");
+
+    fixture.chain->workers_count = 3;
+    fixture.chain->packet_lines  = fixture.packet_lines;
+    for (wid_t wid = 0; wid < fixture.chain->workers_count; ++wid)
+    {
+        fixture.packet_lines[wid] = (line_t *) (uintptr_t) (wid + 1U);
+    }
+    fixture.wgd->chain  = fixture.chain;
+    fixture.next->chain = fixture.chain;
+    tunnelBind(fixture.wgd, fixture.next);
+
+    wgd_tstate_t *state           = tunnelGetState(fixture.wgd);
+    state->tunnel                 = fixture.wgd;
+    state->transport_side_is_next = transport_side_is_next;
+    return fixture;
+}
+
+static void startFixtureDestroy(wireguarddevice_start_fixture_t *fixture)
+{
+    wgd_tstate_t *state = tunnelGetState(fixture->wgd);
+    memoryFree(state->transport_lines);
+    state->transport_lines      = NULL;
+    state->wg_device.loop_timer = NULL;
+    memoryFree(fixture->packet_lines);
+    memoryFree(fixture->chain);
+    tunnelDestroy(fixture->next);
+    tunnelDestroy(fixture->wgd);
+    memoryZero(fixture, sizeof(*fixture));
+}
+
+static void resetStartupInjection(tunnel_t *t)
+{
+    g_start_tunnel           = t;
+    g_fail_transport_storage = false;
+    g_refuse_queue_at        = -1;
+    g_queue_attempts         = 0;
+    g_timer_attempts         = 0;
+    memoryZero(&g_fake_timer, sizeof(g_fake_timer));
+}
+
+static void allocationFailureBody(void *argument)
+{
+    discard                         argument;
+    wireguarddevice_start_fixture_t fixture = startFixtureCreate(true);
+    resetStartupInjection(fixture.wgd);
+    ww_startup_context_t startup = {0};
+    wwStartupContextBegin(&startup);
+    g_fail_transport_storage = true;
+    wireguarddeviceTunnelOnStart(fixture.wgd);
+    const ww_startup_result_t result = wwStartupContextEnd(&startup);
+    twfRequire(! wwStartupSucceeded(result), "WireGuard did not propagate the storage startup failure");
+    twfRequireEqualU32((uint32_t) result.exit_code, 1, "WireGuard propagated the wrong startup status");
+    startFixtureDestroy(&fixture);
+}
+
+typedef struct startup_refusal_case_s
+{
+    bool transport_side_is_next;
+    int  refusal;
+} startup_refusal_case_t;
+
+static void startupRefusalBody(void *argument)
+{
+    const startup_refusal_case_t   *test_case = argument;
+    wireguarddevice_start_fixture_t fixture   = startFixtureCreate(test_case->transport_side_is_next);
+    resetStartupInjection(fixture.wgd);
+    ww_startup_context_t startup = {0};
+    wwStartupContextBegin(&startup);
+    g_refuse_queue_at = test_case->refusal;
+    wireguarddeviceTunnelOnStart(fixture.wgd);
+    const ww_startup_result_t result = wwStartupContextEnd(&startup);
+    twfRequire(! wwStartupSucceeded(result), "WireGuard did not propagate the queue-admission startup failure");
+    twfRequireEqualU32((uint32_t) result.exit_code, 1, "WireGuard propagated the wrong startup status");
+    startFixtureDestroy(&fixture);
+}
+
+static void caseStartupStorageAndAdmissionAreTransactional(void)
+{
+    twfSetCase("WireGuard mandatory startup storage and queue admission");
+    tosWorkerEnvSetup(&g_env, 3, kTestLargeBufferSize, kTestSmallBufferSize);
+    tosResetProcessApi(true);
+    allocationFailureBody(NULL);
+
+    for (int worker = 0; worker < 3; ++worker)
+    {
+        startup_refusal_case_t transport = {.transport_side_is_next = true, .refusal = worker};
+        startupRefusalBody(&transport);
+
+        startup_refusal_case_t packet = {.transport_side_is_next = false, .refusal = 3 + worker};
+        startupRefusalBody(&packet);
+    }
+
+    wireguarddevice_start_fixture_t fixture = startFixtureCreate(false);
+    resetStartupInjection(fixture.wgd);
+    ww_startup_context_t startup = {0};
+    wwStartupContextBegin(&startup);
+    wireguarddeviceTunnelOnStart(fixture.wgd);
+    const ww_startup_result_t result = wwStartupContextEnd(&startup);
+    twfRequire(wwStartupSucceeded(result), "successful WireGuard startup reported a failure");
+    wgd_tstate_t *state = tunnelGetState(fixture.wgd);
+    twfRequire(state->transport_lines != NULL, "successful startup did not publish the mandatory line table");
+    twfRequire(fixture.chain->packet_chain_init_sent, "successful startup did not publish all-worker packet readiness");
+    twfRequireEqualU32(g_queue_attempts, 6, "successful startup omitted a per-worker required task");
+    twfRequireEqualU32(g_timer_attempts, 1, "successful startup did not publish exactly one timer");
+    startFixtureDestroy(&fixture);
+    tosWorkerEnvTeardown(&g_env);
+}
+
 int main(void)
 {
+    caseStartupStorageAndAdmissionAreTransactional();
     caseRejectionIsRetriedSuccessfully();
     caseTransportLineFinishKillsLine();
     casePacketLineFinishAborts();

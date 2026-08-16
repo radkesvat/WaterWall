@@ -81,6 +81,7 @@ if(TARGET ww)
 
   add_executable(tun_windows_lifetime_test tun_windows_lifetime_test.c)
   target_include_directories(tun_windows_lifetime_test PRIVATE ${CMAKE_SOURCE_DIR}/ww/devices/tun)
+  target_link_libraries(tun_windows_lifetime_test PRIVATE ww)
   add_dependencies(waterwall_unit_tests tun_windows_lifetime_test)
 
   add_waterwall_unit_test(
@@ -200,6 +201,7 @@ if(TARGET ww)
 
   add_executable(tun_windows_receive_policy_test tun_windows_receive_policy_test.c)
   target_include_directories(tun_windows_receive_policy_test PRIVATE ${CMAKE_SOURCE_DIR}/ww/devices/tun)
+  target_link_libraries(tun_windows_receive_policy_test PRIVATE ww)
   add_dependencies(waterwall_unit_tests tun_windows_receive_policy_test)
 
   add_waterwall_unit_test(
@@ -220,6 +222,7 @@ if(TARGET ww)
 
   add_executable(raw_windows_send_policy_test raw_windows_send_policy_test.c)
   target_include_directories(raw_windows_send_policy_test PRIVATE ${CMAKE_SOURCE_DIR}/ww/devices/raw)
+  target_link_libraries(raw_windows_send_policy_test PRIVATE ww)
   add_dependencies(waterwall_unit_tests raw_windows_send_policy_test)
 
   add_waterwall_unit_test(
@@ -421,18 +424,38 @@ if(TARGET ww)
   add_dependencies(waterwall_unit_tests packet_tunnel_test)
 
   add_waterwall_unit_test(waterwall.packet_tunnel_unit packet_tunnel_test "unit;net;packet-tunnel")
-
-  if(TARGET TunDevice AND TARGET RawSocket)
-    add_executable(packet_adapter_finish_test packet_adapter_finish_test.c)
-    target_link_libraries(packet_adapter_finish_test PRIVATE TunDevice RawSocket ww)
-    add_dependencies(waterwall_unit_tests packet_adapter_finish_test)
-
-    add_waterwall_unit_test(
-      waterwall.packet_adapter_finish_unit
-      packet_adapter_finish_test
-      "unit;net;packet-tunnel;adapter"
-    )
-  endif()
+  add_library(missing_abi_node_library SHARED legacy_node_library.c)
+  target_compile_definitions(missing_abi_node_library PRIVATE FIXTURE_NODE_TYPE="MissingAbiFixture")
+  set_target_properties(missing_abi_node_library PROPERTIES PREFIX "")
+  add_library(mismatched_abi_node_library SHARED legacy_node_library.c)
+  target_compile_definitions(
+    mismatched_abi_node_library
+    PRIVATE FIXTURE_NODE_TYPE="MismatchedAbiFixture" FIXTURE_ABI_VERSION=1
+  )
+  set_target_properties(mismatched_abi_node_library PROPERTIES PREFIX "")
+  add_library(lifecycle_v2_node_library SHARED lifecycle_v2_node_library.c)
+  set_target_properties(lifecycle_v2_node_library PROPERTIES PREFIX "")
+  add_executable(legacy_node_compatibility_test legacy_node_compatibility_test.c)
+  target_compile_definitions(
+    legacy_node_compatibility_test
+    PRIVATE
+      MISSING_NODE_LIBRARY_PATH="$<TARGET_FILE:missing_abi_node_library>"
+      MISMATCHED_NODE_LIBRARY_PATH="$<TARGET_FILE:mismatched_abi_node_library>"
+      LIFECYCLE_V2_NODE_LIBRARY_PATH="$<TARGET_FILE:lifecycle_v2_node_library>"
+  )
+  target_link_libraries(legacy_node_compatibility_test PRIVATE ww)
+  add_dependencies(
+    legacy_node_compatibility_test
+    missing_abi_node_library
+    mismatched_abi_node_library
+    lifecycle_v2_node_library
+  )
+  add_dependencies(waterwall_unit_tests legacy_node_compatibility_test)
+  add_waterwall_unit_test(
+    waterwall.lifecycle_node_abi_v2_unit
+    legacy_node_compatibility_test
+    "unit;net;tunnels;node-manager;abi;lifecycle-v2;portable"
+  )
 
   add_executable(users_runtime_migration_test
     users_runtime_migration_test.c
@@ -756,6 +779,7 @@ if(TARGET ww)
     )
 
     add_executable(wloop_stop_request_test wloop_stop_request_test.c)
+    target_link_options(wloop_stop_request_test PRIVATE "-Wl,--wrap=send")
     target_link_libraries(wloop_stop_request_test PRIVATE ww)
     add_dependencies(waterwall_unit_tests wloop_stop_request_test)
 
@@ -798,6 +822,8 @@ if(TARGET ww)
 
     if(UNIX)
       add_executable(shutdown_manager_test shutdown_manager_test.c)
+      target_compile_definitions(ww PUBLIC APPLICATION_SHUTDOWN_TEST_HOOKS=1)
+      target_compile_definitions(shutdown_manager_test PRIVATE APPLICATION_SHUTDOWN_TEST_HOOKS=1)
       target_link_libraries(shutdown_manager_test PRIVATE ww)
       add_dependencies(waterwall_unit_tests shutdown_manager_test)
 
@@ -808,6 +834,8 @@ if(TARGET ww)
       )
 
       add_executable(shutdown_signal_test shutdown_signal_test.c)
+      target_compile_definitions(ww PUBLIC SIGNAL_MANAGER_TEST_HOOKS=1)
+      target_compile_definitions(shutdown_signal_test PRIVATE SIGNAL_MANAGER_TEST_HOOKS=1)
       target_link_libraries(shutdown_signal_test PRIVATE ww)
       add_dependencies(waterwall_unit_tests shutdown_signal_test)
 
@@ -863,7 +891,23 @@ if(TARGET ww)
       "unit;worker;identity;threads"
     )
 
-    add_executable(worker_context_helpers_test worker_context_helpers_test.c)
+    add_executable(worker_context_helpers_test
+      worker_context_helpers_test.c
+      ${CMAKE_SOURCE_DIR}/ww/instance/worker_messages.c
+      ${CMAKE_SOURCE_DIR}/ww/net/pipe_tunnel.c
+    )
+    target_compile_definitions(worker_context_helpers_test PRIVATE
+      WW_WORKER_MESSAGE_TEST_SEAM=1
+      WW_PIPE_TUNNEL_TEST_SEAM=1
+    )
+    if(NOT MSVC)
+      target_compile_definitions(worker_context_helpers_test PRIVATE WW_WORKER_MESSAGE_LINK_WRAP=1)
+      target_link_options(worker_context_helpers_test PRIVATE
+        "-Wl,--wrap=wloopPostEvent"
+        "-Wl,--wrap=wtimerAdd"
+        "-Wl,--wrap=signalmanagerRequestShutdownPreservingAcceptedStatus"
+      )
+    endif()
     target_link_libraries(worker_context_helpers_test PRIVATE ww)
     add_dependencies(waterwall_unit_tests worker_context_helpers_test)
 
@@ -1036,7 +1080,7 @@ if(TARGET TlsClient)
     TLSCLIENT_TEST_CERT_FILE="${CMAKE_SOURCE_DIR}/tests/cases/tls_roundtrip/server.crt"
     TLSCLIENT_TEST_KEY_FILE="${CMAKE_SOURCE_DIR}/tests/cases/tls_roundtrip/server.key"
   )
-  target_link_libraries(tlsclient_record_padding_test PRIVATE ssl crypto)
+  target_link_libraries(tlsclient_record_padding_test PRIVATE ssl crypto ww)
   add_dependencies(waterwall_unit_tests tlsclient_record_padding_test)
 
   add_waterwall_unit_test(
@@ -1347,6 +1391,44 @@ if(TARGET PacketsToStream)
   add_dependencies(waterwall_unit_tests packetstostream_parser_test)
 
   add_waterwall_unit_test(waterwall.packetstostream_parser_unit packetstostream_parser_test "unit;tunnels;packetstostream")
+endif()
+
+if(TARGET ReverseClient AND UNIX)
+  add_executable(reverseclient_owner_drain_test reverseclient_owner_drain_test.c)
+  target_compile_definitions(reverseclient_owner_drain_test PRIVATE WW_IDLE_TABLE_TEST_SEAM=1)
+  target_include_directories(reverseclient_owner_drain_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/tunnels/ReverseClient/include
+  )
+  target_link_libraries(reverseclient_owner_drain_test PRIVATE ReverseClient ww)
+  add_dependencies(waterwall_unit_tests reverseclient_owner_drain_test)
+  add_waterwall_unit_test(
+    waterwall.reverseclient_owner_drain_unit
+    reverseclient_owner_drain_test
+    "unit;tunnels;reverseclient;ownership;shutdown"
+  )
+endif()
+
+if(UNIX)
+  # ww's PCH is reused by tunnel targets, so every consumer in this unit-only
+  # tree must see the same test-hook macro set.
+  target_compile_definitions(ww PUBLIC WW_IDLE_TABLE_TEST_SEAM=1)
+
+  add_executable(widle_table_cancellation_test widle_table_cancellation_test.c)
+  target_link_options(widle_table_cancellation_test PRIVATE
+    "-Wl,--wrap=abortProgramNow"
+    "-Wl,--wrap=requestProgramShutdown"
+    "-Wl,--wrap=bufferpoolGetLargeBuffer"
+    "-Wl,--wrap=bufferpoolGetSmallBuffer"
+    "-Wl,--wrap=bufferpoolReuseBuffer"
+    "-Wl,--wrap=sbufDestroy"
+  )
+  target_link_libraries(widle_table_cancellation_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests widle_table_cancellation_test)
+  add_waterwall_unit_test(
+    waterwall.widle_table_cancellation_unit
+    widle_table_cancellation_test
+    "unit;idle-table;worker-message;ownership;shutdown;tsan"
+  )
 endif()
 
 if(TARGET IpManipulator)
@@ -1742,7 +1824,6 @@ set(WATERWALL_LINE_FAILURE_WW_SOURCES
 )
 
 set(WATERWALL_LINE_FAILURE_WRAPS
-  "-Wl,--wrap=terminateProgram"
   "-Wl,--wrap=abortProgramNow"
   "-Wl,--wrap=requestProgramShutdown"
   "-Wl,--wrap=bufferpoolGetLargeBuffer"
@@ -2064,6 +2145,27 @@ foreach(mux_side Client Server)
   endif()
 endforeach()
 
+if(TARGET MuxClient AND TARGET UdpListener)
+  add_executable(udplistener_mux_shutdown_order_test
+    udplistener_mux_shutdown_order_test.c
+    udplistener_shutdown_fixture.c
+    ${WATERWALL_LINE_FAILURE_WW_SOURCES}
+  )
+  waterwall_line_failure_test_use_tunnel(udplistener_mux_shutdown_order_test MuxClient)
+  target_include_directories(udplistener_mux_shutdown_order_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/tunnels/UdpListener/include
+    ${CMAKE_SOURCE_DIR}/ww/managers
+  )
+  target_link_options(udplistener_mux_shutdown_order_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS})
+  target_link_libraries(udplistener_mux_shutdown_order_test PRIVATE UdpListener ww)
+  add_dependencies(waterwall_unit_tests udplistener_mux_shutdown_order_test)
+  add_waterwall_unit_test(
+    waterwall.udplistener_mux_shutdown_order_unit
+    udplistener_mux_shutdown_order_test
+    "unit;tunnels;udplistener;mux;shutdown;ordering"
+  )
+endif()
+
 # Owned-line Finish postcondition. One executable per tunnel, for the same reason
 # as every other block here, and one tunnel per ownership shape: an endpoint owner
 # that registers its lines in a lookup table, and an internal owner that owns its
@@ -2148,17 +2250,42 @@ if(TARGET PacketsToStream)
   )
 endif()
 
+# Exercise the real SocketManager constructor/destructor on Linux as well as in
+# portable native builds. The production source is compiled directly so the
+# synchronization and staged-constructor seams cover the actual singleton.
+add_executable(socket_manager_lifetime_test
+  socket_manager_lifetime_test.c
+  ${CMAKE_SOURCE_DIR}/ww/managers/socket_manager.c
+)
+set_target_properties(socket_manager_lifetime_test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+target_compile_definitions(socket_manager_lifetime_test PRIVATE
+  WW_SYNC_INIT_TEST_SEAM=1
+  WW_SOCKET_MANAGER_CONSTRUCTOR_TEST_SEAM=1
+)
+target_include_directories(socket_manager_lifetime_test PRIVATE
+  ${CMAKE_SOURCE_DIR}/ww/managers
+)
+target_link_libraries(socket_manager_lifetime_test PRIVATE ww)
+add_dependencies(waterwall_unit_tests socket_manager_lifetime_test)
+add_waterwall_unit_test(
+  waterwall.socket_manager_lifetime_unit
+  socket_manager_lifetime_test
+  "unit;socket-manager;synchronization;lifecycle;failure;linux"
+)
+
 # Category-B orderly-shutdown failure injection. One executable per tunnel so
 # that only one tunnel's structure.h is ever visible in a translation unit.
 # wtimerAdd is wrapped alongside the process APIs wherever the injected failure
 # is a timer that cannot be created.
 foreach(orderly_case IN ITEMS
-  "TesterClient|testerclient_orderly_shutdown_test|testerclient|OFF"
+  "TesterClient|testerclient_orderly_shutdown_test|testerclient|ON"
+  "SpeedTestClient|speedtestclient_orderly_shutdown_test|speedtestclient|ON"
   "TesterServer|testerserver_orderly_shutdown_test|testerserver|OFF"
   "PacketsToStream|packetstostream_orderly_shutdown_test|packetstostream|ON"
   "PacketSender|packetsender_orderly_shutdown_test|packetsender|ON"
   "AuthenticationClient|authenticationclient_orderly_shutdown_test|authenticationclient|ON"
   "KeepAliveClient|keepaliveclient_orderly_shutdown_test|keepaliveclient|ON"
+  "UserController|usercontroller_orderly_shutdown_test|usercontroller|ON"
   "WireGuardDevice|wireguarddevice_orderly_shutdown_test|wireguarddevice|OFF"
 )
   string(REPLACE "|" ";" orderly_fields "${orderly_case}")
@@ -2176,6 +2303,34 @@ foreach(orderly_case IN ITEMS
     target_link_options(${orderly_test} PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS})
     if(orderly_wraps_timer)
       target_link_options(${orderly_test} PRIVATE "-Wl,--wrap=wtimerAdd")
+    endif()
+    if(orderly_tunnel STREQUAL "PacketsToStream" OR orderly_tunnel STREQUAL "PacketSender")
+      target_link_options(${orderly_test} PRIVATE "-Wl,--wrap=wtimerReset")
+    endif()
+    if(orderly_tunnel STREQUAL "WireGuardDevice")
+      target_sources(${orderly_test} PRIVATE
+        ${CMAKE_SOURCE_DIR}/tunnels/WireGuardDevice/instance/start.c
+      )
+      target_link_options(${orderly_test} PRIVATE
+        "-Wl,--wrap=memoryAllocateZero"
+        "-Wl,--wrap=sendWorkerMessageForceQueueWithCleanup"
+        "-Wl,--wrap=wtimerAdd"
+      )
+    endif()
+    if(orderly_tunnel STREQUAL "SpeedTestClient")
+      target_compile_definitions(${orderly_test} PRIVATE WW_SPEEDTESTCLIENT_SHUTDOWN_TEST_SEAM=1)
+      target_sources(${orderly_test} PRIVATE
+        ${CMAKE_SOURCE_DIR}/tunnels/SpeedTestClient/instance/start.c
+      )
+      target_link_options(${orderly_test} PRIVATE
+        "-Wl,--wrap=memoryAllocate"
+        "-Wl,--wrap=memoryFree"
+      )
+    endif()
+    if(orderly_tunnel STREQUAL "TesterClient")
+      target_sources(${orderly_test} PRIVATE
+        ${CMAKE_SOURCE_DIR}/tunnels/TesterClient/instance/start.c
+      )
     endif()
     target_link_libraries(${orderly_test} PRIVATE ww)
     add_dependencies(waterwall_unit_tests ${orderly_test})

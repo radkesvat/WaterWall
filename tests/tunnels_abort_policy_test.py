@@ -27,7 +27,7 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 # Total number of audited Category-D conversions. The manifest must account for
 # every one of them.
-EXPECTED_TOTAL_ABORTS = 234
+EXPECTED_TOTAL_ABORTS = 230
 
 
 # ---------------------------------------------------------------------------
@@ -550,18 +550,17 @@ MANIFEST = [
     ("tunnels/IpManipulator/upstream/init.c", "ipmanipulatorUpStreamInit", 1,
      ("IpManipulator: next packet line died during upstream init",),
      "runtime flow-callback invariant: IpManipulator upstream init packet line died"),
-    ("tunnels/RawSocket/upstream/fin.c", "rawsocketUpStreamFinish", 1,
-     ("RawSocket: unexpected upstream Finish on worker packet line %u",),
-     "runtime flow-callback invariant: RawSocket upstream fin worker packet line"),
-    ("tunnels/RawSocket/downstream/fin.c", "rawsocketDownStreamFinish", 1,
-     ("RawSocket: unexpected downstream Finish on worker packet line %u",),
-     "runtime flow-callback invariant: RawSocket downstream fin worker packet line"),
-    ("tunnels/ReverseClient/downstream/fin.c", "reverseclientTunnelDownStreamFinish", 2,
-     ("ReverseClient: finishing a non-paired line with NULL idle_handle, wid: %d",
-      "ReverseClient: failed to remove idle item while closing unpaired connection"),
-     "runtime flow-callback invariant: ReverseClient downstream fin idle-handle and idle-table removal"),
+    ("ww/net/packet_tunnel.c", "packettunnelLifecycleAnchorUpstreamFinish", 1,
+     ("%s: unexpected upstream Finish on worker packet line %d",),
+     "runtime flow-callback invariant: packet lifecycle anchor upstream fin worker packet line"),
+    ("ww/net/packet_tunnel.c", "packettunnelLifecycleAnchorDownstreamFinish", 1,
+     ("%s: unexpected downstream Finish on worker packet line %d",),
+     "runtime flow-callback invariant: packet lifecycle anchor downstream fin worker packet line"),
+    ("tunnels/ReverseClient/common/helpers.c", "reverseclientClosePair", 1,
+     ("ReverseClient: failed to detach an owned pair from the idle table",),
+     "runtime flow-callback invariant: ReverseClient pair idle-table detachment"),
     ("tunnels/ReverseClient/downstream/payload.c", "reverseclientTunnelDownStreamPayload", 1,
-     ("ReverseClient: failed to remove idle item while pairing connection",),
+     ("ReverseClient: failed to remove an idle pair while activating it",),
      "runtime flow-callback invariant: ReverseClient downstream payload remove starved table"),
     ("tunnels/HalfDuplexServer/upstream/fin.c", "halfduplexserverTunnelUpStreamFinish", 3,
      ("HalfDuplexServer: Thread safety is done incorrectly",
@@ -654,9 +653,6 @@ MANIFEST = [
     ("tunnels/ObfuscatorServer/instance/chain.c", "obfuscatorserverTunnelOnChain", 1,
      ("This Function is disabled, using the default Tunnel instead",),
      "disabled lifecycle callback stub: ObfuscatorServer onChain"),
-    ("tunnels/PacketsToConnection/instance/chain.c", "ptcTunnelOnChain", 1,
-     ("This Function is disabled, using the default Tunnel instead",),
-     "disabled lifecycle callback stub: PacketsToConnection onChain"),
     ("tunnels/PacketsToStream/instance/chain.c", "packetstostreamTunnelOnChain", 1,
      ("This Function is disabled, using the default Tunnel instead",),
      "disabled lifecycle callback stub: PacketsToStream onChain"),
@@ -666,9 +662,6 @@ MANIFEST = [
     ("tunnels/PingServer/instance/chain.c", "pingserverOnChain", 1,
      ("This Function is disabled, using the default Tunnel instead",),
      "disabled lifecycle callback stub: PingServer onChain"),
-    ("tunnels/RawSocket/instance/chain.c", "rawsocketOnChain", 1,
-     ("This Function is disabled, using the default Tunnel instead",),
-     "disabled lifecycle callback stub: RawSocket onChain"),
     ("tunnels/ReverseClient/instance/chain.c", "reverseclientTunnelOnChain", 1,
      ("This Function is disabled, using the default Tunnel instead",),
      "disabled lifecycle callback stub: ReverseClient onChain"),
@@ -741,18 +734,9 @@ MANIFEST = [
     ("tunnels/PacketSender/common/helpers.c", "packetsenderStartWorker", 1,
      ("PacketSender: worker %u packet line is not available",),
      "helper/line-state invariant: PacketSender helpers packet line died 2"),
-    ("tunnels/PacketsToConnection/common/fake_dns.c", "ptcFakeDnsHandleIpv4UdpPacket", 1,
-     ("PacketsToConnection: packet line died while sending fake DNS response",),
-     "helper/line-state invariant: PacketsToConn fake_dns packet line died"),
-    ("tunnels/PacketsToConnection/common/helpers.c", "ptcEmitPacketBuffer", 1,
+    ("tunnels/PacketsToConnection/common/netif.c", "ptcEmitPacketBufferAdmitted", 1,
      ("PacketsToConnection: packet line died during runtime, packet tunnel contract was violated",),
-     "helper/line-state invariant: PacketsToConn helpers packet line died"),
-    ("tunnels/ReverseClient/common/helpers.c", "reverseclientOnStarvedConnectionExpire", 1,
-     ("ReverseClient: onStarvedConnectionExpire called with NULL idle_handle",),
-     "helper/line-state invariant: ReverseClient helpers no idle handle"),
-    ("tunnels/ReverseClient/common/line_state.c", "reverseclientLinestateDestroy", 1,
-     ("ReverseClient: LinestateDestroy called with non NULL idle_handle",),
-     "helper/line-state invariant: ReverseClient line_state live idle handle"),
+     "helper/line-state invariant: PacketsToConn admitted packet publication line died"),
     ("tunnels/TcpConnector/common/helpers.c", "tcpconnectorOnClose", 1,
      ("TcpConnector: failed to remove idle item for FD:%x",),
      "helper/line-state invariant: TcpConnector helpers remove idle table"),
@@ -805,9 +789,10 @@ MANIFEST = [
     ("tunnels/Router/common/geoip.c", "routerGeoipLookupCountry", 1,
      ("Router: GeoIP rule evaluated without an open MaxMind database",),
      "per-request evaluation invariant: Router GeoIP database was never opened"),
-    ("tunnels/Internals/DomainResolver/instance/api.c", "domainresolverTunnelSetPrepareHook", 2,
+    ("tunnels/Internals/DomainResolver/instance/api.c", "domainresolverTunnelSetPrepareHook", 4,
      ("DomainResolver: prepare hook must be configured before chaining",
-      "DomainResolver: prepare hook line state is too large"),
+      "DomainResolver: prepare hook line state is too large",
+      "DomainResolver: internal line state is too large"),
      "internal API / unsafe destruction: DomainResolver prepare-hook order and line-state arithmetic"),
     ("tunnels/UdpStatelessSocket/instance/destroy.c", "udpstatelesssocketTunnelDestroy", 1,
      ("UdpStatelessSocket: destroying with active worker-local idle table for worker %u",),
@@ -856,7 +841,7 @@ MANIFEST = [
     # worker packet line is process-lifetime state, so its death during chain
     # initialization invalidates the assumptions orderly teardown relies on.
     # ------------------------------------------------------------------
-    ("ww/managers/node_manager.c", "initializeLineOnTargetWorker", 1,
+    ("ww/managers/node_manager.c", "nodemanagerInitializeLineOnTargetWorker", 1,
      ("NodeManager: node startup failure: line initialization failed for node (\\\"%s\\\") on worker %d",),
      "worker-task invariant: NodeManager persistent packet line died during chain init"),
 ]
@@ -864,23 +849,15 @@ MANIFEST = [
 
 # Function-level exclusions. These are call sites that must NOT become
 # Category-D hard aborts. Each entry pins the intended termination policy in one
-# exact function, so an unrelated terminateProgram() elsewhere in the same file
-# can no longer satisfy the check.
+# exact function, so an unrelated process-control call elsewhere in the same
+# file can no longer satisfy the check.
 #
 #   (relative path, function name, {call name: expected count}, anchors, why)
 #
-# This remains an allowlist policy: terminateProgram() under tunnels/ is not
-# banned in general, only in the audited Category-D functions above.
+# The legacy terminateProgram() spelling remains a zero-call check for audited
+# Category-C functions so it cannot be reintroduced unnoticed.
 
 EXCLUSIONS = [
-    ("tunnels/TcpListener/instance/create.c", "failInvalidPortValue",
-     {"terminateProgram": 1, "abortProgramNow": 0, "requestProgramShutdown": 0},
-     ("JSON Error: TcpListener->settings->%s (positive-integer port field) : The data was empty or invalid",),
-     "main-thread startup configuration failure"),
-    ("tunnels/TcpConnector/instance/create.c", "parseDestinationArray",
-     {"terminateProgram": 3, "abortProgramNow": 0, "requestProgramShutdown": 0},
-     ("JSON Error: TcpConnector->settings->addresses (array field) : The value was empty or invalid",),
-     "main-thread startup configuration failure"),
     ("tunnels/TesterClient/common/helpers.c", "testerclientFail",
      {"terminateProgram": 0, "abortProgramNow": 1, "requestProgramShutdown": 1},
      ("TesterClient: worker %u failed: %s",),
@@ -964,7 +941,7 @@ RETAINED_NON_ABORT_CALLS = {}
 # Removals the previous line-proximity checker silently accepted. They are
 # re-exercised by name so the regression cannot come back unnoticed.
 MANDATORY_REGRESSION_MUTATIONS = [
-    ("tunnels/ReverseClient/downstream/fin.c", "reverseclientTunnelDownStreamFinish"),
+    ("tunnels/ReverseClient/common/helpers.c", "reverseclientClosePair"),
     ("tunnels/MuxClient/common/line_state.c", "muxclientLinestateDestroy"),
     ("tunnels/MuxServer/common/line_state.c", "muxserverLinestateDestroy"),
     ("tunnels/Internals/DomainResolver/instance/api.c", "domainresolverTunnelSetPrepareHook"),

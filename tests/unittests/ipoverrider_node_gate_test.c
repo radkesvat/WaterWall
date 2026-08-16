@@ -211,7 +211,7 @@ static void testChanceZeroSkipsEntireNodeAction(void)
     require(lineGetRecalculateChecksum(&line), "chance=0 cleared pre-existing recalculate_checksum flag");
     sbufDestroy(buf);
 
-    ipoverriderDestroy(t);
+    ipoverriderDestroy(t, wwLifecycleStartupRollback());
     tunnelDestroy(next);
     tunnelDestroy(prev);
     cJSON_Delete(settings);
@@ -252,7 +252,7 @@ static void testCleanTcpRewriteComposition(void)
 
     sbufDestroy(buf);
     sbufDestroy(oracle);
-    ipoverriderDestroy(t);
+    ipoverriderDestroy(t, wwLifecycleStartupRollback());
     tunnelDestroy(next);
     tunnelDestroy(prev);
     cJSON_Delete(settings);
@@ -304,7 +304,7 @@ static void testCleanUdpRewriteAndZeroChecksum(void)
     require(! lineGetRecalculateChecksum(&line), "zero UDP rewrite modified recalculate_checksum flag");
     sbufDestroy(buf);
 
-    ipoverriderDestroy(t);
+    ipoverriderDestroy(t, wwLifecycleStartupRollback());
     tunnelDestroy(next);
     tunnelDestroy(prev);
     cJSON_Delete(settings);
@@ -352,7 +352,7 @@ static void testExistingFullRecalculationRequestPreserved(void)
     sbufDestroy(buf);
     sbufDestroy(expected_intermediate);
     sbufDestroy(oracle);
-    ipoverriderDestroy(t);
+    ipoverriderDestroy(t, wwLifecycleStartupRollback());
     tunnelDestroy(next);
     tunnelDestroy(prev);
     cJSON_Delete(settings);
@@ -428,7 +428,7 @@ static void testOnly120GatesEntireNodeAction(void)
     require(! lineGetRecalculateChecksum(&line), "only120 downstream boundary rewrite modified checksum flag");
     sbufDestroy(buf);
 
-    ipoverriderDestroy(t);
+    ipoverriderDestroy(t, wwLifecycleStartupRollback());
     tunnelDestroy(next);
     tunnelDestroy(prev);
     cJSON_Delete(settings);
@@ -469,7 +469,7 @@ static void testUnchangedAddressHandling(void)
 
     sbufDestroy(buf);
     sbufDestroy(before);
-    ipoverriderDestroy(t);
+    ipoverriderDestroy(t, wwLifecycleStartupRollback());
     tunnelDestroy(next);
     tunnelDestroy(prev);
     cJSON_Delete(settings);
@@ -600,7 +600,7 @@ static void testRejectionAndMalformedPackets(void)
     sbufDestroy(buf);
     sbufDestroy(before_udp);
 
-    ipoverriderDestroy(t);
+    ipoverriderDestroy(t, wwLifecycleStartupRollback());
     tunnelDestroy(next);
     tunnelDestroy(prev);
     cJSON_Delete(settings);

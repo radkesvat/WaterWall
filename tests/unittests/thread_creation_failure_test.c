@@ -89,29 +89,25 @@ static void testWorkerSpawnFailureLeavesThreadInvalid(void)
 
 static void testWorkerJoinClearsValidThread(void)
 {
-    worker_t dummy_workers[2] = {{.wid = 0}, {.wid = 1}};
+    worker_t worker = {.wid = 1};
+    mutexInit(&worker.control_mutex);
+    condmutexInit(&worker.control_condition_mutex);
+    condvarInit(&worker.control_condition);
+    atomic_init(&worker.lifecycle, kWorkerLifecycleInitialized);
 
-    GSTATE                  = (ww_global_state_t) {0};
-    GSTATE.flag_initialized = true;
-    GSTATE.workers_count    = 2;
-    GSTATE.workers          = dummy_workers;
+    atomic_bool ran;
+    atomic_init(&ran, false);
+    wthread_error_t error = threadCreate(&worker.thread, threadCreationSuccessRoutine, &ran);
+    require(error == kWThreadErrorNone, "worker join fixture thread creation failed");
+    worker.thread_valid = true;
 
-    atomic_init(&GSTATE.application_stopping_flag, true);
-    atomic_init(&GSTATE.workers_run_flag, false);
+    require(workerJoin(&worker), "workerJoin rejected a joinable thread");
+    require(! worker.thread_valid, "workerJoin did not clear thread validity");
+    require(atomic_load(&ran), "workerJoin returned before the joined routine completed");
 
-    worker_t *worker = &dummy_workers[1];
-
-    wthread_error_t error = workerSpawn(worker);
-    require(error == kWThreadErrorNone, "workerSpawn success returned an error");
-    require(worker->thread_valid, "workerSpawn success did not publish a valid thread");
-
-    workerJoin(worker);
-    require(! worker->thread_valid, "workerJoin did not clear thread validity");
-
-    atomic_store(&GSTATE.application_stopping_flag, false);
-    GSTATE.flag_initialized = false;
-    GSTATE.workers_count    = 0;
-    GSTATE.workers          = NULL;
+    contvarDestroy(&worker.control_condition);
+    condmutexDestroy(&worker.control_condition_mutex);
+    mutexDestroy(&worker.control_mutex);
 }
 
 int main(void)

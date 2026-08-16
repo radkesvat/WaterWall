@@ -34,9 +34,9 @@ typedef struct halfduplexserver_fixture_s
 
 static halfduplexserver_fixture_t *g_fixture = NULL;
 
-void __wrap_lineScheduleTask(line_t *const line, LineTaskFnNoBuf task, tunnel_t *t);
+bool __wrap_lineScheduleTask(line_t *const line, LineTaskFnNoBuf task, tunnel_t *t);
 
-void __wrap_lineScheduleTask(line_t *const line, LineTaskFnNoBuf task, tunnel_t *t)
+bool __wrap_lineScheduleTask(line_t *const line, LineTaskFnNoBuf task, tunnel_t *t)
 {
     discard task;
     discard t;
@@ -47,6 +47,7 @@ void __wrap_lineScheduleTask(line_t *const line, LineTaskFnNoBuf task, tunnel_t 
     twfRequireEqualU32(
         twfLineRefCount(line), 2, "the upload transport was not retained across the re-entrant main Init");
     ++fixture->scheduled_closes;
+    return true;
 }
 
 static void transportOwnerDownstreamFinish(tunnel_t *prev, line_t *line)
@@ -174,7 +175,7 @@ static void fixtureTeardown(halfduplexserver_fixture_t *fixture)
     twfRequireNoLeakedBuffers();
     tunnelchainDestroy(fixture->chain);
     tunnelDestroy(fixture->next);
-    halfduplexserverTunnelDestroy(fixture->halfduplex);
+    halfduplexserverTunnelDestroy(fixture->halfduplex, wwLifecycleStartupRollback());
     tunnelDestroy(fixture->prev);
     g_fixture = NULL;
 }

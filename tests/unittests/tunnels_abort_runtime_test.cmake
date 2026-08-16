@@ -25,6 +25,8 @@ if(TARGET ww)
     adapter_chain_head_payload
     adapter_chain_end_finish
     adapter_chain_end_payload
+    packet_lifecycle_anchor_upstream_finish
+    packet_lifecycle_anchor_downstream_finish
   )
 
   if(TARGET AuthenticationClient)
@@ -39,26 +41,10 @@ if(TARGET ww)
     list(APPEND tunnels_abort_runtime_cases pingclient_impossible_packet_upstream_init)
   endif()
 
-  if(TARGET RawSocket)
-    list(APPEND tunnels_abort_runtime_libraries RawSocket)
-    list(APPEND tunnels_abort_runtime_definitions WATERWALL_ABORT_TEST_HAS_RAWSOCKET=1)
-    list(APPEND tunnels_abort_runtime_cases rawsocket_worker_packet_line_upstream_finish)
-  endif()
-
   if(TARGET TesterClient)
     list(APPEND tunnels_abort_runtime_libraries TesterClient)
     list(APPEND tunnels_abort_runtime_definitions WATERWALL_ABORT_TEST_HAS_TESTERCLIENT=1)
     list(APPEND tunnels_abort_runtime_cases testerclient_disabled_upstream_finish)
-  endif()
-
-  if(TARGET ReverseClient)
-    list(APPEND tunnels_abort_runtime_sources
-      "${WATERWALL_ABORT_RUNTIME_DIR}/tunnels_abort_reverseclient_case.c"
-    )
-    list(APPEND tunnels_abort_runtime_libraries ReverseClient)
-    list(APPEND tunnels_abort_runtime_includes ${CMAKE_SOURCE_DIR}/tunnels/ReverseClient/include)
-    list(APPEND tunnels_abort_runtime_definitions WATERWALL_ABORT_TEST_HAS_REVERSECLIENT=1)
-    list(APPEND tunnels_abort_runtime_cases reverseclient_live_idle_handle_linestate_destroy)
   endif()
 
   if(TARGET UdpStatelessSocket)
@@ -146,14 +132,22 @@ if(TARGET ww AND tunnels_abort_runtime_cases)
     add_dependencies(waterwall_unit_tests tunnels_abort_runtime_test)
   endif()
 
-  # The runner executes the built binary, so it is only registered where that
-  # binary runs on the host. When cross-compiling, the target remains available
-  # for an explicit compile check without attempting to execute the target
-  # binary.
-  if(NOT CMAKE_CROSSCOMPILING)
+  # This is deliberately a host-execution contract, rather than a raw CMake
+  # cross-compilation classification. Native Windows x86/x64 presets set a
+  # system name and therefore look like cross builds, while their CI runners
+  # can execute the result. A foreign target stays compile-only unless its
+  # preset/CI explicitly declares it runnable.
+  if(WW_NATIVE_UNIT_TEST_EXECUTABLE_RUNNABLE)
     # Pipe-separated so the case list survives add_test() argument splitting.
     string(REPLACE ";" "|" tunnels_abort_runtime_case_arg "${tunnels_abort_runtime_cases}")
 
+    if(COMMAND waterwall_register_abort_runtime_unit_contract)
+      waterwall_register_abort_runtime_unit_contract(
+        waterwall.tunnels_abort_runtime_unit
+        tunnels_abort_runtime_test
+        "unit;tunnels;abort;runtime"
+      )
+    endif()
     add_test(
       NAME waterwall.tunnels_abort_runtime_unit
       COMMAND
@@ -173,6 +167,11 @@ if(TARGET ww AND tunnels_abort_runtime_cases)
         LABELS "unit;tunnels;abort;runtime"
         RESOURCE_LOCK waterwall_unit_test_build
     )
+
+    if(COMMAND waterwall_register_platform_native_unit)
+      waterwall_register_platform_native_unit(
+        waterwall.tunnels_abort_runtime_unit tunnels_abort_runtime_test "unit;tunnels;abort;runtime")
+    endif()
   endif()
 endif()
 

@@ -13,11 +13,56 @@ static void require(bool condition, const char *message)
     }
 }
 
+static void testSharedTransitionTable(void)
+{
+    for (int value = kDeviceLifecycleDown; value <= kDeviceLifecycleFailed; ++value)
+    {
+        const device_lifecycle_state_t initial = (device_lifecycle_state_t) value;
+        atomic_int                     lifecycle;
+        device_lifecycle_state_t       failed_from = kUntouchedSourceState;
+
+        atomic_init(&lifecycle, value);
+        const bool down_to_starting = deviceLifecycleTransitionDownToStarting(&lifecycle);
+        require(down_to_starting == (initial == kDeviceLifecycleDown), "DOWN -> STARTING verdict differed");
+        require(deviceLifecycleLoad(&lifecycle) ==
+                    (initial == kDeviceLifecycleDown ? kDeviceLifecycleStarting : initial),
+                "DOWN -> STARTING final state differed");
+
+        atomicStoreRelaxed(&lifecycle, value);
+        const bool starting_to_up = deviceLifecycleTransitionStartingToUp(&lifecycle);
+        require(starting_to_up == (initial == kDeviceLifecycleStarting), "STARTING -> UP verdict differed");
+        require(deviceLifecycleLoad(&lifecycle) == (initial == kDeviceLifecycleStarting ? kDeviceLifecycleUp : initial),
+                "STARTING -> UP final state differed");
+
+        atomicStoreRelaxed(&lifecycle, value);
+        const bool to_failed = deviceLifecycleTransitionToFailed(&lifecycle, &failed_from);
+        require(to_failed == deviceLifecycleIsActive(initial), "active -> FAILED verdict differed");
+        require(deviceLifecycleLoad(&lifecycle) ==
+                    (deviceLifecycleIsActive(initial) ? kDeviceLifecycleFailed : initial),
+                "active -> FAILED final state differed");
+        require(failed_from ==
+                    (deviceLifecycleIsActive(initial) ? initial : (device_lifecycle_state_t) kUntouchedSourceState),
+                "active -> FAILED source report differed");
+
+        atomicStoreRelaxed(&lifecycle, value);
+        deviceLifecycleTransitionToStopping(&lifecycle);
+        const device_lifecycle_state_t stopped =
+            initial == kDeviceLifecycleDown ? kDeviceLifecycleDown : kDeviceLifecycleStopping;
+        require(deviceLifecycleLoad(&lifecycle) == stopped, "transition-to-STOPPING final state differed");
+
+        atomicStoreRelaxed(&lifecycle, value);
+        deviceLifecycleTransitionStoppingToDown(&lifecycle);
+        require(deviceLifecycleLoad(&lifecycle) == kDeviceLifecycleDown, "transition-to-DOWN final state differed");
+    }
+}
+
 int main(void)
 {
     atomic_int            lifecycle;
     tun_lifecycle_state_t failed_from;
     atomic_init(&lifecycle, kTunLifecycleDown);
+
+    testSharedTransitionTable();
 
     // Initial DOWN -> STARTING -> UP
     require(tunLifecycleTransitionDownToStarting(&lifecycle), "DOWN -> STARTING failed");

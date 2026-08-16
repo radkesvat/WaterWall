@@ -16,10 +16,13 @@
 // wtimerAdd injection
 // ---------------------------------------------------------------------------
 
-static bool g_timer_fails = false;
+static bool g_timer_fails                  = false;
+static bool g_timer_reset_closes_admission = false;
 
 wtimer_t *__real_wtimerAdd(wloop_t *loop, wtimer_cb cb, uint32_t timeout_ms, uint32_t repeat);
 wtimer_t *__wrap_wtimerAdd(wloop_t *loop, wtimer_cb cb, uint32_t timeout_ms, uint32_t repeat);
+bool      __real_wtimerReset(wtimer_t *timer, uint32_t timeout_ms);
+bool      __wrap_wtimerReset(wtimer_t *timer, uint32_t timeout_ms);
 
 wtimer_t *__wrap_wtimerAdd(wloop_t *loop, wtimer_cb cb, uint32_t timeout_ms, uint32_t repeat)
 {
@@ -28,6 +31,16 @@ wtimer_t *__wrap_wtimerAdd(wloop_t *loop, wtimer_cb cb, uint32_t timeout_ms, uin
         return NULL;
     }
     return __real_wtimerAdd(loop, cb, timeout_ms, repeat);
+}
+
+bool __wrap_wtimerReset(wtimer_t *timer, uint32_t timeout_ms)
+{
+    if (g_timer_reset_closes_admission)
+    {
+        g_timer_reset_closes_admission = false;
+        twfRequire(wloopCloseNormalAdmission(weventGetLoop(timer)), "failed to close admission before timer reset");
+    }
+    return __real_wtimerReset(timer, timeout_ms);
 }
 
 // ---------------------------------------------------------------------------
@@ -55,6 +68,7 @@ typedef struct packetstostream_fixture_s
     wtimer_t        *timeout_timer_slot[1];
     wtimer_t        *worker_timer_slot[1];
     wtimer_t        *heartbeat_timer;
+    twf_line_pool_t  stream_line_pool;
 } packetstostream_fixture_t;
 
 static void fixtureSetup(packetstostream_fixture_t *fixture)
@@ -84,8 +98,10 @@ static void fixtureSetup(packetstostream_fixture_t *fixture)
     fixture->packet_line_slot[0] = fixture->packet_line;
     fixture->chain->packet_lines = fixture->packet_line_slot;
 
-    // A live output line, so the ping path never has to create one.
-    fixture->stream_line = twfLineCreate(fixture->p2s->lstate_size);
+    // A live pool-backed output line, so both ordinary fixture teardown and
+    // the production owner-close path exercise lineDestroy() faithfully.
+    twfLinePoolSetup(&fixture->stream_line_pool, fixture->p2s->lstate_size, 4);
+    fixture->stream_line = twfLinePoolCreateLine(&fixture->stream_line_pool);
 
     packetstostream_lstate_t *ls = lineGetState(fixture->packet_line, fixture->p2s);
     packetstostreamLinestateInitialize(ls, lineGetBufferPool(fixture->packet_line));
@@ -107,7 +123,11 @@ static void fixtureTeardown(packetstostream_fixture_t *fixture)
     packetstostream_lstate_t *ls = lineGetState(fixture->packet_line, fixture->p2s);
     packetstostreamLinestateDestroy(ls);
 
-    twfLineDestroy(fixture->stream_line);
+    if (fixture->stream_line != NULL)
+    {
+        lineDestroy(fixture->stream_line);
+    }
+    twfLinePoolTeardown(&fixture->stream_line_pool);
     twfLineDestroy(fixture->packet_line);
     memoryFree(fixture->chain);
 }
@@ -180,6 +200,64 @@ static void caseTimeoutTimerFailure(void)
     fixtureTeardown(&fixture);
 }
 
+static void caseDueTimeoutTimerRearmRefusalClearsSlot(void)
+{
+    twfSetCase("packetstostream due timeout timer rearm refusal");
+    tosResetProcessApi(true);
+
+    packetstostream_fixture_t fixture;
+    fixtureSetup(&fixture);
+
+    packetstostream_lstate_t *ls = lineGetState(fixture.packet_line, fixture.p2s);
+    ls->awaiting_pong            = true;
+    ls->pong_deadline_ms         = wloopNowMS(fixture.env.loop) + 1000U;
+
+    wtimer_t *timer = __real_wtimerAdd(fixture.env.loop, packetstostreamTimeoutTimerCallback, 1U, 1);
+    twfRequire(timer != NULL, "failed to create the timeout timer fixture");
+    fixture.timeout_timer_slot[0] = timer;
+    weventSetUserData(timer, fixture.p2s);
+
+    const uint32_t timers_before = fixture.env.loop->ntimers;
+    wwSleepMS(2);
+    g_timer_reset_closes_admission = true;
+    discard wloopProcessEvents(fixture.env.loop, 0);
+
+    tosRequireNoProcessApiCall();
+    twfRequire(fixture.timeout_timer_slot[0] == NULL, "reset refusal retained the timeout timer slot");
+    twfRequire(ls->awaiting_pong, "reset refusal must leave line settlement to shutdown");
+    twfRequireEqualU32((uint32_t) fixture.env.loop->ntimers,
+                       timers_before - 1U,
+                       "the event loop did not reclaim the due one-shot timer exactly once");
+
+    fixtureTeardown(&fixture);
+}
+
+// ---------------------------------------------------------------------------
+// Owned normal lines must be dead before chain-pool teardown
+// ---------------------------------------------------------------------------
+
+static void caseWorkerStopClosesOwnedOutputLine(void)
+{
+    twfSetCase("packetstostream worker stop closes its output line");
+    tosResetProcessApi(true);
+
+    packetstostream_fixture_t fixture;
+    fixtureSetup(&fixture);
+
+    packetstostreamTunnelOnWorkerStop(fixture.p2s, 0, wwLifecycleProcessShutdown());
+
+    tosRequireNoProcessApiCall();
+    twfRequireEqualU32(fixture.trace.next_finish, 1, "worker stop must finish the owned output line exactly once");
+
+    packetstostream_lstate_t *ls = lineGetState(fixture.packet_line, fixture.p2s);
+    twfRequire(ls->line == NULL, "worker stop retained the owned output line in packet-line state");
+    twfRequire(! ls->recreate_scheduled, "worker stop left output-line recreation scheduled");
+
+    /* onWorkerStop performed the owner's logical and physical release. */
+    fixture.stream_line = NULL;
+    fixtureTeardown(&fixture);
+}
+
 // ---------------------------------------------------------------------------
 // Category B: the worker-0 handoff is refused
 // ---------------------------------------------------------------------------
@@ -246,8 +324,17 @@ static void caseHeartbeatTimerStartFailure(void)
 
 int main(void)
 {
+    if (getenv("WATERWALL_TSAN_POSITIVE_ONLY") != NULL)
+    {
+        caseDueTimeoutTimerRearmRefusalClearsSlot();
+        puts("packetstostream_orderly_shutdown_test: TSAN-positive case passed");
+        return 0;
+    }
+
     caseHealthyPingArmsTheTimer();
     caseTimeoutTimerFailure();
+    caseDueTimeoutTimerRearmRefusalClearsSlot();
+    caseWorkerStopClosesOwnedOutputLine();
     caseRefusedHandoffAborts();
     caseHeartbeatTimerStartFailure();
 

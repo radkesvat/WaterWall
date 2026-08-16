@@ -6,19 +6,25 @@ typedef struct lifetime_probe_s
     unsigned int sequence;
     unsigned int begin_step;
     unsigned int signal_step;
+    unsigned int reader_wait_step;
     unsigned int reader_join_step;
+    unsigned int reader_retire_step;
     unsigned int writer_join_step;
     unsigned int writer_release_step;
     unsigned int session_end_step;
     unsigned int reader_join_calls;
+    unsigned int reader_wait_calls;
+    unsigned int reader_retire_calls;
     unsigned int writer_join_calls;
     unsigned int writer_release_calls;
     unsigned int session_end_calls;
     bool         signal_succeeds;
     bool         reader_join_succeeds;
+    bool         reader_retire_succeeds;
     bool         writer_join_succeeds;
     bool         writer_release_succeeds;
     bool         reader_thread_live;
+    bool         reader_resources_live;
     bool         writer_thread_live;
     bool         writer_resources_live;
     bool         session_live;
@@ -69,6 +75,29 @@ static bool probeJoinReader(void *context)
     return true;
 }
 
+static void probeWaitReaderDelivery(void *context)
+{
+    lifetime_probe_t *probe = context;
+    probe->reader_wait_calls++;
+    probe->reader_wait_step = nextStep(probe);
+}
+
+static bool probeRetireReader(void *context)
+{
+    lifetime_probe_t *probe   = context;
+    probe->reader_retire_step = nextStep(probe);
+    if (! probe->reader_retire_succeeds)
+    {
+        return false;
+    }
+    if (probe->reader_resources_live)
+    {
+        probe->reader_retire_calls++;
+        probe->reader_resources_live = false;
+    }
+    return true;
+}
+
 static bool probeJoinWriter(void *context)
 {
     lifetime_probe_t *probe = context;
@@ -114,12 +143,14 @@ static void probeEndSession(void *context)
 }
 
 static const tun_windows_lifetime_ops_t probe_ops = {
-    .begin_shutdown = probeBeginShutdown,
-    .signal_reader  = probeSignalReader,
-    .join_reader    = probeJoinReader,
-    .join_writer    = probeJoinWriter,
-    .release_writer = probeReleaseWriter,
-    .end_session    = probeEndSession,
+    .begin_shutdown       = probeBeginShutdown,
+    .signal_reader        = probeSignalReader,
+    .wait_reader_delivery = probeWaitReaderDelivery,
+    .join_reader          = probeJoinReader,
+    .retire_reader        = probeRetireReader,
+    .join_writer          = probeJoinWriter,
+    .release_writer       = probeReleaseWriter,
+    .end_session          = probeEndSession,
 };
 
 static lifetime_probe_t newProbe(void)
@@ -127,9 +158,11 @@ static lifetime_probe_t newProbe(void)
     return (lifetime_probe_t) {
         .signal_succeeds         = true,
         .reader_join_succeeds    = true,
+        .reader_retire_succeeds  = true,
         .writer_join_succeeds    = true,
         .writer_release_succeeds = true,
         .reader_thread_live      = true,
+        .reader_resources_live   = true,
         .writer_thread_live      = true,
         .writer_resources_live   = true,
         .session_live            = true,
@@ -142,9 +175,12 @@ static void testSuccessfulShutdownOrdering(void)
 
     require(tunWindowsLifetimeShutdown(&probe, &probe_ops), "normal shutdown failed");
     require(probe.begin_step < probe.signal_step, "reader was signaled before shutdown began");
-    require(probe.signal_step < probe.reader_join_step, "reader was joined before it was signaled");
+    require(probe.signal_step < probe.reader_wait_step, "reader delivery was waited before signaling");
+    require(probe.reader_wait_step < probe.reader_join_step, "reader was joined before delivery quiesced");
     require(probe.reader_join_step < probe.writer_join_step, "writer was joined before reader");
-    require(probe.writer_join_step < probe.writer_release_step, "writer resources were released before joins");
+    require(probe.writer_join_step < probe.reader_retire_step, "reader generation was retired before joins");
+    require(probe.reader_retire_step < probe.writer_release_step,
+            "writer resources were released before reader retirement");
     require(probe.writer_release_step < probe.session_end_step, "session ended before writer resources released");
 }
 
@@ -155,6 +191,7 @@ static void testSignalFailureUsesJoinFallback(void)
 
     require(tunWindowsLifetimeShutdown(&probe, &probe_ops), "signal failure prevented bounded-wait cleanup");
     require(probe.reader_join_calls == 1, "signal failure skipped reader join");
+    require(probe.reader_wait_calls == 1, "signal failure skipped reader delivery wait");
     require(probe.writer_join_calls == 1, "signal failure skipped writer join");
     require(probe.session_end_calls == 1, "signal failure retained a fully joined session");
 }
@@ -167,6 +204,7 @@ static void testJoinFailurePreservesResources(void)
     require(! tunWindowsLifetimeShutdown(&probe, &probe_ops), "reader join failure reported success");
     require(probe.writer_join_calls == 1, "reader join failure skipped writer join");
     require(probe.writer_release_calls == 0, "writer resources released after a failed join");
+    require(probe.reader_retire_calls == 0, "reader generation retired after a failed join");
     require(probe.session_end_calls == 0, "session ended after a failed join");
 
     probe.reader_join_succeeds = true;
@@ -218,6 +256,7 @@ static void testRepeatedShutdownIsIdempotent(void)
     require(tunWindowsLifetimeShutdown(&probe, &probe_ops), "initial shutdown failed");
     require(tunWindowsLifetimeShutdown(&probe, &probe_ops), "repeated shutdown failed");
     require(probe.writer_release_calls == 1, "repeated shutdown released writer resources twice");
+    require(probe.reader_retire_calls == 1, "repeated shutdown retired reader resources twice");
     require(probe.session_end_calls == 1, "repeated shutdown ended the session twice");
 }
 
