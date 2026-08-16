@@ -81,6 +81,10 @@ typedef struct ctp_frag_purge_batch_s
 
 static void ctpFragSchedulePurgeBatch(tunnel_t *t, const ctp_frag_purge_batch_t *purges,
                                       ctp_frag_purge_schedule_fn schedule_purge, uint64_t now_ms);
+static void ctpFragHandlePacketAt(tunnel_t *t, uint64_t now_ms, const ctp_frag_key_t *frag_key,
+                                  const ctp_flow_key_t *zero_flow_key, const ctp_frag_span_t *span, void *payload,
+                                  uint32_t len, ctp_frag_publish_fn publish, ctp_frag_discard_fn release,
+                                  ctp_frag_purge_schedule_fn schedule_purge);
 
 bool ctpFragTableInitialize(ctp_tstate_t *ts)
 {
@@ -137,14 +141,6 @@ static void ctpFragRequestPurgeLocked(ctp_frag_entry_t *entry, const ctp_frag_ke
     purges->items[purges->count++] =
         (ctp_frag_purge_request_t) {.key = *key, .serial = entry->serial, .wid = entry->wid};
     entry->purge_queued = true;
-}
-
-size_t ctpFragAssociationCount(ctp_tstate_t *ts)
-{
-    rwlockReadLock(&ts->flows_lock);
-    const size_t count = (size_t) ctp_frag_map_t_size(&ts->frags);
-    rwlockReadUnlock(&ts->flows_lock);
-    return count;
 }
 
 static void ctpFragReleaseEntryLocked(ctp_tstate_t *ts, ctp_frag_entry_t *entry, ctp_frag_discard_fn release,
@@ -745,8 +741,8 @@ void ctpFragRetirePurged(tunnel_t *t, const ctp_frag_key_t *frag_key, uint64_t s
     }
 }
 
-void ctpFragSettleDeliveryAt(tunnel_t *t, const ctp_frag_key_t *frag_key, uint64_t serial, bool delivered,
-                             uint64_t now_ms, ctp_frag_purge_schedule_fn schedule_purge)
+static void ctpFragSettleDeliveryAt(tunnel_t *t, const ctp_frag_key_t *frag_key, uint64_t serial, bool delivered,
+                                    uint64_t now_ms, ctp_frag_purge_schedule_fn schedule_purge)
 {
     ctp_tstate_t          *ts     = tunnelGetState(t);
     ctp_frag_purge_batch_t purges = {0};
@@ -1179,10 +1175,10 @@ static void ctpFragSettlePublishBatch(tunnel_t *t, const ctp_frag_key_t *frag_ke
     }
 }
 
-void ctpFragHandlePacketAt(tunnel_t *t, uint64_t now_ms, const ctp_frag_key_t *frag_key,
-                           const ctp_flow_key_t *zero_flow_key, const ctp_frag_span_t *span, void *payload,
-                           uint32_t len, ctp_frag_publish_fn publish, ctp_frag_discard_fn release,
-                           ctp_frag_purge_schedule_fn schedule_purge)
+static void ctpFragHandlePacketAt(tunnel_t *t, uint64_t now_ms, const ctp_frag_key_t *frag_key,
+                                  const ctp_flow_key_t *zero_flow_key, const ctp_frag_span_t *span, void *payload,
+                                  uint32_t len, ctp_frag_publish_fn publish, ctp_frag_discard_fn release,
+                                  ctp_frag_purge_schedule_fn schedule_purge)
 {
     ctp_tstate_t            *ts     = tunnelGetState(t);
     ctp_frag_publish_batch_t batch  = {0};

@@ -79,10 +79,6 @@ static inline bool tunnelchainTryAddPadding(uint16_t current, uint16_t additiona
  */
 bool tunnelchainTryComputeLineItemSize(uint32_t aggregate_lstate_size, uint32_t *item_size);
 
-/** Pure boundary seam used to verify narrower target allocation limits. */
-bool tunnelchainTryComputeLineItemSizeForLimit(uint32_t aggregate_lstate_size, uint64_t allocation_size_limit,
-                                               uint32_t *item_size);
-
 /**
  * @brief Allocate a new empty tunnel chain for all workers.
  *

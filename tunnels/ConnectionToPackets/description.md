@@ -296,18 +296,19 @@ queued without bound.
   between lookup and delivery, and it is revalidated under the lwIP core lock immediately before injection. It cannot
   identify a packet that arrives from the network after a tuple was retired and reused, because an IP packet carries no
   generation. Tombstones reduce that late-network-packet window but cannot eliminate it.
-- `onPreStop()` publishes stopping and closes reference-counted gates for the previous side, next side, the complete
-  packet-classification/publication path, and queued asynchronous callbacks. Closing waits for an already admitted
-  callback to return and rejects every later callback before any neighbor can complete `onStop()`. Emit, inject,
-  fragment-purge, and startup packet-`Init` messages retain a small async session rather than the tunnel pointer;
-  configuration Destroy detaches that session, so a late queued message can only release its own resources.
-  `onStop()` then detaches every PCB, flow, netif and staged fragment under the lwIP core
+- `onQuiesceRequest()` publishes stopping, closes new admission through the previous-side, next-side,
+  packet-classification/publication, and asynchronous-session gates, and requests callback detachment without waiting.
+  `onQuiesceWait()` then proves already-admitted callbacks have returned. Emit, inject, fragment-purge, and startup
+  packet-`Init` messages retain a small async session rather than the tunnel pointer, so a canceled queued message can
+  release its own resources. After worker-owned lines drain, `onStop()` detaches every PCB, flow, netif, and staged
+  fragment under the lwIP core
   lock. TCP PCBs are **aborted** there rather than closed: Stop is terminal, the gate already refuses this node's netif
   output, and a successful close would have left an established PCB sitting in `FIN_WAIT` on lwIP's process-global
   active list - outliving the netif removed moments later, and able to observe whichever future interface inherits that
   one-byte netif index. It also clears each live line's copy of its PCB pointer so a worker that has not drained yet
   cannot dereference a released PCB. Publishing `stopping` is not treated as proof that this sweep already happened:
-  a close that acquired the core lock in the pre-stop window performs the real idempotent PCB/callback/registry detach.
+  a close that acquired the core lock during the quiesce-request window performs the real idempotent
+  PCB/callback/registry detach.
   Every queued task enters the relevant gate, so a rejected task suppresses its data and lifecycle events
   toward either neighbour, while close paths stay live so borrowed lines can still be released by their owners.
 - Creation publishes no partially usable bridge: the per-worker netif array, initial flow and fragment map capacities,

@@ -118,7 +118,6 @@ typedef struct device_frag_affinity_publication_s
     uint16_t slot;
     uint16_t count;
     bool     valid;
-    bool     completes_datagram;
 } device_frag_affinity_publication_t;
 
 /* True only while this exact publication still belongs to an open, healthy generation. */
@@ -136,10 +135,7 @@ typedef struct device_frag_affinity_result_s
     sbuf_t **released;       /* staged tails this packet unblocked, arrival order */
     uint8_t  released_count; /* they belong to `wid`, and precede the offered buf */
 
-    wid_t wid;     /* the worker for `released` and the offered packet */
-    bool  staged;  /* compatibility mirror of kDeviceFragAffinityStaged */
-    bool  decided; /* compatibility mirror of kDeviceFragAffinityDispatch */
-    bool  consumed_drop;
+    wid_t wid; /* the worker for `released` and the offered packet */
 
     /* Retires or poisons the association only after consumer delivery settles. */
     device_frag_affinity_publication_t publication;
@@ -151,9 +147,6 @@ typedef struct device_frag_affinity_result_s
  */
 device_frag_affinity_table_t *deviceFragAffinityCreate(buffer_pool_t *release_pool);
 void                          deviceFragAffinityDestroy(device_frag_affinity_table_t *table);
-
-/* Drops every association and returns staged buffers to the pool. */
-void deviceFragAffinityReset(device_frag_affinity_table_t *table);
 
 /*
  * Returns staged buffers without forgetting anything. Called once the producer
@@ -180,11 +173,6 @@ void deviceFragAffinityRetireReleasePool(device_frag_affinity_table_t *table);
 device_frag_affinity_action_t deviceFragAffinityOffer(device_frag_affinity_table_t *table, const uint8_t *packet,
                                                       uint32_t length, sbuf_t *buf, device_frag_affinity_result_t *out);
 
-/* Injected-clock variant; deviceFragAffinityOffer() is this with the real clock. */
-device_frag_affinity_action_t deviceFragAffinityOfferAt(device_frag_affinity_table_t *table, uint64_t now_ms,
-                                                        const uint8_t *packet, uint32_t length, sbuf_t *buf,
-                                                        device_frag_affinity_result_t *out);
-
 /*
  * Settles actual consumer delivery or cleanup for the buffers represented by a
  * token. Queue admission alone is not settlement: a paused worker may retain a
@@ -200,9 +188,6 @@ device_frag_affinity_action_t deviceFragAffinityOfferAt(device_frag_affinity_tab
 void deviceFragAffinitySettlePublication(device_frag_affinity_table_t             *table,
                                          const device_frag_affinity_publication_t *publication,
                                          device_frag_settlement_t                  settlement);
-void deviceFragAffinitySettlePublicationAt(device_frag_affinity_table_t *table, uint64_t now_ms,
-                                           const device_frag_affinity_publication_t *publication,
-                                           device_frag_settlement_t                  settlement);
 
 /*
  * Opens fragment classification for a new reader generation. Offers made while
@@ -220,22 +205,6 @@ void deviceFragAffinityBeginGeneration(device_frag_affinity_table_t *table);
  */
 void deviceFragAffinityEndGeneration(device_frag_affinity_table_t *table);
 
-/* Live quarantined identities. Exposed so a test can assert the bound. */
-uint32_t deviceFragAffinityQuarantineCount(const device_frag_affinity_table_t *table);
-
-/* Deterministic test/diagnostic seam for the bounded quarantine work contract. */
-uint64_t deviceFragAffinityQuarantineScanSteps(const device_frag_affinity_table_t *table);
-void     deviceFragAffinityResetQuarantineScanSteps(device_frag_affinity_table_t *table);
-
-/* Live association count. Exposed so a test can assert capacity and retirement. */
-uint32_t deviceFragAffinityEntryCount(const device_frag_affinity_table_t *table);
-
-/* Staged fragments held across the whole table. */
-uint32_t deviceFragAffinityStagedCount(const device_frag_affinity_table_t *table);
-
-/* Staged packet bytes held across the whole table. */
-uint32_t deviceFragAffinityStagedBytes(const device_frag_affinity_table_t *table);
-
 /*
  * Capture APIs may report IPv4 receive-checksum offload metadata without
  * materializing a valid header checksum in the copied packet. Capture readers
@@ -244,8 +213,6 @@ uint32_t deviceFragAffinityStagedBytes(const device_frag_affinity_table_t *table
  * adapter boundary, while the fragment-affinity parser validates fragmented
  * IPv4 headers before association.
  */
-bool deviceIpv4NormalizeHeaderChecksum(uint8_t *packet, uint32_t length);
-
 typedef enum device_ipv4_checksum_provenance_e
 {
     /* The capture API positively reported that the header checksum is valid. */
@@ -262,13 +229,6 @@ typedef struct device_packet_checksum_provenance_s
     device_ipv4_checksum_provenance_t tcp;
     device_ipv4_checksum_provenance_t udp;
 } device_packet_checksum_provenance_t;
-
-/*
- * Prepares one packet for affinity/fragment parsing. Non-IPv4 packets pass.
- * Offload-not-ready packets are normalized, untrusted packets are verified,
- * and metadata-proven valid packets avoid a redundant checksum pass.
- */
-bool deviceIpv4PrepareHeaderChecksum(uint8_t *packet, uint32_t length, device_ipv4_checksum_provenance_t provenance);
 
 /*
  * Materializes trusted offload results and validates untrusted bytes for the

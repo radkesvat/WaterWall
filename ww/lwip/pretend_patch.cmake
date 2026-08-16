@@ -1,15 +1,5 @@
-set(WW_LWIP_PATCH_SCHEMA "21")
-file(SHA256 "${CMAKE_CURRENT_LIST_FILE}" WW_LWIP_PATCH_RECIPE_SHA256)
-set(WW_LWIP_PATCH_PROVENANCE
-    "schema=${WW_LWIP_PATCH_SCHEMA}\nrecipe-sha256=${WW_LWIP_PATCH_RECIPE_SHA256}\n")
-
 function(ww_lwip_replace_once file before after)
     file(READ "${file}" content)
-    string(FIND "${content}" "${after}" already_patched)
-    if(NOT already_patched EQUAL -1)
-        return()
-    endif()
-
     string(FIND "${content}" "${before}" found)
     if(found EQUAL -1)
         message(FATAL_ERROR "Waterwall lwIP pretend patch failed for ${file}")
@@ -23,143 +13,7 @@ function(ww_lwip_replace_once file before after)
     file(WRITE "${file}" "${content}")
 endfunction()
 
-# Migrate a form emitted by an older version of this patch without making that
-# form a requirement for a freshly populated lwIP tree.
-function(ww_lwip_replace_optional file before after)
-    file(READ "${file}" content)
-    string(FIND "${content}" "${before}" found)
-    if(found EQUAL -1)
-        return()
-    endif()
-
-    string(LENGTH "${before}" before_len)
-    string(SUBSTRING "${content}" 0 ${found} content_prefix)
-    math(EXPR suffix_start "${found} + ${before_len}")
-    string(SUBSTRING "${content}" ${suffix_start} -1 content_suffix)
-    set(content "${content_prefix}${after}${content_suffix}")
-    file(WRITE "${file}" "${content}")
-endfunction()
-
-# Removes an older generated block while preserving the marker that follows it.
-# This is only for migrations between WaterWall patch revisions; a fresh lwIP
-# tree has no start marker and is left untouched.
-function(ww_lwip_remove_between_optional file start_marker end_marker)
-    file(READ "${file}" content)
-    string(FIND "${content}" "${start_marker}" start)
-    if(start EQUAL -1)
-        return()
-    endif()
-    string(SUBSTRING "${content}" ${start} -1 tail)
-    string(FIND "${tail}" "${end_marker}" relative_finish)
-    if(relative_finish EQUAL -1)
-        message(FATAL_ERROR "Waterwall lwIP pretend patch migration failed for ${file}")
-    endif()
-    math(EXPR finish "${start} + ${relative_finish}")
-    string(SUBSTRING "${content}" 0 ${start} prefix)
-    string(SUBSTRING "${content}" ${finish} -1 suffix)
-    file(WRITE "${file}" "${prefix}${suffix}")
-endfunction()
-
-# Restores an upstream block before reapplying the current generated form. This
-# is used where the older patch replaced (rather than merely inserted before)
-# the code between two stable markers.
-function(ww_lwip_restore_between_optional file start_marker end_marker replacement)
-    file(READ "${file}" content)
-    string(FIND "${content}" "${start_marker}" start)
-    if(start EQUAL -1)
-        return()
-    endif()
-    string(SUBSTRING "${content}" ${start} -1 tail)
-    string(FIND "${tail}" "${end_marker}" relative_finish)
-    if(relative_finish EQUAL -1)
-        message(FATAL_ERROR "Waterwall lwIP pretend patch migration failed for ${file}")
-    endif()
-    math(EXPR finish "${start} + ${relative_finish}")
-    string(SUBSTRING "${content}" 0 ${start} prefix)
-    string(SUBSTRING "${content}" ${finish} -1 suffix)
-    file(WRITE "${file}" "${prefix}${replacement}${suffix}")
-endfunction()
-
 function(ww_apply_lwip_pretend_patch lwip_dir)
-    set(ww_patch_sentinel "${lwip_dir}/.waterwall-lwip-patch-version")
-    set(ww_patch_manifest "${lwip_dir}/.waterwall-lwip-patch-manifest")
-
-    # The completion marker is published last. Its digest manifest covers the
-    # whole source tree, so retaining a few generated strings while deleting a
-    # different generated block can never be mistaken for a current patch.
-    if(EXISTS "${ww_patch_sentinel}" OR EXISTS "${ww_patch_manifest}")
-        if(NOT EXISTS "${ww_patch_sentinel}" OR NOT EXISTS "${ww_patch_manifest}")
-            message(FATAL_ERROR "Waterwall lwIP pretend patch found incomplete completion metadata in ${lwip_dir}")
-        endif()
-        file(READ "${ww_patch_sentinel}" ww_stored_provenance)
-        if(NOT ww_stored_provenance STREQUAL WW_LWIP_PATCH_PROVENANCE)
-            message(FATAL_ERROR
-                "Waterwall lwIP pretend patch recipe mismatch in ${lwip_dir}; recopy pristine lwIP")
-        endif()
-
-        file(STRINGS "${ww_patch_manifest}" ww_manifest_lines)
-        set(ww_manifest_paths "")
-        foreach(ww_manifest_line IN LISTS ww_manifest_lines)
-            if(NOT ww_manifest_line MATCHES "^([0-9a-f]+) (.+)$")
-                message(FATAL_ERROR "Waterwall lwIP pretend patch manifest is malformed in ${lwip_dir}")
-            endif()
-            set(ww_expected_hash "${CMAKE_MATCH_1}")
-            set(ww_relative_path "${CMAKE_MATCH_2}")
-            string(LENGTH "${ww_expected_hash}" ww_expected_hash_length)
-            list(FIND ww_manifest_paths "${ww_relative_path}" ww_duplicate_manifest_path)
-            if(NOT ww_expected_hash_length EQUAL 64 OR NOT ww_duplicate_manifest_path EQUAL -1)
-                message(FATAL_ERROR "Waterwall lwIP pretend patch manifest is malformed in ${lwip_dir}")
-            endif()
-            list(APPEND ww_manifest_paths "${ww_relative_path}")
-            set(ww_manifest_file "${lwip_dir}/${ww_relative_path}")
-            if(NOT EXISTS "${ww_manifest_file}" OR IS_DIRECTORY "${ww_manifest_file}")
-                message(FATAL_ERROR "Waterwall lwIP pretend patch is damaged: ${ww_relative_path} is missing")
-            endif()
-            file(SHA256 "${ww_manifest_file}" ww_actual_hash)
-            if(NOT ww_actual_hash STREQUAL ww_expected_hash)
-                message(FATAL_ERROR "Waterwall lwIP pretend patch is damaged: ${ww_relative_path} differs")
-            endif()
-        endforeach()
-
-        # An omitted manifest row is as dangerous as a stale digest: without an
-        # exact inventory a deleted row would silently exempt one generated
-        # source file from current-format validation.
-        file(GLOB_RECURSE ww_current_files RELATIVE "${lwip_dir}" "${lwip_dir}/*")
-        set(ww_current_paths "")
-        foreach(ww_relative_path IN LISTS ww_current_files)
-            set(ww_current_file "${lwip_dir}/${ww_relative_path}")
-            if(NOT IS_DIRECTORY "${ww_current_file}" AND
-               NOT ww_relative_path STREQUAL ".waterwall-lwip-patch-version" AND
-               NOT ww_relative_path STREQUAL ".waterwall-lwip-patch-manifest" AND
-               NOT ww_relative_path STREQUAL ".waterwall-lwip-source-provenance" AND
-               NOT ww_relative_path STREQUAL ".waterwall-lwip-generator-provenance")
-                list(APPEND ww_current_paths "${ww_relative_path}")
-            endif()
-        endforeach()
-        list(SORT ww_manifest_paths)
-        list(SORT ww_current_paths)
-        if(NOT "${ww_manifest_paths}" STREQUAL "${ww_current_paths}")
-            message(FATAL_ERROR "Waterwall lwIP pretend patch manifest does not match the source inventory in ${lwip_dir}")
-        endif()
-        return()
-    endif()
-
-    # Metadata-free generated trees cannot be authenticated. Reject them
-    # explicitly; the build-owned driver upgrades by copying pristine input.
-    file(READ "${lwip_dir}/src/include/lwip/netif.h" ww_netif_header)
-    file(READ "${lwip_dir}/src/include/lwip/tcp.h" ww_tcp_header)
-    file(READ "${lwip_dir}/src/include/lwip/udp.h" ww_udp_header)
-    file(READ "${lwip_dir}/src/core/netif.c" ww_netif_source)
-    string(FIND "${ww_netif_header}" "u8_t ww_removing;" ww_has_removing_field)
-    string(FIND "${ww_tcp_header}" "err_t            tcp_bind_netif" ww_has_tcp_bind_result)
-    string(FIND "${ww_udp_header}" "err_t            udp_bind_netif" ww_has_udp_bind_result)
-    string(FIND "${ww_netif_source}" "WaterWall removal admission barrier" ww_has_removal_barrier)
-    if(NOT ww_has_removing_field EQUAL -1 OR NOT ww_has_tcp_bind_result EQUAL -1 OR
-       NOT ww_has_udp_bind_result EQUAL -1 OR NOT ww_has_removal_barrier EQUAL -1)
-        message(FATAL_ERROR
-            "Waterwall lwIP pretend patch rejects metadata-free generated sources in ${lwip_dir}; recopy pristine lwIP")
-    endif()
-
     # RFC 791 identifies a datagram being reassembled by source, destination,
     # protocol, and identification. lwIP omits the protocol, so a TCP and a UDP
     # datagram between the same two addresses that happen to share an
@@ -168,30 +22,6 @@ function(ww_apply_lwip_pretend_patch lwip_dir)
     # produces either a checksum failure or a corrupted datagram.
     #
     # This only ever makes matching stricter, so no correct reassembly is lost.
-    # Round four found that the old `? 1 : 0` suffix let an appended `&& netif`
-    # bind only to the false branch. Migrate already-patched trees first, then
-    # apply the same fully parenthesized boolean to a fresh dependency tree.
-    ww_lwip_replace_optional(
-        "${lwip_dir}/src/core/ipv4/ip4_frag.c"
-        [=[#define IP_ADDRESSES_AND_ID_MATCH(iphdrA, iphdrB)  \
-  (ip4_addr_eq(&(iphdrA)->src, &(iphdrB)->src) && \
-   ip4_addr_eq(&(iphdrA)->dest, &(iphdrB)->dest) && \
-   IPH_PROTO(iphdrA) == IPH_PROTO(iphdrB) && \
-   IPH_ID(iphdrA) == IPH_ID(iphdrB)) ? 1 : 0]=]
-        [=[#define IP_ADDRESSES_AND_ID_MATCH(iphdrA, iphdrB)  \
-  (ip4_addr_eq(&(iphdrA)->src, &(iphdrB)->src) && \
-   ip4_addr_eq(&(iphdrA)->dest, &(iphdrB)->dest) && \
-   (IPH_PROTO(iphdrA) == IPH_PROTO(iphdrB)) && \
-   (IPH_ID(iphdrA) == IPH_ID(iphdrB)))]=])
-
-    ww_lwip_replace_optional(
-        "${lwip_dir}/src/include/lwip/priv/tcp_priv.h"
-        [=[void tcp_netif_ip_addr_changed(const ip_addr_t* old_addr, const ip_addr_t* new_addr);
-void tcp_netif_removed(const struct netif *netif);]=]
-        [=[void tcp_netif_ip_addr_changed(const struct netif *netif, const ip_addr_t* old_addr, const ip_addr_t* new_addr);
-int tcp_netif_can_remove(const struct netif *netif);
-void tcp_netif_removed(const struct netif *netif);]=])
-
     ww_lwip_replace_once(
         "${lwip_dir}/src/core/ipv4/ip4_frag.c"
         [=[#define IP_ADDRESSES_AND_ID_MATCH(iphdrA, iphdrB)  \
@@ -216,14 +46,6 @@ void tcp_netif_removed(const struct netif *netif);]=])
     # pass the netif into ip4_reass(), and ip_data.current_input_netif is only
     # assigned *after* the reassembly call returns, so reading the "current" netif
     # from inside would see the previous packet's. The interface has to change.
-    ww_lwip_replace_optional(
-        "${lwip_dir}/src/include/lwip/udp.h"
-        [=[void udp_netif_ip_addr_changed(const ip_addr_t* old_addr, const ip_addr_t* new_addr);
-void udp_netif_removed(const struct netif *netif);]=]
-        [=[void udp_netif_ip_addr_changed(const struct netif *netif, const ip_addr_t* old_addr, const ip_addr_t* new_addr);
-int udp_netif_can_remove(const struct netif *netif);
-void udp_netif_removed(const struct netif *netif);]=])
-
     ww_lwip_replace_once(
         "${lwip_dir}/src/include/lwip/ip4_frag.h"
         [=[struct ip_reassdata {
@@ -265,75 +87,58 @@ u8_t ip4_reass_has(struct netif *inp, const ip4_addr_t *src, const ip4_addr_t *d
 u32_t ip4_reass_tmr_epoch(void);
 u16_t ip4_reass_purge_netif(struct netif *inp);]=])
 
-    # The device fragment quarantine cannot use elapsed wall time as proof that
-    # reassembly expired: lwIP deliberately does not replay timer callbacks
-    # missed while its core thread was stalled. Publish the count of timer passes
-    # through a portable atomic so reader/lifecycle threads can wait for actual
-    # stack progress without taking the TCP/IP core lock. The compatibility
-    # header stays inside the generated source tree so standalone lwIP builds do
-    # not depend on WaterWall-private include paths.
+    # The quarantine clock counts actual lwIP timer passes. Elapsed wall time
+    # alone is insufficient because a stalled core does not replay missed timer
+    # callbacks. This atomic conveys only the counter value, so relaxed ordering
+    # is sufficient; no other state is published through it.
     file(WRITE "${lwip_dir}/src/include/lwip/ww_atomic.h" [=[#ifndef LWIP_HDR_WW_ATOMIC_H
 #define LWIP_HDR_WW_ATOMIC_H
 
 #include <stdint.h>
 
-#if defined(WW_LWIP_ATOMIC_FORCE_C11)
-#define WW_LWIP_ATOMIC_USE_C11 1
-#elif defined(WW_LWIP_ATOMIC_FORCE_FALLBACK)
-#define WW_LWIP_ATOMIC_USE_C11 0
-#elif defined(WW_LWIP_ATOMIC_FORCE_WINDOWS)
-#define WW_LWIP_ATOMIC_USE_C11 0
-#elif defined(WW_LWIP_HAVE_STDATOMIC_H)
-#define WW_LWIP_ATOMIC_USE_C11 WW_LWIP_HAVE_STDATOMIC_H
-#elif defined(__STDC_VERSION__) && (__STDC_VERSION__ >= 201112L) && !defined(__STDC_NO_ATOMICS__)
-#define WW_LWIP_ATOMIC_USE_C11 1
-#else
-#define WW_LWIP_ATOMIC_USE_C11 0
-#endif
-
-#if WW_LWIP_ATOMIC_USE_C11
-#include <stdatomic.h>
-typedef atomic_uint_least32_t ww_lwip_atomic_u32_t;
-
-static inline uint32_t
-ww_lwip_atomic_u32_load_acquire(const ww_lwip_atomic_u32_t *value)
-{
-  return (uint32_t)atomic_load_explicit(value, memory_order_acquire);
-}
-
-static inline void
-ww_lwip_atomic_u32_increment_release(ww_lwip_atomic_u32_t *value)
-{
-  (void)atomic_fetch_add_explicit(value, 1, memory_order_release);
-}
-#elif defined(WW_LWIP_ATOMIC_FORCE_WINDOWS) || (defined(_WIN32) && defined(_MSC_VER))
+#if defined(_WIN32) && defined(_MSC_VER)
 #include <windows.h>
 typedef volatile LONG ww_lwip_atomic_u32_t;
 
 static __inline uint32_t
-ww_lwip_atomic_u32_load_acquire(const ww_lwip_atomic_u32_t *value)
+ww_lwip_atomic_u32_load_relaxed(const ww_lwip_atomic_u32_t *value)
 {
   return (uint32_t)InterlockedCompareExchange((volatile LONG *)value, 0, 0);
 }
 
 static __inline void
-ww_lwip_atomic_u32_increment_release(ww_lwip_atomic_u32_t *value)
+ww_lwip_atomic_u32_increment_relaxed(ww_lwip_atomic_u32_t *value)
 {
   (void)InterlockedIncrement(value);
+}
+#elif defined(__STDC_VERSION__) && (__STDC_VERSION__ >= 201112L) && !defined(__STDC_NO_ATOMICS__)
+#include <stdatomic.h>
+typedef atomic_uint_least32_t ww_lwip_atomic_u32_t;
+
+static inline uint32_t
+ww_lwip_atomic_u32_load_relaxed(const ww_lwip_atomic_u32_t *value)
+{
+  return (uint32_t)atomic_load_explicit(value, memory_order_relaxed);
+}
+
+static inline void
+ww_lwip_atomic_u32_increment_relaxed(ww_lwip_atomic_u32_t *value)
+{
+  (void)atomic_fetch_add_explicit(value, 1, memory_order_relaxed);
 }
 #elif defined(__GNUC__) || defined(__clang__)
 typedef uint_least32_t ww_lwip_atomic_u32_t;
 
 static inline uint32_t
-ww_lwip_atomic_u32_load_acquire(const ww_lwip_atomic_u32_t *value)
+ww_lwip_atomic_u32_load_relaxed(const ww_lwip_atomic_u32_t *value)
 {
-  return (uint32_t)__atomic_load_n(value, __ATOMIC_ACQUIRE);
+  return (uint32_t)__atomic_load_n(value, __ATOMIC_RELAXED);
 }
 
 static inline void
-ww_lwip_atomic_u32_increment_release(ww_lwip_atomic_u32_t *value)
+ww_lwip_atomic_u32_increment_relaxed(ww_lwip_atomic_u32_t *value)
 {
-  (void)__atomic_add_fetch(value, 1, __ATOMIC_RELEASE);
+  (void)__atomic_add_fetch(value, 1, __ATOMIC_RELAXED);
 }
 #else
 #error "WaterWall lwIP requires a supported 32-bit atomic backend"
@@ -813,13 +618,13 @@ ip_reass_tmr(void)
       ip_reass_free_complete_datagram(tmp, prev);
     }
   }
-  ww_lwip_atomic_u32_increment_release(&ip_reass_timer_epoch);
+  ww_lwip_atomic_u32_increment_relaxed(&ip_reass_timer_epoch);
 }
 
 u32_t
 ip4_reass_tmr_epoch(void)
 {
-  return (u32_t)ww_lwip_atomic_u32_load_acquire(&ip_reass_timer_epoch);
+  return (u32_t)ww_lwip_atomic_u32_load_relaxed(&ip_reass_timer_epoch);
 }
 
 u16_t
@@ -1027,99 +832,6 @@ void udp_netif_removed(const struct netif *netif);]=])
     # Ordinary address changes apply upstream semantics to unbound pcbs selected
     # by address. Exact pcbs additionally match the changed netif, old address,
     # and address family. Wildcard exact pcbs remain wildcard listeners/binds.
-    ww_lwip_restore_between_optional(
-        "${lwip_dir}/src/core/tcp.c"
-        [=[/** Does this pcb name the given netif as its one interface? */]=]
-        [=[/** This function is called from netif.c when address is changed or netif is removed]=]
-        [=[/** Helper function for tcp_netif_ip_addr_changed() that iterates a pcb list */
-static void
-tcp_netif_ip_addr_changed_pcblist(const ip_addr_t *old_addr, struct tcp_pcb *pcb_list)
-{
-  struct tcp_pcb *pcb;
-  pcb = pcb_list;
-
-  LWIP_ASSERT("tcp_netif_ip_addr_changed_pcblist: invalid old_addr", old_addr != NULL);
-
-  while (pcb != NULL) {
-    /* PCB bound to current local interface address? */
-    if (ip_addr_eq(&pcb->local_ip, old_addr)
-#if LWIP_AUTOIP
-        /* connections to link-local addresses must persist (RFC3927 ch. 1.9) */
-        && (!IP_IS_V4_VAL(pcb->local_ip) || !ip4_addr_islinklocal(ip_2_ip4(&pcb->local_ip)))
-#endif /* LWIP_AUTOIP */
-       ) {
-      /* this connection must be aborted */
-      struct tcp_pcb *next = pcb->next;
-      LWIP_DEBUGF(NETIF_DEBUG | LWIP_DBG_STATE, ("netif_set_ipaddr: aborting TCP pcb %p\n", (void *)pcb));
-      tcp_abort(pcb);
-      pcb = next;
-    } else {
-      pcb = pcb->next;
-    }
-  }
-}
-
-]=])
-
-    ww_lwip_restore_between_optional(
-        "${lwip_dir}/src/core/tcp.c"
-        [=[/** This function is called from netif.c when address is changed or netif is removed]=]
-        [=[const char *
-tcp_debug_state_str]=]
-        [=[/** This function is called from netif.c when address is changed or netif is removed
- *
- * @param old_addr IP address of the netif before change
- * @param new_addr IP address of the netif after change or NULL if netif has been removed
- */
-void
-tcp_netif_ip_addr_changed(const ip_addr_t *old_addr, const ip_addr_t *new_addr)
-{
-  struct tcp_pcb_listen *lpcb;
-
-  if (!ip_addr_isany(old_addr)) {
-    tcp_netif_ip_addr_changed_pcblist(old_addr, tcp_active_pcbs);
-    tcp_netif_ip_addr_changed_pcblist(old_addr, tcp_bound_pcbs);
-
-    if (!ip_addr_isany(new_addr)) {
-      /* PCB bound to current local interface address? */
-      for (lpcb = tcp_listen_pcbs.listen_pcbs; lpcb != NULL; lpcb = lpcb->next) {
-        /* PCB bound to current local interface address? */
-        if (ip_addr_eq(&lpcb->local_ip, old_addr)) {
-          /* The PCB is listening to the old ipaddr and
-            * is set to listen to the new one instead */
-          ip_addr_copy(lpcb->local_ip, *new_addr);
-        }
-      }
-    }
-  }
-}
-
-]=])
-
-    ww_lwip_replace_optional(
-        "${lwip_dir}/src/core/tcp.c"
-        [=[    /* PCB bound to one exact netif? Then only that netif's removal may take it,
-       however many interfaces happen to share this address. */
-    if ((pcb->netif_idx != NETIF_NO_INDEX) || (pcb->pretend_netif_idx != NETIF_NO_INDEX)) {
-      pcb = pcb->next;
-      continue;
-    }
-]=]
-        "")
-
-    # R7 migration: the first identity-aware condition did not group its exact
-    # and unbound branches before lwIP's optional AUTOIP suffix. With AUTOIP on,
-    # that made the RFC 3927 exclusion apply only to the unbound branch.
-    ww_lwip_replace_optional(
-        "${lwip_dir}/src/core/tcp.c"
-        [=[    if (((exact != 0) && (netif != NULL) && tcp_pcb_is_on_netif(pcb, netif_get_index(netif))) ||
-        ((exact == 0) && ip_addr_eq(&pcb->local_ip, old_addr))]=]
-        [=[    if ((((exact != 0) && (netif != NULL) && tcp_pcb_is_on_netif(pcb, netif_get_index(netif)) &&
-          (IP_GET_TYPE(&pcb->local_ip) == IP_GET_TYPE(old_addr)) && !ip_addr_isany(&pcb->local_ip) &&
-          ip_addr_eq(&pcb->local_ip, old_addr)) ||
-         ((exact == 0) && (IP_GET_TYPE(&pcb->local_ip) == IP_GET_TYPE(old_addr)) &&
-          ip_addr_eq(&pcb->local_ip, old_addr)))]=])
-
     ww_lwip_replace_once(
         "${lwip_dir}/src/core/tcp.c"
         [=[/** Helper function for tcp_netif_ip_addr_changed() that iterates a pcb list */
@@ -1238,56 +950,6 @@ tcp_netif_ip_addr_changed_abort_marked(u32_t epoch)
   }
 }
 ]=])
-
-    ww_lwip_remove_between_optional(
-        "${lwip_dir}/src/core/udp.c"
-        [=[/** WaterWall: remove every udp pcb that named one exact netif]=]
-        [=[/** This function is called from netif.c when address is changed]=])
-    ww_lwip_remove_between_optional(
-        "${lwip_dir}/src/core/udp.c"
-        [=[/** WaterWall: raw UDP owners must detach exact pcbs before netif removal.]=]
-        [=[/** This function is called from netif.c when address is changed]=])
-
-    ww_lwip_restore_between_optional(
-        "${lwip_dir}/src/core/udp.c"
-        [=[/** This function is called from netif.c when address is changed]=]
-        [=[#if UDP_DEBUG]=]
-        [=[/** This function is called from netif.c when address is changed
- *
- * @param old_addr IP address of the netif before change
- * @param new_addr IP address of the netif after change
- */
-void udp_netif_ip_addr_changed(const ip_addr_t *old_addr, const ip_addr_t *new_addr)
-{
-  struct udp_pcb *upcb;
-
-  if (!ip_addr_isany(old_addr) && !ip_addr_isany(new_addr)) {
-    for (upcb = udp_pcbs; upcb != NULL; upcb = upcb->next) {
-      /* PCB bound to current local interface address? */
-      if (ip_addr_eq(&upcb->local_ip, old_addr)) {
-        /* The PCB is bound to the old ipaddr and
-         * is set to bound to the new one instead */
-        ip_addr_copy(upcb->local_ip, *new_addr);
-      }
-    }
-  }
-}
-
-]=])
-
-    ww_lwip_replace_optional(
-        "${lwip_dir}/src/core/tcp.c"
-        [=[    /* PCB bound to current local interface address? */
-    if (ip_addr_eq(&pcb->local_ip, old_addr)]=]
-        [=[    const int exact = (pcb->netif_idx != NETIF_NO_INDEX) ||
-                      (pcb->pretend_netif_idx != NETIF_NO_INDEX);
-    /* Exact pcbs follow only their changed netif; unbound pcbs retain upstream's
-       address-based behavior. */
-    if ((((exact != 0) && (netif != NULL) && tcp_pcb_is_on_netif(pcb, netif) &&
-          (IP_GET_TYPE(&pcb->local_ip) == IP_GET_TYPE(old_addr)) && !ip_addr_isany(&pcb->local_ip) &&
-          ip_addr_eq(&pcb->local_ip, old_addr)) ||
-         ((exact == 0) && (IP_GET_TYPE(&pcb->local_ip) == IP_GET_TYPE(old_addr)) &&
-          ip_addr_eq(&pcb->local_ip, old_addr)))]=])
 
     ww_lwip_replace_once(
         "${lwip_dir}/src/core/tcp.c"
@@ -1493,29 +1155,7 @@ void udp_netif_ip_addr_changed(const struct netif *netif, const ip_addr_t *old_a
         [=[static u8_t netif_num;]=]
         [=[static u8_t netif_num;
 static u32_t ww_netif_generation;
-static u8_t ww_netif_add_in_progress;
-
-u32_t
-netif_ww_generation_for_test(void)
-{
-  LWIP_ASSERT_CORE_LOCKED();
-  return ww_netif_generation;
-}
-
-void
-netif_ww_set_generation_for_test(u32_t generation)
-{
-  LWIP_ASSERT_CORE_LOCKED();
-  ww_netif_generation = generation;
-}]=])
-
-    ww_lwip_replace_once(
-        "${lwip_dir}/src/include/lwip/netif.h"
-        [=[struct netif* netif_get_by_index(u8_t idx);]=]
-        [=[struct netif* netif_get_by_index(u8_t idx);
-/** WaterWall test seam for the non-reusable netif lifetime identity. */
-u32_t netif_ww_generation_for_test(void);
-void netif_ww_set_generation_for_test(u32_t generation);]=])
+static u8_t ww_netif_add_in_progress;]=])
 
     # Reject identity exhaustion before netif_set_addr() or the caller's init
     # callback can mutate driver-owned state. A successful init receives its
@@ -1916,93 +1556,6 @@ netif_do_ip_addr_changed(struct netif *netif, const ip_addr_t *old_addr, const i
         [=[#include "lwip/priv/raw_priv.h"
 #include "lwip/ip4_frag.h"]=])
 
-    ww_lwip_restore_between_optional(
-        "${lwip_dir}/src/core/netif.c"
-        [=[void
-netif_remove(struct netif *netif)]=]
-        [=[/**
- * @ingroup netif
- * Set a network interface as the default network interface]=]
-        [=[void
-netif_remove(struct netif *netif)
-{
-#if LWIP_IPV6
-  int i;
-#endif
-
-  LWIP_ASSERT_CORE_LOCKED();
-
-  if (netif == NULL) {
-    return;
-  }
-
-  netif_invoke_ext_callback(netif, LWIP_NSC_NETIF_REMOVED, NULL);
-
-#if LWIP_IPV4
-  if (!ip4_addr_isany_val(*netif_ip4_addr(netif))) {
-    netif_do_ip_addr_changed(netif_ip_addr4(netif), NULL);
-  }
-
-#if LWIP_IGMP
-  /* stop IGMP processing */
-  if (netif->flags & NETIF_FLAG_IGMP) {
-    igmp_stop(netif);
-  }
-#endif /* LWIP_IGMP */
-#endif /* LWIP_IPV4*/
-
-#if LWIP_IPV6
-  for (i = 0; i < LWIP_IPV6_NUM_ADDRESSES; i++) {
-    if (ip6_addr_isvalid(netif_ip6_addr_state(netif, i))) {
-      netif_do_ip_addr_changed(netif_ip_addr6(netif, i), NULL);
-    }
-  }
-#if LWIP_IPV6_MLD
-  /* stop MLD processing */
-  mld6_stop(netif);
-#endif /* LWIP_IPV6_MLD */
-#endif /* LWIP_IPV6 */
-  if (netif_is_up(netif)) {
-    /* set netif down before removing (call callback function) */
-    netif_set_down(netif);
-  }
-
-  mib2_remove_ip4(netif);
-
-  /* this netif is default? */
-  if (netif_default == netif) {
-    /* reset default netif */
-    netif_set_default(NULL);
-  }
-#if !LWIP_SINGLE_NETIF
-  /*  is it the first netif? */
-  if (netif_list == netif) {
-    netif_list = netif->next;
-  } else {
-    /*  look for netif further down the list */
-    struct netif *tmp_netif;
-    NETIF_FOREACH(tmp_netif) {
-      if (tmp_netif->next == netif) {
-        tmp_netif->next = netif->next;
-        break;
-      }
-    }
-    if (tmp_netif == NULL) {
-      return; /* netif is not on the list */
-    }
-  }
-#endif /* !LWIP_SINGLE_NETIF */
-  mib2_netif_removed(netif);
-#if LWIP_NETIF_REMOVE_CALLBACK
-  if (netif->remove_callback) {
-    netif->remove_callback(netif);
-  }
-#endif /* LWIP_NETIF_REMOVE_CALLBACK */
-  LWIP_DEBUGF( NETIF_DEBUG, ("netif_remove: removed netif\n") );
-}
-
-]=])
-
     ww_lwip_replace_once(
         "${lwip_dir}/src/core/netif.c"
         [=[  if (netif == NULL) {
@@ -2293,11 +1846,6 @@ err_t            udp_sendto     (struct udp_pcb *pcb, struct pbuf *p,]=])
   struct netif *netif;
 #if LWIP_IPV6 && LWIP_IPV6_SCOPES]=])
 
-    ww_lwip_replace_optional(
-        "${lwip_dir}/src/core/tcp.c"
-        [=[    struct netif *netif = netif_get_by_index(pcb->netif_idx);]=]
-        [=[    netif = netif_get_by_index(pcb->netif_idx);]=])
-
     ww_lwip_replace_once(
         "${lwip_dir}/src/core/tcp.c"
         [=[  LWIP_ASSERT_CORE_LOCKED();
@@ -2515,14 +2063,6 @@ udp_sendfrom(struct udp_pcb *pcb, struct pbuf *p,
         [=[      if (!netif_is_flag_set(netif, NETIF_FLAG_PRETEND_UDP) &&
           !ip4_addr_eq(ip_2_ip4(&(pcb->local_ip)), netif_ip4_addr(netif))) {]=])
 
-    ww_lwip_replace_optional(
-        "${lwip_dir}/src/core/udp.c"
-        [=[  struct udp_pcb *ipcb;
-  u8_t rebind = 0;]=]
-        [=[  struct udp_pcb *ipcb;
-  struct netif *netif;
-  u8_t rebind = 0;]=])
-
     ww_lwip_replace_once(
         "${lwip_dir}/src/core/udp.c"
         [=[  struct udp_pcb *ipcb;
@@ -2530,18 +2070,6 @@ udp_sendfrom(struct udp_pcb *pcb, struct pbuf *p,
         [=[  struct udp_pcb *ipcb;
   struct netif *netif;
   u8_t rebind = 0;]=])
-
-    ww_lwip_replace_optional(
-        "${lwip_dir}/src/core/udp.c"
-        [=[    struct netif *netif = netif_get_by_index(pcb->netif_idx);]=]
-        [=[    netif = netif_get_by_index(pcb->netif_idx);]=])
-
-    ww_lwip_replace_once(
-        "${lwip_dir}/src/core/udp.c"
-        [=[  u8_t rebind;
-#if LWIP_IPV6 && LWIP_IPV6_SCOPES]=]
-        [=[  u8_t rebind = 0;
-#if LWIP_IPV6 && LWIP_IPV6_SCOPES]=])
 
     ww_lwip_replace_once(
         "${lwip_dir}/src/core/udp.c"
@@ -2749,7 +2277,7 @@ tcpip_shutdown(tcpip_callback_fn shutdown_fn, void *ctx)
 /**
  * Simple callback function used with tcpip_callback to free a pbuf]=])
 
-    # R12-05. Reconciliation markers must survive a PCB shape change and must not
+    # Reconciliation markers must survive a PCB shape change and must not
     # be inherited by a listener that was never a candidate.
     #
     # memp_malloc() returns uninitialized storage and the conversion copies only
@@ -2824,7 +2352,7 @@ tcp_netif_ip_addr_changed_abort_marked(u32_t epoch)]=])
   }
 }]=])
 
-    # R12-06. Removal and address/config reconciliation must exclude each other.
+    # Removal and address/config reconciliation must exclude each other.
     #
     # A TCP error callback raised while an address change reconciles PCBs could
     # call netif_remove(): removal only rejected a nested removal. The outer
@@ -2937,7 +2465,7 @@ netif_do_set_gw(struct netif *netif, const ip4_addr_t *gw, ip_addr_t *old_gw)
 
   old_state = netif_ip6_addr_state(netif, addr_idx);]=])
 
-    # R13-03. ww_reconciling protects only the PCB walk inside an address
+    # ww_reconciling protects only the PCB walk inside an address
     # change. Public mutation must remain closed through every later state write,
     # report, status callback and extended callback as well.
     ww_lwip_replace_once(
@@ -3260,23 +2788,4 @@ netif_ip6_addr_set_state(struct netif *netif, s8_t addr_idx, u8_t state)
   return ERR_VAL;
 }]=])
 
-
-    # Validate every transformation before publishing completion metadata, then
-    # hash all ordinary files. The sentinel is deliberately the final write.
-    file(GLOB_RECURSE ww_patch_files RELATIVE "${lwip_dir}" "${lwip_dir}/*")
-    list(SORT ww_patch_files)
-    set(ww_manifest_content "")
-    foreach(ww_relative_path IN LISTS ww_patch_files)
-        set(ww_manifest_file "${lwip_dir}/${ww_relative_path}")
-        if(NOT IS_DIRECTORY "${ww_manifest_file}" AND
-           NOT ww_relative_path STREQUAL ".waterwall-lwip-patch-version" AND
-           NOT ww_relative_path STREQUAL ".waterwall-lwip-patch-manifest" AND
-           NOT ww_relative_path STREQUAL ".waterwall-lwip-source-provenance" AND
-           NOT ww_relative_path STREQUAL ".waterwall-lwip-generator-provenance")
-            file(SHA256 "${ww_manifest_file}" ww_file_hash)
-            string(APPEND ww_manifest_content "${ww_file_hash} ${ww_relative_path}\n")
-        endif()
-    endforeach()
-    file(WRITE "${ww_patch_manifest}" "${ww_manifest_content}")
-    file(WRITE "${ww_patch_sentinel}" "${WW_LWIP_PATCH_PROVENANCE}")
 endfunction()

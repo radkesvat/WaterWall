@@ -4,31 +4,13 @@
 #include <stddef.h> /* for size_t */
 #include <stdint.h>
 
-static inline bool memoryTryComputeArraySizeForLimit(uint64_t count, uint64_t item_size, uint64_t size_limit,
-                                                     uint64_t *size_out)
-{
-    if (size_out == NULL || item_size == 0 || count > UINT64_MAX / item_size)
-    {
-        return false;
-    }
-    const uint64_t size = count * item_size;
-    if (size > size_limit)
-    {
-        return false;
-    }
-    *size_out = size;
-    return true;
-}
-
 static inline bool memoryTryComputeArraySize(size_t count, size_t item_size, size_t *size_out)
 {
-    uint64_t size;
-    if (size_out == NULL ||
-        ! memoryTryComputeArraySizeForLimit((uint64_t) count, (uint64_t) item_size, (uint64_t) SIZE_MAX, &size))
+    if (size_out == NULL || item_size == 0 || count > SIZE_MAX / item_size)
     {
         return false;
     }
-    *size_out = (size_t) size;
+    *size_out = count * item_size;
     return true;
 }
 
@@ -37,7 +19,7 @@ typedef struct dedicated_memory_s dedicated_memory_t;
 
 void *memoryAllocate(size_t size);
 void *memoryAllocateZero(size_t size);
-bool  memoryAlignedAllocationSizeIsRepresentableForLimit(uint64_t size, size_t alignment, uint64_t size_limit);
+bool  memoryAlignedAllocationSizeIsRepresentable(size_t size, size_t alignment);
 void *memoryAllocateAligned(size_t size, size_t alignment);
 void *memoryAllocateAlignedZero(size_t size, size_t alignment);
 void *memoryAllocateCacheAligned(size_t size);

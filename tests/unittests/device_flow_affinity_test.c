@@ -16,7 +16,7 @@ static test_worker_registry_t g_test_worker_registry;
 enum
 {
     kMaxCapturedPosts   = 256,
-    kMaxCapturedBuffers = 64
+    kMaxCapturedBuffers = 512
 };
 
 typedef struct captured_post_s
@@ -523,9 +523,8 @@ static void testBucketedDispatch(void)
     memoryZero(sbufGetMutablePtr(packets[kPacketCount - 1]), 8);
     expected[kPacketCount - 1] = UINT8_MAX;
 
-    // A real session object, because dispatch now reads its fragment-affinity
-    // table. Leaving that table NULL keeps this case about bucketing alone;
-    // device_frag_affinity_test.c is where the table itself is driven.
+    // A real session object, because dispatch reads its fragment-affinity
+    // table. Leaving that table NULL keeps this case about bucketing alone.
     device_reader_session_t session;
     memoryZero(&session, sizeof(session));
     session.batch_capacity = kMaxCapturedBuffers;
@@ -569,6 +568,71 @@ static void testBucketedDispatch(void)
     }
 }
 
+static void testDispatchBucketsAreSplitAtSessionCapacity(void)
+{
+    enum
+    {
+        kPacketCount = 3
+    };
+    sbuf_t *packets[kPacketCount];
+    for (unsigned int i = 0; i < kPacketCount; ++i)
+    {
+        packets[i] = makeIpv4Packet(0x0A000001, 6500, 0xC0000201, 443, 6, 0);
+    }
+
+    memoryZero(captured_posts, sizeof(captured_posts));
+    captured_post_count = 0;
+    device_reader_session_t session;
+    memoryZero(&session, sizeof(session));
+    session.batch_capacity = 1;
+
+    deviceFlowAffinityPostBatch(&session, packets, kPacketCount);
+    require(captured_post_count == kPacketCount, "capacity-one dispatch was not split into legal posts");
+    for (unsigned int i = 0; i < kPacketCount; ++i)
+    {
+        require(captured_posts[i].count == 1, "a split post exceeded the session capacity");
+        require(captured_posts[i].bufs[0] == packets[i], "split posts did not preserve per-worker order");
+        sbufDestroy(packets[i]);
+    }
+}
+
+static void testLargeDispatchBoundaries(void)
+{
+    static const uint16_t capacities[] = {128, 512};
+
+    for (unsigned int ci = 0; ci < ARRAY_SIZE(capacities); ++ci)
+    {
+        const uint16_t capacity = capacities[ci];
+        const uint16_t count    = (uint16_t) (capacity + 1U);
+        sbuf_t       **packets  = memoryAllocate((size_t) count * sizeof(*packets));
+        require(packets != NULL, "failed to allocate the boundary dispatch fixture");
+
+        for (uint16_t i = 0; i < count; ++i)
+        {
+            packets[i] = makeIpv4Packet(0x0A000001, 6501, 0xC0000201, 443, 6, 0);
+        }
+
+        memoryZero(captured_posts, sizeof(captured_posts));
+        captured_post_count = 0;
+        device_reader_session_t session;
+        memoryZero(&session, sizeof(session));
+        session.batch_capacity = capacity;
+
+        deviceFlowAffinityPostBatch(&session, packets, count);
+        require(captured_post_count == 2, "one-over-capacity dispatch did not produce exactly two posts");
+        require(captured_posts[0].count == capacity && captured_posts[1].count == 1,
+                "one-over-capacity dispatch used illegal chunk sizes");
+        for (uint16_t i = 0; i < count; ++i)
+        {
+            captured_post_t *post = i < capacity ? &captured_posts[0] : &captured_posts[1];
+            const uint16_t   slot = i < capacity ? i : 0;
+            require(post->bufs[slot] == packets[i], "large split posts did not preserve per-worker order");
+            sbufDestroy(packets[i]);
+        }
+        memoryFree(packets);
+    }
+}
+
 int main(void)
 {
     GSTATE.workers_count = 5;
@@ -581,6 +645,8 @@ int main(void)
     testWidIsHashModuloWorkerCount();
     testBalancedDistribution();
     testBucketedDispatch();
+    testDispatchBucketsAreSplitAtSessionCapacity();
+    testLargeDispatchBoundaries();
     GSTATE.workers_count = 0;
     testWorkerRegistryRestore(&g_test_worker_registry);
     return 0;

@@ -60,12 +60,12 @@ static bool capturedeviceAppendFilter(char *filter, size_t filter_len, size_t *o
 
 static char *capturedeviceBuildWinDivertFilter(const ipmask_t *ranges, uint32_t range_count)
 {
-    uint64_t ranges_size;
-    if (! memoryTryComputeArraySizeForLimit(range_count, 80U, SIZE_MAX - 10U, &ranges_size))
+    size_t ranges_size;
+    if (! memoryTryComputeArraySize(range_count, 80U, &ranges_size) || ranges_size > SIZE_MAX - 10U)
     {
         return NULL;
     }
-    const size_t filter_len = 10U + (size_t) ranges_size; // "ip and (" + ")" + NUL
+    const size_t filter_len = 10U + ranges_size; // "ip and (" + ")" + NUL
 
     char  *filter = memoryAllocate(filter_len);
     size_t offset = 0;
@@ -128,9 +128,9 @@ static void captureDeliverPacket(void *device, sbuf_t *buf, wid_t wid)
     cdev->read_event_callback(cdev, cdev->userdata, buf, wid);
 }
 
-static bool distributePacketPayload(capture_device_t *cdev, sbuf_t *buf)
+static void distributePacketPayload(capture_device_t *cdev, sbuf_t *buf)
 {
-    return deviceFlowAffinityPostBatch(cdev->reader_session, &buf, 1);
+    deviceFlowAffinityPostBatch(cdev->reader_session, &buf, 1);
 }
 static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
 {
@@ -209,10 +209,7 @@ static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
             continue;
         }
 
-        if (! distributePacketPayload(cdev, buf))
-        {
-            break;
-        }
+        distributePacketPayload(cdev, buf);
     }
 
     return 0;

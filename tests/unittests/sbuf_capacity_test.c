@@ -25,8 +25,7 @@ enum
     // Exit statuses the forked children use when the rejected request wrongly
     // returned instead of aborting.
     kChildAllocationSucceeded    = 66,
-    kChildAllocationReturnedNull = 67,
-    kChildPoolCreateReturned     = 68
+    kChildAllocationReturnedNull = 67
 };
 
 static void require(bool condition, const char *message)
@@ -278,52 +277,35 @@ static void testCreateRejectsUnrepresentableRequest(void)
  * bufferpoolCreate() returned a pool whose buffers were empty but whose
  * reported size satisfied every later bounds check.
  *
- * bufferpoolCreate() has no failure channel and no valid smaller answer, so an
- * unrepresentable size aborts. Each parameter is checked on its own, because a
- * single surviving copy of the old round-up is the whole failure.
+ * bufferpoolCreate() is nullable, so an unrepresentable size is rejected before
+ * the pool or its callbacks are published. Each parameter is checked on its own.
  */
-static void requirePoolCreateAborts(uint32_t large_buffer_size, uint32_t small_buffer_size, const char *which)
+static void requirePoolCreateRejects(uint32_t large_buffer_size, uint32_t small_buffer_size, const char *which)
 {
-    pid_t child = fork();
-    require(child >= 0, "failed to fork the buffer-pool size child");
+    master_pool_t *large_master = masterpoolCreateWithCapacity(64);
+    master_pool_t *small_master = masterpoolCreateWithCapacity(64);
+    require(large_master != NULL && small_master != NULL, "failed to create buffer-pool masters");
 
-    if (child == 0)
+    buffer_pool_t *pool     = bufferpoolCreate(large_master, small_master, 1, large_buffer_size, small_buffer_size);
+    const bool     rejected = pool == NULL;
+    if (pool != NULL)
     {
-        /*
-         * Real master pools rather than NULL: with the round-up reverted the
-         * call runs to completion, and "returned a pool" has to be
-         * distinguishable from "crashed on a NULL master pool on the way".
-         */
-        master_pool_t *large_master = masterpoolCreateWithCapacity(64);
-        master_pool_t *small_master = masterpoolCreateWithCapacity(64);
-
-        buffer_pool_t *pool = bufferpoolCreate(large_master, small_master, 1, large_buffer_size, small_buffer_size);
-        // Returning at all is the failure; the pointer is folded into the exit
-        // status so the call cannot be optimised away.
-        _Exit(pool == NULL ? kChildAllocationReturnedNull : kChildPoolCreateReturned);
+        bufferpoolDestroy(pool);
     }
+    masterpoolMakeEmpty(large_master);
+    masterpoolMakeEmpty(small_master);
+    masterpoolDestroy(large_master);
+    masterpoolDestroy(small_master);
 
-    int status = 0;
-    require(waitpid(child, &status, 0) == child, "failed to wait for the buffer-pool size child");
-
-    if (WIFEXITED(status) && WEXITSTATUS(status) == 1)
-    {
-        return;
-    }
-
-    fprintf(stderr, "FAIL: bufferpoolCreate() did not abort on an unrepresentable %s buffer size", which);
-    if (WIFEXITED(status) && WEXITSTATUS(status) == kChildPoolCreateReturned)
-    {
-        fprintf(stderr, " (it returned a pool)");
-    }
-    fprintf(stderr, "\n");
-    exit(1);
+    char message[128];
+    snprintf(message, sizeof(message), "bufferpoolCreate() accepted an unrepresentable %s buffer size", which);
+    require(rejected, message);
 }
 
 static void testPoolRejectsUnrepresentableBufferSizes(void)
 {
-    requirePoolCreateAborts(UINT32_MAX, 1024, "large");
-    requirePoolCreateAborts(8192, UINT32_MAX, "small");
+    requirePoolCreateRejects(UINT32_MAX, 1024, "large");
+    requirePoolCreateRejects(8192, UINT32_MAX, "small");
 }
 
 /*

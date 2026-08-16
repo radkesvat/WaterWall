@@ -17,17 +17,6 @@ typedef struct udpstatelesssocket_dns_request_s
 static void udpstatelesssocketCleanupSendRequest(void *arg1, void *arg2, void *arg3,
                                                  worker_message_cancel_reason_e reason);
 
-#ifdef UDPSTATELESSSOCKET_DISPATCH_TEST_HOOKS
-static UdpStatelessSocketForeignAdmissionHook udpstatelesssocket_foreign_admission_hook;
-static void                                  *udpstatelesssocket_foreign_admission_context;
-
-void udpstatelesssocketInstallForeignAdmissionHook(UdpStatelessSocketForeignAdmissionHook hook, void *context)
-{
-    udpstatelesssocket_foreign_admission_hook    = hook;
-    udpstatelesssocket_foreign_admission_context = context;
-}
-#endif
-
 static udpstatelesssocket_send_request_t *udpstatelesssocketSendRequestCreate(udpstatelesssocket_tstate_t *state,
                                                                               tunnel_async_session_t      *session)
 {
@@ -318,13 +307,7 @@ void udpstatelesssocketDispatchToPeer(tunnel_t *t, sbuf_t *buf, const sockaddr_u
         return;
     }
 
-#ifdef UDPSTATELESSSOCKET_DISPATCH_TEST_HOOKS
-    if (udpstatelesssocket_foreign_admission_hook != NULL)
-    {
-        udpstatelesssocket_foreign_admission_hook(udpstatelesssocket_foreign_admission_context);
-    }
-#endif
-    /* Pre-stop can close admission while this already-entered callback is
+    /* Quiesce can close admission while this already-entered callback is
      * paused. Do not extend that callback into a newly queued request. */
     if (UNLIKELY(! tunnelasyncsessionIsAccepting(session)))
     {

@@ -205,9 +205,9 @@ ctp_flush_result_t ctpFlushPendingLocked(ctp_lstate_t *ls)
 
     /*
      * Every core-locked write to a pcb funnels through here, so this is where
-     * the stopping gate has to be rechecked: stop closes the pcb and clears
+     * the stopping gate has to be rechecked: drain closes the pcb and clears
      * ls->tcp_pcb under this same lock, and a task that took the lock first
-     * would otherwise still be holding the pre-stop pointer.
+     * would otherwise still be holding the pre-quiesce pointer.
      */
     if (UNLIKELY(ctpTunnelIsStopping(ls->tunnel)))
     {

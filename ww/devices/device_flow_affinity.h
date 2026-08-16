@@ -49,7 +49,7 @@ bool deviceFlowAffineWID(const uint8_t *packet, uint32_t length, wid_t *out_wid)
 /*
  * Takes ownership of every buffer and posts one batch per selected worker.
  * Parseable IP packets are flow-affine; other packets retain round-robin
- * distribution.
+ * distribution. A refused post drops and settles the affected work locally;
+ * queue pressure is not a process-wide failure.
  */
-/* Returns false only for a fatal partial-fragment publication failure. */
-bool deviceFlowAffinityPostBatch(device_reader_session_t *session, sbuf_t **bufs, unsigned int count);
+void deviceFlowAffinityPostBatch(device_reader_session_t *session, sbuf_t **bufs, unsigned int count);

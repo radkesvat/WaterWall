@@ -310,19 +310,6 @@ void halfduplexserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     halfduplexserver_tstate_t *ts = tunnelGetState(t);
     halfduplexserver_lstate_t *ls = lineGetState(l, t);
 
-    // #ifdef DEBUG
-    // This bug is fixed in my event loop code, i also report this to libhv and merged pull request
-    // checking no longer required, alreday proven with test tools that this will not happen again
-
-    // if (getWID() != lineGetWID(l))
-    // {
-    //     LOGF("HalfDuplexServer: WID mismatch detected, getWID: %d, line WID: %d", getWID(), lineGetWID(l));
-    //     assert(false);
-    //     memoryFree(ls);
-    //     terminateProgram(1);
-    // }
-    // #endif
-
     switch (ls->state)
     {
     case kCsUnkown:

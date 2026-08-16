@@ -351,14 +351,14 @@ static void testSessionGenerationRejectsStaleAndWrap(void)
 
     const uint32_t first_generation = deviceReaderSessionBegin(session);
     require(first_generation != 0, "first reader generation was invalid");
-    require(deviceReaderSessionMatchesGeneration(session, first_generation),
+    require((uint32_t) atomicLoadRelaxed(&session->generation) == first_generation,
             "the current generation did not match its stamp");
 
     deviceReaderSessionEnd(session);
     const uint32_t second_generation = deviceReaderSessionBegin(session);
     require(second_generation != 0 && second_generation != first_generation,
             "beginning a new session did not advance the generation");
-    require(! deviceReaderSessionMatchesGeneration(session, first_generation),
+    require((uint32_t) atomicLoadRelaxed(&session->generation) != first_generation,
             "a stale message stamp matched the new session");
 
     deviceReaderSessionEnd(session);

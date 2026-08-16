@@ -26,9 +26,6 @@ typedef struct wgd_tstate_s
 
 } wgd_tstate_t;
 
-bool wireguarddeviceComputeTransportLineStorageSize(uint64_t workers_count, uint64_t size_limit, size_t pointer_size,
-                                                    uint64_t *bytes_out);
-
 typedef struct wgd_lstate_s
 {
     int unused;

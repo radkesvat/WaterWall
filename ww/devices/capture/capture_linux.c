@@ -1337,12 +1337,6 @@ static bool netfilterSendVerdict(int netfilter_socket, uint16_t qnumber, uint32_
     return netfilterSendVerdictUntil(netfilter_socket, qnumber, packet_id, verdict, deadline_us);
 }
 
-bool captureLinuxNetfilterSendVerdictForTest(int netfilter_socket, uint16_t queue_number, uint32_t packet_id,
-                                             uint32_t verdict)
-{
-    return netfilterSendVerdict(netfilter_socket, queue_number, packet_id, verdict);
-}
-
 /*
  * Get a packet from netfilter.
  */
@@ -1705,10 +1699,7 @@ WTHREAD_ROUTINE(captureLinuxReadRoutine) // NOLINT
                     bufferpoolReuseBuffer(cdev->reader_buffer_pool, bufs[queued_count]);
                     if (queued_count > 0)
                     {
-                        if (! deviceFlowAffinityPostBatch(cdev->reader_session, bufs, queued_count))
-                        {
-                            return 0;
-                        }
+                        deviceFlowAffinityPostBatch(cdev->reader_session, bufs, queued_count);
                         queued_count = 0;
                     }
                     leave_drain_loop = true;
@@ -1718,10 +1709,7 @@ WTHREAD_ROUTINE(captureLinuxReadRoutine) // NOLINT
                     bufferpoolReuseBuffer(cdev->reader_buffer_pool, bufs[queued_count]);
                     if (queued_count > 0)
                     {
-                        if (! deviceFlowAffinityPostBatch(cdev->reader_session, bufs, queued_count))
-                        {
-                            return 0;
-                        }
+                        deviceFlowAffinityPostBatch(cdev->reader_session, bufs, queued_count);
                         queued_count = 0;
                     }
                     capturedeviceReportPendingNetfilterDiscards(cdev);
@@ -1734,10 +1722,7 @@ WTHREAD_ROUTINE(captureLinuxReadRoutine) // NOLINT
                     bufferpoolReuseBuffer(cdev->reader_buffer_pool, bufs[queued_count]);
                     if (queued_count > 0)
                     {
-                        if (! deviceFlowAffinityPostBatch(cdev->reader_session, bufs, queued_count))
-                        {
-                            return 0;
-                        }
+                        deviceFlowAffinityPostBatch(cdev->reader_session, bufs, queued_count);
                         queued_count = 0;
                     }
                     LOGW("CaptureDevice: failed to read a packet from netfilter socket, errno is %d (%s)",
@@ -1757,10 +1742,7 @@ WTHREAD_ROUTINE(captureLinuxReadRoutine) // NOLINT
             // Distribute all accumulated packets in one batch
             if (queued_count > 0)
             {
-                if (! deviceFlowAffinityPostBatch(cdev->reader_session, bufs, queued_count))
-                {
-                    return 0;
-                }
+                deviceFlowAffinityPostBatch(cdev->reader_session, bufs, queued_count);
             }
             continue;
         }

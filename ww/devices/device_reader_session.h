@@ -9,7 +9,6 @@
 #include "devices/device_lifetime.h"
 #include "master_pool.h"
 #include "worker.h"
-#include "worker_messages.h"
 
 /*
  * Hands one packet to the packet chain. Fragment settlement follows the sbuf's
@@ -66,9 +65,7 @@ void deviceReaderSessionRetireGenerationBuffers(device_reader_session_t *session
  * Called after End and producer join, while the device-owned reader pool is
  * still alive. It releases staged fragments and makes delayed final unref safe.
  */
-void     deviceReaderSessionRetireProducerBuffers(device_reader_session_t *session);
-uint32_t deviceReaderSessionGeneration(const device_reader_session_t *session);
-bool     deviceReaderSessionMatchesGeneration(const device_reader_session_t *session, uint32_t generation);
+void deviceReaderSessionRetireProducerBuffers(device_reader_session_t *session);
 
 /*
  * Takes ownership of all `count` buffers. Invalid batch sizes are logged and
@@ -82,10 +79,3 @@ bool deviceReaderSessionPost(device_reader_session_t *session, wid_t target_wid,
 /* Same ownership contract, with one optional fragment-settlement token per buffer. */
 bool deviceReaderSessionPostTracked(device_reader_session_t *session, wid_t target_wid, sbuf_t **bufs,
                                     const device_frag_affinity_publication_t *publications, unsigned int count);
-
-/*
- * Worker-message callbacks are public test seams. Production callers should
- * post through deviceReaderSessionPost().
- */
-void deviceReaderSessionMessageReceived(void *worker, void *arg1, void *arg2, void *arg3);
-void deviceReaderSessionCleanupPostedMessage(void *arg1, void *arg2, void *arg3, worker_message_cancel_reason_e reason);

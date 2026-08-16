@@ -1,7 +1,6 @@
 #include "devices/device_flow_affinity.h"
 
 #include "devices/device_frag_affinity.h"
-#include "global_state.h"
 
 enum
 {
@@ -251,11 +250,10 @@ static unsigned int deviceFlowAffinityAppend(device_reader_session_t *session, s
     // which is the order they arrived in.
     for (uint8_t i = 0; i < frag.released_count; ++i)
     {
-        dispatch[filled]                                 = frag.released[i];
-        dispatch_wids[filled]                            = (uint8_t) frag.wid;
-        dispatch_publications[filled]                    = frag.publication;
-        dispatch_publications[filled].count              = 1;
-        dispatch_publications[filled].completes_datagram = false;
+        dispatch[filled]                    = frag.released[i];
+        dispatch_wids[filled]               = (uint8_t) frag.wid;
+        dispatch_publications[filled]       = frag.publication;
+        dispatch_publications[filled].count = 1;
         ++filled;
     }
 
@@ -341,7 +339,7 @@ static bool deviceFlowAffinityPostSorted(device_reader_session_t *session, sbuf_
     return true;
 }
 
-bool deviceFlowAffinityPostBatch(device_reader_session_t *session, sbuf_t **bufs, unsigned int count)
+void deviceFlowAffinityPostBatch(device_reader_session_t *session, sbuf_t **bufs, unsigned int count)
 {
     assert(session != NULL);
     assert(bufs != NULL);
@@ -352,18 +350,11 @@ bool deviceFlowAffinityPostBatch(device_reader_session_t *session, sbuf_t **bufs
         uint8_t                            wids[kDeviceFlowAffinityMaxDispatch];
         sbuf_t                            *dispatch[kDeviceFlowAffinityMaxDispatch];
         device_frag_affinity_publication_t publications[kDeviceFlowAffinityMaxDispatch];
-        unsigned int                       dispatch_count           = 0;
-        bool                               has_fragment_publication = false;
+        unsigned int                       dispatch_count = 0;
 
         for (unsigned int i = 0; i < chunk_count; ++i)
         {
-            const unsigned int previous_count = dispatch_count;
             dispatch_count = deviceFlowAffinityAppend(session, bufs[i], dispatch, wids, dispatch_count, publications);
-            for (unsigned int publication_index = previous_count; publication_index < dispatch_count;
-                 ++publication_index)
-            {
-                has_fragment_publication = has_fragment_publication || publications[publication_index].valid;
-            }
         }
 
         const bool admitted = deviceFlowAffinityPostSorted(session, dispatch, wids, publications, dispatch_count);
@@ -376,21 +367,11 @@ bool deviceFlowAffinityPostBatch(device_reader_session_t *session, sbuf_t **bufs
                 bufferpoolReuseBuffer(session->reader_buffer_pool, bufs[i]);
             }
 
-            if (has_fragment_publication)
-            {
-                /* Partial fragment publication cannot be retried without risking hybrid reassembly. */
-                deviceReaderSessionEnd(session);
-                if (! requestProgramShutdown(1))
-                {
-                    abortProgramNow(1);
-                }
-                return false;
-            }
-            return true;
+            /* Publication settlement poisons any partially admitted datagram. */
+            return;
         }
 
         bufs += chunk_count;
         count -= chunk_count;
     }
-    return true;
 }

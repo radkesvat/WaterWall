@@ -135,13 +135,13 @@ Important internal rules:
   because the netif output callback only queues a detached packet message - it never calls the neighbour inline
 - packet emission is protected by an admission gate held through the previous-neighbour callback, and normal-line
   `Init`/`Payload`/`Resume`/`Finish` work uses a second gate held through the next-neighbour callback. Global shutdown
-  runs a pre-stop pass for every tunnel before any ordinary `onStop()`: PTC closes and quiesces both gates there, so an
-  already-admitted callback finishes before its neighbour can stop and queued work that runs later is cancelled. A
+  closes both gates in `onQuiesceRequest()` and waits for admitted callbacks in `onQuiesceWait()` before any component
+  stops, so an already-admitted callback finishes before its neighbour can stop and queued work that runs later is cancelled. A
   refused next-side ordinary work recycles anything it owns and leaves teardown to the owner path; an initialized line
-  still receives its one explicit teardown `Finish` while PTC's Stop hook is ordered before the next tunnel's Stop hook
+  still receives its one explicit teardown `Finish` during the owner-worker drain
 - netif output is always queued, even to the same worker, so no neighbouring callback runs while lwIP's non-recursive
   core lock is held. Each queued output owns a reference to a detached-lifetime session rather than a raw tunnel
-  pointer; pre-stop closes its callback gate and Destroy clears the tunnel pointer, so current-worker work left behind
+  pointer; quiesce closes its callback gate and Destroy clears the tunnel pointer, so current-worker work left behind
   configuration teardown performs cleanup without dereferencing the destroyed node. Fake-DNS lookup, response
   construction, and submission to lwIP remain under the core lock; only delivery of the detached output messages to
   the previous neighbour happens after the outer packet handler unlocks

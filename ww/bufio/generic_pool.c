@@ -57,8 +57,8 @@ static void poolFirstCharge(generic_pool_t *pool)
     genericpoolReCharge(pool);
 }
 
-bool genericpoolTryComputeGeometryForLimit(uint32_t pool_width, uint64_t allocation_limit, uint32_t *capacity_out,
-                                           uint32_t *free_threshold_out, uint64_t *allocation_size_out)
+static bool genericpoolTryComputeGeometry(uint32_t pool_width, uint32_t *capacity_out, uint32_t *free_threshold_out,
+                                          size_t *allocation_size_out)
 {
     if (capacity_out == NULL || free_threshold_out == NULL || allocation_size_out == NULL)
     {
@@ -72,16 +72,13 @@ bool genericpoolTryComputeGeometryForLimit(uint32_t pool_width, uint64_t allocat
     }
     const uint32_t capacity = pool_width * 2U;
 
-    const uint64_t container_len = (uint64_t) capacity * (uint64_t) sizeof(pool_item_t *);
-    if (container_len > UINT64_MAX - (uint64_t) sizeof(generic_pool_t))
+    size_t container_len;
+    if (! memoryTryComputeArraySize(capacity, sizeof(pool_item_t *), &container_len) ||
+        container_len > SIZE_MAX - sizeof(generic_pool_t))
     {
         return false;
     }
-    const uint64_t required_size = (uint64_t) sizeof(generic_pool_t) + container_len;
-    if (required_size > allocation_limit || required_size > SIZE_MAX)
-    {
-        return false;
-    }
+    const size_t required_size = sizeof(generic_pool_t) + container_len;
 
     *capacity_out        = capacity;
     *free_threshold_out  = (uint32_t) (((uint64_t) capacity * 2U) / 3U);
@@ -104,14 +101,13 @@ static generic_pool_t *allocateGenericPool(master_pool_t *mp, uint32_t item_size
 {
     uint32_t capacity;
     uint32_t free_threshold;
-    uint64_t required_size64;
+    size_t   required_size;
     if (mp == NULL || create_h == NULL || destroy_h == NULL ||
-        ! genericpoolTryComputeGeometryForLimit(pool_width, SIZE_MAX, &capacity, &free_threshold, &required_size64))
+        ! genericpoolTryComputeGeometry(pool_width, &capacity, &free_threshold, &required_size))
     {
         return NULL;
     }
-    const size_t    required_size = (size_t) required_size64;
-    generic_pool_t *pool_ptr      = memoryAllocate(required_size);
+    generic_pool_t *pool_ptr = memoryAllocate(required_size);
     if (pool_ptr == NULL)
     {
         return NULL;

@@ -105,11 +105,9 @@ struct device_frag_affinity_table_s
      */
     bool generation_open;
 
-    uint32_t entry_count;
     uint32_t staged_total;
     uint32_t staged_bytes;
     uint32_t quarantine_count;
-    uint64_t quarantine_scan_steps;
     uint64_t next_expiry_ms;
     uint64_t next_serial;
 
@@ -152,7 +150,7 @@ static uint16_t deviceIpv4HeaderChecksum(const uint8_t *packet, uint32_t header_
     return (uint16_t) ~sum;
 }
 
-bool deviceIpv4NormalizeHeaderChecksum(uint8_t *packet, uint32_t length)
+static bool deviceIpv4NormalizeHeaderChecksum(uint8_t *packet, uint32_t length)
 {
     if (packet == NULL || length < 20 || (packet[0] >> 4U) != 4)
     {
@@ -173,38 +171,6 @@ bool deviceIpv4NormalizeHeaderChecksum(uint8_t *packet, uint32_t length)
 static bool deviceIpv4HeaderChecksumValid(const uint8_t *packet, uint32_t header_len)
 {
     return deviceIpv4HeaderChecksum(packet, header_len) == 0;
-}
-
-bool deviceIpv4PrepareHeaderChecksum(uint8_t *packet, uint32_t length, device_ipv4_checksum_provenance_t provenance)
-{
-    if (packet == NULL || length == 0)
-    {
-        return false;
-    }
-    if ((packet[0] >> 4U) != 4)
-    {
-        return true;
-    }
-    if (length < 20)
-    {
-        return false;
-    }
-
-    const uint32_t header_len = (uint32_t) (packet[0] & 0x0FU) * 4U;
-    if (header_len < 20 || header_len > 60 || header_len > length || GET_BE16(packet + 2) != length)
-    {
-        return false;
-    }
-
-    if (provenance == kDeviceIpv4ChecksumProvenValid)
-    {
-        return true;
-    }
-    if (provenance == kDeviceIpv4ChecksumOffloadNotReady)
-    {
-        return deviceIpv4NormalizeHeaderChecksum(packet, length);
-    }
-    return deviceIpv4HeaderChecksumValid(packet, header_len);
 }
 
 static bool deviceIpv4TransportChecksumValid(const uint8_t *packet, uint32_t length, uint32_t header_len,
@@ -425,7 +391,6 @@ static void deviceFragAffinityReleaseEntry(device_frag_affinity_table_t *table, 
 {
     deviceFragAffinityDropStaged(table, entry);
     memorySet(entry, 0, sizeof(*entry));
-    --table->entry_count;
 }
 
 /*
@@ -494,11 +459,9 @@ static bool deviceFragQuarantineBlocks(device_frag_affinity_table_t *table, cons
     }
 
     const uint32_t current_epoch = ip4_reass_tmr_epoch();
-    uint64_t       scan_steps    = 0;
 
     for (uint32_t i = 0; i < (uint32_t) kDeviceFragAffinityMaxQuarantine; ++i)
     {
-        ++scan_steps;
         device_frag_quarantine_t *record = &table->quarantine[i];
         if (! record->in_use || record->src != view->src || record->dst != view->dst || record->ident != view->ident ||
             record->proto != view->proto)
@@ -509,13 +472,10 @@ static bool deviceFragQuarantineBlocks(device_frag_affinity_table_t *table, cons
         {
             *record = (device_frag_quarantine_t) {0};
             --table->quarantine_count;
-            table->quarantine_scan_steps += scan_steps;
             return false;
         }
-        table->quarantine_scan_steps += scan_steps;
         return true;
     }
-    table->quarantine_scan_steps += scan_steps;
     return false;
 }
 
@@ -538,11 +498,9 @@ static bool deviceFragQuarantineAdmit(device_frag_affinity_table_t *table, const
     const uint32_t            release_epoch = entry->residue_barrier_armed
                                                   ? entry->residue_release_epoch
                                                   : current_epoch + (uint32_t) kDeviceFragAffinityResidueTimerPasses;
-    uint64_t                  scan_steps    = 0;
 
     for (uint32_t i = 0; i < (uint32_t) kDeviceFragAffinityMaxQuarantine; ++i)
     {
-        ++scan_steps;
         device_frag_quarantine_t *record = &table->quarantine[i];
 
         if (record->in_use && record->src == entry->src && record->dst == entry->dst && record->ident == entry->ident &&
@@ -553,7 +511,6 @@ static bool deviceFragQuarantineAdmit(device_frag_affinity_table_t *table, const
                 record->expires_at_ms = release_at_ms;
                 record->release_epoch = release_epoch;
             }
-            table->quarantine_scan_steps += scan_steps;
             return true;
         }
 
@@ -571,7 +528,6 @@ static bool deviceFragQuarantineAdmit(device_frag_affinity_table_t *table, const
 
     if (free_slot == NULL)
     {
-        table->quarantine_scan_steps += scan_steps;
         return false;
     }
 
@@ -585,7 +541,6 @@ static bool deviceFragQuarantineAdmit(device_frag_affinity_table_t *table, const
         .release_epoch = release_epoch,
     };
     ++table->quarantine_count;
-    table->quarantine_scan_steps += scan_steps;
     return true;
 }
 
@@ -610,7 +565,6 @@ static void deviceFragQuarantineSweep(device_frag_affinity_table_t *table, uint6
             sweep->free_slots[sweep->free_count++] = (uint16_t) i;
         }
     }
-    table->quarantine_scan_steps += (uint64_t) kDeviceFragAffinityMaxQuarantine;
 }
 
 /*
@@ -618,9 +572,7 @@ static void deviceFragQuarantineSweep(device_frag_affinity_table_t *table, uint6
  * every new association passes deviceFragQuarantineBlocks() while holding the
  * same table lock, and an association key is unique. The batch sweep can
  * therefore consume its one-pass free-slot inventory without repeating a
- * 512-record exact-key scan for each association. Focused admission tests pin
- * that invariant in assertion-enabled builds; this transition deliberately has
- * no per-association validation scan, so Debug and Release share the same bound.
+ * 512-record exact-key scan for each association.
  */
 static bool deviceFragQuarantineAdmitSwept(device_frag_affinity_table_t       *table,
                                            const device_frag_affinity_entry_t *entry,
@@ -773,7 +725,6 @@ static device_frag_affinity_entry_t *deviceFragAffinityInsert(device_frag_affini
             .in_use        = true,
             .expires_at_ms = now_ms + (uint64_t) kDeviceFragAffinityTimeoutMs,
         };
-        ++table->entry_count;
         table->next_expiry_ms = min(table->next_expiry_ms, entry->expires_at_ms);
         return entry;
     }
@@ -816,21 +767,8 @@ static void deviceFragAffinityResetLocked(device_frag_affinity_table_t *table)
     table->quarantine_count = 0;
 
     table->next_expiry_ms = UINT64_MAX;
-    assert(table->entry_count == 0);
     assert(table->staged_total == 0);
     assert(table->staged_bytes == 0);
-}
-
-void deviceFragAffinityReset(device_frag_affinity_table_t *table)
-{
-    if (table == NULL)
-    {
-        return;
-    }
-
-    mutexLock(&table->lock);
-    deviceFragAffinityResetLocked(table);
-    mutexUnlock(&table->lock);
 }
 
 void deviceFragAffinityReleaseStagedBuffers(device_frag_affinity_table_t *table)
@@ -957,85 +895,11 @@ void deviceFragAffinityDestroy(device_frag_affinity_table_t *table)
         assert(table->staged_bytes == 0);
         memoryZero(table->entries, sizeof(table->entries));
         memoryZero(table->quarantine, sizeof(table->quarantine));
-        table->entry_count      = 0;
         table->quarantine_count = 0;
     }
     mutexUnlock(&table->lock);
     mutexDestroy(&table->lock);
     memoryFree(table);
-}
-
-uint32_t deviceFragAffinityEntryCount(const device_frag_affinity_table_t *table)
-{
-    if (table == NULL)
-    {
-        return 0;
-    }
-    mutexLock((wmutex_t *) &table->lock);
-    const uint32_t count = table->entry_count;
-    mutexUnlock((wmutex_t *) &table->lock);
-    return count;
-}
-
-uint32_t deviceFragAffinityStagedCount(const device_frag_affinity_table_t *table)
-{
-    if (table == NULL)
-    {
-        return 0;
-    }
-    mutexLock((wmutex_t *) &table->lock);
-    const uint32_t count = table->staged_total;
-    mutexUnlock((wmutex_t *) &table->lock);
-    return count;
-}
-
-uint32_t deviceFragAffinityStagedBytes(const device_frag_affinity_table_t *table)
-{
-    if (table == NULL)
-    {
-        return 0;
-    }
-    mutexLock((wmutex_t *) &table->lock);
-    const uint32_t bytes = table->staged_bytes;
-    mutexUnlock((wmutex_t *) &table->lock);
-    return bytes;
-}
-
-uint32_t deviceFragAffinityQuarantineCount(const device_frag_affinity_table_t *table)
-{
-    if (table == NULL)
-    {
-        return 0;
-    }
-    mutexLock((wmutex_t *) &table->lock);
-    const uint32_t count = table->quarantine_count;
-    mutexUnlock((wmutex_t *) &table->lock);
-    return count;
-}
-
-uint64_t deviceFragAffinityQuarantineScanSteps(const device_frag_affinity_table_t *table)
-{
-    if (table == NULL)
-    {
-        return 0;
-    }
-
-    mutexLock((wmutex_t *) &table->lock);
-    const uint64_t steps = table->quarantine_scan_steps;
-    mutexUnlock((wmutex_t *) &table->lock);
-    return steps;
-}
-
-void deviceFragAffinityResetQuarantineScanSteps(device_frag_affinity_table_t *table)
-{
-    if (table == NULL)
-    {
-        return;
-    }
-
-    mutexLock(&table->lock);
-    table->quarantine_scan_steps = 0;
-    mutexUnlock(&table->lock);
 }
 
 bool deviceFragAffinityPublicationMayEnter(device_frag_affinity_table_t             *table,
@@ -1190,11 +1054,9 @@ static device_frag_account_result_t deviceFragAffinityAccount(device_frag_affini
     return kDeviceFragAccountOk;
 }
 
-static device_frag_affinity_action_t deviceFragAffinityDropCurrent(device_frag_affinity_table_t *table, sbuf_t *buf,
-                                                                   device_frag_affinity_result_t *out)
+static device_frag_affinity_action_t deviceFragAffinityDropCurrent(device_frag_affinity_table_t *table, sbuf_t *buf)
 {
     assert(table->release_pool != NULL);
-    out->consumed_drop = true;
     bufferpoolReuseBuffer(table->release_pool, buf);
     return kDeviceFragAffinityConsumedDrop;
 }
@@ -1294,7 +1156,7 @@ static device_frag_affinity_action_t deviceFragAffinityOfferAtLocked(device_frag
     device_frag_affinity_entry_t *entry = deviceFragAffinityAdmitLocked(table, &view, parsed, now_ms);
     if (entry == NULL)
     {
-        return deviceFragAffinityDropCurrent(table, buf, out);
+        return deviceFragAffinityDropCurrent(table, buf);
     }
 
     const bool is_zero        = view.offset == 0;
@@ -1305,13 +1167,13 @@ static device_frag_affinity_action_t deviceFragAffinityOfferAtLocked(device_frag
         if (! deviceFragAffinityHashAsWhole(sbufGetMutablePtr(buf), length, &zero_flow_hash, &zero_hashed))
         {
             deviceFragAffinityPoison(table, entry);
-            return deviceFragAffinityDropCurrent(table, buf, out);
+            return deviceFragAffinityDropCurrent(table, buf);
         }
 
         if (entry->wid_known && entry->zero_flow_hash != zero_flow_hash)
         {
             deviceFragAffinityPoison(table, entry);
-            return deviceFragAffinityDropCurrent(table, buf, out);
+            return deviceFragAffinityDropCurrent(table, buf);
         }
     }
 
@@ -1327,7 +1189,7 @@ static device_frag_affinity_action_t deviceFragAffinityOfferAtLocked(device_frag
         {
             deviceFragAffinityPoison(table, entry);
         }
-        return deviceFragAffinityDropCurrent(table, buf, out);
+        return deviceFragAffinityDropCurrent(table, buf);
     }
 
     if (is_zero && ! entry->wid_known)
@@ -1348,7 +1210,7 @@ static device_frag_affinity_action_t deviceFragAffinityOfferAtLocked(device_frag
             bytes > (uint32_t) kDeviceFragAffinityMaxStagedBytes - table->staged_bytes)
         {
             deviceFragAffinityPoison(table, entry);
-            return deviceFragAffinityDropCurrent(table, buf, out);
+            return deviceFragAffinityDropCurrent(table, buf);
         }
 
         entry->staged[entry->staged_count++] = (device_staged_frag_t) {
@@ -1359,40 +1221,21 @@ static device_frag_affinity_action_t deviceFragAffinityOfferAtLocked(device_frag
         };
         ++table->staged_total;
         table->staged_bytes += bytes;
-        out->staged = true;
         assert(out->released_count == 0);
         return kDeviceFragAffinityStaged;
     }
 
-    out->wid         = entry->wid;
-    out->decided     = true;
-    out->publication = (device_frag_affinity_publication_t) {
-        .serial             = entry->serial,
-        .slot               = (uint16_t) (entry - table->entries),
-        .count              = (uint16_t) (out->released_count + 1U),
-        .valid              = true,
-        .completes_datagram = deviceFragAffinityIsComplete(entry),
+    const bool completes_datagram = deviceFragAffinityIsComplete(entry);
+    out->wid                      = entry->wid;
+    out->publication              = (device_frag_affinity_publication_t) {
+                     .serial = entry->serial,
+                     .slot   = (uint16_t) (entry - table->entries),
+                     .count  = (uint16_t) (out->released_count + 1U),
+                     .valid  = true,
     };
     entry->pending_publications += out->publication.count;
-    entry->completion_pending = out->publication.completes_datagram;
-    assert(! out->consumed_drop);
+    entry->completion_pending = completes_datagram;
     return kDeviceFragAffinityDispatch;
-}
-
-device_frag_affinity_action_t deviceFragAffinityOfferAt(device_frag_affinity_table_t *table, uint64_t now_ms,
-                                                        const uint8_t *packet, uint32_t length, sbuf_t *buf,
-                                                        device_frag_affinity_result_t *out)
-{
-    if (table == NULL)
-    {
-        return deviceFragAffinityOfferAtLocked(table, now_ms, packet, length, buf, out);
-    }
-
-    mutexLock(&table->lock);
-    const device_frag_affinity_action_t action =
-        deviceFragAffinityOfferAtLocked(table, now_ms, packet, length, buf, out);
-    mutexUnlock(&table->lock);
-    return action;
 }
 
 /*
@@ -1459,9 +1302,9 @@ static void deviceFragAffinitySettleTerminalLocked(device_frag_affinity_table_t 
     }
 }
 
-void deviceFragAffinitySettlePublicationAt(device_frag_affinity_table_t *table, uint64_t now_ms,
-                                           const device_frag_affinity_publication_t *publication,
-                                           device_frag_settlement_t                  settlement)
+static void deviceFragAffinitySettlePublicationAt(device_frag_affinity_table_t *table, uint64_t now_ms,
+                                                  const device_frag_affinity_publication_t *publication,
+                                                  device_frag_settlement_t                  settlement)
 {
     if (table == NULL || publication == NULL || ! publication->valid ||
         publication->slot >= (uint16_t) kDeviceFragAffinityMaxEntries)
@@ -1533,5 +1376,15 @@ void deviceFragAffinitySettlePublication(device_frag_affinity_table_t           
 device_frag_affinity_action_t deviceFragAffinityOffer(device_frag_affinity_table_t *table, const uint8_t *packet,
                                                       uint32_t length, sbuf_t *buf, device_frag_affinity_result_t *out)
 {
-    return deviceFragAffinityOfferAt(table, (uint64_t) (getHRTimeUs() / 1000ULL), packet, length, buf, out);
+    const uint64_t now_ms = (uint64_t) (getHRTimeUs() / 1000ULL);
+    if (table == NULL)
+    {
+        return deviceFragAffinityOfferAtLocked(table, now_ms, packet, length, buf, out);
+    }
+
+    mutexLock(&table->lock);
+    const device_frag_affinity_action_t action =
+        deviceFragAffinityOfferAtLocked(table, now_ms, packet, length, buf, out);
+    mutexUnlock(&table->lock);
+    return action;
 }

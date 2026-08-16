@@ -1877,6 +1877,104 @@ function(waterwall_line_failure_test_use_tunnel test_target tunnel_target)
   endforeach()
 endfunction()
 
+# Focused packet-bridge coverage for user-visible classification, checksum,
+# lifetime, and adapter-boundary contracts.
+if(TARGET ww)
+  add_executable(capture_windows_checksum_test capture_windows_checksum_test.c)
+  target_link_libraries(capture_windows_checksum_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests capture_windows_checksum_test)
+  add_waterwall_unit_test(
+    waterwall.capture_windows_checksum_unit
+    capture_windows_checksum_test
+    "unit;net;capture;checksum"
+  )
+
+  add_executable(device_checksum_validity_test device_checksum_validity_test.c)
+  target_link_libraries(device_checksum_validity_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests device_checksum_validity_test)
+  add_waterwall_unit_test(
+    waterwall.device_checksum_validity_unit
+    device_checksum_validity_test
+    "unit;net;devices;checksum"
+  )
+
+  add_executable(device_frag_affinity_test device_frag_affinity_test.c)
+  target_link_libraries(device_frag_affinity_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests device_frag_affinity_test)
+  add_waterwall_unit_test(
+    waterwall.device_frag_affinity_unit
+    device_frag_affinity_test
+    "unit;net;devices;fragment;affinity;lifetime"
+  )
+endif()
+
+if(TARGET ww)
+  add_executable(tunnel_async_session_test tunnel_async_session_test.c)
+  target_link_libraries(tunnel_async_session_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests tunnel_async_session_test)
+  add_waterwall_unit_test(
+    waterwall.tunnel_async_session_unit
+    tunnel_async_session_test
+    "unit;core;async;lifetime"
+  )
+endif()
+
+if(TARGET ConnectionToPackets AND TARGET TcpUdpConnector)
+  add_executable(transport_classifier_matrix_test transport_classifier_matrix_test.c)
+  target_link_libraries(transport_classifier_matrix_test PRIVATE ConnectionToPackets TcpUdpConnector ww)
+  add_dependencies(waterwall_unit_tests transport_classifier_matrix_test)
+  add_waterwall_unit_test(
+    waterwall.transport_classifier_matrix_unit
+    transport_classifier_matrix_test
+    "unit;tunnels;connectiontopackets;tcpudpconnector;classifier"
+  )
+endif()
+
+if(TARGET ConnectionToPackets)
+  add_executable(connectiontopackets_netif_contract_test connectiontopackets_netif_contract_test.c)
+  target_link_libraries(connectiontopackets_netif_contract_test PRIVATE ConnectionToPackets ww)
+  add_dependencies(waterwall_unit_tests connectiontopackets_netif_contract_test)
+  add_waterwall_unit_test(
+    waterwall.connectiontopackets_netif_contract_unit
+    connectiontopackets_netif_contract_test
+    "unit;tunnels;connectiontopackets;netif;fragment"
+  )
+endif()
+
+if(TARGET PacketsToConnection)
+  add_executable(packetstoconnection_fake_dns_fragment_test packetstoconnection_fake_dns_fragment_test.c)
+  target_include_directories(packetstoconnection_fake_dns_fragment_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/tunnels/PacketsToConnection/include
+    ${CMAKE_SOURCE_DIR}/tunnels/PacketsToConnection/include/PacketsToConnection
+  )
+  target_link_libraries(packetstoconnection_fake_dns_fragment_test PRIVATE PacketsToConnection ww)
+  add_dependencies(waterwall_unit_tests packetstoconnection_fake_dns_fragment_test)
+  add_waterwall_unit_test(
+    waterwall.packetstoconnection_fake_dns_fragment_unit
+    packetstoconnection_fake_dns_fragment_test
+    "unit;tunnels;packetstoconnection;packet;fragment;dns"
+  )
+endif()
+
+if(LINUX AND TARGET RawSocket)
+  add_executable(rawsocket_ipv4_boundary_test
+    rawsocket_ipv4_boundary_test.c
+    ${WATERWALL_LINE_FAILURE_WW_SOURCES}
+  )
+  waterwall_line_failure_test_use_tunnel(rawsocket_ipv4_boundary_test RawSocket)
+  target_link_options(rawsocket_ipv4_boundary_test PRIVATE
+    ${WATERWALL_LINE_FAILURE_WRAPS}
+    "-Wl,--wrap=rawdeviceWrite"
+  )
+  target_link_libraries(rawsocket_ipv4_boundary_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests rawsocket_ipv4_boundary_test)
+  add_waterwall_unit_test(
+    waterwall.rawsocket_ipv4_boundary_unit
+    rawsocket_ipv4_boundary_test
+    "unit;net;packet;rawsocket;boundary"
+  )
+endif()
+
 if(TARGET HttpClient)
   add_executable(httpclient_chunked_terminator_test
     httpclient_chunked_terminator_test.c

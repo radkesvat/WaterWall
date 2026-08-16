@@ -30,8 +30,7 @@ static void defaultDestroyHandle(master_pool_item_t *item)
     abortProgramNow(1);
 }
 
-bool masterpoolTryComputeGeometryForLimit(uint32_t pool_width, uint64_t allocation_limit, uint32_t *capacity_out,
-                                          uint64_t *allocation_size_out)
+static bool masterpoolTryComputeGeometry(uint32_t pool_width, uint32_t *capacity_out, size_t *allocation_size_out)
 {
     if (capacity_out == NULL || allocation_size_out == NULL)
     {
@@ -46,13 +45,14 @@ bool masterpoolTryComputeGeometryForLimit(uint32_t pool_width, uint64_t allocati
     }
     const uint32_t capacity = pool_width * 2U;
 
-    const uint64_t container_len = (uint64_t) capacity * (uint64_t) sizeof(master_pool_item_t *);
-    if (container_len > UINT64_MAX - (uint64_t) sizeof(master_pool_t))
+    size_t container_len;
+    if (! memoryTryComputeArraySize(capacity, sizeof(master_pool_item_t *), &container_len) ||
+        container_len > SIZE_MAX - sizeof(master_pool_t))
     {
         return false;
     }
-    const uint64_t required_size = (uint64_t) sizeof(master_pool_t) + container_len;
-    if (! memoryAlignedAllocationSizeIsRepresentableForLimit(required_size, kCpuLineCacheSize, allocation_limit))
+    const size_t required_size = sizeof(master_pool_t) + container_len;
+    if (! memoryAlignedAllocationSizeIsRepresentable(required_size, kCpuLineCacheSize))
     {
         return false;
     }
@@ -75,13 +75,11 @@ master_pool_item_t *masterpoolRequireCreatedItem(master_pool_t *pool, master_poo
 master_pool_t *masterpoolCreateWithCapacity(uint32_t pool_width)
 {
     uint32_t capacity;
-    uint64_t required_size64;
-    if (! masterpoolTryComputeGeometryForLimit(pool_width, SIZE_MAX, &capacity, &required_size64))
+    size_t   required_size;
+    if (! masterpoolTryComputeGeometry(pool_width, &capacity, &required_size))
     {
         return NULL;
     }
-    const size_t required_size = (size_t) required_size64;
-
     // allocate memory, placing master_pool_t at a line cache address boundary
     master_pool_t *pool_ptr = memoryAllocateCacheAligned(required_size);
     if (pool_ptr == NULL)
@@ -102,7 +100,7 @@ master_pool_t *masterpoolCreateWithCapacity(uint32_t pool_width)
     memoryCopy(pool_ptr, &pool, sizeof(master_pool_t));
     if (UNLIKELY(! mutexTryInit(&pool_ptr->mutex)))
     {
-        memoryFree(pool_ptr);
+        memoryFreeAligned(pool_ptr);
         return NULL;
     }
     atomicStoreExplicit(&(pool_ptr->len), 0, memory_order_relaxed);

@@ -124,13 +124,6 @@ static inline pool_item_t *genericpoolGetItem(generic_pool_t *pool)
 }
 
 /**
- * Validate the internally doubled capacity, metadata size, and free threshold
- * without allocating. Outputs are unchanged on failure.
- */
-bool genericpoolTryComputeGeometryForLimit(uint32_t pool_width, uint64_t allocation_limit, uint32_t *capacity_out,
-                                           uint32_t *free_threshold_out, uint64_t *allocation_size_out);
-
-/**
  * Reuses an item by returning it to the pool.
  * @param pool The generic pool to return the item to.
  * @param b The item to be reused.

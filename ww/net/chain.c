@@ -15,23 +15,17 @@ static bool tunnelchainNodeIsMuxTunnel(const node_t *node)
     return stringCompare(node->type, "MuxClient") == 0 || stringCompare(node->type, "MuxServer") == 0;
 }
 
-bool tunnelchainTryComputeLineItemSizeForLimit(uint32_t aggregate_lstate_size, uint64_t allocation_size_limit,
-                                               uint32_t *item_size)
+bool tunnelchainTryComputeLineItemSize(uint32_t aggregate_lstate_size, uint32_t *item_size)
 {
     const uint64_t total = (uint64_t) sizeof(line_t) + (uint64_t) aggregate_lstate_size;
     if (item_size == NULL || total > UINT32_MAX ||
-        ! memoryAlignedAllocationSizeIsRepresentableForLimit(total, kCpuLineCacheSize, allocation_size_limit))
+        ! memoryAlignedAllocationSizeIsRepresentable((size_t) total, kCpuLineCacheSize))
     {
         return false;
     }
 
     *item_size = (uint32_t) total;
     return true;
-}
-
-bool tunnelchainTryComputeLineItemSize(uint32_t aggregate_lstate_size, uint32_t *item_size)
-{
-    return tunnelchainTryComputeLineItemSizeForLimit(aggregate_lstate_size, (uint64_t) SIZE_MAX, item_size);
 }
 
 void tunnelarrayInsert(tunnel_array_t *tc, tunnel_t *t)

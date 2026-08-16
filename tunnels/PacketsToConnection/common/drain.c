@@ -494,14 +494,3 @@ void ptcTcpDrainDestroyAllLocked(tunnel_t *t)
         ptcDrainFreeLocked(drain);
     }
 }
-
-uint32_t ptcTcpDrainCount(tunnel_t *t)
-{
-    ptc_tstate_t *ts = tunnelGetState(t);
-    uint32_t      count;
-
-    LOCK_TCPIP_CORE();
-    count = ts->drain_count;
-    UNLOCK_TCPIP_CORE();
-    return count;
-}

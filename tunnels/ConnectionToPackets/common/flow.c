@@ -29,6 +29,9 @@ enum
 /* Shared by every worker, so the gate has to be atomic. */
 static atomic_log_rate_limiter_t g_tombstone_evict_log;
 
+static bool ctpFlowRegisterAt(tunnel_t *t, ctp_lstate_t *ls, void *pcb, uint8_t protocol, uint64_t now_ms);
+static void ctpFlowRetireAt(tunnel_t *t, ctp_lstate_t *ls, bool graceful, uint64_t now_ms);
+
 bool ctpFlowRegistryInitialize(ctp_tstate_t *ts)
 {
     if (UNLIKELY(! rwlockTryInit(&ts->flows_lock)))
@@ -160,20 +163,12 @@ static void ctpTombstonePushLocked(ctp_tstate_t *ts, const ctp_flow_key_t *key, 
     ++ts->tomb_count;
 }
 
-uint32_t ctpFlowTombstoneCount(ctp_tstate_t *ts)
-{
-    rwlockReadLock(&ts->flows_lock);
-    const uint32_t count = ts->tomb_count;
-    rwlockReadUnlock(&ts->flows_lock);
-    return count;
-}
-
 bool ctpFlowRegister(tunnel_t *t, ctp_lstate_t *ls, void *pcb, uint8_t protocol)
 {
     return ctpFlowRegisterAt(t, ls, pcb, protocol, ctpNowMs());
 }
 
-bool ctpFlowRegisterAt(tunnel_t *t, ctp_lstate_t *ls, void *pcb, uint8_t protocol, uint64_t now_ms)
+static bool ctpFlowRegisterAt(tunnel_t *t, ctp_lstate_t *ls, void *pcb, uint8_t protocol, uint64_t now_ms)
 {
     ctp_tstate_t *ts    = tunnelGetState(t);
     bool          taken = false;
@@ -268,7 +263,7 @@ void ctpFlowRetire(tunnel_t *t, ctp_lstate_t *ls, bool graceful)
     ctpFlowRetireAt(t, ls, graceful, ctpNowMs());
 }
 
-void ctpFlowRetireAt(tunnel_t *t, ctp_lstate_t *ls, bool graceful, uint64_t now_ms)
+static void ctpFlowRetireAt(tunnel_t *t, ctp_lstate_t *ls, bool graceful, uint64_t now_ms)
 {
     ctp_tstate_t *ts = tunnelGetState(t);
 

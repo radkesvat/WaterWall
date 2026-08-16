@@ -1,0 +1,118 @@
+{
+  "name": "ping-server-packets-to-connection-alignment-roundtrip",
+  "nodes": [
+    {
+      "name": "tester-client",
+      "type": "TesterClient",
+      "settings": {
+        "dest-context": {
+          "address": "10.90.0.2",
+          "port": 9121,
+          "protocol": "tcp"
+        }
+      },
+      "next": "socks5-client"
+    },
+    {
+      "name": "socks5-client",
+      "type": "Socks5Client",
+      "settings": {
+        "address": "dest_context->address",
+        "port": "dest_context->port",
+        "protocol": "dest_context->protocol"
+      },
+      "next": "proxy-connector"
+    },
+    {
+      "name": "proxy-connector",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 9120,
+        "nodelay": true,
+        "fastopen": false
+      }
+    },
+    {
+      "name": "proxy-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 9120,
+        "nodelay": true
+      },
+      "next": "socks5-server"
+    },
+    {
+      "name": "socks5-server",
+      "type": "Socks5Server",
+      "settings": {
+        "no-auth": true,
+        "connect": true,
+        "udp": false
+      },
+      "next": "connection-to-packets"
+    },
+    {
+      "name": "connection-to-packets",
+      "type": "ConnectionToPackets",
+      "settings": {
+        "source-ipv4": "10.90.0.1",
+        "mtu": 1400,
+        "domain-strategy": "only-ipv4"
+      },
+      "next": "ping-client"
+    },
+    {
+      "name": "ping-client",
+      "type": "PingClient",
+      "settings": {
+        "strategy": "wrap-in-new-ip-and-icmp-header",
+        "identifier": 4660,
+        "source": "192.0.2.10",
+        "dest": "198.51.100.10"
+      },
+      "next": "ping-server"
+    },
+    {
+      "name": "ping-server",
+      "type": "PingServer",
+      "settings": {
+        "strategy": "wrap-in-new-ip-and-icmp-header",
+        "identifier": 4660,
+        "source": "192.0.2.10",
+        "dest": "198.51.100.10"
+      },
+      "next": "packets-to-connection"
+    },
+    {
+      "name": "packets-to-connection",
+      "type": "PacketsToConnection",
+      "next": "target-connector"
+    },
+    {
+      "name": "target-connector",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": "dest_context->port",
+        "nodelay": true,
+        "fastopen": false
+      }
+    },
+    {
+      "name": "target-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 9121,
+        "nodelay": true
+      },
+      "next": "tester-server"
+    },
+    {
+      "name": "tester-server",
+      "type": "TesterServer"
+    }
+  ]
+}

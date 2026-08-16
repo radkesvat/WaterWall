@@ -66,24 +66,6 @@ static void wireguarddeviceQueueWorkerTransportLineInit(void *worker, void *arg1
     }
 }
 
-bool wireguarddeviceComputeTransportLineStorageSize(uint64_t workers_count, uint64_t size_limit, size_t pointer_size,
-                                                    uint64_t *bytes_out)
-{
-    if (bytes_out != NULL)
-    {
-        *bytes_out = 0;
-    }
-    if (workers_count == 0 || pointer_size == 0 || workers_count > size_limit / pointer_size)
-    {
-        return false;
-    }
-    if (bytes_out != NULL)
-    {
-        *bytes_out = workers_count * pointer_size;
-    }
-    return true;
-}
-
 static bool wireguarddeviceEnsureTransportLineStorage(tunnel_t *t, wgd_tstate_t *state)
 {
     tunnel_chain_t *tc = tunnelGetChain(t);
@@ -100,16 +82,15 @@ static bool wireguarddeviceEnsureTransportLineStorage(tunnel_t *t, wgd_tstate_t 
         return false;
     }
 
-    uint64_t storage_bytes = 0;
-    if (! wireguarddeviceComputeTransportLineStorageSize(
-            tc->workers_count, SIZE_MAX, sizeof(*state->transport_lines), &storage_bytes))
+    size_t storage_bytes;
+    if (! memoryTryComputeArraySize(tc->workers_count, sizeof(*state->transport_lines), &storage_bytes))
     {
         LOGF("WireGuardDevice: transport line storage geometry overflows size_t");
         startupFailureRecord(1);
         return false;
     }
 
-    line_t **storage = memoryAllocateZero((size_t) storage_bytes);
+    line_t **storage = memoryAllocateZero(storage_bytes);
     if (UNLIKELY(storage == NULL))
     {
         LOGF("WireGuardDevice: failed to allocate mandatory transport line storage");

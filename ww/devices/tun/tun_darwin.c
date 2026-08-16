@@ -256,9 +256,12 @@ static void tunDeliverPacket(void *device, sbuf_t *buf, wid_t wid)
 // Hands whatever the drain cycle has already read to the reader session. Every
 // exit from tunDrainPackets() goes through this, so a device error never
 // strands packets that were read successfully before it.
-static bool tunFlushReadBatch(tun_device_t *tdev, sbuf_t **bufs, uint16_t queued_count)
+static void tunFlushReadBatch(tun_device_t *tdev, sbuf_t **bufs, uint16_t queued_count)
 {
-    return queued_count == 0 || deviceFlowAffinityPostBatch(tdev->reader_session, bufs, queued_count);
+    if (queued_count > 0)
+    {
+        deviceFlowAffinityPostBatch(tdev->reader_session, bufs, queued_count);
+    }
 }
 
 // Drains packets from the TUN device after POLLIN. Every accumulated buffer is
@@ -288,7 +291,8 @@ static tun_drain_result_t tunDrainPackets(tun_device_t *tdev)
         if (nread == 0)
         {
             bufferpoolReuseBuffer(tdev->reader_buffer_pool, bufs[queued_count]);
-            return tunFlushReadBatch(tdev, bufs, queued_count) ? kTunDrainEndOfStream : kTunDrainDeviceError;
+            tunFlushReadBatch(tdev, bufs, queued_count);
+            return kTunDrainEndOfStream;
         }
 
         if (nread < 0)
@@ -297,10 +301,7 @@ static tun_drain_result_t tunDrainPackets(tun_device_t *tdev)
             // loggers below can both overwrite it.
             const int saved_errno = errno;
             bufferpoolReuseBuffer(tdev->reader_buffer_pool, bufs[queued_count]);
-            if (! tunFlushReadBatch(tdev, bufs, queued_count))
-            {
-                return kTunDrainDeviceError;
-            }
+            tunFlushReadBatch(tdev, bufs, queued_count);
 
             if (tunIoErrnoIsTransient(saved_errno))
             {
@@ -348,17 +349,14 @@ static tun_drain_result_t tunDrainPackets(tun_device_t *tdev)
              * path. tundeviceNoteUnexpectedThreadExit() then publishes the
              * failure and owns the shutdown decision. Mirrors tun_linux.c.
              */
-            discard tunFlushReadBatch(tdev, bufs, queued_count);
+            tunFlushReadBatch(tdev, bufs, queued_count);
             return kTunDrainDeviceError;
         }
 
         queued_count++;
     }
 
-    if (! tunFlushReadBatch(tdev, bufs, queued_count))
-    {
-        return kTunDrainDeviceError;
-    }
+    tunFlushReadBatch(tdev, bufs, queued_count);
 
     return kTunDrainAgain;
 }

@@ -2,34 +2,30 @@
 
 #include "loggers/network_logger.h"
 
-bool muxclientComputeFixedStorageGeometry(uint64_t workers_count, uint64_t fixed_connections_count, uint64_t size_limit,
-                                          uint64_t pointer_size, uint64_t index_size, uint64_t *slots_out,
-                                          uint64_t *parents_bytes_out, uint64_t *indexes_bytes_out)
+static bool muxclientComputeFixedStorageGeometry(size_t workers_count, uint32_t fixed_connections_count,
+                                                 size_t *parents_bytes_out, size_t *indexes_bytes_out)
 {
-    if (slots_out == NULL || parents_bytes_out == NULL || indexes_bytes_out == NULL)
+    if (parents_bytes_out == NULL || indexes_bytes_out == NULL)
     {
         return false;
     }
-    *slots_out         = 0;
     *parents_bytes_out = 0;
     *indexes_bytes_out = 0;
 
-    if (workers_count == 0 || fixed_connections_count == 0 || pointer_size == 0 || index_size == 0 ||
-        workers_count > UINT64_MAX / fixed_connections_count)
+    if (workers_count == 0 || fixed_connections_count == 0 || workers_count > SIZE_MAX / fixed_connections_count)
     {
         return false;
     }
 
-    const uint64_t slots = workers_count * fixed_connections_count;
-    uint64_t       parents_bytes;
-    uint64_t       indexes_bytes;
-    if (! memoryTryComputeArraySizeForLimit(slots, pointer_size, size_limit, &parents_bytes) ||
-        ! memoryTryComputeArraySizeForLimit(workers_count, index_size, size_limit, &indexes_bytes))
+    const size_t slots = workers_count * fixed_connections_count;
+    size_t       parents_bytes;
+    size_t       indexes_bytes;
+    if (! memoryTryComputeArraySize(slots, sizeof(line_t *), &parents_bytes) ||
+        ! memoryTryComputeArraySize(workers_count, sizeof(uint32_t), &indexes_bytes))
     {
         return false;
     }
 
-    *slots_out         = slots;
     *parents_bytes_out = parents_bytes;
     *indexes_bytes_out = indexes_bytes;
     return true;
@@ -185,28 +181,19 @@ tunnel_t *muxclientTunnelCreate(node_t *node)
 
     if (staged_fixed_connections != 0)
     {
-        uint64_t fixed_slots;
-        uint64_t fixed_parent_bytes;
-        uint64_t fixed_index_bytes;
-        if (! muxclientComputeFixedStorageGeometry((uint64_t) wc,
-                                                   staged_fixed_connections,
-                                                   SIZE_MAX,
-                                                   sizeof(line_t *),
-                                                   sizeof(uint32_t),
-                                                   &fixed_slots,
-                                                   &fixed_parent_bytes,
-                                                   &fixed_index_bytes))
+        size_t fixed_parent_bytes;
+        size_t fixed_index_bytes;
+        if (! muxclientComputeFixedStorageGeometry(
+                (size_t) wc, staged_fixed_connections, &fixed_parent_bytes, &fixed_index_bytes))
         {
             LOGF("MuxClient: \"per-worker-connections-count\" is too large: %u", staged_fixed_connections);
             tunnelDestroy(t);
             return NULL;
         }
-        discard fixed_slots;
-
-        staged_fixed_parent_lines = memoryAllocateZero((size_t) fixed_parent_bytes);
+        staged_fixed_parent_lines = memoryAllocateZero(fixed_parent_bytes);
         if (staged_fixed_parent_lines != NULL)
         {
-            staged_fixed_parent_indexes = memoryAllocateZero((size_t) fixed_index_bytes);
+            staged_fixed_parent_indexes = memoryAllocateZero(fixed_index_bytes);
         }
     }
 

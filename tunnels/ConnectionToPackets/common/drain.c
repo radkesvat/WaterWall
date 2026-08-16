@@ -251,7 +251,7 @@ static ctp_drain_advance_result_t ctpDrainAbortLocked(ctp_tcp_drain_t *drain, co
 /*
  * The second phase: the FIN is out and every byte is with lwIP.
  *
- * Deliberately does nothing to the pcb. Re-running the shutdown is what R6-01
+ * Deliberately does nothing to the pcb. Re-running the shutdown is what
  * called out - lwIP would refuse it and the old helper answered that refusal
  * with tcp_close(), setting TF_RXCLOSED and turning the peer's next legal byte
  * into a reset. All that is left is to notice the peer finishing, and to stop
@@ -815,19 +815,4 @@ void ctpTcpDrainDestroyAllLocked(tunnel_t *t)
 
     ts->drain_bytes = 0;
     ts->drain_count = 0;
-}
-
-uint32_t ctpTcpDrainCount(tunnel_t *t)
-{
-    ctp_tstate_t *ts    = tunnelGetState(t);
-    uint32_t      count = 0;
-
-    LOCK_TCPIP_CORE();
-    for (const ctp_tcp_drain_t *drain = ts->drains; drain != NULL; drain = drain->next)
-    {
-        ++count;
-    }
-    UNLOCK_TCPIP_CORE();
-
-    return count;
 }

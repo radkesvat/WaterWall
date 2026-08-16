@@ -217,23 +217,21 @@ void deviceReaderSessionRetireProducerBuffers(device_reader_session_t *session)
     assert(session->reader_buffer_pool != NULL);
 
     deviceFragAffinityRetireReleasePool(session->frag_affinity);
-    assert(deviceFragAffinityStagedCount(session->frag_affinity) == 0);
-    assert(deviceFragAffinityStagedBytes(session->frag_affinity) == 0);
     session->reader_buffer_pool = NULL;
 }
 
-uint32_t deviceReaderSessionGeneration(const device_reader_session_t *session)
+static uint32_t deviceReaderSessionGeneration(const device_reader_session_t *session)
 {
     // The generation is only a tag; the delivery gate publishes session fields.
     return (uint32_t) atomicLoadRelaxed(&session->generation);
 }
 
-bool deviceReaderSessionMatchesGeneration(const device_reader_session_t *session, uint32_t generation)
+static bool deviceReaderSessionMatchesGeneration(const device_reader_session_t *session, uint32_t generation)
 {
     return generation == deviceReaderSessionGeneration(session);
 }
 
-void deviceReaderSessionMessageReceived(void *worker, void *arg1, void *arg2, void *arg3)
+static void deviceReaderSessionMessageReceived(void *worker, void *arg1, void *arg2, void *arg3)
 {
     device_reader_message_t *message    = arg1;
     device_reader_session_t *session    = message->session;
@@ -281,7 +279,8 @@ void deviceReaderSessionMessageReceived(void *worker, void *arg1, void *arg2, vo
     deviceReaderSessionUnref(session);
 }
 
-void deviceReaderSessionCleanupPostedMessage(void *arg1, void *arg2, void *arg3, worker_message_cancel_reason_e reason)
+static void deviceReaderSessionCleanupPostedMessage(void *arg1, void *arg2, void *arg3,
+                                                    worker_message_cancel_reason_e reason)
 {
     discard                  reason;
     device_reader_message_t *message = arg1;

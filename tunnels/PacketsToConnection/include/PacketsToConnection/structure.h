@@ -189,22 +189,6 @@ typedef struct ptc_fake_dns_result_s
     bool       handled;
 } ptc_fake_dns_result_t;
 
-typedef enum ptc_fake_dns_geometry_result_e
-{
-    kPtcFakeDnsGeometryOk = 0,
-    kPtcFakeDnsGeometryPracticalLimit,
-    kPtcFakeDnsGeometryRecordBytes,
-    kPtcFakeDnsGeometryMapAddition,
-    kPtcFakeDnsGeometryMapBuckets
-} ptc_fake_dns_geometry_result_t;
-
-typedef struct ptc_fake_dns_geometry_s
-{
-    uint64_t record_bytes;
-    uint64_t map_capacity;
-    uint64_t map_buckets;
-} ptc_fake_dns_geometry_t;
-
 typedef struct ptc_tstate_s
 {
     interface_route_context_t **routes_v4;
@@ -333,7 +317,6 @@ bool ptcLinestateInitialize(ptc_lstate_t *ls, tunnel_t *t, line_t *l, ptc_line_k
 void ptcLinestateDestroy(ptc_lstate_t *ls);
 
 err_t ptcNetifOutput(struct netif *netif, struct pbuf *p, const ip4_addr_t *ipaddr);
-bool  ptcPacketNeedsAlignedCopy(const sbuf_t *buf);
 
 /* The Stop gate. Published before Stop waits for the core lock, so every
  * core-locked path can treat it as a barrier by rechecking under that lock. */
@@ -346,39 +329,6 @@ void ptcNextGateLeave(tunnel_t *t);
 
 /* RX_POOL is process-global and may retain live pbufs across node lifetimes. */
 void ptcRxWrapperPoolInitializeOnce(void);
-
-/*
- * Copies a shifted packet into a buffer lwIP may read typed headers from.
- * Exposed so a test can drive the real production copy rather than a stand-in.
- */
-sbuf_t *ptcAcquireAlignedCopy(buffer_pool_t *pool, sbuf_t *src);
-
-/*
- * Hands one accepted packet to lwIP: alignment decision, copy when needed,
- * custom-pbuf wrapper, then netif input. Exposed for the same reason - so a test
- * can drive the production path end to end instead of its parts.
- */
-void ptcSubmitPacketToStack(sbuf_t *buf, struct netif *inp);
-
-/*
- * The reassembly identity of one IPv4 fragment: what ip4_reass_purge() needs to
- * remove exactly this datagram and nothing else.
- */
-typedef struct ptc_fragment_key_s
-{
-    ip4_addr_t source;
-    ip4_addr_t destination;
-    uint16_t   identification;
-    uint8_t    protocol;
-} ptc_fragment_key_t;
-
-/*
- * Refuses a tracked fragment: purges its exact reassembly key, then reports the
- * refusal to the device settlement seam so the identity can be released instead
- * of quarantined. A no-op when this delivery is not being tracked. Requires
- * LOCK_TCPIP_CORE().
- */
-void ptcReportFragmentRefusalLocked(const ptc_fragment_key_t *key, struct netif *inp, sbuf_t *buf);
 
 void ptcDetachTcpPcbLocked(ptc_lstate_t *ls);
 /* All receive-credit helpers require LOCK_TCPIP_CORE(). */
@@ -400,21 +350,18 @@ void ptcCloseLineFromDownstream(tunnel_t *t, line_t *l);
  * cooperating peer produced, and adopting an over-limit backlog into it would
  * move the same unbounded growth one queue further along.
  */
-void                           ptcCloseLineOverPendingLimit(tunnel_t *t, line_t *l);
-bool                           ptcArmUdpIdleOnOwnerThread(ptc_lstate_t *ls);
-void                           ptcCancelUdpIdleTimer(ptc_lstate_t *ls);
-bool                           ptcEnsureNextInit(tunnel_t *t, line_t *l, ptc_lstate_t *ls);
-void                           ptcOpenLineTask(tunnel_t *t, line_t *l);
-void                           ptcDeliverPayloadTask(tunnel_t *t, line_t *l, sbuf_t *buf);
-void                           ptcCloseLineTask(tunnel_t *t, line_t *l);
-void                           ptcResumeUpstreamTask(tunnel_t *t, line_t *l);
-void                           ptcWriteRetryTask(tunnel_t *t, line_t *l);
-void                           ptcRefusedDataRetryTask(tunnel_t *t, line_t *l);
-bool                           ptcFakeDnsLoadSettings(ptc_tstate_t *ts, const cJSON *settings);
-ptc_fake_dns_geometry_result_t ptcFakeDnsComputeGeometry(uint64_t cache_size, uint64_t record_element_size,
-                                                         uint64_t size_limit, uint64_t ptrdiff_limit,
-                                                         uint64_t practical_limit, ptc_fake_dns_geometry_t *out);
-void                           ptcFakeDnsDestroy(ptc_tstate_t *ts);
+void ptcCloseLineOverPendingLimit(tunnel_t *t, line_t *l);
+bool ptcArmUdpIdleOnOwnerThread(ptc_lstate_t *ls);
+void ptcCancelUdpIdleTimer(ptc_lstate_t *ls);
+bool ptcEnsureNextInit(tunnel_t *t, line_t *l, ptc_lstate_t *ls);
+void ptcOpenLineTask(tunnel_t *t, line_t *l);
+void ptcDeliverPayloadTask(tunnel_t *t, line_t *l, sbuf_t *buf);
+void ptcCloseLineTask(tunnel_t *t, line_t *l);
+void ptcResumeUpstreamTask(tunnel_t *t, line_t *l);
+void ptcWriteRetryTask(tunnel_t *t, line_t *l);
+void ptcRefusedDataRetryTask(tunnel_t *t, line_t *l);
+bool ptcFakeDnsLoadSettings(ptc_tstate_t *ts, const cJSON *settings);
+void ptcFakeDnsDestroy(ptc_tstate_t *ts);
 /* True when fake DNS is enabled and this is the address it answers on. */
 bool ptcFakeDnsOwnsDestination(tunnel_t *t, const ip4_addr_p_t *dest);
 bool ptcFakeDnsShouldDropFragment(const ptc_fake_dns_t *dns, const ip4_addr_p_t *dest, uint8_t protocol,
@@ -445,11 +392,8 @@ err_t ptcEnsureTcpListener(interface_route_context_t *route_ctx, tunnel_t *t, co
 err_t ptcEnsureUdpListener(interface_route_context_t *route_ctx, tunnel_t *t, const ip_addr_t *dest_ip,
                            uint16_t dest_port);
 interface_route_context_t *ptcFindOrCreateRouteContextV4(tunnel_t *t, wid_t packet_wid, const ip4_addr_t *dest_ip);
-#ifdef PTC_ROUTE_LOOKUP_COST_SEAM
-extern uint64_t g_ptc_route_lookup_steps;
-#endif
-void ptcDestroyRouteContexts(tunnel_t *t);
-void ptcDestroyLwipResources(tunnel_t *t);
+void                       ptcDestroyRouteContexts(tunnel_t *t);
+void                       ptcDestroyLwipResources(tunnel_t *t);
 
 // Error callback: called when something goes wrong on the connection.
 void lwipThreadPtcTcpConnectionErrorCallback(void *arg, err_t err);
@@ -492,17 +436,6 @@ bool ptcReserveWriteSlots(ptc_lstate_t *lstate);
 size_t      ptcFrontPauseAckIndexOf(const ptc_lstate_t *lstate);
 sbuf_ack_t *ptcPauseAckRecordAt(ptc_lstate_t *lstate, size_t index);
 
-#ifdef PTC_ASSOCIATION_COST_SEAM
-/*
- * Counts every record reached while associating a paused buffer with its
- * acknowledgement record. Every association - this one and any replacement -
- * goes through ptcPauseAckRecordAt(), so a test can assert the total stays
- * proportional to the entry count rather than to its square. Compiled only into
- * the fixture that measures it.
- */
-extern uint64_t g_ptc_association_steps;
-#endif
-
 /* True when this line already retains the node's maximum payload count. */
 bool ptcPendingEntriesExhausted(const ptc_tstate_t *tstate, const ptc_lstate_t *lstate);
 
@@ -517,4 +450,3 @@ err_t ptcTcpPollCallback(void *arg, struct tcp_pcb *tpcb);
 err_t ptcTcpSendFinLocked(struct tcp_pcb *pcb);
 ptc_tcp_drain_adopt_result_t ptcTcpDrainAdoptLocked(tunnel_t *t, ptc_lstate_t *ls, bool *out_aborted);
 void                         ptcTcpDrainDestroyAllLocked(tunnel_t *t);
-uint32_t                     ptcTcpDrainCount(tunnel_t *t);

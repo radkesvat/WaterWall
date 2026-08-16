@@ -43,63 +43,44 @@ typedef struct ptc_dns_mapping_s
     bool                  inserted;
 } ptc_dns_mapping_t;
 
-ptc_fake_dns_geometry_result_t ptcFakeDnsComputeGeometry(uint64_t cache_size, uint64_t record_element_size,
-                                                         uint64_t size_limit, uint64_t ptrdiff_limit,
-                                                         uint64_t practical_limit, ptc_fake_dns_geometry_t *out)
+typedef struct ptc_fake_dns_geometry_s
 {
-    if (out != NULL)
+    size_t  record_bytes;
+    isize_t map_capacity;
+} ptc_fake_dns_geometry_t;
+
+static bool ptcFakeDnsComputeGeometry(uint32_t cache_size, ptc_fake_dns_geometry_t *out)
+{
+    size_t record_bytes;
+    if (out == NULL || cache_size == 0 || cache_size > kPtcFakeDnsMaxRecords ||
+        ! memoryTryComputeArraySize(cache_size, sizeof(ptc_fake_dns_entry_t *), &record_bytes))
     {
-        *out = (ptc_fake_dns_geometry_t) {0};
-    }
-    if (cache_size == 0 || cache_size > practical_limit)
-    {
-        return kPtcFakeDnsGeometryPracticalLimit;
-    }
-    if (record_element_size == 0 || cache_size > size_limit / record_element_size)
-    {
-        return kPtcFakeDnsGeometryRecordBytes;
-    }
-    if (ptrdiff_limit < (uint64_t) kPtcDnsMaxQuestions || cache_size > ptrdiff_limit - (uint64_t) kPtcDnsMaxQuestions)
-    {
-        return kPtcFakeDnsGeometryMapAddition;
+        return false;
     }
 
-    const uint64_t map_capacity = cache_size + (uint64_t) kPtcDnsMaxQuestions;
-
-    /* STC hmap reserve computes float(capacity / 0.8) + 4 and rounds that
-     * through c_next_pow2(isize_t). Use a conservative integer upper bound so
-     * neither the signed intermediate nor its next power of two can overflow. */
-    if (map_capacity > (UINT64_MAX - 19U) / 5U)
+    const uint64_t map_capacity = (uint64_t) cache_size + kPtcDnsMaxQuestions;
+    if (map_capacity > PTRDIFF_MAX || map_capacity > (UINT64_MAX - 19U) / 5U)
     {
-        return kPtcFakeDnsGeometryMapBuckets;
+        return false;
     }
-    const uint64_t raw_buckets = ((map_capacity * 5U) + 3U) / 4U + 4U;
 
-    uint64_t largest_power = 1;
-    while (largest_power <= ptrdiff_limit / 2U)
+    /* STC rounds float(capacity / 0.8) + 4 to the next power of two. */
+    const uint64_t raw_buckets   = ((map_capacity * 5U) + 3U) / 4U + 4U;
+    uint64_t       largest_power = 1;
+    while (largest_power <= (uint64_t) PTRDIFF_MAX / 2U)
     {
         largest_power *= 2U;
     }
     if (raw_buckets > largest_power)
     {
-        return kPtcFakeDnsGeometryMapBuckets;
+        return false;
     }
 
-    uint64_t map_buckets = 1;
-    while (map_buckets < raw_buckets)
-    {
-        map_buckets *= 2U;
-    }
-
-    if (out != NULL)
-    {
-        *out = (ptc_fake_dns_geometry_t) {
-            .record_bytes = cache_size * record_element_size,
-            .map_capacity = map_capacity,
-            .map_buckets  = map_buckets,
-        };
-    }
-    return kPtcFakeDnsGeometryOk;
+    *out = (ptc_fake_dns_geometry_t) {
+        .record_bytes = record_bytes,
+        .map_capacity = (isize_t) map_capacity,
+    };
+    return true;
 }
 
 static char *ptcFakeDnsDuplicateString(const char *value, uint8_t len)
@@ -905,10 +886,8 @@ bool ptcFakeDnsLoadSettings(ptc_tstate_t *ts, const cJSON *settings)
         return false;
     }
 
-    ptc_fake_dns_geometry_t              geometry;
-    const ptc_fake_dns_geometry_result_t geometry_result = ptcFakeDnsComputeGeometry(
-        (uint64_t) cache_size, sizeof(ptc_fake_dns_entry_t *), SIZE_MAX, PTRDIFF_MAX, kPtcFakeDnsMaxRecords, &geometry);
-    if (geometry_result != kPtcFakeDnsGeometryOk)
+    ptc_fake_dns_geometry_t geometry;
+    if (! ptcFakeDnsComputeGeometry((uint32_t) cache_size, &geometry))
     {
         LOGF("JSON Error: PacketsToConnection->settings->fake-dns->cache-size exceeds safe allocation geometry "
              "(maximum %u records)",
@@ -921,9 +900,9 @@ bool ptcFakeDnsLoadSettings(ptc_tstate_t *ts, const cJSON *settings)
         return true;
     }
 
-    const isize_t           map_capacity = (isize_t) geometry.map_capacity;
+    const isize_t           map_capacity = geometry.map_capacity;
     ptc_fake_dns_name_map_t names        = ptc_fake_dns_name_map_t_with_capacity(map_capacity);
-    ptc_fake_dns_entry_t  **records      = memoryAllocateZero((size_t) geometry.record_bytes);
+    ptc_fake_dns_entry_t  **records      = memoryAllocateZero(geometry.record_bytes);
 
     if (UNLIKELY(ptc_fake_dns_name_map_t_capacity(&names) < (isize_t) map_capacity || records == NULL))
     {

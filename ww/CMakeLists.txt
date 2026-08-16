@@ -648,52 +648,11 @@ endif()
 include(cmake/CPM.cmake)
 set(BUILD_SHARED_LIBS OFF)
 
-# Dependency identity has one authority. CMake-specific build options remain
-# beside each consumer below, while URLs/commits/archive hashes come only from
-# the machine-readable lock used by the integrity coordinator as well.
-set(WW_DEPENDENCY_LOCK "${CMAKE_SOURCE_DIR}/tests/tools/cmake_dependency_lock.json")
-file(READ "${WW_DEPENDENCY_LOCK}" WW_DEPENDENCY_LOCK_JSON)
-string(JSON WW_DEPENDENCY_LOCK_SCHEMA GET "${WW_DEPENDENCY_LOCK_JSON}" schema)
-if(NOT WW_DEPENDENCY_LOCK_SCHEMA STREQUAL "waterwall.cmake-dependencies/v1")
-    message(FATAL_ERROR "Unsupported WaterWall dependency-lock schema")
-endif()
-string(JSON WW_DEPENDENCY_LOCK_COUNT LENGTH "${WW_DEPENDENCY_LOCK_JSON}" dependencies)
-
-function(ww_dependency_identity NAME)
-    set(WW_MATCH_COUNT 0)
-    math(EXPR WW_DEPENDENCY_LOCK_LAST "${WW_DEPENDENCY_LOCK_COUNT} - 1")
-    foreach(WW_INDEX RANGE 0 ${WW_DEPENDENCY_LOCK_LAST})
-        string(JSON WW_NAME GET "${WW_DEPENDENCY_LOCK_JSON}" dependencies ${WW_INDEX} name)
-        if(WW_NAME STREQUAL NAME)
-            math(EXPR WW_MATCH_COUNT "${WW_MATCH_COUNT} + 1")
-            string(JSON WW_KIND GET "${WW_DEPENDENCY_LOCK_JSON}" dependencies ${WW_INDEX} kind)
-            string(JSON WW_URL GET "${WW_DEPENDENCY_LOCK_JSON}" dependencies ${WW_INDEX} url)
-            set(WW_DEPENDENCY_KIND "${WW_KIND}" PARENT_SCOPE)
-            set(WW_DEPENDENCY_URL "${WW_URL}" PARENT_SCOPE)
-            if(WW_KIND STREQUAL "git")
-                string(JSON WW_COMMIT GET "${WW_DEPENDENCY_LOCK_JSON}" dependencies ${WW_INDEX} commit)
-                set(WW_DEPENDENCY_COMMIT "${WW_COMMIT}" PARENT_SCOPE)
-            elseif(WW_KIND STREQUAL "archive")
-                string(JSON WW_SHA256 GET "${WW_DEPENDENCY_LOCK_JSON}" dependencies ${WW_INDEX} sha256)
-                set(WW_DEPENDENCY_SHA256 "${WW_SHA256}" PARENT_SCOPE)
-            else()
-                message(FATAL_ERROR "Dependency ${NAME} has unsupported kind ${WW_KIND}")
-            endif()
-        endif()
-    endforeach()
-    if(NOT WW_MATCH_COUNT EQUAL 1)
-        message(FATAL_ERROR "Dependency ${NAME} must have exactly one lock recipe")
-    endif()
-endfunction()
-
 # KomiHash library
-ww_dependency_identity(komihash)
 CPMAddPackage(
     NAME komihash
-    GIT_REPOSITORY ${WW_DEPENDENCY_URL}
-    # Immutable commit behind the upstream 5.10 release tag. Dependency
-    # provenance must not depend on a movable tag in a warm CPM cache.
-    GIT_TAG ${WW_DEPENDENCY_COMMIT}
+    GIT_REPOSITORY https://github.com/avaneev/komihash.git
+    GIT_TAG 8d531367eae59100687ab84393963b9e8f4345f8
     DOWNLOAD_ONLY True
 )
 if(komihash_ADDED)
@@ -702,11 +661,10 @@ if(komihash_ADDED)
 endif()
 
 # STC library
-ww_dependency_identity(stc)
 CPMAddPackage(
     NAME stc
-    GIT_REPOSITORY ${WW_DEPENDENCY_URL}
-    GIT_TAG ${WW_DEPENDENCY_COMMIT}
+    GIT_REPOSITORY https://github.com/radkesvat/STC
+    GIT_TAG bf1d20e3dd903cde66c301587e017c4dd234a620
     DOWNLOAD_ONLY True
 )
 if(stc_ADDED)
@@ -725,11 +683,10 @@ target_compile_definitions(ww PUBLIC CJSON_HIDE_SYMBOLS)
 target_compile_definitions(ww PUBLIC ENABLE_TARGET_EXPORT=OFF)
 
 # C-Ares library
-ww_dependency_identity(cares)
 CPMAddPackage(
     NAME cares
-    GIT_REPOSITORY ${WW_DEPENDENCY_URL}
-    GIT_TAG ${WW_DEPENDENCY_COMMIT}
+    GIT_REPOSITORY https://github.com/c-ares/c-ares
+    GIT_TAG 3ac47ee46edd8ea40370222f91613fc16c434853
     OPTIONS
         "CARES_INSTALL OFF"
         "CARES_BUILD_TESTS OFF"
@@ -768,11 +725,10 @@ endif()
 
 # nghttp2 library
 if(PROJECT_REQUIRES_NGHTTP2)
-    ww_dependency_identity(nghttp2)
     CPMAddPackage(
         NAME nghttp2
-        GIT_TAG ${WW_DEPENDENCY_COMMIT}
-        GIT_REPOSITORY ${WW_DEPENDENCY_URL}
+        GIT_TAG ac22e0efe3f82f43c1366961c89a50ee821cfba3
+        GIT_REPOSITORY https://github.com/nghttp2/nghttp2.git
         OPTIONS
             "ENABLE_APP OFF"
             "ENABLE_HPACK_TOOLS OFF"
@@ -804,11 +760,10 @@ endif()
 
 
 # libmaxminddb library
-ww_dependency_identity(maxminddb)
 CPMAddPackage(
     NAME maxminddb
-    GIT_REPOSITORY ${WW_DEPENDENCY_URL}
-    GIT_TAG ${WW_DEPENDENCY_COMMIT}
+    GIT_REPOSITORY https://github.com/maxmind/libmaxminddb.git
+    GIT_TAG 09a0540fea89a16e5c6a9e21e93ee9aece6639e3
     OPTIONS
         "BUILD_SHARED_LIBS OFF"
         "BUILD_TESTING OFF"
@@ -827,11 +782,10 @@ endif()
 
 # LibSodium library
 if(WCRYPTO_BACKEND_SODIUM)
-    ww_dependency_identity(libsodium)
     CPMAddPackage(
         NAME libsodium
-        GIT_REPOSITORY ${WW_DEPENDENCY_URL}
-        GIT_TAG ${WW_DEPENDENCY_COMMIT}
+        GIT_REPOSITORY https://github.com/robinlinden/libsodium-cmake.git
+        GIT_TAG 24f829c6d1bf88adb05ff3ee594abc367ffc0590
         OPTIONS
             "SODIUM_MINIMAL ON"
             "SODIUM_DISABLE_TESTS ON"
@@ -983,23 +937,21 @@ if(PROJECT_REQUIRES_OPENSSL)
             set(ENV{RANLIB} "${CMAKE_RANLIB}")
         endif()
 
-        # Materialize the archive through the canonical recipe first. The
-        # wrapper then consumes that exact local tree and cannot substitute its
-        # own URL/hash declaration.
-        ww_dependency_identity(openssl-source)
+        # Pin the source archive and wrapper beside the consumer. Keeping the
+        # immutable identities here is sufficient; no separate verifier-owned
+        # dependency manifest is needed.
         CPMAddPackage(
             NAME openssl-source
-            URL ${WW_DEPENDENCY_URL}
-            URL_HASH SHA256=${WW_DEPENDENCY_SHA256}
+            URL https://github.com/openssl/openssl/releases/download/openssl-4.0.0/openssl-4.0.0.tar.gz
+            URL_HASH SHA256=c32cf49a959c4f345f9606982dd36e7d28f7c58b19c2e25d75624d2b3d2f79ac
             DOWNLOAD_ONLY True
         )
         set(OPENSSL_SOURCE "${openssl-source_SOURCE_DIR}")
 
-        ww_dependency_identity(openssl-cmake)
         CPMAddPackage(
             NAME openssl-cmake
-            GIT_REPOSITORY ${WW_DEPENDENCY_URL}
-            GIT_TAG ${WW_DEPENDENCY_COMMIT}
+            GIT_REPOSITORY https://github.com/jimmy-park/openssl-cmake.git
+            GIT_TAG aff15a0f64d14ba185f1c1c0c16b974875eec2f8
             OPTIONS
             ${WW_OPENSSL_CPM_OPTIONS}
         )
@@ -1141,11 +1093,11 @@ set(LIBS ${LIBS} libuuid)
 ################################################################################
 # updating lwip may cause our patching to fail or be incorrect. check with
 # https://github.com/heiher/lwip
-ww_dependency_identity(lwip)
+set(WW_LWIP_REVISION 77dcd25a72509eb83f72b033d219b1d40cd8eb95)
 CPMAddPackage(
     NAME lwip
-    GIT_REPOSITORY ${WW_DEPENDENCY_URL}
-    GIT_TAG ${WW_DEPENDENCY_COMMIT}
+    GIT_REPOSITORY https://github.com/lwip-tcpip/lwip.git
+    GIT_TAG ${WW_LWIP_REVISION}
     DOWNLOAD_ONLY True
 )
 if(NOT lwip_ADDED)
@@ -1154,48 +1106,31 @@ endif()
 
 set(LWIP_ORIGINAL_DIR ${lwip_SOURCE_DIR})
 set(LWIP_DIR ${CMAKE_BINARY_DIR}/patched-deps/lwip)
-set(LWIP_PATCH_SENTINEL ${LWIP_DIR}/.waterwall-lwip-patch-version)
-set(LWIP_SOURCE_PROVENANCE ${LWIP_DIR}/.waterwall-lwip-source-provenance)
+set(WW_LWIP_PATCH_RECIPE "${CMAKE_CURRENT_SOURCE_DIR}/lwip/pretend_patch.cmake")
+set(WW_LWIP_PATCH_STAMP "${LWIP_DIR}/.waterwall-lwip-patch-stamp")
+file(SHA256 "${WW_LWIP_PATCH_RECIPE}" WW_LWIP_PATCH_RECIPE_SHA256)
+include("${WW_LWIP_PATCH_RECIPE}")
+set(WW_LWIP_EXPECTED_PATCH_STAMP
+    "revision=${WW_LWIP_REVISION}\nrecipe-sha256=${WW_LWIP_PATCH_RECIPE_SHA256}\n")
 
-# Recipe overrides exist only for the disposable repeatability harness. A
-# production configure selects the three indexed recipes before any include or
-# worker process can observe a cache-provided spelling.
-option(WW_LWIP_ALLOW_NONAUTHORITATIVE_RECIPE_OVERRIDE
-       "Allow isolated lwIP recipe override tests; never authoritative" OFF)
-if(WW_LWIP_ALLOW_NONAUTHORITATIVE_RECIPE_OVERRIDE)
-  set(WW_LWIP_NONAUTHORITATIVE_RECIPE_OVERRIDE ON CACHE INTERNAL
-      "This configure cannot produce authority evidence" FORCE)
-else()
-  set(WW_LWIP_PATCH_RECIPE_FILE "${CMAKE_CURRENT_SOURCE_DIR}/lwip/pretend_patch.cmake")
-  set(WW_LWIP_GENERATOR_RECIPE_FILE "${CMAKE_CURRENT_SOURCE_DIR}/lwip/generate_patched_lwip.cmake")
-  set(WW_LWIP_GENERATOR_WORKER_FILE "${CMAKE_CURRENT_SOURCE_DIR}/lwip/generate_patched_lwip_worker.cmake")
-  set(WW_LWIP_NONAUTHORITATIVE_RECIPE_OVERRIDE OFF CACHE INTERNAL
-      "This configure cannot produce authority evidence" FORCE)
+set(WW_LWIP_REBUILD TRUE)
+if(EXISTS "${WW_LWIP_PATCH_STAMP}")
+    file(READ "${WW_LWIP_PATCH_STAMP}" WW_LWIP_CURRENT_PATCH_STAMP)
+    if("${WW_LWIP_CURRENT_PATCH_STAMP}" STREQUAL "${WW_LWIP_EXPECTED_PATCH_STAMP}")
+        set(WW_LWIP_REBUILD FALSE)
+    endif()
 endif()
 
-if(NOT DEFINED WW_LWIP_PATCH_RECIPE_FILE)
-    set(WW_LWIP_PATCH_RECIPE_FILE "${CMAKE_CURRENT_SOURCE_DIR}/lwip/pretend_patch.cmake")
+if(WW_LWIP_REBUILD)
+    # The stamp is written only after every strict replacement succeeds. A
+    # failed configure therefore repairs itself from the pinned pristine tree
+    # on the next run without a second transaction or source-tree attestation.
+    file(REMOVE_RECURSE "${LWIP_DIR}")
+    file(MAKE_DIRECTORY "${LWIP_DIR}")
+    file(COPY "${LWIP_ORIGINAL_DIR}/" DESTINATION "${LWIP_DIR}" PATTERN ".git" EXCLUDE)
+    ww_apply_lwip_pretend_patch("${LWIP_DIR}")
+    file(WRITE "${WW_LWIP_PATCH_STAMP}" "${WW_LWIP_EXPECTED_PATCH_STAMP}")
 endif()
-file(REAL_PATH "${WW_LWIP_PATCH_RECIPE_FILE}" WW_LWIP_PATCH_RECIPE_FILE)
-set(WW_LWIP_AUTHORITY_PATCH_RECIPE_FILE
-    "${WW_LWIP_PATCH_RECIPE_FILE}"
-    CACHE INTERNAL "Configured lwIP patch recipe used by the authoritative build" FORCE
-)
-include("${WW_LWIP_PATCH_RECIPE_FILE}")
-
-if(NOT DEFINED WW_LWIP_GENERATOR_RECIPE_FILE)
-    set(WW_LWIP_GENERATOR_RECIPE_FILE "${CMAKE_CURRENT_SOURCE_DIR}/lwip/generate_patched_lwip.cmake")
-endif()
-file(REAL_PATH "${WW_LWIP_GENERATOR_RECIPE_FILE}" WW_LWIP_GENERATOR_RECIPE_FILE)
-include("${WW_LWIP_GENERATOR_RECIPE_FILE}")
-set(WW_LWIP_AUTHORITY_GENERATOR_RECIPE_FILE
-    "${WW_LWIP_GENERATOR_RECIPE_FILE}"
-    CACHE INTERNAL "Configured lwIP generator recipe used by the authoritative build" FORCE
-)
-set(WW_LWIP_AUTHORITY_GENERATOR_WORKER_FILE
-    "${WW_LWIP_GENERATOR_WORKER_FILE}"
-    CACHE INTERNAL "Configured lwIP generator worker used by the authoritative build" FORCE
-)
 
 set(WPDPACK_DIR ${CMAKE_CURRENT_SOURCE_DIR}/vendor/)
 set(LWIPOPTS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/lwip)
@@ -1213,7 +1148,6 @@ set(LWIP_INCLUDE_DIRS
 )
 set(LWIP_DEFINITIONS ${LWIP_DEFINITIONS}
     WW_LWIP_HAVE_ERRNO_H=$<IF:${HAVE_ERRNO_H},1,0>
-    WW_LWIP_HAVE_STDATOMIC_H=$<IF:${HAVE_STDATOMIC_H},1,0>
 )
 
 # lwIP's pools are static arrays whose sizes are baked into ww_lwip *and* into
@@ -1320,25 +1254,6 @@ target_compile_definitions(ww_lwip PUBLIC $<$<CONFIG:Debug>:LWIP_DEBUG=1>)
 # copy here is what let ww_lwip build while the upstream targets did not.
 target_include_directories(ww_lwip PUBLIC ${LWIP_INCLUDE_DIRS})
 target_compile_definitions(ww_lwip PUBLIC ${LWIP_DEFINITIONS})
-
-option(
-    WW_LWIP_FORCE_WINDOWS_ATOMIC_BACKEND_TEST
-    "Force the production ww_lwip target through its Interlocked atomic backend"
-    OFF
-)
-if(WW_LWIP_FORCE_WINDOWS_ATOMIC_BACKEND_TEST)
-    if(NOT WIN32)
-        message(FATAL_ERROR "WW_LWIP_FORCE_WINDOWS_ATOMIC_BACKEND_TEST requires a native Windows build")
-    endif()
-    target_compile_definitions(ww_lwip PRIVATE WW_LWIP_ATOMIC_FORCE_WINDOWS=1)
-endif()
-# Multi-config Visual Studio generators do not emit compile_commands.json.
-# Publish the evaluated production target definitions so CI can prove that the
-# native epoch test links the forced backend rather than a standalone probe.
-file(GENERATE
-    OUTPUT "${CMAKE_BINARY_DIR}/ww_lwip_compile_definitions_$<CONFIG>.txt"
-    CONTENT "$<JOIN:$<TARGET_PROPERTY:ww_lwip,COMPILE_DEFINITIONS>,\n>\n"
-)
 
 # Set the platform-specific sys_arch.c property explicitly.
 if(UNIX)

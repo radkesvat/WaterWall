@@ -93,13 +93,6 @@ static inline size_t masterpoolGetCheckedOut(const master_pool_t *const pool)
 }
 
 /**
- * Validate the internally doubled capacity and allocation size without
- * allocating. Outputs are unchanged on failure.
- */
-bool masterpoolTryComputeGeometryForLimit(uint32_t pool_width, uint64_t allocation_limit, uint32_t *capacity_out,
-                                          uint64_t *allocation_size_out);
-
-/**
  * Enforce the ordinary pooled-item allocation contract. Metadata constructors
  * are nullable, but once a valid pool is published, ordinary item acquisition
  * is fail-fast and never returns or stores a NULL item.

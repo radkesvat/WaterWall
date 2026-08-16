@@ -88,11 +88,8 @@ void muxclientTunnelDownStreamResume(tunnel_t *t, line_t *l);
 void muxclientLinestateInitialize(muxclient_lstate_t *ls, line_t *l, bool is_child, mux_cid_t connection_id);
 void muxclientLinestateDestroy(muxclient_lstate_t *ls);
 
-bool muxclientComputeFixedStorageGeometry(uint64_t workers_count, uint64_t fixed_connections_count, uint64_t size_limit,
-                                          uint64_t pointer_size, uint64_t index_size, uint64_t *slots_out,
-                                          uint64_t *parents_bytes_out, uint64_t *indexes_bytes_out);
-bool muxclientCheckConnectionIsExhausted(muxclient_tstate_t *ts, muxclient_lstate_t *ls);
-void muxclientForgetParentSelection(muxclient_tstate_t *ts, wid_t wid, line_t *parent_l);
+bool    muxclientCheckConnectionIsExhausted(muxclient_tstate_t *ts, muxclient_lstate_t *ls);
+void    muxclientForgetParentSelection(muxclient_tstate_t *ts, wid_t wid, line_t *parent_l);
 line_t *muxclientGetParentLineForNewChild(tunnel_t *t, line_t *child_l);
 void    muxclientScheduleParentStatsLog(tunnel_t *t, line_t *parent_l);
 

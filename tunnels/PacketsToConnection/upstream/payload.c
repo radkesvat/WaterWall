@@ -12,7 +12,7 @@ enum
 static atomic_log_rate_limiter_t rx_pool_exhaustion_log;
 static atomic_log_rate_limiter_t fake_dns_fragment_log;
 
-bool ptcPacketNeedsAlignedCopy(const sbuf_t *buf)
+static bool ptcPacketNeedsAlignedCopy(const sbuf_t *buf)
 {
     return ((uintptr_t) sbufGetRawPtr(buf) % MEM_ALIGNMENT) != 0;
 }
@@ -71,7 +71,7 @@ static void my_pbuf_free_custom(struct pbuf *p)
  * property when it does not hold. Returns NULL only when the length is one no
  * buffer can carry.
  */
-sbuf_t *ptcAcquireAlignedCopy(buffer_pool_t *pool, sbuf_t *src)
+static sbuf_t *ptcAcquireAlignedCopy(buffer_pool_t *pool, sbuf_t *src)
 {
     const uint32_t len = sbufGetLength(src);
 
@@ -97,13 +97,16 @@ sbuf_t *ptcAcquireAlignedCopy(buffer_pool_t *pool, sbuf_t *src)
 }
 
 /*
- * Everything between an accepted packet and lwIP: the alignment decision, the
- * copy when one is needed, the custom-pbuf wrapper, and the handoff.
- *
- * Exported so a test can drive the real path rather than its pieces. The size
- * ceiling this exists to avoid is invisible from a round trip - a 20 KiB packet
- * simply disappeared - so the seam is what makes it observable.
+ * The reassembly identity of one IPv4 fragment.
  */
+typedef struct ptc_fragment_key_s
+{
+    ip4_addr_t source;
+    ip4_addr_t destination;
+    uint16_t   identification;
+    uint8_t    protocol;
+} ptc_fragment_key_t;
+
 /*
  * Reads the reassembly identity out of an IPv4 packet, if it has one.
  *
@@ -145,13 +148,13 @@ static bool ptcReadFragmentKey(const sbuf_t *buf, ptc_fragment_key_t *out)
  * reused immediately. Called with LOCK_TCPIP_CORE() held, like every other
  * reassembly operation.
  */
-void ptcReportFragmentRefusalLocked(const ptc_fragment_key_t *key, struct netif *inp, sbuf_t *buf)
+static void ptcReportFragmentRefusalLocked(const ptc_fragment_key_t *key, struct netif *inp, sbuf_t *buf)
 {
     discard ip4_reass_purge(inp, &key->source, &key->destination, key->protocol, key->identification);
     deviceFragClaimResolveBuffer(buf, kDeviceFragSettlementNoResidue);
 }
 
-void ptcSubmitPacketToStack(sbuf_t *buf, struct netif *inp)
+static void ptcSubmitPacketToStack(sbuf_t *buf, struct netif *inp)
 {
     // Runs on the packet line's event worker; record that identity with the
     // pbuf so a later lwIP-thread free knows whose pool the sbuf came from.

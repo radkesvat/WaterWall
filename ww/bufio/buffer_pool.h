@@ -32,21 +32,6 @@
 typedef struct buffer_pool_s buffer_pool_t;
 
 /**
- * Validate buffer-pool metadata geometry without allocating it.  The input is
- * the requested per-tier width; the published capacity is twice that width.
- * Outputs are unchanged on failure.
- *
- * @param pool_width Requested per-tier width. Must be nonzero.
- * @param allocation_limit Synthetic target size_t limit.
- * @param capacity_out Doubled container capacity.
- * @param free_threshold_out Shrink threshold derived from the capacity.
- * @param pointer_array_size_out Bytes required by each pointer array.
- * @return true when every independent metadata allocation is representable.
- */
-bool bufferpoolTryComputeGeometryForLimit(uint32_t pool_width, uint64_t allocation_limit, uint32_t *capacity_out,
-                                          uint32_t *free_threshold_out, uint64_t *pointer_array_size_out);
-
-/**
  * Creates a buffer pool with specified parameters.
  * @param mp_large The master pool for large buffers.
  * @param mp_small The master pool for small buffers.

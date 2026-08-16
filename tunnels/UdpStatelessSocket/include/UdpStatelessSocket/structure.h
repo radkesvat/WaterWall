@@ -118,8 +118,4 @@ void udpstatelesssocketDnsCacheStore(udpstatelesssocket_tstate_t *state, const c
                                      int strategy, const sockaddr_u *peer_addr);
 void udpstatelesssocketDnsCacheClear(udpstatelesssocket_tstate_t *state);
 
-#ifdef UDPSTATELESSSOCKET_DISPATCH_TEST_HOOKS
-typedef void (*UdpStatelessSocketForeignAdmissionHook)(void *context);
-void udpstatelesssocketInstallForeignAdmissionHook(UdpStatelessSocketForeignAdmissionHook hook, void *context);
-#endif
 void udpstatelesssocketTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);

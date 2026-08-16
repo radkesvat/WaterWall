@@ -85,8 +85,4 @@ WTHREAD_ROUTINE(captureLinuxReadRoutine);
 // reference and is about to enter its poll loop. Test readers use the same seam.
 bool captureLinuxReaderPublishReady(struct capture_device_s *cdev, int *reader_socket);
 
-// Bounded verdict seam for the Linux constructor/lifecycle fault harness.
-bool captureLinuxNetfilterSendVerdictForTest(int netfilter_socket, uint16_t queue_number, uint32_t packet_id,
-                                             uint32_t verdict);
-
 #endif

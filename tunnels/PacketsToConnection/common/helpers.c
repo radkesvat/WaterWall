@@ -186,15 +186,8 @@ static size_t ptcFrontPauseAckIndex(const ptc_lstate_t *ls)
     return records - paused;
 }
 
-#ifdef PTC_ASSOCIATION_COST_SEAM
-uint64_t g_ptc_association_steps;
-#endif
-
 sbuf_ack_t *ptcPauseAckRecordAt(ptc_lstate_t *ls, size_t index)
 {
-#ifdef PTC_ASSOCIATION_COST_SEAM
-    ++g_ptc_association_steps;
-#endif
     assert(index < (size_t) sbuf_ack_queue_t_size(&ls->ack_queue));
     return sbuf_ack_queue_t_at_mut(&ls->ack_queue, (isize_t) index);
 }
@@ -857,8 +850,8 @@ void ptcRefusedDataRetryTask(tunnel_t *t, line_t *l)
 void ptcCloseLineForStop(tunnel_t *t, line_t *l)
 {
     /*
-     * PTC owns this normal line.  Pre-stop has already blocked ordinary next
-     * callbacks, but chain hooks stop PTC before its next tunnel.  An Init that
+     * PTC owns this normal line. Quiesce has already blocked ordinary next
+     * callbacks, but chain hooks drain PTC before its next tunnel. An Init that
      * completed therefore still needs exactly one teardown Finish before the
      * owned line becomes dead and the next tunnel's line state is reclaimed.
      */

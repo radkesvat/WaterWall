@@ -483,7 +483,7 @@ void ctpCloseLineTask(tunnel_t *t, line_t *l)
  *
  * A one-shot wtimer is already removed from the loop by the time its callback
  * runs, so the handle is cleared first and never deleted here. Clearing it is
- * also the single ownership transition the cancel path tests: once it is NULL,
+ * also the single ownership transition the cancel path relies on: once it is NULL,
  * ctpCancelConnectDeadline() knows the reference below is no longer its to
  * release.
  */

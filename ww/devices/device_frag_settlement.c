@@ -11,8 +11,8 @@ struct device_frag_claim_s
     /*
      * Low bits contain the latest factual settlement and the high bit is a
      * sticky Unknown observation. Resolver updates happen before their release
-     * of a claim reference; the acquire fence on the final reference observes
-     * every completed update without allocating an OS-backed mutex per packet.
+     * of a claim reference; the final acquire/release decrement observes every
+     * completed update without allocating an OS-backed mutex per packet.
      */
     atomic_uint observation;
 
@@ -37,6 +37,11 @@ static device_frag_claim_t *deviceFragClaimFromLifetime(sbuf_lifetime_t *lifetim
 }
 
 static bool deviceFragLifetimeIsClaim(const sbuf_lifetime_t *lifetime);
+
+static bool deviceFragClaimMatchesGeneration(const device_frag_claim_t *claim)
+{
+    return claim->generation == (uint32_t) atomicLoadRelaxed(&claim->session->generation);
+}
 
 static bool deviceFragClaimReadKey(const sbuf_t *buf, uint32_t *source, uint32_t *destination, uint8_t *protocol,
                                    uint16_t *identification)
@@ -91,11 +96,10 @@ static void deviceFragClaimReleaseFinal(device_frag_claim_t *claim)
 
 static void deviceFragClaimUnref(device_frag_claim_t *claim)
 {
-    const w_atomic_uint_value_t previous = atomicSubExplicit(&claim->refcount, 1, memory_order_release);
+    const w_atomic_uint_value_t previous = atomicSubExplicit(&claim->refcount, 1, memory_order_acq_rel);
     assert(previous > 0);
     if (previous == 1)
     {
-        atomicThreadFence(memory_order_acquire);
         deviceFragClaimReleaseFinal(claim);
     }
 }
@@ -184,7 +188,7 @@ bool deviceFragClaimMayEnterStack(const sbuf_t *buf)
     }
 
     const device_frag_claim_t *claim = (const device_frag_claim_t *) lifetime;
-    return deviceReaderSessionMatchesGeneration(claim->session, claim->generation) &&
+    return deviceFragClaimMatchesGeneration(claim) &&
            deviceFragAffinityPublicationMayEnter(claim->session->frag_affinity, &claim->publication);
 }
 
@@ -199,7 +203,7 @@ static bool deviceFragClaimBeginStackUseInternal(device_frag_claim_t *claim)
     {
         return false;
     }
-    if (! deviceReaderSessionMatchesGeneration(claim->session, claim->generation) ||
+    if (! deviceFragClaimMatchesGeneration(claim) ||
         ! deviceFragAffinityPublicationMayEnter(claim->session->frag_affinity, &claim->publication))
     {
         deviceLifetimeGateLeave(&claim->session->delivery_gate);

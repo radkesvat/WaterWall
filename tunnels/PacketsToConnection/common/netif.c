@@ -222,9 +222,6 @@ void ptcDestroyRouteContexts(tunnel_t *t)
 
 static interface_route_context_t **ptcRouteSlot(ptc_tstate_t *state, wid_t packet_wid)
 {
-#ifdef PTC_ROUTE_LOOKUP_COST_SEAM
-    ++g_ptc_route_lookup_steps;
-#endif
     return &state->routes_v4[(uint32_t) packet_wid];
 }
 

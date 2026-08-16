@@ -477,8 +477,8 @@ static bool bufferpoolTryRoundBufferSize(uint32_t requested, uint32_t *rounded_o
     return true;
 }
 
-bool bufferpoolTryComputeGeometryForLimit(uint32_t pool_width, uint64_t allocation_limit, uint32_t *capacity_out,
-                                          uint32_t *free_threshold_out, uint64_t *pointer_array_size_out)
+static bool bufferpoolTryComputeGeometry(uint32_t pool_width, uint32_t *capacity_out, uint32_t *free_threshold_out,
+                                         size_t *pointer_array_size_out)
 {
     if (pool_width == 0 || capacity_out == NULL || free_threshold_out == NULL || pointer_array_size_out == NULL ||
         pool_width > UINT32_MAX / 2U)
@@ -486,9 +486,9 @@ bool bufferpoolTryComputeGeometryForLimit(uint32_t pool_width, uint64_t allocati
         return false;
     }
 
-    const uint32_t capacity           = pool_width * 2U;
-    const uint64_t pointer_array_size = (uint64_t) capacity * (uint64_t) sizeof(sbuf_t *);
-    if ((uint64_t) sizeof(buffer_pool_t) > allocation_limit || pointer_array_size > allocation_limit)
+    const uint32_t capacity = pool_width * 2U;
+    size_t         pointer_array_size;
+    if (! memoryTryComputeArraySize(capacity, sizeof(sbuf_t *), &pointer_array_size))
     {
         return false;
     }
@@ -501,11 +501,6 @@ bool bufferpoolTryComputeGeometryForLimit(uint32_t pool_width, uint64_t allocati
     *free_threshold_out     = threshold;
     *pointer_array_size_out = pointer_array_size;
     return true;
-}
-
-uint64_t bufferpoolMetadataSizeForTest(void)
-{
-    return (uint64_t) sizeof(buffer_pool_t);
 }
 
 void bufferpoolCachedTierCountsForTest(const buffer_pool_t *pool, uint32_t *large_count, uint32_t *small_count)
@@ -522,19 +517,17 @@ buffer_pool_t *bufferpoolCreate(master_pool_t *mp_large, master_pool_t *mp_small
 {
     uint32_t capacity;
     uint32_t free_threshold;
-    uint64_t container_len64;
+    size_t   container_len;
     uint32_t rounded_large_buffer_size;
     uint32_t rounded_small_buffer_size;
 
     if (mp_large == NULL || mp_small == NULL ||
-        ! bufferpoolTryComputeGeometryForLimit(bufcount, SIZE_MAX, &capacity, &free_threshold, &container_len64) ||
+        ! bufferpoolTryComputeGeometry(bufcount, &capacity, &free_threshold, &container_len) ||
         ! bufferpoolTryRoundBufferSize(large_buffer_size, &rounded_large_buffer_size) ||
         ! bufferpoolTryRoundBufferSize(small_buffer_size, &rounded_small_buffer_size))
     {
         return NULL;
     }
-
-    const size_t container_len = (size_t) container_len64;
 
 #ifdef DEBUG
     sbuf_t *test_large_buf = sbufCreateWithPadding(rounded_large_buffer_size, 0);

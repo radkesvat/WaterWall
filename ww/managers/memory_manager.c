@@ -11,20 +11,20 @@ static bool memoryAlignmentIsValid(size_t alignment)
     return alignment != 0 && (alignment & (alignment - 1)) == 0;
 }
 
-bool memoryAlignedAllocationSizeIsRepresentableForLimit(uint64_t size, size_t alignment, uint64_t size_limit)
+bool memoryAlignedAllocationSizeIsRepresentable(size_t size, size_t alignment)
 {
     if (! memoryAlignmentIsValid(alignment))
     {
         return false;
     }
 
-    const uint64_t effective_alignment = max((uint64_t) alignment, (uint64_t) sizeof(void *));
-    return effective_alignment <= size_limit && size <= size_limit - effective_alignment;
+    const size_t effective_alignment = max(alignment, sizeof(void *));
+    return size <= SIZE_MAX - effective_alignment;
 }
 
 void *memoryAllocateAligned(size_t size, size_t alignment)
 {
-    if (! memoryAlignedAllocationSizeIsRepresentableForLimit((uint64_t) size, alignment, (uint64_t) SIZE_MAX))
+    if (! memoryAlignedAllocationSizeIsRepresentable(size, alignment))
     {
         return NULL;
     }

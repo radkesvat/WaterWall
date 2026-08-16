@@ -699,10 +699,6 @@ bool ctpFlowRegister(tunnel_t *t, ctp_lstate_t *ls, void *pcb, uint8_t protocol)
 void ctpFlowUnregister(tunnel_t *t, ctp_lstate_t *ls);
 void ctpFlowRetire(tunnel_t *t, ctp_lstate_t *ls, bool graceful);
 
-/* Injected-clock variants, for tests that have to reach a deadline on demand. */
-bool ctpFlowRegisterAt(tunnel_t *t, ctp_lstate_t *ls, void *pcb, uint8_t protocol, uint64_t now_ms);
-void ctpFlowRetireAt(tunnel_t *t, ctp_lstate_t *ls, bool graceful, uint64_t now_ms);
-
 /*
  * Hands a registry entry from a line to a drain and back again. Both run under
  * LOCK_TCPIP_CORE(), where every pcb transition already happens.
@@ -724,9 +720,6 @@ void ctpFlowDropAllLocked(tunnel_t *t);
  */
 bool ctpFlowLookupWithLockHeld(ctp_tstate_t *ts, const ctp_flow_key_t *key, uint64_t now_ms, wid_t *out_wid,
                                uint64_t *out_generation);
-
-/* Live tombstone count. Tests use it to prove the hard bound holds. */
-uint32_t ctpFlowTombstoneCount(ctp_tstate_t *ts);
 
 // ---------------------------------------------------------------------------
 // common/frag.c - return-fragment association, also under flows_lock
@@ -786,28 +779,15 @@ void ctpFragHandlePacket(tunnel_t *t, const ctp_frag_key_t *frag_key, const ctp_
                          const ctp_frag_span_t *span, void *payload, uint32_t len, ctp_frag_publish_fn publish,
                          ctp_frag_discard_fn release, ctp_frag_purge_schedule_fn schedule_purge);
 
-/* Injected-clock variant, for callers that already have a timestamp and tests. */
-void ctpFragHandlePacketAt(tunnel_t *t, uint64_t now_ms, const ctp_frag_key_t *frag_key,
-                           const ctp_flow_key_t *zero_flow_key, const ctp_frag_span_t *span, void *payload,
-                           uint32_t len, ctp_frag_publish_fn publish, ctp_frag_discard_fn release,
-                           ctp_frag_purge_schedule_fn schedule_purge);
-
 /* Called by the owner-worker barrier after the exact lwIP reassembly key is purged. */
 void ctpFragRetirePurged(tunnel_t *t, const ctp_frag_key_t *frag_key, uint64_t serial, bool exact_absence);
 
 /*
  * Settles one exact delivery token after the owner worker either offered the
- * packet successfully to lwIP or cleaned/refused it. The injected-clock form
- * keeps the lifetime contract deterministic in unit tests.
+ * packet successfully to lwIP or cleaned/refused it.
  */
 void ctpFragSettleDelivery(tunnel_t *t, const ctp_frag_key_t *frag_key, uint64_t serial, bool delivered,
                            ctp_frag_purge_schedule_fn schedule_purge);
-void ctpFragSettleDeliveryAt(tunnel_t *t, const ctp_frag_key_t *frag_key, uint64_t serial, bool delivered,
-                             uint64_t now_ms, ctp_frag_purge_schedule_fn schedule_purge);
-
-/* Live association count. Tests use it to prove completed datagrams retire. */
-size_t ctpFragAssociationCount(ctp_tstate_t *ts);
-
 // ---------------------------------------------------------------------------
 // downstream/payload.c
 // ---------------------------------------------------------------------------
@@ -951,9 +931,6 @@ ctp_tcp_drain_adopt_result_t ctpTcpDrainAdoptLocked(tunnel_t *t, ctp_lstate_t *l
 
 /* Stop-time release. Called under LOCK_TCPIP_CORE() after the pcbs are gone. */
 void ctpTcpDrainDestroyAllLocked(tunnel_t *t);
-
-/* Live drain count, for tests. */
-uint32_t ctpTcpDrainCount(tunnel_t *t);
 
 // ---------------------------------------------------------------------------
 // common/udp.c
