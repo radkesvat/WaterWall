@@ -73,7 +73,9 @@ void tunnelchainInsert(tunnel_chain_t *tci, tunnel_t *t)
     tci->sum_line_state_size = next_line_state_size;
     if (tunnelGetNode(t)->layer_group == kNodeLayer3 ||
         tunnelGetNode(t)->layer_group_prev_node == kNodeLayer3 ||
-        tunnelGetNode(t)->layer_group_next_node == kNodeLayer3)
+        tunnelGetNode(t)->layer_group_next_node == kNodeLayer3 ||
+        (tunnelGetNode(t)->layer_group_prev_node & kNodeLayerOppositeNext) != 0 ||
+        (tunnelGetNode(t)->layer_group_next_node & kNodeLayerOppositePrev) != 0)
     {
         tci->contains_packet_node = true;
     }

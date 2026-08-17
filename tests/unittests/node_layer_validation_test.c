@@ -637,6 +637,370 @@ static void testRejectNoChainWithLinks(void)
     require(result.exit_code == 1, "kNodeFlagNoChain with links was not rejected");
 }
 
+static void testValidOppositeLayerChainL3toL4(void)
+{
+    node_t n_head = {
+        .name                  = (char *) "head",
+        .type                  = (char *) "TunDevice",
+        .flags                 = kNodeFlagChainHead,
+        .layer_group           = kNodeLayer3,
+        .layer_group_next_node = kNodeLayer3,
+        .layer_group_prev_node = kNodeLayerNone,
+        .can_have_next         = true,
+        .can_have_prev         = false,
+    };
+    node_t n_mid = {
+        .name                  = (char *) "wg",
+        .type                  = (char *) "WireGuardDevice",
+        .flags                 = kNodeFlagNone,
+        .layer_group           = kNodeLayerAnything,
+        .layer_group_next_node = kNodeLayerAnything | kNodeLayerOppositePrev,
+        .layer_group_prev_node = kNodeLayerAnything | kNodeLayerOppositeNext,
+        .can_have_next         = true,
+        .can_have_prev         = true,
+    };
+    node_t n_tail = {
+        .name                  = (char *) "tail",
+        .type                  = (char *) "TcpConnector",
+        .flags                 = kNodeFlagChainEnd,
+        .layer_group           = kNodeLayer4,
+        .layer_group_next_node = kNodeLayerNone,
+        .layer_group_prev_node = kNodeLayer4,
+        .can_have_next         = false,
+        .can_have_prev         = true,
+    };
+
+    tunnel_t t_head = {.node = &n_head};
+    tunnel_t t_mid  = {.node = &n_mid};
+    tunnel_t t_tail = {.node = &n_tail};
+
+    bindTunnels(&t_head, &t_mid);
+    bindTunnels(&t_mid, &t_tail);
+
+    tunnel_t *t_array[3] = {&t_head, &t_mid, &t_tail};
+
+    ww_startup_context_t startup = {0};
+    wwStartupContextBegin(&startup);
+    validateTunnelChains(t_array, 3);
+    const ww_startup_result_t result = wwStartupContextEnd(&startup);
+
+    require(result.exit_code == 0, "Valid Opposite layer chain (L3->WG->L4) was rejected");
+}
+
+static void testValidOppositeLayerChainL4toL3(void)
+{
+    node_t n_head = {
+        .name                  = (char *) "head",
+        .type                  = (char *) "TcpListener",
+        .flags                 = kNodeFlagChainHead,
+        .layer_group           = kNodeLayer4,
+        .layer_group_next_node = kNodeLayer4,
+        .layer_group_prev_node = kNodeLayerNone,
+        .can_have_next         = true,
+        .can_have_prev         = false,
+    };
+    node_t n_mid = {
+        .name                  = (char *) "wg",
+        .type                  = (char *) "WireGuardDevice",
+        .flags                 = kNodeFlagNone,
+        .layer_group           = kNodeLayerAnything,
+        .layer_group_next_node = kNodeLayerAnything | kNodeLayerOppositePrev,
+        .layer_group_prev_node = kNodeLayerAnything | kNodeLayerOppositeNext,
+        .can_have_next         = true,
+        .can_have_prev         = true,
+    };
+    node_t n_tail = {
+        .name                  = (char *) "tail",
+        .type                  = (char *) "RawSocket",
+        .flags                 = kNodeFlagChainEnd,
+        .layer_group           = kNodeLayer3,
+        .layer_group_next_node = kNodeLayerNone,
+        .layer_group_prev_node = kNodeLayer3,
+        .can_have_next         = false,
+        .can_have_prev         = true,
+    };
+
+    tunnel_t t_head = {.node = &n_head};
+    tunnel_t t_mid  = {.node = &n_mid};
+    tunnel_t t_tail = {.node = &n_tail};
+
+    bindTunnels(&t_head, &t_mid);
+    bindTunnels(&t_mid, &t_tail);
+
+    tunnel_t *t_array[3] = {&t_head, &t_mid, &t_tail};
+
+    ww_startup_context_t startup = {0};
+    wwStartupContextBegin(&startup);
+    validateTunnelChains(t_array, 3);
+    const ww_startup_result_t result = wwStartupContextEnd(&startup);
+
+    require(result.exit_code == 0, "Valid Opposite layer chain (L4->WG->L3) was rejected");
+}
+
+static void testRejectOppositeLayerMismatchSameL3(void)
+{
+    node_t n_head = {
+        .name                  = (char *) "head",
+        .type                  = (char *) "TunDevice",
+        .flags                 = kNodeFlagChainHead,
+        .layer_group           = kNodeLayer3,
+        .layer_group_next_node = kNodeLayer3,
+        .layer_group_prev_node = kNodeLayerNone,
+        .can_have_next         = true,
+        .can_have_prev         = false,
+    };
+    node_t n_mid = {
+        .name                  = (char *) "wg",
+        .type                  = (char *) "WireGuardDevice",
+        .flags                 = kNodeFlagNone,
+        .layer_group           = kNodeLayerAnything,
+        .layer_group_next_node = kNodeLayerAnything | kNodeLayerOppositePrev,
+        .layer_group_prev_node = kNodeLayerAnything | kNodeLayerOppositeNext,
+        .can_have_next         = true,
+        .can_have_prev         = true,
+    };
+    node_t n_tail = {
+        .name                  = (char *) "tail",
+        .type                  = (char *) "RawSocket",
+        .flags                 = kNodeFlagChainEnd,
+        .layer_group           = kNodeLayer3,
+        .layer_group_next_node = kNodeLayerNone,
+        .layer_group_prev_node = kNodeLayer3,
+        .can_have_next         = false,
+        .can_have_prev         = true,
+    };
+
+    tunnel_t t_head = {.node = &n_head};
+    tunnel_t t_mid  = {.node = &n_mid};
+    tunnel_t t_tail = {.node = &n_tail};
+
+    bindTunnels(&t_head, &t_mid);
+    bindTunnels(&t_mid, &t_tail);
+
+    tunnel_t *t_array[3] = {&t_head, &t_mid, &t_tail};
+
+    ww_startup_context_t startup = {0};
+    wwStartupContextBegin(&startup);
+    validateTunnelChains(t_array, 3);
+    const ww_startup_result_t result = wwStartupContextEnd(&startup);
+
+    require(result.exit_code == 1, "Opposite layer mismatch (L3->WG->L3) was not rejected");
+}
+
+static void testRejectOppositeLayerMismatchSameL4(void)
+{
+    node_t n_head = {
+        .name                  = (char *) "head",
+        .type                  = (char *) "TcpListener",
+        .flags                 = kNodeFlagChainHead,
+        .layer_group           = kNodeLayer4,
+        .layer_group_next_node = kNodeLayer4,
+        .layer_group_prev_node = kNodeLayerNone,
+        .can_have_next         = true,
+        .can_have_prev         = false,
+    };
+    node_t n_mid = {
+        .name                  = (char *) "wg",
+        .type                  = (char *) "WireGuardDevice",
+        .flags                 = kNodeFlagNone,
+        .layer_group           = kNodeLayerAnything,
+        .layer_group_next_node = kNodeLayerAnything | kNodeLayerOppositePrev,
+        .layer_group_prev_node = kNodeLayerAnything | kNodeLayerOppositeNext,
+        .can_have_next         = true,
+        .can_have_prev         = true,
+    };
+    node_t n_tail = {
+        .name                  = (char *) "tail",
+        .type                  = (char *) "TcpConnector",
+        .flags                 = kNodeFlagChainEnd,
+        .layer_group           = kNodeLayer4,
+        .layer_group_next_node = kNodeLayerNone,
+        .layer_group_prev_node = kNodeLayer4,
+        .can_have_next         = false,
+        .can_have_prev         = true,
+    };
+
+    tunnel_t t_head = {.node = &n_head};
+    tunnel_t t_mid  = {.node = &n_mid};
+    tunnel_t t_tail = {.node = &n_tail};
+
+    bindTunnels(&t_head, &t_mid);
+    bindTunnels(&t_mid, &t_tail);
+
+    tunnel_t *t_array[3] = {&t_head, &t_mid, &t_tail};
+
+    ww_startup_context_t startup = {0};
+    wwStartupContextBegin(&startup);
+    validateTunnelChains(t_array, 3);
+    const ww_startup_result_t result = wwStartupContextEnd(&startup);
+
+    require(result.exit_code == 1, "Opposite layer mismatch (L4->WG->L4) was not rejected");
+}
+
+static void testRejectOppositePrevOnHead(void)
+{
+    node_t n_head = {
+        .name                  = (char *) "head",
+        .type                  = (char *) "WireGuardDevice",
+        .flags                 = kNodeFlagChainHead,
+        .layer_group           = kNodeLayerAnything,
+        .layer_group_next_node = kNodeLayerAnything | kNodeLayerOppositePrev,
+        .layer_group_prev_node = kNodeLayerNone,
+        .can_have_next         = true,
+        .can_have_prev         = false,
+    };
+    node_t n_tail = {
+        .name                  = (char *) "tail",
+        .type                  = (char *) "TcpConnector",
+        .flags                 = kNodeFlagChainEnd,
+        .layer_group           = kNodeLayer4,
+        .layer_group_next_node = kNodeLayerNone,
+        .layer_group_prev_node = kNodeLayer4,
+        .can_have_next         = false,
+        .can_have_prev         = true,
+    };
+
+    tunnel_t t_head = {.node = &n_head};
+    tunnel_t t_tail = {.node = &n_tail};
+
+    bindTunnels(&t_head, &t_tail);
+
+    tunnel_t *t_array[2] = {&t_head, &t_tail};
+
+    ww_startup_context_t startup = {0};
+    wwStartupContextBegin(&startup);
+    validateTunnelChains(t_array, 2);
+    const ww_startup_result_t result = wwStartupContextEnd(&startup);
+
+    require(result.exit_code == 1, "OppositePrev on chain head was not rejected");
+}
+
+static void testRejectOppositeNextOnTail(void)
+{
+    node_t n_head = {
+        .name                  = (char *) "head",
+        .type                  = (char *) "TunDevice",
+        .flags                 = kNodeFlagChainHead,
+        .layer_group           = kNodeLayer3,
+        .layer_group_next_node = kNodeLayer3,
+        .layer_group_prev_node = kNodeLayerNone,
+        .can_have_next         = true,
+        .can_have_prev         = false,
+    };
+    node_t n_tail = {
+        .name                  = (char *) "tail",
+        .type                  = (char *) "WireGuardDevice",
+        .flags                 = kNodeFlagChainEnd,
+        .layer_group           = kNodeLayerAnything,
+        .layer_group_next_node = kNodeLayerNone,
+        .layer_group_prev_node = kNodeLayerAnything | kNodeLayerOppositeNext,
+        .can_have_next         = false,
+        .can_have_prev         = true,
+    };
+
+    tunnel_t t_head = {.node = &n_head};
+    tunnel_t t_tail = {.node = &n_tail};
+
+    bindTunnels(&t_head, &t_tail);
+
+    tunnel_t *t_array[2] = {&t_head, &t_tail};
+
+    ww_startup_context_t startup = {0};
+    wwStartupContextBegin(&startup);
+    validateTunnelChains(t_array, 2);
+    const ww_startup_result_t result = wwStartupContextEnd(&startup);
+
+    require(result.exit_code == 1, "OppositeNext on chain tail was not rejected");
+}
+
+static void testRejectForbiddenOppositeInLayerGroup(void)
+{
+    node_t n_node = {
+        .name                  = (char *) "bad",
+        .type                  = (char *) "BadNode",
+        .flags                 = kNodeFlagNone,
+        .layer_group           = kNodeLayerOppositePrev,
+        .layer_group_next_node = kNodeLayer4,
+        .layer_group_prev_node = kNodeLayer4,
+        .can_have_next         = true,
+        .can_have_prev         = true,
+    };
+    node_t n_head = {
+        .name                  = (char *) "head",
+        .type                  = (char *) "TcpListener",
+        .flags                 = kNodeFlagChainHead,
+        .layer_group           = kNodeLayer4,
+        .layer_group_next_node = kNodeLayer4,
+        .layer_group_prev_node = kNodeLayerNone,
+        .can_have_next         = true,
+        .can_have_prev         = false,
+    };
+
+    tunnel_t t_head = {.node = &n_head};
+    tunnel_t t_node = {.node = &n_node};
+
+    bindTunnels(&t_head, &t_node);
+
+    tunnel_t *t_array[2] = {&t_head, &t_node};
+
+    ww_startup_context_t startup = {0};
+    wwStartupContextBegin(&startup);
+    validateTunnelChains(t_array, 2);
+    const ww_startup_result_t result = wwStartupContextEnd(&startup);
+
+    require(result.exit_code == 1, "Forbidden Opposite in layer_group was not rejected");
+}
+
+static void testRejectOppositeWithoutBaseLayer(void)
+{
+    node_t n_head = {
+        .name                  = (char *) "head",
+        .type                  = (char *) "TunDevice",
+        .flags                 = kNodeFlagChainHead,
+        .layer_group           = kNodeLayer3,
+        .layer_group_next_node = kNodeLayer3,
+        .layer_group_prev_node = kNodeLayerNone,
+        .can_have_next         = true,
+        .can_have_prev         = false,
+    };
+    node_t n_mid = {
+        .name                  = (char *) "wg",
+        .type                  = (char *) "WireGuardDevice",
+        .flags                 = kNodeFlagNone,
+        .layer_group           = kNodeLayerAnything,
+        .layer_group_next_node = kNodeLayerOppositePrev, // Bare Opposite flag without base layer
+        .layer_group_prev_node = kNodeLayerAnything | kNodeLayerOppositeNext,
+        .can_have_next         = true,
+        .can_have_prev         = true,
+    };
+    node_t n_tail = {
+        .name                  = (char *) "tail",
+        .type                  = (char *) "TcpConnector",
+        .flags                 = kNodeFlagChainEnd,
+        .layer_group           = kNodeLayer4,
+        .layer_group_next_node = kNodeLayerNone,
+        .layer_group_prev_node = kNodeLayer4,
+        .can_have_next         = false,
+        .can_have_prev         = true,
+    };
+
+    tunnel_t t_head = {.node = &n_head};
+    tunnel_t t_mid  = {.node = &n_mid};
+    tunnel_t t_tail = {.node = &n_tail};
+
+    bindTunnels(&t_head, &t_mid);
+    bindTunnels(&t_mid, &t_tail);
+
+    tunnel_t *t_array[3] = {&t_head, &t_mid, &t_tail};
+
+    ww_startup_context_t startup = {0};
+    wwStartupContextBegin(&startup);
+    validateTunnelChains(t_array, 3);
+    const ww_startup_result_t result = wwStartupContextEnd(&startup);
+
+    require(result.exit_code == 1, "Opposite flag without base layer was not rejected");
+}
+
 int main(void)
 {
     testValidL4Chain();
@@ -644,14 +1008,22 @@ int main(void)
     testValidTransparentMiddleChainL3();
     testValidMultiHopTransparent();
     testValidBridgeChain();
+    testValidOppositeLayerChainL3toL4();
+    testValidOppositeLayerChainL4toL3();
     testRejectForbiddenSameAsInLayerGroup();
+    testRejectForbiddenOppositeInLayerGroup();
     testRejectTransparentBridgeMismatch();
     testRejectAdjacentLayerMismatch();
     testRejectNextNodeLayerMismatch();
+    testRejectOppositeLayerMismatchSameL3();
+    testRejectOppositeLayerMismatchSameL4();
     testRejectCanHaveNextViolation();
     testRejectCanHavePrevViolation();
     testRejectSameAsPrevOnHead();
     testRejectSameAsNextOnTail();
+    testRejectOppositePrevOnHead();
+    testRejectOppositeNextOnTail();
+    testRejectOppositeWithoutBaseLayer();
     testRejectNoChainWithLinks();
     return 0;
 }

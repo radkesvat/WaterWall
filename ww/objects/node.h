@@ -111,12 +111,14 @@ enum node_flags
 
 enum node_layer_group
 {
-    kNodeLayerNone       = (1 << 0),
-    kNodeLayer3          = (1 << 2),
-    kNodeLayer4          = (1 << 3),
-    kNodeLayerAnything   = kNodeLayer3 | kNodeLayer4,
-    kNodeLayerSameAsNext = (1 << 4),
-    kNodeLayerSameAsPrev = (1 << 5)
+    kNodeLayerNone         = (1 << 0),
+    kNodeLayer3            = (1 << 2),
+    kNodeLayer4            = (1 << 3),
+    kNodeLayerAnything     = kNodeLayer3 | kNodeLayer4,
+    kNodeLayerSameAsNext   = (1 << 4),
+    kNodeLayerSameAsPrev   = (1 << 5),
+    kNodeLayerOppositeNext = (1 << 6), // must be ORed with a specific layer (3 or 4) to indicate the opposite layer of the next node
+    kNodeLayerOppositePrev = (1 << 7)  // must be ORed with a specific layer (3 or 4) to indicate the opposite layer of the previous node
 };
 
 static inline const char *nodeLayerGroupToString(enum node_layer_group layer)
@@ -135,6 +137,10 @@ static inline const char *nodeLayerGroupToString(enum node_layer_group layer)
         return "kNodeLayerSameAsNext";
     case kNodeLayerSameAsPrev:
         return "kNodeLayerSameAsPrev";
+    case kNodeLayerOppositeNext:
+        return "kNodeLayerOppositeNext";
+    case kNodeLayerOppositePrev:
+        return "kNodeLayerOppositePrev";
     default:
         break;
     }
@@ -150,6 +156,22 @@ static inline const char *nodeLayerGroupToString(enum node_layer_group layer)
     if (layer & kNodeLayer4)
     {
         return "kNodeLayer4";
+    }
+    if (layer & kNodeLayerOppositeNext)
+    {
+        return "kNodeLayerOppositeNext";
+    }
+    if (layer & kNodeLayerOppositePrev)
+    {
+        return "kNodeLayerOppositePrev";
+    }
+    if (layer & kNodeLayerSameAsNext)
+    {
+        return "kNodeLayerSameAsNext";
+    }
+    if (layer & kNodeLayerSameAsPrev)
+    {
+        return "kNodeLayerSameAsPrev";
     }
     return "unknown";
 }
