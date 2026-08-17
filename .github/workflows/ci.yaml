@@ -29,8 +29,8 @@ jobs:
     name: linux-tsan-shutdown
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+      - uses: actions/checkout@v5
+      - uses: actions/cache@v5
         with:
           path: |
             ${{ env.cpm-path }}
@@ -57,8 +57,8 @@ jobs:
     name: windows-shutdown
     runs-on: windows-2025-vs2026
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+      - uses: actions/checkout@v5
+      - uses: actions/cache@v5
         with:
           path: |
             ${{ env.cpm-path }}
@@ -67,7 +67,7 @@ jobs:
             ${{ env.cpm-key }}-windows-
             ${{ env.cpm-key }}-
           enableCrossOsArchive: false
-      - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
+      - uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
       - name: Install dependencies
