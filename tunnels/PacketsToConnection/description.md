@@ -132,7 +132,7 @@ Important internal rules:
   through `ip4_output_if()`, so lwIP constructs
   the IPv4 header, allocates the shared identification value, and applies fragmentation with stack-owned offsets, MF
   flags, per-fragment lengths, and checksums. That publication happens while `LOCK_TCPIP_CORE()` is held, which is legal
-  because the netif output callback only queues a detached packet message - it never calls the neighbour inline
+  because the netif output callback only queues a packet message - it never calls the neighbour inline
 - packet emission is protected by an admission gate held through the previous-neighbour callback, and normal-line
   `Init`/`Payload`/`Resume`/`Finish` work uses a second gate held through the next-neighbour callback. Global shutdown
   closes both gates in `onQuiesceRequest()` and waits for admitted callbacks in `onQuiesceWait()` before any component
@@ -140,11 +140,10 @@ Important internal rules:
   refused next-side ordinary work recycles anything it owns and leaves teardown to the owner path; an initialized line
   still receives its one explicit teardown `Finish` during the owner-worker drain
 - netif output is always queued, even to the same worker, so no neighbouring callback runs while lwIP's non-recursive
-  core lock is held. Each queued output owns a reference to a detached-lifetime session rather than a raw tunnel
-  pointer; quiesce closes its callback gate and Destroy clears the tunnel pointer, so current-worker work left behind
-  configuration teardown performs cleanup without dereferencing the destroyed node. Fake-DNS lookup, response
-  construction, and submission to lwIP remain under the core lock; only delivery of the detached output messages to
-  the previous neighbour happens after the outer packet handler unlocks
+  core lock is held. Under lifecycle-v2, all pending worker messages settle before component stop and destruction;
+  quiesce closes the output admission gate so queued work running during quiescence cancels cleanly without calling into
+  a stopped neighbour. Fake-DNS lookup, response construction, and submission to lwIP remain under the core lock; only
+  delivery of the queued output messages to the previous neighbour happens after the outer packet handler unlocks
 - top-level packet parsing reads only the version byte before normalizing cursor alignment. Shifted packet buffers are
   copied to aligned sbuf storage before any typed IPv4/UDP access; fake-DNS additionally validates the IPv4 header and
   any nonzero UDP checksum before it can answer or mutate its mapping cache

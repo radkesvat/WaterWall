@@ -2,9 +2,7 @@
 
 #include "wwapi.h"
 
-#include "net/tunnel_async_session.h"
-
-#include "devices/device_lifetime.h"
+#include "quiescence_gate.h"
 
 #include "DomainResolver/interface.h"
 
@@ -557,13 +555,12 @@ typedef struct ctp_tstate_s
     uint32_t   max_pending_bytes;
     int        domain_strategy;
 
-    device_lifetime_gate_t  prev_gate;
-    device_lifetime_gate_t  next_gate;
-    device_lifetime_gate_t  packet_ingress_gate;
-    tunnel_async_session_t *async_session;
-    atomic_bool             stopping;
-    bool                    lwip_resources_destroyed;
-    bool                    flow_registry_initialized;
+    quiescence_gate_t prev_gate;
+    quiescence_gate_t next_gate;
+    quiescence_gate_t packet_ingress_gate;
+    atomic_bool       stopping;
+    bool              lwip_resources_destroyed;
+    bool              flow_registry_initialized;
 } ctp_tstate_t;
 
 /*

@@ -1,3 +1,5 @@
+#include "quiescence_gate.h"
+
 #include "device_reader_session.h"
 #include "wwapi.h"
 
@@ -10,33 +12,33 @@
 
 typedef struct gate_thread_probe_s
 {
-    device_lifetime_gate_t *gate;
-    atomic_bool             started;
-    atomic_bool             completed;
+    quiescence_gate_t *gate;
+    atomic_bool        started;
+    atomic_bool        completed;
 } gate_thread_probe_t;
 
 typedef struct publication_probe_s
 {
-    device_lifetime_gate_t *gate;
-    int                    *published_value;
-    int                     observed_value;
+    quiescence_gate_t *gate;
+    int               *published_value;
+    int                observed_value;
 } publication_probe_t;
 
 typedef struct protected_write_probe_s
 {
-    device_lifetime_gate_t *gate;
-    atomic_bool             entered;
-    int                    *protected_value;
+    quiescence_gate_t *gate;
+    atomic_bool        entered;
+    int               *protected_value;
 } protected_write_probe_t;
 
 typedef struct pre_cas_probe_s
 {
-    device_lifetime_gate_t *gate;
-    atomic_bool             selected;
-    atomic_bool             resume;
-    bool                    entered;
-    int                    *published_value;
-    int                     observed_value;
+    quiescence_gate_t *gate;
+    atomic_bool        selected;
+    atomic_bool        resume;
+    bool               entered;
+    int               *published_value;
+    int                observed_value;
 } pre_cas_probe_t;
 
 static void require(bool condition, const char *message)
@@ -65,7 +67,7 @@ static void *closeGateRoutine(void *userdata)
 {
     gate_thread_probe_t *probe = userdata;
     atomicStoreRelaxed(&probe->started, true);
-    deviceLifetimeGateCloseAndQuiesce(probe->gate, deviceLifetimeYieldThread, NULL);
+    quiescenceGateCloseAndQuiesce(probe->gate, quiescenceGateYieldThread, NULL);
     atomicStoreRelaxed(&probe->completed, true);
     return NULL;
 }
@@ -73,26 +75,26 @@ static void *closeGateRoutine(void *userdata)
 static void *observePublicationRoutine(void *userdata)
 {
     publication_probe_t *probe = userdata;
-    while (! deviceLifetimeGateEnter(probe->gate))
+    while (! quiescenceGateEnter(probe->gate))
     {
         YIELD_THREAD();
     }
     probe->observed_value = *probe->published_value;
-    deviceLifetimeGateLeave(probe->gate);
+    quiescenceGateLeave(probe->gate);
     return NULL;
 }
 
 static void *writeProtectedValueRoutine(void *userdata)
 {
     protected_write_probe_t *probe = userdata;
-    require(deviceLifetimeGateEnter(probe->gate), "protected writer could not enter open gate");
+    require(quiescenceGateEnter(probe->gate), "protected writer could not enter open gate");
     atomicStoreRelaxed(&probe->entered, true);
     *probe->protected_value = 73;
-    deviceLifetimeGateLeave(probe->gate);
+    quiescenceGateLeave(probe->gate);
     return NULL;
 }
 
-static void pauseBeforeEnterCas(device_lifetime_gate_t *gate, void *context)
+static void pauseBeforeEnterCas(quiescence_gate_t *gate, void *context)
 {
     pre_cas_probe_t *probe = context;
     require(gate == probe->gate, "pre-CAS hook received the wrong gate");
@@ -106,11 +108,11 @@ static void pauseBeforeEnterCas(device_lifetime_gate_t *gate, void *context)
 static void *preCasEnterRoutine(void *userdata)
 {
     pre_cas_probe_t *probe = userdata;
-    probe->entered         = deviceLifetimeGateEnter(probe->gate);
+    probe->entered         = quiescenceGateEnter(probe->gate);
     if (probe->entered)
     {
         probe->observed_value = *probe->published_value;
-        deviceLifetimeGateLeave(probe->gate);
+        quiescenceGateLeave(probe->gate);
     }
     return NULL;
 }
@@ -126,40 +128,40 @@ static void requireChildAborted(pid_t child, const char *message)
 
 static void testGateOpenEnterAndClose(void)
 {
-    device_lifetime_gate_t gate;
-    deviceLifetimeGateInit(&gate);
+    quiescence_gate_t gate;
+    quiescenceGateInit(&gate);
 
-    require(! deviceLifetimeGateIsActive(&gate), "a new gate was active");
-    require(! deviceLifetimeGateEnter(&gate), "enter succeeded on a closed gate");
+    require(! quiescenceGateIsActive(&gate), "a new gate was active");
+    require(! quiescenceGateEnter(&gate), "enter succeeded on a closed gate");
 
-    require(deviceLifetimeGateOpen(&gate), "opening a closed gate failed");
-    require(deviceLifetimeGateIsActive(&gate), "opening the gate did not publish it");
+    require(quiescenceGateOpen(&gate), "opening a closed gate failed");
+    require(quiescenceGateIsActive(&gate), "opening the gate did not publish it");
 #ifdef NDEBUG
-    require(! deviceLifetimeGateOpen(&gate), "double-open succeeded");
+    require(! quiescenceGateOpen(&gate), "double-open succeeded");
 #elif ! defined(OS_WIN)
     const pid_t double_open_child = fork();
     require(double_open_child >= 0, "failed to fork double-open contract test");
     if (double_open_child == 0)
     {
-        discard deviceLifetimeGateOpen(&gate);
+        discard quiescenceGateOpen(&gate);
         _Exit(0);
     }
     requireChildAborted(double_open_child, "debug double-open did not abort");
 #endif
-    require(deviceLifetimeGateEnter(&gate), "enter failed on an open gate");
-    deviceLifetimeGateLeave(&gate);
+    require(quiescenceGateEnter(&gate), "enter failed on an open gate");
+    quiescenceGateLeave(&gate);
 
-    deviceLifetimeGateCloseAndQuiesce(&gate, deviceLifetimeYieldThread, NULL);
-    deviceLifetimeGateCloseAndQuiesce(&gate, deviceLifetimeYieldThread, NULL);
-    require(! deviceLifetimeGateEnter(&gate), "enter succeeded after close");
+    quiescenceGateCloseAndQuiesce(&gate, quiescenceGateYieldThread, NULL);
+    quiescenceGateCloseAndQuiesce(&gate, quiescenceGateYieldThread, NULL);
+    require(! quiescenceGateEnter(&gate), "enter succeeded after close");
 }
 
 static void testCloseWaitsForLastLeave(void)
 {
-    device_lifetime_gate_t gate;
-    deviceLifetimeGateInit(&gate);
-    require(deviceLifetimeGateOpen(&gate), "failed to open close-wait gate");
-    require(deviceLifetimeGateEnter(&gate), "failed to establish in-flight entrant");
+    quiescence_gate_t gate;
+    quiescenceGateInit(&gate);
+    require(quiescenceGateOpen(&gate), "failed to open close-wait gate");
+    require(quiescenceGateEnter(&gate), "failed to establish in-flight entrant");
 
     gate_thread_probe_t probe = {
         .gate      = &gate,
@@ -178,16 +180,16 @@ static void testCloseWaitsForLastLeave(void)
         YIELD_THREAD();
     }
 
-    deviceLifetimeGateLeave(&gate);
+    quiescenceGateLeave(&gate);
     require(pthread_join(closer, NULL) == 0, "failed to join close thread");
     require(atomicLoadRelaxed(&probe.completed), "close did not complete after the final leave");
 }
 
 static void testCloseWinsBeforeEnterCas(void)
 {
-    device_lifetime_gate_t gate;
-    deviceLifetimeGateInit(&gate);
-    require(deviceLifetimeGateOpen(&gate), "failed to open close-before-CAS gate");
+    quiescence_gate_t gate;
+    quiescenceGateInit(&gate);
+    require(quiescenceGateOpen(&gate), "failed to open close-before-CAS gate");
 
     int             published = 1;
     pre_cas_probe_t probe     = {
@@ -197,7 +199,7 @@ static void testCloseWinsBeforeEnterCas(void)
             .entered         = false,
             .published_value = &published,
     };
-    deviceLifetimeInstallBeforeEnterCasHook(pauseBeforeEnterCas, &probe);
+    quiescenceGateInstallBeforeEnterCasHook(pauseBeforeEnterCas, &probe);
 
     pthread_t entrant;
     require(pthread_create(&entrant, NULL, preCasEnterRoutine, &probe) == 0, "failed to create delayed gate entrant");
@@ -206,20 +208,20 @@ static void testCloseWinsBeforeEnterCas(void)
         YIELD_THREAD();
     }
 
-    deviceLifetimeGateCloseAndQuiesce(&gate, deviceLifetimeYieldThread, NULL);
+    quiescenceGateCloseAndQuiesce(&gate, quiescenceGateYieldThread, NULL);
     atomicStoreRelaxed(&probe.resume, true);
     require(pthread_join(entrant, NULL) == 0, "failed to join rejected delayed entrant");
-    deviceLifetimeInstallBeforeEnterCasHook(NULL, NULL);
+    quiescenceGateInstallBeforeEnterCasHook(NULL, NULL);
     require(! probe.entered, "an entrant whose CAS lost to close was admitted");
 }
 
 static void testDelayedEnterAcrossReopenObservesNewPublication(void)
 {
-    device_lifetime_gate_t gate;
-    deviceLifetimeGateInit(&gate);
+    quiescence_gate_t gate;
+    quiescenceGateInit(&gate);
 
     int published = 11;
-    require(deviceLifetimeGateOpen(&gate), "failed to open old publication");
+    require(quiescenceGateOpen(&gate), "failed to open old publication");
     pre_cas_probe_t probe = {
         .gate            = &gate,
         .selected        = false,
@@ -228,7 +230,7 @@ static void testDelayedEnterAcrossReopenObservesNewPublication(void)
         .published_value = &published,
         .observed_value  = 0,
     };
-    deviceLifetimeInstallBeforeEnterCasHook(pauseBeforeEnterCas, &probe);
+    quiescenceGateInstallBeforeEnterCasHook(pauseBeforeEnterCas, &probe);
 
     pthread_t entrant;
     require(pthread_create(&entrant, NULL, preCasEnterRoutine, &probe) == 0, "failed to create delayed reopen entrant");
@@ -237,22 +239,22 @@ static void testDelayedEnterAcrossReopenObservesNewPublication(void)
         YIELD_THREAD();
     }
 
-    deviceLifetimeGateCloseAndQuiesce(&gate, deviceLifetimeYieldThread, NULL);
+    quiescenceGateCloseAndQuiesce(&gate, quiescenceGateYieldThread, NULL);
     published = 29;
-    require(deviceLifetimeGateOpen(&gate), "failed to publish reopened resource");
+    require(quiescenceGateOpen(&gate), "failed to publish reopened resource");
     atomicStoreRelaxed(&probe.resume, true);
     require(pthread_join(entrant, NULL) == 0, "failed to join delayed reopen entrant");
-    deviceLifetimeInstallBeforeEnterCasHook(NULL, NULL);
+    quiescenceGateInstallBeforeEnterCasHook(NULL, NULL);
 
     require(probe.entered, "delayed entrant did not select the reopened gate");
     require(probe.observed_value == published, "delayed entrant observed the old protected publication");
-    deviceLifetimeGateCloseAndQuiesce(&gate, deviceLifetimeYieldThread, NULL);
+    quiescenceGateCloseAndQuiesce(&gate, quiescenceGateYieldThread, NULL);
 }
 
 static void testOpenPublishesAndCloseReclaimsProtectedWork(void)
 {
-    device_lifetime_gate_t gate;
-    deviceLifetimeGateInit(&gate);
+    quiescence_gate_t gate;
+    quiescenceGateInit(&gate);
 
     int                 published         = 41;
     publication_probe_t publication_probe = {
@@ -263,12 +265,12 @@ static void testOpenPublishesAndCloseReclaimsProtectedWork(void)
     pthread_t observer;
     require(pthread_create(&observer, NULL, observePublicationRoutine, &publication_probe) == 0,
             "failed to create publication observer");
-    require(deviceLifetimeGateOpen(&gate), "failed to publish gate-protected fields");
+    require(quiescenceGateOpen(&gate), "failed to publish gate-protected fields");
     require(pthread_join(observer, NULL) == 0, "failed to join publication observer");
     require(publication_probe.observed_value == published, "enter did not observe fields published before open");
-    deviceLifetimeGateCloseAndQuiesce(&gate, deviceLifetimeYieldThread, NULL);
+    quiescenceGateCloseAndQuiesce(&gate, quiescenceGateYieldThread, NULL);
 
-    require(deviceLifetimeGateOpen(&gate), "failed to reopen protected-write gate");
+    require(quiescenceGateOpen(&gate), "failed to reopen protected-write gate");
     int                     protected_value = 0;
     protected_write_probe_t write_probe     = {
             .gate            = &gate,
@@ -282,66 +284,65 @@ static void testOpenPublishesAndCloseReclaimsProtectedWork(void)
     {
         YIELD_THREAD();
     }
-    deviceLifetimeGateCloseAndQuiesce(&gate, deviceLifetimeYieldThread, NULL);
+    quiescenceGateCloseAndQuiesce(&gate, quiescenceGateYieldThread, NULL);
     require(pthread_join(writer, NULL) == 0, "failed to join protected writer");
     require(protected_value == 73, "close did not observe work completed before the final leave");
 }
 
 static void testSaturationFailsClosed(void)
 {
-    device_lifetime_gate_t gate;
-    deviceLifetimeGateInit(&gate);
-    atomicStoreRelaxed(&gate.state, DEVICE_LIFETIME_GATE_COUNT_MASK);
+    quiescence_gate_t gate;
+    quiescenceGateInit(&gate);
+    atomicStoreRelaxed(&gate.state, QUIESCENCE_GATE_COUNT_MASK);
 
 #ifdef NDEBUG
-    require(! deviceLifetimeGateEnter(&gate), "saturated gate admitted another entrant");
-    require(atomicLoadRelaxed(&gate.state) == DEVICE_LIFETIME_GATE_COUNT_MASK,
-            "saturated enter corrupted packed state");
+    require(! quiescenceGateEnter(&gate), "saturated gate admitted another entrant");
+    require(atomicLoadRelaxed(&gate.state) == QUIESCENCE_GATE_COUNT_MASK, "saturated enter corrupted packed state");
 #elif ! defined(OS_WIN)
     const pid_t saturation_child = fork();
     require(saturation_child >= 0, "failed to fork saturation contract test");
     if (saturation_child == 0)
     {
-        discard deviceLifetimeGateEnter(&gate);
+        discard quiescenceGateEnter(&gate);
         _Exit(0);
     }
     requireChildAborted(saturation_child, "debug saturation did not abort");
 #endif
 
-    atomicStoreRelaxed(&gate.state, DEVICE_LIFETIME_GATE_CLOSED);
+    atomicStoreRelaxed(&gate.state, QUIESCENCE_GATE_CLOSED);
 }
 
 #if ! defined(NDEBUG) && ! defined(OS_WIN)
 static void testSameGateSelfCloseIsDebugContractFailure(void)
 {
-    device_lifetime_gate_t gate;
-    deviceLifetimeGateInit(&gate);
-    require(deviceLifetimeGateOpen(&gate), "failed to open self-close contract gate");
+    quiescence_gate_t gate;
+    quiescenceGateInit(&gate);
+    require(quiescenceGateOpen(&gate), "failed to open self-close contract gate");
 
     const pid_t child = fork();
     require(child >= 0, "failed to fork self-close contract test");
     if (child == 0)
     {
-        require(deviceLifetimeGateEnter(&gate), "debug self-close child could not enter");
-        deviceLifetimeGateCloseAndQuiesce(&gate, deviceLifetimeYieldThread, NULL);
+        require(quiescenceGateEnter(&gate), "debug self-close child could not enter");
+        quiescenceGateCloseAndQuiesce(&gate, quiescenceGateYieldThread, NULL);
         _Exit(0);
     }
     requireChildAborted(child, "same-gate self-close did not abort in debug mode");
-    deviceLifetimeGateCloseAndQuiesce(&gate, deviceLifetimeYieldThread, NULL);
+    quiescenceGateCloseAndQuiesce(&gate, quiescenceGateYieldThread, NULL);
 }
 #endif
 
 static void testRepeatedCloseOpenCycles(void)
 {
-    device_lifetime_gate_t gate;
-    deviceLifetimeGateInit(&gate);
+    quiescence_gate_t gate;
+    quiescenceGateInit(&gate);
 
     for (unsigned int i = 0; i < 1000; i++)
     {
-        require(deviceLifetimeGateOpen(&gate), "repeated gate open failed");
-        require(deviceLifetimeGateEnter(&gate), "repeated gate enter failed");
-        deviceLifetimeGateLeave(&gate);
-        deviceLifetimeGateCloseAndQuiesce(&gate, deviceLifetimeYieldThread, NULL);
+        require(quiescenceGateOpen(&gate), "repeated gate open failed");
+        require(quiescenceGateEnter(&gate), "repeated gate enter failed");
+        quiescenceGateLeave(&gate);
+        quiescenceGateCloseAndQuiesce(&gate, quiescenceGateYieldThread, NULL);
     }
 }
 
@@ -364,7 +365,7 @@ static void testSessionGenerationRejectsStaleAndWrap(void)
     deviceReaderSessionEnd(session);
     atomicStoreRelaxed(&session->generation, UINT32_MAX);
     require(deviceReaderSessionBegin(session) == 0, "generation exhaustion reopened the reader gate");
-    require(! deviceLifetimeGateIsActive(&session->delivery_gate), "generation exhaustion left delivery active");
+    require(! quiescenceGateIsActive(&session->delivery_gate), "generation exhaustion left delivery active");
     deviceReaderSessionUnref(session);
 }
 
@@ -381,6 +382,6 @@ int main(void)
 #endif
     testRepeatedCloseOpenCycles();
     testSessionGenerationRejectsStaleAndWrap();
-    puts("device lifetime tests passed");
+    puts("quiescence gate tests passed");
     return 0;
 }

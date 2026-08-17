@@ -26,7 +26,7 @@ void ptcTunnelOnStart(tunnel_t *t)
         return;
     }
 
-    if (UNLIKELY(! deviceLifetimeGateOpen(&state->output_gate)))
+    if (UNLIKELY(! quiescenceGateOpen(&state->output_gate)))
     {
         memoryFree(state->owned_lines);
         memoryFree(state->routes_v4);
@@ -36,26 +36,14 @@ void ptcTunnelOnStart(tunnel_t *t)
         startupFailureRecord(1);
         return;
     }
-    if (UNLIKELY(! deviceLifetimeGateOpen(&state->next_gate)))
+    if (UNLIKELY(! quiescenceGateOpen(&state->next_gate)))
     {
-        deviceLifetimeGateCloseAndQuiesce(&state->output_gate, deviceLifetimeYieldThread, NULL);
+        quiescenceGateCloseAndQuiesce(&state->output_gate, quiescenceGateYieldThread, NULL);
         memoryFree(state->owned_lines);
         memoryFree(state->routes_v4);
         state->owned_lines = NULL;
         state->routes_v4   = NULL;
         LOGF("PacketsToConnection: failed to open the next-side admission gate");
-        startupFailureRecord(1);
-        return;
-    }
-    if (UNLIKELY(state->async_session == NULL || ! tunnelasyncsessionOpen(state->async_session)))
-    {
-        deviceLifetimeGateCloseAndQuiesce(&state->next_gate, deviceLifetimeYieldThread, NULL);
-        deviceLifetimeGateCloseAndQuiesce(&state->output_gate, deviceLifetimeYieldThread, NULL);
-        memoryFree(state->owned_lines);
-        memoryFree(state->routes_v4);
-        state->owned_lines = NULL;
-        state->routes_v4   = NULL;
-        LOGF("PacketsToConnection: failed to open the asynchronous callback gate");
         startupFailureRecord(1);
         return;
     }

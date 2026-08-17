@@ -497,9 +497,11 @@ A bridge between the two layers states which side is which rather than claiming
 `tunnelCreate()`, `adapterCreate()` and `packettunnelCreate()` all return `NULL` on
 a state-size overflow or a failed allocation. A constructor must check the result
 before touching any callback or `tunnelGetState()`, and return `NULL` itself.
-Callbacks a node hands to lwIP, timers or worker messages should observe the
-tunnel through `ww/net/tunnel_async_session.h` rather than capturing the pointer
-directly.
+Under lifecycle-v2, framework-owned worker messages and timers settle before
+component destruction, so worker-to-worker messages pass the tunnel pointer directly
+with owner-worker validation. External callback roots (such as background reader
+threads) must use a quiescence gate (`quiescence_gate_t`) to close admission and wait
+for active operations before reclamation.
 
 **HTTP tunnels** (`HttpClient`/`HttpServer`): HTTP/1.x and **single-stream** HTTP/2
 only. No HTTP/3, no multiple H2 streams. For h2c upgrade, stream `1` is the original

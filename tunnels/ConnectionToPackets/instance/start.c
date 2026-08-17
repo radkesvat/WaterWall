@@ -5,21 +5,17 @@
 static void ctpQueueWorkerPacketInitCleanup(void *arg1, void *arg2, void *arg3, worker_message_cancel_reason_e reason)
 {
     discard reason;
+    discard arg1;
     discard arg2;
     discard arg3;
-    tunnelasyncsessionUnref(arg1);
 }
 
 static void ctpRollbackStart(ctp_tstate_t *ts)
 {
     atomicStoreRelaxed(&ts->stopping, true);
-    deviceLifetimeGateCloseAndQuiesce(&ts->prev_gate, deviceLifetimeYieldThread, NULL);
-    deviceLifetimeGateCloseAndQuiesce(&ts->next_gate, deviceLifetimeYieldThread, NULL);
-    deviceLifetimeGateCloseAndQuiesce(&ts->packet_ingress_gate, deviceLifetimeYieldThread, NULL);
-    if (ts->async_session != NULL)
-    {
-        tunnelasyncsessionCloseAndQuiesce(ts->async_session);
-    }
+    quiescenceGateCloseAndQuiesce(&ts->prev_gate, quiescenceGateYieldThread, NULL);
+    quiescenceGateCloseAndQuiesce(&ts->next_gate, quiescenceGateYieldThread, NULL);
+    quiescenceGateCloseAndQuiesce(&ts->packet_ingress_gate, quiescenceGateYieldThread, NULL);
 }
 
 void ctpQueueWorkerPacketInit(void *worker, void *arg1, void *arg2, void *arg3)
@@ -28,25 +24,16 @@ void ctpQueueWorkerPacketInit(void *worker, void *arg1, void *arg2, void *arg3)
     discard arg2;
     discard arg3;
 
-    tunnel_async_session_t *session = arg1;
-    tunnel_t               *t       = NULL;
-
-    if (! tunnelasyncsessionEnter(session, &t))
-    {
-        tunnelasyncsessionUnref(session);
-        return;
-    }
+    tunnel_t *t = arg1;
 
     /*
      * Start queues one of these per worker, and a worker may not reach its copy
-     * until after onStop() has already run on another. Initializing the packet
+     * until after onQuiesceRequest() has already run on another. Initializing the packet
      * side toward a next node whose stop hook has completed is a lifecycle
      * violation, so a late message is simply dropped.
      */
     if (UNLIKELY(! ctpNextGateEnter(t)))
     {
-        tunnelasyncsessionLeave(session);
-        tunnelasyncsessionUnref(session);
         return;
     }
 
@@ -56,23 +43,19 @@ void ctpQueueWorkerPacketInit(void *worker, void *arg1, void *arg2, void *arg3)
     {
         /* Release non-line lifetime references before the Category-D abort. */
         ctpNextGateLeave(t);
-        tunnelasyncsessionLeave(session);
-        tunnelasyncsessionUnref(session);
         LOGF("ConnectionToPackets: worker packet line died during packet-side init");
         abortProgramNow(1);
         return;
     }
     ctpNextGateLeave(t);
-    tunnelasyncsessionLeave(session);
-    tunnelasyncsessionUnref(session);
 }
 
 void ctpTunnelOnStart(tunnel_t *t)
 {
     ctp_tstate_t *ts = tunnelGetState(t);
 
-    if (UNLIKELY(! deviceLifetimeGateOpen(&ts->prev_gate) || ! deviceLifetimeGateOpen(&ts->next_gate) ||
-                 ! deviceLifetimeGateOpen(&ts->packet_ingress_gate) || ! tunnelasyncsessionOpen(ts->async_session)))
+    if (UNLIKELY(! quiescenceGateOpen(&ts->prev_gate) || ! quiescenceGateOpen(&ts->next_gate) ||
+                 ! quiescenceGateOpen(&ts->packet_ingress_gate)))
     {
         LOGF("ConnectionToPackets: failed to open callback admission gates");
         ctpRollbackStart(ts);
@@ -88,9 +71,8 @@ void ctpTunnelOnStart(tunnel_t *t)
      */
     for (wid_t wi = 0; wi < getWorkersCount(); wi++)
     {
-        tunnelasyncsessionRef(ts->async_session);
         if (sendWorkerMessageForceQueueWithCleanup(
-                wi, ctpQueueWorkerPacketInit, ctpQueueWorkerPacketInitCleanup, ts->async_session, NULL, NULL) !=
+                wi, ctpQueueWorkerPacketInit, ctpQueueWorkerPacketInitCleanup, t, NULL, NULL) !=
             kWorkerMessageSubmitAccepted)
         {
             LOGF("ConnectionToPackets: required packet-line Init was refused on worker %u", (unsigned int) wi);

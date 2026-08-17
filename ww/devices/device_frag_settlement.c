@@ -199,14 +199,14 @@ static bool deviceFragClaimBeginStackUseInternal(device_frag_claim_t *claim)
         return true;
     }
 
-    if (! deviceLifetimeGateEnter(&claim->session->delivery_gate))
+    if (! quiescenceGateEnter(&claim->session->delivery_gate))
     {
         return false;
     }
     if (! deviceFragClaimMatchesGeneration(claim) ||
         ! deviceFragAffinityPublicationMayEnter(claim->session->frag_affinity, &claim->publication))
     {
-        deviceLifetimeGateLeave(&claim->session->delivery_gate);
+        quiescenceGateLeave(&claim->session->delivery_gate);
         return false;
     }
 
@@ -243,7 +243,7 @@ void deviceFragClaimEndStackUse(device_frag_claim_t *claim)
 {
     if (claim != NULL)
     {
-        deviceLifetimeGateLeave(&claim->session->delivery_gate);
+        quiescenceGateLeave(&claim->session->delivery_gate);
     }
 }
 

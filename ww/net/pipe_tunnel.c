@@ -2,7 +2,6 @@
 
 /* Cross-worker pipe forwarding with one explicit owner for each pair. */
 
-#include "devices/device_lifetime.h"
 #include "global_state.h"
 #include "line.h"
 #include "loggers/internal_logger.h"
@@ -86,7 +85,7 @@ static tunnel_t *getParentTunnel(tunnel_t *t)
 }
 
 /* Queued cleanup may run after logical line death, so it needs a physical-only
- * reference just like the worker-message and async-session infrastructure. */
+ * reference just like other worker-message cleanup paths. */
 static inline void lineLockForce(line_t *const line)
 {
     assert(line->refc < LINE_REFC_MAX);

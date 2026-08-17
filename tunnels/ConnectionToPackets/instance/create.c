@@ -266,9 +266,9 @@ tunnel_t *ctpTunnelCreate(node_t *node)
         .next_generation    = 0,
     };
     atomic_init(&ts->stopping, false);
-    deviceLifetimeGateInit(&ts->prev_gate);
-    deviceLifetimeGateInit(&ts->next_gate);
-    deviceLifetimeGateInit(&ts->packet_ingress_gate);
+    quiescenceGateInit(&ts->prev_gate);
+    quiescenceGateInit(&ts->next_gate);
+    quiescenceGateInit(&ts->packet_ingress_gate);
 
     // Brought up before anything that could fail, so every teardown path below
     // and in onDestroy() can take the core lock unconditionally.
@@ -278,7 +278,7 @@ tunnel_t *ctpTunnelCreate(node_t *node)
      * One stage per fallible resource, each committed before the next is
      * attempted. ctpTunnelDestroy() is the single unwind path for all of them,
      * and it decides what to release from the state each stage published -
-     * `netifs`, `flow_registry_initialized`, `async_session` - rather than from
+     * `netifs`, `flow_registry_initialized` - rather than from
      * how far this function happened to get.
      *
      * The registry stage used to share a short-circuiting condition with the
@@ -295,13 +295,6 @@ tunnel_t *ctpTunnelCreate(node_t *node)
     }
 
     if (UNLIKELY(! ctpFlowRegistryInitialize(ts)))
-    {
-        ctpTunnelDestroy(t, wwLifecycleStartupRollback());
-        return NULL;
-    }
-
-    ts->async_session = tunnelasyncsessionCreate(t, "ConnectionToPackets");
-    if (UNLIKELY(ts->async_session == NULL))
     {
         ctpTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;

@@ -39,13 +39,6 @@ void ctpTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context)
 
     ctpFlowRegistryDestroy(ts);
 
-    if (ts->async_session != NULL)
-    {
-        tunnelasyncsessionDetach(ts->async_session);
-        tunnelasyncsessionUnref(ts->async_session);
-        ts->async_session = NULL;
-    }
-
     if (ts->terminal_lines != NULL)
     {
         for (wid_t wid = 0; wid < ts->netifs_count; ++wid)

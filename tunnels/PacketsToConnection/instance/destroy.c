@@ -40,12 +40,5 @@ void ptcTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context)
         state->owned_lines_lock_initialized = false;
     }
 
-    if (state->async_session != NULL)
-    {
-        tunnelasyncsessionDetach(state->async_session);
-        tunnelasyncsessionUnref(state->async_session);
-        state->async_session = NULL;
-    }
-
     tunnelDestroy(t);
 }

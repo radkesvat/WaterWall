@@ -24,16 +24,16 @@ typedef struct ctp_inject_msg_s
      */
     struct pbuf_custom pbuf;
 
-    tunnel_async_session_t *session;
-    device_frag_claim_t    *claim;
-    ctp_frag_key_t          claim_key;
-    ctp_frag_key_t          delivery_key;
-    ctp_flow_key_t          key;
-    uint64_t                generation;
-    uint64_t                delivery_serial;
-    uint32_t                len;
-    wid_t                   wid;
-    bool                    has_delivery_token;
+    tunnel_t            *tunnel;
+    device_frag_claim_t *claim;
+    ctp_frag_key_t       claim_key;
+    ctp_frag_key_t       delivery_key;
+    ctp_flow_key_t       key;
+    uint64_t             generation;
+    uint64_t             delivery_serial;
+    uint32_t             len;
+    wid_t                wid;
+    bool                 has_delivery_token;
 
     /*
      * pbuf_alloced_custom() makes payload alignment the caller's problem, and
@@ -52,9 +52,9 @@ typedef struct ctp_inject_msg_s
  */
 typedef struct ctp_frag_purge_msg_s
 {
-    tunnel_async_session_t *session;
-    ctp_frag_key_t          key;
-    uint64_t                serial;
+    tunnel_t      *tunnel;
+    ctp_frag_key_t key;
+    uint64_t       serial;
 } ctp_frag_purge_msg_t;
 
 static bool ctpFragSchedulePurge(tunnel_t *t, const ctp_frag_key_t *frag_key, uint64_t serial, wid_t wid);
@@ -102,15 +102,17 @@ static void ctpInjectPbufFree(struct pbuf *p)
 
 static void ctpInjectPacketCleanup(void *arg1, void *arg2, void *arg3, worker_message_cancel_reason_e reason)
 {
-    discard                 reason;
-    discard                 arg2;
-    discard                 arg3;
-    ctp_inject_msg_t       *msg           = arg1;
-    tunnel_async_session_t *session       = msg->session;
-    tunnel_t               *t             = NULL;
-    device_frag_claim_t    *settled_claim = NULL;
+    discard              reason;
+    discard              arg2;
+    discard              arg3;
+    ctp_inject_msg_t    *msg           = arg1;
+    tunnel_t            *t             = msg->tunnel;
+    device_frag_claim_t *settled_claim = NULL;
 
-    if (tunnelasyncsessionEnter(session, &t))
+    /* Accepted messages settle before tunnel destruction. During quiesce,
+     * stopping is already published, so delivery settlement only releases its
+     * outstanding count and cannot schedule a new purge message. */
+    if (t != NULL)
     {
         if (currentThreadIsEventWorkerWID(msg->wid))
         {
@@ -135,10 +137,8 @@ static void ctpInjectPacketCleanup(void *arg1, void *arg2, void *arg3, worker_me
         {
             ctpFragSettleDelivery(t, &msg->delivery_key, msg->delivery_serial, false, ctpFragSchedulePurge);
         }
-        tunnelasyncsessionLeave(session);
     }
     deviceFragClaimResolve(settled_claim, kDeviceFragSettlementNoResidue);
-    tunnelasyncsessionUnref(session);
     ctpInjectMessageDestroy(msg);
 }
 
@@ -147,18 +147,9 @@ static void ctpInjectPacketOnWorker(worker_t *worker, void *arg1, void *arg2, vo
     discard arg2;
     discard arg3;
 
-    ctp_inject_msg_t       *msg     = arg1;
-    tunnel_async_session_t *session = msg->session;
-    tunnel_t               *t       = NULL;
-
-    if (! tunnelasyncsessionEnter(session, &t))
-    {
-        tunnelasyncsessionUnref(session);
-        ctpInjectMessageDestroy(msg);
-        return;
-    }
-
-    ctp_tstate_t *ts = tunnelGetState(t);
+    ctp_inject_msg_t *msg = arg1;
+    tunnel_t         *t   = msg->tunnel;
+    ctp_tstate_t     *ts  = tunnelGetState(t);
 
     LOCK_TCPIP_CORE();
 
@@ -214,6 +205,7 @@ static void ctpInjectPacketOnWorker(worker_t *worker, void *arg1, void *arg2, vo
             device_frag_claim_t *claim     = msg->claim;
             const ctp_frag_key_t claim_key = msg->claim_key;
             msg->claim                     = NULL;
+            msg->tunnel                    = NULL;
             handed_to_lwip                 = true;
 
             const err_t input_result = ctx->netif.input(p, &ctx->netif);
@@ -270,9 +262,6 @@ static void ctpInjectPacketOnWorker(worker_t *worker, void *arg1, void *arg2, vo
         ctpFragSettleDelivery(t, &delivery_key, delivery_serial, delivered, ctpFragSchedulePurge);
     }
 
-    tunnelasyncsessionLeave(session);
-    tunnelasyncsessionUnref(session);
-
     if (! handed_to_lwip)
     {
         ctpInjectMessageDestroy(msg);
@@ -284,9 +273,8 @@ static ctp_frag_publish_result_t ctpInjectPublish(tunnel_t *t, const ctp_flow_ke
                                                   void *payload)
 {
     ctp_inject_msg_t *msg = payload;
-    ctp_tstate_t     *ts  = tunnelGetState(t);
 
-    msg->session    = ts->async_session;
+    msg->tunnel     = t;
     msg->key        = *flow_key;
     msg->generation = generation;
     msg->wid        = wid;
@@ -296,7 +284,6 @@ static ctp_frag_publish_result_t ctpInjectPublish(tunnel_t *t, const ctp_flow_ke
         msg->delivery_serial    = serial;
         msg->has_delivery_token = true;
     }
-    tunnelasyncsessionRef(msg->session);
 
     /*
      * Always queued, even when the owner is this worker: injecting inline would
@@ -313,7 +300,6 @@ static ctp_frag_publish_result_t ctpInjectPublish(tunnel_t *t, const ctp_flow_ke
 
     device_frag_claim_t *refused_claim = msg->claim;
     msg->claim                         = NULL;
-    tunnelasyncsessionUnref(msg->session);
     memoryFreeAligned(msg);
     return (ctp_frag_publish_result_t) {.refused_receipt = refused_claim, .accepted = false};
 }
@@ -324,7 +310,6 @@ static void ctpFragPurgeCleanup(void *arg1, void *arg2, void *arg3, worker_messa
     discard               arg2;
     discard               arg3;
     ctp_frag_purge_msg_t *msg = arg1;
-    tunnelasyncsessionUnref(msg->session);
     memoryFree(msg);
 }
 
@@ -333,18 +318,9 @@ static void ctpFragPurgeOnWorker(worker_t *worker, void *arg1, void *arg2, void 
     discard arg2;
     discard arg3;
 
-    ctp_frag_purge_msg_t   *msg     = arg1;
-    tunnel_async_session_t *session = msg->session;
-    tunnel_t               *t       = NULL;
-
-    if (! tunnelasyncsessionEnter(session, &t))
-    {
-        tunnelasyncsessionUnref(session);
-        memoryFree(msg);
-        return;
-    }
-
-    ctp_tstate_t *ts = tunnelGetState(t);
+    ctp_frag_purge_msg_t *msg = arg1;
+    tunnel_t             *t   = msg->tunnel;
+    ctp_tstate_t         *ts  = tunnelGetState(t);
 
     LOCK_TCPIP_CORE();
 
@@ -368,8 +344,6 @@ static void ctpFragPurgeOnWorker(worker_t *worker, void *arg1, void *arg2, void 
      * first, its netif-wide purge supplied the same guarantee.
      */
     ctpFragRetirePurged(t, &msg->key, msg->serial, exact_absence);
-    tunnelasyncsessionLeave(session);
-    tunnelasyncsessionUnref(session);
     memoryFree(msg);
 }
 
@@ -382,13 +356,11 @@ static bool ctpFragSchedulePurge(tunnel_t *t, const ctp_frag_key_t *frag_key, ui
         return false;
     }
 
-    ctp_tstate_t *ts = tunnelGetState(t);
-    *msg             = (ctp_frag_purge_msg_t) {
-                    .session = ts->async_session,
-                    .key     = *frag_key,
-                    .serial  = serial,
+    *msg = (ctp_frag_purge_msg_t) {
+        .tunnel = t,
+        .key    = *frag_key,
+        .serial = serial,
     };
-    tunnelasyncsessionRef(msg->session);
 
     return sendWorkerMessageForceQueueWithCleanup(
                wid, (WorkerMessageCallback) ctpFragPurgeOnWorker, ctpFragPurgeCleanup, msg, NULL, NULL) ==
@@ -566,7 +538,7 @@ static ctp_inject_msg_t *ctpAllocatePacketMessage(uint32_t len)
     assert(((uintptr_t) msg->data % MEM_ALIGNMENT) == 0);
 
     msg->claim              = NULL;
-    msg->session            = NULL;
+    msg->tunnel             = NULL;
     msg->len                = len;
     msg->has_delivery_token = false;
     return msg;

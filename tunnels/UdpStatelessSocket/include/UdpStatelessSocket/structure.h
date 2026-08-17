@@ -1,6 +1,5 @@
 #pragma once
 
-#include "net/tunnel_async_session.h"
 #include "wwapi.h"
 
 enum
@@ -27,7 +26,7 @@ struct udpstatelesssocket_dns_cache_entry_s
 struct udpstatelesssocket_send_request_s
 {
     threadsafe_generic_pool_t *pool;
-    tunnel_async_session_t    *session;
+    tunnel_t                  *tunnel;
     sbuf_t                    *buf;
     sockaddr_u                 peer_addr;
 };
@@ -35,7 +34,6 @@ struct udpstatelesssocket_send_request_s
 typedef struct udpstatelesssocket_tstate_s
 {
     udpsock_t                   socket; // UDP socket side-data, including worker-local peer idle tables
-    tunnel_async_session_t     *async_session;
     master_pool_t              *send_request_master_pool;
     threadsafe_generic_pool_t **send_request_pools;
 

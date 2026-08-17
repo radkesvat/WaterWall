@@ -89,8 +89,8 @@ tunnel_t *ptcTunnelCreate(node_t *node)
         return NULL;
     }
 
-    deviceLifetimeGateInit(&ts->output_gate);
-    deviceLifetimeGateInit(&ts->next_gate);
+    quiescenceGateInit(&ts->output_gate);
+    quiescenceGateInit(&ts->next_gate);
     atomic_init(&ts->stopping, false);
     if (UNLIKELY(! mutexTryInit(&ts->owned_lines_lock)))
     {
@@ -101,13 +101,6 @@ tunnel_t *ptcTunnelCreate(node_t *node)
 
     initTcpIpStack();
     ptcRxWrapperPoolInitializeOnce();
-
-    ts->async_session = tunnelasyncsessionCreate(t, "PacketsToConnection");
-    if (UNLIKELY(ts->async_session == NULL))
-    {
-        ptcTunnelDestroy(t, wwLifecycleStartupRollback());
-        return NULL;
-    }
 
     return t;
 }

@@ -6,8 +6,8 @@
 
 #include "buffer_pool.h"
 #include "devices/device_frag_affinity.h"
-#include "devices/device_lifetime.h"
 #include "master_pool.h"
+#include "quiescence_gate.h"
 #include "worker.h"
 
 /*
@@ -18,15 +18,15 @@ typedef void (*DeviceReaderDeliverFn)(void *device, sbuf_t *buf, wid_t wid);
 
 typedef struct device_reader_session_s
 {
-    atomic_uint            refcount;
-    atomic_uint            generation;
-    atomic_bool            producer_admission;
-    device_lifetime_gate_t delivery_gate;
-    master_pool_t         *message_pool;
-    uint16_t               batch_capacity;
-    void                  *device;
-    DeviceReaderDeliverFn  deliver;
-    buffer_pool_t         *reader_buffer_pool;
+    atomic_uint           refcount;
+    atomic_uint           generation;
+    atomic_bool           producer_admission;
+    quiescence_gate_t     delivery_gate;
+    master_pool_t        *message_pool;
+    uint16_t              batch_capacity;
+    void                 *device;
+    DeviceReaderDeliverFn deliver;
+    buffer_pool_t        *reader_buffer_pool;
 
     /*
      * Keeps a fragmented datagram on the worker its transport ports would have

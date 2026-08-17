@@ -21,15 +21,15 @@ bool ctpTunnelIsStopping(tunnel_t *t)
     return atomicLoadRelaxed(&ts->stopping);
 }
 
-static bool ctpGateEnter(tunnel_t *t, device_lifetime_gate_t *gate)
+static bool ctpGateEnter(tunnel_t *t, quiescence_gate_t *gate)
 {
-    if (UNLIKELY(ctpTunnelIsStopping(t) || ! deviceLifetimeGateEnter(gate)))
+    if (UNLIKELY(ctpTunnelIsStopping(t) || ! quiescenceGateEnter(gate)))
     {
         return false;
     }
     if (UNLIKELY(ctpTunnelIsStopping(t)))
     {
-        deviceLifetimeGateLeave(gate);
+        quiescenceGateLeave(gate);
         return false;
     }
     return true;
@@ -43,7 +43,7 @@ bool ctpPrevGateEnter(tunnel_t *t)
 void ctpPrevGateLeave(tunnel_t *t)
 {
     ctp_tstate_t *ts = tunnelGetState(t);
-    deviceLifetimeGateLeave(&ts->prev_gate);
+    quiescenceGateLeave(&ts->prev_gate);
 }
 
 bool ctpNextGateEnter(tunnel_t *t)
@@ -59,13 +59,13 @@ bool ctpPacketIngressGateEnter(tunnel_t *t)
 void ctpPacketIngressGateLeave(tunnel_t *t)
 {
     ctp_tstate_t *ts = tunnelGetState(t);
-    deviceLifetimeGateLeave(&ts->packet_ingress_gate);
+    quiescenceGateLeave(&ts->packet_ingress_gate);
 }
 
 void ctpNextGateLeave(tunnel_t *t)
 {
     ctp_tstate_t *ts = tunnelGetState(t);
-    deviceLifetimeGateLeave(&ts->next_gate);
+    quiescenceGateLeave(&ts->next_gate);
 }
 
 static void ctpTerminalEnqueue(tunnel_t *t, ctp_lstate_t *ls)

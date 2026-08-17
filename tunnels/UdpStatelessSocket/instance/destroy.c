@@ -58,12 +58,5 @@ void udpstatelesssocketTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *
         memoryFree(state->interface_name);
     }
 
-    if (state->async_session != NULL)
-    {
-        tunnelasyncsessionDetach(state->async_session);
-        tunnelasyncsessionUnref(state->async_session);
-        state->async_session = NULL;
-    }
-
     tunnelDestroy(t);
 }

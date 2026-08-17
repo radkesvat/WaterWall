@@ -95,7 +95,7 @@ device_reader_session_t *deviceReaderSessionCreate(uint32_t pool_capacity, uint1
         .frag_affinity      = frag_affinity,
     };
     atomic_init(&session->producer_admission, false);
-    deviceLifetimeGateInit(&session->delivery_gate);
+    quiescenceGateInit(&session->delivery_gate);
     masterpoolInstallCallBacks(session->message_pool, deviceReaderMessageCreate, deviceReaderMessageDestroy);
     return session;
 }
@@ -147,7 +147,7 @@ void deviceReaderSessionUnref(device_reader_session_t *session)
 
 uint32_t deviceReaderSessionBegin(device_reader_session_t *session)
 {
-    if (UNLIKELY(! deviceLifetimeGateIsClosedAndQuiesced(&session->delivery_gate)))
+    if (UNLIKELY(! quiescenceGateIsClosedAndQuiesced(&session->delivery_gate)))
     {
         LOGE("DeviceReaderSession: begin requires the previous generation to be closed and quiesced");
         return 0;
@@ -165,7 +165,7 @@ uint32_t deviceReaderSessionBegin(device_reader_session_t *session)
 
     const uint32_t generation = previous + UINT32_C(1);
     atomicStoreRelaxed(&session->generation, (w_atomic_uint_value_t) generation);
-    if (UNLIKELY(! deviceLifetimeGateOpen(&session->delivery_gate)))
+    if (UNLIKELY(! quiescenceGateOpen(&session->delivery_gate)))
     {
         // One lifecycle owner makes rollback safe; no entrant could pass a gate
         // whose Open CAS failed.
@@ -187,12 +187,12 @@ void deviceReaderSessionEnd(device_reader_session_t *session)
 void deviceReaderSessionEndRequest(device_reader_session_t *session)
 {
     atomicStoreExplicit(&session->producer_admission, false, memory_order_relaxed);
-    deviceLifetimeGateClose(&session->delivery_gate);
+    quiescenceGateClose(&session->delivery_gate);
 }
 
 void deviceReaderSessionEndWait(device_reader_session_t *session)
 {
-    deviceLifetimeGateWaitQuiesced(&session->delivery_gate, deviceLifetimeYieldThread, NULL);
+    quiescenceGateWaitQuiesced(&session->delivery_gate, quiescenceGateYieldThread, NULL);
     /* A late receipt holds the delivery gate across its final admission, lwIP
      * input, and exact residue query. Closing the fragment generation only after
      * those entrants leave makes "may enter" atomic with generation shutdown. */
@@ -201,7 +201,7 @@ void deviceReaderSessionEndWait(device_reader_session_t *session)
 
 void deviceReaderSessionRetireGenerationBuffers(device_reader_session_t *session)
 {
-    assert(deviceLifetimeGateIsClosedAndQuiesced(&session->delivery_gate));
+    assert(quiescenceGateIsClosedAndQuiesced(&session->delivery_gate));
 
     if (session->reader_buffer_pool == NULL)
     {
@@ -213,7 +213,7 @@ void deviceReaderSessionRetireGenerationBuffers(device_reader_session_t *session
 
 void deviceReaderSessionRetireProducerBuffers(device_reader_session_t *session)
 {
-    assert(deviceLifetimeGateIsClosedAndQuiesced(&session->delivery_gate));
+    assert(quiescenceGateIsClosedAndQuiesced(&session->delivery_gate));
     assert(session->reader_buffer_pool != NULL);
 
     deviceFragAffinityRetireReleasePool(session->frag_affinity);
@@ -240,7 +240,7 @@ static void deviceReaderSessionMessageReceived(void *worker, void *arg1, void *a
     discard                  arg2;
     discard                  arg3;
 
-    const bool entered = deviceLifetimeGateEnter(&session->delivery_gate);
+    const bool entered = quiescenceGateEnter(&session->delivery_gate);
     if (entered && deviceReaderSessionMatchesGeneration(session, generation))
     {
         for (unsigned int i = 0; i < message->count; i++)
@@ -259,13 +259,13 @@ static void deviceReaderSessionMessageReceived(void *worker, void *arg1, void *a
 
             session->deliver(session->device, message->items[i].buf, wid);
         }
-        deviceLifetimeGateLeave(&session->delivery_gate);
+        quiescenceGateLeave(&session->delivery_gate);
     }
     else
     {
         if (entered)
         {
-            deviceLifetimeGateLeave(&session->delivery_gate);
+            quiescenceGateLeave(&session->delivery_gate);
         }
         for (unsigned int i = 0; i < message->count; i++)
         {

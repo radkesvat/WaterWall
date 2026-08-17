@@ -155,7 +155,7 @@ typedef intptr_t           atomic_uintmax_t;
  * So the fix depends on which way the mismatch goes: 64-bit state belongs to
  * the u64 API below, while a caller whose own variable is narrower than a
  * pointer should hold the value in a w_atomic_int_value_t / w_atomic_uint_value_t
- * and convert at the boundary, the way worker.c and device_lifetime.h do.
+ * and convert at the boundary, the way worker.c and quiescence_gate.h do.
  */
 #define W_ATOMIC_REQUIRE_PTR_WIDTH(object)                                                                             \
     ((void) sizeof(struct {                                                                                            \

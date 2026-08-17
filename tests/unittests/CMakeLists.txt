@@ -101,16 +101,16 @@ if(TARGET ww)
     "unit;net;tun;lifecycle"
   )
 
-  add_executable(device_lifetime_test device_lifetime_test.c)
-  target_include_directories(device_lifetime_test PRIVATE ${CMAKE_SOURCE_DIR}/ww/devices)
-  target_compile_definitions(device_lifetime_test PRIVATE DEVICE_LIFETIME_TEST_HOOKS=1)
-  target_link_libraries(device_lifetime_test PRIVATE ww)
-  add_dependencies(waterwall_unit_tests device_lifetime_test)
+  add_executable(quiescence_gate_test quiescence_gate_test.c)
+  target_include_directories(quiescence_gate_test PRIVATE ${CMAKE_SOURCE_DIR}/ww/base ${CMAKE_SOURCE_DIR}/ww/devices)
+  target_compile_definitions(quiescence_gate_test PRIVATE QUIESCENCE_GATE_TEST_HOOKS=1)
+  target_link_libraries(quiescence_gate_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests quiescence_gate_test)
 
   add_waterwall_unit_test(
-    waterwall.device_lifetime_unit
-    device_lifetime_test
-    "unit;net;device;lifetime"
+    waterwall.quiescence_gate_unit
+    quiescence_gate_test
+    "unit;base;quiescence;gate;lifetime"
   )
 
   add_executable(device_flow_affinity_test device_flow_affinity_test.c)
@@ -396,7 +396,9 @@ if(TARGET ww)
   add_waterwall_unit_test(waterwall.address_context_unit address_context_test "unit;net;address-context")
 
   add_executable(wchecksum_test wchecksum_test.c)
-  target_link_libraries(wchecksum_test PRIVATE ww)
+  # ww_lwip calls the platform assert hook defined by ww. Repeat ww after the
+  # lwIP archive so a one-pass static linker can resolve that reverse edge.
+  target_link_libraries(wchecksum_test PRIVATE ww ww_lwip ww)
   add_dependencies(waterwall_unit_tests wchecksum_test)
 
   add_waterwall_unit_test(waterwall.wchecksum_unit wchecksum_test "unit;net;checksum")
@@ -1905,17 +1907,6 @@ if(TARGET ww)
     waterwall.device_frag_affinity_unit
     device_frag_affinity_test
     "unit;net;devices;fragment;affinity;lifetime"
-  )
-endif()
-
-if(TARGET ww)
-  add_executable(tunnel_async_session_test tunnel_async_session_test.c)
-  target_link_libraries(tunnel_async_session_test PRIVATE ww)
-  add_dependencies(waterwall_unit_tests tunnel_async_session_test)
-  add_waterwall_unit_test(
-    waterwall.tunnel_async_session_unit
-    tunnel_async_session_test
-    "unit;core;async;lifetime"
   )
 endif()
 

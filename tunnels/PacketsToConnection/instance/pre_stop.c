@@ -8,22 +8,14 @@ void ptcTunnelOnQuiesceRequest(tunnel_t *t, const ww_lifecycle_context_t *contex
     ptc_tstate_t *state = tunnelGetState(t);
 
     atomicStoreRelaxed(&state->stopping, true);
-    deviceLifetimeGateClose(&state->output_gate);
-    deviceLifetimeGateClose(&state->next_gate);
-    if (state->async_session != NULL)
-    {
-        tunnelasyncsessionClose(state->async_session);
-    }
+    quiescenceGateClose(&state->output_gate);
+    quiescenceGateClose(&state->next_gate);
 }
 
 void ptcTunnelOnQuiesceWait(tunnel_t *t, const ww_lifecycle_context_t *context)
 {
     discard       context;
     ptc_tstate_t *state = tunnelGetState(t);
-    deviceLifetimeGateWaitQuiesced(&state->output_gate, deviceLifetimeYieldThread, NULL);
-    deviceLifetimeGateWaitQuiesced(&state->next_gate, deviceLifetimeYieldThread, NULL);
-    if (state->async_session != NULL)
-    {
-        tunnelasyncsessionWaitQuiesced(state->async_session);
-    }
+    quiescenceGateWaitQuiesced(&state->output_gate, quiescenceGateYieldThread, NULL);
+    quiescenceGateWaitQuiesced(&state->next_gate, quiescenceGateYieldThread, NULL);
 }

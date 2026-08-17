@@ -2,10 +2,8 @@
 
 #include "wwapi.h"
 
-#include "net/tunnel_async_session.h"
-
 #include "devices/device_frag_settlement.h"
-#include "devices/device_lifetime.h"
+#include "quiescence_gate.h"
 
 #include "lwip/priv/tcp_priv.h"
 
@@ -197,9 +195,8 @@ typedef struct ptc_tstate_s
     uint32_t                    max_pending_entries;
     uint32_t                    udp_idle_timeout_ms;
     ptc_fake_dns_t              fake_dns;
-    device_lifetime_gate_t      output_gate;
-    device_lifetime_gate_t      next_gate;
-    tunnel_async_session_t     *async_session;
+    quiescence_gate_t           output_gate;
+    quiescence_gate_t           next_gate;
     ptc_tcp_drain_t            *drains;
     uint32_t                    drain_bytes;
     uint32_t                    drain_count;

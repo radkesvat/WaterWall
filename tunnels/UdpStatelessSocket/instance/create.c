@@ -46,12 +46,6 @@ tunnel_t *udpstatelesssocketTunnelCreate(node_t *node)
         tunnelDestroy(t);
         return NULL;
     }
-    state->async_session = tunnelasyncsessionCreate(t, "UdpStatelessSocket");
-    if (UNLIKELY(state->async_session == NULL))
-    {
-        LOGF("UdpStatelessSocket: failed to create async callback session");
-        return udpstatelesssocketTunnelCreateFail(t);
-    }
 
     const cJSON *settings = node->node_settings_json;
 

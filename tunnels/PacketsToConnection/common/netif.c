@@ -13,9 +13,9 @@ static void ptcEmitPacketOnWorker(worker_t *worker, void *arg1, void *arg2, void
 static void ptcEmitPacketCleanup(void *arg1, void *arg2, void *arg3, worker_message_cancel_reason_e reason)
 {
     discard reason;
+    discard arg1;
     discard arg3;
     memoryFree(arg2);
-    tunnelasyncsessionUnref(arg1);
 }
 
 static void ptcEmitPacketBufferAdmitted(tunnel_t *t, line_t *packet_line, sbuf_t *buf)
@@ -41,7 +41,7 @@ bool ptcEmitPacketBuffer(tunnel_t *t, line_t *packet_line, sbuf_t *buf)
 {
     ptc_tstate_t *state = tunnelGetState(t);
 
-    if (UNLIKELY(ptcTunnelIsStopping(t) || ! deviceLifetimeGateEnter(&state->output_gate)))
+    if (UNLIKELY(ptcTunnelIsStopping(t) || ! quiescenceGateEnter(&state->output_gate)))
     {
         lineReuseBuffer(packet_line, buf);
         return false;
@@ -49,13 +49,13 @@ bool ptcEmitPacketBuffer(tunnel_t *t, line_t *packet_line, sbuf_t *buf)
 
     if (UNLIKELY(ptcTunnelIsStopping(t)))
     {
-        deviceLifetimeGateLeave(&state->output_gate);
+        quiescenceGateLeave(&state->output_gate);
         lineReuseBuffer(packet_line, buf);
         return false;
     }
 
     ptcEmitPacketBufferAdmitted(t, packet_line, buf);
-    deviceLifetimeGateLeave(&state->output_gate);
+    quiescenceGateLeave(&state->output_gate);
     return true;
 }
 
@@ -63,30 +63,18 @@ static void ptcEmitPacketOnWorker(worker_t *worker, void *arg1, void *arg2, void
 {
     discard arg3;
 
-    tunnel_async_session_t *session    = arg1;
-    ptc_packet_emit_msg_t  *packet_msg = arg2;
-    tunnel_t               *t          = NULL;
-
-    if (! tunnelasyncsessionEnter(session, &t))
-    {
-        memoryFree(packet_msg);
-        tunnelasyncsessionUnref(session);
-        return;
-    }
-    ptc_tstate_t *state = tunnelGetState(t);
+    tunnel_t              *t          = arg1;
+    ptc_packet_emit_msg_t *packet_msg = arg2;
+    ptc_tstate_t          *state      = tunnelGetState(t);
 
     /*
-     * Workers keep draining their queues after onStop() has run, so a packet
-     * accepted a moment before Stop can still arrive here - and by now the
-     * previous node's own onStop() may have run too. Calling into a neighbour
-     * that has stopped is a composability violation whether or not that
-     * particular neighbour tolerates it.
+     * Under lifecycle-v2, worker messages are settled before tunnel destruction.
+     * Local stopping/output_gate checks ensure work does not cross into a neighbour
+     * after admission has closed.
      */
-    if (UNLIKELY(ptcTunnelIsStopping(t) || ! deviceLifetimeGateEnter(&state->output_gate)))
+    if (UNLIKELY(ptcTunnelIsStopping(t) || ! quiescenceGateEnter(&state->output_gate)))
     {
         memoryFree(packet_msg);
-        tunnelasyncsessionLeave(session);
-        tunnelasyncsessionUnref(session);
         return;
     }
 
@@ -95,10 +83,8 @@ static void ptcEmitPacketOnWorker(worker_t *worker, void *arg1, void *arg2, void
     line_t *packet_line = tunnelchainGetWorkerPacketLine(tunnelGetChain(t), worker->wid);
     if (UNLIKELY(packet_line == NULL || ptcTunnelIsStopping(t)))
     {
-        deviceLifetimeGateLeave(&state->output_gate);
+        quiescenceGateLeave(&state->output_gate);
         memoryFree(packet_msg);
-        tunnelasyncsessionLeave(session);
-        tunnelasyncsessionUnref(session);
         return;
     }
 
@@ -107,10 +93,8 @@ static void ptcEmitPacketOnWorker(worker_t *worker, void *arg1, void *arg2, void
 
     if (UNLIKELY(buf == NULL))
     {
-        deviceLifetimeGateLeave(&state->output_gate);
+        quiescenceGateLeave(&state->output_gate);
         memoryFree(packet_msg);
-        tunnelasyncsessionLeave(session);
-        tunnelasyncsessionUnref(session);
         return;
     }
 
@@ -119,9 +103,7 @@ static void ptcEmitPacketOnWorker(worker_t *worker, void *arg1, void *arg2, void
     memoryFree(packet_msg);
 
     ptcEmitPacketBufferAdmitted(t, packet_line, buf);
-    deviceLifetimeGateLeave(&state->output_gate);
-    tunnelasyncsessionLeave(session);
-    tunnelasyncsessionUnref(session);
+    quiescenceGateLeave(&state->output_gate);
 }
 
 static err_t interfaceInit(struct netif *netif)
@@ -403,7 +385,7 @@ err_t ptcNetifOutput(struct netif *netif, struct pbuf *p, const ip4_addr_t *ipad
      * reach an output callback, and a packet published then would arrive at a
      * neighbour that has already stopped.
      */
-    if (UNLIKELY(ptcTunnelIsStopping(t) || ! deviceLifetimeGateEnter(&state->output_gate)))
+    if (UNLIKELY(ptcTunnelIsStopping(t) || ! quiescenceGateEnter(&state->output_gate)))
     {
         return ERR_IF;
     }
@@ -418,7 +400,7 @@ err_t ptcNetifOutput(struct netif *netif, struct pbuf *p, const ip4_addr_t *ipad
 
     if (UNLIKELY(packet_msg == NULL))
     {
-        deviceLifetimeGateLeave(&state->output_gate);
+        quiescenceGateLeave(&state->output_gate);
         return ERR_MEM;
     }
 
@@ -428,15 +410,9 @@ err_t ptcNetifOutput(struct netif *netif, struct pbuf *p, const ip4_addr_t *ipad
     // A refusal releases the message through ptcEmitPacketCleanup(), which frees
     // one global-allocator block and touches no worker-local pool - the only
     // release that is legal from this thread.
-    tunnelasyncsessionRef(state->async_session);
-    const worker_message_submit_result_e queued =
-        sendWorkerMessageForceQueueWithCleanup(packet_wid,
-                                               (WorkerMessageCallback) ptcEmitPacketOnWorker,
-                                               ptcEmitPacketCleanup,
-                                               state->async_session,
-                                               packet_msg,
-                                               NULL);
-    deviceLifetimeGateLeave(&state->output_gate);
+    const worker_message_submit_result_e queued = sendWorkerMessageForceQueueWithCleanup(
+        packet_wid, (WorkerMessageCallback) ptcEmitPacketOnWorker, ptcEmitPacketCleanup, t, packet_msg, NULL);
+    quiescenceGateLeave(&state->output_gate);
     if (queued != kWorkerMessageSubmitAccepted)
     {
         return ERR_MEM;

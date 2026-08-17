@@ -69,7 +69,7 @@ if "deviceFragAffinityEndGeneration" not in wait_body:
     raise SystemExit("deviceReaderSessionEndWait() no longer closes the fragment generation")
 if "RetireGenerationBuffers" in wait_body or "ReleaseStagedBuffers" in wait_body:
     raise SystemExit("deviceReaderSessionEndWait() returns staged buffers while the reader may still own the pool")
-if wait_body.index("deviceFragAffinityEndGeneration") < wait_body.index("deviceLifetimeGateWaitQuiesced"):
+if wait_body.index("deviceFragAffinityEndGeneration") < wait_body.index("quiescenceGateWaitQuiesced"):
     raise SystemExit("deviceReaderSessionEndWait() closes fragment classification before in-flight receipts quiesce")
 
 print("all device lifecycle wrappers close, join, then retire the reader generation's buffers")

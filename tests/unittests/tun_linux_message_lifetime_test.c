@@ -635,7 +635,7 @@ static void testClosedAndStaleDeliveriesDoNotTouchDevice(void)
     postOne(tdev, stale_buf);
 
     require(tundeviceBringDown(tdev), "production bring-down failed");
-    require(! deviceLifetimeGateEnter(&session->delivery_gate), "delivery gate accepted an entry after bring-down");
+    require(! quiescenceGateEnter(&session->delivery_gate), "delivery gate accepted an entry after bring-down");
 
     expected_reuse_pool    = getWorkerBufferPool(0);
     expected_reused_buffer = closed_buf;
@@ -672,7 +672,7 @@ static void testBringUpRollsBackThreadCreationFailures(void)
         require(fake_thread_join_calls == (failed_call == 2 ? 1U : 0U),
                 "bring-up rollback joined the wrong number of started threads");
         require(! tundeviceIsUp(tdev), "thread-creation rollback left the device up");
-        require(! deviceLifetimeGateIsActive(&session->delivery_gate),
+        require(! quiescenceGateIsActive(&session->delivery_gate),
                 "thread-creation rollback left the delivery gate open");
         require(atomicLoadExplicit(&session->refcount, memory_order_acquire) == 1,
                 "thread-creation rollback leaked a reader-session reference");
@@ -723,7 +723,7 @@ static void testThreadExitDuringStartupRollsBack(unsigned int exit_on_create_cal
     require(fake_thread_join_calls == exit_on_create_call, "startup rollback did not join every created thread");
     require(! tundeviceIsUp(tdev), "startup rollback left the device advertised as up");
     require(tunLinuxLifecycleState(tdev) == kTunLifecycleDown, "startup rollback did not publish final DOWN");
-    require(! deviceLifetimeGateIsActive(&session->delivery_gate), "startup rollback left the delivery gate open");
+    require(! quiescenceGateIsActive(&session->delivery_gate), "startup rollback left the delivery gate open");
     require(atomicLoadExplicit(&session->refcount, memory_order_acquire) == 1,
             "startup rollback leaked a reader-session reference");
     require((uint32_t) atomicLoadRelaxed(&session->generation) == failed_generation,

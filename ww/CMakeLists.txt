@@ -74,15 +74,15 @@ add_library(ww STATIC
     base/widle_table.c
     base/wlog.c
     base/wlsem.c
+    base/quiescence_gate.c
     base/wsocket.c
     base/wsysinfo.c
     base/wproc.c
 
-    # Device lifetime primitives
+    # Device primitives
     devices/device_flow_affinity.c
     devices/device_frag_affinity.c
     devices/device_frag_settlement.c
-    devices/device_lifetime.c
     devices/device_reader_session.c
     devices/device_writer_channel.c
     
@@ -136,7 +136,6 @@ add_library(ww STATIC
     net/dns_strategy.c
     net/adapter.c
     net/tunnel.c
-    net/tunnel_async_session.c
     net/line.c
     net/chain.c
     net/context.c
@@ -1529,9 +1528,9 @@ if(BUILD_TESTING)
         net/tunnel.c
         net/pipe_tunnel.c
         net/wchecksum.c
+        base/quiescence_gate.c
         devices/device_reader_session.c
         devices/device_writer_channel.c
-        devices/device_lifetime.c
         devices/tun/tun_linux.c
         devices/capture/capture_linux.c
         devices/raw/raw_linux.c

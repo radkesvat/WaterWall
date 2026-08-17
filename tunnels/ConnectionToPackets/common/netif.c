@@ -23,36 +23,27 @@ typedef struct ctp_packet_emit_msg_s
 static void ctpEmitPacketCleanup(void *arg1, void *arg2, void *arg3, worker_message_cancel_reason_e reason)
 {
     discard reason;
+    discard arg1;
     discard arg3;
     memoryFree(arg2);
-    tunnelasyncsessionUnref(arg1);
 }
 
 static void ctpEmitPacketOnWorker(worker_t *worker, void *arg1, void *arg2, void *arg3)
 {
     discard arg3;
 
-    tunnel_async_session_t *session    = arg1;
-    ctp_packet_emit_msg_t  *packet_msg = arg2;
-    tunnel_t               *t          = NULL;
+    tunnel_t              *t          = arg1;
+    ctp_packet_emit_msg_t *packet_msg = arg2;
 
-    if (! tunnelasyncsessionEnter(session, &t))
-    {
-        memoryFree(packet_msg);
-        tunnelasyncsessionUnref(session);
-        return;
-    }
     // The message was delivered to exactly one worker; take the packet line from
     // that worker instead of re-reading thread-local state.
     line_t *packet_line = tunnelchainGetWorkerPacketLine(tunnelGetChain(t), worker->wid);
 
-    // A packet queued before onStop() can still arrive here afterwards, and the
-    // next node's stop hook may already have run.
+    // A packet queued before onQuiesceRequest() can still arrive after local
+    // admission has closed. Do not extend it into a neighbouring callback.
     if (UNLIKELY(packet_line == NULL || ctpTunnelIsStopping(t)))
     {
         memoryFree(packet_msg);
-        tunnelasyncsessionLeave(session);
-        tunnelasyncsessionUnref(session);
         return;
     }
 
@@ -72,8 +63,6 @@ static void ctpEmitPacketOnWorker(worker_t *worker, void *arg1, void *arg2, void
     if (UNLIKELY(! ctpNextGateEnter(t)))
     {
         bufferpoolReuseBuffer(pool, buf);
-        tunnelasyncsessionLeave(session);
-        tunnelasyncsessionUnref(session);
         return;
     }
 
@@ -94,8 +83,6 @@ static void ctpEmitPacketOnWorker(worker_t *worker, void *arg1, void *arg2, void
 #endif
 
     ctpNextGateLeave(t);
-    tunnelasyncsessionLeave(session);
-    tunnelasyncsessionUnref(session);
 }
 
 /*
@@ -194,11 +181,10 @@ err_t ctpNetifOutput(struct netif *netif, struct pbuf *p, const ip4_addr_t *ipad
 
     const wid_t packet_wid = ctpSelectPacketWorkerLocked(ctx, packet_msg->data, packet_msg->len);
 
-    tunnelasyncsessionRef(ts->async_session);
     if (sendWorkerMessageForceQueueWithCleanup(packet_wid,
                                                (WorkerMessageCallback) ctpEmitPacketOnWorker,
                                                ctpEmitPacketCleanup,
-                                               ts->async_session,
+                                               ctx->tunnel,
                                                packet_msg,
                                                NULL) != kWorkerMessageSubmitAccepted)
     {

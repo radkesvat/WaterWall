@@ -131,7 +131,7 @@ void udpstatelesssocketTunnelOnPrepair(tunnel_t *t)
     assert(state->io_wid == 0);
     state->is_chain_end = nodeIsLastInChain(t->node);
 
-    weventSetUserData(state->socket.io, state->async_session);
+    weventSetUserData(state->socket.io, t);
     wioSetCallBackRead(state->socket.io, udpstatelesssocketOnRecvFrom);
     if (UNLIKELY(wioRead(state->socket.io) != 0))
     {
