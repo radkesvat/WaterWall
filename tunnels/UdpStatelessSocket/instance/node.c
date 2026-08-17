@@ -24,7 +24,7 @@ node_t nodeUdpStatelessSocketGet(void)
              .layer_group           = kNodeLayerAnything,
              .layer_group_next_node = kNodeLayerAnything,
              .layer_group_prev_node = kNodeLayerAnything,
-             .can_have_next         = false,
+             .can_have_next         = true,
              .can_have_prev         = true,
     };
     return node_udpstatelesssocket;

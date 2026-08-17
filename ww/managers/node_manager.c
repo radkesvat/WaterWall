@@ -264,8 +264,66 @@ static void finalizeTunnelChains(node_manager_config_t *cfg, tunnel_t **t_array,
     }
 }
 
+static enum node_layer_group resolveTunnelEffectiveLayer(const tunnel_t *t, int max_depth)
+{
+    if (t == NULL || t->node == NULL)
+    {
+        return kNodeLayerNone;
+    }
+
+    enum node_layer_group layer = t->node->layer_group;
+    if ((layer & (kNodeLayerSameAsPrev | kNodeLayerSameAsNext)) == 0)
+    {
+        return layer;
+    }
+
+    if ((layer & kNodeLayerSameAsPrev) != 0)
+    {
+        const tunnel_t *curr  = t->prev;
+        int             depth = 0;
+        while (curr != NULL && curr->node != NULL && depth < max_depth)
+        {
+            enum node_layer_group l = curr->node->layer_group;
+            if ((l & (kNodeLayerSameAsPrev | kNodeLayerSameAsNext)) == 0)
+            {
+                return l;
+            }
+            if ((l & kNodeLayerSameAsNext) != 0)
+            {
+                break;
+            }
+            curr = curr->prev;
+            depth++;
+        }
+        return kNodeLayerNone;
+    }
+
+    if ((layer & kNodeLayerSameAsNext) != 0)
+    {
+        const tunnel_t *curr  = t->next;
+        int             depth = 0;
+        while (curr != NULL && curr->node != NULL && depth < max_depth)
+        {
+            enum node_layer_group l = curr->node->layer_group;
+            if ((l & (kNodeLayerSameAsPrev | kNodeLayerSameAsNext)) == 0)
+            {
+                return l;
+            }
+            if ((l & kNodeLayerSameAsPrev) != 0)
+            {
+                break;
+            }
+            curr = curr->next;
+            depth++;
+        }
+        return kNodeLayerNone;
+    }
+
+    return layer;
+}
+
 /**
- * @brief Validate resulting tunnel topology and required node flags.
+ * @brief Validate resulting tunnel topology, capability constraints, and layer groups.
  *
  * @param t_array Tunnel instance array.
  * @param tunnels_count Number of tunnel instances.
@@ -274,30 +332,208 @@ static void validateTunnelChains(tunnel_t **t_array, int tunnels_count)
 {
     for (int i = 0; i < tunnels_count; i++)
     {
-        if (t_array[i]->next == NULL && t_array[i]->prev == NULL && ! (t_array[i]->node->flags & kNodeFlagNoChain))
+        tunnel_t *t = t_array[i];
+        assert(t != NULL && t->node != NULL);
+
+        if (t->next == NULL && t->prev == NULL && ! (t->node->flags & kNodeFlagNoChain))
         {
-            LOGF("NodeManager: node startup failure: node (\"%s\") is not chained", t_array[i]->node->name);
+            LOGF("NodeManager: node startup failure: node (\"%s\") is not chained", t->node->name);
             startupFailureRecord(1);
             return;
         }
 
-        if (t_array[i]->next == NULL && ! (t_array[i]->node->flags & kNodeFlagChainEnd) &&
-            ! (t_array[i]->node->flags & kNodeFlagNoChain))
+        if ((t->node->flags & (kNodeFlagChainHead | kNodeFlagChainEnd)) == 0 &&
+            (t->node->flags & kNodeFlagNoChain) != 0 && (t->next != NULL || t->prev != NULL))
         {
-            LOGF("NodeManager: node startup failure: node (\"%s\") at the end of the chain but dose not have "
-                 "flagkNodeFlagChainEnd",
-                 t_array[i]->node->name);
+            LOGF("NodeManager: node startup failure: node (\"%s\") has flag kNodeFlagNoChain but is chained",
+                 t->node->name);
             startupFailureRecord(1);
             return;
         }
-        if (t_array[i]->prev == NULL && ! (t_array[i]->node->flags & kNodeFlagChainHead) &&
-            ! (t_array[i]->node->flags & kNodeFlagNoChain))
+
+        if (t->next != NULL && ! t->node->can_have_next)
         {
-            LOGF("NodeManager: node startup failure: node (\"%s\") at the start of the chain but dose not have "
-                 "flagkNodeFlagChainHead",
-                 t_array[i]->node->name);
+            LOGF("NodeManager: node startup failure: node (\"%s\") has next node (\"%s\") but specifies can_have_next = false",
+                 t->node->name,
+                 t->next->node->name);
             startupFailureRecord(1);
             return;
+        }
+
+        if (t->prev != NULL && ! t->node->can_have_prev)
+        {
+            LOGF("NodeManager: node startup failure: node (\"%s\") has previous node (\"%s\") but specifies can_have_prev = false",
+                 t->node->name,
+                 t->prev->node->name);
+            startupFailureRecord(1);
+            return;
+        }
+
+        if (t->next == NULL && ! (t->node->flags & kNodeFlagChainEnd) &&
+            ! (t->node->flags & kNodeFlagNoChain))
+        {
+            LOGF("NodeManager: node startup failure: node (\"%s\") at the end of the chain but does not have "
+                 "flag kNodeFlagChainEnd",
+                 t->node->name);
+            startupFailureRecord(1);
+            return;
+        }
+        if (t->prev == NULL && ! (t->node->flags & kNodeFlagChainHead) &&
+            ! (t->node->flags & kNodeFlagNoChain))
+        {
+            LOGF("NodeManager: node startup failure: node (\"%s\") at the start of the chain but does not have "
+                 "flag kNodeFlagChainHead",
+                 t->node->name);
+            startupFailureRecord(1);
+            return;
+        }
+
+        if (t->next == NULL && t->prev == NULL)
+        {
+            continue;
+        }
+
+        enum node_layer_group eff_layer = resolveTunnelEffectiveLayer(t, kMaxNodesPerConfig);
+        if ((t->node->layer_group & kNodeLayerSameAsPrev) != 0 && t->prev == NULL)
+        {
+            LOGF("NodeManager: node startup failure: node (\"%s\") specifies layer_group as kNodeLayerSameAsPrev but has no previous node",
+                 t->node->name);
+            startupFailureRecord(1);
+            return;
+        }
+        if ((t->node->layer_group & kNodeLayerSameAsNext) != 0 && t->next == NULL)
+        {
+            LOGF("NodeManager: node startup failure: node (\"%s\") specifies layer_group as kNodeLayerSameAsNext but has no next node",
+                 t->node->name);
+            startupFailureRecord(1);
+            return;
+        }
+        if ((eff_layer & (kNodeLayer3 | kNodeLayer4 | kNodeLayerNone)) == 0 ||
+            (eff_layer & (kNodeLayerSameAsPrev | kNodeLayerSameAsNext)) != 0)
+        {
+            LOGF("NodeManager: node startup failure: node (\"%s\") has unresolvable layer group (circular or undefined layer dependency)",
+                 t->node->name);
+            startupFailureRecord(1);
+            return;
+        }
+
+        if (t->next != NULL)
+        {
+            tunnel_t *t_next = t->next;
+            assert(t_next->node != NULL);
+
+            if (! t_next->node->can_have_prev)
+            {
+                LOGF("NodeManager: node startup failure: node (\"%s\") precedes node (\"%s\") but next node specifies can_have_prev = false",
+                     t->node->name,
+                     t_next->node->name);
+                startupFailureRecord(1);
+                return;
+            }
+
+            enum node_layer_group eff_layer_next = resolveTunnelEffectiveLayer(t_next, kMaxNodesPerConfig);
+            if ((eff_layer_next & (kNodeLayer3 | kNodeLayer4 | kNodeLayerNone)) == 0 ||
+                (eff_layer_next & (kNodeLayerSameAsPrev | kNodeLayerSameAsNext)) != 0)
+            {
+                LOGF("NodeManager: node startup failure: node (\"%s\") has unresolvable layer group",
+                     t_next->node->name);
+                startupFailureRecord(1);
+                return;
+            }
+
+            enum node_layer_group req_next = t->node->layer_group_next_node;
+            if (req_next == kNodeLayerSameAsPrev)
+            {
+                if (t->prev == NULL)
+                {
+                    LOGF("NodeManager: node startup failure: node (\"%s\") specifies layer_group_next_node as kNodeLayerSameAsPrev but has no previous node",
+                         t->node->name);
+                    startupFailureRecord(1);
+                    return;
+                }
+                req_next = resolveTunnelEffectiveLayer(t->prev, kMaxNodesPerConfig);
+            }
+            else if (req_next == kNodeLayerSameAsNext)
+            {
+                req_next = eff_layer;
+            }
+
+            if (req_next != kNodeLayerNone && (eff_layer_next & req_next) == 0)
+            {
+                LOGF("NodeManager: node startup failure: node (\"%s\") (layer %s) requires next node layer %s, but next node (\"%s\") has incompatible layer %s",
+                     t->node->name,
+                     nodeLayerGroupToString(eff_layer),
+                     nodeLayerGroupToString(req_next),
+                     t_next->node->name,
+                     nodeLayerGroupToString(eff_layer_next));
+                startupFailureRecord(1);
+                return;
+            }
+
+            if ((eff_layer & eff_layer_next) == 0)
+            {
+                LOGF("NodeManager: node startup failure: node (\"%s\") (layer %s) is adjacent to next node (\"%s\") with incompatible layer %s",
+                     t->node->name,
+                     nodeLayerGroupToString(eff_layer),
+                     t_next->node->name,
+                     nodeLayerGroupToString(eff_layer_next));
+                startupFailureRecord(1);
+                return;
+            }
+        }
+
+        if (t->prev != NULL)
+        {
+            tunnel_t *t_prev = t->prev;
+            assert(t_prev->node != NULL);
+
+            if (! t_prev->node->can_have_next)
+            {
+                LOGF("NodeManager: node startup failure: node (\"%s\") follows node (\"%s\") but previous node specifies can_have_next = false",
+                     t->node->name,
+                     t_prev->node->name);
+                startupFailureRecord(1);
+                return;
+            }
+
+            enum node_layer_group eff_layer_prev = resolveTunnelEffectiveLayer(t_prev, kMaxNodesPerConfig);
+            if ((eff_layer_prev & (kNodeLayer3 | kNodeLayer4 | kNodeLayerNone)) == 0 ||
+                (eff_layer_prev & (kNodeLayerSameAsPrev | kNodeLayerSameAsNext)) != 0)
+            {
+                LOGF("NodeManager: node startup failure: node (\"%s\") has unresolvable layer group",
+                     t_prev->node->name);
+                startupFailureRecord(1);
+                return;
+            }
+
+            enum node_layer_group req_prev = t->node->layer_group_prev_node;
+            if (req_prev == kNodeLayerSameAsNext)
+            {
+                if (t->next == NULL)
+                {
+                    LOGF("NodeManager: node startup failure: node (\"%s\") specifies layer_group_prev_node as kNodeLayerSameAsNext but has no next node",
+                         t->node->name);
+                    startupFailureRecord(1);
+                    return;
+                }
+                req_prev = resolveTunnelEffectiveLayer(t->next, kMaxNodesPerConfig);
+            }
+            else if (req_prev == kNodeLayerSameAsPrev)
+            {
+                req_prev = eff_layer;
+            }
+
+            if (req_prev != kNodeLayerNone && (eff_layer_prev & req_prev) == 0)
+            {
+                LOGF("NodeManager: node startup failure: node (\"%s\") (layer %s) requires previous node layer %s, but previous node (\"%s\") has incompatible layer %s",
+                     t->node->name,
+                     nodeLayerGroupToString(eff_layer),
+                     nodeLayerGroupToString(req_prev),
+                     t_prev->node->name,
+                     nodeLayerGroupToString(eff_layer_prev));
+                startupFailureRecord(1);
+                return;
+            }
         }
     }
 }

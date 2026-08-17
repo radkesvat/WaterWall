@@ -870,6 +870,18 @@ if(TARGET ww)
         node_manager_map_invariant_test
         "unit;node-manager;configuration;capacity;lifetime"
       )
+
+      add_executable(node_layer_validation_test
+        node_layer_validation_test.c
+      )
+      target_link_libraries(node_layer_validation_test PRIVATE ww)
+      add_dependencies(waterwall_unit_tests node_layer_validation_test)
+
+      add_waterwall_unit_test(
+        waterwall.node_layer_validation_unit
+        node_layer_validation_test
+        "unit;node-manager;validation;layer;capabilities"
+      )
     endif()
 
     add_executable(thread_creation_failure_test thread_creation_failure_test.c)

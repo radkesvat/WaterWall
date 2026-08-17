@@ -111,11 +111,48 @@ enum node_flags
 
 enum node_layer_group
 {
-    kNodeLayerNone     = (1 << 0),
-    kNodeLayer3        = (1 << 2),
-    kNodeLayer4        = (1 << 3),
-    kNodeLayerAnything = kNodeLayer3 | kNodeLayer4
+    kNodeLayerNone       = (1 << 0),
+    kNodeLayer3          = (1 << 2),
+    kNodeLayer4          = (1 << 3),
+    kNodeLayerAnything   = kNodeLayer3 | kNodeLayer4,
+    kNodeLayerSameAsNext = (1 << 4),
+    kNodeLayerSameAsPrev = (1 << 5)
 };
+
+static inline const char *nodeLayerGroupToString(enum node_layer_group layer)
+{
+    switch (layer)
+    {
+    case kNodeLayerNone:
+        return "kNodeLayerNone";
+    case kNodeLayer3:
+        return "kNodeLayer3";
+    case kNodeLayer4:
+        return "kNodeLayer4";
+    case kNodeLayerAnything:
+        return "kNodeLayerAnything";
+    case kNodeLayerSameAsNext:
+        return "kNodeLayerSameAsNext";
+    case kNodeLayerSameAsPrev:
+        return "kNodeLayerSameAsPrev";
+    default:
+        break;
+    }
+
+    if ((layer & kNodeLayerAnything) == kNodeLayerAnything)
+    {
+        return "kNodeLayerAnything";
+    }
+    if (layer & kNodeLayer3)
+    {
+        return "kNodeLayer3";
+    }
+    if (layer & kNodeLayer4)
+    {
+        return "kNodeLayer4";
+    }
+    return "unknown";
+}
 
 typedef struct node_s node_t;
 
