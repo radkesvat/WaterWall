@@ -302,7 +302,8 @@ static bool hasUncancelledReceive(const wio_t *io)
 // record is retired locally because no completion packet will arrive.
 static int post_recv(wio_t *io, woverlapped_t *record)
 {
-    const bool is_new = (record == NULL);
+    const bool is_new     = (record == NULL);
+    const bool control_io = wloopIOIsControl(io);
     if (is_new)
     {
         EVENTLOOP_ALLOC_SIZEOF(record);
@@ -321,7 +322,13 @@ static int post_recv(wio_t *io, woverlapped_t *record)
         bufferpoolReuseBuffer(io->loop->bufpool, record->sbuf);
         record->sbuf = NULL;
     }
-    if (io->io_type == WIO_TYPE_UDP)
+    if (control_io)
+    {
+        // The loop wake transport carries one byte per armed wake and must not
+        // reserve a full network payload buffer for its lifetime.
+        record->sbuf = bufferpoolGetSmallBuffer(io->loop->bufpool);
+    }
+    else if (io->io_type == WIO_TYPE_UDP)
     {
         record->sbuf = bufferpoolGetLargeBuffer(io->loop->bufpool);
     }
@@ -340,7 +347,7 @@ static int post_recv(wio_t *io, woverlapped_t *record)
     DWORD flags   = 0;
     int   ret     = 0;
 
-    if (! wloopNormalAdmissionBegin(io->loop))
+    if (! control_io && ! wloopNormalAdmissionBegin(io->loop))
     {
         recordRetire(record);
         return WSA_OPERATION_ABORTED;
@@ -367,7 +374,10 @@ static int post_recv(wio_t *io, woverlapped_t *record)
         WSASetLastError(WSAEINVAL);
         ret = -1;
     }
-    wloopNormalAdmissionEnd(io->loop);
+    if (! control_io)
+    {
+        wloopNormalAdmissionEnd(io->loop);
+    }
 
     if (ret != 0)
     {

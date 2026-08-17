@@ -554,6 +554,12 @@ static void eventFDReadCB(wio_t *io, sbuf_t *buf)
     bufferpoolReuseBuffer(io->loop->bufpool, buf);
 }
 
+bool wloopIOIsControl(const wio_t *io)
+{
+    return io != NULL && io->loop != NULL && io->fd == io->loop->eventfds[EVENTFDS_READ_INDEX] &&
+           io->read_cb == eventFDReadCB;
+}
+
 #ifdef OS_UNIX
 static bool wloopConfigureWakeFD(int fd)
 {
@@ -2004,7 +2010,7 @@ static int wioAddWithNormalAuthority(wio_t *io, wio_cb cb, int events, bool alre
     {
         return -1;
     }
-    const bool control_io = io->fd == loop->eventfds[EVENTFDS_READ_INDEX] && io->read_cb == eventFDReadCB;
+    const bool control_io = wloopIOIsControl(io);
     if (! control_io && ! already_admitted)
     {
         mutexLock(&loop->normal_admission_mutex);

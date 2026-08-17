@@ -9,6 +9,8 @@ bool wloopPostControlEvent(wloop_t *loop, wevent_t *ev);
 
 bool wloopNormalAdmissionBegin(wloop_t *loop);
 void wloopNormalAdmissionEnd(wloop_t *loop);
+/* The wake transport is control infrastructure and remains admissible while normal work closes. */
+bool wloopIOIsControl(const wio_t *io);
 int  wioAddAlreadyAdmitted(wio_t *io, wio_cb cb, int events);
 
 typedef void (*wloop_callback_root_cb)(void *context);
