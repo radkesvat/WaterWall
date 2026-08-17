@@ -335,7 +335,9 @@ static bool ptcFakeDnsCommitQuestions(ptc_fake_dns_t *dns, ptc_dns_question_t *q
         return false;
     }
 
+#ifndef NDEBUG
     uint8_t staged_count = 0;
+#endif
     for (uint8_t i = 0; i < mapping_count; ++i)
     {
         ptc_dns_mapping_t *mapping = &mappings[i];
@@ -344,7 +346,9 @@ static bool ptcFakeDnsCommitQuestions(ptc_fake_dns_t *dns, ptc_dns_question_t *q
         {
             continue;
         }
+#ifndef NDEBUG
         ++staged_count;
+#endif
 
         char *domain = ptcFakeDnsDuplicateString(mapping->domain, mapping->domain_len);
         if (UNLIKELY(domain == NULL))
@@ -401,8 +405,10 @@ static bool ptcFakeDnsCommitQuestions(ptc_fake_dns_t *dns, ptc_dns_question_t *q
         mapping->entry->fake_addr_network = lwip_htonl(dns->network_host | mapping->entry->index);
     }
 
+#ifndef NDEBUG
     /* The map was reserved for capacity + max questions during configuration. */
     assert(ptc_fake_dns_name_map_t_capacity(&dns->names) >= (isize_t) (dns->used + staged_count));
+#endif
     for (uint8_t i = 0; i < mapping_count; ++i)
     {
         ptc_dns_mapping_t *mapping = &mappings[i];
