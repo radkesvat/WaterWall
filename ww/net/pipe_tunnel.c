@@ -178,9 +178,7 @@ static void pipePairDetach(pipe_pair_t *pair, line_t *line)
         attached = &pair->owned_attached;
     }
 
-    bool expected = true;
-    if (! atomic_compare_exchange_strong_explicit(
-            attached, &expected, false, memory_order_acq_rel, memory_order_acquire))
+    if (! atomicExchangeExplicit(attached, false, memory_order_acq_rel))
     {
         return;
     }
