@@ -21,9 +21,9 @@ node_t nodeKeepAliveClientGet(void)
              .instance              = NULL,
              .flags                 = kNodeFlagNone,
              .required_padding_left = kKeepAliveFramePrefixSize,
-             .layer_group           = kNodeLayerAnything,
-             .layer_group_next_node = kNodeLayerSameAsPrev,
-             .layer_group_prev_node = kNodeLayerSameAsNext,
+             .layer_group           = kNodeLayer4,
+             .layer_group_next_node = kNodeLayer4,
+             .layer_group_prev_node = kNodeLayer4,
              .can_have_next         = true,
              .can_have_prev         = true,
     };
