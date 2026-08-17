@@ -647,11 +647,14 @@ endif()
 include(cmake/CPM.cmake)
 set(BUILD_SHARED_LIBS OFF)
 
+# Track the latest reviewed stable dependency releases, but pin immutable
+# commits or verified archives so clean builds remain reproducible.
+
 # KomiHash library
 CPMAddPackage(
     NAME komihash
     GIT_REPOSITORY https://github.com/avaneev/komihash.git
-    GIT_TAG 8d531367eae59100687ab84393963b9e8f4345f8
+    GIT_TAG 50a15150746eaf7db32558388a27c6628a46cdee # 5.34
     DOWNLOAD_ONLY True
 )
 if(komihash_ADDED)
@@ -663,6 +666,7 @@ endif()
 CPMAddPackage(
     NAME stc
     GIT_REPOSITORY https://github.com/radkesvat/STC
+    # Custom fork revision that lets embedding projects provide allocator macros.
     GIT_TAG bf1d20e3dd903cde66c301587e017c4dd234a620
     DOWNLOAD_ONLY True
 )
@@ -685,7 +689,7 @@ target_compile_definitions(ww PUBLIC ENABLE_TARGET_EXPORT=OFF)
 CPMAddPackage(
     NAME cares
     GIT_REPOSITORY https://github.com/c-ares/c-ares
-    GIT_TAG 3ac47ee46edd8ea40370222f91613fc16c434853
+    GIT_TAG c7a3138dcfe3bb0eaaf10c0c24c36dc66dc790ab # 1.34.8
     OPTIONS
         "CARES_INSTALL OFF"
         "CARES_BUILD_TESTS OFF"
@@ -726,8 +730,8 @@ endif()
 if(PROJECT_REQUIRES_NGHTTP2)
     CPMAddPackage(
         NAME nghttp2
-        GIT_TAG ac22e0efe3f82f43c1366961c89a50ee821cfba3
         GIT_REPOSITORY https://github.com/nghttp2/nghttp2.git
+        GIT_TAG 85e300c79fb6dbcfa9c1013215c8710c1c2cd3d2 # 1.70.0
         OPTIONS
             "ENABLE_APP OFF"
             "ENABLE_HPACK_TOOLS OFF"
@@ -762,7 +766,7 @@ endif()
 CPMAddPackage(
     NAME maxminddb
     GIT_REPOSITORY https://github.com/maxmind/libmaxminddb.git
-    GIT_TAG 09a0540fea89a16e5c6a9e21e93ee9aece6639e3
+    GIT_TAG 09a0540fea89a16e5c6a9e21e93ee9aece6639e3 # 1.13.3
     OPTIONS
         "BUILD_SHARED_LIBS OFF"
         "BUILD_TESTING OFF"
@@ -784,7 +788,7 @@ if(WCRYPTO_BACKEND_SODIUM)
     CPMAddPackage(
         NAME libsodium
         GIT_REPOSITORY https://github.com/robinlinden/libsodium-cmake.git
-        GIT_TAG 24f829c6d1bf88adb05ff3ee594abc367ffc0590
+        GIT_TAG cfebfd3da486d5a86c644c8b47067e5411c7599c # libsodium 1.0.20-FINAL
         OPTIONS
             "SODIUM_MINIMAL ON"
             "SODIUM_DISABLE_TESTS ON"
@@ -941,8 +945,8 @@ if(PROJECT_REQUIRES_OPENSSL)
         # dependency manifest is needed.
         CPMAddPackage(
             NAME openssl-source
-            URL https://github.com/openssl/openssl/releases/download/openssl-4.0.0/openssl-4.0.0.tar.gz
-            URL_HASH SHA256=c32cf49a959c4f345f9606982dd36e7d28f7c58b19c2e25d75624d2b3d2f79ac
+            URL https://github.com/openssl/openssl/releases/download/openssl-4.0.1/openssl-4.0.1.tar.gz
+            URL_HASH SHA256=2db3f3a0d6ea4b59e1f094ace2c8cd536dffb87cdc39084c5afa1e6f7f37dd09
             DOWNLOAD_ONLY True
         )
         set(OPENSSL_SOURCE "${openssl-source_SOURCE_DIR}")
@@ -950,7 +954,7 @@ if(PROJECT_REQUIRES_OPENSSL)
         CPMAddPackage(
             NAME openssl-cmake
             GIT_REPOSITORY https://github.com/jimmy-park/openssl-cmake.git
-            GIT_TAG aff15a0f64d14ba185f1c1c0c16b974875eec2f8
+            GIT_TAG f2318c9f4e31f1e449ce3533cd9f9a9d3a44256c # 4.0.1
             OPTIONS
             ${WW_OPENSSL_CPM_OPTIONS}
         )
@@ -965,13 +969,15 @@ if(PROJECT_REQUIRES_OPENSSL)
         message(FATAL_ERROR "OpenSSL backend is enabled, but OpenSSL::SSL/OpenSSL::Crypto were not created")
     endif()
 
-    # openssl-cmake's Makefile parser in some rolling `main` revisions loses
-    # both archive paths when it is embedded as a subproject.  Keep fresh
-    # backend-matrix build trees usable while the dependency remains unpinned.
+    # openssl-cmake's Makefile parser can fail to expose one of the imported
+    # archive paths when it is embedded as a subproject. Keep fresh
+    # backend-matrix build trees usable by declaring the missing crypto archive
+    # at the wrapper's actual OpenSSL build directory. The wrapper already owns
+    # the libssl archive rule, and build_libs produces both archives.
     get_target_property(WW_OPENSSL_SSL_LOCATION OpenSSL::SSL IMPORTED_LOCATION)
     if(UNIX AND (NOT WW_OPENSSL_SSL_LOCATION OR
                  WW_OPENSSL_SSL_LOCATION MATCHES "-NOTFOUND$"))
-        set(WW_OPENSSL_BUILD_DIR "${CMAKE_BINARY_DIR}/_deps/openssl-source-build")
+        set(WW_OPENSSL_BUILD_DIR "${openssl-cmake_BINARY_DIR}/openssl-source-build")
         set(OPENSSL_CRYPTO_LIBRARY
             "${WW_OPENSSL_BUILD_DIR}/${CMAKE_STATIC_LIBRARY_PREFIX}crypto${CMAKE_STATIC_LIBRARY_SUFFIX}"
             CACHE STRING "Override FindOpenSSL variables" FORCE)
@@ -1090,9 +1096,9 @@ set(LIBS ${LIBS} libuuid)
 ################################################################################
 # LWIP Library Configuration
 ################################################################################
-# updating lwip may cause our patching to fail or be incorrect. check with
+# Updating lwIP may cause our patching to fail or be incorrect. Check with
 # https://github.com/heiher/lwip
-set(WW_LWIP_REVISION 77dcd25a72509eb83f72b033d219b1d40cd8eb95)
+set(WW_LWIP_REVISION 77dcd25a72509eb83f72b033d219b1d40cd8eb95) # 2.2.1
 CPMAddPackage(
     NAME lwip
     GIT_REPOSITORY https://github.com/lwip-tcpip/lwip.git
