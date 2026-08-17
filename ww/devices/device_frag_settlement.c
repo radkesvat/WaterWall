@@ -83,7 +83,7 @@ static void deviceFragClaimRetainLifetime(sbuf_lifetime_t *lifetime)
 
 static void deviceFragClaimReleaseFinal(device_frag_claim_t *claim)
 {
-    const unsigned int observation = atomic_load_explicit(&claim->observation, memory_order_relaxed);
+    const w_atomic_uint_value_t observation = atomicLoadExplicit(&claim->observation, memory_order_relaxed);
     deviceFragAffinitySettlePublication(
         claim->session->frag_affinity,
         &claim->publication,
@@ -276,8 +276,8 @@ void deviceFragClaimResolve(device_frag_claim_t *claim, device_frag_settlement_t
          * Publish the latest factual stack observation without ever erasing an
          * Unknown bit concurrently made sticky by another copy.
          */
-        unsigned int observed = atomic_load_explicit(&claim->observation, memory_order_relaxed);
-        unsigned int desired;
+        w_atomic_uint_value_t observed = atomicLoadExplicit(&claim->observation, memory_order_relaxed);
+        w_atomic_uint_value_t desired;
         do
         {
             desired = (observed & ~kDeviceFragObservationSettlementMask) | (unsigned int) settlement;
