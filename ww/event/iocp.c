@@ -54,12 +54,13 @@ int iowatcherAddEvent(wloop_t *loop, int fd, int events)
     }
     iocp_ctx_t *iocp_ctx = (iocp_ctx_t *) loop->iowatcher;
     wio_t      *io       = loop->ios.ptr[fd];
-    if (io && io->events == 0 && events != 0)
+    if (io != NULL && ! io->iocp_associated && events != 0)
     {
         if (CreateIoCompletionPort((HANDLE) (uintptr_t) fd, iocp_ctx->iocp, 0, 0) == NULL)
         {
             return -(int) GetLastError();
         }
+        io->iocp_associated = 1;
     }
     return 0;
 }

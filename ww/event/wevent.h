@@ -240,6 +240,7 @@ struct wio_s
     unsigned  iocp_deferred_finalize : 1; // return to pool once records retire
     unsigned  iocp_pending_dispatch : 1;  // generic pending loop still holds its cursor
     unsigned  iocp_close_in_progress : 1; // wioClose still owns a stack reference
+    unsigned  iocp_associated : 1;        // socket handle is already bound to this loop's IOCP
 #endif
 };
 /*

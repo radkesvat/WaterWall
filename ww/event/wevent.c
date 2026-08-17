@@ -195,6 +195,7 @@ void wioReady(wio_t *io)
     io->iocp_deferred_finalize                        = 0;
     io->iocp_pending_dispatch                         = 0;
     io->iocp_close_in_progress                        = 0;
+    io->iocp_associated                               = 0;
 #endif
 
     // io_type

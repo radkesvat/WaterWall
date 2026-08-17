@@ -279,6 +279,17 @@ static int wloopProcessIOS(wloop_t *loop, int timeout)
     return nevents;
 }
 
+static bool wloopHasPollWork(const wloop_t *loop)
+{
+#ifdef EVENT_IOCP
+    // Closed handles are inactive, but their canceled overlapped operations
+    // remain kernel-owned until IOCP dequeues the completion packets.
+    return loop->nios > 0 || loop->iocp_live_operations > 0;
+#else
+    return loop->nios > 0;
+#endif
+}
+
 static void wloopReleasePending(wevent_t *event, bool callback_suppressed)
 {
 #ifndef EVENT_IOCP
@@ -405,7 +416,7 @@ int wloopProcessEvents(wloop_t *loop, int timeout_ms)
         blocktime_ms = min(blocktime_ms, timeout_ms);
     }
 
-    if (loop->nios)
+    if (wloopHasPollWork(loop))
     {
         nios = wloopProcessIOS(loop, blocktime_ms);
         if (nios < 0)
