@@ -436,21 +436,32 @@ jobs:
           sudo apt-get install -y ninja-build ccache iproute2 util-linux
       - name: Reset ccache statistics
         run: ccache --zero-stats
-      - name: Configure crypto backend matrix entry
+      - name: Configure production crypto backend
         run: >
           cmake --preset ${{ matrix.preset }}
           -DCPM_SOURCE_CACHE="${{ env.cpm-path }}"
-      - name: Build Waterwall and crypto tests
-        run: cmake --build --preset ${{ matrix.preset }} --target Waterwall crypto_primitives_test aes256gcm_test
-      - name: Run backend and consumer verification
+      - name: Configure crypto backend unit tests
+        run: >
+          cmake --preset ${{ matrix.preset }}-unit
+          -DCPM_SOURCE_CACHE="${{ env.cpm-path }}"
+      - name: Build production Waterwall
+        run: cmake --build --preset ${{ matrix.preset }} --target Waterwall
+      - name: Build crypto unit tests
+        run: cmake --build --preset ${{ matrix.preset }}-unit --target crypto_primitives_test aes256gcm_test
+      - name: Run backend unit verification
+        if: matrix.sanitizer == false
+        run: >
+          ctest --preset ${{ matrix.preset }}-unit --no-tests=error --output-on-failure
+          -R '^waterwall\.(aes256gcm_unit|crypto_primitives_unit|users_runtime_migration_unit|global_crypto_startup_failure_unit|openssl_partial_init_failure_unit|wireguard_crypto_failure_unit|encryptionclient_crypto_failure_unit|encryptionserver_crypto_failure_unit|tlsserver_alpn_unit|reality_config_unit|reality_v2_unit|reality_close_lifecycle_unit)$'
+      - name: Run backend integration verification
         if: matrix.sanitizer == false
         run: >
           ctest --preset ${{ matrix.preset }} --no-tests=error --output-on-failure
-          -R '^waterwall\.(aes256gcm_unit|crypto_primitives_unit|users_runtime_migration_unit|global_crypto_startup_failure_unit|openssl_partial_init_failure_unit|wireguard_crypto_failure_unit|encryptionclient_crypto_failure_unit|encryptionserver_crypto_failure_unit|tlsserver_alpn_unit|reality_config_unit|reality_v2_unit|reality_close_lifecycle_unit|encryption_roundtrip|encryption_small_frame_roundtrip|wireguard_udpstateless_packet_roundtrip)$'
+          -R '^waterwall\.(encryption_roundtrip|encryption_small_frame_roundtrip|wireguard_udpstateless_packet_roundtrip)$'
       - name: Run ASan and UBSan crypto tests
         if: matrix.sanitizer == true
         run: >
-          ctest --preset ${{ matrix.preset }} --no-tests=error --output-on-failure
+          ctest --preset ${{ matrix.preset }}-unit --no-tests=error --output-on-failure
           -R '^waterwall\.(aes256gcm_unit|crypto_primitives_unit)$'
       - name: Show ccache statistics
         run: ccache -sv

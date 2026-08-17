@@ -260,6 +260,48 @@
             ]
         },
         {
+            "name": "linux-software-crypto-unit",
+            "configurePreset": "linux-software-crypto-unit",
+            "inherits": [
+                "linux-unit-release"
+            ]
+        },
+        {
+            "name": "linux-sodium-crypto-unit",
+            "configurePreset": "linux-sodium-crypto-unit",
+            "inherits": [
+                "linux-unit-release"
+            ]
+        },
+        {
+            "name": "linux-openssl-crypto-unit",
+            "configurePreset": "linux-openssl-crypto-unit",
+            "inherits": [
+                "linux-unit-release"
+            ]
+        },
+        {
+            "name": "linux-combined-crypto-unit",
+            "configurePreset": "linux-combined-crypto-unit",
+            "inherits": [
+                "linux-unit-release"
+            ]
+        },
+        {
+            "name": "linux-software-crypto-tls-unit",
+            "configurePreset": "linux-software-crypto-tls-unit",
+            "inherits": [
+                "linux-unit-release"
+            ]
+        },
+        {
+            "name": "linux-software-crypto-sanitize-unit",
+            "configurePreset": "linux-software-crypto-sanitize-unit",
+            "inherits": [
+                "linux-unit-debug"
+            ]
+        },
+        {
             "name": "linux-software-crypto",
             "configurePreset": "linux-software-crypto",
             "inherits": [
@@ -506,6 +548,48 @@
             "inherits": [
                 "host-linux",
                 "options"
+            ]
+        },
+        {
+            "name": "linux-software-crypto-unit",
+            "configurePreset": "linux-software-crypto-unit",
+            "inherits": [
+                "linux-unit-release"
+            ]
+        },
+        {
+            "name": "linux-sodium-crypto-unit",
+            "configurePreset": "linux-sodium-crypto-unit",
+            "inherits": [
+                "linux-unit-release"
+            ]
+        },
+        {
+            "name": "linux-openssl-crypto-unit",
+            "configurePreset": "linux-openssl-crypto-unit",
+            "inherits": [
+                "linux-unit-release"
+            ]
+        },
+        {
+            "name": "linux-combined-crypto-unit",
+            "configurePreset": "linux-combined-crypto-unit",
+            "inherits": [
+                "linux-unit-release"
+            ]
+        },
+        {
+            "name": "linux-software-crypto-tls-unit",
+            "configurePreset": "linux-software-crypto-tls-unit",
+            "inherits": [
+                "linux-unit-release"
+            ]
+        },
+        {
+            "name": "linux-software-crypto-sanitize-unit",
+            "configurePreset": "linux-software-crypto-sanitize-unit",
+            "inherits": [
+                "linux-unit-debug"
             ]
         },
         {

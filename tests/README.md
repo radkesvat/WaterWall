@@ -592,6 +592,11 @@ Important:
   do not enable LTO, and representative linked artifacts contain no embedded
   LTO IR. Build `Waterwall`, or one of the `check_waterwall_*` targets first,
   only when the scope requires the production lane too.
+- crypto backend presets follow the same split. For example,
+  `linux-sodium-crypto` builds the production binary and runs integration tests,
+  while `linux-sodium-crypto-unit` builds and runs native units against the same
+  backend without IPO/LTO. Production crypto presets intentionally do not expose
+  native-unit targets.
 
 Run only the canonical Release/no-LTO unit tests:
 
