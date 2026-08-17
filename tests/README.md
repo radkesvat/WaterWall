@@ -19,8 +19,8 @@ These tests run the real `Waterwall` binary with synthetic chains built from:
 
 ### Test Lanes & Network Isolation
 
-On Linux, integration tests run inside private user and network namespaces created without root privileges via `tests/run_in_network_namespace.sh` (`unshare --user --map-root-user --net`).
-This provides loopback-only isolation without public internet access, enabling parallel execution of deterministic functional tests without port collision.
+On Linux, ordinary integration tests run inside private user and network namespaces created without root privileges via `tests/run_in_network_namespace.sh` (`unshare --user --map-root-user --net`). When the privileged lane invokes the same wrapper as root, it retains the caller's user namespace and creates only a private network namespace (`unshare --net`); this preserves access to runner-owned workspace paths while keeping network isolation.
+Both modes provide loopback-only isolation without public internet access, enabling parallel execution of deterministic functional tests without port collision.
 
 Tests are organized into distinct execution lanes via `tests/run_test_lane.sh`:
 
@@ -30,7 +30,7 @@ Tests are organized into distinct execution lanes via `tests/run_test_lane.sh`:
 - `speed`: Multi-stream speed tests (16 tests). Runs strictly serially (`RUN_SERIAL TRUE`) to avoid CPU and bandwidth contention.
 - `privileged`: Tests requiring root/TUN permissions (`sudo -E`, 6 tests). Runs serially.
 - `all`: Runs preflight, support (serial), functional (parallel), external (serial), and speed (serial) in sequence (170 tests total).
-- `preflight`: Verifies unprivileged user + network namespace capability.
+- `preflight`: Verifies the namespace capabilities required by the current caller (user + network namespaces for non-root, network namespace only for root).
 
 ### Performance Baseline & Post-Change Timings
 
@@ -76,7 +76,7 @@ There are several valid ways to run tests:
 - `speedtests/<name>/config.json`
   One Waterwall config file for a SpeedTestClient/SpeedTestServer case.
 - `run_in_network_namespace.sh`
-  Wrapper executing test commands inside a private user + network namespace with `lo` configured.
+  Wrapper executing test commands inside a private network namespace with `lo` configured; non-root callers also enter a mapped user namespace.
 - `run_test_lane.sh`
   Unified test runner executing test lanes (`support`, `functional`, `external`, `speed`, `privileged`, `all`, `preflight`).
 - `run_waterwall_case.sh`

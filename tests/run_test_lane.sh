@@ -88,11 +88,12 @@ check_netns_capability() {
   if ! "${wrapper_script}" bash -c 'ip link show dev lo >/dev/null 2>&1' 2>/dev/null; then
     cat <<'EOF' >&2
 error: network namespace capability check failed.
-WaterWall integration tests in isolated mode require unprivileged user and
-network namespaces (unshare --user --map-root-user --net) with loopback support.
+WaterWall integration tests in isolated mode require a private network namespace
+with loopback support. Non-root runs also require an unprivileged user namespace
+(unshare --user --map-root-user --net); root runs use unshare --net directly.
 
 Common causes:
-  - Kernel unprivileged user namespaces disabled (sysctl kernel.unprivileged_userns_clone=1)
+  - Kernel unprivileged user namespaces disabled for a non-root run (sysctl kernel.unprivileged_userns_clone=1)
   - Container runtime / seccomp profile blocking unshare(CLONE_NEWUSER | CLONE_NEWNET)
   - Missing util-linux (unshare) or iproute2 (ip) packages
 

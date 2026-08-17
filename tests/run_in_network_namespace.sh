@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 
 # Network namespace wrapper for WaterWall integration tests.
-# Runs the requested command in a private Linux user + network namespace
-# with only the loopback ('lo') interface brought up.
+# Runs the requested command in a private Linux network namespace with only
+# the loopback ('lo') interface brought up. Unprivileged callers also receive
+# a private user namespace so they can configure the network namespace.
 
 set -euo pipefail
 
@@ -35,10 +36,17 @@ if [[ -z "$bash_bin" || ! -x "$bash_bin" ]]; then
   exit 1
 fi
 
+unshare_args=(--net)
+if ((EUID != 0)); then
+  unshare_args=(--user --map-root-user --net)
+fi
+
 # The inner script is deliberately single-quoted so its positional parameters
-# are expanded only after unshare starts the inner shell.
+# are expanded only after unshare starts the inner shell. A caller that already
+# has root authority must remain in its current user namespace: nested namespace
+# root cannot override permissions on runner-owned workspace paths.
 # shellcheck disable=SC2016
-exec "$unshare_bin" --user --map-root-user --net -- \
+exec "$unshare_bin" "${unshare_args[@]}" -- \
   "$bash_bin" -c '
     set -euo pipefail
     "$1" link set dev lo up

@@ -39,7 +39,22 @@ for test_exit in 0 7 42 123; do
   fi
 done
 
-# 3. Arguments containing spaces remain separate and intact
+# 3. Root callers retain their user namespace so runner-owned workspace paths
+# remain accessible from the isolated network namespace.
+if ((EUID == 0)); then
+  parent_user_namespace=$(readlink /proc/self/ns/user)
+  child_user_namespace=$("$wrapper_script" "$python_bin" -c '
+import os
+print(os.readlink("/proc/self/ns/user"))
+')
+
+  if [[ "$child_user_namespace" != "$parent_user_namespace" ]]; then
+    echo "FAIL: Root caller unexpectedly entered a nested user namespace" >&2
+    exit 1
+  fi
+fi
+
+# 4. Arguments containing spaces remain separate and intact
 out=$("$wrapper_script" "$python_bin" -c '
 import sys
 assert len(sys.argv) == 4, f"expected 4 argv items, got {len(sys.argv)}: {sys.argv}"
@@ -54,7 +69,7 @@ if [[ "$out" != "args_ok" ]]; then
   exit 1
 fi
 
-# 4. Loopback is usable and both IPv4 and IPv6 sockets can bind
+# 5. Loopback is usable and both IPv4 and IPv6 sockets can bind
 "$wrapper_script" "$python_bin" -c '
 import socket
 # IPv4 TCP bind & connect
@@ -89,7 +104,7 @@ except OSError:
     pass # IPv6 disabled in container/kernel is tolerated
 '
 
-# 5. Two concurrent wrappers can bind the same fixed port without collision
+# 6. Two concurrent wrappers can bind the same fixed port without collision
 test_port=47891
 tmp_dir=$(mktemp -d)
 trap 'rm -rf "$tmp_dir"' EXIT
