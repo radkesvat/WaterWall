@@ -28,7 +28,17 @@ static void postExpiredItem(idle_table_t *table, wloop_t *timer_loop)
     wtimer_t *driver = wtimerAdd(timer_loop, idleCallBack, 1000U, 1);
     twfRequire(driver != NULL, "failed to create the IdleTable delivery driver");
     weventSetUserData(driver, table);
-    wloopUpdateTime(timer_loop);
+
+    // Idle items use wall-clock milliseconds while the loop exposes a cached,
+    // monotonic-derived value. At a millisecond boundary the first refresh can
+    // trail an age-zero item's timestamp, so wait until that cache reaches a
+    // bound sampled after the item was published.
+    const uint64_t expiration_upper_bound = getTimeOfDayMS();
+    do
+    {
+        wloopUpdateTime(timer_loop);
+    } while (wloopNowMS(timer_loop) < expiration_upper_bound);
+
     idleCallBack(driver);
     weventSetUserData(driver, NULL);
     wtimerDelete(driver);
@@ -160,8 +170,7 @@ static void caseStagingGrowthRefusalRestoresPoppedItem(void)
     idletableTestRefuseNextStagingGrowth();
     postExpiredItem(table, getWorkerLoop(0));
 
-    const wid_t  previous_wid = tosSetCurrentWorker(1);
-    discard      wloopProcessEvents(getWorkerLoop(1), 0);
+    tosPumpWorker(&env, 1);
     unsigned int delivered = 0;
     unsigned int restored  = 0;
     for (unsigned int i = 0; i < kGrowthItems; ++i)
@@ -172,9 +181,10 @@ static void caseStagingGrowthRefusalRestoresPoppedItem(void)
             restored++;
         }
     }
-    twfRequire(delivered == kGrowthItems - 1, "successfully staged items did not settle exactly once");
+    twfRequireEqualU32(delivered, kGrowthItems - 1, "successfully staged items did not settle exactly once");
     twfRequire(restored == 1, "staging growth refusal did not restore exactly the popped item");
 
+    const wid_t previous_wid = tosSetCurrentWorker(1);
     idletableDrainWorkerItems(table, 1);
     discard tosSetCurrentWorker(previous_wid);
 
