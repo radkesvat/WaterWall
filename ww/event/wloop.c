@@ -10,7 +10,9 @@
 #include "wthread.h"
 #include "wtime.h"
 
+#include "global_state.h"
 #include "worker.h"
+#include "worker_messages.h"
 
 #ifdef EVENT_IOCP
 #include "overlapio.h"
