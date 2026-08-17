@@ -36,6 +36,7 @@ int main(void)
 #include "iowatcher.h"
 #include "overlapio.h"
 #include "threadsafe_generic_pool.h"
+#include "wloop_internal.h"
 #include "worker_registry_fixture.h"
 #include "wsocket.h"
 
