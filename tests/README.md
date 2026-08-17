@@ -17,21 +17,53 @@ These tests run the real `Waterwall` binary with synthetic chains built from:
 - the tunnel or tunnel-pair under test, with optional `Disturber` inbetween.
 - `TesterServer`
 
+### Test Lanes & Network Isolation
+
+On Linux, integration tests run inside private user and network namespaces created without root privileges via `tests/run_in_network_namespace.sh` (`unshare --user --map-root-user --net`).
+This provides loopback-only isolation without public internet access, enabling parallel execution of deterministic functional tests without port collision.
+
+Tests are organized into distinct execution lanes via `tests/run_test_lane.sh`:
+
+- `support`: Production policy and harness tests (13 tests), run strictly serially.
+- `functional`: Deterministic integration tests (140 tests) run concurrently in isolated network namespaces. Parallelism is calculated adaptively as `min(32, max(4, 4 * CPUs))` (e.g. 16 jobs on a 4-CPU machine). Override with `WATERWALL_INTEGRATION_TEST_JOBS`.
+- `external`: Tests requiring live host network connectivity (e.g., `reality_google_roundtrip`). Runs strictly serially on host network.
+- `speed`: Multi-stream speed tests (16 tests). Runs strictly serially (`RUN_SERIAL TRUE`) to avoid CPU and bandwidth contention.
+- `privileged`: Tests requiring root/TUN permissions (`sudo -E`, 6 tests). Runs serially.
+- `all`: Runs preflight, support (serial), functional (parallel), external (serial), and speed (serial) in sequence (170 tests total).
+- `preflight`: Verifies unprivileged user + network namespace capability.
+
+### Performance Baseline & Post-Change Timings
+
+| Test Suite / Lane | Pre-Isolation (Host Serial) | Post-Isolation (Parallel Lanes) |
+|---|---|---|
+| **Support Tests** (13 tests) | ~55s (serial) | **~55s** (serial) |
+| **Deterministic Functional** (140 tests) | ~173s (sequential) | **~22–24s** (16 jobs on 4 CPUs) / **~71s** (1 CPU, 4 jobs) |
+| **External Network** (1 test) | ~1s | **<1s** (serial) |
+| **Speed Tests** (16 tests) | ~48s (sequential) | **~46–48s** (serial) |
+| **Privileged Integration** (6 tests) | ~15s (sequential) | **~14–15s** (serial) |
+| **Ordinary non-privileged production sequence (`all`)** | ~277s | **~127s (~2m)** (support + functional + external + speed, 170 tests) |
+
+These are warm-build planning measurements from the 4-CPU reference host, not
+portable performance guarantees. The `all` total includes the production
+policy/harness checks; the native-unit tree remains separate. Complete production
+plus native-unit validation takes about 3.5 minutes including the privileged lane;
+the native-unit portion measured a median ~74s across three warm
+`linux-unit-release` runs. These values depend on hardware and build state.
+
 ## Which runner should I use?
 
-There are two valid ways to run these integration tests:
+There are several valid ways to run tests:
 
+- `tests/run_test_lane.sh functional build/linux Release`
+  Recommended for running all functional integration tests in parallel.
+- `tests/run_test_lane.sh all build/linux Release`
+  Runs the complete non-privileged production suite in sequence (support, functional, external, speed).
 - `ctest`
-  This is the normal, recommended entry point.
-  Use it when you want to run registered tests by name, by pattern, or all at once.
+  Normal entry point for running specific tests by pattern or label.
 - `tests/run_waterwall_case.sh`
-  This is the low-level single-case runner.
-  `ctest` calls this script underneath for each registered case.
-
-Practical rule:
-
-- most users should start with `ctest`
-- use `run_waterwall_case.sh` directly when debugging one case or when you want to control the timeout and paths manually
+  Low-level single-case runner for debugging.
+- `tests/run_in_network_namespace.sh`
+  Low-level namespace wrapper (`tests/run_in_network_namespace.sh <command> <args...>`).
 
 ## Current layout
 
@@ -41,9 +73,12 @@ Practical rule:
   One Waterwall config file for a test case.
 - `cases/<name>/workers.txt`
   Optional worker-count override for a case.
-  If omitted, the runner uses its default worker count.
 - `speedtests/<name>/config.json`
   One Waterwall config file for a SpeedTestClient/SpeedTestServer case.
+- `run_in_network_namespace.sh`
+  Wrapper executing test commands inside a private user + network namespace with `lo` configured.
+- `run_test_lane.sh`
+  Unified test runner executing test lanes (`support`, `functional`, `external`, `speed`, `privileged`, `all`, `preflight`).
 - `run_waterwall_case.sh`
   The low-level single-case runner.
   It runs `Waterwall` from the selected case directory, writes a generated `core.json`, watches the tester log, and fails
@@ -63,7 +98,7 @@ Practical rule:
   Optional manual cleanup helper for generated test logs, reports, transient `core.json` files, copied cert/key fixtures,
   and unit-test logs. CTest does not call it.
 - `CMakeLists.txt`
-  Registers integration cases with CTest and delegates unit-test registration to `unittests/CMakeLists.txt`.
+  Registers test cases, wraps isolated tests in `run_in_network_namespace.sh`, and defines custom targets `check_waterwall_support_tests`, `check_waterwall_integration_tests`, `check_waterwall_external_integration_tests`, `check_waterwall_speedtests`, and `check_waterwall_tests`.
 
 ## Current cases
 
@@ -319,8 +354,8 @@ Practical rule:
   Verifies that `PacketsToStream -> UdpConnector -> UdpListener -> StreamToPackets` preserves packet integrity across
   a real UDP loopback transport while multiple workers create independent UDP peers against one shared listener socket.
 - `udp_connector_packet_balance_mode_roundtrip`
-  Verifies that `UdpConnector` accepts `balance-mode: "packet"` with multiple weighted `lvh.me` domain targets,
-  resolves those targets through DNS, and preserves packet integrity while balancing packets across several UDP loopback
+  Verifies that `UdpConnector` accepts `balance-mode: "packet"` with multiple weighted `localhost` domain targets,
+  resolves those targets through the local domain-resolution path, and preserves packet integrity while balancing packets across several UDP loopback
   listener ports.
 - `udp_connector_listener_packet_loss_multiworker`
   Verifies a real UDP loopback hop across four workers using `PacketSender -> UdpConnector` on the sender side and

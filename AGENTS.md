@@ -70,10 +70,23 @@ A correct tunnel is never "just" a parser or encoder. It must preserve callback
     Start with the cheapest relevant check and prefer existing focused tests for
     the files, tunnel, and behavior changed. Do not create or update a test merely
     because a file changed; add coverage only when it provides meaningful regression
-    protection for new or changed behavior. A complete validation currently takes
-    about 30 minutes or more, so reserve it for broad/high-risk changes, shared-core
-    work, release-level validation, or an explicit request. It is not a routine
-    completion step for simple or narrowly scoped tasks.
+    protection for new or changed behavior. On Linux, deterministic integration
+    tests run in private user + network namespaces with loopback-only isolation
+    via `tests/run_in_network_namespace.sh`; the functional lane normally finishes
+    in about 20–30 seconds on the 4-CPU reference host with 16 CTest jobs (~71s on 1 CPU).
+    The serial support lane (13 production policy/harness tests) takes about 55
+    seconds, the external lane takes about one second, the serial speed lane takes
+    about 45–50 seconds, and the privileged lane takes about 15 seconds. The ordinary
+    non-privileged production sequence (`all` lane: support + functional + external + speed,
+    170 tests total) finishes in roughly 2 minutes (~127s). Deterministic cases must
+    not use public DNS or depend on host-network port availability. Use the full functional
+    lane freely for shared tunnel/network behavior or changes spanning several cases,
+    and all integration lanes for broad tunnel or harness work. Complete production
+    plus native-unit validation (a median ~74s across three warm
+    `linux-unit-release` runs) now takes about 3.5 minutes including the privileged
+    lane rather than 30 minutes or more; prefer it for shared-core,
+    lifecycle/concurrency, multi-subsystem, or uncertain-scope changes, not only for
+    releases. Timings are planning values and vary with hardware and build warmth.
 13. **Worker identity is explicit (`WID`) and invalid by default (`kInvalidWID`).**
     WID represents a registered worker slot index (`0 .. WORKERS_COUNT - 1`), not
     an OS thread ID (`getTID()`). Unregistered threads (device reader/writer
@@ -525,7 +538,13 @@ cmake --build --preset linux --target TlsClient -j8
 # preferred: run the registered test(s) related to the change
 ctest --preset linux --output-on-failure -R '^waterwall\.tls_roundtrip$'
 
-# Full production lane (exceptional, not a routine completion step).
+# Fast full deterministic integration lane (normally 20–30 seconds on 4 CPUs).
+bash tests/run_test_lane.sh functional build/linux Release
+
+# All ordinary non-privileged production lanes (normally about 2 minutes).
+bash tests/run_test_lane.sh all build/linux Release
+
+# Complete production tree, including policy and harness checks.
 ctest --preset linux --output-on-failure
 
 # Native units have a separate Release/no-LTO tree.
@@ -554,11 +573,15 @@ Build/validation rules:
   non-behavioral edits may need only inspection or a diff check. Do not run a full
   test lane merely because code changed, because the lane is available, or as a
   habitual final step.
-- **Treat full validation as exceptional.** Complete validation currently takes
-  about 30 minutes or more. Run a full lane only when focused checks cannot give
-  credible coverage and the change is broad or high-risk (for example shared core
-  contracts or cross-tunnel behavior), when preparing release-level evidence, or
-  when the user explicitly requests it. Record the reason when choosing it.
+- **Use the faster broad lanes when they add useful confidence.** The functional
+  integration lane normally takes 20–30 seconds on the 4-CPU reference host, and
+  all ordinary non-privileged production lanes take about 2 minutes. Run them
+  readily for shared networking or tunnel behavior, cross-tunnel changes, and test
+  harness work. Complete production plus native-unit validation takes about 3.5 minutes
+  and is encouraged for shared-core contracts, lifecycle/concurrency work,
+  multi-subsystem changes, or any change whose impact is hard to bound. Focused
+  validation is still preferable for narrow changes; speed alone is not a reason
+  to run unrelated tests. Treat every timing as hardware- and build-dependent.
 - **Keep validation proportional and finite.** Do not turn a build-property test
   into a general supply-chain, reproducibility, CI-authority, process-tracing, or
   object-format verification system. If the requested invariant can be checked
@@ -617,8 +640,9 @@ Build/validation rules:
    case, or a contract change. Reuse existing coverage where it is sufficient;
    do not manufacture a test for a simple, mechanical, or documentation-only task.
 8. **Validate proportionally.** Start with inspection and the smallest relevant
-   preset target/test. Do not expand to a full lane unless focused checks are
-   inadequate and the exceptional criteria in §5 apply.
+   preset target/test. Expand to the fast broad lanes when the change is shared,
+   cross-cutting, concurrency-sensitive, or difficult to bound, as described in
+   §5; do not run unrelated tests merely because they are available.
 
 ---
 
@@ -649,8 +673,9 @@ Build/validation rules:
 - No `initialized` flag added that the source does not require.
 - When tests were warranted, the chosen focused coverage exercises the changed
   behavior and likely regressions; otherwise, the reason existing coverage or
-  non-test validation is sufficient is clear. Full validation was used only under
-  the exceptional criteria in §5. Compilation used preset build metadata.
+  non-test validation is sufficient is clear. Validation scope follows §5:
+  focused for narrow work and broad/full for shared or difficult-to-bound work.
+  Compilation used preset build metadata.
 
 ---
 
