@@ -31,22 +31,22 @@
         "domain-strategy": 3,
         "addresses": [
           {
-            "address": "lvh.me",
+            "address": "localhost",
             "port": 25950,
             "weight": 1
           },
           {
-            "address": "lvh.me",
+            "address": "localhost",
             "port": 25951,
             "weight": 1
           },
           {
-            "address": "lvh.me",
+            "address": "localhost",
             "port": 25952,
             "weight": 1
           },
           {
-            "address": "lvh.me",
+            "address": "localhost",
             "port": 25953,
             "weight": 1
           }

@@ -7,6 +7,28 @@ option(
   ON
 )
 
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING)
+  set(WATERWALL_DEFAULT_INTEGRATION_TEST_NETNS ON)
+else()
+  set(WATERWALL_DEFAULT_INTEGRATION_TEST_NETNS OFF)
+endif()
+
+option(
+  WATERWALL_ENABLE_INTEGRATION_TEST_NETNS
+  "Run Linux integration tests inside private user + network namespaces"
+  ${WATERWALL_DEFAULT_INTEGRATION_TEST_NETNS}
+)
+
+if(WATERWALL_ENABLE_INTEGRATION_TEST_NETNS)
+  find_program(UNSHARE_EXECUTABLE unshare REQUIRED)
+  find_program(IP_EXECUTABLE ip REQUIRED)
+  set(waterwall_test_network_mode "isolated")
+else()
+  set(waterwall_test_network_mode "host-serial")
+endif()
+
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/waterwall_test_network_mode.txt" "${waterwall_test_network_mode}\n")
+
 set(waterwall_production_lto_artifacts "")
 foreach(waterwall_production_lto_target IN ITEMS ww ww_lwip TlsClient)
   if(TARGET ${waterwall_production_lto_target})
@@ -68,6 +90,11 @@ add_test(
 )
 set_tests_properties(waterwall.udpstatelesssocket_io_owner_policy PROPERTIES LABELS "unit;policy;tunnels;udpstatelesssocket;worker;ownership")
 
+# Helper to append labels to a test without overwriting existing labels.
+function(add_waterwall_test_labels test_name)
+  set_property(TEST ${test_name} APPEND PROPERTY LABELS ${ARGN})
+endfunction()
+
 # Every runner now copies its case directory into a private run directory, so
 # generated files can no longer collide. The listener ports inside config.json
 # are still a shared resource though: distinct cases pick distinct ports, but
@@ -81,7 +108,51 @@ function(add_waterwall_case_resource_lock test_name case_name)
   )
 endfunction()
 
+function(add_waterwall_isolated_test test_name)
+  if(WATERWALL_ENABLE_INTEGRATION_TEST_NETNS)
+    add_test(
+      NAME ${test_name}
+      COMMAND
+        "${BASH_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/run_in_network_namespace.sh"
+        ${ARGN}
+    )
+    add_waterwall_test_labels(${test_name} "network-isolated")
+  else()
+    add_test(
+      NAME ${test_name}
+      COMMAND ${ARGN}
+    )
+    add_waterwall_test_labels(${test_name} "host-network")
+  endif()
+endfunction()
+
 function(add_waterwall_integration_test_with_timeout test_name case_name timeout_seconds)
+  set(case_dir "${CMAKE_CURRENT_SOURCE_DIR}/cases/${case_name}")
+
+  add_waterwall_isolated_test(
+    ${test_name}
+    "${BASH_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/run_waterwall_case.sh"
+    "$<TARGET_FILE:Waterwall>"
+    "${case_dir}"
+    "${timeout_seconds}"
+  )
+
+  set_tests_properties(
+    ${test_name}
+    PROPERTIES
+      TIMEOUT 120
+  )
+  add_waterwall_test_labels(${test_name} "integration" "tunnels")
+  add_waterwall_case_resource_lock(${test_name} ${case_name})
+endfunction()
+
+function(add_waterwall_integration_test test_name case_name)
+  add_waterwall_integration_test_with_timeout(${test_name} ${case_name} 30)
+endfunction()
+
+function(add_waterwall_external_integration_test_with_timeout test_name case_name timeout_seconds)
   set(case_dir "${CMAKE_CURRENT_SOURCE_DIR}/cases/${case_name}")
 
   add_test(
@@ -98,37 +169,37 @@ function(add_waterwall_integration_test_with_timeout test_name case_name timeout
     ${test_name}
     PROPERTIES
       TIMEOUT 120
-      LABELS "integration;tunnels"
+      RUN_SERIAL TRUE
   )
+  add_waterwall_test_labels(${test_name} "integration" "tunnels" "external-network" "host-network")
   add_waterwall_case_resource_lock(${test_name} ${case_name})
 endfunction()
 
-function(add_waterwall_integration_test test_name case_name)
-  add_waterwall_integration_test_with_timeout(${test_name} ${case_name} 30)
+function(add_waterwall_external_integration_test test_name case_name)
+  add_waterwall_external_integration_test_with_timeout(${test_name} ${case_name} 30)
 endfunction()
 
 function(add_waterwall_wireguard_cookie_test test_name case_name)
   set(case_dir "${CMAKE_CURRENT_SOURCE_DIR}/cases/${case_name}")
 
-  add_test(
-    NAME ${test_name}
-    COMMAND
-      "${BASH_EXECUTABLE}"
-      "${CMAKE_CURRENT_SOURCE_DIR}/run_wireguard_cookie_case.sh"
-      "${CMAKE_CURRENT_SOURCE_DIR}/run_waterwall_case.sh"
-      "$<TARGET_FILE:Waterwall>"
-      "${case_dir}"
-      "30"
-      "${PYTHON3_EXECUTABLE}"
+  add_waterwall_isolated_test(
+    ${test_name}
+    "${BASH_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/run_wireguard_cookie_case.sh"
+    "${CMAKE_CURRENT_SOURCE_DIR}/run_waterwall_case.sh"
+    "$<TARGET_FILE:Waterwall>"
+    "${case_dir}"
+    "30"
+    "${PYTHON3_EXECUTABLE}"
   )
 
   set_tests_properties(
     ${test_name}
     PROPERTIES
       TIMEOUT 120
-      LABELS "integration;tunnels;wireguard;cookies;overload"
       RESOURCE_LOCK waterwall_wireguard_cookie_ports
   )
+  add_waterwall_test_labels(${test_name} "integration" "tunnels" "wireguard" "cookies" "overload")
   add_waterwall_case_resource_lock(${test_name} ${case_name})
 endfunction()
 
@@ -147,9 +218,9 @@ function(add_waterwall_skipped_integration_test test_name skip_message)
     ${test_name}
     PROPERTIES
       TIMEOUT 120
-      LABELS "integration;tunnels"
       SKIP_RETURN_CODE 77
   )
+  add_waterwall_test_labels(${test_name} "integration" "tunnels")
 endfunction()
 
 function(add_waterwall_expected_failure_integration_test test_name case_name expected_output)
@@ -160,25 +231,24 @@ function(add_waterwall_expected_failure_integration_test test_name case_name exp
     set(expected_status "1")
   endif()
 
-  add_test(
-    NAME ${test_name}
-    COMMAND
-      "${BASH_EXECUTABLE}"
-      "${CMAKE_CURRENT_SOURCE_DIR}/run_waterwall_expected_failure_case.sh"
-      "${CMAKE_CURRENT_SOURCE_DIR}/run_waterwall_case.sh"
-      "$<TARGET_FILE:Waterwall>"
-      "${case_dir}"
-      "10"
-      "${expected_output}"
-      "${expected_status}"
+  add_waterwall_isolated_test(
+    ${test_name}
+    "${BASH_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/run_waterwall_expected_failure_case.sh"
+    "${CMAKE_CURRENT_SOURCE_DIR}/run_waterwall_case.sh"
+    "$<TARGET_FILE:Waterwall>"
+    "${case_dir}"
+    "10"
+    "${expected_output}"
+    "${expected_status}"
   )
 
   set_tests_properties(
     ${test_name}
     PROPERTIES
       TIMEOUT 120
-      LABELS "integration;tunnels;negative"
   )
+  add_waterwall_test_labels(${test_name} "integration" "tunnels" "negative")
   add_waterwall_case_resource_lock(${test_name} ${case_name})
 endfunction()
 
@@ -214,6 +284,39 @@ set_tests_properties(
     LABELS "test-harness"
 )
 
+if(LINUX AND WATERWALL_ENABLE_INTEGRATION_TEST_NETNS)
+  add_test(
+    NAME waterwall.network_namespace_wrapper
+    COMMAND
+      "${BASH_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/run_in_network_namespace_test.sh"
+      "${CMAKE_CURRENT_SOURCE_DIR}/run_in_network_namespace.sh"
+      "${PYTHON3_EXECUTABLE}"
+  )
+  set_tests_properties(
+    waterwall.network_namespace_wrapper
+    PROPERTIES
+      TIMEOUT 30
+      LABELS "test-harness;linux;netns"
+  )
+endif()
+
+if(LINUX)
+  add_test(
+    NAME waterwall.test_lane_runner
+    COMMAND
+      "${BASH_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/run_test_lane_test.sh"
+      "${CMAKE_CURRENT_SOURCE_DIR}/run_test_lane.sh"
+  )
+  set_tests_properties(
+    waterwall.test_lane_runner
+    PROPERTIES
+      TIMEOUT 30
+      LABELS "test-harness;linux"
+  )
+endif()
+
 add_test(
   NAME waterwall.lwip_shutdown_order_policy
   COMMAND
@@ -230,23 +333,22 @@ set_tests_properties(
 function(add_waterwall_probe_integration_test test_name case_name timeout_seconds)
   set(case_dir "${CMAKE_CURRENT_SOURCE_DIR}/cases/${case_name}")
 
-  add_test(
-    NAME ${test_name}
-    COMMAND
-      "${BASH_EXECUTABLE}"
-      "${CMAKE_CURRENT_SOURCE_DIR}/run_waterwall_probe_case.sh"
-      "$<TARGET_FILE:Waterwall>"
-      "${case_dir}"
-      "${timeout_seconds}"
-      "${PYTHON3_EXECUTABLE}"
+  add_waterwall_isolated_test(
+    ${test_name}
+    "${BASH_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/run_waterwall_probe_case.sh"
+    "$<TARGET_FILE:Waterwall>"
+    "${case_dir}"
+    "${timeout_seconds}"
+    "${PYTHON3_EXECUTABLE}"
   )
 
   set_tests_properties(
     ${test_name}
     PROPERTIES
       TIMEOUT 120
-      LABELS "integration;tunnels;probe"
   )
+  add_waterwall_test_labels(${test_name} "integration" "tunnels" "probe")
   add_waterwall_case_resource_lock(${test_name} ${case_name})
 endfunction()
 
@@ -254,35 +356,30 @@ function(add_waterwall_privileged_probe_integration_test test_name case_name tim
   set(case_dir "${CMAKE_CURRENT_SOURCE_DIR}/cases/${case_name}")
 
   if(WATERWALL_ENABLE_PRIVILEGED_INTEGRATION_TESTS)
-    add_test(
-      NAME ${test_name}
-      COMMAND
-        "${BASH_EXECUTABLE}"
-        "${CMAKE_CURRENT_SOURCE_DIR}/run_waterwall_privileged_probe_case.sh"
-        "$<TARGET_FILE:Waterwall>"
-        "${case_dir}"
-        "${timeout_seconds}"
-        "${PYTHON3_EXECUTABLE}"
+    add_waterwall_isolated_test(
+      ${test_name}
+      "${BASH_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/run_waterwall_privileged_probe_case.sh"
+      "$<TARGET_FILE:Waterwall>"
+      "${case_dir}"
+      "${timeout_seconds}"
+      "${PYTHON3_EXECUTABLE}"
     )
 
     set_tests_properties(
       ${test_name}
       PROPERTIES
         TIMEOUT 120
-        LABELS "integration;tunnels;probe;privileged;socket-manager"
         SKIP_RETURN_CODE 77
     )
+    add_waterwall_test_labels(${test_name} "integration" "tunnels" "probe" "privileged" "socket-manager")
     add_waterwall_case_resource_lock(${test_name} ${case_name})
   else()
     add_waterwall_skipped_integration_test(
       ${test_name}
       "privileged integration tests disabled; configure with -DWATERWALL_ENABLE_PRIVILEGED_INTEGRATION_TESTS=ON"
     )
-    set_tests_properties(
-      ${test_name}
-      PROPERTIES
-        LABELS "integration;tunnels;probe;privileged;socket-manager"
-    )
+    add_waterwall_test_labels(${test_name} "integration" "tunnels" "probe" "privileged" "socket-manager")
   endif()
 endfunction()
 
@@ -300,46 +397,63 @@ function(add_waterwall_iptables_recovery_integration_test test_name)
       ${test_name}
       PROPERTIES
         TIMEOUT 180
-        LABELS "integration;linux;privileged;socket-manager;iptables"
         SKIP_RETURN_CODE 77
         RESOURCE_LOCK waterwall_iptables_recovery
     )
+    add_waterwall_test_labels(${test_name} "integration" "linux" "privileged" "socket-manager" "iptables" "self-managed-network-namespace" "host-network")
   else()
     add_waterwall_skipped_integration_test(
       ${test_name}
       "iptables crash-recovery integration requires enabled Linux privileged tests"
     )
-    set_tests_properties(
-      ${test_name}
-      PROPERTIES
-        LABELS "integration;linux;privileged;socket-manager;iptables"
-    )
+    add_waterwall_test_labels(${test_name} "integration" "linux" "privileged" "socket-manager" "iptables")
   endif()
 endfunction()
 
 function(add_waterwall_packet_analysis_test test_name case_name)
   set(case_dir "${CMAKE_CURRENT_SOURCE_DIR}/cases/${case_name}")
 
-  add_test(
-    NAME ${test_name}
-    COMMAND
-      "${BASH_EXECUTABLE}"
-      "${CMAKE_CURRENT_SOURCE_DIR}/run_packet_analysis_case.sh"
-      "$<TARGET_FILE:Waterwall>"
-      "${case_dir}"
-      "30"
+  add_waterwall_isolated_test(
+    ${test_name}
+    "${BASH_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/run_packet_analysis_case.sh"
+    "$<TARGET_FILE:Waterwall>"
+    "${case_dir}"
+    "30"
   )
 
   set_tests_properties(
     ${test_name}
     PROPERTIES
       TIMEOUT 120
-      LABELS "integration;tunnels;packet-analysis"
   )
+  add_waterwall_test_labels(${test_name} "integration" "tunnels" "packet-analysis")
   add_waterwall_case_resource_lock(${test_name} ${case_name})
 endfunction()
 
 function(add_waterwall_speedtest test_name speedtest_name)
+  set(speedtest_dir "${CMAKE_CURRENT_SOURCE_DIR}/speedtests/${speedtest_name}")
+
+  add_waterwall_isolated_test(
+    ${test_name}
+    "${BASH_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/run_waterwall_speedtest.sh"
+    "$<TARGET_FILE:Waterwall>"
+    "${speedtest_dir}"
+    "45"
+  )
+
+  set_tests_properties(
+    ${test_name}
+    PROPERTIES
+      TIMEOUT 120
+      RUN_SERIAL TRUE
+  )
+  add_waterwall_test_labels(${test_name} "integration" "tunnels" "speedtest")
+  add_waterwall_case_resource_lock(${test_name} "speedtest_${speedtest_name}")
+endfunction()
+
+function(add_waterwall_external_speedtest test_name speedtest_name)
   set(speedtest_dir "${CMAKE_CURRENT_SOURCE_DIR}/speedtests/${speedtest_name}")
 
   add_test(
@@ -356,8 +470,9 @@ function(add_waterwall_speedtest test_name speedtest_name)
     ${test_name}
     PROPERTIES
       TIMEOUT 120
-      LABELS "integration;tunnels;speedtest"
+      RUN_SERIAL TRUE
   )
+  add_waterwall_test_labels(${test_name} "integration" "tunnels" "speedtest" "external-network" "host-network")
   add_waterwall_case_resource_lock(${test_name} "speedtest_${speedtest_name}")
 endfunction()
 
@@ -385,7 +500,7 @@ add_waterwall_expected_failure_integration_test(
   tls_fallback_rejects_sni_gate
   "TlsServer: fallback-node-name/fallback-node/fallback cannot be combined with sni"
 )
-add_waterwall_integration_test(waterwall.reality_google_roundtrip reality_google_roundtrip)
+add_waterwall_external_integration_test(waterwall.reality_google_roundtrip reality_google_roundtrip)
 add_waterwall_integration_test(waterwall.reality_v2_roundtrip reality_v2_roundtrip)
 add_waterwall_probe_integration_test(waterwall.reality_v2_tls13_post_handshake reality_v2_tls13_post_handshake 20)
 add_waterwall_integration_test(waterwall.reality_v2_tls13_handoff reality_v2_tls13_handoff)
@@ -638,11 +753,7 @@ add_waterwall_expected_failure_integration_test(
   "JSON Error: PingServer->settings->ttl (int field) : expected a whole number between 0 and 255"
 )
 add_waterwall_privileged_probe_integration_test(waterwall.ping_direct_real_adapters_roundtrip ping_direct_real_adapters_roundtrip 15)
-set_tests_properties(
-  waterwall.ping_direct_real_adapters_roundtrip
-  PROPERTIES
-    LABELS "integration;tunnels;probe;privileged;ping"
-)
+add_waterwall_test_labels(waterwall.ping_direct_real_adapters_roundtrip "ping")
 add_waterwall_integration_test(
   waterwall.ipmanipulator_tcp_custom_protocol_roundtrip
   ipmanipulator_tcp_custom_protocol_roundtrip
@@ -678,30 +789,61 @@ add_waterwall_speedtest(waterwall.speedtest_tls_direct_pair tls_direct_pair)
 add_waterwall_speedtest(waterwall.speedtest_tls_tcp_sandwich tls_tcp_sandwich)
 add_waterwall_speedtest(waterwall.speedtest_encryption_direct_pair encryption_direct_pair)
 add_waterwall_speedtest(waterwall.speedtest_encryption_tcp_sandwich encryption_tcp_sandwich)
-add_waterwall_speedtest(waterwall.speedtest_reality_direct_pair reality_direct_pair)
-add_waterwall_speedtest(waterwall.speedtest_reality_tcp_sandwich reality_tcp_sandwich)
+add_waterwall_external_speedtest(waterwall.speedtest_reality_direct_pair reality_direct_pair)
+add_waterwall_external_speedtest(waterwall.speedtest_reality_tcp_sandwich reality_tcp_sandwich)
 add_waterwall_speedtest(waterwall.speedtest_mux_direct_pair mux_direct_pair)
 add_waterwall_speedtest(waterwall.speedtest_mux_tcp_sandwich mux_tcp_sandwich)
 
 add_custom_target(check_waterwall_integration_tests
   COMMAND
-    "${CMAKE_CTEST_COMMAND}"
-    --test-dir "${CMAKE_BINARY_DIR}"
-    -C "$<CONFIG>"
-    --output-on-failure
-    -L integration
+    "${BASH_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/run_test_lane.sh"
+    functional
+    "${CMAKE_BINARY_DIR}"
+    "$<CONFIG>"
+  DEPENDS Waterwall
+  USES_TERMINAL
+)
+
+add_custom_target(check_waterwall_external_integration_tests
+  COMMAND
+    "${BASH_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/run_test_lane.sh"
+    external
+    "${CMAKE_BINARY_DIR}"
+    "$<CONFIG>"
+  DEPENDS Waterwall
+  USES_TERMINAL
+)
+
+add_custom_target(check_waterwall_speedtests
+  COMMAND
+    "${BASH_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/run_test_lane.sh"
+    speed
+    "${CMAKE_BINARY_DIR}"
+    "$<CONFIG>"
+  DEPENDS Waterwall
+  USES_TERMINAL
+)
+add_custom_target(check_waterwall_support_tests
+  COMMAND
+    "${BASH_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/run_test_lane.sh"
+    support
+    "${CMAKE_BINARY_DIR}"
+    "$<CONFIG>"
   DEPENDS Waterwall
   USES_TERMINAL
 )
 
 add_custom_target(check_waterwall_tests
   COMMAND
-    "${CMAKE_CTEST_COMMAND}"
-    --test-dir "${CMAKE_BINARY_DIR}"
-    -C "$<CONFIG>"
-    --output-on-failure
-  DEPENDS
-    Waterwall
-    waterwall_unit_tests
+    "${BASH_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/run_test_lane.sh"
+    all
+    "${CMAKE_BINARY_DIR}"
+    "$<CONFIG>"
+  DEPENDS Waterwall
   USES_TERMINAL
 )
