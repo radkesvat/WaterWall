@@ -439,6 +439,7 @@ static uint32_t tunnelGetCorrectAlignedStateSize(uint32_t size)
     uint32_t   aligned_size = 0;
     const bool valid        = tunnelTryAlignStateSize((size_t) size, &aligned_size);
     assert(valid);
+    discard valid;
     return aligned_size;
 }
 
@@ -453,6 +454,7 @@ static uint32_t tunnelGetCorrectAlignedLineStateSize(uint32_t size)
     uint32_t   aligned_size = 0;
     const bool valid        = tunnelTryAlignStateSize((size_t) size, &aligned_size);
     assert(valid);
+    discard valid;
     return aligned_size;
 }
 
