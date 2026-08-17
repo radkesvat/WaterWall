@@ -62,7 +62,6 @@ jobs:
         with:
           path: |
             ${{ env.cpm-path }}
-            ${{ github.workspace }}/.ccache
           key: ${{ env.cpm-key }}-windows-shutdown-${{ hashFiles('**/CMakeLists.txt', '**/*.cmake') }}
           restore-keys: |
             ${{ env.cpm-key }}-windows-
@@ -72,7 +71,9 @@ jobs:
         with:
           arch: x64
       - name: Install dependencies
-        run: choco install -y ninja nasm ccache
+        # Keep MSVC's PCH compilation direct; ccache only documents PCH support
+        # for GCC and Clang.
+        run: choco install -y ninja nasm
       - name: Configure focused Windows shutdown units
         run: >
           cmake --preset windows-iocp-unit

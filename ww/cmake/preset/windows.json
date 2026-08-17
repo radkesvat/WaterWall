@@ -46,7 +46,6 @@
                 "host-windows",
                 "target-windows",
                 "ninja",
-                "ccache",
                 "native-unit-tests",
                 "native-unit-windows-x64",
                 "default"
