@@ -169,6 +169,7 @@ def immediate_cover_record_count(scenario):
 def new_runtime(scenario):
     return {
         "scenario": scenario,
+        "request_cutoff_started": threading.Event(),
         "request_forwarded": threading.Event(),
         "partial_prefix_sent": threading.Event(),
         "cover_client_finished": threading.Event(),
@@ -342,7 +343,7 @@ def start_cover_relay():
         client.settimeout(6.0)
         server.settimeout(6.0)
         c2s_ccs = False
-        post_handshake_count = 0
+        pre_request_cover_count = 0
 
         def upstream():
             nonlocal c2s_ccs
@@ -368,34 +369,48 @@ def start_cover_relay():
                     pass
 
         def downstream():
-            nonlocal post_handshake_count
+            nonlocal pre_request_cover_count
             try:
                 while True:
                     record = recv_tls_record(server)
                     if record is None:
                         break
                     index = record_event(runtime, "cover", "s2c", record)
-                    is_post_handshake = (
+                    # Closing the cover side after REQUEST can make OpenSSL emit an
+                    # encrypted close_notify before CONFIRM. It is after the
+                    # destination cutoff and is not ticket/action evidence.
+                    is_pre_request_cover = (
                         runtime["cover_client_finished"].is_set()
-                        and not runtime["confirm_forwarded"].is_set()
+                        and not runtime["request_cutoff_started"].is_set()
                         and record[:3] == TLS_APPLICATION_HEADER
                     )
-                    if is_post_handshake:
-                        post_handshake_count += 1
-                        runtime["evidence"]["cover_post_handshake_records"] = (
-                            post_handshake_count
+                    if is_pre_request_cover:
+                        pre_request_cover_count += 1
+                        runtime["evidence"]["cover_pre_request_records"] = (
+                            pre_request_cover_count
                         )
+                        runtime["evidence"].setdefault(
+                            "cover_pre_request_body_lengths", []
+                        ).append(int.from_bytes(record[3:5], "big"))
                         runtime["cover_source_ready"].set()
 
                     mode = scenario.get("cover_mode")
-                    if is_post_handshake and post_handshake_count == 1 and mode == "delay_until_request":
+                    if (
+                        is_pre_request_cover
+                        and pre_request_cover_count == 1
+                        and mode == "delay_until_request"
+                    ):
                         if not runtime["request_forwarded"].wait(2.0):
                             raise OSError("request was not observed before delayed ticket")
                         time.sleep(0.03)
                         runtime["evidence"]["ticket_released_after_request"] = True
                         client.sendall(record)
                         chunks = (len(record),)
-                    elif is_post_handshake and post_handshake_count == 1 and mode == "partial_until_request":
+                    elif (
+                        is_pre_request_cover
+                        and pre_request_cover_count == 1
+                        and mode == "partial_until_request"
+                    ):
                         prefix_len = min(8, len(record) - 1)
                         client.sendall(record[:prefix_len])
                         # The REQUEST travels over a separate loopback connection. Give the
@@ -409,7 +424,7 @@ def start_cover_relay():
                         client.sendall(record[prefix_len:])
                         chunks = (prefix_len, len(record) - prefix_len)
                         runtime["evidence"]["partial_ticket_prefix"] = prefix_len
-                    elif is_post_handshake and mode == "byte_split":
+                    elif is_pre_request_cover and mode == "byte_split":
                         chunks = tuple(send_chunks(client, record, (1,) * len(record), delay=0.0002))
                         runtime["evidence"]["byte_split_ticket_chunks"] = len(chunks)
                     elif mode == "record_segmented":
@@ -540,6 +555,7 @@ def start_main_relay():
                                 f"only {runtime['evidence'].get('main_cover_records', 0)} of "
                                 f"{expected_cover} immediate cover records arrived before REQUEST"
                             )
+                        runtime["request_cutoff_started"].set()
 
                     if mode == "record_segmented" and role in ("request", "confirm"):
                         chunks = tuple(send_segmented(server, forwarded))
@@ -798,14 +814,16 @@ def validate_success(runtime, sink_before):
         if not cover_positions or not all(request_pos < position for position in cover_positions):
             fail(f"{scenario['name']}: final partial cover record did not complete after REQUEST")
     post_handshake_cover_count = len(cover_entries)
-    cover_source_count = runtime["evidence"].get("cover_post_handshake_records", 0)
+    cover_source_count = runtime["evidence"].get("cover_pre_request_records", 0)
     expected_source_count = scenario["tickets"]
     if scenario.get("cover_action") == "application":
         expected_source_count += 1
     if cover_source_count != expected_source_count:
         fail(
             f"{scenario['name']}: cover endpoint emitted {cover_source_count} protected "
-            f"post-handshake records, expected {expected_source_count}"
+            f"records before REQUEST cutoff with body lengths "
+            f"{runtime['evidence'].get('cover_pre_request_body_lengths', [])}, expected "
+            f"{expected_source_count}"
         )
     if scenario.get("cover_mode") == "delay_until_request":
         if post_handshake_cover_count != 0:
@@ -877,7 +895,7 @@ def validate_failure(runtime, sink_before, sink_state):
     if mode == "corrupt_confirm" and not runtime["evidence"].get("corrupted_confirm"):
         fail("corrupted-confirm scenario did not mutate CONFIRM")
     if scenario.get("cover_action") == "close_notify":
-        source_records = runtime["evidence"].get("cover_post_handshake_records", 0)
+        source_records = runtime["evidence"].get("cover_pre_request_records", 0)
         relayed_records = runtime["evidence"].get("main_cover_records", 0)
         if source_records != 1 or relayed_records != 1:
             fail(
