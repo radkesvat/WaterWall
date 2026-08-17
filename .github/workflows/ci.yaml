@@ -666,7 +666,7 @@ jobs:
 
         - name: Extract version
           run: |
-            VERSION=$(cat ww/cmake/version.txt)
+            VERSION=$(cat build/ww/cmake/version.txt)
             echo "Project version: $VERSION"
             echo "VERSION=$VERSION" >> $GITHUB_ENV
 
