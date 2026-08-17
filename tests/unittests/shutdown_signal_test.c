@@ -71,6 +71,10 @@ static signal_case_t child_case;
 static atomic_bool   worker_is_busy;
 static atomic_bool   ready_for_signal;
 static atomic_bool   cleanup_entered;
+static wthread_t     sender_thread;
+static wthread_t     requester_thread;
+static bool          sender_thread_valid;
+static bool          requester_thread_valid;
 
 static bool waitForBool(atomic_bool *flag, unsigned int timeout_ms)
 {
@@ -168,6 +172,20 @@ static WTHREAD_ROUTINE(successRequestMain) // NOLINT
     return 0;
 }
 
+static void joinSignalHelperThreads(void)
+{
+    if (sender_thread_valid)
+    {
+        require(safeThreadJoin(sender_thread), "failed to join the signal-sender thread");
+        sender_thread_valid = false;
+    }
+    if (requester_thread_valid)
+    {
+        require(safeThreadJoin(requester_thread), "failed to join the success-request thread");
+        requester_thread_valid = false;
+    }
+}
+
 typedef struct
 {
     wid_t     wid;
@@ -177,6 +195,72 @@ typedef struct
 } child_plan_t;
 
 static child_plan_t child_plan;
+
+static bool postPlannedEventWhenWorkerLoopRuns(void)
+{
+    worker_t *worker = getWorker(child_plan.wid);
+
+    for (unsigned int waited = 0; waited < kWaitTimeoutMs; waited += 5)
+    {
+        bool attempted = false;
+        bool posted    = false;
+
+        /* Keep the non-owning loop pointer alive through the foreign post. */
+        mutexLock(&worker->control_mutex);
+        wloop_t *loop = worker->loop;
+        if (loop != NULL && wloopStatus(loop) == WLOOP_STATUS_RUNNING)
+        {
+            wevent_t ev;
+            memoryZero(&ev, sizeof(ev));
+            ev.loop = loop;
+            ev.cb   = child_plan.cb;
+            weventSetPriority(&ev, WEVENT_HIGH_PRIORITY);
+
+            attempted = true;
+            posted    = wloopPostEvent(loop, &ev);
+        }
+        const bool loop_available = loop != NULL;
+        mutexUnlock(&worker->control_mutex);
+
+        if (attempted)
+        {
+            return posted;
+        }
+        if (! loop_available)
+        {
+            return false;
+        }
+        wwSleepMS(5);
+    }
+
+    return false;
+}
+
+static bool waitForWorkerLoopToRun(wid_t wid)
+{
+    worker_t *worker = getWorker(wid);
+
+    for (unsigned int waited = 0; waited < kWaitTimeoutMs; waited += 5)
+    {
+        mutexLock(&worker->control_mutex);
+        wloop_t   *loop           = worker->loop;
+        const bool loop_available = loop != NULL;
+        const bool running        = loop_available && wloopStatus(loop) == WLOOP_STATUS_RUNNING;
+        mutexUnlock(&worker->control_mutex);
+
+        if (running)
+        {
+            return true;
+        }
+        if (! loop_available)
+        {
+            return false;
+        }
+        wwSleepMS(5);
+    }
+
+    return false;
+}
 
 static void fillShutdownWakePipe(void)
 {
@@ -206,22 +290,7 @@ static WTHREAD_ROUTINE(signalSenderMain) // NOLINT
 
     if (child_plan.cb != NULL)
     {
-        wloop_t *loop = getWorkerLoop(child_plan.wid);
-        for (unsigned int waited = 0; waited < kWaitTimeoutMs; waited += 5)
-        {
-            if (wloopStatus(loop) == WLOOP_STATUS_RUNNING)
-            {
-                break;
-            }
-            wwSleepMS(5);
-        }
-
-        wevent_t ev;
-        memoryZero(&ev, sizeof(ev));
-        ev.loop = loop;
-        ev.cb   = child_plan.cb;
-        weventSetPriority(&ev, WEVENT_HIGH_PRIORITY);
-        if (! wloopPostEvent(loop, &ev))
+        if (! postPlannedEventWhenWorkerLoopRuns())
         {
             _Exit(81);
         }
@@ -237,13 +306,9 @@ static WTHREAD_ROUTINE(signalSenderMain) // NOLINT
     else
     {
         // Idle case: let worker 0 settle into its poll first.
-        for (unsigned int waited = 0; waited < kWaitTimeoutMs; waited += 5)
+        if (! waitForWorkerLoopToRun(0))
         {
-            if (wloopStatus(getWorkerLoop(0)) == WLOOP_STATUS_RUNNING)
-            {
-                break;
-            }
-            wwSleepMS(5);
+            _Exit(85);
         }
         wwSleepMS(100);
     }
@@ -273,6 +338,7 @@ _Noreturn static void runChild(signal_case_t scenario, int report_fd)
     init_data.workers_count          = kTestWorkerCount;
     init_data.ram_profile            = kRamProfileS1Memory;
     init_data.mtu_size               = 1500;
+    init_data.application_finalizer  = joinSignalHelperThreads;
 
     init_data.internal_logger_data.log_level = child_log_level;
     init_data.core_logger_data.log_level     = child_log_level;
@@ -310,11 +376,11 @@ _Noreturn static void runChild(signal_case_t scenario, int report_fd)
 
     if (scenario == kSignalCaseAfterSuccessRequest)
     {
-        wthread_t requester;
-        if (threadCreate(&requester, successRequestMain, NULL) != kWThreadErrorNone)
+        if (threadCreate(&requester_thread, successRequestMain, NULL) != kWThreadErrorNone)
         {
             _Exit(84);
         }
+        requester_thread_valid = true;
     }
 
     if (scenario == kSignalCaseFullPipe)
@@ -324,11 +390,11 @@ _Noreturn static void runChild(signal_case_t scenario, int report_fd)
     }
     else
     {
-        wthread_t sender;
-        if (threadCreate(&sender, signalSenderMain, NULL) != kWThreadErrorNone)
+        if (threadCreate(&sender_thread, signalSenderMain, NULL) != kWThreadErrorNone)
         {
             _Exit(82);
         }
+        sender_thread_valid = true;
     }
 
     runMainThread();

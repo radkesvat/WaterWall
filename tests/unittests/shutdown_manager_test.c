@@ -301,6 +301,50 @@ typedef struct
 static post_request_t posts[2];
 static uint8_t        posts_count;
 
+static bool postRequestWhenWorkerLoopRuns(const post_request_t *post)
+{
+    worker_t *worker = getWorker(post->wid);
+
+    for (unsigned int waited = 0; waited < kWaitTimeoutMs; waited += 5)
+    {
+        bool attempted = false;
+        bool posted    = false;
+
+        /*
+         * loop is detached and destroyed under control_mutex. A foreign
+         * poster must retain that lifetime lock through wloopPostEvent(), not
+         * merely sample the worker's non-owning loop shortcut before teardown.
+         */
+        mutexLock(&worker->control_mutex);
+        wloop_t *loop = worker->loop;
+        if (loop != NULL && wloopStatus(loop) == WLOOP_STATUS_RUNNING)
+        {
+            wevent_t ev;
+            memoryZero(&ev, sizeof(ev));
+            ev.loop = loop;
+            ev.cb   = post->cb;
+            weventSetPriority(&ev, WEVENT_HIGH_PRIORITY);
+
+            attempted = true;
+            posted    = wloopPostEvent(loop, &ev);
+        }
+        const bool loop_available = loop != NULL;
+        mutexUnlock(&worker->control_mutex);
+
+        if (attempted)
+        {
+            return posted;
+        }
+        if (! loop_available)
+        {
+            return false;
+        }
+        wwSleepMS(5);
+    }
+
+    return false;
+}
+
 /*
  * Helper thread: waits until the target loops are actually running, then posts
  * the request callbacks. Posting after wloopRun() started means the loops own
@@ -312,24 +356,7 @@ static WTHREAD_ROUTINE(requestPosterMain) // NOLINT
 
     for (uint8_t i = 0; i < posts_count; ++i)
     {
-        wloop_t *loop = getWorkerLoop(posts[i].wid);
-
-        for (unsigned int waited = 0; waited < kWaitTimeoutMs; waited += 5)
-        {
-            if (wloopStatus(loop) == WLOOP_STATUS_RUNNING)
-            {
-                break;
-            }
-            wwSleepMS(5);
-        }
-
-        wevent_t ev;
-        memoryZero(&ev, sizeof(ev));
-        ev.loop = loop;
-        ev.cb   = posts[i].cb;
-        weventSetPriority(&ev, WEVENT_HIGH_PRIORITY);
-
-        if (! wloopPostEvent(loop, &ev))
+        if (! postRequestWhenWorkerLoopRuns(&posts[i]))
         {
             const char *msg     = "FAIL: could not post the shutdown request onto the target worker\n";
             ssize_t     written = write(STDERR_FILENO, msg, strlen(msg));
