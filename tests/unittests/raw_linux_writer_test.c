@@ -483,6 +483,12 @@ static void queueRawPackets(raw_device_t *rdev, test_env_t *env, unsigned int co
         sbuf_t *buf = bufferpoolGetSmallBuffer(env->worker_buffer_pool);
         sbufSetLength(buf, sizeof(struct iphdr) + 1);
         memoryZero(sbufGetMutablePtr(buf), sbufGetLength(buf));
+        struct iphdr *ipheader = (struct iphdr *) sbufGetMutablePtr(buf);
+        ipheader->version      = 4;
+        ipheader->ihl          = 5;
+        ipheader->tot_len      = htons((uint16_t) sbufGetLength(buf));
+        ipheader->ttl          = 64;
+        ipheader->daddr        = htonl(INADDR_LOOPBACK);
         require(rawdeviceWrite(rdev, buf), "failed to queue a raw writer failure-injection packet");
     }
 }

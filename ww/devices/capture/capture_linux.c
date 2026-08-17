@@ -1801,16 +1801,6 @@ static bool capturedeviceDrainResidualQueue(capture_device_t *cdev, int socket_f
             sbufDestroy(buf);
             return false;
         }
-        if (drained >= (uint32_t) kNetfilterResidualPacketBudget)
-        {
-            errno = EOVERFLOW;
-            LOGW("CaptureDevice: residual acceptance budget for queue %u ended after %u packet(s)",
-                 cdev->queue_number,
-                 drained);
-            sbufDestroy(buf);
-            return false;
-        }
-
         sbufReset(buf);
         buf = sbufReserveSpace(buf, kNetfilterReadBufferSize);
 
@@ -1833,6 +1823,20 @@ static bool capturedeviceDrainResidualQueue(capture_device_t *cdev, int socket_f
             LOGW("CaptureDevice: stopped draining residual packets from queue %u: %s",
                  cdev->queue_number,
                  strerror(errno));
+            sbufDestroy(buf);
+            return false;
+        }
+
+        // Exactly one receive beyond the packet budget is allowed as the
+        // emptiness probe. EAGAIN/Eof above makes a queue containing exactly
+        // the budget successful; receiving another packet verdicts it before
+        // failing closed and disabling the queue.
+        if (drained >= (uint32_t) kNetfilterResidualPacketBudget)
+        {
+            errno = EOVERFLOW;
+            LOGW("CaptureDevice: residual acceptance budget for queue %u ended after %u packet(s)",
+                 cdev->queue_number,
+                 drained + 1U);
             sbufDestroy(buf);
             return false;
         }

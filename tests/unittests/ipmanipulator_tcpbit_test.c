@@ -356,10 +356,10 @@ static void testNoOpAndRejection(void)
     /* 5. Truncated TCP header (sbuf len < iphdr_len + sizeof(struct tcp_hdr)) */
     buf = createTcpPacket(TCP_ACK, 0, false);
     sbufSetLength(buf, 30); /* 20 IP + 10 TCP bytes */
-    memoryCopy(before, sbufGetRawPtr(buf), 30);
+    memoryCopy(sbufGetMutablePtr(before), sbufGetRawPtr(buf), 30);
 
     tcpbitchangetrickUpStreamPayload(t, &line, &buf);
-    require(memoryEqual(sbufGetRawPtr(buf), before, 30), "truncated TCP header packet modified");
+    require(memoryEqual(sbufGetRawPtr(buf), sbufGetRawPtr(before), 30), "truncated TCP header packet modified");
     require(! lineGetRecalculateChecksum(&line), "truncated TCP header modified flag");
     sbufDestroy(buf);
 
@@ -367,10 +367,11 @@ static void testNoOpAndRejection(void)
     buf                  = createTcpPacket(TCP_ACK, 0, false);
     struct tcp_hdr *tcph = (struct tcp_hdr *) (sbufGetMutablePtr(buf) + 20);
     TCPH_HDRLEN_FLAGS_SET(tcph, 4, TCP_ACK);
-    memoryCopy(before, sbufGetRawPtr(buf), sbufGetLength(buf));
+    memoryCopy(sbufGetMutablePtr(before), sbufGetRawPtr(buf), sbufGetLength(buf));
 
     tcpbitchangetrickUpStreamPayload(t, &line, &buf);
-    require(memoryEqual(sbufGetRawPtr(buf), before, sbufGetLength(buf)), "invalid TCP data offset packet modified");
+    require(memoryEqual(sbufGetRawPtr(buf), sbufGetRawPtr(before), sbufGetLength(buf)),
+            "invalid TCP data offset packet modified");
     require(! lineGetRecalculateChecksum(&line), "invalid TCP data offset modified flag");
     sbufDestroy(buf);
 
@@ -378,10 +379,11 @@ static void testNoOpAndRejection(void)
     buf      = createTcpPacket(TCP_ACK, 0, false);
     ipheader = (struct ip_hdr *) sbufGetMutablePtr(buf);
     IPH_VHL_SET(ipheader, 4, 4);
-    memoryCopy(before, sbufGetRawPtr(buf), sbufGetLength(buf));
+    memoryCopy(sbufGetMutablePtr(before), sbufGetRawPtr(buf), sbufGetLength(buf));
 
     tcpbitchangetrickUpStreamPayload(t, &line, &buf);
-    require(memoryEqual(sbufGetRawPtr(buf), before, sbufGetLength(buf)), "invalid IP IHL packet modified");
+    require(memoryEqual(sbufGetRawPtr(buf), sbufGetRawPtr(before), sbufGetLength(buf)),
+            "invalid IP IHL packet modified");
     require(! lineGetRecalculateChecksum(&line), "invalid IP IHL modified flag");
     sbufDestroy(buf);
 
@@ -389,10 +391,11 @@ static void testNoOpAndRejection(void)
     buf      = createTcpPacket(TCP_ACK, 0, false);
     ipheader = (struct ip_hdr *) sbufGetMutablePtr(buf);
     IPH_LEN_SET(ipheader, lwip_htons(10));
-    memoryCopy(before, sbufGetRawPtr(buf), sbufGetLength(buf));
+    memoryCopy(sbufGetMutablePtr(before), sbufGetRawPtr(buf), sbufGetLength(buf));
 
     tcpbitchangetrickUpStreamPayload(t, &line, &buf);
-    require(memoryEqual(sbufGetRawPtr(buf), before, sbufGetLength(buf)), "IP total_len < IHL packet modified");
+    require(memoryEqual(sbufGetRawPtr(buf), sbufGetRawPtr(before), sbufGetLength(buf)),
+            "IP total_len < IHL packet modified");
     require(! lineGetRecalculateChecksum(&line), "IP total_len < IHL modified flag");
     sbufDestroy(buf);
 
@@ -401,10 +404,10 @@ static void testNoOpAndRejection(void)
     ipheader = (struct ip_hdr *) sbufGetMutablePtr(buf);
     IPH_LEN_SET(ipheader, lwip_htons(200));
     sbufSetLength(buf, 60);
-    memoryCopy(before, sbufGetRawPtr(buf), 60);
+    memoryCopy(sbufGetMutablePtr(before), sbufGetRawPtr(buf), 60);
 
     tcpbitchangetrickUpStreamPayload(t, &line, &buf);
-    require(memoryEqual(sbufGetRawPtr(buf), before, 60), "IP total_len > buffer len packet modified");
+    require(memoryEqual(sbufGetRawPtr(buf), sbufGetRawPtr(before), 60), "IP total_len > buffer len packet modified");
     require(! lineGetRecalculateChecksum(&line), "IP total_len > buffer len modified flag");
     sbufDestroy(buf);
 

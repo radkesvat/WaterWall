@@ -43,8 +43,10 @@ enum
     kMaxCommandSteps       = 96,
     kMaxRecordedCommands   = 192,
     kMaxCommandText        = 64,
-    kConfiguredQueueLength = 64 * 1024,
-    kInjectedPacketId      = 0x10203040U,
+    // Mirrors the deliberately smaller bounded teardown budget in
+    // capture_linux.c, not the kernel queue's configured maximum length.
+    kResidualPacketBudget = 4096,
+    kInjectedPacketId     = 0x10203040U,
     // Long enough for a freshly created reader to actually park inside poll().
     kReaderSettleUs = 50000
 };
@@ -1153,7 +1155,7 @@ static void testResidualVerdictFailureFailsBringDown(test_env_t *env)
     deviceTeardown(&cdev);
 }
 
-static void testFullResidualQueueDrainsSuccessfully(test_env_t *env)
+static void testResidualPacketBudgetDrainsSuccessfully(test_env_t *env)
 {
     commandScriptReset();
     scriptSuccessfulInsertions();
@@ -1165,18 +1167,18 @@ static void testFullResidualQueueDrainsSuccessfully(test_env_t *env)
     int queue_pair[2];
     attachQueueSocket(&cdev, queue_pair);
 
-    require(caputredeviceBringUp(&cdev), "bring-up before the full residual drain failed");
-    atomicStoreExplicit(&injected_residual_packets, kConfiguredQueueLength, memory_order_relaxed);
+    require(caputredeviceBringUp(&cdev), "bring-up before the bounded residual drain failed");
+    atomicStoreExplicit(&injected_residual_packets, kResidualPacketBudget, memory_order_relaxed);
 
-    require(caputredeviceBringDown(&cdev), "a full residual queue failed after draining to EAGAIN");
-    require(atomicLoadExplicit(&injected_recv_attempts, memory_order_relaxed) == kConfiguredQueueLength + 1U,
-            "a full residual queue did not receive its final emptiness probe");
-    require(atomicLoadExplicit(&injected_verdict_count, memory_order_relaxed) == kConfiguredQueueLength,
-            "a full residual queue did not verdict every packet");
-    require(cdev.queue_restartable, "a successfully drained full queue was unnecessarily disabled");
+    require(caputredeviceBringDown(&cdev), "the residual packet budget failed after draining to EAGAIN");
+    require(atomicLoadExplicit(&injected_recv_attempts, memory_order_relaxed) == kResidualPacketBudget + 1U,
+            "the residual packet budget did not receive its final emptiness probe");
+    require(atomicLoadExplicit(&injected_verdict_count, memory_order_relaxed) == kResidualPacketBudget,
+            "the residual packet budget did not verdict every packet");
+    require(cdev.queue_restartable, "a successfully drained residual packet budget was unnecessarily disabled");
 
     close(queue_pair[1]);
-    requireCommandScriptConsumed("the full residual drain changed the firewall lifecycle command sequence");
+    requireCommandScriptConsumed("the bounded residual drain changed the firewall lifecycle command sequence");
     deviceTeardown(&cdev);
 }
 
@@ -1194,12 +1196,12 @@ static void testResidualDrainBoundFailureFailsBringDown(test_env_t *env)
     const int queue_socket = cdev.socket;
 
     require(caputredeviceBringUp(&cdev), "bring-up before the residual drain bound failure failed");
-    atomicStoreExplicit(&injected_residual_packets, kConfiguredQueueLength + 1U, memory_order_relaxed);
+    atomicStoreExplicit(&injected_residual_packets, kResidualPacketBudget + 1U, memory_order_relaxed);
 
     require(! caputredeviceBringDown(&cdev), "a residual drain bound failure was not propagated by bring-down");
-    require(atomicLoadExplicit(&injected_recv_attempts, memory_order_relaxed) == kConfiguredQueueLength + 1U,
+    require(atomicLoadExplicit(&injected_recv_attempts, memory_order_relaxed) == kResidualPacketBudget + 1U,
             "the residual drain did not stop at its configured bound probe");
-    require(atomicLoadExplicit(&injected_verdict_count, memory_order_relaxed) == kConfiguredQueueLength + 1U,
+    require(atomicLoadExplicit(&injected_verdict_count, memory_order_relaxed) == kResidualPacketBudget + 1U,
             "the residual drain bound probe did not verdict the packet it received");
     requireQueueSocketClosed(&cdev, queue_socket);
 
@@ -1783,7 +1785,7 @@ int main(void)
     testResidualDrainRetriesInterruptedIo(&env);
     testResidualReadFailureFailsBringDown(&env);
     testResidualVerdictFailureFailsBringDown(&env);
-    testFullResidualQueueDrainsSuccessfully(&env);
+    testResidualPacketBudgetDrainsSuccessfully(&env);
     testResidualDrainBoundFailureFailsBringDown(&env);
     testPartialInsertionRollsBackConfirmedPrefix(&env);
     testPartialRollbackFailureIsRetriedByDestroy(&env);
