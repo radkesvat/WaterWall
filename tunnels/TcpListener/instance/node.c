@@ -22,10 +22,10 @@ node_t nodeTcpListenerGet(void)
              .flags                 = kNodeFlagChainHead,
              .required_padding_left = 0,
              .layer_group           = kNodeLayer4,
-             .layer_group_next_node = kNodeLayerAnything,
-             .layer_group_prev_node = kNodeLayerAnything,
+             .layer_group_next_node = kNodeLayer4,
+             .layer_group_prev_node = kNodeLayerNone,
              .can_have_next         = true,
-             .can_have_prev         = true,
+             .can_have_prev         = false,
     };
     return node_tcplistener;
 }

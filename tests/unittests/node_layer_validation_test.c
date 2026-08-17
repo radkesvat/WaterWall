@@ -28,18 +28,18 @@ static void testValidL4Chain(void)
         .type                  = (char *) "TcpListener",
         .flags                 = kNodeFlagChainHead,
         .layer_group           = kNodeLayer4,
-        .layer_group_next_node = kNodeLayerAnything,
-        .layer_group_prev_node = kNodeLayerAnything,
+        .layer_group_next_node = kNodeLayer4,
+        .layer_group_prev_node = kNodeLayerNone,
         .can_have_next         = true,
-        .can_have_prev         = true,
+        .can_have_prev         = false,
     };
     node_t n_mid = {
         .name                  = (char *) "mid",
         .type                  = (char *) "TlsClient",
         .flags                 = kNodeFlagNone,
         .layer_group           = kNodeLayer4,
-        .layer_group_next_node = kNodeLayerAnything,
-        .layer_group_prev_node = kNodeLayerAnything,
+        .layer_group_next_node = kNodeLayer4,
+        .layer_group_prev_node = kNodeLayer4,
         .can_have_next         = true,
         .can_have_prev         = true,
     };
@@ -48,9 +48,9 @@ static void testValidL4Chain(void)
         .type                  = (char *) "TcpConnector",
         .flags                 = kNodeFlagChainEnd,
         .layer_group           = kNodeLayer4,
-        .layer_group_next_node = kNodeLayerAnything,
-        .layer_group_prev_node = kNodeLayerAnything,
-        .can_have_next         = true,
+        .layer_group_next_node = kNodeLayerNone,
+        .layer_group_prev_node = kNodeLayer4,
+        .can_have_next         = false,
         .can_have_prev         = true,
     };
 
@@ -71,25 +71,25 @@ static void testValidL4Chain(void)
     require(result.exit_code == 0, "Valid L4 chain was rejected");
 }
 
-static void testValidSameAsPrevChain(void)
+static void testValidTransparentMiddleChainL4(void)
 {
     node_t n_head = {
         .name                  = (char *) "head",
         .type                  = (char *) "TcpListener",
         .flags                 = kNodeFlagChainHead,
         .layer_group           = kNodeLayer4,
-        .layer_group_next_node = kNodeLayerAnything,
-        .layer_group_prev_node = kNodeLayerAnything,
+        .layer_group_next_node = kNodeLayer4,
+        .layer_group_prev_node = kNodeLayerNone,
         .can_have_next         = true,
-        .can_have_prev         = true,
+        .can_have_prev         = false,
     };
     node_t n_mid = {
         .name                  = (char *) "mid",
-        .type                  = (char *) "CustomFilter",
+        .type                  = (char *) "ObfuscatorClient",
         .flags                 = kNodeFlagNone,
-        .layer_group           = kNodeLayerSameAsPrev,
-        .layer_group_next_node = kNodeLayerAnything,
-        .layer_group_prev_node = kNodeLayerAnything,
+        .layer_group           = kNodeLayerAnything,
+        .layer_group_next_node = kNodeLayerSameAsPrev,
+        .layer_group_prev_node = kNodeLayerSameAsNext,
         .can_have_next         = true,
         .can_have_prev         = true,
     };
@@ -98,9 +98,9 @@ static void testValidSameAsPrevChain(void)
         .type                  = (char *) "TcpConnector",
         .flags                 = kNodeFlagChainEnd,
         .layer_group           = kNodeLayer4,
-        .layer_group_next_node = kNodeLayerAnything,
-        .layer_group_prev_node = kNodeLayerAnything,
-        .can_have_next         = true,
+        .layer_group_next_node = kNodeLayerNone,
+        .layer_group_prev_node = kNodeLayer4,
+        .can_have_next         = false,
         .can_have_prev         = true,
     };
 
@@ -118,28 +118,28 @@ static void testValidSameAsPrevChain(void)
     validateTunnelChains(t_array, 3);
     const ww_startup_result_t result = wwStartupContextEnd(&startup);
 
-    require(result.exit_code == 0, "Valid SameAsPrev chain was rejected");
+    require(result.exit_code == 0, "Valid transparent middle chain on L4 was rejected");
 }
 
-static void testValidSameAsNextChain(void)
+static void testValidTransparentMiddleChainL3(void)
 {
     node_t n_head = {
         .name                  = (char *) "head",
         .type                  = (char *) "TunDevice",
         .flags                 = kNodeFlagChainHead,
         .layer_group           = kNodeLayer3,
-        .layer_group_next_node = kNodeLayerAnything,
-        .layer_group_prev_node = kNodeLayerAnything,
+        .layer_group_next_node = kNodeLayer3,
+        .layer_group_prev_node = kNodeLayer3,
         .can_have_next         = true,
         .can_have_prev         = true,
     };
     node_t n_mid = {
         .name                  = (char *) "mid",
-        .type                  = (char *) "CustomFilter",
+        .type                  = (char *) "ObfuscatorClient",
         .flags                 = kNodeFlagNone,
-        .layer_group           = kNodeLayerSameAsNext,
-        .layer_group_next_node = kNodeLayerAnything,
-        .layer_group_prev_node = kNodeLayerAnything,
+        .layer_group           = kNodeLayerAnything,
+        .layer_group_next_node = kNodeLayerSameAsPrev,
+        .layer_group_prev_node = kNodeLayerSameAsNext,
         .can_have_next         = true,
         .can_have_prev         = true,
     };
@@ -148,8 +148,8 @@ static void testValidSameAsNextChain(void)
         .type                  = (char *) "RawSocket",
         .flags                 = kNodeFlagChainEnd,
         .layer_group           = kNodeLayer3,
-        .layer_group_next_node = kNodeLayerAnything,
-        .layer_group_prev_node = kNodeLayerAnything,
+        .layer_group_next_node = kNodeLayer3,
+        .layer_group_prev_node = kNodeLayer3,
         .can_have_next         = true,
         .can_have_prev         = true,
     };
@@ -168,38 +168,38 @@ static void testValidSameAsNextChain(void)
     validateTunnelChains(t_array, 3);
     const ww_startup_result_t result = wwStartupContextEnd(&startup);
 
-    require(result.exit_code == 0, "Valid SameAsNext chain was rejected");
+    require(result.exit_code == 0, "Valid transparent middle chain on L3 was rejected");
 }
 
-static void testValidMultiHopPropagation(void)
+static void testValidMultiHopTransparent(void)
 {
     node_t n_head = {
         .name                  = (char *) "head",
         .type                  = (char *) "TcpListener",
         .flags                 = kNodeFlagChainHead,
         .layer_group           = kNodeLayer4,
-        .layer_group_next_node = kNodeLayerAnything,
-        .layer_group_prev_node = kNodeLayerAnything,
+        .layer_group_next_node = kNodeLayer4,
+        .layer_group_prev_node = kNodeLayerNone,
         .can_have_next         = true,
-        .can_have_prev         = true,
+        .can_have_prev         = false,
     };
     node_t n_mid1 = {
         .name                  = (char *) "mid1",
-        .type                  = (char *) "Filter1",
+        .type                  = (char *) "ObfuscatorClient",
         .flags                 = kNodeFlagNone,
-        .layer_group           = kNodeLayerSameAsPrev,
-        .layer_group_next_node = kNodeLayerAnything,
-        .layer_group_prev_node = kNodeLayerAnything,
+        .layer_group           = kNodeLayerAnything,
+        .layer_group_next_node = kNodeLayerSameAsPrev,
+        .layer_group_prev_node = kNodeLayerSameAsNext,
         .can_have_next         = true,
         .can_have_prev         = true,
     };
     node_t n_mid2 = {
         .name                  = (char *) "mid2",
-        .type                  = (char *) "Filter2",
+        .type                  = (char *) "EncryptionClient",
         .flags                 = kNodeFlagNone,
-        .layer_group           = kNodeLayerSameAsPrev,
-        .layer_group_next_node = kNodeLayerAnything,
-        .layer_group_prev_node = kNodeLayerAnything,
+        .layer_group           = kNodeLayerAnything,
+        .layer_group_next_node = kNodeLayerSameAsPrev,
+        .layer_group_prev_node = kNodeLayerSameAsNext,
         .can_have_next         = true,
         .can_have_prev         = true,
     };
@@ -208,9 +208,9 @@ static void testValidMultiHopPropagation(void)
         .type                  = (char *) "TcpConnector",
         .flags                 = kNodeFlagChainEnd,
         .layer_group           = kNodeLayer4,
-        .layer_group_next_node = kNodeLayerAnything,
-        .layer_group_prev_node = kNodeLayerAnything,
-        .can_have_next         = true,
+        .layer_group_next_node = kNodeLayerNone,
+        .layer_group_prev_node = kNodeLayer4,
+        .can_have_next         = false,
         .can_have_prev         = true,
     };
 
@@ -230,7 +230,7 @@ static void testValidMultiHopPropagation(void)
     validateTunnelChains(t_array, 4);
     const ww_startup_result_t result = wwStartupContextEnd(&startup);
 
-    require(result.exit_code == 0, "Valid multi-hop SameAsPrev chain was rejected");
+    require(result.exit_code == 0, "Valid multi-hop transparent chain was rejected");
 }
 
 static void testValidBridgeChain(void)
@@ -240,10 +240,10 @@ static void testValidBridgeChain(void)
         .type                  = (char *) "TcpListener",
         .flags                 = kNodeFlagChainHead,
         .layer_group           = kNodeLayer4,
-        .layer_group_next_node = kNodeLayerAnything,
-        .layer_group_prev_node = kNodeLayerAnything,
+        .layer_group_next_node = kNodeLayer4,
+        .layer_group_prev_node = kNodeLayerNone,
         .can_have_next         = true,
-        .can_have_prev         = true,
+        .can_have_prev         = false,
     };
     node_t n_bridge = {
         .name                  = (char *) "bridge",
@@ -281,6 +281,94 @@ static void testValidBridgeChain(void)
     const ww_startup_result_t result = wwStartupContextEnd(&startup);
 
     require(result.exit_code == 0, "Valid bridge chain was rejected");
+}
+
+static void testRejectForbiddenSameAsInLayerGroup(void)
+{
+    node_t n_head = {
+        .name                  = (char *) "head",
+        .type                  = (char *) "TcpListener",
+        .flags                 = kNodeFlagChainHead,
+        .layer_group           = kNodeLayerSameAsNext,
+        .layer_group_next_node = kNodeLayer4,
+        .layer_group_prev_node = kNodeLayerNone,
+        .can_have_next         = true,
+        .can_have_prev         = false,
+    };
+    node_t n_tail = {
+        .name                  = (char *) "tail",
+        .type                  = (char *) "TcpConnector",
+        .flags                 = kNodeFlagChainEnd,
+        .layer_group           = kNodeLayer4,
+        .layer_group_next_node = kNodeLayerNone,
+        .layer_group_prev_node = kNodeLayer4,
+        .can_have_next         = false,
+        .can_have_prev         = true,
+    };
+
+    tunnel_t t_head = {.node = &n_head};
+    tunnel_t t_tail = {.node = &n_tail};
+
+    bindTunnels(&t_head, &t_tail);
+
+    tunnel_t *t_array[2] = {&t_head, &t_tail};
+
+    ww_startup_context_t startup = {0};
+    wwStartupContextBegin(&startup);
+    validateTunnelChains(t_array, 2);
+    const ww_startup_result_t result = wwStartupContextEnd(&startup);
+
+    require(result.exit_code == 1, "Forbidden SameAs in layer_group was not rejected");
+}
+
+static void testRejectTransparentBridgeMismatch(void)
+{
+    node_t n_head = {
+        .name                  = (char *) "head",
+        .type                  = (char *) "TunDevice",
+        .flags                 = kNodeFlagChainHead,
+        .layer_group           = kNodeLayer3,
+        .layer_group_next_node = kNodeLayer3,
+        .layer_group_prev_node = kNodeLayer3,
+        .can_have_next         = true,
+        .can_have_prev         = true,
+    };
+    node_t n_mid = {
+        .name                  = (char *) "mid",
+        .type                  = (char *) "ObfuscatorClient",
+        .flags                 = kNodeFlagNone,
+        .layer_group           = kNodeLayerAnything,
+        .layer_group_next_node = kNodeLayerSameAsPrev,
+        .layer_group_prev_node = kNodeLayerSameAsNext,
+        .can_have_next         = true,
+        .can_have_prev         = true,
+    };
+    node_t n_tail = {
+        .name                  = (char *) "tail",
+        .type                  = (char *) "TcpConnector",
+        .flags                 = kNodeFlagChainEnd,
+        .layer_group           = kNodeLayer4,
+        .layer_group_next_node = kNodeLayerNone,
+        .layer_group_prev_node = kNodeLayer4,
+        .can_have_next         = false,
+        .can_have_prev         = true,
+    };
+
+    tunnel_t t_head = {.node = &n_head};
+    tunnel_t t_mid  = {.node = &n_mid};
+    tunnel_t t_tail = {.node = &n_tail};
+
+    bindTunnels(&t_head, &t_mid);
+    bindTunnels(&t_mid, &t_tail);
+
+    tunnel_t *t_array[3] = {&t_head, &t_mid, &t_tail};
+
+    ww_startup_context_t startup = {0};
+    wwStartupContextBegin(&startup);
+    validateTunnelChains(t_array, 3);
+    const ww_startup_result_t result = wwStartupContextEnd(&startup);
+
+    require(result.exit_code == 1, "Transparent bridge mismatch L3->Obfuscator->L4 was not rejected");
 }
 
 static void testRejectAdjacentLayerMismatch(void)
@@ -441,20 +529,20 @@ static void testRejectSameAsPrevOnHead(void)
         .name                  = (char *) "head",
         .type                  = (char *) "BadHead",
         .flags                 = kNodeFlagChainHead,
-        .layer_group           = kNodeLayerSameAsPrev,
-        .layer_group_next_node = kNodeLayerAnything,
-        .layer_group_prev_node = kNodeLayerAnything,
+        .layer_group           = kNodeLayerAnything,
+        .layer_group_next_node = kNodeLayerSameAsPrev,
+        .layer_group_prev_node = kNodeLayerNone,
         .can_have_next         = true,
-        .can_have_prev         = true,
+        .can_have_prev         = false,
     };
     node_t n_tail = {
         .name                  = (char *) "tail",
         .type                  = (char *) "TcpConnector",
         .flags                 = kNodeFlagChainEnd,
         .layer_group           = kNodeLayer4,
-        .layer_group_next_node = kNodeLayerAnything,
-        .layer_group_prev_node = kNodeLayerAnything,
-        .can_have_next         = true,
+        .layer_group_next_node = kNodeLayerNone,
+        .layer_group_prev_node = kNodeLayer4,
+        .can_have_next         = false,
         .can_have_prev         = true,
     };
 
@@ -480,19 +568,19 @@ static void testRejectSameAsNextOnTail(void)
         .type                  = (char *) "TcpListener",
         .flags                 = kNodeFlagChainHead,
         .layer_group           = kNodeLayer4,
-        .layer_group_next_node = kNodeLayerAnything,
-        .layer_group_prev_node = kNodeLayerAnything,
+        .layer_group_next_node = kNodeLayer4,
+        .layer_group_prev_node = kNodeLayerNone,
         .can_have_next         = true,
-        .can_have_prev         = true,
+        .can_have_prev         = false,
     };
     node_t n_tail = {
         .name                  = (char *) "tail",
         .type                  = (char *) "BadTail",
         .flags                 = kNodeFlagChainEnd,
-        .layer_group           = kNodeLayerSameAsNext,
-        .layer_group_next_node = kNodeLayerAnything,
-        .layer_group_prev_node = kNodeLayerAnything,
-        .can_have_next         = true,
+        .layer_group           = kNodeLayerAnything,
+        .layer_group_next_node = kNodeLayerNone,
+        .layer_group_prev_node = kNodeLayerSameAsNext,
+        .can_have_next         = false,
         .can_have_prev         = true,
     };
 
@@ -509,44 +597,6 @@ static void testRejectSameAsNextOnTail(void)
     const ww_startup_result_t result = wwStartupContextEnd(&startup);
 
     require(result.exit_code == 1, "SameAsNext on chain tail was not rejected");
-}
-
-static void testRejectUnresolvableSameAsLoop(void)
-{
-    node_t n_head = {
-        .name                  = (char *) "head",
-        .type                  = (char *) "BadHead",
-        .flags                 = kNodeFlagChainHead,
-        .layer_group           = kNodeLayerSameAsNext,
-        .layer_group_next_node = kNodeLayerAnything,
-        .layer_group_prev_node = kNodeLayerAnything,
-        .can_have_next         = true,
-        .can_have_prev         = true,
-    };
-    node_t n_tail = {
-        .name                  = (char *) "tail",
-        .type                  = (char *) "BadTail",
-        .flags                 = kNodeFlagChainEnd,
-        .layer_group           = kNodeLayerSameAsPrev,
-        .layer_group_next_node = kNodeLayerAnything,
-        .layer_group_prev_node = kNodeLayerAnything,
-        .can_have_next         = true,
-        .can_have_prev         = true,
-    };
-
-    tunnel_t t_head = {.node = &n_head};
-    tunnel_t t_tail = {.node = &n_tail};
-
-    bindTunnels(&t_head, &t_tail);
-
-    tunnel_t *t_array[2] = {&t_head, &t_tail};
-
-    ww_startup_context_t startup = {0};
-    wwStartupContextBegin(&startup);
-    validateTunnelChains(t_array, 2);
-    const ww_startup_result_t result = wwStartupContextEnd(&startup);
-
-    require(result.exit_code == 1, "Unresolvable SameAs loop was not rejected");
 }
 
 static void testRejectNoChainWithLinks(void)
@@ -590,17 +640,18 @@ static void testRejectNoChainWithLinks(void)
 int main(void)
 {
     testValidL4Chain();
-    testValidSameAsPrevChain();
-    testValidSameAsNextChain();
-    testValidMultiHopPropagation();
+    testValidTransparentMiddleChainL4();
+    testValidTransparentMiddleChainL3();
+    testValidMultiHopTransparent();
     testValidBridgeChain();
+    testRejectForbiddenSameAsInLayerGroup();
+    testRejectTransparentBridgeMismatch();
     testRejectAdjacentLayerMismatch();
     testRejectNextNodeLayerMismatch();
     testRejectCanHaveNextViolation();
     testRejectCanHavePrevViolation();
     testRejectSameAsPrevOnHead();
     testRejectSameAsNextOnTail();
-    testRejectUnresolvableSameAsLoop();
     testRejectNoChainWithLinks();
     return 0;
 }

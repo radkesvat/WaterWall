@@ -22,8 +22,8 @@ node_t nodeObfuscatorClientGet(void)
              .flags                 = kNodeFlagNone,
              .required_padding_left = kObfuscatorTlsRecordHeaderSize,
              .layer_group           = kNodeLayerAnything,
-             .layer_group_next_node = kNodeLayerAnything,
-             .layer_group_prev_node = kNodeLayerAnything,
+             .layer_group_next_node = kNodeLayerSameAsPrev,
+             .layer_group_prev_node = kNodeLayerSameAsNext,
              .can_have_next         = true,
              .can_have_prev         = true,
     };

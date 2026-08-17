@@ -344,6 +344,7 @@ tunnel_t *testerclientTunnelCreate(node_t *node)
 
     getBoolFromJsonObjectOrDefault(&ts->allow_early_response, settings, "allow-early-response", false);
     getBoolFromJsonObjectOrDefault(&ts->packet_mode, settings, "packet-mode", false);
+    node->layer_group = ts->packet_mode ? kNodeLayer3 : kNodeLayer4;
     getBoolFromJsonObjectOrDefault(&ts->packet_stateless, settings, "packet-stateless", false);
     getBoolFromJsonObjectOrDefault(&ts->packet_start_immediately, settings, "packet-start-immediately", false);
     getIntFromJsonObjectOrDefault(&packet_start_delay_ms, settings, "packet-start-delay-ms", 0);
