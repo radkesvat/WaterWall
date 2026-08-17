@@ -2,7 +2,23 @@
 #include "loggers/core_logger.h"
 #include "wwapi.h"
 
-#define USING(x) nodelibraryRegister(node##x##Get());
+#if defined(__MINGW32__) && defined(__GNUC__) && ! defined(__clang__)
+#define IMPORTED_TUNNEL_REGISTRATION_BOUNDARY __attribute__((noinline))
+#else
+#define IMPORTED_TUNNEL_REGISTRATION_BOUNDARY
+#endif
+
+/*
+ * Keep MinGW GCC's LTO from folding every node getter into one enormous
+ * loadImportedTunnelsIntoCore() stack frame. GCC 15+ otherwise emits a Windows
+ * x64 SEH prologue whose offsets no longer fit the unwind encoding.
+ */
+static IMPORTED_TUNNEL_REGISTRATION_BOUNDARY void registerImportedTunnel(node_t (*getter)(void))
+{
+    nodelibraryRegister(getter());
+}
+
+#define USING(x) registerImportedTunnel(node##x##Get);
 
 #ifdef INCLUDE_TEMPLATE
 #include "Template/interface.h"

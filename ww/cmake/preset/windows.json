@@ -138,7 +138,6 @@
 
         {
             "name": "windows-mingw",
-            "description": "MinGW build with IPO disabled for reliable PE linking",
             "inherits": [
                 "host-windows",
                 "target-windows",
@@ -147,10 +146,7 @@
                 "ccache",
                 "unity",
                 "default"
-            ],
-            "cacheVariables": {
-                "WW_ENABLE_IPO": false
-            }
+            ]
         }
        
     ],
