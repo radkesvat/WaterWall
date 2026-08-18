@@ -52,6 +52,7 @@ static void fixtureSetup(muxserver_fixture_t *fixture)
     muxserver_tstate_t *ts           = tunnelGetState(fixture->mux);
     ts->child_buffer_limit           = kMuxDefaultChildBufferLimit;
     ts->child_buffer_pause_tolerance = kMuxDefaultChildBufferPauseTolerance;
+    ts->parent_buffer_limit          = kMuxDefaultParentBufferLimit;
 
     // Real pooled lines: lineDestroy() returns a line to line->pools[wid], so the
     // postcondition cannot be driven with a bare allocation.
@@ -199,11 +200,93 @@ static void caseNestedDestroyIsNotRepeated(void)
     fixtureTeardown(&fixture);
 }
 
+// ---------------------------------------------------------------------------
+// The parent budget sheds queued children instead of pausing the parent
+// ---------------------------------------------------------------------------
+
+/*
+ * `parent-buffer-limit` is the only bound that covers a parent whose children each stay well
+ * under `child-buffer-limit`. Before it existed those queues paused the shared parent transport
+ * instead, and a child that never drained held that pause shut for every other stream.
+ */
+static void caseParentBufferLimitShedsQueuedChildren(void)
+{
+    twfSetCase("the parent buffer limit sheds queued children instead of pausing the parent");
+
+    enum
+    {
+        kShedExtraChildren = 3,
+        kShedChildren      = kShedExtraChildren + 1,
+        kShedPayload       = 8u * 1024u,
+        kShedParentLimit   = 24u * 1024u
+    };
+
+    muxserver_fixture_t fixture;
+    fixtureSetup(&fixture);
+
+    muxserver_tstate_t *ts        = tunnelGetState(fixture.mux);
+    muxserver_lstate_t *parent_ls = lineGetState(fixture.parent_l, fixture.mux);
+
+    // the per-child limit stays far above anything queued here, so only the parent budget can shed
+    ts->child_buffer_limit  = kMuxDefaultChildBufferLimit;
+    ts->parent_buffer_limit = kShedParentLimit;
+
+    line_t *children[kShedChildren];
+    children[0] = fixture.child_l;
+    for (uint32_t i = 1; i < (uint32_t) kShedChildren; ++i)
+    {
+        children[i]                  = twfLinePoolCreateLine(&fixture.lines);
+        muxserver_lstate_t *extra_ls = lineGetState(children[i], fixture.mux);
+        muxserverLinestateInitialize(extra_ls, children[i], true, kTestChildCid + i);
+        muxserverJoinConnection(parent_ls, extra_ls);
+    }
+    for (uint32_t i = 0; i < (uint32_t) kShedChildren; ++i)
+    {
+        muxserver_lstate_t *paused_ls = lineGetState(children[i], fixture.mux);
+        paused_ls->paused             = true;
+    }
+    twfRequireEqualU32(parent_ls->children_count, kShedChildren, "the case must start with every child attached");
+
+    for (uint32_t i = 0; i < (uint32_t) kShedChildren; ++i)
+    {
+        muxserver_lstate_t *child_ls = lineGetState(children[i], fixture.mux);
+        sbuf_t             *buf      = bufferpoolGetLargeBuffer(fixture.env.pool);
+        buf                          = sbufReserveSpace(buf, kShedPayload);
+        sbufSetLength(buf, kShedPayload);
+        twfRequire(muxserverQueueChildPayload(fixture.mux, fixture.parent_l, ts, parent_ls, child_ls, buf),
+                   "queueing a child payload tore the parent down");
+    }
+
+    twfRequire(lineIsAlive(fixture.parent_l), "the parent line was closed instead of shedding a child");
+    twfRequire(parent_ls->pending_child_data_len < (size_t) kShedParentLimit,
+               "the parent queue stayed at or above its budget after shedding");
+    twfRequire(parent_ls->children_count < (uint32_t) kShedChildren, "no child was shed at the parent budget");
+
+    const uint32_t shed = (uint32_t) kShedChildren - parent_ls->children_count;
+    twfRequireEqualU32(fixture.trace.prev_payload, shed, "the peer was not told about every shed child");
+    twfRequireEqualU32(fixture.trace.next_finish, shed, "a shed child was never finished toward its own side");
+
+    // the survivors still own line state; the shed ones were destroyed by the shed itself
+    for (uint32_t i = 0; i < (uint32_t) kShedChildren; ++i)
+    {
+        muxserver_lstate_t *child_ls = lineGetState(children[i], fixture.mux);
+        if (child_ls->parent != NULL)
+        {
+            muxserverLeaveConnection(child_ls);
+            muxserverLinestateDestroy(child_ls);
+            lineDestroy(children[i]);
+        }
+    }
+
+    fixtureTeardown(&fixture);
+}
+
 int main(void)
 {
     caseInternalOwnerFinishKillsChildOnly();
     caseParentFinishKillsOwnedChildren();
     caseNestedDestroyIsNotRepeated();
+    caseParentBufferLimitShedsQueuedChildren();
 
     printf("owned_line_finish_muxserver_test: all cases passed\n");
     return 0;

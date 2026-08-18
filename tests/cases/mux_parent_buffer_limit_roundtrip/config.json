@@ -1,0 +1,36 @@
+{
+  "name": "mux-parent-buffer-limit-roundtrip",
+  "nodes": [
+    {
+      "name": "tester-client",
+      "type": "TesterClient",
+      "next": "mux-client"
+    },
+    {
+      "name": "mux-client",
+      "type": "MuxClient",
+      "settings": {
+        "mode": "fixed-connections-count",
+        "per-worker-connections-count": 1,
+        "child-buffer-limit": 2097152,
+        "child-buffer-pause-tolerance": 524288,
+        "parent-buffer-limit": 8388608
+      },
+      "next": "mux-server"
+    },
+    {
+      "name": "mux-server",
+      "type": "MuxServer",
+      "settings": {
+        "child-buffer-limit": 2097152,
+        "child-buffer-pause-tolerance": 524288,
+        "parent-buffer-limit": 8388608
+      },
+      "next": "tester-server"
+    },
+    {
+      "name": "tester-server",
+      "type": "TesterServer"
+    }
+  ]
+}
