@@ -1,5 +1,5 @@
 <!--
-Documentation version: 106
+Documentation version: 107
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/MuxServer.mdx, and both files must keep the same documentation version.
 -->
 
@@ -66,16 +66,30 @@ There are no required tunnel-specific settings in the current implementation.
   Default: `8388608` (`8 MB`).
 
 - `child-buffer-pause-tolerance` `(integer, bytes, optional)`
-  Queued-data threshold where a paused child also pauses reads on the shared parent transport.
+  Queued-data backstop for sending a `FlowPause` frame for a paused child.
 
-  Default: `524288` (`512 KB`). Set to `0` to pause parent reads as soon as data must be queued for a paused child.
-  Values above `child-buffer-limit` are capped to `child-buffer-limit`.
+  In practice `FlowPause` is already sent the moment the child's write side pauses, which is before any data can be
+  queued for it, so this threshold only covers the one case that ordering misses: a child paused before its `Open`
+  frame reached the peer. Raising it does not delay peer throttling in any other flow.
+
+  Default: `524288` (`512 KB`). Values above `child-buffer-limit` are capped to `child-buffer-limit`.
+
+- `parent-buffer-limit` `(integer, bytes, optional)`
+  Budget for the queued child data held across all children of one parent transport line. When the total reaches it,
+  `MuxServer` closes the children holding the most queued data until the total is back under the budget.
+
+  Default: `8388608` (`8 MB`). Set to `0` to remove the budget and bound memory by `child-buffer-limit` per child
+  only. The value may deliberately sit below `child-buffer-limit`: whichever bound is reached first sheds.
+
+  This is a per-parent figure, so the worst case a process can hold is `parent-buffer-limit` multiplied by the number
+  of live parent lines - one per pool slot for `MuxClient`, one per accepted transport connection for `MuxServer`.
+  Size it against the memory the host actually has, not against a single connection.
 
 - `log-main-line-stats` `(boolean, optional)`
   When `true`, each active parent transport line logs mux diagnostics every `5` seconds.
 
-  The log includes `wid`, parent-line write/read pause state, child count, child read-pause count, and child
-  write-pause count. Default: `false`.
+  The log includes `wid`, parent-line write pause state, bytes queued on the parent, child count, child read-pause
+  count, and child write-pause count. Default: `false`.
 
 ## Detailed Behavior
 
@@ -143,16 +157,22 @@ If the parent transport line itself finishes, `MuxServer` closes all currently a
 Per-child `FlowPause` and `FlowResume` frames are forwarded to the matching child line.
 
 If writing parent-delivered data to a child causes that child to pause, `MuxServer` queues later data for that child.
-`FlowPause` is sent as soon as the local child write side pauses. If the queued data reaches
-`child-buffer-pause-tolerance`, `MuxServer` also pauses parent transport reads locally so the shared parent cannot keep
-draining into that child's queue. Queued child data is flushed when the child resumes. A `FlowResume` is sent once the
-child's pending data drops below `512 KB`, so the peer can begin sending before the queue is fully empty; parent reads
-resume when no child queue still requires the parent pause.
+`FlowPause` is sent as soon as the local child write side pauses, which is before any data can be queued for that
+child, so the peer has already been asked to stop producing for it; `child-buffer-pause-tolerance` is only a
+backstop for a child that was paused before its `Open` frame reached the peer.
+Queued child data is flushed when the child resumes, and a `FlowResume` is sent once the child's pending data drops
+below `512 KB`, so the peer can begin sending before the queue is fully empty.
 
-The same pause threshold is also applied to the aggregate queued child data on the parent line. This prevents the
-parent from continuing to read while many paused children each have a smaller-than-threshold queue.
+Queue pressure never pauses reads on the parent transport. The parent is shared by every child stream, so a pause taken
+on behalf of one child could only be cleared by that same child draining. A child whose downstream peer has stopped
+reading never drains, and while the parent is paused no frame can be read from it - not the peer's `FlowPause`
+acknowledgement, not another child's reply - so nothing that could clear the pause is able to arrive. One stalled stream
+would deadlock every stream multiplexed onto the same parent.
 
-If one paused child's queue still reaches `child-buffer-limit`, `MuxServer` sends a `Close` for that child and finishes the local child line.
+Pressure is relieved by shedding instead. If one paused child's queue reaches `child-buffer-limit`, `MuxServer` sends a
+`Close` for that child and finishes the local child line. If the queued child data across the whole parent reaches
+`parent-buffer-limit`, `MuxServer` closes the children holding the most queued data until the total is back under the
+ceiling. Both bounds always terminate, because each close frees the queue that caused it.
 
 If the parent transport is paused without a known recent writer, `MuxServer` pauses all child lines attached to that parent. Resume only clears parent-write pressure; a child that is still under peer `FlowPause` remains paused.
 
