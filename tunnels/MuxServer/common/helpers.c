@@ -91,11 +91,11 @@ static void muxserverParentStatsLogTask(tunnel_t *t, line_t *parent_l)
     muxserver_parent_stats_t stats;
     muxserverCollectParentStats(parent_ls, &stats);
 
-    LOGI("MuxServer: main line stats wid=%u parent-line-write-paused=%s parent-line-read-paused=%s "
+    LOGI("MuxServer: main line stats wid=%u parent-line-write-paused=%s parent-queued-bytes=%zu "
          "children-count=%u childs-read-paused=%u childs-write-paused=%u",
          (unsigned int) lineGetWID(parent_l),
          boolToYesNo(stats.parent_write_paused > 0),
-         boolToYesNo(parent_ls->parent_read_pause_count > 0),
+         parent_ls->pending_child_data_len,
          parent_ls->children_count,
          stats.child_read_paused,
          stats.child_write_paused);
@@ -243,104 +243,29 @@ bool muxserverSendChildFlowPause(tunnel_t *t, line_t *parent_l, muxserver_lstate
     return muxserverSendControlFrame(t, parent_l, parent_ls, child_l, child_ls->connection_id, kMuxFlagFlowPause);
 }
 
-bool muxserverMaybePauseParentInputForChild(tunnel_t *t, line_t *parent_l, muxserver_tstate_t *ts,
-                                            muxserver_lstate_t *parent_ls, muxserver_lstate_t *child_ls)
-{
-    if (parent_ls->parent_finishing || child_ls->parent_read_paused)
-    {
-        return true;
-    }
-
-    if (bufferqueueGetBufLen(&child_ls->pending_child_data) < ts->child_buffer_pause_tolerance)
-    {
-        return true;
-    }
-
-    child_ls->parent_read_paused = true;
-    parent_ls->parent_read_pause_count++;
-
-    return withLineLocked(parent_l, tunnelPrevDownStreamPause, t);
-}
-
-static bool muxserverMaybePauseParentInputForAggregate(tunnel_t *t, line_t *parent_l, muxserver_tstate_t *ts,
-                                                       muxserver_lstate_t *parent_ls)
-{
-    if (parent_ls->parent_finishing || parent_ls->aggregate_read_paused)
-    {
-        return true;
-    }
-
-    if (parent_ls->pending_child_data_len < ts->child_buffer_pause_tolerance)
-    {
-        return true;
-    }
-
-    parent_ls->aggregate_read_paused = true;
-    parent_ls->parent_read_pause_count++;
-
-    return withLineLocked(parent_l, tunnelPrevDownStreamPause, t);
-}
-
-bool muxserverResumeParentInputForChild(tunnel_t *t, line_t *parent_l, muxserver_lstate_t *parent_ls,
-                                        muxserver_lstate_t *child_ls)
-{
-    if (! child_ls->parent_read_paused)
-    {
-        return true;
-    }
-
-    assert(parent_ls->parent_read_pause_count > 0);
-
-    child_ls->parent_read_paused = false;
-    parent_ls->parent_read_pause_count--;
-
-    if (parent_ls->parent_read_pause_count > 0 || parent_ls->parent_finishing)
-    {
-        return true;
-    }
-
-    return withLineLocked(parent_l, tunnelPrevDownStreamResume, t);
-}
-
-static bool muxserverResumeParentInputForAggregate(tunnel_t *t, line_t *parent_l, muxserver_tstate_t *ts,
-                                                   muxserver_lstate_t *parent_ls)
-{
-    if (! parent_ls->aggregate_read_paused)
-    {
-        return true;
-    }
-
-    if (parent_ls->pending_child_data_len >= muxserverChildResumeThreshold(ts))
-    {
-        return true;
-    }
-
-    assert(parent_ls->parent_read_pause_count > 0);
-
-    parent_ls->aggregate_read_paused = false;
-    parent_ls->parent_read_pause_count--;
-
-    if (parent_ls->parent_read_pause_count > 0 || parent_ls->parent_finishing)
-    {
-        return true;
-    }
-
-    return withLineLocked(parent_l, tunnelPrevDownStreamResume, t);
-}
-
+/*
+ * Queue pressure never pauses reads on the parent transport.
+ *
+ * The parent is shared by every child stream, so a pause taken on behalf of one child can
+ * only be cleared by that same child draining its queue. A child whose downstream peer has
+ * stopped reading never drains, and while the parent is paused no frame - not the peer's
+ * FlowPause acknowledgement, not another child's reply - can be read from it, so nothing
+ * that could clear the pause is able to arrive. One stalled stream therefore deadlocks every
+ * stream multiplexed onto the same parent until the stalled peer moves or the connection
+ * times out.
+ *
+ * Pressure is relieved by shedding instead: `child-buffer-limit` closes a single runaway
+ * child, and `parent-buffer-limit` closes the largest queues until the parent total is back
+ * under its ceiling. Both always terminate, because each close frees the queue that caused it.
+ */
 bool muxserverReleaseParentInputForChildClose(tunnel_t *t, line_t *parent_l, muxserver_lstate_t *parent_ls,
                                               muxserver_lstate_t *child_ls)
 {
-    muxserver_tstate_t *ts = tunnelGetState(t);
+    discard t;
 
     muxserverReleaseChildPendingBytes(parent_ls, child_ls);
 
-    if (! muxserverResumeParentInputForChild(t, parent_l, parent_ls, child_ls))
-    {
-        return false;
-    }
-
-    return muxserverResumeParentInputForAggregate(t, parent_l, ts, parent_ls);
+    return lineIsAlive(parent_l);
 }
 
 static bool muxserverChildSourcePaused(muxserver_lstate_t *child_ls)
@@ -396,18 +321,22 @@ bool muxserverResumeChildSource(tunnel_t *t, line_t *parent_l, muxserver_lstate_
     return lineIsAlive(parent_l);
 }
 
-static bool muxserverCloseChildForBufferLimit(tunnel_t *t, line_t *parent_l, muxserver_lstate_t *parent_ls,
-                                              muxserver_lstate_t *child_ls)
+static bool muxserverCloseChildForQueueLimit(tunnel_t *t, line_t *parent_l, muxserver_lstate_t *parent_ls,
+                                             muxserver_lstate_t *child_ls, const char *reason)
 {
     line_t   *child_l = child_ls->l;
     mux_cid_t cid     = child_ls->connection_id;
 
-    LOGW("MuxServer: closing child cid %u because queued child data reached limit", cid);
-
     if (! muxserverSendControlFrame(t, parent_l, parent_ls, child_l, cid, kMuxFlagClose))
     {
+        // the parent died mid-write, so the child is not being closed for its queue after all
         return false;
     }
+
+    LOGW("MuxServer: closing child cid %u because %s (%zu bytes queued on the parent)",
+         (unsigned int) cid,
+         reason,
+         parent_ls->pending_child_data_len);
 
     muxserverLeaveConnection(child_ls);
     bool parent_alive = muxserverReleaseParentInputForChildClose(t, parent_l, parent_ls, child_ls);
@@ -420,6 +349,71 @@ static bool muxserverCloseChildForBufferLimit(tunnel_t *t, line_t *parent_l, mux
     return parent_alive && lineIsAlive(parent_l);
 }
 
+/*
+ * Sheds the children holding the most queued data until the parent total is back under
+ * `parent-buffer-limit`.
+ *
+ * One pass over the child list, so the work is bounded by the child count even though a
+ * parent may carry tens of thousands of children: this runs inside a payload callback and
+ * must not turn one queued frame into an unbounded amount of work. The cut is the mean queue
+ * length at entry - the total being at or over the limit guarantees at least one child sits
+ * at or above it, so a pass always sheds something and always makes progress. A pass that
+ * does not get all the way under the ceiling is simply re-entered by the next queued payload.
+ *
+ * The result describes the parent, not the shed children: false means the parent line is gone
+ * and the caller must stop using it.
+ */
+static bool muxserverShedForParentBufferLimit(tunnel_t *t, line_t *parent_l, muxserver_tstate_t *ts,
+                                              muxserver_lstate_t *parent_ls)
+{
+    if (ts->parent_buffer_limit == kMuxParentBufferLimitUnlimited ||
+        parent_ls->pending_child_data_len < (size_t) ts->parent_buffer_limit)
+    {
+        return true;
+    }
+
+    const size_t children = (parent_ls->children_count > 0) ? (size_t) parent_ls->children_count : (size_t) 1;
+    size_t       cut      = parent_ls->pending_child_data_len / children;
+    if (cut == 0)
+    {
+        cut = 1;
+    }
+
+    uint32_t            shed_count = 0;
+    muxserver_lstate_t *child_ls   = parent_ls->child_next;
+
+    while (child_ls != NULL && parent_ls->pending_child_data_len >= (size_t) ts->parent_buffer_limit)
+    {
+        muxserver_lstate_t *next = child_ls->child_next;
+
+        if (bufferqueueGetBufLen(&child_ls->pending_child_data) >= cut)
+        {
+            shed_count++;
+            if (! muxserverCloseChildForQueueLimit(
+                    t, parent_l, parent_ls, child_ls, "queued child data on the parent reached limit"))
+            {
+                return false;
+            }
+        }
+
+        child_ls = next;
+    }
+
+    if (shed_count == 0)
+    {
+        // Nothing was over the cut while the total was over the limit, so the accounted total
+        // no longer matches the queues behind it. Left silent this would shed a healthy child
+        // on every subsequent payload and never recover, so say so instead.
+        LOGE("MuxServer: parent queue accounting is inconsistent: %zu bytes accounted across %u children with none "
+             "at or above the %zu byte cut",
+             parent_ls->pending_child_data_len,
+             parent_ls->children_count,
+             cut);
+    }
+
+    return true;
+}
+
 bool muxserverQueueChildPayload(tunnel_t *t, line_t *parent_l, muxserver_tstate_t *ts, muxserver_lstate_t *parent_ls,
                                 muxserver_lstate_t *child_ls, sbuf_t *buf)
 {
@@ -430,7 +424,8 @@ bool muxserverQueueChildPayload(tunnel_t *t, line_t *parent_l, muxserver_tstate_
 
     if (bufferqueueGetBufLen(&child_ls->pending_child_data) >= ts->child_buffer_limit)
     {
-        return muxserverCloseChildForBufferLimit(t, parent_l, parent_ls, child_ls);
+        return muxserverCloseChildForQueueLimit(
+            t, parent_l, parent_ls, child_ls, "its own queued child data reached limit");
     }
 
     if (! muxserverMaybeSendChildFlowPause(t, parent_l, ts, parent_ls, child_ls->l, child_ls))
@@ -438,15 +433,7 @@ bool muxserverQueueChildPayload(tunnel_t *t, line_t *parent_l, muxserver_tstate_
         return false;
     }
 
-    if (! muxserverMaybePauseParentInputForChild(t, parent_l, ts, parent_ls, child_ls))
-    {
-        return false;
-    }
-    if (! muxserverMaybePauseParentInputForAggregate(t, parent_l, ts, parent_ls))
-    {
-        return false;
-    }
-    return true;
+    return muxserverShedForParentBufferLimit(t, parent_l, ts, parent_ls);
 }
 
 static bool muxserverHandleChildBufferAfterDrain(tunnel_t *t, line_t *parent_l, muxserver_tstate_t *ts,
@@ -464,15 +451,7 @@ static bool muxserverHandleChildBufferAfterDrain(tunnel_t *t, line_t *parent_l, 
         }
     }
 
-    if (! child_ls->paused && pending_bytes < muxserverChildResumeThreshold(ts))
-    {
-        if (! muxserverResumeParentInputForChild(t, parent_l, parent_ls, child_ls))
-        {
-            return false;
-        }
-    }
-
-    return muxserverResumeParentInputForAggregate(t, parent_l, ts, parent_ls);
+    return true;
 }
 
 bool muxserverFlushChildPending(tunnel_t *t, line_t *parent_l, muxserver_lstate_t *parent_ls, line_t *child_l,
