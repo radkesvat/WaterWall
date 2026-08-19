@@ -112,6 +112,7 @@ static tunnel_t *createBaseTunnel(node_t *node)
     t->fnPauseD        = &wireguarddeviceTunnelDownStreamPause;
     t->fnResumeD       = &wireguarddeviceTunnelDownStreamResume;
     t->onChain         = &wireguarddeviceTunnelOnChain;
+    t->onSolvedTopology = &wireguarddeviceTunnelOnSolvedTopology;
     t->onPrepare       = &wireguarddeviceTunnelOnPrepair;
     t->onStart         = &wireguarddeviceTunnelOnStart;
     t->onStop          = &wireguarddeviceTunnelOnStop;
@@ -437,45 +438,6 @@ static bool processAllPeers(const cJSON *peers_array, wireguard_device_t *device
     return true;
 }
 
-static bool parseTransportDirection(wgd_tstate_t *state, const cJSON *settings)
-{
-    const cJSON *direction = cJSON_GetObjectItemCaseSensitive(settings, "transport-direction");
-
-    if (direction == NULL)
-    {
-        return true;
-    }
-
-    if (! cJSON_IsString(direction) || direction->valuestring == NULL)
-    {
-        LOGF("JSON Error: WireGuardDevice->settings->transport-direction must be \"next\"/\"up\" or "
-             "\"prev\"/\"down\"");
-        return false;
-    }
-
-    if (stringCompare(direction->valuestring, "next") == 0 || stringCompare(direction->valuestring, "up") == 0 ||
-        stringCompare(direction->valuestring, "upstream") == 0)
-    {
-        state->transport_side_is_next         = true;
-        state->transport_direction_configured = true;
-        state->transport_side_resolved        = true;
-        return true;
-    }
-
-    if (stringCompare(direction->valuestring, "prev") == 0 || stringCompare(direction->valuestring, "down") == 0 ||
-        stringCompare(direction->valuestring, "downstream") == 0)
-    {
-        state->transport_side_is_next         = false;
-        state->transport_direction_configured = true;
-        state->transport_side_resolved        = true;
-        return true;
-    }
-
-    LOGF("JSON Error: WireGuardDevice->settings->transport-direction must be \"next\"/\"up\" or "
-         "\"prev\"/\"down\"");
-    return false;
-}
-
 static bool wireguarddeviceCreateUserControllerTunnel(tunnel_t *t, node_t *node, const cJSON *settings)
 {
     wgd_tstate_t *state          = tunnelGetState(t);
@@ -560,8 +522,10 @@ tunnel_t *wireguarddeviceTunnelCreate(node_t *node)
     device_configuration.private_key                  = (const uint8_t *) device_private_key;
     state->device_configuration                       = device_configuration;
 
-    if (! parseTransportDirection(state, settings))
+    if (cJSON_GetObjectItemCaseSensitive(settings, "transport-direction") != NULL)
     {
+        LOGF("JSON Error: WireGuardDevice->settings->transport-direction is no longer supported; "
+             "the transport side is derived from the solved chain layers");
         goto fail;
     }
 

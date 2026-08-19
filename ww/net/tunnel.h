@@ -49,7 +49,22 @@ typedef void (*TunnelStatusCb)(tunnel_t *);
 typedef void (*TunnelLifecycleCb)(tunnel_t *, const ww_lifecycle_context_t *context);
 typedef void (*TunnelWorkerLifecycleCb)(tunnel_t *, wid_t wid, const ww_lifecycle_context_t *context);
 typedef void (*TunnelChainFn)(tunnel_t *, tunnel_chain_t *chain);
+/*
+ * onIndex runs once after layer resolution and topology expansion have reached
+ * a fixed point. The chain topology and its solved edge domains are final by
+ * then; implementations may consume them, but must not mutate the chain.
+ */
 typedef void (*TunnelIndexFn)(tunnel_t *, uint16_t index, uint32_t *mem_offset);
+/*
+ * Runs after each successful layer solve and before indexing. The callback sees
+ * the current solved topology snapshot, which is not necessarily final. It may
+ * derive state from that snapshot and may materialize private topology. Return
+ * true if and only if topology changed; that immediately invalidates the
+ * snapshot and makes NodeManager solve again. Callbacks must tolerate repeated
+ * calls. The topology is final only after every callback in a complete pass
+ * reports no change.
+ */
+typedef bool (*TunnelSolvedTopologyFn)(tunnel_t *, tunnel_chain_t *chain);
 typedef void (*TunnelFlowRoutineInit)(tunnel_t *, line_t *line);
 typedef void (*TunnelFlowRoutinePayload)(tunnel_t *, line_t *line, sbuf_t *payload);
 typedef void (*TunnelFlowRoutineEst)(tunnel_t *, line_t *line);
@@ -68,7 +83,7 @@ typedef splice_retcode_t (*TunnelFlowRoutineSplice)(tunnel_t *, line_t *line, in
     Tunnel is just a doubly linked list, it has its own state, per connection state is stored in line structure
     which later gets accessed by the chain_index which is fixed.
 
-    node(Create) -> onChain -> onChainingComplete -> onIndex -> onChainStart -> node(Destroy)
+    node(Create) -> onChain -> [solve -> onSolvedTopology]* -> onIndex -> onPrepare -> onStart -> node(Destroy)
 */
 struct tunnel_s
 {
@@ -106,6 +121,18 @@ struct tunnel_s
 
     node_t         *node;
     tunnel_chain_t *chain;
+
+    /*
+     * Optional pre-indexing hook for a tunnel whose runtime orientation or
+     * private topology depends on solved adjacent layer domains. See the
+     * TunnelSolvedTopologyFn contract above. Tunnels that only need to consume
+     * the final solution may do so in onIndex instead. (as of writing this only WireGuardDevice used this)
+     *
+     * This pointer occupies historical alignment padding: state[] remains at
+     * the same cache-line-aligned offset, preserving the external tunnel ABI.
+     * Old external nodes leave it NULL, which is the default no-op behavior.
+     */
+    TunnelSolvedTopologyFn onSolvedTopology;
 
     // tunnel itself will be aligned to cache line when allocating memory
     MSVC_ATTR_ALIGNED_LINE_CACHE uint8_t state[] GNU_ATTR_ALIGNED_LINE_CACHE;

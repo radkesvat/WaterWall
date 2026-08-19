@@ -138,6 +138,7 @@ add_library(ww STATIC
     net/tunnel.c
     net/line.c
     net/chain.c
+    net/node_layer_solver.c
     net/context.c
     net/generic_sniffer.c
     net/ipv4_packet_view.c

@@ -4,9 +4,10 @@
 #include "loggers/network_logger.h"
 
 /*
- * A layer-4 connection enters and raw layer-3 packets leave, so this node belongs
- * to both layer groups. Being a kNodeLayer3 member is what makes its chain a
- * packet chain and gets per-worker packet lines allocated for it.
+ * A layer-4 connection enters and raw layer-3 packets leave, so this node operates
+ * across both layer groups (kNodeLayerAnything with layer_group_next_node = kNodeLayer3
+ * and layer_group_prev_node = kNodeLayer4). Its fixed L3 next-edge requirement is
+ * what classifies the chain as a packet chain and triggers packet line allocation.
  */
 node_t nodeConnectionToPacketsGet(void)
 {

@@ -14,7 +14,6 @@ static bool tunnelchainNodeIsMuxTunnel(const node_t *node)
 {
     return stringCompare(node->type, "MuxClient") == 0 || stringCompare(node->type, "MuxServer") == 0;
 }
-
 bool tunnelchainTryComputeLineItemSize(uint32_t aggregate_lstate_size, uint32_t *item_size)
 {
     const uint64_t total = (uint64_t) sizeof(line_t) + (uint64_t) aggregate_lstate_size;
@@ -40,8 +39,15 @@ void tunnelarrayInsert(tunnel_array_t *tc, tunnel_t *t)
     tc->tuns[tc->len++] = t;
 }
 
-void tunnelchainInsert(tunnel_chain_t *tci, tunnel_t *t)
+void tunnelchainInsertAt(tunnel_chain_t *tci, tunnel_t *t, uint16_t index)
 {
+    if (UNLIKELY(index > tci->tunnels.len || tci->tunnels.len >= kMaxChainLen))
+    {
+        LOGF("tunnelchainInsertAt: invalid insertion index or full chain");
+        startupFailureRecord(1);
+        return;
+    }
+
     uint16_t next_padding;
     if (UNLIKELY(
             ! tunnelchainTryAddPadding(tci->sum_padding_left, tunnelGetNode(t)->required_padding_left, &next_padding)))
@@ -68,23 +74,31 @@ void tunnelchainInsert(tunnel_chain_t *tci, tunnel_t *t)
     }
     discard line_item_size;
 
-    tunnelarrayInsert(&(tci->tunnels), t);
-    tci->sum_padding_left    = next_padding;
-    tci->sum_line_state_size = next_line_state_size;
-    if (tunnelGetNode(t)->layer_group == kNodeLayer3 ||
-        tunnelGetNode(t)->layer_group_prev_node == kNodeLayer3 ||
-        tunnelGetNode(t)->layer_group_next_node == kNodeLayer3 ||
-        (tunnelGetNode(t)->layer_group_prev_node & kNodeLayerOppositeNext) != 0 ||
-        (tunnelGetNode(t)->layer_group_next_node & kNodeLayerOppositePrev) != 0)
+    if (index < tci->tunnels.len)
     {
-        tci->contains_packet_node = true;
+        memoryMove(&tci->tunnels.tuns[index + 1],
+                   &tci->tunnels.tuns[index],
+                   (size_t) (tci->tunnels.len - index) * sizeof(tci->tunnels.tuns[0]));
     }
+    tci->tunnels.tuns[index] = t;
+    tci->tunnels.len++;
+    tci->sum_padding_left     = next_padding;
+    tci->sum_line_state_size  = next_line_state_size;
+    tci->contains_packet_node = false;
+    tci->layer_solution_ready = false;
+    memoryZero(tci->resolved_prev_layer, sizeof(tci->resolved_prev_layer));
+    memoryZero(tci->resolved_next_layer, sizeof(tci->resolved_next_layer));
     if (tunnelchainNodeIsMuxTunnel(tunnelGetNode(t)))
     {
         tci->mux_tunnel_present = true;
     }
 
     t->chain = tci;
+}
+
+void tunnelchainInsert(tunnel_chain_t *tci, tunnel_t *t)
+{
+    tunnelchainInsertAt(tci, t, tci->tunnels.len);
 }
 
 tunnel_chain_t *tunnelchainCreate(wid_t workers_count)
@@ -228,8 +242,101 @@ void tunnelchainDestroy(tunnel_chain_t *tc)
     memoryFree(tc);
 }
 
+static bool tunnelchainLayerRelationsMatch(
+    const tunnel_layer_relation_registration_t *left,
+    const tunnel_layer_relation_registration_t *right)
+{
+    if (left->kind != right->kind)
+    {
+        return false;
+    }
+
+    return (left->left_tunnel == right->left_tunnel && left->left_side == right->left_side &&
+            left->right_tunnel == right->right_tunnel && left->right_side == right->right_side) ||
+           (left->left_tunnel == right->right_tunnel && left->left_side == right->right_side &&
+            left->right_tunnel == right->left_tunnel && left->right_side == right->left_side);
+}
+
+bool tunnelchainRegisterLayerRelation(
+    tunnel_chain_t              *chain,
+    tunnel_t                    *left,
+    tunnel_layer_side_t          left_side,
+    tunnel_t                    *right,
+    tunnel_layer_side_t          right_side,
+    tunnel_layer_relation_kind_t kind)
+{
+    if (chain == NULL || left == NULL || right == NULL)
+    {
+        LOGF("tunnelchainRegisterLayerRelation: NULL argument provided");
+        startupFailureRecord(1);
+        return false;
+    }
+
+    if ((left_side != kTunnelLayerSidePrev && left_side != kTunnelLayerSideNext) ||
+        (right_side != kTunnelLayerSidePrev && right_side != kTunnelLayerSideNext) ||
+        (kind != kTunnelLayerRelationSame && kind != kTunnelLayerRelationOpposite))
+    {
+        LOGF("tunnelchainRegisterLayerRelation: invalid side or relation kind");
+        startupFailureRecord(1);
+        return false;
+    }
+
+    if (chain->finalized)
+    {
+        LOGF("tunnelchainRegisterLayerRelation: cannot register relation on finalized chain");
+        startupFailureRecord(1);
+        return false;
+    }
+
+    const tunnel_layer_relation_registration_t candidate = {
+        .left_tunnel  = left,
+        .left_side    = left_side,
+        .right_tunnel = right,
+        .right_side   = right_side,
+        .kind         = kind,
+    };
+
+    // Check for deduplication (both direct order and symmetric swapped order)
+    for (uint16_t i = 0; i < chain->layer_relations_count; i++)
+    {
+        const tunnel_layer_relation_registration_t *r = &chain->layer_relations[i];
+        if (tunnelchainLayerRelationsMatch(r, &candidate))
+        {
+            return true;
+        }
+    }
+
+    if (chain->layer_relations_count >= kMaxLayerRelations)
+    {
+        LOGF("tunnelchainRegisterLayerRelation: capacity overflow (%u >= %u)",
+             chain->layer_relations_count, (unsigned int) kMaxLayerRelations);
+        startupFailureRecord(1);
+        return false;
+    }
+
+    tunnel_layer_relation_registration_t *reg = &chain->layer_relations[chain->layer_relations_count++];
+    reg->left_tunnel                          = left;
+    reg->left_side                            = left_side;
+    reg->right_tunnel                         = right;
+    reg->right_side                           = right_side;
+    reg->kind                                 = kind;
+
+    chain->contains_packet_node = false;
+    chain->layer_solution_ready = false;
+    memoryZero(chain->resolved_prev_layer, sizeof(chain->resolved_prev_layer));
+    memoryZero(chain->resolved_next_layer, sizeof(chain->resolved_next_layer));
+    return true;
+}
+
 void tunnelchainCombine(tunnel_chain_t *destination, tunnel_chain_t *source)
 {
+    if (destination->finalized || source->finalized)
+    {
+        LOGF("tunnelchainCombine: cannot combine finalized chains");
+        startupFailureRecord(1);
+        return;
+    }
+
     // Check if combining would exceed maximum chain length
     if (destination->tunnels.len + source->tunnels.len > kMaxChainLen)
     {
@@ -249,6 +356,41 @@ void tunnelchainCombine(tunnel_chain_t *destination, tunnel_chain_t *source)
              source->workers_count);
         startupFailureRecord(1);
         return;
+    }
+
+    uint16_t combined_relations_count = destination->layer_relations_count;
+    for (uint16_t i = 0; i < source->layer_relations_count; ++i)
+    {
+        const tunnel_layer_relation_registration_t *candidate = &source->layer_relations[i];
+        bool duplicate = false;
+
+        for (uint16_t j = 0; j < destination->layer_relations_count; ++j)
+        {
+            if (tunnelchainLayerRelationsMatch(candidate, &destination->layer_relations[j]))
+            {
+                duplicate = true;
+                break;
+            }
+        }
+        if (! duplicate)
+        {
+            for (uint16_t j = 0; j < i; ++j)
+            {
+                if (tunnelchainLayerRelationsMatch(candidate, &source->layer_relations[j]))
+                {
+                    duplicate = true;
+                    break;
+                }
+            }
+        }
+
+        if (! duplicate && combined_relations_count++ >= kMaxLayerRelations)
+        {
+            LOGF("tunnelchainCombine: combined layer-relation count exceeds capacity (%u)",
+                 (unsigned int) kMaxLayerRelations);
+            startupFailureRecord(1);
+            return;
+        }
     }
 
     uint16_t combined_padding;
@@ -289,12 +431,29 @@ void tunnelchainCombine(tunnel_chain_t *destination, tunnel_chain_t *source)
         }
     }
 
+    // Copy all layer relation registrations from source into destination
+    for (uint16_t i = 0; i < source->layer_relations_count; i++)
+    {
+        const tunnel_layer_relation_registration_t *r = &source->layer_relations[i];
+        if (! tunnelchainRegisterLayerRelation(destination,
+                                               r->left_tunnel, r->left_side,
+                                               r->right_tunnel, r->right_side,
+                                               r->kind))
+        {
+            return;
+        }
+    }
+
     // Clear the source chain (tunnels are now owned by destination)
-    source->tunnels.len          = 0;
-    source->sum_padding_left     = 0;
-    source->sum_line_state_size  = 0;
-    source->contains_packet_node = false;
-    source->mux_tunnel_present   = false;
+    source->tunnels.len           = 0;
+    source->sum_padding_left      = 0;
+    source->sum_line_state_size   = 0;
+    source->contains_packet_node  = false;
+    source->mux_tunnel_present    = false;
+    source->layer_solution_ready  = false;
+    source->layer_relations_count = 0;
+    memoryZero(source->resolved_prev_layer, sizeof(source->resolved_prev_layer));
+    memoryZero(source->resolved_next_layer, sizeof(source->resolved_next_layer));
 
     tunnelchainDestroy(source);
 }

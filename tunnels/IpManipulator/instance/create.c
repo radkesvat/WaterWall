@@ -215,8 +215,11 @@ static bool createInternalTlsClient(tunnel_t *t, node_t *owner, const char *sni,
     }
 
     state->internal_tls_client_node.flags |= kNodeFlagNoChain;
-    state->internal_tls_client_node.can_have_next = false;
-    state->internal_tls_client_tunnel             = nodemanagerCreateTunnelInstance(&state->internal_tls_client_node);
+    state->internal_tls_client_node.can_have_next         = false;
+    state->internal_tls_client_node.can_have_prev         = false;
+    state->internal_tls_client_node.layer_group_next_node = kNodeLayerNone;
+    state->internal_tls_client_node.layer_group_prev_node = kNodeLayerNone;
+    state->internal_tls_client_tunnel                     = nodemanagerCreateTunnelInstance(&state->internal_tls_client_node);
     if (state->internal_tls_client_tunnel == NULL)
     {
         LOGF("IpManipulator: failed to create internal TlsClient child tunnel");

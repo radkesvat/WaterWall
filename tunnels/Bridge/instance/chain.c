@@ -22,4 +22,20 @@ void bridgeTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
 
         state->pair_tun->onChain(state->pair_tun, chain);
     }
+
+    chain = tunnelGetChain(t);
+    if (state->pair_tun != NULL && chain != NULL)
+    {
+        tunnelchainRegisterLayerRelation(
+            chain,
+            t, kTunnelLayerSidePrev,
+            state->pair_tun, kTunnelLayerSidePrev,
+            kTunnelLayerRelationSame);
+
+        tunnelchainRegisterLayerRelation(
+            chain,
+            t, kTunnelLayerSideNext,
+            state->pair_tun, kTunnelLayerSideNext,
+            kTunnelLayerRelationSame);
+    }
 }

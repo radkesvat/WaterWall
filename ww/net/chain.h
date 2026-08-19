@@ -27,6 +27,35 @@ typedef enum
 
 } splice_retcode_t;
 
+typedef enum tunnel_layer_side_e
+{
+    kTunnelLayerSidePrev = 0,
+    kTunnelLayerSideNext = 1
+
+} tunnel_layer_side_t;
+
+typedef enum tunnel_layer_relation_kind_e
+{
+    kTunnelLayerRelationSame     = 1,
+    kTunnelLayerRelationOpposite = 2
+
+} tunnel_layer_relation_kind_t;
+
+typedef struct tunnel_layer_relation_registration_s
+{
+    tunnel_t                    *left_tunnel;
+    tunnel_layer_side_t          left_side;
+    tunnel_t                    *right_tunnel;
+    tunnel_layer_side_t          right_side;
+    tunnel_layer_relation_kind_t kind;
+
+} tunnel_layer_relation_registration_t;
+
+enum
+{
+    kMaxLayerRelations = (kMaxChainLen * 2)
+};
+
 typedef struct tunnel_array_s
 {
     uint16_t  len;
@@ -36,18 +65,23 @@ typedef struct tunnel_array_s
 
 typedef struct tunnel_chain_s
 {
-    tunnel_array_t  tunnels;
-    uint16_t        sum_padding_left;
-    uint32_t        sum_line_state_size;
-    wid_t           workers_count;
-    bool            contains_packet_node : 1;
-    bool            mux_tunnel_present : 1;
-    bool            packet_chain_init_sent : 1;
-    bool            finalized : 1;
-    bool            started : 1;
-    line_t        **packet_lines;
-    master_pool_t  *masterpool_line_pool;
-    generic_pool_t *line_pools[];
+    tunnel_array_t                       tunnels;
+    uint16_t                             sum_padding_left;
+    uint32_t                             sum_line_state_size;
+    wid_t                                workers_count;
+    bool                                 contains_packet_node : 1;
+    bool                                 mux_tunnel_present : 1;
+    bool                                 packet_chain_init_sent : 1;
+    bool                                 layer_solution_ready : 1;
+    bool                                 finalized : 1;
+    bool                                 started : 1;
+    uint16_t                             layer_relations_count;
+    tunnel_layer_relation_registration_t layer_relations[kMaxLayerRelations];
+    uint8_t                              resolved_prev_layer[kMaxChainLen];
+    uint8_t                              resolved_next_layer[kMaxChainLen];
+    line_t                             **packet_lines;
+    master_pool_t                       *masterpool_line_pool;
+    generic_pool_t                      *line_pools[];
 
 } tunnel_chain_t;
 
@@ -126,6 +160,19 @@ void tunnelarrayInsert(tunnel_array_t *tc, tunnel_t *t);
 void tunnelchainInsert(tunnel_chain_t *tci, tunnel_t *t);
 
 /**
+ * @brief Insert a tunnel at an exact chain-array position.
+ *
+ * The caller is responsible for updating the tunnel's prev/next links before
+ * insertion. Aggregated padding/state sizes are updated and any cached layer
+ * solution is invalidated.
+ *
+ * @param tci Destination chain.
+ * @param t Tunnel instance to insert.
+ * @param index Position in [0, tci->tunnels.len].
+ */
+void tunnelchainInsertAt(tunnel_chain_t *tci, tunnel_t *t, uint16_t index);
+
+/**
  * @brief Return per-worker line pools used by this chain.
  *
  * @param tc Chain instance.
@@ -186,3 +233,61 @@ static inline bool tunnelchainIsFinalized(tunnel_chain_t *tc)
 {
     return tc->finalized;
 }
+
+/**
+ * @brief Return the cached solved previous edge domain for a tunnel.
+ *
+ * The cache is available as the current snapshot during onSolvedTopology. It is
+ * final and stable during onIndex and every later lifecycle callback. A callback
+ * that changes topology must return true and must not use the stale snapshot
+ * afterward; NodeManager re-solves before invoking another callback.
+ *
+ * @param tc Chain instance.
+ * @param index Tunnel index in chain->tunnels.
+ * @return uint8_t Solved layer domain bitmask (node_layer_domain_t).
+ */
+static inline uint8_t tunnelchainGetResolvedPrevLayer(const tunnel_chain_t *tc, uint16_t index)
+{
+    assert(tc != NULL);
+    assert(index < kMaxChainLen);
+    return tc->resolved_prev_layer[index];
+}
+
+/**
+ * @brief Return the cached solved next edge domain for a tunnel.
+ *
+ * The cache is available as the current snapshot during onSolvedTopology. It is
+ * final and stable during onIndex and every later lifecycle callback. A callback
+ * that changes topology must return true and must not use the stale snapshot
+ * afterward; NodeManager re-solves before invoking another callback.
+ *
+ * @param tc Chain instance.
+ * @param index Tunnel index in chain->tunnels.
+ * @return uint8_t Solved layer domain bitmask (node_layer_domain_t).
+ */
+static inline uint8_t tunnelchainGetResolvedNextLayer(const tunnel_chain_t *tc, uint16_t index)
+{
+    assert(tc != NULL);
+    assert(index < kMaxChainLen);
+    return tc->resolved_next_layer[index];
+}
+
+/**
+ * @brief Register a logical layer relationship between two tunnel sides in a chain.
+ *
+ * @param chain Target chain (must not be finalized).
+ * @param left First tunnel in relationship.
+ * @param left_side Side of first tunnel (prev or next).
+ * @param right Second tunnel in relationship.
+ * @param right_side Side of second tunnel (prev or next).
+ * @param kind Relationship kind (Same or Opposite).
+ * @return true Successfully registered or already registered.
+ * @return false Registration failed (finalized, null, capacity overflow).
+ */
+bool tunnelchainRegisterLayerRelation(
+    tunnel_chain_t              *chain,
+    tunnel_t                    *left,
+    tunnel_layer_side_t          left_side,
+    tunnel_t                    *right,
+    tunnel_layer_side_t          right_side,
+    tunnel_layer_relation_kind_t kind);

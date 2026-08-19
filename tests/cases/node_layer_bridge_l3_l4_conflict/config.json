@@ -1,0 +1,39 @@
+{
+  "name": "node-layer-bridge-l3-l4-conflict",
+  "nodes": [
+    {
+      "name": "tun-in",
+      "type": "TunDevice",
+      "settings": {
+        "device-name": "ww-tun-br",
+        "device-ip": "10.252.31.1/24",
+        "device-mtu": 1400,
+        "route-table": "off"
+      },
+      "next": "bridge-a"
+    },
+    {
+      "name": "bridge-a",
+      "type": "Bridge",
+      "settings": {
+        "pair": "bridge-b"
+      }
+    },
+    {
+      "name": "tcp-in",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 23555
+      },
+      "next": "bridge-b"
+    },
+    {
+      "name": "bridge-b",
+      "type": "Bridge",
+      "settings": {
+        "pair": "bridge-a"
+      }
+    }
+  ]
+}

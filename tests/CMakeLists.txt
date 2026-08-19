@@ -752,6 +752,26 @@ add_waterwall_expected_failure_integration_test(
   ping_server_rejects_numeric_overflow
   "JSON Error: PingServer->settings->ttl (int field) : expected a whole number between 0 and 255"
 )
+add_waterwall_expected_failure_integration_test(
+  waterwall.node_layer_tundevice_tcpconnector_conflict
+  node_layer_tundevice_tcpconnector_conflict
+  "requires same layer on both sides, but sides resolved to incompatible domains"
+)
+add_waterwall_expected_failure_integration_test(
+  waterwall.node_layer_bridge_l3_l4_conflict
+  node_layer_bridge_l3_l4_conflict
+  "registered layer relation between node"
+)
+add_waterwall_expected_failure_integration_test(
+  waterwall.wireguard_transport_direction_removed
+  wireguard_transport_direction_removed
+  "transport-direction is no longer supported"
+)
+add_waterwall_expected_failure_integration_test(
+  waterwall.wireguard_ambiguous_layers
+  wireguard_ambiguous_layers
+  "chain layers must resolve exactly one L3 packet side and one L4 transport side"
+)
 add_waterwall_privileged_probe_integration_test(waterwall.ping_direct_real_adapters_roundtrip ping_direct_real_adapters_roundtrip 15)
 add_waterwall_test_labels(waterwall.ping_direct_real_adapters_roundtrip "ping")
 add_waterwall_integration_test(

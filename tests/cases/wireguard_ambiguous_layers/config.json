@@ -1,0 +1,37 @@
+{
+  "name": "wireguard-ambiguous-layers",
+  "nodes": [
+    {
+      "name": "udp-prev",
+      "type": "UdpStatelessSocket",
+      "settings": {
+        "listen-address": "127.0.0.1",
+        "listen-port": 26761
+      },
+      "next": "wireguard"
+    },
+    {
+      "name": "wireguard",
+      "type": "WireGuardDevice",
+      "settings": {
+        "privatekey": "0MHoX6RogAEFxKF7c5E84tA1Qy3l9u8IzJfgcVt4B2Y=",
+        "peers": [
+          {
+            "publickey": "GnRcOavdc180YrXak138cZxWlMoEUZL0Mg/ZyWhLBgo=",
+            "allowedips": "0.0.0.0/0",
+            "endpoint": "127.0.0.1:26762"
+          }
+        ]
+      },
+      "next": "udp-next"
+    },
+    {
+      "name": "udp-next",
+      "type": "UdpStatelessSocket",
+      "settings": {
+        "listen-address": "127.0.0.1",
+        "listen-port": 26762
+      }
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "name": "node-layer-tundevice-tcpconnector-conflict",
+  "nodes": [
+    {
+      "name": "tun-in",
+      "type": "TunDevice",
+      "settings": {
+        "device-name": "ww-tun-conflict",
+        "device-ip": "10.252.30.1/24",
+        "device-mtu": 1400,
+        "route-table": "off"
+      },
+      "next": "tcp-out"
+    },
+    {
+      "name": "tcp-out",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 12345
+      }
+    }
+  ]
+}

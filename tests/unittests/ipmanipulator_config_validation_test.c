@@ -8,6 +8,7 @@
 
 #include "IpManipulator/interface.h"
 #include "IpManipulator/structure.h"
+#include "net/node_layer_solver.h"
 #include "worker_registry_fixture.h"
 
 /*
@@ -528,21 +529,57 @@ static void testOverlapSniStandaloneConfiguration(void)
 
 static void testNodeLayerMetadata(void)
 {
-    node_t          node  = nodeIpManipulatorGet();
-    tunnel_t       *t     = tunnelCreate(&node, 0, 0);
-    tunnel_chain_t *chain = tunnelchainCreate(0);
+    node_t    node   = nodeIpManipulatorGet();
+    tunnel_t *t_ipm  = tunnelCreate(&node, 0, 0);
+    node_t    n_head = {
+           .name                  = (char *) "head",
+           .type                  = (char *) "TunDevice",
+           .flags                 = kNodeFlagChainHead,
+           .layer_group           = kNodeLayer3,
+           .layer_group_next_node = kNodeLayer3,
+           .layer_group_prev_node = kNodeLayerNone,
+           .can_have_next         = true,
+           .can_have_prev         = false,
+    };
+    node_t n_tail = {
+        .name                  = (char *) "tail",
+        .type                  = (char *) "PingServer",
+        .flags                 = kNodeFlagChainEnd,
+        .layer_group           = kNodeLayer3,
+        .layer_group_next_node = kNodeLayerNone,
+        .layer_group_prev_node = kNodeLayer3,
+        .can_have_next         = false,
+        .can_have_prev         = true,
+    };
+    tunnel_t *t_head = tunnelCreate(&n_head, 0, 0);
+    tunnel_t *t_tail = tunnelCreate(&n_tail, 0, 0);
 
     require(node.layer_group == kNodeLayer3, "IpManipulator does not advertise layer 3");
     require(node.layer_group_prev_node == kNodeLayerAnything && node.layer_group_next_node == kNodeLayerAnything,
             "IpManipulator unexpectedly restricts its neighboring layer groups");
-    require(t != NULL && chain != NULL, "failed to build the IpManipulator chain classification fixture");
+    require(t_ipm != NULL && t_head != NULL && t_tail != NULL, "failed to build the IpManipulator chain classification fixture");
+
+    t_head->next = t_ipm;
+    t_ipm->prev  = t_head;
+    t_ipm->next  = t_tail;
+    t_tail->prev = t_ipm;
+
+    tunnel_chain_t *chain = tunnelchainCreate(0);
+    require(chain != NULL, "failed to create test chain");
     require(! chain->contains_packet_node, "an empty chain is already classified as a packet chain");
 
-    tunnelchainInsert(chain, t);
-    require(chain->contains_packet_node, "a chain containing only IpManipulator was not classified as a packet chain");
+    tunnelchainInsert(chain, t_head);
+    tunnelchainInsert(chain, t_ipm);
+    tunnelchainInsert(chain, t_tail);
+
+    node_layer_solver_status_t status = {0};
+    require(nodeLayerSolveChain(chain, &status), "failed to solve chain containing IpManipulator");
+    require(chain->contains_packet_node, "a chain containing IpManipulator was not classified as a packet chain");
 
     tunnelchainDestroy(chain);
-    tunnelDestroy(t);
+    tunnelDestroy(t_head);
+    tunnelDestroy(t_ipm);
+    tunnelDestroy(t_tail);
     memoryFree(node.type);
 }
 

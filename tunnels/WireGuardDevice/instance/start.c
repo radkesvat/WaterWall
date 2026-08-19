@@ -135,7 +135,7 @@ static bool wireguarddeviceEnsureInnerPacketInit(tunnel_t *t, wgd_tstate_t *stat
 
     if (t->next == NULL)
     {
-        LOGF("WireGuardDevice: transport-direction=prev requires a next packet-side tunnel");
+        LOGF("WireGuardDevice: a previous transport side requires a next packet-side tunnel");
         startupFailureRecord(1);
         return false;
     }

@@ -239,7 +239,7 @@ neighbor.
 **Lifecycle hooks** (per tunnel, not per packet), assigned in `create.c`:
 
 ```text
-createHandle -> onChain -> onIndex -> onPrepare -> onStart -> onQuiesceRequest
+createHandle -> onChain -> [solve -> onSolvedTopology]* -> onIndex -> onPrepare -> onStart -> onQuiesceRequest
              -> onWorkerQuiesce -> onQuiesceWait -> onWorkerStop -> onStop -> onDestroy
 ```
 
@@ -261,7 +261,16 @@ device restart use their corresponding explicit lifecycle contexts rather than
 ambient process state.
 
 Most tunnels override only `onPrepare`, `onStart`, `onStop`, `onDestroy`, and the
-flow callbacks; `onChain`/`onIndex` keep the framework defaults.
+flow callbacks; `onChain`/`onIndex` keep the framework defaults and
+`onSolvedTopology` remains `NULL`. A tunnel whose private topology depends on
+solved adjacent edge domains may set `onSolvedTopology`. The hook sees the
+current solved snapshot, not necessarily the final topology, and may run more
+than once. It must return `true` if and only if it changed topology; that makes
+the snapshot stale and NodeManager solves again before invoking another hook.
+After a complete pass reports no changes, `onIndex` runs once over immutable
+topology. It and all later lifecycle callbacks may consume the final solved edge
+domains. Static internal topology known before solving remains the responsibility
+of `onChain`.
 
 ---
 

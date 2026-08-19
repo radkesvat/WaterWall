@@ -1212,6 +1212,23 @@ if(TARGET RealityCommon)
   add_waterwall_unit_test(waterwall.reality_v2_unit reality_v2_test "unit;tunnels;reality;v2;crypto;replay;direction")
 endif()
 
+if(TARGET WireGuardDevice)
+  add_executable(wireguarddevice_layer_resolution_test
+    wireguarddevice_layer_resolution_test.c
+  )
+  target_include_directories(wireguarddevice_layer_resolution_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/tunnels/WireGuardDevice
+  )
+  target_link_libraries(wireguarddevice_layer_resolution_test PRIVATE WireGuardDevice ww)
+  add_dependencies(waterwall_unit_tests wireguarddevice_layer_resolution_test)
+
+  add_waterwall_unit_test(
+    waterwall.wireguarddevice_layer_resolution_unit
+    wireguarddevice_layer_resolution_test
+    "unit;tunnels;wireguard;layer;topology"
+  )
+endif()
+
 if(LINUX AND TARGET WireGuardDevice)
   add_executable(wireguard_crypto_failure_test
     wireguard_crypto_failure_test.c

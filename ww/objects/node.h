@@ -117,8 +117,8 @@ enum node_layer_group
     kNodeLayerAnything     = kNodeLayer3 | kNodeLayer4,
     kNodeLayerSameAsNext   = (1 << 4),
     kNodeLayerSameAsPrev   = (1 << 5),
-    kNodeLayerOppositeNext = (1 << 6), // must be ORed with a specific layer (3 or 4) to indicate the opposite layer of the next node
-    kNodeLayerOppositePrev = (1 << 7)  // must be ORed with a specific layer (3 or 4) to indicate the opposite layer of the previous node
+    kNodeLayerOppositeNext = (1 << 6), // must be ORed with a base layer (3, 4, or Anything) to constrain this side and require opposite layer on next side
+    kNodeLayerOppositePrev = (1 << 7)  // must be ORed with a base layer (3, 4, or Anything) to constrain this side and require opposite layer on prev side
 };
 
 static inline const char *nodeLayerGroupToString(enum node_layer_group layer)
@@ -137,6 +137,18 @@ static inline const char *nodeLayerGroupToString(enum node_layer_group layer)
         return "kNodeLayerSameAsNext";
     case kNodeLayerSameAsPrev:
         return "kNodeLayerSameAsPrev";
+    case kNodeLayer3 | kNodeLayerOppositePrev:
+        return "kNodeLayer3|kNodeLayerOppositePrev";
+    case kNodeLayer4 | kNodeLayerOppositePrev:
+        return "kNodeLayer4|kNodeLayerOppositePrev";
+    case kNodeLayerAnything | kNodeLayerOppositePrev:
+        return "kNodeLayerAnything|kNodeLayerOppositePrev";
+    case kNodeLayer3 | kNodeLayerOppositeNext:
+        return "kNodeLayer3|kNodeLayerOppositeNext";
+    case kNodeLayer4 | kNodeLayerOppositeNext:
+        return "kNodeLayer4|kNodeLayerOppositeNext";
+    case kNodeLayerAnything | kNodeLayerOppositeNext:
+        return "kNodeLayerAnything|kNodeLayerOppositeNext";
     case kNodeLayerOppositeNext:
         return "kNodeLayerOppositeNext";
     case kNodeLayerOppositePrev:

@@ -1,5 +1,5 @@
 <!--
-Documentation version: 106
+Documentation version: 108
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/LoggerTunnel.mdx, and both files must keep the same documentation version.
 -->
 
@@ -7,7 +7,7 @@ Sync note: Any change to this file must also be applied to WaterWall/WaterWall-D
 
 `LoggerTunnel` is a transparent Waterwall tunnel that observes payload callbacks without modifying data or changing line lifecycle.
 
-It can sit at the beginning, middle, or end of a chain because every callback simply forwards in the correct direction after a null check, and only payload callbacks perform logging side effects.
+It is a middle tunnel: it observes traffic that already has a real line owner and forwards every callback to the next or previous tunnel.
 
 ## What It Does
 
@@ -19,13 +19,13 @@ It can sit at the beginning, middle, or end of a chain because every callback si
 
 ## Typical Placement
 
-Because `LoggerTunnel` is a passive observer, it can be placed almost anywhere:
+Place `LoggerTunnel` between a real chain head and chain end:
 
 - `TcpListener <--> LoggerTunnel <--> TcpConnector`
 - `TunDevice <--> LoggerTunnel <--> IpManipulator`
-- `UdpListener <--> LoggerTunnel`
+- `UdpListener <--> LoggerTunnel <--> UdpConnector`
 
-If it is the first or last node in a chain segment, missing `prev` or `next` links are handled by null checks instead of synthetic lifecycle behavior.
+It is not a line source, terminal sink, or useful standalone node, so strict topology validation rejects it at a chain boundary.
 
 ## Configuration Example
 
@@ -199,3 +199,4 @@ The selected `output-mode` controls filenames exactly like `file` mode.
 - File output uses raw bytes even though the filenames end in `.txt`.
 - `tcp-payload-file` is intentionally IPv4-only in this implementation.
 - Logging failures do not change forwarding behavior; payload is still passed through unchanged.
+- Layer group is `kNodeLayerAnything` with `SameAsPrev` and `SameAsNext`. It is middle-only (`kNodeFlagNone`) and preserves the network layer across its two neighbors.
