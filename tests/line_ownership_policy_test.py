@@ -226,7 +226,7 @@ OWNER_CLOSE_SITES = [
     ("tunnels/TcpListener/downstream/fin.c", "tcplistenerTunnelDownStreamFinish",
      "accepted TCP line, closed by the neighbour's Finish"),
     ("tunnels/UdpListener/downstream/fin.c", "udplistenerTunnelDownStreamFinish",
-     "stateful UDP peer line"),
+     "stateful UDP peer line; missing idle inventory is a fatal structural violation, so the valid path destroys once"),
     ("tunnels/UdpStatelessSocket/common/helpers.c", "udpstatelesssocketCloseOwnedLineFromAdjacent",
      "stateless UDP peer line, from either adjacent Finish"),
     ("tunnels/TesterClient/common/helpers.c", "testerclientCloseCompletedOwnedLine",
@@ -278,7 +278,6 @@ OWNER_CLOSE_SITES = [
 # How many lines an owner close path destroys, where that is not one. A handler
 # that closes a set of related lines has to keep closing all of them.
 OWNER_DESTROY_COUNTS = {
-    ("tunnels/UdpListener/downstream/fin.c", "udplistenerTunnelDownStreamFinish"): 2,
     ("tunnels/PacketsToStream/downstream/fin.c", "packetstostreamTunnelDownStreamFinish"): 2,
     ("tunnels/ReverseClient/common/helpers.c", "reverseclientClosePair"): 2,
 }

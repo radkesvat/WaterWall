@@ -103,18 +103,7 @@ void tunnelchainInsert(tunnel_chain_t *tci, tunnel_t *t)
 
 tunnel_chain_t *tunnelchainCreate(wid_t workers_count)
 {
-    const size_t count = (size_t) workers_count;
-    size_t       pointer_bytes;
-    if (UNLIKELY(count != 0 && sizeof(void *) > SIZE_MAX / count))
-    {
-        return NULL;
-    }
-    pointer_bytes = count * sizeof(void *);
-    if (UNLIKELY(pointer_bytes > SIZE_MAX - sizeof(tunnel_chain_t)))
-    {
-        return NULL;
-    }
-    size_t          size = sizeof(tunnel_chain_t) + pointer_bytes;
+    const size_t    size = sizeof(tunnel_chain_t) + ((size_t) workers_count * sizeof(void *));
     tunnel_chain_t *tc   = memoryAllocateZero(size);
     if (UNLIKELY(tc == NULL))
     {

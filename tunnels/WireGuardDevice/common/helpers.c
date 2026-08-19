@@ -169,21 +169,16 @@ void wireguarddeviceCloseTransportLine(tunnel_t *t, wid_t wid)
 }
 
 /*
- * WireGuardDevice is a dual-role node: it sits on the chain's persistent worker
- * packet line and it creates one normal transport line per worker for its
- * encrypted side. Both roles reach this handler, so the exact role decides what a
- * Finish means before any cleanup runs.
+ * WireGuardDevice sees three roles here: the persistent worker packet line, its
+ * own normal transport line, and a transport peer line owned by UdpStatelessSocket.
+ * The exact role decides what a Finish means before any cleanup runs.
  */
 void wireguarddeviceHandleTransportLineFinish(tunnel_t *t, line_t *line)
 {
     wgd_tstate_t   *state = tunnelGetState(t);
     tunnel_chain_t *chain = tunnelGetChain(t);
-    wid_t           wid;
 
-    if (line == NULL || chain == NULL)
-    {
-        return;
-    }
+    assert(line != NULL && chain != NULL);
 
     if (tunnelchainIsWorkerPacketLine(chain, line))
     {
@@ -195,23 +190,27 @@ void wireguarddeviceHandleTransportLineFinish(tunnel_t *t, line_t *line)
         abortProgramNow(1);
     }
 
-    if (state->transport_lines == NULL)
+    const wid_t wid = lineGetWID(line);
+    assert(state->transport_lines != NULL && wid < chain->workers_count);
+    if (UNLIKELY(state->transport_lines == NULL || wid >= chain->workers_count))
     {
-        return;
+        LOGF("WireGuardDevice: Finish reached invalid transport-line storage or worker %u", (unsigned int) wid);
+        abortProgramNow(1);
     }
 
-    wid = lineGetWID(line);
-    if (wid >= chain->workers_count || state->transport_lines[wid] != line)
+    if (state->transport_lines[wid] != line)
     {
+        /*
+         * UdpStatelessSocket owns its peer lines on the transport side. It
+         * forwards their Finish here before destroying them; WireGuard owns no
+         * state or line for that role, so this Finish is intentionally absorbed.
+         */
         return;
     }
 
     // A normal line this tunnel created: detach the slot, then leave it dead.
     state->transport_lines[wid] = NULL;
-    if (lineIsAlive(line))
-    {
-        lineDestroy(line);
-    }
+    lineDestroy(line);
 }
 
 bool wireguarddeviceForwardTransportPacket(wgd_tstate_t *state, line_t *line, sbuf_t *buf)

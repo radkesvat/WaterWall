@@ -116,16 +116,10 @@ bool tcpoverudpclientLinestateInitialize(tcpoverudpclient_lstate_t *ls, line_t *
 
 void tcpoverudpclientLinestateDestroy(tcpoverudpclient_lstate_t *ls)
 {
-    if (ls->k_handle == NULL)
-    {
-        return;
-    }
+    assert(ls->k_handle != NULL && ls->k_timer != NULL);
 
-    if (ls->k_timer != NULL)
-    {
-        weventSetUserData(ls->k_timer, NULL);
-        wtimerDelete(ls->k_timer);
-    }
+    weventSetUserData(ls->k_timer, NULL);
+    wtimerDelete(ls->k_timer);
 
     contextqueueDestroy(&ls->cq_u);
     contextqueueDestroy(&ls->cq_d);
@@ -133,10 +127,7 @@ void tcpoverudpclientLinestateDestroy(tcpoverudpclient_lstate_t *ls)
     tcpoverudpFecEncoderDestroy(&ls->fec_encoder);
     tcpoverudpFecDecoderDestroy(&ls->fec_decoder);
 
-    if (ls->k_handle != NULL)
-    {
-        ikcp_release(ls->k_handle);
-    }
+    ikcp_release(ls->k_handle);
 
     memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(tcpoverudpclient_lstate_t)));
 }

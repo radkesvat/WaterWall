@@ -304,11 +304,9 @@ void socketManagerBuildOwnedChainCommand(char *out, size_t out_len, const char *
         return;
     }
 
-    if (out_len > 0)
-    {
-        out[0] = '\0';
-    }
     assert(false);
+    LOGF("socketManagerBuildOwnedChainCommand: invalid iptables chain action %u", (unsigned int) action);
+    abortProgramNow(1);
 }
 
 void socketManagerBuildRedirectCommand(char *out, size_t out_len, const char *tool, const char *chain_name,

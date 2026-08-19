@@ -284,10 +284,7 @@ static line_t *createInternalLine(tunnel_t *t, line_t *app_l, socks5client_line_
 
 void socks5clientTunnelstateDestroy(socks5client_tstate_t *ts)
 {
-    if (ts == NULL)
-    {
-        return;
-    }
+    assert(ts != NULL);
 
     addresscontextReset(&ts->target_addr);
 

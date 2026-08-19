@@ -331,7 +331,7 @@ static headerserver_header_parse_result_t headerserverReadConfiguredHeader(tunne
         return headerserverReadProxyProtocol(ls, l);
 
     default:
-        LOGE("HeaderServer: invalid delayed header mode");
+        assert(false);
         return kHeaderServerHeaderParseError;
     }
 }

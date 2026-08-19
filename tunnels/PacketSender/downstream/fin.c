@@ -12,7 +12,6 @@ void packetsenderTunnelDownStreamFinish(tunnel_t *t, line_t *l)
     {
         LOGF("PacketSender: downstream Finish did not target a configured worker packet line");
         abortProgramNow(1);
-        return;
     }
 
     packetsender_worker_state_t *slot = &state->workers[wid];
@@ -20,7 +19,6 @@ void packetsenderTunnelDownStreamFinish(tunnel_t *t, line_t *l)
     {
         LOGF("PacketSender: downstream Finish targeted the wrong packet line for worker %u", (unsigned int) wid);
         abortProgramNow(1);
-        return;
     }
 
     /*

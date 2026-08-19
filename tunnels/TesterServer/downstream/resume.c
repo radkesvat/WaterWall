@@ -10,8 +10,7 @@ void testerserverTunnelDownStreamResume(tunnel_t *t, line_t *l)
     if (! ts->packet_mode)
     {
         LOGF("TesterServer: downStreamResume disabled");
-        assert(false);
-        return;
+        abortProgramNow(1);
     }
 
     ls->response_paused = false;

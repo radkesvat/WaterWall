@@ -326,18 +326,13 @@ bool tlsserverDrainShapedOutput(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls, 
 static void tlsserverShapingOutputTimerCallback(wtimer_t *timer)
 {
     tlsserver_lstate_t *ls = weventGetUserdata(timer);
-    if (ls == NULL)
-    {
-        return;
-    }
+    assert(ls != NULL && ls->shaping_output_timer == timer);
+
+    tunnel_t *t = ls->tunnel;
+    line_t   *l = ls->line;
+    assert(t != NULL && l != NULL && lineIsAlive(l) && ! ls->resources_released);
 
     ls->shaping_output_timer = NULL;
-    tunnel_t *t              = ls->tunnel;
-    line_t   *l              = ls->line;
-    if (t == NULL || l == NULL || ! lineIsAlive(l) || ls->resources_released)
-    {
-        return;
-    }
 
     lineLock(l);
     if (! tlsserverDrainShapedOutput(t, l, ls, false))
@@ -734,18 +729,11 @@ bool tlsserverSendFallbackPayload(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls
 static void tlsserverHandshakeDeadlineTimerCallback(wtimer_t *timer)
 {
     tlsserver_lstate_t *ls = weventGetUserdata(timer);
-    if (ls == NULL)
-    {
-        return;
-    }
+    assert(ls != NULL && ls->handshake_deadline_timer == timer && ls->handshake_deadline_armed &&
+           ! ls->handshake_completed && ! ls->fallback_mode && ls->ssl != NULL && ls->line != NULL &&
+           ls->tunnel != NULL && lineIsAlive(ls->line));
 
     ls->handshake_deadline_timer = NULL;
-
-    if (! ls->handshake_deadline_armed || ls->handshake_completed || ls->fallback_mode || ls->ssl == NULL ||
-        ls->line == NULL || ls->tunnel == NULL || ! lineIsAlive(ls->line))
-    {
-        return;
-    }
 
     LOGW("TlsServer: TLS handshake timed out before completion");
     tlsserverCloseLineFatal(ls->tunnel, ls->line);

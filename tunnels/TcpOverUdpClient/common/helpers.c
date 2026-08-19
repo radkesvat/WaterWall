@@ -2,7 +2,8 @@
 
 #include "loggers/network_logger.h"
 
-static bool tcpoverudpclientQueuePacketContext(context_queue_t *queue, line_t *l, const uint8_t *packet, size_t packet_len)
+static bool tcpoverudpclientQueuePacketContext(context_queue_t *queue, line_t *l, const uint8_t *packet,
+                                               size_t packet_len)
 {
     if (packet_len == 0 || packet_len > UINT32_MAX)
     {
@@ -42,10 +43,7 @@ static bool tcpoverudpclientEmitOuterPacket(void *ctx, const uint8_t *packet, si
 {
     tcpoverudpclient_lstate_t *ls = (tcpoverudpclient_lstate_t *) ctx;
 
-    if (ls == NULL || ls->line == NULL || ! lineIsAlive(ls->line))
-    {
-        return false;
-    }
+    assert(ls != NULL && ls->k_handle != NULL && ls->line != NULL && lineIsAlive(ls->line));
 
     return tcpoverudpclientQueuePacketContext(&ls->cq_u, ls->line, packet, packet_len);
 }
@@ -54,7 +52,9 @@ bool tcpoverudpclientInputKcpPacket(void *ctx, const uint8_t *packet, size_t pac
 {
     tcpoverudpclient_lstate_t *ls = (tcpoverudpclient_lstate_t *) ctx;
 
-    if (ls == NULL || ls->k_handle == NULL || packet == NULL || packet_len > INT_MAX)
+    assert(ls != NULL && ls->k_handle != NULL);
+
+    if (packet == NULL || packet_len > INT_MAX)
     {
         return false;
     }
@@ -116,12 +116,10 @@ void tcpoverudpclientKcpLoopIntervalCallback(wtimer_t *timer)
 
     tcpoverudpclient_lstate_t *ls = weventGetUserdata(timer);
 
-    if (ls == NULL || ls->k_handle == NULL || ls->line == NULL || ! lineIsAlive(ls->line))
-    {
-        return;
-    }
+    assert(ls != NULL && ls->k_timer == timer && ls->k_handle != NULL && ls->line != NULL && ls->tunnel != NULL &&
+           lineIsAlive(ls->line));
 
-    uint64_t                  current_time = wloopNowMS(getWorkerLoop(lineGetWID(ls->line)));
+    uint64_t                   current_time = wloopNowMS(getWorkerLoop(lineGetWID(ls->line)));
     tcpoverudpclient_tstate_t *ts           = tunnelGetState(ls->tunnel);
 
     if ((current_time - ls->last_recv) > ts->ping_interval_ms)
@@ -164,10 +162,7 @@ int tcpoverudpclientKUdpOutput(const char *data, int len, ikcpcb *kcp, void *use
 
     tcpoverudpclient_lstate_t *ls = (tcpoverudpclient_lstate_t *) user;
 
-    if (ls == NULL || ls->k_handle == NULL || ls->line == NULL || ! lineIsAlive(ls->line))
-    {
-        return -1;
-    }
+    assert(ls != NULL && ls->k_handle != NULL && ls->line != NULL && lineIsAlive(ls->line));
     line_t *l = ls->line;
 
     if (ls->write_paused && ikcp_waitsnd(ls->k_handle) < tcpoverudpclientGetKcpSendBufferLimit(ls))
@@ -179,8 +174,8 @@ int tcpoverudpclientKUdpOutput(const char *data, int len, ikcpcb *kcp, void *use
 
     if (ls->fec_encoder != NULL)
     {
-        if (! tcpoverudpFecEncodePacket(ls->fec_encoder, (const uint8_t *) data, (size_t) len,
-                                        tcpoverudpclientEmitOuterPacket, ls))
+        if (! tcpoverudpFecEncodePacket(
+                ls->fec_encoder, (const uint8_t *) data, (size_t) len, tcpoverudpclientEmitOuterPacket, ls))
         {
             return -1;
         }

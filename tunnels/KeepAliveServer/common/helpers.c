@@ -11,13 +11,7 @@ typedef enum keepaliveserver_consume_result_e
 
 static bool keepaliveserverIsPacketLine(tunnel_t *t, line_t *l)
 {
-    tunnel_chain_t *chain = tunnelGetChain(t);
-    if (chain == NULL || chain->packet_lines == NULL)
-    {
-        return false;
-    }
-
-    return tunnelchainGetWorkerPacketLine(chain, lineGetWID(l)) == l;
+    return tunnelchainIsWorkerPacketLine(tunnelGetChain(t), l);
 }
 
 static sbuf_t *keepaliveserverAllocFrameBuffer(buffer_pool_t *pool, uint32_t frame_len)

@@ -9,10 +9,10 @@ void udpconnectorTunnelUpStreamFinish(tunnel_t *t, line_t *l)
     udpconnector_lstate_t *ls = lineGetState(l, t);
     wio_t                 *io = ls->io;
 
-    if (io == NULL)
+    if (UNLIKELY(io == NULL || wioIsClosed(io)))
     {
-        udpconnectorLinestateDestroy(ls);
-        return;
+        LOGF("UdpConnector: upstream Finish reached an unavailable UDP socket");
+        abortProgramNow(1);
     }
 
     bool removed = localidletableRemoveIdleItemByHash(udpconnectorGetLineIdleTable(ts, l), udpconnectorIdleKey(ls->io));

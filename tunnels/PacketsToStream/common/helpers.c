@@ -749,25 +749,18 @@ line_t *packetstostreamEnsureOutputLine(tunnel_t *t, line_t *packet_line, packet
 void packetstostreamHeartbeatTimerCallback(wtimer_t *timer)
 {
     tunnel_t *t = weventGetUserdata(timer);
-    if (t == NULL)
-    {
-        return;
-    }
+    assert(t != NULL);
 
     packetstostream_tstate_t *ts = tunnelGetState(t);
-    if (! ts->sensitive_mode)
-    {
-        return;
-    }
+    discard                   ts;
+    assert(ts->sensitive_mode);
 
     // The heartbeat timer is armed per worker on that worker's own loop.
     const wid_t wid = getLoopEventWorkerWID(weventGetLoop(timer));
+    assert(ts->worker_timers != NULL && ts->worker_timers[wid] == timer);
 
     line_t *packet_line = tunnelchainGetWorkerPacketLine(tunnelGetChain(t), wid);
-    if (packet_line == NULL || ! lineIsAlive(packet_line))
-    {
-        return;
-    }
+    assert(packet_line != NULL && lineIsAlive(packet_line));
 
     packetstostream_lstate_t *ls = lineGetState(packet_line, t);
     if (ls->read_stream.pool == NULL)
@@ -794,21 +787,15 @@ void packetstostreamHeartbeatTimerCallback(wtimer_t *timer)
 void packetstostreamTimeoutTimerCallback(wtimer_t *timer)
 {
     tunnel_t *t = weventGetUserdata(timer);
-    if (t == NULL)
-    {
-        return;
-    }
+    assert(t != NULL);
 
     packetstostream_tstate_t *ts = tunnelGetState(t);
     // One checked identity for the packet line and the per-worker timer slot.
     const wid_t wid = getLoopEventWorkerWID(weventGetLoop(timer));
+    assert(ts->worker_timeout_timers != NULL && ts->worker_timeout_timers[wid] == timer);
 
     line_t *packet_line = tunnelchainGetWorkerPacketLine(tunnelGetChain(t), wid);
-    if (packet_line == NULL || ! lineIsAlive(packet_line))
-    {
-        ts->worker_timeout_timers[wid] = NULL;
-        return;
-    }
+    assert(packet_line != NULL && lineIsAlive(packet_line));
 
     packetstostream_lstate_t *ls = lineGetState(packet_line, t);
     if (! ls->awaiting_pong)

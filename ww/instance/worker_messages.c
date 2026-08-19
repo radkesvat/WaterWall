@@ -539,7 +539,11 @@ static worker_message_submit_result_e sendWorkerMessageForceQueueTransactional(w
     queue->wakeup_pending          = false;
     timed_worker_msg_t *queued_msg = worker_msg_deque_t_pull_back(&(queue->queued));
     assert(queued_msg == msg);
-    discard queued_msg;
+    if (UNLIKELY(queued_msg != msg))
+    {
+        LOGF("sendWorkerMessageForceQueueTransactional: queued message mismatch during refusal rollback");
+        abortProgramNow(1);
+    }
     mutexUnlock(&(queue->mutex));
     mutexUnlock(&(worker->control_mutex));
 
@@ -603,10 +607,19 @@ static void runTimedTask(wtimer_t *timer)
             worker_t               *worker = getWorker(owner_wid);
             worker_message_queue_t *queue  = worker->message_queue;
             assert(queue != NULL);
+            if (UNLIKELY(queue == NULL))
+            {
+                LOGF("runTimedTask: worker message queue is NULL during timer reset failure");
+                abortProgramNow(1);
+            }
             mutexLock(&(queue->mutex));
             const bool removed = workerTimedMessageRemoveLocked(queue, timed_msg);
             assert(removed);
-            discard removed;
+            if (UNLIKELY(! removed))
+            {
+                LOGF("runTimedTask: timed message not found in queue during timer reset failure");
+                abortProgramNow(1);
+            }
             timed_msg->timer = NULL;
             mutexUnlock(&(queue->mutex));
 
@@ -621,10 +634,19 @@ static void runTimedTask(wtimer_t *timer)
     worker_t               *worker = getWorker(owner_wid);
     worker_message_queue_t *queue  = worker->message_queue;
     assert(queue != NULL);
+    if (UNLIKELY(queue == NULL))
+    {
+        LOGF("runTimedTask: worker message queue is NULL on deadline");
+        abortProgramNow(1);
+    }
     mutexLock(&(queue->mutex));
     bool removed = workerTimedMessageRemoveLocked(queue, timed_msg);
     assert(removed);
-    discard removed;
+    if (UNLIKELY(! removed))
+    {
+        LOGF("runTimedTask: timed message not found in queue on deadline");
+        abortProgramNow(1);
+    }
     timed_msg->timer = NULL;
     mutexUnlock(&(queue->mutex));
 
@@ -697,6 +719,11 @@ static bool setupTimedTaskChecked(worker_t *worker, void *arg1, void *arg2, void
 
     mutexLock(&(queue->mutex));
     assert(worker->message_queue == queue);
+    if (UNLIKELY(worker->message_queue != queue))
+    {
+        LOGF("setupTimedTaskChecked: worker message queue mismatch");
+        abortProgramNow(1);
+    }
     if (UNLIKELY(worker_msg_deque_t_push_back(&(queue->timed), timed_msg) == NULL))
     {
         mutexUnlock(&(queue->mutex));

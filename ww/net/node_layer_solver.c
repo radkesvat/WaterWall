@@ -439,9 +439,12 @@ bool nodeLayerSolveChain(tunnel_chain_t *chain, node_layer_solver_status_t *stat
                 status->code             = kNodeLayerSolverErrStructural;
                 status->primary_tunnel   = t;
                 status->secondary_tunnel = t->next;
-                snprintf(status->message, sizeof(status->message),
-                         "node (\"%s\") is linked to next node (\"%s\") but specifies layer_group_next_node = kNodeLayerNone",
-                         name, t->next->node->name);
+                snprintf(status->message,
+                         sizeof(status->message),
+                         "node (\"%s\") is linked to next node (\"%s\") but specifies layer_group_next_node = "
+                         "kNodeLayerNone",
+                         name,
+                         t->next->node->name);
             }
             return false;
         }
@@ -453,29 +456,14 @@ bool nodeLayerSolveChain(tunnel_chain_t *chain, node_layer_solver_status_t *stat
                 status->code             = kNodeLayerSolverErrStructural;
                 status->primary_tunnel   = t;
                 status->secondary_tunnel = t->prev;
-                snprintf(status->message, sizeof(status->message),
-                         "node (\"%s\") is linked to previous node (\"%s\") but specifies layer_group_prev_node = kNodeLayerNone",
-                         name, t->prev->node->name);
+                snprintf(status->message,
+                         sizeof(status->message),
+                         "node (\"%s\") is linked to previous node (\"%s\") but specifies layer_group_prev_node = "
+                         "kNodeLayerNone",
+                         name,
+                         t->prev->node->name);
             }
             return false;
-        }
-
-        // Reciprocal capability on mutual edge
-        if (t->next != NULL && t->next->prev == t)
-        {
-            if (! t->next->node->can_have_prev)
-            {
-                if (status != NULL)
-                {
-                    status->code             = kNodeLayerSolverErrStructural;
-                    status->primary_tunnel   = t;
-                    status->secondary_tunnel = t->next;
-                    snprintf(status->message, sizeof(status->message),
-                             "node (\"%s\") precedes node (\"%s\") but next node specifies can_have_prev = false",
-                             name, t->next->node->name);
-                }
-                return false;
-            }
         }
 
         // Relative constraints:
@@ -490,9 +478,11 @@ bool nodeLayerSolveChain(tunnel_chain_t *chain, node_layer_solver_status_t *stat
                 {
                     status->code           = kNodeLayerSolverErrRelativeMissingSide;
                     status->primary_tunnel = t;
-                    snprintf(status->message, sizeof(status->message),
+                    snprintf(status->message,
+                             sizeof(status->message),
                              "node (\"%s\") specifies layer_group_next_node as %s but has no next node",
-                             name, nodeLayerGroupToString(t->node->layer_group_next_node));
+                             name,
+                             nodeLayerGroupToString(t->node->layer_group_next_node));
                 }
                 return false;
             }

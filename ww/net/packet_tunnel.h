@@ -41,7 +41,7 @@ bool packettunnelConfigureLifecycleAnchor(tunnel_t *t, const char *name, TunnelF
 /** Resolve the configured publication neighbour after chaining. */
 bool packettunnelLifecycleAnchorBind(tunnel_t *t);
 
-/** Publish one device packet and enforce packet-line survival in Debug builds. */
+/** Publish one device packet and enforce packet-line survival. */
 void packettunnelLifecycleAnchorPublish(tunnel_t *t, line_t *packet_line, sbuf_t *buf);
 
 /**

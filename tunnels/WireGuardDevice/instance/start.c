@@ -5,19 +5,11 @@
 static void loopHandle(wtimer_t *timer)
 {
     wgd_tstate_t *state = weventGetUserdata(timer);
-    if (state == NULL)
-    {
-        return;
-    }
+    assert(state != NULL);
 
     wireguarddeviceStateLock(state);
-    const bool active = state->wg_device.loop_timer == timer;
+    assert(state->wg_device.loop_timer == timer);
     wireguarddeviceStateUnlock(state);
-
-    if (! active)
-    {
-        return;
-    }
 
     wireguarddeviceLoop((wireguard_device_t *) state);
 }

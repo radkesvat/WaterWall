@@ -15,7 +15,6 @@ void streamtopacketsQueueWorkerPacketInit(void *worker, void *arg1, void *arg2, 
     {
         LOGF("StreamToPackets: worker packet line died during packet-side init");
         abortProgramNow(1);
-        return;
     }
 }
 

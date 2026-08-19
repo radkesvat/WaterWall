@@ -67,6 +67,12 @@ void tcpconnectorTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     tcpconnector_tstate_t *ts = tunnelGetState(t);
     tcpconnector_lstate_t *ls = lineGetState(l, t);
 
+    if (UNLIKELY(ls->io == NULL || wioIsClosed(ls->io)))
+    {
+        LOGF("TcpConnector: upstream payload reached an unavailable TCP socket");
+        abortProgramNow(1);
+    }
+
     if (ls->write_paused)
     {
         handlePausedWrite(t, l, ts, ls, buf);

@@ -7,12 +7,6 @@ void streamtopacketsTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     streamtopackets_tstate_t *ts      = tunnelGetState(t);
     streamtopackets_lstate_t *line_ls = lineGetState(l, t);
 
-    if (line_ls->read_stream.pool == NULL)
-    {
-        lineReuseBuffer(l, buf);
-        return;
-    }
-
     bufferstreamPush(&(line_ls->read_stream), buf);
 
     if (streamtopacketsReadStreamIsOverflowed(&(line_ls->read_stream)))
@@ -79,7 +73,7 @@ void streamtopacketsTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         // so affinity is restored from the decoded packet itself.
         streamtopacketsForwardDecodedPacket(t, l, packet_buffer, generation);
 
-        if (! lineIsAlive(l) || line_ls->read_stream.pool == NULL)
+        if (! lineIsAlive(l))
         {
             lineUnlock(l);
             return;

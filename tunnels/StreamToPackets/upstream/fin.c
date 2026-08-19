@@ -13,9 +13,5 @@ void streamtopacketsTunnelUpStreamFinish(tunnel_t *t, line_t *l)
      * generation, the registry clears the active owner and stales queued writes.
      */
     streamtopacketsUnregisterLine(t, l);
-
-    if (line_ls->read_stream.pool != NULL)
-    {
-        streamtopacketsLinestateDestroy(line_ls);
-    }
+    streamtopacketsLinestateDestroy(line_ls);
 }

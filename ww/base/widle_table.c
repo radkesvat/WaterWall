@@ -432,6 +432,11 @@ static void idletableReleaseMessageRef(idle_table_t *self)
 
     mutexLock(&(self->mutex));
     assert(self->posted_messages > 0);
+    if (UNLIKELY(self->posted_messages == 0))
+    {
+        LOGF("IdleTable: posted-message counter underflow during message release");
+        abortProgramNow(1);
+    }
     self->posted_messages -= 1;
     const bool destroy_now = self->posted_messages == 0 && self->destroy_requested;
     mutexUnlock(&(self->mutex));

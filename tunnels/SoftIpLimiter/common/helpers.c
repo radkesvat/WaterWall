@@ -181,10 +181,7 @@ softiplimiter_extract_result_t softiplimiterTryExtractIdentifierFromBytes(softip
                                                                           const uint8_t *bytes, size_t len,
                                                                           hash_t *identifier_out)
 {
-    if (UNLIKELY(identifier_out == NULL))
-    {
-        return kSoftIpLimiterExtractInvalid;
-    }
+    assert(identifier_out != NULL);
 
     if (mode == kSoftIpLimiterIdentifierVless)
     {

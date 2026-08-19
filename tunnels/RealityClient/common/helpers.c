@@ -31,8 +31,10 @@ static bool realityclientEncryptFrame(realityclient_tstate_t *ts, realityclient_
                                       uint8_t record_kind, const uint8_t *plaintext, uint32_t plaintext_len,
                                       sbuf_t **frame_buffer)
 {
+    assert(frame_buffer != NULL);
+
     if (! ls->session_keys_ready || ! realityV2SequenceAvailable(ls->c2s_send_seq) ||
-        ! realityV2RecordProfileIsValid(&ls->record_profile) || frame_buffer == NULL)
+        ! realityV2RecordProfileIsValid(&ls->record_profile))
     {
         return false;
     }

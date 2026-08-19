@@ -162,17 +162,10 @@ void tcpconnectorOnOutBoundConnected(wio_t *upstream_io)
 
 void tcpconnectorFlushWriteQueue(tcpconnector_lstate_t *lstate)
 {
-    if (lstate->io == NULL)
-    {
-        return;
-    }
+    assert(lstate->io != NULL && ! wioIsClosed(lstate->io));
 
     while (bufferqueueGetBufCount(&lstate->pause_queue) > 0)
     {
-        if (wioIsClosed(lstate->io))
-        {
-            return;
-        }
         sbuf_t *buf = bufferqueuePopFront(&lstate->pause_queue);
         wioWrite(lstate->io, buf);
     }

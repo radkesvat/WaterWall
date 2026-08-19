@@ -473,20 +473,16 @@ void udpconnectorTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     udpconnector_lstate_t *ls = lineGetState(l, t);
 
     wio_t *io = ls->io;
-    if (ls->write_paused || io == NULL)
+    if (UNLIKELY(io == NULL || wioIsClosed(io)))
+    {
+        LOGF("UdpConnector: upstream payload reached an unavailable UDP socket");
+        abortProgramNow(1);
+    }
+
+    if (ls->write_paused)
     {
         handleQueuedWrite(t, l, ts, ls, buf);
         return;
-    }
-
-    if (UNLIKELY(wioIsClosed(io)))
-    {
-        // should not happen in our structure
-        LOGF("UdpConnector: UpStream Payload is called on closed wio. This should not happen");
-        lineReuseBuffer(l, buf);
-        // tunnelPrevDownStreamFinish(t, l);
-        assert(false);
-        abortProgramNow(1);
     }
     // LOGD("writing %d bytes", sbufGetLength(buf));
 

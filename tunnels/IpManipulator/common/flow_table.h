@@ -115,7 +115,8 @@ static inline bool ipmanipulatorFlowKeyEquals(const ipmanipulator_flow_key_t *a,
 
 static inline void *ipmanipulatorFlowEntryRecord(ipmanipulator_flow_entry_t *entry)
 {
-    return entry == NULL ? NULL : (void *) entry->record_storage;
+    assert(entry != NULL);
+    return entry->record_storage;
 }
 
 /*

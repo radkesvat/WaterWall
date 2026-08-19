@@ -134,21 +134,22 @@ void packettunnelLifecycleAnchorPublish(tunnel_t *t, line_t *packet_line, sbuf_t
         LOGF("%s: invalid packet-lifecycle anchor publication", anchor->name);
         abortProgramNow(1);
     }
+    if (UNLIKELY(! lineIsAlive(packet_line)))
+    {
+        LOGF("%s: packet line was already dead during runtime", anchor->name);
+        abortProgramNow(1);
+    }
 
-#ifdef DEBUG
     lineLock(packet_line);
-#endif
 
     anchor->publication_callback(anchor->publication_tunnel, packet_line, buf);
 
-#ifdef DEBUG
     if (! lineIsAlive(packet_line))
     {
         LOGF("%s: packet line died during runtime", anchor->name);
         abortProgramNow(1);
     }
     lineUnlock(packet_line);
-#endif
 }
 
 bool packettunnelTakeChecksumRequest(line_t *line)

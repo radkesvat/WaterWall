@@ -4,10 +4,5 @@
 
 void loggertunnelTunnelUpStreamPause(tunnel_t *t, line_t *l)
 {
-    if (t->next == NULL)
-    {
-        return;
-    }
-
     tunnelNextUpStreamPause(t, l);
 }

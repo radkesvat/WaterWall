@@ -91,7 +91,8 @@ static inline void lineLockForce(line_t *const line)
     assert(line->refc < LINE_REFC_MAX);
     if (0 == atomicIncRelaxed(&line->refc))
     {
-        assert(false);
+        LOGF("PipeTunnel: forced lock failed due to reference count overflow");
+        abortProgramNow(1);
     }
 }
 
@@ -99,21 +100,36 @@ static void pipePairRef(pipe_pair_t *pair)
 {
     const w_atomic_uint_value_t previous = atomicAddExplicit(&pair->refs, 1, memory_order_relaxed);
     assert(previous != 0 && previous < UINT_MAX);
-    discard previous;
+    if (UNLIKELY(previous == 0 || previous == UINT_MAX))
+    {
+        LOGF("PipeTunnel: pair reference count is dead or overflowed (%u)", (unsigned int) previous);
+        abortProgramNow(1);
+    }
 }
 
 static void pipePairUnref(pipe_pair_t *pair)
 {
     const w_atomic_uint_value_t previous = atomicSubExplicit(&pair->refs, 1, memory_order_acq_rel);
     assert(previous != 0);
+    if (UNLIKELY(previous == 0))
+    {
+        LOGF("PipeTunnel: pair reference count underflow");
+        abortProgramNow(1);
+    }
     if (previous != 1)
     {
         return;
     }
 
-    assert(! atomicLoadExplicit(&pair->registered, memory_order_relaxed));
-    assert(! atomicLoadExplicit(&pair->borrowed_attached, memory_order_relaxed));
-    assert(! atomicLoadExplicit(&pair->owned_attached, memory_order_relaxed));
+    const bool registered        = atomicLoadExplicit(&pair->registered, memory_order_relaxed);
+    const bool borrowed_attached = atomicLoadExplicit(&pair->borrowed_attached, memory_order_relaxed);
+    const bool owned_attached    = atomicLoadExplicit(&pair->owned_attached, memory_order_relaxed);
+    assert(! registered && ! borrowed_attached && ! owned_attached);
+    if (UNLIKELY(registered || borrowed_attached || owned_attached))
+    {
+        LOGF("PipeTunnel: final pair release occurred while still registered or attached");
+        abortProgramNow(1);
+    }
 
     /* The pair, rather than either attached side, owns these physical
      * references. Keeping them through the last queued message prevents a
@@ -145,6 +161,11 @@ static void pipePairMaybeUnregister(pipe_pair_t *pair)
         else
         {
             assert(state->pairs == pair);
+            if (UNLIKELY(state->pairs != pair))
+            {
+                LOGF("PipeTunnel: pair registry head mismatch during unregister");
+                abortProgramNow(1);
+            }
             state->pairs = pair->next;
         }
         if (pair->next != NULL)
@@ -175,6 +196,11 @@ static void pipePairDetach(pipe_pair_t *pair, line_t *line)
     else
     {
         assert(line == pair->owned_line);
+        if (UNLIKELY(line != pair->owned_line))
+        {
+            LOGF("PipeTunnel: detach received an unrelated line");
+            abortProgramNow(1);
+        }
         attached = &pair->owned_attached;
     }
 
@@ -486,6 +512,11 @@ static pipe_send_result_t pipeSend(pipe_pair_t *pair, line_t *line_to, pipe_mess
 
     WorkerMessageCallback callback = upstream ? pipeUpCallback(type) : pipeDownCallback(type);
     assert(callback != NULL);
+    if (UNLIKELY(callback == NULL))
+    {
+        LOGF("PipeTunnel: pipeSend message kind %d has no callback", (int) type);
+        abortProgramNow(1);
+    }
 
     pipePairRef(pair);
     lineLockForce(line_to);
@@ -627,7 +658,9 @@ static void pipetunnelDefaultDownStreamInit(tunnel_t *t, line_t *line)
 {
     discard t;
     discard line;
+    LOGF("PipeTunnel: downStreamInit is disabled");
     assert(false);
+    abortProgramNow(1);
 }
 
 static void pipetunnelDefaultDownStreamEst(tunnel_t *t, line_t *line)
@@ -903,6 +936,11 @@ void pipetunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context)
     discard             context;
     pipetunnel_state_t *state = pipeTunnelState(t);
     assert(state->pairs == NULL);
+    if (UNLIKELY(state->pairs != NULL))
+    {
+        LOGF("PipeTunnel: destroyed while active pairs remain in registry");
+        abortProgramNow(1);
+    }
     if (state->pairs_lock_initialized)
     {
         mutexDestroy(&state->pairs_lock);

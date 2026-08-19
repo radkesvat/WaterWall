@@ -878,7 +878,6 @@ void testerserverResponseSendTask(tunnel_t *t, line_t *l)
             {
                 LOGF("TesterServer: packet line died during packet-mode response send");
                 abortProgramNow(1);
-                return;
             }
         }
 

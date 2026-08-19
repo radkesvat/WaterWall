@@ -244,15 +244,9 @@ static int sio_run_ifconfig_slip(int mtu, const char *local_addr, const char *pe
 {
 	pid_t childpid;
 	int status;
-	int written;
 	char mtu_arg[32];
 
-	written = snprintf(mtu_arg, sizeof(mtu_arg), "%d", mtu);
-	if ((written < 0) || ((size_t)written >= sizeof(mtu_arg)))
-	{
-		fprintf(stderr, "ifconfig failed: invalid MTU value\n");
-		return -1;
-	}
+	snprintf(mtu_arg, sizeof(mtu_arg), "%d", mtu);
 
 	childpid = fork();
 	if (childpid < 0)

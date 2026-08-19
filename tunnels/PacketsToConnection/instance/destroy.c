@@ -34,11 +34,7 @@ void ptcTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context)
         memoryFree(state->owned_lines);
         state->owned_lines = NULL;
     }
-    if (state->owned_lines_lock_initialized)
-    {
-        mutexDestroy(&state->owned_lines_lock);
-        state->owned_lines_lock_initialized = false;
-    }
+    mutexDestroy(&state->owned_lines_lock);
 
     tunnelDestroy(t);
 }

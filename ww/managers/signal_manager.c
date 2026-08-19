@@ -171,7 +171,11 @@ static void windowsHandlerGateLeave(void)
 {
     const w_atomic_uint_value_t previous = atomicSubExplicit(&windows_ctrl_handler_gate, 1U, memory_order_release);
     assert((previous & WINDOWS_HANDLER_GATE_COUNT_MASK) != 0);
-    discard previous;
+    if (UNLIKELY((previous & WINDOWS_HANDLER_GATE_COUNT_MASK) == 0))
+    {
+        printError("windowsHandlerGateLeave: Windows control-handler gate count underflow");
+        abortProgramNow(1);
+    }
 }
 
 static void windowsHandlerGateCloseAndWait(void)

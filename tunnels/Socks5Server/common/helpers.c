@@ -362,11 +362,7 @@ static bool socks5serverAuthUserFromClient(tunnel_t *t, line_t *l, const uint8_t
     socks5server_tstate_t *ts            = tunnelGetState(t);
     size_t                 username_size = username_len;
     size_t                 password_size = password_len;
-    if (UNLIKELY(user_handle_out == NULL))
-    {
-        socks5serverLogAuthRejected(t, l, username, username_len, "internal auth handle unavailable");
-        return false;
-    }
+    assert(user_handle_out != NULL);
     if (username_len == 0)
     {
         socks5serverLogAuthRejected(t, l, NULL, 0, "empty username");

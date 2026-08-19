@@ -10,7 +10,6 @@ void testerclientTunnelDownStreamInit(tunnel_t *t, line_t *l)
     {
         LOGF("TesterClient: downStreamInit disabled");
         abortProgramNow(1);
-        return;
     }
 
     testerclient_lstate_t *ls = lineGetState(l, t);

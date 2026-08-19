@@ -10,8 +10,7 @@ void testerserverTunnelDownStreamInit(tunnel_t *t, line_t *l)
     if (! ts->packet_mode)
     {
         LOGF("TesterServer: downStreamInit disabled");
-        assert(false);
-        return;
+        abortProgramNow(1);
     }
 
     if (ls->read_stream.pool == NULL)

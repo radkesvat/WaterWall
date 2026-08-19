@@ -6,10 +6,7 @@ void streamtopacketsTunnelUpStreamInit(tunnel_t *t, line_t *l)
 {
     streamtopackets_lstate_t *line_ls = lineGetState(l, t);
 
-    if (line_ls->read_stream.pool == NULL)
-    {
-        streamtopacketsLinestateInitialize(line_ls, lineGetBufferPool(l));
-    }
+    streamtopacketsLinestateInitialize(line_ls, lineGetBufferPool(l));
 
     /*
      * Registration alone neither changes the active source nor makes this line
