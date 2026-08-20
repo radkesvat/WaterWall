@@ -443,7 +443,7 @@ bool tlsclientFlushSslOutput(tunnel_t *t, line_t *l, tlsclient_lstate_t *ls)
     bool force = queued >= kTlsRecordShapingQueueHardLimit;
     if (force && ls->shaping_wire_paused)
     {
-        LOGW("TlsClient: record shaping queue exceeded 1 MiB while the wire side was paused");
+        LOGW("TlsClient: record shaping queue exceeded 8 MiB while the wire side was paused");
         return false;
     }
     if (! tlsclientDrainShapedOutput(t, l, ls, force))
@@ -454,7 +454,7 @@ bool tlsclientFlushSslOutput(tunnel_t *t, line_t *l, tlsclient_lstate_t *ls)
     ls = lineGetState(l, t);
     if (tlsrecordshapingOutputQueueBytes(&ls->shaping_output) >= kTlsRecordShapingQueueHardLimit)
     {
-        LOGW("TlsClient: record shaping queue could not be reduced below its 1 MiB hard limit");
+        LOGW("TlsClient: record shaping queue could not be reduced below its 8 MiB hard limit");
         return false;
     }
     return tlsclientScheduleShapedOutput(t, l, ls);

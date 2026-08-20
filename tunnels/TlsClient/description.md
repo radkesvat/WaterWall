@@ -152,8 +152,8 @@ capture, overhead, connection-success, and classifier measurements justify publi
 
 Padding is standard zero-valued TLS 1.3 `TLSInnerPlaintext` padding and adds the selected number of bytes to ciphertext,
 subject to the remaining legal TLS record capacity. Delay starts after encryption and adds up to the selected latency.
-Records stay in wire order with `release_at = max(now + delay, previous_release_at)`. Queued ciphertext is bounded to 1
-MiB per line, with producer backpressure at 768 KiB and release at 384 KiB. Pause and Resume propagation follows the
+Records stay in wire order with `release_at = max(now + delay, previous_release_at)`. Queued ciphertext is bounded to 8
+MiB per line, with producer backpressure at 6 MiB and release at 3 MiB. Pause and Resume propagation follows the
 current wire state: if draining during Resume re-enters with another wire Pause, the stale Resume is suppressed until a
 later wire Resume. If the cleartext side finishes, the timer is canceled and queued client ciphertext is synchronously
 released in FIFO order while the wire remains writable. If the wire is paused, any remainder is discarded; local state

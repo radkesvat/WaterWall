@@ -10,9 +10,9 @@ enum
     kTlsRecordShapingMaxDelayMs            = 1000,
     kTlsRecordShapingRecordHeaderSize      = 5,
     kTlsRecordShapingMaxRecordBody         = 18432,
-    kTlsRecordShapingQueueHardLimit        = 1024 * 1024,
-    kTlsRecordShapingQueueHighWatermark    = 768 * 1024,
-    kTlsRecordShapingQueueLowWatermark     = 384 * 1024,
+    kTlsRecordShapingQueueHardLimit        = 8 * 1024 * 1024,
+    kTlsRecordShapingQueueHighWatermark    = 6 * 1024 * 1024,
+    kTlsRecordShapingQueueLowWatermark     = 3 * 1024 * 1024,
     kTlsRecordShapingErrorSize             = 256,
 };
 
