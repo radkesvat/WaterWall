@@ -123,7 +123,7 @@ enum node_layer_group
 
 static inline const char *nodeLayerGroupToString(enum node_layer_group layer)
 {
-    switch (layer)
+    switch ((int)layer)
     {
     case kNodeLayerNone:
         return "kNodeLayerNone";
