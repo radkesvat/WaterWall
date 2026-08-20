@@ -126,7 +126,7 @@ Fixed connection count mode:
 - `child-buffer-limit` `(integer, bytes, optional)`
   Maximum queued data per paused child line before `MuxClient` closes that child stream.
 
-  Default: `8388608` (`8 MB`).
+  Default: `25165824` (`24 MB`).
 
 - `child-buffer-pause-tolerance` `(integer, bytes, optional)`
   Queued-data backstop for sending a `FlowPause` frame for a paused child.
@@ -142,7 +142,7 @@ Fixed connection count mode:
   reach the budget, `MuxClient` closes the child with the largest queue. Equal-sized queues prefer the
   least-recently-active child. This releases the pressure without pausing unrelated streams on the shared parent.
 
-  Default: `8388608` (`8 MB`). Set to `0` to disable the aggregate budget; `child-buffer-limit` still bounds each
+  Default: `33554432` (`32 MB`). Set to `0` to disable the aggregate budget; `child-buffer-limit` still bounds each
   individual child. The value may intentionally be lower than `child-buffer-limit`.
 
   The limit applies to each parent independently. Approximate worst-case queued memory is therefore
@@ -245,7 +245,7 @@ that child's `cid`. `FlowPause` is sent as soon as the local child write side pa
 If writing parent-delivered data to a child causes that child to pause, `MuxClient` queues later data for that child.
 The peer has normally already received `FlowPause` for that `cid`; `child-buffer-pause-tolerance` is a backstop for a
 child that paused before its `Open` frame was sent. Queued data is flushed when the child resumes. `FlowResume` is sent
-once the child's queue drops below `512 KB`, allowing the peer to begin sending before the queue is completely empty.
+once the child's queue drops below `256 KB`, allowing the peer to begin sending before the queue is completely empty.
 
 Queue pressure does not pause reads on the parent transport. A parent is shared by every child, so a parent read pause
 taken for one indefinitely blocked destination also prevents unrelated child frames from being demultiplexed. That is

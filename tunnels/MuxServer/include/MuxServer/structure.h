@@ -39,11 +39,11 @@ enum
     kConcurrencyModeTimer                = kDvsFirstOption,
     kConcurrencyModeCounter              = kDvsSecondOption,
     kMaxMainChannelBufferSize            = 1024 * 1024, // 1MB
-    kMuxDefaultChildBufferLimit          = 8 * 1024 * 1024,
+    kMuxDefaultChildBufferLimit          = 24 * 1024 * 1024,
     kMuxDefaultChildBufferPauseTolerance = 512 * 1024,
-    kMuxDefaultParentBufferLimit         = 8 * 1024 * 1024,
+    kMuxDefaultParentBufferLimit         = 32 * 1024 * 1024,
     kMuxParentBufferLimitUnlimited       = 0,
-    kMuxChildBufferResumeThreshold       = 512 * 1024,
+    kMuxChildBufferResumeThreshold       = 256 * 1024,
     kMuxChildBufferQueueCap              = 8,
     kMuxMainLineStatsLogIntervalMs       = 5000,
 };
