@@ -19,7 +19,9 @@ typedef struct server_delay_context_s
     uint32_t  next_resume;
     uint32_t  next_finish;
     sbuf_t   *upstream_payload_on_prev_payload;
+    sbuf_t   *downstream_payload_on_next_resume;
     bool      pause_on_prev_payload;
+    bool      downstream_resume_payload_sent;
 } server_delay_context_t;
 
 typedef struct server_delay_fixture_s
@@ -101,8 +103,15 @@ static void serverNextPause(tunnel_t *t, line_t *l)
 
 static void serverNextResume(tunnel_t *t, line_t *l)
 {
-    discard l;
-    ++serverContext(t)->next_resume;
+    server_delay_context_t *context = serverContext(t);
+    ++context->next_resume;
+    if (context->downstream_payload_on_next_resume != NULL)
+    {
+        sbuf_t *payload                            = context->downstream_payload_on_next_resume;
+        context->downstream_payload_on_next_resume = NULL;
+        context->downstream_resume_payload_sent    = true;
+        tlsserverTunnelDownStreamPayload(context->tls, l, payload);
+    }
 }
 
 static void serverNextFinish(tunnel_t *t, line_t *l)
@@ -380,6 +389,189 @@ static void serverQueueRecord(server_delay_fixture_t *fixture, uint32_t body_len
     serverQueueRecordWithDelay(fixture, body_length, 1000);
 }
 
+static void serverUseSingleRecordScope(server_delay_fixture_t *fixture, uint32_t delay_ms)
+{
+    tlsserver_tstate_t *ts                          = tunnelGetState(fixture->tls);
+    ts->record_shaping.first_application_records    = 1;
+    ts->record_shaping.outcomes[0].delay_ms.minimum = delay_ms;
+    ts->record_shaping.outcomes[0].delay_ms.maximum = delay_ms;
+}
+
+static void testServerImmediateRetirementAndDirectOutput(void)
+{
+    static const uint8_t first[]  = "server-final-shaped-record";
+    static const uint8_t second[] = "server-direct-record";
+    server_delay_fixture_t fixture;
+    serverFixtureSetup(&fixture);
+    serverUseSingleRecordScope(&fixture, 0);
+
+    tlsserver_lstate_t *ls = lineGetState(fixture.line, fixture.tls);
+    requireServer(tlsserverEncryptAndSendApplicationData(
+                      fixture.tls, fixture.line, ls, serverMakeBytes(&fixture, first, sizeof(first))),
+                  "server could not flush its final shaped record");
+    ls = lineGetState(fixture.line, fixture.tls);
+    requireServer(ls->shaping_retired && ! ls->shaping_output.initialized && ls->shaping_output_timer == NULL &&
+                      fixture.context.prev_payload == 1,
+                  "server did not retire immediately at its empty scoped boundary");
+
+    uint8_t header[SSL3_RT_HEADER_LENGTH] = {SSL3_RT_APPLICATION_DATA, 0x03, 0x03, 0, 1};
+    requireServer(tlsserverRecordPaddingCallback(ls->ssl, SSL3_RT_APPLICATION_DATA, 32, ls) == 0,
+                  "server padding callback did not become a no-op after retirement");
+    tlsserverRecordMessageCallback(1, TLS1_3_VERSION, SSL3_RT_HEADER, header, sizeof(header), ls->ssl, NULL);
+    requireServer(! ls->shaping_metadata_error && ! ls->shaping_output.initialized,
+                  "server record callback touched its retired queue");
+
+    requireServer(tlsserverEncryptAndSendApplicationData(
+                      fixture.tls, fixture.line, ls, serverMakeBytes(&fixture, second, sizeof(second))),
+                  "server post-retirement direct output failed");
+    requireServer(fixture.context.prev_payload == 2 && ls->shaping_state.application_records_seen == 1 &&
+                      ! ls->shaping_output.initialized,
+                  "server post-retirement output re-entered the shaping queue");
+
+    requireServer(SSL_key_update(ls->ssl, SSL_KEY_UPDATE_REQUESTED) == 1 && SSL_do_handshake(ls->ssl) == 1 &&
+                      tlsserverFlushSslOutput(fixture.tls, fixture.line, ls),
+                  "server post-retirement KeyUpdate output failed");
+    requireServer(fixture.context.prev_payload == 3 && ls->shaping_state.application_records_seen == 1 &&
+                      ! ls->shaping_output.initialized,
+                  "server post-retirement KeyUpdate re-entered the shaping queue");
+
+    tlsserverLinestateDestroy(ls);
+    serverFixtureTeardown(&fixture);
+}
+
+static void testServerFullRecordFallbackRetires(void)
+{
+    server_delay_fixture_t fixture;
+    serverFixtureSetup(&fixture);
+    serverUseSingleRecordScope(&fixture, 0);
+    tlsserver_lstate_t *ls = lineGetState(fixture.line, fixture.tls);
+
+    uint8_t *plaintext = memoryAllocate(SSL3_RT_MAX_PLAIN_LENGTH);
+    memorySet(plaintext, 0x4e, SSL3_RT_MAX_PLAIN_LENGTH);
+    requireServer(tlsserverEncryptAndSendApplicationData(
+                      fixture.tls,
+                      fixture.line,
+                      ls,
+                      serverMakeBytes(&fixture, plaintext, SSL3_RT_MAX_PLAIN_LENGTH)),
+                  "server full-record fallback output failed");
+    memoryFree(plaintext);
+
+    ls = lineGetState(fixture.line, fixture.tls);
+    requireServer(ls->shaping_state.application_records_seen == 1 && ls->shaping_retired &&
+                      ! ls->shaping_output.initialized && fixture.context.prev_payload == 1,
+                  "server full application record did not consume scope and retire at its header callback boundary");
+
+    tlsserverLinestateDestroy(ls);
+    serverFixtureTeardown(&fixture);
+}
+
+static void testServerRetiresBeforeReentrantProducerResume(void)
+{
+    static const uint8_t first[]  = "server-paused-final-record";
+    static const uint8_t second[] = "server-reentrant-direct-record";
+    server_delay_fixture_t fixture;
+    serverFixtureSetup(&fixture);
+    serverUseSingleRecordScope(&fixture, 0);
+    tlsserver_lstate_t *ls = lineGetState(fixture.line, fixture.tls);
+
+    tlsserverTunnelUpStreamPause(fixture.tls, fixture.line);
+    requireServer(tlsserverEncryptAndSendApplicationData(
+                      fixture.tls, fixture.line, ls, serverMakeBytes(&fixture, first, sizeof(first))),
+                  "server could not queue its wire-paused final shaped record");
+    requireServer(ls->shaping_producer_paused && ! ls->shaping_retired && fixture.context.next_pause == 1 &&
+                      fixture.context.prev_payload == 0,
+                  "server wire-paused scope did not establish its drain barrier");
+
+    fixture.context.downstream_payload_on_next_resume = serverMakeBytes(&fixture, second, sizeof(second));
+    tlsserverTunnelUpStreamResume(fixture.tls, fixture.line);
+    ls = lineGetState(fixture.line, fixture.tls);
+    requireServer(ls->shaping_retired && fixture.context.downstream_resume_payload_sent &&
+                      fixture.context.next_resume == 1 && fixture.context.prev_payload == 2 &&
+                      ! ls->shaping_output.initialized,
+                  "server producer Resume ran before retirement became direct");
+
+    tlsserverLinestateDestroy(ls);
+    serverFixtureTeardown(&fixture);
+}
+
+static void testServerRetirementSurvivesReentrantFinalPause(void)
+{
+    server_delay_fixture_t fixture;
+    serverFixtureSetup(&fixture);
+    serverUseSingleRecordScope(&fixture, 0);
+    tlsserver_lstate_t *ls = lineGetState(fixture.line, fixture.tls);
+    ls->shaping_state.application_records_seen = 1;
+    serverQueueRecordWithDelay(&fixture, 32, 0);
+
+    tlsserverTunnelUpStreamPause(fixture.tls, fixture.line);
+    requireServer(tlsserverDrainShapedOutput(fixture.tls, fixture.line, ls, false) &&
+                      ls->shaping_producer_paused,
+                  "server re-entrant Pause fixture did not establish its barrier");
+
+    fixture.context.pause_on_prev_payload = true;
+    tlsserverTunnelUpStreamResume(fixture.tls, fixture.line);
+    ls = lineGetState(fixture.line, fixture.tls);
+    requireServer(ls->shaping_retired && ls->shaping_wire_paused && ! ls->shaping_output.initialized &&
+                      fixture.context.prev_payload == 1 && fixture.context.next_resume == 0,
+                  "server did not retire safely behind a re-entrant final Pause");
+
+    tlsserverTunnelUpStreamResume(fixture.tls, fixture.line);
+    ls = lineGetState(fixture.line, fixture.tls);
+    requireServer(ls->shaping_retired && fixture.context.prev_payload == 1 &&
+                      fixture.context.next_pause == 1 && fixture.context.next_resume == 1,
+                  "server did not balance the drain barrier on the later genuine wire Resume");
+
+    tlsserverLinestateDestroy(ls);
+    serverFixtureTeardown(&fixture);
+}
+
+static void testServerRetiredCloseNotifyOrdering(void)
+{
+    static const uint8_t plaintext[] = "server-before-retired-close-notify";
+    server_delay_fixture_t fixture;
+    serverFixtureSetup(&fixture);
+    serverUseSingleRecordScope(&fixture, 0);
+    tlsserver_lstate_t *ls = lineGetState(fixture.line, fixture.tls);
+
+    requireServer(tlsserverEncryptAndSendApplicationData(
+                      fixture.tls, fixture.line, ls, serverMakeBytes(&fixture, plaintext, sizeof(plaintext))) &&
+                      ls->shaping_retired,
+                  "server close_notify fixture did not retire shaping");
+    tlsserverTunnelDownStreamFinish(fixture.tls, fixture.line);
+    requireServer(fixture.context.prev_payload == 2 && fixture.context.prev_finish == 1 &&
+                      fixture.context.next_finish == 0 && serverStateIsZero(&fixture),
+                  "server retired close_notify was not handed off before downstream Finish");
+
+    serverFixtureTeardown(&fixture);
+}
+
+static void testServerPausedRetiredCloseNotifyDefersFinish(void)
+{
+    static const uint8_t plaintext[] = "server-before-paused-retired-close-notify";
+    server_delay_fixture_t fixture;
+    serverFixtureSetup(&fixture);
+    serverUseSingleRecordScope(&fixture, 0);
+    tlsserver_lstate_t *ls = lineGetState(fixture.line, fixture.tls);
+
+    requireServer(tlsserverEncryptAndSendApplicationData(
+                      fixture.tls, fixture.line, ls, serverMakeBytes(&fixture, plaintext, sizeof(plaintext))) &&
+                      ls->shaping_retired,
+                  "server paused-close fixture did not retire shaping");
+    tlsserverTunnelUpStreamPause(fixture.tls, fixture.line);
+    tlsserverTunnelDownStreamFinish(fixture.tls, fixture.line);
+    ls = lineGetState(fixture.line, fixture.tls);
+    requireServer(ls->downstream_finish_deferred && BIO_ctrl_pending(SSL_get_wbio(ls->ssl)) > 0 &&
+                      fixture.context.prev_payload == 1 && fixture.context.prev_finish == 0,
+                  "server dropped a paused direct close_notify instead of deferring Finish");
+
+    tlsserverTunnelUpStreamResume(fixture.tls, fixture.line);
+    requireServer(fixture.context.prev_payload == 2 && fixture.context.prev_finish == 1 &&
+                      fixture.context.next_resume == 0 && serverStateIsZero(&fixture),
+                  "server did not flush paused direct close_notify before deferred Finish");
+
+    serverFixtureTeardown(&fixture);
+}
+
 static void testServerPausedWatermarksEmitOnePauseResumePair(void)
 {
     server_delay_fixture_t fixture;
@@ -590,6 +782,12 @@ static void testServerKeyUpdateFlushSurvivesReentrantCloseNotify(void)
 int main(void)
 {
     requireServer(wCryptoGlobalInit() == kWCryptoOk, "OpenSSL global initialization failed");
+    testServerImmediateRetirementAndDirectOutput();
+    testServerFullRecordFallbackRetires();
+    testServerRetiresBeforeReentrantProducerResume();
+    testServerRetirementSurvivesReentrantFinalPause();
+    testServerRetiredCloseNotifyOrdering();
+    testServerPausedRetiredCloseNotifyDefersFinish();
     testServerPausedWatermarksEmitOnePauseResumePair();
     testServerDeferredFinishSuppressesIncomingPayload();
     testServerReentrantPauseSuppressesStaleResume();

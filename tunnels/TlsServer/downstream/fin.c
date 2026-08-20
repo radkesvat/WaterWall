@@ -49,7 +49,13 @@ void tlsserverTunnelDownStreamFinish(tunnel_t *t, line_t *l)
     }
 
     ls = lineGetState(l, t);
-    if (ls->shaping_output.initialized && ! tlsrecordshapingOutputQueueIsEmpty(&ls->shaping_output))
+    bool output_pending = ls->shaping_output.initialized &&
+                          ! tlsrecordshapingOutputQueueIsEmpty(&ls->shaping_output);
+    if (ls->shaping_retired && ls->ssl != NULL)
+    {
+        output_pending = BIO_ctrl_pending(SSL_get_wbio(ls->ssl)) != 0;
+    }
+    if (output_pending)
     {
         ls->downstream_finish_deferred = true;
         if (ls->verbose)

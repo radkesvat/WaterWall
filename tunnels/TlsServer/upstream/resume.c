@@ -31,7 +31,9 @@ void tlsserverTunnelUpStreamResume(tunnel_t *t, line_t *l)
     {
         lineLock(l);
         bool shaping_pause_was_active = ls->shaping_producer_paused;
-        if (! tlsserverDrainShapedOutput(t, l, ls, false))
+        bool output_ok = ls->shaping_retired ? tlsserverFlushSslOutput(t, l, ls)
+                                             : tlsserverDrainShapedOutput(t, l, ls, false);
+        if (! output_ok)
         {
             if (lineIsAlive(l))
             {
@@ -54,7 +56,7 @@ void tlsserverTunnelUpStreamResume(tunnel_t *t, line_t *l)
             return;
         }
 
-        if (! tlsserverScheduleShapedOutput(t, l, ls))
+        if (! ls->shaping_retired && ! tlsserverScheduleShapedOutput(t, l, ls))
         {
             if (lineIsAlive(l))
             {

@@ -646,6 +646,8 @@ static void clientFixtureEnableTls13TakeoverWithTickets(client_lifecycle_fixture
                       (struct tlsclient_lstate_s *) tls_ls, fixture->tls_client_ctx, fixture->pool, NULL, 0),
                   "client TLS fixture failed to initialize the TlsClient line state");
     fixture->tls_state_initialized = true;
+    tls_ls->tunnel                  = fixture->tls;
+    tls_ls->line                    = fixture->line;
     requireClient(tlsclientConfigureSslForConnect(tls_ls->ssl, tls_ls->rbio, tls_ls->wbio, "example.com", NULL, 0),
                   "client TLS fixture failed to configure the retained client");
     requireClient(tlsclientTunnelEnableHandshakeTakeover(fixture->tls),

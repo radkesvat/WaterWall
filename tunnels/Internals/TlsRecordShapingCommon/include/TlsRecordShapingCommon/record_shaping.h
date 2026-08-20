@@ -94,6 +94,8 @@ bool tlsrecordshapingSelectDeterministic(const tlsrecordshaping_config_t *config
                                          uint32_t delay_draw, tlsrecordshaping_decision_t *decision);
 bool tlsrecordshapingSample(const tlsrecordshaping_config_t *config, tlsrecordshaping_state_t *state,
                             tlsrecordshaping_decision_t *decision);
+bool tlsrecordshapingScopeIsExhausted(const tlsrecordshaping_config_t *config,
+                                      const tlsrecordshaping_state_t  *state);
 void tlsrecordshapingRecordEffectivePadding(tlsrecordshaping_state_t          *state,
                                             const tlsrecordshaping_decision_t *decision,
                                             uint32_t                           effective_padding_bytes);

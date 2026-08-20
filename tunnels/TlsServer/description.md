@@ -283,6 +283,13 @@ side finishes, already accepted server ciphertext and an unpadded `close_notify`
 `Finish`; a wire-side finish cancels and discards queued output and is propagated only toward cleartext. Timer allocation
 failure drains immediately in order.
 
+After the configured application-record scope is consumed, the current shaping queue first drains completely so no later
+TLS record can overtake delayed ciphertext. While that ordering barrier is active, the cleartext producer remains paused
+even below the normal low watermark. At an empty queue and complete write-BIO boundary, the timer and per-line shaping
+queue are released; later TLS output is forwarded directly without record parsing or shaping metadata. Ordinary wire
+Pause still applies in this direct phase. The 8 MiB limit and 6/3 MiB watermarks therefore bound only the finite active
+shaping window.
+
 Record shaping can make early sizes and timings less deterministic, but it cannot remove an inner handshake round trip,
 make a burst smaller, or hide every direction and timing feature. Combine it with `MuxClient`/`MuxServer` when
 multiplexing fits the deployment.

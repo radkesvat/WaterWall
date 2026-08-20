@@ -86,6 +86,7 @@ bool tlsclientLinestateInitializeWithShaping(tlsclient_lstate_t *ls, SSL_CTX *sc
         .bq              = bufferqueueCreate(2),
         .takeover_stream = bufferstreamCreate(pool, 0),
         .takeover_phase  = kTlsClientTakeoverHandshake,
+        .shaping_retired = false,
         .verbose         = verbose,
     };
 

@@ -9,6 +9,7 @@ bool tlsserverLinestateInitialize(tlsserver_lstate_t *ls, SSL_CTX *ssl_ctx, buff
         .pending_down        = bufferqueueCreate(2),
         .fallback_pending_up = NULL,
         .fallback_probe      = bufferstreamCreate(pool, 0),
+        .shaping_retired     = false,
         .verbose             = verbose,
     };
 

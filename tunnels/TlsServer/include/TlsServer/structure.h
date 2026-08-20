@@ -73,6 +73,8 @@ typedef struct tlsserver_lstate_s
     bool downstream_finish_deferred;
     bool shaping_wire_paused;
     bool shaping_producer_paused;
+    /* Monotonic: once true, an uninitialized shaping_output is intentional. */
+    bool shaping_retired;
     bool shaping_timer_failure_logged;
     bool shaping_metadata_error;
     bool shaping_writing_application;

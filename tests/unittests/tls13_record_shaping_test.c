@@ -68,6 +68,9 @@ static void testDeterministicBoundariesAndScope(void)
     tlsrecordshaping_state_t    state  = {0};
     tlsrecordshaping_decision_t decision;
 
+    require(! tlsrecordshapingScopeIsExhausted(&config, &state),
+            "record shaping scope began exhausted");
+
     require(tlsrecordshapingSelectDeterministic(&config, &state, 1, 100, 1, 10, &decision),
             "inclusive minimum selection failed");
     require(decision.outcome_selected && decision.selected_outcome == 0 && decision.requested_padding_bytes == 100 &&
@@ -104,10 +107,20 @@ static void testDeterministicBoundariesAndScope(void)
                 "scope no-op selection failed");
         require(decision.considered && ! decision.outcome_selected, "scope no-op did not consume eligibility");
     }
+    require(tlsrecordshapingScopeIsExhausted(&config, &state),
+            "record shaping scope did not become exhausted at its exact limit");
     require(tlsrecordshapingSelectDeterministic(&config, &state, 1, 100, 1, 10, &decision),
             "scope exhaustion returned an internal error");
     require(! decision.considered && state.application_records_seen == config.first_application_records,
             "scope exhaustion still sampled an application record");
+    require(tlsrecordshapingScopeIsExhausted(&config, &state),
+            "record shaping scope stopped reporting exhaustion after a later sampler call");
+
+    tlsrecordshaping_config_t disabled = {0};
+    require(! tlsrecordshapingScopeIsExhausted(NULL, &state) &&
+                ! tlsrecordshapingScopeIsExhausted(&config, NULL) &&
+                ! tlsrecordshapingScopeIsExhausted(&disabled, &state),
+            "null or disabled shaping configuration reported an exhausted active scope");
 }
 
 static void testInvalidConfigurations(void)

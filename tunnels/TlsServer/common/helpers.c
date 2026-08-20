@@ -170,8 +170,8 @@ size_t tlsserverRecordPaddingCallback(SSL *ssl, int type, size_t len, void *arg)
     discard arg;
 
     tlsserver_lstate_t *ls = SSL_get_app_data(ssl);
-    if (ls == NULL || ls->ssl != ssl || ls->resources_released || ! ls->handshake_completed || ls->tunnel == NULL ||
-        SSL_version(ssl) != TLS1_3_VERSION)
+    if (ls == NULL || ls->ssl != ssl || ls->resources_released || ls->shaping_retired ||
+        ! ls->handshake_completed || ls->tunnel == NULL || SSL_version(ssl) != TLS1_3_VERSION)
     {
         return 0;
     }
@@ -206,8 +206,8 @@ void tlsserverRecordMessageCallback(int write_p, int version, int content_type, 
 
     tlsserver_lstate_t *ls = SSL_get_app_data(ssl);
     if (write_p != 1 || content_type != SSL3_RT_HEADER || buf == NULL || len != SSL3_RT_HEADER_LENGTH || ls == NULL ||
-        ls->ssl != ssl || ls->resources_released || ! ls->handshake_completed || ls->tunnel == NULL ||
-        SSL_version(ssl) != TLS1_3_VERSION)
+        ls->ssl != ssl || ls->resources_released || ls->shaping_retired || ! ls->handshake_completed ||
+        ls->tunnel == NULL || SSL_version(ssl) != TLS1_3_VERSION)
     {
         return;
     }
@@ -261,9 +261,96 @@ void tlsserverCancelShapedOutputTimer(tlsserver_lstate_t *ls)
     ls->shaping_output_timer = NULL;
 }
 
+static bool tlsserverShapingStateIsActive(tunnel_t *t, line_t *l)
+{
+    tlsserver_lstate_t *ls = lineGetState(l, t);
+    return ls->tunnel == t && ! ls->resources_released &&
+           (ls->shaping_retired || ls->shaping_output.initialized);
+}
+
+static bool tlsserverTryRetireShaping(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls)
+{
+    if (ls->shaping_retired)
+    {
+        return true;
+    }
+
+    tlsserver_tstate_t *ts = tunnelGetState(t);
+    if (ls->resources_released || ls->upstream_finished || ls->downstream_finishing ||
+        ! ls->shaping_output.initialized ||
+        ! tlsrecordshapingScopeIsExhausted(&ts->record_shaping, &ls->shaping_state) ||
+        ! tlsrecordshapingOutputQueueIsEmpty(&ls->shaping_output))
+    {
+        return true;
+    }
+
+    BIO *wbio = ls->ssl != NULL ? SSL_get_wbio(ls->ssl) : NULL;
+    if (wbio == NULL || BIO_ctrl_pending(wbio) != 0)
+    {
+        LOGW("TlsServer: refusing to retire record shaping with pending TLS write BIO bytes");
+        return false;
+    }
+
+    tlsserverCancelShapedOutputTimer(ls);
+
+    bool release_producer_pause = ls->shaping_producer_paused;
+    ls->shaping_retired         = true;
+    ls->shaping_producer_paused = false;
+    tlsrecordshapingOutputQueueDestroy(&ls->shaping_output);
+
+    if (ls->verbose)
+    {
+        LOGD("TlsServer: configured TLS 1.3 record shaping scope drained; output shaper retired");
+    }
+
+    if (release_producer_pause && ! ls->shaping_wire_paused && ! ls->upstream_finished &&
+        ! ls->downstream_finishing)
+    {
+        if (! withLineLocked(l, tunnelNextUpStreamResume, t))
+        {
+            return false;
+        }
+        return tlsserverShapingStateIsActive(t, l);
+    }
+    return true;
+}
+
 static bool tlsserverUpdateShapingBackpressure(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls)
 {
-    size_t queued = tlsrecordshapingOutputQueueBytes(&ls->shaping_output);
+    if (ls->shaping_retired)
+    {
+        return true;
+    }
+    if (ls->resources_released || ! ls->shaping_output.initialized)
+    {
+        return false;
+    }
+
+    tlsserver_tstate_t *ts     = tunnelGetState(t);
+    size_t              queued = tlsrecordshapingOutputQueueBytes(&ls->shaping_output);
+
+    if (tlsrecordshapingScopeIsExhausted(&ts->record_shaping, &ls->shaping_state))
+    {
+        if (queued == 0 && tlsrecordshapingOutputQueueIsEmpty(&ls->shaping_output))
+        {
+            return tlsserverTryRetireShaping(t, l, ls);
+        }
+
+        if (! ls->shaping_producer_paused)
+        {
+            ls->shaping_producer_paused = true;
+            if (! ls->shaping_wire_paused && ! ls->upstream_finished && ! ls->downstream_finishing)
+            {
+                if (! withLineLocked(l, tunnelNextUpStreamPause, t))
+                {
+                    return false;
+                }
+                return tlsserverShapingStateIsActive(t, l);
+            }
+        }
+        return true;
+    }
+
     if (! ls->shaping_producer_paused && queued >= kTlsRecordShapingQueueHighWatermark)
     {
         ls->shaping_producer_paused = true;
@@ -273,6 +360,7 @@ static bool tlsserverUpdateShapingBackpressure(tunnel_t *t, line_t *l, tlsserver
             {
                 return false;
             }
+            return tlsserverShapingStateIsActive(t, l);
         }
         return true;
     }
@@ -286,6 +374,7 @@ static bool tlsserverUpdateShapingBackpressure(tunnel_t *t, line_t *l, tlsserver
             {
                 return false;
             }
+            return tlsserverShapingStateIsActive(t, l);
         }
     }
     return true;
@@ -293,6 +382,15 @@ static bool tlsserverUpdateShapingBackpressure(tunnel_t *t, line_t *l, tlsserver
 
 bool tlsserverDrainShapedOutput(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls, bool force)
 {
+    if (ls->shaping_retired)
+    {
+        return true;
+    }
+    if (ls->resources_released || ! ls->shaping_output.initialized)
+    {
+        return false;
+    }
+
     if (ls->shaping_wire_paused)
     {
         return tlsserverUpdateShapingBackpressure(t, l, ls);
@@ -313,7 +411,15 @@ bool tlsserverDrainShapedOutput(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls, 
         }
 
         ls = lineGetState(l, t);
-        if (ls->tunnel != t || ls->resources_released || ! ls->shaping_output.initialized)
+        if (ls->tunnel != t || ls->resources_released)
+        {
+            return false;
+        }
+        if (ls->shaping_retired)
+        {
+            return true;
+        }
+        if (! ls->shaping_output.initialized)
         {
             return false;
         }
@@ -376,6 +482,22 @@ static void tlsserverShapingOutputTimerCallback(wtimer_t *timer)
 
 bool tlsserverScheduleShapedOutput(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls)
 {
+    if (ls->shaping_retired)
+    {
+        return true;
+    }
+    if (ls->resources_released || ! ls->shaping_output.initialized)
+    {
+        return false;
+    }
+
+    tlsserver_tstate_t *ts = tunnelGetState(t);
+    if (tlsrecordshapingScopeIsExhausted(&ts->record_shaping, &ls->shaping_state) &&
+        tlsrecordshapingOutputQueueIsEmpty(&ls->shaping_output))
+    {
+        return tlsserverTryRetireShaping(t, l, ls);
+    }
+
     if (ls->shaping_output_timer != NULL || ls->shaping_wire_paused ||
         tlsrecordshapingOutputQueueIsEmpty(&ls->shaping_output))
     {
@@ -411,7 +533,13 @@ bool tlsserverScheduleShapedOutput(tunnel_t *t, line_t *l, tlsserver_lstate_t *l
 
 bool tlsserverTryCompleteDeferredFinish(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls)
 {
-    if (! ls->downstream_finish_deferred || ! tlsrecordshapingOutputQueueIsEmpty(&ls->shaping_output))
+    bool output_drained = tlsrecordshapingOutputQueueIsEmpty(&ls->shaping_output);
+    if (output_drained && ls->shaping_retired && ls->ssl != NULL)
+    {
+        output_drained = BIO_ctrl_pending(SSL_get_wbio(ls->ssl)) == 0;
+    }
+
+    if (! ls->downstream_finish_deferred || ! output_drained)
     {
         return true;
     }
@@ -423,14 +551,26 @@ bool tlsserverTryCompleteDeferredFinish(tunnel_t *t, line_t *l, tlsserver_lstate
 
 bool tlsserverFlushSslOutput(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls)
 {
-    tlsserver_tstate_t *ts = tunnelGetState(t);
-    bool shape_output = ts->record_shaping.enabled && ls->handshake_completed && SSL_version(ls->ssl) == TLS1_3_VERSION;
+    tlsserver_tstate_t *ts   = tunnelGetState(t);
+    BIO                *wbio = ls->ssl != NULL ? SSL_get_wbio(ls->ssl) : NULL;
+    if (wbio == NULL)
+    {
+        return false;
+    }
+
+    bool shape_output = ts->record_shaping.enabled && ! ls->shaping_retired && ls->handshake_completed &&
+                        SSL_version(ls->ssl) == TLS1_3_VERSION;
+
+    if (ls->shaping_retired && ls->shaping_wire_paused)
+    {
+        return true;
+    }
 
     while (true)
     {
         sbuf_t *ssl_buf = bufferpoolGetLargeBuffer(lineGetBufferPool(l));
         int     avail   = (int) sbufGetMaximumWriteableSize(ssl_buf);
-        int     n       = BIO_read(SSL_get_wbio(ls->ssl), sbufGetMutablePtr(ssl_buf), avail);
+        int     n       = BIO_read(wbio, sbufGetMutablePtr(ssl_buf), avail);
 
         if (n > 0)
         {
@@ -456,12 +596,22 @@ bool tlsserverFlushSslOutput(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls)
                 LOGW("TlsServer: line closed while flushing TLS bytes downstream");
                 return false;
             }
+
+            ls = lineGetState(l, t);
+            if (ls->tunnel != t || ls->resources_released || ls->ssl == NULL || SSL_get_wbio(ls->ssl) != wbio)
+            {
+                return false;
+            }
+            if (ls->shaping_retired && ls->shaping_wire_paused)
+            {
+                return true;
+            }
             continue;
         }
 
         lineReuseBuffer(l, ssl_buf);
 
-        if (! BIO_should_retry(SSL_get_wbio(ls->ssl)))
+        if (! BIO_should_retry(wbio))
         {
             LOGW("TlsServer: TLS write BIO failed while flushing output");
             tlsserverPrintSSLError();
@@ -505,6 +655,18 @@ bool tlsserverFlushSslOutput(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls)
     }
 
     ls = lineGetState(l, t);
+    if (ls->tunnel != t || ls->resources_released)
+    {
+        return false;
+    }
+    if (ls->shaping_retired)
+    {
+        return true;
+    }
+    if (! ls->shaping_output.initialized)
+    {
+        return false;
+    }
     if (tlsrecordshapingOutputQueueBytes(&ls->shaping_output) >= kTlsRecordShapingQueueHardLimit)
     {
         LOGW("TlsServer: record shaping queue could not be reduced below its 8 MiB hard limit");

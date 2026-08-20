@@ -18,9 +18,12 @@ typedef struct client_delay_context_s
     uint32_t  prev_finish;
     uint32_t  next_payload;
     uint32_t  next_finish;
+    uint8_t   next_payload_markers[16];
     bool      reenter_finished_client;
     bool      pause_on_next_payload;
     bool      destroy_during_drain;
+    bool      write_direct_on_prev_resume;
+    bool      direct_flush_ok;
 } client_delay_context_t;
 
 typedef struct client_delay_fixture_s
@@ -98,8 +101,18 @@ static void clientPrevPause(tunnel_t *t, line_t *l)
 
 static void clientPrevResume(tunnel_t *t, line_t *l)
 {
-    discard l;
-    ++clientContext(t)->prev_resume;
+    client_delay_context_t *context = clientContext(t);
+    ++context->prev_resume;
+
+    if (context->write_direct_on_prev_resume)
+    {
+        static const uint8_t direct_bytes[] = {0x7d, 0x01, 0x02, 0x03};
+        context->write_direct_on_prev_resume = false;
+        tlsclient_lstate_t *ls = lineGetState(l, context->tls);
+        context->direct_flush_ok = BIO_write(ls->wbio, direct_bytes, (int) sizeof(direct_bytes)) ==
+                                       (int) sizeof(direct_bytes) &&
+                                   tlsclientFlushSslOutput(context->tls, l, ls);
+    }
 }
 
 static void clientPrevFinish(tunnel_t *t, line_t *l)
@@ -112,6 +125,12 @@ static void clientNextPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     static const uint8_t    incoming[] = {0xde, 0xad, 0xbe, 0xef};
     client_delay_context_t *context    = clientContext(t);
+    if (context->next_payload < ARRAY_SIZE(context->next_payload_markers))
+    {
+        const uint8_t *bytes = sbufGetRawPtr(buf);
+        context->next_payload_markers[context->next_payload] =
+            bytes[sbufGetLength(buf) > kTlsRecordShapingRecordHeaderSize ? kTlsRecordShapingRecordHeaderSize : 0];
+    }
     ++context->next_payload;
     lineReuseBuffer(l, buf);
 
@@ -264,7 +283,8 @@ static void clientFixtureTeardown(client_delay_fixture_t *fixture)
     GSTATE.shortcut_loops        = fixture->saved_loops;
 }
 
-static void clientQueueRecordWithDelay(client_delay_fixture_t *fixture, uint32_t body_length, uint32_t delay_ms)
+static void clientQueueRecordWithDelayAndFill(client_delay_fixture_t *fixture, uint32_t body_length,
+                                              uint32_t delay_ms, uint8_t fill)
 {
     requireClient(body_length > 0 && body_length <= kTlsRecordShapingMaxRecordBody,
                   "invalid client lifecycle record length");
@@ -279,7 +299,7 @@ static void clientQueueRecordWithDelay(client_delay_fixture_t *fixture, uint32_t
     bytes[2]       = 0x03;
     bytes[3]       = (uint8_t) (body_length >> 8U);
     bytes[4]       = (uint8_t) body_length;
-    memorySet(bytes + kTlsRecordShapingRecordHeaderSize, 0x5a, body_length);
+    memorySet(bytes + kTlsRecordShapingRecordHeaderSize, fill, body_length);
     sbufSetLength(buf, body_length + kTlsRecordShapingRecordHeaderSize);
 
     char error[kTlsRecordShapingErrorSize];
@@ -288,9 +308,156 @@ static void clientQueueRecordWithDelay(client_delay_fixture_t *fixture, uint32_t
                   "failed to queue client lifecycle TLS record");
 }
 
+static void clientQueueRecordWithDelay(client_delay_fixture_t *fixture, uint32_t body_length, uint32_t delay_ms)
+{
+    clientQueueRecordWithDelayAndFill(fixture, body_length, delay_ms, 0x5a);
+}
+
 static void clientQueueRecord(client_delay_fixture_t *fixture, uint32_t body_length)
 {
     clientQueueRecordWithDelay(fixture, body_length, 1000);
+}
+
+static void clientUseSingleRecordScope(client_delay_fixture_t *fixture)
+{
+    tlsclient_tstate_t *ts                     = tunnelGetState(fixture->tls);
+    tlsclient_lstate_t *ls                     = lineGetState(fixture->line, fixture->tls);
+    ts->record_shaping.first_application_records = 1;
+    ls->shaping_state.application_records_seen   = 1;
+}
+
+static void clientWriteRecordToBio(client_delay_fixture_t *fixture, uint8_t fill)
+{
+    uint8_t record[kTlsRecordShapingRecordHeaderSize + 8];
+    record[0] = SSL3_RT_APPLICATION_DATA;
+    record[1] = 0x03;
+    record[2] = 0x03;
+    record[3] = 0;
+    record[4] = 8;
+    memorySet(record + kTlsRecordShapingRecordHeaderSize, fill, 8);
+
+    tlsclient_lstate_t *ls = lineGetState(fixture->line, fixture->tls);
+    requireClient(tlsrecordshapingOutputQueuePushMetadata(&ls->shaping_output, 0) &&
+                      BIO_write(ls->wbio, record, (int) sizeof(record)) == (int) sizeof(record),
+                  "failed to prepare client TLS BIO record");
+}
+
+static void testClientImmediateRetirementAndDirectOutput(void)
+{
+    client_delay_fixture_t fixture;
+    clientFixtureSetup(&fixture);
+    clientUseSingleRecordScope(&fixture);
+    clientWriteRecordToBio(&fixture, 0x31);
+
+    tlsclient_lstate_t *ls = lineGetState(fixture.line, fixture.tls);
+    requireClient(tlsclientFlushSslOutput(fixture.tls, fixture.line, ls),
+                  "client could not flush its final shaped record");
+    ls = lineGetState(fixture.line, fixture.tls);
+    requireClient(ls->shaping_retired && ! ls->shaping_output.initialized && ls->shaping_output_timer == NULL &&
+                      fixture.context.next_payload == 1 && fixture.context.next_payload_markers[0] == 0x31,
+                  "client did not retire immediately at its empty scoped boundary");
+
+    static const uint8_t direct_bytes[] = {0x42, 0x43, 0x44};
+    requireClient(BIO_write(ls->wbio, direct_bytes, (int) sizeof(direct_bytes)) == (int) sizeof(direct_bytes) &&
+                      tlsclientFlushSslOutput(fixture.tls, fixture.line, ls),
+                  "client post-retirement direct BIO flush failed");
+    requireClient(fixture.context.next_payload == 2 && fixture.context.next_payload_markers[1] == direct_bytes[0] &&
+                      ls->shaping_state.application_records_seen == 1 && ! ls->shaping_output.initialized,
+                  "client post-retirement output re-entered the shaping queue");
+
+    requireClient(tlsclientRecordPaddingCallback(
+                      ls->ssl, SSL3_RT_APPLICATION_DATA, 32, kTlsRecordShapingMaxPaddingBytes, ls) == 0 &&
+                      ! ls->shaping_metadata_error && ! ls->shaping_output.initialized,
+                  "client padding callback touched its retired queue");
+
+    tlsclientLinestateDestroy(ls);
+    clientFixtureTeardown(&fixture);
+}
+
+static void testClientDrainBarrierHoldsUntilRetirement(void)
+{
+    client_delay_fixture_t fixture;
+    clientFixtureSetup(&fixture);
+    clientUseSingleRecordScope(&fixture);
+    clientQueueRecordWithDelayAndFill(&fixture, 32, 0, 0x11);
+    clientQueueRecordWithDelayAndFill(&fixture, 32, 1000, 0x22);
+
+    tlsclient_lstate_t *ls = lineGetState(fixture.line, fixture.tls);
+    requireClient(tlsclientDrainShapedOutput(fixture.tls, fixture.line, ls, false) &&
+                      ls->shaping_producer_paused && fixture.context.next_payload == 1 &&
+                      fixture.context.prev_pause == 1 && fixture.context.prev_resume == 0,
+                  "client draining scope did not establish its below-watermark barrier");
+    requireClient(tlsclientScheduleShapedOutput(fixture.tls, fixture.line, ls) &&
+                      ls->shaping_output_timer != NULL,
+                  "client draining scope did not retain its final release timer");
+
+    requireClient(tlsclientDrainShapedOutput(fixture.tls, fixture.line, ls, true),
+                  "client draining scope could not release its final record");
+    ls = lineGetState(fixture.line, fixture.tls);
+    requireClient(ls->shaping_retired && ! ls->shaping_output.initialized && ls->shaping_output_timer == NULL &&
+                      ! ls->shaping_producer_paused && fixture.context.next_payload == 2 &&
+                      fixture.context.next_payload_markers[0] == 0x11 &&
+                      fixture.context.next_payload_markers[1] == 0x22 && fixture.context.prev_pause == 1 &&
+                      fixture.context.prev_resume == 1,
+                  "client drain barrier resumed early or retired out of FIFO order");
+
+    tlsclientLinestateDestroy(ls);
+    clientFixtureTeardown(&fixture);
+}
+
+static void testClientRetiresBeforeReentrantProducerResume(void)
+{
+    client_delay_fixture_t fixture;
+    clientFixtureSetup(&fixture);
+    clientUseSingleRecordScope(&fixture);
+    clientQueueRecordWithDelayAndFill(&fixture, 32, 0, 0x61);
+
+    tlsclient_lstate_t *ls = lineGetState(fixture.line, fixture.tls);
+    tlsclientTunnelDownStreamPause(fixture.tls, fixture.line);
+    requireClient(tlsclientDrainShapedOutput(fixture.tls, fixture.line, ls, false) &&
+                      ls->shaping_producer_paused && fixture.context.prev_pause == 1,
+                  "client wire-paused drain did not establish its barrier");
+
+    fixture.context.write_direct_on_prev_resume = true;
+    tlsclientTunnelDownStreamResume(fixture.tls, fixture.line);
+    ls = lineGetState(fixture.line, fixture.tls);
+    requireClient(ls->shaping_retired && fixture.context.direct_flush_ok && fixture.context.prev_resume == 1 &&
+                      fixture.context.next_payload == 2 && fixture.context.next_payload_markers[0] == 0x61 &&
+                      fixture.context.next_payload_markers[1] == 0x7d && ! ls->shaping_output.initialized,
+                  "client producer Resume ran before retirement became direct");
+
+    tlsclientLinestateDestroy(ls);
+    clientFixtureTeardown(&fixture);
+}
+
+static void testClientRetirementSurvivesReentrantFinalPause(void)
+{
+    client_delay_fixture_t fixture;
+    clientFixtureSetup(&fixture);
+    clientUseSingleRecordScope(&fixture);
+    clientQueueRecordWithDelayAndFill(&fixture, 32, 0, 0x71);
+
+    tlsclient_lstate_t *ls = lineGetState(fixture.line, fixture.tls);
+    tlsclientTunnelDownStreamPause(fixture.tls, fixture.line);
+    requireClient(tlsclientDrainShapedOutput(fixture.tls, fixture.line, ls, false) &&
+                      ls->shaping_producer_paused,
+                  "client re-entrant Pause fixture did not establish its barrier");
+
+    fixture.context.pause_on_next_payload = true;
+    tlsclientTunnelDownStreamResume(fixture.tls, fixture.line);
+    ls = lineGetState(fixture.line, fixture.tls);
+    requireClient(ls->shaping_retired && ls->shaping_wire_paused && ! ls->shaping_output.initialized &&
+                      fixture.context.next_payload == 1 && fixture.context.prev_resume == 0,
+                  "client did not retire safely behind a re-entrant final Pause");
+
+    tlsclientTunnelDownStreamResume(fixture.tls, fixture.line);
+    ls = lineGetState(fixture.line, fixture.tls);
+    requireClient(ls->shaping_retired && fixture.context.next_payload == 1 &&
+                      fixture.context.prev_pause == 1 && fixture.context.prev_resume == 1,
+                  "client did not balance the drain barrier on the later genuine wire Resume");
+
+    tlsclientLinestateDestroy(ls);
+    clientFixtureTeardown(&fixture);
 }
 
 static void testClientFinalDrainSuppressesReentrantCallbacks(void)
@@ -395,6 +562,10 @@ static void testClientReentrantPauseSuppressesStaleResume(void)
 
 void tls13RecordDelayClientCases(void)
 {
+    testClientImmediateRetirementAndDirectOutput();
+    testClientDrainBarrierHoldsUntilRetirement();
+    testClientRetiresBeforeReentrantProducerResume();
+    testClientRetirementSurvivesReentrantFinalPause();
     testClientFinalDrainSuppressesReentrantCallbacks();
     testClientPausedWatermarksEmitOnePauseResumePair();
     testClientDrainStopsAfterReentrantLineDeath();

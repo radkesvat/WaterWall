@@ -85,7 +85,11 @@ WaterWall-side pieces that must remain compatible with this patch:
 - `TlsClient/CMakeLists.txt` links `TlsRecordShapingCommon` and keeps the bundled
   BoringSSL symbol-prefix configuration.
 - `TlsClient/common/line_state.c` installs the callback per SSL object and clears
-  it before releasing that object.
+  it before releasing that object. Once the configured record scope has drained
+  through an empty output-queue/write-BIO boundary, WaterWall may clear the same
+  per-SSL callback early and destroy the queue. The existing NULL-callback API is
+  sufficient for this transition; it requires no BoringSSL source or saved-patch
+  change.
 - `TlsClient/common/helpers.c` maps callback decisions to complete encrypted TLS
   records, preserves FIFO release order, enforces the queue limits, and owns the
   single release timer.

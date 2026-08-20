@@ -158,6 +158,14 @@ current wire state: if draining during Resume re-enters with another wire Pause,
 later wire Resume. If the cleartext side finishes, the timer is canceled and queued client ciphertext is synchronously
 released in FIFO order while the wire remains writable. If the wire is paused, any remainder is discarded; local state
 and upstream `Finish` are completed before the callback returns.
+
+After the configured application-record scope is consumed, the current shaping queue first drains completely so no later
+TLS record can overtake delayed ciphertext. While that ordering barrier is active, the cleartext producer remains paused
+even below the normal low watermark. At an empty queue and complete write-BIO boundary, the timer and per-line shaping
+queue are released; later TLS output is forwarded directly without record parsing or shaping metadata. Ordinary wire
+Pause still applies in this direct phase. The 8 MiB limit and 6/3 MiB watermarks therefore bound only the finite active
+shaping window.
+
 During this synchronous final drain, downstream Payload and Est are discarded, while Pause and Resume only update the
 local wire-paused state; none of those callbacks is forwarded toward the finished cleartext owner. A wire-side finish
 cancels and discards queued output and is propagated only toward cleartext. Timer allocation failure drains immediately

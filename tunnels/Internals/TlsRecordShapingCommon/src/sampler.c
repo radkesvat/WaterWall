@@ -107,6 +107,13 @@ bool tlsrecordshapingSample(const tlsrecordshaping_config_t *config, tlsrecordsh
         config, state, outcome_roll, padding_draw, delay_roll, delay_draw, decision);
 }
 
+bool tlsrecordshapingScopeIsExhausted(const tlsrecordshaping_config_t *config,
+                                      const tlsrecordshaping_state_t  *state)
+{
+    return config != NULL && state != NULL && config->enabled &&
+           state->application_records_seen >= config->first_application_records;
+}
+
 void tlsrecordshapingRecordEffectivePadding(tlsrecordshaping_state_t          *state,
                                             const tlsrecordshaping_decision_t *decision,
                                             uint32_t                           effective_padding_bytes)
