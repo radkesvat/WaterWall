@@ -50,18 +50,19 @@ static void caseUdpSourceDrainsBeforeMuxWorkerStop(uint8_t mode)
     const uint32_t aggregate_lstate_size = udp->lstate_size + mux->lstate_size;
     twfLinePoolSetup(&lines, aggregate_lstate_size, kShutdownLineCapacity);
 
-    muxclient_tstate_t *ts           = tunnelGetState(mux);
-    ts->concurrency_mode             = mode;
-    ts->concurrency_capacity         = 16;
-    ts->concurrency_duration         = UINT32_MAX;
-    ts->child_buffer_limit           = kMuxDefaultChildBufferLimit;
-    ts->child_buffer_pause_tolerance = kMuxDefaultChildBufferPauseTolerance;
-    ts->parent_buffer_limit          = kMuxDefaultParentBufferLimit;
-    ts->detached_buffer_limit        = kMuxMinimumDetachedBufferLimit;
-    ts->detached_child_limit         = kMuxMinimumDetachedChildLimit;
-    ts->workers_count                = 1;
-    ts->detached_child_counts        = memoryAllocateZero(sizeof(*ts->detached_child_counts));
-    ts->detached_queued_bytes        = memoryAllocateZero(sizeof(*ts->detached_queued_bytes));
+    muxclient_tstate_t *ts            = tunnelGetState(mux);
+    ts->concurrency_mode              = mode;
+    ts->concurrency_capacity          = 16;
+    ts->concurrency_duration          = UINT32_MAX;
+    ts->child_buffer_limit            = kMuxDefaultChildBufferLimit;
+    ts->child_buffer_pause_tolerance  = kMuxDefaultChildBufferPauseTolerance;
+    ts->child_buffer_resume_threshold = kMuxDefaultChildBufferResumeThreshold;
+    ts->parent_buffer_limit           = kMuxDefaultParentBufferLimit;
+    ts->detached_buffer_limit         = kMuxMinimumDetachedBufferLimit;
+    ts->detached_child_limit          = kMuxMinimumDetachedChildLimit;
+    ts->workers_count                 = 1;
+    ts->detached_child_counts         = memoryAllocateZero(sizeof(*ts->detached_child_counts));
+    ts->detached_queued_bytes         = memoryAllocateZero(sizeof(*ts->detached_queued_bytes));
     twfRequire(ts->detached_child_counts != NULL && ts->detached_queued_bytes != NULL,
                "failed to allocate detached MuxClient accounting");
 

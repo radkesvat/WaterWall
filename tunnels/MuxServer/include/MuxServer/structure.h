@@ -32,6 +32,7 @@ typedef struct muxserver_tstate_s
 {
     uint32_t child_buffer_limit;
     uint32_t child_buffer_pause_tolerance;
+    uint32_t child_buffer_resume_threshold;
     uint32_t parent_buffer_limit;
     uint32_t detached_buffer_limit;
     uint32_t detached_child_limit;
@@ -68,18 +69,18 @@ struct muxserver_lstate_s
 
 enum
 {
-    kTunnelStateSize                     = sizeof(muxserver_tstate_t),
-    kLineStateSize                       = sizeof(muxserver_lstate_t),
-    kConcurrencyModeTimer                = kDvsFirstOption,
-    kConcurrencyModeCounter              = kDvsSecondOption,
-    kMaxMainChannelBufferSize            = 1024 * 1024, // 1MB
-    kMuxDefaultChildBufferLimit          = 24 * 1024 * 1024,
-    kMuxDefaultChildBufferPauseTolerance = 512 * 1024,
-    kMuxDefaultParentBufferLimit         = 32 * 1024 * 1024,
-    kMuxParentBufferLimitUnlimited       = 0,
-    kMuxChildBufferResumeThreshold       = 256 * 1024,
-    kMuxChildBufferQueueCap              = 8,
-    kMuxMainLineStatsLogIntervalMs       = 5000,
+    kTunnelStateSize                      = sizeof(muxserver_tstate_t),
+    kLineStateSize                        = sizeof(muxserver_lstate_t),
+    kConcurrencyModeTimer                 = kDvsFirstOption,
+    kConcurrencyModeCounter               = kDvsSecondOption,
+    kMaxMainChannelBufferSize             = 1024 * 1024, // 1MB
+    kMuxDefaultChildBufferLimit           = 24 * 1024 * 1024,
+    kMuxDefaultChildBufferPauseTolerance  = 512 * 1024,
+    kMuxDefaultChildBufferResumeThreshold = 256 * 1024,
+    kMuxDefaultParentBufferLimit          = 32 * 1024 * 1024,
+    kMuxParentBufferLimitUnlimited        = 0,
+    kMuxChildBufferQueueCap               = 8,
+    kMuxMainLineStatsLogIntervalMs        = 5000,
 };
 
 WW_EXPORT void         muxserverTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context);

@@ -12,6 +12,7 @@ typedef struct muxclient_tstate_s
     uint32_t fixed_connections_count;
     uint32_t child_buffer_limit;
     uint32_t child_buffer_pause_tolerance;
+    uint32_t child_buffer_resume_threshold;
     uint32_t parent_buffer_limit;
     uint32_t detached_buffer_limit;
     uint32_t detached_child_limit;
@@ -75,9 +76,9 @@ enum
     kMaxMainChannelBufferSize             = 1024 * 1024, // 1MB
     kMuxDefaultChildBufferLimit           = 24 * 1024 * 1024,
     kMuxDefaultChildBufferPauseTolerance  = 512 * 1024,
+    kMuxDefaultChildBufferResumeThreshold = 256 * 1024,
     kMuxDefaultParentBufferLimit          = 32 * 1024 * 1024,
     kMuxParentBufferLimitUnlimited        = 0,
-    kMuxChildBufferResumeThreshold        = 256 * 1024,
     kMuxChildBufferQueueCap               = 8,
     kMuxMainLineStatsLogIntervalMs        = 5000,
 };

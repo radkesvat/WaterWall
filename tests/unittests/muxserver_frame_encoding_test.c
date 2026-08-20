@@ -106,13 +106,14 @@ static void fixtureSetup(muxserver_fixture_t *fixture, uint32_t capture_capacity
     tunnelBind(fixture->prev, fixture->mux);
     tunnelBind(fixture->mux, fixture->next);
 
-    muxserver_tstate_t *ts           = tunnelGetState(fixture->mux);
-    ts->child_buffer_limit           = kMuxDefaultChildBufferLimit;
-    ts->child_buffer_pause_tolerance = kMuxDefaultChildBufferPauseTolerance;
-    ts->parent_buffer_limit          = kMuxDefaultParentBufferLimit;
-    ts->detached_buffer_limit        = kMuxMinimumDetachedBufferLimit;
-    ts->detached_child_limit         = kMuxMinimumDetachedChildLimit;
-    ts->workers_count                = 1;
+    muxserver_tstate_t *ts            = tunnelGetState(fixture->mux);
+    ts->child_buffer_limit            = kMuxDefaultChildBufferLimit;
+    ts->child_buffer_pause_tolerance  = kMuxDefaultChildBufferPauseTolerance;
+    ts->child_buffer_resume_threshold = kMuxDefaultChildBufferResumeThreshold;
+    ts->parent_buffer_limit           = kMuxDefaultParentBufferLimit;
+    ts->detached_buffer_limit         = kMuxMinimumDetachedBufferLimit;
+    ts->detached_child_limit          = kMuxMinimumDetachedChildLimit;
+    ts->workers_count                 = 1;
 
     twfLinePoolSetup(&fixture->lines, fixture->mux->lstate_size, 8);
     fixture->parent_l = twfLinePoolCreateLine(&fixture->lines);
@@ -308,6 +309,46 @@ static void destroyServerSibling(muxserver_fixture_t *fixture, line_t *child_l)
     lineDestroy(child_l);
 }
 
+static void caseConfiguredResumeThresholdControlsFlowResume(void)
+{
+    twfSetCase("MuxServer configured child resume threshold controls FlowResume timing");
+
+    enum
+    {
+        kFirst     = 10,
+        kSecond    = 10,
+        kThreshold = 5,
+    };
+
+    muxserver_fixture_t fixture;
+    fixtureSetup(&fixture, kFirst + kSecond + kMuxFrameLength);
+
+    muxserver_tstate_t *ts            = tunnelGetState(fixture.mux);
+    muxserver_lstate_t *parent_ls     = lineGetState(fixture.parent_l, fixture.mux);
+    muxserver_lstate_t *child_ls      = lineGetState(fixture.child_l, fixture.mux);
+    ts->child_buffer_resume_threshold = kThreshold;
+    child_ls->paused                  = true;
+    child_ls->flow_paused_sent        = true;
+
+    twfRequire(muxserverQueueChildPayload(
+                   fixture.mux, fixture.parent_l, ts, parent_ls, child_ls, makePatternPayload(&fixture, kFirst)),
+               "queueing the first paused MuxServer child payload failed");
+    twfRequire(muxserverQueueChildPayload(
+                   fixture.mux, fixture.parent_l, ts, parent_ls, child_ls, makePatternPayload(&fixture, kSecond)),
+               "queueing the second paused MuxServer child payload failed");
+
+    muxserverTunnelDownStreamResume(fixture.mux, fixture.child_l);
+
+    twfRequireEqualText(fixture.trace.seq, "PPp", "MuxServer sent FlowResume above its configured threshold");
+    twfRequireEqualU32(fixture.trace.next_payload, 2, "MuxServer did not drain both queued child payloads");
+    twfRequireEqualU32(fixture.trace.prev_payload, 1, "MuxServer did not send exactly one FlowResume frame");
+    twfRequire(fixture.capture[kFirst + kSecond + 2U] == kMuxFlagFlowResume,
+               "MuxServer emitted the wrong control frame at its configured resume threshold");
+    twfRequire(! child_ls->flow_paused_sent, "MuxServer retained its sent-pause latch after FlowResume");
+
+    fixtureTeardown(&fixture);
+}
+
 static void casePeerCloseDropsLateFramesAndKeepsSiblingProgress(void)
 {
     twfSetCase("MuxServer drops same-batch late frames for a draining cid while a sibling progresses");
@@ -427,12 +468,16 @@ static void caseDetachedConfiguration(void)
             ts->detached_buffer_limit, profiles[i].buffer_limit, "profile-derived MuxServer byte limit drifted");
         twfRequireEqualU32(
             ts->detached_child_limit, profiles[i].child_limit, "profile-derived MuxServer child limit drifted");
+        twfRequireEqualU32(ts->child_buffer_resume_threshold,
+                           kMuxDefaultChildBufferResumeThreshold,
+                           "default MuxServer child resume threshold drifted");
         muxserverTunnelDestroy(mux, wwLifecycleProcessShutdown());
         cJSON_Delete(settings);
     }
 
     GSTATE.ram_profile = kRamProfileL2Memory;
-    cJSON *settings    = cJSON_Parse("{\"detached-buffer-limit\":0,\"detached-child-limit\":9}");
+    cJSON *settings    = cJSON_Parse("{\"child-buffer-limit\":1000,\"child-buffer-resume-threshold\":2000,"
+                                     "\"detached-buffer-limit\":0,\"detached-child-limit\":9}");
     twfRequire(settings != NULL, "failed to create explicit MuxServer settings");
     node.node_settings_json = settings;
     tunnel_t *mux           = muxserverTunnelCreate(&node);
@@ -440,6 +485,8 @@ static void caseDetachedConfiguration(void)
     muxserver_tstate_t *ts = tunnelGetState(mux);
     twfRequireEqualU32(ts->detached_buffer_limit, 0, "MuxServer zero byte limit was not preserved");
     twfRequireEqualU32(ts->detached_child_limit, 9, "MuxServer explicit child limit was not preserved");
+    twfRequireEqualU32(
+        ts->child_buffer_resume_threshold, 1000, "MuxServer child resume threshold was not capped to its buffer limit");
     muxserverTunnelDestroy(mux, wwLifecycleProcessShutdown());
     cJSON_Delete(settings);
 
@@ -447,6 +494,12 @@ static void caseDetachedConfiguration(void)
     twfRequire(settings != NULL, "failed to create invalid MuxServer settings");
     node.node_settings_json = settings;
     twfRequire(muxserverTunnelCreate(&node) == NULL, "negative detached MuxServer child limit was accepted");
+    cJSON_Delete(settings);
+
+    settings = cJSON_Parse("{\"child-buffer-resume-threshold\":0}");
+    twfRequire(settings != NULL, "failed to create invalid MuxServer resume-threshold settings");
+    node.node_settings_json = settings;
+    twfRequire(muxserverTunnelCreate(&node) == NULL, "zero MuxServer child resume threshold was accepted");
     cJSON_Delete(settings);
 
     GSTATE.ram_profile = previous_ram_profile;
@@ -459,6 +512,7 @@ int main(void)
     caseDownstreamFraming((3U * kMuxMaxDataFrameLength) - 5U, 3, "a payload spanning three frames is fragmented");
 
     caseLargeCompleteBatchIsDrained();
+    caseConfiguredResumeThresholdControlsFlowResume();
     casePeerCloseDropsLateFramesAndKeepsSiblingProgress();
     caseDetachedConfiguration();
 

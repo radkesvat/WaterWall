@@ -42,13 +42,14 @@ void mxbMuxServerCreate(mxb_fixture_t *fixture)
     fixture->parent_peer->fnFinD                             = mxbServerParentFinish;
     tunnelBind(fixture->parent_peer, fixture->mux);
 
-    muxserver_tstate_t *ts           = tunnelGetState(fixture->mux);
-    ts->child_buffer_limit           = kMuxDefaultChildBufferLimit;
-    ts->child_buffer_pause_tolerance = kMuxDefaultChildBufferPauseTolerance;
-    ts->parent_buffer_limit          = kMuxDefaultParentBufferLimit;
-    ts->detached_buffer_limit        = kMuxMinimumDetachedBufferLimit;
-    ts->detached_child_limit         = kMuxMinimumDetachedChildLimit;
-    ts->workers_count                = 1;
+    muxserver_tstate_t *ts            = tunnelGetState(fixture->mux);
+    ts->child_buffer_limit            = kMuxDefaultChildBufferLimit;
+    ts->child_buffer_pause_tolerance  = kMuxDefaultChildBufferPauseTolerance;
+    ts->child_buffer_resume_threshold = kMuxDefaultChildBufferResumeThreshold;
+    ts->parent_buffer_limit           = kMuxDefaultParentBufferLimit;
+    ts->detached_buffer_limit         = kMuxMinimumDetachedBufferLimit;
+    ts->detached_child_limit          = kMuxMinimumDetachedChildLimit;
+    ts->workers_count                 = 1;
 }
 
 void mxbMuxServerInitializeLines(mxb_fixture_t *fixture)

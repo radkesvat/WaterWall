@@ -1,5 +1,5 @@
 <!--
-Documentation version: 110
+Documentation version: 111
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/MuxClient.mdx, and both files must keep the same documentation version.
 -->
 
@@ -137,6 +137,14 @@ Fixed connection count mode:
 
   Default: `524288` (`512 KB`). Values above `child-buffer-limit` are capped to `child-buffer-limit`.
 
+- `child-buffer-resume-threshold` `(integer, bytes, optional)`
+  Low-water mark for sending `FlowResume` after the local child becomes writable. The frame is sent once the retained
+  child queue falls below this value, allowing the peer to restart before the queue is completely empty. It must be
+  greater than `0`; values above `child-buffer-limit` are capped to `child-buffer-limit`.
+
+  Default: `262144` (`256 KiB`). Raising it resumes the peer earlier and may reduce high-RTT throughput gaps, at the
+  cost of weaker hysteresis and potentially more pause/resume cycling.
+
 - `parent-buffer-limit` `(integer, bytes, optional)`
   Per-parent budget for child-destined data queued across all children. When a newly queued payload makes the total
   reach the budget, `MuxClient` closes the child with the largest queue. Equal-sized queues prefer the
@@ -268,7 +276,8 @@ that child's `cid`. `FlowPause` is sent as soon as the local child write side pa
 If writing parent-delivered data to a child causes that child to pause, `MuxClient` queues later data for that child.
 The peer has normally already received `FlowPause` for that `cid`; `child-buffer-pause-tolerance` is a backstop for a
 child that paused before its `Open` frame was sent. Queued data is flushed when the child resumes. `FlowResume` is sent
-once the child's queue drops below `256 KB`, allowing the peer to begin sending before the queue is completely empty.
+once the child's queue drops below `child-buffer-resume-threshold`, allowing the peer to begin sending before the queue
+is completely empty.
 
 Queue pressure does not pause reads on the parent transport. A parent is shared by every child, so a parent read pause
 taken for one indefinitely blocked destination also prevents unrelated child frames from being demultiplexed. That is

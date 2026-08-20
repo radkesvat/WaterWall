@@ -109,17 +109,18 @@ static void fixtureSetup(muxclient_fixture_t *fixture, uint32_t capture_capacity
     tunnelBind(fixture->prev, fixture->mux);
     tunnelBind(fixture->mux, fixture->next);
 
-    muxclient_tstate_t *ts           = tunnelGetState(fixture->mux);
-    ts->concurrency_mode             = kConcurrencyModeCounter;
-    ts->concurrency_capacity         = 1024;
-    ts->child_buffer_limit           = kMuxDefaultChildBufferLimit;
-    ts->child_buffer_pause_tolerance = kMuxDefaultChildBufferPauseTolerance;
-    ts->parent_buffer_limit          = kMuxDefaultParentBufferLimit;
-    ts->detached_buffer_limit        = kMuxMinimumDetachedBufferLimit;
-    ts->detached_child_limit         = kMuxMinimumDetachedChildLimit;
-    ts->workers_count                = 1;
-    ts->detached_child_counts        = memoryAllocateZero(sizeof(*ts->detached_child_counts));
-    ts->detached_queued_bytes        = memoryAllocateZero(sizeof(*ts->detached_queued_bytes));
+    muxclient_tstate_t *ts            = tunnelGetState(fixture->mux);
+    ts->concurrency_mode              = kConcurrencyModeCounter;
+    ts->concurrency_capacity          = 1024;
+    ts->child_buffer_limit            = kMuxDefaultChildBufferLimit;
+    ts->child_buffer_pause_tolerance  = kMuxDefaultChildBufferPauseTolerance;
+    ts->child_buffer_resume_threshold = kMuxDefaultChildBufferResumeThreshold;
+    ts->parent_buffer_limit           = kMuxDefaultParentBufferLimit;
+    ts->detached_buffer_limit         = kMuxMinimumDetachedBufferLimit;
+    ts->detached_child_limit          = kMuxMinimumDetachedChildLimit;
+    ts->workers_count                 = 1;
+    ts->detached_child_counts         = memoryAllocateZero(sizeof(*ts->detached_child_counts));
+    ts->detached_queued_bytes         = memoryAllocateZero(sizeof(*ts->detached_queued_bytes));
     twfRequire(ts->detached_child_counts != NULL && ts->detached_queued_bytes != NULL,
                "failed to allocate detached MuxClient accounting");
 
@@ -515,6 +516,38 @@ static void queueTwoPausedClientPayloads(muxclient_fixture_t *fixture, uint32_t 
                "queueing the second paused child payload failed");
 }
 
+static void caseConfiguredResumeThresholdControlsFlowResume(void)
+{
+    twfSetCase("MuxClient configured child resume threshold controls FlowResume timing");
+
+    enum
+    {
+        kFirst     = 10,
+        kSecond    = 10,
+        kThreshold = 5,
+    };
+
+    muxclient_fixture_t fixture;
+    fixtureSetup(&fixture, kFirst + kSecond + kMuxFrameLength);
+
+    muxclient_tstate_t *ts            = tunnelGetState(fixture.mux);
+    muxclient_lstate_t *child_ls      = lineGetState(fixture.child_l, fixture.mux);
+    ts->child_buffer_resume_threshold = kThreshold;
+    child_ls->flow_paused_sent        = true;
+    queueTwoPausedClientPayloads(&fixture, kFirst, kSecond);
+
+    muxclientTunnelUpStreamResume(fixture.mux, fixture.child_l);
+
+    twfRequireEqualText(fixture.trace.seq, "ppP", "MuxClient sent FlowResume above its configured threshold");
+    twfRequireEqualU32(fixture.trace.prev_payload, 2, "MuxClient did not drain both queued child payloads");
+    twfRequireEqualU32(fixture.trace.next_payload, 1, "MuxClient did not send exactly one FlowResume frame");
+    twfRequire(fixture.capture[kFirst + kSecond + 2U] == kMuxFlagFlowResume,
+               "MuxClient emitted the wrong control frame at its configured resume threshold");
+    twfRequire(! child_ls->flow_paused_sent, "MuxClient retained its sent-pause latch after FlowResume");
+
+    fixtureTeardown(&fixture);
+}
+
 static void casePeerCloseWaitsForResume(void)
 {
     twfSetCase("MuxClient peer Close waits for a paused child queue to drain");
@@ -718,12 +751,16 @@ static void caseDetachedConfiguration(void)
             ts->detached_buffer_limit, profiles[i].buffer_limit, "profile-derived MuxClient byte limit drifted");
         twfRequireEqualU32(
             ts->detached_child_limit, profiles[i].child_limit, "profile-derived MuxClient child limit drifted");
+        twfRequireEqualU32(ts->child_buffer_resume_threshold,
+                           kMuxDefaultChildBufferResumeThreshold,
+                           "default MuxClient child resume threshold drifted");
         muxclientTunnelDestroy(mux, wwLifecycleProcessShutdown());
         cJSON_Delete(settings);
     }
 
     GSTATE.ram_profile = kRamProfileL2Memory;
     cJSON *settings    = cJSON_Parse("{\"mode\":\"counter\",\"connection-capacity\":1,"
+                                     "\"child-buffer-limit\":1000,\"child-buffer-resume-threshold\":2000,"
                                      "\"detached-buffer-limit\":0,\"detached-child-limit\":7}");
     twfRequire(settings != NULL, "failed to create explicit MuxClient settings");
     node.node_settings_json = settings;
@@ -732,6 +769,8 @@ static void caseDetachedConfiguration(void)
     muxclient_tstate_t *ts = tunnelGetState(mux);
     twfRequireEqualU32(ts->detached_buffer_limit, 0, "MuxClient zero byte limit was not preserved");
     twfRequireEqualU32(ts->detached_child_limit, 7, "MuxClient explicit child limit was not preserved");
+    twfRequireEqualU32(
+        ts->child_buffer_resume_threshold, 1000, "MuxClient child resume threshold was not capped to its buffer limit");
     muxclientTunnelDestroy(mux, wwLifecycleProcessShutdown());
     cJSON_Delete(settings);
 
@@ -740,6 +779,13 @@ static void caseDetachedConfiguration(void)
     twfRequire(settings != NULL, "failed to create invalid MuxClient settings");
     node.node_settings_json = settings;
     twfRequire(muxclientTunnelCreate(&node) == NULL, "negative detached MuxClient byte limit was accepted");
+    cJSON_Delete(settings);
+
+    settings = cJSON_Parse("{\"mode\":\"counter\",\"connection-capacity\":1,"
+                           "\"child-buffer-resume-threshold\":0}");
+    twfRequire(settings != NULL, "failed to create invalid MuxClient resume-threshold settings");
+    node.node_settings_json = settings;
+    twfRequire(muxclientTunnelCreate(&node) == NULL, "zero MuxClient child resume threshold was accepted");
     cJSON_Delete(settings);
 
     GSTATE.ram_profile = previous_ram_profile;
@@ -972,6 +1018,7 @@ int main(void)
     caseReentrantParentCloseReturnsImmediately();
     caseParentBufferLimitClosesActualLargestQueue();
     caseParentBufferLimitCanBeDisabled();
+    caseConfiguredResumeThresholdControlsFlowResume();
     casePeerCloseWaitsForResume();
     casePeerCloseDropsLateFramesAndKeepsSiblingProgress();
     caseParentLossDetachesAndDrainsBorrowedChild();

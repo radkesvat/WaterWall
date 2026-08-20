@@ -181,11 +181,6 @@ void muxserverCloseChildKeepParent(tunnel_t *t, line_t *parent_l, muxserver_lsta
     tunnelPrevDownStreamPayload(t, parent_l, finishpacket_buf);
 }
 
-static size_t muxserverChildResumeThreshold(muxserver_tstate_t *ts)
-{
-    return min((size_t) kMuxChildBufferResumeThreshold, (size_t) ts->child_buffer_limit);
-}
-
 static void muxserverAddParentPendingChildBytes(muxserver_lstate_t *parent_ls, size_t bytes)
 {
     assert(parent_ls != NULL && ! parent_ls->is_child);
@@ -477,7 +472,7 @@ static bool muxserverHandleChildBufferAfterDrain(tunnel_t *t, line_t *parent_l, 
     size_t pending_bytes = bufferqueueGetBufLen(&child_ls->pending_child_data);
 
     if (child_ls->close_state == kMuxServerChildCloseOpen && ! child_ls->paused && child_ls->flow_paused_sent &&
-        pending_bytes < muxserverChildResumeThreshold(ts))
+        pending_bytes < ts->child_buffer_resume_threshold)
     {
         child_ls->flow_paused_sent = false;
         if (! muxserverSendControlFrame(t, parent_l, parent_ls, child_l, child_ls->connection_id, kMuxFlagFlowResume))

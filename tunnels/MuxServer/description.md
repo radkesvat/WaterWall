@@ -1,5 +1,5 @@
 <!--
-Documentation version: 109
+Documentation version: 110
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/MuxServer.mdx, and both files must keep the same documentation version.
 -->
 
@@ -76,6 +76,14 @@ There are no required tunnel-specific settings in the current implementation.
   throttling.
 
   Default: `524288` (`512 KB`). Values above `child-buffer-limit` are capped to `child-buffer-limit`.
+
+- `child-buffer-resume-threshold` `(integer, bytes, optional)`
+  Low-water mark for sending `FlowResume` after the local child becomes writable. The frame is sent once the retained
+  child queue falls below this value, allowing the peer to restart before the queue is completely empty. It must be
+  greater than `0`; values above `child-buffer-limit` are capped to `child-buffer-limit`.
+
+  Default: `262144` (`256 KiB`). Raising it resumes the peer earlier and may reduce high-RTT throughput gaps, at the
+  cost of weaker hysteresis and potentially more pause/resume cycling.
 
 - `parent-buffer-limit` `(integer, bytes, optional)`
   Per-parent budget for child-destined data queued across all children. When a newly queued payload makes the total
@@ -188,8 +196,8 @@ Per-child `FlowPause` and `FlowResume` frames are forwarded to the matching chil
 
 If writing parent-delivered data to a child causes that child to pause, `MuxServer` queues later data for that child.
 `FlowPause` is sent as soon as the local child write side pauses, before later data is queued for it. Queued data is
-flushed when the child resumes. `FlowResume` is sent once the child's queue drops below `256 KB`, allowing the peer to
-begin sending before the queue is completely empty.
+flushed when the child resumes. `FlowResume` is sent once the child's queue drops below
+`child-buffer-resume-threshold`, allowing the peer to begin sending before the queue is completely empty.
 
 Queue pressure does not pause reads on the parent transport. A parent is shared by every child, so a parent read pause
 taken for one indefinitely blocked destination also prevents unrelated child frames from being demultiplexed. That is
