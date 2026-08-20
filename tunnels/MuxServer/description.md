@@ -68,28 +68,29 @@ There are no required tunnel-specific settings in the current implementation.
 - `child-buffer-pause-tolerance` `(integer, bytes, optional)`
   Queued-data backstop for sending a `FlowPause` frame for a paused child.
 
-  In practice `FlowPause` is already sent the moment the child's write side pauses, which is before any data can be
-  queued for it, so this threshold only covers the one case that ordering misses: a child paused before its `Open`
-  frame reached the peer. Raising it does not delay peer throttling in any other flow.
+  `FlowPause` is normally sent as soon as the child's local write side pauses, before data is queued. This threshold
+  covers any ordering edge where the peer has not yet been told to stop. Raising it does not normally delay peer
+  throttling.
 
   Default: `524288` (`512 KB`). Values above `child-buffer-limit` are capped to `child-buffer-limit`.
 
 - `parent-buffer-limit` `(integer, bytes, optional)`
-  Budget for the queued child data held across all children of one parent transport line. When the total reaches it,
-  `MuxServer` closes the children holding the most queued data until the total is back under the budget.
+  Per-parent budget for child-destined data queued across all children. When a newly queued payload makes the total
+  reach the budget, `MuxServer` closes the child with the largest queue. Equal-sized queues prefer the
+  least-recently-active child. This releases the pressure without pausing unrelated streams on the shared parent.
 
-  Default: `8388608` (`8 MB`). Set to `0` to remove the budget and bound memory by `child-buffer-limit` per child
-  only. The value may deliberately sit below `child-buffer-limit`: whichever bound is reached first sheds.
+  Default: `8388608` (`8 MB`). Set to `0` to disable the aggregate budget; `child-buffer-limit` still bounds each
+  individual child. The value may intentionally be lower than `child-buffer-limit`.
 
-  This is a per-parent figure, so the worst case a process can hold is `parent-buffer-limit` multiplied by the number
-  of live parent lines - one per pool slot for `MuxClient`, one per accepted transport connection for `MuxServer`.
-  Size it against the memory the host actually has, not against a single connection.
+  The limit applies to each parent independently. Approximate worst-case queued memory is therefore
+  `parent-buffer-limit` multiplied by the number of accepted parent transport connections.
 
 - `log-main-line-stats` `(boolean, optional)`
   When `true`, each active parent transport line logs mux diagnostics every `5` seconds.
 
-  The log includes `wid`, parent-line write pause state, bytes queued on the parent, child count, child read-pause
-  count, and child write-pause count. Default: `false`.
+  The log keeps `parent-line-read-paused=no` for compatibility and also reports `parent-queued-bytes`, along with
+  `wid`, parent-line write pause state, child count, child read-pause count, and child write-pause count.
+  Default: `false`.
 
 ## Detailed Behavior
 
@@ -157,22 +158,18 @@ If the parent transport line itself finishes, `MuxServer` closes all currently a
 Per-child `FlowPause` and `FlowResume` frames are forwarded to the matching child line.
 
 If writing parent-delivered data to a child causes that child to pause, `MuxServer` queues later data for that child.
-`FlowPause` is sent as soon as the local child write side pauses, which is before any data can be queued for that
-child, so the peer has already been asked to stop producing for it; `child-buffer-pause-tolerance` is only a
-backstop for a child that was paused before its `Open` frame reached the peer.
-Queued child data is flushed when the child resumes, and a `FlowResume` is sent once the child's pending data drops
-below `512 KB`, so the peer can begin sending before the queue is fully empty.
+`FlowPause` is sent as soon as the local child write side pauses, before later data is queued for it. Queued data is
+flushed when the child resumes. `FlowResume` is sent once the child's queue drops below `512 KB`, allowing the peer to
+begin sending before the queue is completely empty.
 
-Queue pressure never pauses reads on the parent transport. The parent is shared by every child stream, so a pause taken
-on behalf of one child could only be cleared by that same child draining. A child whose downstream peer has stopped
-reading never drains, and while the parent is paused no frame can be read from it - not the peer's `FlowPause`
-acknowledgement, not another child's reply - so nothing that could clear the pause is able to arrive. One stalled stream
-would deadlock every stream multiplexed onto the same parent.
+Queue pressure does not pause reads on the parent transport. A parent is shared by every child, so a parent read pause
+taken for one indefinitely blocked destination also prevents unrelated child frames from being demultiplexed. That is
+global head-of-line blocking even though the other streams and the parent transport are healthy.
 
-Pressure is relieved by shedding instead. If one paused child's queue reaches `child-buffer-limit`, `MuxServer` sends a
-`Close` for that child and finishes the local child line. If the queued child data across the whole parent reaches
-`parent-buffer-limit`, `MuxServer` closes the children holding the most queued data until the total is back under the
-ceiling. Both bounds always terminate, because each close frees the queue that caused it.
+Pressure is bounded by closing a child instead. If one child's queue reaches `child-buffer-limit`, that child is closed.
+If the total queued data reaches `parent-buffer-limit`, the actual largest queued child is closed; equal-size ties prefer
+the least-recently-active child. The total was below the budget before the newest payload, and the largest queue is at
+least as large as that payload, so one close returns the parent below budget in the normal accounting path.
 
 If the parent transport is paused without a known recent writer, `MuxServer` pauses all child lines attached to that parent. Resume only clears parent-write pressure; a child that is still under peer `FlowPause` remains paused.
 

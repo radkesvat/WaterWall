@@ -14,7 +14,7 @@
         "per-worker-connections-count": 1,
         "child-buffer-limit": 2097152,
         "child-buffer-pause-tolerance": 524288,
-        "parent-buffer-limit": 8388608
+        "parent-buffer-limit": 0
       },
       "next": "mux-server"
     },

@@ -162,14 +162,14 @@ static void muxclientParentStatsLogTask(tunnel_t *t, line_t *parent_l)
     muxclient_parent_stats_t stats;
     muxclientCollectParentStats(parent_ls, &stats);
 
-    LOGI("MuxClient: main line stats wid=%u parent-line-write-paused=%s parent-queued-bytes=%zu "
-         "children-count=%u childs-read-paused=%u childs-write-paused=%u",
+    LOGI("MuxClient: main line stats wid=%u parent-line-write-paused=%s parent-line-read-paused=no "
+         "children-count=%u childs-read-paused=%u childs-write-paused=%u parent-queued-bytes=%zu",
          (unsigned int) lineGetWID(parent_l),
          boolToYesNo(stats.parent_write_paused > 0),
-         parent_ls->pending_child_data_len,
          parent_ls->children_count,
          stats.child_read_paused,
-         stats.child_write_paused);
+         stats.child_write_paused,
+         parent_ls->pending_child_data_len);
 
     if (! parent_ls->parent_finishing)
     {
@@ -448,19 +448,11 @@ bool muxclientSendChildFlowPause(tunnel_t *t, line_t *parent_l, muxclient_lstate
 }
 
 /*
- * Queue pressure never pauses reads on the parent transport.
- *
- * The parent is shared by every child stream, so a pause taken on behalf of one child can
- * only be cleared by that same child draining its queue. A child whose downstream peer has
- * stopped reading never drains, and while the parent is paused no frame - not the peer's
- * FlowPause acknowledgement, not another child's reply - can be read from it, so nothing
- * that could clear the pause is able to arrive. One stalled stream therefore deadlocks every
- * stream multiplexed onto the same parent until the stalled peer moves or the connection
- * times out.
- *
- * Pressure is relieved by shedding instead: `child-buffer-limit` closes a single runaway
- * child, and `parent-buffer-limit` closes the largest queues until the parent total is back
- * under its ceiling. Both always terminate, because each close frees the queue that caused it.
+ * Queue pressure must not pause reads on the shared parent transport. Such a pause
+ * blocks every child on the parent until the particular local child that caused it
+ * starts draining again. Per-child FlowPause/FlowResume already asks the peer to stop
+ * producing for that cid; the aggregate memory bound below protects the process
+ * without turning one indefinitely blocked destination into a parent-wide stall.
  */
 bool muxclientReleaseParentInputForChildClose(tunnel_t *t, line_t *parent_l, muxclient_lstate_t *parent_ls,
                                               muxclient_lstate_t *child_ls)
@@ -468,7 +460,6 @@ bool muxclientReleaseParentInputForChildClose(tunnel_t *t, line_t *parent_l, mux
     discard t;
 
     muxclientReleaseChildPendingBytes(parent_ls, child_ls);
-
     return lineIsAlive(parent_l);
 }
 
@@ -529,19 +520,21 @@ static bool muxclientCloseChildForQueueLimit(tunnel_t *t, line_t *parent_l, muxc
                                              muxclient_lstate_t *parent_ls, muxclient_lstate_t *child_ls,
                                              const char *reason)
 {
-    line_t   *child_l = child_ls->l;
-    mux_cid_t cid     = child_ls->connection_id;
+    line_t         *child_l             = child_ls->l;
+    const mux_cid_t cid                 = child_ls->connection_id;
+    const size_t    child_queued_bytes  = bufferqueueGetBufLen(&child_ls->pending_child_data);
+    const size_t    parent_queued_bytes = parent_ls->pending_child_data_len;
 
     if (! muxclientSendControlFrame(t, parent_l, parent_ls, child_l, cid, kMuxFlagClose))
     {
-        // the parent died mid-write, so the child is not being closed for its queue after all
         return false;
     }
 
-    LOGW("MuxClient: closing child cid %u because %s (%zu bytes queued on the parent)",
+    LOGW("MuxClient: closing child cid %u because %s (child-queued-bytes=%zu parent-queued-bytes=%zu)",
          (unsigned int) cid,
          reason,
-         parent_ls->pending_child_data_len);
+         child_queued_bytes,
+         parent_queued_bytes);
 
     muxclientLeaveConnection(child_ls);
     bool parent_alive = muxclientReleaseParentInputForChildClose(t, parent_l, parent_ls, child_ls);
@@ -562,18 +555,37 @@ static bool muxclientCloseChildForQueueLimit(tunnel_t *t, line_t *parent_l, muxc
 }
 
 /*
- * Sheds the children holding the most queued data until the parent total is back under
- * `parent-buffer-limit`.
- *
- * One pass over the child list, so the work is bounded by the child count even though a
- * parent may carry tens of thousands of children: this runs inside a payload callback and
- * must not turn one queued frame into an unbounded amount of work. The cut is the mean queue
- * length at entry - the total being at or over the limit guarantees at least one child sits
- * at or above it, so a pass always sheds something and always makes progress. A pass that
- * does not get all the way under the ceiling is simply re-entered by the next queued payload.
- *
- * The result describes the parent, not the shed children: false means the parent line is gone
- * and the caller must stop using it.
+ * Return the actual largest queued child. Children are kept in most-recently-used
+ * order by the frame parser; replacing on an equal size therefore makes the stable
+ * tie-break prefer the least-recently-active child.
+ */
+static muxclient_lstate_t *muxclientFindLargestQueuedChild(muxclient_lstate_t *parent_ls,
+                                                           size_t *queued_bytes_out)
+{
+    muxclient_lstate_t *largest      = NULL;
+    size_t              largest_size = 0;
+
+    for (muxclient_lstate_t *child_ls = parent_ls->child_next; child_ls != NULL; child_ls = child_ls->child_next)
+    {
+        const size_t queued = bufferqueueGetBufLen(&child_ls->pending_child_data);
+        if (queued > 0 && queued >= largest_size)
+        {
+            largest      = child_ls;
+            largest_size = queued;
+        }
+    }
+
+    *queued_bytes_out = largest_size;
+    return largest;
+}
+
+/*
+ * The parent total was below its budget before the payload currently being queued.
+ * If that payload has length B, its destination now holds at least B queued bytes,
+ * so the largest child queue is at least B. Removing that one queue leaves no more
+ * than the old, below-budget total. One O(children) scan and one close are therefore
+ * sufficient in the normal path; no average-based heuristic or repeated scan is
+ * needed.
  */
 static bool muxclientShedForParentBufferLimit(tunnel_t *t, line_t *parent_l, muxclient_tstate_t *ts,
                                               muxclient_lstate_t *parent_ls)
@@ -584,43 +596,32 @@ static bool muxclientShedForParentBufferLimit(tunnel_t *t, line_t *parent_l, mux
         return true;
     }
 
-    const size_t children = (parent_ls->children_count > 0) ? (size_t) parent_ls->children_count : (size_t) 1;
-    size_t       cut      = parent_ls->pending_child_data_len / children;
-    if (cut == 0)
+    const size_t        total_before_close = parent_ls->pending_child_data_len;
+    size_t              victim_bytes       = 0;
+    muxclient_lstate_t *victim             = muxclientFindLargestQueuedChild(parent_ls, &victim_bytes);
+
+    if (UNLIKELY(victim == NULL || victim_bytes == 0 || victim_bytes > total_before_close))
     {
-        cut = 1;
-    }
-
-    uint32_t            shed_count = 0;
-    muxclient_lstate_t *child_ls   = parent_ls->child_next;
-
-    while (child_ls != NULL && parent_ls->pending_child_data_len >= (size_t) ts->parent_buffer_limit)
-    {
-        muxclient_lstate_t *next = child_ls->child_next;
-
-        if (bufferqueueGetBufLen(&child_ls->pending_child_data) >= cut)
-        {
-            shed_count++;
-            if (! muxclientCloseChildForQueueLimit(
-                    t, parent_l, ts, parent_ls, child_ls, "queued child data on the parent reached limit"))
-            {
-                return false;
-            }
-        }
-
-        child_ls = next;
-    }
-
-    if (shed_count == 0)
-    {
-        // Nothing was over the cut while the total was over the limit, so the accounted total
-        // no longer matches the queues behind it. Left silent this would shed a healthy child
-        // on every subsequent payload and never recover, so say so instead.
-        LOGE("MuxClient: parent queue accounting is inconsistent: %zu bytes accounted across %u children with none "
-             "at or above the %zu byte cut",
-             parent_ls->pending_child_data_len,
+        LOGE("MuxClient: parent queue accounting is inconsistent: %zu bytes accounted across %u children, "
+             "largest child queue is %zu bytes",
+             total_before_close,
              parent_ls->children_count,
-             cut);
+             victim_bytes);
+        return true;
+    }
+
+    if (! muxclientCloseChildForQueueLimit(
+            t, parent_l, ts, parent_ls, victim, "queued child data on the parent reached its limit"))
+    {
+        return false;
+    }
+
+    if (UNLIKELY(parent_ls->pending_child_data_len >= (size_t) ts->parent_buffer_limit))
+    {
+        LOGE("MuxClient: parent queue remained over limit after closing its largest child: "
+             "%zu bytes remain, limit is %u",
+             parent_ls->pending_child_data_len,
+             ts->parent_buffer_limit);
     }
 
     return true;
@@ -637,7 +638,7 @@ bool muxclientQueueChildPayload(tunnel_t *t, line_t *parent_l, muxclient_tstate_
     if (bufferqueueGetBufLen(&child_ls->pending_child_data) >= ts->child_buffer_limit)
     {
         return muxclientCloseChildForQueueLimit(
-            t, parent_l, ts, parent_ls, child_ls, "its own queued child data reached limit");
+            t, parent_l, ts, parent_ls, child_ls, "its own queued child data reached its limit");
     }
 
     if (! muxclientMaybeSendChildFlowPause(t, parent_l, ts, parent_ls, child_ls->l, child_ls))

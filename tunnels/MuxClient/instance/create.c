@@ -104,8 +104,8 @@ tunnel_t *muxclientTunnelCreate(node_t *node)
     ts->child_buffer_limit = (uint32_t) child_buffer_limit;
     ts->child_buffer_pause_tolerance =
         (uint32_t) min((size_t) child_buffer_pause_tolerance, (size_t) child_buffer_limit);
-    // A per-parent budget, so it may deliberately sit below the per-child limit: whichever
-    // bound is reached first sheds. 0 disables the parent budget entirely.
+    // This is a per-parent budget, not another per-child limit, so it may
+    // intentionally be smaller than child_buffer_limit. Zero disables it.
     ts->parent_buffer_limit = (uint32_t) parent_buffer_limit;
     ts->log_main_line_stats = log_main_line_stats;
 
