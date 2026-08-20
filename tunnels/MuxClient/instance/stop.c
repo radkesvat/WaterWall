@@ -30,6 +30,16 @@ void muxclientTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_cont
     assert(currentThreadIsEventWorkerWID(wid));
 
     muxclient_tstate_t *ts = tunnelGetState(t);
+    if (UNLIKELY(wid >= ts->workers_count || ts->detached_child_counts == NULL || ts->detached_queued_bytes == NULL ||
+                 ts->detached_child_counts[wid] != 0 || ts->detached_queued_bytes[wid] != 0))
+    {
+        LOGF("MuxClient: worker %d stopped with detached borrowed children (count=%u bytes=%zu)",
+             (int) wid,
+             wid < ts->workers_count && ts->detached_child_counts != NULL ? ts->detached_child_counts[wid] : 0,
+             wid < ts->workers_count && ts->detached_queued_bytes != NULL ? ts->detached_queued_bytes[wid] : 0);
+        abortProgramNow(1);
+    }
+
     if (ts->concurrency_mode != kConcurrencyModeFixedConnectionsCount)
     {
         line_t *parent_l           = ts->unsatisfied_lines[wid];

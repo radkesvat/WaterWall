@@ -1,5 +1,6 @@
 #pragma once
 
+#include "MuxCommon/mux_limits.h"
 #include "MuxCommon/mux_wire.h"
 #include "wwapi.h"
 
@@ -12,29 +13,50 @@ typedef struct muxclient_tstate_s
     uint32_t child_buffer_limit;
     uint32_t child_buffer_pause_tolerance;
     uint32_t parent_buffer_limit;
+    uint32_t detached_buffer_limit;
+    uint32_t detached_child_limit;
+    uint32_t workers_count;
     bool     log_main_line_stats;
 
     line_t  **fixed_parent_lines;
     uint32_t *fixed_next_parent_indexes;
+    uint32_t *detached_child_counts;
+    size_t   *detached_queued_bytes;
 
     line_t *unsatisfied_lines[]; // lines (per worker) that still want child connections
 } muxclient_tstate_t;
+
+typedef enum muxclient_child_close_state_e
+{
+    kMuxClientChildCloseOpen = 0,
+    kMuxClientChildClosePeerDraining,
+    kMuxClientChildCloseParentGoneDraining,
+} muxclient_child_close_state_t;
+
+typedef enum muxclient_child_drain_result_e
+{
+    kMuxClientChildDrainBlocked = 0,
+    kMuxClientChildDrainReadyToFinish,
+    kMuxClientChildDrainChildGone,
+    kMuxClientChildDrainParentGone,
+} muxclient_child_drain_result_t;
 
 typedef struct muxclient_lstate_s
 {
     line_t *l;           // the line this state is associated with
     line_t *last_writer; // used when parent, to track the last writer line
 
-    struct muxclient_lstate_s *parent;             // the parent  f is_child is true
-    struct muxclient_lstate_s *child_prev;         // previous child in the parent connection
-    struct muxclient_lstate_s *child_next;         // next child in the parent connection
-    buffer_stream_t            read_stream;        // stream for reading data from the parent connection
-    buffer_queue_t             pending_child_data; // child-destined data queued while the child write side is paused
-    size_t                     pending_child_data_len; // parent: total queued child-destined bytes
-    uint64_t                   creation_epoch; // epoch of the connection creation, used for concurrency mode timer
-    mux_cid_t                  connection_id;  // unique connection id, used for multiplexing
+    struct muxclient_lstate_s    *parent;             // the parent  f is_child is true
+    struct muxclient_lstate_s    *child_prev;         // previous child in the parent connection
+    struct muxclient_lstate_s    *child_next;         // next child in the parent connection
+    buffer_stream_t               read_stream;        // stream for reading data from the parent connection
+    buffer_queue_t                pending_child_data; // child-destined data queued while the child write side is paused
+    size_t                        pending_child_data_len; // parent: total queued child-destined bytes
+    uint64_t                      creation_epoch; // epoch of the connection creation, used for concurrency mode timer
+    mux_cid_t                     connection_id;  // unique connection id, used for multiplexing
+    muxclient_child_close_state_t close_state;    // child: monotonic ordered-close/drain state
     uint32_t children_count;          // number of children in the parent connection, used for concurrency mode counter
-    bool     is_child : 1;            // if this connection is muxed into a parent connection
+    bool     is_child : 1;            // immutable line role: this line is a Mux child
     bool     paused : 1;              // child: local child write side is paused
     bool     flow_paused_sent : 1;    // child: FlowPause was sent to the peer for this cid
     bool     peer_flow_paused : 1;    // child: peer sent FlowPause for this cid
@@ -129,5 +151,13 @@ bool muxclientResumeChildSource(tunnel_t *t, line_t *parent_l, muxclient_lstate_
                                 bool parent_write);
 bool muxclientQueueChildPayload(tunnel_t *t, line_t *parent_l, muxclient_tstate_t *ts, muxclient_lstate_t *parent_ls,
                                 muxclient_lstate_t *child_ls, sbuf_t *buf);
-bool muxclientFlushChildPending(tunnel_t *t, line_t *parent_l, muxclient_lstate_t *parent_ls, line_t *child_l,
-                                muxclient_lstate_t *child_ls, bool fin_mode);
+muxclient_child_drain_result_t muxclientDrainAttachedChild(tunnel_t *t, line_t *parent_l, muxclient_lstate_t *parent_ls,
+                                                           line_t *child_l, muxclient_lstate_t *child_ls);
+muxclient_child_drain_result_t muxclientDrainDetachedChild(tunnel_t *t, line_t *child_l, muxclient_lstate_t *child_ls);
+bool muxclientBeginPeerCloseDrain(tunnel_t *t, line_t *parent_l, muxclient_tstate_t *ts, muxclient_lstate_t *parent_ls,
+                                  muxclient_lstate_t *child_ls);
+bool muxclientFinalizeAttachedPeerClose(tunnel_t *t, line_t *parent_l, muxclient_tstate_t *ts,
+                                        muxclient_lstate_t *parent_ls, muxclient_lstate_t *child_ls);
+void muxclientFinalizeDetachedChild(tunnel_t *t, line_t *child_l, muxclient_lstate_t *child_ls);
+void muxclientAbortDetachedChild(tunnel_t *t, line_t *child_l, muxclient_lstate_t *child_ls, bool notify_child_prev);
+void muxclientHandleParentLoss(tunnel_t *t, line_t *parent_l, bool notify_parent_next);

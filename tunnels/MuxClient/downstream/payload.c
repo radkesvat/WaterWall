@@ -48,37 +48,20 @@ static bool handleCloseFrame(tunnel_t *t, line_t *parent_l, mux_frame_t *frame, 
 
     LOGD("MuxClient: DownStreamPayload: Close frame received, cid: %u", frame->cid);
     lineReuseBuffer(parent_l, frame_buffer);
-
-    bool child_alive = muxclientFlushChildPending(t, parent_l, parent_ls, child_l, child_ls, true);
-    if (! lineIsAlive(parent_l))
-    {
-        return false;
-    }
-
-    if (child_alive)
-    {
-        muxclientLeaveConnection(child_ls);
-        bool parent_alive = muxclientReleaseParentInputForChildClose(t, parent_l, parent_ls, child_ls);
-        muxclientLinestateDestroy(child_ls);
-        tunnelPrevDownStreamFinish(t, child_l);
-        if (! parent_alive || ! lineIsAlive(parent_l))
-        {
-            return false;
-        }
-    }
-
-    if (muxclientCheckConnectionIsExhausted(ts, parent_ls) && parent_ls->children_count == 0)
-    {
-        muxclientCloseIdleExhaustedParentLine(t, ts, lineGetWID(parent_l), parent_l, parent_ls);
-        return false;
-    }
-    return true;
+    discard child_l;
+    return muxclientBeginPeerCloseDrain(t, parent_l, ts, parent_ls, child_ls);
 }
 
 static bool processFrameForChild(tunnel_t *t, line_t *parent_l, mux_frame_t *frame, sbuf_t *frame_buffer,
                                  muxclient_tstate_t *ts, muxclient_lstate_t *parent_ls, muxclient_lstate_t *child_ls)
 {
     line_t *child_l = child_ls->l;
+
+    if (child_ls->close_state != kMuxClientChildCloseOpen)
+    {
+        lineReuseBuffer(parent_l, frame_buffer);
+        return true;
+    }
 
     switch (frame->flags)
     {
@@ -149,30 +132,19 @@ static bool isOverFlow(buffer_stream_t *read_stream)
 
 static void handleOverFlow(tunnel_t *t, line_t *parent_l)
 {
-    muxclient_tstate_t *ts        = tunnelGetState(t);
-    muxclient_lstate_t *parent_ls = lineGetState(parent_l, t);
-
-    parent_ls->parent_finishing = true;
-
-    muxclient_lstate_t *child_ls = parent_ls->child_next;
-    while (child_ls)
-    {
-        muxclient_lstate_t *temp    = child_ls->child_next;
-        line_t             *child_l = child_ls->l;
-        muxclientLeaveConnection(child_ls);
-        discard muxclientReleaseParentInputForChildClose(t, parent_l, parent_ls, child_ls);
-        muxclientLinestateDestroy(child_ls);
-        tunnelPrevDownStreamFinish(t, child_l);
-        child_ls = temp;
-    }
-
-    muxclientCloseIdleExhaustedParentLine(t, ts, lineGetWID(parent_l), parent_l, parent_ls);
+    muxclientHandleParentLoss(t, parent_l, true);
 }
 
 void muxclientTunnelDownStreamPayload(tunnel_t *t, line_t *parent_l, sbuf_t *buf)
 {
     muxclient_tstate_t *ts        = tunnelGetState(t);
     muxclient_lstate_t *parent_ls = lineGetState(parent_l, t);
+
+    if (parent_ls->parent_finishing)
+    {
+        lineReuseBuffer(parent_l, buf);
+        return;
+    }
 
     bufferstreamPush(&(parent_ls->read_stream), buf);
 

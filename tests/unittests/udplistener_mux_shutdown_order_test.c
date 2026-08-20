@@ -57,6 +57,13 @@ static void caseUdpSourceDrainsBeforeMuxWorkerStop(uint8_t mode)
     ts->child_buffer_limit           = kMuxDefaultChildBufferLimit;
     ts->child_buffer_pause_tolerance = kMuxDefaultChildBufferPauseTolerance;
     ts->parent_buffer_limit          = kMuxDefaultParentBufferLimit;
+    ts->detached_buffer_limit        = kMuxMinimumDetachedBufferLimit;
+    ts->detached_child_limit         = kMuxMinimumDetachedChildLimit;
+    ts->workers_count                = 1;
+    ts->detached_child_counts        = memoryAllocateZero(sizeof(*ts->detached_child_counts));
+    ts->detached_queued_bytes        = memoryAllocateZero(sizeof(*ts->detached_queued_bytes));
+    twfRequire(ts->detached_child_counts != NULL && ts->detached_queued_bytes != NULL,
+               "failed to allocate detached MuxClient accounting");
 
     line_t *parent = twfLinePoolCreateLine(&lines);
     lineLock(parent);
@@ -115,6 +122,8 @@ static void caseUdpSourceDrainsBeforeMuxWorkerStop(uint8_t mode)
 
     memoryFree(ts->fixed_parent_lines);
     memoryFree(ts->fixed_next_parent_indexes);
+    memoryFree(ts->detached_child_counts);
+    memoryFree(ts->detached_queued_bytes);
     tunnelDestroy(next);
     tunnelDestroy(mux);
     tunnelDestroy(udp);

@@ -2263,6 +2263,65 @@ foreach(mux_side Client Server)
   endif()
 endforeach()
 
+if(LINUX AND TARGET MuxClient AND TARGET TlsServer AND TARGET TlsRecordShapingCommon)
+  add_executable(muxclient_tlsserver_close_backpressure_test
+    muxclient_tlsserver_close_backpressure_test.c
+    mux_tls_close_backpressure_fixture.c
+    muxclient_backpressure_fixture.c
+    tlsserver_backpressure_fixture.c
+  )
+  target_include_directories(muxclient_tlsserver_close_backpressure_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/tunnels/MuxClient/include
+    ${CMAKE_SOURCE_DIR}/tunnels/TlsServer/include
+    ${CMAKE_SOURCE_DIR}/tunnels/Internals/MuxCommon/include
+  )
+  target_compile_definitions(muxclient_tlsserver_close_backpressure_test PRIVATE
+    MXB_TLS_CERT_FILE="${CMAKE_SOURCE_DIR}/tests/cases/tls_roundtrip/server.crt"
+    MXB_TLS_KEY_FILE="${CMAKE_SOURCE_DIR}/tests/cases/tls_roundtrip/server.key"
+  )
+  target_link_libraries(muxclient_tlsserver_close_backpressure_test PRIVATE
+    MuxClient TlsServer TlsRecordShapingCommon ww
+  )
+  add_dependencies(waterwall_unit_tests muxclient_tlsserver_close_backpressure_test)
+  add_waterwall_unit_test(
+    waterwall.muxclient_tlsserver_close_backpressure_unit
+    muxclient_tlsserver_close_backpressure_test
+    "unit;tunnels;muxclient;tlsserver;tls13_record;backpressure;lifecycle"
+  )
+endif()
+
+if(LINUX AND TARGET MuxServer AND TARGET TlsClient AND TARGET TlsRecordShapingCommon)
+  add_executable(muxserver_tlsclient_close_backpressure_test
+    muxserver_tlsclient_close_backpressure_test.c
+    mux_tls_close_backpressure_fixture.c
+    muxserver_backpressure_fixture.c
+    tlsclient_backpressure_fixture.c
+  )
+  target_include_directories(muxserver_tlsclient_close_backpressure_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/tunnels/MuxServer/include
+    ${CMAKE_SOURCE_DIR}/tunnels/TlsClient/include
+    ${CMAKE_SOURCE_DIR}/tunnels/Internals/MuxCommon/include
+  )
+  target_include_directories(muxserver_tlsclient_close_backpressure_test BEFORE PRIVATE
+    ${CMAKE_SOURCE_DIR}/tunnels/TlsClient/boringssl/include
+    ${CMAKE_BINARY_DIR}/tunnels/TlsClient/boringssl/symbol_prefix_include
+  )
+  target_compile_definitions(muxserver_tlsclient_close_backpressure_test PRIVATE
+    BORINGSSL_PREFIX=WW_BSSL
+    MXB_TLS_CERT_FILE="${CMAKE_SOURCE_DIR}/tests/cases/tls_roundtrip/server.crt"
+    MXB_TLS_KEY_FILE="${CMAKE_SOURCE_DIR}/tests/cases/tls_roundtrip/server.key"
+  )
+  target_link_libraries(muxserver_tlsclient_close_backpressure_test PRIVATE
+    MuxServer TlsClient TlsRecordShapingCommon ww ssl crypto
+  )
+  add_dependencies(waterwall_unit_tests muxserver_tlsclient_close_backpressure_test)
+  add_waterwall_unit_test(
+    waterwall.muxserver_tlsclient_close_backpressure_unit
+    muxserver_tlsclient_close_backpressure_test
+    "unit;tunnels;muxserver;tlsclient;tls13_record;backpressure;lifecycle;ownership"
+  )
+endif()
+
 if(TARGET MuxClient AND TARGET UdpListener)
   add_executable(udplistener_mux_shutdown_order_test
     udplistener_mux_shutdown_order_test.c

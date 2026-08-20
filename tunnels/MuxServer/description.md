@@ -1,5 +1,5 @@
 <!--
-Documentation version: 107
+Documentation version: 109
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/MuxServer.mdx, and both files must keep the same documentation version.
 -->
 
@@ -36,7 +36,10 @@ A common layout is:
 {
   "name": "mux-server",
   "type": "MuxServer",
-  "settings": {},
+  "settings": {
+    "detached-buffer-limit": 268435456,
+    "detached-child-limit": 12000
+  },
   "next": "service-side-node"
 }
 ```
@@ -85,11 +88,34 @@ There are no required tunnel-specific settings in the current implementation.
   The limit applies to each parent independently. Approximate worst-case queued memory is therefore
   `parent-buffer-limit` multiplied by the number of accepted parent transport connections.
 
+- `detached-buffer-limit` `(integer, bytes, optional)`
+  Per-worker byte limit for blocked child queues retained after parent loss. The default depends on the global
+  `misc.ram-profile`, as shown below. Reaching it aborts only the newly detached blocked child. Set to `0` to disable
+  this aggregate bound.
+
+- `detached-child-limit` `(integer, optional)`
+  Per-worker count limit for blocked children retained after parent loss. The default depends on the global
+  `misc.ram-profile`, as shown below. Reaching it aborts only the newly detached blocked child. Set to `0` to disable
+  this aggregate bound.
+
+  | RAM profile | Default detached bytes | Default detached children |
+  | --- | ---: | ---: |
+  | S1 (`minimal` / `ultralow`) | `33554432` (`32 MiB`) | `4096` |
+  | S2 | `80740352` (`77 MiB`) | `5677` |
+  | M1 (`client`) | `127926272` (`122 MiB`) | `7258` |
+  | M2 (`client-larger`) | `174063616` (`166 MiB`) | `8838` |
+  | L1 | `221249536` (`211 MiB`) | `10419` |
+  | L2 (`server`, the global default) | `268435456` (`256 MiB`) | `12000` |
+
+  Defaults are linearly interpolated over the six ordered RAM-profile tiers, with the byte limit rounded to the
+  nearest whole MiB. An explicit setting overrides the profile-derived value independently for that limit.
+
 - `log-main-line-stats` `(boolean, optional)`
   When `true`, each active parent transport line logs mux diagnostics every `5` seconds.
 
-  The log keeps `parent-line-read-paused=no` for compatibility and also reports `parent-queued-bytes`, along with
-  `wid`, parent-line write pause state, child count, child read-pause count, and child write-pause count.
+  The log keeps `parent-line-read-paused=no` for compatibility and also reports `parent-queued-bytes` and
+  `children-close-pending`, along with `wid`, parent-line write pause state, child count, child read-pause count, and
+  child write-pause count.
   Default: `false`.
 
 ## Detailed Behavior
@@ -144,14 +170,17 @@ For replies coming back from a child, `MuxServer` adds the same header and sends
 
 If `MuxServer` receives a `Close` frame for a child:
 
-- the child is detached from the parent
-- child line state is destroyed
-- upstream finish is sent to the next node
-- the child line is destroyed
+- the `Close` remains ordered after all earlier queued `Data`
+- queued data drains only while the next destination is writable
+- if paused, the child remains addressable by `cid` until Resume empties the queue
+- upstream Finish and owned-line destruction happen only at the empty-and-writable barrier
 
 If a child finishes from the service-facing side, `MuxServer` sends a `Close` frame back on the parent line.
 
-If the parent transport line itself finishes, `MuxServer` closes all currently attached child lines too.
+If the parent transport line itself finishes, its borrowed MUX state is destroyed immediately. Already accepted child
+queues detach from it and drain independently under ordinary child Pause/Resume. `MuxServer` inventories these owned
+detached children per worker, rejects new outbound child data, and finishes/destroys each child after its queue drains.
+The two detached limits bound the per-worker residual backlog.
 
 ### Pause and resume behavior
 
@@ -181,11 +210,14 @@ Current overflow limit:
 
 - `1 MB` buffered on the parent read stream
 
-If that limit is exceeded, `MuxServer` closes every child attached to that parent and finishes the parent line toward the previous side.
+If that limit is exceeded, `MuxServer` discards the incomplete parent remainder, finishes the parent line toward the
+previous side, and applies the same detached drain behavior to already parsed child queues.
 
 ## Notes And Caveats
 
 - `MuxServer` is intended to be paired with `MuxClient`.
-- There are no tunnel-specific JSON settings today.
 - `UpStreamEst` and `DownStreamInit` are disabled in the current implementation.
 - Duplicate `Open` frames for an already existing `cid` are ignored.
+- A service-side Finish or orderly worker shutdown may discard residual detached data. Worker shutdown forwards no
+  queued Payload, even for a writable child, before closing every remaining owned child.
+- The detached drain changes no MUX wire bytes or peer capability requirements.

@@ -5,8 +5,12 @@
 void muxclientJoinConnection(muxclient_lstate_t *parent, muxclient_lstate_t *child)
 {
     assert(child != NULL && parent != NULL && child->is_child && (parent->is_child == false));
-    child->parent   = parent;
-    child->is_child = true;
+    if (UNLIKELY(parent->children_count == UINT32_MAX))
+    {
+        LOGF("MuxClient: parent child-count overflow");
+        abortProgramNow(1);
+    }
+    child->parent = parent;
 
     child->child_next = parent->child_next;
     child->child_prev = NULL;
@@ -43,12 +47,16 @@ void muxclientLeaveConnection(muxclient_lstate_t *child)
         child->child_next->child_prev = child->child_prev;
     }
 
+    if (UNLIKELY(child->parent->children_count == 0))
+    {
+        LOGF("MuxClient: parent child-count underflow");
+        abortProgramNow(1);
+    }
     child->parent->children_count--;
 
     child->parent     = NULL;
     child->child_prev = NULL;
     child->child_next = NULL;
-    child->is_child   = false;
 }
 
 bool muxclientCheckConnectionIsExhausted(muxclient_tstate_t *ts, muxclient_lstate_t *ls)
@@ -126,6 +134,7 @@ typedef struct muxclient_parent_stats_s
     uint32_t parent_write_paused;
     uint32_t child_read_paused;
     uint32_t child_write_paused;
+    uint32_t children_close_pending;
 } muxclient_parent_stats_t;
 
 static void muxclientCollectParentStats(muxclient_lstate_t *parent_ls, muxclient_parent_stats_t *stats)
@@ -146,6 +155,10 @@ static void muxclientCollectParentStats(muxclient_lstate_t *parent_ls, muxclient
         {
             stats->child_write_paused++;
         }
+        if (child_ls->close_state == kMuxClientChildClosePeerDraining)
+        {
+            stats->children_close_pending++;
+        }
     }
 }
 
@@ -163,10 +176,12 @@ static void muxclientParentStatsLogTask(tunnel_t *t, line_t *parent_l)
     muxclientCollectParentStats(parent_ls, &stats);
 
     LOGI("MuxClient: main line stats wid=%u parent-line-write-paused=%s parent-line-read-paused=no "
-         "children-count=%u childs-read-paused=%u childs-write-paused=%u parent-queued-bytes=%zu",
+         "children-count=%u children-close-pending=%u childs-read-paused=%u childs-write-paused=%u "
+         "parent-queued-bytes=%zu",
          (unsigned int) lineGetWID(parent_l),
          boolToYesNo(stats.parent_write_paused > 0),
          parent_ls->children_count,
+         stats.children_close_pending,
          stats.child_read_paused,
          stats.child_write_paused,
          parent_ls->pending_child_data_len);
@@ -320,21 +335,27 @@ line_t *muxclientGetParentLineForNewChild(tunnel_t *t, line_t *child_l)
 void muxclientCloseChildKeepParent(tunnel_t *t, muxclient_tstate_t *ts, line_t *parent_l, muxclient_lstate_t *parent_ls,
                                    muxclient_lstate_t *child_ls, bool notify_child_prev)
 {
-    line_t         *child_l   = child_ls->l;
-    const mux_cid_t cid       = child_ls->connection_id;
-    const bool      open_sent = child_ls->open_frame_sent;
+    line_t         *child_l     = child_ls->l;
+    const mux_cid_t cid         = child_ls->connection_id;
+    const bool      open_sent   = child_ls->open_frame_sent;
+    const bool      notify_peer = child_ls->close_state == kMuxClientChildCloseOpen;
 
     muxclientLeaveConnection(child_ls);
 
     const bool parent_alive = muxclientReleaseParentInputForChildClose(t, parent_l, parent_ls, child_ls);
 
-    if (! parent_alive || parent_ls->parent_finishing)
+    if (! parent_alive || parent_ls->parent_finishing || ! notify_peer)
     {
-        // no Close frame can be written; the peer learns about the close from the dying parent connection
+        // A dying parent needs no child Close, and a peer-close drain must not echo a duplicate Close.
         muxclientLinestateDestroy(child_ls);
         if (notify_child_prev)
         {
             tunnelPrevDownStreamFinish(t, child_l);
+        }
+        if (parent_alive && ! parent_ls->parent_finishing && muxclientCheckConnectionIsExhausted(ts, parent_ls) &&
+            parent_ls->children_count == 0)
+        {
+            muxclientCloseIdleExhaustedParentLine(t, ts, lineGetWID(parent_l), parent_l, parent_ls);
         }
         return;
     }
@@ -376,7 +397,11 @@ static size_t muxclientChildResumeThreshold(muxclient_tstate_t *ts)
 static void muxclientAddParentPendingChildBytes(muxclient_lstate_t *parent_ls, size_t bytes)
 {
     assert(parent_ls != NULL && ! parent_ls->is_child);
-    assert(parent_ls->pending_child_data_len <= SIZE_MAX - bytes);
+    if (UNLIKELY(parent_ls->pending_child_data_len > SIZE_MAX - bytes))
+    {
+        LOGF("MuxClient: parent queued-byte accounting overflow");
+        abortProgramNow(1);
+    }
 
     parent_ls->pending_child_data_len += bytes;
 }
@@ -384,7 +409,11 @@ static void muxclientAddParentPendingChildBytes(muxclient_lstate_t *parent_ls, s
 static void muxclientSubtractParentPendingChildBytes(muxclient_lstate_t *parent_ls, size_t bytes)
 {
     assert(parent_ls != NULL && ! parent_ls->is_child);
-    assert(parent_ls->pending_child_data_len >= bytes);
+    if (UNLIKELY(parent_ls->pending_child_data_len < bytes))
+    {
+        LOGF("MuxClient: parent queued-byte accounting underflow");
+        abortProgramNow(1);
+    }
 
     parent_ls->pending_child_data_len -= bytes;
 }
@@ -411,17 +440,21 @@ bool muxclientSendControlFrame(tunnel_t *t, line_t *parent_l, muxclient_lstate_t
     sbuf_t *control_buf = bufferpoolGetLargeBuffer(lineGetBufferPool(parent_l));
     muxMakeMuxFrame(control_buf, cid, flag);
 
+    lineLock(child_l);
     lineLock(parent_l);
     parent_ls->last_writer = child_l;
     tunnelNextUpStreamPayload(t, parent_l, control_buf);
     if (! lineIsAlive(parent_l))
     {
         lineUnlock(parent_l);
+        lineUnlock(child_l);
         return false;
     }
     parent_ls->last_writer = NULL;
+    const bool child_alive = lineIsAlive(child_l);
     lineUnlock(parent_l);
-    return true;
+    lineUnlock(child_l);
+    return child_alive;
 }
 
 bool muxclientMaybeSendChildFlowPause(tunnel_t *t, line_t *parent_l, muxclient_tstate_t *ts,
@@ -438,7 +471,7 @@ bool muxclientMaybeSendChildFlowPause(tunnel_t *t, line_t *parent_l, muxclient_t
 bool muxclientSendChildFlowPause(tunnel_t *t, line_t *parent_l, muxclient_lstate_t *parent_ls, line_t *child_l,
                                  muxclient_lstate_t *child_ls)
 {
-    if (parent_ls->parent_finishing || child_ls->flow_paused_sent)
+    if (parent_ls->parent_finishing || child_ls->close_state != kMuxClientChildCloseOpen || child_ls->flow_paused_sent)
     {
         return true;
     }
@@ -465,7 +498,8 @@ bool muxclientReleaseParentInputForChildClose(tunnel_t *t, line_t *parent_l, mux
 
 static bool muxclientChildSourcePaused(muxclient_lstate_t *child_ls)
 {
-    return child_ls->peer_flow_paused || child_ls->parent_write_paused;
+    return child_ls->peer_flow_paused || child_ls->parent_write_paused ||
+           child_ls->close_state != kMuxClientChildCloseOpen;
 }
 
 bool muxclientPauseChildSource(tunnel_t *t, line_t *parent_l, muxclient_lstate_t *child_ls, bool peer_flow,
@@ -525,7 +559,8 @@ static bool muxclientCloseChildForQueueLimit(tunnel_t *t, line_t *parent_l, muxc
     const size_t    child_queued_bytes  = bufferqueueGetBufLen(&child_ls->pending_child_data);
     const size_t    parent_queued_bytes = parent_ls->pending_child_data_len;
 
-    if (! muxclientSendControlFrame(t, parent_l, parent_ls, child_l, cid, kMuxFlagClose))
+    if (child_ls->close_state == kMuxClientChildCloseOpen &&
+        ! muxclientSendControlFrame(t, parent_l, parent_ls, child_l, cid, kMuxFlagClose))
     {
         return false;
     }
@@ -559,8 +594,7 @@ static bool muxclientCloseChildForQueueLimit(tunnel_t *t, line_t *parent_l, muxc
  * order by the frame parser; replacing on an equal size therefore makes the stable
  * tie-break prefer the least-recently-active child.
  */
-static muxclient_lstate_t *muxclientFindLargestQueuedChild(muxclient_lstate_t *parent_ls,
-                                                           size_t *queued_bytes_out)
+static muxclient_lstate_t *muxclientFindLargestQueuedChild(muxclient_lstate_t *parent_ls, size_t *queued_bytes_out)
 {
     muxclient_lstate_t *largest      = NULL;
     size_t              largest_size = 0;
@@ -630,6 +664,9 @@ static bool muxclientShedForParentBufferLimit(tunnel_t *t, line_t *parent_l, mux
 bool muxclientQueueChildPayload(tunnel_t *t, line_t *parent_l, muxclient_tstate_t *ts, muxclient_lstate_t *parent_ls,
                                 muxclient_lstate_t *child_ls, sbuf_t *buf)
 {
+    assert(child_ls->close_state == kMuxClientChildCloseOpen);
+    assert(child_ls->parent == parent_ls);
+
     size_t buf_len = sbufGetLength(buf);
 
     bufferqueuePushBack(&child_ls->pending_child_data, buf);
@@ -655,7 +692,8 @@ static bool muxclientHandleChildBufferAfterDrain(tunnel_t *t, line_t *parent_l, 
 {
     size_t pending_bytes = bufferqueueGetBufLen(&child_ls->pending_child_data);
 
-    if (! child_ls->paused && child_ls->flow_paused_sent && pending_bytes < muxclientChildResumeThreshold(ts))
+    if (child_ls->close_state == kMuxClientChildCloseOpen && ! child_ls->paused && child_ls->flow_paused_sent &&
+        pending_bytes < muxclientChildResumeThreshold(ts))
     {
         child_ls->flow_paused_sent = false;
         if (! muxclientSendControlFrame(t, parent_l, parent_ls, child_l, child_ls->connection_id, kMuxFlagFlowResume))
@@ -667,36 +705,36 @@ static bool muxclientHandleChildBufferAfterDrain(tunnel_t *t, line_t *parent_l, 
     return true;
 }
 
-bool muxclientFlushChildPending(tunnel_t *t, line_t *parent_l, muxclient_lstate_t *parent_ls, line_t *child_l,
-                                muxclient_lstate_t *child_ls, bool fin_mode)
+muxclient_child_drain_result_t muxclientDrainAttachedChild(tunnel_t *t, line_t *parent_l, muxclient_lstate_t *parent_ls,
+                                                           line_t *child_l, muxclient_lstate_t *child_ls)
 {
     muxclient_tstate_t *ts = tunnelGetState(t);
 
-    lineLock(parent_l);
-    while (bufferqueueGetBufCount(&child_ls->pending_child_data) > 0)
-    {
-        if (child_ls->paused && ! fin_mode)
-        {
-            break;
-        }
+    assert(child_ls->parent == parent_ls);
+    assert(child_ls->close_state != kMuxClientChildCloseParentGoneDraining);
 
+    lineLock(parent_l);
+    while (! child_ls->paused && bufferqueueGetBufCount(&child_ls->pending_child_data) > 0)
+    {
         sbuf_t *buf = bufferqueuePopFront(&child_ls->pending_child_data);
         muxclientSubtractParentPendingChildBytes(parent_ls, sbufGetLength(buf));
         if (! withLineLockedWithBuf(child_l, tunnelPrevDownStreamPayload, t, buf))
         {
             lineUnlock(parent_l);
-            return false;
+            return kMuxClientChildDrainChildGone;
         }
 
         if (! lineIsAlive(parent_l))
         {
             lineUnlock(parent_l);
-            return false;
+            return kMuxClientChildDrainParentGone;
         }
 
-        if (fin_mode)
+        child_ls = lineGetState(child_l, t);
+        if (child_ls->close_state == kMuxClientChildCloseParentGoneDraining || child_ls->parent != parent_ls)
         {
-            continue;
+            lineUnlock(parent_l);
+            return kMuxClientChildDrainParentGone;
         }
 
         if (child_ls->paused)
@@ -707,17 +745,299 @@ bool muxclientFlushChildPending(tunnel_t *t, line_t *parent_l, muxclient_lstate_
         if (! muxclientHandleChildBufferAfterDrain(t, parent_l, ts, parent_ls, child_l, child_ls))
         {
             lineUnlock(parent_l);
-            return false;
+            return kMuxClientChildDrainParentGone;
         }
     }
 
-    if (! fin_mode && ! child_ls->paused &&
-        ! muxclientHandleChildBufferAfterDrain(t, parent_l, ts, parent_ls, child_l, child_ls))
+    if (! child_ls->paused && ! muxclientHandleChildBufferAfterDrain(t, parent_l, ts, parent_ls, child_l, child_ls))
     {
+        lineUnlock(parent_l);
+        return kMuxClientChildDrainParentGone;
+    }
+
+    const muxclient_child_drain_result_t result =
+        ! child_ls->paused && bufferqueueGetBufCount(&child_ls->pending_child_data) == 0
+            ? kMuxClientChildDrainReadyToFinish
+            : kMuxClientChildDrainBlocked;
+    lineUnlock(parent_l);
+    return result;
+}
+
+static void muxclientRegisterDetachedChild(muxclient_tstate_t *ts, line_t *child_l, size_t queued_bytes)
+{
+    const wid_t wid = lineGetWID(child_l);
+    assert(lineIsOnCurrentEventWorker(child_l));
+    assert(workerWIDIsRegistered(wid));
+
+    if (UNLIKELY(ts->detached_child_counts == NULL || ts->detached_queued_bytes == NULL || wid >= ts->workers_count ||
+                 ts->detached_child_counts[wid] == UINT32_MAX ||
+                 ts->detached_queued_bytes[wid] > SIZE_MAX - queued_bytes))
+    {
+        LOGF("MuxClient: detached child accounting overflow on worker %d", (int) wid);
+        abortProgramNow(1);
+    }
+
+    ts->detached_child_counts[wid]++;
+    ts->detached_queued_bytes[wid] += queued_bytes;
+}
+
+static void muxclientSubtractDetachedBytes(muxclient_tstate_t *ts, line_t *child_l, size_t bytes)
+{
+    const wid_t wid = lineGetWID(child_l);
+    assert(lineIsOnCurrentEventWorker(child_l));
+
+    if (UNLIKELY(ts->detached_queued_bytes == NULL || wid >= ts->workers_count ||
+                 ts->detached_queued_bytes[wid] < bytes))
+    {
+        LOGF("MuxClient: detached byte accounting underflow on worker %d", (int) wid);
+        abortProgramNow(1);
+    }
+    ts->detached_queued_bytes[wid] -= bytes;
+}
+
+static void muxclientRemoveDetachedChild(muxclient_tstate_t *ts, line_t *child_l, muxclient_lstate_t *child_ls)
+{
+    const wid_t  wid            = lineGetWID(child_l);
+    const size_t residual_bytes = bufferqueueGetBufLen(&child_ls->pending_child_data);
+
+    assert(lineIsOnCurrentEventWorker(child_l));
+    assert(child_ls->close_state == kMuxClientChildCloseParentGoneDraining);
+    assert(child_ls->parent == NULL);
+
+    if (UNLIKELY(ts->detached_child_counts == NULL || ts->detached_queued_bytes == NULL || wid >= ts->workers_count ||
+                 ts->detached_child_counts[wid] == 0 || ts->detached_queued_bytes[wid] < residual_bytes))
+    {
+        LOGF("MuxClient: invalid detached child removal on worker %d", (int) wid);
+        abortProgramNow(1);
+    }
+
+    ts->detached_queued_bytes[wid] -= residual_bytes;
+    ts->detached_child_counts[wid]--;
+}
+
+muxclient_child_drain_result_t muxclientDrainDetachedChild(tunnel_t *t, line_t *child_l, muxclient_lstate_t *child_ls)
+{
+    muxclient_tstate_t *ts = tunnelGetState(t);
+
+    assert(lineIsOnCurrentEventWorker(child_l));
+    assert(child_ls->close_state == kMuxClientChildCloseParentGoneDraining);
+    assert(child_ls->parent == NULL);
+
+    while (! child_ls->paused && bufferqueueGetBufCount(&child_ls->pending_child_data) > 0)
+    {
+        sbuf_t      *buf     = bufferqueuePopFront(&child_ls->pending_child_data);
+        const size_t buf_len = sbufGetLength(buf);
+        muxclientSubtractDetachedBytes(ts, child_l, buf_len);
+
+        if (! withLineLockedWithBuf(child_l, tunnelPrevDownStreamPayload, t, buf))
+        {
+            return kMuxClientChildDrainChildGone;
+        }
+
+        child_ls = lineGetState(child_l, t);
+        if (UNLIKELY(child_ls->close_state != kMuxClientChildCloseParentGoneDraining || child_ls->parent != NULL))
+        {
+            LOGF("MuxClient: detached child changed association while draining");
+            abortProgramNow(1);
+        }
+    }
+
+    return ! child_ls->paused && bufferqueueGetBufCount(&child_ls->pending_child_data) == 0
+               ? kMuxClientChildDrainReadyToFinish
+               : kMuxClientChildDrainBlocked;
+}
+
+void muxclientFinalizeDetachedChild(tunnel_t *t, line_t *child_l, muxclient_lstate_t *child_ls)
+{
+    assert(child_ls->close_state == kMuxClientChildCloseParentGoneDraining);
+    assert(! child_ls->paused);
+    assert(bufferqueueGetBufCount(&child_ls->pending_child_data) == 0);
+
+    muxclientRemoveDetachedChild(tunnelGetState(t), child_l, child_ls);
+    muxclientLinestateDestroy(child_ls);
+    tunnelPrevDownStreamFinish(t, child_l);
+}
+
+void muxclientAbortDetachedChild(tunnel_t *t, line_t *child_l, muxclient_lstate_t *child_ls, bool notify_child_prev)
+{
+    muxclientRemoveDetachedChild(tunnelGetState(t), child_l, child_ls);
+    muxclientLinestateDestroy(child_ls);
+    if (notify_child_prev)
+    {
+        tunnelPrevDownStreamFinish(t, child_l);
+    }
+}
+
+bool muxclientFinalizeAttachedPeerClose(tunnel_t *t, line_t *parent_l, muxclient_tstate_t *ts,
+                                        muxclient_lstate_t *parent_ls, muxclient_lstate_t *child_ls)
+{
+    line_t *child_l = child_ls->l;
+
+    assert(child_ls->close_state == kMuxClientChildClosePeerDraining);
+    assert(child_ls->parent == parent_ls);
+    assert(! child_ls->paused);
+    assert(bufferqueueGetBufCount(&child_ls->pending_child_data) == 0);
+
+    lineLock(parent_l);
+    if (parent_ls->last_writer == child_l)
+    {
+        parent_ls->last_writer = NULL;
+    }
+    muxclientLeaveConnection(child_ls);
+    muxclientLinestateDestroy(child_ls);
+    tunnelPrevDownStreamFinish(t, child_l);
+
+    if (! lineIsAlive(parent_l))
+    {
+        lineUnlock(parent_l);
+        return false;
+    }
+
+    if (muxclientCheckConnectionIsExhausted(ts, parent_ls) && parent_ls->children_count == 0)
+    {
+        muxclientCloseIdleExhaustedParentLine(t, ts, lineGetWID(parent_l), parent_l, parent_ls);
         lineUnlock(parent_l);
         return false;
     }
 
     lineUnlock(parent_l);
     return true;
+}
+
+bool muxclientBeginPeerCloseDrain(tunnel_t *t, line_t *parent_l, muxclient_tstate_t *ts, muxclient_lstate_t *parent_ls,
+                                  muxclient_lstate_t *child_ls)
+{
+    line_t *child_l = child_ls->l;
+    assert(child_ls->close_state == kMuxClientChildCloseOpen);
+
+    const bool source_was_paused = muxclientChildSourcePaused(child_ls);
+    child_ls->close_state        = kMuxClientChildClosePeerDraining;
+    if (parent_ls->last_writer == child_l)
+    {
+        parent_ls->last_writer = NULL;
+    }
+
+    const muxclient_child_drain_result_t result =
+        muxclientDrainAttachedChild(t, parent_l, parent_ls, child_l, child_ls);
+    if (result == kMuxClientChildDrainChildGone || result == kMuxClientChildDrainParentGone)
+    {
+        return lineIsAlive(parent_l);
+    }
+    if (result == kMuxClientChildDrainReadyToFinish)
+    {
+        return muxclientFinalizeAttachedPeerClose(t, parent_l, ts, parent_ls, child_ls);
+    }
+
+    if (! source_was_paused)
+    {
+        lineLock(parent_l);
+        discard    withLineLocked(child_l, tunnelPrevDownStreamPause, t);
+        const bool parent_alive = lineIsAlive(parent_l);
+        lineUnlock(parent_l);
+        return parent_alive;
+    }
+    return true;
+}
+
+static bool muxclientDetachedLimitReached(muxclient_tstate_t *ts, wid_t wid)
+{
+    return (ts->detached_buffer_limit != kMuxDetachedLimitUnlimited &&
+            ts->detached_queued_bytes[wid] >= (size_t) ts->detached_buffer_limit) ||
+           (ts->detached_child_limit != kMuxDetachedLimitUnlimited &&
+            ts->detached_child_counts[wid] >= ts->detached_child_limit);
+}
+
+void muxclientHandleParentLoss(tunnel_t *t, line_t *parent_l, bool notify_parent_next)
+{
+    muxclient_tstate_t *ts                = tunnelGetState(t);
+    muxclient_lstate_t *parent_ls         = lineGetState(parent_l, t);
+    const wid_t         wid               = lineGetWID(parent_l);
+    uint32_t            detached_children = 0;
+    size_t              detached_bytes    = 0;
+
+    assert(lineIsOnCurrentEventWorker(parent_l));
+    muxclientForgetParentSelection(ts, wid, parent_l);
+
+    lineLock(parent_l);
+    parent_ls->parent_finishing = true;
+
+    while (parent_ls->child_next != NULL)
+    {
+        muxclient_lstate_t *child_ls          = parent_ls->child_next;
+        line_t             *child_l           = child_ls->l;
+        const bool          source_was_paused = muxclientChildSourcePaused(child_ls);
+        const size_t        queued_bytes      = bufferqueueGetBufLen(&child_ls->pending_child_data);
+
+        assert(child_ls->close_state == kMuxClientChildCloseOpen ||
+               child_ls->close_state == kMuxClientChildClosePeerDraining);
+        child_ls->close_state = kMuxClientChildCloseParentGoneDraining;
+        if (parent_ls->last_writer == child_l)
+        {
+            parent_ls->last_writer = NULL;
+        }
+        muxclientSubtractParentPendingChildBytes(parent_ls, queued_bytes);
+        muxclientLeaveConnection(child_ls);
+        muxclientRegisterDetachedChild(ts, child_l, queued_bytes);
+        detached_children++;
+        detached_bytes += queued_bytes;
+
+        const muxclient_child_drain_result_t result = muxclientDrainDetachedChild(t, child_l, child_ls);
+        if (result == kMuxClientChildDrainChildGone)
+        {
+            continue;
+        }
+        if (result == kMuxClientChildDrainReadyToFinish)
+        {
+            muxclientFinalizeDetachedChild(t, child_l, child_ls);
+            continue;
+        }
+        if (UNLIKELY(result != kMuxClientChildDrainBlocked))
+        {
+            LOGF("MuxClient: invalid detached drain result during parent loss");
+            abortProgramNow(1);
+        }
+
+        child_ls = lineGetState(child_l, t);
+        if (muxclientDetachedLimitReached(ts, wid))
+        {
+            LOGW("MuxClient: aborting detached child cid %u at worker backlog limit "
+                 "(child-residual-bytes=%zu worker-children=%u worker-residual-bytes=%zu "
+                 "child-limit=%u byte-limit=%u)",
+                 (unsigned int) child_ls->connection_id,
+                 bufferqueueGetBufLen(&child_ls->pending_child_data),
+                 ts->detached_child_counts[wid],
+                 ts->detached_queued_bytes[wid],
+                 ts->detached_child_limit,
+                 ts->detached_buffer_limit);
+            muxclientAbortDetachedChild(t, child_l, child_ls, true);
+            continue;
+        }
+
+        if (! source_was_paused)
+        {
+            discard withLineLocked(child_l, tunnelPrevDownStreamPause, t);
+        }
+    }
+
+    if (UNLIKELY(parent_ls->children_count != 0 || parent_ls->child_next != NULL ||
+                 parent_ls->pending_child_data_len != 0))
+    {
+        LOGF("MuxClient: parent-loss transfer left attached child state behind");
+        abortProgramNow(1);
+    }
+
+    LOGD("MuxClient: parent loss transferred detached-children=%u detached-queued-bytes=%zu",
+         detached_children,
+         detached_bytes);
+
+    muxclientLinestateDestroy(parent_ls);
+    if (notify_parent_next)
+    {
+        tunnelNextUpStreamFinish(t, parent_l);
+    }
+    if (lineIsAlive(parent_l))
+    {
+        lineDestroy(parent_l);
+    }
+    lineUnlock(parent_l);
 }

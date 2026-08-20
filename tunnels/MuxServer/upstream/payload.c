@@ -4,35 +4,19 @@
 
 static muxserver_lstate_t *findChildByConnectionId(muxserver_lstate_t *parent_ls, uint32_t cid);
 
-static bool muxserverCloseOwnedChildLineFromUpstreamPayload(tunnel_t *t, line_t *parent_l,
-                                                            muxserver_lstate_t *parent_ls, line_t *child_l,
-                                                            muxserver_lstate_t *child_ls, bool release_parent_input)
-{
-    muxserverLeaveConnection(child_ls);
-    bool parent_alive = true;
-    if (release_parent_input || parent_ls->parent_finishing)
-    {
-        parent_alive = muxserverReleaseParentInputForChildClose(t, parent_l, parent_ls, child_ls);
-    }
-    muxserverLinestateDestroy(child_ls);
-    tunnelNextUpStreamFinish(t, child_l);
-
-    if (lineIsAlive(child_l))
-    {
-        lineDestroy(child_l);
-    }
-    return parent_alive && (! release_parent_input || lineIsAlive(parent_l));
-}
-
 static bool handleOpenFrame(tunnel_t *t, line_t *parent_l, muxserver_lstate_t *parent_ls, mux_frame_t *frame,
                             sbuf_t *frame_buffer)
 {
     lineReuseBuffer(parent_l, frame_buffer);
     LOGD("MuxServer: UpStreamPayload: Open frame received, cid: %u", frame->cid);
 
-    if (findChildByConnectionId(parent_ls, frame->cid) != NULL)
+    muxserver_lstate_t *existing = findChildByConnectionId(parent_ls, frame->cid);
+    if (existing != NULL)
     {
-        LOGW("MuxServer: UpStreamPayload: Duplicate Open frame ignored, cid: %u", frame->cid);
+        if (existing->close_state == kMuxServerChildCloseOpen)
+        {
+            LOGW("MuxServer: UpStreamPayload: Duplicate Open frame ignored, cid: %u", frame->cid);
+        }
         return true;
     }
 
@@ -92,19 +76,18 @@ static bool processFrameForChild(tunnel_t *t, line_t *parent_l, mux_frame_t *fra
 {
     line_t *child_l = child_ls->l;
 
+    if (child_ls->close_state != kMuxServerChildCloseOpen)
+    {
+        lineReuseBuffer(parent_l, frame_buffer);
+        return true;
+    }
+
     switch (frame->flags)
     {
     case kMuxFlagClose:
         LOGD("MuxServer: UpStreamPayload: Close frame received, cid: %u", frame->cid);
         lineReuseBuffer(parent_l, frame_buffer);
-        if (muxserverFlushChildPending(t, parent_l, parent_ls, child_l, child_ls, true))
-        {
-            if (! muxserverCloseOwnedChildLineFromUpstreamPayload(t, parent_l, parent_ls, child_l, child_ls, true))
-            {
-                return false;
-            }
-        }
-        if (! lineIsAlive(parent_l))
+        if (! muxserverBeginPeerCloseDrain(t, parent_l, ts, parent_ls, child_ls))
         {
             return false;
         }
@@ -163,28 +146,19 @@ static bool isOverFlow(buffer_stream_t *read_stream)
 
 static void handleOverFlow(tunnel_t *t, line_t *parent_l)
 {
-    muxserver_lstate_t *parent_ls = lineGetState(parent_l, t);
-    muxserver_lstate_t *child_ls  = parent_ls->child_next;
-
-    parent_ls->parent_finishing = true;
-
-    while (child_ls)
-    {
-        muxserver_lstate_t *temp    = child_ls->child_next;
-        line_t             *child_l = child_ls->l;
-        discard muxserverCloseOwnedChildLineFromUpstreamPayload(t, parent_l, parent_ls, child_l, child_ls, false);
-        child_ls = temp;
-    }
-
-    muxserverLinestateDestroy(parent_ls);
-
-    tunnelPrevDownStreamFinish(t, parent_l);
+    muxserverHandleParentLoss(t, parent_l, true);
 }
 
 void muxserverTunnelUpStreamPayload(tunnel_t *t, line_t *parent_l, sbuf_t *buf)
 {
     muxserver_tstate_t *ts        = tunnelGetState(t);
     muxserver_lstate_t *parent_ls = lineGetState(parent_l, t);
+
+    if (parent_ls->parent_finishing)
+    {
+        lineReuseBuffer(parent_l, buf);
+        return;
+    }
 
     bufferstreamPush(&(parent_ls->read_stream), buf);
 

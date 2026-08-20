@@ -36,7 +36,11 @@ tunnel_t *muxclientTunnelCreate(node_t *node)
     int wc = getWorkersCount();
 
     size_t selection_bytes;
+    size_t detached_count_bytes;
+    size_t detached_byte_bytes;
     if (wc <= 0 || ! memoryTryComputeArraySize((size_t) wc, sizeof(line_t *), &selection_bytes) ||
+        ! memoryTryComputeArraySize((size_t) wc, sizeof(uint32_t), &detached_count_bytes) ||
+        ! memoryTryComputeArraySize((size_t) wc, sizeof(size_t), &detached_byte_bytes) ||
         selection_bytes > SIZE_MAX - sizeof(muxclient_tstate_t))
     {
         LOGF("MuxClient: worker selection geometry is not representable");
@@ -69,18 +73,25 @@ tunnel_t *muxclientTunnelCreate(node_t *node)
     t->onWorkerStop = &muxclientTunnelOnWorkerStop;
     t->onDestroy    = &muxclientTunnelDestroy;
 
-    const cJSON        *settings                     = node->node_settings_json;
-    muxclient_tstate_t *ts                           = tunnelGetState(t);
-    int                 child_buffer_limit           = kMuxDefaultChildBufferLimit;
-    int                 child_buffer_pause_tolerance = kMuxDefaultChildBufferPauseTolerance;
-    int                 parent_buffer_limit          = kMuxDefaultParentBufferLimit;
-    bool                log_main_line_stats          = false;
-    uint32_t            staged_fixed_connections     = 0;
+    const mux_detached_defaults_t detached_defaults            = muxGetDefaultDetachedLimits(RAM_PROFILE);
+    const cJSON                  *settings                     = node->node_settings_json;
+    muxclient_tstate_t           *ts                           = tunnelGetState(t);
+    int                           child_buffer_limit           = kMuxDefaultChildBufferLimit;
+    int                           child_buffer_pause_tolerance = kMuxDefaultChildBufferPauseTolerance;
+    int                           parent_buffer_limit          = kMuxDefaultParentBufferLimit;
+    int                           detached_buffer_limit        = (int) detached_defaults.buffer_limit;
+    int                           detached_child_limit         = (int) detached_defaults.child_limit;
+    bool                          log_main_line_stats          = false;
+    uint32_t                      staged_fixed_connections     = 0;
 
     getIntFromJsonObjectOrDefault(&child_buffer_limit, settings, "child-buffer-limit", kMuxDefaultChildBufferLimit);
     getIntFromJsonObjectOrDefault(
         &child_buffer_pause_tolerance, settings, "child-buffer-pause-tolerance", kMuxDefaultChildBufferPauseTolerance);
     getIntFromJsonObjectOrDefault(&parent_buffer_limit, settings, "parent-buffer-limit", kMuxDefaultParentBufferLimit);
+    getIntFromJsonObjectOrDefault(
+        &detached_buffer_limit, settings, "detached-buffer-limit", (int) detached_defaults.buffer_limit);
+    getIntFromJsonObjectOrDefault(
+        &detached_child_limit, settings, "detached-child-limit", (int) detached_defaults.child_limit);
     getBoolFromJsonObjectOrDefault(&log_main_line_stats, settings, "log-main-line-stats", false);
     if (child_buffer_limit <= 0)
     {
@@ -101,13 +112,28 @@ tunnel_t *muxclientTunnelCreate(node_t *node)
         tunnelDestroy(t);
         return NULL;
     }
+    if (detached_buffer_limit < 0)
+    {
+        LOGF("MuxClient: \"detached-buffer-limit\" must be greater than or equal to 0, got %d", detached_buffer_limit);
+        tunnelDestroy(t);
+        return NULL;
+    }
+    if (detached_child_limit < 0)
+    {
+        LOGF("MuxClient: \"detached-child-limit\" must be greater than or equal to 0, got %d", detached_child_limit);
+        tunnelDestroy(t);
+        return NULL;
+    }
     ts->child_buffer_limit = (uint32_t) child_buffer_limit;
     ts->child_buffer_pause_tolerance =
         (uint32_t) min((size_t) child_buffer_pause_tolerance, (size_t) child_buffer_limit);
     // This is a per-parent budget, not another per-child limit, so it may
     // intentionally be smaller than child_buffer_limit. Zero disables it.
-    ts->parent_buffer_limit = (uint32_t) parent_buffer_limit;
-    ts->log_main_line_stats = log_main_line_stats;
+    ts->parent_buffer_limit   = (uint32_t) parent_buffer_limit;
+    ts->detached_buffer_limit = (uint32_t) detached_buffer_limit;
+    ts->detached_child_limit  = (uint32_t) detached_child_limit;
+    ts->workers_count         = (uint32_t) wc;
+    ts->log_main_line_stats   = log_main_line_stats;
 
     ts->concurrency_mode =
         parseDynamicNumericValueFromJsonObject(settings, "mode", 3, "timer", "counter", "fixed-connections-count")
@@ -189,6 +215,16 @@ tunnel_t *muxclientTunnelCreate(node_t *node)
 
     line_t  **staged_fixed_parent_lines   = NULL;
     uint32_t *staged_fixed_parent_indexes = NULL;
+    uint32_t *staged_detached_counts      = memoryAllocateZero(detached_count_bytes);
+    size_t   *staged_detached_bytes       = memoryAllocateZero(detached_byte_bytes);
+
+    if (staged_detached_counts == NULL || staged_detached_bytes == NULL)
+    {
+        memoryFree(staged_detached_counts);
+        memoryFree(staged_detached_bytes);
+        tunnelDestroy(t);
+        return NULL;
+    }
 
     if (staged_fixed_connections != 0)
     {
@@ -198,6 +234,8 @@ tunnel_t *muxclientTunnelCreate(node_t *node)
                 (size_t) wc, staged_fixed_connections, &fixed_parent_bytes, &fixed_index_bytes))
         {
             LOGF("MuxClient: \"per-worker-connections-count\" is too large: %u", staged_fixed_connections);
+            memoryFree(staged_detached_counts);
+            memoryFree(staged_detached_bytes);
             tunnelDestroy(t);
             return NULL;
         }
@@ -212,6 +250,8 @@ tunnel_t *muxclientTunnelCreate(node_t *node)
     {
         memoryFree(staged_fixed_parent_lines);
         memoryFree(staged_fixed_parent_indexes);
+        memoryFree(staged_detached_counts);
+        memoryFree(staged_detached_bytes);
         tunnelDestroy(t);
         return NULL;
     }
@@ -219,6 +259,8 @@ tunnel_t *muxclientTunnelCreate(node_t *node)
     ts->fixed_connections_count   = staged_fixed_connections;
     ts->fixed_parent_lines        = staged_fixed_parent_lines;
     ts->fixed_next_parent_indexes = staged_fixed_parent_indexes;
+    ts->detached_child_counts     = staged_detached_counts;
+    ts->detached_queued_bytes     = staged_detached_bytes;
 
     return t;
 }

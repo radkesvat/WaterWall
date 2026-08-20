@@ -10,6 +10,11 @@ void muxclientTunnelUpStreamPause(tunnel_t *t, line_t *child_l)
 
     child_ls->paused = true;
 
+    if (child_ls->close_state != kMuxClientChildCloseOpen)
+    {
+        return;
+    }
+
     muxclient_lstate_t *parent_ls = child_ls->parent;
     if (parent_ls->parent_finishing || ! child_ls->open_frame_sent)
     {

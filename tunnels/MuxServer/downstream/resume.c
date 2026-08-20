@@ -10,11 +10,25 @@ void muxserverTunnelDownStreamResume(tunnel_t *t, line_t *child_l)
 
     child_ls->paused = false;
 
+    if (child_ls->close_state == kMuxServerChildCloseParentGoneDraining)
+    {
+        muxserver_child_drain_result_t result = muxserverDrainDetachedChild(t, child_l, child_ls);
+        if (result == kMuxServerChildDrainReadyToFinish)
+        {
+            muxserverFinalizeDetachedChild(t, child_l, child_ls);
+        }
+        return;
+    }
+
     muxserver_lstate_t *parent_ls = child_ls->parent;
     if (parent_ls->parent_finishing)
     {
         return;
     }
 
-    discard muxserverFlushChildPending(t, parent_ls->l, parent_ls, child_l, child_ls, false);
+    muxserver_child_drain_result_t result = muxserverDrainAttachedChild(t, parent_ls->l, parent_ls, child_l, child_ls);
+    if (result == kMuxServerChildDrainReadyToFinish && child_ls->close_state == kMuxServerChildClosePeerDraining)
+    {
+        discard muxserverFinalizeAttachedPeerClose(t, parent_ls->l, parent_ls, child_ls);
+    }
 }

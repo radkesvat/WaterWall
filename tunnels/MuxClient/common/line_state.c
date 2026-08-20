@@ -15,6 +15,7 @@ void muxclientLinestateInitialize(muxclient_lstate_t *ls, line_t *l, bool is_chi
                                       .pending_child_data_len = 0,
                                       .creation_epoch         = is_child ? 0 : wloopNowMS(getWorkerLoop(wid)),
                                       .connection_id          = connection_id,
+                                      .close_state            = kMuxClientChildCloseOpen,
                                       .children_count         = 0,
                                       .is_child               = is_child,
                                       .paused                 = false,
@@ -39,6 +40,12 @@ void muxclientLinestateDestroy(muxclient_lstate_t *ls)
         if (ls->child_prev != NULL || ls->child_next != NULL)
         {
             LOGF("MuxClient: Trying to destroy parent line state with child links still present");
+            abortProgramNow(1);
+        }
+        if (ls->pending_child_data_len != 0)
+        {
+            LOGF("MuxClient: Trying to destroy parent line state with %zu queued child byte(s)",
+                 ls->pending_child_data_len);
             abortProgramNow(1);
         }
     }

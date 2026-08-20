@@ -205,7 +205,7 @@ setting nobody chose. This applies to every field in the table, not only to
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
 | `workers` | integer | CPU core count | Number of worker threads. Must be a whole number in the signed 32-bit range when present. Within that range, values less than or equal to `0` mean "as many as this machine has" and values above `254` are reduced to `254`. |
-| `ram-profile` | string or integer | `"server"` | Memory pool sizing profile. A number must be a whole number in `0..6`; `0` and `1` are legacy aliases for the smallest profile. |
+| `ram-profile` | string or integer | `"server"` | Memory sizing profile for pools and profile-aware node defaults. A number must be a whole number in `0..6`; `0` and `1` are legacy aliases for the smallest profile. |
 | `mtu` | integer | `1500` | Global MTU, inherited by nodes that do not carry their own. Must be a whole number in `68..65535` - RFC 791's minimum IPv4 MTU up to what the field can hold. |
 | `try-enabling-bbr` | boolean | `true` on Linux; `false` otherwise | Linux-only best-effort startup attempt to enable TCP BBR. |
 | `libs-path` | string | `"libs/"` | Directory used when loading external tunnel libraries. |
@@ -256,6 +256,10 @@ Integer values are also accepted:
 | `4` | M2 memory profile |
 | `5` | L1 memory profile |
 | `6` | L2 memory profile |
+
+The profile also selects defaults for memory-sensitive node settings. In particular, omitted MuxClient and MuxServer
+`detached-buffer-limit` and `detached-child-limit` values scale from the S1 minimum to the L2 maximum; explicit node
+settings still override them. See the Mux node references for the exact limits.
 
 ## `dns`
 

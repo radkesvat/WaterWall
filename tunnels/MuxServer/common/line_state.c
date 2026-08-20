@@ -9,17 +9,21 @@ void muxserverLinestateInitialize(muxserver_lstate_t *ls, line_t *l, bool is_chi
                                       .parent                 = NULL,
                                       .child_prev             = NULL,
                                       .child_next             = NULL,
+                                      .detached_prev          = NULL,
+                                      .detached_next          = NULL,
                                       .read_stream            = bufferstreamCreate(getWorkerBufferPool(wid), kMuxFrameLength),
                                       .pending_child_data     = bufferqueueCreate(kMuxChildBufferQueueCap),
                                       .pending_child_data_len = 0,
                                       .connection_id          = connection_id,
+                                      .close_state            = kMuxServerChildCloseOpen,
                                       .children_count         = 0,
                                       .is_child               = is_child,
                                       .paused                 = false,
                                       .flow_paused_sent       = false,
                                       .peer_flow_paused       = false,
                                       .parent_write_paused    = false,
-                                      .parent_finishing       = false};
+                                      .parent_finishing       = false,
+                                      .detached_registered    = false};
 }
 
 void muxserverLinestateDestroy(muxserver_lstate_t *ls)
@@ -38,6 +42,12 @@ void muxserverLinestateDestroy(muxserver_lstate_t *ls)
             LOGF("MuxServer: Trying to destroy parent line state with child links still present");
             abortProgramNow(1);
         }
+        if (ls->pending_child_data_len != 0)
+        {
+            LOGF("MuxServer: Trying to destroy parent line state with %zu queued child byte(s)",
+                 ls->pending_child_data_len);
+            abortProgramNow(1);
+        }
     }
     else
     {
@@ -51,6 +61,11 @@ void muxserverLinestateDestroy(muxserver_lstate_t *ls)
         if (ls->child_prev != NULL || ls->child_next != NULL)
         {
             LOGF("MuxServer: Trying to destroy child line state while still linked to siblings");
+            abortProgramNow(1);
+        }
+        if (ls->detached_registered || ls->detached_prev != NULL || ls->detached_next != NULL)
+        {
+            LOGF("MuxServer: Trying to destroy child line state while still registered as detached");
             abortProgramNow(1);
         }
     }
