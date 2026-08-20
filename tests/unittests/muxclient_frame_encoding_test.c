@@ -113,6 +113,7 @@ static void fixtureSetup(muxclient_fixture_t *fixture, uint32_t capture_capacity
     ts->concurrency_capacity         = 1024;
     ts->child_buffer_limit           = kMuxDefaultChildBufferLimit;
     ts->child_buffer_pause_tolerance = kMuxDefaultChildBufferPauseTolerance;
+    ts->parent_buffer_limit          = kMuxDefaultParentBufferLimit;
 
     fixture->parent_l = twfLineCreate(fixture->mux->lstate_size);
     fixture->child_l  = twfLineCreate(fixture->mux->lstate_size);
@@ -318,6 +319,146 @@ static void caseReentrantParentCloseReturnsImmediately(void)
     fixtureTeardown(&fixture);
 }
 
+static line_t *createPausedClientChild(muxclient_fixture_t *fixture, muxclient_lstate_t *parent_ls, mux_cid_t cid)
+{
+    line_t             *child_l  = twfLineCreate(fixture->mux->lstate_size);
+    muxclient_lstate_t *child_ls = lineGetState(child_l, fixture->mux);
+
+    muxclientLinestateInitialize(child_ls, child_l, true, cid);
+    child_ls->paused = true;
+    muxclientJoinConnection(parent_ls, child_ls);
+    return child_l;
+}
+
+static void destroySurvivingClientChild(muxclient_fixture_t *fixture, line_t *child_l)
+{
+    muxclient_lstate_t *child_ls = lineGetState(child_l, fixture->mux);
+    muxclientLeaveConnection(child_ls);
+    muxclientLinestateDestroy(child_ls);
+    twfLineDestroy(child_l);
+}
+
+/*
+ * This shape catches the average-based policy from PR #332. The trigger is the
+ * most-recently-active child and has only 20 KiB queued, while an older stalled
+ * child holds 48 KiB. Three idle children pull the mean below the trigger size,
+ * so a mean cut closes the trigger even though it is not the pressure source.
+ */
+static void caseParentBufferLimitClosesActualLargestQueue(void)
+{
+    twfSetCase("the parent buffer limit closes the actual largest queued child");
+
+    enum
+    {
+        kIdleChildren = 3,
+        kLargeQueue   = 48u * 1024u,
+        kTriggerQueue = 20u * 1024u,
+        kParentLimit  = 64u * 1024u
+    };
+
+    muxclient_fixture_t fixture;
+    fixtureSetup(&fixture, 256);
+
+    muxclient_tstate_t *ts         = tunnelGetState(fixture.mux);
+    muxclient_lstate_t *parent_ls  = lineGetState(fixture.parent_l, fixture.mux);
+    muxclient_lstate_t *trigger_ls = lineGetState(fixture.child_l, fixture.mux);
+
+    ts->parent_buffer_limit = kParentLimit;
+    trigger_ls->paused      = true;
+
+    line_t *large_l = createPausedClientChild(&fixture, parent_ls, kTestChildCid + 1U);
+    line_t *idle[kIdleChildren];
+    for (uint32_t i = 0; i < (uint32_t) kIdleChildren; ++i)
+    {
+        idle[i] = createPausedClientChild(&fixture, parent_ls, kTestChildCid + 2U + i);
+    }
+
+    // The frame parser keeps recently active children at the front. Reinsert the
+    // trigger there so the regression fails if selection merely walks from the head.
+    muxclientLeaveConnection(trigger_ls);
+    muxclientJoinConnection(parent_ls, trigger_ls);
+
+    muxclient_lstate_t *large_ls = lineGetState(large_l, fixture.mux);
+    twfRequire(muxclientQueueChildPayload(fixture.mux,
+                                          fixture.parent_l,
+                                          ts,
+                                          parent_ls,
+                                          large_ls,
+                                          makePatternPayload(&fixture, kLargeQueue)),
+               "queueing the large stalled child tore down the parent");
+    twfRequireEqualU32((uint32_t) parent_ls->pending_child_data_len,
+                       kLargeQueue,
+                       "the first queue did not update the parent total");
+
+    twfRequire(muxclientQueueChildPayload(fixture.mux,
+                                          fixture.parent_l,
+                                          ts,
+                                          parent_ls,
+                                          trigger_ls,
+                                          makePatternPayload(&fixture, kTriggerQueue)),
+               "shedding the largest child tore down the parent");
+
+    twfRequire(lineIsAlive(fixture.parent_l), "the shared parent was closed under child queue pressure");
+    twfRequire(lineIsAlive(large_l), "MuxClient must not destroy the borrowed child line");
+    twfRequireLineStateZeroed(large_l, fixture.mux, "the actual largest child was not shed");
+    twfRequire(trigger_ls->parent == parent_ls, "the smaller trigger child was shed instead of the largest queue");
+    twfRequireEqualU32(parent_ls->children_count, 1U + kIdleChildren, "the shed child was not unlinked exactly once");
+    twfRequireEqualU32((uint32_t) parent_ls->pending_child_data_len,
+                       kTriggerQueue,
+                       "closing the largest child did not release its queued bytes");
+    twfRequireEqualText(fixture.trace.seq,
+                        "Pf",
+                        "queue pressure must emit one Close and child Finish without pausing the parent");
+
+    frame_view_t frames[2];
+    uint32_t     frame_count = parseFrames(fixture.capture, fixture.trace.capture_len, frames, 2);
+    twfRequireEqualU32(frame_count, 1, "parent shedding emitted more than one control frame");
+    twfRequireEqualU32(frames[0].flags, kMuxFlagClose, "parent shedding did not emit a Close frame");
+    twfRequireEqualU32(frames[0].cid, kTestChildCid + 1U, "parent shedding announced the wrong child cid");
+
+    for (uint32_t i = 0; i < (uint32_t) kIdleChildren; ++i)
+    {
+        destroySurvivingClientChild(&fixture, idle[i]);
+    }
+    twfLineDestroy(large_l);
+    fixtureTeardown(&fixture);
+}
+
+static void caseParentBufferLimitCanBeDisabled(void)
+{
+    twfSetCase("parent-buffer-limit zero disables aggregate shedding");
+
+    enum
+    {
+        kQueuedBytes = 256u * 1024u
+    };
+
+    muxclient_fixture_t fixture;
+    fixtureSetup(&fixture, 32);
+
+    muxclient_tstate_t *ts        = tunnelGetState(fixture.mux);
+    muxclient_lstate_t *parent_ls = lineGetState(fixture.parent_l, fixture.mux);
+    muxclient_lstate_t *child_ls  = lineGetState(fixture.child_l, fixture.mux);
+
+    ts->parent_buffer_limit = kMuxParentBufferLimitUnlimited;
+    child_ls->paused        = true;
+
+    twfRequire(muxclientQueueChildPayload(fixture.mux,
+                                          fixture.parent_l,
+                                          ts,
+                                          parent_ls,
+                                          child_ls,
+                                          makePatternPayload(&fixture, kQueuedBytes)),
+               "an unlimited parent budget tore down the parent");
+    twfRequire(child_ls->parent == parent_ls, "an unlimited parent budget shed its child");
+    twfRequireEqualU32((uint32_t) parent_ls->pending_child_data_len,
+                       kQueuedBytes,
+                       "the unlimited parent budget lost queued-byte accounting");
+    twfRequireEqualText(fixture.trace.seq, "", "an unlimited parent budget emitted flow or close callbacks");
+
+    fixtureTeardown(&fixture);
+}
+
 int main(void)
 {
     caseUpstreamFraming(kMuxMaxDataFrameLength, 1, "a payload exactly at the per-frame limit stays one frame");
@@ -326,6 +467,8 @@ int main(void)
 
     caseLargeCompleteBatchIsDrained();
     caseReentrantParentCloseReturnsImmediately();
+    caseParentBufferLimitClosesActualLargestQueue();
+    caseParentBufferLimitCanBeDisabled();
 
     printf("muxclient_frame_encoding_test: all cases passed\n");
     return 0;

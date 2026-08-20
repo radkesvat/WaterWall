@@ -73,12 +73,14 @@ tunnel_t *muxclientTunnelCreate(node_t *node)
     muxclient_tstate_t *ts                           = tunnelGetState(t);
     int                 child_buffer_limit           = kMuxDefaultChildBufferLimit;
     int                 child_buffer_pause_tolerance = kMuxDefaultChildBufferPauseTolerance;
+    int                 parent_buffer_limit          = kMuxDefaultParentBufferLimit;
     bool                log_main_line_stats          = false;
     uint32_t            staged_fixed_connections     = 0;
 
     getIntFromJsonObjectOrDefault(&child_buffer_limit, settings, "child-buffer-limit", kMuxDefaultChildBufferLimit);
     getIntFromJsonObjectOrDefault(
         &child_buffer_pause_tolerance, settings, "child-buffer-pause-tolerance", kMuxDefaultChildBufferPauseTolerance);
+    getIntFromJsonObjectOrDefault(&parent_buffer_limit, settings, "parent-buffer-limit", kMuxDefaultParentBufferLimit);
     getBoolFromJsonObjectOrDefault(&log_main_line_stats, settings, "log-main-line-stats", false);
     if (child_buffer_limit <= 0)
     {
@@ -93,9 +95,18 @@ tunnel_t *muxclientTunnelCreate(node_t *node)
         tunnelDestroy(t);
         return NULL;
     }
+    if (parent_buffer_limit < 0)
+    {
+        LOGF("MuxClient: \"parent-buffer-limit\" must be greater than or equal to 0, got %d", parent_buffer_limit);
+        tunnelDestroy(t);
+        return NULL;
+    }
     ts->child_buffer_limit = (uint32_t) child_buffer_limit;
     ts->child_buffer_pause_tolerance =
         (uint32_t) min((size_t) child_buffer_pause_tolerance, (size_t) child_buffer_limit);
+    // This is a per-parent budget, not another per-child limit, so it may
+    // intentionally be smaller than child_buffer_limit. Zero disables it.
+    ts->parent_buffer_limit = (uint32_t) parent_buffer_limit;
     ts->log_main_line_stats = log_main_line_stats;
 
     ts->concurrency_mode =

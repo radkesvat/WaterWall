@@ -107,6 +107,7 @@ static void fixtureSetup(muxserver_fixture_t *fixture, uint32_t capture_capacity
     muxserver_tstate_t *ts           = tunnelGetState(fixture->mux);
     ts->child_buffer_limit           = kMuxDefaultChildBufferLimit;
     ts->child_buffer_pause_tolerance = kMuxDefaultChildBufferPauseTolerance;
+    ts->parent_buffer_limit          = kMuxDefaultParentBufferLimit;
 
     fixture->parent_l = twfLineCreate(fixture->mux->lstate_size);
     fixture->child_l  = twfLineCreate(fixture->mux->lstate_size);

@@ -56,6 +56,7 @@ static void caseUdpSourceDrainsBeforeMuxWorkerStop(uint8_t mode)
     ts->concurrency_duration         = UINT32_MAX;
     ts->child_buffer_limit           = kMuxDefaultChildBufferLimit;
     ts->child_buffer_pause_tolerance = kMuxDefaultChildBufferPauseTolerance;
+    ts->parent_buffer_limit          = kMuxDefaultParentBufferLimit;
 
     line_t *parent = twfLinePoolCreateLine(&lines);
     lineLock(parent);
