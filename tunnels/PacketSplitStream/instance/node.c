@@ -19,10 +19,11 @@ node_t nodePacketSplitStreamGet(void)
              .instance              = NULL,
              .flags                 = kNodeFlagChainEnd,
              .required_padding_left = 0,
+             // This node makes its 'down' node its 'next' node, so it can receive packets from the 'down' node.
              .layer_group           = kNodeLayer3,
-             .layer_group_next_node = kNodeLayerNone,
+             .layer_group_next_node = kNodeLayer3,
              .layer_group_prev_node = kNodeLayer3,
-             .can_have_next         = false,
+             .can_have_next         = true, 
              .can_have_prev         = true,
     };
     return node_packetsplitstream;
