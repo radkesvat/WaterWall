@@ -155,6 +155,14 @@ A correct tunnel is never "just" a parser or encoder. It must preserve callback
     across mailbox take and controller publication. `abortProgramNow()` uses
     only an always-lock-free relaxed status atomic and deliberately skips orderly
     cleanup and logging.
+18. **`Pause` is backpressure, not proof of a zero-byte pipeline.** Once a
+    producer receives `Pause`, it must stop initiating new `Payload` callbacks
+    toward that consumer until `Resume`. The consumer may nevertheless retain
+    bytes it already accepted, and adapters may deliberately absorb a small,
+    bounded queue before emitting `Pause`. Do not "fix" an adapter by forcing
+    pause at its first queued byte without reading its write-queue policy. Any
+    tolerance must remain bounded, FIFO-preserving, accounted, and paired with a
+    clear resume or overflow/close path.
 
 > If a proposed change cannot explain how it preserves all of the above, it is not
 > ready.
@@ -379,7 +387,7 @@ to rely on — and mandatory to obey:
   its line state while an outer callback frame still saw `lineIsAlive(line)` and
   resumed on freed state. Exceptions, and only these: **borrowed lines** (destroy
   your own state, propagate away from the sender, never `lineDestroy()`) and
-  **packet lines** (§3.4).
+  **packet lines** (§3.5).
 
 - **A shutdown request does not close a line.** `requestProgramShutdown()`
   schedules global teardown on worker 0; the current callback still unwinds
@@ -409,7 +417,42 @@ to rely on — and mandatory to obey:
 
 - **Never read `ls` after `LinestateDestroy(ls)`** — assume it is zeroed.
 
-### 3.3 Buffers & padding (`sbuf_t`) → [Part 3](WaterWall-Docs/docs/05-devguides/part3-buffers-and-padding.mdx)
+### 3.3 Pause / Resume and bounded tolerance → [Part 2](WaterWall-Docs/docs/05-devguides/part2-lines-and-callbacks.mdx)
+
+There are two different moments in backpressure, and confusing them produces
+overly strict or unsafe implementations:
+
+- **After receiving `Pause`:** the producer must not initiate another `Payload`
+  toward the paused side until it receives `Resume`. `Pause` is not merely a hint
+  and does not authorize bypassing that neighbor. A queue that must drain through
+  the paused side waits; a terminal path either retains the accepted bytes under
+  its close policy or takes its documented overflow/abort path.
+- **Before emitting `Pause`:** a consumer, especially an adapter writing to an OS
+  resource, may accept a bounded amount of data before signaling backpressure.
+  `TcpListener`, `TcpConnector`, and `UdpConnector` use local write queues and
+  thresholds to absorb short stalls and callback/event-loop latency. This does
+  not violate the contract: those bytes were accepted before the producer saw
+  `Pause`.
+
+Therefore, neither `Pause` nor `Resume` proves that every adapter, event-loop, OS,
+or middle-tunnel queue is empty. It changes permission for **future** payload
+delivery at that chain edge. Payload already handed to a callback remains owned
+by the receiver and may be queued according to that node's policy.
+
+Do not generalize adapter tolerance into arbitrary buffering in transparent
+middle tunnels. A tunnel with no explicit queue normally forwards `Pause` and
+`Resume` immediately. If a node intentionally absorbs pressure, its queue must:
+
+- preserve payload order and buffer ownership;
+- have an explicit byte/item bound and an overflow or close policy;
+- resume the producer only when the node can accept payload again; and
+- remain correct if the pause callback re-enters and destroys the line.
+
+Treat numeric thresholds and hysteresis as implementation details: read the
+target adapter's `payload.c`, `helpers.c`, and `structure.h` rather than copying a
+value into this guide or assuming every adapter has the same tolerance.
+
+### 3.4 Buffers & padding (`sbuf_t`) → [Part 3](WaterWall-Docs/docs/05-devguides/part3-buffers-and-padding.mdx)
 
 - `sbuf_t` is a padded, shiftable buffer: `curpos` (payload start), `len`,
   `capacity`, `l_pad` (reserved left padding).
@@ -434,7 +477,7 @@ to rely on — and mandatory to obey:
 - A forwarding callback **takes ownership** of the buffer you pass it — do not
   reuse or free it afterward. On error paths, recycle any buffer you still hold.
 
-### 3.4 Packet lines & packet tunnels → [Part 4](WaterWall-Docs/docs/05-devguides/part4-packet-tunnels.mdx)
+### 3.5 Packet lines & packet tunnels → [Part 4](WaterWall-Docs/docs/05-devguides/part4-packet-tunnels.mdx)
 
 - A packet line is one persistent `line_t` **per worker** for a chain containing a
   layer-3 node. Allocated in `tunnelchainFinalize()`, destroyed only in
@@ -675,6 +718,10 @@ Build/validation rules:
 - `requestProgramShutdown()` is never used in place of closing an owned line.
 - Producers (io callbacks, timers, idle-table items, maps, queues) are detached
   before the owner's line state and line are destroyed.
+- A producer stops new payload delivery after receiving `Pause`; any intentional
+  pre-Pause tolerance is bounded, FIFO-preserving, accounted, and has a clear
+  Resume or overflow/close path. Transparent middle tunnels do not invent
+  buffering merely because adapters have it.
 - Every prepend fits inside `required_padding_left`; `sbufShiftLeft` only with
   enough left capacity; buffers recycled exactly on paths that own them.
 - Packet lines stay alive at runtime; packet-line state treated as worker-local;
