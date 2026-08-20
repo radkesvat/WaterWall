@@ -13,7 +13,6 @@ void udpovertcpclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
              "0");
         lineReuseBuffer(l, buf);
         abortProgramNow(1);
-        return;
     }
 #endif
 

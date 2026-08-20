@@ -643,8 +643,14 @@ static inline sockaddr_u addresscontextToSockAddr(const address_context_t *conte
     // Zero the whole union first: each branch below only fills a subset of the sockaddr fields
     // (IPv4 leaves sin_zero; IPv6 leaves sin6_flowinfo and sin6_scope_id). Those bytes are read
     // verbatim by connect()/sendto(), so leaving them uninitialized feeds garbage to the kernel.
-    sockaddr_u addr = {0};
-    assert(addresscontextCanConvertToSockAddr(context));
+    sockaddr_u addr        = {0};
+    const bool convertible = addresscontextCanConvertToSockAddr(context);
+    assert(convertible);
+    if (UNLIKELY(! convertible))
+    {
+        printError("addresscontextToSockAddr: address context cannot be converted to sockaddr");
+        abortProgramNow(1);
+    }
     if (context->ip_address.type == IPADDR_TYPE_V4)
     {
         struct sockaddr_in *addr_in = (struct sockaddr_in *) &addr;
@@ -662,5 +668,6 @@ static inline sockaddr_u addresscontextToSockAddr(const address_context_t *conte
         return addr;
     }
     assert(false); // Not a valid IP type
-    return (sockaddr_u) {0};
+    printError("addresscontextToSockAddr: invalid IP address type %u", (unsigned int) context->ip_address.type);
+    abortProgramNow(1);
 }

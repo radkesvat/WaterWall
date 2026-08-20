@@ -275,10 +275,7 @@ static line_t *createInternalLine(tunnel_t *t, line_t *app_l, trojanclient_line_
 
 void trojanclientTunnelstateDestroy(trojanclient_tstate_t *ts)
 {
-    if (ts == NULL)
-    {
-        return;
-    }
+    assert(ts != NULL);
 
     addresscontextReset(&ts->target_addr);
     memoryZero(ts->password_hex, sizeof(ts->password_hex));

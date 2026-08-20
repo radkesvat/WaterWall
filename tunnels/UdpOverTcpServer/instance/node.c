@@ -21,9 +21,9 @@ node_t nodeUdpOverTcpServerGet(void)
              .instance              = NULL,
              .flags                 = kNodeFlagNone,
              .required_padding_left = 2, // to append the length of the payload (should not be changed) (must same kHeaderSize)
-             .layer_group           = kNodeLayerAnything,
-             .layer_group_next_node = kNodeLayerAnything,
-             .layer_group_prev_node = kNodeLayerAnything,
+             .layer_group           = kNodeLayer4,
+             .layer_group_next_node = kNodeLayer4,
+             .layer_group_prev_node = kNodeLayer4,
              .can_have_next         = true,
              .can_have_prev         = true,
     };

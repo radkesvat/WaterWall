@@ -23,9 +23,10 @@ void muxclientJoinConnection(muxclient_lstate_t *parent, muxclient_lstate_t *chi
 
 void muxclientLeaveConnection(muxclient_lstate_t *child)
 {
-    if (child == NULL || ! child->is_child || child->parent == NULL)
+    if (UNLIKELY(child == NULL || ! child->is_child || child->parent == NULL))
     {
-        return;
+        LOGF("MuxClient: attempted to unlink a child without a live parent link");
+        abortProgramNow(1);
     }
 
     if (child->child_prev != NULL)

@@ -1,5 +1,5 @@
 <!--
-Documentation version: 106
+Documentation version: 107
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/DomainResolver.mdx, and both files must keep the same documentation version.
 -->
 
@@ -81,7 +81,8 @@ nodes. This implementation is intentionally standalone; no existing tunnel is re
 
 ## Notes And Caveats
 
-- This is a stream-style middle node, not a packet tunnel.
+- This is a middle node (`.flags = kNodeFlagNone`) that operates within a chain; it cannot be placed as a chain head or chain end.
+- It is a transparent middle node (`kNodeLayerAnything`, `SameAsPrev`/`SameAsNext`) that preserves line layer across neighbors.
 - It does not use or modify packet-line state.
 - It requires no left padding and does not touch `sbuf_t` layout.
 - It resolves only the destination address context (`dest_ctx`), not the source context.

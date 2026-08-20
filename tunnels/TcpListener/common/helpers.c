@@ -165,12 +165,10 @@ void tcplistenerOnInboundConnected(wevent_t *ev)
 
 void tcplistenerFlushWriteQueue(tcplistener_lstate_t *lstate)
 {
+    assert(lstate->io != NULL && ! wioIsClosed(lstate->io));
+
     while (bufferqueueGetBufCount(&lstate->pause_queue) > 0)
     {
-        if (wioIsClosed(lstate->io))
-        {
-            return;
-        }
         sbuf_t *buf = bufferqueuePopFront(&lstate->pause_queue);
         wioWrite(lstate->io, buf);
     }

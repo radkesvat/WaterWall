@@ -2,6 +2,7 @@
 
 #include "devices/device_frag_affinity.h"
 #include "global_state.h"
+#include "loggers/internal_logger.h"
 #include "worker_messages.h"
 
 typedef struct device_reader_message_s
@@ -135,6 +136,11 @@ void deviceReaderSessionUnref(device_reader_session_t *session)
     // Release publishes all work performed through this reference.
     const w_atomic_uint_value_t previous = atomicSubExplicit(&session->refcount, 1, memory_order_release);
     assert(previous > 0);
+    if (UNLIKELY(previous == 0))
+    {
+        LOGF("deviceReaderSessionUnref: reader session refcount underflow");
+        abortProgramNow(1);
+    }
     if (previous != 1)
     {
         return;

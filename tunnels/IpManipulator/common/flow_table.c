@@ -37,6 +37,12 @@ static void flowtableShardDestroyStorage(ipmanipulator_flow_shard_t *shard)
     shard->heap    = NULL;
 }
 
+static void flowtableAbortStructuralCorruption(const char *detail)
+{
+    LOGF("IpManipulator: flow table structural corruption: %s", detail);
+    abortProgramNow(1);
+}
+
 /* ------------------------------------------------------------------ heap -- */
 
 static void flowtableHeapSwap(ipmanipulator_flow_shard_t *shard, uint32_t a, uint32_t b)
@@ -95,6 +101,12 @@ static void flowtableHeapSiftDown(ipmanipulator_flow_shard_t *shard, uint32_t in
 
 static void flowtableHeapPush(ipmanipulator_flow_shard_t *shard, ipmanipulator_flow_entry_t *entry)
 {
+    assert(shard != NULL && entry != NULL);
+    if (UNLIKELY(shard->heap == NULL || shard->heap_count >= shard->limit))
+    {
+        flowtableAbortStructuralCorruption("heap storage or capacity is invalid before insertion");
+    }
+
     entry->heap_index              = shard->heap_count;
     shard->heap[entry->heap_index] = entry;
     shard->heap_count += 1U;
@@ -103,6 +115,11 @@ static void flowtableHeapPush(ipmanipulator_flow_shard_t *shard, ipmanipulator_f
 
 static void flowtableHeapRemoveAt(ipmanipulator_flow_shard_t *shard, uint32_t index)
 {
+    if (UNLIKELY(shard == NULL || shard->heap_count == 0 || index >= shard->heap_count))
+    {
+        flowtableAbortStructuralCorruption("heap index is inconsistent with the entry being removed");
+    }
+
     uint32_t last = shard->heap_count - 1U;
 
     if (index != last)
@@ -126,6 +143,8 @@ static void flowtableHeapRemoveAt(ipmanipulator_flow_shard_t *shard, uint32_t in
 static void flowtableBucketInsert(ipmanipulator_flow_shard_t *shard, ipmanipulator_flow_entry_t *entry,
                                   uint32_t bucket_index)
 {
+    assert(shard != NULL && entry != NULL && shard->buckets != NULL && bucket_index < shard->bucket_count);
+
     entry->bucket_index          = bucket_index;
     entry->bucket_next           = shard->buckets[bucket_index];
     shard->buckets[bucket_index] = entry;
@@ -133,6 +152,13 @@ static void flowtableBucketInsert(ipmanipulator_flow_shard_t *shard, ipmanipulat
 
 static void flowtableBucketRemove(ipmanipulator_flow_shard_t *shard, ipmanipulator_flow_entry_t *entry)
 {
+    assert(shard != NULL && entry != NULL);
+
+    if (UNLIKELY(entry->bucket_index >= shard->bucket_count))
+    {
+        flowtableAbortStructuralCorruption("entry records an out-of-range bucket index");
+    }
+
     ipmanipulator_flow_entry_t **link = &shard->buckets[entry->bucket_index];
 
     while (*link != NULL)
@@ -146,6 +172,8 @@ static void flowtableBucketRemove(ipmanipulator_flow_shard_t *shard, ipmanipulat
 
         link = &(*link)->bucket_next;
     }
+
+    flowtableAbortStructuralCorruption("entry was missing from its recorded bucket");
 }
 
 /* ------------------------------------------------------------ lifecycle --- */
@@ -299,7 +327,9 @@ static void flowtableDestroyEntry(ipmanipulator_flow_table_t *table, ipmanipulat
 
 void ipmanipulatorFlowTableDestroy(ipmanipulator_flow_table_t *table)
 {
-    if (table == NULL || table->shards == NULL)
+    assert(table != NULL);
+
+    if (table->shards == NULL)
     {
         return;
     }
@@ -343,6 +373,8 @@ void ipmanipulatorFlowTableDestroy(ipmanipulator_flow_table_t *table)
 
 uint64_t ipmanipulatorFlowTableHash(const ipmanipulator_flow_table_t *table, const ipmanipulator_flow_key_t *key)
 {
+    assert(table != NULL && key != NULL);
+
     /*
      * Hash the explicit fields rather than the raw structure so no padding byte
      * ever reaches the hash input.
@@ -360,7 +392,9 @@ uint64_t ipmanipulatorFlowTableHash(const ipmanipulator_flow_table_t *table, con
 ipmanipulator_flow_shard_t *ipmanipulatorFlowTableLockShard(ipmanipulator_flow_table_t     *table,
                                                             const ipmanipulator_flow_key_t *key)
 {
-    if (! ipmanipulatorFlowTableIsReady(table) || key == NULL)
+    assert(key != NULL);
+
+    if (! ipmanipulatorFlowTableIsReady(table))
     {
         return NULL;
     }
@@ -374,10 +408,8 @@ ipmanipulator_flow_shard_t *ipmanipulatorFlowTableLockShard(ipmanipulator_flow_t
 
 void ipmanipulatorFlowShardUnlock(ipmanipulator_flow_shard_t *shard)
 {
-    if (shard != NULL)
-    {
-        mutexUnlock(&shard->mutex);
-    }
+    assert(shard != NULL);
+    mutexUnlock(&shard->mutex);
 }
 
 static uint32_t flowtableBucketIndex(const ipmanipulator_flow_table_t *table, const ipmanipulator_flow_shard_t *shard,
@@ -390,10 +422,7 @@ ipmanipulator_flow_entry_t *ipmanipulatorFlowShardFind(ipmanipulator_flow_table_
                                                        ipmanipulator_flow_shard_t     *shard,
                                                        const ipmanipulator_flow_key_t *key)
 {
-    if (table == NULL || shard == NULL || key == NULL)
-    {
-        return NULL;
-    }
+    assert(table != NULL && shard != NULL && key != NULL);
 
     for (ipmanipulator_flow_entry_t *entry = shard->buckets[flowtableBucketIndex(table, shard, key)]; entry != NULL;
          entry                             = entry->bucket_next)
@@ -410,9 +439,12 @@ ipmanipulator_flow_entry_t *ipmanipulatorFlowShardFind(ipmanipulator_flow_table_
 void ipmanipulatorFlowShardRemove(ipmanipulator_flow_table_t *table, ipmanipulator_flow_shard_t *shard,
                                   ipmanipulator_flow_entry_t *entry)
 {
-    if (table == NULL || shard == NULL || entry == NULL)
+    assert(table != NULL && shard != NULL && entry != NULL);
+
+    if (UNLIKELY(shard->count == 0 || entry->heap_index >= shard->heap_count ||
+                 shard->heap[entry->heap_index] != entry))
     {
-        return;
+        flowtableAbortStructuralCorruption("entry is not recorded in its claimed heap slot before removal");
     }
 
     flowtableBucketRemove(shard, entry);
@@ -424,10 +456,7 @@ void ipmanipulatorFlowShardRemove(ipmanipulator_flow_table_t *table, ipmanipulat
 uint32_t ipmanipulatorFlowShardExpire(ipmanipulator_flow_table_t *table, ipmanipulator_flow_shard_t *shard,
                                       uint64_t now_ms, uint32_t budget)
 {
-    if (table == NULL || shard == NULL)
-    {
-        return 0;
-    }
+    assert(table != NULL && shard != NULL);
 
     uint32_t removed = 0;
 
@@ -445,10 +474,7 @@ ipmanipulator_flow_entry_t *ipmanipulatorFlowShardReserve(ipmanipulator_flow_tab
                                                           const ipmanipulator_flow_key_t *key, uint64_t now_ms,
                                                           uint64_t deadline_ms)
 {
-    if (table == NULL || shard == NULL || key == NULL)
-    {
-        return NULL;
-    }
+    assert(table != NULL && shard != NULL && key != NULL);
 
     /*
      * Canonical forward/reverse keys are intentionally identical. Reserving a
@@ -500,7 +526,14 @@ ipmanipulator_flow_entry_t *ipmanipulatorFlowShardReserve(ipmanipulator_flow_tab
 void ipmanipulatorFlowShardTouch(ipmanipulator_flow_shard_t *shard, ipmanipulator_flow_entry_t *entry,
                                  uint64_t deadline_ms)
 {
-    if (shard == NULL || entry == NULL || entry->deadline_ms == deadline_ms)
+    assert(shard != NULL && entry != NULL);
+
+    if (UNLIKELY(entry->heap_index >= shard->heap_count || shard->heap[entry->heap_index] != entry))
+    {
+        flowtableAbortStructuralCorruption("entry is not recorded in its claimed heap slot before touch");
+    }
+
+    if (entry->deadline_ms == deadline_ms)
     {
         return;
     }
@@ -521,10 +554,7 @@ void ipmanipulatorFlowShardTouch(ipmanipulator_flow_shard_t *shard, ipmanipulato
 
 uint32_t ipmanipulatorFlowTableCount(ipmanipulator_flow_table_t *table)
 {
-    if (! ipmanipulatorFlowTableIsReady(table))
-    {
-        return 0;
-    }
+    assert(ipmanipulatorFlowTableIsReady(table));
 
     uint32_t total = 0;
 
@@ -541,10 +571,7 @@ uint32_t ipmanipulatorFlowTableCount(ipmanipulator_flow_table_t *table)
 void ipmanipulatorFlowTableForEach(ipmanipulator_flow_table_t *table,
                                    void (*visit)(ipmanipulator_flow_entry_t *entry, void *context), void *context)
 {
-    if (! ipmanipulatorFlowTableIsReady(table) || visit == NULL)
-    {
-        return;
-    }
+    assert(ipmanipulatorFlowTableIsReady(table) && visit != NULL);
 
     for (uint32_t i = 0; i < table->shard_count; ++i)
     {

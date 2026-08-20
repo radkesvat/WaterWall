@@ -21,5 +21,4 @@ tunnel_t *tcpudplistenerSelectDownStreamTunnel(tunnel_t *t, line_t *l)
          (unsigned int) src_ctx->proto_tcp,
          (unsigned int) src_ctx->proto_udp);
     abortProgramNow(1);
-    return NULL;
 }

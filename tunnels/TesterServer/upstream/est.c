@@ -7,5 +7,5 @@ void testerserverTunnelUpStreamEst(tunnel_t *t, line_t *l)
     discard t;
     discard l;
     LOGF("TesterServer: upStreamEst disabled");
-    assert(false);
+    abortProgramNow(1);
 }

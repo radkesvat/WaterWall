@@ -165,18 +165,10 @@ size_t udpconnectorQueuedWriteBytes(udpconnector_lstate_t *ls)
 
 void udpconnectorFlushWriteQueue(udpconnector_lstate_t *ls)
 {
-    if (ls->io == NULL)
-    {
-        return;
-    }
+    assert(ls->io != NULL && ! wioIsClosed(ls->io));
 
     while (bufferqueueGetBufCount(&ls->pause_queue) > 0)
     {
-        if (wioIsClosed(ls->io))
-        {
-            return;
-        }
-
         sbuf_t *buf = bufferqueuePopFront(&ls->pause_queue);
         wioWriteDatagram(ls->io, buf, &ls->peer_addr);
     }
@@ -184,21 +176,13 @@ void udpconnectorFlushWriteQueue(udpconnector_lstate_t *ls)
 
 bool udpconnectorReplayWriteQueue(udpconnector_lstate_t *ls)
 {
-    if (ls->io == NULL)
-    {
-        return true;
-    }
+    assert(ls->io != NULL && ! wioIsClosed(ls->io));
 
     tunnel_t *t = ls->tunnel;
     line_t   *l = ls->line;
 
     while (bufferqueueGetBufCount(&ls->pause_queue) > 0)
     {
-        if (wioIsClosed(ls->io))
-        {
-            return true;
-        }
-
         sbuf_t *buf = bufferqueuePopFront(&ls->pause_queue);
         udpconnectorTunnelUpStreamPayload(t, l, buf);
 

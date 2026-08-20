@@ -22,9 +22,9 @@ node_t nodeTcpConnectorGet(void)
              .flags                 = kNodeFlagChainEnd,
              .required_padding_left = 0,
              .layer_group           = kNodeLayer4,
-             .layer_group_next_node = kNodeLayerAnything,
-             .layer_group_prev_node = kNodeLayerAnything,
-             .can_have_next         = true,
+             .layer_group_next_node = kNodeLayerNone,
+             .layer_group_prev_node = kNodeLayer4,
+             .can_have_next         = false,
              .can_have_prev         = true,
     };
     return node_tcpconnector;

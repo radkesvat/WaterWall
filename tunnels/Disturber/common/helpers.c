@@ -31,10 +31,7 @@ static void disturberScheduleForwardPayload(tunnel_t *t, line_t *l, sbuf_t *buf,
 
 bool disturberIsWorkerPacketLine(tunnel_t *t, line_t *l)
 {
-    tunnel_chain_t *chain = tunnelGetChain(t);
-
-    return chain != NULL && chain->packet_lines != NULL && lineGetWID(l) < chain->workers_count &&
-           tunnelchainGetWorkerPacketLine(chain, lineGetWID(l)) == l;
+    return tunnelchainIsWorkerPacketLine(tunnelGetChain(t), l);
 }
 
 static void disturberCloseNormalLine(tunnel_t *t, line_t *l)

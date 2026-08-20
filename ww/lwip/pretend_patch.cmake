@@ -220,7 +220,6 @@ ip_reass_enqueue_new_datagram(struct ip_hdr *fraghdr, int clen, u8_t input_netif
   u16_t start;
   u16_t end;
   u16_t payload_len;
-  u8_t is_last;
 };
 
 /* Complete structural admission before applying a resource budget or
@@ -279,7 +278,6 @@ ip_reass_validate_fragment_span(const struct ip_reassdata *ipr, const struct pbu
     span_out->start = start;
     span_out->end = (u16_t)end;
     span_out->payload_len = len;
-    span_out->is_last = (u8_t)is_last;
   }
   return 0;
 }
@@ -315,7 +313,6 @@ ip_reass_validate_fragment_span(const struct ip_reassdata *ipr, const struct pbu
   if (ip_reass_validate_fragment_span(ipr, new_p, &span)) {
     return IP_REASS_VALIDATE_PBUF_DROPPED;
   }
-  LWIP_ASSERT("is_last agrees with structural admission", is_last == (int)span.is_last);
   offset = span.start;
   len = span.payload_len;]=])
 

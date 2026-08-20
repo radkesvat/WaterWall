@@ -217,12 +217,6 @@ static bool udpconnectorBeginSocket(tunnel_t *t, line_t *l, udpconnector_lstate_
     udpconnector_tstate_t *ts       = tunnelGetState(t);
     address_context_t     *dest_ctx = lineGetDestinationAddressContext(l);
 
-    if (! addresscontextCanConvertToSockAddr(dest_ctx) || ! addresscontextHasPort(dest_ctx))
-    {
-        LOGE("UdpConnector: destination address or port is not initialized");
-        goto fail;
-    }
-
     sockaddr_u addr   = addresscontextToSockAddr(dest_ctx);
     int        family = addr.sa.sa_family;
 

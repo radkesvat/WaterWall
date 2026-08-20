@@ -196,10 +196,7 @@ static line_t *createInternalLine(tunnel_t *t, line_t *app_l, vlessclient_line_k
 
 void vlessclientTunnelstateDestroy(vlessclient_tstate_t *ts)
 {
-    if (ts == NULL)
-    {
-        return;
-    }
+    assert(ts != NULL);
 
     addresscontextReset(&ts->target_addr);
     memoryZero(ts->uuid, sizeof(ts->uuid));

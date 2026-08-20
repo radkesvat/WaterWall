@@ -25,6 +25,7 @@ static uint16_t headerclientGetHeaderPort(headerclient_tstate_t *ts, line_t *l)
         return ts->constant_port;
 
     default:
+        assert(false);
         return 0;
     }
 }
@@ -141,6 +142,7 @@ static uint32_t headerclientBuildHeader(headerclient_tstate_t *ts, line_t *l, ui
         return headerclientBuildProxyProtocolV2(ts, l, out);
 
     default:
+        assert(false);
         return 0;
     }
 }

@@ -91,8 +91,10 @@ static bool realityserverEncryptFrame(realityserver_tstate_t *ts, realityserver_
                                       uint8_t record_kind, const uint8_t *plaintext, uint32_t plaintext_len,
                                       sbuf_t **frame_buffer)
 {
+    assert(frame_buffer != NULL);
+
     if (! ls->session_keys_ready || ! realityV2SequenceAvailable(ls->s2c_send_seq) ||
-        ! realityV2RecordProfileIsValid(&ls->record_profile) || frame_buffer == NULL)
+        ! realityV2RecordProfileIsValid(&ls->record_profile))
     {
         return false;
     }
@@ -353,8 +355,9 @@ static bool realityserverIsRealityCandidate(const realityserver_lstate_t *ls, sb
 static bool realityserverDecryptFrame(realityserver_tstate_t *ts, realityserver_lstate_t *ls, sbuf_t *frame_buffer,
                                       uint8_t *record_kind, uint8_t *alert)
 {
-    if (! ls->session_keys_ready || ! realityV2SequenceAvailable(ls->c2s_recv_seq) || record_kind == NULL ||
-        alert == NULL)
+    assert(record_kind != NULL && alert != NULL);
+
+    if (! ls->session_keys_ready || ! realityV2SequenceAvailable(ls->c2s_recv_seq))
     {
         return false;
     }

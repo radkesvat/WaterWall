@@ -49,7 +49,7 @@ static void testMaximumFitsWithoutGrowth(void)
     config_file_t          config_file          = {0};
     node_manager_config_t *cfg                  = createTestConfig(&config_file);
     node_t                *nodes                = memoryAllocateZero(sizeof(*nodes) * kMaxNodesPerConfig);
-    const isize_t          initial_bucket_count = cfg->node_map_bucket_count;
+    const isize_t          initial_bucket_count = map_node_t_bucket_count(&cfg->node_map);
 
     require(map_node_t_capacity(&cfg->node_map) >= kMaxNodesPerConfig,
             "the config node map did not reserve the logical maximum");

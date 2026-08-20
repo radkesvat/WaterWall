@@ -11,8 +11,7 @@ void testerserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     {
         discard buf;
         LOGF("TesterServer: downStreamPayload disabled");
-        assert(false);
-        return;
+        abortProgramNow(1);
     }
 
     ls->response_to_next = true;

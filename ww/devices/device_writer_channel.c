@@ -110,6 +110,11 @@ void deviceWriterChannelClose(device_writer_channel_t *writer_channel)
     device_writer_generation_t *generation = (device_writer_generation_t *) published;
     assert(generation == writer_channel->current);
     assert(! writer_channel->current_closed);
+    if (UNLIKELY(generation != writer_channel->current || writer_channel->current_closed))
+    {
+        LOGF("deviceWriterChannelClose: invalid generation or writer channel already closed");
+        abortProgramNow(1);
+    }
 
     chanClose(generation->channel);
     writer_channel->current_closed = true;

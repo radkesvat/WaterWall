@@ -210,7 +210,11 @@ static inline void quiescenceGateLeave(quiescence_gate_t *gate)
     // Publishes completion of protected work to the closing owner.
     const w_atomic_uint_value_t entered = atomicSubExplicit(&gate->state, 1, memory_order_release);
     assert((entered & QUIESCENCE_GATE_COUNT_MASK) > 0);
-    discard entered;
+    if (UNLIKELY((entered & QUIESCENCE_GATE_COUNT_MASK) == 0))
+    {
+        LOGF("quiescenceGateLeave: gate state count underflow");
+        abortProgramNow(1);
+    }
 }
 
 /*

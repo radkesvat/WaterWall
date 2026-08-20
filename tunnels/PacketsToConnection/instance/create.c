@@ -94,10 +94,9 @@ tunnel_t *ptcTunnelCreate(node_t *node)
     atomic_init(&ts->stopping, false);
     if (UNLIKELY(! mutexTryInit(&ts->owned_lines_lock)))
     {
-        ptcTunnelDestroy(t, wwLifecycleStartupRollback());
+        tunnelDestroy(t);
         return NULL;
     }
-    ts->owned_lines_lock_initialized = true;
 
     initTcpIpStack();
     ptcRxWrapperPoolInitializeOnce();

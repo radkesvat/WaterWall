@@ -44,9 +44,10 @@ wcrypto_status_t encryptionclientDecryptAead(uint32_t algorithm, unsigned char *
 
 void encryptionclientCloseLineBidirectional(tunnel_t *t, line_t *l)
 {
-    if (! lineIsAlive(l))
+    if (UNLIKELY(! lineIsAlive(l)))
     {
-        return;
+        LOGF("EncryptionClient: attempted to close an already-destroyed line");
+        abortProgramNow(1);
     }
 
     encryptionclient_lstate_t *ls = lineGetState(l, t);

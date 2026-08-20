@@ -7,6 +7,7 @@
 #include "global_state.h"
 #include "line.h"
 #include "loggers/internal_logger.h"
+#include "net/node_layer_solver.h"
 #include "utils/json_helpers.h"
 
 enum
@@ -35,7 +36,6 @@ typedef struct node_manager_config_s
     config_file_t   *config_file;
     map_node_t       node_map;
     vec_chains_t     chains;
-    isize_t          node_map_bucket_count;
     node_map_phase_t node_map_phase;
 
 } node_manager_config_t;
@@ -136,9 +136,7 @@ static int createTunnelInstances(node_manager_config_t *cfg, tunnel_t **t_array,
         return -1;
     }
 
-    const isize_t expected_map_size         = map_node_t_size(&cfg->node_map);
-    const isize_t expected_map_bucket_count = cfg->node_map_bucket_count;
-    int           index                     = 0;
+    int index = 0;
 
     c_foreach(p1, map_node_t, cfg->node_map)
     {
@@ -156,16 +154,6 @@ static int createTunnelInstances(node_manager_config_t *cfg, tunnel_t **t_array,
         if (UNLIKELY(startupFailurePending() || n1->instance == NULL))
         {
             LOGF("NodeManager: node startup failure: node (\"%s\") create() returned NULL handle", n1->name);
-            startupFailureRecord(1);
-            return -1;
-        }
-
-        if (cfg->node_map_phase != kNodeMapPhaseFrozen || map_node_t_size(&cfg->node_map) != expected_map_size ||
-            map_node_t_bucket_count(&cfg->node_map) != expected_map_bucket_count)
-        {
-            LOGF("NodeManager: node \"%s\" mutated the frozen config node map during tunnel creation; "
-                 "internal child nodes must be private and owned by their parent tunnel",
-                 n1->name);
             startupFailureRecord(1);
             return -1;
         }
@@ -222,6 +210,18 @@ static void finalizeTunnelChains(node_manager_config_t *cfg, tunnel_t **t_array,
 
         if (tunnelchainIsFinalized(chain) == false)
         {
+            /*
+             * Validation has already driven solve/onSolvedTopology to a fixed
+             * point. Indexing is a one-shot layout phase over immutable
+             * topology; onIndex callbacks may consume the final layer cache.
+             */
+            if (UNLIKELY(! chain->layer_solution_ready))
+            {
+                LOGF("NodeManager: tunnel chain has not been validated/solved before finalization");
+                startupFailureRecord(1);
+                return;
+            }
+
             uint16_t index      = 0;
             uint32_t mem_offset = 0;
             for (int tci = 0; tci < chain->tunnels.len; tci++)
@@ -252,9 +252,7 @@ static void finalizeTunnelChains(node_manager_config_t *cfg, tunnel_t **t_array,
             }
 
             tunnelchainFinalize(chain);
-            const isize_t size_before = vec_chains_t_size(&cfg->chains);
-            if (UNLIKELY(vec_chains_t_push(&cfg->chains, chain) == NULL ||
-                         vec_chains_t_size(&cfg->chains) != size_before + 1))
+            if (UNLIKELY(vec_chains_t_push(&cfg->chains, chain) == NULL))
             {
                 LOGF("NodeManager: failed to publish finalized tunnel chain");
                 startupFailureRecord(1);
@@ -265,39 +263,98 @@ static void finalizeTunnelChains(node_manager_config_t *cfg, tunnel_t **t_array,
 }
 
 /**
- * @brief Validate resulting tunnel topology and required node flags.
+ * @brief Validate resulting tunnel topology, capability constraints, and layer groups.
  *
  * @param t_array Tunnel instance array.
  * @param tunnels_count Number of tunnel instances.
  */
 static void validateTunnelChains(tunnel_t **t_array, int tunnels_count)
 {
+    tunnel_chain_t *unique_chains[kMaxNodesPerConfig] = {0};
+    int             unique_chain_count                = 0;
+
     for (int i = 0; i < tunnels_count; i++)
     {
-        if (t_array[i]->next == NULL && t_array[i]->prev == NULL && ! (t_array[i]->node->flags & kNodeFlagNoChain))
+        tunnel_t *t = t_array[i];
+        assert(t != NULL && t->node != NULL);
+
+        if (t->chain == NULL)
         {
-            LOGF("NodeManager: node startup failure: node (\"%s\") is not chained", t_array[i]->node->name);
+            LOGF("NodeManager: node startup failure: node (\"%s\") is not in an assembled chain", t->node->name);
             startupFailureRecord(1);
             return;
         }
 
-        if (t_array[i]->next == NULL && ! (t_array[i]->node->flags & kNodeFlagChainEnd) &&
-            ! (t_array[i]->node->flags & kNodeFlagNoChain))
+        tunnel_chain_t *c     = t->chain;
+        bool            found = false;
+        for (int j = 0; j < unique_chain_count; j++)
         {
-            LOGF("NodeManager: node startup failure: node (\"%s\") at the end of the chain but dose not have "
-                 "flagkNodeFlagChainEnd",
-                 t_array[i]->node->name);
-            startupFailureRecord(1);
-            return;
+            if (unique_chains[j] == c)
+            {
+                found = true;
+                break;
+            }
         }
-        if (t_array[i]->prev == NULL && ! (t_array[i]->node->flags & kNodeFlagChainHead) &&
-            ! (t_array[i]->node->flags & kNodeFlagNoChain))
+        if (! found)
         {
-            LOGF("NodeManager: node startup failure: node (\"%s\") at the start of the chain but dose not have "
-                 "flagkNodeFlagChainHead",
-                 t_array[i]->node->name);
-            startupFailureRecord(1);
-            return;
+            assert(unique_chain_count < kMaxNodesPerConfig);
+            unique_chains[unique_chain_count++] = c;
+        }
+    }
+
+    for (int j = 0; j < unique_chain_count; j++)
+    {
+        tunnel_chain_t *chain = unique_chains[j];
+
+        /*
+         * A layer-dependent hook may materialize private tunnels, invalidating
+         * the current edge solution. Re-solve after each reported mutation so
+         * no later hook observes stale domains. Indexing begins only after this
+         * phase reaches a fixed point.
+         */
+        for (uint16_t topology_changes = 0;;)
+        {
+            node_layer_solver_status_t status = {0};
+            if (! nodeLayerSolveChain(chain, &status))
+            {
+                LOGF("NodeManager: node startup failure: %s", status.message);
+                startupFailureRecord(1);
+                return;
+            }
+
+            bool topology_changed = false;
+            for (uint16_t i = 0; i < chain->tunnels.len; ++i)
+            {
+                tunnel_t *tunnel = chain->tunnels.tuns[i];
+                assert(tunnel != NULL);
+
+                if (tunnel->onSolvedTopology != NULL && tunnel->onSolvedTopology(tunnel, chain))
+                {
+                    topology_changed = true;
+                    break;
+                }
+                if (UNLIKELY(startupFailurePending()))
+                {
+                    return;
+                }
+            }
+
+            if (! topology_changed)
+            {
+                break;
+            }
+            if (UNLIKELY(startupFailurePending()))
+            {
+                return;
+            }
+
+            topology_changes++;
+            if (topology_changes >= kMaxChainLen)
+            {
+                LOGF("NodeManager: solved-topology expansion did not converge");
+                startupFailureRecord(1);
+                return;
+            }
         }
     }
 }
@@ -406,48 +463,69 @@ void nodemanagerInitializeLineOnTargetWorker(void *worker, void *_tunnel, void *
     }
 }
 
+static bool tunnelIsManagerPacketInitHead(const tunnel_chain_t *chain, uint16_t index)
+{
+    assert(chain != NULL);
+    assert(chain->layer_solution_ready);
+    assert(index < chain->tunnels.len);
+
+    const tunnel_t *tunnel = chain->tunnels.tuns[index];
+    assert(tunnel != NULL && tunnel->node != NULL);
+
+    return tunnel->prev == NULL && tunnel->next != NULL &&
+           (tunnel->node->flags & kNodeFlagChainHead) != 0 &&
+           tunnelchainGetResolvedNextLayer(chain, index) == kLayerDomainL3;
+}
+
 /**
  * @brief Send initial line events for packet-layer chain heads.
  *
- * @param t_array Tunnel instance array.
- * @param tunnels_count Number of tunnel instances.
+ * @param cfg Node manager config.
  */
-static bool initializePacketTunnels(tunnel_t **t_array, int tunnels_count)
+static bool initializePacketTunnels(node_manager_config_t *cfg)
 {
-    for (int i = 0; i < tunnels_count; i++)
+    c_foreach(chain_ref, vec_chains_t, cfg->chains)
     {
-        assert(t_array[i] != NULL);
-        tunnel_t *tunnel = t_array[i];
-        if (tunnel->prev == NULL && tunnel->node->flags & kNodeFlagChainHead &&
-            tunnel->node->layer_group == kNodeLayer3)
+        tunnel_chain_t *chain = *chain_ref.ref;
+        assert(chain != NULL);
+        if (chain->tunnels.len == 0 || chain->packet_chain_init_sent)
         {
-            assert(tunnelGetChain(tunnel)->packet_chain_init_sent == false);
+            continue;
+        }
 
-            bool admitted_all = true;
+        assert(chain->layer_solution_ready);
+        bool admitted_any_head = false;
+
+        for (uint16_t ti = 0; ti < chain->tunnels.len; ++ti)
+        {
+            if (! tunnelIsManagerPacketInitHead(chain, ti))
+            {
+                continue;
+            }
+
+            tunnel_t *head = chain->tunnels.tuns[ti];
             for (wid_t wi = 0; wi < getWorkersCount(); wi++)
             {
-                line_t *l = tunnelchainGetWorkerPacketLine(tunnelGetChain(tunnel), wi);
+                line_t *l = tunnelchainGetWorkerPacketLine(chain, wi);
                 if (UNLIKELY(sendWorkerMessageForceQueueWithCleanup(
-                                 wi, &nodemanagerInitializeLineOnTargetWorker, NULL, tunnel, l, NULL) !=
+                                 wi, &nodemanagerInitializeLineOnTargetWorker, NULL, head, l, NULL) !=
                              kWorkerMessageSubmitAccepted))
                 {
-                    admitted_all = false;
                     LOGF("NodeManager: failed to admit packet-chain Init for node \"%s\" on worker %d",
-                         tunnel->node->name,
+                         head->node->name,
                          workerWIDForLog(wi));
-                    break;
+                    return false;
                 }
             }
+            admitted_any_head = true;
+        }
 
-            if (UNLIKELY(! admitted_all))
-            {
-                return false;
-            }
-
+        if (admitted_any_head)
+        {
             /* Worker loops are still behind workers_run_flag, so publication
              * follows complete admission while execution remains deferred
              * until after every prepare/start hook. */
-            tunnelGetChain(tunnel)->packet_chain_init_sent = true;
+            chain->packet_chain_init_sent = true;
         }
     }
     return true;
@@ -478,17 +556,17 @@ static void runNodes(node_manager_config_t *cfg)
     {
         return;
     }
-    finalizeTunnelChains(cfg, t_array, tunnels_count);
-    if (UNLIKELY(startupFailurePending()))
-    {
-        return;
-    }
     validateTunnelChains(t_array, tunnels_count);
     if (UNLIKELY(startupFailurePending()))
     {
         return;
     }
-    if (UNLIKELY(! initializePacketTunnels(t_array, tunnels_count)))
+    finalizeTunnelChains(cfg, t_array, tunnels_count);
+    if (UNLIKELY(startupFailurePending()))
+    {
+        return;
+    }
+    if (UNLIKELY(! initializePacketTunnels(cfg)))
     {
         /* Already-admitted messages remain owned by their worker queues and are
          * reclaimed by startup-failure teardown. Packet lines themselves stay
@@ -584,15 +662,6 @@ static void validateChainHeadNodes(node_manager_config_t *cfg)
  */
 static void cycleProcess(node_manager_config_t *cfg)
 {
-    c_foreach(n1, map_node_t, cfg->node_map)
-    {
-        hash_t next_hash = n1.ref->second->hash_next;
-        if (next_hash == 0)
-        {
-            continue;
-        }
-    }
-
     validateChainHeadNodes(cfg);
 }
 
@@ -754,9 +823,7 @@ static void registerNodeInMap(node_t *node, node_manager_config_t *cfg)
         return;
     }
 
-    const isize_t size_before         = map_node_t_size(map);
-    const isize_t bucket_count_before = map_node_t_bucket_count(map);
-    if (size_before >= kMaxNodesPerConfig)
+    if (map_node_t_size(map) >= kMaxNodesPerConfig)
     {
         LOGF("NodeManager: config file \"%s\" exceeds the maximum of %d nodes",
              cfg->config_file->file_path,
@@ -764,13 +831,6 @@ static void registerNodeInMap(node_t *node, node_manager_config_t *cfg)
         startupFailureRecord(1);
         return;
     }
-    if (bucket_count_before != cfg->node_map_bucket_count)
-    {
-        LOGF("NodeManager: config node map capacity changed before registering node \"%s\"", node->name);
-        startupFailureRecord(1);
-        return;
-    }
-
     validateSingletonNodeType(node, cfg);
     if (UNLIKELY(startupFailurePending()))
     {
@@ -778,10 +838,9 @@ static void registerNodeInMap(node_t *node, node_manager_config_t *cfg)
     }
     map_node_t_result result = map_node_t_insert(map, node->hash_name, node);
 
-    if (result.ref == NULL || ! result.inserted || map_node_t_size(map) != size_before + 1 ||
-        map_node_t_bucket_count(map) != cfg->node_map_bucket_count)
+    if (result.ref == NULL || ! result.inserted)
     {
-        LOGF("NodeManager: fixed config node map invariant failed while registering node \"%s\"", node->name);
+        LOGF("NodeManager: failed to register node \"%s\"", node->name);
         startupFailureRecord(1);
     }
 }
@@ -877,10 +936,7 @@ static void createAllNodeInstances(node_manager_config_t *cfg)
 
 static void freezeNodeMap(node_manager_config_t *cfg)
 {
-    if (cfg->node_map_phase != kNodeMapPhaseCollecting ||
-        map_node_t_bucket_count(&cfg->node_map) != cfg->node_map_bucket_count ||
-        map_node_t_capacity(&cfg->node_map) < kMaxNodesPerConfig ||
-        map_node_t_size(&cfg->node_map) > kMaxNodesPerConfig)
+    if (cfg->node_map_phase != kNodeMapPhaseCollecting)
     {
         LOGF("NodeManager: config node map invariant failed before freezing");
         startupFailureRecord(1);
@@ -951,9 +1007,7 @@ static node_manager_config_t *createNodeManagerConfig(config_file_t *config_file
     cfg->node_map_phase = kNodeMapPhaseCollecting;
 
     if (! map_node_t_reserve(&cfg->node_map, kMaxNodesPerConfig) ||
-        map_node_t_capacity(&cfg->node_map) < kMaxNodesPerConfig ||
-        ! vec_chains_t_reserve(&cfg->chains, kMaxNodesPerConfig) ||
-        vec_chains_t_capacity(&cfg->chains) < kMaxNodesPerConfig)
+        ! vec_chains_t_reserve(&cfg->chains, kMaxNodesPerConfig))
     {
         LOGF("NodeManager: failed to reserve fixed config registries for %d nodes", kMaxNodesPerConfig);
         map_node_t_drop(&cfg->node_map);
@@ -962,7 +1016,6 @@ static node_manager_config_t *createNodeManagerConfig(config_file_t *config_file
         return NULL;
     }
 
-    cfg->node_map_bucket_count = map_node_t_bucket_count(&cfg->node_map);
     return cfg;
 }
 
@@ -979,9 +1032,7 @@ ww_startup_result_t nodemanagerRunConfigFile(config_file_t *config_file)
         return wwStartupContextEnd(&startup);
     }
 
-    const isize_t size_before = vec_configs_t_size(&nodemanager_gstate->configs);
-    if (UNLIKELY(vec_configs_t_push(&nodemanager_gstate->configs, cfg) == NULL ||
-                 vec_configs_t_size(&nodemanager_gstate->configs) != size_before + 1))
+    if (UNLIKELY(vec_configs_t_push(&nodemanager_gstate->configs, cfg) == NULL))
     {
         nodemanagerDestroyConfig(cfg);
         LOGF("NodeManager: failed to publish config metadata");
@@ -1154,8 +1205,7 @@ node_manager_t *nodemanagerCreate(void)
     }
 
     state->configs = vec_configs_t_init();
-    if (UNLIKELY(! vec_configs_t_reserve(&state->configs, kNmConfigsVectorCap) ||
-                 vec_configs_t_capacity(&state->configs) < kNmConfigsVectorCap))
+    if (UNLIKELY(! vec_configs_t_reserve(&state->configs, kNmConfigsVectorCap)))
     {
         vec_configs_t_drop(&state->configs);
         memoryFree(state);
@@ -1188,15 +1238,55 @@ void nodemanagerDestroyNode(node_t *node)
 
 void nodemanagerDestroyConfig(node_manager_config_t *cfg)
 {
+    /*
+     * Layer/topology validation intentionally runs before chain finalization and
+     * publication. A startup failure in that interval still leaves assembled
+     * chains owned through their configured tunnel instances, so collect those
+     * pointers before onDestroy() invalidates the instances. Published chains
+     * are included first and deduplicated against the same instance pointers.
+     */
+    tunnel_chain_t *owned_chains[kMaxNodesPerConfig] = {0};
+    int             owned_chain_count                = 0;
+
+    c_foreach(chain, vec_chains_t, cfg->chains)
+    {
+        owned_chains[owned_chain_count++] = *chain.ref;
+    }
+
+    c_foreach(node_key_pair, map_node_t, cfg->node_map)
+    {
+        node_t         *node  = node_key_pair.ref->second;
+        tunnel_chain_t *chain = node->instance != NULL ? node->instance->chain : NULL;
+        if (chain == NULL)
+        {
+            continue;
+        }
+
+        bool already_owned = false;
+        for (int i = 0; i < owned_chain_count; ++i)
+        {
+            if (owned_chains[i] == chain)
+            {
+                already_owned = true;
+                break;
+            }
+        }
+        if (! already_owned)
+        {
+            assert(owned_chain_count < kMaxNodesPerConfig);
+            owned_chains[owned_chain_count++] = chain;
+        }
+    }
+
     c_foreach(node_key_pair, map_node_t, cfg->node_map)
     {
         node_t *node = (node_key_pair.ref)->second;
         nodemanagerDestroyNode(node);
     }
 
-    c_foreach(chain, vec_chains_t, cfg->chains)
+    for (int i = 0; i < owned_chain_count; ++i)
     {
-        tunnelchainDestroy(*chain.ref);
+        tunnelchainDestroy(owned_chains[i]);
     }
 
     map_node_t_drop(&cfg->node_map);

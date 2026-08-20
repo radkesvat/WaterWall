@@ -165,11 +165,21 @@ void lineUnRefInternal(line_t *l)
      */
     const w_atomic_uint_value_t previous = atomicSubExplicit(&l->refc, 1, memory_order_acq_rel);
     assert(previous != 0);
+    if (UNLIKELY(previous == 0))
+    {
+        LOGF("lineUnRefInternal: line reference count underflow");
+        abortProgramNow(1);
+    }
     if (previous > 1)
     {
         return;
     }
     assert(! l->alive);
+    if (UNLIKELY(l->alive))
+    {
+        LOGF("lineUnRefInternal: line reclaimed while still logically alive");
+        abortProgramNow(1);
+    }
 
     /* Every line pool in a chain has one item geometry and one shared master.
      * Pool zero is therefore stable allocator metadata even when the line's

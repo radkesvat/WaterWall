@@ -242,10 +242,7 @@ static bool trojanserverAuthenticateHash(tunnel_t *t, line_t *l, const uint8_t s
 {
     trojanserver_tstate_t *ts = tunnelGetState(t);
 
-    if (UNLIKELY(user_handle_out == NULL))
-    {
-        return false;
-    }
+    assert(user_handle_out != NULL);
 
     if (ts->auth_client_tunnel == NULL)
     {

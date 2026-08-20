@@ -112,21 +112,14 @@ static void tapif_thread(void *arg);
 #endif /* !NO_SYS */
 
 #if LWIP_IPV4
-static int
-tapif_format_ipv4(char *dst, size_t dst_len, const ip4_addr_t *addr)
+static void
+tapif_format_ipv4(char dst[16], const ip4_addr_t *addr)
 {
-  int written;
-
-  written = snprintf(dst, dst_len, "%d.%d.%d.%d",
-                     ip4_addr1(addr),
-                     ip4_addr2(addr),
-                     ip4_addr3(addr),
-                     ip4_addr4(addr));
-  if ((written < 0) || ((size_t)written >= dst_len)) {
-    return -1;
-  }
-
-  return 0;
+  snprintf(dst, 16, "%d.%d.%d.%d",
+           ip4_addr1(addr),
+           ip4_addr2(addr),
+           ip4_addr3(addr),
+           ip4_addr4(addr));
 }
 
 static int
@@ -231,11 +224,8 @@ low_level_init(struct netif *netif)
 
   if (preconfigured_tapif == NULL) {
 #if LWIP_IPV4
-    if ((tapif_format_ipv4(addr, sizeof(addr), netif_ip4_gw(netif)) != 0) ||
-        (tapif_format_ipv4(netmask, sizeof(netmask), netif_ip4_netmask(netif)) != 0)) {
-      perror("tapif_init: invalid IPv4 address");
-      exit(1);
-    }
+    tapif_format_ipv4(addr, netif_ip4_gw(netif));
+    tapif_format_ipv4(netmask, netif_ip4_netmask(netif));
 
     LWIP_DEBUGF(TAPIF_DEBUG, ("tapif_init: execl(\"/sbin/ifconfig\", \"ifconfig\", \"%s\", \"inet\", \"%s\", \"netmask\", \"%s\"%s);\n",
                               TAPIF_CONFIG_IF,

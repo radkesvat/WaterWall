@@ -9,10 +9,8 @@ void udplistenerTunnelDownStreamFinish(tunnel_t *t, line_t *l)
 
     if (idle == NULL)
     {
-        LOGE("UdpListener: downstream finish received before idle item was attached");
-        udplistenerLinestateDestroy(lstate);
-        lineDestroy(l);
-        return;
+        LOGF("UdpListener: downstream Finish reached a line absent from the idle inventory");
+        abortProgramNow(1);
     }
 
     bool deleted = localidletableRemoveIdleItemByHash(udpsockGetWorkerIdleTable(lstate->uio), idle->hash);

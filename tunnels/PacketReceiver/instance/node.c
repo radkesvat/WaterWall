@@ -21,7 +21,7 @@ node_t nodePacketReceiverGet(void)
              .instance              = NULL,
              .flags                 = kNodeFlagChainHead | kNodeFlagChainEnd,
              .required_padding_left = 0,
-             .layer_group           = kNodeLayerAnything,
+             .layer_group           = kNodeLayer3,
              .layer_group_next_node = kNodeLayer3,
              .layer_group_prev_node = kNodeLayer3,
              .can_have_next         = true,

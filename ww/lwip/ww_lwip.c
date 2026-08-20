@@ -43,6 +43,11 @@ static void wwLwipReleaseProtocolState(void *userdata)
     discard userdata;
     LWIP_ASSERT_CORE_LOCKED();
     assert(tcp_input_pcb == NULL);
+    if (tcp_input_pcb != NULL)
+    {
+        LOGF("wwLwipReleaseProtocolState: active TCP input PCB (tcp_input_pcb != NULL) during protocol release");
+        abortProgramNow(1);
+    }
 
     /*
      * tcp_abandon(reset=0) releases queued segments, including custom pbufs in
@@ -65,7 +70,11 @@ static void wwLwipReleaseProtocolState(void *userdata)
     {
         err_t close_result = tcp_close(tcp_listen_pcbs.pcbs);
         assert(close_result == ERR_OK);
-        discard close_result;
+        if (close_result != ERR_OK)
+        {
+            LOGF("wwLwipReleaseProtocolState: failed to close listen PCB (close_result != ERR_OK, result=%d)", (int) close_result);
+            abortProgramNow(1);
+        }
     }
     while (udp_pcbs != NULL)
     {

@@ -85,9 +85,11 @@ void ptcOwnedLineRegister(ptc_lstate_t *ls)
     ptc_tstate_t *state = tunnelGetState(ls->tunnel);
     const wid_t   wid   = lineGetWID(ls->line);
 
-    assert(state->owned_lines != NULL);
-    assert(wid < state->owned_worker_count);
-    assert(! ls->owned_registered);
+    if (UNLIKELY(state->owned_lines == NULL || wid >= state->owned_worker_count || ls->owned_registered))
+    {
+        LOGF("PacketsToConnection: invalid owned-line registration state");
+        abortProgramNow(1);
+    }
 
     mutexLock(&state->owned_lines_lock);
     line_t *head   = state->owned_lines[wid];
@@ -105,13 +107,20 @@ void ptcOwnedLineRegister(ptc_lstate_t *ls)
 
 void ptcOwnedLineUnregister(ptc_lstate_t *ls)
 {
-    if (! ls->owned_registered)
+    if (UNLIKELY(! ls->owned_registered))
     {
-        return;
+        LOGF("PacketsToConnection: attempted to unregister a line absent from the owned-line registry");
+        abortProgramNow(1);
     }
 
     ptc_tstate_t *state = tunnelGetState(ls->tunnel);
     const wid_t   wid   = lineGetWID(ls->line);
+
+    if (UNLIKELY(state->owned_lines == NULL || wid >= state->owned_worker_count))
+    {
+        LOGF("PacketsToConnection: invalid owned-line registry state during unregister");
+        abortProgramNow(1);
+    }
 
     mutexLock(&state->owned_lines_lock);
     if (ls->owned_prev != NULL)
@@ -222,7 +231,6 @@ void ptcAckQueuePushBack(ptc_lstate_t *ls, sbuf_t *buf, uint32_t total)
     {
         LOGF("PacketsToConnection: acknowledgement record insertion failed after a successful reservation");
         abortProgramNow(1);
-        return;
     }
 
     /*
@@ -279,7 +287,6 @@ void ptcPauseQueuePushBack(ptc_lstate_t *ls, sbuf_t *buf)
     {
         LOGF("PacketsToConnection: pause insertion failed after a successful reservation");
         abortProgramNow(1);
-        return;
     }
 
     assert(ptcFrontPauseAckIndex(ls) + bufferqueueGetBufCount(&ls->pause_queue) ==
@@ -294,7 +301,6 @@ void ptcPauseQueuePushFront(ptc_lstate_t *ls, sbuf_t *buf)
     {
         LOGF("PacketsToConnection: pause reinsertion failed on a slot it had just released");
         abortProgramNow(1);
-        return;
     }
 
     ptcPauseAckRecordAt(ls, ptcFrontPauseAckIndex(ls))->buf = buf;
@@ -539,26 +545,22 @@ err_t ptcTcpPollCallback(void *arg, struct tcp_pcb *tpcb)
 static void ptcUdpIdleTimerCallback(wtimer_t *timer)
 {
     ptc_lstate_t *ls = weventGetUserdata(timer);
-    if (ls == NULL)
-    {
-        return;
-    }
+    assert(ls != NULL && ls->udp_idle_timer == timer);
 
-    line_t   *l        = ls->line;
-    tunnel_t *t        = ls->tunnel;
+    line_t   *l = ls->line;
+    tunnel_t *t = ls->tunnel;
+    assert(l != NULL && t != NULL && lineIsAlive(l));
+
     ls->udp_idle_timer = NULL;
 
-    if (lineIsAlive(l))
+    if (ptcNextGateEnter(t))
     {
-        if (ptcNextGateEnter(t))
-        {
-            ptcCloseLineFromNetwork(t, l);
-            ptcNextGateLeave(t);
-        }
-        else
-        {
-            ptcCloseLineForStop(t, l);
-        }
+        ptcCloseLineFromNetwork(t, l);
+        ptcNextGateLeave(t);
+    }
+    else
+    {
+        ptcCloseLineForStop(t, l);
     }
     lineUnlock(l);
 }

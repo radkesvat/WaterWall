@@ -1,5 +1,5 @@
 <!--
-Documentation version: 106
+Documentation version: 107
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/Bridge.mdx, and both files must keep the same documentation version.
 -->
 
@@ -123,3 +123,4 @@ and then connect those two places logically through the bridge pair.
 - `Bridge` is intended to be paired with another `Bridge` node.
 - The current implementation requires the paired node name to exist in the same configuration.
 - `Bridge` adds no buffering, protocol parsing, or transport of its own. It only relays events.
+- `Bridge` advertises `kNodeLayerAnything` and registers logical layer equivalence relations between paired instances (`Bridge A prev == Bridge B prev` and `Bridge A next == Bridge B next`). Startup fails if paired bridge nodes are connected to incompatible network layers (e.g. L3 packet on one side and L4 stream on the other).

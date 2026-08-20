@@ -5,10 +5,7 @@
 void httpclientTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context)
 {
     discard context;
-    if (t == NULL)
-    {
-        return;
-    }
+    assert(t != NULL);
 
     httpclient_tstate_t *ts = tunnelGetState(t);
 

@@ -11,7 +11,6 @@ void testerserverTunnelDownStreamEst(tunnel_t *t, line_t *l)
     if (! ts->packet_mode)
     {
         LOGF("TesterServer: downStreamEst disabled");
-        assert(false);
-        return;
+        abortProgramNow(1);
     }
 }

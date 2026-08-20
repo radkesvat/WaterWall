@@ -5,19 +5,11 @@
 static void loopHandle(wtimer_t *timer)
 {
     wgd_tstate_t *state = weventGetUserdata(timer);
-    if (state == NULL)
-    {
-        return;
-    }
+    assert(state != NULL);
 
     wireguarddeviceStateLock(state);
-    const bool active = state->wg_device.loop_timer == timer;
+    assert(state->wg_device.loop_timer == timer);
     wireguarddeviceStateUnlock(state);
-
-    if (! active)
-    {
-        return;
-    }
 
     wireguarddeviceLoop((wireguard_device_t *) state);
 }
@@ -135,7 +127,7 @@ static bool wireguarddeviceEnsureInnerPacketInit(tunnel_t *t, wgd_tstate_t *stat
 
     if (t->next == NULL)
     {
-        LOGF("WireGuardDevice: transport-direction=prev requires a next packet-side tunnel");
+        LOGF("WireGuardDevice: a previous transport side requires a next packet-side tunnel");
         startupFailureRecord(1);
         return false;
     }

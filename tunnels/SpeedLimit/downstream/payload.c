@@ -69,16 +69,9 @@ static void speedlimitDrainDownstream(speedlimit_lstate_t *ls)
 void speedlimitDownstreamDrainTimerCallback(wtimer_t *timer)
 {
     speedlimit_lstate_t *ls = weventGetUserdata(timer);
-    if (ls == NULL)
-    {
-        return;
-    }
+    assert(ls != NULL && ls->down_timer == timer && ls->line != NULL && ls->tunnel != NULL && lineIsAlive(ls->line));
 
     ls->down_timer = NULL;
-    if (ls->line == NULL || ls->tunnel == NULL || ! lineIsAlive(ls->line))
-    {
-        return;
-    }
 
     speedlimitDrainDownstream(ls);
 }

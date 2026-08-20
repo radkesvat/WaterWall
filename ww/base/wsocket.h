@@ -836,8 +836,6 @@ static inline bool sockaddrCmpIP(const sockaddr_u *restrict addr1, const sockadd
         return sockaddrCmpIPV6(addr1, addr2);
     }
 
-    assert(! "unknown sa_family");
-
     return false;
 }
 

@@ -1,5 +1,5 @@
 <!--
-Documentation version: 107
+Documentation version: 108
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/WireGuardDevice.mdx, and both files must keep the same documentation version.
 -->
 
@@ -83,18 +83,15 @@ only the normal companion transport lines owned by `WireGuardDevice` do.
 
 ## Transport-Side Detection
 
-During `onPrepare`, `WireGuardDevice` decides which side carries outer WireGuard UDP message bodies.
+`WireGuardDevice` does not search for particular node types and has no configurable direction. After the complete chain
+is assembled, the layer solver determines both adjacent edge domains:
 
-If `settings.transport-direction` is set, that explicit value is used and no topology search is performed.
+- the resolved L3 edge is the inner packet side
+- the resolved L4 edge is the outer WireGuard transport side
 
-If it is not set, the tunnel searches outward in both chain directions:
-
-- first for `UdpStatelessSocket`, across all reachable `next` tunnels and all reachable `prev` tunnels
-- if no `UdpStatelessSocket` is found, for a tunnel whose node has `kNodeLayer4` enabled in `layer_group`
-
-If `UdpStatelessSocket` is found only on one side, that side becomes the transport side. If `UdpStatelessSocket` is found in both directions, `transport-direction` is mandatory because the topology is ambiguous.
-
-If no UDP stateless socket is found, the Layer 4 search is a compatibility fallback. A single Layer 4 side is selected; otherwise the tunnel keeps the historical default of treating `next` as the transport side.
+Startup fails unless the two adjacent edges resolve to exactly one L3 side and one L4 side. There is no fallback to
+`next`. If a complex topology leaves the roles unresolved, add an explicit packet/stream bridge such as
+`PacketsToStream` or `StreamToPackets` so the layer solver can determine them.
 
 ## Configuration Example
 
@@ -104,7 +101,6 @@ If no UDP stateless socket is found, the Layer 4 search is a compatibility fallb
   "type": "WireGuardDevice",
   "settings": {
     "privatekey": "<base64-32-byte-private-key>",
-    "transport-direction": "next",
     "peers": [
       {
         "publickey": "<base64-32-byte-peer-public-key>",
@@ -142,15 +138,6 @@ If no UDP stateless socket is found, the Layer 4 search is a compatibility fallb
   - maximum peer count is `32`
 
 ## Optional Settings Fields
-
-- `transport-direction` `(string)`
-  Explicitly selects which side of `WireGuardDevice` carries outer WireGuard transport packets.
-
-  Accepted values:
-  - `"next"` or `"up"` or `"upstream"`: the transport side is the next/upstream side
-  - `"prev"` or `"down"` or `"downstream"`: the transport side is the previous/downstream side
-
-  When omitted, `WireGuardDevice` auto-detects the transport side by searching for `UdpStatelessSocket` in both directions, then falls back to Layer 4 node detection. Set this field when both directions contain `UdpStatelessSocket` or when the chain shape is intentionally unusual.
 
 - `auth-client-node-name` `(string)`
   Creates an internal `UserController` on the transport side, using this `AuthenticationClient` node.
@@ -411,7 +398,7 @@ That layout is useful as a minimal reference when you want WireGuard transport o
 - The outer WireGuard transport side uses normal worker-local companion lines owned by `WireGuardDevice`; those lines are not packet lines and are torn down by `WireGuardDevice`.
 - The tunnel itself does not add a UDP header; that belongs to `UdpStatelessSocket`.
 - Hostname endpoints are resolved once during startup, not continuously re-resolved later.
-- Keep the chain shape unambiguous by placing `UdpStatelessSocket` on only one side, or set `transport-direction` explicitly.
+- Ensure the chain solver can resolve exactly one adjacent L3 side and one adjacent L4 side; use packet/stream bridge nodes for complex layouts.
 - Do not manually place a `UserController` on the transport side while also setting `auth-client-node-name`; `WireGuardDevice` creates that internal node itself.
 - Outbound routing depends entirely on `AllowedIPs`; if your inner destination addresses do not match a peer, traffic is dropped.
 - Inbound plaintext is forwarded only if the decrypted source address is allowed for that peer.

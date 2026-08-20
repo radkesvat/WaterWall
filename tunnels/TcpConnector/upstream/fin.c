@@ -7,10 +7,10 @@ void tcpconnectorTunnelUpStreamFinish(tunnel_t *t, line_t *l)
     tcpconnector_lstate_t *ls = lineGetState(l, t);
     tcpconnector_tstate_t *ts = tunnelGetState(t);
 
-    if (ls->io == NULL)
+    if (UNLIKELY(ls->io == NULL || wioIsClosed(ls->io)))
     {
-        tcpconnectorLinestateDestroy(ls);
-        return;
+        LOGF("TcpConnector: upstream finish reached an unavailable TCP socket");
+        abortProgramNow(1);
     }
 
     // This indicates that line is closed. Even if we get the closeCallback

@@ -16,11 +16,7 @@ void tcpoverudpclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     tcpoverudpclient_lstate_t *ls = lineGetState(l, t);
 
-    if (UNLIKELY(ls->k_handle == NULL))
-    {
-        lineReuseBuffer(l, buf);
-        return;
-    }
+    assert(ls->k_handle != NULL);
 
     if (ikcp_waitsnd(ls->k_handle) > tcpoverudpclientGetKcpSendBufferLimit(ls))
     {
@@ -36,11 +32,7 @@ void tcpoverudpclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     tcpoverudpclient_tstate_t *ts            = tunnelGetState(t);
     int                        kcp_write_mtu = tcpoverudpclientGetKcpWriteMtu(ts);
 
-    if (UNLIKELY(kcp_write_mtu <= 0))
-    {
-        lineReuseBuffer(l, buf);
-        return;
-    }
+    assert(kcp_write_mtu > 0);
 
     while (sbufGetLength(buf) > 0)
     {

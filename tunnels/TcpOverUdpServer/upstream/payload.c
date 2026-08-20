@@ -6,11 +6,7 @@ void tcpoverudpserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     tcpoverudpserver_lstate_t *ls = lineGetState(l, t);
 
-    if (UNLIKELY(ls->k_handle == NULL))
-    {
-        lineReuseBuffer(l, buf);
-        return;
-    }
+    assert(ls->k_handle != NULL);
 
     // any recv indicates that connection is still alive
     ls->last_recv = wloopNowMS(getWorkerLoop(lineGetWID(l)));

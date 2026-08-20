@@ -92,9 +92,6 @@ void bufferstreamPush(buffer_stream_t *self, sbuf_t *buf)
         abortProgramNow(1);
     }
 
-    // Check for potential overflow
-    assert(self->size <= SIZE_MAX - buf_len);
-
     bs_doublequeue_t_push_back(&self->q, buf);
     self->size += buf_len;
 }
@@ -202,9 +199,15 @@ uint8_t bufferstreamViewByteAt(buffer_stream_t *self, size_t at)
 
 void bufferstreamViewBytesAt(buffer_stream_t *self, size_t at, uint8_t *buf, size_t len)
 {
-
     // Use subtraction-based bounds checks to avoid overflow in (at + len).
-    assert(self && buf && len > 0 && self->size != 0 && at <= self->size && len <= (self->size - at));
+    const bool valid =
+        self != NULL && buf != NULL && len > 0 && self->size != 0 && at <= self->size && len <= (self->size - at);
+    assert(valid);
+    if (UNLIKELY(! valid))
+    {
+        printError("BufferStream: invalid byte-view range (offset=%zu, length=%zu)", at, len);
+        abortProgramNow(1);
+    }
 
     size_t remaining_offset = at;
     size_t buf_i            = 0;
@@ -234,4 +237,7 @@ void bufferstreamViewBytesAt(buffer_stream_t *self, size_t at, uint8_t *buf, siz
             return;
         }
     }
+
+    printError("BufferStream: size accounting is inconsistent while viewing %zu byte(s) at offset %zu", len, at);
+    abortProgramNow(1);
 }

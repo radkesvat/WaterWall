@@ -30,10 +30,7 @@ static void socks5clientDestroyInternalDomainResolverChain(socks5client_tstate_t
 void socks5clientTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context)
 {
     discard context;
-    if (t == NULL)
-    {
-        return;
-    }
+    assert(t != NULL);
 
     socks5client_tstate_t *ts = tunnelGetState(t);
 

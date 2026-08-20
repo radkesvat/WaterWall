@@ -100,9 +100,8 @@ static void workerPublishLifecycleLocked(worker_t *worker, worker_lifecycle_e ph
 
 worker_lifecycle_e workerGetLifecycle(const worker_t *worker)
 {
-    return worker == NULL
-               ? kWorkerLifecycleInitialized
-               : (worker_lifecycle_e) atomicLoadExplicit(&((worker_t *) worker)->lifecycle, memory_order_acquire);
+    assert(worker != NULL);
+    return (worker_lifecycle_e) atomicLoadExplicit(&((worker_t *) worker)->lifecycle, memory_order_acquire);
 }
 
 bool workerQuiesceRequested(const worker_t *worker)

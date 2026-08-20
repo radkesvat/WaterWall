@@ -124,7 +124,9 @@ static bool httpclientHeaderNameEquals(const char *value, const char *name)
 
 static const char *httpclientUpgradeProtocol(const httpclient_tstate_t *ts)
 {
-    if (ts == NULL || ts->upgrade_protocol == NULL || ts->upgrade_protocol[0] == '\0')
+    assert(ts != NULL);
+
+    if (ts->upgrade_protocol == NULL || ts->upgrade_protocol[0] == '\0')
     {
         return "h2c";
     }
@@ -134,12 +136,14 @@ static const char *httpclientUpgradeProtocol(const httpclient_tstate_t *ts)
 
 static bool httpclientUpgradeIsH2C(const httpclient_tstate_t *ts)
 {
-    return ts != NULL && stringAsciiCaseEquals(httpclientUpgradeProtocol(ts), "h2c");
+    assert(ts != NULL);
+    return stringAsciiCaseEquals(httpclientUpgradeProtocol(ts), "h2c");
 }
 
 static bool httpclientUpgradeIsCustom(const httpclient_tstate_t *ts)
 {
-    return ts != NULL && ! httpclientUpgradeIsH2C(ts);
+    assert(ts != NULL);
+    return ! httpclientUpgradeIsH2C(ts);
 }
 
 static bool httpclientShouldSkipExtraHeader(const char *name, bool upgrade_to_h2, bool websocket_mode)

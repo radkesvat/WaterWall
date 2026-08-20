@@ -241,6 +241,7 @@ tunnel_t *testerserverTunnelCreate(node_t *node)
     int                    split_payload_burst    = kTesterServerSplitPayloadBurst;
 
     getBoolFromJsonObjectOrDefault(&ts->packet_mode, settings, "packet-mode", false);
+    node->layer_group = ts->packet_mode ? kNodeLayer3 : kNodeLayer4;
     getBoolFromJsonObjectOrDefault(&ts->packet_stateless, settings, "packet-stateless", false);
     getBoolFromJsonObjectOrDefault(&ts->packet_init_on_start, settings, "packet-init-on-start", false);
     getBoolFromJsonObjectOrDefault(&ts->streaming_response, settings, "streaming-response", false);

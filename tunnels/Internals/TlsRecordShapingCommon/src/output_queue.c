@@ -24,7 +24,9 @@ void tlsrecordshapingOutputQueueInitialize(tlsrecordshaping_output_queue_t *queu
 
 void tlsrecordshapingOutputQueueDestroy(tlsrecordshaping_output_queue_t *queue)
 {
-    if (queue == NULL || ! queue->initialized)
+    assert(queue != NULL);
+
+    if (! queue->initialized)
     {
         return;
     }
@@ -56,8 +58,14 @@ void tlsrecordshapingOutputQueueDestroy(tlsrecordshaping_output_queue_t *queue)
 static bool pushMetadata(tlsrecordshaping_metadata_node_t **head, tlsrecordshaping_metadata_node_t **tail,
                          size_t *count, uint32_t delay_ms)
 {
+    assert(head != NULL && tail != NULL && count != NULL);
+
     tlsrecordshaping_metadata_node_t *node = memoryAllocateZero(sizeof(*node));
-    node->delay_ms                         = delay_ms;
+    if (UNLIKELY(node == NULL))
+    {
+        return false;
+    }
+    node->delay_ms = delay_ms;
     if (*tail != NULL)
     {
         (*tail)->next = node;
@@ -73,7 +81,9 @@ static bool pushMetadata(tlsrecordshaping_metadata_node_t **head, tlsrecordshapi
 
 bool tlsrecordshapingOutputQueuePushMetadata(tlsrecordshaping_output_queue_t *queue, uint32_t delay_ms)
 {
-    if (queue == NULL || ! queue->initialized || delay_ms > kTlsRecordShapingMaxDelayMs)
+    assert(queue != NULL && queue->initialized);
+
+    if (delay_ms > kTlsRecordShapingMaxDelayMs)
     {
         return false;
     }
@@ -83,7 +93,9 @@ bool tlsrecordshapingOutputQueuePushMetadata(tlsrecordshaping_output_queue_t *qu
 
 bool tlsrecordshapingOutputQueuePushPendingMetadata(tlsrecordshaping_output_queue_t *queue, uint32_t delay_ms)
 {
-    if (queue == NULL || ! queue->initialized || delay_ms > kTlsRecordShapingMaxDelayMs)
+    assert(queue != NULL && queue->initialized);
+
+    if (delay_ms > kTlsRecordShapingMaxDelayMs)
     {
         return false;
     }
@@ -94,12 +106,16 @@ bool tlsrecordshapingOutputQueuePushPendingMetadata(tlsrecordshaping_output_queu
 
 bool tlsrecordshapingOutputQueueHasPendingMetadata(const tlsrecordshaping_output_queue_t *queue)
 {
-    return queue != NULL && queue->pending_metadata_head != NULL;
+    assert(queue != NULL && queue->initialized);
+
+    return queue->pending_metadata_head != NULL;
 }
 
 bool tlsrecordshapingOutputQueueCommitMetadata(tlsrecordshaping_output_queue_t *queue, uint32_t fallback_delay_ms)
 {
-    if (queue == NULL || ! queue->initialized || fallback_delay_ms > kTlsRecordShapingMaxDelayMs)
+    assert(queue != NULL && queue->initialized);
+
+    if (fallback_delay_ms > kTlsRecordShapingMaxDelayMs)
     {
         return false;
     }
@@ -158,9 +174,13 @@ static tlsrecordshaping_metadata_node_t *popMetadata(tlsrecordshaping_output_que
     return node;
 }
 
-static void pushOutput(tlsrecordshaping_output_queue_t *queue, sbuf_t *record, uint64_t release_at_ms)
+static bool pushOutput(tlsrecordshaping_output_queue_t *queue, sbuf_t *record, uint64_t release_at_ms)
 {
     tlsrecordshaping_output_node_t *node = memoryAllocateZero(sizeof(*node));
+    if (UNLIKELY(node == NULL))
+    {
+        return false;
+    }
     node->record                         = record;
     node->release_at_ms                  = release_at_ms;
     if (queue->output_tail != NULL)
@@ -174,19 +194,13 @@ static void pushOutput(tlsrecordshaping_output_queue_t *queue, sbuf_t *record, u
     queue->output_tail = node;
     queue->output_count += 1;
     queue->queued_ciphertext_bytes += sbufGetLength(record);
+    return true;
 }
 
 bool tlsrecordshapingOutputQueueFeed(tlsrecordshaping_output_queue_t *queue, sbuf_t *ciphertext, uint64_t now_ms,
                                      char error[kTlsRecordShapingErrorSize])
 {
-    if (queue == NULL || ! queue->initialized || ciphertext == NULL)
-    {
-        if (ciphertext != NULL)
-        {
-            reuseBuffer(ciphertext);
-        }
-        return tlsrecordshapingSetError(error, "invalid outgoing TLS record queue input");
-    }
+    assert(queue != NULL && queue->initialized && ciphertext != NULL);
 
     bufferstreamPush(&queue->ciphertext_stream, ciphertext);
     while (bufferstreamGetBufLen(&queue->ciphertext_stream) >= kTlsRecordShapingRecordHeaderSize)
@@ -219,7 +233,12 @@ bool tlsrecordshapingOutputQueueFeed(tlsrecordshaping_output_queue_t *queue, sbu
         queue->previous_release_at_ms = release_at;
 
         sbuf_t *record = bufferstreamReadExact(&queue->ciphertext_stream, record_length);
-        pushOutput(queue, record, release_at);
+        if (! pushOutput(queue, record, release_at))
+        {
+            reuseBuffer(record);
+            memoryFree(metadata);
+            return tlsrecordshapingSetError(error, "failed to allocate outgoing TLS record queue node");
+        }
         memoryFree(metadata);
     }
     return true;
@@ -228,10 +247,8 @@ bool tlsrecordshapingOutputQueueFeed(tlsrecordshaping_output_queue_t *queue, sbu
 bool tlsrecordshapingOutputQueueFinishFeed(const tlsrecordshaping_output_queue_t *queue,
                                            char                                   error[kTlsRecordShapingErrorSize])
 {
-    if (queue == NULL || ! queue->initialized)
-    {
-        return tlsrecordshapingSetError(error, "outgoing TLS record queue is not initialized");
-    }
+    assert(queue != NULL && queue->initialized);
+
     if (bufferstreamGetBufLen((buffer_stream_t *) &queue->ciphertext_stream) != 0)
     {
         return tlsrecordshapingSetError(error, "outgoing TLS write BIO ended with a partial record");
@@ -249,7 +266,9 @@ bool tlsrecordshapingOutputQueueFinishFeed(const tlsrecordshaping_output_queue_t
 
 sbuf_t *tlsrecordshapingOutputQueuePopReady(tlsrecordshaping_output_queue_t *queue, uint64_t now_ms, bool force)
 {
-    if (queue == NULL || queue->output_head == NULL || (! force && queue->output_head->release_at_ms > now_ms))
+    assert(queue != NULL && queue->initialized);
+
+    if (queue->output_head == NULL || (! force && queue->output_head->release_at_ms > now_ms))
     {
         return NULL;
     }
@@ -272,7 +291,9 @@ sbuf_t *tlsrecordshapingOutputQueuePopReady(tlsrecordshaping_output_queue_t *que
 bool tlsrecordshapingOutputQueueNextDelay(const tlsrecordshaping_output_queue_t *queue, uint64_t now_ms,
                                           uint32_t *delay_ms)
 {
-    if (queue == NULL || queue->output_head == NULL || delay_ms == NULL)
+    assert(queue != NULL && queue->initialized && delay_ms != NULL);
+
+    if (queue->output_head == NULL)
     {
         return false;
     }
@@ -289,17 +310,28 @@ bool tlsrecordshapingOutputQueueNextDelay(const tlsrecordshaping_output_queue_t 
 
 size_t tlsrecordshapingOutputQueueBytes(const tlsrecordshaping_output_queue_t *queue)
 {
-    return queue != NULL ? queue->queued_ciphertext_bytes : 0;
+    assert(queue != NULL && queue->initialized);
+
+    return queue->queued_ciphertext_bytes;
 }
 
 size_t tlsrecordshapingOutputQueueCount(const tlsrecordshaping_output_queue_t *queue)
 {
-    return queue != NULL ? queue->output_count : 0;
+    assert(queue != NULL && queue->initialized);
+
+    return queue->output_count;
 }
 
 bool tlsrecordshapingOutputQueueIsEmpty(const tlsrecordshaping_output_queue_t *queue)
 {
-    return queue == NULL ||
-           (queue->output_count == 0 && queue->metadata_count == 0 && queue->pending_metadata_count == 0 &&
-            bufferstreamGetBufLen((buffer_stream_t *) &queue->ciphertext_stream) == 0);
+    assert(queue != NULL);
+
+    /* Handshake takeover also queries this queue when record shaping is disabled. */
+    if (! queue->initialized)
+    {
+        return true;
+    }
+
+    return queue->output_count == 0 && queue->metadata_count == 0 && queue->pending_metadata_count == 0 &&
+           bufferstreamGetBufLen((buffer_stream_t *) &queue->ciphertext_stream) == 0;
 }

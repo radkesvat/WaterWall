@@ -14,7 +14,6 @@ typedef struct wgd_tstate_s
     tunnel_t *tunnel;
     wmutex_t  mutex;
     bool      transport_side_is_next;
-    bool      transport_direction_configured;
     bool      transport_side_resolved;
     line_t  **transport_lines;
 
@@ -43,6 +42,7 @@ WW_EXPORT api_result_t wireguarddeviceTunnelApi(tunnel_t *instance, sbuf_t *mess
 
 void wireguarddeviceTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offset);
 void wireguarddeviceTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
+bool wireguarddeviceTunnelOnSolvedTopology(tunnel_t *t, tunnel_chain_t *chain);
 void wireguarddeviceTunnelOnPrepair(tunnel_t *t);
 void wireguarddeviceTunnelOnStart(tunnel_t *t);
 void wireguarddeviceQueueWorkerPacketInit(void *worker, void *arg1, void *arg2, void *arg3);
@@ -69,7 +69,6 @@ void              wireguarddeviceLinestateDestroy(wgd_lstate_t *ls);
 void              wireguarddeviceStateLock(wgd_tstate_t *state);
 void              wireguarddeviceStateUnlock(wgd_tstate_t *state);
 bool              wireguarddeviceTransportSideIsNext(const wgd_tstate_t *state);
-void              wireguarddeviceResolveTransportSide(tunnel_t *t);
 line_t           *wireguarddeviceEnsureTransportLine(wgd_tstate_t *state, wid_t wid);
 void              wireguarddeviceCloseTransportLine(tunnel_t *t, wid_t wid);
 void              wireguarddeviceHandleTransportLineFinish(tunnel_t *t, line_t *line);

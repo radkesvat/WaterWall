@@ -142,7 +142,9 @@ static bool httpserverHeaderNameEquals(const char *value, const char *name)
 
 static const char *httpserverUpgradeProtocol(const httpserver_tstate_t *ts)
 {
-    if (ts == NULL || ts->upgrade_protocol == NULL || ts->upgrade_protocol[0] == '\0')
+    assert(ts != NULL);
+
+    if (ts->upgrade_protocol == NULL || ts->upgrade_protocol[0] == '\0')
     {
         return "h2c";
     }
@@ -152,12 +154,14 @@ static const char *httpserverUpgradeProtocol(const httpserver_tstate_t *ts)
 
 static bool httpserverUpgradeIsH2C(const httpserver_tstate_t *ts)
 {
-    return ts != NULL && stringAsciiCaseEquals(httpserverUpgradeProtocol(ts), "h2c");
+    assert(ts != NULL);
+    return stringAsciiCaseEquals(httpserverUpgradeProtocol(ts), "h2c");
 }
 
 static bool httpserverUpgradeIsCustom(const httpserver_tstate_t *ts)
 {
-    return ts != NULL && ! httpserverUpgradeIsH2C(ts);
+    assert(ts != NULL);
+    return ! httpserverUpgradeIsH2C(ts);
 }
 
 static bool httpserverShouldSkipExtraHeader(const char *name, bool websocket_mode)

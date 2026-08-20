@@ -6,11 +6,7 @@ void tcpoverudpclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf
 {
     tcpoverudpclient_lstate_t *ls = lineGetState(l, t);
 
-    if (UNLIKELY(ls->k_handle == NULL))
-    {
-        lineReuseBuffer(l, buf);
-        return;
-    }
+    assert(ls->k_handle != NULL);
 
     // any recv indicates that connection is still alive
     ls->last_recv = wloopNowMS(getWorkerLoop(lineGetWID(l)));
@@ -18,8 +14,11 @@ void tcpoverudpclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf
 
     if (ls->fec_decoder != NULL)
     {
-        if (! tcpoverudpFecDecodePacket(ls->fec_decoder, (const uint8_t *) sbufGetRawPtr(buf), sbufGetLength(buf),
-                                        tcpoverudpclientInputKcpPacket, ls))
+        if (! tcpoverudpFecDecodePacket(ls->fec_decoder,
+                                        (const uint8_t *) sbufGetRawPtr(buf),
+                                        sbufGetLength(buf),
+                                        tcpoverudpclientInputKcpPacket,
+                                        ls))
         {
             LOGW("TcpOverUdpClient: dropped invalid FEC packet");
         }
@@ -42,8 +41,8 @@ void tcpoverudpclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf
     {
         sbuf_t *large_buf = bufferpoolGetLargeBuffer(lineGetBufferPool(l));
 
-        int read =
-            ikcp_recv(ls->k_handle, (void *) sbufGetMutablePtr(large_buf), (int) sbufGetMaximumWriteableSize(large_buf));
+        int read = ikcp_recv(
+            ls->k_handle, (void *) sbufGetMutablePtr(large_buf), (int) sbufGetMaximumWriteableSize(large_buf));
 
         if (read <= 0)
         {

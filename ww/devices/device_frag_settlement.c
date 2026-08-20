@@ -2,6 +2,7 @@
 
 #include "devices/device_frag_affinity.h"
 #include "devices/device_reader_session.h"
+#include "loggers/internal_logger.h"
 
 struct device_frag_claim_s
 {
@@ -98,6 +99,11 @@ static void deviceFragClaimUnref(device_frag_claim_t *claim)
 {
     const w_atomic_uint_value_t previous = atomicSubExplicit(&claim->refcount, 1, memory_order_acq_rel);
     assert(previous > 0);
+    if (UNLIKELY(previous == 0))
+    {
+        LOGF("deviceFragClaimUnref: fragment claim refcount underflow");
+        abortProgramNow(1);
+    }
     if (previous == 1)
     {
         deviceFragClaimReleaseFinal(claim);

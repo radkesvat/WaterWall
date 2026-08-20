@@ -440,13 +440,19 @@ static smugglefintrick_release_context_t *smugglefintrickCreateReleaseContextLoc
     const ipmanipulator_smuggle_fin_flow_t *flow, bool force)
 {
     smugglefintrick_release_context_t *context = memoryAllocate(sizeof(*context));
-    *context                                   = (smugglefintrick_release_context_t) {
-                                          .src_addr   = flow->src_addr,
-                                          .dst_addr   = flow->dst_addr,
-                                          .generation = flow->pause_generation,
-                                          .src_port   = flow->src_port,
-                                          .dst_port   = flow->dst_port,
-                                          .force      = force,
+    if (UNLIKELY(context == NULL))
+    {
+        LOGF("IpManipulator: failed to allocate a smuggle-fin release context");
+        abortProgramNow(1);
+    }
+
+    *context = (smugglefintrick_release_context_t) {
+        .src_addr   = flow->src_addr,
+        .dst_addr   = flow->dst_addr,
+        .generation = flow->pause_generation,
+        .src_port   = flow->src_port,
+        .dst_port   = flow->dst_port,
+        .force      = force,
     };
     return context;
 }
@@ -741,10 +747,7 @@ bool smugglefintrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     uint32_t                                   queued_packets_count = 0;
     uint64_t                                   now_ms               = getTickMS();
 
-    if (state->trick_real_fin_upstream_tunnel == NULL)
-    {
-        return false;
-    }
+    assert(state->trick_real_fin_upstream_tunnel != NULL);
 
     /*
      * A pause belongs to one parseable TCP flow. Unparseable packets and every

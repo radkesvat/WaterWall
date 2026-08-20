@@ -870,6 +870,18 @@ if(TARGET ww)
         node_manager_map_invariant_test
         "unit;node-manager;configuration;capacity;lifetime"
       )
+
+      add_executable(node_layer_validation_test
+        node_layer_validation_test.c
+      )
+      target_link_libraries(node_layer_validation_test PRIVATE ww)
+      add_dependencies(waterwall_unit_tests node_layer_validation_test)
+
+      add_waterwall_unit_test(
+        waterwall.node_layer_validation_unit
+        node_layer_validation_test
+        "unit;node-manager;validation;layer;capabilities"
+      )
     endif()
 
     add_executable(thread_creation_failure_test thread_creation_failure_test.c)
@@ -1198,6 +1210,23 @@ if(TARGET RealityCommon)
   add_dependencies(waterwall_unit_tests reality_v2_test)
 
   add_waterwall_unit_test(waterwall.reality_v2_unit reality_v2_test "unit;tunnels;reality;v2;crypto;replay;direction")
+endif()
+
+if(TARGET WireGuardDevice)
+  add_executable(wireguarddevice_layer_resolution_test
+    wireguarddevice_layer_resolution_test.c
+  )
+  target_include_directories(wireguarddevice_layer_resolution_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/tunnels/WireGuardDevice
+  )
+  target_link_libraries(wireguarddevice_layer_resolution_test PRIVATE WireGuardDevice ww)
+  add_dependencies(waterwall_unit_tests wireguarddevice_layer_resolution_test)
+
+  add_waterwall_unit_test(
+    waterwall.wireguarddevice_layer_resolution_unit
+    wireguarddevice_layer_resolution_test
+    "unit;tunnels;wireguard;layer;topology"
+  )
 endif()
 
 if(LINUX AND TARGET WireGuardDevice)

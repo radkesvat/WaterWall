@@ -286,18 +286,13 @@ bool tlsclientDrainShapedOutput(tunnel_t *t, line_t *l, tlsclient_lstate_t *ls, 
 static void tlsclientShapingOutputTimerCallback(wtimer_t *timer)
 {
     tlsclient_lstate_t *ls = weventGetUserdata(timer);
-    if (ls == NULL)
-    {
-        return;
-    }
+    assert(ls != NULL && ls->shaping_output_timer == timer);
+
+    tunnel_t *t = ls->tunnel;
+    line_t   *l = ls->line;
+    assert(t != NULL && l != NULL && lineIsAlive(l) && ! ls->resources_released);
 
     ls->shaping_output_timer = NULL;
-    tunnel_t *t              = ls->tunnel;
-    line_t   *l              = ls->line;
-    if (t == NULL || l == NULL || ! lineIsAlive(l) || ls->resources_released)
-    {
-        return;
-    }
 
     lineLock(l);
     if (! tlsclientDrainShapedOutput(t, l, ls, false))
@@ -962,10 +957,7 @@ static void tlsclientFreeSslContextPool(SSL_CTX ***contexts)
 
 void tlsclientTunnelstateDestroy(tlsclient_tstate_t *ts)
 {
-    if (ts == NULL)
-    {
-        return;
-    }
+    assert(ts != NULL);
 
     tlsclientFreeSslContextPool(&ts->threadlocal_ssl_contexts);
     tlsclientFreeSslContextPool(&ts->threadlocal_ech_grease_inner_ssl_contexts);

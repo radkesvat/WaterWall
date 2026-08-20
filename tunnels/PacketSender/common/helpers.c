@@ -30,7 +30,6 @@ static uint8_t packetsenderGetSingleProtocolNumber(const packetsender_tstate_t *
     default:
         LOGF("PacketSender: internal error, invalid single-protocol mode %u", (unsigned int) state->protocol_mode);
         abortProgramNow(1);
-        return 0;
     }
 }
 
@@ -518,7 +517,6 @@ static void packetsenderSendReadyPackets(packetsender_worker_state_t *slot)
         {
             LOGF("PacketSender: worker packet line died during payload send");
             abortProgramNow(1);
-            return;
         }
 
         slot->next_packet_index = current_index + 1U;
@@ -743,7 +741,6 @@ void packetsenderStartWorker(void *worker_ptr, void *arg1, void *arg2, void *arg
     {
         LOGF("PacketSender: worker %u packet line is not available", (unsigned int) worker->wid);
         abortProgramNow(1);
-        return;
     }
 
     if (slot->packet_index_begin == slot->packet_index_end)
@@ -759,10 +756,7 @@ void packetsenderStartWorker(void *worker_ptr, void *arg1, void *arg2, void *arg
 void packetsenderWorkerTimerCallback(wtimer_t *timer)
 {
     packetsender_worker_state_t *slot = weventGetUserdata(timer);
-    if (slot == NULL || slot->stopped)
-    {
-        return;
-    }
+    assert(slot != NULL && slot->timer == timer && ! slot->stopped);
 
     packetsenderSendReadyPackets(slot);
 }

@@ -169,9 +169,10 @@ static inline void lineLock(line_t *const line)
     assert(line->alive);
     assert(line->refc < LINE_REFC_MAX);
 
-    if (0 == atomicIncRelaxed(&line->refc))
+    if (UNLIKELY(! line->alive) || UNLIKELY(0 == atomicIncRelaxed(&line->refc)))
     {
-        assert(false);
+        printError("lineLock: attempted to lock dead line or reference count overflow");
+        abortProgramNow(1);
     }
 }
 
@@ -193,6 +194,11 @@ static inline void lineUnlock(line_t *const line)
 static inline void lineDestroy(line_t *const l)
 {
     assert(l->alive);
+    if (UNLIKELY(! l->alive))
+    {
+        printError("lineDestroy: duplicate line destruction or line is not alive");
+        abortProgramNow(1);
+    }
     l->alive = false;
     lineUnlock(l);
 }

@@ -78,13 +78,24 @@ typedef MSVC_ATTR_ALIGNED_LINE_CACHE struct master_pool_s
 /** Account for an item leaving/returning to this family of local pools. */
 static inline void masterpoolRecordCheckout(master_pool_t *const pool)
 {
-    atomicAddExplicit(&pool->checked_out, 1, memory_order_relaxed);
+    const size_t previous = atomicAddExplicit(&pool->checked_out, 1, memory_order_relaxed);
+    assert(previous != SIZE_MAX);
+    if (UNLIKELY(previous == SIZE_MAX))
+    {
+        printError("masterpoolRecordCheckout: checkout counter overflow");
+        abortProgramNow(1);
+    }
 }
 
 static inline void masterpoolRecordReturn(master_pool_t *const pool)
 {
-    assert(atomicLoadExplicit(&pool->checked_out, memory_order_relaxed) > 0);
-    atomicSubExplicit(&pool->checked_out, 1, memory_order_release);
+    const size_t previous = atomicSubExplicit(&pool->checked_out, 1, memory_order_release);
+    assert(previous != 0);
+    if (UNLIKELY(previous == 0))
+    {
+        printError("masterpoolRecordReturn: return counter underflow");
+        abortProgramNow(1);
+    }
 }
 
 static inline size_t masterpoolGetCheckedOut(const master_pool_t *const pool)

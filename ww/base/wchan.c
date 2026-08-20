@@ -923,7 +923,13 @@ void chanClose(wchan_t *c)
 
 void chanFree(wchan_t *c)
 {
-    assert(atomicLoadExplicit(&c->closed, memory_order_acquire)); // must close channel before freeing its memory
+    const bool closed = atomicLoadExplicit(&c->closed, memory_order_acquire);
+    assert(closed); // must close channel before freeing its memory
+    if (UNLIKELY(! closed))
+    {
+        printError("chanFree: channel must be closed before freeing its memory");
+        abortProgramNow(1);
+    }
     chan_lock_destroy(&c->lock);
     memoryFreeAligned(c);
 }

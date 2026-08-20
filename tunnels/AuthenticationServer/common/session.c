@@ -22,10 +22,7 @@ static bool authenticationserverTokenIsZero(const uint8_t token[kAuthenticationS
 
 static void authenticationserverSessionDestroyFields(authenticationserver_session_t *session)
 {
-    if (UNLIKELY(session == NULL))
-    {
-        return;
-    }
+    assert(session != NULL);
 
     usersDestroy(&session->baseline_users);
     memoryFree(session->client_name);
@@ -35,10 +32,7 @@ static void authenticationserverSessionDestroyFields(authenticationserver_sessio
 
 static void authenticationserverSessionFree(authenticationserver_session_t *session)
 {
-    if (UNLIKELY(session == NULL))
-    {
-        return;
-    }
+    assert(session != NULL);
 
     authenticationserverSessionDestroyFields(session);
     memoryFree(session);
@@ -70,10 +64,7 @@ bool authenticationserverCopyUsersTable(users_t *dest, const users_t *src)
 bool authenticationserverSessionReplaceBaselineFromUsers(authenticationserver_session_t *session, const users_t *src,
                                                          uint64_t config_revision, uint64_t stats_revision)
 {
-    if (UNLIKELY(session == NULL || src == NULL))
-    {
-        return false;
-    }
+    assert(session != NULL && src != NULL);
 
     if (UNLIKELY(! authenticationserverCopyUsersTable(&session->baseline_users, src)))
     {
@@ -88,10 +79,7 @@ bool authenticationserverSessionReplaceBaselineFromUsers(authenticationserver_se
 static const authenticationserver_auth_client_t *authenticationserverFindAuthClient(
     const authenticationserver_tstate_t *ts, const char *name, const char *secret)
 {
-    if (UNLIKELY(name == NULL || secret == NULL))
-    {
-        return NULL;
-    }
+    assert(ts != NULL && name != NULL && secret != NULL);
 
     for (uint32_t i = 0; i < ts->auth_clients_count; ++i)
     {
@@ -118,7 +106,9 @@ authenticationserver_session_t *authenticationserverSessionFindByTokenLocked(
 {
     authenticationserver_tstate_t *ts = tunnelGetState(t);
 
-    if (UNLIKELY(token == NULL || authenticationserverTokenIsZero(token)))
+    assert(token != NULL);
+
+    if (UNLIKELY(authenticationserverTokenIsZero(token)))
     {
         return NULL;
     }
@@ -185,6 +175,8 @@ static void authenticationserverSessionsRemoveClientLocked(authenticationserver_
 
 authenticationserver_session_t *authenticationserverSessionCreate(tunnel_t *t, const char *name, const char *secret)
 {
+    assert(name != NULL && secret != NULL);
+
     authenticationserver_tstate_t            *ts     = tunnelGetState(t);
     const authenticationserver_auth_client_t *client = authenticationserverFindAuthClient(ts, name, secret);
 
@@ -291,10 +283,7 @@ static void authenticationserverSessionRemoveAtLocked(authenticationserver_tstat
 
 static void authenticationserverSessionsRemoveClientLocked(authenticationserver_tstate_t *ts, const char *client_name)
 {
-    if (UNLIKELY(client_name == NULL))
-    {
-        return;
-    }
+    assert(client_name != NULL);
 
     uint32_t removed_count = 0;
     for (uint32_t i = 0; i < ts->sessions_count;)
@@ -363,7 +352,9 @@ void authenticationserverSessionExpiryTimerCallback(wtimer_t *timer)
 
 void authenticationserverSessionsDestroy(authenticationserver_tstate_t *ts)
 {
-    if (UNLIKELY(ts == NULL || ts->sessions == NULL))
+    assert(ts != NULL);
+
+    if (ts->sessions == NULL)
     {
         return;
     }
@@ -382,7 +373,9 @@ void authenticationserverSessionsDestroy(authenticationserver_tstate_t *ts)
 
 void authenticationserverAuthClientsDestroy(authenticationserver_tstate_t *ts)
 {
-    if (UNLIKELY(ts == NULL || ts->auth_clients == NULL))
+    assert(ts != NULL);
+
+    if (ts->auth_clients == NULL)
     {
         return;
     }
