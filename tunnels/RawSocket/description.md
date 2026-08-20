@@ -1,5 +1,5 @@
 <!--
-Documentation version: 118
+Documentation version: 119
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/RawSocket.mdx, and both files must keep the same documentation version.
 -->
 
@@ -13,7 +13,7 @@ This node is a layer-3 adapter rather than a connection-oriented tunnel.
 
 - Creates a capture device for matching IPv4 packets.
 - Creates a raw output device for sending raw IPv4 packets.
-- Captures packets that match a configured IP filter.
+- Captures packets that match a configured IP filter and drops them from the host kernel network stack so only WaterWall receives and accesses them.
 - Forwards captured packets to the adjacent chain side.
 - Writes raw IP packets from the chain out through the raw device.
 - Applies checksum recalculation before writing when the line requests it.
@@ -124,6 +124,7 @@ When a packet is captured:
 - fragmented packets are never given a transport checksum calculated over one fragment. A fragmented L4-offload packet
   is dropped; an IP-header-only offload may repair that header while preserving a demonstrably valid transport checksum
 - only IPv4 packets are currently forwarded by this path
+- matching packets are intercepted and dropped from the host kernel stack (using drop-and-dispatch verdicts or packet diversion), so the host OS kernel does not process them and only WaterWall receives and has access to them
 - the packet is forwarded through the chosen adjacent side using the worker packet line
 
 Fragment affinity follows the captured packet buffer through forwarding, delay, one-to-one copies, duplication, worker
@@ -150,7 +151,7 @@ Both upstream and downstream payload handlers write to the same raw output devic
 
 ### Capture filter behavior
 
-The capture device is configured using `capture-ips`.
+The capture device is configured using `capture-ips`. Captured packets matching the configured source IP filter are dropped from the host kernel networking stack: the host operating system kernel does not process them, and only WaterWall receives and has access to them.
 
 Current implementation behavior:
 

@@ -1,5 +1,5 @@
 <!--
-Documentation version: 106
+Documentation version: 107
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/PacketSplitStream.mdx, and both files must keep the same documentation version.
 -->
 
@@ -28,4 +28,20 @@ Unlike `HalfDuplexClient`, this tunnel is packet-line anchored and does not do p
 - `settings.up`: node name used as the upstream entry tunnel for sent packets
 - `settings.down`: node name chained as the normal downstream branch for received packets
 
-Top-level `next` is intentionally unused for this tunnel.
+Top-level `next` is intentionally unused for this tunnel in configuration.
+
+## Node Metadata
+
+Source-backed metadata:
+
+| Property | Value |
+| --- | --- |
+| node flag | `kNodeFlagChainEnd` |
+| `can_have_prev` | `true` |
+| `can_have_next` | `true` |
+| `layer_group` | `kNodeLayer3` |
+| `layer_group_prev_node` | `kNodeLayer3` |
+| `layer_group_next_node` | `kNodeLayer3` |
+| `required_padding_left` | `0` |
+
+During chain construction, `PacketSplitStream` binds its configured `down` branch as its chained `next` tunnel (`tunnelBind(t, state->down_tunnel)`), allowing it to receive return packets flowing downstream from the `down` node. Consequently, `can_have_next` is `true` and `layer_group_next_node` is `kNodeLayer3`.
