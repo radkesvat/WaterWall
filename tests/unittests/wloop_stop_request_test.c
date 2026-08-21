@@ -898,6 +898,216 @@ static void controlCleanupCallback(wevent_t *event)
     ++*runs;
 }
 
+typedef struct custom_event_batch_quiesce_probe_s
+{
+    wloop_t     *loop;
+    unsigned int stopper_runs;
+    unsigned int victim_runs;
+} custom_event_batch_quiesce_probe_t;
+
+static void customEventBatchStopper(wevent_t *event)
+{
+    custom_event_batch_quiesce_probe_t *probe = weventGetUserdata(event);
+    ++probe->stopper_runs;
+    require(wloopCloseNormalAdmission(probe->loop), "custom-event batch could not close normal admission");
+}
+
+static void customEventBatchVictim(wevent_t *event)
+{
+    custom_event_batch_quiesce_probe_t *probe = weventGetUserdata(event);
+    ++probe->victim_runs;
+}
+
+static void testCapturedCustomEventBatchStopsAtQuiescence(env_t *env)
+{
+    wloop_t *loop = wloopCreate(0, env->buffer_pool, 0);
+    require(loop != NULL, "failed to create the custom-event batch fixture");
+
+    custom_event_batch_quiesce_probe_t probe = {.loop = loop};
+    wevent_t                           event;
+    memoryZero(&event, sizeof(event));
+    event.userdata = &probe;
+    event.cb       = customEventBatchStopper;
+    require(wloopPostEvent(loop, &event), "failed to post the custom-event batch stopper");
+    event.cb = customEventBatchVictim;
+    require(wloopPostEvent(loop, &event), "failed to post the custom-event batch victim");
+
+    discard wloopProcessEvents(loop, 0);
+    require(probe.stopper_runs == 1, "custom-event batch stopper did not run exactly once");
+    require(probe.victim_runs == 0, "a copied custom event started after normal admission closed");
+
+    wloopDestroy(&loop);
+}
+
+enum
+{
+    kCustomEventChunkTestRecords = 80,
+};
+
+typedef struct custom_event_chunk_order_probe_s
+{
+    uint32_t controls;
+    uint32_t normals;
+    bool     failed;
+} custom_event_chunk_order_probe_t;
+
+static void customEventChunkControl(wevent_t *event)
+{
+    custom_event_chunk_order_probe_t *probe = weventGetUserdata(event);
+    const uint32_t                    index = (uint32_t) (uintptr_t) event->privdata;
+    if (index != probe->controls || probe->normals != 0)
+    {
+        probe->failed = true;
+    }
+    ++probe->controls;
+}
+
+static void customEventChunkNormal(wevent_t *event)
+{
+    custom_event_chunk_order_probe_t *probe = weventGetUserdata(event);
+    const uint32_t                    index = (uint32_t) (uintptr_t) event->privdata;
+    if (index != probe->normals || probe->controls != kCustomEventChunkTestRecords)
+    {
+        probe->failed = true;
+    }
+    ++probe->normals;
+}
+
+static void testChunkedCustomEventsKeepControlFirstAndFIFO(env_t *env)
+{
+    wloop_t *loop = wloopCreate(0, env->buffer_pool, 0);
+    require(loop != NULL, "failed to create chunked custom-event ordering fixture");
+
+    custom_event_chunk_order_probe_t probe;
+    memoryZero(&probe, sizeof(probe));
+    for (uint32_t index = 0; index < kCustomEventChunkTestRecords; ++index)
+    {
+        wevent_t event;
+        memoryZero(&event, sizeof(event));
+        event.cb       = customEventChunkNormal;
+        event.userdata = &probe;
+        event.privdata = (void *) (uintptr_t) index;
+        require(wloopPostEvent(loop, &event), "failed to post chunked normal event");
+    }
+    for (uint32_t index = 0; index < kCustomEventChunkTestRecords; ++index)
+    {
+        wevent_t event;
+        memoryZero(&event, sizeof(event));
+        event.cb       = customEventChunkControl;
+        event.userdata = &probe;
+        event.privdata = (void *) (uintptr_t) index;
+        require(wloopPostControlEvent(loop, &event), "failed to post chunked control event");
+    }
+
+    discard wloopProcessEvents(loop, 0);
+    require(! probe.failed, "chunked custom events broke control-before-normal FIFO ordering");
+    require(probe.controls == kCustomEventChunkTestRecords && probe.normals == kCustomEventChunkTestRecords,
+            "chunked custom events lost a control or normal callback");
+    wloopDestroy(&loop);
+}
+
+typedef struct custom_event_chunk_close_probe_s
+{
+    wloop_t *loop;
+    uint32_t stopper_position;
+    uint32_t runs;
+    bool     failed;
+} custom_event_chunk_close_probe_t;
+
+static void customEventChunkClose(wevent_t *event)
+{
+    custom_event_chunk_close_probe_t *probe = weventGetUserdata(event);
+    const uint32_t                    index = (uint32_t) (uintptr_t) event->privdata;
+    if (index != probe->runs)
+    {
+        probe->failed = true;
+    }
+    ++probe->runs;
+    if (index == probe->stopper_position)
+    {
+        require(wloopCloseNormalAdmission(probe->loop), "chunked custom-event stopper could not close admission");
+    }
+}
+
+static void testChunkedCustomEventsStopAtSeveralCopiedPositions(env_t *env)
+{
+    /* Positions cover the start, middle, and end of the first 32-event copied
+     * chunk without inspecting the queue's private backing storage. */
+    const uint32_t positions[] = {0, 7, 31};
+    for (uint32_t case_index = 0; case_index < ARRAY_SIZE(positions); ++case_index)
+    {
+        wloop_t *loop = wloopCreate(0, env->buffer_pool, 0);
+        require(loop != NULL, "failed to create chunked custom-event closure fixture");
+
+        custom_event_chunk_close_probe_t probe = {
+            .loop             = loop,
+            .stopper_position = positions[case_index],
+        };
+        for (uint32_t index = 0; index < kCustomEventChunkTestRecords; ++index)
+        {
+            wevent_t event;
+            memoryZero(&event, sizeof(event));
+            event.cb       = customEventChunkClose;
+            event.userdata = &probe;
+            event.privdata = (void *) (uintptr_t) index;
+            require(wloopPostEvent(loop, &event), "failed to post chunked closure event");
+        }
+
+        discard wloopProcessEvents(loop, 0);
+        require(! probe.failed, "chunked custom-event closure changed FIFO order");
+        require(probe.runs == positions[case_index] + 1U,
+                "a copied normal event started after normal admission closed");
+        wloopDestroy(&loop);
+    }
+}
+
+typedef struct custom_event_next_wake_probe_s
+{
+    wloop_t     *loop;
+    unsigned int stage;
+} custom_event_next_wake_probe_t;
+
+static void customEventNextWake(wevent_t *event)
+{
+    custom_event_next_wake_probe_t *probe = weventGetUserdata(event);
+    const uintptr_t                 index = (uintptr_t) event->privdata;
+
+    if (index == 0)
+    {
+        require(probe->stage == 0, "recursive custom event entered the wrong wake batch");
+        probe->stage = 1;
+        wevent_t next;
+        memoryZero(&next, sizeof(next));
+        next.cb       = customEventNextWake;
+        next.userdata = probe;
+        next.privdata = (void *) 1;
+        require(wloopPostEvent(probe->loop, &next), "recursive custom event was not accepted");
+        return;
+    }
+
+    require(index == 1 && probe->stage == 1, "recursive custom event did not wait for the next captured wake");
+    probe->stage = 2;
+}
+
+static void testRecursiveCustomEventUsesNextCapturedWake(env_t *env)
+{
+    wloop_t *loop = wloopCreate(0, env->buffer_pool, 0);
+    require(loop != NULL, "failed to create recursive custom-event fixture");
+
+    custom_event_next_wake_probe_t probe = {.loop = loop};
+    wevent_t                       event;
+    memoryZero(&event, sizeof(event));
+    event.cb       = customEventNextWake;
+    event.userdata = &probe;
+    require(wloopPostEvent(loop, &event), "failed to post recursive custom-event root");
+
+    discard wloopProcessEvents(loop, 0);
+    require(probe.stage == 1, "recursive custom event joined its current captured wake");
+    discard wloopProcessEvents(loop, 0);
+    require(probe.stage == 2, "recursive custom event did not run on the next captured wake");
+    wloopDestroy(&loop);
+}
+
 static void testControlCleanupDrainsAfterNormalAdmissionCloses(env_t *env)
 {
     loop_runner_t runner;
@@ -933,6 +1143,10 @@ int main(void)
     testAdmittedPartialWritePublishesBeforeClosure(&env);
 
     testNullLoop();
+    testCapturedCustomEventBatchStopsAtQuiescence(&env);
+    testChunkedCustomEventsKeepControlFirstAndFIFO(&env);
+    testChunkedCustomEventsStopAtSeveralCopiedPositions(&env);
+    testRecursiveCustomEventUsesNextCapturedWake(&env);
     testControlCleanupDrainsAfterNormalAdmissionCloses(&env);
     testStopWakesBlockedLoop(&env);
     testStopBeforeRunIsHonored(&env);

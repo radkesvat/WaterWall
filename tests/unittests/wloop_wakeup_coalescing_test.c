@@ -353,6 +353,125 @@ static void testManyPostsBeforeRun(env_t *env)
     runnerDestroy(&runner);
 }
 
+enum
+{
+    kChunkedWakeEvents = 80,
+};
+
+typedef struct chunked_wake_probe_s
+{
+    wloop_t *loop;
+    size_t   controls;
+    size_t   normals;
+    bool     failed;
+} chunked_wake_probe_t;
+
+static void chunkedWakeControlCallback(wevent_t *event)
+{
+    chunked_wake_probe_t *probe = event->userdata;
+    const size_t          id    = (size_t) (uintptr_t) event->privdata;
+    if (id != probe->controls || probe->normals != 0)
+    {
+        probe->failed = true;
+    }
+    ++probe->controls;
+}
+
+static void chunkedWakeNormalCallback(wevent_t *event)
+{
+    chunked_wake_probe_t *probe = event->userdata;
+    const size_t          id    = (size_t) (uintptr_t) event->privdata;
+    if (id != probe->normals || probe->controls != kChunkedWakeEvents)
+    {
+        probe->failed = true;
+    }
+    ++probe->normals;
+    if (probe->normals == kChunkedWakeEvents)
+    {
+        require(wloopRequestQuiesce(probe->loop), "chunked wake ordering callback could not stop the loop");
+    }
+}
+
+static void testChunkedControlBeforeNormalFIFO(env_t *env)
+{
+    loop_runner_t        runner;
+    chunked_wake_probe_t probe;
+    runnerCreate(&runner, env);
+
+    memoryZero(&probe, sizeof(probe));
+    probe.loop = runner.loop;
+    for (size_t id = 0; id < kChunkedWakeEvents; ++id)
+    {
+        postEvent(runner.loop, chunkedWakeNormalCallback, &probe, id);
+    }
+    for (size_t id = 0; id < kChunkedWakeEvents; ++id)
+    {
+        wevent_t event;
+        memoryZero(&event, sizeof(event));
+        event.cb       = chunkedWakeControlCallback;
+        event.userdata = &probe;
+        event.privdata = (void *) id;
+        require(wloopPostControlEvent(runner.loop, &event), "chunked control event post was rejected");
+    }
+
+    runnerStart(&runner);
+    require(waitForFlag(&runner.finished, 5000), "chunked control/normal wake batch did not finish");
+    runnerJoin(&runner);
+    require(! probe.failed, "forced wake backend broke chunked control-before-normal FIFO ordering");
+    require(probe.controls == kChunkedWakeEvents && probe.normals == kChunkedWakeEvents,
+            "forced wake backend lost a chunked control or normal event");
+    runnerDestroy(&runner);
+}
+
+typedef struct chunked_wake_close_probe_s
+{
+    wloop_t *loop;
+    size_t   stopper;
+    size_t   runs;
+    bool     failed;
+} chunked_wake_close_probe_t;
+
+static void chunkedWakeCloseCallback(wevent_t *event)
+{
+    chunked_wake_close_probe_t *probe = event->userdata;
+    const size_t                id    = (size_t) (uintptr_t) event->privdata;
+    if (id != probe->runs)
+    {
+        probe->failed = true;
+    }
+    ++probe->runs;
+    if (id == probe->stopper)
+    {
+        require(wloopRequestQuiesce(probe->loop), "chunked wake closure callback could not stop the loop");
+    }
+}
+
+static void testChunkedNormalClosure(env_t *env)
+{
+    const size_t positions[] = {0, 7, 31};
+    for (size_t case_index = 0; case_index < ARRAY_SIZE(positions); ++case_index)
+    {
+        loop_runner_t              runner;
+        chunked_wake_close_probe_t probe;
+        runnerCreate(&runner, env);
+
+        memoryZero(&probe, sizeof(probe));
+        probe.loop    = runner.loop;
+        probe.stopper = positions[case_index];
+        for (size_t id = 0; id < kChunkedWakeEvents; ++id)
+        {
+            postEvent(runner.loop, chunkedWakeCloseCallback, &probe, id);
+        }
+
+        runnerStart(&runner);
+        require(waitForFlag(&runner.finished, 5000), "chunked normal closure wake batch did not finish");
+        runnerJoin(&runner);
+        require(! probe.failed, "forced wake backend changed FIFO before chunked normal closure");
+        require(probe.runs == probe.stopper + 1, "forced wake backend started a copied normal event after closure");
+        runnerDestroy(&runner);
+    }
+}
+
 static void recursiveDeliveryCallback(wevent_t *event)
 {
     ordered_delivery_t *delivery = event->userdata;
@@ -561,6 +680,8 @@ int main(void)
     testDescriptorRegistrationRejection(&env);
     testStopPublicationAfterWakeFailure(&env);
     testManyPostsBeforeRun(&env);
+    testChunkedControlBeforeNormalFIFO(&env);
+    testChunkedNormalClosure(&env);
     testRecursivePosting(&env);
     testPostDuringCallbackUsesNextBatch(&env);
     testConcurrentProducers(&env);
