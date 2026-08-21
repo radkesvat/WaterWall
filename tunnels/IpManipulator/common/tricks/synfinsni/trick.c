@@ -526,6 +526,7 @@ static bool synfinsnitrickScheduleHoldTimeout(tunnel_t *t, line_t *l, const ipma
 
     /* The queued message owns a separate reference from the held flow record. */
     lineLock(l);
+    WW_WORKER_MESSAGE_BENCHMARK_RECORD_CONTINUATION(kWorkerMessageBenchmarkContinuationIpManipulatorDeferred);
 #ifdef IPMANIPULATOR_SYNFIN_TEST_HOOKS
     bool scheduled = ipmanipulatorSynfinTestScheduleTimed(lineGetWID(l),
                                                           (WorkerMessageCallback) synfinsnitrickRunHoldTimeout,

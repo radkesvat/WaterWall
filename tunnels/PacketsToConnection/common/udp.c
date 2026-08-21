@@ -162,6 +162,7 @@ void ptcUdpReceived(void *arg, struct udp_pcb *upcb, struct pbuf *p, const ip_ad
     if (lineIsAlive(line))
     {
         /* UDP is intentionally lossy when the worker queue refuses admission. */
+        WW_WORKER_MESSAGE_BENCHMARK_RECORD_CONTINUATION(kWorkerMessageBenchmarkContinuationBridgeRetryOrDelivery);
         discard lineScheduleTaskWithBuf(line, ptcDeliverPayloadTask, t, buf);
     }
     else

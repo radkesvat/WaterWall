@@ -454,6 +454,7 @@ static void streamtopacketsQueueEvictedCloses(tunnel_t *t, streamtopackets_line_
         // a rejected message has already run its cleanup.
         lineLock(l);
 
+        WW_WORKER_MESSAGE_BENCHMARK_RECORD_CONTINUATION(kWorkerMessageBenchmarkContinuationBridgeRetryOrDelivery);
         if (UNLIKELY(
                 sendWorkerMessageForceQueueWithCleanup(wid,
                                                        (WorkerMessageCallback) streamtopacketsCloseEvictedLineOnWorker,
@@ -833,6 +834,7 @@ void streamtopacketsQueueSelectedWrite(tunnel_t *t, streamtopackets_selected_lin
                                                .line_id    = selected->line_id,
                                                .generation = selected->generation};
 
+    WW_WORKER_MESSAGE_BENCHMARK_RECORD_CONTINUATION(kWorkerMessageBenchmarkContinuationBridgeRetryOrDelivery);
     sendWorkerMessageForceQueueBestEffortWithCleanup(selected->wid,
                                                      (WorkerMessageCallback) streamtopacketsWriteSelectedLineOnWorker,
                                                      streamtopacketsCleanupSelectedWrite,

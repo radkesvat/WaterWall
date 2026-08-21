@@ -312,6 +312,7 @@ static bool ctpQueueWriteRetryLocked(ctp_lstate_t *ls)
 
     ls->write_retry_queued = true;
 
+    WW_WORKER_MESSAGE_BENCHMARK_RECORD_CONTINUATION(kWorkerMessageBenchmarkContinuationBridgeRetryOrDelivery);
     if (! lineScheduleTask(ls->line, ctpResumeWriteTask, ls->tunnel))
     {
         ls->write_retry_queued = false;
@@ -464,6 +465,7 @@ err_t ctpTcpRecvCallback(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t 
         if (! ls->refused_retry_queued)
         {
             ls->refused_retry_queued = true;
+            WW_WORKER_MESSAGE_BENCHMARK_RECORD_CONTINUATION(kWorkerMessageBenchmarkContinuationBridgeRetryOrDelivery);
             if (! lineIsAlive(l) || ! lineScheduleTask(l, ctpRefusedDataRetryTask, t))
             {
                 ls->refused_retry_queued = false;
@@ -507,6 +509,7 @@ err_t ctpTcpRecvCallback(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t 
         return ERR_MEM;
     }
 
+    WW_WORKER_MESSAGE_BENCHMARK_RECORD_CONTINUATION(kWorkerMessageBenchmarkContinuationBridgeRetryOrDelivery);
     if (! lineScheduleTaskWithBuf(l, ctpDeliverPayloadTask, t, buf))
     {
         /* Scheduler cleanup owns the copied sbuf; lwIP retains and replays p. */

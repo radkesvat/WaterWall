@@ -737,6 +737,7 @@ void testerclientScheduleRequestSend(tunnel_t *t, line_t *l, testerclient_lstate
     }
 
     ls->request_send_scheduled = true;
+    WW_WORKER_MESSAGE_BENCHMARK_RECORD_CONTINUATION(kWorkerMessageBenchmarkContinuationTesterSend);
     if (UNLIKELY(! lineScheduleTask(l, testerclientRequestSendTask, t)))
     {
         ls->request_send_scheduled = false;
@@ -807,6 +808,7 @@ void testerclientRequestSendTask(tunnel_t *t, line_t *l)
                 ls->request_send_scheduled = true;
                 if (ts->split_payload_delay_ms == 0)
                 {
+                    WW_WORKER_MESSAGE_BENCHMARK_RECORD_CONTINUATION(kWorkerMessageBenchmarkContinuationTesterSend);
                     if (UNLIKELY(! lineScheduleTask(l, testerclientRequestSendTask, t)))
                     {
                         ls->request_send_scheduled = false;
@@ -822,6 +824,7 @@ void testerclientRequestSendTask(tunnel_t *t, line_t *l)
                 }
                 else
                 {
+                    WW_WORKER_MESSAGE_BENCHMARK_RECORD_CONTINUATION(kWorkerMessageBenchmarkContinuationTesterSend);
                     if (UNLIKELY(
                             ! lineScheduleDelayedTask(l, testerclientRequestSendTask, ts->split_payload_delay_ms, t)))
                     {

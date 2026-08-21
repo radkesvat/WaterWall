@@ -81,6 +81,7 @@ err_t lwipThreadPtcTcpRecvCallback(void *arg, struct tcp_pcb *tpcb, struct pbuf 
         if (! ls->refused_retry_queued)
         {
             ls->refused_retry_queued = true;
+            WW_WORKER_MESSAGE_BENCHMARK_RECORD_CONTINUATION(kWorkerMessageBenchmarkContinuationBridgeRetryOrDelivery);
             if (! lineIsAlive(ls->line) || ! lineScheduleTask(ls->line, ptcRefusedDataRetryTask, ls->tunnel))
             {
                 ls->refused_retry_queued = false;
@@ -112,6 +113,7 @@ err_t lwipThreadPtcTcpRecvCallback(void *arg, struct tcp_pcb *tpcb, struct pbuf 
         return ERR_ABRT;
     }
 
+    WW_WORKER_MESSAGE_BENCHMARK_RECORD_CONTINUATION(kWorkerMessageBenchmarkContinuationBridgeRetryOrDelivery);
     if (! lineScheduleTaskWithBuf(ls->line, ptcDeliverPayloadTask, ls->tunnel, buf))
     {
         /* Scheduler cleanup owns the copied sbuf; lwIP retains and replays p. */

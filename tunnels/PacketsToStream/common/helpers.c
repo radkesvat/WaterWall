@@ -634,6 +634,7 @@ void packetstostreamForwardDecodedPacket(tunnel_t *t, line_t *stream_line, sbuf_
     }
 
     lineLock(packet_line);
+    WW_WORKER_MESSAGE_BENCHMARK_RECORD_CONTINUATION(kWorkerMessageBenchmarkContinuationBridgeRetryOrDelivery);
     sendWorkerMessageForceQueueBestEffortWithCleanup(target_wid,
                                                      (WorkerMessageCallback) packetstostreamReplayDecodedPacketOnWorker,
                                                      packetstostreamCleanupDecodedPacket,
@@ -650,6 +651,7 @@ void packetstostreamScheduleRecreateOutputLine(tunnel_t *t, line_t *packet_line,
     }
 
     ls->recreate_scheduled = true;
+    WW_WORKER_MESSAGE_BENCHMARK_RECORD_CONTINUATION(kWorkerMessageBenchmarkContinuationBridgeRetryOrDelivery);
     if (UNLIKELY(! lineScheduleTask(packet_line, packetstostreamRecreateOutputLineTask, t)))
     {
         /* Leave the packet worker retryable; the next packet/heartbeat may

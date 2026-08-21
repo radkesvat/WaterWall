@@ -410,6 +410,7 @@ err_t ptcNetifOutput(struct netif *netif, struct pbuf *p, const ip4_addr_t *ipad
     // A refusal releases the message through ptcEmitPacketCleanup(), which frees
     // one global-allocator block and touches no worker-local pool - the only
     // release that is legal from this thread.
+    WW_WORKER_MESSAGE_BENCHMARK_RECORD_CONTINUATION(kWorkerMessageBenchmarkContinuationBridgeRetryOrDelivery);
     const worker_message_submit_result_e queued = sendWorkerMessageForceQueueWithCleanup(
         packet_wid, (WorkerMessageCallback) ptcEmitPacketOnWorker, ptcEmitPacketCleanup, t, packet_msg, NULL);
     quiescenceGateLeave(&state->output_gate);

@@ -417,6 +417,7 @@ void speedtestclientScheduleSend(tunnel_t *t, line_t *l, speedtestclient_lstate_
     }
 
     ls->send_scheduled = true;
+    WW_WORKER_MESSAGE_BENCHMARK_RECORD_CONTINUATION(kWorkerMessageBenchmarkContinuationSpeedTestSend);
     if (UNLIKELY(! lineScheduleTask(l, speedtestclientSendTask, ls->tunnel)))
     {
         ls->send_scheduled = false;
@@ -479,6 +480,7 @@ void speedtestclientSendTask(tunnel_t *t, line_t *l)
                 retry_ms = 1;
             }
             ls->send_scheduled = true;
+            WW_WORKER_MESSAGE_BENCHMARK_RECORD_CONTINUATION(kWorkerMessageBenchmarkContinuationSpeedTestSend);
             if (UNLIKELY(! lineScheduleDelayedTask(l, speedtestclientSendTask, retry_ms, t)))
             {
                 ls->send_scheduled = false;
@@ -509,6 +511,7 @@ void speedtestclientSendTask(tunnel_t *t, line_t *l)
         if (speedtestclientShouldWaitForPace(state, ls, now_us, &delay_ms))
         {
             ls->send_scheduled = true;
+            WW_WORKER_MESSAGE_BENCHMARK_RECORD_CONTINUATION(kWorkerMessageBenchmarkContinuationSpeedTestSend);
             if (UNLIKELY(! lineScheduleDelayedTask(l, speedtestclientSendTask, delay_ms, t)))
             {
                 ls->send_scheduled = false;
@@ -803,6 +806,7 @@ static void speedtestclientHandleFrame(tunnel_t *t, line_t *l, const speedtestcl
             if (! ls->send_paused && ! ls->sender_finished)
             {
                 ls->send_scheduled = true;
+                WW_WORKER_MESSAGE_BENCHMARK_RECORD_CONTINUATION(kWorkerMessageBenchmarkContinuationSpeedTestSend);
                 if (UNLIKELY(! lineScheduleTask(l, speedtestclientSendTask, t)))
                 {
                     ls->send_scheduled = false;
