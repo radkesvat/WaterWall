@@ -673,6 +673,14 @@ Build/validation rules:
 
 ## 6. Implementation Workflow
 
+**Planning may include a short developer interview.** When asked to write an
+implementation-plan Markdown file (often in the repository root), inspect the
+code and documentation first. If a consequential requirement, trade-off, scope
+boundary, or compatibility decision remains that the repository cannot answer
+reliably, ask the developer focused questions before finalizing the plan. Do not
+delegate routine implementation details back to the developer; make and record
+reasonable assumptions for low-risk choices.
+
 1. **Draw the chain flow**; mark upstream/downstream and which direction owns the
    transformation.
 2. **Classify every line your change touches** — before editing any `Finish`
