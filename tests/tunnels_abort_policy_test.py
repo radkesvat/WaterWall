@@ -27,7 +27,7 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 # Total number of audited Category-D conversions. The manifest must account for
 # every one of them.
-EXPECTED_TOTAL_ABORTS = 295
+EXPECTED_TOTAL_ABORTS = 291
 
 
 # ---------------------------------------------------------------------------
@@ -935,15 +935,9 @@ MANIFEST = [
     ("ww/instance/worker_messages.c", "sendWorkerMessageForceQueueTransactional", 1,
      ("sendWorkerMessageForceQueueTransactional: queued message mismatch during refusal rollback",),
      "runtime queue invariant: transactional worker-message rollback identity"),
-    ("ww/instance/worker_messages.c", "runTimedTask", 4,
-     ("runTimedTask: worker message queue is NULL during timer reset failure",
-      "runTimedTask: timed message not found in queue during timer reset failure",
-      "runTimedTask: worker message queue is NULL on deadline",
-      "runTimedTask: timed message not found in queue on deadline"),
-     "runtime queue invariant: timed worker-message ownership and removal"),
-    ("ww/instance/worker_messages.c", "setupTimedTaskChecked", 1,
-     ("setupTimedTaskChecked: worker message queue mismatch",),
-     "runtime queue invariant: timed-task queue identity"),
+    ("ww/instance/worker_messages.c", "workerTimedMessageDetachFromOwner", 1,
+     ("runTimedTask: worker message queue detached during %s",),
+     "runtime queue invariant: timed worker-message owner detachment"),
     ("ww/managers/signal_manager.c", "windowsHandlerGateLeave", 1,
      ("windowsHandlerGateLeave: Windows control-handler gate count underflow",),
      "runtime reference invariant: Windows control-handler gate underflow"),

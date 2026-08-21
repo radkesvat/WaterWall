@@ -48,10 +48,15 @@ typedef struct worker_s
     threadsafe_generic_pool_t *wios_pool;
 
     /*
-     * `loop` and `message_queue` are published and detached together. Foreign
-     * posters must hold control_mutex while reading either pointer and while
-     * using the referenced object. If both locks are needed, the global order
-     * is control_mutex followed by worker_message_queue_s::mutex.
+     * `loop` and `message_queue` are published and detached together.
+     * control_mutex is the sole synchronization domain for their lifetime,
+     * worker-message admission, ordinary/timed queue mutation, and the
+     * worker-message wake state. Foreign posters hold it from the final
+     * admission decision through wake publication. Once
+     * workerMessagesCloseAdmissionAndDetach() releases it, the detached
+     * queue has exclusive shutdown-owner access and no later poster may touch
+     * either detached pointer. Posting order is control_mutex, then the
+     * loop's normal-admission mutex, then custom_events_mutex.
      */
     wloop_t                *loop;          // Event loop associated with the worker.
     dns_resolver_t          dns_resolver;  // Worker-local async DNS resolver.

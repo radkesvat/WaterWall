@@ -26,8 +26,9 @@
 #define WLOOP_MAX_BLOCK_TIME 100   // ms
 #define WLOOP_STAT_TIMEOUT   60000 // ms
 
-#define IO_ARRAY_INIT_SIZE           1024
-#define CUSTOM_EVENT_QUEUE_INIT_SIZE 16
+#define IO_ARRAY_INIT_SIZE            1024
+#define CUSTOM_EVENT_QUEUE_INIT_SIZE  16
+#define CUSTOM_EVENT_DRAIN_BATCH_SIZE 32
 
 #define EVENTFDS_READ_INDEX  0
 #define EVENTFDS_WRITE_INDEX 1
@@ -515,51 +516,73 @@ static void eventFDReadCB(wio_t *io, sbuf_t *buf)
     const size_t normal_batch_count  = loop->custom_events.size;
     mutexUnlock(&loop->custom_events_mutex);
 
-    for (size_t i = 0; i < control_batch_count; ++i)
+    size_t control_remaining = control_batch_count;
+    while (control_remaining != 0)
     {
-        wevent_t ev;
+        wevent_t     batch[CUSTOM_EVENT_DRAIN_BATCH_SIZE];
+        size_t       batch_count = 0;
+        const size_t wanted      = min(control_remaining, ARRAY_SIZE(batch));
 
         mutexLock(&loop->custom_events_mutex);
-        if (event_queue_empty(&loop->control_events))
+        while (batch_count < wanted && ! event_queue_empty(&loop->control_events))
         {
-            mutexUnlock(&loop->custom_events_mutex);
+            batch[batch_count++] = *event_queue_front(&loop->control_events);
+            event_queue_pop_front(&loop->control_events);
+        }
+        mutexUnlock(&loop->custom_events_mutex);
+
+        if (UNLIKELY(batch_count == 0))
+        {
+            wloge("control event queue became empty inside a captured wake batch");
             break;
         }
-        ev = *event_queue_front(&loop->control_events);
-        event_queue_pop_front(&loop->control_events);
-        mutexUnlock(&loop->custom_events_mutex);
-        if (ev.cb)
+        control_remaining -= batch_count;
+        for (size_t i = 0; i < batch_count; ++i)
         {
-            wloopRunControlEventCallback(loop, &ev);
+            if (batch[i].cb)
+            {
+                wloopRunControlEventCallback(loop, &batch[i]);
+            }
         }
     }
 
-    for (size_t i = 0; i < normal_batch_count; ++i)
+    size_t normal_remaining = normal_batch_count;
+    while (normal_remaining != 0)
     {
-        wevent_t  ev;
-        wevent_t *pev;
+        wevent_t     batch[CUSTOM_EVENT_DRAIN_BATCH_SIZE];
+        size_t       batch_count = 0;
+        const size_t wanted      = min(normal_remaining, ARRAY_SIZE(batch));
 
         mutexLock(&loop->custom_events_mutex);
-        if (! wloopNormalDispatchAllowed(loop))
+        if (wloopNormalDispatchAllowed(loop))
         {
-            mutexUnlock(&loop->custom_events_mutex);
-            break;
+            while (batch_count < wanted && ! event_queue_empty(&loop->custom_events))
+            {
+                batch[batch_count++] = *event_queue_front(&loop->custom_events);
+                event_queue_pop_front(&loop->custom_events);
+            }
         }
-        assert(! event_queue_empty(&loop->custom_events));
-        pev = event_queue_front(&loop->custom_events);
-        if (UNLIKELY(pev == NULL))
-        {
-            mutexUnlock(&loop->custom_events_mutex);
-            wloge("custom event queue became empty inside a captured wake batch");
-            break;
-        }
-        ev = *pev;
-        event_queue_pop_front(&loop->custom_events);
-        // NOTE: unlock before cb, avoid deadlock if wloopPostEvent called in cb.
         mutexUnlock(&loop->custom_events_mutex);
-        if (ev.cb)
+
+        if (batch_count == 0)
         {
-            discard wloopRunNormalEventCallback(loop, &ev);
+            break;
+        }
+        normal_remaining -= batch_count;
+        for (size_t i = 0; i < batch_count; ++i)
+        {
+            // Do not hold custom_events_mutex across callbacks: a callback may
+            // post more work, which belongs to the separately armed next wake.
+            // Each copied event remains an independent normal root; if an
+            // earlier callback closes admission, discard the unstarted suffix.
+            if (! wloopNormalDispatchAllowed(loop))
+            {
+                break;
+            }
+            if (batch[i].cb)
+            {
+                discard wloopRunNormalEventCallback(loop, &batch[i]);
+            }
         }
     }
     bufferpoolReuseBuffer(io->loop->bufpool, buf);
@@ -765,6 +788,9 @@ static bool wloopArmWakeupLocked(wloop_t *loop)
     }
 
 retry:;
+#ifdef WW_WORKER_MESSAGE_BENCHMARK_INSTRUMENTATION
+    workerMessagesBenchmarkRecordLoopWakeWriteAttempt();
+#endif
 #ifdef WATERWALL_WLOOP_TEST_HOOKS
     ++s_wloop_test_wake_write_attempts;
     if (s_wloop_test_next_wake_write_error != 0)
