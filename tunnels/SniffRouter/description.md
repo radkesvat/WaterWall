@@ -1,11 +1,12 @@
 <!--
-Documentation version: 106
-Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/SniffRouter.mdx, and both files must keep the same documentation version.
+Documentation version: 107
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/SniffRouter.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/SniffRouter.mdx, and all files must keep the same documentation version.
 -->
 
 # SniffRouter
 
-A layer-4 content router. It can be placed **right after a `TlsServer`**
+`SniffRouter` is primarily a simple, convenient layer-4 routing node for common
+domain-sniffing setups. It can be placed **right after a `TlsServer`**
 (TLS termination) to route by the first decrypted HTTP/1 request, or before TLS
 termination to route by the TLS ClientHello SNI.
 
@@ -21,6 +22,18 @@ termination to route by the TLS ClientHello SNI.
 
 This makes it possible to share one TLS port between multiple HTTP backends and
 a default tunnel/fail path.
+
+Most HTTP Host and TLS SNI configurations can also be expressed with the more
+flexible [`Router`](../Router/description.md) node. Start with `SniffRouter` when
+you want the shorter domain-to-destination configuration shown here. Use
+`Router` when you need HTTP/2 or HTTP/3 sniffing, richer matching, combined rule
+conditions, or more flexible routing behavior.
+
+The current exception is reverse-link handshake detection: `SniffRouter` can
+recognize the handshake sent by `ReverseClient`, while `Router` does not yet
+have that detector. Reverse detection is expected to be added to `Router` in
+the future, so this is a current capability difference rather than a permanent
+architectural distinction.
 
 ## How it works
 
@@ -77,27 +90,50 @@ removed; use `tls`.
 The node itself must define top-level `next`, which is the default fallback.
 Routes are checked in order; the first matching domain wins.
 
-## Example
+## Basic domain routing: SniffRouter and Router
+
+For example, on a listener path where no earlier node supplied a destination
+domain, this `SniffRouter` sends three HTTP/1 Host names to three separate
+destinations:
 
 ```json
 {
-    "name": "sniff-router",
-    "type": "SniffRouter",
-    "settings": {
-        "routes": [
-            {
-                "domains": ["a.x.com", "b.x.com", "x.com"],
-                "next": "node_x"
-            },
-            {
-                "domains": ["*.mydomain.com", "*.mydomain2.com"],
-                "next": "node_one"
-            }
-        ]
-    },
-    "next": "default_fail_path"
+  "name": "sniff-router",
+  "type": "SniffRouter",
+  "settings": {
+    "routes": [
+      { "domain": "one.example.com", "next": "destination_one" },
+      { "domain": "two.example.com", "next": "destination_two" },
+      { "domain": "three.example.com", "next": "destination_three" }
+    ]
+  },
+  "next": "default_destination"
 }
 ```
+
+The equivalent `Router` configuration uses root-level sniffing and domain rule
+conditions:
+
+```json
+{
+  "name": "router",
+  "type": "Router",
+  "settings": {
+    "sniffing": ["http1"],
+    "rules": [
+      { "destination-domain": "one.example.com", "target": "destination_one" },
+      { "destination-domain": "two.example.com", "target": "destination_two" },
+      { "destination-domain": "three.example.com", "target": "destination_three" }
+    ]
+  },
+  "next": "default_destination"
+}
+```
+
+In both forms, entries are checked in order and top-level `next` is the
+fallback. The main difference for this basic case is vocabulary: a
+`SniffRouter` route uses `domain`/`domains` and `next`, while a `Router` rule
+uses `destination-domain` and `target`.
 
 ## Reverse-link detection (single-SNI tunnels)
 
