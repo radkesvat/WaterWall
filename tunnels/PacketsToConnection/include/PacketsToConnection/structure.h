@@ -326,6 +326,29 @@ void ptcNextGateLeave(tunnel_t *t);
 /* RX_POOL is process-global and may retain live pbufs across node lifetimes. */
 void ptcRxWrapperPoolInitializeOnce(void);
 
+#ifdef PTC_FRAGMENT_ADMISSION_TEST_HOOKS
+/*
+ * This unit-only seam drives the final fragment-admission boundary without a
+ * full packet tunnel/route fixture.  The production PacketsToConnection
+ * library is compiled without it, so no hook load or allocation branch reaches
+ * device traffic.
+ */
+typedef void (*PtcFragmentAdmissionTestHook)(sbuf_t *buf, struct netif *inp, void *context);
+
+typedef struct ptc_fragment_admission_test_hooks_s
+{
+    PtcFragmentAdmissionTestHook before_stack_admission;
+    PtcFragmentAdmissionTestHook after_stack_admission;
+    PtcFragmentAdmissionTestHook before_residue_query;
+    void                        *context;
+    bool                         fail_aligned_copy;
+    bool                         fail_rx_wrapper_allocation;
+} ptc_fragment_admission_test_hooks_t;
+
+void ptcFragmentAdmissionTestInstallHooks(const ptc_fragment_admission_test_hooks_t *hooks);
+void ptcFragmentAdmissionTestSubmitPacketToStack(sbuf_t *buf, struct netif *inp);
+#endif
+
 void ptcDetachTcpPcbLocked(ptc_lstate_t *ls);
 /* All receive-credit helpers require LOCK_TCPIP_CORE(). */
 bool ptcReceiveCreditAccumulateLocked(ptc_lstate_t *ls, uint32_t amount);

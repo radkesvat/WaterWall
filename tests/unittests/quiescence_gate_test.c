@@ -354,8 +354,12 @@ static void testSessionGenerationRejectsStaleAndWrap(void)
     require(first_generation != 0, "first reader generation was invalid");
     require((uint32_t) atomicLoadRelaxed(&session->generation) == first_generation,
             "the current generation did not match its stamp");
+    require(atomicLoadExplicit(&session->producer_admission, memory_order_acquire),
+            "reader producer admission did not open with the current generation");
 
     deviceReaderSessionEnd(session);
+    require(! atomicLoadExplicit(&session->producer_admission, memory_order_acquire),
+            "reader end did not close producer admission before delivery shutdown");
     const uint32_t second_generation = deviceReaderSessionBegin(session);
     require(second_generation != 0 && second_generation != first_generation,
             "beginning a new session did not advance the generation");

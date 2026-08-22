@@ -52,6 +52,12 @@ void     deviceReaderSessionEnd(device_reader_session_t *session);
 void     deviceReaderSessionEndRequest(device_reader_session_t *session);
 void     deviceReaderSessionEndWait(device_reader_session_t *session);
 
+#ifdef DEVICE_READER_SESSION_TEST_HOOKS
+/* Unit-only synchronization seam for deterministic EndWait race coverage. */
+typedef void (*DeviceReaderSessionEndWaitYieldHook)(device_reader_session_t *session, void *context);
+void deviceReaderSessionInstallEndWaitYieldHook(DeviceReaderSessionEndWaitYieldHook hook, void *context);
+#endif
+
 /*
  * Called after End and producer join, and after the reader pool's thread
  * ownership was reset, while that pool is still alive. It returns the staged

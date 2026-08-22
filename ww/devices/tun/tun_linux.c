@@ -1029,6 +1029,16 @@ bool tundeviceGetLuid(tun_device_t *tdev, uint64_t *out)
     return false;
 }
 
+/* Failure-only TLS sampler. Full is ordinary bounded overload and deliberately
+ * silent; Down/Closed keep sparse lifecycle evidence without a shared limiter. */
+static bool tundeviceShouldLogRefusal(void)
+{
+    static thread_local uint32_t refusal_count;
+    const uint32_t               ordinal = ++refusal_count;
+
+    return ordinal == 1 || (ordinal & (ordinal - 1U)) == 0;
+}
+
 // Write to TUN device
 bool tundeviceWrite(tun_device_t *tdev, sbuf_t *buf)
 {
@@ -1041,13 +1051,18 @@ bool tundeviceWrite(tun_device_t *tdev, sbuf_t *buf)
     case kDeviceWriterSendOk:
         return true;
     case kDeviceWriterSendDown:
-        LOGE("TunDevice: write failed, device is down");
+        if (tundeviceShouldLogRefusal())
+        {
+            LOGE("TunDevice: write failed, device is down");
+        }
         return false;
     case kDeviceWriterSendClosed:
-        LOGE("TunDevice: write failed, channel was closed");
+        if (tundeviceShouldLogRefusal())
+        {
+            LOGE("TunDevice: write failed, channel was closed");
+        }
         return false;
     case kDeviceWriterSendFull:
-        LOGE("TunDevice: write failed, ring is full");
         return false;
     }
 
@@ -1758,7 +1773,6 @@ bool tundeviceBringDown(tun_device_t *tdev)
     if (tunLifecycleLoad(&tdev->lifecycle) == kTunLifecycleDown && ! tdev->reader_joinable && ! tdev->writer_joinable &&
         ! deviceWriterChannelHasCurrent(&tdev->writer_channel))
     {
-        LOGE("TunDevice: device is already down");
         return true;
     }
 
@@ -2059,6 +2073,11 @@ device_reader_session_t *tunLinuxReaderSession(tun_device_t *tdev)
 buffer_pool_t *tunLinuxWriterBufferPool(tun_device_t *tdev)
 {
     return tdev->writer_buffer_pool;
+}
+
+device_writer_channel_t *tunLinuxWriterChannel(tun_device_t *tdev)
+{
+    return &tdev->writer_channel;
 }
 
 int tunLinuxStopPipeWriteFD(const tun_device_t *tdev)

@@ -287,6 +287,17 @@ typedef MSVC_ATTR_ALIGNED_LINE_CACHE struct wchan_s
     uint8_t buf[]; // queue storage
 } GNU_ATTR_ALIGNED_LINE_CACHE wchan_t;
 
+#ifdef WCHAN_TEST_HOOKS
+static WchanAfterTrySendFastFullHook wchan_after_try_send_fast_full_hook;
+static void                         *wchan_after_try_send_fast_full_context;
+
+void chanInstallAfterTrySendFastFullHook(WchanAfterTrySendFastFullHook hook, void *context)
+{
+    wchan_after_try_send_fast_full_hook    = hook;
+    wchan_after_try_send_fast_full_context = context;
+}
+#endif
+
 // Waits until no thr_signal() call is still inside t's semaphore. Publishing the wakeup and
 // returning from the call that published it are not the same instant: the woken thread can
 // run to completion, exit, and tear its Thr down while the waker is still touching the
@@ -570,7 +581,15 @@ inline static bool chan_send(wchan_t *c, void *srcelemptr, bool *closed)
     // guarantees forward progress. We rely on the side effects of lock release in
     // chan_recv() and wchan_Close() to update this thread's view of c.closed and chan_full().
     if (! block && ! atomicLoadExplicit(&c->closed, memory_order_relaxed) && chan_full(c))
+    {
+#ifdef WCHAN_TEST_HOOKS
+        if (wchan_after_try_send_fast_full_hook != NULL)
+        {
+            wchan_after_try_send_fast_full_hook(c, wchan_after_try_send_fast_full_context);
+        }
+#endif
         return false;
+    }
 
     chan_lock(&c->lock);
 

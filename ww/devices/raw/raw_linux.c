@@ -372,13 +372,26 @@ bool rawdeviceIsUp(const raw_device_t *rdev)
     return rdev != NULL && rawLifecycleLoad(&rdev->lifecycle) == kRawLifecycleUp;
 }
 
+/* Failure-only TLS sampler: shutdown bursts retain useful evidence without a
+ * time read, shared atomic, or any work on the successful writer path. */
+static bool rawdeviceShouldLogRefusal(void)
+{
+    static thread_local uint32_t refusal_count;
+    const uint32_t               ordinal = ++refusal_count;
+
+    return ordinal == 1 || (ordinal & (ordinal - 1U)) == 0;
+}
+
 bool rawdeviceWrite(raw_device_t *rdev, sbuf_t *buf)
 {
     assert(sbufGetLength(buf) > sizeof(struct iphdr));
 
     if (UNLIKELY(! rawdeviceIsUp(rdev)))
     {
-        LOGE("RawDevice: write failed, device is not up");
+        if (rawdeviceShouldLogRefusal())
+        {
+            LOGE("RawDevice: write failed, device is not up");
+        }
         return false;
     }
 
@@ -387,13 +400,18 @@ bool rawdeviceWrite(raw_device_t *rdev, sbuf_t *buf)
     case kDeviceWriterSendOk:
         return true;
     case kDeviceWriterSendDown:
-        LOGE("RawDevice: write failed, device is down");
+        if (rawdeviceShouldLogRefusal())
+        {
+            LOGE("RawDevice: write failed, device is down");
+        }
         return false;
     case kDeviceWriterSendClosed:
-        LOGE("RawDevice: write failed, channel was closed");
+        if (rawdeviceShouldLogRefusal())
+        {
+            LOGE("RawDevice: write failed, channel was closed");
+        }
         return false;
     case kDeviceWriterSendFull:
-        LOGE("RawDevice: write failed, ring is full");
         return false;
     }
 

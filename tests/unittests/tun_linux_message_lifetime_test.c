@@ -7,6 +7,7 @@
 #include "wwapi.h"
 
 #include "devices/tun/tun_linux_internal.h"
+#include "loggers/internal_logger.h"
 #include "worker_messages.h"
 
 #include "worker_registry_fixture.h"
@@ -79,6 +80,29 @@ static device_reader_session_t *tracked_session;
 static master_pool_t           *tracked_message_pool;
 static unsigned int             tracked_session_free_count;
 static unsigned int             tracked_pool_destroy_count;
+
+enum
+{
+    kTunLogCaptureCapacity = 4096
+};
+
+static char   tun_log_capture[kTunLogCaptureCapacity];
+static size_t tun_log_capture_len;
+
+typedef struct tun_refusal_probe_s
+{
+    tun_device_t *tdev;
+    bool          accepted;
+} tun_refusal_probe_t;
+
+#ifdef DEVICE_WRITER_CHANNEL_TEST_HOOKS
+typedef struct tun_selected_closed_probe_s
+{
+    tun_device_t *tdev;
+    atomic_bool   selected;
+    atomic_bool   resume;
+} tun_selected_closed_probe_t;
+#endif
 
 int     __real_open(const char *path, int flags, ...);
 int     __wrap_open(const char *path, int flags, ...);
@@ -173,6 +197,48 @@ static void require(bool condition, const char *message)
         fprintf(stderr, "FAIL: %s\n", message);
         exit(1);
     }
+}
+
+static void captureTunLog(int log_level, const char *buf, int len)
+{
+    discard log_level;
+    if (buf == NULL || len <= 0 || tun_log_capture_len >= sizeof(tun_log_capture) - 1U)
+    {
+        return;
+    }
+    const size_t copy_len = min((size_t) len, sizeof(tun_log_capture) - tun_log_capture_len - 1U);
+    memoryCopy(tun_log_capture + tun_log_capture_len, buf, copy_len);
+    tun_log_capture_len += copy_len;
+    tun_log_capture[tun_log_capture_len] = '\0';
+}
+
+static void resetTunLogCapture(void)
+{
+    memoryZero(tun_log_capture, sizeof(tun_log_capture));
+    tun_log_capture_len = 0;
+}
+
+static unsigned int countTunLogSubstring(const char *needle)
+{
+    unsigned int count  = 0;
+    const char  *match  = tun_log_capture;
+    const size_t length = strlen(needle);
+    while ((match = strstr(match, needle)) != NULL)
+    {
+        ++count;
+        match += length;
+    }
+    return count;
+}
+
+/* The fake pthread wrapper executes a device body inline, but its production
+ * contract is still that of an auxiliary, unregistered thread. */
+static void runAuxiliaryThreadBody(void *(*routine)(void *), void *arg)
+{
+    const wid_t saved_wid = getWID();
+    testWorkerUnbindWID();
+    discard routine(arg);
+    testWorkerBindWID(saved_wid);
 }
 
 // A recoverable error must leave the device usable: the routine keeps running,
@@ -324,7 +390,7 @@ int __wrap_pthread_create(pthread_t *thread, const pthread_attr_t *attr, void *(
     }
     if (fake_thread_create_calls == run_fake_thread_on_create_call)
     {
-        discard routine(arg);
+        runAuxiliaryThreadBody(routine, arg);
     }
     return 0;
 }
@@ -534,14 +600,14 @@ static void resetFakeThreads(unsigned int fail_on_call)
     memoryZero(captured_thread_args, sizeof(captured_thread_args));
 }
 
-// Runs one captured device I/O thread body inline, exactly as the OS thread
-// would: the routine returns and the production wrapper then decides whether the
-// exit was expected.
+// Runs one captured device I/O thread body inline. Emulate the real auxiliary
+// thread's unregistered identity while the production wrapper runs; the test
+// process itself is deliberately bound to worker zero.
 static void runCapturedThreadBody(unsigned int index)
 {
     require(index < kMaxCapturedThreads, "invalid captured thread index");
     require(captured_thread_routines[index] != NULL, "the requested thread body was not captured");
-    discard captured_thread_routines[index](captured_thread_args[index]);
+    runAuxiliaryThreadBody(captured_thread_routines[index], captured_thread_args[index]);
 }
 
 static tun_device_t *createRunningDevice(void)
@@ -566,6 +632,110 @@ static tun_device_t *createRunningReaderDevice(void)
     require(tdev != NULL, "production reader-device create failed");
     require(tundeviceBringUp(tdev), "production reader-device bring-up failed");
     return tdev;
+}
+
+static void *tunRefusalWriterRoutine(void *userdata)
+{
+    tun_refusal_probe_t *probe = userdata;
+    sbuf_t              *buf   = sbufCreate(64);
+    require(buf != NULL, "failed to create fresh TUN refusal helper buffer");
+    sbufSetLength(buf, 64);
+    probe->accepted = tundeviceWrite(probe->tdev, buf);
+    if (! probe->accepted)
+    {
+        sbufDestroy(buf);
+    }
+    return NULL;
+}
+
+static void runFreshTunRefusalThread(tun_refusal_probe_t *probe)
+{
+    pthread_t thread;
+    require(__real_pthread_create(&thread, NULL, tunRefusalWriterRoutine, probe) == 0,
+            "failed to create fresh TUN refusal helper thread");
+    require(__real_pthread_join(thread, NULL) == 0, "failed to join fresh TUN refusal helper thread");
+    require(! probe->accepted, "TUN refusal helper unexpectedly transferred caller buffer ownership");
+}
+
+#ifdef DEVICE_WRITER_CHANNEL_TEST_HOOKS
+static void pauseTunWriterAfterGenerationSelect(device_writer_channel_t    *writer_channel,
+                                                device_writer_generation_t *generation, void *context)
+{
+    tun_selected_closed_probe_t *probe = context;
+    discard                      generation;
+    require(writer_channel == tunLinuxWriterChannel(probe->tdev),
+            "TUN closed-refusal hook selected the wrong writer generation");
+    atomicStoreExplicit(&probe->selected, true, memory_order_release);
+    while (! atomicLoadExplicit(&probe->resume, memory_order_acquire))
+    {
+        YIELD_THREAD();
+    }
+}
+#endif
+
+static void reopenTunWriterChannelWithCapacityOne(tun_device_t *tdev)
+{
+    device_writer_channel_t *writer_channel = tunLinuxWriterChannel(tdev);
+    deviceWriterChannelClose(writer_channel);
+    require(deviceWriterChannelRetireCurrent(writer_channel), "failed to retire synthetic TUN writer generation");
+    require(deviceWriterChannelOpen(writer_channel, 1), "failed to open synthetic capacity-one TUN writer generation");
+}
+
+static void testTunWriterRefusalClassesUseFreshTlsState(void)
+{
+    /* Down reaches the actual Linux TUN device layer without a published writer
+     * generation. A fresh helper starts its sparse TLS sampler at ordinal one. */
+    resetFakeThreads(0);
+    tun_device_t *tdev = tundeviceCreate("ww-lifetime-test", false, 1500, NULL, NULL);
+    require(tdev != NULL, "failed to create down TUN refusal fixture");
+    tun_refusal_probe_t down = {.tdev = tdev};
+    resetTunLogCapture();
+    runFreshTunRefusalThread(&down);
+    require(countTunLogSubstring("TunDevice: write failed, device is down") == 1,
+            "fresh TUN writer thread did not emit exactly its first Down diagnostic");
+    tundeviceDestroy(tdev);
+
+    /* The real wrapper remains UP while its test fixture replaces the large
+     * production generation with a capacity-one open one. Full is silent. */
+    resetFakeThreads(0);
+    tdev = createRunningDevice();
+    reopenTunWriterChannelWithCapacityOne(tdev);
+    sbuf_t *prefill = sbufCreate(64);
+    require(prefill != NULL, "failed to create TUN Full-refusal prefill buffer");
+    sbufSetLength(prefill, 64);
+    require(tundeviceWrite(tdev, prefill), "failed to prefill capacity-one TUN writer generation");
+    tun_refusal_probe_t full = {.tdev = tdev};
+    resetTunLogCapture();
+    runFreshTunRefusalThread(&full);
+    require(tun_log_capture_len == 0, "TUN Full refusal emitted a diagnostic");
+    require(tundeviceBringDown(tdev), "failed to bring down TUN Full-refusal fixture");
+    tundeviceDestroy(tdev);
+
+#ifdef DEVICE_WRITER_CHANNEL_TEST_HOOKS
+    resetFakeThreads(0);
+    tdev = createRunningDevice();
+    reopenTunWriterChannelWithCapacityOne(tdev);
+    tun_selected_closed_probe_t selected = {.tdev = tdev, .selected = false, .resume = false};
+    deviceWriterChannelInstallAfterSelectHook(pauseTunWriterAfterGenerationSelect, &selected);
+    tun_refusal_probe_t closed = {.tdev = tdev};
+    pthread_t           thread;
+    resetTunLogCapture();
+    require(__real_pthread_create(&thread, NULL, tunRefusalWriterRoutine, &closed) == 0,
+            "failed to create fresh TUN Closed-refusal helper thread");
+    while (! atomicLoadExplicit(&selected.selected, memory_order_acquire))
+    {
+        YIELD_THREAD();
+    }
+    deviceWriterChannelClose(tunLinuxWriterChannel(tdev));
+    atomicStoreExplicit(&selected.resume, true, memory_order_release);
+    require(__real_pthread_join(thread, NULL) == 0, "failed to join TUN Closed-refusal helper thread");
+    deviceWriterChannelInstallAfterSelectHook(NULL, NULL);
+    require(! closed.accepted, "selected TUN Closed-refusal helper unexpectedly accepted caller ownership");
+    require(countTunLogSubstring("TunDevice: write failed, channel was closed") == 1,
+            "fresh TUN writer thread did not emit exactly its first Closed diagnostic");
+    require(tundeviceBringDown(tdev), "failed to bring down TUN Closed-refusal fixture");
+    tundeviceDestroy(tdev);
+#endif
 }
 
 static void postOne(tun_device_t *tdev, sbuf_t *buf)
@@ -1264,8 +1434,13 @@ int main(void)
 {
     test_env_t env;
     envSetup(&env);
+    logger_t *logger = loggerCreate();
+    require(logger != NULL, "failed to create TUN writer log-capture logger");
+    loggerSetHandler(logger, captureTunLog);
+    setInternalLogger(logger);
     testQueuedCleanupOutlivesDevice();
     testClosedAndStaleDeliveriesDoNotTouchDevice();
+    testTunWriterRefusalClassesUseFreshTlsState();
     testBringUpRollsBackThreadCreationFailures();
     testThreadExitsDuringStartupAreNotPublishedAsUp();
     testUnexpectedThreadExitsRequestShutdownOnce();
@@ -1276,6 +1451,7 @@ int main(void)
     testJoinFailureRetainsOwnershipForRetry();
     testWriterGateQuiescesConcurrentSenders();
     testBringDownReleasesQueuedWritesOffTheWriterThread();
+    internaloggerDestroy();
     envTeardown(&env);
     puts("Linux TUN message lifetime tests passed");
     return 0;

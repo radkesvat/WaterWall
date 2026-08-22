@@ -17,6 +17,27 @@ typedef struct device_reader_message_s
     } items[];
 } device_reader_message_t;
 
+#ifdef DEVICE_READER_SESSION_TEST_HOOKS
+static DeviceReaderSessionEndWaitYieldHook device_reader_session_end_wait_yield_hook;
+static void                               *device_reader_session_end_wait_yield_context;
+
+void deviceReaderSessionInstallEndWaitYieldHook(DeviceReaderSessionEndWaitYieldHook hook, void *context)
+{
+    device_reader_session_end_wait_yield_hook    = hook;
+    device_reader_session_end_wait_yield_context = context;
+}
+
+static void deviceReaderSessionEndWaitYield(void *context)
+{
+    device_reader_session_t *session = context;
+    if (device_reader_session_end_wait_yield_hook != NULL)
+    {
+        device_reader_session_end_wait_yield_hook(session, device_reader_session_end_wait_yield_context);
+    }
+    quiescenceGateYieldThread(NULL);
+}
+#endif
+
 static master_pool_item_t *deviceReaderMessageCreate(void *userdata)
 {
     const device_reader_session_t *session = userdata;
@@ -198,7 +219,11 @@ void deviceReaderSessionEndRequest(device_reader_session_t *session)
 
 void deviceReaderSessionEndWait(device_reader_session_t *session)
 {
+#ifdef DEVICE_READER_SESSION_TEST_HOOKS
+    quiescenceGateWaitQuiesced(&session->delivery_gate, deviceReaderSessionEndWaitYield, session);
+#else
     quiescenceGateWaitQuiesced(&session->delivery_gate, quiescenceGateYieldThread, NULL);
+#endif
     /* A late receipt holds the delivery gate across its final admission, lwIP
      * input, and exact residue query. Closing the fragment generation only after
      * those entrants leave makes "may enter" atomic with generation shutdown. */

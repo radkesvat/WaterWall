@@ -3,6 +3,7 @@
 #include "devices/raw/raw.h"
 #include "devices/raw/raw_linux_internal.h"
 #include "devices/raw/raw_linux_send_policy.h"
+#include "loggers/internal_logger.h"
 
 #include "worker_registry_fixture.h"
 #include <netinet/ip.h>
@@ -49,6 +50,21 @@ typedef struct recycling_probe_s
 {
     atomic_uint consumed;
 } recycling_probe_t;
+
+typedef struct raw_refusal_probe_s
+{
+    raw_device_t *rdev;
+    bool          accepted;
+} raw_refusal_probe_t;
+
+#ifdef DEVICE_WRITER_CHANNEL_TEST_HOOKS
+typedef struct raw_selected_closed_probe_s
+{
+    raw_device_t *rdev;
+    atomic_bool   selected;
+    atomic_bool   resume;
+} raw_selected_closed_probe_t;
+#endif
 
 static bool fail_next_thread_join;
 
@@ -98,6 +114,14 @@ static atomic_bool            allow_injected_send;
 static atomic_uint            shutdown_request_calls;
 static atomic_int             shutdown_request_last_code;
 
+enum
+{
+    kLogCaptureCapacity = 8192
+};
+
+static char   log_capture[kLogCaptureCapacity];
+static size_t log_capture_len;
+
 static void require(bool condition, const char *message)
 {
     if (! condition)
@@ -105,6 +129,40 @@ static void require(bool condition, const char *message)
         fprintf(stderr, "FAIL: %s\n", message);
         exit(1);
     }
+}
+
+static void captureLog(int log_level, const char *buf, int len)
+{
+    discard log_level;
+    if (buf == NULL || len <= 0 || log_capture_len >= sizeof(log_capture) - 1U)
+    {
+        return;
+    }
+
+    const size_t copy_len = min((size_t) len, sizeof(log_capture) - log_capture_len - 1U);
+    memoryCopy(log_capture + log_capture_len, buf, copy_len);
+    log_capture_len += copy_len;
+    log_capture[log_capture_len] = '\0';
+}
+
+static void resetLogCapture(void)
+{
+    memoryZero(log_capture, sizeof(log_capture));
+    log_capture_len = 0;
+}
+
+static unsigned int countLogSubstring(const char *needle)
+{
+    unsigned int count  = 0;
+    const char  *match  = log_capture;
+    const size_t length = strlen(needle);
+
+    while ((match = strstr(match, needle)) != NULL)
+    {
+        ++count;
+        match += length;
+    }
+    return count;
 }
 
 int __wrap_sendmmsg(int socket_fd, struct mmsghdr *messages, unsigned int message_count, int flags)
@@ -608,10 +666,179 @@ static void testRawLinuxSendErrorClassifier(void)
             "an unknown raw send error was not classified as terminal");
 }
 
+/* Full is an expected lockless overload result. Lifecycle bursts retain only
+ * sparse diagnostics, so neither path can emit at packet rate. */
+static void testWriterRefusalLoggingDoesNotStorm(void)
+{
+    enum
+    {
+        kRefusalAttempts = 64
+    };
+
+    raw_device_t rdev;
+    memoryZero(&rdev, sizeof(rdev));
+    atomic_init(&rdev.lifecycle, kRawLifecycleUp);
+    deviceWriterChannelInit(&rdev.writer_channel);
+    require(deviceWriterChannelOpen(&rdev.writer_channel, 1), "failed to open raw full-refusal queue");
+
+    sbuf_t *queued = sbufCreate(sizeof(struct iphdr) + 1U);
+    sbufSetLength(queued, sizeof(struct iphdr) + 1U);
+    require(rawdeviceWrite(&rdev, queued), "failed to prefill raw full-refusal queue");
+
+    resetLogCapture();
+    for (unsigned int i = 0; i < kRefusalAttempts; ++i)
+    {
+        sbuf_t *buf = sbufCreate(sizeof(struct iphdr) + 1U);
+        sbufSetLength(buf, sizeof(struct iphdr) + 1U);
+        require(! rawdeviceWrite(&rdev, buf), "full raw queue unexpectedly accepted a write");
+        sbufDestroy(buf);
+    }
+    require(countLogSubstring("ring is full") == 0, "raw full-refusal path emitted per-packet overload logs");
+
+    deviceWriterChannelClose(&rdev.writer_channel);
+    require(deviceWriterChannelRetireCurrent(&rdev.writer_channel), "failed to retire raw full-refusal queue");
+    require(deviceWriterChannelDestroy(&rdev.writer_channel), "failed to destroy raw full-refusal queue");
+
+    memoryZero(&rdev, sizeof(rdev));
+    atomic_init(&rdev.lifecycle, kRawLifecycleDown);
+    deviceWriterChannelInit(&rdev.writer_channel);
+    resetLogCapture();
+    for (unsigned int i = 0; i < kRefusalAttempts; ++i)
+    {
+        sbuf_t *buf = sbufCreate(sizeof(struct iphdr) + 1U);
+        sbufSetLength(buf, sizeof(struct iphdr) + 1U);
+        require(! rawdeviceWrite(&rdev, buf), "down raw device unexpectedly accepted a write");
+        sbufDestroy(buf);
+    }
+    require(countLogSubstring("device is not up") <= 7,
+            "raw lifecycle rejection emitted one diagnostic per refused packet");
+    require(deviceWriterChannelDestroy(&rdev.writer_channel), "failed to destroy down raw writer channel");
+}
+
+static void *rawRefusalWriterRoutine(void *userdata)
+{
+    raw_refusal_probe_t *probe = userdata;
+    sbuf_t              *buf   = sbufCreate(sizeof(struct iphdr) + 1U);
+    require(buf != NULL, "failed to create raw refusal helper buffer");
+    sbufSetLength(buf, sizeof(struct iphdr) + 1U);
+    probe->accepted = rawdeviceWrite(probe->rdev, buf);
+    if (! probe->accepted)
+    {
+        sbufDestroy(buf);
+    }
+    return NULL;
+}
+
+static void runFreshRawRefusalThread(raw_refusal_probe_t *probe)
+{
+    pthread_t thread;
+    require(pthread_create(&thread, NULL, rawRefusalWriterRoutine, probe) == 0,
+            "failed to create fresh raw refusal helper thread");
+    require(pthread_join(thread, NULL) == 0, "failed to join fresh raw refusal helper thread");
+    require(! probe->accepted, "raw refusal helper unexpectedly transferred caller buffer ownership");
+}
+
+#ifdef DEVICE_WRITER_CHANNEL_TEST_HOOKS
+static void pauseRawWriterAfterGenerationSelect(device_writer_channel_t    *writer_channel,
+                                                device_writer_generation_t *generation, void *context)
+{
+    raw_selected_closed_probe_t *probe = context;
+    discard                      generation;
+    require(writer_channel == &probe->rdev->writer_channel,
+            "raw closed-refusal hook selected the wrong writer generation");
+    atomicStoreExplicit(&probe->selected, true, memory_order_release);
+    while (! atomicLoadExplicit(&probe->resume, memory_order_acquire))
+    {
+        YIELD_THREAD();
+    }
+}
+#endif
+
+static void testRawWriterRefusalClassesUseFreshTlsState(void)
+{
+    raw_device_t rdev;
+
+    /* Down is a lifecycle refusal before generation selection. */
+    memoryZero(&rdev, sizeof(rdev));
+    atomic_init(&rdev.lifecycle, kRawLifecycleDown);
+    deviceWriterChannelInit(&rdev.writer_channel);
+    raw_refusal_probe_t down = {.rdev = &rdev};
+    resetLogCapture();
+    runFreshRawRefusalThread(&down);
+    require(countLogSubstring("device is not up") == 1,
+            "fresh raw writer thread did not emit exactly its first Down diagnostic");
+    require(deviceWriterChannelDestroy(&rdev.writer_channel), "failed to destroy raw Down-refusal channel");
+
+    /* This is distinct from the lifecycle precheck above: the Raw device is
+     * UP, but no writer generation has been published yet. */
+    memoryZero(&rdev, sizeof(rdev));
+    atomic_init(&rdev.lifecycle, kRawLifecycleUp);
+    deviceWriterChannelInit(&rdev.writer_channel);
+    raw_refusal_probe_t writer_down = {.rdev = &rdev};
+    resetLogCapture();
+    runFreshRawRefusalThread(&writer_down);
+    require(countLogSubstring("device is down") == 1,
+            "fresh raw writer thread did not emit exactly its first writer-Down diagnostic");
+    require(deviceWriterChannelDestroy(&rdev.writer_channel), "failed to destroy raw writer-Down channel");
+
+    /* Full is ordinary overload and must stay completely silent. */
+    memoryZero(&rdev, sizeof(rdev));
+    atomic_init(&rdev.lifecycle, kRawLifecycleUp);
+    deviceWriterChannelInit(&rdev.writer_channel);
+    require(deviceWriterChannelOpen(&rdev.writer_channel, 1), "failed to open raw Full-refusal channel");
+    sbuf_t *prefill = sbufCreate(sizeof(struct iphdr) + 1U);
+    require(prefill != NULL, "failed to create raw Full-refusal prefill buffer");
+    sbufSetLength(prefill, sizeof(struct iphdr) + 1U);
+    require(rawdeviceWrite(&rdev, prefill), "failed to prefill raw Full-refusal channel");
+    raw_refusal_probe_t full = {.rdev = &rdev};
+    resetLogCapture();
+    runFreshRawRefusalThread(&full);
+    require(log_capture_len == 0, "raw Full refusal emitted a diagnostic");
+    deviceWriterChannelClose(&rdev.writer_channel);
+    require(deviceWriterChannelRetireCurrent(&rdev.writer_channel), "failed to retire raw Full-refusal channel");
+    require(deviceWriterChannelDestroy(&rdev.writer_channel), "failed to destroy raw Full-refusal channel");
+
+#ifdef DEVICE_WRITER_CHANNEL_TEST_HOOKS
+    /* A producer that selected before close must reach the old channel and
+     * report Closed, not observe the later unpublished Down state. */
+    memoryZero(&rdev, sizeof(rdev));
+    atomic_init(&rdev.lifecycle, kRawLifecycleUp);
+    deviceWriterChannelInit(&rdev.writer_channel);
+    require(deviceWriterChannelOpen(&rdev.writer_channel, 1), "failed to open raw Closed-refusal channel");
+    raw_selected_closed_probe_t selected = {.rdev = &rdev, .selected = false, .resume = false};
+    deviceWriterChannelInstallAfterSelectHook(pauseRawWriterAfterGenerationSelect, &selected);
+    raw_refusal_probe_t closed = {.rdev = &rdev};
+    pthread_t           thread;
+    resetLogCapture();
+    require(pthread_create(&thread, NULL, rawRefusalWriterRoutine, &closed) == 0,
+            "failed to create fresh raw Closed-refusal helper thread");
+    while (! atomicLoadExplicit(&selected.selected, memory_order_acquire))
+    {
+        YIELD_THREAD();
+    }
+    deviceWriterChannelClose(&rdev.writer_channel);
+    atomicStoreExplicit(&selected.resume, true, memory_order_release);
+    require(pthread_join(thread, NULL) == 0, "failed to join raw Closed-refusal helper thread");
+    deviceWriterChannelInstallAfterSelectHook(NULL, NULL);
+    require(! closed.accepted, "selected raw Closed-refusal helper unexpectedly accepted caller ownership");
+    require(countLogSubstring("channel was closed") == 1,
+            "fresh raw writer thread did not emit exactly its first Closed diagnostic");
+    require(deviceWriterChannelRetireCurrent(&rdev.writer_channel), "failed to retire raw Closed-refusal channel");
+    require(deviceWriterChannelDestroy(&rdev.writer_channel), "failed to destroy raw Closed-refusal channel");
+#endif
+}
+
 int main(void)
 {
     test_env_t env;
     envSetup(&env);
+    logger_t *logger = loggerCreate();
+    require(logger != NULL, "failed to create raw writer log-capture logger");
+    loggerSetHandler(logger, captureLog);
+    setInternalLogger(logger);
+
+    testWriterRefusalLoggingDoesNotStorm();
+    testRawWriterRefusalClassesUseFreshTlsState();
     testRawLinuxSendErrorClassifier();
     testRawBringDownQuiescesConcurrentWriters(&env);
     testRawJoinFailureRetainsOwnership(&env);
@@ -619,6 +846,7 @@ int main(void)
     testRawSendErrorPolicyEndsOnTerminalFailure(&env);
     testRawPollTerminalEventFailsTheDevice(&env);
     envTeardown(&env);
+    internaloggerDestroy();
     puts("Linux raw writer lifetime tests passed");
     return 0;
 }

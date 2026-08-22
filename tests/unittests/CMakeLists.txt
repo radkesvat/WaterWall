@@ -115,6 +115,14 @@ if(TARGET ww)
 
   add_executable(device_flow_affinity_test device_flow_affinity_test.c)
   target_link_libraries(device_flow_affinity_test PRIVATE ww)
+  if(LINUX)
+    target_compile_definitions(device_flow_affinity_test PRIVATE DEVICE_FLOW_AFFINITY_TEST_TRACKING=1)
+    target_link_options(device_flow_affinity_test PRIVATE
+      "-Wl,--wrap=bufferpoolReuseBuffer"
+      "-Wl,--wrap=deviceFragAffinitySettlePublication"
+      "-Wl,--wrap=deviceFragAffinityOffer"
+    )
+  endif()
   if(TARGET WireGuardDevice)
     target_compile_definitions(device_flow_affinity_test PRIVATE DEVICE_FLOW_AFFINITY_TEST_WIREGUARD=1)
     target_include_directories(device_flow_affinity_test PRIVATE
@@ -160,7 +168,9 @@ if(TARGET ww)
       "-Wl,--wrap=memoryFree"
       "-Wl,--wrap=masterpoolDestroy"
       "-Wl,--wrap=bufferpoolReuseBuffer"
+      "-Wl,--wrap=deviceFragAffinitySettlePublication"
     )
+    target_compile_definitions(device_reader_session_test PRIVATE DEVICE_READER_SESSION_TEST_HOOKS=1)
     target_link_libraries(device_reader_session_test PRIVATE ww)
     add_dependencies(waterwall_unit_tests device_reader_session_test)
 
@@ -639,8 +649,10 @@ if(TARGET ww)
     add_executable(tun_linux_message_lifetime_test
       tun_linux_message_lifetime_test.c
       ${CMAKE_SOURCE_DIR}/ww/devices/device_reader_session.c
+      ${CMAKE_SOURCE_DIR}/ww/devices/device_writer_channel.c
       ${CMAKE_SOURCE_DIR}/ww/devices/tun/tun_linux.c
     )
+    target_compile_definitions(tun_linux_message_lifetime_test PRIVATE DEVICE_WRITER_CHANNEL_TEST_HOOKS=1)
     target_link_options(tun_linux_message_lifetime_test PRIVATE
       "-Wl,--wrap=open"
       "-Wl,--wrap=ioctl"
@@ -671,6 +683,27 @@ if(TARGET ww)
       "unit;net;tun;linux;lifetime"
     )
 
+    if(TARGET TunDevice)
+      # Compile the small tunnel wrapper directly so the test can inject one
+      # lower-layer refusal and verify it does not add a duplicate diagnostic.
+      add_executable(tundevice_writer_refusal_log_test
+        tundevice_writer_refusal_log_test.c
+        ${CMAKE_SOURCE_DIR}/tunnels/TunDevice/common/helpers.c
+      )
+      target_include_directories(tundevice_writer_refusal_log_test PRIVATE
+        ${CMAKE_SOURCE_DIR}/tunnels/TunDevice/include
+        ${CMAKE_SOURCE_DIR}/tunnels/TunDevice/include/TunDevice
+      )
+      target_link_options(tundevice_writer_refusal_log_test PRIVATE "-Wl,--wrap=bufferpoolReuseBuffer")
+      target_link_libraries(tundevice_writer_refusal_log_test PRIVATE ww)
+      add_dependencies(waterwall_unit_tests tundevice_writer_refusal_log_test)
+      add_waterwall_unit_test(
+        waterwall.tundevice_writer_refusal_log_unit
+        tundevice_writer_refusal_log_test
+        "unit;net;tun;linux;writer;logger"
+      )
+    endif()
+
     add_executable(capture_linux_message_lifetime_test
       capture_linux_message_lifetime_test.c
       ${CMAKE_SOURCE_DIR}/ww/devices/device_reader_session.c
@@ -697,6 +730,7 @@ if(TARGET ww)
       ${CMAKE_SOURCE_DIR}/ww/devices/device_writer_channel.c
       ${CMAKE_SOURCE_DIR}/ww/devices/raw/raw_linux.c
     )
+    target_compile_definitions(raw_linux_writer_test PRIVATE DEVICE_WRITER_CHANNEL_TEST_HOOKS=1)
     target_link_options(raw_linux_writer_test PRIVATE
       "-Wl,--wrap=pthread_join"
       "-Wl,--wrap=sendmmsg"
@@ -1974,6 +2008,36 @@ if(TARGET PacketsToConnection)
     packetstoconnection_fake_dns_fragment_test
     "unit;tunnels;packetstoconnection;packet;fragment;dns"
   )
+
+  if(LINUX)
+    # The payload source is compiled once more with its unit-only final-admission
+    # seam.  The archive's ordinary payload object is not extracted, so normal
+    # PacketsToConnection code and layout stay production-identical.
+    add_executable(packetstoconnection_fragment_admission_test
+      packetstoconnection_fragment_admission_test.c
+      ${CMAKE_SOURCE_DIR}/tunnels/PacketsToConnection/upstream/payload.c
+    )
+    target_compile_definitions(packetstoconnection_fragment_admission_test PRIVATE
+      PTC_FRAGMENT_ADMISSION_TEST_HOOKS=1
+    )
+    target_include_directories(packetstoconnection_fragment_admission_test PRIVATE
+      ${CMAKE_SOURCE_DIR}/tunnels/PacketsToConnection/include
+      ${CMAKE_SOURCE_DIR}/tunnels/PacketsToConnection/include/PacketsToConnection
+      ${CMAKE_SOURCE_DIR}/tunnels/PacketsToConnection
+      ${CMAKE_SOURCE_DIR}/ww/base
+    )
+    target_link_options(packetstoconnection_fragment_admission_test PRIVATE
+      "-Wl,--wrap=bufferpoolReuseBuffer"
+      "-Wl,--wrap=deviceFragAffinitySettlePublication"
+    )
+    target_link_libraries(packetstoconnection_fragment_admission_test PRIVATE PacketsToConnection ww)
+    add_dependencies(waterwall_unit_tests packetstoconnection_fragment_admission_test)
+    add_waterwall_unit_test(
+      waterwall.packetstoconnection_fragment_admission_unit
+      packetstoconnection_fragment_admission_test
+      "unit;tunnels;packetstoconnection;packet;fragment;admission;lifetime"
+    )
+  endif()
 endif()
 
 if(LINUX AND TARGET RawSocket)

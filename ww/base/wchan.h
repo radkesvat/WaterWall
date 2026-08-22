@@ -71,3 +71,15 @@ bool chanTryRecv(wchan_t *ch, void *elemptr, bool *closed);
 // queue. Lets a test wait for a worker to really be parked instead of sleeping and hoping.
 uint32_t chanWaiterCount(wchan_t *c, bool senders);
 #endif
+
+#ifdef WCHAN_TEST_HOOKS
+/*
+ * Invoked after chanTrySend() has observed an open, full buffered channel and
+ * immediately before it returns Full.  This narrow seam lets the close-race
+ * unit test prove that the lockless observation has legal Full semantics even
+ * when Close wins immediately afterwards.  Production builds contain neither
+ * the hook storage nor its load.
+ */
+typedef void (*WchanAfterTrySendFastFullHook)(wchan_t *channel, void *context);
+void chanInstallAfterTrySendFastFullHook(WchanAfterTrySendFastFullHook hook, void *context);
+#endif

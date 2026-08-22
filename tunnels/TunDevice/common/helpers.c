@@ -132,7 +132,6 @@ void tundeviceTunnelWritePayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     if (! tundeviceWrite(tdev, buf))
     {
-        LOGW("TunDevice: Write failed! worker %d ", lineGetWID(l));
         lineReuseBuffer(l, buf);
     }
 }

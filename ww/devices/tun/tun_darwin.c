@@ -556,6 +556,16 @@ bool tundeviceDisableReversePathFiltering(const char *ifname)
     return true;
 }
 
+/* Full is expected bounded overload. Sample only lifecycle refusals on the
+ * failing path so shutdown bursts do not turn into packet-rate logging. */
+static bool tundeviceShouldLogRefusal(void)
+{
+    static thread_local uint32_t refusal_count;
+    const uint32_t               ordinal = ++refusal_count;
+
+    return ordinal == 1 || (ordinal & (ordinal - 1U)) == 0;
+}
+
 bool tundeviceWrite(tun_device_t *tdev, sbuf_t *buf)
 {
     assert(sbufGetLength(buf) > 0);
@@ -565,13 +575,18 @@ bool tundeviceWrite(tun_device_t *tdev, sbuf_t *buf)
     case kDeviceWriterSendOk:
         return true;
     case kDeviceWriterSendDown:
-        LOGE("TunDevice: write failed, device is down");
+        if (tundeviceShouldLogRefusal())
+        {
+            LOGE("TunDevice: write failed, device is down");
+        }
         return false;
     case kDeviceWriterSendClosed:
-        LOGE("TunDevice: write failed, channel was closed");
+        if (tundeviceShouldLogRefusal())
+        {
+            LOGE("TunDevice: write failed, channel was closed");
+        }
         return false;
     case kDeviceWriterSendFull:
-        LOGE("TunDevice: write failed, ring is full");
         return false;
     }
 
@@ -1113,7 +1128,6 @@ bool tundeviceBringDown(tun_device_t *tdev)
     if (tunLifecycleLoad(&tdev->lifecycle) == kTunLifecycleDown && ! tdev->reader_joinable && ! tdev->writer_joinable &&
         ! deviceWriterChannelHasCurrent(&tdev->writer_channel))
     {
-        LOGE("TunDevice: device is already down");
         return true;
     }
 

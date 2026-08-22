@@ -1321,7 +1321,6 @@ bool tundeviceBringDown(tun_device_t *tdev)
         ! deviceWriterChannelHasCurrent(&tdev->writer_channel) && tdev->read_thread == NULL &&
         tdev->write_thread == NULL)
     {
-        LOGE("TunDevice: Device is already down");
         return true;
     }
 
@@ -1617,6 +1616,16 @@ bool tundeviceGetLuid(tun_device_t *tdev, uint64_t *out)
     return true;
 }
 
+/* Full is expected bounded overload.  Keep only exponentially sparse Down and
+ * Closed diagnostics, with no shared counter or successful-path work. */
+static bool tundeviceShouldLogRefusal(void)
+{
+    static thread_local uint32_t refusal_count;
+    const uint32_t               ordinal = ++refusal_count;
+
+    return ordinal == 1 || (ordinal & (ordinal - 1U)) == 0;
+}
+
 bool tundeviceWrite(tun_device_t *tdev, sbuf_t *buf)
 {
     // minimum length of an IP header is 20 bytes
@@ -1627,13 +1636,18 @@ bool tundeviceWrite(tun_device_t *tdev, sbuf_t *buf)
     case kDeviceWriterSendOk:
         return true;
     case kDeviceWriterSendDown:
-        LOGE("TunDevice: Write failed, device is down");
+        if (tundeviceShouldLogRefusal())
+        {
+            LOGE("TunDevice: Write failed, device is down");
+        }
         return false;
     case kDeviceWriterSendClosed:
-        LOGE("TunDevice: Write failed, channel was closed");
+        if (tundeviceShouldLogRefusal())
+        {
+            LOGE("TunDevice: Write failed, channel was closed");
+        }
         return false;
     case kDeviceWriterSendFull:
-        LOGE("TunDevice: Write failed, ring is full");
         return false;
     }
 

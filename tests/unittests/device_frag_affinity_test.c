@@ -85,6 +85,63 @@ static void completeDatagram(device_frag_affinity_table_t *table, uint16_t ident
     bufferpoolReuseBuffer(g_pool, tail);
 }
 
+static void testNonFragmentBypassesTableAndZerosResult(void)
+{
+    sbuf_t                       *buf    = makeFragment(13299, 0, false);
+    device_frag_affinity_result_t result = {
+        .released       = (sbuf_t **) (uintptr_t) 1,
+        .released_count = UINT8_MAX,
+        .wid            = kInvalidWID,
+        .publication    = {.serial = UINT64_MAX, .slot = UINT16_MAX, .count = UINT16_MAX, .valid = true},
+    };
+
+    require(deviceFragAffinityOffer(NULL, sbufGetRawPtr(buf), sbufGetLength(buf), buf, &result) ==
+                kDeviceFragAffinityNotFragment,
+            "an unfragmented IPv4 packet entered the fragment table");
+    require(result.released == NULL && result.released_count == 0 && result.wid == 0 && ! result.publication.valid,
+            "the non-fragment result was not fully zeroed");
+    bufferpoolReuseBuffer(g_pool, buf);
+}
+
+static void testMalformedAndClosedFragmentsAreConsumed(void)
+{
+    device_frag_affinity_table_t *table = deviceFragAffinityCreate(g_pool);
+    require(table != NULL, "failed to create the malformed-fragment table");
+
+    sbuf_t *malformed = makeFragment(13310, 0, true);
+    sbufGetMutablePtr(malformed)[10] ^= UINT8_C(1);
+    device_frag_affinity_result_t result = {
+        .publication = {.valid = true},
+    };
+    require(deviceFragAffinityOffer(table, sbufGetRawPtr(malformed), sbufGetLength(malformed), malformed, &result) ==
+                kDeviceFragAffinityConsumedDrop,
+            "a malformed fragment did not take the locked poison/drop path");
+    require(! result.publication.valid && result.released_count == 0,
+            "a malformed fragment left a dispatch result behind");
+
+    sbuf_t *poisoned_retry = makeFragment(13310, 8, false);
+    require(deviceFragAffinityOffer(
+                table, sbufGetRawPtr(poisoned_retry), sbufGetLength(poisoned_retry), poisoned_retry, &result) ==
+                kDeviceFragAffinityConsumedDrop,
+            "a malformed fragment did not poison its identity");
+
+    deviceFragAffinityEndGeneration(table);
+    sbuf_t *closed_tail = makeFragment(13311, 8, false);
+    require(
+        deviceFragAffinityOffer(table, sbufGetRawPtr(closed_tail), sbufGetLength(closed_tail), closed_tail, &result) ==
+            kDeviceFragAffinityConsumedDrop,
+        "a closed generation staged an orphan fragment tail");
+
+    deviceFragAffinityBeginGeneration(table);
+    sbuf_t                       *zero        = makeFragment(13311, 0, true);
+    device_frag_affinity_result_t zero_result = offerDispatch(table, zero, "closed-generation tail survived reopen");
+    require(zero_result.released_count == 0, "a closed-generation orphan tail was released after reopen");
+    deviceFragAffinitySettlePublication(table, &zero_result.publication, kDeviceFragSettlementUnknown);
+    bufferpoolReuseBuffer(g_pool, zero);
+
+    deviceFragAffinityDestroy(table);
+}
+
 static void testSettlementControlsSameIdentityReuse(void)
 {
     device_frag_affinity_table_t *table = deviceFragAffinityCreate(g_pool);
@@ -117,6 +174,8 @@ int main(void)
     g_pool = bufferpoolCreate(g_large_master, g_small_master, 8, 512, 256);
     require(g_pool != NULL, "failed to create the buffer pool");
 
+    testNonFragmentBypassesTableAndZerosResult();
+    testMalformedAndClosedFragmentsAreConsumed();
     testSettlementControlsSameIdentityReuse();
 
     bufferpoolDestroy(g_pool);

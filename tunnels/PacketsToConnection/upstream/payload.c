@@ -12,6 +12,23 @@ enum
 static atomic_log_rate_limiter_t rx_pool_exhaustion_log;
 static atomic_log_rate_limiter_t fake_dns_fragment_log;
 
+#ifdef PTC_FRAGMENT_ADMISSION_TEST_HOOKS
+static ptc_fragment_admission_test_hooks_t ptc_fragment_admission_test_hooks;
+
+void ptcFragmentAdmissionTestInstallHooks(const ptc_fragment_admission_test_hooks_t *hooks)
+{
+    ptc_fragment_admission_test_hooks = hooks != NULL ? *hooks : (ptc_fragment_admission_test_hooks_t) {0};
+}
+
+static void ptcFragmentAdmissionTestRunHook(PtcFragmentAdmissionTestHook hook, sbuf_t *buf, struct netif *inp)
+{
+    if (hook != NULL)
+    {
+        hook(buf, inp, ptc_fragment_admission_test_hooks.context);
+    }
+}
+#endif
+
 static bool ptcPacketNeedsAlignedCopy(const sbuf_t *buf)
 {
     return ((uintptr_t) sbufGetRawPtr(buf) % MEM_ALIGNMENT) != 0;
@@ -73,6 +90,13 @@ static void my_pbuf_free_custom(struct pbuf *p)
  */
 static sbuf_t *ptcAcquireAlignedCopy(buffer_pool_t *pool, sbuf_t *src)
 {
+#ifdef PTC_FRAGMENT_ADMISSION_TEST_HOOKS
+    if (ptc_fragment_admission_test_hooks.fail_aligned_copy)
+    {
+        return NULL;
+    }
+#endif
+
     const uint32_t len = sbufGetLength(src);
 
     if (UNLIKELY(len == 0 || len > (uint32_t) UINT16_MAX))
@@ -240,6 +264,9 @@ static void ptcSubmitPacketToStack(sbuf_t *buf, struct netif *inp)
     }
 
     device_frag_claim_t *stack_claim = NULL;
+#ifdef PTC_FRAGMENT_ADMISSION_TEST_HOOKS
+    ptcFragmentAdmissionTestRunHook(ptc_fragment_admission_test_hooks.before_stack_admission, buf, inp);
+#endif
     if (UNLIKELY(! deviceFragClaimBeginStackUse(buf, &stack_claim)))
     {
         if (is_fragment)
@@ -254,7 +281,14 @@ static void ptcSubmitPacketToStack(sbuf_t *buf, struct netif *inp)
         return;
     }
 
-    my_custom_pbuf_t *custombuf = (my_custom_pbuf_t *) LWIP_MEMPOOL_ALLOC(RX_POOL);
+#ifdef PTC_FRAGMENT_ADMISSION_TEST_HOOKS
+    ptcFragmentAdmissionTestRunHook(ptc_fragment_admission_test_hooks.after_stack_admission, buf, inp);
+#endif
+    my_custom_pbuf_t *custombuf =
+#ifdef PTC_FRAGMENT_ADMISSION_TEST_HOOKS
+        ptc_fragment_admission_test_hooks.fail_rx_wrapper_allocation ? NULL :
+#endif
+                                                                     (my_custom_pbuf_t *) LWIP_MEMPOOL_ALLOC(RX_POOL);
     if (custombuf == NULL)
     {
         // Shared by every worker, so the gate has to be atomic. A silent drop
@@ -323,6 +357,9 @@ static void ptcSubmitPacketToStack(sbuf_t *buf, struct netif *inp)
 
     if (is_fragment)
     {
+#ifdef PTC_FRAGMENT_ADMISSION_TEST_HOOKS
+        ptcFragmentAdmissionTestRunHook(ptc_fragment_admission_test_hooks.before_residue_query, buf, inp);
+#endif
         const bool residue = ip4_reass_has(
             inp, &fragment_key.source, &fragment_key.destination, fragment_key.protocol, fragment_key.identification);
         deviceFragClaimEndStackUse(stack_claim);
@@ -334,6 +371,13 @@ static void ptcSubmitPacketToStack(sbuf_t *buf, struct netif *inp)
         deviceFragClaimResolve(claim, kDeviceFragSettlementUnknown);
     }
 }
+
+#ifdef PTC_FRAGMENT_ADMISSION_TEST_HOOKS
+void ptcFragmentAdmissionTestSubmitPacketToStack(sbuf_t *buf, struct netif *inp)
+{
+    ptcSubmitPacketToStack(buf, inp);
+}
+#endif
 
 static bool ptcValidateIpv4Packet(const sbuf_t *buf, const struct ip_hdr *iphdr)
 {

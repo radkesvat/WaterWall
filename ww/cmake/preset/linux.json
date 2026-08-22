@@ -253,7 +253,8 @@
                 "widle_table_cancellation_test",
                 "reverseclient_owner_drain_test",
                 "packetstostream_orderly_shutdown_test",
-                "packetsender_orderly_shutdown_test"
+                "packetsender_orderly_shutdown_test",
+                "wchan_close_semantics_test"
             ],
             "inherits": [
                 "host-linux"
@@ -542,7 +543,7 @@
             "configuration": "Debug",
             "filter": {
                 "include": {
-                    "name": "^waterwall\\.((shutdown_manager|wloop_stop_request|worker_context_helpers|device_reader_session|widle_table_cancellation|reverseclient_owner_drain|packetstostream_orderly_shutdown|packetsender_orderly_shutdown)_unit|shutdown_production_sequence|reverse_tcp_bridge_roundtrip)$"
+                    "name": "^waterwall\\.((shutdown_manager|wloop_stop_request|worker_context_helpers|device_reader_session|wchan_close_semantics|widle_table_cancellation|reverseclient_owner_drain|packetstostream_orderly_shutdown|packetsender_orderly_shutdown)_unit|shutdown_production_sequence|reverse_tcp_bridge_roundtrip)$"
                 }
             },
             "inherits": [

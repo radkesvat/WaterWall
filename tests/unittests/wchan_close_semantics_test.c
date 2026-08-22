@@ -10,7 +10,8 @@
 
 enum
 {
-    kParkWaitMs = 5000 // ceiling for a worker to reach its blocking call
+    kParkWaitMs              = 5000, // ceiling for a worker to reach its blocking call
+    kMpscMessagesPerProducer = 2048,
 };
 
 static void require(bool condition, const char *message)
@@ -186,11 +187,262 @@ static void testBufferedRoundTrip(void)
     chanFree(c);
 }
 
+/* Repeated capacity-one transitions exercise both ring indices after every wrap. */
+static void testCapacityOneRepeatedWrap(void)
+{
+    wchan_t *channel = chanOpen(sizeof(uint32_t), 1);
+
+    for (uint32_t value = 0; value < 4096; ++value)
+    {
+        bool closed = false;
+        require(chanTrySend(channel, &value, &closed), "capacity-one channel rejected an empty-slot send");
+
+        const uint32_t overflow = value ^ UINT32_C(0xA5A5A5A5);
+        closed                  = false;
+        require(! chanTrySend(channel, (void *) &overflow, &closed), "capacity-one channel did not report full");
+        require(! closed, "capacity-one full channel reported closed");
+
+        uint32_t received = UINT32_MAX;
+        require(chanTryRecv(channel, &received, &closed), "capacity-one channel lost a queued value");
+        require(received == value, "capacity-one channel returned the wrong wrapped value");
+
+        closed = false;
+        require(! chanTryRecv(channel, &received, &closed), "capacity-one channel did not become empty");
+        require(! closed, "open empty capacity-one channel reported closed");
+    }
+
+    chanClose(channel);
+    chanFree(channel);
+}
+
+/* Capacity three catches wrap arithmetic that happens to work only for powers of two. */
+static void testCapacityThreePartialDrainWrap(void)
+{
+    wchan_t *channel = chanOpen(sizeof(uint32_t), 3);
+
+    for (uint32_t base = 0; base < 4096; base += 3)
+    {
+        uint32_t value = base;
+        require(chanSend(channel, &value), "capacity-three channel rejected first fill");
+        value = base + 1;
+        require(chanSend(channel, &value), "capacity-three channel rejected second fill");
+        value = base + 2;
+        require(chanSend(channel, &value), "capacity-three channel rejected third fill");
+
+        for (uint32_t expected = base; expected < base + 2; ++expected)
+        {
+            uint32_t received = UINT32_MAX;
+            require(chanRecv(channel, &received), "capacity-three channel lost a partial-drain value");
+            require(received == expected, "capacity-three channel reordered a partial-drain value");
+        }
+
+        value = base + 3;
+        require(chanSend(channel, &value), "capacity-three channel rejected first refill");
+        value = base + 4;
+        require(chanSend(channel, &value), "capacity-three channel rejected second refill");
+
+        for (uint32_t expected = base + 2; expected < base + 5; ++expected)
+        {
+            uint32_t received = UINT32_MAX;
+            require(chanRecv(channel, &received), "capacity-three channel lost a wrapped value");
+            require(received == expected, "capacity-three channel reordered a wrapped value");
+        }
+    }
+
+    chanClose(channel);
+    chanFree(channel);
+}
+
+typedef struct mpsc_producer_s
+{
+    wchan_t    *channel;
+    uint32_t    producer_id;
+    uint32_t    tokens;
+    atomic_bool start;
+    atomic_bool observed_full;
+    atomic_uint full_results;
+} mpsc_producer_t;
+
+static WTHREAD_ROUTINE(mpscProducerMain) // NOLINT
+{
+    mpsc_producer_t *producer = userdata;
+
+    while (! atomicLoadExplicit(&producer->start, memory_order_acquire))
+    {
+        YIELD_THREAD();
+    }
+
+    for (uint32_t sequence = 0; sequence < producer->tokens; ++sequence)
+    {
+        const uint64_t token = ((uint64_t) producer->producer_id << 32U) | sequence;
+        for (;;)
+        {
+            bool closed = false;
+            if (chanTrySend(producer->channel, (void *) &token, &closed))
+            {
+                break;
+            }
+            require(! closed, "open MPSC channel reported closed while producers were active");
+            atomicIncRelaxed(&producer->full_results);
+            atomicStoreExplicit(&producer->observed_full, true, memory_order_release);
+            YIELD_THREAD();
+        }
+    }
+    return (HTHREAD_RETTYPE) 0;
+}
+
+static void testMpscExactnessAndFullTransitions(unsigned int producer_count)
+{
+    wchan_t         *channel   = chanOpen(sizeof(uint64_t), 3);
+    mpsc_producer_t *producers = memoryAllocateZero((size_t) producer_count * sizeof(*producers));
+    wthread_t       *threads   = memoryAllocate((size_t) producer_count * sizeof(*threads));
+    uint32_t        *expected  = memoryAllocateZero((size_t) producer_count * sizeof(*expected));
+    require(producers != NULL && threads != NULL && expected != NULL, "failed to allocate MPSC channel fixture");
+
+    for (unsigned int producer = 0; producer < producer_count; ++producer)
+    {
+        producers[producer] = (mpsc_producer_t) {
+            .channel       = channel,
+            .producer_id   = producer,
+            .tokens        = kMpscMessagesPerProducer,
+            .start         = false,
+            .observed_full = false,
+            .full_results  = 0,
+        };
+        require(threadCreate(&threads[producer], mpscProducerMain, &producers[producer]) == kWThreadErrorNone,
+                "failed to create an MPSC producer");
+    }
+
+    for (unsigned int producer = 0; producer < producer_count; ++producer)
+    {
+        atomicStoreExplicit(&producers[producer].start, true, memory_order_release);
+    }
+
+    /* Let every producer prove it crossed the full boundary before consuming. */
+    for (unsigned int producer = 0; producer < producer_count; ++producer)
+    {
+        while (! atomicLoadExplicit(&producers[producer].observed_full, memory_order_acquire))
+        {
+            YIELD_THREAD();
+        }
+    }
+
+    const uint64_t expected_total = (uint64_t) producer_count * kMpscMessagesPerProducer;
+    uint64_t       received_total = 0;
+    while (received_total < expected_total)
+    {
+        uint64_t token  = UINT64_MAX;
+        bool     closed = false;
+        if (! chanTryRecv(channel, &token, &closed))
+        {
+            require(! closed, "MPSC channel closed before every accepted token drained");
+            YIELD_THREAD();
+            continue;
+        }
+
+        const uint32_t producer = (uint32_t) (token >> 32U);
+        const uint32_t sequence = (uint32_t) token;
+        require(producer < producer_count, "MPSC channel delivered a token with an invalid producer id");
+        require(sequence == expected[producer], "MPSC channel lost, duplicated, or reordered a producer token");
+        ++expected[producer];
+        ++received_total;
+    }
+
+    for (unsigned int producer = 0; producer < producer_count; ++producer)
+    {
+        require(threadJoin(threads[producer]) == 0, "failed to join an MPSC producer");
+        require(expected[producer] == kMpscMessagesPerProducer,
+                "MPSC channel did not deliver every token from one producer");
+        require(atomicLoadRelaxed(&producers[producer].full_results) != 0,
+                "MPSC producer never exercised the Full refusal path");
+    }
+
+    chanClose(channel);
+    chanFree(channel);
+    memoryFree(expected);
+    memoryFree(threads);
+    memoryFree(producers);
+}
+
+typedef struct fast_full_close_probe_s
+{
+    wchan_t    *channel;
+    int         attempted;
+    bool        sent;
+    bool        closed;
+    atomic_bool observed_fast_full;
+    atomic_bool release_sender;
+} fast_full_close_probe_t;
+
+static void pauseAfterFastFullObservation(wchan_t *channel, void *context)
+{
+    fast_full_close_probe_t *probe = context;
+    require(channel == probe->channel, "fast-full hook received the wrong channel");
+    atomicStoreExplicit(&probe->observed_fast_full, true, memory_order_release);
+    while (! atomicLoadExplicit(&probe->release_sender, memory_order_acquire))
+    {
+        YIELD_THREAD();
+    }
+}
+
+static WTHREAD_ROUTINE(fastFullCloseSenderMain) // NOLINT
+{
+    fast_full_close_probe_t *probe = userdata;
+    probe->closed                  = false;
+    probe->sent                    = chanTrySend(probe->channel, &probe->attempted, &probe->closed);
+    return (HTHREAD_RETTYPE) 0;
+}
+
+/* A close after the documented open/full observation may legally return Full, never consume the token. */
+static void testCloseVersusFastFullRejection(void)
+{
+    wchan_t *channel = chanOpen(sizeof(int), 1);
+    int      queued  = 71;
+    require(chanSend(channel, &queued), "could not prefill close-race channel");
+
+    fast_full_close_probe_t probe = {
+        .channel            = channel,
+        .attempted          = 72,
+        .observed_fast_full = false,
+        .release_sender     = false,
+    };
+    chanInstallAfterTrySendFastFullHook(pauseAfterFastFullObservation, &probe);
+
+    wthread_t sender;
+    require(threadCreate(&sender, fastFullCloseSenderMain, &probe) == kWThreadErrorNone,
+            "failed to create close-race sender");
+    while (! atomicLoadExplicit(&probe.observed_fast_full, memory_order_acquire))
+    {
+        YIELD_THREAD();
+    }
+
+    chanClose(channel);
+    atomicStoreExplicit(&probe.release_sender, true, memory_order_release);
+    require(threadJoin(sender) == 0, "failed to join close-race sender");
+    chanInstallAfterTrySendFastFullHook(NULL, NULL);
+
+    require(! probe.sent && ! probe.closed,
+            "an already observed open/full channel did not report the legal Full result after close");
+
+    int  received = -1;
+    bool closed   = false;
+    require(chanTryRecv(channel, &received, &closed), "close-race channel lost a pre-close item");
+    require(received == queued, "close-race channel returned the wrong pre-close item");
+    require(! chanTryRecv(channel, &received, &closed) && closed,
+            "close-race channel delivered a post-close fast-full token");
+    chanFree(channel);
+}
+
 int main(void)
 {
     testCanceledSenderReportsFailure();
     testCanceledReceiverStaysUsable();
     testBufferedRoundTrip();
+    testCapacityOneRepeatedWrap();
+    testCapacityThreePartialDrainWrap();
+    testMpscExactnessAndFullTransitions(2);
+    testMpscExactnessAndFullTransitions(4);
+    testCloseVersusFastFullRejection();
 
     printf("wchan close semantics tests passed\n");
     return 0;

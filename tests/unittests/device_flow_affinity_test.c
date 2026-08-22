@@ -21,13 +21,46 @@ enum
 
 typedef struct captured_post_s
 {
-    wid_t        wid;
-    unsigned int count;
-    sbuf_t      *bufs[kMaxCapturedBuffers];
+    wid_t                              wid;
+    unsigned int                       count;
+    sbuf_t                            *bufs[kMaxCapturedBuffers];
+    device_frag_affinity_publication_t publications[kMaxCapturedBuffers];
 } captured_post_t;
 
 static captured_post_t captured_posts[kMaxCapturedPosts];
 static unsigned int    captured_post_count;
+static int             refused_post_index = -1;
+static unsigned int    post_attempt_count;
+
+#ifdef DEVICE_FLOW_AFFINITY_TEST_TRACKING
+typedef struct tracked_resource_s
+{
+    sbuf_t                            *buf;
+    device_frag_affinity_publication_t publication;
+    unsigned int                       reuse_count;
+    unsigned int                       settlement_count;
+    device_frag_settlement_t           settlement;
+} tracked_resource_t;
+
+static tracked_resource_t tracked_resources[kMaxCapturedBuffers];
+static unsigned int       tracked_resource_count;
+static buffer_pool_t     *tracked_reuse_pool;
+
+void                          __real_bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *buf);
+void                          __wrap_bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *buf);
+void                          __real_deviceFragAffinitySettlePublication(device_frag_affinity_table_t             *table,
+                                                                         const device_frag_affinity_publication_t *publication,
+                                                                         device_frag_settlement_t                  settlement);
+void                          __wrap_deviceFragAffinitySettlePublication(device_frag_affinity_table_t             *table,
+                                                                         const device_frag_affinity_publication_t *publication,
+                                                                         device_frag_settlement_t                  settlement);
+device_frag_affinity_action_t __real_deviceFragAffinityOffer(device_frag_affinity_table_t *table, const uint8_t *packet,
+                                                             uint32_t length, sbuf_t *buf,
+                                                             device_frag_affinity_result_t *out);
+device_frag_affinity_action_t __wrap_deviceFragAffinityOffer(device_frag_affinity_table_t *table, const uint8_t *packet,
+                                                             uint32_t length, sbuf_t *buf,
+                                                             device_frag_affinity_result_t *out);
+#endif
 
 static void require(bool condition, const char *message)
 {
@@ -38,9 +71,115 @@ static void require(bool condition, const char *message)
     }
 }
 
-bool deviceReaderSessionPost(device_reader_session_t *session, wid_t target_wid, sbuf_t **bufs, unsigned int count)
+#ifdef DEVICE_FLOW_AFFINITY_TEST_TRACKING
+static tracked_resource_t *findTrackedResourceByBuffer(sbuf_t *buf)
 {
-    discard session;
+    for (unsigned int i = 0; i < tracked_resource_count; ++i)
+    {
+        if (tracked_resources[i].buf == buf)
+        {
+            return &tracked_resources[i];
+        }
+    }
+    return NULL;
+}
+
+static tracked_resource_t *findTrackedResourceByPublication(const device_frag_affinity_publication_t *publication)
+{
+    if (publication == NULL || ! publication->valid)
+    {
+        return NULL;
+    }
+
+    for (unsigned int i = 0; i < tracked_resource_count; ++i)
+    {
+        const device_frag_affinity_publication_t *tracked = &tracked_resources[i].publication;
+        if (tracked->valid && tracked->serial == publication->serial && tracked->slot == publication->slot &&
+            tracked->count == publication->count)
+        {
+            return &tracked_resources[i];
+        }
+    }
+    return NULL;
+}
+
+static void trackResource(sbuf_t *buf, const device_frag_affinity_publication_t *publication)
+{
+    if (publication == NULL || ! publication->valid || findTrackedResourceByBuffer(buf) != NULL)
+    {
+        return;
+    }
+
+    require(tracked_resource_count < ARRAY_SIZE(tracked_resources), "tracked-resource array overflow");
+    tracked_resources[tracked_resource_count++] = (tracked_resource_t) {
+        .buf         = buf,
+        .publication = *publication,
+        .settlement  = kDeviceFragSettlementUnknown,
+    };
+}
+
+static void resetResourceTracking(buffer_pool_t *pool)
+{
+    memoryZero(tracked_resources, sizeof(tracked_resources));
+    tracked_resource_count = 0;
+    tracked_reuse_pool     = pool;
+}
+
+void __wrap_bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *buf)
+{
+    if (pool == tracked_reuse_pool)
+    {
+        tracked_resource_t *tracked = findTrackedResourceByBuffer(buf);
+        if (tracked != NULL)
+        {
+            ++tracked->reuse_count;
+            require(tracked->reuse_count == 1, "a mixed-worker refusal buffer was returned more than once");
+        }
+    }
+    __real_bufferpoolReuseBuffer(pool, buf);
+}
+
+void __wrap_deviceFragAffinitySettlePublication(device_frag_affinity_table_t             *table,
+                                                const device_frag_affinity_publication_t *publication,
+                                                device_frag_settlement_t                  settlement)
+{
+    tracked_resource_t *tracked = findTrackedResourceByPublication(publication);
+    if (tracked != NULL)
+    {
+        ++tracked->settlement_count;
+        tracked->settlement = settlement;
+        require(tracked->settlement_count == 1, "a mixed-worker publication settled more than once");
+    }
+    __real_deviceFragAffinitySettlePublication(table, publication, settlement);
+}
+
+device_frag_affinity_action_t __wrap_deviceFragAffinityOffer(device_frag_affinity_table_t *table, const uint8_t *packet,
+                                                             uint32_t length, sbuf_t *buf,
+                                                             device_frag_affinity_result_t *out)
+{
+    const device_frag_affinity_action_t action = __real_deviceFragAffinityOffer(table, packet, length, buf, out);
+    if (action == kDeviceFragAffinityDispatch && out != NULL)
+    {
+        trackResource(buf, &out->publication);
+    }
+    return action;
+}
+#else
+static void trackResource(sbuf_t *buf, const device_frag_affinity_publication_t *publication)
+{
+    discard buf;
+    discard publication;
+}
+
+static void resetResourceTracking(buffer_pool_t *pool)
+{
+    discard pool;
+}
+#endif
+
+static bool capturePost(wid_t target_wid, sbuf_t **bufs, const device_frag_affinity_publication_t *publications,
+                        unsigned int count)
+{
     require(captured_post_count < kMaxCapturedPosts, "captured-post array overflow");
     require(count <= kMaxCapturedBuffers, "captured buffer bucket is too large");
 
@@ -49,16 +188,48 @@ bool deviceReaderSessionPost(device_reader_session_t *session, wid_t target_wid,
     post->count           = count;
     for (unsigned int i = 0; i < count; ++i)
     {
-        post->bufs[i] = bufs[i];
+        post->bufs[i]         = bufs[i];
+        post->publications[i] = publications != NULL ? publications[i] : (device_frag_affinity_publication_t) {0};
+        trackResource(post->bufs[i], &post->publications[i]);
     }
     return true;
+}
+
+bool deviceReaderSessionPost(device_reader_session_t *session, wid_t target_wid, sbuf_t **bufs, unsigned int count)
+{
+    discard session;
+    return capturePost(target_wid, bufs, NULL, count);
 }
 
 bool deviceReaderSessionPostTracked(device_reader_session_t *session, wid_t target_wid, sbuf_t **bufs,
                                     const device_frag_affinity_publication_t *publications, unsigned int count)
 {
-    discard publications;
-    return deviceReaderSessionPost(session, target_wid, bufs, count);
+    for (unsigned int i = 0; i < count; ++i)
+    {
+        if (publications != NULL)
+        {
+            trackResource(bufs[i], &publications[i]);
+        }
+    }
+
+    if (refused_post_index >= 0 && post_attempt_count++ == (unsigned int) refused_post_index)
+    {
+        /* Match the real session contract: the refused chunk is already
+         * consumed before PostTracked reports false. */
+        for (unsigned int i = 0; i < count; ++i)
+        {
+            if (publications != NULL)
+            {
+                deviceFragAffinitySettlePublication(
+                    session->frag_affinity, &publications[i], kDeviceFragSettlementUnknown);
+            }
+            bufferpoolReuseBuffer(session->reader_buffer_pool, bufs[i]);
+        }
+        return false;
+    }
+
+    discard session;
+    return capturePost(target_wid, bufs, publications, count);
 }
 
 void deviceReaderSessionEnd(device_reader_session_t *session)
@@ -87,6 +258,75 @@ static sbuf_t *makeIpv4Packet(uint32_t src, uint16_t src_port, uint32_t dst, uin
     PUT_BE16(packet + 20, src_port);
     PUT_BE16(packet + 22, dst_port);
     return buf;
+}
+
+static void writeIpv4Checksum(uint8_t *packet)
+{
+    uint32_t sum = 0;
+    PUT_BE16(packet + 10, 0);
+    for (uint32_t offset = 0; offset < 20; offset += 2)
+    {
+        sum += GET_BE16(packet + offset);
+    }
+    while ((sum >> 16U) != 0)
+    {
+        sum = (sum & UINT32_C(0xFFFF)) + (sum >> 16U);
+    }
+    PUT_BE16(packet + 10, (uint16_t) ~sum);
+}
+
+static sbuf_t *makeTrackedIpv4Fragment(buffer_pool_t *pool, uint32_t serial)
+{
+    enum
+    {
+        kPayloadBytes = 64,
+        kPacketBytes  = 20 + kPayloadBytes,
+    };
+
+    sbuf_t *buf = bufferpoolGetSmallBuffer(pool);
+    sbufSetLength(buf, kPacketBytes);
+
+    uint8_t *packet = sbufGetMutablePtr(buf);
+    memoryZero(packet, kPacketBytes);
+    packet[0] = 0x45;
+    packet[8] = 64;
+    packet[9] = 17;
+    PUT_BE16(packet + 2, kPacketBytes);
+    PUT_BE16(packet + 4, (uint16_t) serial);
+    PUT_BE16(packet + 6, UINT16_C(0x2000));
+    PUT_BE32(packet + 12, UINT32_C(0x0A000000) | (serial & UINT32_C(0x00FFFFFF)));
+    PUT_BE32(packet + 16, UINT32_C(0xC0000201));
+    PUT_BE16(packet + 20, (uint16_t) (20000U + (serial % 20000U)));
+    PUT_BE16(packet + 22, 53);
+    writeIpv4Checksum(packet);
+    return buf;
+}
+
+static wid_t wholeFragmentWID(sbuf_t *buf)
+{
+    uint8_t       *packet = sbufGetMutablePtr(buf);
+    const uint16_t saved  = GET_BE16(packet + 6);
+    wid_t          target = kInvalidWID;
+    PUT_BE16(packet + 6, 0);
+    require(deviceFlowAffineWID(packet, sbufGetLength(buf), &target),
+            "could not hash an otherwise valid first fragment as a whole packet");
+    PUT_BE16(packet + 6, saved);
+    return target;
+}
+
+static sbuf_t *makeTrackedFragmentForWID(buffer_pool_t *pool, wid_t target_wid, uint32_t serial_base)
+{
+    for (uint32_t offset = 0; offset < 512; ++offset)
+    {
+        sbuf_t *buf = makeTrackedIpv4Fragment(pool, serial_base + offset);
+        if (wholeFragmentWID(buf) == target_wid)
+        {
+            return buf;
+        }
+        bufferpoolReuseBuffer(pool, buf);
+    }
+    require(false, "could not construct a tracked fragment for the requested worker bucket");
+    return NULL;
 }
 
 static sbuf_t *makeIpv6Packet(const uint8_t src[16], uint16_t src_port, const uint8_t dst[16], uint16_t dst_port,
@@ -508,6 +748,7 @@ static void testBucketedDispatch(void)
     sbuf_t *packets[kPacketCount];
     wid_t   expected[kPacketCount];
     bool    seen[kPacketCount];
+    int     last_source_by_wid[4] = {-1, -1, -1, -1};
     memoryZero(seen, sizeof(seen));
     memoryZero(captured_posts, sizeof(captured_posts));
     captured_post_count = 0;
@@ -553,6 +794,9 @@ static void testBucketedDispatch(void)
                 if (expected[source] != UINT8_MAX)
                 {
                     require(post->wid == expected[source], "buffer was posted to the wrong affinity bucket");
+                    require((int) source > last_source_by_wid[post->wid],
+                            "stable mixed-worker dispatch reordered one worker's packets");
+                    last_source_by_wid[post->wid] = (int) source;
                 }
                 break;
             }
@@ -566,6 +810,27 @@ static void testBucketedDispatch(void)
         require(seen[i], "source buffer was not posted");
         sbufDestroy(packets[i]);
     }
+}
+
+static void testEmptyAndSingletonDispatch(void)
+{
+    sbuf_t                 *no_buffers[1] = {NULL};
+    device_reader_session_t session;
+    memoryZero(&session, sizeof(session));
+    session.batch_capacity = 1;
+
+    memoryZero(captured_posts, sizeof(captured_posts));
+    captured_post_count = 0;
+    deviceFlowAffinityPostBatch(&session, no_buffers, 0);
+    require(captured_post_count == 0, "an empty dispatch submitted a worker message");
+
+    sbuf_t     *packet   = makeIpv4Packet(0x0A000011, 32123, 0xC0000201, 443, 6, 0);
+    const wid_t expected = affinityOf(packet);
+    deviceFlowAffinityPostBatch(&session, &packet, 1);
+    require(captured_post_count == 1 && captured_posts[0].wid == expected && captured_posts[0].count == 1 &&
+                captured_posts[0].bufs[0] == packet,
+            "a singleton dispatch did not post the original packet directly");
+    sbufDestroy(packet);
 }
 
 static void testDispatchBucketsAreSplitAtSessionCapacity(void)
@@ -633,6 +898,174 @@ static void testLargeDispatchBoundaries(void)
     }
 }
 
+static void testSameTargetRefusalCleansLaterChunks(void)
+{
+    enum
+    {
+        kPacketCount = 5,
+        kChunkSize   = 2,
+    };
+
+    master_pool_t *large_master = masterpoolCreateWithCapacity(8);
+    master_pool_t *small_master = masterpoolCreateWithCapacity(8);
+    buffer_pool_t *pool         = bufferpoolCreate(large_master, small_master, 8, 256, 64);
+    require(large_master != NULL && small_master != NULL && pool != NULL,
+            "failed to create the dispatch-refusal buffer pool");
+
+    for (unsigned int refused = 0; refused < 2; ++refused)
+    {
+        sbuf_t *packets[kPacketCount];
+        for (unsigned int i = 0; i < ARRAY_SIZE(packets); ++i)
+        {
+            packets[i] = makeIpv4Packet(0x0A000001, 6502, 0xC0000201, 443, 6, 0);
+        }
+
+        memoryZero(captured_posts, sizeof(captured_posts));
+        captured_post_count = 0;
+        refused_post_index  = (int) refused;
+        post_attempt_count  = 0;
+
+        device_reader_session_t session;
+        memoryZero(&session, sizeof(session));
+        session.batch_capacity     = kChunkSize;
+        session.reader_buffer_pool = pool;
+
+        deviceFlowAffinityPostBatch(&session, packets, ARRAY_SIZE(packets));
+
+        require(captured_post_count == refused, "same-target dispatch posted a chunk after the selected refusal");
+        for (unsigned int post = 0; post < captured_post_count; ++post)
+        {
+            require(captured_posts[post].count == kChunkSize,
+                    "same-target dispatch changed the size of an admitted chunk");
+            for (unsigned int item = 0; item < captured_posts[post].count; ++item)
+            {
+                require(captured_posts[post].bufs[item] == packets[post * kChunkSize + item],
+                        "same-target dispatch changed admitted FIFO order before refusal");
+                bufferpoolReuseBuffer(pool, captured_posts[post].bufs[item]);
+            }
+        }
+    }
+
+    refused_post_index = -1;
+    bufferpoolDestroy(pool);
+    masterpoolMakeEmpty(large_master);
+    masterpoolMakeEmpty(small_master);
+    masterpoolDestroy(large_master);
+    masterpoolDestroy(small_master);
+}
+
+static void settleAndReuseCapturedPosts(device_reader_session_t *session, buffer_pool_t *pool)
+{
+    for (unsigned int post = 0; post < captured_post_count; ++post)
+    {
+        for (unsigned int item = 0; item < captured_posts[post].count; ++item)
+        {
+            deviceFragAffinitySettlePublication(
+                session->frag_affinity, &captured_posts[post].publications[item], kDeviceFragSettlementUnknown);
+            bufferpoolReuseBuffer(pool, captured_posts[post].bufs[item]);
+        }
+    }
+}
+
+/*
+ * The sorted path must stop exactly at a refused chunk: earlier buckets stay
+ * FIFO, the session consumes that chunk, and only never-submitted later work is
+ * cleaned by the dispatcher.  Real fragment publications make the assertion
+ * cover both buffer and association ownership instead of synthetic tokens.
+ */
+static void testMixedWorkerRefusalCleansTrackedPublications(void)
+{
+    enum
+    {
+        kPacketCount = 7,
+        kBucketCount = 3,
+        kChunkSize   = 2,
+    };
+    static const wid_t source_bucket[kPacketCount] = {1, 0, 2, 1, 0, 2, 1};
+    static const int   refused_attempts[]          = {0, 2};
+
+    master_pool_t *large_master = masterpoolCreateWithCapacity(16);
+    master_pool_t *small_master = masterpoolCreateWithCapacity(16);
+    buffer_pool_t *pool         = bufferpoolCreate(large_master, small_master, 16, 256, 128);
+    require(large_master != NULL && small_master != NULL && pool != NULL,
+            "failed to create mixed-worker refusal buffer pool");
+    require(getWorkersCount() >= kBucketCount, "mixed-worker refusal fixture needs three worker buckets");
+
+    for (unsigned int run = 0; run < ARRAY_SIZE(refused_attempts); ++run)
+    {
+        sbuf_t      *packets[kPacketCount];
+        sbuf_t      *by_bucket[kBucketCount][kPacketCount];
+        unsigned int bucket_counts[kBucketCount] = {0};
+        memoryZero(captured_posts, sizeof(captured_posts));
+        captured_post_count = 0;
+        refused_post_index  = refused_attempts[run];
+        post_attempt_count  = 0;
+        resetResourceTracking(pool);
+
+        device_reader_session_t session;
+        memoryZero(&session, sizeof(session));
+        session.batch_capacity     = kChunkSize;
+        session.reader_buffer_pool = pool;
+        session.frag_affinity      = deviceFragAffinityCreate(pool);
+        require(session.frag_affinity != NULL, "failed to create mixed-worker refusal fragment table");
+
+        for (unsigned int source = 0; source < kPacketCount; ++source)
+        {
+            const wid_t target = source_bucket[source];
+            packets[source]    = makeTrackedFragmentForWID(pool, target, 31000U + source * 1024U);
+            by_bucket[target][bucket_counts[target]++] = packets[source];
+        }
+        require(bucket_counts[0] == 2 && bucket_counts[1] == 3 && bucket_counts[2] == 2,
+                "mixed-worker refusal fixture did not fill its intended buckets");
+
+        deviceFlowAffinityPostBatch(&session, packets, ARRAY_SIZE(packets));
+
+        if (run == 0)
+        {
+            require(captured_post_count == 0, "first mixed-worker post refusal allowed a later bucket to submit");
+        }
+        else
+        {
+            require(captured_post_count == 2, "middle mixed-worker chunk refusal submitted work after the refusal");
+            require(captured_posts[0].wid == 0 && captured_posts[0].count == 2,
+                    "earlier mixed-worker bucket was not submitted as one legal chunk");
+            require(captured_posts[0].bufs[0] == by_bucket[0][0] && captured_posts[0].bufs[1] == by_bucket[0][1],
+                    "earlier mixed-worker bucket lost stable FIFO order");
+            require(captured_posts[1].wid == 1 && captured_posts[1].count == 2,
+                    "middle mixed-worker bucket did not split at the session capacity");
+            require(captured_posts[1].bufs[0] == by_bucket[1][0] && captured_posts[1].bufs[1] == by_bucket[1][1],
+                    "middle mixed-worker bucket lost FIFO order before its refused chunk");
+        }
+
+        settleAndReuseCapturedPosts(&session, pool);
+
+#ifdef DEVICE_FLOW_AFFINITY_TEST_TRACKING
+        require(tracked_resource_count == kPacketCount,
+                "mixed-worker fixture did not observe every real fragment publication");
+        for (unsigned int resource = 0; resource < tracked_resource_count; ++resource)
+        {
+            const tracked_resource_t *tracked = &tracked_resources[resource];
+            require(tracked->settlement_count == 1 && tracked->settlement == kDeviceFragSettlementUnknown,
+                    "mixed-worker refusal did not settle each valid publication once as Unknown");
+            require(tracked->reuse_count == 1,
+                    "mixed-worker refusal did not return each refused or never-posted buffer exactly once");
+        }
+#endif
+
+        deviceFragAffinityDestroy(session.frag_affinity);
+    }
+
+    refused_post_index = -1;
+#ifdef DEVICE_FLOW_AFFINITY_TEST_TRACKING
+    tracked_reuse_pool = NULL;
+#endif
+    bufferpoolDestroy(pool);
+    masterpoolMakeEmpty(large_master);
+    masterpoolMakeEmpty(small_master);
+    masterpoolDestroy(large_master);
+    masterpoolDestroy(small_master);
+}
+
 int main(void)
 {
     GSTATE.workers_count = 5;
@@ -644,9 +1077,12 @@ int main(void)
     testPortlessProtocolsAreStableAndSymmetric();
     testWidIsHashModuloWorkerCount();
     testBalancedDistribution();
+    testEmptyAndSingletonDispatch();
     testBucketedDispatch();
     testDispatchBucketsAreSplitAtSessionCapacity();
     testLargeDispatchBoundaries();
+    testSameTargetRefusalCleansLaterChunks();
+    testMixedWorkerRefusalCleansTrackedPublications();
     GSTATE.workers_count = 0;
     testWorkerRegistryRestore(&g_test_worker_registry);
     return 0;
