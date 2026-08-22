@@ -122,7 +122,9 @@ static inline void masterpoolGetItems(master_pool_t *const pool, master_pool_ite
 {
     uint32_t i = 0;
 
-    if (atomicLoadExplicit(&(pool->len), memory_order_acquire) > 0)
+    /* This is only an advisory empty probe. Slot visibility is established
+     * under the mutex below, so a stale result can at worst allocate a new item. */
+    if (atomicLoadExplicit(&(pool->len), memory_order_relaxed) > 0)
     {
         mutexLock(&(pool->mutex));
         const uint32_t tmp_len  = (uint32_t) atomicLoadExplicit(&(pool->len), memory_order_relaxed);
@@ -130,15 +132,14 @@ static inline void masterpoolGetItems(master_pool_t *const pool, master_pool_ite
 
         if (consumed > 0)
         {
-            // subtracted rather than added negated: consumed is uint32_t, so -consumed wraps to a
-            // large positive value that then zero-extends into the pointer-width slot the Windows
-            // fallback uses, adding 2^32 per call instead of subtracting
-            atomicSubExplicit(&(pool->len), consumed, memory_order_release);
             const uint32_t pbase = (tmp_len - consumed);
             for (; i < consumed; i++)
             {
                 iptr[i] = pool->available[pbase + i];
             }
+            /* Consumers have copied every slot before making them unavailable
+             * to lockless probes and the next mutex holder. */
+            atomicStoreExplicit(&(pool->len), pbase, memory_order_release);
         }
         mutexUnlock(&(pool->mutex));
     }
@@ -158,7 +159,10 @@ static inline void masterpoolGetItems(master_pool_t *const pool, master_pool_ite
 static inline void masterpoolReuseItems(master_pool_t *const pool, master_pool_item_t **const iptr,
                                         const uint32_t count)
 {
-    if (pool->cap == (uint32_t) atomicLoadExplicit(&(pool->len), memory_order_acquire))
+    /* This is only an advisory full probe. A stale full result may destroy an
+     * item that a later lock holder could have retained, but cannot expose a
+     * slot before it is initialized. */
+    if (pool->cap == (uint32_t) atomicLoadExplicit(&(pool->len), memory_order_relaxed))
     {
         for (uint32_t i = 0; i < count; i++)
         {
@@ -174,12 +178,13 @@ static inline void masterpoolReuseItems(master_pool_t *const pool, master_pool_i
     const uint32_t tmp_len  = (uint32_t) atomicLoadExplicit(&(pool->len), memory_order_relaxed);
     const uint32_t consumed = min(pool->cap - tmp_len, count);
 
-    atomicAddExplicit(&(pool->len), consumed, memory_order_release);
-
     for (; i < consumed; i++)
     {
         pool->available[i + tmp_len] = iptr[i];
     }
+
+    /* Publish initialized slots only after writing them. */
+    atomicStoreExplicit(&(pool->len), tmp_len + consumed, memory_order_release);
 
     mutexUnlock(&(pool->mutex));
 
