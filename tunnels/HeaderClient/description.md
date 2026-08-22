@@ -1,6 +1,6 @@
 <!--
-Documentation version: 110
-Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/HeaderClient.mdx, and both files must keep the same documentation version.
+Documentation version: 152
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/HeaderClient.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/HeaderClient.mdx, and all files must keep the same documentation version.
 -->
 
 # HeaderClient
@@ -350,3 +350,17 @@ The node declares `required_padding_left = 108` because it prepends the largest 
 - If one listener accepts traffic on multiple frontend IPv4 addresses, one fixed `frontend-ipv4` may not describe every accepted connection correctly.
 - The encoded value is taken when the first upstream payload arrives.
 - It only mutates the first upstream payload; the response path is transparent.
+
+## Node Metadata
+
+Source-backed metadata:
+
+| Property | Value |
+| --- | --- |
+| node flags | `kNodeFlagNone` |
+| `can_have_prev` | `true` |
+| `can_have_next` | `true` |
+| `layer_group` | `kNodeLayer4` |
+| `layer_group_prev_node` | `kNodeLayer4` |
+| `layer_group_next_node` | `kNodeLayer4` |
+| `required_padding_left` | `108` bytes |

@@ -1,6 +1,6 @@
 <!--
-Documentation version: 107
-Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/PacketsToStream.mdx, and both files must keep the same documentation version.
+Documentation version: 152
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/PacketsToStream.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/PacketsToStream.mdx, and all files must keep the same documentation version.
 -->
 
 # PacketsToStream Node
@@ -252,3 +252,17 @@ If buffered return data grows beyond that limit, the read stream is emptied.
 - Pair it with `StreamToPackets` on the other side to restore packet boundaries.
 - It still owns one stream output line per packet worker on the send side; only the receive side is re-affinitized.
 - Upstream `est`, `pause`, `resume`, and `finish`, plus downstream `init`, are not part of the intended normal callback path for this tunnel.
+
+## Node Metadata
+
+Source-backed metadata:
+
+| Property | Value |
+| --- | --- |
+| node flags | `kNodeFlagNone` |
+| `can_have_prev` | `true` |
+| `can_have_next` | `true` |
+| `layer_group` | `kNodeLayer3` &#124; `kNodeLayer4` |
+| `layer_group_prev_node` | `kNodeLayer3` |
+| `layer_group_next_node` | `kNodeLayer4` |
+| `required_padding_left` | `0` bytes |

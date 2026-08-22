@@ -1,6 +1,6 @@
 <!--
-Documentation version: 109
-Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/SoftIpLimiter.mdx, and both files must keep the same documentation version.
+Documentation version: 152
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/SoftIpLimiter.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/SoftIpLimiter.mdx, and all files must keep the same documentation version.
 -->
 
 # SoftIpLimiter Node
@@ -434,18 +434,6 @@ Raw VLESS UUIDs and raw Trojan SHA224 values are not logged.
 - Enable `verbose` temporarily when you need to confirm whether a connection was rejected or actively closed because of
   the IP limit.
 
-## Node Metadata
-
-| Property | Value |
-| --- | --- |
-| Node flag | `kNodeFlagNone` |
-| Previous node | Required |
-| Next node | Required |
-| Layer group | `kNodeLayer4` |
-| Previous node layer | `kNodeLayer4` |
-| Next node layer | `kNodeLayer4` |
-| `required_padding_left` | `0` |
-
 ## Common Mistakes
 
 - Placing `SoftIpLimiter(identifier=trojan)` before `TlsServer`. Trojan bytes are still encrypted there, so the limiter
@@ -459,3 +447,17 @@ Raw VLESS UUIDs and raw Trojan SHA224 values are not logged.
   `"on-identification-failure": "close"` for strict enforcement.
 - Setting `simultaneous-user-limit` higher than `6`.
 - Using it in packet chains. It is a stream-only node.
+
+## Node Metadata
+
+Source-backed metadata:
+
+| Property | Value |
+| --- | --- |
+| node flags | `kNodeFlagNone` |
+| `can_have_prev` | `true` |
+| `can_have_next` | `true` |
+| `layer_group` | `kNodeLayer4` |
+| `layer_group_prev_node` | `kNodeLayer4` |
+| `layer_group_next_node` | `kNodeLayer4` |
+| `required_padding_left` | `0` bytes |

@@ -1,6 +1,6 @@
 <!--
-Documentation version: 107
-Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/UdpOverTcpClient.mdx, and both files must keep the same documentation version.
+Documentation version: 152
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/UdpOverTcpClient.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/UdpOverTcpClient.mdx, and all files must keep the same documentation version.
 -->
 
 # UdpOverTcpClient Node
@@ -133,3 +133,17 @@ When either side finishes, the tunnel destroys its read buffer state and forward
 - Outbound packets larger than the hard-coded maximum are dropped.
 - If the inbound framed byte stream overflows the internal buffer, the buffer is emptied instead of closing the line.
 - `UpStreamEst` and `DownStreamInit` are disabled in the current implementation.
+
+## Node Metadata
+
+Source-backed metadata:
+
+| Property | Value |
+| --- | --- |
+| node flags | `kNodeFlagNone` |
+| `can_have_prev` | `true` |
+| `can_have_next` | `true` |
+| `layer_group` | `kNodeLayer4` |
+| `layer_group_prev_node` | `kNodeLayer4` |
+| `layer_group_next_node` | `kNodeLayer4` |
+| `required_padding_left` | `2` bytes |

@@ -1,6 +1,6 @@
 <!--
-Documentation version: 111
-Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/MuxClient.mdx, and both files must keep the same documentation version.
+Documentation version: 152
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/MuxClient.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/MuxClient.mdx, and all files must keep the same documentation version.
 -->
 
 # MuxClient Node
@@ -322,3 +322,17 @@ the same detached drain behavior to already parsed child queues.
 - A local child Finish or orderly process shutdown may release a residual detached queue instead of forwarding it.
 - The detached drain changes no MUX wire bytes or peer capability requirements.
 - `UpStreamEst` and `DownStreamInit` are disabled in the current implementation, so this node is not meant to be used as a generic chain endpoint.
+
+## Node Metadata
+
+Source-backed metadata:
+
+| Property | Value |
+| --- | --- |
+| node flags | `kNodeFlagNone` |
+| `can_have_prev` | `true` |
+| `can_have_next` | `true` |
+| `layer_group` | `kNodeLayer4` |
+| `layer_group_prev_node` | `kNodeLayer4` |
+| `layer_group_next_node` | `kNodeLayer4` |
+| `required_padding_left` | `16` bytes |

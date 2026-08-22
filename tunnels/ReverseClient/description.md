@@ -1,6 +1,6 @@
 <!--
-Documentation version: 106
-Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/ReverseClient.mdx, and both files must keep the same documentation version.
+Documentation version: 152
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/ReverseClient.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/ReverseClient.mdx, and all files must keep the same documentation version.
 -->
 
 # ReverseClient Node
@@ -165,3 +165,17 @@ A spare reverse connection counts as established after the next node reports dow
   `ReverseServer` and any `SniffRouter` reverse detector in front of it.
 - This node relies on an internal handshake format shared with `ReverseServer`.
 - Spare reverse connections are created proactively, so this tunnel intentionally keeps some idle outbound connections open.
+
+## Node Metadata
+
+Source-backed metadata:
+
+| Property | Value |
+| --- | --- |
+| node flags | `kNodeFlagNone` |
+| `can_have_prev` | `true` |
+| `can_have_next` | `true` |
+| `layer_group` | `kNodeLayer4` |
+| `layer_group_prev_node` | `kNodeLayer4` |
+| `layer_group_next_node` | `kNodeLayer4` |
+| `required_padding_left` | `0` bytes |

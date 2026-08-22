@@ -1,6 +1,6 @@
 <!--
-Documentation version: 106
-Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/Bgp4Client.mdx, and both files must keep the same documentation version.
+Documentation version: 152
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/Bgp4Client.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/Bgp4Client.mdx, and all files must keep the same documentation version.
 -->
 
 # Bgp4Client
@@ -24,3 +24,17 @@ Later upstream payloads are wrapped with a random non-OPEN BGP type. Downstream 
 The body length is encoded in network byte order and covers the BGP type byte plus body bytes, matching the older tunnel's framing contract. `settings.password` is still accepted for configuration compatibility, but the historical implementation did not use it for encryption or authentication.
 
 `Bgp4Client` initializes line state during `UpStreamInit`, forwards `Init` immediately, and destroys local line state before forwarding directional `Finish`. It advertises enough left padding for the largest first OPEN prefix. It is a normal layer-4 stream tunnel, not a packet-line tunnel.
+
+## Node Metadata
+
+Source-backed metadata:
+
+| Property | Value |
+| --- | --- |
+| node flags | `kNodeFlagNone` |
+| `can_have_prev` | `true` |
+| `can_have_next` | `true` |
+| `layer_group` | `kNodeLayer4` |
+| `layer_group_prev_node` | `kNodeLayer4` |
+| `layer_group_next_node` | `kNodeLayer4` |
+| `required_padding_left` | `39` bytes |

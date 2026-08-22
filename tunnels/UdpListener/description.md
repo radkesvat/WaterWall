@@ -1,6 +1,6 @@
 <!--
-Documentation version: 106
-Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/UdpListener.mdx, and both files must keep the same documentation version.
+Documentation version: 152
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/UdpListener.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/UdpListener.mdx, and all files must keep the same documentation version.
 -->
 
 # UdpListener Node
@@ -199,3 +199,17 @@ three ports, not on the whole range between `123` and `5353`.
 - `port` is parsed as a number or an array of explicit port numbers, and `port-range` is parsed as a two-item range array.
 - `fwmark` and device binding are platform-dependent. `fwmark` is not available on Windows.
 - Paused peer lines drop inbound datagrams instead of buffering them.
+
+## Node Metadata
+
+Source-backed metadata:
+
+| Property | Value |
+| --- | --- |
+| node flags | `kNodeFlagChainHead` |
+| `can_have_prev` | `false` |
+| `can_have_next` | `true` |
+| `layer_group` | `kNodeLayerAnything` |
+| `layer_group_prev_node` | `kNodeLayerNone` |
+| `layer_group_next_node` | `kNodeLayerAnything` |
+| `required_padding_left` | `0` bytes |

@@ -1,6 +1,6 @@
 <!--
-Documentation version: 108
-Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/WireGuardDevice.mdx, and both files must keep the same documentation version.
+Documentation version: 152
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/WireGuardDevice.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/WireGuardDevice.mdx, and all files must keep the same documentation version.
 -->
 
 # WireGuardDevice Node
@@ -402,3 +402,17 @@ That layout is useful as a minimal reference when you want WireGuard transport o
 - Do not manually place a `UserController` on the transport side while also setting `auth-client-node-name`; `WireGuardDevice` creates that internal node itself.
 - Outbound routing depends entirely on `AllowedIPs`; if your inner destination addresses do not match a peer, traffic is dropped.
 - Inbound plaintext is forwarded only if the decrypted source address is allowed for that peer.
+
+## Node Metadata
+
+Source-backed metadata:
+
+| Property | Value |
+| --- | --- |
+| node flags | `kNodeFlagNone` |
+| `can_have_prev` | `true` |
+| `can_have_next` | `true` |
+| `layer_group` | `kNodeLayerAnything` |
+| `layer_group_prev_node` | `kNodeLayerAnything` &#124; `kNodeLayerOppositeNext` |
+| `layer_group_next_node` | `kNodeLayerAnything` &#124; `kNodeLayerOppositePrev` |
+| `required_padding_left` | `16` bytes |

@@ -1,6 +1,6 @@
 <!--
-Documentation version: 106
-Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/TrojanServer.mdx, and both files must keep the same documentation version.
+Documentation version: 152
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/TrojanServer.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/TrojanServer.mdx, and all files must keep the same documentation version.
 -->
 
 # TrojanServer Node
@@ -427,3 +427,17 @@ not have enough left capacity, the tunnel allocates a new buffer and recycles th
   unauthenticated bytes are sent to fallback. Those bytes may include the presented Trojan password hash, so choose the
   fallback service accordingly.
 - `required_padding_left` is set for UDP wrapping; do not reduce it unless the Trojan UDP header calculation changes.
+
+## Node Metadata
+
+Source-backed metadata:
+
+| Property | Value |
+| --- | --- |
+| node flags | `kNodeFlagNone` |
+| `can_have_prev` | `true` |
+| `can_have_next` | `true` |
+| `layer_group` | `kNodeLayer4` |
+| `layer_group_prev_node` | `kNodeLayer4` |
+| `layer_group_next_node` | `kNodeLayer4` |
+| `required_padding_left` | `263` bytes |

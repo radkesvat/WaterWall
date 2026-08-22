@@ -1,6 +1,6 @@
 <!--
-Documentation version: 107
-Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/Bridge.mdx, and both files must keep the same documentation version.
+Documentation version: 152
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/Bridge.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/Bridge.mdx, and all files must keep the same documentation version.
 -->
 
 # Bridge Node
@@ -124,3 +124,17 @@ and then connect those two places logically through the bridge pair.
 - The current implementation requires the paired node name to exist in the same configuration.
 - `Bridge` adds no buffering, protocol parsing, or transport of its own. It only relays events.
 - `Bridge` advertises `kNodeLayerAnything` and registers logical layer equivalence relations between paired instances (`Bridge A prev == Bridge B prev` and `Bridge A next == Bridge B next`). Startup fails if paired bridge nodes are connected to incompatible network layers (e.g. L3 packet on one side and L4 stream on the other).
+
+## Node Metadata
+
+Source-backed metadata:
+
+| Property | Value |
+| --- | --- |
+| node flags | `kNodeFlagChainHead` &#124; `kNodeFlagChainEnd` |
+| `can_have_prev` | `true` |
+| `can_have_next` | `true` |
+| `layer_group` | `kNodeLayerAnything` |
+| `layer_group_prev_node` | `kNodeLayerAnything` |
+| `layer_group_next_node` | `kNodeLayerAnything` |
+| `required_padding_left` | `0` bytes |

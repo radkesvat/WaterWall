@@ -1,6 +1,6 @@
 <!--
-Documentation version: 106
-Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/Socks5Server.mdx, and both files must keep the same documentation version.
+Documentation version: 152
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/Socks5Server.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/Socks5Server.mdx, and all files must keep the same documentation version.
 -->
 
 # Socks5Server Node
@@ -250,3 +250,17 @@ The implementation follows normal Waterwall finish ordering:
   separator. Embedded NUL bytes are rejected because AuthenticationClient password lookup uses C strings.
 - `required_padding_left` is set for the worst-case SOCKS5 UDP header so the tunnel can prepend UDP headers without
   breaking Waterwall buffer-padding assumptions.
+
+## Node Metadata
+
+Source-backed metadata:
+
+| Property | Value |
+| --- | --- |
+| node flags | `kNodeFlagNone` |
+| `can_have_prev` | `true` |
+| `can_have_next` | `true` |
+| `layer_group` | `kNodeLayer4` |
+| `layer_group_prev_node` | `kNodeLayer4` |
+| `layer_group_next_node` | `kNodeLayer4` |
+| `required_padding_left` | `262` bytes |

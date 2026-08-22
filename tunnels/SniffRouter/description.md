@@ -1,5 +1,5 @@
 <!--
-Documentation version: 107
+Documentation version: 152
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/SniffRouter.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/SniffRouter.mdx, and all files must keep the same documentation version.
 -->
 
@@ -188,3 +188,17 @@ reverse handshake, `SniffRouter` logs a warning and immediately uses the default
 The handshake must be at the very start of the decrypted stream. If a fronting
 proxy forwards traffic with a PROXY-protocol header prepended, strip it before
 `SniffRouter` (the leading bytes would otherwise not be the handshake).
+
+## Node Metadata
+
+Source-backed metadata:
+
+| Property | Value |
+| --- | --- |
+| node flags | `kNodeFlagNone` |
+| `can_have_prev` | `true` |
+| `can_have_next` | `true` |
+| `layer_group` | `kNodeLayer4` |
+| `layer_group_prev_node` | `kNodeLayer4` |
+| `layer_group_next_node` | `kNodeLayer4` |
+| `required_padding_left` | `0` bytes |

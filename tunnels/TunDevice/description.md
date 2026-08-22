@@ -1,6 +1,6 @@
 <!--
-Documentation version: 115
-Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/TunDevice.mdx, and both files must keep the same documentation version.
+Documentation version: 152
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/TunDevice.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/TunDevice.mdx, and all files must keep the same documentation version.
 -->
 
 # TunDevice Node
@@ -280,3 +280,17 @@ those lines and has zero bytes of line state.
 - DNS setup is optional. If configured, invalid IPv4 values are rejected during node creation and failed platform DNS application stops startup.
 - On Windows and macOS, `route-table` values other than `"main"` or `"auto"` are rejected.
 - Platform support depends on build and operating system support for TUN devices.
+
+## Node Metadata
+
+Source-backed metadata:
+
+| Property | Value |
+| --- | --- |
+| node flags | `kNodeFlagChainHead` &#124; `kNodeFlagChainEnd` |
+| `can_have_prev` | `true` |
+| `can_have_next` | `true` |
+| `layer_group` | `kNodeLayer3` |
+| `layer_group_prev_node` | `kNodeLayer3` |
+| `layer_group_next_node` | `kNodeLayer3` |
+| `required_padding_left` | `0` bytes |

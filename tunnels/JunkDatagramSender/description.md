@@ -1,6 +1,6 @@
 <!--
-Documentation version: 106
-Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/JunkDatagramSender.mdx, and both files must keep the same documentation version.
+Documentation version: 152
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/JunkDatagramSender.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/JunkDatagramSender.mdx, and all files must keep the same documentation version.
 -->
 
 # JunkDatagramSender Node
@@ -94,3 +94,17 @@ The DNS module currently builds a real DNS query UDP payload with a question and
 `JunkDatagramSender` stores only a per-line remaining trigger count initialized from `resend-again-times`. Delayed payloads are scheduled with Waterwall's `lineScheduleDelayedTaskWithBuf()`, so the core line scheduler owns the temporary line reference and releases the buffer if the line has closed before the task runs.
 
 Packet helper lines are not destroyed by this tunnel during runtime, and junk generation is skipped on worker packet lines so a layer-3 chain bootstrap does not emit connection-style junk payloads.
+
+## Node Metadata
+
+Source-backed metadata:
+
+| Property | Value |
+| --- | --- |
+| node flags | `kNodeFlagNone` |
+| `can_have_prev` | `true` |
+| `can_have_next` | `true` |
+| `layer_group` | `kNodeLayerAnything` |
+| `layer_group_prev_node` | `kNodeLayerSameAsNext` |
+| `layer_group_next_node` | `kNodeLayerSameAsPrev` |
+| `required_padding_left` | `0` bytes |

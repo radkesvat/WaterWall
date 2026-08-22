@@ -1,6 +1,6 @@
 <!--
-Documentation version: 108
-Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/UserController.mdx, and both files must keep the same documentation version.
+Documentation version: 152
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/UserController.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/UserController.mdx, and all files must keep the same documentation version.
 -->
 
 # UserController Node
@@ -224,3 +224,17 @@ if (admission != kUserAdmissionOk)
 - This node does not require left padding and does not prepend in-place.
 - This node is not a packet tunnel and does not use packet-line semantics.
 - Speed (bytes-per-second / `bandwidth`) limiting is out of scope; use `SpeedLimit` for that.
+
+## Node Metadata
+
+Source-backed metadata:
+
+| Property | Value |
+| --- | --- |
+| node flags | `kNodeFlagNone` |
+| `can_have_prev` | `true` |
+| `can_have_next` | `true` |
+| `layer_group` | `kNodeLayer4` |
+| `layer_group_prev_node` | `kNodeLayer4` |
+| `layer_group_next_node` | `kNodeLayer4` |
+| `required_padding_left` | `0` bytes |

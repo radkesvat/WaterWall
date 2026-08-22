@@ -1,6 +1,6 @@
 <!--
-Documentation version: 108
-Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/AuthenticationClient.mdx, and both files must keep the same documentation version.
+Documentation version: 152
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/AuthenticationClient.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/AuthenticationClient.mdx, and all files must keep the same documentation version.
 -->
 
 # AuthenticationClient
@@ -454,3 +454,17 @@ except the normal control line that it created itself.
 - The local sync baseline is duplicated with the native `usersCopy()` deep copy
   rather than a JSON round trip. Only the received `GetAllUsers` network response
   still requires one JSON parse into the active table.
+
+## Node Metadata
+
+Source-backed metadata:
+
+| Property | Value |
+| --- | --- |
+| node flags | `kNodeFlagChainHead` |
+| `can_have_prev` | `false` |
+| `can_have_next` | `true` |
+| `layer_group` | `kNodeLayer4` |
+| `layer_group_prev_node` | `kNodeLayerNone` |
+| `layer_group_next_node` | `kNodeLayer4` |
+| `required_padding_left` | `0` bytes |

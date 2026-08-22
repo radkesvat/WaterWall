@@ -1,6 +1,6 @@
 <!--
-Documentation version: 108
-Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/TesterServer.mdx, and both files must keep the same documentation version.
+Documentation version: 152
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/TesterServer.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/TesterServer.mdx, and all files must keep the same documentation version.
 -->
 
 # TesterServer Node
@@ -312,3 +312,17 @@ bug because packet lines are shared worker state, not per-connection lines.
   `transport` is enabled
 - in packet mode, `max-payload-size` reduces the effective chunk size before packet generation; it does not split one
   logical packet into multiple packets
+
+## Node Metadata
+
+Source-backed metadata:
+
+| Property | Value |
+| --- | --- |
+| node flags | `kNodeFlagChainHead` &#124; `kNodeFlagChainEnd` |
+| `can_have_prev` | `true` |
+| `can_have_next` | `true` |
+| `layer_group` | `kNodeLayerAnything` |
+| `layer_group_prev_node` | `kNodeLayerAnything` |
+| `layer_group_next_node` | `kNodeLayerAnything` |
+| `required_padding_left` | `0` bytes |

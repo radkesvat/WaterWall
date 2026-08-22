@@ -1,6 +1,6 @@
 <!--
-Documentation version: 107
-Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/UdpOverTcpServer.mdx, and both files must keep the same documentation version.
+Documentation version: 152
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/UdpOverTcpServer.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/UdpOverTcpServer.mdx, and all files must keep the same documentation version.
 -->
 
 # UdpOverTcpServer Node
@@ -127,3 +127,17 @@ When the line finishes from either direction, it destroys the read buffer state 
 - Oversized packets are dropped.
 - If the inbound framed stream exceeds the internal overflow threshold, the read buffer is emptied instead of closing the line.
 - `UpStreamEst` and `DownStreamInit` are disabled in the current implementation.
+
+## Node Metadata
+
+Source-backed metadata:
+
+| Property | Value |
+| --- | --- |
+| node flags | `kNodeFlagNone` |
+| `can_have_prev` | `true` |
+| `can_have_next` | `true` |
+| `layer_group` | `kNodeLayer4` |
+| `layer_group_prev_node` | `kNodeLayer4` |
+| `layer_group_next_node` | `kNodeLayer4` |
+| `required_padding_left` | `2` bytes |

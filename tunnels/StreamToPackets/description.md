@@ -1,6 +1,6 @@
 <!--
-Documentation version: 107
-Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/StreamToPackets.mdx, and both files must keep the same documentation version.
+Documentation version: 152
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/StreamToPackets.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/StreamToPackets.mdx, and all files must keep the same documentation version.
 -->
 
 # StreamToPackets Node
@@ -269,3 +269,17 @@ If buffered data exceeds that size, the read stream is emptied.
   allowlisting in front of it on untrusted listeners.
 - Return traffic can arrive on any line of the active source's pool, so the peer must be able to accept a decoded
   packet on any of its lines. `PacketsToStream` does exactly that.
+
+## Node Metadata
+
+Source-backed metadata:
+
+| Property | Value |
+| --- | --- |
+| node flags | `kNodeFlagNone` |
+| `can_have_prev` | `true` |
+| `can_have_next` | `true` |
+| `layer_group` | `kNodeLayer3` &#124; `kNodeLayer4` |
+| `layer_group_prev_node` | `kNodeLayer4` |
+| `layer_group_next_node` | `kNodeLayer3` |
+| `required_padding_left` | `0` bytes |

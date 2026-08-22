@@ -1,6 +1,6 @@
 <!--
-Documentation version: 108
-Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/LoggerTunnel.mdx, and both files must keep the same documentation version.
+Documentation version: 152
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/LoggerTunnel.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/LoggerTunnel.mdx, and all files must keep the same documentation version.
 -->
 
 # LoggerTunnel Node
@@ -200,3 +200,17 @@ The selected `output-mode` controls filenames exactly like `file` mode.
 - `tcp-payload-file` is intentionally IPv4-only in this implementation.
 - Logging failures do not change forwarding behavior; payload is still passed through unchanged.
 - Layer group is `kNodeLayerAnything` with `SameAsPrev` and `SameAsNext`. It is middle-only (`kNodeFlagNone`) and preserves the network layer across its two neighbors.
+
+## Node Metadata
+
+Source-backed metadata:
+
+| Property | Value |
+| --- | --- |
+| node flags | `kNodeFlagNone` |
+| `can_have_prev` | `true` |
+| `can_have_next` | `true` |
+| `layer_group` | `kNodeLayerAnything` |
+| `layer_group_prev_node` | `kNodeLayerSameAsNext` |
+| `layer_group_next_node` | `kNodeLayerSameAsPrev` |
+| `required_padding_left` | `0` bytes |

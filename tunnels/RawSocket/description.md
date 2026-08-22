@@ -1,6 +1,6 @@
 <!--
-Documentation version: 119
-Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/RawSocket.mdx, and both files must keep the same documentation version.
+Documentation version: 152
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/RawSocket.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/RawSocket.mdx, and all files must keep the same documentation version.
 -->
 
 # RawSocket Node
@@ -208,3 +208,17 @@ those lines and has zero bytes of line state.
 - `capture-filter-mode` is effectively limited to `"source-ip"` right now.
 - `capture-ips` should be provided explicitly.
 - Platform support depends on the raw/capture backend available on the operating system.
+
+## Node Metadata
+
+Source-backed metadata:
+
+| Property | Value |
+| --- | --- |
+| node flags | `kNodeFlagChainHead` &#124; `kNodeFlagChainEnd` |
+| `can_have_prev` | `true` |
+| `can_have_next` | `true` |
+| `layer_group` | `kNodeLayer3` |
+| `layer_group_prev_node` | `kNodeLayer3` |
+| `layer_group_next_node` | `kNodeLayer3` |
+| `required_padding_left` | `0` bytes |

@@ -1,6 +1,6 @@
 <!--
-Documentation version: 107
-Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/DomainResolver.mdx, and both files must keep the same documentation version.
+Documentation version: 152
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/DomainResolver.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/DomainResolver.mdx, and all files must keep the same documentation version.
 -->
 
 # DomainResolver Node
@@ -87,3 +87,17 @@ nodes. This implementation is intentionally standalone; no existing tunnel is re
 - It requires no left padding and does not touch `sbuf_t` layout.
 - It resolves only the destination address context (`dest_ctx`), not the source context.
 - A line whose destination is neither an IP address nor a valid domain is rejected.
+
+## Node Metadata
+
+Source-backed metadata:
+
+| Property | Value |
+| --- | --- |
+| node flags | `kNodeFlagNone` |
+| `can_have_prev` | `true` |
+| `can_have_next` | `true` |
+| `layer_group` | `kNodeLayerAnything` |
+| `layer_group_prev_node` | `kNodeLayerSameAsNext` |
+| `layer_group_next_node` | `kNodeLayerSameAsPrev` |
+| `required_padding_left` | `0` bytes |

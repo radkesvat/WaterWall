@@ -1,6 +1,6 @@
 <!--
-Documentation version: 106
-Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/VlessClient.mdx, and both files must keep the same documentation version.
+Documentation version: 152
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/VlessClient.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/VlessClient.mdx, and all files must keep the same documentation version.
 -->
 
 # VlessClient Node
@@ -224,3 +224,17 @@ the VLESS response header. Downstream body bytes are still held until the respon
 - UDP payloads with length `0` or greater than `65535` are dropped locally.
 - Malformed downstream response headers or UDP frames close the affected line safely.
 - `required_padding_left` is `2`, enough for the VLESS UDP length prefix.
+
+## Node Metadata
+
+Source-backed metadata:
+
+| Property | Value |
+| --- | --- |
+| node flags | `kNodeFlagNone` |
+| `can_have_prev` | `true` |
+| `can_have_next` | `true` |
+| `layer_group` | `kNodeLayer4` |
+| `layer_group_prev_node` | `kNodeLayer4` |
+| `layer_group_next_node` | `kNodeLayer4` |
+| `required_padding_left` | `2` bytes |

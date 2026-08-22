@@ -1,6 +1,6 @@
 <!--
-Documentation version: 106
-Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/PacketReceiver.mdx, and both files must keep the same documentation version.
+Documentation version: 152
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/PacketReceiver.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/PacketReceiver.mdx, and all files must keep the same documentation version.
 -->
 
 # PacketReceiver Node
@@ -41,3 +41,17 @@ per-IP count, and writes a file report with loss and a text histogram.
 The report is written to the file only. PacketReceiver does not use packet-line `Finish` as a completion signal.
 It can be placed at the end of a packet chain, where it consumes upstream payload, or at the start of a packet chain,
 where it consumes downstream payload arriving from its next-side peer.
+
+## Node Metadata
+
+Source-backed metadata:
+
+| Property | Value |
+| --- | --- |
+| node flags | `kNodeFlagChainHead` &#124; `kNodeFlagChainEnd` |
+| `can_have_prev` | `true` |
+| `can_have_next` | `true` |
+| `layer_group` | `kNodeLayer3` |
+| `layer_group_prev_node` | `kNodeLayer3` |
+| `layer_group_next_node` | `kNodeLayer3` |
+| `required_padding_left` | `0` bytes |

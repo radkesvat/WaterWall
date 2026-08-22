@@ -1,6 +1,6 @@
 <!--
-Documentation version: 110
-Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/MuxServer.mdx, and both files must keep the same documentation version.
+Documentation version: 152
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/MuxServer.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/MuxServer.mdx, and all files must keep the same documentation version.
 -->
 
 # MuxServer Node
@@ -229,3 +229,17 @@ previous side, and applies the same detached drain behavior to already parsed ch
 - A service-side Finish or orderly worker shutdown may discard residual detached data. Worker shutdown forwards no
   queued Payload, even for a writable child, before closing every remaining owned child.
 - The detached drain changes no MUX wire bytes or peer capability requirements.
+
+## Node Metadata
+
+Source-backed metadata:
+
+| Property | Value |
+| --- | --- |
+| node flags | `kNodeFlagNone` |
+| `can_have_prev` | `true` |
+| `can_have_next` | `true` |
+| `layer_group` | `kNodeLayer4` |
+| `layer_group_prev_node` | `kNodeLayer4` |
+| `layer_group_next_node` | `kNodeLayer4` |
+| `required_padding_left` | `8` bytes |

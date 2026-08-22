@@ -1,6 +1,6 @@
 <!--
-Documentation version: 106
-Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/HalfDuplexClient.mdx, and both files must keep the same documentation version.
+Documentation version: 152
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/HalfDuplexClient.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/HalfDuplexClient.mdx, and all files must keep the same documentation version.
 -->
 
 # HalfDuplexClient Node
@@ -138,3 +138,17 @@ If either transport-side half-connection finishes first, `HalfDuplexClient` also
 - The first upstream payload is special because it carries the pairing intro for the upload side.
 - The download line sends only the intro at startup and is then used mainly for return traffic.
 - `UpStreamEst` and `DownStreamInit` are disabled in the current implementation.
+
+## Node Metadata
+
+Source-backed metadata:
+
+| Property | Value |
+| --- | --- |
+| node flags | `kNodeFlagNone` |
+| `can_have_prev` | `true` |
+| `can_have_next` | `true` |
+| `layer_group` | `kNodeLayer4` |
+| `layer_group_prev_node` | `kNodeLayer4` |
+| `layer_group_next_node` | `kNodeLayer4` |
+| `required_padding_left` | `0` bytes |

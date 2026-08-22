@@ -1,6 +1,6 @@
 <!--
-Documentation version: 108
-Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/UdpStatelessSocket.mdx, and both files must keep the same documentation version.
+Documentation version: 152
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/UdpStatelessSocket.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/UdpStatelessSocket.mdx, and all files must keep the same documentation version.
 -->
 
 # UdpStatelessSocket Node
@@ -172,3 +172,17 @@ Packet lines are still supported for outbound routing-context sends, but receive
 - Received UDP peers get distinct normal lines; packet lines are not destroyed during runtime.
 - `fwmark` and device binding are platform-dependent. `fwmark` is not available on Windows.
 - The JSON parser requires `listen-address` and `listen-port`; `source-ip` may override the effective local bind address.
+
+## Node Metadata
+
+Source-backed metadata:
+
+| Property | Value |
+| --- | --- |
+| node flags | `kNodeFlagChainHead` &#124; `kNodeFlagChainEnd` |
+| `can_have_prev` | `true` |
+| `can_have_next` | `true` |
+| `layer_group` | `kNodeLayerAnything` |
+| `layer_group_prev_node` | `kNodeLayerAnything` |
+| `layer_group_next_node` | `kNodeLayerAnything` |
+| `required_padding_left` | `0` bytes |

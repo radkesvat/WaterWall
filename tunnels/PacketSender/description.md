@@ -1,6 +1,6 @@
 <!--
-Documentation version: 108
-Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/PacketSender.mdx, and both files must keep the same documentation version.
+Documentation version: 152
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/PacketSender.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/PacketSender.mdx, and all files must keep the same documentation version.
 -->
 
 # PacketSender Node
@@ -54,3 +54,17 @@ packet lines during the configured duration.
 When `protocol-number` is `ALL`, the total packets per source IP become `packets-per-ip * 255`.
 PacketSender materializes its packet store before sending, so large ranges and high repeat counts must fit under the
 `8 GiB` safety cap.
+
+## Node Metadata
+
+Source-backed metadata:
+
+| Property | Value |
+| --- | --- |
+| node flags | `kNodeFlagChainHead` &#124; `kNodeFlagSingleton` |
+| `can_have_prev` | `false` |
+| `can_have_next` | `true` |
+| `layer_group` | `kNodeLayer3` |
+| `layer_group_prev_node` | `kNodeLayerNone` |
+| `layer_group_next_node` | `kNodeLayer3` |
+| `required_padding_left` | `0` bytes |

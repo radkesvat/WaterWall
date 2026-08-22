@@ -1,6 +1,6 @@
 <!--
-Documentation version: 107
-Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/BlackHole.mdx, and both files must keep the same documentation version.
+Documentation version: 152
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/BlackHole.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/BlackHole.mdx, and all files must keep the same documentation version.
 -->
 
 # BlackHole Node
@@ -146,3 +146,17 @@ That means:
 - `BlackHole` is layer-agnostic in node metadata, but it does not transform between stream and packet semantics.
 - `passive` mode can leave the previous side open indefinitely if that side keeps the line open.
 - `active` mode is best used as a deliberate reject or kill endpoint.
+
+## Node Metadata
+
+Source-backed metadata:
+
+| Property | Value |
+| --- | --- |
+| node flags | `kNodeFlagChainEnd` &#124; `kNodeFlagNoChain` |
+| `can_have_prev` | `true` |
+| `can_have_next` | `false` |
+| `layer_group` | `kNodeLayerAnything` |
+| `layer_group_prev_node` | `kNodeLayerAnything` |
+| `layer_group_next_node` | `kNodeLayerNone` |
+| `required_padding_left` | `0` bytes |

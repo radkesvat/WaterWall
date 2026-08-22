@@ -1,5 +1,5 @@
 <!--
-Documentation version: 110
+Documentation version: 152
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/Router.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/Router.mdx, and all files must keep the same documentation version.
 -->
 
@@ -537,3 +537,17 @@ error* (a MaxMind lookup failure, a regex engine failure) must set
 evaluation may not fall through to a later rule or to the default route. `modules/matchers.c` is the single registry of matchers; adding a condition
 type is: create `modules/<field>/`, then add one row to the `kRouterMatchers`
 table.
+
+## Node Metadata
+
+Source-backed metadata:
+
+| Property | Value |
+| --- | --- |
+| node flags | `kNodeFlagNone` |
+| `can_have_prev` | `true` |
+| `can_have_next` | `true` |
+| `layer_group` | `kNodeLayer4` |
+| `layer_group_prev_node` | `kNodeLayer4` |
+| `layer_group_next_node` | `kNodeLayer4` |
+| `required_padding_left` | `0` bytes |

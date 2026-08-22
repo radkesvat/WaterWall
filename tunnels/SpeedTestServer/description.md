@@ -1,6 +1,6 @@
 <!--
-Documentation version: 106
-Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/SpeedTestServer.mdx, and both files must keep the same documentation version.
+Documentation version: 152
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/SpeedTestServer.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/SpeedTestServer.mdx, and all files must keep the same documentation version.
 -->
 
 # SpeedTestServer Node
@@ -262,3 +262,17 @@ When the server completes or fails a test itself, it:
 - UDP mode reports packet loss and reordering; it does not retry data frames.
 - The server trusts the client to choose the test shape, but validates payload sizes and frame types before buffering or
   processing them.
+
+## Node Metadata
+
+Source-backed metadata:
+
+| Property | Value |
+| --- | --- |
+| node flags | `kNodeFlagChainEnd` |
+| `can_have_prev` | `true` |
+| `can_have_next` | `false` |
+| `layer_group` | `kNodeLayer4` |
+| `layer_group_prev_node` | `kNodeLayer4` |
+| `layer_group_next_node` | `kNodeLayerNone` |
+| `required_padding_left` | `0` bytes |

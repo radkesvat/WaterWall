@@ -1,6 +1,6 @@
 <!--
-Documentation version: 106
-Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/TcpUdpListener.mdx, and both files must keep the same documentation version.
+Documentation version: 152
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/TcpUdpListener.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/TcpUdpListener.mdx, and all files must keep the same documentation version.
 -->
 
 # TcpUdpListener Node
@@ -120,3 +120,17 @@ The internal child listeners are the real socket adapters:
 - The next node must tolerate both transports, or the config should route by protocol after this wrapper.
 - UDP pause semantics remain `UdpListener` semantics: paused UDP peer lines drop inbound datagrams instead of buffering them.
 - No payload bytes are added or removed, so the node requires no left padding.
+
+## Node Metadata
+
+Source-backed metadata:
+
+| Property | Value |
+| --- | --- |
+| node flags | `kNodeFlagChainHead` |
+| `can_have_prev` | `false` |
+| `can_have_next` | `true` |
+| `layer_group` | `kNodeLayer4` |
+| `layer_group_prev_node` | `kNodeLayerNone` |
+| `layer_group_next_node` | `kNodeLayer4` |
+| `required_padding_left` | `0` bytes |

@@ -1,6 +1,6 @@
 <!--
-Documentation version: 107
-Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/UdpConnector.mdx, and both files must keep the same documentation version.
+Documentation version: 152
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/UdpConnector.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/UdpConnector.mdx, and all files must keep the same documentation version.
 -->
 
 # UdpConnector Node
@@ -283,3 +283,17 @@ With `"packet"` balance mode, a `random(x,y)` port is selected when that destina
 - Paused reads drop inbound datagrams instead of buffering them.
 - Downstream `est` is triggered after the local UDP socket is created and ready.
 - Inbound datagrams from unexpected peers are ignored in `"connection"` mode. In `"packet"` mode, datagrams received on the connector socket are accepted so replies from any packet-balanced target can return.
+
+## Node Metadata
+
+Source-backed metadata:
+
+| Property | Value |
+| --- | --- |
+| node flags | `kNodeFlagChainEnd` |
+| `can_have_prev` | `true` |
+| `can_have_next` | `false` |
+| `layer_group` | `kNodeLayerAnything` |
+| `layer_group_prev_node` | `kNodeLayerAnything` |
+| `layer_group_next_node` | `kNodeLayerNone` |
+| `required_padding_left` | `0` bytes |

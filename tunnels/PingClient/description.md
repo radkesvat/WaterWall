@@ -1,6 +1,6 @@
 <!--
-Documentation version: 110
-Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/PingClient.mdx, and both files must keep the same documentation version.
+Documentation version: 152
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/PingClient.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/PingClient.mdx, and all files must keep the same documentation version.
 -->
 
 # PingClient Node
@@ -228,3 +228,17 @@ downstream node's packet limit.
 - unmatched IPv4 traffic is still forwarded unchanged in the same direction
 - IPv4 packet strategies forward packets unchanged when they cannot safely rewrite them; `wrap-in-only-icmp-header` treats input as raw bytes
 - legacy aliases such as `warp-*`, `warp-in-icmp-header-and-update-ipv4-header`, `change-only-ip4-packet-identifier-number`, and `swap-identifier` are still accepted for backward compatibility
+
+## Node Metadata
+
+Source-backed metadata:
+
+| Property | Value |
+| --- | --- |
+| node flags | `kNodeFlagNone` |
+| `can_have_prev` | `true` |
+| `can_have_next` | `true` |
+| `layer_group` | `kNodeLayer3` |
+| `layer_group_prev_node` | `kNodeLayer3` |
+| `layer_group_next_node` | `kNodeLayer3` |
+| `required_padding_left` | `28` bytes |

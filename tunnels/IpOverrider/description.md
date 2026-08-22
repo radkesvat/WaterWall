@@ -1,6 +1,6 @@
 <!--
-Documentation version: 110
-Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/IpOverrider.mdx, and both files must keep the same documentation version.
+Documentation version: 152
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/IpOverrider.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/IpOverrider.mdx, and all files must keep the same documentation version.
 -->
 
 # IpOverrider Node
@@ -234,3 +234,17 @@ When an IPv4 address rewrite is applied, `IpOverrider` updates the IPv4 header c
 - IPv6 addresses are parsed and stored, but IPv6 header rewriting is not enabled yet.
 - A single tunnel instance can now replace what previously required multiple chained `IpOverrider` nodes.
 - The legacy `direction` plus `mode` configuration is still supported for backward compatibility.
+
+## Node Metadata
+
+Source-backed metadata:
+
+| Property | Value |
+| --- | --- |
+| node flags | `kNodeFlagNone` |
+| `can_have_prev` | `true` |
+| `can_have_next` | `true` |
+| `layer_group` | `kNodeLayer3` |
+| `layer_group_prev_node` | `kNodeLayerAnything` |
+| `layer_group_next_node` | `kNodeLayerAnything` |
+| `required_padding_left` | `0` bytes |

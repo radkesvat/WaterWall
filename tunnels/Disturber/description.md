@@ -1,6 +1,6 @@
 <!--
-Documentation version: 106
-Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/Disturber.mdx, and both files must keep the same documentation version.
+Documentation version: 152
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/Disturber.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/Disturber.mdx, and all files must keep the same documentation version.
 -->
 
 # Disturber Node
@@ -196,3 +196,17 @@ Set `disturb-downstream=true` to apply the same payload disturbance model to dow
 - This node is intended for testing and validation, not for production traffic.
 - Combining multiple high probability values can create very chaotic behavior quickly.
 - If you enable payload delay, configure a meaningful `delay_min_ms` and `delay_max_ms` range so the simulated network behavior matches the scenario you want to test.
+
+## Node Metadata
+
+Source-backed metadata:
+
+| Property | Value |
+| --- | --- |
+| node flags | `kNodeFlagNone` |
+| `can_have_prev` | `true` |
+| `can_have_next` | `true` |
+| `layer_group` | `kNodeLayerAnything` |
+| `layer_group_prev_node` | `kNodeLayerSameAsNext` |
+| `layer_group_next_node` | `kNodeLayerSameAsPrev` |
+| `required_padding_left` | `0` bytes |

@@ -1,6 +1,6 @@
 <!--
-Documentation version: 106
-Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/ConnectionFisherClient.mdx, and both files must keep the same documentation version.
+Documentation version: 152
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/ConnectionFisherClient.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/ConnectionFisherClient.mdx, and all files must keep the same documentation version.
 -->
 
 # ConnectionFisherClient Node
@@ -77,3 +77,17 @@ The child lines created by `ConnectionFisherClient` are internal bridge lines.
 - the original line is valid only toward `prev`
 
 This is why the tunnel manually bridges payload, `Est`, `Pause`, `Resume`, and `Finish` between the winning child and the original line instead of forwarding the original line directly.
+
+## Node Metadata
+
+Source-backed metadata:
+
+| Property | Value |
+| --- | --- |
+| node flags | `kNodeFlagNone` |
+| `can_have_prev` | `true` |
+| `can_have_next` | `true` |
+| `layer_group` | `kNodeLayer4` |
+| `layer_group_prev_node` | `kNodeLayer4` |
+| `layer_group_next_node` | `kNodeLayer4` |
+| `required_padding_left` | `0` bytes |

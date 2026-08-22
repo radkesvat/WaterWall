@@ -1,6 +1,6 @@
 <!--
-Documentation version: 131
-Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/IpManipulator.mdx, and both files must keep the same documentation version.
+Documentation version: 152
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/IpManipulator.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/IpManipulator.mdx, and all files must keep the same documentation version.
 -->
 
 # IpManipulator Node
@@ -2363,3 +2363,17 @@ When `source-port-ghost` and/or `dest-port-ghost` are enabled:
   from the destination, the decoy ClientHello reaches the server as in-window
   data ahead of the real one and normally breaks the TLS handshake.
 - The struct contains `trick_sni_blender_packets_delay_max`, but current JSON parsing does not expose or use it.
+
+## Node Metadata
+
+Source-backed metadata:
+
+| Property | Value |
+| --- | --- |
+| node flags | `kNodeFlagNone` |
+| `can_have_prev` | `true` |
+| `can_have_next` | `true` |
+| `layer_group` | `kNodeLayer3` |
+| `layer_group_prev_node` | `kNodeLayerAnything` |
+| `layer_group_next_node` | `kNodeLayerAnything` |
+| `required_padding_left` | `0` bytes |

@@ -1,6 +1,6 @@
 <!--
-Documentation version: 106
-Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/SpeedLimit.mdx, and both files must keep the same documentation version.
+Documentation version: 152
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/SpeedLimit.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/SpeedLimit.mdx, and all files must keep the same documentation version.
 -->
 
 # SpeedLimit Node
@@ -233,3 +233,17 @@ If there are not enough tokens for that packet or datagram chunk, it drops that 
 - `all-lines` mode is the best choice when you want one shared cap for the whole node.
 - The limit is shared by both directions combined inside each selected bucket.
 - In packet chains, Waterwall packet lines are worker-shared helper lines. Because of that, `per-line` on a packet line behaves like a worker-local shared bucket, not a separate limit for each packet flow.
+
+## Node Metadata
+
+Source-backed metadata:
+
+| Property | Value |
+| --- | --- |
+| node flags | `kNodeFlagNone` |
+| `can_have_prev` | `true` |
+| `can_have_next` | `true` |
+| `layer_group` | `kNodeLayerAnything` |
+| `layer_group_prev_node` | `kNodeLayerSameAsNext` |
+| `layer_group_next_node` | `kNodeLayerSameAsPrev` |
+| `required_padding_left` | `0` bytes |

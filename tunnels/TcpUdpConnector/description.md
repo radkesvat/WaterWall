@@ -1,6 +1,6 @@
 <!--
-Documentation version: 108
-Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/TcpUdpConnector.mdx, and both files must keep the same documentation version.
+Documentation version: 152
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/TcpUdpConnector.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/TcpUdpConnector.mdx, and all files must keep the same documentation version.
 -->
 
 # TcpUdpConnector Node
@@ -122,3 +122,17 @@ or before forwarding upstream `Finish` into the selected child. It never calls `
 - If a previous node can set destination protocol, that protocol wins over source protocol.
 - If neither source nor destination has an exact TCP or UDP protocol flag, the line is rejected as a configuration or routing error.
 - No payload bytes are added or removed, so the node requires no left padding.
+
+## Node Metadata
+
+Source-backed metadata:
+
+| Property | Value |
+| --- | --- |
+| node flags | `kNodeFlagChainEnd` |
+| `can_have_prev` | `true` |
+| `can_have_next` | `false` |
+| `layer_group` | `kNodeLayer4` |
+| `layer_group_prev_node` | `kNodeLayer4` |
+| `layer_group_next_node` | `kNodeLayerNone` |
+| `required_padding_left` | `0` bytes |

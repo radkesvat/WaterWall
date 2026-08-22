@@ -1,6 +1,6 @@
 <!--
-Documentation version: 109
-Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/TesterClient.mdx, and both files must keep the same documentation version.
+Documentation version: 152
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/TesterClient.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/TesterClient.mdx, and all files must keep the same documentation version.
 -->
 
 # TesterClient Node
@@ -342,3 +342,17 @@ closable connection lines.
   logical packet into multiple packets
 - `UpStreamInit`, `UpStreamEst`, `UpStreamPayload`, `UpStreamPause`, `UpStreamResume`, and `UpStreamFinish` are
   intentionally disabled because this node is a chain head
+
+## Node Metadata
+
+Source-backed metadata:
+
+| Property | Value |
+| --- | --- |
+| node flags | `kNodeFlagChainHead` &#124; `kNodeFlagSingleton` |
+| `can_have_prev` | `false` |
+| `can_have_next` | `true` |
+| `layer_group` | `kNodeLayerAnything` |
+| `layer_group_prev_node` | `kNodeLayerNone` |
+| `layer_group_next_node` | `kNodeLayerAnything` |
+| `required_padding_left` | `0` bytes |
