@@ -1131,35 +1131,28 @@ static device_frag_affinity_entry_t *deviceFragAffinityAdmitLocked(device_frag_a
     return entry;
 }
 
-static device_frag_affinity_action_t deviceFragAffinityOfferAtLocked(device_frag_affinity_table_t *table,
-                                                                     uint64_t now_ms, const uint8_t *packet,
-                                                                     uint32_t length, sbuf_t *buf,
-                                                                     device_frag_affinity_result_t *out)
+/*
+ * The caller has already classified this packet. Keeping parsing outside the
+ * mutex makes ordinary packets avoid both the fragment-table lock and its
+ * clock read, while every fragment-specific decision remains serialized here.
+ */
+static device_frag_affinity_action_t deviceFragAffinityOfferParsedLocked(
+    device_frag_affinity_table_t *table, uint64_t now_ms, const device_frag_view_t *view,
+    device_frag_parse_result_t parsed, uint32_t length, sbuf_t *buf, device_frag_affinity_result_t *out)
 {
-    if (out != NULL)
-    {
-        *out = (device_frag_affinity_result_t) {0};
-    }
-
-    device_frag_view_t               view   = {0};
-    const device_frag_parse_result_t parsed = deviceFragAffinityParse(packet, length, &view);
-
-    if (parsed == kDeviceFragParseNotFragment)
-    {
-        return kDeviceFragAffinityNotFragment;
-    }
     assert(table != NULL);
     assert(table->release_pool != NULL);
     assert(buf != NULL);
     assert(out != NULL);
+    assert(parsed != kDeviceFragParseNotFragment);
 
-    device_frag_affinity_entry_t *entry = deviceFragAffinityAdmitLocked(table, &view, parsed, now_ms);
+    device_frag_affinity_entry_t *entry = deviceFragAffinityAdmitLocked(table, view, parsed, now_ms);
     if (entry == NULL)
     {
         return deviceFragAffinityDropCurrent(table, buf);
     }
 
-    const bool is_zero        = view.offset == 0;
+    const bool is_zero        = view->offset == 0;
     uint64_t   zero_flow_hash = 0;
     wid_t      zero_hashed    = 0;
     if (is_zero)
@@ -1177,7 +1170,7 @@ static device_frag_affinity_action_t deviceFragAffinityOfferAtLocked(device_frag
         }
     }
 
-    const device_frag_account_result_t account_result = deviceFragAffinityAccount(entry, &view);
+    const device_frag_account_result_t account_result = deviceFragAffinityAccount(entry, view);
     if (account_result != kDeviceFragAccountOk)
     {
         /*
@@ -1215,9 +1208,9 @@ static device_frag_affinity_action_t deviceFragAffinityOfferAtLocked(device_frag
 
         entry->staged[entry->staged_count++] = (device_staged_frag_t) {
             .buf            = buf,
-            .offset         = view.offset,
-            .payload_len    = view.payload_len,
-            .more_fragments = view.more_fragments,
+            .offset         = view->offset,
+            .payload_len    = view->payload_len,
+            .more_fragments = view->more_fragments,
         };
         ++table->staged_total;
         table->staged_bytes += bytes;
@@ -1376,15 +1369,29 @@ void deviceFragAffinitySettlePublication(device_frag_affinity_table_t           
 device_frag_affinity_action_t deviceFragAffinityOffer(device_frag_affinity_table_t *table, const uint8_t *packet,
                                                       uint32_t length, sbuf_t *buf, device_frag_affinity_result_t *out)
 {
-    const uint64_t now_ms = (uint64_t) (getHRTimeUs() / 1000ULL);
-    if (table == NULL)
+    if (out != NULL)
     {
-        return deviceFragAffinityOfferAtLocked(table, now_ms, packet, length, buf, out);
+        *out = (device_frag_affinity_result_t) {0};
     }
 
+    device_frag_view_t               view   = {0};
+    const device_frag_parse_result_t parsed = deviceFragAffinityParse(packet, length, &view);
+    if (parsed == kDeviceFragParseNotFragment)
+    {
+        return kDeviceFragAffinityNotFragment;
+    }
+
+    /* A fragment always needs the shared table; only non-fragments may use a
+     * NULL table to bypass fragment classification. */
+    assert(table != NULL);
+    assert(table->release_pool != NULL);
+    assert(buf != NULL);
+    assert(out != NULL);
+
+    const uint64_t now_ms = (uint64_t) (getHRTimeUs() / 1000ULL);
     mutexLock(&table->lock);
     const device_frag_affinity_action_t action =
-        deviceFragAffinityOfferAtLocked(table, now_ms, packet, length, buf, out);
+        deviceFragAffinityOfferParsedLocked(table, now_ms, &view, parsed, length, buf, out);
     mutexUnlock(&table->lock);
     return action;
 }
