@@ -124,16 +124,14 @@ A correct tunnel is never "just" a parser or encoder. It must preserve callback
     Middle tunnels never duplicate inventories for borrowed lines, but remain
     responsible for internal normal lines they create. Packet lines and
     documented resource-free terminal absorbers are explicit exceptions.
-16. **Do not create proofs of proofs.** Validation exists to catch realistic
-    regressions in the requested behavior, not to authenticate the validator,
-    compiler, shell, CI runner, filesystem, or every possible descendant process.
-    Once a direct, maintainable check demonstrates the scoped invariant, stop.
-    Do not recursively add transaction attestations, verifier replay, tool hashes,
-    adversarial mutation frameworks, complete command-language parsers, or
-    cross-platform binary parsers unless the user explicitly approves a separate
-    security threat model and its maintenance cost. A newly discovered weakness
-    in optional proof machinery is normally a reason to simplify or remove that
-    machinery, not to build another layer around it.
+16. **Do not create proofs of proofs.** Validation must directly protect product
+    behavior or make a bounded performance decision. A defect in optional test,
+    benchmark, parser, provenance, or evidence machinery is normally a reason to
+    simplify or remove that machinery, not to add another validator. Optimization
+    review must end in a terminal keep/revert/defer/inconclusive disposition; a
+    harness failure alone does not authorize another implementation plan. See
+    [§6](#6-validation-and-optimization-review-stop-rules) for the mandatory stop
+    rules.
 17. **Application termination has one coordinator.** Leaf callbacks close their
     local ownership, publish a typed orderly request, and unwind; they do not
     inspect a global termination phase or assume the request ran cleanup.
@@ -671,7 +669,105 @@ Build/validation rules:
 
 ---
 
-## 6. Implementation Workflow
+## 6. Validation And Optimization Review Stop Rules
+
+Validation is support work, not a second product. Its purpose is to catch a
+realistic regression or answer a predeclared engineering question. It is not a
+request to prove that every tool involved in answering the question is itself
+perfect.
+
+### 6.1 Classify findings before requesting work
+
+Every review finding must fit one of these categories:
+
+1. **Production correctness:** a concrete contract, ownership, lifetime,
+   concurrency, portability, or user-visible behavior defect in shipped code.
+2. **Direct regression coverage:** a realistic missing test for changed product
+   behavior that is likely to regress.
+3. **Performance decision:** evidence that a specific production candidate
+   meets, misses, or cannot be measured against a predeclared workload and gate.
+4. **Support-machinery quality:** a defect or possible hardening opportunity in
+   a benchmark runner, result parser, manifest, test seam, artifact collector,
+   or other evidence tooling.
+
+Categories 1 and 2 may require implementation. Category 3 must produce a
+terminal candidate disposition. Category 4 is non-blocking once the direct
+product question can be answered; simplify, replace, or remove the machinery
+instead of recursively repairing it. Do not describe a support-machinery issue
+as a production blocker without demonstrating how it can produce a wrong
+decision for the current scoped candidate.
+
+### 6.2 Optimization work must terminate
+
+Before collecting performance data, freeze the workload, metrics, thresholds,
+sample/order count, host requirements, and candidate boundaries. Then apply
+these rules:
+
+- Give every isolated optional optimization one of **keep**, **revert/defer**, or
+  **inconclusive on this host**. Do not leave an implemented optional candidate
+  indefinitely "pending" while expanding the acceptance system around it.
+- A measured regression or failure to earn the predeclared gain selects the
+  simpler baseline. An inconclusive result also defaults to the simpler baseline
+  for production; the candidate may be deferred for a better benchmark host.
+- A host that cannot reliably execute the frozen workload is
+  **non-decision-capable** for that workload. Preserve the observation and stop.
+  Do not create another harness identity, tune the workload after seeing the
+  result, retry until favorable, or weaken a gate to force a decision.
+- By default, allow at most **one bounded harness-repair pass** after the first
+  end-to-end attempt. Any further repair requires explicit maintainer approval
+  for a separately scoped benchmark-infrastructure task. It may not silently
+  extend the production optimization review.
+- Once direct correctness checks pass and the terminal performance disposition
+  is recorded, stop reviewing the acceptance machinery. Run broad product
+  validation once on the final retained production set, not after every
+  evidence-tool revision.
+
+A reviewer whose remaining findings concern only evidence machinery must not
+write another implementation/fix/readiness plan. Report the support-tool
+limitations and the terminal product disposition instead. Reopen implementation
+only for an independently reproducible production defect or an explicit
+maintainer request to build reusable benchmark infrastructure.
+
+### 6.3 Forbidden recursive validation
+
+Unless the maintainer explicitly approves a separate security or reproducible-
+build threat model, do not add or require:
+
+- verifier replay, validator self-validation, test-of-test mutation frameworks,
+  or attestations of the acceptance transaction;
+- binary/tool/source hashes, copied verifier source in every result directory,
+  child-process ancestry proofs, filesystem provenance, or CI-runner identity;
+- general shell/CMake command parsers whose purpose is to prove that recorded
+  commands match recorded flags;
+- exhaustive fail-closed schemas for diagnostic fields that cannot change the
+  scoped keep/revert or correctness decision; or
+- a new product setting, protocol field, runtime branch, counter, or lifecycle
+  hook solely to make optional evidence tooling easier to authenticate.
+
+One direct check of a build option, path, ownership balance, timeout, or emitted
+metric is enough when it demonstrates the relevant invariant. If optional proof
+machinery becomes difficult to trust, prefer deleting it and retaining the
+direct check.
+
+### 6.4 Keep support code and artifacts subordinate
+
+- Prefer existing tests and small benchmark fixtures. If new validation/evidence
+  code materially exceeds the production change or introduces a new framework,
+  stop and obtain maintainer approval before expanding it.
+- Test seams and counters must compile out of ordinary production builds.
+  Non-compile-gated product API added only for a benchmark requires explicit
+  maintainer approval and a separate product justification.
+- Raw benchmark output, copied manifests, temporary state trees, and repeated
+  runner snapshots are generated artifacts, not normal source. Keep one concise
+  results summary in the repository and store bulky reproducibility bundles
+  outside the main source history unless maintainers explicitly request them.
+- A review prompt asking for production review does not authorize cleanup or
+  redesign of benchmark infrastructure. Conversely, a benchmark cleanup must
+  not change production behavior merely to make evidence pass.
+
+---
+
+## 7. Implementation Workflow
 
 **Planning may include a short developer interview.** When asked to write an
 implementation-plan Markdown file (often in the repository root), inspect the
@@ -702,11 +798,11 @@ reasonable assumptions for low-risk choices.
 8. **Validate proportionally.** Start with inspection and the smallest relevant
    preset target/test. Expand to the fast broad lanes when the change is shared,
    cross-cutting, concurrency-sensitive, or difficult to bound, as described in
-   §5; do not run unrelated tests merely because they are available.
+   §§5–6; do not run unrelated tests merely because they are available.
 
 ---
 
-## 7. Review Checklist
+## 8. Review Checklist
 
 - `Init` initializes this tunnel's line state before any callback can use it.
 - Upstream forwarded only with `tunnelNextUpStream*`; downstream only with
@@ -737,7 +833,7 @@ reasonable assumptions for low-risk choices.
 - No `initialized` flag added that the source does not require.
 - When tests were warranted, the chosen focused coverage exercises the changed
   behavior and likely regressions; otherwise, the reason existing coverage or
-  non-test validation is sufficient is clear. Validation scope follows §5:
+  non-test validation is sufficient is clear. Validation scope follows §§5–6:
   focused for narrow work and broad/full for shared or difficult-to-bound work.
   Compilation used preset build metadata.
 
