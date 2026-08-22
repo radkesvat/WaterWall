@@ -272,16 +272,11 @@ typedef MSVC_ATTR_ALIGNED_LINE_CACHE struct wchan_s
     WaitQ sendq; // list of waiting send callers
     WaitQ recvq; // list of waiting recv callers
 
-    // sendx & recvx are likely to be falsely shared between threads.
-    // - sendx is loaded & stored by both chan_send and chan_recv
-    //   - chan_send for buffered channels when no receiver is waiting
-    //   - chan_recv when there's a waiting sender
-    // - recvx is only used by chan_recv
-    // So we make sure recvx ends up on a separate cache line.
-    atomic_uint32_t sendx;
+    // sendx and recvx are serialized by lock. qlen stays atomic because the
+    // non-blocking full/empty probes read it without taking lock.
+    uint32_t sendx;
 
-    // send index in buf
-    MSVC_ATTR_ALIGNED_LINE_CACHE atomic_uint32_t recvx GNU_ATTR_ALIGNED_LINE_CACHE; // receive index in buf
+    MSVC_ATTR_ALIGNED_LINE_CACHE uint32_t recvx GNU_ATTR_ALIGNED_LINE_CACHE;
 
     // uint8_t pad[kCpuLineCacheSize];
     uint8_t buf[]; // queue storage
@@ -619,17 +614,18 @@ inline static bool chan_send(wchan_t *c, void *srcelemptr, bool *closed)
         return chan_send_direct(c, srcelemptr, recvt);
     }
 
-    if (atomicLoadExplicit(&c->qlen, memory_order_relaxed) < c->qcap)
+    const uint32_t qlen = (uint32_t) atomicLoadExplicit(&c->qlen, memory_order_relaxed);
+    if (qlen < c->qcap)
     {
         // space available in message buffer -- enqueue
-        uint32_t i = (uint32_t) atomicAddExplicit(&c->sendx, 1, memory_order_relaxed);
+        const uint32_t i = c->sendx;
         // copy *srcelemptr -> *dstelemptr
         void *dstelemptr = chan_bufptr(c, i);
         memoryCopy(dstelemptr, srcelemptr, c->elemsize);
         // dlog_send("enqueue elemptr %p at buf[%u]", srcelemptr, i);
-        if (i == c->qcap - 1)
-            atomicStoreExplicit(&c->sendx, 0, memory_order_relaxed);
-        atomicAddExplicit(&c->qlen, 1, memory_order_relaxed);
+        c->sendx = i == c->qcap - 1 ? 0 : i + 1;
+        // Publish the copied ring element after it is fully initialized.
+        atomicStoreExplicit(&c->qlen, qlen + 1, memory_order_relaxed);
         chan_unlock(&c->lock);
         return true;
     }
@@ -752,13 +748,12 @@ inline static bool chan_recv(wchan_t *c, void *dstelemptr, bool *closed)
         return chan_recv_direct(c, dstelemptr, t);
     }
 
-    if (atomicLoadExplicit(&c->qlen, memory_order_relaxed) > 0)
+    const uint32_t qlen = (uint32_t) atomicLoadExplicit(&c->qlen, memory_order_relaxed);
+    if (qlen > 0)
     {
         // Receive directly from queue
-        uint32_t i = (uint32_t) atomicAddExplicit(&c->recvx, 1, memory_order_relaxed);
-        if (i == c->qcap - 1)
-            atomicStoreExplicit(&c->recvx, 0, memory_order_relaxed);
-        atomicSubExplicit(&c->qlen, 1, memory_order_relaxed);
+        const uint32_t i = c->recvx;
+        c->recvx         = i == c->qcap - 1 ? 0 : i + 1;
 
         // copy *srcelemptr -> *dstelemptr
         void *srcelemptr = chan_bufptr(c, i);
@@ -766,6 +761,9 @@ inline static bool chan_recv(wchan_t *c, void *dstelemptr, bool *closed)
 #ifdef DEBUG
         memoryZero(srcelemptr, c->elemsize); // zero buffer memory
 #endif
+
+        // The item has been copied before a lockless probe may observe space.
+        atomicStoreExplicit(&c->qlen, qlen - 1, memory_order_relaxed);
 
         // dlog_recv("dequeue elemptr %p from buf[%u]", srcelemptr, i);
 
@@ -844,15 +842,16 @@ static bool chan_recv_direct(wchan_t *c, void *dstelemptr, Thr *sendert)
         // assert_debug(atomicLoadExplicit(&c->qlen) == c->qcap); // queue is full
 
         // copy element from queue to receiver
-        uint32_t i = (uint32_t) atomicAddExplicit(&c->recvx, 1, memory_order_relaxed);
+        const uint32_t i = c->recvx;
         if (i == c->qcap - 1)
         {
-            atomicStoreExplicit(&c->recvx, 0, memory_order_relaxed);
-            atomicStoreExplicit(&c->sendx, 0, memory_order_relaxed);
+            c->recvx = 0;
+            c->sendx = 0;
         }
         else
         {
-            atomicStoreExplicit(&c->sendx, i + 1, memory_order_relaxed);
+            c->recvx = i + 1;
+            c->sendx = i + 1;
         }
 
         // copy c->buf[i] -> *dstelemptr
