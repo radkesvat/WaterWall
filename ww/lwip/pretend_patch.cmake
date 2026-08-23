@@ -1943,14 +1943,16 @@ err_t            udp_sendto     (struct udp_pcb *pcb, struct pbuf *p,]=])
         [=[    /* compare PCB local addr+port to UDP destination addr+port */]=]
         [=[    if ((pcb->pretend_netif_idx != NETIF_NO_INDEX) &&
         (pcb->pretend_netif_idx == netif_get_index(inp)) &&
-        (pcb->pretend_netif_generation == inp->ww_generation) &&
-        ((pcb->flags & UDP_FLAGS_CONNECTED) != 0)) {
-      if ((pcb->remote_port == src) &&
+        (pcb->pretend_netif_generation == inp->ww_generation)) {
+      if (((pcb->flags & UDP_FLAGS_CONNECTED) != 0) &&
+          (pcb->remote_port == src) &&
           ip_addr_cmp(&pcb->remote_ip, ip_current_src_addr()) &&
           (pcb->local_port == dest) &&
           ip_addr_cmp(&pcb->local_ip, ip_current_dest_addr())) {
         break;
       }
+      /* The wildcard pretend listener is selected only by the listener scan
+       * below, which retains p while it creates a child and redispatches it. */
       prev = pcb;
       continue;
     }

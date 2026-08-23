@@ -195,6 +195,16 @@ if(TARGET ww)
     )
   endif()
 
+  add_executable(lwip_pretend_udp_dispatch_test lwip_pretend_udp_dispatch_test.c)
+  target_link_libraries(lwip_pretend_udp_dispatch_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests lwip_pretend_udp_dispatch_test)
+
+  add_waterwall_unit_test(
+    waterwall.lwip_pretend_udp_dispatch_unit
+    lwip_pretend_udp_dispatch_test
+    "unit;net;lwip;udp;pretend;ownership"
+  )
+
   add_executable(wchan_close_semantics_test
     wchan_close_semantics_test.c
     ${CMAKE_SOURCE_DIR}/ww/base/wchan.c
