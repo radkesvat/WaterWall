@@ -35,9 +35,11 @@ TunDevice -> PingClient -> RawSocket
 RawSocket -> PingServer -> TunDevice
 ```
 
-In first position, RawSocket forwards captured wrapped packets upstream into
-PingServer. PingServer restores them toward TunDevice; plain packets captured by
-TunDevice return downstream through PingServer for wrapping and raw injection.
+In first position, RawSocket forwards captured carrier packets upstream into
+PingServer. PingServer sends an exact type-0 Echo Reply back toward RawSocket
+before restoring the inner packet toward TunDevice. Plain packets from TunDevice
+return downstream as fresh type-8 Echo Requests for raw injection; they are not
+inserted into an unrelated Echo Reply.
 
 ## Configuration Example
 
