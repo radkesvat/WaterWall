@@ -4,6 +4,6 @@
 
 void pingserverDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    // Plain responses from PingServer's next node are wrapped toward PingClient.
+    // Local reverse-direction data becomes a fresh Echo Request toward PingClient.
     pingserverHandleDownstreamPacket(t, l, buf);
 }

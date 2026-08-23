@@ -9,7 +9,6 @@ add_library(PingClient STATIC
                     instance/chain.c
                     instance/index.c
                     common/helpers.c
-                    common/line_state.c
                     upstream/init.c
                     upstream/est.c
                     upstream/fin.c
@@ -27,7 +26,7 @@ add_library(PingClient STATIC
 target_include_directories(PingClient PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(PingClient PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/PingClient)
 
-target_link_libraries(PingClient ww)
+target_link_libraries(PingClient PRIVATE PingCommon ww)
 if(NOT APPLE)
     target_precompile_headers(PingClient REUSE_FROM ww)
 endif()

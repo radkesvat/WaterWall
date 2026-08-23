@@ -5,7 +5,7 @@
 
 node_t nodePingClientGet(void)
 {
-    const char *type_name    = "PingClient";
+    const char *type_name       = "PingClient";
     node_t      node_pingclient = {
              .name                  = NULL,
              .type                  = stringDuplicate(type_name),
@@ -13,7 +13,7 @@ node_t nodePingClientGet(void)
              .hash_name             = 0,
              .hash_type             = calcHashBytes(type_name, stringLength(type_name)),
              .hash_next             = 0,
-             .version               = 0001,
+             .version               = 0002,
              .createHandle          = pingclientCreate,
              .node_json             = NULL,
              .node_settings_json    = NULL,

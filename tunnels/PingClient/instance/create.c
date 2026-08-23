@@ -2,13 +2,54 @@
 
 #include "loggers/network_logger.h"
 
-static bool pingclientLoadIntSetting(int *dest, const cJSON *settings, const char *key, int default_value,
-                                     int min_value, int max_value, const char *json_path)
+static bool pingclientSettingIsSupported(const char *key)
 {
-    assert(default_value >= min_value && default_value <= max_value);
+    static const char *const supported[] = {
+        "local-ipv4",
+        "peer-ipv4",
+        "identifier",
+        "sequence-start",
+        "ttl",
+        "tos",
+    };
 
-    int64_t             val    = 0;
-    json_value_status_t status = jsonGetObjectIntegerInRange(settings, key, min_value, max_value, &val);
+    if (key == NULL)
+    {
+        return false;
+    }
+
+    for (size_t i = 0; i < ARRAY_SIZE(supported); ++i)
+    {
+        if (stringCompare(key, supported[i]) == 0)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool pingclientRejectLegacySettings(const cJSON *settings)
+{
+    for (const cJSON *item = settings != NULL ? settings->child : NULL; item != NULL; item = item->next)
+    {
+        if (pingclientSettingIsSupported(item->string))
+        {
+            continue;
+        }
+
+        LOGF("PingClient: configuration uses removed Ping wire v1 setting '%s'; Ping wire v2 accepts only "
+             "local-ipv4, peer-ipv4, identifier, sequence-start, ttl, and tos",
+             item->string != NULL ? item->string : "<unnamed>");
+        return false;
+    }
+    return true;
+}
+
+static bool pingclientLoadInteger(int *dest, const cJSON *settings, const char *key, int default_value, int minimum,
+                                  int maximum)
+{
+    int64_t             value  = 0;
+    json_value_status_t status = jsonGetObjectIntegerInRange(settings, key, minimum, maximum, &value);
     if (status == kJsonValueMissing)
     {
         *dest = default_value;
@@ -16,215 +57,78 @@ static bool pingclientLoadIntSetting(int *dest, const cJSON *settings, const cha
     }
     if (status == kJsonValueInvalid)
     {
-        LOGF("JSON Error: %s (int field) : expected a whole number between %d and %d", json_path, min_value, max_value);
+        LOGF("JSON Error: PingClient->settings->%s (int field) : expected a whole number between %d and %d",
+             key,
+             minimum,
+             maximum);
         return false;
     }
 
-    *dest = (int) val;
+    *dest = (int) value;
     return true;
 }
 
-static bool pingclientLoadUint16Setting(uint16_t *dest, const cJSON *settings, const char *key, int default_value,
-                                        const char *json_path)
+static bool pingclientLoadRequiredIpv4(uint32_t *destination, const cJSON *settings, const char *key)
 {
-    int value;
-    if (! pingclientLoadIntSetting(&value, settings, key, default_value, 0, UINT16_MAX, json_path))
+    const char         *address = NULL;
+    json_value_status_t status  = jsonGetObjectNonEmptyString(settings, key, &address);
+    if (status == kJsonValueMissing)
     {
+        LOGF("JSON Error: PingClient->settings->%s (required string field) : expected a single IPv4 address", key);
         return false;
     }
-
-    *dest = (uint16_t) value;
-    return true;
-}
-
-static bool pingclientLoadUint8Setting(uint8_t *dest, const cJSON *settings, const char *key, int default_value,
-                                       const char *json_path)
-{
-    int value;
-    if (! pingclientLoadIntSetting(&value, settings, key, default_value, 0, UINT8_MAX, json_path))
+    if (status == kJsonValueInvalid)
     {
+        LOGF("JSON Error: PingClient->settings->%s (string field) : expected a single IPv4 address", key);
         return false;
     }
 
-    *dest = (uint8_t) value;
+    ip4_addr_t parsed = {0};
+    if (ip4AddrAddressToNetwork(address, &parsed) == 0)
+    {
+        LOGF("JSON Error: PingClient->settings->%s (string field) : expected a single IPv4 address", key);
+        return false;
+    }
+
+    *destination = ip4AddrGetU32(&parsed);
     return true;
 }
 
-static bool pingclientLoadBoolSetting(bool *dest, const cJSON *settings, const char *key, bool default_value,
-                                      const char *json_path)
+static bool pingclientLoadIdentifier(pingclient_tstate_t *state, const cJSON *settings)
 {
-    const cJSON *item = cJSON_GetObjectItemCaseSensitive(settings, key);
+    const cJSON *item = settings != NULL ? cJSON_GetObjectItemCaseSensitive(settings, "identifier") : NULL;
     if (item == NULL)
     {
-        *dest = default_value;
+        state->identifier_is_random = true;
+        state->wire.identifier      = 0;
         return true;
     }
 
-    if (! cJSON_IsBool(item))
+    if (cJSON_IsString(item) && item->valuestring != NULL && stringCompare(item->valuestring, "random") == 0)
     {
-        LOGF("JSON Error: %s (boolean field) : expected true or false", json_path);
+        state->identifier_is_random = true;
+        state->wire.identifier      = 0;
+        return true;
+    }
+
+    int64_t value = 0;
+    if (! jsonGetIntegerInRange(item, 0, UINT16_MAX, &value))
+    {
+        LOGF("JSON Error: PingClient->settings->identifier (int or string field) : expected 'random' or a whole "
+             "number between 0 and %u",
+             (unsigned int) UINT16_MAX);
         return false;
     }
 
-    *dest = cJSON_IsTrue(item);
+    state->identifier_is_random = false;
+    state->wire.identifier      = (uint16_t) value;
     return true;
-}
-
-static bool pingclientLoadOptionalXorByteSetting(bool *enabled_out, uint8_t *value_out, const cJSON *settings,
-                                                 const char *key, const char *json_path)
-{
-    int value;
-    if (! pingclientLoadIntSetting(&value, settings, key, kPingClientDefaultPayloadXorByte, -1, UINT8_MAX, json_path))
-    {
-        return false;
-    }
-
-    *enabled_out = (value != -1);
-    *value_out   = (value == -1) ? 0 : (uint8_t) value;
-    return true;
-}
-
-static bool pingclientParseIpv4String(uint32_t *dest, const char *ipbuf, const char *json_path)
-{
-    ip4_addr_t parsed_ipv4;
-
-    if (ip4AddrAddressToNetwork(ipbuf, &parsed_ipv4) == 0)
-    {
-        LOGF("JSON Error: %s (string field) : expected a single IPv4 address", json_path);
-        return false;
-    }
-
-    *dest = ip4AddrGetU32(&parsed_ipv4);
-    return true;
-}
-
-static bool pingclientLoadOptionalIpv4Setting(uint32_t *dest, bool *configured, const cJSON *settings, const char *key,
-                                              const char *json_path)
-{
-    char *ipbuf = NULL;
-    *dest       = 0;
-    *configured = false;
-
-    if (! getStringFromJsonObject(&ipbuf, settings, key))
-    {
-        return true;
-    }
-
-    *configured   = true;
-    const bool ok = pingclientParseIpv4String(dest, ipbuf, json_path);
-    memoryFree(ipbuf);
-    return ok;
-}
-
-static bool pingclientLoadStrategy(pingclient_tstate_t *state, const cJSON *settings)
-{
-    char *strategy = NULL;
-
-    if (! getStringFromJsonObject(&strategy, settings, "strategy"))
-    {
-        state->strategy = kPingClientDefaultStrategy;
-        return true;
-    }
-
-    bool ok = true;
-
-    if (stringCompare(strategy, "wrap-in-new-ip-and-icmp-header") == 0 ||
-        stringCompare(strategy, "warp-in-new-ip-and-icmp-header") == 0 ||
-        stringCompare(strategy, "wrap-in-new-ipv4-and-icmp-header") == 0 ||
-        stringCompare(strategy, "warp-in-new-ipv4-and-icmp-header") == 0)
-    {
-        state->strategy = kPingClientStrategyWrapNewIpAndIcmpHeader;
-    }
-    else if (stringCompare(strategy, "wrap-in-icmp-header-and-reuse-ipv4-addresses") == 0 ||
-             stringCompare(strategy, "warp-in-icmp-header-and-reuse-ipv4-addresses") == 0 ||
-             stringCompare(strategy, "wrap-in-icmp-header-and-reuse-ip-addresses") == 0 ||
-             stringCompare(strategy, "warp-in-icmp-header-and-reuse-ip-addresses") == 0 ||
-             stringCompare(strategy, "wrap-in-icmp-header-and-update-ipv4-header") == 0 ||
-             stringCompare(strategy, "warp-in-icmp-header-and-update-ipv4-header") == 0)
-    {
-        state->strategy = kPingClientStrategyWrapIcmpHeaderAndReuseIpv4Addrs;
-    }
-    else if (stringCompare(strategy, "wrap-in-only-icmp-header") == 0 ||
-             stringCompare(strategy, "warp-in-only-icmp-header") == 0 ||
-             stringCompare(strategy, "wrap-payload-in-only-icmp-header") == 0 ||
-             stringCompare(strategy, "warp-payload-in-only-icmp-header") == 0)
-    {
-        state->strategy = kPingClientStrategyWrapOnlyIcmpHeader;
-    }
-    else if (stringCompare(strategy, "change-only-ipv4-protocol-number") == 0 ||
-             stringCompare(strategy, "change-only-ip4-protocol-number") == 0 ||
-             stringCompare(strategy, "change-only-ip4-packet-identifier-number") == 0)
-    {
-        state->strategy = kPingClientStrategyChangeOnlyIpv4ProtocolNumber;
-    }
-    else
-    {
-        LOGF("JSON Error: PingClient->settings->strategy (string field) : unsupported strategy '%s'", strategy);
-        ok = false;
-    }
-
-    memoryFree(strategy);
-    return ok;
-}
-
-static bool pingclientParseProtocolNumber(uint8_t *dest, const cJSON *settings, const char *key, const char *json_path)
-{
-    const cJSON *item = cJSON_GetObjectItemCaseSensitive(settings, key);
-    if (item == NULL)
-    {
-        LOGF("JSON Error: %s (string or int field) : expected TCP, UDP, ICMP, or a protocol number", json_path);
-        return false;
-    }
-
-    if (cJSON_IsNumber(item))
-    {
-        int value;
-        if (! pingclientLoadIntSetting(&value, settings, key, 0, 0, UINT8_MAX, json_path))
-        {
-            return false;
-        }
-
-        *dest = (uint8_t) value;
-        return true;
-    }
-
-    if (cJSON_IsString(item) && item->valuestring != NULL)
-    {
-        if (stringCompare(item->valuestring, "TCP") == 0 || stringCompare(item->valuestring, "tcp") == 0)
-        {
-            *dest = IP_PROTO_TCP;
-            return true;
-        }
-        if (stringCompare(item->valuestring, "UDP") == 0 || stringCompare(item->valuestring, "udp") == 0)
-        {
-            *dest = IP_PROTO_UDP;
-            return true;
-        }
-        if (stringCompare(item->valuestring, "ICMP") == 0 || stringCompare(item->valuestring, "icmp") == 0)
-        {
-            *dest = IP_PROTO_ICMP;
-            return true;
-        }
-    }
-
-    LOGF("JSON Error: %s (string or int field) : expected TCP, UDP, ICMP, or a protocol number", json_path);
-    return false;
-}
-
-static bool pingclientLoadSwapProtocol(uint8_t *dest, const cJSON *settings)
-{
-    if (cJSON_GetObjectItemCaseSensitive(settings, "swap-protocol") != NULL)
-    {
-        return pingclientParseProtocolNumber(dest, settings, "swap-protocol", "PingClient->settings->swap-protocol");
-    }
-
-    return pingclientParseProtocolNumber(dest, settings, "swap-identifier", "PingClient->settings->swap-protocol");
 }
 
 tunnel_t *pingclientCreate(node_t *node)
 {
     tunnel_t *t = packettunnelCreate(node, sizeof(pingclient_tstate_t), 0);
-    if (! t)
+    if (t == NULL)
     {
         return NULL;
     }
@@ -247,82 +151,30 @@ tunnel_t *pingclientCreate(node_t *node)
         return NULL;
     }
 
-    if (! pingclientLoadUint16Setting(&state->identifier,
-                                      settings,
-                                      "identifier",
-                                      kPingClientDefaultIdentifier,
-                                      "PingClient->settings->identifier") ||
-        ! pingclientLoadBoolSetting(&state->identifier_check_enabled,
-                                    settings,
-                                    "check-identifier",
-                                    kPingClientDefaultIdentifierCheck,
-                                    "PingClient->settings->check-identifier") ||
-        ! pingclientLoadStrategy(state, settings) ||
-        ! pingclientLoadUint8Setting(
-            &state->ttl, settings, "ttl", kPingClientDefaultTtl, "PingClient->settings->ttl") ||
-        ! pingclientLoadUint8Setting(
-            &state->tos, settings, "tos", kPingClientDefaultTos, "PingClient->settings->tos") ||
-        ! pingclientLoadOptionalXorByteSetting(&state->payload_xor_enabled,
-                                               &state->payload_xor_byte,
-                                               settings,
-                                               "xor-byte",
-                                               "PingClient->settings->xor-byte"))
+    if (! pingclientRejectLegacySettings(settings) ||
+        ! pingclientLoadRequiredIpv4(&state->wire.local_ipv4, settings, "local-ipv4") ||
+        ! pingclientLoadRequiredIpv4(&state->wire.peer_ipv4, settings, "peer-ipv4") ||
+        ! pingclientLoadIdentifier(state, settings))
     {
         pingclientDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
-    getBoolFromJsonObjectOrDefault(
-        &state->roundup_payload_size, settings, "roundup-size", kPingClientDefaultRoundupPayload);
-
-    if (! state->roundup_payload_size)
-    {
-        getBoolFromJsonObjectOrDefault(
-            &state->roundup_payload_size, settings, "roundup", kPingClientDefaultRoundupPayload);
-    }
-
-    uint16_t sequence_start = kPingClientDefaultSequenceStart;
-    uint16_t ipv4_id_start  = kPingClientDefaultIpv4IdStart;
-
-    if (! pingclientLoadUint16Setting(&sequence_start,
-                                      settings,
-                                      "sequence-start",
-                                      kPingClientDefaultSequenceStart,
-                                      "PingClient->settings->sequence-start") ||
-        ! pingclientLoadUint16Setting(&ipv4_id_start,
-                                      settings,
-                                      "ipv4-id-start",
-                                      kPingClientDefaultIpv4IdStart,
-                                      "PingClient->settings->ipv4-id-start"))
+    int sequence_start = kPingClientDefaultSequenceStart;
+    int ttl            = kPingClientDefaultTtl;
+    int tos            = kPingClientDefaultTos;
+    if (! pingclientLoadInteger(
+            &sequence_start, settings, "sequence-start", kPingClientDefaultSequenceStart, 0, UINT16_MAX) ||
+        ! pingclientLoadInteger(&ttl, settings, "ttl", kPingClientDefaultTtl, 0, UINT8_MAX) ||
+        ! pingclientLoadInteger(&tos, settings, "tos", kPingClientDefaultTos, 0, UINT8_MAX))
     {
         pingclientDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
-    atomicStoreRelaxed(&state->icmp_sequence, sequence_start);
-    atomicStoreRelaxed(&state->ipv4_identification, ipv4_id_start);
-
-    if (state->strategy == kPingClientStrategyWrapNewIpAndIcmpHeader)
-    {
-        if (! pingclientLoadOptionalIpv4Setting(&state->source_addr,
-                                                &state->source_addr_configured,
-                                                settings,
-                                                "source",
-                                                "PingClient->settings->source") ||
-            ! pingclientLoadOptionalIpv4Setting(
-                &state->dest_addr, &state->dest_addr_configured, settings, "dest", "PingClient->settings->dest"))
-        {
-            pingclientDestroy(t, wwLifecycleStartupRollback());
-            return NULL;
-        }
-    }
-
-    if (state->strategy == kPingClientStrategyChangeOnlyIpv4ProtocolNumber &&
-        ! pingclientLoadSwapProtocol(&state->swap_protocol, settings))
-    {
-        pingclientDestroy(t, wwLifecycleStartupRollback());
-        return NULL;
-    }
-
+    state->wire.ttl = (uint8_t) ttl;
+    state->wire.tos = (uint8_t) tos;
+    atomicStoreRelaxed(&state->next_sequence, (unsigned int) sequence_start);
+    atomicLogRateLimiterInitialize(&state->drop_log_limiter);
     return t;
 }

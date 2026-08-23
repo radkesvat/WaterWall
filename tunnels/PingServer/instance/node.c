@@ -5,7 +5,7 @@
 
 node_t nodePingServerGet(void)
 {
-    const char *type_name    = "PingServer";
+    const char *type_name       = "PingServer";
     node_t      node_pingserver = {
              .name                  = NULL,
              .type                  = stringDuplicate(type_name),
@@ -13,7 +13,7 @@ node_t nodePingServerGet(void)
              .hash_name             = 0,
              .hash_type             = calcHashBytes(type_name, stringLength(type_name)),
              .hash_next             = 0,
-             .version               = 0001,
+             .version               = 0002,
              .createHandle          = pingserverCreate,
              .node_json             = NULL,
              .node_settings_json    = NULL,

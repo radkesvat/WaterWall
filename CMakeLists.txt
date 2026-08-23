@@ -650,6 +650,12 @@ if(INCLUDE_IP_MANIPULATOR)
   target_link_libraries(Waterwall IpManipulator)
 endif()
 
+# Ping wire v2 codec is shared by either endpoint.  Keep it independent of
+# whether a build includes one node or both for plugin/minimal builds.
+if(INCLUDE_PING_CLIENT OR INCLUDE_PING_SERVER)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/Internals/PingCommon)
+endif()
+
 #ping client
 if(INCLUDE_PING_CLIENT)
   target_compile_definitions(Waterwall PUBLIC INCLUDE_PING_CLIENT=1)
