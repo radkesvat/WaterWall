@@ -25,11 +25,11 @@ Both modes provide loopback-only isolation without public internet access, enabl
 Tests are organized into distinct execution lanes via `tests/run_test_lane.sh`:
 
 - `support`: Production policy and harness tests (13 tests), run strictly serially.
-- `functional`: Deterministic integration tests (140 tests) run concurrently in isolated network namespaces. Parallelism is calculated adaptively as `min(32, max(4, 4 * CPUs))` (e.g. 16 jobs on a 4-CPU machine). Override with `WATERWALL_INTEGRATION_TEST_JOBS`.
+- `functional`: Deterministic integration tests (139 tests) run concurrently in isolated network namespaces. Parallelism is calculated adaptively as `min(32, max(4, 4 * CPUs))` (e.g. 16 jobs on a 4-CPU machine). Override with `WATERWALL_INTEGRATION_TEST_JOBS`.
 - `external`: Tests requiring live host network connectivity (e.g., `reality_google_roundtrip`). Runs strictly serially on host network.
 - `speed`: Multi-stream speed tests (16 tests). Runs strictly serially (`RUN_SERIAL TRUE`) to avoid CPU and bandwidth contention.
 - `privileged`: Tests requiring root/TUN permissions (`sudo -E`, 6 tests). Runs serially.
-- `all`: Runs preflight, support (serial), functional (parallel), external (serial), and speed (serial) in sequence (170 tests total).
+- `all`: Runs preflight, support (serial), functional (parallel), external (serial), and speed (serial) in sequence (169 tests total).
 - `preflight`: Verifies the namespace capabilities required by the current caller (user + network namespaces for non-root, network namespace only for root).
 
 ### Performance Baseline & Post-Change Timings
@@ -37,11 +37,11 @@ Tests are organized into distinct execution lanes via `tests/run_test_lane.sh`:
 | Test Suite / Lane | Pre-Isolation (Host Serial) | Post-Isolation (Parallel Lanes) |
 |---|---|---|
 | **Support Tests** (13 tests) | ~55s (serial) | **~55s** (serial) |
-| **Deterministic Functional** (140 tests) | ~173s (sequential) | **~22–24s** (16 jobs on 4 CPUs) / **~71s** (1 CPU, 4 jobs) |
+| **Deterministic Functional** (139 tests) | ~173s (sequential) | **~22–24s** (16 jobs on 4 CPUs) / **~71s** (1 CPU, 4 jobs) |
 | **External Network** (1 test) | ~1s | **<1s** (serial) |
 | **Speed Tests** (16 tests) | ~48s (sequential) | **~46–48s** (serial) |
 | **Privileged Integration** (6 tests) | ~15s (sequential) | **~14–15s** (serial) |
-| **Ordinary non-privileged production sequence (`all`)** | ~277s | **~127s (~2m)** (support + functional + external + speed, 170 tests) |
+| **Ordinary non-privileged production sequence (`all`)** | ~277s | **~127s (~2m)** (support + functional + external + speed, 169 tests) |
 
 These are warm-build planning measurements from the 4-CPU reference host, not
 portable performance guarantees. The `all` total includes the production
@@ -377,37 +377,16 @@ There are several valid ways to run tests:
   integer connector destination port inside the listener's port range.
 - `ping_new_ip_icmp_roundtrip`
   Verifies a direct `TesterClient -> PingClient -> PingServer -> TesterServer` packet chain in both directions,
-  including outer IPv4/ICMP wrapping, ICMP payload XOR, roundup padding, PingServer upstream restoration, and
-  PingServer downstream response wrapping.
-- `ping_reuse_ipv4_addresses_roundtrip`
-  Verifies the direct `wrap-in-icmp-header-and-reuse-ipv4-addresses` request and response paths, including reuse of the
-  original IPv4 header and restoration of the tester packet's original IPv4 protocol. The normal direct-chain
-  `Init`/`Est` handshake initializes the persistent packet line.
-- `ping_only_icmp_roundtrip`
-  Verifies the direct bidirectional `wrap-in-only-icmp-header` path using raw packet-mode bytes rather than synthetic
-  IPv4 packets.
-- `ping_protocol_swap_roundtrip`
-  Verifies the direct bidirectional `change-only-ipv4-protocol-number` path over the full packet IPv4 corpus because
-  this strategy does not add bytes to packets.
-- `ping_identifier_check_disabled_roundtrip`
-  Verifies direct bidirectional reuse-header flow when PingClient and PingServer intentionally use different ICMP
-  identifiers and both disable identifier checking.
-- `ping_server_unmatched_upstream_passthrough`
-  Sends IPv4 packets that do not match PingServer's configured protocol-swap value and verifies that unmatched upstream
-  packets pass through unchanged.
-- `ping_server_drops_malformed_roundup`
-  Intentionally mismatches the peers' roundup-size setting and requires PingServer's exact malformed upstream metadata
-  diagnostic, covering the drop path rather than accepting an unrelated test failure.
-- `ping_client_rejects_numeric_overflow` / `ping_server_rejects_numeric_overflow`
-  Verify each node emits its exact out-of-range `ttl` diagnostic before chain startup in the smallest direct Ping
-  topology.
+  including fresh IPv4/ICMP Echo Requests, exact Echo Reply acknowledgements, nested synchronous reply handling,
+  and one-time inner-packet delivery.
+- `ping_legacy_settings_rejected` / `ping_server_legacy_settings_rejected`
+  Verify that both strict Ping parsers reject removed wire-v1 settings with the explicit migration diagnostic.
 - `packet_analysis_ping_roundtrip`
-  Preserves the one-way `PacketSender -> PingClient -> PacketReceiver` wire-format check so the direct-pair change
-  cannot silently alter PingClient's encoded IPv4/ICMP output.
+  Verifies PingClient's one-way fresh IPv4/ICMP Echo Request encoding over the packet analysis path.
 - `ping_direct_real_adapters_roundtrip`
   On privileged Linux hosts, injects a wrapped ICMP request through the real
-  `RawSocket -> PingServer -> TunDevice` server topology and verifies the kernel-generated response returns through
-  PingServer's downstream encoder and RawSocket's raw injector.
+  `RawSocket -> PingServer -> TunDevice` server topology, verifies the immediate exact Echo Reply, then verifies the
+  kernel-generated response returns in a separate Echo Request followed by a matching acknowledgement.
 - `ipmanipulator_tcp_custom_protocol_roundtrip`
   Verifies that `IpManipulator` can rewrite the IPv4 TCP protocol number to a non-TCP/UDP custom value.
 - `ipmanipulator_udp_custom_protocol_roundtrip`

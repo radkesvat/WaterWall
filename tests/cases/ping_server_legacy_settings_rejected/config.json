@@ -1,0 +1,27 @@
+{
+  "name": "ping-server-legacy-settings-rejected",
+  "nodes": [
+    {
+      "name": "tester-client",
+      "type": "TesterClient",
+      "settings": {
+        "packet-mode": true,
+        "chunk-count": 1,
+        "packet-ipv4": {
+          "source-ip": "10.84.0.1",
+          "dest-ip": "10.84.0.2",
+          "protocol": 253,
+          "ttl": 64
+        }
+      },
+      "next": "ping-server"
+    },
+    {
+      "name": "ping-server",
+      "type": "PingServer",
+      "settings": {
+        "strategy": "wrap-in-new-ip-and-icmp-header"
+      }
+    }
+  ]
+}

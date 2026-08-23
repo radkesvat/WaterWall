@@ -378,6 +378,57 @@ if(TARGET ww)
     add_waterwall_unit_test(waterwall.muxcommon_wire_unit muxcommon_wire_test "unit;mux;wire")
   endif()
 
+  if(TARGET PingCommon)
+    add_executable(ping_wire_test ping_wire_test.c)
+    target_link_libraries(ping_wire_test PRIVATE PingCommon ww)
+    add_dependencies(waterwall_unit_tests ping_wire_test)
+    add_waterwall_unit_test(waterwall.ping_wire_unit ping_wire_test "unit;ping;wire")
+
+    add_executable(
+      ping_tracker_test
+      ping_tracker_test.c
+      ${CMAKE_SOURCE_DIR}/tunnels/Internals/PingCommon/src/ping_wire.c
+    )
+    target_compile_definitions(ping_tracker_test PRIVATE WW_SYNC_INIT_TEST_SEAM=1)
+    target_include_directories(
+      ping_tracker_test
+      PRIVATE ${CMAKE_SOURCE_DIR}/tunnels/Internals/PingCommon/include
+    )
+    target_link_libraries(ping_tracker_test PRIVATE ww)
+    add_dependencies(waterwall_unit_tests ping_tracker_test)
+    add_waterwall_unit_test(
+      waterwall.ping_tracker_unit
+      ping_tracker_test
+      "unit;ping;tracker;synchronization;failure;tsan"
+    )
+
+    if(TARGET PingClient AND TARGET PingServer)
+      add_executable(
+        ping_flow_test
+        ping_flow_test.c
+        ${CMAKE_SOURCE_DIR}/ww/bufio/buffer_queue.c
+        ${CMAKE_SOURCE_DIR}/ww/bufio/buffer_stream.c
+      )
+      target_link_options(
+        ping_flow_test
+        PRIVATE
+          "-Wl,--wrap=abortProgramNow"
+          "-Wl,--wrap=requestProgramShutdown"
+          "-Wl,--wrap=bufferpoolGetLargeBuffer"
+          "-Wl,--wrap=bufferpoolGetSmallBuffer"
+          "-Wl,--wrap=bufferpoolReuseBuffer"
+          "-Wl,--wrap=sbufDestroy"
+      )
+      target_link_libraries(ping_flow_test PRIVATE PingClient PingServer PingCommon ww)
+      add_dependencies(waterwall_unit_tests ping_flow_test)
+      add_waterwall_unit_test(
+        waterwall.ping_flow_unit
+        ping_flow_test
+        "unit;ping;flow;packet;direction;affinity;lifetime"
+      )
+    endif()
+  endif()
+
   add_executable(wfrand_test wfrand_test.c)
   target_link_libraries(wfrand_test PRIVATE ww)
   if(LINUX)

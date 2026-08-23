@@ -67,10 +67,10 @@
       "name": "ping-client",
       "type": "PingClient",
       "settings": {
-        "strategy": "wrap-in-new-ip-and-icmp-header",
+        "local-ipv4": "192.0.2.10",
+        "peer-ipv4": "198.51.100.10",
         "identifier": 4660,
-        "source": "192.0.2.10",
-        "dest": "198.51.100.10"
+        "sequence-start": 1
       },
       "next": "ping-server"
     },
@@ -78,10 +78,10 @@
       "name": "ping-server",
       "type": "PingServer",
       "settings": {
-        "strategy": "wrap-in-new-ip-and-icmp-header",
-        "identifier": 4660,
-        "source": "192.0.2.10",
-        "dest": "198.51.100.10"
+        "local-ipv4": "198.51.100.10",
+        "peer-ipv4": "192.0.2.10",
+        "identifier": 4661,
+        "sequence-start": 1
       },
       "next": "packets-to-connection"
     },

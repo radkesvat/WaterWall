@@ -732,26 +732,15 @@ add_waterwall_privileged_probe_integration_test(waterwall.socket_manager_tcp_ran
 add_waterwall_privileged_probe_integration_test(waterwall.socket_manager_udp_range_socket_wildcard_specific_tun socket_manager_udp_range_socket_wildcard_specific_tun 15)
 add_waterwall_iptables_recovery_integration_test(waterwall.socket_manager_iptables_crash_recovery)
 add_waterwall_integration_test(waterwall.ping_new_ip_icmp_roundtrip ping_new_ip_icmp_roundtrip)
-add_waterwall_integration_test(waterwall.ping_reuse_ipv4_addresses_roundtrip ping_reuse_ipv4_addresses_roundtrip)
-add_waterwall_integration_test(waterwall.ping_only_icmp_roundtrip ping_only_icmp_roundtrip)
-add_waterwall_integration_test(waterwall.ping_protocol_swap_roundtrip ping_protocol_swap_roundtrip)
-add_waterwall_integration_test(waterwall.ping_identifier_check_disabled_roundtrip ping_identifier_check_disabled_roundtrip)
-add_waterwall_integration_test(waterwall.ping_server_unmatched_upstream_passthrough ping_server_unmatched_upstream_passthrough)
 add_waterwall_expected_failure_integration_test(
-  waterwall.ping_server_drops_malformed_roundup
-  ping_server_drops_malformed_roundup
-  "PingServer: dropping malformed upstream packet because roundup-size payload length exceeds ICMP payload"
-  124
+  waterwall.ping_legacy_settings_rejected
+  ping_legacy_settings_rejected
+  "PingClient: configuration uses removed Ping wire v1 setting 'strategy'"
 )
 add_waterwall_expected_failure_integration_test(
-  waterwall.ping_client_rejects_numeric_overflow
-  ping_client_rejects_numeric_overflow
-  "JSON Error: PingClient->settings->ttl (int field) : expected a whole number between 0 and 255"
-)
-add_waterwall_expected_failure_integration_test(
-  waterwall.ping_server_rejects_numeric_overflow
-  ping_server_rejects_numeric_overflow
-  "JSON Error: PingServer->settings->ttl (int field) : expected a whole number between 0 and 255"
+  waterwall.ping_server_legacy_settings_rejected
+  ping_server_legacy_settings_rejected
+  "PingServer: configuration uses removed Ping wire v1 setting 'strategy'"
 )
 add_waterwall_expected_failure_integration_test(
   waterwall.node_layer_tundevice_tcpconnector_conflict

@@ -18,11 +18,12 @@
       "name": "ping-server",
       "type": "PingServer",
       "settings": {
-        "strategy": "wrap-in-new-ip-and-icmp-header",
-        "identifier": 4660,
-        "check-identifier": true,
-        "source": "127.0.0.1",
-        "dest": "127.0.0.2"
+        "local-ipv4": "127.0.0.1",
+        "peer-ipv4": "127.0.0.2",
+        "identifier": 4661,
+        "sequence-start": 1,
+        "ttl": 64,
+        "tos": 0
       },
       "next": "server-tun"
     },
