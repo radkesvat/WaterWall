@@ -2190,6 +2190,21 @@ if(TARGET HttpServer)
     httpserver_reentrant_finish_test
     "unit;tunnels;httpserver;reentrant;finish;line"
   )
+
+  add_executable(httpserver_split_callback_boundary_test
+    httpserver_split_callback_boundary_test.c
+    ${WATERWALL_LINE_FAILURE_WW_SOURCES}
+  )
+  waterwall_line_failure_test_use_tunnel(httpserver_split_callback_boundary_test HttpServer)
+  target_link_options(httpserver_split_callback_boundary_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS})
+  target_link_libraries(httpserver_split_callback_boundary_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests httpserver_split_callback_boundary_test)
+
+  add_waterwall_unit_test(
+    waterwall.httpserver_split_callback_boundary_unit
+    httpserver_split_callback_boundary_test
+    "unit;tunnels;httpserver;split;backpressure;line"
+  )
 endif()
 
 if(TARGET HalfDuplexServer)
