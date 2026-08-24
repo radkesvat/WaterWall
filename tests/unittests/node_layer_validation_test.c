@@ -775,8 +775,12 @@ static void testBridgeRelationsSurviveChainCombine(void)
                                             kTunnelLayerRelationSame),
             "failed to register relation on source chain");
 
+    ww_startup_context_t startup = {0};
+    wwStartupContextBegin(&startup);
     tunnelchainCombine(dest, src);
+    const ww_startup_result_t result = wwStartupContextEnd(&startup);
 
+    require(wwStartupSucceeded(result), "valid chain combination unexpectedly failed startup");
     require(dest->layer_relations_count == 1, "Layer relation was not transferred during combine");
 
     node_layer_solver_status_t status = {0};
@@ -1388,6 +1392,9 @@ static void testPacketLineInitAndPayloadExecution(void)
     require(tunnelIsManagerPacketInitHead(&rev_chain, 2), "Topological head was not chosen in reverse array order");
     require(! tunnelIsManagerPacketInitHead(&rev_chain, 0), "Tail was incorrectly chosen as Init head");
 
+    // The chain owns the persistent packet line, but each tunnel still owns and
+    // must settle its exact line-state slot before chain teardown.
+    memoryZero(ls, t_mid.lstate_size);
     tunnelchainDestroy(chain);
 }
 
@@ -1475,9 +1482,13 @@ static void testSolvedTopologyExpansionIsRevalidated(void)
     g_layer_expansion_tunnel = &t_inserted;
     g_solved_topology_calls  = 0;
     tunnel_t *t_array[2]     = {&t_head, &t_tail};
-    validateTunnelChains(t_array, 2);
 
-    require(! startupFailurePending(), "valid layer-dependent topology expansion failed");
+    ww_startup_context_t startup = {0};
+    wwStartupContextBegin(&startup);
+    validateTunnelChains(t_array, 2);
+    const ww_startup_result_t result = wwStartupContextEnd(&startup);
+
+    require(wwStartupSucceeded(result), "valid layer-dependent topology expansion failed");
     require(g_solved_topology_calls == 2,
             "solved-topology callback was not rerun against the final solved topology");
     require(chain.tunnels.len == 3 && chain.tunnels.tuns[1] == &t_inserted,

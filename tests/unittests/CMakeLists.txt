@@ -509,6 +509,19 @@ if(TARGET ww)
   set_target_properties(mismatched_abi_node_library PROPERTIES PREFIX "")
   add_library(lifecycle_v2_node_library SHARED lifecycle_v2_node_library.c)
   set_target_properties(lifecycle_v2_node_library PROPERTIES PREFIX "")
+  if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    foreach(node_fixture_target IN ITEMS
+        missing_abi_node_library
+        mismatched_abi_node_library
+        lifecycle_v2_node_library)
+      # At -O0 the public headers emit otherwise-unused static helpers whose
+      # application-owned symbols cannot resolve inside a standalone fixture.
+      # Give the linker one section per helper so it can retain only the ABI
+      # surface these external-node fixtures actually export.
+      target_compile_options(${node_fixture_target} PRIVATE -ffunction-sections -fdata-sections)
+      target_link_options(${node_fixture_target} PRIVATE "LINKER:--gc-sections")
+    endforeach()
+  endif()
   add_executable(legacy_node_compatibility_test legacy_node_compatibility_test.c)
   target_compile_definitions(
     legacy_node_compatibility_test

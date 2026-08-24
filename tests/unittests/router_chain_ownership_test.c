@@ -66,9 +66,13 @@ static void testSniffRouterRefreshesChainBetweenRoutes(void)
     tunnel_chain_t *following_chain = tunnelchainCreate(0);
     tunnelchainInsert(following_chain, following);
 
-    tunnel_chain_t *initial_chain = tunnelchainCreate(0);
+    tunnel_chain_t      *initial_chain = tunnelchainCreate(0);
+    ww_startup_context_t startup       = {0};
+    wwStartupContextBegin(&startup);
     sniffrouterTunnelOnChain(router, initial_chain);
+    const ww_startup_result_t result = wwStartupContextEnd(&startup);
 
+    require(wwStartupSucceeded(result), "SniffRouter chain construction unexpectedly failed startup");
     require(tunnelGetChain(router) == replacement_chain, "SniffRouter did not retain the replacement chain");
     require(replacement_chain->tunnels.len == 4, "SniffRouter did not combine both route branches");
     require(routes[0].tunnel == replacing, "SniffRouter lost the replacing route entry");
@@ -111,9 +115,13 @@ static void testRouterRefreshesChainBetweenRules(void)
     tunnel_chain_t *following_chain = tunnelchainCreate(0);
     tunnelchainInsert(following_chain, following);
 
-    tunnel_chain_t *initial_chain = tunnelchainCreate(0);
+    tunnel_chain_t      *initial_chain = tunnelchainCreate(0);
+    ww_startup_context_t startup       = {0};
+    wwStartupContextBegin(&startup);
     routerTunnelOnChain(router, initial_chain);
+    const ww_startup_result_t result = wwStartupContextEnd(&startup);
 
+    require(wwStartupSucceeded(result), "Router chain construction unexpectedly failed startup");
     require(tunnelGetChain(router) == replacement_chain, "Router did not retain the replacement chain");
     require(replacement_chain->tunnels.len == 4, "Router did not combine both rule branches");
     require(rules[0].target_tunnel == replacing, "Router lost the replacing rule entry");

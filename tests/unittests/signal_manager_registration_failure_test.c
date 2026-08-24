@@ -42,20 +42,29 @@ int main(void)
     {
         wloop_t *loops[] = {(wloop_t *) (uintptr_t) 1};
 
-        GSTATE                = (ww_global_state_t) {0};
-        GSTATE.shortcut_loops = loops;
-        GSTATE.main_thread_id = (uint64_t) getTID();
-        force_wread_failure   = true;
-        signal_manager_t *sm  = signalmanagerCreate();
+        GSTATE                  = (ww_global_state_t) {0};
+        GSTATE.flag_initialized = true;
+        GSTATE.workers_count    = 2;
+        GSTATE.shortcut_loops   = loops;
+        GSTATE.main_thread_id   = (uint64_t) getTID();
+        force_wread_failure     = true;
+        signal_manager_t *sm    = signalmanagerCreate();
+        if (sm == NULL)
+        {
+            _Exit(97);
+        }
         GSTATE.signal_manager = sm;
-        discard sm;
-        signalmanagerStart();
-        _Exit(99);
+        if (signalmanagerStart())
+        {
+            _Exit(98);
+        }
+        signalmanagerDestroy();
+        _Exit(EXIT_SUCCESS);
     }
 
     int status = 0;
     require(waitpid(child, &status, 0) == child, "failed to wait for signal-manager failure child");
     require(WIFEXITED(status), "signal-manager registration failure did not exit normally");
-    require(WEXITSTATUS(status) == EXIT_FAILURE, "signal-manager registration failure used the wrong exit status");
+    require(WEXITSTATUS(status) == EXIT_SUCCESS, "signal-manager registration failure did not return cleanly");
     return 0;
 }

@@ -148,6 +148,9 @@ if(TARGET ww AND tunnels_abort_runtime_cases)
         "unit;tunnels;abort;runtime"
       )
     endif()
+    # Several invariant paths deliberately assert before their
+    # abortProgramNow(1) fallback. The exact numeric-exit contract this runner
+    # proves therefore applies only when NDEBUG is active.
     add_test(
       NAME waterwall.tunnels_abort_runtime_unit
       COMMAND
@@ -158,6 +161,7 @@ if(TARGET ww AND tunnels_abort_runtime_cases)
         "-DABORT_TEST_BUILD_DIR=${CMAKE_BINARY_DIR}"
         "-DABORT_TEST_CASES=${tunnels_abort_runtime_case_arg}"
         -P "${WATERWALL_ABORT_RUNTIME_DIR}/run_tunnels_abort_runtime_test.cmake"
+      CONFIGURATIONS Release
     )
 
     set_tests_properties(

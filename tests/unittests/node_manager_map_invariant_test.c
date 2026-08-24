@@ -46,6 +46,9 @@ static void destroyTestConfig(node_manager_config_t *cfg)
 
 static void testMaximumFitsWithoutGrowth(void)
 {
+    ww_startup_context_t startup = {0};
+    wwStartupContextBegin(&startup);
+
     config_file_t          config_file          = {0};
     node_manager_config_t *cfg                  = createTestConfig(&config_file);
     node_t                *nodes                = memoryAllocateZero(sizeof(*nodes) * kMaxNodesPerConfig);
@@ -66,6 +69,8 @@ static void testMaximumFitsWithoutGrowth(void)
             "the config node map did not retain every allowed node");
     freezeNodeMap(cfg);
     require(cfg->node_map_phase == kNodeMapPhaseFrozen, "the config node map did not enter the frozen phase");
+    const ww_startup_result_t result = wwStartupContextEnd(&startup);
+    require(wwStartupSucceeded(result), "NodeManager rejected a valid maximum-sized node map");
 
     destroyTestConfig(cfg);
     memoryFree(nodes);

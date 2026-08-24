@@ -139,9 +139,10 @@ static void fixtureTeardown(tlsclient_fixture_t *fixture)
 {
     twfRequireNoLeakedBuffers();
     SSL_CTX_free(fixture->ssl_ctx);
-    memoryFree(fixture->prev);
-    memoryFree(fixture->tls);
-    memoryFree(fixture->next);
+    tunnelDestroy(fixture->prev);
+    tunnelDestroy(fixture->tls);
+    tunnelDestroy(fixture->next);
+    twfWorkerEnvTeardown(&fixture->env);
 }
 
 // ---------------------------------------------------------------------------

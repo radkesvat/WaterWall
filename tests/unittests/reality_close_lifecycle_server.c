@@ -2196,9 +2196,13 @@ static void runServerSizingCase(uint16_t tls_version, const reality_v2_record_pr
     master_pool_t *small_master = masterpoolCreateWithCapacity(8);
     buffer_pool_t *pool         = bufferpoolCreate(large_master, small_master, 8, 65536, 1024);
     bufferpoolUpdateAllocationPaddings(pool, kRealityServerMaxFramePrefixSize, kRealityServerMaxFramePrefixSize);
-    buffer_pool_t  *shortcut[1]     = {pool};
-    buffer_pool_t **saved_shortcuts = GSTATE.shortcut_buffer_pools;
-    GSTATE.shortcut_buffer_pools    = shortcut;
+    buffer_pool_t  *shortcut[1]         = {pool};
+    buffer_pool_t **saved_shortcuts     = GSTATE.shortcut_buffer_pools;
+    const bool      saved_initialized   = GSTATE.flag_initialized;
+    const uint32_t  saved_workers_count = GSTATE.workers_count;
+    GSTATE.flag_initialized             = true;
+    GSTATE.workers_count                = 2;
+    GSTATE.shortcut_buffer_pools        = shortcut;
 
     tunnel_t *capture = tunnelCreate(NULL, sizeof(server_sizing_context_t *), 0);
     tunnel_t *reality = tunnelCreate(NULL, sizeof(realityserver_tstate_t), sizeof(realityserver_lstate_t));
@@ -2274,6 +2278,8 @@ static void runServerSizingCase(uint16_t tls_version, const reality_v2_record_pr
     tunnelDestroy(capture);
     tunnelDestroy(reality);
     GSTATE.shortcut_buffer_pools = saved_shortcuts;
+    GSTATE.workers_count         = saved_workers_count;
+    GSTATE.flag_initialized      = saved_initialized;
     bufferpoolDestroy(pool);
     masterpoolMakeEmpty(large_master);
     masterpoolMakeEmpty(small_master);
