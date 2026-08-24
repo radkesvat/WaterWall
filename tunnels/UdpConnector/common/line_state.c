@@ -2,7 +2,7 @@
 
 #include "loggers/network_logger.h"
 
-void udpconnectorLinestateInitialize(udpconnector_lstate_t *ls, tunnel_t *t, line_t *l, wio_t *io)
+bool udpconnectorLinestateInitialize(udpconnector_lstate_t *ls, tunnel_t *t, line_t *l, wio_t *io)
 {
     *ls = (udpconnector_lstate_t) {
         .tunnel                           = t,
@@ -24,7 +24,20 @@ void udpconnectorLinestateInitialize(udpconnector_lstate_t *ls, tunnel_t *t, lin
     {
         uint32_t count = ts->destinations_count > 0 ? ts->destinations_count : 1;
 
-        ls->packet_destinations       = memoryAllocateZero(sizeof(*ls->packet_destinations) * (size_t) count);
+        size_t packet_destinations_size;
+        if (! memoryTryComputeArraySize((size_t) count, sizeof(*ls->packet_destinations), &packet_destinations_size))
+        {
+            LOGE("UdpConnector: packet destination cache size is not representable");
+            return false;
+        }
+
+        ls->packet_destinations = memoryAllocateZero(packet_destinations_size);
+        if (UNLIKELY(ls->packet_destinations == NULL))
+        {
+            LOGE("UdpConnector: failed to allocate packet destination cache");
+            return false;
+        }
+
         ls->packet_destinations_count = count;
         for (uint32_t i = 0; i < count; ++i)
         {
@@ -36,6 +49,8 @@ void udpconnectorLinestateInitialize(udpconnector_lstate_t *ls, tunnel_t *t, lin
     {
         weventSetUserData(io, ls);
     }
+
+    return true;
 }
 
 void udpconnectorCancelPacketDnsRequests(udpconnector_lstate_t *ls)

@@ -7,11 +7,22 @@ void reverseclientTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *conte
     discard                 context;
     reverseclient_tstate_t *ts = tunnelGetState(t);
 
-    reverseclientHandshakeDestroy(ts->handshake_bytes);
     for (wid_t wid = 0; wid < getWorkersCount(); wid++)
     {
-        assert(ts->threadlocal_pool[wid].owned_pairs == NULL);
+        if (UNLIKELY(ts->threadlocal_pool[wid].owned_pairs != NULL))
+        {
+            LOGF("ReverseClient: destroy observed an undrained owned pair on worker %d", (int) wid);
+            abortProgramNow(1);
+        }
     }
+    if (UNLIKELY(atomicLoadRelaxed(&ts->reverse_cons) != 0))
+    {
+        LOGF("ReverseClient: destroy observed %u active reverse pair reservation(s)",
+             (unsigned int) atomicLoadRelaxed(&ts->reverse_cons));
+        abortProgramNow(1);
+    }
+
+    reverseclientHandshakeDestroy(ts->handshake_bytes);
     if (ts->starved_connections != NULL)
     {
         idletableDestroy(ts->starved_connections);

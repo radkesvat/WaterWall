@@ -329,16 +329,16 @@ static void udpstatelesssocketHandleRecvFrom(tunnel_t *t, wio_t *io, sbuf_t *buf
 
     if (peer_addr.sa.sa_family == 0)
     {
-        assert(false);
-        bufferpoolReuseBuffer(getWorkerBufferPool(wid), buf);
-        return;
+        LOGF("UdpStatelessSocket: received a datagram without a peer address family");
+        abortProgramNow(1);
     }
 
     if (UNLIKELY(wid != state->io_wid))
     {
-        assert(false);
-        bufferpoolReuseBuffer(getWorkerBufferPool(wid), buf);
-        return;
+        LOGF("UdpStatelessSocket: socket receive ran on worker %u instead of owner worker %u",
+             (unsigned int) wid,
+             (unsigned int) state->io_wid);
+        abortProgramNow(1);
     }
 
     if (state->verbose)
@@ -662,7 +662,10 @@ static void udpstatelesssocketOnDnsResolved(void *userdata, int status, const ch
 
     if (asyncdnsStatusIsShutdown(status) || ! lineIsAlive(line))
     {
-        lineReuseBuffer(line, buf);
+        /* The request's line lock preserves allocation memory, not its logical
+         * life. DNS completion always runs on the submitting owner worker, so
+         * recycle through that worker rather than reading a dead line. */
+        bufferpoolReuseBuffer(getCurrentEventWorkerBufferPool(), buf);
         lineUnlock(line);
         udpstatelesssocketDnsRequestDestroy(request);
         return;

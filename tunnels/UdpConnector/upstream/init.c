@@ -405,7 +405,13 @@ void udpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
         domainresolverTunnelGetUserLineState(ts->domain_resolver_tunnel, l);
     address_context_t *dest_ctx = lineGetDestinationAddressContext(l);
 
-    udpconnectorLinestateInitialize(ls, t, l, NULL);
+    if (UNLIKELY(! udpconnectorLinestateInitialize(ls, t, l, NULL)))
+    {
+        LOGE("UdpConnector: failed to initialize per-line packet destination state");
+        udpconnectorLinestateDestroy(ls);
+        tunnelPrevDownStreamFinish(t, l);
+        return;
+    }
     if (UNLIKELY(resolver_ls == NULL))
     {
         LOGF("UdpConnector: internal DomainResolver prepare state is missing");

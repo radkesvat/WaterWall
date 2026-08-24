@@ -387,8 +387,20 @@ static bool parseDestinationArray(udpconnector_tstate_t *state, const cJSON *set
     }
 
     const int destination_count = cJSON_GetArraySize(jaddresses);
-    state->destinations         = memoryAllocateZero(sizeof(*state->destinations) * (size_t) destination_count);
-    state->destinations_count   = (uint32_t) destination_count;
+    size_t    destinations_size;
+    if (! memoryTryComputeArraySize((size_t) destination_count, sizeof(*state->destinations), &destinations_size))
+    {
+        LOGF("UdpConnector: destination metadata size is not representable");
+        return false;
+    }
+
+    state->destinations = memoryAllocateZero(destinations_size);
+    if (UNLIKELY(state->destinations == NULL))
+    {
+        LOGF("UdpConnector: failed to allocate destination metadata");
+        return false;
+    }
+    state->destinations_count = (uint32_t) destination_count;
 
     int          index = 0;
     const cJSON *entry = NULL;
@@ -443,6 +455,7 @@ tunnel_t *udpconnectorTunnelCreate(node_t *node)
     if (! (cJSON_IsObject(settings) && settings->child != NULL))
     {
         LOGF("JSON Error: UdpConnector->settings (object field) : The object was empty or invalid");
+        udpconnectorTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
@@ -451,6 +464,7 @@ tunnel_t *udpconnectorTunnelCreate(node_t *node)
             &domain_strategy, settings, "domain-strategy", GSTATE.domain_strategy))
     {
         LOGF("JSON Error: UdpConnector->settings->domain-strategy (string or integer field) : The value was invalid");
+        udpconnectorTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
     state->domain_strategy = domain_strategy;
@@ -463,6 +477,7 @@ tunnel_t *udpconnectorTunnelCreate(node_t *node)
     {
         LOGF("JSON Error: UdpConnector->settings->large-send-buffer (boolean-or-positive-integer field) : The value "
              "was empty or invalid");
+        udpconnectorTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
     if (! getPositiveIntFromJsonObjectOrBoolDefault(&state->recv_buffer_size,
@@ -473,12 +488,14 @@ tunnel_t *udpconnectorTunnelCreate(node_t *node)
     {
         LOGF("JSON Error: UdpConnector->settings->large-recv-buffer (boolean-or-positive-integer field) : The value "
              "was empty or invalid");
+        udpconnectorTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
     getStringFromJsonObject(&(state->interface_name), settings, "interface");
     getStringFromJsonObject(&(state->source_ip), settings, "source-ip");
     if (! parseBalanceMode(state, settings))
     {
+        udpconnectorTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
     if (state->source_ip != NULL && ! addressIsIp(state->source_ip))
@@ -486,6 +503,7 @@ tunnel_t *udpconnectorTunnelCreate(node_t *node)
         LOGF("JSON Error: UdpConnector->settings->source-ip (string field) : The value must be a valid IP address");
         memoryFree(state->source_ip);
         state->source_ip = NULL;
+        udpconnectorTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
@@ -499,6 +517,7 @@ tunnel_t *udpconnectorTunnelCreate(node_t *node)
     {
         if (! parseDestinationArray(state, settings))
         {
+            udpconnectorTunnelDestroy(t, wwLifecycleStartupRollback());
             return NULL;
         }
     }
@@ -507,6 +526,7 @@ tunnel_t *udpconnectorTunnelCreate(node_t *node)
         if (! parseAddressSettings(
                 &state->dest_addr_selected, &state->constant_dest_addr, settings, "UdpConnector->settings"))
         {
+            udpconnectorTunnelDestroy(t, wwLifecycleStartupRollback());
             return NULL;
         }
 
@@ -517,6 +537,7 @@ tunnel_t *udpconnectorTunnelCreate(node_t *node)
                                 settings,
                                 "UdpConnector->settings"))
         {
+            udpconnectorTunnelDestroy(t, wwLifecycleStartupRollback());
             return NULL;
         }
     }
@@ -528,6 +549,12 @@ tunnel_t *udpconnectorTunnelCreate(node_t *node)
     }
 
     state->idle_tables = memoryAllocateZero(sizeof(*state->idle_tables) * getWorkersCount());
+    if (UNLIKELY(state->idle_tables == NULL))
+    {
+        LOGF("UdpConnector: failed to allocate worker idle-table slots");
+        udpconnectorTunnelDestroy(t, wwLifecycleStartupRollback());
+        return NULL;
+    }
 
     return t;
 }

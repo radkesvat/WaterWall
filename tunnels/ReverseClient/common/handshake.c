@@ -115,6 +115,12 @@ WW_EXPORT bool reverseclientHandshakeBuildFromSettings(const cJSON *settings, co
     }
 
     uint8_t *bytes = memoryAllocate(length);
+    if (UNLIKELY(bytes == NULL))
+    {
+        LOGF("%s: failed to allocate reverse handshake bytes", node_name);
+        return false;
+    }
+
     for (uint32_t i = 0; i < length; ++i)
     {
         uint8_t value = reverseclientHandshakeBytes[i % reverseclientHandshakeLength];

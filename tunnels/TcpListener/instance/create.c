@@ -276,6 +276,7 @@ static void parseIpMaskListEntry(const cJSON *list_item, vec_ipmask_t *target_li
         LOGF("JSON Error: TcpListener->settings->%s (array of strings field) index %d : The data was empty or invalid",
              list_name,
              index);
+        memoryFree(ip_str);
         startupFailureRecord(1);
         return;
     }
@@ -284,6 +285,7 @@ static void parseIpMaskListEntry(const cJSON *list_item, vec_ipmask_t *target_li
     if (parse_result != 4 && parse_result != 6)
     {
         LOGF("TcpListener: stopping due to %s address [%d] \"%s\" parse failure", list_name, index, ip_str);
+        memoryFree(ip_str);
         startupFailureRecord(1);
         return;
     }
@@ -353,14 +355,21 @@ tunnel_t *tcplistenerTunnelCreate(node_t *node)
 
     if (! parseBasicSettings(state, settings) || ! parseIdleTimeoutSettings(state, settings))
     {
+        tcplistenerTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
+    state->idle_tables = memoryAllocateZero(sizeof(*state->idle_tables) * getWorkersCount());
+    if (UNLIKELY(state->idle_tables == NULL))
+    {
+        LOGF("TcpListener: failed to allocate worker idle-table slots");
+        tcplistenerTunnelDestroy(t, wwLifecycleStartupRollback());
+        return NULL;
+    }
+    atomicStoreRelaxed(&state->stopping, false);
+
     socket_filter_option_t filter_opt;
     setupFilterOptions(&filter_opt, state, settings);
-
-    state->idle_tables = memoryAllocateZero(sizeof(*state->idle_tables) * getWorkersCount());
-    atomicStoreRelaxed(&state->stopping, false);
 
     socketacceptorRegister(t, filter_opt, tcplistenerOnInboundConnected);
 

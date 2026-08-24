@@ -25,8 +25,14 @@ void reverseclientTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_
     {
         reverseclientClosePair(box->owned_pairs, kReverseClientCloseInternal);
     }
-    assert(box->connecting_cons_count == 0);
-    assert(box->unused_cons_count == 0);
+    if (UNLIKELY(box->connecting_cons_count != 0 || box->unused_cons_count != 0))
+    {
+        LOGF("ReverseClient: worker %d stopped with %u connecting and %u unused pair reservation(s)",
+             (int) wid,
+             (unsigned int) box->connecting_cons_count,
+             (unsigned int) box->unused_cons_count);
+        abortProgramNow(1);
+    }
 }
 
 void reverseclientTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context)
@@ -35,9 +41,18 @@ void reverseclientTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *contex
     reverseclient_tstate_t *ts = tunnelGetState(t);
     for (wid_t wid = 0; wid < getWorkersCount(); wid++)
     {
-        assert(ts->threadlocal_pool[wid].owned_pairs == NULL);
+        if (UNLIKELY(ts->threadlocal_pool[wid].owned_pairs != NULL))
+        {
+            LOGF("ReverseClient: stop observed an undrained owned pair on worker %d", (int) wid);
+            abortProgramNow(1);
+        }
     }
-    assert(atomicLoadRelaxed(&ts->reverse_cons) == 0);
+    if (UNLIKELY(atomicLoadRelaxed(&ts->reverse_cons) != 0))
+    {
+        LOGF("ReverseClient: stop observed %u active reverse pair reservation(s)",
+             (unsigned int) atomicLoadRelaxed(&ts->reverse_cons));
+        abortProgramNow(1);
+    }
     if (ts->starved_connections != NULL)
     {
         idletableDestroy(ts->starved_connections);

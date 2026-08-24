@@ -248,6 +248,7 @@ static void parseIpMaskListEntry(const cJSON *list_item, vec_ipmask_t *target_li
         LOGF("JSON Error: UdpListener->settings->%s (array of strings field) index %d : The data was empty or invalid",
              list_name,
              index);
+        memoryFree(ip_str);
         startupFailureRecord(1);
         return;
     }
@@ -256,6 +257,7 @@ static void parseIpMaskListEntry(const cJSON *list_item, vec_ipmask_t *target_li
     if (parse_result != 4 && parse_result != 6)
     {
         LOGF("UdpListener: stopping due to %s address [%d] \"%s\" parse failure", list_name, index, ip_str);
+        memoryFree(ip_str);
         startupFailureRecord(1);
         return;
     }
@@ -325,6 +327,7 @@ tunnel_t *udplistenerTunnelCreate(node_t *node)
 
     if (! validateAndSetAddress(state, settings))
     {
+        udplistenerTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 

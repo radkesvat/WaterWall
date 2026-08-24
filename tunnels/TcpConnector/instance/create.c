@@ -432,8 +432,20 @@ static bool parseDestinationArray(tcpconnector_tstate_t *state, const cJSON *set
     }
 
     const int destination_count = cJSON_GetArraySize(jaddresses);
-    state->destinations         = memoryAllocateZero(sizeof(*state->destinations) * (size_t) destination_count);
-    state->destinations_count   = (uint32_t) destination_count;
+    size_t    destinations_size;
+    if (! memoryTryComputeArraySize((size_t) destination_count, sizeof(*state->destinations), &destinations_size))
+    {
+        LOGF("TcpConnector: destination metadata size is not representable");
+        return false;
+    }
+
+    state->destinations = memoryAllocateZero(destinations_size);
+    if (UNLIKELY(state->destinations == NULL))
+    {
+        LOGF("TcpConnector: failed to allocate destination metadata");
+        return false;
+    }
+    state->destinations_count = (uint32_t) destination_count;
 
     int          index = 0;
     const cJSON *entry = NULL;
@@ -532,6 +544,12 @@ tunnel_t *tcpconnectorTunnelCreate(node_t *node)
     }
 
     state->idle_tables = memoryAllocateZero(sizeof(*state->idle_tables) * getWorkersCount());
+    if (UNLIKELY(state->idle_tables == NULL))
+    {
+        LOGF("TcpConnector: failed to allocate worker idle-table slots");
+        tcpconnectorTunnelDestroy(t, wwLifecycleStartupRollback());
+        return NULL;
+    }
 
     return t;
 }

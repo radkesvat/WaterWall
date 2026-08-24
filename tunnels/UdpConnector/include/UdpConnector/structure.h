@@ -160,7 +160,7 @@ bool udpconnectorDomainResolverPrepare(tunnel_t *resolver, tunnel_t *connector, 
                                        domainresolver_direction_t direction, void *user_lstate);
 void udpconnectorDomainResolverUserStateDestroy(tunnel_t *resolver, tunnel_t *connector, line_t *l, void *user_lstate);
 
-void   udpconnectorLinestateInitialize(udpconnector_lstate_t *ls, tunnel_t *t, line_t *l, wio_t *io);
+bool   udpconnectorLinestateInitialize(udpconnector_lstate_t *ls, tunnel_t *t, line_t *l, wio_t *io);
 void   udpconnectorLinestateDestroy(udpconnector_lstate_t *ls);
 void   udpconnectorCancelPacketDnsRequests(udpconnector_lstate_t *ls);
 void   udpconnectorOnRecvFrom(wio_t *io, sbuf_t *buf);

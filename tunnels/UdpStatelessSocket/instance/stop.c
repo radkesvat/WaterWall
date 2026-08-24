@@ -29,7 +29,8 @@ void udpstatelesssocketTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_li
         wioClose(state->socket.io);
         state->socket.io = NULL;
     }
-    if (state->socket.idle_tables != NULL && state->socket.idle_tables[wid] != NULL)
+    assert(state->socket.idle_tables != NULL);
+    if (state->socket.idle_tables[wid] != NULL)
     {
         localidletableQuiesce(state->socket.idle_tables[wid]);
     }
@@ -41,10 +42,7 @@ void udpstatelesssocketTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifec
     assert(currentThreadIsEventWorkerWID(wid));
 
     udpstatelesssocket_tstate_t *state = tunnelGetState(t);
-    if (state->socket.idle_tables == NULL)
-    {
-        return;
-    }
+    assert(state->socket.idle_tables != NULL);
 
     local_idle_table_t *table = state->socket.idle_tables[wid];
     if (table == NULL)

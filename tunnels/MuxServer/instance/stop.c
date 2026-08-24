@@ -70,8 +70,14 @@ void muxserverTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_cont
         muxserverAbortDetachedChild(t, child_l, child_ls, true);
     }
 
-    assert(registry->count == 0);
-    assert(registry->queued_bytes == 0);
+    if (UNLIKELY(registry->count != 0 || registry->queued_bytes != 0))
+    {
+        LOGF("MuxServer: worker %d detached registry accounting remained after drain (count=%u, bytes=%zu)",
+             (int) wid,
+             (unsigned int) registry->count,
+             registry->queued_bytes);
+        abortProgramNow(1);
+    }
 
     if (worker_state->child_idle_table != NULL)
     {
