@@ -205,6 +205,13 @@ void packetreceiverPrepareRuntime(tunnel_t *t)
 
     state->workers_count = chain->workers_count;
 
+    if (state->source_count > (UINT64_MAX / (uint64_t) state->expected_packets_per_ip))
+    {
+        LOGF("PacketReceiver: total expected packet count would overflow");
+        startupFailureRecord(1);
+        return;
+    }
+
     if (state->source_count > (SIZE_MAX / (uint64_t) sizeof(uint64_t)))
     {
         LOGF("PacketReceiver: expected source count exceeds addressable memory");
@@ -213,10 +220,9 @@ void packetreceiverPrepareRuntime(tunnel_t *t)
     }
 
     state->received_counts = memoryAllocateZero((size_t) state->source_count * sizeof(uint64_t));
-
-    if (state->source_count > (UINT64_MAX / (uint64_t) state->expected_packets_per_ip))
+    if (UNLIKELY(state->received_counts == NULL))
     {
-        LOGF("PacketReceiver: total expected packet count would overflow");
+        LOGF("PacketReceiver: failed to allocate received-packet counters");
         startupFailureRecord(1);
         return;
     }

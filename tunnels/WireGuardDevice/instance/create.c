@@ -297,7 +297,7 @@ static bool processPeer(cJSON *peer_object, wireguard_device_t *device, int peer
     uint8_t   allowed_ip_count     = 0;
     ip_addr_t allowed_ip_list[WIREGUARD_MAX_SRC_IPS];
     ip_addr_t allowed_mask_list[WIREGUARD_MAX_SRC_IPS];
-    uint8_t   decoded_preshared_key[WIREGUARD_SESSION_KEY_LEN];
+    uint8_t   decoded_preshared_key[WIREGUARD_SESSION_KEY_LEN] = {0};
 
     if (! extractPeerFields(peer_object,
                             &peer_public_key,
@@ -307,7 +307,7 @@ static bool processPeer(cJSON *peer_object, wireguard_device_t *device, int peer
                             &persistentkeepalive,
                             peer_index))
     {
-        return false;
+        goto cleanup;
     }
 
     wireguard_peer_init_data_t peer = {0};

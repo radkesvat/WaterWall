@@ -660,6 +660,12 @@ void packetsenderPrepareRuntime(tunnel_t *t)
     }
 
     state->packet_bytes = memoryAllocate(state->total_packet_bytes);
+    if (UNLIKELY(state->packet_bytes == NULL))
+    {
+        LOGF("PacketSender: failed to allocate the generated packet store");
+        startupFailureRecord(1);
+        return;
+    }
 
     for (uint64_t source_index = 0; source_index < state->source_count; ++source_index)
     {
@@ -692,8 +698,14 @@ void packetsenderPrepareRuntime(tunnel_t *t)
         }
     }
 
-    state->workers_count  = chain->workers_count;
-    state->workers        = memoryAllocateZero(sizeof(*state->workers) * state->workers_count);
+    state->workers_count = chain->workers_count;
+    state->workers       = memoryAllocateZero(sizeof(*state->workers) * state->workers_count);
+    if (UNLIKELY(state->workers == NULL))
+    {
+        LOGF("PacketSender: failed to allocate worker state");
+        startupFailureRecord(1);
+        return;
+    }
     state->active_workers = state->workers_count;
 
     uint64_t       start_index = 0;

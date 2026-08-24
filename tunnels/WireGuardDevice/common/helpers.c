@@ -274,7 +274,6 @@ static void wireguarddeviceReplayInnerPacketOnWorker(worker_t *worker, void *arg
 
     assert(worker != NULL);
     assert(worker->wid == lineGetWID(line));
-    discard worker;
 
     if (lineIsAlive(line))
     {
@@ -282,7 +281,10 @@ static void wireguarddeviceReplayInnerPacketOnWorker(worker_t *worker, void *arg
     }
     else
     {
-        lineReuseBuffer(line, buf);
+        /* The message keeps the packet-line allocation alive, but Finish can
+         * already have ended its logical life. Recycle through the delivered
+         * worker rather than reading the dead line or re-reading TLS state. */
+        bufferpoolReuseBuffer(worker->buffer_pool, buf);
     }
 
     lineUnlock(line);
@@ -298,7 +300,9 @@ static void wireguarddeviceCleanupInnerPacket(void *arg1, void *arg2, void *arg3
 
     if (lineIsOnCurrentEventWorker(line))
     {
-        lineReuseBuffer(line, buf);
+        /* A cancellation can race packet-line shutdown.  The reference keeps
+         * line memory valid, while this worker still owns the pool. */
+        bufferpoolReuseBuffer(getCurrentEventWorkerBufferPool(), buf);
     }
     else
     {

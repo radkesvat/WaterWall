@@ -20,10 +20,15 @@ void tcpoverudpserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf
 
     if (ikcp_waitsnd(ls->k_handle) > tcpoverudpserverGetKcpSendBufferLimit(ls))
     {
-        ls->write_paused = true;
+        ls->write_paused    = true;
+        buffer_pool_t *pool = lineGetBufferPool(l);
         if (UNLIKELY(! lineScheduleTask(l, pauseDownSide, t)))
         {
-            pauseDownSide(t, l);
+            if (! withLineLocked(l, pauseDownSide, t))
+            {
+                bufferpoolReuseBuffer(pool, buf);
+                return;
+            }
         }
     }
 

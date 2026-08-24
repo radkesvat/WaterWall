@@ -68,7 +68,19 @@ static bool packetreceiverLoadSourceRanges(packetreceiver_tstate_t *state, const
         return false;
     }
 
-    state->source_ranges      = memoryAllocateZero((size_t) range_count * sizeof(*(state->source_ranges)));
+    size_t source_ranges_size;
+    if (! memoryTryComputeArraySize((size_t) range_count, sizeof(*(state->source_ranges)), &source_ranges_size))
+    {
+        LOGF("PacketReceiver: source range metadata size is not representable");
+        return false;
+    }
+
+    state->source_ranges = memoryAllocateZero(source_ranges_size);
+    if (state->source_ranges == NULL)
+    {
+        LOGF("PacketReceiver: failed to allocate source range metadata");
+        return false;
+    }
     state->source_range_count = (uint32_t) range_count;
 
     uint64_t total_source_count = 0;
