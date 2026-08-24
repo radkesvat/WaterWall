@@ -1,6 +1,7 @@
 #include "devices/device_flow_affinity.h"
 
 #include "devices/device_frag_affinity.h"
+#include "global_state.h"
 
 enum
 {

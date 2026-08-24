@@ -1,6 +1,7 @@
 #include "devices/device_frag_affinity.h"
 
 #include "devices/device_flow_affinity.h"
+#include "global_state.h"
 #include "loggers/internal_logger.h"
 #include "loggers/log_rate_limiter.h"
 #include "wchecksum.h"

@@ -435,12 +435,15 @@ static uint32_t pingwireXorShift32(uint32_t value)
 
 static uint32_t pingwireReplyIdRandom(ping_wire_reply_id_generator_t *generator)
 {
-    uint32_t observed = atomicLoadRelaxed(&generator->random_state);
+    w_atomic_uint_value_t observed = atomicLoadRelaxed(&generator->random_state);
     for (;;)
     {
-        const uint32_t next = pingwireXorShift32(observed);
-        if (atomicCompareExchangeExplicit(
-                &generator->random_state, &observed, next, memory_order_relaxed, memory_order_relaxed))
+        const uint32_t next = pingwireXorShift32((uint32_t) observed);
+        if (atomicCompareExchangeExplicit(&generator->random_state,
+                                          &observed,
+                                          (w_atomic_uint_value_t) next,
+                                          memory_order_relaxed,
+                                          memory_order_relaxed))
         {
             return next;
         }
