@@ -331,6 +331,9 @@ void httpclientSplitUpStreamFinish(tunnel_t *t, line_t *l)
     if (upload_line != NULL && lineIsAlive(upload_line))
     {
         lineLock(upload_line);
+        httpclient_lstate_t *upload_ls = lineGetState(upload_line, t);
+        // Upload backpressure is re-homed to main's prev, which has already finished this split trio.
+        upload_ls->prev_finished = true;
         discard httpclientTransportSendHttp1FinalChunk(t, upload_line);
         if (lineIsAlive(upload_line))
         {
