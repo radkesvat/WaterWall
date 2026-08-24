@@ -301,7 +301,7 @@ void tlsserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     if (ls->fallback_mode)
     {
         tunnel_t *fallback = ts->fallback_tunnel;
-        if (UNLIKELY(fallback == NULL || ls->fallback_up_finished || ls->fallback_up_finish_pending))
+        if (UNLIKELY(fallback == NULL || ls->fallback_close_draining))
         {
             lineReuseBuffer(l, buf);
             return;

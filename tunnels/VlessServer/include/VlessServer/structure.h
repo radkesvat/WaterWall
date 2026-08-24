@@ -73,8 +73,9 @@ typedef struct vlessserver_lstate_s
     bool                    client_line_locked;
     bool                    response_sent;
     bool                    user_handle_recorded;
-    bool                    fallback_up_finish_pending;
-    bool                    fallback_up_finished;
+    bool                    fallback_close_draining;
+    bool                    fallback_branch_finished_during_drain;
+    bool                    fallback_payload_paused;
     bool                    fallback_delay_scheduled;
 } vlessserver_lstate_t;
 
@@ -129,3 +130,4 @@ void vlessserverCloseLineBidirectional(tunnel_t *t, line_t *l);
 void vlessserverOnSelectedEstablished(tunnel_t *t, line_t *l, vlessserver_lstate_t *ls);
 bool vlessserverWrapUdpPayload(line_t *l, sbuf_t **buf_io);
 bool vlessserverSendFallbackPayload(tunnel_t *t, line_t *l, vlessserver_lstate_t *ls, sbuf_t *buf);
+bool vlessserverScheduleFallbackPayloadDrain(tunnel_t *t, line_t *l, vlessserver_lstate_t *ls);

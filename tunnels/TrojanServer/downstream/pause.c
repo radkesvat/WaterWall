@@ -19,5 +19,10 @@ void trojanserverTunnelDownStreamPause(tunnel_t *t, line_t *l)
         return;
     }
 
+    if (ls->branch == kTrojanServerBranchFallback)
+    {
+        ls->fallback_payload_paused = true;
+    }
+
     tunnelPrevDownStreamPause(t, l);
 }

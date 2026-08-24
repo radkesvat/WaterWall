@@ -6,11 +6,14 @@ bool tlsserverLinestateInitialize(tlsserver_lstate_t *ls, SSL_CTX *ssl_ctx, buff
                                   const tlsrecordshaping_config_t *record_shaping, bool verbose)
 {
     *ls = (tlsserver_lstate_t) {
-        .pending_down        = bufferqueueCreate(2),
-        .fallback_pending_up = NULL,
-        .fallback_probe      = bufferstreamCreate(pool, 0),
-        .shaping_retired     = false,
-        .verbose             = verbose,
+        .pending_down                          = bufferqueueCreate(2),
+        .fallback_pending_up                   = NULL,
+        .fallback_probe                        = bufferstreamCreate(pool, 0),
+        .fallback_close_draining               = false,
+        .fallback_branch_finished_during_drain = false,
+        .fallback_payload_paused               = false,
+        .shaping_retired                       = false,
+        .verbose                               = verbose,
     };
 
     if (record_shaping->enabled)

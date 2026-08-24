@@ -778,27 +778,98 @@ static buffer_queue_t *tlsserverEnsureFallbackPendingQueue(tlsserver_lstate_t *l
 {
     if (ls->fallback_pending_up == NULL)
     {
-        ls->fallback_pending_up  = memoryAllocate(sizeof(*ls->fallback_pending_up));
-        *ls->fallback_pending_up = bufferqueueCreate(2);
+        ls->fallback_pending_up = memoryAllocate(sizeof(*ls->fallback_pending_up));
+        if (UNLIKELY(ls->fallback_pending_up == NULL))
+        {
+            return NULL;
+        }
+        *ls->fallback_pending_up = bufferqueueCreate(kTlsServerFallbackBufferQueueCap);
     }
 
     return ls->fallback_pending_up;
 }
 
-static void tlsserverForwardPendingFallbackFinish(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls)
+static void tlsserverRecycleFallbackPendingQueue(buffer_queue_t *pending, buffer_pool_t *pool)
 {
-    tlsserver_tstate_t *ts       = tunnelGetState(t);
-    tunnel_t           *fallback = ts->fallback_tunnel;
-
-    if (! ls->fallback_up_finish_pending || tlsserverFallbackPendingCount(ls) > 0 || fallback == NULL ||
-        ls->fallback_up_finished)
+    while (bufferqueueGetBufCount(pending) > 0)
     {
-        return;
+        bufferpoolReuseBuffer(pool, bufferqueuePopFront(pending));
     }
 
-    ls->fallback_up_finished = true;
-    tlsserverLinestateDestroy(ls);
-    tunnelUpStreamFin(fallback, l);
+    bufferqueueDestroy(pending);
+    memoryFree(pending);
+}
+
+static void tlsserverDiscardFallbackPendingPayload(tlsserver_lstate_t *ls, buffer_pool_t *pool)
+{
+    buffer_queue_t *pending = ls->fallback_pending_up;
+    ls->fallback_pending_up = NULL;
+    if (pending != NULL)
+    {
+        tlsserverRecycleFallbackPendingQueue(pending, pool);
+    }
+}
+
+static bool tlsserverDetachFallbackPendingPayload(tlsserver_lstate_t *ls, buffer_pool_t *pool, sbuf_t **out)
+{
+    *out = NULL;
+
+    buffer_queue_t *pending = ls->fallback_pending_up;
+    ls->fallback_pending_up = NULL;
+    if (pending == NULL)
+    {
+        return true;
+    }
+
+    const size_t total = bufferqueueGetBufLen(pending);
+    if (UNLIKELY(total > kTlsServerMaxFallbackPendingBytes || total > UINT32_MAX))
+    {
+        LOGE("TlsServer: invalid fallback payload batch size=%zu", total);
+        tlsserverRecycleFallbackPendingQueue(pending, pool);
+        return false;
+    }
+
+    sbuf_t *merged = bufferqueuePopFront(pending);
+    if (merged != NULL)
+    {
+        merged = sbufReserveSpace(merged, (uint32_t) total);
+        while (bufferqueueGetBufCount(pending) > 0)
+        {
+            sbuf_t *part = bufferqueuePopFront(pending);
+            sbufConcatNoCheck(merged, part);
+            bufferpoolReuseBuffer(pool, part);
+        }
+    }
+
+    bufferqueueDestroy(pending);
+    memoryFree(pending);
+    *out = merged;
+    return true;
+}
+
+static void tlsserverDelayedFallbackPayloadTask(tunnel_t *t, line_t *l);
+
+bool tlsserverScheduleFallbackPayloadDrain(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls)
+{
+    if (! ls->fallback_mode || ls->fallback_close_draining || ls->fallback_payload_paused ||
+        tlsserverFallbackPendingCount(ls) == 0 || ls->fallback_delay_scheduled)
+    {
+        return true;
+    }
+
+    tlsserver_tstate_t *ts = tunnelGetState(t);
+    uint32_t            delay_ms =
+        ts->fallback_intentional_delay_ms == 0
+                       ? 0
+                       : fastRandJittered32(ts->fallback_intentional_delay_ms, ts->fallback_intentional_delay_jitter_ms);
+
+    ls->fallback_delay_scheduled = true;
+    if (UNLIKELY(! lineScheduleDelayedTask(l, tlsserverDelayedFallbackPayloadTask, delay_ms, t)))
+    {
+        ls->fallback_delay_scheduled = false;
+        return false;
+    }
+    return true;
 }
 
 static void tlsserverDelayedFallbackPayloadTask(tunnel_t *t, line_t *l)
@@ -808,46 +879,46 @@ static void tlsserverDelayedFallbackPayloadTask(tunnel_t *t, line_t *l)
 
     ls->fallback_delay_scheduled = false;
 
-    size_t queued = tlsserverFallbackPendingCount(ls);
-    while (queued > 0)
+    if (! ls->fallback_mode || ls->fallback_close_draining || ls->fallback_payload_paused)
     {
-        queued -= 1;
-
-        sbuf_t   *buf      = bufferqueuePopFront(ls->fallback_pending_up);
-        tunnel_t *fallback = ts->fallback_tunnel;
-        if (fallback == NULL || ! ls->fallback_mode || ls->fallback_up_finished)
-        {
-            lineReuseBuffer(l, buf);
-        }
-        else
-        {
-            tunnelUpStreamPayload(fallback, l, buf);
-        }
-
-        if (! lineIsAlive(l))
-        {
-            return;
-        }
-
-        ls = lineGetState(l, t);
-    }
-
-    if (tlsserverFallbackPendingCount(ls) > 0 && ! ls->fallback_delay_scheduled)
-    {
-        ls->fallback_delay_scheduled = true;
-        if (UNLIKELY(! lineScheduleDelayedTask(
-                l,
-                tlsserverDelayedFallbackPayloadTask,
-                fastRandJittered32(ts->fallback_intentional_delay_ms, ts->fallback_intentional_delay_jitter_ms),
-                t)))
-        {
-            ls->fallback_delay_scheduled = false;
-            tlsserverCloseLineFatal(t, l);
-        }
         return;
     }
 
-    tlsserverForwardPendingFallbackFinish(t, l, ls);
+    buffer_pool_t *pool     = lineGetBufferPool(l);
+    tunnel_t      *fallback = ts->fallback_tunnel;
+    sbuf_t        *buf      = NULL;
+    if (UNLIKELY(! tlsserverDetachFallbackPendingPayload(ls, pool, &buf)))
+    {
+        tlsserverCloseLineFatal(t, l);
+        return;
+    }
+
+    if (buf == NULL)
+    {
+        return;
+    }
+    if (UNLIKELY(fallback == NULL))
+    {
+        bufferpoolReuseBuffer(pool, buf);
+        tlsserverCloseLineFatal(t, l);
+        return;
+    }
+
+    tunnelUpStreamPayload(fallback, l, buf);
+    if (! lineIsAlive(l))
+    {
+        return;
+    }
+
+    ls = lineGetState(l, t);
+    if (! ls->fallback_mode || ls->fallback_close_draining || ls->fallback_payload_paused)
+    {
+        return;
+    }
+    if (UNLIKELY(! tlsserverScheduleFallbackPayloadDrain(t, l, ls)))
+    {
+        tlsserverCloseLineFatal(t, l);
+    }
 }
 
 bool tlsserverSendFallbackPayload(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls, sbuf_t *buf)
@@ -855,34 +926,40 @@ bool tlsserverSendFallbackPayload(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls
     tlsserver_tstate_t *ts       = tunnelGetState(t);
     tunnel_t           *fallback = ts->fallback_tunnel;
 
-    if (fallback == NULL || ! ls->fallback_mode || ls->fallback_up_finished || ls->fallback_up_finish_pending)
+    if (fallback == NULL || ! ls->fallback_mode || ls->fallback_close_draining)
     {
         lineReuseBuffer(l, buf);
         return false;
     }
 
-    if (ts->fallback_intentional_delay_ms == 0)
+    if (ts->fallback_intentional_delay_ms == 0 && ! ls->fallback_payload_paused &&
+        tlsserverFallbackPendingCount(ls) == 0 && ! ls->fallback_delay_scheduled)
     {
-        tunnelUpStreamPayload(fallback, l, buf);
-        return lineIsAlive(l);
+        return withLineLockedWithBuf(l, tunnelUpStreamPayload, fallback, buf);
     }
 
     buffer_queue_t *pending = tlsserverEnsureFallbackPendingQueue(ls);
-    bufferqueuePushBack(pending, buf);
-
-    if (! ls->fallback_delay_scheduled)
+    if (UNLIKELY(pending == NULL))
     {
-        ls->fallback_delay_scheduled = true;
-        if (UNLIKELY(! lineScheduleDelayedTask(
-                l,
-                tlsserverDelayedFallbackPayloadTask,
-                fastRandJittered32(ts->fallback_intentional_delay_ms, ts->fallback_intentional_delay_jitter_ms),
-                t)))
-        {
-            ls->fallback_delay_scheduled = false;
-            tlsserverCloseLineFatal(t, l);
-            return false;
-        }
+        lineReuseBuffer(l, buf);
+        tlsserverCloseLineFatal(t, l);
+        return false;
+    }
+
+    bufferqueuePushBack(pending, buf);
+    if (UNLIKELY(bufferqueueGetBufLen(pending) > kTlsServerMaxFallbackPendingBytes))
+    {
+        LOGE("TlsServer: fallback payload queue overflow, size=%zu limit=%u",
+             bufferqueueGetBufLen(pending),
+             (unsigned int) kTlsServerMaxFallbackPendingBytes);
+        tlsserverCloseLineFatal(t, l);
+        return false;
+    }
+
+    if (UNLIKELY(! tlsserverScheduleFallbackPayloadDrain(t, l, ls)))
+    {
+        tlsserverCloseLineFatal(t, l);
+        return false;
     }
 
     return true;
@@ -986,6 +1063,60 @@ bool tlsserverStartFallback(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls)
     return alive;
 }
 
+void tlsserverCloseFallbackFromUpstream(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls)
+{
+    tlsserver_tstate_t *ts       = tunnelGetState(t);
+    tunnel_t           *fallback = ts->fallback_tunnel;
+    const bool          forward  = fallback != NULL && ls->fallback_init_sent;
+
+    if (! forward || tlsserverFallbackPendingCount(ls) == 0)
+    {
+        tlsserverLinestateDestroy(ls);
+        if (forward)
+        {
+            tunnelUpStreamFin(fallback, l);
+        }
+        return;
+    }
+
+    /* The previous owner may destroy this borrowed line on return, so publish the
+     * close gate before the final re-entrant fallback Payload. */
+    buffer_pool_t *pool = lineGetBufferPool(l);
+    sbuf_t        *buf  = NULL;
+
+    lineLock(l);
+    ls->fallback_close_draining               = true;
+    ls->fallback_branch_finished_during_drain = false;
+
+    if (ls->fallback_payload_paused)
+    {
+        tlsserverDiscardFallbackPendingPayload(ls, pool);
+    }
+    else if (! tlsserverDetachFallbackPendingPayload(ls, pool, &buf))
+    {
+        buf = NULL;
+    }
+
+    if (buf != NULL)
+    {
+        tunnelUpStreamPayload(fallback, l, buf);
+        if (! lineIsAlive(l))
+        {
+            lineUnlock(l);
+            return;
+        }
+    }
+
+    const bool branch_finished = ls->fallback_branch_finished_during_drain;
+    tlsserverLinestateDestroy(ls);
+
+    if (! branch_finished)
+    {
+        tunnelUpStreamFin(fallback, l);
+    }
+    lineUnlock(l);
+}
+
 bool tlsserverSendCloseNotify(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls)
 {
     if (ls->resources_released || ls->ssl == NULL || ! ls->handshake_completed)
@@ -1038,23 +1169,35 @@ void tlsserverCloseLineFatal(tunnel_t *t, line_t *l)
         return;
     }
 
-    tlsserver_lstate_t *ls         = lineGetState(l, t);
-    bool                close_next = ls->protected_init_sent && ! ls->upstream_finished;
+    tlsserver_lstate_t *ls              = lineGetState(l, t);
+    tlsserver_tstate_t *ts              = tunnelGetState(t);
+    bool                fallback_branch = ls->fallback_mode && ls->fallback_init_sent;
+    tunnel_t           *target     = fallback_branch ? ts->fallback_tunnel : (ls->protected_init_sent ? t->next : NULL);
+    bool                close_next = target != NULL && (fallback_branch || ! ls->upstream_finished);
     bool                close_prev = ! ls->downstream_finishing;
 
     LOGW("TlsServer: closing line after fatal TLS failure (close_next=%d, close_prev=%d)",
          (int) close_next,
          (int) close_prev);
 
+    lineLock(l);
     tlsserverLinestateDestroy(ls);
 
     if (close_next)
     {
-        tunnelNextUpStreamFinish(t, l);
+        if (fallback_branch)
+        {
+            tunnelUpStreamFin(target, l);
+        }
+        else
+        {
+            tunnelNextUpStreamFinish(t, l);
+        }
     }
 
     if (lineIsAlive(l) && close_prev)
     {
         tunnelPrevDownStreamFinish(t, l);
     }
+    lineUnlock(l);
 }

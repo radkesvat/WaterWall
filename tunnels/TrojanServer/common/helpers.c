@@ -463,97 +463,173 @@ static buffer_queue_t *trojanserverEnsureFallbackPendingQueue(trojanserver_lstat
 {
     if (ls->fallback_pending_up == NULL)
     {
-        ls->fallback_pending_up  = memoryAllocate(sizeof(*ls->fallback_pending_up));
+        ls->fallback_pending_up = memoryAllocate(sizeof(*ls->fallback_pending_up));
+        if (UNLIKELY(ls->fallback_pending_up == NULL))
+        {
+            return NULL;
+        }
         *ls->fallback_pending_up = bufferqueueCreate(kTrojanServerBufferQueueCap);
     }
 
     return ls->fallback_pending_up;
 }
 
-static void trojanserverForwardPendingFallbackFinish(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls)
+static void trojanserverRecycleFallbackPendingQueue(buffer_queue_t *pending, buffer_pool_t *pool)
 {
-    tunnel_t *fallback = trojanserverSelectedUpstream(t, ls);
-
-    if (! ls->fallback_up_finish_pending || trojanserverFallbackPendingCount(ls) > 0 || fallback == NULL ||
-        ls->fallback_up_finished)
+    while (bufferqueueGetBufCount(pending) > 0)
     {
-        return;
+        bufferpoolReuseBuffer(pool, bufferqueuePopFront(pending));
     }
 
-    ls->fallback_up_finished = true;
-    ls->phase                = kTrojanServerPhaseClosing;
-    trojanserverLinestateDestroy(ls);
-    tunnelUpStreamFin(fallback, l);
+    bufferqueueDestroy(pending);
+    memoryFree(pending);
+}
+
+static void trojanserverDiscardFallbackPendingPayload(trojanserver_lstate_t *ls, buffer_pool_t *pool)
+{
+    buffer_queue_t *pending = ls->fallback_pending_up;
+    ls->fallback_pending_up = NULL;
+    if (pending != NULL)
+    {
+        trojanserverRecycleFallbackPendingQueue(pending, pool);
+    }
+}
+
+static bool trojanserverDetachFallbackPendingPayload(trojanserver_lstate_t *ls, buffer_pool_t *pool, sbuf_t **out)
+{
+    *out = NULL;
+
+    buffer_queue_t *pending = ls->fallback_pending_up;
+    ls->fallback_pending_up = NULL;
+    if (pending == NULL)
+    {
+        return true;
+    }
+
+    const size_t total = bufferqueueGetBufLen(pending);
+    if (UNLIKELY(total > kTrojanServerMaxPendingBytes || total > UINT32_MAX))
+    {
+        LOGE("TrojanServer: invalid fallback payload batch size=%zu", total);
+        trojanserverRecycleFallbackPendingQueue(pending, pool);
+        return false;
+    }
+
+    sbuf_t *merged = bufferqueuePopFront(pending);
+    if (merged != NULL)
+    {
+        merged = sbufReserveSpace(merged, (uint32_t) total);
+        while (bufferqueueGetBufCount(pending) > 0)
+        {
+            sbuf_t *part = bufferqueuePopFront(pending);
+            sbufConcatNoCheck(merged, part);
+            bufferpoolReuseBuffer(pool, part);
+        }
+    }
+
+    bufferqueueDestroy(pending);
+    memoryFree(pending);
+    *out = merged;
+    return true;
+}
+
+static void trojanserverDelayedFallbackPayloadTask(tunnel_t *t, line_t *l);
+
+bool trojanserverScheduleFallbackPayloadDrain(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls)
+{
+    if (ls->branch != kTrojanServerBranchFallback || ls->fallback_close_draining || ls->fallback_payload_paused ||
+        trojanserverFallbackPendingCount(ls) == 0 || ls->fallback_delay_scheduled)
+    {
+        return true;
+    }
+
+    trojanserver_tstate_t *ts = tunnelGetState(t);
+    uint32_t               delay_ms =
+        ts->fallback_intentional_delay_ms == 0
+                          ? 0
+                          : fastRandJittered32(ts->fallback_intentional_delay_ms, ts->fallback_intentional_delay_jitter_ms);
+
+    ls->fallback_delay_scheduled = true;
+    if (UNLIKELY(! lineScheduleDelayedTask(l, trojanserverDelayedFallbackPayloadTask, delay_ms, t)))
+    {
+        ls->fallback_delay_scheduled = false;
+        return false;
+    }
+    return true;
 }
 
 static void trojanserverDelayedFallbackPayloadTask(tunnel_t *t, line_t *l)
 {
-    trojanserver_tstate_t *ts = tunnelGetState(t);
     trojanserver_lstate_t *ls = lineGetState(l, t);
 
     ls->fallback_delay_scheduled = false;
 
-    size_t queued = trojanserverFallbackPendingCount(ls);
-    while (queued > 0)
+    if (ls->branch != kTrojanServerBranchFallback || ls->fallback_close_draining || ls->fallback_payload_paused)
     {
-        queued -= 1;
-
-        sbuf_t   *buf      = bufferqueuePopFront(ls->fallback_pending_up);
-        tunnel_t *fallback = trojanserverSelectedUpstream(t, ls);
-        if (fallback == NULL || ls->branch != kTrojanServerBranchFallback || ls->fallback_up_finished)
-        {
-            lineReuseBuffer(l, buf);
-        }
-        else
-        {
-            tunnelUpStreamPayload(fallback, l, buf);
-        }
-
-        if (! lineIsAlive(l))
-        {
-            return;
-        }
-
-        ls = lineGetState(l, t);
-    }
-
-    if (trojanserverFallbackPendingCount(ls) > 0 && ! ls->fallback_delay_scheduled)
-    {
-        ls->fallback_delay_scheduled = true;
-        if (UNLIKELY(! lineScheduleDelayedTask(
-                l,
-                trojanserverDelayedFallbackPayloadTask,
-                fastRandJittered32(ts->fallback_intentional_delay_ms, ts->fallback_intentional_delay_jitter_ms),
-                t)))
-        {
-            ls->fallback_delay_scheduled = false;
-            trojanserverCloseLineBidirectional(t, l);
-        }
         return;
     }
 
-    trojanserverForwardPendingFallbackFinish(t, l, ls);
+    buffer_pool_t *pool     = lineGetBufferPool(l);
+    tunnel_t      *fallback = trojanserverSelectedUpstream(t, ls);
+    sbuf_t        *buf      = NULL;
+    if (UNLIKELY(! trojanserverDetachFallbackPendingPayload(ls, pool, &buf)))
+    {
+        trojanserverCloseLineBidirectional(t, l);
+        return;
+    }
+
+    if (buf == NULL)
+    {
+        return;
+    }
+    if (UNLIKELY(fallback == NULL))
+    {
+        bufferpoolReuseBuffer(pool, buf);
+        trojanserverCloseLineBidirectional(t, l);
+        return;
+    }
+
+    tunnelUpStreamPayload(fallback, l, buf);
+    if (! lineIsAlive(l))
+    {
+        return;
+    }
+
+    ls = lineGetState(l, t);
+    if (ls->branch != kTrojanServerBranchFallback || ls->fallback_close_draining || ls->fallback_payload_paused)
+    {
+        return;
+    }
+    if (UNLIKELY(! trojanserverScheduleFallbackPayloadDrain(t, l, ls)))
+    {
+        trojanserverCloseLineBidirectional(t, l);
+    }
 }
 
 bool trojanserverSendFallbackPayload(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls, sbuf_t *buf)
 {
-    trojanserver_tstate_t *ts       = tunnelGetState(t);
-    tunnel_t              *fallback = trojanserverSelectedUpstream(t, ls);
+    tunnel_t *fallback = trojanserverSelectedUpstream(t, ls);
 
-    if (fallback == NULL || ls->branch != kTrojanServerBranchFallback || ls->fallback_up_finished ||
-        ls->fallback_up_finish_pending)
+    if (fallback == NULL || ls->branch != kTrojanServerBranchFallback || ls->fallback_close_draining)
     {
         lineReuseBuffer(l, buf);
         return false;
     }
 
-    if (ts->fallback_intentional_delay_ms == 0)
+    trojanserver_tstate_t *ts = tunnelGetState(t);
+    if (ts->fallback_intentional_delay_ms == 0 && ! ls->fallback_payload_paused &&
+        trojanserverFallbackPendingCount(ls) == 0 && ! ls->fallback_delay_scheduled)
     {
-        tunnelUpStreamPayload(fallback, l, buf);
-        return lineIsAlive(l);
+        return withLineLockedWithBuf(l, tunnelUpStreamPayload, fallback, buf);
     }
 
     buffer_queue_t *pending = trojanserverEnsureFallbackPendingQueue(ls);
+    if (UNLIKELY(pending == NULL))
+    {
+        lineReuseBuffer(l, buf);
+        trojanserverCloseLineBidirectional(t, l);
+        return false;
+    }
+
     bufferqueuePushBack(pending, buf);
     if (UNLIKELY(bufferqueueGetBufLen(pending) > kTrojanServerMaxPendingBytes))
     {
@@ -564,19 +640,10 @@ bool trojanserverSendFallbackPayload(tunnel_t *t, line_t *l, trojanserver_lstate
         return false;
     }
 
-    if (! ls->fallback_delay_scheduled)
+    if (UNLIKELY(! trojanserverScheduleFallbackPayloadDrain(t, l, ls)))
     {
-        ls->fallback_delay_scheduled = true;
-        if (UNLIKELY(! lineScheduleDelayedTask(
-                l,
-                trojanserverDelayedFallbackPayloadTask,
-                fastRandJittered32(ts->fallback_intentional_delay_ms, ts->fallback_intentional_delay_jitter_ms),
-                t)))
-        {
-            ls->fallback_delay_scheduled = false;
-            trojanserverCloseLineBidirectional(t, l);
-            return false;
-        }
+        trojanserverCloseLineBidirectional(t, l);
+        return false;
     }
 
     return true;
@@ -1077,6 +1144,48 @@ static void trojanserverCloseUdpRemoteLines(tunnel_t *t, trojanserver_lstate_t *
     memoryFree(remote_lines);
 }
 
+static void trojanserverCloseFallbackFromUpstream(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls, tunnel_t *fallback)
+{
+    /* The previous owner may destroy this borrowed line on return, so publish the
+     * close gate before the final re-entrant fallback Payload. */
+    buffer_pool_t *pool = lineGetBufferPool(l);
+    sbuf_t        *buf  = NULL;
+
+    lineLock(l);
+    ls->phase                                 = kTrojanServerPhaseClosing;
+    ls->fallback_close_draining               = true;
+    ls->fallback_branch_finished_during_drain = false;
+
+    if (ls->fallback_payload_paused)
+    {
+        trojanserverDiscardFallbackPendingPayload(ls, pool);
+    }
+    else if (! trojanserverDetachFallbackPendingPayload(ls, pool, &buf))
+    {
+        buf = NULL;
+    }
+
+    if (buf != NULL)
+    {
+        tunnelUpStreamPayload(fallback, l, buf);
+        if (! lineIsAlive(l))
+        {
+            lineUnlock(l);
+            return;
+        }
+    }
+
+    const bool branch_finished = ls->fallback_branch_finished_during_drain;
+    trojanserverCloseUdpRemoteLines(t, ls);
+    trojanserverLinestateDestroy(ls);
+
+    if (! branch_finished)
+    {
+        tunnelUpStreamFin(fallback, l);
+    }
+    lineUnlock(l);
+}
+
 static void trojanserverCloseLine(tunnel_t *t, line_t *l, trojanserver_close_origin_t origin)
 {
     trojanserver_lstate_t *ls = lineGetState(l, t);
@@ -1098,10 +1207,9 @@ static void trojanserverCloseLine(tunnel_t *t, line_t *l, trojanserver_close_ori
     bool      use_target = ls->branch == kTrojanServerBranchFallback;
     tunnel_t *target     = use_target ? trojanserverSelectedUpstream(t, ls) : NULL;
 
-    if (origin == kTrojanServerCloseFromPrev && use_target && target != NULL &&
-        trojanserverFallbackPendingCount(ls) > 0)
+    if (origin == kTrojanServerCloseFromPrev && use_target && target != NULL)
     {
-        ls->fallback_up_finish_pending = true;
+        trojanserverCloseFallbackFromUpstream(t, l, ls, target);
         return;
     }
 

@@ -86,8 +86,9 @@ typedef struct trojanserver_lstate_s
     trojanserver_branch_t     branch;
     bool                      client_line_locked;
     bool                      user_handle_recorded;
-    bool                      fallback_up_finish_pending;
-    bool                      fallback_up_finished;
+    bool                      fallback_close_draining;
+    bool                      fallback_branch_finished_during_drain;
+    bool                      fallback_payload_paused;
     bool                      fallback_delay_scheduled;
 } trojanserver_lstate_t;
 
@@ -141,3 +142,4 @@ void trojanserverCloseLineBidirectional(tunnel_t *t, line_t *l);
 void trojanserverOnSelectedEstablished(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls);
 bool trojanserverWrapUdpPayload(line_t *l, sbuf_t **buf_io);
 bool trojanserverSendFallbackPayload(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls, sbuf_t *buf);
+bool trojanserverScheduleFallbackPayloadDrain(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls);

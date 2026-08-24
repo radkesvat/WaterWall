@@ -4,7 +4,6 @@
 
 void tlsserverTunnelUpStreamFinish(tunnel_t *t, line_t *l)
 {
-    tlsserver_tstate_t *ts = tunnelGetState(t);
     tlsserver_lstate_t *ls = lineGetState(l, t);
 
     if (ls->verbose)
@@ -17,21 +16,7 @@ void tlsserverTunnelUpStreamFinish(tunnel_t *t, line_t *l)
 
     if (ls->fallback_mode)
     {
-        tunnel_t *fallback = ts->fallback_tunnel;
-        bool      forward  = fallback != NULL && ls->fallback_init_sent && ! ls->fallback_up_finished;
-
-        if (forward && ls->fallback_pending_up != NULL && bufferqueueGetBufCount(ls->fallback_pending_up) > 0)
-        {
-            ls->fallback_up_finish_pending = true;
-            return;
-        }
-
-        tlsserverLinestateDestroy(ls);
-
-        if (forward)
-        {
-            tunnelUpStreamFin(fallback, l);
-        }
+        tlsserverCloseFallbackFromUpstream(t, l, ls);
         return;
     }
 

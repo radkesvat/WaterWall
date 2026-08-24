@@ -10,7 +10,7 @@ void tlsserverTunnelUpStreamPause(tunnel_t *t, line_t *l)
     if (ls->fallback_mode)
     {
         tunnel_t *fallback = ts->fallback_tunnel;
-        if (fallback != NULL && ! ls->fallback_up_finished)
+        if (fallback != NULL && ! ls->fallback_close_draining)
         {
             tunnelUpStreamPause(fallback, l);
         }

@@ -19,5 +19,19 @@ void trojanserverTunnelDownStreamResume(tunnel_t *t, line_t *l)
         return;
     }
 
+    if (ls->branch == kTrojanServerBranchFallback)
+    {
+        ls->fallback_payload_paused = false;
+        if (UNLIKELY(! trojanserverScheduleFallbackPayloadDrain(t, l, ls)))
+        {
+            trojanserverCloseLineBidirectional(t, l);
+            return;
+        }
+        if (! lineIsAlive(l))
+        {
+            return;
+        }
+    }
+
     tunnelPrevDownStreamResume(t, l);
 }

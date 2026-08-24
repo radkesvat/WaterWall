@@ -64,8 +64,9 @@ typedef struct tlsserver_lstate_s
     bool protected_init_sent;
     bool fallback_mode;
     bool fallback_init_sent;
-    bool fallback_up_finished;
-    bool fallback_up_finish_pending;
+    bool fallback_close_draining;
+    bool fallback_branch_finished_during_drain;
+    bool fallback_payload_paused;
     bool prev_est_sent;
     bool fallback_delay_scheduled;
     bool upstream_finished;
@@ -85,7 +86,10 @@ typedef struct tlsserver_lstate_s
 enum
 {
     kTunnelStateSize = sizeof(tlsserver_tstate_t),
-    kLineStateSize   = sizeof(tlsserver_lstate_t)
+    kLineStateSize   = sizeof(tlsserver_lstate_t),
+
+    kTlsServerFallbackBufferQueueCap  = 8,
+    kTlsServerMaxFallbackPendingBytes = 1024 * 1024
 };
 
 enum sslstatus
@@ -165,6 +169,8 @@ bool   tlsserverTryCompleteDeferredFinish(tunnel_t *t, line_t *l, tlsserver_lsta
 bool   tlsserverStartProtectedBranch(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls);
 bool   tlsserverStartFallback(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls);
 bool   tlsserverSendFallbackPayload(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls, sbuf_t *buf);
+bool   tlsserverScheduleFallbackPayloadDrain(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls);
+void   tlsserverCloseFallbackFromUpstream(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls);
 bool   tlsserverArmHandshakeDeadline(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls);
 void   tlsserverDisarmHandshakeDeadline(tlsserver_lstate_t *ls);
 void   tlsserverCloseLineFatal(tunnel_t *t, line_t *l);
