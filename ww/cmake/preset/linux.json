@@ -124,7 +124,8 @@
             "inherits": "linux-software-crypto",
             "cacheVariables": {
                 "ENABLE_ASAN": true,
-                "ENABLE_USAN": true
+                "ENABLE_USAN": true,
+                "INCLUDE_TLS_SERVER": true
             }
         },
         {

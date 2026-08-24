@@ -453,6 +453,14 @@ jobs:
         run: cmake --build --preset ${{ matrix.preset }} --target Waterwall
       - name: Build crypto unit tests
         run: cmake --build --preset ${{ matrix.preset }}-unit --target crypto_primitives_test aes256gcm_test
+      - name: Build ASan and UBSan fallback lifetime tests
+        if: matrix.sanitizer == true
+        run: >
+          cmake --build --preset ${{ matrix.preset }}-unit --target
+          vlessserver_fallback_finish_lifetime_test
+          trojanserver_fallback_finish_lifetime_test
+          tlsserver_fallback_finish_lifetime_test
+          muxserver_vless_fallback_finish_test
       - name: Run backend unit verification
         if: matrix.sanitizer == false
         run: >
@@ -467,7 +475,7 @@ jobs:
         if: matrix.sanitizer == true
         run: >
           ctest --preset ${{ matrix.preset }}-unit --no-tests=error --output-on-failure
-          -R '^waterwall\.(aes256gcm_unit|crypto_primitives_unit)$'
+          -R '^waterwall\.(aes256gcm_unit|crypto_primitives_unit|vlessserver_fallback_finish_lifetime_unit|trojanserver_fallback_finish_lifetime_unit|tlsserver_fallback_finish_lifetime_unit|muxserver_vless_fallback_finish_unit)$'
       - name: Show ccache statistics
         run: ccache -sv
 
