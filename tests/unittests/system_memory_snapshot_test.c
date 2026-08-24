@@ -27,7 +27,7 @@ typedef struct memory_timer_fixture_s
     unsigned int                       get_calls;
     unsigned int                       delete_calls;
     bool                               fail_add;
-    max_align_t                        timer_storage;
+    ww_max_align_t                     timer_storage;
 } memory_timer_fixture_t;
 
 typedef struct tuple_provider_s

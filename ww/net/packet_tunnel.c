@@ -5,6 +5,7 @@
  */
 
 #include "ipv4_packet_view.h"
+#include "line.h"
 #include "loggers/internal_logger.h"
 #include "wchecksum.h"
 
