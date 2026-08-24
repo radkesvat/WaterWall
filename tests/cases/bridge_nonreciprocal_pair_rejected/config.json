@@ -1,0 +1,26 @@
+{
+  "name": "bridge-nonreciprocal-pair-rejected",
+  "nodes": [
+    {
+      "name": "bridge-a",
+      "type": "Bridge",
+      "settings": {
+        "pair": "bridge-b"
+      }
+    },
+    {
+      "name": "bridge-b",
+      "type": "Bridge",
+      "settings": {
+        "pair": "bridge-c"
+      }
+    },
+    {
+      "name": "bridge-c",
+      "type": "Bridge",
+      "settings": {
+        "pair": "bridge-b"
+      }
+    }
+  ]
+}

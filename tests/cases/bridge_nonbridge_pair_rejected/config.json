@@ -1,0 +1,19 @@
+{
+  "name": "bridge-nonbridge-pair-rejected",
+  "nodes": [
+    {
+      "name": "bridge-a",
+      "type": "Bridge",
+      "settings": {
+        "pair": "dropper"
+      }
+    },
+    {
+      "name": "dropper",
+      "type": "BlackHole",
+      "settings": {
+        "mode": "passive"
+      }
+    }
+  ]
+}

@@ -50,6 +50,15 @@ tunnel_t *bridgeTunnelCreate(node_t *node)
         tunnelDestroy(t);
         return NULL;
     }
+
+    if (pair_node == node || node->type == NULL || pair_node->type == NULL || pair_node->hash_type != node->hash_type ||
+        stringCompare(pair_node->type, node->type) != 0)
+    {
+        LOGF("Bridge: pair node \"%s\" must name a distinct Bridge node", pair_node_name);
+        memoryFree(pair_node_name);
+        tunnelDestroy(t);
+        return NULL;
+    }
     memoryFree(pair_node_name);
 
     state->pair_node   = pair_node;

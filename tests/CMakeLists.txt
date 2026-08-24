@@ -754,6 +754,21 @@ add_waterwall_expected_failure_integration_test(
   "registered layer relation between node"
 )
 add_waterwall_expected_failure_integration_test(
+  waterwall.bridge_self_pair_rejected
+  bridge_self_pair_rejected
+  "Bridge: pair node \"bridge-a\" must name a distinct Bridge node"
+)
+add_waterwall_expected_failure_integration_test(
+  waterwall.bridge_nonbridge_pair_rejected
+  bridge_nonbridge_pair_rejected
+  "Bridge: pair node \"dropper\" must name a distinct Bridge node"
+)
+add_waterwall_expected_failure_integration_test(
+  waterwall.bridge_nonreciprocal_pair_rejected
+  bridge_nonreciprocal_pair_rejected
+  "Bridge: pair configuration for node \"bridge-a\" is not reciprocal"
+)
+add_waterwall_expected_failure_integration_test(
   waterwall.wireguard_transport_direction_removed
   wireguard_transport_direction_removed
   "transport-direction is no longer supported"

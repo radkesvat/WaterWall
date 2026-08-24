@@ -1,0 +1,12 @@
+{
+  "name": "bridge-self-pair-rejected",
+  "nodes": [
+    {
+      "name": "bridge-a",
+      "type": "Bridge",
+      "settings": {
+        "pair": "bridge-a"
+      }
+    }
+  ]
+}
