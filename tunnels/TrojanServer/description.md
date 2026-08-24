@@ -1,5 +1,5 @@
 <!--
-Documentation version: 152
+Documentation version: 153
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/TrojanServer.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/TrojanServer.mdx, and all files must keep the same documentation version.
 -->
 
@@ -251,7 +251,9 @@ At least one of `connect` or `udp` must be enabled.
 
   The fallback branch still receives `Init` immediately. Only payload is delayed. This small delay exists to reduce
   timing-based active-probe fingerprints where a detector compares how quickly an invalid probe is handed to fallback.
-  Set to `0` to disable the intentional delay.
+  Set to `0` to disable the intentional delay. At delay zero, an active unpaused fallback with no older queued bytes or
+  scheduled drain receives payload inline. Paused fallback bytes, and bytes behind an older FIFO batch, stay FIFO and
+  Resume schedules that retained drain before later payload can overtake it.
 
   This value must be calibrated against the public behavior the fallback should resemble. The important question is
   whether the fallback branch would answer faster or slower than that behavior, not whether it is co-located or remote.
@@ -266,7 +268,7 @@ At least one of `connect` or `udp` must be enabled.
 
   When `fallback-intentional-delay-ms` is non-zero, each delayed FIFO drain is scheduled in the range
   `max(0, delay - jitter)` through `delay + jitter` milliseconds. If `fallback-intentional-delay-ms` is `0`, jitter is
-  ignored because fallback payloads are forwarded immediately.
+  ignored because no intentional delay is applied.
 
 - `connect` `(boolean)`
   Enables Trojan TCP `CONNECT`.
@@ -328,14 +330,16 @@ When fallback is configured, unauthenticated traffic that does not look like a v
 fallback branch with the original buffered bytes preserved. `TrojanServer` does not send a Trojan-specific error before
 doing this.
 
-Saved fallback bytes and later upstream payloads are sent to fallback after the configured fallback delay and jitter, while
-the fallback branch receives `Init` immediately. If upstream `Finish` arrives while fallback payloads are delayed,
-`TrojanServer` forwards that `Finish` only after the delayed payloads have been delivered.
+The fallback branch receives `Init` immediately. During normal live operation, nonzero delay uses the configured delay
+and jitter. At delay zero, an active unpaused fallback with no older FIFO batch or scheduled drain receives payload
+inline; paused or older bytes remain FIFO and Resume schedules their drain before later payload can overtake them. The
+delayed FIFO is bounded to 1 MiB per line. Downstream responses from fallback are not intentionally delayed.
 
-The fallback delay is applied only to upstream payloads. Downstream responses from fallback are not intentionally delayed,
-and an upstream `Finish` waits behind queued delayed fallback payloads. That is internally consistent with request
-handoff, but it still creates a measurable request-side offset. Delay and jitter are only mitigations; they do not prove
-timing indistinguishability. Measure the deployment path and choose values that match the service being impersonated.
+An upstream `Finish` does not keep the remaining intentional delay alive. If fallback can still accept payload, accepted
+queued bytes are synchronously flushed in FIFO order before fallback `Finish`. If fallback has already paused payload, the
+still-local delayed batch is discarded and fallback is closed instead of bypassing backpressure. Delay and jitter are only
+mitigations; they do not prove timing indistinguishability. Measure the deployment path and choose values that match the
+service being impersonated.
 
 Fallback may be selected for:
 

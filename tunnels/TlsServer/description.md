@@ -1,5 +1,5 @@
 <!--
-Documentation version: 152
+Documentation version: 153
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/TlsServer.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/TlsServer.mdx, and all files must keep the same documentation version.
 -->
 
@@ -211,9 +211,10 @@ Both fields are required. If either one is missing or invalid, tunnel creation f
 
   The fallback branch still receives `Init` immediately. Only payload is delayed. This small delay exists to reduce
   timing-based active-probe fingerprints where a detector compares how quickly a plaintext probe is handed to fallback.
-  Set to `0` to disable the intentional delay.
-  Delayed fallback payloads are delivered in FIFO order. If upstream `Finish` arrives while fallback payloads are
-  delayed, `TlsServer` forwards that `Finish` only after the delayed payloads have been delivered.
+  Set to `0` to disable the intentional delay. At delay zero, an active unpaused fallback with no older queued bytes or
+  scheduled drain receives payload inline. Paused fallback bytes, and bytes behind an older FIFO batch, stay FIFO and
+  Resume schedules that retained drain before later payload can overtake it. Delayed fallback payloads are delivered in
+  FIFO order and are bounded to 1 MiB per line; close-time behavior is described in [Fallback behavior](#fallback-behavior).
 
   This value must be calibrated against the public behavior the fallback should resemble. The important question is
   whether the fallback branch would answer faster or slower than that behavior, not whether it is co-located or remote.
@@ -228,7 +229,7 @@ Both fields are required. If either one is missing or invalid, tunnel creation f
 
   When `fallback-intentional-delay-ms` is non-zero, each delayed FIFO drain is scheduled in the range
   `max(0, delay - jitter)` through `delay + jitter` milliseconds. If `fallback-intentional-delay-ms` is `0`, jitter is
-  ignored because fallback payloads are forwarded immediately.
+  ignored because no intentional delay is applied.
 
 - `verbose` `(boolean)`
   Enables detailed TLS lifecycle debug logs.
@@ -327,18 +328,21 @@ TLS commit.
 If OpenSSL produces a ServerHello, `TlsServer` treats the connection as real TLS, discards the saved copy, starts the
 protected `next` branch, and continues the normal TLS handshake.
 
-If the first bytes are clearly not TLS, `TlsServer` releases its TLS state and initializes the fallback node. It then
-sends the saved bytes to fallback unchanged after the configured fallback delay and jitter. From that point onward,
-payloads in both directions are passed through the fallback branch without TLS encryption or decryption; upstream payloads
-keep using the same intentional fallback delay so byte ordering is preserved.
+If the first bytes are clearly not TLS, `TlsServer` releases its TLS state and initializes the fallback node. With a
+nonzero configured delay, it sends the saved bytes and later live upstream batches after that delay and jitter. At delay
+zero, an active unpaused fallback with no older FIFO batch or scheduled drain receives payload inline; paused or older
+bytes remain FIFO and Resume schedules their drain before later payload can overtake them. From that point onward,
+payloads in both directions are passed through the fallback branch without TLS encryption or decryption.
 
 If the first bytes look like a TLS handshake record, for example they start with `16 03`, the connection stays on the
 OpenSSL path. Malformed, oversized, incomplete, or slow TLS-looking handshakes are closed by OpenSSL failure or by
 `handshake-timeout-ms`; they are not routed to fallback.
 
-The fallback delay is applied only to upstream payloads. Downstream responses from fallback are not intentionally delayed,
-and an upstream `Finish` waits behind queued delayed fallback payloads. That is internally consistent with request
-handoff, but it still creates a measurable request-side offset. Delay and jitter are only mitigations; they do not prove
+The fallback delay is applied only to upstream payloads during normal live operation, and delayed bytes stay in a FIFO
+bounded to 1 MiB per line. Downstream responses from fallback are not intentionally delayed. An upstream `Finish` does not
+keep the remaining intentional delay alive: accepted queued bytes are synchronously flushed in FIFO order before fallback
+`Finish` when fallback can accept payload. If fallback has already paused payload, `TlsServer` discards the still-local
+batch and closes fallback rather than bypassing backpressure. Delay and jitter are only mitigations; they do not prove
 timing indistinguishability. Measure the deployment path and choose values that match the service being impersonated.
 
 Fallback is intentionally incompatible with `sni`. If that gate rejects an otherwise valid TLS ClientHello before
