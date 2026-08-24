@@ -437,30 +437,35 @@ static uint64_t socks5serverNextAssociationToken(tunnel_t *t)
 // Store null-terminated copies of the raw SOCKS5 credentials on the line state,
 // replacing any previous values. The wire fields are length-prefixed and are not
 // null-terminated, so they are copied out into owned strings here.
-static void socks5serverStoreAuthCredentials(socks5server_lstate_t *ls, const uint8_t *username, uint8_t username_len,
+static bool socks5serverStoreAuthCredentials(socks5server_lstate_t *ls, const uint8_t *username, uint8_t username_len,
                                              const uint8_t *password, uint8_t password_len)
 {
-    if (ls->auth_username != NULL)
+    char *new_username = memoryAllocate((size_t) username_len + 1U);
+    char *new_password = memoryAllocate((size_t) password_len + 1U);
+    if (UNLIKELY(new_username == NULL || new_password == NULL))
     {
-        memoryFree(ls->auth_username);
+        memoryFree(new_username);
+        memoryFree(new_password);
+        return false;
     }
-    ls->auth_username = memoryAllocate((size_t) username_len + 1U);
+
     if (username_len > 0)
     {
-        memoryCopy(ls->auth_username, username, username_len);
+        memoryCopy(new_username, username, username_len);
     }
-    ls->auth_username[username_len] = '\0';
+    new_username[username_len] = '\0';
 
-    if (ls->auth_password != NULL)
-    {
-        memoryFree(ls->auth_password);
-    }
-    ls->auth_password = memoryAllocate((size_t) password_len + 1U);
     if (password_len > 0)
     {
-        memoryCopy(ls->auth_password, password, password_len);
+        memoryCopy(new_password, password, password_len);
     }
-    ls->auth_password[password_len] = '\0';
+    new_password[password_len] = '\0';
+
+    memoryFree(ls->auth_username);
+    memoryFree(ls->auth_password);
+    ls->auth_username = new_username;
+    ls->auth_password = new_password;
+    return true;
 }
 
 static void socks5serverRecordLineUser(line_t *l, socks5server_lstate_t *ls, const user_handle_t *user_handle)
@@ -868,36 +873,39 @@ static void socks5serverCloseUdpClientLineInternal(tunnel_t *t, line_t *client_l
 {
     socks5server_lstate_t *client_ls = lineGetState(client_l, t);
 
-    size_t line_count = socks5server_remote_map_t_size(&client_ls->udp_remote_lines);
-    if (line_count > 0)
+    while (socks5server_remote_map_t_size(&client_ls->udp_remote_lines) > 0)
     {
-        line_t **remote_lines = memoryAllocate(sizeof(*remote_lines) * line_count);
-        size_t   index        = 0;
-
+        line_t *remote_l = NULL;
         c_foreach(it, socks5server_remote_map_t, client_ls->udp_remote_lines)
         {
-            remote_lines[index++] = it.ref->second;
+            remote_l = it.ref->second;
+            break;
         }
 
-        for (size_t i = 0; i < index; ++i)
+        if (UNLIKELY(remote_l == NULL || ! lineIsAlive(remote_l)))
         {
-            line_t *remote_l = remote_lines[i];
-            if (! lineIsAlive(remote_l))
-            {
-                continue;
-            }
-
-            socks5server_lstate_t *remote_ls = lineGetState(remote_l, t);
-            socks5serverDetachRemoteFromClient(remote_ls);
-            socks5serverLinestateDestroy(remote_ls);
-            tunnelNextUpStreamFinish(t, remote_l);
-            if (lineIsAlive(remote_l))
-            {
-                lineDestroy(remote_l);
-            }
+            LOGF("Socks5Server: UDP remote registry contains a dead or null line during client teardown");
+            abortProgramNow(1);
         }
 
-        memoryFree(remote_lines);
+        socks5server_lstate_t *remote_ls = lineGetState(remote_l, t);
+        if (UNLIKELY(remote_ls->client_line != client_l || ! remote_ls->client_line_locked))
+        {
+            LOGF("Socks5Server: UDP remote registry contains a line without its client ownership link");
+            abortProgramNow(1);
+        }
+
+        lineLock(remote_l);
+        socks5serverDetachRemoteFromClient(remote_ls);
+        socks5serverLinestateDestroy(remote_ls);
+        tunnelNextUpStreamFinish(t, remote_l);
+        if (UNLIKELY(! lineIsAlive(remote_l)))
+        {
+            LOGF("Socks5Server: next/upstream tunnel destroyed a Socks5Server-owned UDP remote during Finish");
+            abortProgramNow(1);
+        }
+        lineDestroy(remote_l);
+        lineUnlock(remote_l);
     }
 
     socks5serverLinestateDestroy(client_ls);
@@ -921,13 +929,17 @@ void socks5serverCloseUdpRemoteLine(tunnel_t *t, line_t *remote_l)
 {
     socks5server_lstate_t *remote_ls = lineGetState(remote_l, t);
 
+    lineLock(remote_l);
     socks5serverDetachRemoteFromClient(remote_ls);
     socks5serverLinestateDestroy(remote_ls);
     tunnelNextUpStreamFinish(t, remote_l);
-    if (lineIsAlive(remote_l))
+    if (UNLIKELY(! lineIsAlive(remote_l)))
     {
-        lineDestroy(remote_l);
+        LOGF("Socks5Server: next/upstream tunnel destroyed a Socks5Server-owned UDP remote during Finish");
+        abortProgramNow(1);
     }
+    lineDestroy(remote_l);
+    lineUnlock(remote_l);
 }
 
 void socks5serverOnControlEstablished(tunnel_t *t, line_t *l, socks5server_lstate_t *ls)
@@ -1239,11 +1251,10 @@ bool socks5serverControlDrainInput(tunnel_t *t, line_t *l, socks5server_lstate_t
             user_handle_t  user_handle = userHandleEmpty();
             bool           authenticated =
                 socks5serverAuthUserFromClient(t, l, raw + 2, head[1], raw + 3 + head[1], plen, &user_handle);
-            if (authenticated)
+            if (authenticated && ! socks5serverStoreAuthCredentials(ls, raw + 2, head[1], raw + 3 + head[1], plen))
             {
-                // Capture the raw credentials while the auth buffer is still valid
-                // (raw points into auth_buf, which is reused right below).
-                socks5serverStoreAuthCredentials(ls, raw + 2, head[1], raw + 3 + head[1], plen);
+                socks5serverLogAuthRejected(t, l, raw + 2, head[1], "failed to retain authenticated credentials");
+                authenticated = false;
             }
             lineReuseBuffer(l, auth_buf);
 

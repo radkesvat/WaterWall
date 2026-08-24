@@ -1,5 +1,5 @@
 <!--
-Documentation version: 152
+Documentation version: 153
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/KeepAliveClient.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/KeepAliveClient.mdx, and all files must keep the same documentation version.
 -->
 
@@ -50,15 +50,6 @@ Every `ping-interval` milliseconds, the worker-local timer walks the tracked lin
 Default interval:
 
 - `60000 ms`
-
-## Packet-Line Rule
-
-When the current line is the worker packet line, framing must not push a packet past `kMaxAllowedPacketLength`.
-
-If `payload + 3` would exceed that limit:
-
-- the tunnel logs an error
-- the frame is dropped
 
 ## Finish Behavior
 

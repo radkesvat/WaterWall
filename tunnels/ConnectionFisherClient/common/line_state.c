@@ -2,20 +2,41 @@
 
 #include "loggers/network_logger.h"
 
-void connectionfisherclientLinestateInitializeMain(connectionfisherclient_lstate_t *ls, line_t *l, uint32_t child_count)
+bool connectionfisherclientLinestateInitializeMain(connectionfisherclient_lstate_t *ls, line_t *l, uint32_t child_count)
 {
     discard l;
 
     *ls = (connectionfisherclient_lstate_t) {
         .role               = kConnectionFisherClientRoleMain,
         .main_est_forwarded = false,
-        .child_count        = child_count,
         .open_child_count   = 0,
-        .child_lines        = memoryAllocateZero(sizeof(line_t *) * child_count),
         .selected_child     = NULL,
         .main_line          = NULL,
         .pending_up         = bufferqueueCreate(kConnectionFisherPendingQueueCap),
     };
+
+    if (child_count == 0)
+    {
+        return true;
+    }
+
+#if WW_COMPILE_FOR_32BIT
+    if (UNLIKELY(child_count > SIZE_MAX / sizeof(*ls->child_lines)))
+    {
+        LOGW("ConnectionFisherClient: child line count is too large to represent");
+        return false;
+    }
+#endif
+
+    ls->child_lines = memoryAllocateZero(sizeof(*ls->child_lines) * (size_t) child_count);
+    if (UNLIKELY(ls->child_lines == NULL))
+    {
+        LOGW("ConnectionFisherClient: failed to allocate child line slots");
+        return false;
+    }
+
+    ls->child_count = child_count;
+    return true;
 }
 
 void connectionfisherclientLinestateInitializeChild(connectionfisherclient_lstate_t *ls, line_t *l, line_t *main_l,

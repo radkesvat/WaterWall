@@ -22,6 +22,7 @@ typedef struct disturber_tstate_s
 typedef struct disturber_direction_lstate_s
 {
     bool is_deadhang; // the connection is dead, no packet type will be transmitted, but only close
+    bool finished;    // payload publication in this direction is terminal after packet Finish
 
     sbuf_t *held_payload; // store  a payload and wait for next, to be able to send them out of order
 } disturber_direction_lstate_t;
@@ -52,6 +53,7 @@ void disturberTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offset);
 void disturberTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void disturberTunnelOnPrepair(tunnel_t *t);
 void disturberTunnelOnStart(tunnel_t *t);
+void disturberTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);
 void disturberTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context);
 
 void disturberTunnelUpStreamInit(tunnel_t *t, line_t *l);
@@ -69,6 +71,7 @@ void disturberTunnelDownStreamPause(tunnel_t *t, line_t *l);
 void disturberTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
 void disturberLinestateInitialize(disturber_lstate_t *ls);
-void disturberLinestateDestroy(disturber_lstate_t *ls);
+void disturberLinestateDestroy(line_t *l, disturber_lstate_t *ls);
 void disturberTunnelPayload(tunnel_t *t, line_t *l, sbuf_t *buf, disturber_payload_direction_e direction);
 bool disturberIsWorkerPacketLine(tunnel_t *t, line_t *l);
+void disturberPacketLineFinish(tunnel_t *t, line_t *l, disturber_payload_direction_e direction);

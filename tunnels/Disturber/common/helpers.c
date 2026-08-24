@@ -18,9 +18,34 @@ static disturber_direction_lstate_t *disturberGetDirectionState(disturber_lstate
     return direction == kDisturberPayloadDirectionUpstream ? &ls->upstream : &ls->downstream;
 }
 
+static void disturberForwardScheduledUpstreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
+{
+    disturber_lstate_t *ls = lineGetState(l, t);
+    if (ls->upstream.finished)
+    {
+        lineReuseBuffer(l, buf);
+        return;
+    }
+
+    tunnelNextUpStreamPayload(t, l, buf);
+}
+
+static void disturberForwardScheduledDownstreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
+{
+    disturber_lstate_t *ls = lineGetState(l, t);
+    if (ls->downstream.finished)
+    {
+        lineReuseBuffer(l, buf);
+        return;
+    }
+
+    tunnelPrevDownStreamPayload(t, l, buf);
+}
+
 static LineTaskFnWithBuf disturberGetForwardPayloadFn(disturber_payload_direction_e direction)
 {
-    return direction == kDisturberPayloadDirectionUpstream ? tunnelNextUpStreamPayload : tunnelPrevDownStreamPayload;
+    return direction == kDisturberPayloadDirectionUpstream ? disturberForwardScheduledUpstreamPayload
+                                                           : disturberForwardScheduledDownstreamPayload;
 }
 
 static void disturberScheduleForwardPayload(tunnel_t *t, line_t *l, sbuf_t *buf,
@@ -31,14 +56,94 @@ static void disturberScheduleForwardPayload(tunnel_t *t, line_t *l, sbuf_t *buf,
 
 bool disturberIsWorkerPacketLine(tunnel_t *t, line_t *l)
 {
-    return tunnelchainIsWorkerPacketLine(tunnelGetChain(t), l);
+    tunnel_chain_t *chain = tunnelGetChain(t);
+    if (chain == NULL || ! chain->finalized)
+    {
+        return tunnelchainIsWorkerPacketLine(chain, l);
+    }
+
+    if (UNLIKELY(chain->packet_lines == NULL))
+    {
+        LOGF("Disturber: finalized chain is missing its packet-line slots during runtime classification");
+        abortProgramNow(1);
+    }
+
+    /* Finalization publishes exactly one owner-matched packet line in every
+     * worker slot if and only if the chain contains a packet node. Validate the
+     * complete geometry before deciding that a callback line is merely normal:
+     * a missing or mis-owned slot must not make a real packet line fall through
+     * to normal-line teardown. */
+    for (wid_t wid = 0; wid < chain->workers_count; ++wid)
+    {
+        line_t *packet_line = tunnelchainGetWorkerPacketLine(chain, wid);
+        if (UNLIKELY(chain->contains_packet_node != (packet_line != NULL)))
+        {
+            LOGF("Disturber: finalized packet-line topology disagrees with worker slot %d during runtime "
+                 "classification",
+                 workerWIDForLog(wid));
+            abortProgramNow(1);
+        }
+
+        if (packet_line != NULL &&
+            UNLIKELY(lineGetWID(packet_line) != wid || ! tunnelchainIsWorkerPacketLine(chain, packet_line)))
+        {
+            LOGF("Disturber: finalized chain has a non-owner packet line in worker slot %d during runtime "
+                 "classification",
+                 workerWIDForLog(wid));
+            abortProgramNow(1);
+        }
+    }
+
+    return tunnelchainIsWorkerPacketLine(chain, l);
+}
+
+void disturberPacketLineFinish(tunnel_t *t, line_t *l, disturber_payload_direction_e direction)
+{
+    tunnel_chain_t *chain = tunnelGetChain(t);
+    if (UNLIKELY(chain == NULL || ! chain->finalized || ! chain->contains_packet_node || l == NULL ||
+                 ! disturberIsWorkerPacketLine(t, l) || ! lineIsOnCurrentEventWorker(l)))
+    {
+        LOGF("Disturber: packet Finish ran outside the exact owner packet line");
+        abortProgramNow(1);
+    }
+
+    assert(chain != NULL && chain->contains_packet_node);
+    assert(lineIsOnCurrentEventWorker(l));
+    assert(disturberIsWorkerPacketLine(t, l));
+
+    disturber_lstate_t *ls = lineGetState(l, t);
+
+    /* A received Finish creates two terminal publication boundaries. Payload
+     * already queued in the same direction must not overtake the propagated
+     * Finish, and payload queued in the opposite direction must not reflect
+     * toward the side that sent it. Normal-line teardown gets both guarantees
+     * by destroying all lstate; persistent packet state needs them explicitly. */
+    disturber_direction_lstate_t *received = disturberGetDirectionState(ls, direction);
+    disturber_direction_lstate_t *opposite = disturberGetDirectionState(ls,
+                                                                        direction == kDisturberPayloadDirectionUpstream
+                                                                            ? kDisturberPayloadDirectionDownstream
+                                                                            : kDisturberPayloadDirectionUpstream);
+
+    received->finished = true;
+    if (received->held_payload != NULL)
+    {
+        lineReuseBuffer(l, received->held_payload);
+        received->held_payload = NULL;
+    }
+
+    opposite->finished = true;
+    if (opposite->held_payload != NULL)
+    {
+        lineReuseBuffer(l, opposite->held_payload);
+        opposite->held_payload = NULL;
+    }
 }
 
 static void disturberCloseNormalLine(tunnel_t *t, line_t *l)
 {
     disturber_lstate_t *ls = lineGetState(l, t);
 
-    disturberLinestateDestroy(ls);
+    disturberLinestateDestroy(l, ls);
 
     tunnelNextUpStreamFinish(t, l);
     tunnelPrevDownStreamFinish(t, l);
@@ -58,7 +163,7 @@ void disturberTunnelPayload(tunnel_t *t, line_t *l, sbuf_t *buf, disturber_paylo
         return;
     }
 
-    if (dir_ls->is_deadhang)
+    if (dir_ls->finished || dir_ls->is_deadhang)
     {
         lineReuseBuffer(l, buf);
         return;

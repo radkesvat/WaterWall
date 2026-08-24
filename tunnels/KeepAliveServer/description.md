@@ -1,5 +1,5 @@
 <!--
-Documentation version: 152
+Documentation version: 153
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/KeepAliveServer.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/KeepAliveServer.mdx, and all files must keep the same documentation version.
 -->
 
@@ -30,15 +30,6 @@ Frame kinds are:
 - upstream `ping` frames are answered with downstream `pong` frames
 - upstream `pong` frames are ignored
 - downstream payload is encoded into framed output and sent with `tunnelPrevDownStreamPayload()`
-
-## Packet-Line Rule
-
-When the current line is the worker packet line, framing must not push the output past `kMaxAllowedPacketLength`.
-
-If `payload + 3` would exceed that limit:
-
-- the tunnel logs an error
-- the packet is dropped
 
 ## Finish Behavior
 

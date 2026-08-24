@@ -62,8 +62,20 @@ static void connectionfisherclientCloseMainLineInternal(tunnel_t *t, line_t *mai
         return;
     }
 
-    line_t  **children   = main_ls->child_lines;
+    line_t **children    = main_ls->child_lines;
     uint32_t child_count = main_ls->child_count;
+
+    /* Closing one child calls into the shared next-side tunnel and may
+     * synchronously close another child.  Retain the whole authoritative
+     * snapshot before the first callback so later entries cannot become stale
+     * pointers while this loop is in progress. */
+    for (uint32_t i = 0; children != NULL && i < child_count; ++i)
+    {
+        if (children[i] != NULL)
+        {
+            lineLock(children[i]);
+        }
+    }
 
     main_ls->child_lines      = NULL;
     main_ls->child_count      = 0;
@@ -76,10 +88,16 @@ static void connectionfisherclientCloseMainLineInternal(tunnel_t *t, line_t *mai
     {
         for (uint32_t i = 0; i < child_count; ++i)
         {
-            if (children[i] != NULL && lineIsAlive(children[i]))
+            if (children[i] == NULL)
+            {
+                continue;
+            }
+
+            if (lineIsAlive(children[i]))
             {
                 connectionfisherclientCloseChildLine(t, children[i], false);
             }
+            lineUnlock(children[i]);
         }
 
         memoryFree(children);
@@ -124,7 +142,7 @@ static void connectionfisherclientCloseChildLineInternal(tunnel_t *t, line_t *ch
     uint32_t  child_slot        = child_ls->child_slot;
     bool      should_close_main = force_close_main;
 
-    if (main_l != NULL)
+    if (main_l != NULL && lineIsAlive(main_l))
     {
         connectionfisherclient_lstate_t *main_ls = lineGetState(main_l, t);
 
@@ -185,36 +203,61 @@ void connectionfisherclientCloseChildLineFromDownstream(tunnel_t *t, line_t *chi
 
 bool connectionfisherclientSelectChild(tunnel_t *t, line_t *child_l)
 {
+    bool     selected    = false;
+    bool     main_locked = false;
+    line_t **losers      = NULL;
+    uint32_t loser_count = 0;
+    line_t  *main_l      = NULL;
+
+    /* Selection invokes callbacks on the main line and on sibling children.
+     * Any of them may synchronously close a different line in this set.  The
+     * creator references do not protect a line after such a close, so retain
+     * the selected child and its main explicitly for the complete operation. */
+    lineLock(child_l);
+
     connectionfisherclient_lstate_t *child_ls = lineGetState(child_l, t);
-    line_t                          *main_l   = child_ls->main_line;
+    main_l                                    = child_ls->main_line;
 
     if (main_l == NULL || ! lineIsAlive(main_l))
     {
         connectionfisherclientCloseChildLine(t, child_l, false);
-        return false;
+        goto cleanup;
     }
+    lineLock(main_l);
+    main_locked = true;
 
     connectionfisherclient_lstate_t *main_ls = lineGetState(main_l, t);
     if (main_ls->role != kConnectionFisherClientRoleMain)
     {
         connectionfisherclientCloseChildLine(t, child_l, false);
-        return false;
+        goto cleanup;
     }
 
     if (main_ls->selected_child != NULL && main_ls->selected_child != child_l)
     {
         connectionfisherclientCloseChildLine(t, child_l, false);
-        return false;
+        goto cleanup;
     }
-
-    line_t  **losers     = NULL;
-    uint32_t loser_count = 0;
 
     if (main_ls->selected_child == NULL)
     {
         if (main_ls->child_count > 1)
         {
-            losers = memoryAllocate(sizeof(line_t *) * (main_ls->child_count - 1));
+            const size_t loser_capacity = (size_t) main_ls->child_count - 1U;
+            if (UNLIKELY(loser_capacity > SIZE_MAX / sizeof(*losers)))
+            {
+                LOGW("ConnectionFisherClient: child line count is too large to snapshot losing children");
+                connectionfisherclientCloseMainLine(t, main_l);
+                goto cleanup;
+            }
+
+            losers = memoryAllocate(sizeof(*losers) * loser_capacity);
+            if (UNLIKELY(losers == NULL))
+            {
+                LOGW("ConnectionFisherClient: failed to snapshot losing child lines");
+                connectionfisherclientCloseMainLine(t, main_l);
+                goto cleanup;
+            }
         }
 
         main_ls->selected_child = child_l;
@@ -228,6 +271,7 @@ bool connectionfisherclientSelectChild(tunnel_t *t, line_t *child_l)
                 continue;
             }
 
+            lineLock(candidate);
             losers[loser_count++]   = candidate;
             main_ls->child_lines[i] = NULL;
         }
@@ -238,15 +282,9 @@ bool connectionfisherclientSelectChild(tunnel_t *t, line_t *child_l)
         {
             main_ls->main_est_forwarded = true;
 
- 
-
             if (! withLineLocked(main_l, tunnelPrevDownStreamEst, t))
             {
-                if (losers != NULL)
-                {
-                    memoryFree(losers);
-                }
-                return false;
+                goto cleanup;
             }
         }
     }
@@ -259,31 +297,30 @@ bool connectionfisherclientSelectChild(tunnel_t *t, line_t *child_l)
 
             if (! lineIsAlive(main_l))
             {
-                memoryFree(losers);
-                return false;
+                goto cleanup;
             }
         }
     }
 
-    if (losers != NULL)
+    if (! lineIsAlive(main_l) || ! lineIsAlive(child_l))
     {
-        memoryFree(losers);
+        goto cleanup;
     }
 
     if (! connectionfisherclientFlushPendingToSelected(t, main_l, child_l))
     {
-        return false;
+        goto cleanup;
     }
 
-    if (! lineIsAlive(main_l))
+    if (! lineIsAlive(main_l) || ! lineIsAlive(child_l))
     {
-        return false;
+        goto cleanup;
     }
 
     child_ls = lineGetState(child_l, t);
     if (child_ls->role != kConnectionFisherClientRoleChild)
     {
-        return false;
+        goto cleanup;
     }
 
     if (! bufferstreamIsEmpty(&child_ls->read_stream))
@@ -292,11 +329,32 @@ bool connectionfisherclientSelectChild(tunnel_t *t, line_t *child_l)
 
         if (extra != NULL && ! withLineLockedWithBuf(main_l, tunnelPrevDownStreamPayload, t, extra))
         {
-            return false;
+            goto cleanup;
         }
     }
 
-    return true;
+    selected = lineIsAlive(main_l) && lineIsAlive(child_l);
+
+cleanup:
+    for (uint32_t i = 0; i < loser_count; ++i)
+    {
+        /* A callback for an earlier loser can close the selected child and
+         * main. These losers were already detached from the main registry, so
+         * the main close cannot find them; finish any survivor before dropping
+         * the snapshot reference. */
+        if (lineIsAlive(losers[i]))
+        {
+            connectionfisherclientCloseChildLine(t, losers[i], false);
+        }
+        lineUnlock(losers[i]);
+    }
+    memoryFree(losers);
+    if (main_locked)
+    {
+        lineUnlock(main_l);
+    }
+    lineUnlock(child_l);
+    return selected;
 }
 
 void connectionfisherclientTimeoutTask(tunnel_t *t, line_t *main_l)

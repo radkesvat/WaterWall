@@ -18,7 +18,12 @@ void connectionfisherclientTunnelUpStreamInit(tunnel_t *t, line_t *main_l)
     connectionfisherclient_tstate_t *ts      = tunnelGetState(t);
     connectionfisherclient_lstate_t *main_ls = lineGetState(main_l, t);
 
-    connectionfisherclientLinestateInitializeMain(main_ls, main_l, ts->simultaneous_tries_perline);
+    if (UNLIKELY(! connectionfisherclientLinestateInitializeMain(main_ls, main_l, ts->simultaneous_tries_perline)))
+    {
+        connectionfisherclientCloseMainLine(t, main_l);
+        return;
+    }
+
     lineLock(main_l);
 
     for (uint32_t i = 0; i < ts->simultaneous_tries_perline; ++i)

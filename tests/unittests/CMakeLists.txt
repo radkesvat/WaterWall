@@ -2246,6 +2246,44 @@ if(TARGET SpeedLimit)
   )
 endif()
 
+if(TARGET Disturber)
+  add_executable(disturber_packet_lifecycle_test
+    disturber_packet_lifecycle_test.c
+    ${WATERWALL_LINE_FAILURE_WW_SOURCES}
+  )
+  waterwall_line_failure_test_use_tunnel(disturber_packet_lifecycle_test Disturber)
+  target_link_options(disturber_packet_lifecycle_test PRIVATE
+    ${WATERWALL_LINE_FAILURE_WRAPS}
+  )
+  target_link_libraries(disturber_packet_lifecycle_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests disturber_packet_lifecycle_test)
+
+  add_waterwall_unit_test(
+    waterwall.disturber_packet_lifecycle_unit
+    disturber_packet_lifecycle_test
+    "unit;tunnels;disturber;packet;finish;lifecycle;affinity;ownership"
+  )
+endif()
+
+if(TARGET ConnectionFisherClient)
+  add_executable(connectionfisherclient_reentrant_selection_test
+    connectionfisherclient_reentrant_selection_test.c
+    ${WATERWALL_LINE_FAILURE_WW_SOURCES}
+  )
+  waterwall_line_failure_test_use_tunnel(connectionfisherclient_reentrant_selection_test ConnectionFisherClient)
+  target_link_options(connectionfisherclient_reentrant_selection_test PRIVATE
+    ${WATERWALL_LINE_FAILURE_WRAPS}
+  )
+  target_link_libraries(connectionfisherclient_reentrant_selection_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests connectionfisherclient_reentrant_selection_test)
+
+  add_waterwall_unit_test(
+    waterwall.connectionfisherclient_reentrant_selection_unit
+    connectionfisherclient_reentrant_selection_test
+    "unit;tunnels;connectionfisherclient;reentrant;lifetime;ownership"
+  )
+endif()
+
 if(TARGET TlsServer)
   add_executable(tlsserver_line_failure_test
     tlsserver_line_failure_test.c
@@ -2809,6 +2847,26 @@ foreach(orderly_case IN ITEMS
     )
   endif()
 endforeach()
+
+# A client-side Payload callback may re-enter Socks5Server and drain the
+# response's UDP remote.  Retain that remote across the cross-line callback;
+# next/upstream Finish recipients remain borrowers and may not destroy it.
+if(TARGET Socks5Server)
+  add_executable(socks5server_udp_close_reentrant_test
+    socks5server_udp_close_reentrant_test.c
+    ${WATERWALL_LINE_FAILURE_WW_SOURCES}
+  )
+  waterwall_line_failure_test_use_tunnel(socks5server_udp_close_reentrant_test Socks5Server)
+  target_link_options(socks5server_udp_close_reentrant_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS})
+  target_link_libraries(socks5server_udp_close_reentrant_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests socks5server_udp_close_reentrant_test)
+
+  add_waterwall_unit_test(
+    waterwall.socks5server_udp_close_reentrant_unit
+    socks5server_udp_close_reentrant_test
+    "unit;tunnels;socks5server;udp;reentrant;finish;lifetime;ownership;payload"
+  )
+endif()
 
 add_executable(local_idle_table_indexed_test local_idle_table_indexed_test.c)
 target_link_libraries(local_idle_table_indexed_test PRIVATE ww)

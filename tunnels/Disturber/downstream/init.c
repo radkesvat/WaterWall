@@ -13,7 +13,7 @@ void disturberTunnelDownStreamInit(tunnel_t *t, line_t *l)
         LOGD("Disturber: Closing downstream direction instantly");
         if (! disturberIsWorkerPacketLine(t, l))
         {
-            disturberLinestateDestroy(ls);
+            disturberLinestateDestroy(l, ls);
             tunnelNextUpStreamFinish(t, l);
             return;
         }

@@ -59,7 +59,7 @@ void connectionfisherclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_
 void connectionfisherclientTunnelDownStreamPause(tunnel_t *t, line_t *l);
 void connectionfisherclientTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
-void connectionfisherclientLinestateInitializeMain(connectionfisherclient_lstate_t *ls, line_t *l,
+bool connectionfisherclientLinestateInitializeMain(connectionfisherclient_lstate_t *ls, line_t *l,
                                                    uint32_t child_count);
 void connectionfisherclientLinestateInitializeChild(connectionfisherclient_lstate_t *ls, line_t *l, line_t *main_l,
                                                     uint32_t slot);

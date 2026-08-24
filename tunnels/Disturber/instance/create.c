@@ -24,10 +24,11 @@ tunnel_t *disturberTunnelCreate(node_t *node)
     t->fnPauseD   = &disturberTunnelDownStreamPause;
     t->fnResumeD  = &disturberTunnelDownStreamResume;
 
-    t->onPrepare = &disturberTunnelOnPrepair;
-    t->onStart   = &disturberTunnelOnStart;
-    t->onStop    = &disturberTunnelOnStop;
-    t->onDestroy = &disturberTunnelDestroy;
+    t->onPrepare    = &disturberTunnelOnPrepair;
+    t->onStart      = &disturberTunnelOnStart;
+    t->onWorkerStop = &disturberTunnelOnWorkerStop;
+    t->onStop       = &disturberTunnelOnStop;
+    t->onDestroy    = &disturberTunnelDestroy;
 
     const cJSON        *settings = node->node_settings_json;
     disturber_tstate_t *ts       = tunnelGetState(t);

@@ -14,7 +14,7 @@ void disturberTunnelUpStreamInit(tunnel_t *t, line_t *l)
         LOGD("Disturber: Closing upstream direction instantly");
         if (! disturberIsWorkerPacketLine(t, l))
         {
-            disturberLinestateDestroy(ls);
+            disturberLinestateDestroy(l, ls);
             tunnelPrevDownStreamFinish(t, l);
             return;
         }

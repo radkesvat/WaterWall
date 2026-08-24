@@ -188,7 +188,6 @@ void keepaliveclientUntrackLine(tunnel_t *t, line_t *l)
 
     ls->tracked_prev = NULL;
     ls->tracked_next = NULL;
-
     mutexUnlock(&ts->lines_mutex);
 }
 
@@ -219,11 +218,32 @@ void keepaliveclientWorkerTimerCallback(wtimer_t *timer)
 
     if (count > 0)
     {
+        if (UNLIKELY(count > SIZE_MAX / sizeof(*lines)))
+        {
+            LOGW("KeepAliveClient: too many tracked lines to snapshot periodic pings on worker %d", (int) wid);
+            mutexUnlock(&ts->lines_mutex);
+            return;
+        }
+
         lines = memoryAllocate(sizeof(line_t *) * count);
+        if (UNLIKELY(lines == NULL))
+        {
+            LOGW("KeepAliveClient: failed to snapshot %zu tracked line(s) for periodic pings on worker %d",
+                 count,
+                 (int) wid);
+            mutexUnlock(&ts->lines_mutex);
+            return;
+        }
+
         for (it = ts->lines_head; it != NULL; it = it->tracked_next)
         {
             if (it->wid == wid && it->line != NULL)
             {
+                /* A ping callback for one line may synchronously close another
+                 * tracked line. Retain every snapshot entry while the registry
+                 * lock still proves it is live, so later entries remain
+                 * physically valid after such re-entrant removal. */
+                lineLock(it->line);
                 lines[index++] = it->line;
             }
         }
@@ -233,12 +253,12 @@ void keepaliveclientWorkerTimerCallback(wtimer_t *timer)
 
     for (size_t i = 0; i < count; ++i)
     {
-        if (! lineIsAlive(lines[i]))
+        if (lineIsAlive(lines[i]))
         {
-            continue;
+            discard keepaliveclientSendPingFrame(t, lines[i]);
         }
 
-        discard keepaliveclientSendPingFrame(t, lines[i]);
+        lineUnlock(lines[i]);
     }
 
     if (lines != NULL)
