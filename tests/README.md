@@ -37,18 +37,20 @@ Tests are organized into distinct execution lanes via `tests/run_test_lane.sh`:
 | Test Suite / Lane | Pre-Isolation (Host Serial) | Post-Isolation (Parallel Lanes) |
 |---|---|---|
 | **Support Tests** (13 tests) | ~55s (serial) | **~55s** (serial) |
-| **Deterministic Functional** (139 tests) | ~173s (sequential) | **~22–24s** (16 jobs on 4 CPUs) / **~71s** (1 CPU, 4 jobs) |
+| **Deterministic Functional** (143 tests) | ~173s (sequential) | **~22–24s** (16 jobs on 4 CPUs) / **~71s** (1 CPU, 4 jobs) |
 | **External Network** (1 test) | ~1s | **<1s** (serial) |
 | **Speed Tests** (16 tests) | ~48s (sequential) | **~46–48s** (serial) |
 | **Privileged Integration** (6 tests) | ~15s (sequential) | **~14–15s** (serial) |
-| **Ordinary non-privileged production sequence (`all`)** | ~277s | **~127s (~2m)** (support + functional + external + speed, 169 tests) |
+| **Ordinary non-privileged production sequence (`all`)** | ~277s | **~127s (~2m)** (support + functional + external + speed, 173 tests) |
 
 These are warm-build planning measurements from the 4-CPU reference host, not
 portable performance guarantees. The `all` total includes the production
 policy/harness checks; the native-unit tree remains separate. Complete production
-plus native-unit validation takes about 3.5 minutes including the privileged lane;
-the native-unit portion measured a median ~74s across three warm
-`linux-unit-release` runs. These values depend on hardware and build state.
+plus the Release native-unit lane takes about 3.5 minutes including the privileged
+lane; the Release unit portion measured a median ~74s across three warm
+`linux-unit-release` runs. That measurement excludes the additional Debug unit
+lane, which cloud CI runs in parallel. These values depend on hardware and build
+state.
 
 ## Which runner should I use?
 
@@ -543,18 +545,22 @@ important for validating bidirectional transports such as the HTTP cases above.
 ## Running locally
 
 Production integration tests and native unit tests deliberately use separate
-Release build trees. The production tree keeps IPO/LTO enabled; the unit tree
-keeps all otherwise-normal Release behavior while disabling IPO/LTO.
+build trees. The production Release tree keeps IPO/LTO enabled. The native-unit
+tree disables IPO/LTO and supports complementary Release and Debug configurations.
 
 ```sh
 # Complete production Release lane: integration, smoke, and source-policy coverage.
 cmake --preset linux-gcc-x64
 cmake --build --preset linux-gcc-x64 --config Release --target check_waterwall_tests
 
-# Canonical native unit-test lane: Release without IPO/LTO.
+# Native units: optimized Release behavior without IPO/LTO.
 cmake --preset linux-unit-tests
 cmake --build --preset linux-unit-release
 ctest --preset linux-unit-release --output-on-failure
+
+# Native units: assertions and Debug guardrails without IPO/LTO.
+cmake --build --preset linux-unit-debug
+ctest --preset linux-unit-debug --output-on-failure
 ```
 
 Important:
@@ -564,7 +570,8 @@ Important:
   while `ctest --preset linux-unit-release` reads `build/linux-unit-tests`; do
   not mix the two lanes
 - `linux-gcc` and `linux-unit-release` select `Release`; `linux-unit-debug`
-  intentionally selects `Debug` for diagnostics
+  selects `Debug`. Use Debug first for relevant behavioral iteration, then run
+  the same coverage in Release; broad/shared changes run both complete unit lanes
 - direct `ctest` runs do not build missing executables.
   The Release unit preset builds `waterwall_unit_tests`. The registered policy
   directly checks that the unit tree has IPO disabled, reachable build commands
@@ -577,11 +584,14 @@ Important:
   backend without IPO/LTO. Production crypto presets intentionally do not expose
   native-unit targets.
 
-Run only the canonical Release/no-LTO unit tests:
+Run one native-unit configuration independently when focusing a failure:
 
 ```sh
 cmake --build --preset linux-unit-release
 ctest --preset linux-unit-release --output-on-failure
+
+cmake --build --preset linux-unit-debug
+ctest --preset linux-unit-debug --output-on-failure
 ```
 
 Run only integration tests:

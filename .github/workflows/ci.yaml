@@ -371,7 +371,13 @@ jobs:
         run: ccache -sv
 
   unit-tests:
-    name: linux-unit-release
+    strategy:
+      fail-fast: false
+      matrix:
+        preset:
+          - linux-unit-release
+          - linux-unit-debug
+    name: ${{ matrix.preset }}
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v5
@@ -380,9 +386,10 @@ jobs:
           path: |
             ${{ env.cpm-path }}
             ${{ github.workspace }}/.ccache
-          key: ${{ env.cpm-key }}-linux-unit-release-${{ hashFiles('**/CMakeLists.txt', '**/*.cmake') }}
+          key: ${{ env.cpm-key }}-${{ matrix.preset }}-${{ hashFiles('**/CMakeLists.txt', '**/*.cmake') }}
           restore-keys: |
-            ${{ env.cpm-key }}-linux-unit-release-
+            ${{ env.cpm-key }}-${{ matrix.preset }}-
+            ${{ env.cpm-key }}-linux-unit-
             ${{ env.cpm-key }}-linux-
             ${{ env.cpm-key }}-
           enableCrossOsArchive: false
@@ -397,9 +404,9 @@ jobs:
           cmake --preset linux-unit-tests
           -DCPM_SOURCE_CACHE="${{ env.cpm-path }}"
       - name: Build Unit Tests
-        run: cmake --build --preset linux-unit-release -j8
+        run: cmake --build --preset ${{ matrix.preset }} -j8
       - name: Run Unit Tests
-        run: ctest --preset linux-unit-release --output-on-failure
+        run: ctest --preset ${{ matrix.preset }} --output-on-failure
       - name: Show ccache statistics
         run: ccache -sv
 

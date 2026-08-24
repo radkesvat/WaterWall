@@ -214,6 +214,11 @@ clang-format --dry-run -Werror --style=file path/to/changed_file.c
 - Start with the smallest direct check. Expand to the functional lane for shared
   tunnel/network behavior and to all production lanes plus native units for
   shared-core, lifecycle/concurrency, multi-subsystem, or uncertain-scope changes.
+- When native Linux units are relevant, normally exercise the focused coverage in
+  both `linux-unit-debug` and `linux-unit-release`. Prefer Debug first during
+  behavioral iteration because assertions and guardrails are active, but never use
+  it as a substitute for optimized `NDEBUG` Release behavior. Broad/shared changes
+  run the complete unit suite in both configurations.
 - Documentation and clearly non-behavioral changes may need only inspection or
   relevant link/policy checks. Tests are expected for new observable behavior,
   meaningful edge cases, changed contracts, and reproducible bugs likely to regress;

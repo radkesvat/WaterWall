@@ -44,18 +44,22 @@ These tests exercise small library-level behavior without launching the `Waterwa
 
 ## Running Unit Tests
 
-Unit tests use a dedicated Release/no-LTO build tree. They retain normal
-Release optimization, `NDEBUG`, ABI, and feature definitions; only IPO/LTO is
-disabled. The production Release tree remains IPO/LTO-enabled and must not be
-reused for native unit tests. The Debug unit preset is available for diagnosis,
-but Release/no-LTO is the canonical validation lane.
+Unit tests use a dedicated multi-configuration no-LTO build tree. Release retains
+normal optimization, `NDEBUG`, ABI, and feature definitions; Debug enables
+assertions and other Debug guardrails. The production Release tree remains
+IPO/LTO-enabled and must not be reused for native unit tests. These configurations
+are complementary: Debug is preferred first during behavioral iteration, while
+Release proves the optimized behavior that ships.
 
-Build and run only the unit tests:
+Build and run the complete unit suite in both configurations:
 
 ```sh
 cmake --preset linux-unit-tests
 cmake --build --preset linux-unit-release
 ctest --preset linux-unit-release --output-on-failure
+
+cmake --build --preset linux-unit-debug
+ctest --preset linux-unit-debug --output-on-failure
 ```
 
 The registered no-LTO policy is intentionally small. It checks the configured
@@ -64,12 +68,10 @@ artifacts from WaterWall, lwIP, and TlsClient. It is a regression check for the
 property that caused the slow links; it is not a toolchain attestation or a
 reproducible-build system.
 
-Optional Debug diagnostics (not equivalent to the canonical Release/no-LTO run):
-
-```sh
-cmake --build --preset linux-unit-debug
-ctest --preset linux-unit-debug --output-on-failure
-```
+For a focused behavioral change, run the relevant test selection in Debug first so
+assertions fail close to the violated contract, then repeat it in Release. Broad or
+shared changes run both complete presets. Debug does not replace Release,
+AddressSanitizer, UndefinedBehaviorSanitizer, or ThreadSanitizer coverage.
 
 The unit CTest entries run through `run_unit_test.cmake`, which brings the requested unit executable up to date for the
 active CTest configuration before running it. A complete validation also builds
