@@ -448,20 +448,21 @@ static void streamtopacketsReplayDecodedPacketOnWorker(worker_t *worker, void *a
 
     assert(worker != NULL);
     assert(worker->wid == lineGetWID(msg->packet_line));
-    discard worker;
 
     streamtopackets_tstate_t *ts = tunnelGetState(msg->tunnel);
 
     if (! lineIsAlive(msg->packet_line))
     {
-        lineReuseBuffer(msg->packet_line, msg->buf);
+        /* The queued reference retains packet-line memory, not its logical
+         * lifetime. This callback owns the delivered worker's pool. */
+        bufferpoolReuseBuffer(worker->buffer_pool, msg->buf);
     }
     else if (streamtopacketsPublishedGeneration(ts) != msg->generation)
     {
         // A takeover linearized after this packet was queued: the epoch that
         // authorized it no longer owns the tunnel, so it must not be injected.
         LOGD("StreamToPackets: dropping a queued packet from a superseded source generation");
-        lineReuseBuffer(msg->packet_line, msg->buf);
+        bufferpoolReuseBuffer(worker->buffer_pool, msg->buf);
     }
     else
     {
@@ -483,7 +484,9 @@ static void streamtopacketsCleanupDecodedPacket(void *arg1, void *arg2, void *ar
     // A pooled buffer may only go back to a pool this thread owns.
     if (lineIsOnCurrentEventWorker(msg->packet_line))
     {
-        lineReuseBuffer(msg->packet_line, msg->buf);
+        /* Cleanup can observe a logically dead line; current-worker ownership
+         * is enough to recycle without reading that line. */
+        bufferpoolReuseBuffer(getCurrentEventWorkerBufferPool(), msg->buf);
     }
     else
     {

@@ -565,7 +565,6 @@ static void packetstostreamReplayDecodedPacketOnWorker(worker_t *worker, void *a
 
     assert(worker != NULL);
     assert(worker->wid == lineGetWID(packet_line));
-    discard worker;
 
     if (LIKELY(lineIsAlive(packet_line)))
     {
@@ -573,7 +572,9 @@ static void packetstostreamReplayDecodedPacketOnWorker(worker_t *worker, void *a
     }
     else
     {
-        lineReuseBuffer(packet_line, buf);
+        /* The temporary reference preserves memory, not the packet line's
+         * logical life; the delivered worker owns this buffer's pool. */
+        bufferpoolReuseBuffer(worker->buffer_pool, buf);
     }
 
     lineUnlock(packet_line);
@@ -591,7 +592,8 @@ static void packetstostreamCleanupDecodedPacket(void *arg1, void *arg2, void *ar
     // A pooled buffer may only go back to a pool this thread owns.
     if (lineIsOnCurrentEventWorker(packet_line))
     {
-        lineReuseBuffer(packet_line, buf);
+        /* Message cleanup may run after logical line death. */
+        bufferpoolReuseBuffer(getCurrentEventWorkerBufferPool(), buf);
     }
     else
     {

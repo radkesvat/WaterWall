@@ -228,10 +228,11 @@ tunnel_t *testerserverTunnelCreate(node_t *node)
     t->fnPauseD   = &testerserverTunnelDownStreamPause;
     t->fnResumeD  = &testerserverTunnelDownStreamResume;
 
-    t->onPrepare = &testerserverTunnelOnPrepair;
-    t->onStart   = &testerserverTunnelOnStart;
-    t->onStop    = &testerserverTunnelOnStop;
-    t->onDestroy = &testerserverTunnelDestroy;
+    t->onPrepare    = &testerserverTunnelOnPrepair;
+    t->onStart      = &testerserverTunnelOnStart;
+    t->onWorkerStop = &testerserverTunnelOnWorkerStop;
+    t->onStop       = &testerserverTunnelOnStop;
+    t->onDestroy    = &testerserverTunnelDestroy;
 
     testerserver_tstate_t *ts                     = tunnelGetState(t);
     const cJSON           *settings               = node->node_settings_json;

@@ -247,7 +247,12 @@ static void caseStartupAdmissionIsCheckedForEveryWorker(void)
 
 static void fixtureTeardown(void)
 {
-    streamtopacketsOwnershipDestroy(g_fixture.s2p);
+    if (g_fixture.s2p != NULL)
+    {
+        streamtopacketsOwnershipDestroy(g_fixture.s2p);
+        tunnelDestroy(g_fixture.s2p);
+        g_fixture.s2p = NULL;
+    }
 
     for (wid_t wi = 0; wi < kTestWorkers; ++wi)
     {
@@ -257,7 +262,6 @@ static void fixtureTeardown(void)
     memoryFree(g_fixture.chain);
     tunnelDestroy(g_fixture.next);
     tunnelDestroy(g_fixture.prev);
-    tunnelDestroy(g_fixture.s2p);
     tosWorkerEnvTeardown(&g_fixture.env);
 }
 
@@ -389,6 +393,49 @@ static void closeStreamLine(line_t *l)
 {
     finishStreamLine(l);
     twfLineDestroy(l);
+}
+
+// ---------------------------------------------------------------------------
+// Tunnel destruction owns only an empty registry, never packet-line state
+// ---------------------------------------------------------------------------
+
+static void caseDestroyAcceptsAnEmptyRegistry(void)
+{
+    twfSetCase("StreamToPackets Destroy accepts an empty borrowed-line registry");
+    tosResetProcessApi(true);
+    fixtureSetup();
+
+    streamtopacketsTunnelDestroy(g_fixture.s2p, wwLifecycleProcessShutdown());
+    g_fixture.s2p = NULL;
+
+    for (wid_t wid = 0; wid < kTestWorkers; ++wid)
+    {
+        twfRequire(lineIsAlive(g_fixture.packet_lines[wid]), "Destroy must not release a chain-owned packet line");
+    }
+
+    fixtureTeardown();
+    tosRequireNoProcessApiCall();
+}
+
+static void residualRegistryDestroyBody(void *argument)
+{
+    discard argument;
+
+    fixtureSetup();
+    discard openStreamLine("10.0.0.1", 1);
+
+    /* This deliberately bypasses the source-owner drain so the terminal
+     * registry invariant, rather than a normal Finish, is exercised. */
+    streamtopacketsTunnelDestroy(g_fixture.s2p, wwLifecycleProcessShutdown());
+}
+
+static void caseDestroyRejectsResidualBorrowedRegistryLine(void)
+{
+    twfSetCase("StreamToPackets Destroy rejects a residual borrowed-line registry entry");
+    tosResetProcessApi(true);
+    tosRequireChildExit(
+        "the residual borrowed-line registry entry", residualRegistryDestroyBody, NULL, kTosChildDirectAbort);
+    tosResetProcessApi(true);
 }
 
 static bool lineIsTracked(const line_t *l)
@@ -1270,6 +1317,8 @@ static void caseAnonymousLinesShareOneIdentity(void)
 int main(void)
 {
     caseStartupAdmissionIsCheckedForEveryWorker();
+    caseDestroyAcceptsAnEmptyRegistry();
+    caseDestroyRejectsResidualBorrowedRegistryLine();
     caseCandidateIsNotSelectable();
     caseFirstValidLineEstablishesTheSource();
     caseSameSourceLinesJoinOneGeneration();

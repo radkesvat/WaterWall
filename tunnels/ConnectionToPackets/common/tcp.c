@@ -505,7 +505,8 @@ err_t ctpTcpRecvCallback(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t 
      */
     if (! lineIsAlive(l))
     {
-        lineReuseBuffer(l, buf);
+        /* The owner-pool pointer was captured while the line was alive. */
+        bufferpoolReuseBuffer(pool, buf);
         return ERR_MEM;
     }
 

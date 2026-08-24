@@ -201,32 +201,28 @@ void streamtopacketsOwnershipStop(tunnel_t *t)
 }
 
 /*
- * Releases whatever the registry still holds. Called from tunnel destruction,
- * after the workers are quiesced, so this only detaches and frees nodes: the
- * lines themselves are borrowed and belong to their own owners.
+ * Destroy is the terminal registry boundary. Registration happens only from a
+ * live stream line's Init, and that line's own Finish unregisters it before its
+ * owner can reclaim the line. Therefore all normal-line owners completing
+ * worker drain must leave this registry empty before final Destroy; silently
+ * freeing a residual entry would conceal a lifecycle violation.
  */
 void streamtopacketsOwnershipDestroy(tunnel_t *t)
 {
-    streamtopackets_tstate_t     *ts        = tunnelGetState(t);
-    streamtopackets_line_entry_t *remaining = NULL;
+    streamtopackets_tstate_t *ts = tunnelGetState(t);
 
     rwlockWriteLock(&ts->lines_lock);
-    remaining      = ts->lines_head;
-    ts->lines_head = NULL;
+    if (UNLIKELY(ts->lines_head != NULL))
+    {
+        void *line = ts->lines_head->line;
+        rwlockWriteUnlock(&ts->lines_lock);
+
+        LOGF("StreamToPackets: tunnel destruction found an undrained borrowed stream line %p", line);
+        abortProgramNow(1);
+    }
+
     streamtopacketsClearOwnerLocked(ts);
     rwlockWriteUnlock(&ts->lines_lock);
-
-    while (remaining != NULL)
-    {
-        streamtopackets_line_entry_t *node = remaining;
-        remaining                          = node->next;
-
-        // Expected during shutdown: the peers' lines are still open and their own
-        // owners tear them down. Only this node's registry storage is released.
-        LOGD("StreamToPackets: releasing the registry entry of stream line %p during tunnel destruction",
-             (void *) node->line);
-        memoryFree(node);
-    }
 
     rwlockDestroy(&ts->lines_lock);
 }
@@ -800,7 +796,9 @@ static void streamtopacketsCleanupSelectedWrite(void *arg1, void *arg2, void *ar
     // A pooled buffer may only go back to a pool this thread owns.
     if (lineIsOnCurrentEventWorker(msg->line))
     {
-        lineReuseBuffer(msg->line, msg->buf);
+        /* Cancellation may observe logical line death; the checked owner
+         * worker is sufficient to recycle without reading it. */
+        bufferpoolReuseBuffer(getCurrentEventWorkerBufferPool(), msg->buf);
     }
     else
     {
@@ -858,7 +856,9 @@ void streamtopacketsDeliverSelectedWrite(tunnel_t *t, line_t *l, uint64_t line_i
 
     if (! lineIsAlive(l))
     {
-        lineReuseBuffer(l, buf);
+        /* The caller is the selected line's owner worker, but its retained
+         * reference does not revive a logically dead line. */
+        bufferpoolReuseBuffer(getCurrentEventWorkerBufferPool(), buf);
         return;
     }
 

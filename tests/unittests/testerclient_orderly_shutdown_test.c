@@ -455,6 +455,281 @@ static void caseWorkerStopClosesUnscheduledOwnedLine(void)
 }
 
 // ---------------------------------------------------------------------------
+// Packet-line state must be drained by the exact owning worker
+// ---------------------------------------------------------------------------
+
+static void casePacketWorkerStopSettlesOwnerState(void)
+{
+    enum
+    {
+        kWorkerCount = 2
+    };
+
+    twfSetCase("testerclient packet worker Stop settles worker-affine state");
+    tosResetProcessApi(true);
+
+    tos_worker_env_t env;
+    tosWorkerEnvSetup(&env, kWorkerCount, kTestLargeBufferSize, kTestSmallBufferSize);
+
+    tunnel_t *tester = tunnelCreate(NULL, sizeof(testerclient_tstate_t), sizeof(testerclient_lstate_t));
+    twfRequire(tester != NULL, "failed to create the packet worker-stop TesterClient fixture");
+
+    tunnel_chain_t *chain = memoryAllocateZero(sizeof(tunnel_chain_t) + kWorkerCount * sizeof(generic_pool_t *));
+    twfRequire(chain != NULL, "failed to allocate the packet worker-stop chain");
+    line_t *packet_lines[kWorkerCount] = {0};
+    chain->workers_count               = kWorkerCount;
+    chain->contains_packet_node        = true;
+    chain->finalized                   = true;
+    chain->packet_lines                = packet_lines;
+    tester->chain                      = chain;
+
+    testerclient_tstate_t *ts = tunnelGetState(tester);
+    ts->packet_mode           = true;
+
+    const uint32_t recycles_before = twfRecycleCount();
+    for (wid_t wid = 0; wid < kWorkerCount; ++wid)
+    {
+        line_t *line      = twfLineCreate(tester->lstate_size);
+        line->wid         = wid;
+        packet_lines[wid] = line;
+
+        const wid_t            previous_wid = tosSetCurrentWorker(wid);
+        testerclient_lstate_t *ls           = lineGetState(line, tester);
+        testerclientLinestateInitialize(ls, lineGetBufferPool(line));
+
+        sbuf_t *retained = bufferpoolGetSmallBuffer(lineGetBufferPool(line));
+        sbufSetLength(retained, 1);
+        bufferstreamPush(&ls->read_stream, retained);
+
+        testerclientTunnelOnWorkerStop(tester, wid, wwLifecycleProcessShutdown());
+
+        twfRequireLineStateZeroed(line, tester, "packet worker Stop left TesterClient state behind");
+        twfRequire(lineIsAlive(line), "packet worker Stop destroyed the chain-owned packet line");
+
+        /* A terminal packet flow can retain scalar progress after its stream
+         * has already been settled. Stop must still invoke the full
+         * destructor, not use the null pool as a proxy for zero state. */
+        twfRequire(ls->read_stream.pool == NULL, "the first packet drain did not clear the stream pool");
+        ls->request_tx_index               = 11;
+        ls->response_rx_index              = 11;
+        ls->packet_stateless_response_mask = UINT32_C(2047);
+        ls->request_complete               = true;
+        ls->response_complete              = true;
+        testerclientTunnelOnWorkerStop(tester, wid, wwLifecycleProcessShutdown());
+        twfRequireLineStateZeroed(
+            line, tester, "packet worker Stop left terminal TesterClient scalars behind after its pool was cleared");
+
+        discard tosSetCurrentWorker(previous_wid);
+    }
+
+    twfRequireEqualU32(
+        twfRecycleCount() - recycles_before, kWorkerCount, "packet worker Stop did not recycle every retained buffer");
+    twfRequireNoLeakedBuffers();
+    tosRequireNoProcessApiCall();
+
+    /* onDestroy runs after owner-worker drains and must not revisit their pools. */
+    testerclientTunnelDestroy(tester, wwLifecycleProcessShutdown());
+    for (wid_t wid = 0; wid < kWorkerCount; ++wid)
+    {
+        twfLineDestroy(packet_lines[wid]);
+    }
+    memoryFree(chain);
+    tosWorkerEnvTeardown(&env);
+}
+
+static void residualPacketStateDestroyBody(void *argument)
+{
+    const bool terminal_scalars_only = (uintptr_t) argument != 0;
+
+    tos_worker_env_t env;
+    tosWorkerEnvSetup(&env, 1, kTestLargeBufferSize, kTestSmallBufferSize);
+
+    tunnel_t *tester = tunnelCreate(NULL, sizeof(testerclient_tstate_t), sizeof(testerclient_lstate_t));
+    twfRequire(tester != NULL, "failed to create the residual TesterClient fixture");
+
+    tunnel_chain_t *chain = memoryAllocateZero(sizeof(tunnel_chain_t) + sizeof(generic_pool_t *));
+    twfRequire(chain != NULL, "failed to allocate the residual TesterClient chain");
+    line_t *packet_lines[1]     = {twfLineCreate(tester->lstate_size)};
+    chain->workers_count        = 1;
+    chain->contains_packet_node = true;
+    chain->finalized            = true;
+    chain->packet_lines         = packet_lines;
+    tester->chain               = chain;
+
+    testerclient_tstate_t *ts = tunnelGetState(tester);
+    ts->packet_mode           = true;
+    testerclient_lstate_t *ls = lineGetState(packet_lines[0], tester);
+    if (terminal_scalars_only)
+    {
+        twfRequire(ls->read_stream.pool == NULL, "the terminal-scalar fixture unexpectedly has a stream pool");
+        ls->request_tx_index               = 11;
+        ls->response_rx_index              = 11;
+        ls->packet_stateless_response_mask = UINT32_C(2047);
+        ls->request_complete               = true;
+        ls->response_complete              = true;
+    }
+    else
+    {
+        testerclientLinestateInitialize(ls, lineGetBufferPool(packet_lines[0]));
+        bufferstreamPush(&ls->read_stream, bufferpoolGetSmallBuffer(lineGetBufferPool(packet_lines[0])));
+    }
+
+    testerclientTunnelDestroy(tester, wwLifecycleProcessShutdown());
+}
+
+static void caseDestroyRejectsUndrainedFinalizedPacketState(void)
+{
+    twfSetCase("testerclient Destroy rejects undrained finalized packet state");
+    tosResetProcessApi(true);
+    tosRequireChildExit(
+        "the undrained packet buffer state", residualPacketStateDestroyBody, NULL, kTosChildDirectAbort);
+    tosRequireChildExit("terminal packet scalars with no stream pool",
+                        residualPacketStateDestroyBody,
+                        (void *) (uintptr_t) 1,
+                        kTosChildDirectAbort);
+    tosResetProcessApi(true);
+}
+
+typedef enum testerclient_finalized_geometry_case_e
+{
+    kTesterClientFinalizedGeometryMissingSlots,
+    kTesterClientFinalizedGeometryMissingPacketSlot,
+    kTesterClientFinalizedGeometryOutOfRangeWorker,
+    kTesterClientFinalizedGeometryWrongCurrentWorker,
+    kTesterClientFinalizedGeometryPacketModeWithoutPacketTopology,
+    kTesterClientFinalizedGeometryDestroyMissingSlots,
+    kTesterClientFinalizedGeometryDestroyMissingPacketSlot,
+    kTesterClientFinalizedGeometryDestroyWrongPacketOwner,
+    kTesterClientFinalizedGeometryDestroyPacketModeWithoutPacketTopology,
+} testerclient_finalized_geometry_case_e;
+
+static void finalizedPacketGeometryAbortBody(void *argument)
+{
+    const testerclient_finalized_geometry_case_e geometry =
+        (testerclient_finalized_geometry_case_e) (uintptr_t) argument;
+
+    enum
+    {
+        kWorkerCount = 2
+    };
+
+    tos_worker_env_t env;
+    tosWorkerEnvSetup(&env, kWorkerCount, kTestLargeBufferSize, kTestSmallBufferSize);
+
+    tunnel_t *tester = tunnelCreate(NULL, sizeof(testerclient_tstate_t), sizeof(testerclient_lstate_t));
+    twfRequire(tester != NULL, "failed to create the finalized-geometry TesterClient fixture");
+
+    tunnel_chain_t *chain = memoryAllocateZero(sizeof(tunnel_chain_t) + kWorkerCount * sizeof(generic_pool_t *));
+    twfRequire(chain != NULL, "failed to allocate the finalized-geometry TesterClient chain");
+    line_t *packet_lines[kWorkerCount] = {0};
+    chain->workers_count               = kWorkerCount;
+    chain->contains_packet_node        = true;
+    chain->finalized                   = true;
+    chain->packet_lines                = packet_lines;
+    tester->chain                      = chain;
+
+    testerclient_tstate_t *ts = tunnelGetState(tester);
+    ts->packet_mode           = true;
+
+    switch (geometry)
+    {
+    case kTesterClientFinalizedGeometryMissingSlots:
+        chain->packet_lines = NULL;
+        testerclientTunnelOnWorkerStop(tester, 0, wwLifecycleProcessShutdown());
+        break;
+    case kTesterClientFinalizedGeometryMissingPacketSlot:
+        testerclientTunnelOnWorkerStop(tester, 0, wwLifecycleProcessShutdown());
+        break;
+    case kTesterClientFinalizedGeometryOutOfRangeWorker:
+        testerclientTunnelOnWorkerStop(tester, kWorkerCount, wwLifecycleProcessShutdown());
+        break;
+    case kTesterClientFinalizedGeometryWrongCurrentWorker: {
+        line_t *line    = twfLineCreate(tester->lstate_size);
+        line->wid       = 1;
+        packet_lines[1] = line;
+        discard tosSetCurrentWorker(0);
+        testerclientTunnelOnWorkerStop(tester, 1, wwLifecycleProcessShutdown());
+        break;
+    }
+    case kTesterClientFinalizedGeometryPacketModeWithoutPacketTopology: {
+        line_t *line                = twfLineCreate(tester->lstate_size);
+        line->wid                   = 0;
+        packet_lines[0]             = line;
+        chain->contains_packet_node = false;
+        testerclientTunnelOnWorkerStop(tester, 0, wwLifecycleProcessShutdown());
+        break;
+    }
+    case kTesterClientFinalizedGeometryDestroyMissingSlots:
+        chain->packet_lines = NULL;
+        testerclientTunnelDestroy(tester, wwLifecycleProcessShutdown());
+        break;
+    case kTesterClientFinalizedGeometryDestroyMissingPacketSlot:
+        testerclientTunnelDestroy(tester, wwLifecycleProcessShutdown());
+        break;
+    case kTesterClientFinalizedGeometryDestroyWrongPacketOwner: {
+        line_t *line    = twfLineCreate(tester->lstate_size);
+        line->wid       = 1;
+        packet_lines[0] = line;
+        testerclientTunnelDestroy(tester, wwLifecycleProcessShutdown());
+        break;
+    }
+    case kTesterClientFinalizedGeometryDestroyPacketModeWithoutPacketTopology: {
+        line_t *line                = twfLineCreate(tester->lstate_size);
+        line->wid                   = 0;
+        packet_lines[0]             = line;
+        chain->contains_packet_node = false;
+        testerclientTunnelDestroy(tester, wwLifecycleProcessShutdown());
+        break;
+    }
+    }
+}
+
+static void caseFinalizedPacketGeometryAborts(void)
+{
+    twfSetCase("testerclient finalized packet geometry is release-fatal");
+    tosResetProcessApi(true);
+
+    tosRequireChildExit("missing finalized packet-line slots",
+                        finalizedPacketGeometryAbortBody,
+                        (void *) (uintptr_t) kTesterClientFinalizedGeometryMissingSlots,
+                        kTosChildDirectAbort);
+    tosRequireChildExit("a missing finalized packet line",
+                        finalizedPacketGeometryAbortBody,
+                        (void *) (uintptr_t) kTesterClientFinalizedGeometryMissingPacketSlot,
+                        kTosChildDirectAbort);
+    tosRequireChildExit("an out-of-range finalized packet worker",
+                        finalizedPacketGeometryAbortBody,
+                        (void *) (uintptr_t) kTesterClientFinalizedGeometryOutOfRangeWorker,
+                        kTosChildDirectAbort);
+    tosRequireChildExit("a foreign worker Stop callback",
+                        finalizedPacketGeometryAbortBody,
+                        (void *) (uintptr_t) kTesterClientFinalizedGeometryWrongCurrentWorker,
+                        kTosChildDirectAbort);
+    tosRequireChildExit("packet mode with a stream-only topology",
+                        finalizedPacketGeometryAbortBody,
+                        (void *) (uintptr_t) kTesterClientFinalizedGeometryPacketModeWithoutPacketTopology,
+                        kTosChildDirectAbort);
+    tosRequireChildExit("Destroy missing finalized packet-line slots",
+                        finalizedPacketGeometryAbortBody,
+                        (void *) (uintptr_t) kTesterClientFinalizedGeometryDestroyMissingSlots,
+                        kTosChildDirectAbort);
+    tosRequireChildExit("Destroy missing a finalized packet line",
+                        finalizedPacketGeometryAbortBody,
+                        (void *) (uintptr_t) kTesterClientFinalizedGeometryDestroyMissingPacketSlot,
+                        kTosChildDirectAbort);
+    tosRequireChildExit("Destroy with a wrong-owner finalized packet line",
+                        finalizedPacketGeometryAbortBody,
+                        (void *) (uintptr_t) kTesterClientFinalizedGeometryDestroyWrongPacketOwner,
+                        kTosChildDirectAbort);
+    tosRequireChildExit("Destroy packet mode with a stream-only topology",
+                        finalizedPacketGeometryAbortBody,
+                        (void *) (uintptr_t) kTesterClientFinalizedGeometryDestroyPacketModeWithoutPacketTopology,
+                        kTosChildDirectAbort);
+
+    tosResetProcessApi(true);
+}
+
+// ---------------------------------------------------------------------------
 // Category D: the same Finish on a persistent worker packet line
 // ---------------------------------------------------------------------------
 
@@ -526,6 +801,9 @@ int main(void)
     casePayloadGeneratorInvariantAborts();
     caseSuccessfulDownstreamFinishClosesBeforeSweep();
     caseWorkerStopClosesUnscheduledOwnedLine();
+    casePacketWorkerStopSettlesOwnerState();
+    caseDestroyRejectsUndrainedFinalizedPacketState();
+    caseFinalizedPacketGeometryAborts();
 
     printf("testerclient_orderly_shutdown_test: all cases passed\n");
     return 0;

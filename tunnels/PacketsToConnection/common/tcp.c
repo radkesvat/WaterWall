@@ -102,7 +102,9 @@ err_t lwipThreadPtcTcpRecvCallback(void *arg, struct tcp_pcb *tpcb, struct pbuf 
 
     if (! lineIsAlive(ls->line))
     {
-        lineReuseBuffer(ls->line, buf);
+        /* This callback is on owner_wid and captured its pool before the
+         * logical-death check. */
+        bufferpoolReuseBuffer(pool, buf);
         return ERR_MEM;
     }
 

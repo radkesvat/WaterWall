@@ -77,6 +77,7 @@ WW_EXPORT api_result_t testerserverTunnelApi(tunnel_t *instance, sbuf_t *message
 
 void testerserverTunnelOnPrepair(tunnel_t *t);
 void testerserverTunnelOnStart(tunnel_t *t);
+void testerserverTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);
 void testerserverTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context);
 
 void testerserverTunnelUpStreamInit(tunnel_t *t, line_t *l);
