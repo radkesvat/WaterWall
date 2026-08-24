@@ -2266,6 +2266,88 @@ if(TARGET TlsServer)
   )
 endif()
 
+# Delayed fallback branches keep a line-task reference, not the borrowed line's
+# logical lifetime.  Compile each affected server into its own fixture so the
+# test can intercept delayed task admission without adding a production seam.
+if(LINUX AND TARGET VlessServer)
+  add_executable(vlessserver_fallback_finish_lifetime_test
+    vlessserver_fallback_finish_lifetime_test.c
+    ${WATERWALL_LINE_FAILURE_WW_SOURCES}
+  )
+  waterwall_line_failure_test_use_tunnel(vlessserver_fallback_finish_lifetime_test VlessServer)
+  target_link_options(vlessserver_fallback_finish_lifetime_test PRIVATE
+    ${WATERWALL_LINE_FAILURE_WRAPS}
+    "-Wl,--wrap=lineScheduleDelayedTask"
+  )
+  target_link_libraries(vlessserver_fallback_finish_lifetime_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests vlessserver_fallback_finish_lifetime_test)
+  add_waterwall_unit_test(
+    waterwall.vlessserver_fallback_finish_lifetime_unit
+    vlessserver_fallback_finish_lifetime_test
+    "unit;tunnels;vlessserver;fallback;finish;lifetime;reentrant;ownership;sanitizer"
+  )
+endif()
+
+if(LINUX AND TARGET TrojanServer)
+  add_executable(trojanserver_fallback_finish_lifetime_test
+    trojanserver_fallback_finish_lifetime_test.c
+    ${WATERWALL_LINE_FAILURE_WW_SOURCES}
+  )
+  waterwall_line_failure_test_use_tunnel(trojanserver_fallback_finish_lifetime_test TrojanServer)
+  target_link_options(trojanserver_fallback_finish_lifetime_test PRIVATE
+    ${WATERWALL_LINE_FAILURE_WRAPS}
+    "-Wl,--wrap=lineScheduleDelayedTask"
+  )
+  target_link_libraries(trojanserver_fallback_finish_lifetime_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests trojanserver_fallback_finish_lifetime_test)
+  add_waterwall_unit_test(
+    waterwall.trojanserver_fallback_finish_lifetime_unit
+    trojanserver_fallback_finish_lifetime_test
+    "unit;tunnels;trojanserver;fallback;finish;lifetime;reentrant;ownership;sanitizer"
+  )
+endif()
+
+if(LINUX AND TARGET TlsServer)
+  add_executable(tlsserver_fallback_finish_lifetime_test
+    tlsserver_fallback_finish_lifetime_test.c
+    ${WATERWALL_LINE_FAILURE_WW_SOURCES}
+  )
+  waterwall_line_failure_test_use_tunnel(tlsserver_fallback_finish_lifetime_test TlsServer)
+  target_link_options(tlsserver_fallback_finish_lifetime_test PRIVATE
+    ${WATERWALL_LINE_FAILURE_WRAPS}
+    "-Wl,--wrap=lineScheduleDelayedTask"
+  )
+  target_link_libraries(tlsserver_fallback_finish_lifetime_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests tlsserver_fallback_finish_lifetime_test)
+  add_waterwall_unit_test(
+    waterwall.tlsserver_fallback_finish_lifetime_unit
+    tlsserver_fallback_finish_lifetime_test
+    "unit;tunnels;tlsserver;fallback;finish;lifetime;reentrant;ownership;sanitizer"
+  )
+endif()
+
+if(LINUX AND TARGET MuxServer AND TARGET VlessServer)
+  add_executable(muxserver_vless_fallback_finish_test
+    muxserver_vless_fallback_finish_test.c
+  )
+  target_include_directories(muxserver_vless_fallback_finish_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/tunnels/MuxServer/include
+    ${CMAKE_SOURCE_DIR}/tunnels/VlessServer/include
+    ${CMAKE_SOURCE_DIR}/tunnels/Internals/MuxCommon/include
+  )
+  target_link_options(muxserver_vless_fallback_finish_test PRIVATE
+    ${WATERWALL_LINE_FAILURE_WRAPS}
+    "-Wl,--wrap=lineScheduleDelayedTask"
+  )
+  target_link_libraries(muxserver_vless_fallback_finish_test PRIVATE MuxServer VlessServer ww)
+  add_dependencies(waterwall_unit_tests muxserver_vless_fallback_finish_test)
+  add_waterwall_unit_test(
+    waterwall.muxserver_vless_fallback_finish_unit
+    muxserver_vless_fallback_finish_test
+    "unit;tunnels;muxserver;vlessserver;fallback;finish;lifetime;reentrant;ownership;sanitizer"
+  )
+endif()
+
 if(TARGET TlsClient)
   add_executable(tlsclient_line_failure_test
     tlsclient_line_failure_test.c
