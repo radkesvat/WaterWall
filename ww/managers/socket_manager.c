@@ -147,6 +147,18 @@ static socket_manager_state_t *socketmanager_gstate = NULL;
 bool socketManagerConstructorTestFailAfterMutex(void);
 #endif
 
+#ifdef WW_SOCKET_MANAGER_REGISTRATION_TEST_SEAM
+bool socketManagerRegistrationTestFailPublication(void);
+void socketManagerRegistrationTestUnpublishedOptionReleased(void);
+void socketManagerRegistrationTestSetStarted(bool started);
+
+void socketManagerRegistrationTestSetStarted(bool started)
+{
+    assert(socketmanager_gstate != NULL);
+    socketmanager_gstate->started = started;
+}
+#endif
+
 static void distributeTcpSocket(wio_t *io, uint16_t local_port, const ip_addr_t *local_addr);
 
 static void distributeUdpPayload(udp_payload_t pl);
@@ -1215,6 +1227,14 @@ static unsigned int calculateFilterPriority(const socket_filter_option_t option)
     return priority;
 }
 
+static void socketacceptorReleaseUnpublishedOption(socket_filter_option_t *option)
+{
+    socketfilteroptionDeInit(option);
+#ifdef WW_SOCKET_MANAGER_REGISTRATION_TEST_SEAM
+    socketManagerRegistrationTestUnpublishedOptionReleased();
+#endif
+}
+
 /**
  * @brief Whether the filter uses an explicit port list.
  */
@@ -1290,6 +1310,7 @@ void socketacceptorRegister(tunnel_t *tunnel, socket_filter_option_t option, onA
     if (socketmanager_gstate->started)
     {
         LOGF("SocketManager: cannot register after accept thread starts");
+        socketacceptorReleaseUnpublishedOption(&option);
         startupFailureRecord(1);
         return;
     }
@@ -1300,6 +1321,7 @@ void socketacceptorRegister(tunnel_t *tunnel, socket_filter_option_t option, onA
     if (UNLIKELY(filter == NULL))
     {
         LOGF("SocketManager: failed to allocate listener filter metadata");
+        socketacceptorReleaseUnpublishedOption(&option);
         startupFailureRecord(1);
         return;
     }
@@ -1311,6 +1333,7 @@ void socketacceptorRegister(tunnel_t *tunnel, socket_filter_option_t option, onA
         {
             memoryFree(filter);
             LOGF("SocketManager: failed to create balance-group metadata");
+            socketacceptorReleaseUnpublishedOption(&option);
             startupFailureRecord(1);
             return;
         }
@@ -1321,10 +1344,16 @@ void socketacceptorRegister(tunnel_t *tunnel, socket_filter_option_t option, onA
     mutexLock(&(socketmanager_gstate->mutex));
     filters_t *filters  = &socketmanager_gstate->filters[priority];
     isize_t    required = filters_t_size(filters) + 1;
-    if (UNLIKELY(! filters_t_reserve(filters, required) || filters_t_capacity(filters) < required ||
-                 filters_t_push(filters, filter) == NULL))
+#ifdef WW_SOCKET_MANAGER_REGISTRATION_TEST_SEAM
+    const bool test_fail_publication = socketManagerRegistrationTestFailPublication();
+#else
+    const bool test_fail_publication = false;
+#endif
+    if (UNLIKELY(test_fail_publication || ! filters_t_reserve(filters, required) ||
+                 filters_t_capacity(filters) < required || filters_t_push(filters, filter) == NULL))
     {
         mutexUnlock(&(socketmanager_gstate->mutex));
+        socketacceptorReleaseUnpublishedOption(&filter->option);
         memoryFree(filter);
         LOGF("SocketManager: failed to publish listener filter metadata");
         startupFailureRecord(1);

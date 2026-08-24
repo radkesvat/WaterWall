@@ -2766,6 +2766,7 @@ set_target_properties(socket_manager_lifetime_test PROPERTIES INTERPROCEDURAL_OP
 target_compile_definitions(socket_manager_lifetime_test PRIVATE
   WW_SYNC_INIT_TEST_SEAM=1
   WW_SOCKET_MANAGER_CONSTRUCTOR_TEST_SEAM=1
+  WW_SOCKET_MANAGER_REGISTRATION_TEST_SEAM=1
 )
 target_include_directories(socket_manager_lifetime_test PRIVATE
   ${CMAKE_SOURCE_DIR}/ww/managers

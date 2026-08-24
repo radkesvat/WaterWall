@@ -4,10 +4,15 @@
 
 static bool     g_fail_sync_init;
 static bool     g_fail_after_mutex;
+static bool     g_fail_filter_publication;
 static uint32_t g_sync_acquired;
 static uint32_t g_sync_destroyed;
+static uint32_t g_unpublished_options_released;
 
 bool socketManagerConstructorTestFailAfterMutex(void);
+bool socketManagerRegistrationTestFailPublication(void);
+void socketManagerRegistrationTestUnpublishedOptionReleased(void);
+void socketManagerRegistrationTestSetStarted(bool started);
 
 bool wSyncInitTestShouldFail(void)
 {
@@ -33,6 +38,18 @@ bool socketManagerConstructorTestFailAfterMutex(void)
     return fail;
 }
 
+bool socketManagerRegistrationTestFailPublication(void)
+{
+    const bool fail           = g_fail_filter_publication;
+    g_fail_filter_publication = false;
+    return fail;
+}
+
+void socketManagerRegistrationTestUnpublishedOptionReleased(void)
+{
+    ++g_unpublished_options_released;
+}
+
 static void require(bool condition, const char *message)
 {
     if (! condition)
@@ -45,6 +62,34 @@ static void require(bool condition, const char *message)
 static void requireBalanced(void)
 {
     require(g_sync_acquired == g_sync_destroyed, "manager mutex acquisition/destruction is unbalanced");
+}
+
+static socket_filter_option_t createOwnedFilterOption(bool with_balance_group)
+{
+    socket_filter_option_t option;
+    socketfilteroptionInit(&option);
+    option.host           = (char *) "127.0.0.1";
+    option.protocol       = IPPROTO_TCP;
+    option.port_min       = 4321;
+    option.port_max       = 4321;
+    option.interface_name = stringDuplicate("loopback-test");
+    require(option.interface_name != NULL, "failed to allocate filter interface name");
+    if (with_balance_group)
+    {
+        option.balance_group_name = stringDuplicate("late-registration-test");
+        require(option.balance_group_name != NULL, "failed to allocate filter balance-group name");
+    }
+    require(vec_listener_port_t_push(&option.ports, option.port_min) != NULL,
+            "failed to populate owned filter port vector");
+    return option;
+}
+
+static ww_startup_result_t registerFilterOption(socket_filter_option_t option)
+{
+    ww_startup_context_t startup = {0};
+    wwStartupContextBegin(&startup);
+    socketacceptorRegister(NULL, option, NULL);
+    return wwStartupContextEnd(&startup);
 }
 
 int main(void)
@@ -65,6 +110,22 @@ int main(void)
     require(socketmanagerGet() != NULL, "successful create did not publish the singleton");
     require(g_sync_acquired == 1 && g_sync_destroyed == 0,
             "successful create did not acquire exactly one manager mutex");
+
+    socketManagerRegistrationTestSetStarted(true);
+    require(! wwStartupSucceeded(registerFilterOption(createOwnedFilterOption(true))),
+            "late filter registration did not fail startup");
+    socketManagerRegistrationTestSetStarted(false);
+    require(g_unpublished_options_released == 1, "late filter registration did not release its transferred option");
+
+    g_fail_filter_publication = true;
+    require(! wwStartupSucceeded(registerFilterOption(createOwnedFilterOption(false))),
+            "refused filter publication did not fail startup");
+    require(g_unpublished_options_released == 2, "refused filter publication did not release its copied option");
+
+    require(wwStartupSucceeded(registerFilterOption(createOwnedFilterOption(false))),
+            "valid filter registration failed");
+    require(g_unpublished_options_released == 2, "successful filter registration released manager-owned options early");
+
     socketmanagerDestroy();
     require(socketmanagerGet() == NULL, "destroy did not clear the singleton");
     requireBalanced();

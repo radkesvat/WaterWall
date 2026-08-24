@@ -133,7 +133,8 @@ ww_startup_result_t socketmanagerStart(void);
  * @brief Register one socket accept/filter rule for a tunnel.
  *
  * @param tunnel Target tunnel for accepted traffic.
- * @param option Filter/listen options.
+ * @param option Filter/listen options. The manager consumes its dynamic members
+ *               on both successful registration and failure.
  * @param cb Callback invoked on accepted payload/socket events.
  */
 void socketacceptorRegister(tunnel_t *tunnel, socket_filter_option_t option, onAccept cb);
