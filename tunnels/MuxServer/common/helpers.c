@@ -2,12 +2,267 @@
 
 #include "loggers/network_logger.h"
 
+static uint64_t muxserverMemoryAdmissionPack(uint64_t generation, bool closed)
+{
+    if (UNLIKELY(generation > (UINT64_MAX >> 1U)))
+    {
+        LOGF("MuxServer: memory admission generation is not representable");
+        abortProgramNow(1);
+    }
+    return (generation << 1U) | (closed ? 1U : 0U);
+}
+
+muxserver_memory_admission_t muxserverEvaluateMemoryAdmission(muxserver_tstate_t *ts)
+{
+    system_memory_snapshot_t              snapshot = {0};
+    const system_memory_snapshot_status_t status   = systemMemorySnapshotGet(&snapshot);
+    muxserver_memory_admission_t          decision = {
+                 .effective_ceiling   = min(ts->max_live_children, ts->memory_fallback_max_live_children),
+                 .snapshot_generation = snapshot.generation,
+                 .snapshot_status     = status,
+                 .reason              = kMuxServerAdmissionAllowedFallback,
+                 .permits_memory      = true,
+                 .gate_transitioned   = false,
+                 .gate_closed         = false,
+    };
+
+    uint64_t observed = atomicLoadU64Relaxed(&ts->memory_admission_state);
+    if (status != kSystemMemorySnapshotFresh)
+    {
+        decision.gate_closed = (observed & 1U) != 0;
+        if (decision.gate_closed)
+        {
+            decision.permits_memory = false;
+            decision.reason         = kMuxServerAdmissionRejectedPressure;
+        }
+        return decision;
+    }
+
+    decision.effective_ceiling = ts->max_live_children;
+    for (;;)
+    {
+        const uint64_t observed_generation = observed >> 1U;
+        const bool     was_closed          = (observed & 1U) != 0;
+        if (snapshot.generation <= observed_generation)
+        {
+            decision.gate_closed = was_closed;
+            break;
+        }
+
+        const uint32_t high_basis_points = ts->memory_high_watermark_percent * 100U;
+        const uint32_t low_basis_points  = ts->memory_low_watermark_percent * 100U;
+        const bool     high_pressure =
+            snapshot.host_used_basis_points >= high_basis_points ||
+            (snapshot.cgroup_limited && snapshot.cgroup_used_basis_points >= high_basis_points) ||
+            ((uint64_t) ts->memory_reserve != 0 && snapshot.effective_available_bytes <= (uint64_t) ts->memory_reserve);
+        const bool recovered =
+            snapshot.host_used_basis_points <= low_basis_points &&
+            (! snapshot.cgroup_limited || snapshot.cgroup_used_basis_points <= low_basis_points) &&
+            ((uint64_t) ts->memory_reserve == 0 || snapshot.effective_available_bytes > (uint64_t) ts->memory_reserve);
+        const bool     desired_closed = was_closed ? ! recovered : high_pressure;
+        const uint64_t desired        = muxserverMemoryAdmissionPack(snapshot.generation, desired_closed);
+        if (atomicCompareExchangeU64(&ts->memory_admission_state, &observed, desired))
+        {
+            decision.gate_closed       = desired_closed;
+            decision.gate_transitioned = desired_closed != was_closed;
+            break;
+        }
+    }
+
+    decision.permits_memory = ! decision.gate_closed;
+    decision.reason = decision.gate_closed ? kMuxServerAdmissionRejectedPressure : kMuxServerAdmissionAllowedFresh;
+    return decision;
+}
+
+bool muxserverTryReserveLiveChildSlot(muxserver_tstate_t *ts, uint32_t effective_ceiling)
+{
+    assert(effective_ceiling > 0 && effective_ceiling <= ts->max_live_children);
+
+    w_atomic_uint_value_t count = atomicLoadRelaxed(&ts->live_children_count);
+    for (;;)
+    {
+        if (count >= effective_ceiling)
+        {
+            return false;
+        }
+        if (atomicCompareExchangeExplicit(
+                &ts->live_children_count, &count, count + 1U, memory_order_relaxed, memory_order_relaxed))
+        {
+            return true;
+        }
+    }
+}
+
+void muxserverReleaseLiveChildSlot(muxserver_tstate_t *ts)
+{
+    const w_atomic_uint_value_t previous = atomicSubExplicit(&ts->live_children_count, 1U, memory_order_relaxed);
+    if (UNLIKELY(previous == 0))
+    {
+        LOGF("MuxServer: aggregate live-child reservation underflow");
+        abortProgramNow(1);
+    }
+}
+
+bool muxserverConsumeRejectedOpenToken(muxserver_lstate_t *parent_ls, uint64_t now_ms)
+{
+    assert(! parent_ls->is_child && parent_ls->parent_state != NULL);
+    muxserver_rejection_bucket_t *bucket = &parent_ls->parent_state->rejection_bucket;
+
+    if (bucket->last_refill_ms == 0)
+    {
+        bucket->last_refill_ms = now_ms;
+    }
+    else if (now_ms < bucket->last_refill_ms)
+    {
+        bucket->last_refill_ms = now_ms;
+    }
+    else
+    {
+        const uint64_t steps = (now_ms - bucket->last_refill_ms) / 1000U;
+        if (steps != 0)
+        {
+            const uint64_t needed =
+                (kMuxServerRejectedOpenBurst - bucket->tokens + kMuxServerRejectedOpenRefillPerSecond - 1U) /
+                kMuxServerRejectedOpenRefillPerSecond;
+            if (steps >= needed)
+            {
+                bucket->tokens = kMuxServerRejectedOpenBurst;
+            }
+            else
+            {
+                bucket->tokens += (uint32_t) steps * kMuxServerRejectedOpenRefillPerSecond;
+            }
+            bucket->last_refill_ms += steps * 1000U;
+        }
+    }
+
+    if (bucket->tokens == 0)
+    {
+        return false;
+    }
+    bucket->tokens--;
+    return true;
+}
+
+muxserver_worker_state_t *muxserverGetWorkerState(tunnel_t *t, line_t *line)
+{
+    muxserver_tstate_t *ts  = tunnelGetState(t);
+    const wid_t         wid = lineGetWID(line);
+    assert(lineIsOnCurrentEventWorker(line));
+    if (UNLIKELY(! workerWIDIsEventWorker(wid) || wid >= ts->workers_count))
+    {
+        LOGF("MuxServer: invalid worker %d for worker-local child state", (int) wid);
+        abortProgramNow(1);
+    }
+    return &ts->worker_states[wid];
+}
+
+static hash_t muxserverChildIdleKey(const line_t *child_l)
+{
+    _Static_assert(sizeof(uintptr_t) <= sizeof(hash_t), "MuxServer child pointers must fit idle keys");
+    return (hash_t) (uintptr_t) child_l;
+}
+
+static void muxserverOnChildIdleExpire(local_idle_item_t *item)
+{
+    muxserver_lstate_t *child_ls = item->userdata;
+    tunnel_t           *t        = child_ls->t;
+    line_t             *child_l  = child_ls->l;
+    muxserver_tstate_t *ts       = tunnelGetState(t);
+    const mux_cid_t     cid      = child_ls->connection_id;
+    const bool          active   = child_ls->child_has_payload_activity;
+    const wid_t         wid      = lineGetWID(child_l);
+    local_idle_table_t *table    = item->table;
+
+    assert(child_ls->is_child && child_ls->child_idle_item == item);
+    const bool natural_expiry = item->expiring && ! item->removed && table != NULL;
+    const bool drain_expiry   = ! item->expiring && item->removed && table == NULL;
+    if (UNLIKELY(! natural_expiry && ! drain_expiry))
+    {
+        LOGF("MuxServer: child idle callback entered with an invalid item lifecycle");
+        abortProgramNow(1);
+    }
+
+    child_ls->child_idle_item = NULL;
+    if (natural_expiry && UNLIKELY(! localidletableRemoveIdleItem(table, item)))
+    {
+        LOGF("MuxServer: naturally expiring child idle item could not be detached");
+        abortProgramNow(1);
+    }
+
+    /* The item is logically invalid after detach. Child destruction and the
+     * Close callback below may immediately recycle this line address and arm a
+     * replacement item with the same pointer key. */
+
+    if (atomicLogRateLimiterShouldLog(&ts->idle_expiry_log_limiter, kMuxServerAdmissionLogIntervalMs))
+    {
+        LOGW("MuxServer: expiring %s idle child cid %u on worker %u",
+             active ? "active" : "initial",
+             (unsigned int) cid,
+             (unsigned int) wid);
+    }
+
+    if (child_ls->close_state == kMuxServerChildCloseParentGoneDraining)
+    {
+        muxserverAbortDetachedChild(t, child_l, child_ls, true);
+        return;
+    }
+
+    muxserver_lstate_t *parent_ls = child_ls->parent;
+    assert(parent_ls != NULL);
+    muxserverCloseChildKeepParent(t, parent_ls->l, parent_ls, child_ls, true);
+}
+
+void muxserverArmChildIdle(tunnel_t *t, muxserver_lstate_t *child_ls)
+{
+    assert(child_ls->is_child && child_ls->child_idle_item == NULL);
+    muxserver_tstate_t       *ts           = tunnelGetState(t);
+    muxserver_worker_state_t *worker_state = muxserverGetWorkerState(t, child_ls->l);
+    if (worker_state->child_idle_table == NULL)
+    {
+        worker_state->child_idle_table = localIdleTableCreate(getWorkerLoop(lineGetWID(child_ls->l)));
+    }
+
+    child_ls->child_idle_item = localidletableCreateItem(worker_state->child_idle_table,
+                                                         muxserverChildIdleKey(child_ls->l),
+                                                         child_ls,
+                                                         muxserverOnChildIdleExpire,
+                                                         ts->initial_child_idle_timeout_ms);
+    if (UNLIKELY(child_ls->child_idle_item == NULL))
+    {
+        LOGF("MuxServer: duplicate child idle key");
+        abortProgramNow(1);
+    }
+}
+
+void muxserverRefreshChildIdle(tunnel_t *t, muxserver_lstate_t *child_ls)
+{
+    assert(child_ls->is_child && child_ls->child_idle_item != NULL);
+    muxserver_tstate_t       *ts           = tunnelGetState(t);
+    muxserver_worker_state_t *worker_state = muxserverGetWorkerState(t, child_ls->l);
+    if (UNLIKELY(worker_state->child_idle_table == NULL))
+    {
+        LOGF("MuxServer: active child has no worker idle table");
+        abortProgramNow(1);
+    }
+    child_ls->child_has_payload_activity = true;
+    localidletableKeepIdleItemForAtleast(
+        worker_state->child_idle_table, child_ls->child_idle_item, ts->active_child_idle_timeout_ms);
+}
+
 void muxserverJoinConnection(muxserver_lstate_t *parent, muxserver_lstate_t *child)
 {
     assert(child != NULL && parent != NULL && child->is_child && (parent->is_child == false));
-    if (UNLIKELY(parent->children_count == UINT32_MAX))
+    if (UNLIKELY(parent->parent_state == NULL || parent->children_count == UINT32_MAX ||
+                 muxserverFindChildByConnectionId(parent, child->connection_id) != NULL))
     {
-        LOGF("MuxServer: parent child-count overflow");
+        LOGF("MuxServer: duplicate CID insertion or parent child-count overflow");
+        abortProgramNow(1);
+    }
+    if (UNLIKELY(
+            ! muxserver_child_map_t_insert(&parent->parent_state->child_map, child->connection_id, child).inserted))
+    {
+        LOGF("MuxServer: failed to publish child CID index entry");
         abortProgramNow(1);
     }
     child->parent = parent;
@@ -33,6 +288,17 @@ void muxserverLeaveConnection(muxserver_lstate_t *child)
         abortProgramNow(1);
     }
 
+    muxserver_lstate_t        *parent = child->parent;
+    muxserver_child_map_t_iter indexed =
+        muxserver_child_map_t_find(&parent->parent_state->child_map, child->connection_id);
+    if (UNLIKELY(indexed.ref == muxserver_child_map_t_end(&parent->parent_state->child_map).ref ||
+                 indexed.ref->second != child))
+    {
+        LOGF("MuxServer: child CID index disagrees with ownership list");
+        abortProgramNow(1);
+    }
+    muxserver_child_map_t_erase_at(&parent->parent_state->child_map, indexed);
+
     if (child->child_prev != NULL)
     {
         child->child_prev->child_next = child->child_next;
@@ -57,6 +323,13 @@ void muxserverLeaveConnection(muxserver_lstate_t *child)
     child->parent     = NULL;
     child->child_prev = NULL;
     child->child_next = NULL;
+}
+
+muxserver_lstate_t *muxserverFindChildByConnectionId(muxserver_lstate_t *parent, mux_cid_t cid)
+{
+    assert(parent != NULL && ! parent->is_child && parent->parent_state != NULL);
+    muxserver_child_map_t_iter found = muxserver_child_map_t_find(&parent->parent_state->child_map, cid);
+    return found.ref == muxserver_child_map_t_end(&parent->parent_state->child_map).ref ? NULL : found.ref->second;
 }
 
 typedef struct muxserver_parent_stats_s
@@ -150,7 +423,7 @@ void muxserverCloseChildKeepParent(tunnel_t *t, line_t *parent_l, muxserver_lsta
     if (! parent_alive || parent_ls->parent_finishing || ! notify_peer)
     {
         // no Close frame can be written; the peer learns about the close from the dying parent connection
-        muxserverLinestateDestroy(child_ls);
+        muxserverLinestateDestroy(t, child_ls);
         if (notify_child_next)
         {
             tunnelNextUpStreamFinish(t, child_l);
@@ -165,7 +438,7 @@ void muxserverCloseChildKeepParent(tunnel_t *t, line_t *parent_l, muxserver_lsta
     sbuf_t *finishpacket_buf = bufferpoolGetLargeBuffer(lineGetBufferPool(child_l));
     muxMakeMuxFrame(finishpacket_buf, cid, kMuxFlagClose);
 
-    muxserverLinestateDestroy(child_ls);
+    muxserverLinestateDestroy(t, child_ls);
 
     if (notify_child_next)
     {
@@ -359,7 +632,7 @@ static bool muxserverCloseChildForQueueLimit(tunnel_t *t, line_t *parent_l, muxs
 
     muxserverLeaveConnection(child_ls);
     bool parent_alive = muxserverReleaseParentInputForChildClose(t, parent_l, parent_ls, child_ls);
-    muxserverLinestateDestroy(child_ls);
+    muxserverLinestateDestroy(t, child_ls);
     tunnelNextUpStreamFinish(t, child_l);
     if (lineIsAlive(child_l))
     {
@@ -369,9 +642,9 @@ static bool muxserverCloseChildForQueueLimit(tunnel_t *t, line_t *parent_l, muxs
 }
 
 /*
- * Return the actual largest queued child. Children are kept in most-recently-used
- * order by the frame parser; replacing on an equal size therefore makes the stable
- * tie-break prefer the least-recently-active child.
+ * Return the actual largest queued child. Children remain in ownership-list
+ * insertion order; replacing on an equal size makes the stable tie-break prefer
+ * the oldest attached child.
  */
 static muxserver_lstate_t *muxserverFindLargestQueuedChild(muxserver_lstate_t *parent_ls, size_t *queued_bytes_out)
 {
@@ -553,7 +826,7 @@ muxserver_detached_registry_t *muxserverGetDetachedRegistry(tunnel_t *t, line_t 
         LOGF("MuxServer: invalid worker %d for detached child registry", (int) wid);
         abortProgramNow(1);
     }
-    return &ts->detached_registries[wid];
+    return &ts->worker_states[wid].detached_registry;
 }
 
 static void muxserverRegisterDetachedChild(tunnel_t *t, line_t *child_l, muxserver_lstate_t *child_ls,
@@ -674,7 +947,7 @@ void muxserverFinalizeDetachedChild(tunnel_t *t, line_t *child_l, muxserver_lsta
     assert(bufferqueueGetBufCount(&child_ls->pending_child_data) == 0);
 
     muxserverRemoveDetachedChild(t, child_l, child_ls);
-    muxserverLinestateDestroy(child_ls);
+    muxserverLinestateDestroy(t, child_ls);
     tunnelNextUpStreamFinish(t, child_l);
     if (lineIsAlive(child_l))
     {
@@ -685,7 +958,7 @@ void muxserverFinalizeDetachedChild(tunnel_t *t, line_t *child_l, muxserver_lsta
 void muxserverAbortDetachedChild(tunnel_t *t, line_t *child_l, muxserver_lstate_t *child_ls, bool notify_child_next)
 {
     muxserverRemoveDetachedChild(t, child_l, child_ls);
-    muxserverLinestateDestroy(child_ls);
+    muxserverLinestateDestroy(t, child_ls);
     if (notify_child_next)
     {
         tunnelNextUpStreamFinish(t, child_l);
@@ -712,7 +985,7 @@ bool muxserverFinalizeAttachedPeerClose(tunnel_t *t, line_t *parent_l, muxserver
         parent_ls->last_writer = NULL;
     }
     muxserverLeaveConnection(child_ls);
-    muxserverLinestateDestroy(child_ls);
+    muxserverLinestateDestroy(t, child_ls);
     tunnelNextUpStreamFinish(t, child_l);
     if (lineIsAlive(child_l))
     {
@@ -848,7 +1121,7 @@ void muxserverHandleParentLoss(tunnel_t *t, line_t *parent_l, bool notify_parent
          detached_children,
          detached_bytes);
 
-    muxserverLinestateDestroy(parent_ls);
+    muxserverLinestateDestroy(t, parent_ls);
     if (notify_parent_prev)
     {
         tunnelPrevDownStreamFinish(t, parent_l);

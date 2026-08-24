@@ -22,8 +22,12 @@ void muxserverTunnelDownStreamPayload(tunnel_t *t, line_t *child_l, sbuf_t *buf)
         return;
     }
 
-    const uint32_t      payload_length = sbufGetLength(buf);
-    sbuf_t             *encoded        = NULL;
+    const uint32_t payload_length = sbufGetLength(buf);
+    if (payload_length != 0 && child_ls->child_slot_reserved)
+    {
+        muxserverRefreshChildIdle(t, child_ls);
+    }
+    sbuf_t             *encoded = NULL;
     mux_encode_result_t encode_result =
         muxEncodeChildPayload(lineGetBufferPool(child_l), buf, child_ls->connection_id, false, &encoded);
     if (UNLIKELY(encode_result != kMuxEncodeSuccess))

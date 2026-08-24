@@ -60,6 +60,7 @@ endfunction()
 if(TARGET ww)
   add_executable(capture_windows_lifetime_test capture_windows_lifetime_test.c)
   target_include_directories(capture_windows_lifetime_test PRIVATE ${CMAKE_SOURCE_DIR}/ww/devices/capture)
+  target_link_libraries(capture_windows_lifetime_test PRIVATE ww)
   add_dependencies(waterwall_unit_tests capture_windows_lifetime_test)
 
   add_waterwall_unit_test(
@@ -1534,11 +1535,9 @@ if(TARGET ReverseClient AND UNIX)
   )
 endif()
 
-if(UNIX)
-  # ww's PCH is reused by tunnel targets, so every consumer in this unit-only
-  # tree must see the same test-hook macro set.
-  target_compile_definitions(ww PUBLIC WW_IDLE_TABLE_TEST_SEAM=1)
+include("${CMAKE_CURRENT_SOURCE_DIR}/portable_contract_tests.cmake")
 
+if(UNIX)
   add_executable(widle_table_cancellation_test widle_table_cancellation_test.c)
   target_link_options(widle_table_cancellation_test PRIVATE
     "-Wl,--wrap=abortProgramNow"
@@ -2403,6 +2402,75 @@ foreach(mux_side Client Server)
   endif()
 endforeach()
 
+if(TARGET MuxServer)
+  add_executable(muxserver_admission_reentrancy_test
+    muxserver_admission_reentrancy_test.c
+    ${WATERWALL_LINE_FAILURE_WW_SOURCES}
+    ${CMAKE_SOURCE_DIR}/tunnels/Internals/MuxCommon/src/mux_wire.c
+  )
+  waterwall_line_failure_test_use_tunnel(muxserver_admission_reentrancy_test MuxServer)
+  target_compile_definitions(muxserver_admission_reentrancy_test PRIVATE WW_MUXSERVER_TEST_SEAM=1)
+  target_link_options(muxserver_admission_reentrancy_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS})
+  target_link_libraries(muxserver_admission_reentrancy_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests muxserver_admission_reentrancy_test)
+
+  add_waterwall_unit_test(
+    waterwall.muxserver_admission_reentrancy_unit
+    muxserver_admission_reentrancy_test
+    "unit;tunnels;muxserver;admission;reentrant;lifetime;ownership;sanitizer"
+  )
+
+  add_executable(muxserver_idle_lifecycle_test
+    muxserver_idle_lifecycle_test.c
+    ${WATERWALL_LINE_FAILURE_WW_SOURCES}
+    ${CMAKE_SOURCE_DIR}/tunnels/Internals/MuxCommon/src/mux_wire.c
+  )
+  waterwall_line_failure_test_use_tunnel(muxserver_idle_lifecycle_test MuxServer)
+  target_link_options(muxserver_idle_lifecycle_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS})
+  target_link_libraries(muxserver_idle_lifecycle_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests muxserver_idle_lifecycle_test)
+
+  add_waterwall_unit_test(
+    waterwall.muxserver_idle_lifecycle_unit
+    muxserver_idle_lifecycle_test
+    "unit;tunnels;muxserver;idle-table;reentrant;lifetime;ownership;sanitizer"
+  )
+
+  add_executable(muxserver_admission_concurrency_test
+    muxserver_admission_concurrency_test.c
+  )
+  target_include_directories(muxserver_admission_concurrency_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/tunnels/MuxServer/include
+    ${CMAKE_SOURCE_DIR}/tunnels/Internals/MuxCommon/include
+  )
+  target_link_libraries(muxserver_admission_concurrency_test PRIVATE MuxServer ww)
+  add_dependencies(waterwall_unit_tests muxserver_admission_concurrency_test)
+
+  add_waterwall_unit_test(
+    waterwall.muxserver_admission_concurrency_unit
+    muxserver_admission_concurrency_test
+    "unit;tunnels;muxserver;admission;concurrency;ownership;tsan;sanitizer"
+  )
+endif()
+
+if(TARGET MuxClient)
+  add_executable(muxclient_capacity_dispatch_test
+    muxclient_capacity_dispatch_test.c
+    ${WATERWALL_LINE_FAILURE_WW_SOURCES}
+    ${CMAKE_SOURCE_DIR}/tunnels/Internals/MuxCommon/src/mux_wire.c
+  )
+  waterwall_line_failure_test_use_tunnel(muxclient_capacity_dispatch_test MuxClient)
+  target_link_options(muxclient_capacity_dispatch_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS})
+  target_link_libraries(muxclient_capacity_dispatch_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests muxclient_capacity_dispatch_test)
+
+  add_waterwall_unit_test(
+    waterwall.muxclient_capacity_dispatch_unit
+    muxclient_capacity_dispatch_test
+    "unit;tunnels;muxclient;capacity;cid;dispatch;lifetime;ownership;sanitizer"
+  )
+endif()
+
 if(LINUX AND TARGET MuxClient AND TARGET TlsServer AND TARGET TlsRecordShapingCommon)
   add_executable(muxclient_tlsserver_close_backpressure_test
     muxclient_tlsserver_close_backpressure_test.c
@@ -2659,6 +2727,26 @@ foreach(orderly_case IN ITEMS
     )
   endif()
 endforeach()
+
+add_executable(local_idle_table_indexed_test local_idle_table_indexed_test.c)
+target_link_libraries(local_idle_table_indexed_test PRIVATE ww)
+add_dependencies(waterwall_unit_tests local_idle_table_indexed_test)
+add_waterwall_unit_test(
+  waterwall.local_idle_table_indexed_unit
+  local_idle_table_indexed_test
+  "unit;base;local-idle;heap;lifetime;tsan"
+)
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  add_executable(system_memory_linux_provider_test system_memory_linux_provider_test.c)
+  target_link_libraries(system_memory_linux_provider_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests system_memory_linux_provider_test)
+  add_waterwall_unit_test(
+    waterwall.system_memory_linux_provider_unit
+    system_memory_linux_provider_test
+    "unit;base;system-memory;linux;cgroup;provider"
+  )
+endif()
 
 # Tunnel hard-abort runtime cases. The registration is shared with the native
 # Windows/macOS test configurations, which do not add the tests/ subtree.

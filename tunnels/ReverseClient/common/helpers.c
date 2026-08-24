@@ -99,13 +99,13 @@ void reverseclientClosePair(reverseclient_pair_t *pair, reverseclient_close_orig
 
     if (pair->idle_handle != NULL)
     {
+        pair->idle_handle = NULL;
         if (origin != kReverseClientCloseIdleExpiry &&
             ! idletableRemoveIdleItemByHash(wid, ts->starved_connections, (hash_t) (uintptr_t) pair))
         {
             LOGF("ReverseClient: failed to detach an owned pair from the idle table");
             abortProgramNow(1);
         }
-        pair->idle_handle = NULL;
     }
 
     reverseclientReleasePairCounter(pair);

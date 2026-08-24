@@ -170,14 +170,15 @@ void udpstatelesssocketCloseOwnedLineFromAdjacent(tunnel_t *t, line_t *l, bool i
 
     if (idle != NULL)
     {
-        bool deleted = localidletableRemoveIdleItemByHash(udpstatelesssocketGetLineIdleTable(state, l), idle->hash);
+        idle->userdata  = NULL;
+        ls->idle_handle = NULL;
+
+        bool deleted = localidletableRemoveIdleItem(udpstatelesssocketGetLineIdleTable(state, l), idle);
         if (! deleted)
         {
             LOGE("UdpStatelessSocket: failed to remove idle item for peer line");
             abortProgramNow(1);
         }
-        idle->userdata  = NULL;
-        ls->idle_handle = NULL;
     }
 
     udpstatelesssocketLinestateDestroy(ls);

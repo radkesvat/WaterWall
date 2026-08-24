@@ -7,6 +7,7 @@ void udplistenerOnConnectionExpire(local_idle_item_t *idle_udp)
     udplistener_lstate_t *ls = idle_udp->userdata;
     assert(ls != NULL && ls->tunnel != NULL);
     idle_udp->userdata = NULL;
+    ls->idle_handle    = NULL;
 
     LOGD("UdpListener: expired 1 udp connection FD:%x ", ls->listener_fd);
     tunnel_t *self = ls->tunnel;

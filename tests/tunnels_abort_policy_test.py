@@ -27,7 +27,7 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 # Total number of audited Category-D conversions. The manifest must account for
 # every one of them.
-EXPECTED_TOTAL_ABORTS = 291
+EXPECTED_TOTAL_ABORTS = 298
 
 
 # ---------------------------------------------------------------------------
@@ -713,20 +713,25 @@ MANIFEST = [
     ("tunnels/IpManipulator/common/tricks/smugglefin/trick.c", "smugglefintrickUpStreamPayload", 1,
      ("IpManipulator: worker packet line died during smuggle-fin send",),
      "helper/line-state invariant: IpManipulator trick packet line died 2"),
-    ("tunnels/MuxClient/common/line_state.c", "muxclientLinestateDestroy", 5,
+    ("tunnels/MuxClient/common/line_state.c", "muxclientLinestateDestroy", 7,
      ("MuxClient: Trying to destroy parent line state with %u children still attached",
       "MuxClient: Trying to destroy parent line state with child links still present",
       "MuxClient: Trying to destroy parent line state with %zu queued child byte(s)",
+      "MuxClient: Trying to destroy parent line state with a nonempty or absent CID index",
       "MuxClient: Trying to destroy child line state while still linked to parent",
-      "MuxClient: Trying to destroy child line state while still linked to siblings"),
+      "MuxClient: Trying to destroy child line state while still linked to siblings",
+      "MuxClient: child line state unexpectedly owns parent-only state"),
      "helper/line-state invariant: MuxClient line-state link and parent-byte integrity"),
-    ("tunnels/MuxServer/common/line_state.c", "muxserverLinestateDestroy", 6,
+    ("tunnels/MuxServer/common/line_state.c", "muxserverLinestateDestroy", 9,
      ("MuxServer: Trying to destroy parent line state with %u children still attached",
       "MuxServer: Trying to destroy parent line state with child links still present",
       "MuxServer: Trying to destroy parent line state with %zu queued child byte(s)",
+      "MuxServer: Trying to destroy parent line state with a nonempty or absent CID index",
       "MuxServer: Trying to destroy child line state while still linked to parent",
       "MuxServer: Trying to destroy child line state while still linked to siblings",
-      "MuxServer: Trying to destroy child line state while still registered as detached"),
+      "MuxServer: Trying to destroy child line state while still registered as detached",
+      "MuxServer: child line state unexpectedly owns parent-only state",
+      "MuxServer: child idle item was absent during line-state destruction"),
      "helper/line-state invariant: MuxServer line-state link, registry and parent-byte integrity"),
     ("tunnels/PacketSender/common/helpers.c", "packetsenderGetSingleProtocolNumber", 1,
      ("PacketSender: internal error, invalid single-protocol mode %u",),
@@ -867,12 +872,14 @@ MANIFEST = [
     ("tunnels/IpManipulator/common/tricks/smugglefin/trick.c", "smugglefintrickCreateReleaseContextLocked", 1,
      ("IpManipulator: failed to allocate a smuggle-fin release context",),
      "runtime allocation invariant: IpManipulator required release context would otherwise be dereferenced null"),
-    ("tunnels/MuxClient/common/helpers.c", "muxclientLeaveConnection", 2,
+    ("tunnels/MuxClient/common/helpers.c", "muxclientLeaveConnection", 3,
      ("MuxClient: attempted to unlink a child without a live parent link",
+      "MuxClient: child CID index disagrees with ownership list",
       "MuxClient: parent child-count underflow"),
      "runtime link invariant: MuxClient child unlink would rewire invalid state"),
-    ("tunnels/MuxServer/common/helpers.c", "muxserverLeaveConnection", 2,
+    ("tunnels/MuxServer/common/helpers.c", "muxserverLeaveConnection", 3,
      ("MuxServer: attempted to unlink a child without a live parent link",
+      "MuxServer: child CID index disagrees with ownership list",
       "MuxServer: parent child-count underflow"),
      "runtime link invariant: MuxServer child unlink would rewire invalid state"),
     ("tunnels/PacketsToConnection/common/helpers.c", "ptcOwnedLineRegister", 1,

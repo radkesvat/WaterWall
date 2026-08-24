@@ -1,5 +1,5 @@
 <!--
-Documentation version: 152
+Documentation version: 153
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/MuxServer.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/MuxServer.mdx, and all files must keep the same documentation version.
 -->
 
@@ -88,13 +88,40 @@ There are no required tunnel-specific settings in the current implementation.
 - `parent-buffer-limit` `(integer, bytes, optional)`
   Per-parent budget for child-destined data queued across all children. When a newly queued payload makes the total
   reach the budget, `MuxServer` closes the child with the largest queue. Equal-sized queues prefer the
-  least-recently-active child. This releases the pressure without pausing unrelated streams on the shared parent.
+  oldest attached child. This releases the pressure without pausing unrelated streams on the shared parent.
 
   Default: `33554432` (`32 MB`). Set to `0` to disable the aggregate budget; `child-buffer-limit` still bounds each
   individual child. The value may intentionally be lower than `child-buffer-limit`.
 
   The limit applies to each parent independently. Approximate worst-case queued memory is therefore
   `parent-buffer-limit` multiplied by the number of accepted parent transport connections.
+
+- `max-children` `(integer, optional)`
+  Hard maximum attached live children on one parent transport. Default: `10000`.
+  It must be positive and no greater than `max-live-children`.
+
+- `max-live-children` `(integer, optional)`
+  Hard maximum reserved or initialized children across this MuxServer instance,
+  all parents, and all workers. Default: `262144`. Draining and detached children
+  remain counted until their MuxServer line state is destroyed.
+
+- `initial-child-idle-timeout-ms` / `active-child-idle-timeout-ms` `(integer, milliseconds, optional)`
+  Two-phase child idle timeouts. Defaults: `10000` and `300000`. Both must be
+  positive, and the active timeout must be at least the initial timeout.
+
+- `memory-high-watermark-percent` / `memory-low-watermark-percent` `(integer, optional)`
+  Memory admission hysteresis. Defaults: `85` and `75`. Both must be in
+  `[1, 99]`, and low must be strictly below high.
+
+- `memory-reserve` `(integer, bytes, optional)`
+  Also stops new Opens when effective available memory reaches this reserve.
+  The default follows the RAM-profile byte table below. It must be in
+  `[0, INT_MAX]`; zero disables only the absolute reserve.
+
+- `memory-fallback-max-live-children` `(integer, optional)`
+  Aggregate ceiling used while the cached memory snapshot is unavailable,
+  unsupported, or older than one second. The default follows the RAM-profile
+  child table below. It must be positive and no greater than `max-live-children`.
 
 - `detached-buffer-limit` `(integer, bytes, optional)`
   Per-worker byte limit for blocked child queues retained after parent loss. The default depends on the global
@@ -118,6 +145,9 @@ There are no required tunnel-specific settings in the current implementation.
   Defaults are linearly interpolated over the six ordered RAM-profile tiers, with the byte limit rounded to the
   nearest whole MiB. An explicit setting overrides the profile-derived value independently for that limit.
 
+  The memory admission reserve and fallback ceiling initially use the same six
+  byte/child values, through an independent admission-default policy.
+
 - `log-main-line-stats` `(boolean, optional)`
   When `true`, each active parent transport line logs mux diagnostics every `5` seconds.
 
@@ -139,12 +169,41 @@ Each child line is keyed by the `cid` carried in the frame header.
 
 When an `Open` frame arrives:
 
-- `MuxServer` creates a new child line on the same worker
+- `MuxServer` performs average-O(1) duplicate lookup and applies the parent,
+  instance, and cached-memory admission gates
+- an admitted Open reserves capacity and creates a child line on the same worker
 - initializes line state for that child
 - links it to the parent line
 - calls upstream `init` on the next node for that child line
 
 After that, `Data`, `Pause`, `Resume`, and `Close` frames for the same `cid` are routed to that child.
+
+A resource-rejected fresh Open allocates no child, sends `Close(cid)`, and keeps
+the healthy parent and siblings alive. A duplicate Open is a protocol violation
+and closes the parent. Rejected-Open abuse is bounded by a 1024-token burst
+bucket refilled at 64 tokens per second; sustained excess closes that parent.
+
+Fresh memory data is published by the process-global sampler every `500` ms and
+expires after one second. On Linux, cgroup pressure is the maximum used
+percentage and the minimum remaining allowance across every visible finite
+cgroup v2/v1 level; `MemAvailable` still bounds effective headroom. Ambiguous or
+hidden cgroup constraints use the conservative fallback. Windows uses available
+physical memory. Workers consume only the cached atomic tuple. Stale or
+unsupported data uses the profile fallback ceiling and never reopens a
+pressure-closed gate.
+
+### Child idle lifetime
+
+Open-only children expire after `initial-child-idle-timeout-ms`. The first
+nonempty incoming or outgoing payload switches to the active timeout, and each
+later nonempty payload refreshes it. Control frames, Init/Est, and zero-length
+Data do not refresh it. Expiry sends `Close(cid)` when possible, closes only the
+owned child, and preserves the parent and siblings. Explicit close immediately
+removes the timer item.
+
+Limits count concurrent live state rather than historical CIDs, so destroyed
+children free capacity and parent transports remain reusable for their full
+transport lifetime. There is no MUX wire-format change.
 
 ### Internal frame format
 
@@ -205,7 +264,7 @@ global head-of-line blocking even though the other streams and the parent transp
 
 Pressure is bounded by closing a child instead. If one child's queue reaches `child-buffer-limit`, that child is closed.
 If the total queued data reaches `parent-buffer-limit`, the actual largest queued child is closed; equal-size ties prefer
-the least-recently-active child. The total was below the budget before the newest payload, and the largest queue is at
+the oldest attached child. The total was below the budget before the newest payload, and the largest queue is at
 least as large as that payload, so one close returns the parent below budget in the normal accounting path.
 
 If the parent transport is paused without a known recent writer, `MuxServer` pauses all child lines attached to that parent. Resume only clears parent-write pressure; a child that is still under peer `FlowPause` remains paused.

@@ -27,8 +27,8 @@ static void mxbServerParentFinish(tunnel_t *endpoint, line_t *parent)
 
 void mxbMuxServerCreate(mxb_fixture_t *fixture)
 {
-    fixture->mux = tunnelCreate(
-        NULL, sizeof(muxserver_tstate_t) + sizeof(muxserver_detached_registry_t), sizeof(muxserver_lstate_t));
+    fixture->mux =
+        tunnelCreate(NULL, sizeof(muxserver_tstate_t) + sizeof(muxserver_worker_state_t), sizeof(muxserver_lstate_t));
     fixture->parent_peer = tunnelCreate(NULL, sizeof(mxb_fixture_t *), 0);
     mxbRequire(fixture->mux != NULL && fixture->parent_peer != NULL, "failed to create MuxServer composition tunnels");
 
@@ -56,8 +56,8 @@ void mxbMuxServerInitializeLines(mxb_fixture_t *fixture)
 {
     muxserver_lstate_t *parent_ls = lineGetState(fixture->parent, fixture->mux);
     muxserver_lstate_t *child_ls  = lineGetState(fixture->child, fixture->mux);
-    muxserverLinestateInitialize(parent_ls, fixture->parent, false, 0);
-    muxserverLinestateInitialize(child_ls, fixture->child, true, kMxbServerCid);
+    muxserverLinestateInitialize(fixture->mux, parent_ls, fixture->parent, false, 0);
+    muxserverLinestateInitialize(fixture->mux, child_ls, fixture->child, true, kMxbServerCid);
     muxserverJoinConnection(parent_ls, child_ls);
 }
 
@@ -108,26 +108,27 @@ size_t mxbMuxServerParentQueuedBytes(const mxb_fixture_t *fixture)
 
 uint32_t mxbMuxServerDetachedChildren(const mxb_fixture_t *fixture)
 {
-    return ((muxserver_tstate_t *) tunnelGetState(fixture->mux))->detached_registries[0].count;
+    return ((muxserver_tstate_t *) tunnelGetState(fixture->mux))->worker_states[0].detached_registry.count;
 }
 
 size_t mxbMuxServerDetachedBytes(const mxb_fixture_t *fixture)
 {
-    return ((muxserver_tstate_t *) tunnelGetState(fixture->mux))->detached_registries[0].queued_bytes;
+    return ((muxserver_tstate_t *) tunnelGetState(fixture->mux))->worker_states[0].detached_registry.queued_bytes;
 }
 
 bool mxbMuxServerDetachedHeadIsChild(const mxb_fixture_t *fixture)
 {
     muxserver_detached_registry_t *registry =
-        &((muxserver_tstate_t *) tunnelGetState(fixture->mux))->detached_registries[0];
+        &((muxserver_tstate_t *) tunnelGetState(fixture->mux))->worker_states[0].detached_registry;
     return registry->head == lineGetState(fixture->child, fixture->mux);
 }
 
 void mxbMuxServerDestroy(mxb_fixture_t *fixture)
 {
     muxserver_tstate_t *ts = tunnelGetState(fixture->mux);
-    mxbRequire(ts->detached_registries[0].head == NULL && ts->detached_registries[0].count == 0 &&
-                   ts->detached_registries[0].queued_bytes == 0,
+    mxbRequire(ts->worker_states[0].detached_registry.head == NULL &&
+                   ts->worker_states[0].detached_registry.count == 0 &&
+                   ts->worker_states[0].detached_registry.queued_bytes == 0,
                "MuxServer composition teardown retained detached registry state");
 
     if (fixture->parent != NULL)
@@ -137,7 +138,7 @@ void mxbMuxServerDestroy(mxb_fixture_t *fixture)
         if (parent_ls->l != NULL)
         {
             mxbRequire(parent_ls->children_count == 0, "MuxServer composition parent retained a child at teardown");
-            muxserverLinestateDestroy(parent_ls);
+            muxserverLinestateDestroy(fixture->mux, parent_ls);
         }
         lineDestroy(fixture->parent);
         fixture->parent = NULL;

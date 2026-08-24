@@ -1235,6 +1235,14 @@ elseif(BUILD_TESTING)
   include("${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests/tunnels_abort_runtime_test.cmake")
 endif()
 
+# Register the same portable sampler, idle, and MUX contracts in the supported
+# non-Linux native-unit trees. Native Linux includes this module from its full
+# tests/unittests configuration above.
+if(BUILD_TESTING AND WW_BUILD_UNIT_TESTS AND
+   NOT (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING))
+  include("${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests/portable_contract_tests.cmake")
+endif()
+
 # Windows does not add the tests/ subtree, so register the focused interface-name
 # test here as well. The test remains build-on-demand through its CTest runner.
 if(BUILD_TESTING AND WW_BUILD_UNIT_TESTS AND WIN32)

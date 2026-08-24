@@ -5,9 +5,16 @@
 void muxclientJoinConnection(muxclient_lstate_t *parent, muxclient_lstate_t *child)
 {
     assert(child != NULL && parent != NULL && child->is_child && (parent->is_child == false));
-    if (UNLIKELY(parent->children_count == UINT32_MAX))
+    if (UNLIKELY(parent->parent_state == NULL || parent->children_count == UINT32_MAX ||
+                 muxclientFindChildByConnectionId(parent, child->connection_id) != NULL))
     {
-        LOGF("MuxClient: parent child-count overflow");
+        LOGF("MuxClient: duplicate CID insertion or parent child-count overflow");
+        abortProgramNow(1);
+    }
+    if (UNLIKELY(
+            ! muxclient_child_map_t_insert(&parent->parent_state->child_map, child->connection_id, child).inserted))
+    {
+        LOGF("MuxClient: failed to publish child CID index entry");
         abortProgramNow(1);
     }
     child->parent = parent;
@@ -32,6 +39,17 @@ void muxclientLeaveConnection(muxclient_lstate_t *child)
         LOGF("MuxClient: attempted to unlink a child without a live parent link");
         abortProgramNow(1);
     }
+
+    muxclient_lstate_t        *parent = child->parent;
+    muxclient_child_map_t_iter indexed =
+        muxclient_child_map_t_find(&parent->parent_state->child_map, child->connection_id);
+    if (UNLIKELY(indexed.ref == muxclient_child_map_t_end(&parent->parent_state->child_map).ref ||
+                 indexed.ref->second != child))
+    {
+        LOGF("MuxClient: child CID index disagrees with ownership list");
+        abortProgramNow(1);
+    }
+    muxclient_child_map_t_erase_at(&parent->parent_state->child_map, indexed);
 
     if (child->child_prev != NULL)
     {
@@ -59,6 +77,13 @@ void muxclientLeaveConnection(muxclient_lstate_t *child)
     child->child_next = NULL;
 }
 
+muxclient_lstate_t *muxclientFindChildByConnectionId(muxclient_lstate_t *parent, mux_cid_t cid)
+{
+    assert(parent != NULL && ! parent->is_child && parent->parent_state != NULL);
+    muxclient_child_map_t_iter found = muxclient_child_map_t_find(&parent->parent_state->child_map, cid);
+    return found.ref == muxclient_child_map_t_end(&parent->parent_state->child_map).ref ? NULL : found.ref->second;
+}
+
 bool muxclientCheckConnectionIsExhausted(muxclient_tstate_t *ts, muxclient_lstate_t *ls)
 {
     assert(ls->is_child == false);
@@ -73,6 +98,11 @@ bool muxclientCheckConnectionIsExhausted(muxclient_tstate_t *ts, muxclient_lstat
     {
         LOGE("MuxClient: Connection exhausted, children count reached maximum value: %u", kMuxCidMax);
         return true; // Connection is exhausted
+    }
+
+    if (ts->max_children != 0 && ls->children_count >= ts->max_children)
+    {
+        return true;
     }
 
     if (ts->concurrency_mode == kConcurrencyModeTimer)
@@ -100,6 +130,11 @@ bool muxclientCheckConnectionIsExhausted(muxclient_tstate_t *ts, muxclient_lstat
 
     assert(false);
     return true;
+}
+
+static bool muxclientParentShouldCloseWhenIdle(muxclient_tstate_t *ts, muxclient_lstate_t *parent_ls)
+{
+    return parent_ls->selection_retired || muxclientCheckConnectionIsExhausted(ts, parent_ls);
 }
 
 static line_t **muxclientFixedParentSlot(muxclient_tstate_t *ts, wid_t wid, uint32_t index)
@@ -316,7 +351,8 @@ line_t *muxclientGetParentLineForNewChild(tunnel_t *t, line_t *child_l)
             }
             else
             {
-                ts->unsatisfied_lines[wid] = NULL;
+                candidate_parent_ls->selection_retired = true;
+                ts->unsatisfied_lines[wid]             = NULL;
             }
         }
     }
@@ -352,7 +388,7 @@ void muxclientCloseChildKeepParent(tunnel_t *t, muxclient_tstate_t *ts, line_t *
         {
             tunnelPrevDownStreamFinish(t, child_l);
         }
-        if (parent_alive && ! parent_ls->parent_finishing && muxclientCheckConnectionIsExhausted(ts, parent_ls) &&
+        if (parent_alive && ! parent_ls->parent_finishing && muxclientParentShouldCloseWhenIdle(ts, parent_ls) &&
             parent_ls->children_count == 0)
         {
             muxclientCloseIdleExhaustedParentLine(t, ts, lineGetWID(parent_l), parent_l, parent_ls);
@@ -383,7 +419,7 @@ void muxclientCloseChildKeepParent(tunnel_t *t, muxclient_tstate_t *ts, line_t *
         return;
     }
 
-    if (muxclientCheckConnectionIsExhausted(ts, parent_ls) && parent_ls->children_count == 0)
+    if (muxclientParentShouldCloseWhenIdle(ts, parent_ls) && parent_ls->children_count == 0)
     {
         muxclientCloseIdleExhaustedParentLine(t, ts, lineGetWID(parent_l), parent_l, parent_ls);
     }
@@ -575,7 +611,7 @@ static bool muxclientCloseChildForQueueLimit(tunnel_t *t, line_t *parent_l, muxc
         return false;
     }
 
-    if (muxclientCheckConnectionIsExhausted(ts, parent_ls) && parent_ls->children_count == 0)
+    if (muxclientParentShouldCloseWhenIdle(ts, parent_ls) && parent_ls->children_count == 0)
     {
         muxclientCloseIdleExhaustedParentLine(t, ts, lineGetWID(parent_l), parent_l, parent_ls);
         return false;
@@ -585,9 +621,9 @@ static bool muxclientCloseChildForQueueLimit(tunnel_t *t, line_t *parent_l, muxc
 }
 
 /*
- * Return the actual largest queued child. Children are kept in most-recently-used
- * order by the frame parser; replacing on an equal size therefore makes the stable
- * tie-break prefer the least-recently-active child.
+ * Return the actual largest queued child. Children remain in ownership-list
+ * insertion order; replacing on an equal size makes the stable tie-break prefer
+ * the oldest attached child.
  */
 static muxclient_lstate_t *muxclientFindLargestQueuedChild(muxclient_lstate_t *parent_ls, size_t *queued_bytes_out)
 {
@@ -888,7 +924,7 @@ bool muxclientFinalizeAttachedPeerClose(tunnel_t *t, line_t *parent_l, muxclient
         return false;
     }
 
-    if (muxclientCheckConnectionIsExhausted(ts, parent_ls) && parent_ls->children_count == 0)
+    if (muxclientParentShouldCloseWhenIdle(ts, parent_ls) && parent_ls->children_count == 0)
     {
         muxclientCloseIdleExhaustedParentLine(t, ts, lineGetWID(parent_l), parent_l, parent_ls);
         lineUnlock(parent_l);

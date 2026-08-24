@@ -78,14 +78,18 @@ jobs:
         run: >
           cmake --preset windows-iocp-unit
           -DCPM_SOURCE_CACHE="${{ env.cpm-path }}"
-      - name: Build focused Windows shutdown units
+      - name: Build Windows platform native units
         run: >
           cmake --build build/windows-iocp-unit --config Release --parallel
-          --target windows_console_shutdown_test iocp_native_test
-      - name: Run focused Windows shutdown units
+          --target waterwall_platform_unit_tests
+      - name: Run required portable Windows contracts
         run: >
-          ctest --test-dir build/windows-iocp-unit -C Release --output-on-failure
-          -R '^waterwall\.(windows_console_shutdown_unit|iocp_native)$'
+          ctest --test-dir build/windows-iocp-unit -C Release --no-tests=error --output-on-failure
+          -R '^waterwall\.(idle_table_contract_unit|system_memory_snapshot_unit|muxserver_admission_limit_unit|muxclient_cid_index_unit)$'
+      - name: Run complete Windows platform unit lane
+        run: >
+          ctest --test-dir build/windows-iocp-unit -C Release --no-tests=error --output-on-failure
+          -L unit
 
   android:
     env:
@@ -508,6 +512,26 @@ jobs:
 
       - name: Build
         run: cmake --build --preset ${{ matrix.preset }}
+
+      - name: Configure macOS native units
+        run: >
+          cmake --preset macos-unit-tests
+          -DCPM_SOURCE_CACHE="${{ env.cpm-path }}"
+
+      - name: Build macOS platform native units
+        run: >
+          cmake --build build/macos-unit-tests --config Release --parallel
+          --target waterwall_platform_unit_tests
+
+      - name: Run required portable macOS contracts
+        run: >
+          ctest --test-dir build/macos-unit-tests -C Release --no-tests=error --output-on-failure
+          -R '^waterwall\.(idle_table_contract_unit|system_memory_snapshot_unit|muxserver_admission_limit_unit|muxclient_cid_index_unit)$'
+
+      - name: Run complete macOS platform unit lane
+        run: >
+          ctest --test-dir build/macos-unit-tests -C Release --no-tests=error --output-on-failure
+          -L unit
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6

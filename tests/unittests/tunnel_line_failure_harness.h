@@ -100,7 +100,7 @@ bool __wrap_requestProgramShutdown(int exit_code)
 
 enum
 {
-    kTwfMaxTrackedBuffers = 512
+    kTwfMaxTrackedBuffers = 8192
 };
 
 typedef struct twf_buffer_ledger_s

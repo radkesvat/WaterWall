@@ -62,13 +62,14 @@ static void onClose(wio_t *io)
         tcplistener_tstate_t *ts = tunnelGetState(t);
 
         weventSetUserData(ls->io, NULL);
-        bool removed = localidletableRemoveIdleItemByHash(tcplistenerGetLineIdleTable(ts, l), tcplistenerIdleKey(io));
+        local_idle_item_t *idle_item = ls->idle_handle;
+        ls->idle_handle              = NULL;
+        bool removed                 = localidletableRemoveIdleItem(tcplistenerGetLineIdleTable(ts, l), idle_item);
         if (! removed)
         {
             LOGF("TcpListener: failed to remove idle item for FD:%x ", wioGetFD(io));
             abortProgramNow(1);
         }
-        ls->idle_handle = NULL; // mark as removed
 
         tcplistenerLinestateDestroy(ls);
         tunnelNextUpStreamFinish(t, l);

@@ -14,15 +14,14 @@ static void closeLine(tunnel_t *t, line_t *l, udpconnector_tstate_t *ts, udpconn
 {
     if (ls->io != NULL)
     {
-        bool removed =
-            localidletableRemoveIdleItemByHash(udpconnectorGetLineIdleTable(ts, l), udpconnectorIdleKey(ls->io));
+        local_idle_item_t *idle_item = ls->idle_handle;
+        ls->idle_handle              = NULL;
+        bool removed                 = localidletableRemoveIdleItem(udpconnectorGetLineIdleTable(ts, l), idle_item);
         if (! removed)
         {
             LOGF("UdpConnector: failed to remove idle item for FD:%x ", wioGetFD(ls->io));
             abortProgramNow(1);
         }
-
-        ls->idle_handle = NULL;
         weventSetUserData(ls->io, NULL);
         wioClose(ls->io);
     }

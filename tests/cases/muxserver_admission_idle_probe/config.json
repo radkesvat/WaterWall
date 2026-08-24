@@ -1,0 +1,47 @@
+{
+  "name": "muxserver-admission-idle-probe",
+  "nodes": [
+    {
+      "name": "mux-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 26780,
+        "nodelay": true,
+        "initial-idle-timeout-ms": 5000,
+        "active-idle-timeout-ms": 5000
+      },
+      "next": "mux-server"
+    },
+    {
+      "name": "mux-server",
+      "type": "MuxServer",
+      "settings": {
+        "max-children": 2,
+        "max-live-children": 2,
+        "memory-fallback-max-live-children": 2,
+        "memory-high-watermark-percent": 99,
+        "memory-low-watermark-percent": 98,
+        "memory-reserve": 0,
+        "initial-child-idle-timeout-ms": 250,
+        "active-child-idle-timeout-ms": 3000
+      },
+      "next": "parking-router"
+    },
+    {
+      "name": "parking-router",
+      "type": "Router",
+      "next": "unused-connector"
+    },
+    {
+      "name": "unused-connector",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 26781,
+        "nodelay": true,
+        "fastopen": false
+      }
+    }
+  ]
+}

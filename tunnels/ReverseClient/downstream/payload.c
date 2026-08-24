@@ -16,14 +16,13 @@ void reverseclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     assert(pair->phase == kReverseClientPairUnused);
     assert(pair->idle_handle != NULL);
 
-    const wid_t wid = lineGetWID(pair->u);
+    const wid_t wid   = lineGetWID(pair->u);
+    pair->idle_handle = NULL;
     if (! idletableRemoveIdleItemByHash(wid, ts->starved_connections, (hash_t) (uintptr_t) pair))
     {
         LOGF("ReverseClient: failed to remove an idle pair while activating it");
         abortProgramNow(1);
     }
-    pair->idle_handle = NULL;
-
     reverseclient_thread_box_t *box = &ts->threadlocal_pool[wid];
     assert(box->unused_cons_count > 0);
     box->unused_cons_count--;

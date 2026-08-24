@@ -754,6 +754,8 @@ static void caseDetachedConfiguration(void)
         twfRequireEqualU32(ts->child_buffer_resume_threshold,
                            kMuxDefaultChildBufferResumeThreshold,
                            "default MuxClient child resume threshold drifted");
+        twfRequireEqualU32(
+            ts->max_children, kMuxDefaultMaxChildrenPerParent, "default MuxClient per-parent child limit drifted");
         muxclientTunnelDestroy(mux, wwLifecycleProcessShutdown());
         cJSON_Delete(settings);
     }
@@ -787,6 +789,31 @@ static void caseDetachedConfiguration(void)
     node.node_settings_json = settings;
     twfRequire(muxclientTunnelCreate(&node) == NULL, "zero MuxClient child resume threshold was accepted");
     cJSON_Delete(settings);
+
+    settings = cJSON_Parse("{\"mode\":\"counter\",\"connection-capacity\":100,\"max-children\":9}");
+    twfRequire(settings != NULL, "failed to create explicit MuxClient max-children settings");
+    node.node_settings_json = settings;
+    mux                     = muxclientTunnelCreate(&node);
+    twfRequire(mux != NULL, "valid MuxClient max-children setting was rejected");
+    ts = tunnelGetState(mux);
+    twfRequireEqualU32(ts->max_children, 9, "MuxClient max-children override was not preserved");
+    muxclientTunnelDestroy(mux, wwLifecycleProcessShutdown());
+    cJSON_Delete(settings);
+
+    static const char *const invalid_max_children[] = {
+        "{\"mode\":\"counter\",\"connection-capacity\":1,\"max-children\":0}",
+        "{\"mode\":\"counter\",\"connection-capacity\":1,\"max-children\":-1}",
+        "{\"mode\":\"counter\",\"connection-capacity\":1,\"max-children\":1.5}",
+        "{\"mode\":\"counter\",\"connection-capacity\":1,\"max-children\":\"9\"}",
+    };
+    for (size_t i = 0; i < ARRAY_SIZE(invalid_max_children); ++i)
+    {
+        settings = cJSON_Parse(invalid_max_children[i]);
+        twfRequire(settings != NULL, "failed to create invalid MuxClient max-children settings");
+        node.node_settings_json = settings;
+        twfRequire(muxclientTunnelCreate(&node) == NULL, "invalid MuxClient max-children setting was accepted");
+        cJSON_Delete(settings);
+    }
 
     GSTATE.ram_profile = previous_ram_profile;
 }

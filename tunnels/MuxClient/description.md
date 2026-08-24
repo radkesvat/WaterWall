@@ -1,5 +1,5 @@
 <!--
-Documentation version: 152
+Documentation version: 153
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/MuxClient.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/MuxClient.mdx, and all files must keep the same documentation version.
 -->
 
@@ -123,6 +123,11 @@ Fixed connection count mode:
 
 ## Optional `settings` Fields
 
+- `max-children` `(integer, optional)`
+  Maximum concurrent live children on one parent. Default: `10000`. It must be
+  positive and is separate from counter mode's cumulative
+  `connection-capacity`.
+
 - `child-buffer-limit` `(integer, bytes, optional)`
   Maximum queued data per paused child line before `MuxClient` closes that child stream.
 
@@ -148,7 +153,7 @@ Fixed connection count mode:
 - `parent-buffer-limit` `(integer, bytes, optional)`
   Per-parent budget for child-destined data queued across all children. When a newly queued payload makes the total
   reach the budget, `MuxClient` closes the child with the largest queue. Equal-sized queues prefer the
-  least-recently-active child. This releases the pressure without pausing unrelated streams on the shared parent.
+  oldest attached child. This releases the pressure without pausing unrelated streams on the shared parent.
 
   Default: `33554432` (`32 MB`). Set to `0` to disable the aggregate budget; `child-buffer-limit` still bounds each
   individual child. The value may intentionally be lower than `child-buffer-limit`.
@@ -197,9 +202,9 @@ Fixed connection count mode:
 
 Each child line gets a 32-bit connection id (`cid`). That id is used inside MUX frames so the remote `MuxServer` can map traffic back to the correct child stream.
 
-In timer and counter modes, `MuxClient` keeps one current reusable parent line per worker. The code calls this the unsatisfied line. As long as that parent is still allowed to accept more children, new child lines will join it.
+In timer and counter modes, `MuxClient` keeps one current reusable parent line per worker. The code calls this the unsatisfied line. As long as that parent is still allowed to accept more children, new child lines will join it. If another child arrives while the parent is at `max-children`, the parent is selection-retired, remains alive for current children, and closes at zero while the arriving child uses a new parent.
 
-In fixed connection count mode, `MuxClient` keeps a fixed-size parent pool per worker. When a worker first needs a mux parent, it opens `per-worker-connections-count` parent transport lines for that worker. New child lines are assigned to the least-loaded parent in that worker's pool, with a round-robin tie break, and no additional parent lines are opened while the pool slots are alive.
+In fixed connection count mode, `MuxClient` keeps a fixed-size parent pool per worker. When a worker first needs a mux parent, it opens `per-worker-connections-count` parent transport lines for that worker. New child lines are assigned to the least-loaded non-finishing parent below `max-children`, with a round-robin tie break. If every fixed parent is full, the new borrowed child receives Finish immediately; no extra parent or unbounded wait queue is created. Capacity is reusable when a parent drops below the live cap.
 
 ### When a new parent connection is opened
 
@@ -220,13 +225,18 @@ The current parent line becomes exhausted in one of these ways:
 
 - timer mode: its age becomes greater than `connection-duration-ms`
 - counter mode: its opened child stream count reaches `connection-capacity`
-- fixed connection count mode: parent lines are not exhausted by age or child count
+- all modes: its concurrent live child count reaches `max-children`
+- fixed connection count mode: age and cumulative counter do not retire parents, but the live cap still applies
 - absolute hard limit: the parent connection id reaches `4294967295`
 
 An exhausted parent line is not closed immediately. It simply stops accepting new child lines. Existing child streams continue using it until they finish.
 
 When the parent is exhausted and its last child closes, `MuxClient` closes the parent transport line too. If a reusable
 parent becomes exhausted while it has no active children, `MuxClient` closes it before replacing it with a new parent.
+
+Child response lookup uses a per-parent hash index and remains average O(1). A
+server resource-rejection `Close(cid)` finishes only that matching borrowed
+child; the parent and unrelated siblings continue.
 
 ### Internal frame format
 
@@ -285,7 +295,7 @@ global head-of-line blocking even though the other streams and the parent transp
 
 Pressure is bounded by closing a child instead. If one child's queue reaches `child-buffer-limit`, that child is closed.
 If the total queued data reaches `parent-buffer-limit`, the actual largest queued child is closed; equal-size ties prefer
-the least-recently-active child. The total was below the budget before the newest payload, and the largest queue is at
+the oldest attached child. The total was below the budget before the newest payload, and the largest queue is at
 least as large as that payload, so one close returns the parent below budget in the normal accounting path.
 
 When the remote side pauses the shared parent line, `MuxClient` tries to pause the child that most recently wrote to that parent. If no recent writer is known, it pauses all attached children. Resume only clears parent-write pressure; a child that is still under peer `FlowPause` remains paused.

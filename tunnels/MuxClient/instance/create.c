@@ -2,6 +2,24 @@
 
 #include "loggers/network_logger.h"
 
+static bool muxclientReadMaxChildren(const cJSON *settings, uint32_t *value)
+{
+    int64_t parsed = 0;
+    switch (jsonGetObjectIntegerInRange(settings, "max-children", 1, INT_MAX, &parsed))
+    {
+    case kJsonValueMissing:
+        *value = kMuxDefaultMaxChildrenPerParent;
+        return true;
+    case kJsonValuePresent:
+        *value = (uint32_t) parsed;
+        return true;
+    case kJsonValueInvalid:
+        LOGF("MuxClient: \"max-children\" must be a positive integer no greater than INT_MAX");
+        return false;
+    }
+    return false;
+}
+
 static bool muxclientComputeFixedStorageGeometry(size_t workers_count, uint32_t fixed_connections_count,
                                                  size_t *parents_bytes_out, size_t *indexes_bytes_out)
 {
@@ -84,6 +102,12 @@ tunnel_t *muxclientTunnelCreate(node_t *node)
     int                           detached_child_limit          = (int) detached_defaults.child_limit;
     bool                          log_main_line_stats           = false;
     uint32_t                      staged_fixed_connections      = 0;
+
+    if (! muxclientReadMaxChildren(settings, &ts->max_children))
+    {
+        tunnelDestroy(t);
+        return NULL;
+    }
 
     getIntFromJsonObjectOrDefault(&child_buffer_limit, settings, "child-buffer-limit", kMuxDefaultChildBufferLimit);
     getIntFromJsonObjectOrDefault(

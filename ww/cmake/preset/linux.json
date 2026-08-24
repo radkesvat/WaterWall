@@ -251,7 +251,13 @@
                 "worker_context_helpers_test",
                 "device_reader_session_test",
                 "ping_tracker_test",
+                "idle_table_contract_test",
+                "local_idle_table_indexed_test",
                 "widle_table_cancellation_test",
+                "system_memory_snapshot_test",
+                "system_memory_linux_provider_test",
+                "muxserver_admission_limit_test",
+                "muxserver_admission_concurrency_test",
                 "reverseclient_owner_drain_test",
                 "packetstostream_orderly_shutdown_test",
                 "packetsender_orderly_shutdown_test",
@@ -544,7 +550,7 @@
             "configuration": "Debug",
             "filter": {
                 "include": {
-                    "name": "^waterwall\\.((shutdown_manager|wloop_stop_request|worker_context_helpers|device_reader_session|wchan_close_semantics|widle_table_cancellation|reverseclient_owner_drain|packetstostream_orderly_shutdown|packetsender_orderly_shutdown|ping_tracker)_unit|shutdown_production_sequence|reverse_tcp_bridge_roundtrip)$"
+                    "name": "^waterwall\\.((shutdown_manager|wloop_stop_request|worker_context_helpers|device_reader_session|wchan_close_semantics|idle_table_contract|local_idle_table_indexed|widle_table_cancellation|system_memory_snapshot|system_memory_linux_provider|muxserver_admission_limit|muxserver_admission_concurrency|reverseclient_owner_drain|packetstostream_orderly_shutdown|packetsender_orderly_shutdown|ping_tracker)_unit|shutdown_production_sequence|reverse_tcp_bridge_roundtrip)$"
                 }
             },
             "inherits": [

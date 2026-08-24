@@ -13,15 +13,14 @@ void udplistenerTunnelDownStreamFinish(tunnel_t *t, line_t *l)
         abortProgramNow(1);
     }
 
-    bool deleted = localidletableRemoveIdleItemByHash(udpsockGetWorkerIdleTable(lstate->uio), idle->hash);
+    lstate->idle_handle = NULL;
+    bool deleted        = localidletableRemoveIdleItem(udpsockGetWorkerIdleTable(lstate->uio), idle);
     if (! deleted)
     {
         LOGE("UdpListener: Failed to remove idle item for UDP listener on FD:%x", lstate->listener_fd);
         abortProgramNow(1);
     }
     LOGD("UdpListener: Finished down stream for 1 connection on FD:%x", lstate->listener_fd);
-
-    lstate->idle_handle = NULL;
     udplistenerLinestateDestroy(lstate);
     lineDestroy(l);
 }

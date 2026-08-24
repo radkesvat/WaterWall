@@ -178,6 +178,8 @@ CREATION_SITES = [
      "the shared pool-backed fixture line the owner-postcondition cases need"),
     ("tests/unittests/mux_tls_close_backpressure_fixture.c", "mxbCreateLine", TEST_ONLY,
      "the combined Mux/TLS parent and child lines used by real callback-composition fixtures"),
+    ("tests/unittests/muxserver_admission_concurrency_test.c", "WTHREAD_ROUTINE", TEST_ONLY,
+     "one borrowed MuxServer parent fixture line created on each exact registered owner worker"),
     ("tests/unittests/speedtestclient_orderly_shutdown_test.c", "publishLine", TEST_ONLY,
      "the fixture lines published into SpeedTestClient's worker-owned inventory"),
     ("tests/unittests/worker_context_helpers_test.c",

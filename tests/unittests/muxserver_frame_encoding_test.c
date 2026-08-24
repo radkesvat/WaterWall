@@ -98,8 +98,8 @@ static void fixtureSetup(muxserver_fixture_t *fixture, uint32_t capture_capacity
     fixture->trace.capture_capacity = capture_capacity;
 
     fixture->prev = twfCreatePrevTunnel(&fixture->trace);
-    fixture->mux  = tunnelCreate(
-        NULL, sizeof(muxserver_tstate_t) + sizeof(muxserver_detached_registry_t), sizeof(muxserver_lstate_t));
+    fixture->mux =
+        tunnelCreate(NULL, sizeof(muxserver_tstate_t) + sizeof(muxserver_worker_state_t), sizeof(muxserver_lstate_t));
     twfRequire(fixture->mux != NULL, "failed to create the MuxServer tunnel");
     fixture->next = twfCreateNextTunnel(&fixture->trace);
 
@@ -122,8 +122,8 @@ static void fixtureSetup(muxserver_fixture_t *fixture, uint32_t capture_capacity
     muxserver_lstate_t *parent_ls = lineGetState(fixture->parent_l, fixture->mux);
     muxserver_lstate_t *child_ls  = lineGetState(fixture->child_l, fixture->mux);
 
-    muxserverLinestateInitialize(parent_ls, fixture->parent_l, false, 0);
-    muxserverLinestateInitialize(child_ls, fixture->child_l, true, kTestChildCid);
+    muxserverLinestateInitialize(fixture->mux, parent_ls, fixture->parent_l, false, 0);
+    muxserverLinestateInitialize(fixture->mux, child_ls, fixture->child_l, true, kTestChildCid);
     muxserverJoinConnection(parent_ls, child_ls);
 }
 
@@ -136,11 +136,11 @@ static void fixtureTeardown(muxserver_fixture_t *fixture)
     {
         muxserverLeaveConnection(child_ls);
         discard muxserverReleaseParentInputForChildClose(fixture->mux, fixture->parent_l, parent_ls, child_ls);
-        muxserverLinestateDestroy(child_ls);
+        muxserverLinestateDestroy(fixture->mux, child_ls);
     }
     if (parent_ls != NULL && parent_ls->l != NULL)
     {
-        muxserverLinestateDestroy(parent_ls);
+        muxserverLinestateDestroy(fixture->mux, parent_ls);
     }
 
     twfRequireNoLeakedBuffers();
@@ -294,7 +294,7 @@ static line_t *createServerSibling(muxserver_fixture_t *fixture, muxserver_lstat
 {
     line_t             *child_l  = twfLinePoolCreateLine(&fixture->lines);
     muxserver_lstate_t *child_ls = lineGetState(child_l, fixture->mux);
-    muxserverLinestateInitialize(child_ls, child_l, true, cid);
+    muxserverLinestateInitialize(fixture->mux, child_ls, child_l, true, cid);
     muxserverJoinConnection(parent_ls, child_ls);
     return child_l;
 }
@@ -305,7 +305,7 @@ static void destroyServerSibling(muxserver_fixture_t *fixture, line_t *child_l)
     muxserver_lstate_t *parent_ls = child_ls->parent;
     muxserverLeaveConnection(child_ls);
     discard muxserverReleaseParentInputForChildClose(fixture->mux, fixture->parent_l, parent_ls, child_ls);
-    muxserverLinestateDestroy(child_ls);
+    muxserverLinestateDestroy(fixture->mux, child_ls);
     lineDestroy(child_l);
 }
 
@@ -349,9 +349,120 @@ static void caseConfiguredResumeThresholdControlsFlowResume(void)
     fixtureTeardown(&fixture);
 }
 
+static void casePerParentAdmissionRejectsWithClose(void)
+{
+    twfSetCase("MuxServer per-parent admission limit rejects one fresh cid without closing siblings");
+
+    muxserver_fixture_t fixture;
+    fixtureSetup(&fixture, (3U * kMuxFrameLength) + 1U);
+    muxserver_tstate_t *ts = tunnelGetState(fixture.mux);
+    ts->max_children       = 1;
+
+    const mux_cid_t rejected_cid = kTestChildCid + 100U;
+    sbuf_t         *open         = bufferpoolGetLargeBuffer(fixture.env.pool);
+    sbufSetLength(open, kMuxFrameLength);
+    writeFrameHeader(sbufGetMutablePtr(open), 0, kMuxFlagOpen, rejected_cid);
+    muxserverTunnelUpStreamPayload(fixture.mux, fixture.parent_l, open);
+
+    muxserver_lstate_t *parent_ls = lineGetState(fixture.parent_l, fixture.mux);
+    twfRequire(lineIsAlive(fixture.parent_l), "resource rejection closed the healthy borrowed parent");
+    twfRequire(lineIsAlive(fixture.child_l), "resource rejection closed an admitted sibling");
+    twfRequireEqualU32(parent_ls->children_count, 1, "resource rejection allocated or removed a child");
+    twfRequireEqualU32(fixture.trace.prev_payload, 1, "resource rejection did not emit exactly one Close frame");
+    twfRequireEqualU32(fixture.trace.next_init, 0, "resource rejection initialized a temporary child");
+
+    frame_view_t frame;
+    twfRequireEqualU32(parseFrames(fixture.capture, fixture.trace.capture_len, &frame, 1),
+                       1,
+                       "resource rejection emitted an invalid frame sequence");
+    twfRequire(frame.flags == kMuxFlagClose && frame.cid == rejected_cid && frame.length == 0,
+               "resource rejection emitted the wrong Close frame");
+    fixtureTeardown(&fixture);
+}
+
+static void caseDuplicateOpenClosesParent(void)
+{
+    twfSetCase("MuxServer duplicate Open closes the offending parent");
+
+    muxserver_fixture_t fixture;
+    fixtureSetup(&fixture, 1);
+
+    sbuf_t *open = bufferpoolGetLargeBuffer(fixture.env.pool);
+    sbufSetLength(open, kMuxFrameLength);
+    writeFrameHeader(sbufGetMutablePtr(open), 0, kMuxFlagOpen, kTestChildCid);
+
+    lineLock(fixture.child_l);
+    muxserverTunnelUpStreamPayload(fixture.mux, fixture.parent_l, open);
+    twfRequire(! lineIsAlive(fixture.child_l), "duplicate Open left the owned child alive");
+    twfRequireEqualU32(fixture.trace.prev_finish, 1, "duplicate Open did not close the parent toward its owner");
+    twfRequireEqualU32(fixture.trace.next_finish, 1, "duplicate Open did not finish the admitted child");
+    twfRequireLineStateZeroed(fixture.parent_l, fixture.mux, "duplicate Open retained parent MUX state");
+    twfRequireLineStateZeroed(fixture.child_l, fixture.mux, "duplicate Open retained child MUX state");
+    twfRequireOwnedLineReclaimed(fixture.child_l, "MuxServer duplicate Open child cleanup");
+    fixture.child_l = NULL;
+
+    fixtureTeardown(&fixture);
+}
+
+static void destroyFixtureChildIdleTable(muxserver_fixture_t *fixture)
+{
+    muxserver_tstate_t *ts    = tunnelGetState(fixture->mux);
+    local_idle_table_t *table = ts->worker_states[0].child_idle_table;
+    if (table != NULL)
+    {
+        twfRequireEqualU32((uint32_t) localidletableGetItemCount(table), 0, "child idle table retained an item");
+        localidletableDestroy(table);
+        ts->worker_states[0].child_idle_table = NULL;
+    }
+}
+
+static void caseChildIdlePromotionAndImmediateRemoval(void)
+{
+    twfSetCase("MuxServer real payload promotes child idle timeout and explicit close removes it immediately");
+
+    muxserver_fixture_t fixture;
+    fixtureSetup(&fixture, (3U * kMuxFrameLength) + 1U);
+    muxserver_tstate_t *ts            = tunnelGetState(fixture.mux);
+    muxserver_lstate_t *child_ls      = lineGetState(fixture.child_l, fixture.mux);
+    ts->initial_child_idle_timeout_ms = 10;
+    ts->active_child_idle_timeout_ms  = 100;
+    atomicStoreRelaxed(&ts->live_children_count, 1);
+    child_ls->child_slot_reserved = true;
+    muxserverArmChildIdle(fixture.mux, child_ls);
+
+    const uint64_t initial_deadline = child_ls->child_idle_item->expire_at_ms;
+    sbuf_t        *empty            = bufferpoolGetLargeBuffer(fixture.env.pool);
+    muxserverTunnelDownStreamPayload(fixture.mux, fixture.child_l, empty);
+    twfRequire(! child_ls->child_has_payload_activity && child_ls->child_idle_item->expire_at_ms == initial_deadline,
+               "zero-length Data promoted or refreshed the child idle timeout");
+
+    sbuf_t *payload = bufferpoolGetLargeBuffer(fixture.env.pool);
+    sbufSetLength(payload, 1);
+    sbufGetMutablePtr(payload)[0] = 0x42;
+    muxserverTunnelDownStreamPayload(fixture.mux, fixture.child_l, payload);
+    twfRequire(child_ls->child_has_payload_activity && child_ls->child_idle_item->expire_at_ms > initial_deadline,
+               "nonempty payload did not promote the child to the active idle timeout");
+
+    local_idle_table_t *table = ts->worker_states[0].child_idle_table;
+    twfRequireEqualU32((uint32_t) localidletableGetItemCount(table), 1, "armed child idle item is absent");
+    lineLock(fixture.child_l);
+    muxserverTunnelDownStreamFinish(fixture.mux, fixture.child_l);
+    twfRequire(! lineIsAlive(fixture.child_l), "explicit child Finish left the owned child alive");
+    twfRequireEqualU32(
+        (uint32_t) localidletableGetItemCount(table), 0, "explicit close retained the long active timer item");
+    twfRequireEqualU32((uint32_t) atomicLoadRelaxed(&ts->live_children_count),
+                       0,
+                       "explicit close retained the aggregate child reservation");
+    twfRequireOwnedLineReclaimed(fixture.child_l, "MuxServer explicit close timer cleanup");
+    fixture.child_l = NULL;
+
+    destroyFixtureChildIdleTable(&fixture);
+    fixtureTeardown(&fixture);
+}
+
 static void casePeerCloseDropsLateFramesAndKeepsSiblingProgress(void)
 {
-    twfSetCase("MuxServer drops same-batch late frames for a draining cid while a sibling progresses");
+    twfSetCase("MuxServer drops same-batch late non-Open frames for a draining cid while a sibling progresses");
 
     enum
     {
@@ -359,7 +470,7 @@ static void casePeerCloseDropsLateFramesAndKeepsSiblingProgress(void)
         kLate        = 13,
         kSibling     = 17,
         kSiblingCid  = kTestChildCid + 1U,
-        kBatchFrames = 8,
+        kBatchFrames = 7,
         kBatchBytes  = (kBatchFrames * kMuxFrameLength) + kFirst + kLate + kSibling
     };
 
@@ -382,14 +493,13 @@ static void casePeerCloseDropsLateFramesAndKeepsSiblingProgress(void)
     offset          = appendInputFrame(raw, offset, kTestChildCid, kMuxFlagFlowPause, 0, 0);
     offset          = appendInputFrame(raw, offset, kTestChildCid, kMuxFlagFlowResume, 0, 0);
     offset          = appendInputFrame(raw, offset, kTestChildCid, kMuxFlagClose, 0, 0);
-    offset          = appendInputFrame(raw, offset, kTestChildCid, kMuxFlagOpen, 0, 0);
     offset          = appendInputFrame(raw, offset, kSiblingCid, kMuxFlagData, kSibling, 0x52);
     twfRequireEqualU32(offset, kBatchBytes, "the mixed MuxServer input batch has the wrong size");
 
     muxserverTunnelUpStreamPayload(fixture.mux, fixture.parent_l, batch);
 
     twfRequire(lineIsAlive(fixture.parent_l), "late terminal frames killed the borrowed parent");
-    twfRequire(lineIsAlive(fixture.child_l), "duplicate Open replaced or killed the terminal owned child");
+    twfRequire(lineIsAlive(fixture.child_l), "late control frames killed the terminal owned child");
     twfRequire(child_ls->close_state == kMuxServerChildClosePeerDraining,
                "same-batch Close did not retain the server cid for ordered draining");
     twfRequire(child_ls->parent == parent_ls, "same-batch Close removed the blocked server cid from routing");
@@ -400,8 +510,8 @@ static void casePeerCloseDropsLateFramesAndKeepsSiblingProgress(void)
                        "late server Data changed the terminal child's retained FIFO");
     twfRequireEqualU32(
         (uint32_t) parent_ls->pending_child_data_len, kFirst, "late server Data changed parent queued-byte accounting");
-    twfRequireEqualU32(parent_ls->children_count, 2, "duplicate Open created a replacement owned child");
-    twfRequireEqualU32(fixture.trace.next_init, 0, "duplicate Open initialized a replacement owned child");
+    twfRequireEqualU32(parent_ls->children_count, 2, "late control frames changed the owned child inventory");
+    twfRequireEqualU32(fixture.trace.next_init, 0, "late control frames initialized a replacement owned child");
     twfRequireEqualU32(
         fixture.trace.next_payload, 1, "the writable server sibling did not progress in the same parser pass");
     twfRequireEqualU32(fixture.trace.next_payload_bytes,
@@ -471,6 +581,21 @@ static void caseDetachedConfiguration(void)
         twfRequireEqualU32(ts->child_buffer_resume_threshold,
                            kMuxDefaultChildBufferResumeThreshold,
                            "default MuxServer child resume threshold drifted");
+        twfRequireEqualU32(
+            ts->max_children, kMuxDefaultMaxChildrenPerParent, "default MuxServer per-parent child limit drifted");
+        twfRequireEqualU32(
+            ts->max_live_children, kMuxDefaultMaxLiveChildren, "default MuxServer aggregate child limit drifted");
+        twfRequireEqualU32(
+            ts->memory_reserve, profiles[i].buffer_limit, "profile-derived MuxServer admission reserve drifted");
+        twfRequireEqualU32(ts->memory_fallback_max_live_children,
+                           profiles[i].child_limit,
+                           "profile-derived MuxServer fallback child ceiling drifted");
+        twfRequireEqualU32(ts->initial_child_idle_timeout_ms,
+                           kMuxDefaultInitialChildIdleTimeoutMs,
+                           "default MuxServer initial child idle timeout drifted");
+        twfRequireEqualU32(ts->active_child_idle_timeout_ms,
+                           kMuxDefaultActiveChildIdleTimeoutMs,
+                           "default MuxServer active child idle timeout drifted");
         muxserverTunnelDestroy(mux, wwLifecycleProcessShutdown());
         cJSON_Delete(settings);
     }
@@ -502,6 +627,42 @@ static void caseDetachedConfiguration(void)
     twfRequire(muxserverTunnelCreate(&node) == NULL, "zero MuxServer child resume threshold was accepted");
     cJSON_Delete(settings);
 
+    settings = cJSON_Parse("{\"max-children\":11,\"max-live-children\":12,"
+                           "\"memory-fallback-max-live-children\":7,\"memory-high-watermark-percent\":90,"
+                           "\"memory-low-watermark-percent\":70,\"memory-reserve\":0,"
+                           "\"initial-child-idle-timeout-ms\":20,\"active-child-idle-timeout-ms\":30}");
+    twfRequire(settings != NULL, "failed to create explicit MuxServer admission settings");
+    node.node_settings_json = settings;
+    mux                     = muxserverTunnelCreate(&node);
+    twfRequire(mux != NULL, "valid explicit MuxServer admission settings were rejected");
+    ts = tunnelGetState(mux);
+    twfRequireEqualU32(ts->max_children, 11, "MuxServer max-children override was not preserved");
+    twfRequireEqualU32(ts->max_live_children, 12, "MuxServer max-live-children override was not preserved");
+    twfRequireEqualU32(
+        ts->memory_fallback_max_live_children, 7, "MuxServer fallback ceiling override was not preserved");
+    twfRequireEqualU32(ts->memory_reserve, 0, "MuxServer zero memory reserve was not preserved");
+    muxserverTunnelDestroy(mux, wwLifecycleProcessShutdown());
+    cJSON_Delete(settings);
+
+    static const char *const invalid_admission_settings[] = {
+        "{\"max-children\":0}",
+        "{\"max-children\":11,\"max-live-children\":10}",
+        "{\"max-live-children\":10,\"memory-fallback-max-live-children\":11}",
+        "{\"memory-high-watermark-percent\":75,\"memory-low-watermark-percent\":75}",
+        "{\"memory-high-watermark-percent\":99,\"memory-low-watermark-percent\":100}",
+        "{\"initial-child-idle-timeout-ms\":20,\"active-child-idle-timeout-ms\":19}",
+        "{\"memory-reserve\":-1}",
+        "{\"max-children\":1.5}",
+    };
+    for (size_t i = 0; i < ARRAY_SIZE(invalid_admission_settings); ++i)
+    {
+        settings = cJSON_Parse(invalid_admission_settings[i]);
+        twfRequire(settings != NULL, "failed to create invalid MuxServer admission settings");
+        node.node_settings_json = settings;
+        twfRequire(muxserverTunnelCreate(&node) == NULL, "invalid MuxServer admission relationship was accepted");
+        cJSON_Delete(settings);
+    }
+
     GSTATE.ram_profile = previous_ram_profile;
 }
 
@@ -513,6 +674,9 @@ int main(void)
 
     caseLargeCompleteBatchIsDrained();
     caseConfiguredResumeThresholdControlsFlowResume();
+    casePerParentAdmissionRejectsWithClose();
+    caseDuplicateOpenClosesParent();
+    caseChildIdlePromotionAndImmediateRemoval();
     casePeerCloseDropsLateFramesAndKeepsSiblingProgress();
     caseDetachedConfiguration();
 

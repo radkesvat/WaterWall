@@ -8,14 +8,14 @@ static void handleQueueOverflow(tunnel_t *t, line_t *l, tcplistener_tstate_t *ts
          bufferqueueGetBufLen(&ls->pause_queue),
          kMaxPauseQueueSize);
 
-    bool removed = localidletableRemoveIdleItemByHash(tcplistenerGetLineIdleTable(ts, l), tcplistenerIdleKey(ls->io));
+    local_idle_item_t *idle_item = ls->idle_handle;
+    ls->idle_handle              = NULL;
+    bool removed                 = localidletableRemoveIdleItem(tcplistenerGetLineIdleTable(ts, l), idle_item);
     if (! removed)
     {
         LOGF("TcpListener: failed to remove idle item for FD:%x ", wioGetFD(ls->io));
         abortProgramNow(1);
     }
-
-    ls->idle_handle = NULL;
     weventSetUserData(ls->io, NULL);
     wioClose(ls->io);
     tcplistenerLinestateDestroy(ls);

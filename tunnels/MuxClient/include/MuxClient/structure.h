@@ -4,6 +4,21 @@
 #include "MuxCommon/mux_wire.h"
 #include "wwapi.h"
 
+typedef struct muxclient_lstate_s muxclient_lstate_t;
+
+#define i_type muxclient_child_map_t
+#define i_key  mux_cid_t
+#define i_val  muxclient_lstate_t *
+#include "stc/hmap.h"
+#undef i_val
+#undef i_key
+#undef i_type
+
+typedef struct muxclient_parent_state_s
+{
+    muxclient_child_map_t child_map;
+} muxclient_parent_state_t;
+
 typedef struct muxclient_tstate_s
 {
     uint8_t  concurrency_mode; // timer, counter, fixed-connections-count
@@ -16,6 +31,7 @@ typedef struct muxclient_tstate_s
     uint32_t parent_buffer_limit;
     uint32_t detached_buffer_limit;
     uint32_t detached_child_limit;
+    uint32_t max_children;
     uint32_t workers_count;
     bool     log_main_line_stats;
 
@@ -42,7 +58,7 @@ typedef enum muxclient_child_drain_result_e
     kMuxClientChildDrainParentGone,
 } muxclient_child_drain_result_t;
 
-typedef struct muxclient_lstate_s
+struct muxclient_lstate_s
 {
     line_t *l;           // the line this state is associated with
     line_t *last_writer; // used when parent, to track the last writer line
@@ -56,15 +72,17 @@ typedef struct muxclient_lstate_s
     uint64_t                      creation_epoch; // epoch of the connection creation, used for concurrency mode timer
     mux_cid_t                     connection_id;  // unique connection id, used for multiplexing
     muxclient_child_close_state_t close_state;    // child: monotonic ordered-close/drain state
-    uint32_t children_count;          // number of children in the parent connection, used for concurrency mode counter
-    bool     is_child : 1;            // immutable line role: this line is a Mux child
-    bool     paused : 1;              // child: local child write side is paused
-    bool     flow_paused_sent : 1;    // child: FlowPause was sent to the peer for this cid
-    bool     peer_flow_paused : 1;    // child: peer sent FlowPause for this cid
-    bool     parent_write_paused : 1; // child: parent transport write pause was reflected to this child
-    bool     parent_finishing : 1;    // parent: main FIN is being handled, suppress parent writes
-    bool     open_frame_sent : 1;     // child: peer has received the Open frame for this cid
-} muxclient_lstate_t;
+    uint32_t children_count; // number of children in the parent connection, used for concurrency mode counter
+    muxclient_parent_state_t *parent_state;         // parent-only CID index
+    bool                      is_child : 1;         // immutable line role: this line is a Mux child
+    bool                      paused : 1;           // child: local child write side is paused
+    bool                      flow_paused_sent : 1; // child: FlowPause was sent to the peer for this cid
+    bool                      peer_flow_paused : 1; // child: peer sent FlowPause for this cid
+    bool parent_write_paused : 1;                   // child: parent transport write pause was reflected to this child
+    bool parent_finishing : 1;                      // parent: main FIN is being handled, suppress parent writes
+    bool open_frame_sent : 1;                       // child: peer has received the Open frame for this cid
+    bool selection_retired : 1;                     // non-fixed parent: never selected for another child
+};
 
 enum
 {
@@ -116,8 +134,9 @@ void    muxclientForgetParentSelection(muxclient_tstate_t *ts, wid_t wid, line_t
 line_t *muxclientGetParentLineForNewChild(tunnel_t *t, line_t *child_l);
 void    muxclientScheduleParentStatsLog(tunnel_t *t, line_t *parent_l);
 
-void muxclientJoinConnection(muxclient_lstate_t *parent, muxclient_lstate_t *child);
-void muxclientLeaveConnection(muxclient_lstate_t *child);
+void                muxclientJoinConnection(muxclient_lstate_t *parent, muxclient_lstate_t *child);
+void                muxclientLeaveConnection(muxclient_lstate_t *child);
+muxclient_lstate_t *muxclientFindChildByConnectionId(muxclient_lstate_t *parent, mux_cid_t cid);
 
 /**
  * Finish and release a parent line that this node owns and that has no children left.

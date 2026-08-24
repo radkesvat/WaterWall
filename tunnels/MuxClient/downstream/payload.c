@@ -2,45 +2,6 @@
 
 #include "loggers/network_logger.h"
 
-static muxclient_lstate_t *findChildByConnectionId(muxclient_lstate_t *parent_ls, uint32_t cid)
-{
-    muxclient_lstate_t *child_ls = parent_ls->child_next;
-    while (child_ls)
-    {
-        if (child_ls->connection_id == cid)
-        {
-            return child_ls;
-        }
-        child_ls = child_ls->child_next;
-    }
-    return NULL;
-}
-
-static void moveChildToFront(muxclient_lstate_t *parent_ls, muxclient_lstate_t *child_ls)
-{
-    if (child_ls == parent_ls->child_next)
-    {
-        return;
-    }
-
-    if (child_ls->child_prev)
-    {
-        child_ls->child_prev->child_next = child_ls->child_next;
-    }
-    if (child_ls->child_next)
-    {
-        child_ls->child_next->child_prev = child_ls->child_prev;
-    }
-
-    child_ls->child_prev = NULL;
-    child_ls->child_next = parent_ls->child_next;
-    if (parent_ls->child_next)
-    {
-        parent_ls->child_next->child_prev = child_ls;
-    }
-    parent_ls->child_next = child_ls;
-}
-
 static bool handleCloseFrame(tunnel_t *t, line_t *parent_l, mux_frame_t *frame, sbuf_t *frame_buffer,
                              muxclient_tstate_t *ts, muxclient_lstate_t *parent_ls, muxclient_lstate_t *child_ls)
 {
@@ -158,15 +119,13 @@ void muxclientTunnelDownStreamPayload(tunnel_t *t, line_t *parent_l, sbuf_t *buf
             break;
         }
 
-        muxclient_lstate_t *child_ls = findChildByConnectionId(parent_ls, frame.cid);
+        muxclient_lstate_t *child_ls = muxclientFindChildByConnectionId(parent_ls, frame.cid);
         if (! child_ls)
         {
             // LOGD("MuxClient: DownStreamPayload: No child line state found for cid: %u", frame.cid);
             lineReuseBuffer(parent_l, frame_buffer);
             continue;
         }
-
-        moveChildToFront(parent_ls, child_ls);
 
         lineLock(parent_l);
         if (! processFrameForChild(t, parent_l, &frame, frame_buffer, ts, parent_ls, child_ls))

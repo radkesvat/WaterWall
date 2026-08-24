@@ -34,6 +34,14 @@ typedef struct muxserver_fixture_s
     line_t          *child_l;
 } muxserver_fixture_t;
 
+static void requireLiveChildResources(muxserver_fixture_t *fixture, uint32_t expected, const char *message)
+{
+    muxserver_tstate_t *ts = tunnelGetState(fixture->mux);
+    twfRequireEqualU32((uint32_t) atomicLoadRelaxed(&ts->live_children_count), expected, message);
+    local_idle_table_t *table = ts->worker_states[0].child_idle_table;
+    twfRequireEqualU32(table == NULL ? 0 : (uint32_t) localidletableGetItemCount(table), expected, message);
+}
+
 static void fixtureSetup(muxserver_fixture_t *fixture)
 {
     memoryZero(&fixture->trace, sizeof(fixture->trace));
@@ -42,22 +50,26 @@ static void fixtureSetup(muxserver_fixture_t *fixture)
     twfWorkerEnvSetup(&fixture->env, kTestLargeBufferSize, kMuxFrameLength * 2);
 
     fixture->prev = twfCreatePrevTunnel(&fixture->trace);
-    fixture->mux  = tunnelCreate(
-        NULL, sizeof(muxserver_tstate_t) + sizeof(muxserver_detached_registry_t), sizeof(muxserver_lstate_t));
+    fixture->mux =
+        tunnelCreate(NULL, sizeof(muxserver_tstate_t) + sizeof(muxserver_worker_state_t), sizeof(muxserver_lstate_t));
     twfRequire(fixture->mux != NULL, "failed to create the MuxServer tunnel");
     fixture->next = twfCreateNextTunnel(&fixture->trace);
 
     tunnelBind(fixture->prev, fixture->mux);
     tunnelBind(fixture->mux, fixture->next);
 
-    muxserver_tstate_t *ts            = tunnelGetState(fixture->mux);
-    ts->child_buffer_limit            = kMuxDefaultChildBufferLimit;
-    ts->child_buffer_pause_tolerance  = kMuxDefaultChildBufferPauseTolerance;
-    ts->child_buffer_resume_threshold = kMuxDefaultChildBufferResumeThreshold;
-    ts->parent_buffer_limit           = kMuxDefaultParentBufferLimit;
-    ts->detached_buffer_limit         = kMuxMinimumDetachedBufferLimit;
-    ts->detached_child_limit          = kMuxMinimumDetachedChildLimit;
-    ts->workers_count                 = 1;
+    muxserver_tstate_t *ts                = tunnelGetState(fixture->mux);
+    ts->child_buffer_limit                = kMuxDefaultChildBufferLimit;
+    ts->child_buffer_pause_tolerance      = kMuxDefaultChildBufferPauseTolerance;
+    ts->child_buffer_resume_threshold     = kMuxDefaultChildBufferResumeThreshold;
+    ts->parent_buffer_limit               = kMuxDefaultParentBufferLimit;
+    ts->detached_buffer_limit             = kMuxMinimumDetachedBufferLimit;
+    ts->detached_child_limit              = kMuxMinimumDetachedChildLimit;
+    ts->max_live_children                 = 1024;
+    ts->memory_fallback_max_live_children = 1024;
+    ts->initial_child_idle_timeout_ms     = 60000;
+    ts->active_child_idle_timeout_ms      = 60000;
+    ts->workers_count                     = 1;
 
     // Real pooled lines: lineDestroy() returns a line to line->pools[wid], so the
     // postcondition cannot be driven with a bare allocation.
@@ -68,9 +80,14 @@ static void fixtureSetup(muxserver_fixture_t *fixture)
     muxserver_lstate_t *parent_ls = lineGetState(fixture->parent_l, fixture->mux);
     muxserver_lstate_t *child_ls  = lineGetState(fixture->child_l, fixture->mux);
 
-    muxserverLinestateInitialize(parent_ls, fixture->parent_l, false, 0);
-    muxserverLinestateInitialize(child_ls, fixture->child_l, true, kTestChildCid);
+    muxserverLinestateInitialize(fixture->mux, parent_ls, fixture->parent_l, false, 0);
+    twfRequire(muxserverTryReserveLiveChildSlot(ts, ts->max_live_children),
+               "failed to reserve the fixture child's aggregate slot");
+    muxserverLinestateInitialize(fixture->mux, child_ls, fixture->child_l, true, kTestChildCid);
+    child_ls->child_slot_reserved = true;
+    muxserverArmChildIdle(fixture->mux, child_ls);
     muxserverJoinConnection(parent_ls, child_ls);
+    requireLiveChildResources(fixture, 1, "fixture child was not both reserved and armed");
 }
 
 /**
@@ -84,9 +101,21 @@ static void fixtureTeardown(muxserver_fixture_t *fixture)
         muxserver_lstate_t *parent_ls = lineGetState(fixture->parent_l, fixture->mux);
         if (parent_ls->l != NULL)
         {
-            muxserverLinestateDestroy(parent_ls);
+            muxserverLinestateDestroy(fixture->mux, parent_ls);
         }
         lineDestroy(fixture->parent_l);
+    }
+
+    muxserver_tstate_t *ts = tunnelGetState(fixture->mux);
+    twfRequireEqualU32(
+        (uint32_t) atomicLoadRelaxed(&ts->live_children_count), 0, "fixture teardown retained an aggregate child slot");
+    if (ts->worker_states[0].child_idle_table != NULL)
+    {
+        twfRequireEqualU32((uint32_t) localidletableGetItemCount(ts->worker_states[0].child_idle_table),
+                           0,
+                           "fixture teardown retained a child idle item");
+        localidletableDestroy(ts->worker_states[0].child_idle_table);
+        ts->worker_states[0].child_idle_table = NULL;
     }
 
     twfRequireNoLeakedBuffers();
@@ -246,8 +275,13 @@ static line_t *createPausedServerChild(muxserver_fixture_t *fixture, muxserver_l
 {
     line_t             *child_l  = twfLinePoolCreateLine(&fixture->lines);
     muxserver_lstate_t *child_ls = lineGetState(child_l, fixture->mux);
+    muxserver_tstate_t *ts       = tunnelGetState(fixture->mux);
 
-    muxserverLinestateInitialize(child_ls, child_l, true, cid);
+    twfRequire(muxserverTryReserveLiveChildSlot(ts, ts->max_live_children),
+               "failed to reserve an additional server child slot");
+    muxserverLinestateInitialize(fixture->mux, child_ls, child_l, true, cid);
+    child_ls->child_slot_reserved = true;
+    muxserverArmChildIdle(fixture->mux, child_ls);
     child_ls->paused = true;
     muxserverJoinConnection(parent_ls, child_ls);
     return child_l;
@@ -256,7 +290,7 @@ static line_t *createPausedServerChild(muxserver_fixture_t *fixture, muxserver_l
 static line_t *createServerParent(muxserver_fixture_t *fixture)
 {
     line_t *parent_l = twfLinePoolCreateLine(&fixture->lines);
-    muxserverLinestateInitialize(lineGetState(parent_l, fixture->mux), parent_l, false, 0);
+    muxserverLinestateInitialize(fixture->mux, lineGetState(parent_l, fixture->mux), parent_l, false, 0);
     return parent_l;
 }
 
@@ -266,7 +300,7 @@ static void destroySurvivingServerChild(muxserver_fixture_t *fixture, line_t *ch
     muxserver_lstate_t *parent_ls = child_ls->parent;
     muxserverLeaveConnection(child_ls);
     discard muxserverReleaseParentInputForChildClose(fixture->mux, fixture->parent_l, parent_ls, child_ls);
-    muxserverLinestateDestroy(child_ls);
+    muxserverLinestateDestroy(fixture->mux, child_ls);
     lineDestroy(child_l);
 }
 
@@ -401,6 +435,7 @@ static void casePeerCloseWaitsForOwnedChildResume(void)
     twfRequire(child_ls->close_state == kMuxServerChildClosePeerDraining,
                "peer Close did not publish server drain state");
     twfRequire(child_ls->parent == parent_ls, "blocked peer-close child was removed from attached routing");
+    requireLiveChildResources(&fixture, 1, "peer-close drain released a live child's slot or timer");
 
     lineLock(fixture.child_l);
     muxserverTunnelDownStreamResume(fixture.mux, fixture.child_l);
@@ -410,6 +445,7 @@ static void casePeerCloseWaitsForOwnedChildResume(void)
     twfRequireEqualU32(parent_ls->children_count, 0, "server peer-close completion left a child attached");
     twfRequireEqualU32(
         (uint32_t) parent_ls->pending_child_data_len, 0, "server peer-close completion retained parent accounting");
+    requireLiveChildResources(&fixture, 0, "peer-close final destruction did not release slot and timer once");
     twfRequireOwnedLineReclaimed(fixture.child_l, "MuxServer peer-close completion");
 
     fixtureTeardown(&fixture);
@@ -435,7 +471,7 @@ static void caseParentLossRegistersAndDrainsOwnedChild(void)
     muxserver_lstate_t *child_ls = lineGetState(fixture.child_l, fixture.mux);
     muxserverTunnelUpStreamFinish(fixture.mux, fixture.parent_l);
 
-    muxserver_detached_registry_t *registry = &ts->detached_registries[0];
+    muxserver_detached_registry_t *registry = &ts->worker_states[0].detached_registry;
     twfRequire(lineIsAlive(fixture.parent_l), "MuxServer destroyed its borrowed parent");
     twfRequireLineStateZeroed(fixture.parent_l, fixture.mux, "MuxServer retained dead parent state");
     twfRequire(lineIsAlive(fixture.child_l), "MuxServer destroyed a blocked detached owned child");
@@ -445,6 +481,7 @@ static void caseParentLossRegistersAndDrainsOwnedChild(void)
     twfRequire(registry->head == child_ls, "detached registry head does not own the child");
     twfRequireEqualU32(registry->count, 1, "detached owned child count is wrong");
     twfRequireEqualU32((uint32_t) registry->queued_bytes, kFirst + kSecond, "detached owned byte accounting is wrong");
+    requireLiveChildResources(&fixture, 1, "attached-to-detached transfer released the live slot or timer");
     twfRequireEqualU32(fixture.trace.next_payload, 0, "parent loss forced Payload through child Pause");
     twfRequireEqualU32(fixture.trace.next_finish, 0, "parent loss finished a blocked owned child early");
 
@@ -456,6 +493,7 @@ static void caseParentLossRegistersAndDrainsOwnedChild(void)
     twfRequireEqualU32(registry->count, 0, "detached registry count survived completion");
     twfRequireEqualU32((uint32_t) registry->queued_bytes, 0, "detached registry bytes survived completion");
     twfRequire(registry->head == NULL, "detached registry head survived completion");
+    requireLiveChildResources(&fixture, 0, "detached Resume finalization did not release slot and timer once");
     for (uint32_t i = 0; i < kFirst; ++i)
     {
         twfRequire(capture[i] == (uint8_t) kFirst, "detached drain reordered the first buffer");
@@ -484,9 +522,12 @@ static void caseDetachedLocalFinishAbortsResidualQueue(void)
 
     twfRequireEqualU32(fixture.trace.next_payload, 0, "detached local Finish forwarded residual Payload");
     twfRequireEqualU32(fixture.trace.next_finish, 0, "detached local Finish reflected Finish toward its sender");
-    twfRequireEqualU32(ts->detached_registries[0].count, 0, "detached local Finish retained registry membership");
     twfRequireEqualU32(
-        (uint32_t) ts->detached_registries[0].queued_bytes, 0, "detached local Finish retained queued-byte accounting");
+        ts->worker_states[0].detached_registry.count, 0, "detached local Finish retained registry membership");
+    twfRequireEqualU32((uint32_t) ts->worker_states[0].detached_registry.queued_bytes,
+                       0,
+                       "detached local Finish retained queued-byte accounting");
+    requireLiveChildResources(&fixture, 0, "detached local abort did not release slot and timer once");
     twfRequireOwnedLineReclaimed(fixture.child_l, "detached muxserverTunnelDownStreamFinish");
 
     fixtureTeardown(&fixture);
@@ -504,15 +545,24 @@ static void caseWorkerStopDiscardsDetachedQueue(void)
     muxserver_lstate_t *child_ls = lineGetState(fixture.child_l, fixture.mux);
     child_ls->paused             = false; // writable still must not create new work after shutdown commit
     lineLock(fixture.child_l);
-    muxserverTunnelOnWorkerStop(fixture.mux, 0, wwLifecycleProcessShutdown());
+    muxserverTunnelOnWorkerQuiesce(fixture.mux, 0, wwLifecycleProcessShutdown());
 
     muxserver_tstate_t *ts = tunnelGetState(fixture.mux);
+    requireLiveChildResources(&fixture, 1, "worker quiesce released a live detached child's slot or item");
+    twfRequire(ts->worker_states[0].child_idle_table != NULL &&
+                   localidletableTestIsQuiesced(ts->worker_states[0].child_idle_table),
+               "worker quiesce did not detach the child idle timer before drain");
+    muxserverTunnelOnWorkerStop(fixture.mux, 0, wwLifecycleProcessShutdown());
+
     twfRequire(! lineIsAlive(fixture.child_l), "worker stop left a detached owned child alive");
     twfRequireEqualU32(fixture.trace.next_payload, 0, "worker stop forwarded detached Payload");
     twfRequireEqualU32(fixture.trace.next_finish, 1, "worker stop did not finish the child exactly once");
-    twfRequire(ts->detached_registries[0].head == NULL, "worker stop retained the detached registry head");
-    twfRequireEqualU32(ts->detached_registries[0].count, 0, "worker stop retained detached children");
-    twfRequireEqualU32((uint32_t) ts->detached_registries[0].queued_bytes, 0, "worker stop retained detached bytes");
+    twfRequire(ts->worker_states[0].detached_registry.head == NULL, "worker stop retained the detached registry head");
+    twfRequireEqualU32(ts->worker_states[0].detached_registry.count, 0, "worker stop retained detached children");
+    twfRequireEqualU32(
+        (uint32_t) ts->worker_states[0].detached_registry.queued_bytes, 0, "worker stop retained detached bytes");
+    requireLiveChildResources(&fixture, 0, "worker stop did not release slot and timer once");
+    twfRequire(ts->worker_states[0].child_idle_table == NULL, "worker stop retained the child idle table");
     twfRequireOwnedLineReclaimed(fixture.child_l, "MuxServer worker stop");
 
     muxserverTunnelOnWorkerStop(fixture.mux, 0, wwLifecycleProcessShutdown());
@@ -535,9 +585,11 @@ static void caseDetachedChildLimitAbortsOnlyNewBlockedChild(void)
     twfRequire(! lineIsAlive(fixture.child_l), "detached child limit retained the rejected child");
     twfRequireEqualU32(fixture.trace.next_payload, 0, "detached child limit force-forwarded Payload");
     twfRequireEqualU32(fixture.trace.next_finish, 1, "detached child limit did not finish the rejected child");
-    twfRequire(ts->detached_registries[0].head == NULL, "detached child limit corrupted the registry head");
-    twfRequireEqualU32(ts->detached_registries[0].count, 0, "detached child limit retained registry membership");
-    twfRequireEqualU32((uint32_t) ts->detached_registries[0].queued_bytes, 0, "detached child limit retained bytes");
+    twfRequire(ts->worker_states[0].detached_registry.head == NULL, "detached child limit corrupted the registry head");
+    twfRequireEqualU32(
+        ts->worker_states[0].detached_registry.count, 0, "detached child limit retained registry membership");
+    twfRequireEqualU32(
+        (uint32_t) ts->worker_states[0].detached_registry.queued_bytes, 0, "detached child limit retained bytes");
     twfRequireOwnedLineReclaimed(fixture.child_l, "MuxServer detached child limit");
 
     fixtureTeardown(&fixture);
@@ -587,7 +639,7 @@ static void casePopulatedDetachedRegistrySupportsEveryRemovalPosition(void)
     muxserverTunnelUpStreamFinish(fixture.mux, fixture.parent_l);
 
     muxserver_tstate_t            *ts       = tunnelGetState(fixture.mux);
-    muxserver_detached_registry_t *registry = &ts->detached_registries[0];
+    muxserver_detached_registry_t *registry = &ts->worker_states[0].detached_registry;
     size_t                         total    = 0;
     for (uint32_t i = 0; i < ARRAY_SIZE(kQueueBytes); ++i)
     {
@@ -666,7 +718,7 @@ static void runMuxserverDetachedByteLimitCase(bool unlimited)
     muxserver_tstate_t *ts = tunnelGetState(fixture.mux);
     queuePausedServerPayload(&fixture, fixture.parent_l, fixture.child_l, kOlderBytes);
     muxserverTunnelUpStreamFinish(fixture.mux, fixture.parent_l);
-    muxserver_detached_registry_t *registry = &ts->detached_registries[0];
+    muxserver_detached_registry_t *registry = &ts->worker_states[0].detached_registry;
     requireDetachedRegistryLinks(registry, 1, kOlderBytes, "older detached server child was not retained");
 
     line_t             *new_parent    = createServerParent(&fixture);
@@ -751,7 +803,7 @@ static void caseDetachedDrainStopsOnReentrantPause(void)
     muxserver_tstate_t *ts = tunnelGetState(fixture.mux);
     twfRequireEqualU32(fixture.trace.next_payload, 1, "re-entrant Pause did not stop after the first Payload");
     twfRequireEqualU32(fixture.trace.next_finish, 0, "re-entrant Pause allowed early Finish");
-    twfRequireEqualU32((uint32_t) ts->detached_registries[0].queued_bytes,
+    twfRequireEqualU32((uint32_t) ts->worker_states[0].detached_registry.queued_bytes,
                        kSecond,
                        "re-entrant Pause corrupted residual detached bytes");
     twfRequire(child_ls->paused, "re-entrant Pause was not retained on the detached child");
