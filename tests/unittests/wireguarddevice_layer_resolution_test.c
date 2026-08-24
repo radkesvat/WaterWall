@@ -27,14 +27,14 @@ static void layerFixtureCreate(layer_fixture_t *fixture, enum node_layer_group p
 {
     memoryZero(fixture, sizeof(*fixture));
     fixture->prev_node = (node_t) {
-              .name                  = (char *) "prev",
-              .type                  = (char *) "PrevNode",
-              .flags                 = kNodeFlagChainHead,
-              .layer_group           = prev_layer,
-              .layer_group_next_node = prev_layer,
-              .layer_group_prev_node = kNodeLayerNone,
-              .can_have_next         = true,
-              .can_have_prev         = false,
+        .name                  = (char *) "prev",
+        .type                  = (char *) "PrevNode",
+        .flags                 = kNodeFlagChainHead,
+        .layer_group           = prev_layer,
+        .layer_group_next_node = prev_layer,
+        .layer_group_prev_node = kNodeLayerNone,
+        .can_have_next         = true,
+        .can_have_prev         = false,
     };
     fixture->wireguard_node = (node_t) {
         .name                  = (char *) "wireguard",
@@ -122,12 +122,22 @@ static void requireSolved(layer_fixture_t *fixture)
     require(nodeLayerSolveChain(fixture->chain, &status), status.message);
 }
 
+static bool runSuccessfulSolvedTopologyHook(layer_fixture_t *fixture)
+{
+    ww_startup_context_t startup = {0};
+    wwStartupContextBegin(&startup);
+    const bool                changed = wireguarddeviceTunnelOnSolvedTopology(fixture->wireguard, fixture->chain);
+    const ww_startup_result_t result  = wwStartupContextEnd(&startup);
+    require(wwStartupSucceeded(result), "valid WireGuard topology hook unexpectedly failed startup");
+    return changed;
+}
+
 static void testDirectionComesFromAdjacentSolvedLayers(void)
 {
     layer_fixture_t packet_prev;
     layerFixtureCreate(&packet_prev, kNodeLayer3, kNodeLayer4);
     requireSolved(&packet_prev);
-    require(! wireguarddeviceTunnelOnSolvedTopology(packet_prev.wireguard, packet_prev.chain),
+    require(! runSuccessfulSolvedTopologyHook(&packet_prev),
             "WireGuard without a private controller reported a topology change");
     wgd_tstate_t *prev_state = tunnelGetState(packet_prev.wireguard);
     require(prev_state->transport_side_resolved && prev_state->transport_side_is_next,
@@ -137,7 +147,7 @@ static void testDirectionComesFromAdjacentSolvedLayers(void)
     layer_fixture_t packet_next;
     layerFixtureCreate(&packet_next, kNodeLayer4, kNodeLayer3);
     requireSolved(&packet_next);
-    require(! wireguarddeviceTunnelOnSolvedTopology(packet_next.wireguard, packet_next.chain),
+    require(! runSuccessfulSolvedTopologyHook(&packet_next),
             "WireGuard without a private controller reported a topology change");
     wgd_tstate_t *next_state = tunnelGetState(packet_next.wireguard);
     require(next_state->transport_side_resolved && ! next_state->transport_side_is_next,
@@ -149,29 +159,29 @@ static void testControllerIsInsertedOnSolvedTransportSide(void)
 {
     layer_fixture_t next_transport;
     layerFixtureCreate(&next_transport, kNodeLayer3, kNodeLayer4);
-    tunnel_t       *next_controller = layerFixtureAddController(&next_transport);
+    tunnel_t *next_controller = layerFixtureAddController(&next_transport);
     requireSolved(&next_transport);
-    require(wireguarddeviceTunnelOnSolvedTopology(next_transport.wireguard, next_transport.chain),
+    require(runSuccessfulSolvedTopologyHook(&next_transport),
             "WireGuard did not report next-side controller insertion");
     require(next_transport.wireguard->next == next_controller && next_controller->next == next_transport.next &&
                 next_transport.chain->tunnels.tuns[2] == next_controller,
             "WireGuard inserted its controller outside the solved next L4 edge");
     requireSolved(&next_transport);
-    require(! wireguarddeviceTunnelOnSolvedTopology(next_transport.wireguard, next_transport.chain),
+    require(! runSuccessfulSolvedTopologyHook(&next_transport),
             "WireGuard inserted its next-side controller more than once");
     layerFixtureDestroy(&next_transport);
 
     layer_fixture_t prev_transport;
     layerFixtureCreate(&prev_transport, kNodeLayer4, kNodeLayer3);
-    tunnel_t       *prev_controller = layerFixtureAddController(&prev_transport);
+    tunnel_t *prev_controller = layerFixtureAddController(&prev_transport);
     requireSolved(&prev_transport);
-    require(wireguarddeviceTunnelOnSolvedTopology(prev_transport.wireguard, prev_transport.chain),
+    require(runSuccessfulSolvedTopologyHook(&prev_transport),
             "WireGuard did not report previous-side controller insertion");
     require(prev_transport.prev->next == prev_controller && prev_controller->next == prev_transport.wireguard &&
                 prev_transport.chain->tunnels.tuns[1] == prev_controller,
             "WireGuard inserted its controller outside the solved previous L4 edge");
     requireSolved(&prev_transport);
-    require(! wireguarddeviceTunnelOnSolvedTopology(prev_transport.wireguard, prev_transport.chain),
+    require(! runSuccessfulSolvedTopologyHook(&prev_transport),
             "WireGuard inserted its previous-side controller more than once");
     layerFixtureDestroy(&prev_transport);
 }

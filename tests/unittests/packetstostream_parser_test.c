@@ -215,8 +215,14 @@ static void testAdversarialNoCrash(buffer_stream_t *bs, buffer_pool_t *pool)
 // crashing, and must resync afterwards.
 static void testLooksValidWorstCase(buffer_stream_t *bs, buffer_pool_t *pool)
 {
+    enum
+    {
+        kWorstCasePacketLength = 1000
+    };
+
     uint8_t head[IP_HLEN];
-    buildIpv4(head, 1000, IP_PROTO_TCP, 0x00); // claims 1000 bytes total
+    buildIpv4(head, IP_HLEN, IP_PROTO_TCP, 0x00);
+    IPH_LEN_SET((struct ip_hdr *) head, lwip_htons(kWorstCasePacketLength));
 
     // Only the 20-byte header is present: parser must wait, not crash, not extract.
     pushBytes(bs, pool, head, IP_HLEN, 0);
@@ -226,11 +232,11 @@ static void testLooksValidWorstCase(buffer_stream_t *bs, buffer_pool_t *pool)
 
     // Provide the remaining claimed bytes: the parser forwards the garbage-sized packet (size 1000)
     // exactly as the size field demanded. This is acceptable per the contract.
-    uint8_t filler[1000 - IP_HLEN];
+    uint8_t filler[kWorstCasePacketLength - IP_HLEN];
     memorySet(filler, 0x99, sizeof(filler));
     pushBytes(bs, pool, filler, sizeof(filler), 128);
     require(packetstostreamTryReadIPv4Packet(bs, &p), "worst-case: should forward the sized packet");
-    require(p != NULL && sbufGetLength(p) == 1000, "worst-case: forwarded wrong size");
+    require(p != NULL && sbufGetLength(p) == kWorstCasePacketLength, "worst-case: forwarded wrong size");
     if (p)
         bufferpoolReuseBuffer(pool, p);
     require(bufferstreamGetBufLen(bs) == 0, "worst-case: stream should be drained");
