@@ -171,7 +171,7 @@ WW_WORKER_MESSAGE_MUST_USE worker_message_submit_result_e sendWorkerMessageForce
 
 // Same as above but with a delay in ms. delay=0 means next event-loop iteration.
 // Note, order of execution is not guaranteed for messages with the same delay, so if you need to guarantee order,
-// use your own FIFO queue.
+// use your own FIFO queue (like buffer_queue_t forexample).
 void sendWorkerMessageTimed(wid_t wid, WorkerMessageCallback cb, uint32_t delay_ms, void *arg1, void *arg2, void *arg3);
 /* Accepted work runs its callback or receives one typed cancellation cleanup. */
 WW_WORKER_MESSAGE_MUST_USE worker_message_submit_result_e
