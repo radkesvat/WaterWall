@@ -1112,64 +1112,6 @@ static void installPendingIptablesRules(void)
 }
 
 /**
- * @brief Detect IPv4-mapped IPv6 addresses.
- */
-static inline bool needsV4SocketStrategy(const ip6_addr_t addr)
-{
-    uint16_t segments[8];
-    memoryCopy(segments, addr.addr, sizeof(segments));
-    return (segments[0] == 0 && segments[1] == 0 && segments[2] == 0 && segments[3] == 0 && segments[4] == 0 &&
-            segments[5] == 0xFFFF);
-}
-
-/**
- * @brief Compare two normalized IP addresses for exact equality.
- */
-static inline bool ipAddrEqualsExact(const ip_addr_t *a, const ip_addr_t *b)
-{
-    if (a->type != b->type)
-    {
-        return false;
-    }
-    if (a->type == IPADDR_TYPE_V4)
-    {
-        return a->u_addr.ip4.addr == b->u_addr.ip4.addr;
-    }
-    return (a->u_addr.ip6.addr[0] == b->u_addr.ip6.addr[0] && a->u_addr.ip6.addr[1] == b->u_addr.ip6.addr[1] &&
-            a->u_addr.ip6.addr[2] == b->u_addr.ip6.addr[2] && a->u_addr.ip6.addr[3] == b->u_addr.ip6.addr[3]);
-}
-
-/**
- * @brief Detect a wildcard (all-zero) IP address.
- */
-static inline bool ipAddrIsWildcard(const ip_addr_t *a)
-{
-    if (a->type == IPADDR_TYPE_V4)
-    {
-        return a->u_addr.ip4.addr == 0;
-    }
-    if (a->type == IPADDR_TYPE_V6)
-    {
-        return (a->u_addr.ip6.addr[0] | a->u_addr.ip6.addr[1] | a->u_addr.ip6.addr[2] | a->u_addr.ip6.addr[3]) == 0;
-    }
-    return true;
-}
-
-/**
- * @brief Collapse an IPv4-mapped IPv6 address to native IPv4.
- */
-static inline void normalizeIpAddr(ip_addr_t *addr)
-{
-    if (addr->type == IPADDR_TYPE_V6 && needsV4SocketStrategy(addr->u_addr.ip6))
-    {
-        ip4_addr_t v4;
-        memoryCopy(&v4, &(addr->u_addr.ip6.addr[3]), sizeof(v4.addr));
-        addr->type       = IPADDR_TYPE_V4;
-        addr->u_addr.ip4 = v4;
-    }
-}
-
-/**
  * @brief Convert an ACL range wholly contained in the IPv4-mapped IPv6 prefix to native IPv4.
  */
 static inline bool mappedAclRangeToV4(const ipmask_t *range, ip4_addr_t *ip, ip4_addr_t *mask)
@@ -1188,19 +1130,6 @@ static inline bool mappedAclRangeToV4(const ipmask_t *range, ip4_addr_t *ip, ip4
 
     memoryCopy(ip, &range->ip.u_addr.ip6.addr[3], sizeof(ip->addr));
     memoryCopy(mask, &range_mask->addr[3], sizeof(mask->addr));
-    return true;
-}
-
-/**
- * @brief Convert an accepted socket address to a normalized IP address for local-address dispatch.
- */
-static inline bool sockaddrToNormalizedIpAddr(const sockaddr_u *src, ip_addr_t *dest)
-{
-    if (! sockaddrToIpAddr(src, dest))
-    {
-        return false;
-    }
-    normalizeIpAddr(dest);
     return true;
 }
 

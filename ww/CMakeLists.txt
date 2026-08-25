@@ -128,6 +128,7 @@ add_library(ww STATIC
     instance/wversion.c
     
     # Networking
+    net/bound_udp_socket.c
     net/packet_tunnel.c
     net/pipe_tunnel.c
     net/sync_dns.c

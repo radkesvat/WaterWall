@@ -22,3 +22,17 @@ tunnel_t *tcpudplistenerSelectDownStreamTunnel(tunnel_t *t, line_t *l)
          (unsigned int) src_ctx->proto_udp);
     abortProgramNow(1);
 }
+
+udplistener_dynamic_provider_t tcpudplistenerGetDynamicProvider(tunnel_t *t)
+{
+    if (t == NULL)
+    {
+        return (udplistener_dynamic_provider_t) {0};
+    }
+    tcpudplistener_tstate_t *ts = tunnelGetState(t);
+    if (ts == NULL || ts->udp_listener == NULL)
+    {
+        return (udplistener_dynamic_provider_t) {0};
+    }
+    return udplistenerGetDynamicProvider(ts->udp_listener);
+}

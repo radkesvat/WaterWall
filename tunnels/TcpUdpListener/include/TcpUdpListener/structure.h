@@ -1,5 +1,6 @@
 #pragma once
 
+#include "interface.h"
 #include "wwapi.h"
 
 #include "TcpListener/interface.h"

@@ -162,10 +162,13 @@ static void setupTunnelCallbacks(tunnel_t *t)
     t->fnPauseD   = &udplistenerTunnelDownStreamPause;
     t->fnResumeD  = &udplistenerTunnelDownStreamResume;
 
-    t->onPrepare = &udplistenerTunnelOnPrepair;
-    t->onStart   = &udplistenerTunnelOnStart;
-    t->onStop    = &udplistenerTunnelOnStop;
-    t->onDestroy = &udplistenerTunnelDestroy;
+    t->onPrepare        = &udplistenerTunnelOnPrepair;
+    t->onStart          = &udplistenerTunnelOnStart;
+    t->onQuiesceRequest = &udplistenerTunnelOnQuiesceRequest;
+    t->onWorkerQuiesce  = &udplistenerTunnelOnWorkerQuiesce;
+    t->onWorkerStop     = &udplistenerTunnelOnWorkerStop;
+    t->onStop           = &udplistenerTunnelOnStop;
+    t->onDestroy        = &udplistenerTunnelDestroy;
 }
 
 static bool validateAndSetAddress(udplistener_tstate_t *state, const cJSON *settings)
@@ -290,26 +293,91 @@ static void parseIpMaskList(const cJSON *settings, const char *list_name, vec_ip
     }
 }
 
-static void setupFilterOptions(socket_filter_option_t *filter_opt, udplistener_tstate_t *state, const cJSON *settings)
+static bool copyIpMaskList(vec_ipmask_t *dst, const vec_ipmask_t *src)
+{
+    /* socketfilteroptionInit() already gave both destination vectors owned
+     * backing storage. Preserve it so socketfilteroptionDeInit() can release
+     * the same allocations exactly once. */
+    if (dst == src)
+    {
+        return true;
+    }
+
+    const isize_t initial_size = vec_ipmask_t_size(dst);
+    const isize_t source_size  = vec_ipmask_t_size(src);
+
+    if (source_size > ISIZE_MAX - initial_size)
+    {
+        return false;
+    }
+    const isize_t needed = initial_size + source_size;
+
+    if (needed > vec_ipmask_t_capacity(dst))
+    {
+#ifdef UDPLISTENER_CREATE_TEST_HOOKS
+        if (udplistenerTestFailAclCopyReserve())
+        {
+            return false;
+        }
+#endif
+
+        if (! vec_ipmask_t_reserve(dst, needed) || vec_ipmask_t_capacity(dst) < needed)
+        {
+            return false;
+        }
+    }
+
+    for (isize i = 0; i < vec_ipmask_t_size(src); ++i)
+    {
+        if (UNLIKELY(vec_ipmask_t_push(dst, *vec_ipmask_t_at(src, i)) == NULL))
+        {
+            /* ipmask_t has no owned subobjects. Keep this helper atomic for
+             * callers that choose to retry after a transient allocation
+             * failure, while the constructor below still deinitializes the
+             * complete unpublished option before returning NULL. */
+            dst->size = initial_size;
+            return false;
+        }
+    }
+
+    return true;
+}
+
+#ifdef UDPLISTENER_CREATE_TEST_HOOKS
+bool udplistenerTestCopyIpMaskList(vec_ipmask_t *dst, const vec_ipmask_t *src)
+{
+    return copyIpMaskList(dst, src);
+}
+#endif
+
+static bool setupFilterOptions(socket_filter_option_t *filter_opt, udplistener_tstate_t *state, const cJSON *settings)
 {
     socketfilteroptionInit(filter_opt);
     filter_opt->send_buffer_size = state->send_buffer_size;
     filter_opt->recv_buffer_size = state->recv_buffer_size;
 
-    getStringFromJsonObject(&(filter_opt->interface_name), settings, "interface");
+    if (state->interface_name != NULL)
+    {
+        filter_opt->interface_name = stringDuplicate(state->interface_name);
+    }
     getStringFromJsonObject(&(filter_opt->balance_group_name), settings, "balance-group");
     getIntFromJsonObject((int *) &(filter_opt->balance_group_interval), settings, "balance-interval");
-    getIntFromJsonObjectOrDefault(&(filter_opt->fwmark), settings, "fwmark", -1);
+    filter_opt->fwmark = state->fwmark;
 
     parsePortSection(state, filter_opt, settings);
     configureMultiportBackend(filter_opt, state, settings);
-    parseIpMaskList(settings, "whitelist", &filter_opt->white_list);
-    parseIpMaskList(settings, "blacklist", &filter_opt->black_list);
+    if (! copyIpMaskList(&filter_opt->white_list, &state->white_list) ||
+        ! copyIpMaskList(&filter_opt->black_list, &state->black_list))
+    {
+        LOGF("UdpListener: failed to copy listener ACL into SocketManager filter options");
+        return false;
+    }
 
     filter_opt->host     = state->listen_address;
     filter_opt->port_min = state->listen_port_min;
     filter_opt->port_max = state->listen_port_max;
     filter_opt->protocol = IPPROTO_UDP;
+    return true;
 }
 
 tunnel_t *udplistenerTunnelCreate(node_t *node)
@@ -325,14 +393,43 @@ tunnel_t *udplistenerTunnelCreate(node_t *node)
     const cJSON          *settings = node->node_settings_json;
     udplistener_tstate_t *state    = tunnelGetState(t);
 
+    state->white_list = vec_ipmask_t_init();
+    state->black_list = vec_ipmask_t_init();
+
     if (! validateAndSetAddress(state, settings))
     {
         udplistenerTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
+    getStringFromJsonObject(&(state->interface_name), settings, "interface");
+    getIntFromJsonObjectOrDefault(&(state->fwmark), settings, "fwmark", -1);
+    parseIpMaskList(settings, "whitelist", &state->white_list);
+    parseIpMaskList(settings, "blacklist", &state->black_list);
+
+    state->workers_count     = (wid_t) getWorkersCount();
+    state->worker_registries = memoryAllocateZero(sizeof(udplistener_worker_registry_t) * state->workers_count);
+    if (state->worker_registries == NULL)
+    {
+        udplistenerTunnelDestroy(t, wwLifecycleStartupRollback());
+        return NULL;
+    }
+
+    for (wid_t wid = 0; wid < state->workers_count; ++wid)
+    {
+        state->worker_registries[wid].endpoints       = udplistener_endpoint_map_t_init();
+        state->worker_registries[wid].next_generation = 1;
+    }
+
+    atomic_init(&state->dynamic_admission_open, true);
+
     socket_filter_option_t filter_opt;
-    setupFilterOptions(&filter_opt, state, settings);
+    if (! setupFilterOptions(&filter_opt, state, settings))
+    {
+        socketfilteroptionDeInit(&filter_opt);
+        udplistenerTunnelDestroy(t, wwLifecycleStartupRollback());
+        return NULL;
+    }
     socketacceptorRegister(t, filter_opt, onUdpListenerFilteredPayloadReceived);
 
     return t;

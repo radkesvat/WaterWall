@@ -21,6 +21,7 @@
 
 #include "net/adapter.h"
 #include "net/async_dns.h"
+#include "net/bound_udp_socket.h"
 #include "net/dns_strategy.h"
 #include "net/egress_pin.h"
 #include "net/ipv4_packet_view.h"

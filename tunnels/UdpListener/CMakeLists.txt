@@ -8,6 +8,7 @@ add_library(UdpListener STATIC
                     instance/start.c
                     instance/stop.c
                     common/helpers.c
+                    common/dynamic_endpoint.c
                     common/line_state.c
                     downstream/init.c
                     downstream/est.c
