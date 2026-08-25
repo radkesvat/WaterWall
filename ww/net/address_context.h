@@ -36,12 +36,12 @@ enum connection_context_type
 
 #define IP_PROTO_PACKET 255
 
-enum
-{
-    kAddressContextProtocolHttp1      = 1U << 0U,
-    kAddressContextProtocolTls        = 1U << 1U,
-    kAddressContextProtocolBittorrent = 1U << 2U,
-};
+/* Keep every flag unsigned at its definition. Enum constants have type int
+ * when their values fit, which makes complemented masks signed on ISO C
+ * compilers even though the storage below is uint32_t. */
+#define kAddressContextProtocolHttp1      (UINT32_C(1) << 0U)
+#define kAddressContextProtocolTls        (UINT32_C(1) << 1U)
+#define kAddressContextProtocolBittorrent (UINT32_C(1) << 2U)
 
 /* Stored with optional metadata so an already-negotiated endpoint can survive
  * middle tunnels without changing the line_t ABI. It is not a sniffed
