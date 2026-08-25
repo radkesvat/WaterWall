@@ -179,7 +179,7 @@ typedef struct Thr Thr;
 
 // Thr holds thread-specific data and is owned by thread-local storage
 
-#if ! HAVE_STDATOMIC_H
+#if ! WW_HAVE_C11_ATOMICS
 /*
  * The slots the accessors below operate on are declared as the fallback's own
  * atomic type rather than as pointers. The fallback's generic atomics take an
@@ -226,7 +226,7 @@ typedef struct WaitQ
 
 #endif
 
-#if ! HAVE_STDATOMIC_H
+#if ! WW_HAVE_C11_ATOMICS
 #define atomicLoadThrPtr(p, order)      ((Thr *) atomicLoadExplicit((p), order))
 #define atomicStoreThrPtr(p, v, order)  atomicStoreExplicit((p), (intptr_t) (v), order)
 #define atomicLoadVoidPtr(p, order)     ((void *) atomicLoadExplicit((p), order))

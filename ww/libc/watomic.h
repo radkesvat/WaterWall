@@ -1,7 +1,7 @@
 #ifndef WW_ATOMIC_H_
 #define WW_ATOMIC_H_
 
-#include "wplatform.h" // for HAVE_STDATOMIC_H
+#include "wplatform.h" // for WW_HAVE_C11_ATOMICS
 
 /*
  * This header exposes two atomic APIs and they are not interchangeable:
@@ -17,7 +17,7 @@
  * atomic_ullong field or reaching for a generic operation on an existing one.
  */
 
-#if HAVE_STDATOMIC_H
+#if WW_HAVE_C11_ATOMICS
 
 // c11
 #include <limits.h>
@@ -341,7 +341,7 @@ _Static_assert(sizeof(atomic_ullong) == sizeof(uint64_t),
 _Static_assert(sizeof(atomic_ullong) == sizeof(w_atomic_ullong_value_t),
                "atomic_ullong compare/exchange value type must match its storage");
 
-#if HAVE_STDATOMIC_H
+#if WW_HAVE_C11_ATOMICS
 
 /*
  * uint64_t and unsigned long long are distinct types on LP64, and the C11

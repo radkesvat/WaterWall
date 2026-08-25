@@ -19,7 +19,7 @@ struct application_shutdown_s
 static application_shutdown_t *application_shutdown_gstate;
 static atomic_int              fatal_exit_status;
 
-#if HAVE_STDATOMIC_H
+#if WW_HAVE_C11_ATOMICS
 _Static_assert(ATOMIC_INT_LOCK_FREE == 2, "fatal shutdown status requires an always-lock-free atomic_int");
 #elif defined(OS_WIN)
 /* The fallback atomic_int is pointer-width and its compare/exchange and load map
