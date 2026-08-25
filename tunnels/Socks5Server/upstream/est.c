@@ -4,8 +4,8 @@
 
 void socks5serverTunnelUpStreamEst(tunnel_t *t, line_t *l)
 {
+    socks5serverRequireCurrentLineWorker(l, "upstream Est");
     discard t;
-    discard l;
     LOGF("Socks5Server: UpStreamEst is disabled");
     abortProgramNow(1);
 }

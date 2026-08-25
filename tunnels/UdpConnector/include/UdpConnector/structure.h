@@ -21,6 +21,7 @@ typedef struct udpconnector_domain_resolver_lstate_s
 {
     address_context_t packet_base_dest_ctx;
     uint32_t          packet_initial_destination_index;
+    bool              route_destination_pinned;
 } udpconnector_domain_resolver_lstate_t;
 
 typedef struct udpconnector_packet_dns_request_s udpconnector_packet_dns_request_t;
@@ -102,6 +103,7 @@ typedef struct udpconnector_lstate_s
     bool                               established : 1;      // whether downstream est was sent
     bool                               write_paused : 1;     // whether upstream writes are queued
     bool                               queue_pause_sent : 1; // whether downstream pause was sent for the queue
+    bool                               route_destination_pinned : 1;
 
 } udpconnector_lstate_t;
 

@@ -4,6 +4,7 @@
 
 void socks5serverTunnelUpStreamFinish(tunnel_t *t, line_t *l)
 {
+    socks5serverRequireCurrentLineWorker(l, "upstream Finish");
     socks5server_lstate_t *ls = lineGetState(l, t);
 
     switch (ls->kind)
@@ -18,6 +19,10 @@ void socks5serverTunnelUpStreamFinish(tunnel_t *t, line_t *l)
 
     case kSocks5ServerLineKindUdpRemote:
         socks5serverCloseUdpRemoteLine(t, l);
+        return;
+
+    case kSocks5ServerLineKindRejected:
+        socks5serverLinestateDestroy(ls);
         return;
 
     case kSocks5ServerLineKindNone:

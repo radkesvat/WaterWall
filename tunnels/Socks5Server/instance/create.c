@@ -195,39 +195,21 @@ tunnel_t *socks5serverTunnelCreate(node_t *node)
         return NULL;
     }
 
-    ts->allow_connect = true;
-    ts->allow_udp     = false;
-    ts->no_auth       = false;
-    for (uint32_t i = 0; i < kSocks5ServerAssocShardCount; ++i)
+    ts->allow_connect       = true;
+    ts->allow_udp           = false;
+    ts->no_auth             = false;
+    ts->workers_count       = (wid_t) getWorkersCount();
+    ts->worker_associations = memoryAllocateZero(sizeof(socks5server_assoc_map_t) * ts->workers_count);
+    if (UNLIKELY(ts->worker_associations == NULL))
     {
-        ts->assoc_shards[i].map = socks5server_assoc_map_t_init();
-        if (UNLIKELY(! rwlockTryInit(&ts->assoc_shards[i].lock)))
-        {
-            socks5server_assoc_map_t_drop(&ts->assoc_shards[i].map);
-            while (i > 0)
-            {
-                --i;
-                socks5server_assoc_map_t_drop(&ts->assoc_shards[i].map);
-                rwlockDestroy(&ts->assoc_shards[i].lock);
-            }
-            LOGF("Socks5Server: failed to initialize UDP association shard lock");
-            tunnelDestroy(t);
-            return NULL;
-        }
-        if (UNLIKELY(! socks5server_assoc_map_t_reserve(&ts->assoc_shards[i].map, kSocks5ServerAssocShardInitialCap)))
-        {
-            socks5server_assoc_map_t_drop(&ts->assoc_shards[i].map);
-            rwlockDestroy(&ts->assoc_shards[i].lock);
-            while (i > 0)
-            {
-                --i;
-                socks5server_assoc_map_t_drop(&ts->assoc_shards[i].map);
-                rwlockDestroy(&ts->assoc_shards[i].lock);
-            }
-            LOGF("Socks5Server: failed to reserve UDP association shard map");
-            tunnelDestroy(t);
-            return NULL;
-        }
+        LOGF("Socks5Server: failed to allocate worker associations array");
+        tunnelDestroy(t);
+        return NULL;
+    }
+
+    for (wid_t wid = 0; wid < ts->workers_count; ++wid)
+    {
+        ts->worker_associations[wid] = socks5server_assoc_map_t_init();
     }
 
     getBoolFromJsonObjectOrDefault(&ts->allow_connect, settings, "connect", true);

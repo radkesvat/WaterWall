@@ -33,39 +33,30 @@ static uint16_t socks5serverGetLocalPort(const line_t *l)
     return lineGetSourceAddressContext((line_t *) l)->port;
 }
 
-static hash_t socks5serverCalcAssociationKey(const ip_addr_t *ip, uint16_t udp_port, uint16_t local_port)
-{
-    struct
-    {
-        uint16_t   listener_port;
-        uint16_t   client_port;
-        uint8_t    ip_type;
-        uint8_t    padding[5];
-        ip4_addr_t ip4;
-        ip6_addr_t ip6;
-    } key = {0};
-
-    key.listener_port = local_port;
-    key.client_port   = udp_port;
-    key.ip_type       = ip->type;
-
-    if (ip->type == IPADDR_TYPE_V4)
-    {
-        key.ip4 = ip->u_addr.ip4;
-    }
-    else
-    {
-        key.ip6 = ip->u_addr.ip6;
-    }
-
-    return calcHashBytes(&key, sizeof(key));
-}
-
 static hash_t socks5serverCalcAddressHash(const address_context_t *ctx)
 {
     if (addresscontextIsIp(ctx))
     {
-        return socks5serverCalcAssociationKey(&ctx->ip_address, ctx->port, 0);
+        struct
+        {
+            uint16_t   port;
+            uint8_t    ip_type;
+            uint8_t    padding[5];
+            ip4_addr_t ip4;
+            ip6_addr_t ip6;
+        } key = {0};
+
+        key.port    = ctx->port;
+        key.ip_type = ctx->ip_address.type;
+        if (ctx->ip_address.type == IPADDR_TYPE_V4)
+        {
+            key.ip4 = ctx->ip_address.u_addr.ip4;
+        }
+        else
+        {
+            key.ip6 = ctx->ip_address.u_addr.ip6;
+        }
+        return calcHashBytes(&key, sizeof(key));
     }
 
     struct
@@ -416,27 +407,6 @@ static bool socks5serverAuthUserFromClient(tunnel_t *t, line_t *l, const uint8_t
     return false;
 }
 
-static socks5server_assoc_shard_t *socks5serverGetAssocShard(tunnel_t *t, hash_t key)
-{
-    socks5server_tstate_t *ts          = tunnelGetState(t);
-    size_t                 shard_index = (size_t) (key & (hash_t) (kSocks5ServerAssocShardCount - 1U));
-    return &ts->assoc_shards[shard_index];
-}
-
-static uint64_t socks5serverNextAssociationToken(tunnel_t *t)
-{
-    socks5server_tstate_t *ts    = tunnelGetState(t);
-    uint64_t               token = atomicAddU64Explicit(&ts->next_association_token, 1ULL, memory_order_relaxed) + 1ULL;
-    if (UNLIKELY(token == 0))
-    {
-        token = atomicAddU64Explicit(&ts->next_association_token, 1ULL, memory_order_relaxed) + 1ULL;
-    }
-    return token;
-}
-
-// Store null-terminated copies of the raw SOCKS5 credentials on the line state,
-// replacing any previous values. The wire fields are length-prefixed and are not
-// null-terminated, so they are copied out into owned strings here.
 static bool socks5serverStoreAuthCredentials(socks5server_lstate_t *ls, const uint8_t *username, uint8_t username_len,
                                              const uint8_t *password, uint8_t password_len)
 {
@@ -468,7 +438,7 @@ static bool socks5serverStoreAuthCredentials(socks5server_lstate_t *ls, const ui
     return true;
 }
 
-static void socks5serverRecordLineUser(line_t *l, socks5server_lstate_t *ls, const user_handle_t *user_handle)
+void socks5serverRecordLineUser(line_t *l, socks5server_lstate_t *ls, const user_handle_t *user_handle)
 {
     if (ls->user_handle_recorded)
     {
@@ -479,8 +449,7 @@ static void socks5serverRecordLineUser(line_t *l, socks5server_lstate_t *ls, con
     ls->user_handle_recorded = true;
 }
 
-// Free the owned credential strings carried by an association entry.
-static void socks5serverAssocEntryFreeCreds(socks5server_assoc_entry_t *entry)
+void socks5serverAssocEntryFreeCreds(socks5server_assoc_entry_t *entry)
 {
     if (entry->auth_username != NULL)
     {
@@ -494,161 +463,256 @@ static void socks5serverAssocEntryFreeCreds(socks5server_assoc_entry_t *entry)
     }
 }
 
-static bool socks5serverRegisterUdpAssociation(tunnel_t *t, line_t *l, const user_handle_t *user_handle,
-                                               const address_context_t *udp_peer_hint, hash_t *out_key,
-                                               uint64_t *out_token)
+void socks5serverRequireCurrentLineWorker(const line_t *l, const char *callback_name)
 {
-    const address_context_t *src_ctx    = lineGetSourceAddressContext(l);
-    uint16_t                 local_port = socks5serverGetLocalPort(l);
-    ip_addr_t                key_ip     = src_ctx->ip_address;
-    uint16_t                 key_port   = 0;
+    if (UNLIKELY(l == NULL || ! lineIsOnCurrentEventWorker(l)))
+    {
+        LOGF("Socks5Server: %s arrived outside its line owner worker",
+             callback_name != NULL ? callback_name : "flow callback");
+        abortProgramNow(1);
+    }
+}
 
-    if (! addresscontextIsIp(src_ctx) || local_port == 0 || ! lineIsAuthenticated(l) || ! lineIsAlive(l))
+socks5server_assoc_entry_t *socks5serverFindWorkerAssociation(tunnel_t *t, wid_t wid, uint64_t generation)
+{
+    if (t == NULL || generation == 0)
+    {
+        return NULL;
+    }
+    socks5server_tstate_t *ts = tunnelGetState(t);
+    if (ts->worker_associations == NULL || wid >= ts->workers_count || ! currentThreadIsEventWorkerWID(wid))
+    {
+        return NULL;
+    }
+
+    socks5server_assoc_map_t     *map = &ts->worker_associations[wid];
+    socks5server_assoc_map_t_iter it  = socks5server_assoc_map_t_find(map, generation);
+    if (it.ref == socks5server_assoc_map_t_end(map).ref)
+    {
+        return NULL;
+    }
+    return &it.ref->second;
+}
+
+bool socks5serverAssociationIsActive(tunnel_t *t, wid_t wid, udplistener_dynamic_endpoint_handle_t handle,
+                                     uint16_t assigned_port, socks5server_assoc_entry_t **entry_out)
+{
+    if (entry_out != NULL)
+    {
+        *entry_out = NULL;
+    }
+
+    if (! udplistenerDynamicEndpointHandleIsValid(handle) || handle.owner_wid != wid || assigned_port == 0)
     {
         return false;
     }
 
-    if (udp_peer_hint != NULL && addresscontextIsIp(udp_peer_hint) && udp_peer_hint->port > 0)
+    socks5server_assoc_entry_t *entry = socks5serverFindWorkerAssociation(t, wid, handle.generation);
+    if (entry == NULL || ! entry->active || entry->owner_wid != wid || entry->generation != handle.generation ||
+        ! udplistenerDynamicEndpointHandleEquals(entry->dynamic_handle, handle) ||
+        entry->assigned_port != assigned_port)
     {
-        key_ip   = ipAddrIsAny(&udp_peer_hint->ip_address) ? src_ctx->ip_address : udp_peer_hint->ip_address;
-        key_port = udp_peer_hint->port;
+        return false;
     }
 
-    hash_t                      key   = socks5serverCalcAssociationKey(&key_ip, key_port, local_port);
-    uint64_t                    token = socks5serverNextAssociationToken(t);
-    socks5server_assoc_shard_t *shard = socks5serverGetAssocShard(t, key);
+    if (entry_out != NULL)
+    {
+        *entry_out = entry;
+    }
+    return true;
+}
 
-    // Carry the authenticated user's raw credentials so UDP client/remote lines
-    // (which only learn the user_handle through this registry) can also surface
-    // them on their lines for downstream username/password routing.
+bool socks5serverValidateUdpClientAssociation(tunnel_t *t, line_t *l, socks5server_lstate_t *ls,
+                                              bool validate_provider_metadata)
+{
+    if (t == NULL || l == NULL || ls == NULL || ! lineIsOnCurrentEventWorker(l))
+    {
+        return false;
+    }
+
+    const wid_t    wid        = lineGetWID(l);
+    const uint16_t local_port = lineGetRoutingContext(l)->local_listener_port;
+    if (! socks5serverAssociationIsActive(t, wid, ls->dynamic_handle, local_port, NULL))
+    {
+        return false;
+    }
+
+    if (! validate_provider_metadata)
+    {
+        return true;
+    }
+
+    socks5server_tstate_t *ts = tunnelGetState(t);
+    if (ts->dynamic_provider.instance == NULL || ts->dynamic_provider.get_line_info == NULL)
+    {
+        return false;
+    }
+
+    udplistener_dynamic_line_info_t info = {0};
+    if (! ts->dynamic_provider.get_line_info(ts->dynamic_provider.instance, l, &info) || ! info.is_dynamic ||
+        info.expected_wid != wid || info.generation != ls->dynamic_handle.generation ||
+        ! udplistenerDynamicEndpointHandleEquals(info.handle, ls->dynamic_handle) ||
+        info.bound_local_port != local_port)
+    {
+        return false;
+    }
+
+    return true;
+}
+
+static bool socks5serverRegisterUdpAssociation(tunnel_t *t, line_t *l, const user_handle_t *user_handle,
+                                               const address_context_t *udp_peer_hint, uint16_t *assigned_port_out)
+{
+    socks5server_tstate_t *ts  = tunnelGetState(t);
+    wid_t                  wid = lineGetWID(l);
+
+    if (assigned_port_out == NULL || ts->worker_associations == NULL || wid >= ts->workers_count ||
+        ! currentThreadIsEventWorkerWID(wid) || ! lineIsAuthenticated(l) || ! lineIsAlive(l))
+    {
+        return false;
+    }
+
+    if (ts->dynamic_provider.instance == NULL || ts->dynamic_provider.open == NULL ||
+        ts->dynamic_provider.activate == NULL || ts->dynamic_provider.close == NULL)
+    {
+        return false;
+    }
+
+    const address_context_t *src_ctx = lineGetSourceAddressContext(l);
+    if (! addresscontextIsIp(src_ctx))
+    {
+        return false;
+    }
+
+    ip_addr_t expected_peer_ip = src_ctx->ip_address;
+    normalizeIpAddr(&expected_peer_ip);
+    if (ipAddrIsWildcard(&expected_peer_ip))
+    {
+        return false;
+    }
+
+    uint16_t expected_source_port = 0;
+
+    if (udp_peer_hint != NULL && addresscontextIsIp(udp_peer_hint))
+    {
+        ip_addr_t requested_peer_ip = udp_peer_hint->ip_address;
+        normalizeIpAddr(&requested_peer_ip);
+        if (! ipAddrIsWildcard(&requested_peer_ip) && ! ipAddrEqualsExact(&requested_peer_ip, &expected_peer_ip))
+        {
+            /* RFC 1928 permits a hint, not a client-selected foreign relay identity. */
+            return false;
+        }
+        expected_source_port = udp_peer_hint->port;
+    }
+    else if (udp_peer_hint != NULL)
+    {
+        expected_source_port = udp_peer_hint->port;
+    }
+
+    socks5server_lstate_t *ls = lineGetState(l, t);
+    if (ls->dynamic_handle.generation != 0)
+    {
+        return false;
+    }
+
+    udplistener_dynamic_endpoint_open_request_t req = {
+        .expected_peer_ip     = expected_peer_ip,
+        .expected_source_port = expected_source_port,
+    };
+    udplistener_dynamic_endpoint_open_result_t res;
+
+    if (! ts->dynamic_provider.open(ts->dynamic_provider.instance, wid, &req, &res))
+    {
+        return false;
+    }
+
+    if (! udplistenerDynamicEndpointHandleIsValid(res.handle) || res.handle.owner_wid != wid ||
+        res.bound_local_port == 0 || sockaddrPort(&res.bound_local_addr) != res.bound_local_port)
+    {
+        if (res.handle.owner_wid == wid)
+        {
+            ts->dynamic_provider.close(ts->dynamic_provider.instance, res.handle);
+        }
+        return false;
+    }
+
     const char *src_username = lineGetAuthenticatedUsername(l);
     const char *src_password = lineGetAuthenticatedPassword(l);
 
     socks5server_assoc_entry_t entry = {
-        .token         = token,
-        .owner_wid     = lineGetWID(l),
-        .user_handle   = *user_handle,
-        .auth_username = src_username != NULL ? stringDuplicate(src_username) : NULL,
-        .auth_password = src_password != NULL ? stringDuplicate(src_password) : NULL,
+        .generation     = res.handle.generation,
+        .owner_wid      = wid,
+        .dynamic_handle = res.handle,
+        .assigned_port  = res.bound_local_port,
+        .user_handle    = *user_handle,
+        .auth_username  = src_username != NULL ? stringDuplicate(src_username) : NULL,
+        .auth_password  = src_password != NULL ? stringDuplicate(src_password) : NULL,
+        .active         = false,
     };
 
-    rwlockWriteLock(&shard->lock);
-    // insert_or_assign overwrites any existing entry for this key in place; free
-    // the displaced entry's owned credentials first to avoid leaking them.
-    socks5server_assoc_map_t_iter existing = socks5server_assoc_map_t_find(&shard->map, key);
-    if (existing.ref != socks5server_assoc_map_t_end(&shard->map).ref)
-    {
-        socks5serverAssocEntryFreeCreds(&existing.ref->second);
-    }
-    bool inserted = socks5server_assoc_map_t_insert_or_assign(&shard->map, key, entry).ref != NULL;
-    rwlockWriteUnlock(&shard->lock);
-
-    if (! inserted)
+    if ((src_username != NULL && entry.auth_username == NULL) || (src_password != NULL && entry.auth_password == NULL))
     {
         socks5serverAssocEntryFreeCreds(&entry);
+        ts->dynamic_provider.close(ts->dynamic_provider.instance, res.handle);
         return false;
     }
 
-    *out_key   = key;
-    *out_token = token;
+    socks5server_assoc_map_t *map = &ts->worker_associations[wid];
+    if (! socks5server_assoc_map_t_insert(map, res.handle.generation, entry).inserted)
+    {
+        socks5serverAssocEntryFreeCreds(&entry);
+        ts->dynamic_provider.close(ts->dynamic_provider.instance, res.handle);
+        return false;
+    }
+
+    socks5server_assoc_map_t_iter it = socks5server_assoc_map_t_find(map, res.handle.generation);
+    assert(it.ref != socks5server_assoc_map_t_end(map).ref);
+    it.ref->second.active = true;
+    ls->dynamic_handle    = res.handle;
+
+    if (! ts->dynamic_provider.activate(ts->dynamic_provider.instance, res.handle))
+    {
+        ls->dynamic_handle = (udplistener_dynamic_endpoint_handle_t) {0};
+        socks5serverAssocEntryFreeCreds(&it.ref->second);
+        socks5server_assoc_map_t_erase_at(map, it);
+        ts->dynamic_provider.close(ts->dynamic_provider.instance, res.handle);
+        return false;
+    }
+
+    *assigned_port_out = res.bound_local_port;
     return true;
 }
 
 void socks5serverUnregisterUdpAssociation(tunnel_t *t, socks5server_lstate_t *ls)
 {
-    if (ls->association_token == 0)
+    if (ls->dynamic_handle.generation == 0)
     {
         return;
     }
 
-    socks5server_assoc_shard_t *shard = socks5serverGetAssocShard(t, ls->association_key);
-    rwlockWriteLock(&shard->lock);
+    socks5server_tstate_t                *ts     = tunnelGetState(t);
+    udplistener_dynamic_endpoint_handle_t handle = ls->dynamic_handle;
+    ls->dynamic_handle                           = (udplistener_dynamic_endpoint_handle_t) {0};
 
-    socks5server_assoc_map_t_iter it = socks5server_assoc_map_t_find(&shard->map, ls->association_key);
+    if (handle.owner_wid >= ts->workers_count || ! currentThreadIsEventWorkerWID(handle.owner_wid))
+    {
+        LOGF("Socks5Server: control association handle has an invalid owner worker");
+        abortProgramNow(1);
+    }
 
-    // Only erase if this control line still owns the entry: a newer association may have replaced
-    // the same key, in which case its newer token owns the registry slot.
-    if (it.ref != socks5server_assoc_map_t_end(&shard->map).ref && it.ref->second.token == ls->association_token)
+    socks5server_assoc_map_t     *map = &ts->worker_associations[handle.owner_wid];
+    socks5server_assoc_map_t_iter it  = socks5server_assoc_map_t_find(map, handle.generation);
+    if (it.ref != socks5server_assoc_map_t_end(map).ref &&
+        udplistenerDynamicEndpointHandleEquals(it.ref->second.dynamic_handle, handle))
     {
         socks5serverAssocEntryFreeCreds(&it.ref->second);
-        socks5server_assoc_map_t_erase_at(&shard->map, it);
+        socks5server_assoc_map_t_erase_at(map, it);
     }
-    rwlockWriteUnlock(&shard->lock);
 
-    ls->association_key   = 0;
-    ls->association_token = 0;
-}
-
-// Look up an association by key. When username_out/password_out are non-NULL,
-// duplicates of the entry's owned credentials are written there (NULL when the
-// entry has none); the caller owns the duplicates.
-static bool socks5serverLookupUdpAssociationByKey(tunnel_t *t, hash_t key, user_handle_t *user_handle_out,
-                                                  char **username_out, char **password_out)
-{
-    socks5server_assoc_shard_t *shard = socks5serverGetAssocShard(t, key);
-    bool                        found = false;
-
-    rwlockReadLock(&shard->lock);
-    socks5server_assoc_map_t_iter it = socks5server_assoc_map_t_find(&shard->map, key);
-    if (it.ref != socks5server_assoc_map_t_end(&shard->map).ref)
+    if (ts->dynamic_provider.close != NULL)
     {
-        // Registered entries always carry a non-zero token (socks5serverNextAssociationToken
-        // never returns 0); a zero here would mean a corrupted/uninitialized entry.
-        assert(it.ref->second.token != 0);
-        *user_handle_out = it.ref->second.user_handle;
-        if (username_out != NULL)
-        {
-            *username_out = it.ref->second.auth_username != NULL ? stringDuplicate(it.ref->second.auth_username) : NULL;
-        }
-        if (password_out != NULL)
-        {
-            *password_out = it.ref->second.auth_password != NULL ? stringDuplicate(it.ref->second.auth_password) : NULL;
-        }
-        found = true;
+        ts->dynamic_provider.close(ts->dynamic_provider.instance, handle);
     }
-    rwlockReadUnlock(&shard->lock);
-
-    return found;
-}
-
-bool socks5serverLookupUdpAssociation(tunnel_t *t, line_t *l, user_handle_t *user_handle_out, hash_t *key_out,
-                                      char **username_out, char **password_out)
-{
-    const address_context_t *src_ctx    = lineGetSourceAddressContext(l);
-    const routing_context_t *route      = lineGetRoutingContext(l);
-    uint16_t                 local_port = socks5serverGetLocalPort(l);
-
-    if (username_out != NULL)
-    {
-        *username_out = NULL;
-    }
-    if (password_out != NULL)
-    {
-        *password_out = NULL;
-    }
-
-    if (! addresscontextIsIp(src_ctx) || local_port == 0)
-    {
-        return false;
-    }
-
-    hash_t exact_key    = socks5serverCalcAssociationKey(&src_ctx->ip_address, route->peer_source_port, local_port);
-    hash_t fallback_key = socks5serverCalcAssociationKey(&src_ctx->ip_address, 0, local_port);
-
-    if (socks5serverLookupUdpAssociationByKey(t, exact_key, user_handle_out, username_out, password_out))
-    {
-        *key_out = exact_key;
-        return true;
-    }
-
-    if (fallback_key != exact_key &&
-        socks5serverLookupUdpAssociationByKey(t, fallback_key, user_handle_out, username_out, password_out))
-    {
-        *key_out = fallback_key;
-        return true;
-    }
-
-    return false;
 }
 
 static void socks5serverDestroyInternalUserController(socks5server_tstate_t *ts)
@@ -696,8 +760,7 @@ void socks5serverDetachRemoteFromClient(socks5server_lstate_t *remote_ls)
 }
 
 static line_t *socks5serverGetOrCreateUdpRemoteLine(tunnel_t *t, line_t *client_l, socks5server_lstate_t *client_ls,
-                                                    const address_context_t *target, const user_handle_t *user_handle,
-                                                    hash_t assoc_key)
+                                                    const address_context_t *target, const user_handle_t *user_handle)
 {
     hash_t remote_key = socks5serverCalcAddressHash(target);
 
@@ -714,19 +777,14 @@ static line_t *socks5serverGetOrCreateUdpRemoteLine(tunnel_t *t, line_t *client_
     remote_ls->client_line        = client_l;
     remote_ls->client_line_locked = true;
     remote_ls->remote_key         = remote_key;
-    // Bookkeeping only: a backend UDP line caches the association key but never owns the registry
-    // entry. Only the TCP control line registers/unregisters (via association_token); this line
-    // leaves association_token == 0 and never touches the registry.
-    remote_ls->association_key = assoc_key;
-    remote_ls->user_handle     = *user_handle;
+    remote_ls->dynamic_handle     = client_ls->dynamic_handle;
+    remote_ls->user_handle        = *user_handle;
 
     lineLock(client_l);
 
     lineGetRoutingContext(remote_l)->local_listener_port = socks5serverGetLocalPort(client_l);
     socks5serverApplyDestinationContext(remote_l, target, true);
 
-    // Carry the authenticated credentials from the client line so the backend UDP
-    // line also surfaces them for downstream username/password routing.
     if (client_ls->auth_username != NULL)
     {
         remote_ls->auth_username = stringDuplicate(client_ls->auth_username);
@@ -752,15 +810,19 @@ void socks5serverTunnelstateDestroy(socks5server_tstate_t *ts)
     socks5serverDestroyInternalUserController(ts);
     socks5serverClearInternalNode(&ts->user_controller_node);
 
-    // Free the per-entry owned credentials before dropping each shard's map.
-    for (uint32_t i = 0; i < kSocks5ServerAssocShardCount; ++i)
+    if (ts->worker_associations != NULL)
     {
-        c_foreach(it, socks5server_assoc_map_t, ts->assoc_shards[i].map)
+        for (wid_t wid = 0; wid < ts->workers_count; ++wid)
         {
-            socks5serverAssocEntryFreeCreds(&it.ref->second);
+            assert(socks5server_assoc_map_t_size(&ts->worker_associations[wid]) == 0);
+            c_foreach(it, socks5server_assoc_map_t, ts->worker_associations[wid])
+            {
+                socks5serverAssocEntryFreeCreds(&it.ref->second);
+            }
+            socks5server_assoc_map_t_drop(&ts->worker_associations[wid]);
         }
-        socks5server_assoc_map_t_drop(&ts->assoc_shards[i].map);
-        rwlockDestroy(&ts->assoc_shards[i].lock);
+        memoryFree(ts->worker_associations);
+        ts->worker_associations = NULL;
     }
 
     if (ts->udp_reply_ipv4 != NULL)
@@ -789,26 +851,13 @@ static void socks5serverMarkControlFinishedSide(socks5server_lstate_t *ls, socks
     }
 }
 
-// Single teardown path for a control line. Handles the re-entrant window that opens when we send
-// a final SOCKS5 reply downstream during a finish: the prev adapter (e.g. TcpListener) can, inside
-// that write, synchronously call our UpStreamFinish (and lineDestroy). We guard against that by
-// marking the line kSocks5ServerPhaseClosing and holding a lineLock before sending anything, so a
-// re-entrant close becomes a no-op and the line memory stays valid until we finish here.
-//
-//   origin == kSocks5ServerCloseFromPrev : prev finished us  -> close next only, never touch prev
-//   origin == kSocks5ServerCloseFromNext : next finished us  -> close prev only, never touch next
-//   origin == kSocks5ServerCloseInternal : our decision      -> close both
-//
-// reply_code >= 0 sends a SOCKS5 command reply downstream before closing prev (only meaningful
-// before the stream is established; ignored once data is flowing).
 static void socks5serverCloseControlLine(tunnel_t *t, line_t *l, socks5server_close_origin_t origin, int reply_code)
 {
+    socks5serverRequireCurrentLineWorker(l, "control close");
     socks5server_lstate_t *ls = lineGetState(l, t);
 
     if (ls->phase == kSocks5ServerPhaseClosing)
     {
-        // Re-entrant teardown while we are already closing this line. Remember which side finished
-        // us so the in-flight close does not send anything back toward that side, then return.
         socks5serverMarkControlFinishedSide(ls, origin);
         return;
     }
@@ -832,7 +881,7 @@ static void socks5serverCloseControlLine(tunnel_t *t, line_t *l, socks5server_cl
         if (reply != NULL)
         {
             ls->connect_reply_sent = true;
-            tunnelPrevDownStreamPayload(t, l, reply); // may re-enter; guarded by kSocks5ServerPhaseClosing
+            tunnelPrevDownStreamPayload(t, l, reply);
         }
     }
 
@@ -869,12 +918,38 @@ void socks5serverCloseControlLineBidirectional(tunnel_t *t, line_t *l)
     socks5serverCloseControlLine(t, l, kSocks5ServerCloseInternal, -1);
 }
 
-static void socks5serverCloseUdpClientLineInternal(tunnel_t *t, line_t *client_l, bool close_prev)
+/*
+ * Returns true only while @p client_l remains logically alive and its Socks5
+ * line state is still owned by the caller.  A remote Finish can synchronously
+ * close the provider endpoint, which in turn destroys this UDP client line.
+ * Keep a separate client reference for the complete drain: the per-remote
+ * client reference is deliberately released before its Finish callback.
+ */
+static bool socks5serverDrainUdpClientRemoteLines(tunnel_t *t, line_t *client_l, socks5server_lstate_t *client_ls)
 {
-    socks5server_lstate_t *client_ls = lineGetState(client_l, t);
-
-    while (socks5server_remote_map_t_size(&client_ls->udp_remote_lines) > 0)
+    if (UNLIKELY(client_l == NULL || client_ls == NULL || ! lineIsAlive(client_l)))
     {
+        return false;
+    }
+
+    lineLock(client_l);
+
+    while (true)
+    {
+        if (! lineIsAlive(client_l))
+        {
+            lineUnlock(client_l);
+            return false;
+        }
+
+        /* Re-read after every potentially re-entrant remote callback. */
+        client_ls = lineGetState(client_l, t);
+        if (socks5server_remote_map_t_size(&client_ls->udp_remote_lines) == 0)
+        {
+            lineUnlock(client_l);
+            return true;
+        }
+
         line_t *remote_l = NULL;
         c_foreach(it, socks5server_remote_map_t, client_ls->udp_remote_lines)
         {
@@ -906,6 +981,43 @@ static void socks5serverCloseUdpClientLineInternal(tunnel_t *t, line_t *client_l
         }
         lineDestroy(remote_l);
         lineUnlock(remote_l);
+
+        if (! lineIsAlive(client_l))
+        {
+            lineUnlock(client_l);
+            return false;
+        }
+    }
+}
+
+void socks5serverRejectUdpClientLine(tunnel_t *t, line_t *client_l)
+{
+    socks5serverRequireCurrentLineWorker(client_l, "UDP client rejection");
+
+    socks5server_lstate_t *client_ls = lineGetState(client_l, t);
+    if (client_ls->kind != kSocks5ServerLineKindUdpClient)
+    {
+        return;
+    }
+
+    if (! socks5serverDrainUdpClientRemoteLines(t, client_l, client_ls))
+    {
+        return;
+    }
+
+    socks5serverLinestateDestroy(client_ls);
+    socks5serverLinestateInitialize(lineGetState(client_l, t), t, client_l, kSocks5ServerLineKindRejected);
+}
+
+static void socks5serverCloseUdpClientLineInternal(tunnel_t *t, line_t *client_l, bool close_prev)
+{
+    socks5serverRequireCurrentLineWorker(client_l, "UDP client close");
+
+    socks5server_lstate_t *client_ls = lineGetState(client_l, t);
+
+    if (! socks5serverDrainUdpClientRemoteLines(t, client_l, client_ls))
+    {
+        return;
     }
 
     socks5serverLinestateDestroy(client_ls);
@@ -927,6 +1039,7 @@ void socks5serverCloseUdpClientLine(tunnel_t *t, line_t *client_l)
 
 void socks5serverCloseUdpRemoteLine(tunnel_t *t, line_t *remote_l)
 {
+    socks5serverRequireCurrentLineWorker(remote_l, "UDP remote close");
     socks5server_lstate_t *remote_ls = lineGetState(remote_l, t);
 
     lineLock(remote_l);
@@ -1046,95 +1159,90 @@ bool socks5serverWrapUdpPayloadForClient(line_t *l, sbuf_t **buf_io, const addre
 
 bool socks5serverHandleUdpClientPayload(tunnel_t *t, line_t *l, socks5server_lstate_t *ls, sbuf_t *buf)
 {
-    user_handle_t     user_handle = userHandleEmpty();
-    hash_t            assoc_key   = 0;
-    address_context_t target      = {0};
-    size_t            addr_len    = 0;
-    const uint8_t    *raw         = sbufGetRawPtr(buf);
-    size_t            len         = sbufGetLength(buf);
+    socks5serverRequireCurrentLineWorker(l, "UDP client payload");
 
-    // Only fetch the (duplicated) credentials the first time we record a user on
-    // this line; afterwards they already live on the line state.
-    bool  need_creds = ! ls->user_handle_recorded;
-    char *assoc_user = NULL;
-    char *assoc_pass = NULL;
-    if (! socks5serverLookupUdpAssociation(
-            t, l, &user_handle, &assoc_key, need_creds ? &assoc_user : NULL, need_creds ? &assoc_pass : NULL))
+    /* A remote Init/Payload can close the provider endpoint and therefore this
+     * different line.  Keep the allocation and pool identity independent of
+     * that callback before touching any remote-line helper. */
+    buffer_pool_t *const client_pool = lineGetBufferPool(l);
+    lineLock(l);
+    ls = lineGetState(l, t);
+
+    const bool first_payload     = ! ls->udp_first_payload_validated;
+    const bool association_valid = socks5serverValidateUdpClientAssociation(t, l, ls, first_payload);
+    if (! lineIsAlive(l))
     {
-        lineReuseBuffer(l, buf);
-        socks5serverCloseUdpClientLine(t, l);
+        bufferpoolReuseBuffer(client_pool, buf);
+        lineUnlock(l);
         return false;
     }
 
-    if (need_creds)
+    if (! association_valid)
     {
-        // Transfer ownership of the looked-up credentials onto this UDP client line
-        // state so they surface on the line for downstream username/password
-        // routing; freed by the line-state destroy.
-        if (ls->auth_username != NULL)
-        {
-            memoryFree(ls->auth_username);
-        }
-        ls->auth_username = assoc_user;
-        if (ls->auth_password != NULL)
-        {
-            memoryFree(ls->auth_password);
-        }
-        ls->auth_password = assoc_pass;
+        bufferpoolReuseBuffer(client_pool, buf);
+        socks5serverRejectUdpClientLine(t, l);
+        lineUnlock(l);
+        return false;
     }
+    ls->udp_first_payload_validated = true;
+
+    const uint8_t *raw = sbufGetRawPtr(buf);
+    size_t         len = sbufGetLength(buf);
 
     if (len < 4 || raw[0] != 0 || raw[1] != 0)
     {
-        lineReuseBuffer(l, buf);
+        bufferpoolReuseBuffer(client_pool, buf);
         socks5serverCloseUdpClientLine(t, l);
+        lineUnlock(l);
         return false;
     }
 
     if (raw[2] != 0)
     {
-        lineReuseBuffer(l, buf);
+        bufferpoolReuseBuffer(client_pool, buf);
+        lineUnlock(l);
         return true;
     }
 
-    int parse_res = socks5serverParseAddressBytes(raw + 3, len - 3, &target, &addr_len);
+    address_context_t target    = {0};
+    size_t            addr_len  = 0;
+    int               parse_res = socks5serverParseAddressBytes(raw + 3, len - 3, &target, &addr_len);
     if (parse_res <= 0 || len < (size_t) (3 + addr_len))
     {
-        lineReuseBuffer(l, buf);
+        bufferpoolReuseBuffer(client_pool, buf);
         if (parse_res < 0)
         {
             socks5serverCloseUdpClientLine(t, l);
+            lineUnlock(l);
             return false;
         }
+        lineUnlock(l);
         return true;
     }
 
-    // Bookkeeping only: the UDP client line caches the looked-up key/handle, but it never owns the
-    // registry entry. Only the TCP control line registers and unregisters an association (via its
-    // association_token); this line leaves association_token == 0 and never touches the registry.
-    ls->user_handle     = user_handle;
-    ls->association_key = assoc_key;
-    socks5serverRecordLineUser(l, ls, &ls->user_handle);
-
-    line_t *remote_l = socks5serverGetOrCreateUdpRemoteLine(t, l, ls, &target, &ls->user_handle, assoc_key);
+    line_t *remote_l = socks5serverGetOrCreateUdpRemoteLine(t, l, ls, &target, &ls->user_handle);
     addresscontextReset(&target);
+    if (! lineIsAlive(l))
+    {
+        bufferpoolReuseBuffer(client_pool, buf);
+        lineUnlock(l);
+        return false;
+    }
+
     if (remote_l == NULL)
     {
-        lineReuseBuffer(l, buf);
+        bufferpoolReuseBuffer(client_pool, buf);
+        lineUnlock(l);
         return false;
     }
 
     sbufShiftRight(buf, (uint32_t) (3 + addr_len));
-    if (! withLineLockedWithBuf(remote_l, tunnelNextUpStreamPayload, t, buf))
-    {
-        return false;
-    }
+    const bool remote_alive = withLineLockedWithBuf(remote_l, tunnelNextUpStreamPayload, t, buf);
 
-    return true;
+    lineUnlock(l);
+    return remote_alive;
 }
 
-// Send a SOCKS5 command reply downstream and then tear the control line down both ways. The reply
-// is emitted inside the unified close path, which protects the re-entrant write (see
-// socks5serverCloseControlLine). Always returns false so callers can `return` immediately.
 static bool socks5serverSendReplyAndClose(tunnel_t *t, line_t *l, uint8_t rep)
 {
     socks5serverCloseControlLine(t, l, kSocks5ServerCloseInternal, rep);
@@ -1345,8 +1453,8 @@ bool socks5serverControlDrainInput(tunnel_t *t, line_t *l, socks5server_lstate_t
 
             if (head[1] == kSocks5CommandUdpAssoc)
             {
-                address_context_t bind_ctx   = {0};
-                uint16_t          local_port = socks5serverGetLocalPort(l);
+                address_context_t bind_ctx      = {0};
+                uint16_t          assigned_port = 0;
 
                 if (! ts->allow_udp)
                 {
@@ -1354,18 +1462,26 @@ bool socks5serverControlDrainInput(tunnel_t *t, line_t *l, socks5server_lstate_t
                     return socks5serverSendReplyAndClose(t, l, kSocks5ReplyCmdNotSupported);
                 }
 
-                addresscontextSetIpPort(&bind_ctx, &ts->udp_reply_ip, local_port);
-                if (! socks5serverRegisterUdpAssociation(
-                        t, l, &ls->user_handle, &target, &ls->association_key, &ls->association_token))
+                if (! socks5serverRegisterUdpAssociation(t, l, &ls->user_handle, &target, &assigned_port))
                 {
-                    addresscontextReset(&bind_ctx);
+                    LOGW("Socks5Server: failed to create a dynamic UDP association");
                     addresscontextReset(&target);
                     return socks5serverSendReplyAndClose(t, l, kSocks5ReplyGeneralFailure);
                 }
 
+                LOGD("Socks5Server: opened dynamic UDP association endpoint on worker %u port %u",
+                     (unsigned int) lineGetWID(l),
+                     (unsigned int) assigned_port);
+
+                addresscontextSetIpPort(&bind_ctx, &ts->udp_reply_ip, assigned_port);
                 sbuf_t *reply = socks5serverCreateCommandReply(l, kSocks5ReplySucceeded, &bind_ctx);
                 addresscontextReset(&bind_ctx);
                 addresscontextReset(&target);
+                if (reply == NULL)
+                {
+                    socks5serverUnregisterUdpAssociation(t, ls);
+                    return socks5serverSendReplyAndClose(t, l, kSocks5ReplyGeneralFailure);
+                }
                 if (! withLineLockedWithBuf(l, tunnelPrevDownStreamPayload, t, reply))
                 {
                     return false;

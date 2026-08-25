@@ -1049,6 +1049,19 @@ if(INCLUDE_SOCKS_5_SERVER)
   if(NOT INCLUDE_USER_CONTROLLER)
     message(FATAL_ERROR "Socks5Server requires INCLUDE_USER_CONTROLLER because it creates an internal UserController")
   endif()
+  # Socks5Server's typed UDP-provider capability is compiled even when the
+  # provider nodes themselves are not registered in this build. This keeps a
+  # TCP-only Socks5Server usable in reduced builds while allowing udp: true to
+  # fail at topology preparation instead of creating a link-time feature gap.
+  if(NOT TARGET UdpListener)
+    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/UdpListener)
+  endif()
+  if(NOT TARGET TcpListener)
+    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/TcpListener)
+  endif()
+  if(NOT TARGET TcpUdpListener)
+    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/TcpUdpListener)
+  endif()
   target_compile_definitions(Waterwall PUBLIC INCLUDE_SOCKS_5_SERVER=1)
   add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/Socks5Server)
   target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/Socks5Server)

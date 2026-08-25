@@ -295,7 +295,7 @@ static bool udpconnectorBeginSocket(tunnel_t *t, line_t *l, udpconnector_lstate_
         alive = lineIsAlive(l);
     }
 
-    if (ts->balance_mode == kUdpConnectorBalanceModePacket)
+    if (! ls->route_destination_pinned && ts->balance_mode == kUdpConnectorBalanceModePacket)
     {
         if (alive)
         {
@@ -346,6 +346,23 @@ bool udpconnectorDomainResolverPrepare(tunnel_t *resolver, tunnel_t *connector, 
     uint32_t                               selected_destination_index = udpconnectorSelectWeightedDestinationIndex(ts);
     const udpconnector_destination_t      *selected_destination =
         ts->destinations_count > 0 ? &ts->destinations[selected_destination_index] : NULL;
+
+    ls->route_destination_pinned = addresscontextDestinationIsPinned(dest_ctx);
+    if (ls->route_destination_pinned)
+    {
+        /* A protocol tunnel (currently SOCKS5 UDP ASSOCIATE) negotiated this
+         * endpoint. Preserve it through the ordinary connector path instead
+         * of applying a static proxy destination a second time. */
+        addresscontextSetDestinationPinned(dest_ctx, false);
+        addresscontextSetOnlyProtocol(dest_ctx, IP_PROTO_UDP);
+        if (! addresscontextHasPort(dest_ctx))
+        {
+            LOGE("UdpConnector: negotiated destination has no port");
+            return false;
+        }
+        addresscontextSetDomainStrategy(dest_ctx, (enum domain_strategy) ts->domain_strategy);
+        return true;
+    }
 
     if (ts->balance_mode == kUdpConnectorBalanceModePacket)
     {
@@ -418,7 +435,9 @@ void udpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
         abortProgramNow(1);
     }
 
-    if (ts->balance_mode == kUdpConnectorBalanceModePacket)
+    ls->route_destination_pinned = resolver_ls->route_destination_pinned;
+
+    if (! ls->route_destination_pinned && ts->balance_mode == kUdpConnectorBalanceModePacket)
     {
         addresscontextCopy(&ls->packet_base_dest_ctx, &resolver_ls->packet_base_dest_ctx);
         ls->packet_initial_destination_index = resolver_ls->packet_initial_destination_index;

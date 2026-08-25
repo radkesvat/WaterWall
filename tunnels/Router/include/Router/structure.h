@@ -11,9 +11,9 @@
 /*
  * Router
  * ------
- * A layer-4 rule-based router. It sits inside a chain like a middle tunnel and,
- * on the first upstream payload of each connection, evaluates an ordered list of
- * routing rules to decide where the connection should go:
+ * A layer-4 rule-based router. It sits inside a chain like a middle tunnel and
+ * evaluates an ordered list of routing rules to decide where each connection
+ * should go:
  *
  *   - the first rule whose match conditions ALL succeed (logical AND) wins, and
  *     the connection is handed to that rule's "target" node;
@@ -21,10 +21,11 @@
  *     "next" (the default route).
  *
  * Rule targets are folded into the same chain during onChain so they get per-line
- * state slots and so their downstream traffic returns through us. Just like
- * SniffRouter, the decision is deferred to the first payload and the buffered
- * bytes are replayed to the chosen branch with no loss; deferring the decision
- * keeps a payload window available for content-based matchers (e.g. "protocol").
+ * state slots and so their downstream traffic returns through us. A rule set
+ * with no payload-dependent matcher commits during Init, so handshake clients
+ * can establish their downstream transport before producing payload. Rules that
+ * need protocol/domain/attribute sniffing remain deferred to the first payload,
+ * whose buffered bytes are replayed to the chosen branch with no loss.
  *
  * Each supported rule field has its own matcher/parser module under modules/.
  * Each module owns its config struct (stored inside router_rule_t) and exposes a

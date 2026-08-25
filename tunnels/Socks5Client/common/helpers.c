@@ -619,6 +619,7 @@ static bool startUdpRelayLine(tunnel_t *t, line_t *control_l, socks5client_lstat
 
     addresscontextCopy(lineGetDestinationAddressContext(udp_l), relay_addr);
     addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(udp_l), IP_PROTO_UDP);
+    addresscontextSetDestinationPinned(lineGetDestinationAddressContext(udp_l), true);
     addresscontextSetOnlyProtocol(lineGetSourceAddressContext(udp_l), IP_PROTO_UDP);
 
     app_ls->udp_line = udp_l;

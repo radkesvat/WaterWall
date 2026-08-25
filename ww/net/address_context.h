@@ -41,11 +41,23 @@ enum
     kAddressContextProtocolHttp1      = 1U << 0U,
     kAddressContextProtocolTls        = 1U << 1U,
     kAddressContextProtocolBittorrent = 1U << 2U,
+    /* Stored with optional metadata so an already-negotiated endpoint can
+     * survive middle tunnels without changing the line_t ABI. It is not a
+     * sniffed application protocol and must never be matched by Router rules. */
+    kAddressContextRouteFlagPinnedDestination = UINT32_C(1) << 31U,
 };
 
+/* Optional metadata has two independent owners. Router/sniffers may clear
+ * only observed application protocols; protocol tunnels may carry one-shot
+ * route-control data through those middle nodes. */
+#define kAddressContextDetectedProtocolMask                                                                            \
+    (kAddressContextProtocolHttp1 | kAddressContextProtocolTls | kAddressContextProtocolBittorrent)
+#define kAddressContextRouteControlMask (kAddressContextRouteFlagPinnedDestination)
+
 /*
- * Optional routing metadata. These flags are not intrinsic endpoint identity;
- * Router sets them opportunistically from the first payload window.
+ * Optional routing metadata. These flags are not intrinsic endpoint identity.
+ * Router/sniffers own the detected-protocol subset; route-control flags are
+ * carried by protocol tunnels until their designated consumer accepts them.
  */
 typedef struct address_context_optional_flags_s
 {
@@ -63,7 +75,7 @@ typedef struct address_context_s
     char                            *domain;          // Domain name if applicable
     enum domain_strategy             domain_strategy; // DNS resolution strategy
     uint8_t                          domain_len;      // Length of domain name
-    address_context_optional_flags_t optional_flags;  // Router-owned optional metadata
+    address_context_optional_flags_t optional_flags;  // sniff and route-control metadata
 
     // Flags for address properties
     uint8_t type_ip : 1;         // True for IP address, false for domain
@@ -101,6 +113,40 @@ static inline void addresscontextReset(address_context_t *ctx)
 static inline void addresscontextClearOptionalFlags(address_context_t *ctx)
 {
     ctx->optional_flags = (address_context_optional_flags_t) {0};
+}
+
+/**
+ * @brief Clear only Router/sniffer-owned application-protocol observations.
+ *
+ * Route-control metadata intentionally survives this narrow reset so a Router
+ * cannot erase an already-negotiated endpoint before the outbound adapter sees
+ * it. Use addresscontextClearOptionalFlags() when replacing the whole context.
+ */
+static inline void addresscontextClearDetectedProtocols(address_context_t *ctx)
+{
+    ctx->optional_flags.detected_protocols &= ~kAddressContextDetectedProtocolMask;
+}
+
+/**
+ * @brief Mark an internally negotiated destination as authoritative for the
+ * next outbound adapter, bypassing that adapter's configured destination
+ * selector exactly once.
+ */
+static inline void addresscontextSetDestinationPinned(address_context_t *ctx, bool pinned)
+{
+    if (pinned)
+    {
+        ctx->optional_flags.detected_protocols |= kAddressContextRouteFlagPinnedDestination;
+    }
+    else
+    {
+        ctx->optional_flags.detected_protocols &= ~kAddressContextRouteFlagPinnedDestination;
+    }
+}
+
+static inline bool addresscontextDestinationIsPinned(const address_context_t *ctx)
+{
+    return (ctx->optional_flags.detected_protocols & kAddressContextRouteFlagPinnedDestination) != 0;
 }
 
 /**

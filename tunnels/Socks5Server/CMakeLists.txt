@@ -32,15 +32,21 @@ if(NOT TARGET UserController)
     message(FATAL_ERROR "Socks5Server requires UserController; enable INCLUDE_USER_CONTROLLER")
 endif()
 
+if(NOT TARGET UdpListener OR NOT TARGET TcpUdpListener)
+    message(FATAL_ERROR "Socks5Server requires UdpListener and TcpUdpListener provider-support targets")
+endif()
+
 target_include_directories(Socks5Server PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../AuthenticationClient/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../Internals/UserController/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../UdpListener/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../TcpUdpListener/include
 )
 
 target_include_directories(Socks5Server PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(Socks5Server PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/Socks5Server)
 
-target_link_libraries(Socks5Server PRIVATE ww AuthenticationClient UserController)
+target_link_libraries(Socks5Server PRIVATE ww AuthenticationClient UserController UdpListener TcpUdpListener)
 if(NOT APPLE)
     target_precompile_headers(Socks5Server REUSE_FROM ww)
 endif()

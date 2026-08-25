@@ -485,7 +485,7 @@ void udpconnectorTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     }
     // LOGD("writing %d bytes", sbufGetLength(buf));
 
-    if (ts->balance_mode == kUdpConnectorBalanceModePacket)
+    if (! ls->route_destination_pinned && ts->balance_mode == kUdpConnectorBalanceModePacket)
     {
         sockaddr_u peer_addr;
 
