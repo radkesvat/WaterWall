@@ -41,11 +41,13 @@ enum
     kAddressContextProtocolHttp1      = 1U << 0U,
     kAddressContextProtocolTls        = 1U << 1U,
     kAddressContextProtocolBittorrent = 1U << 2U,
-    /* Stored with optional metadata so an already-negotiated endpoint can
-     * survive middle tunnels without changing the line_t ABI. It is not a
-     * sniffed application protocol and must never be matched by Router rules. */
-    kAddressContextRouteFlagPinnedDestination = UINT32_C(1) << 31U,
 };
+
+/* Stored with optional metadata so an already-negotiated endpoint can survive
+ * middle tunnels without changing the line_t ABI. It is not a sniffed
+ * application protocol and must never be matched by Router rules. Keep bit 31
+ * out of the enum because ISO C requires enumerator values to fit in int. */
+#define kAddressContextRouteFlagPinnedDestination (UINT32_C(1) << 31U)
 
 /* Optional metadata has two independent owners. Router/sniffers may clear
  * only observed application protocols; protocol tunnels may carry one-shot
