@@ -69,6 +69,7 @@ static void testBoundUdpSocketIpv4Ephemeral(void)
     bound_udp_config_t cfg = {
         .bind_address = "127.0.0.1",
         .port         = 0,
+        .fwmark       = -1,
         .bind_policy  = kBoundUdpBindPolicyExclusive,
     };
 
@@ -95,6 +96,7 @@ static void testBoundUdpSocketWildcard(void)
     bound_udp_config_t cfg = {
         .bind_address = "0.0.0.0",
         .port         = 0,
+        .fwmark       = -1,
         .bind_policy  = kBoundUdpBindPolicyExclusive,
     };
 
@@ -117,6 +119,7 @@ static void testBoundUdpSocketExclusiveBindCannotBeShared(void)
     bound_udp_config_t cfg = {
         .bind_address = "127.0.0.1",
         .port         = 0,
+        .fwmark       = -1,
         .bind_policy  = kBoundUdpBindPolicyExclusive,
     };
 
@@ -140,6 +143,7 @@ static void testBoundUdpSocketIpv6Ephemeral(void)
     bound_udp_config_t cfg = {
         .bind_address = "::1",
         .port         = 0,
+        .fwmark       = -1,
         .bind_policy  = kBoundUdpBindPolicyExclusive,
     };
 
@@ -179,6 +183,7 @@ static void testBoundUdpSocketRejectsUnrepresentableBufferRequest(void)
     const bound_udp_config_t cfg = {
         .bind_address     = "127.0.0.1",
         .port             = 0,
+        .fwmark           = -1,
         .send_buffer_size = (uint32_t) INT_MAX + 1U,
         .bind_policy      = kBoundUdpBindPolicyExclusive,
     };
@@ -198,6 +203,7 @@ static void testBoundUdpSocketBufferOptionSemantics(void)
     bound_udp_config_t cfg = {
         .bind_address = "127.0.0.1",
         .port         = 0,
+        .fwmark       = -1,
         .bind_policy  = kBoundUdpBindPolicyExclusive,
     };
     wio_t *wio = boundUdpSocketCreate(env.loop, &cfg);
@@ -244,6 +250,7 @@ static void testBoundUdpSocketBufferOptionFailureClosesUnpublishedFd(void)
     bound_udp_config_t cfg = {
         .bind_address     = "127.0.0.1",
         .port             = 0,
+        .fwmark           = -1,
         .send_buffer_size = 4096,
         .recv_buffer_size = 4096,
         .bind_policy      = kBoundUdpBindPolicyExclusive,

@@ -15,7 +15,7 @@ typedef struct bound_udp_config_s
     const char             *bind_address;
     uint16_t                port;
     const char             *interface_name;
-    int                     fwmark;
+    int                     fwmark; /* -1 disables socket marking. */
     uint32_t                send_buffer_size;
     uint32_t                recv_buffer_size;
     bound_udp_bind_policy_t bind_policy;
