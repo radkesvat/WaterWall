@@ -3,8 +3,6 @@
 #include "interface.h"
 #include "wwapi.h"
 
-#include <stdatomic.h>
-
 typedef enum udplistener_source_kind_e
 {
     kUdpListenerSourceStatic  = 0,
