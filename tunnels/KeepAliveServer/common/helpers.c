@@ -56,13 +56,13 @@ static bool keepaliveserverSendFramePrev(tunnel_t *t, line_t *l, sbuf_t *buf, ui
 
     sbufShiftLeft(buf, kKeepAliveServerFramePrefixSize);
 
-    uint8_t *frame = sbufGetMutablePtr(buf);
+    uint8_t *frame                  = sbufGetMutablePtr(buf);
     uint16_t frame_body_len_network = htons((uint16_t) frame_body_len);
     sbufByteCopy(frame, &frame_body_len_network, (uint32_t) sizeof(frame_body_len_network));
     frame[kKeepAliveServerFrameLengthSize] = frame_kind;
 
     sbufSetLength(buf, frame_len);
-    return withLineLockedWithBuf(l, tunnelPrevDownStreamPayload, t, buf);
+    return lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, buf);
 }
 
 static bool keepaliveserverSendControlFrame(tunnel_t *t, line_t *l, uint8_t frame_kind)
@@ -121,7 +121,7 @@ static keepaliveserver_consume_result_t keepaliveserverConsumeOneFrame(tunnel_t 
         }
 
         sbufShiftRight(frame, kKeepAliveServerFrameTypeSize);
-        if (! withLineLockedWithBuf(l, tunnelNextUpStreamPayload, t, frame))
+        if (! lineCallWithRefWithBuf(l, tunnelNextUpStreamPayload, t, frame))
         {
             return kKeepAliveServerConsumeLineDead;
         }
@@ -173,7 +173,7 @@ bool keepaliveserverSendNormalFrameDownstream(tunnel_t *t, line_t *l, sbuf_t *bu
         while (remaining > 0)
         {
             const uint32_t chunk_len = min(remaining, (uint32_t) kKeepAliveServerMaxPayloadChunkSize);
-            sbuf_t        *frame_buf = keepaliveserverAllocFrameBuffer(pool, chunk_len + kKeepAliveServerFramePrefixSize);
+            sbuf_t *frame_buf = keepaliveserverAllocFrameBuffer(pool, chunk_len + kKeepAliveServerFramePrefixSize);
 
             sbufSetLength(frame_buf, chunk_len);
             memoryCopyLarge(sbufGetMutablePtr(frame_buf), src, chunk_len);

@@ -309,7 +309,7 @@ static streamtopackets_line_entry_t *streamtopacketsDetachForeignSourceLocked(
              * through its own worker's Finish handler, and that handler takes
              * this same write lock before its owner may destroy the line.
              */
-            lineLock(entry->line);
+            lineRef(entry->line);
 
             entry->next = evicted;
             evicted     = entry;
@@ -367,7 +367,7 @@ static void streamtopacketsCloseEvictedLineOnWorker(worker_t *worker, void *arg1
     discard worker;
 
     streamtopacketsCloseEvictedLineNow(t, l);
-    lineUnlock(l);
+    lineUnref(l);
 }
 
 static void streamtopacketsCleanupEvictedLine(void *arg1, void *arg2, void *arg3, worker_message_cancel_reason_e reason)
@@ -378,7 +378,7 @@ static void streamtopacketsCleanupEvictedLine(void *arg1, void *arg2, void *arg3
 
     line_t *l = arg2;
 
-    lineUnlock(l);
+    lineUnref(l);
 }
 
 /*
@@ -448,7 +448,7 @@ static void streamtopacketsQueueEvictedCloses(tunnel_t *t, streamtopackets_line_
 
         // Held across the post so the recovery below still has a live line after
         // a rejected message has already run its cleanup.
-        lineLock(l);
+        lineRef(l);
 
         WW_WORKER_MESSAGE_BENCHMARK_RECORD_CONTINUATION(kWorkerMessageBenchmarkContinuationBridgeRetryOrDelivery);
         if (UNLIKELY(
@@ -462,7 +462,7 @@ static void streamtopacketsQueueEvictedCloses(tunnel_t *t, streamtopackets_line_
             streamtopacketsRecoverFailedEvictionClose(t, l, wid);
         }
 
-        lineUnlock(l);
+        lineUnref(l);
     }
 }
 
@@ -740,9 +740,9 @@ bool streamtopacketsSelectReturnLine(tunnel_t *t, uint64_t flow_hash, streamtopa
         return false;
     }
 
-    // Taken before the registry protection is released, so the winner cannot die
-    // between selection and delivery.
-    lineLock(best->line);
+    // Taken before the registry protection is released, so the winner's
+    // allocation cannot be reclaimed between selection and delivery.
+    lineRef(best->line);
 
     *out = (streamtopackets_selected_line_t) {
         .line = best->line, .line_id = best->line_id, .generation = best->source_generation, .wid = best->wid};
@@ -781,7 +781,7 @@ static void streamtopacketsWriteSelectedLineOnWorker(worker_t *worker, void *arg
     // reads line or registry state again.
     streamtopacketsDeliverSelectedWrite(msg->tunnel, msg->line, msg->line_id, msg->generation, msg->buf);
 
-    lineUnlock(msg->line);
+    lineUnref(msg->line);
     memoryFree(msg);
 }
 
@@ -805,7 +805,7 @@ static void streamtopacketsCleanupSelectedWrite(void *arg1, void *arg2, void *ar
         sbufDestroy(msg->buf);
     }
 
-    lineUnlock(msg->line);
+    lineUnref(msg->line);
     memoryFree(msg);
 }
 
@@ -822,7 +822,7 @@ void streamtopacketsQueueSelectedWrite(tunnel_t *t, streamtopackets_selected_lin
     {
         LOGE("StreamToPackets: failed to allocate a cross-worker return-write message");
         bufferpoolReuseBuffer(getCurrentEventWorkerBufferPool(), buf);
-        lineUnlock(selected->line);
+        lineUnref(selected->line);
         return;
     }
 

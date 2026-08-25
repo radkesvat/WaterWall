@@ -8,7 +8,7 @@ void tcpoverudpclientTunnelUpStreamFinish(tunnel_t *t, line_t *l)
 
     assert(ls->k_handle != NULL);
 
-    lineLock(l);
+    lineRef(l);
 
     tcpoverudpclient_tstate_t *state = tunnelGetState(t);
     if (UNLIKELY(atomicLoadRelaxed(&state->stopping)))
@@ -18,7 +18,7 @@ void tcpoverudpclientTunnelUpStreamFinish(tunnel_t *t, line_t *l)
         {
             tunnelNextUpStreamFinish(t, l);
         }
-        lineUnlock(l);
+        lineUnref(l);
         return;
     }
 
@@ -29,7 +29,7 @@ void tcpoverudpclientTunnelUpStreamFinish(tunnel_t *t, line_t *l)
 
     if (! tcpoverudpclientUpdateKcp(ls, true))
     {
-        lineUnlock(l);
+        lineUnref(l);
         return;
     }
 
@@ -39,5 +39,5 @@ void tcpoverudpclientTunnelUpStreamFinish(tunnel_t *t, line_t *l)
         tunnelNextUpStreamFinish(t, l);
     }
 
-    lineUnlock(l);
+    lineUnref(l);
 }

@@ -72,7 +72,7 @@ bool tcpoverudpserverUpdateKcp(tcpoverudpserver_lstate_t *ls, bool flush)
 
     bool ret = true;
 
-    lineLock(l);
+    lineRef(l);
 
     if (flush)
     {
@@ -98,7 +98,7 @@ bool tcpoverudpserverUpdateKcp(tcpoverudpserver_lstate_t *ls, bool flush)
     }
     ret = lineIsAlive(l) && ls->k_handle != NULL;
 
-    lineUnlock(l);
+    lineUnref(l);
     return ret;
 }
 
@@ -138,7 +138,7 @@ void tcpoverudpserverKcpLoopIntervalCallback(wtimer_t *timer)
             line_t   *l = ls->line;
             tunnel_t *t = ls->tunnel;
 
-            lineLock(l);
+            lineRef(l);
             // close upstream side first, our own DownStreamFin propagates downstream
             // and destroys the line when it reaches the creator adapter
             tunnelNextUpStreamFinish(t, l);
@@ -146,7 +146,7 @@ void tcpoverudpserverKcpLoopIntervalCallback(wtimer_t *timer)
             {
                 tunnelDownStreamFin(t, l);
             }
-            lineUnlock(l);
+            lineUnref(l);
             return;
         }
     }

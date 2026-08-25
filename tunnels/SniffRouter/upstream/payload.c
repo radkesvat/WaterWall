@@ -13,7 +13,7 @@ static void forwardSelectedPayload(tunnel_t *t, line_t *l, sniffrouter_lstate_t 
 
 static void initializeSelectedRoute(tunnel_t *t, line_t *l, sniffrouter_lstate_t *ls, tunnel_t *target, sbuf_t *first)
 {
-    lineLock(l);
+    lineRef(l);
 
     if (target != NULL)
     {
@@ -43,7 +43,7 @@ static void initializeSelectedRoute(tunnel_t *t, line_t *l, sniffrouter_lstate_t
         lineReuseBuffer(l, first);
     }
 
-    lineUnlock(l);
+    lineUnref(l);
 }
 
 void sniffrouterTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)

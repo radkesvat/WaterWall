@@ -11,7 +11,7 @@
  */
 bool ptcLinestateInitialize(ptc_lstate_t *ls, tunnel_t *t, line_t *l, ptc_line_kind_t kind, void *pcb)
 {
-    lineLock(l);
+    lineRef(l);
 
     memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(*ls)));
     ls->tunnel = t;
@@ -29,7 +29,7 @@ bool ptcLinestateInitialize(ptc_lstate_t *ls, tunnel_t *t, line_t *l, ptc_line_k
             bufferqueueDestroy(&ls->pause_queue);
             sbuf_ack_queue_t_drop(&ls->ack_queue);
             memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(*ls)));
-            lineUnlock(l);
+            lineUnref(l);
             return false;
         }
     }
@@ -113,5 +113,5 @@ void ptcLinestateDestroy(ptc_lstate_t *ls)
 #endif
 
     memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(ptc_lstate_t)));
-    lineUnlock(l);
+    lineUnref(l);
 }

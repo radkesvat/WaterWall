@@ -139,7 +139,7 @@ static void benchmarkPoolSizes(uint64_t iterations)
             if (streamtopacketsSelectReturnLine(fixture.tunnel, i * UINT64_C(0x9E3779B97F4A7C15), &out))
             {
                 ++selected;
-                lineUnlock(out.line);
+                lineUnref(out.line);
             }
         }
 
@@ -198,7 +198,7 @@ static WTHREAD_ROUTINE(contentionReader)
         if (streamtopacketsSelectReturnLine(g_contention.fixture->tunnel, i * UINT64_C(0x9E3779B97F4A7C15), &out))
         {
             ++local;
-            lineUnlock(out.line);
+            lineUnref(out.line);
         }
     }
 

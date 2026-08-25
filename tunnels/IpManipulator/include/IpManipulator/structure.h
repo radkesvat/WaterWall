@@ -167,7 +167,7 @@ typedef struct ipmanipulator_ordered_output_s
 
 /*
  * A fixed-size per-flow FIFO used only while a stateful SNI transcript has
- * delayed output pending. Each retained line is locked until its packet is
+ * delayed output pending. Each retained line holds a reference until its packet is
  * forwarded or recycled, so a normal-line test fixture is as safe as the
  * persistent worker packet line used in production.
  */

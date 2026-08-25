@@ -12,5 +12,5 @@ void packetstostreamTunnelDownStreamEst(tunnel_t *t, line_t *l)
         return;
     }
 
-    discard withLineLocked(packet_line, tunnelPrevDownStreamEst, t);
+    discard lineCallWithRef(packet_line, tunnelPrevDownStreamEst, t);
 }

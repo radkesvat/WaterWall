@@ -70,7 +70,7 @@ typedef struct vlessserver_lstate_s
     char                   *auth_password; // resolved raw password / UUID, owned (NULL if none)
     vlessserver_phase_t     phase;
     vlessserver_line_kind_t line_kind;
-    bool                    client_line_locked;
+    bool                    client_line_ref_held;
     bool                    response_sent;
     bool                    user_handle_recorded;
     bool                    fallback_close_draining;

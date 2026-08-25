@@ -87,7 +87,7 @@ static bool socks5serverFlushQueueToNext(tunnel_t *t, line_t *l, buffer_queue_t 
     while (bufferqueueGetBufCount(queue) > 0)
     {
         sbuf_t *buf = bufferqueuePopFront(queue);
-        if (! withLineLockedWithBuf(l, tunnelNextUpStreamPayload, t, buf))
+        if (! lineCallWithRefWithBuf(l, tunnelNextUpStreamPayload, t, buf))
         {
             bufferqueueDestroy(queue);
             return false;
@@ -103,7 +103,7 @@ static bool socks5serverFlushQueueToPrev(tunnel_t *t, line_t *l, buffer_queue_t 
     while (bufferqueueGetBufCount(queue) > 0)
     {
         sbuf_t *buf = bufferqueuePopFront(queue);
-        if (! withLineLockedWithBuf(l, tunnelPrevDownStreamPayload, t, buf))
+        if (! lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, buf))
         {
             bufferqueueDestroy(queue);
             return false;
@@ -738,7 +738,7 @@ void socks5serverDetachRemoteFromClient(socks5server_lstate_t *remote_ls)
 {
     line_t *client_line = remote_ls->client_line;
 
-    if (client_line != NULL && remote_ls->client_line_locked)
+    if (client_line != NULL && remote_ls->client_line_ref_held)
     {
         if (lineIsAlive(client_line))
         {
@@ -752,11 +752,11 @@ void socks5serverDetachRemoteFromClient(socks5server_lstate_t *remote_ls)
             }
         }
 
-        lineUnlock(client_line);
+        lineUnref(client_line);
     }
 
-    remote_ls->client_line        = NULL;
-    remote_ls->client_line_locked = false;
+    remote_ls->client_line          = NULL;
+    remote_ls->client_line_ref_held = false;
 }
 
 static line_t *socks5serverGetOrCreateUdpRemoteLine(tunnel_t *t, line_t *client_l, socks5server_lstate_t *client_ls,
@@ -774,13 +774,13 @@ static line_t *socks5serverGetOrCreateUdpRemoteLine(tunnel_t *t, line_t *client_
     socks5server_lstate_t *remote_ls = lineGetState(remote_l, t);
 
     socks5serverLinestateInitialize(remote_ls, t, remote_l, kSocks5ServerLineKindUdpRemote);
-    remote_ls->client_line        = client_l;
-    remote_ls->client_line_locked = true;
-    remote_ls->remote_key         = remote_key;
-    remote_ls->dynamic_handle     = client_ls->dynamic_handle;
-    remote_ls->user_handle        = *user_handle;
+    remote_ls->client_line          = client_l;
+    remote_ls->client_line_ref_held = true;
+    remote_ls->remote_key           = remote_key;
+    remote_ls->dynamic_handle       = client_ls->dynamic_handle;
+    remote_ls->user_handle          = *user_handle;
 
-    lineLock(client_l);
+    lineRef(client_l);
 
     lineGetRoutingContext(remote_l)->local_listener_port = socks5serverGetLocalPort(client_l);
     socks5serverApplyDestinationContext(remote_l, target, true);
@@ -797,7 +797,7 @@ static line_t *socks5serverGetOrCreateUdpRemoteLine(tunnel_t *t, line_t *client_
 
     socks5server_remote_map_t_insert(&client_ls->udp_remote_lines, remote_key, remote_l);
 
-    if (! withLineLocked(remote_l, tunnelNextUpStreamInit, t))
+    if (! lineCallWithRef(remote_l, tunnelNextUpStreamInit, t))
     {
         return NULL;
     }
@@ -871,7 +871,7 @@ static void socks5serverCloseControlLine(tunnel_t *t, line_t *l, socks5server_cl
     socks5serverMarkControlFinishedSide(ls, origin);
 
     ls->phase = kSocks5ServerPhaseClosing;
-    lineLock(l);
+    lineRef(l);
 
     socks5serverUnregisterUdpAssociation(t, ls);
 
@@ -900,7 +900,7 @@ static void socks5serverCloseControlLine(tunnel_t *t, line_t *l, socks5server_cl
         tunnelPrevDownStreamFinish(t, l);
     }
 
-    lineUnlock(l);
+    lineUnref(l);
 }
 
 void socks5serverCloseControlLineFromUpstream(tunnel_t *t, line_t *l)
@@ -932,13 +932,13 @@ static bool socks5serverDrainUdpClientRemoteLines(tunnel_t *t, line_t *client_l,
         return false;
     }
 
-    lineLock(client_l);
+    lineRef(client_l);
 
     while (true)
     {
         if (! lineIsAlive(client_l))
         {
-            lineUnlock(client_l);
+            lineUnref(client_l);
             return false;
         }
 
@@ -946,7 +946,7 @@ static bool socks5serverDrainUdpClientRemoteLines(tunnel_t *t, line_t *client_l,
         client_ls = lineGetState(client_l, t);
         if (socks5server_remote_map_t_size(&client_ls->udp_remote_lines) == 0)
         {
-            lineUnlock(client_l);
+            lineUnref(client_l);
             return true;
         }
 
@@ -964,13 +964,13 @@ static bool socks5serverDrainUdpClientRemoteLines(tunnel_t *t, line_t *client_l,
         }
 
         socks5server_lstate_t *remote_ls = lineGetState(remote_l, t);
-        if (UNLIKELY(remote_ls->client_line != client_l || ! remote_ls->client_line_locked))
+        if (UNLIKELY(remote_ls->client_line != client_l || ! remote_ls->client_line_ref_held))
         {
             LOGF("Socks5Server: UDP remote registry contains a line without its client ownership link");
             abortProgramNow(1);
         }
 
-        lineLock(remote_l);
+        lineRef(remote_l);
         socks5serverDetachRemoteFromClient(remote_ls);
         socks5serverLinestateDestroy(remote_ls);
         tunnelNextUpStreamFinish(t, remote_l);
@@ -980,11 +980,11 @@ static bool socks5serverDrainUdpClientRemoteLines(tunnel_t *t, line_t *client_l,
             abortProgramNow(1);
         }
         lineDestroy(remote_l);
-        lineUnlock(remote_l);
+        lineUnref(remote_l);
 
         if (! lineIsAlive(client_l))
         {
-            lineUnlock(client_l);
+            lineUnref(client_l);
             return false;
         }
     }
@@ -1042,7 +1042,7 @@ void socks5serverCloseUdpRemoteLine(tunnel_t *t, line_t *remote_l)
     socks5serverRequireCurrentLineWorker(remote_l, "UDP remote close");
     socks5server_lstate_t *remote_ls = lineGetState(remote_l, t);
 
-    lineLock(remote_l);
+    lineRef(remote_l);
     socks5serverDetachRemoteFromClient(remote_ls);
     socks5serverLinestateDestroy(remote_ls);
     tunnelNextUpStreamFinish(t, remote_l);
@@ -1052,7 +1052,7 @@ void socks5serverCloseUdpRemoteLine(tunnel_t *t, line_t *remote_l)
         abortProgramNow(1);
     }
     lineDestroy(remote_l);
-    lineUnlock(remote_l);
+    lineUnref(remote_l);
 }
 
 void socks5serverOnControlEstablished(tunnel_t *t, line_t *l, socks5server_lstate_t *ls)
@@ -1087,14 +1087,14 @@ void socks5serverOnControlEstablished(tunnel_t *t, line_t *l, socks5server_lstat
     ls->phase              = kSocks5ServerPhaseTcpEstablished;
     ls->connect_reply_sent = true;
 
-    if (! withLineLockedWithBuf(l, tunnelPrevDownStreamPayload, t, reply))
+    if (! lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, reply))
     {
         bufferqueueDestroy(&up_local);
         bufferqueueDestroy(&down_local);
         return;
     }
 
-    if (! withLineLocked(l, tunnelPrevDownStreamEst, t))
+    if (! lineCallWithRef(l, tunnelPrevDownStreamEst, t))
     {
         bufferqueueDestroy(&up_local);
         bufferqueueDestroy(&down_local);
@@ -1165,7 +1165,7 @@ bool socks5serverHandleUdpClientPayload(tunnel_t *t, line_t *l, socks5server_lst
      * different line.  Keep the allocation and pool identity independent of
      * that callback before touching any remote-line helper. */
     buffer_pool_t *const client_pool = lineGetBufferPool(l);
-    lineLock(l);
+    lineRef(l);
     ls = lineGetState(l, t);
 
     const bool first_payload     = ! ls->udp_first_payload_validated;
@@ -1173,7 +1173,7 @@ bool socks5serverHandleUdpClientPayload(tunnel_t *t, line_t *l, socks5server_lst
     if (! lineIsAlive(l))
     {
         bufferpoolReuseBuffer(client_pool, buf);
-        lineUnlock(l);
+        lineUnref(l);
         return false;
     }
 
@@ -1181,7 +1181,7 @@ bool socks5serverHandleUdpClientPayload(tunnel_t *t, line_t *l, socks5server_lst
     {
         bufferpoolReuseBuffer(client_pool, buf);
         socks5serverRejectUdpClientLine(t, l);
-        lineUnlock(l);
+        lineUnref(l);
         return false;
     }
     ls->udp_first_payload_validated = true;
@@ -1193,14 +1193,14 @@ bool socks5serverHandleUdpClientPayload(tunnel_t *t, line_t *l, socks5server_lst
     {
         bufferpoolReuseBuffer(client_pool, buf);
         socks5serverCloseUdpClientLine(t, l);
-        lineUnlock(l);
+        lineUnref(l);
         return false;
     }
 
     if (raw[2] != 0)
     {
         bufferpoolReuseBuffer(client_pool, buf);
-        lineUnlock(l);
+        lineUnref(l);
         return true;
     }
 
@@ -1213,10 +1213,10 @@ bool socks5serverHandleUdpClientPayload(tunnel_t *t, line_t *l, socks5server_lst
         if (parse_res < 0)
         {
             socks5serverCloseUdpClientLine(t, l);
-            lineUnlock(l);
+            lineUnref(l);
             return false;
         }
-        lineUnlock(l);
+        lineUnref(l);
         return true;
     }
 
@@ -1225,21 +1225,21 @@ bool socks5serverHandleUdpClientPayload(tunnel_t *t, line_t *l, socks5server_lst
     if (! lineIsAlive(l))
     {
         bufferpoolReuseBuffer(client_pool, buf);
-        lineUnlock(l);
+        lineUnref(l);
         return false;
     }
 
     if (remote_l == NULL)
     {
         bufferpoolReuseBuffer(client_pool, buf);
-        lineUnlock(l);
+        lineUnref(l);
         return false;
     }
 
     sbufShiftRight(buf, (uint32_t) (3 + addr_len));
-    const bool remote_alive = withLineLockedWithBuf(remote_l, tunnelNextUpStreamPayload, t, buf);
+    const bool remote_alive = lineCallWithRefWithBuf(remote_l, tunnelNextUpStreamPayload, t, buf);
 
-    lineUnlock(l);
+    lineUnref(l);
     return remote_alive;
 }
 
@@ -1299,7 +1299,7 @@ bool socks5serverControlDrainInput(tunnel_t *t, line_t *l, socks5server_lstate_t
             }
 
             sbuf_t *reply = socks5serverCreateMethodReply(l, selected);
-            if (! withLineLockedWithBuf(l, tunnelPrevDownStreamPayload, t, reply))
+            if (! lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, reply))
             {
                 return false;
             }
@@ -1367,7 +1367,7 @@ bool socks5serverControlDrainInput(tunnel_t *t, line_t *l, socks5server_lstate_t
             lineReuseBuffer(l, auth_buf);
 
             sbuf_t *reply = socks5serverCreateAuthReply(l, authenticated ? 0x00 : 0x01);
-            if (! withLineLockedWithBuf(l, tunnelPrevDownStreamPayload, t, reply))
+            if (! lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, reply))
             {
                 return false;
             }
@@ -1444,7 +1444,7 @@ bool socks5serverControlDrainInput(tunnel_t *t, line_t *l, socks5server_lstate_t
                 socks5serverApplyDestinationContext(l, &target, false);
                 addresscontextReset(&target);
                 ls->phase = kSocks5ServerPhaseConnectWaitEst;
-                if (! withLineLocked(l, tunnelNextUpStreamInit, t))
+                if (! lineCallWithRef(l, tunnelNextUpStreamInit, t))
                 {
                     return false;
                 }
@@ -1482,7 +1482,7 @@ bool socks5serverControlDrainInput(tunnel_t *t, line_t *l, socks5server_lstate_t
                     socks5serverUnregisterUdpAssociation(t, ls);
                     return socks5serverSendReplyAndClose(t, l, kSocks5ReplyGeneralFailure);
                 }
-                if (! withLineLockedWithBuf(l, tunnelPrevDownStreamPayload, t, reply))
+                if (! lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, reply))
                 {
                     return false;
                 }

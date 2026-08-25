@@ -447,7 +447,7 @@ void nodemanagerInitializeLineOnTargetWorker(void *worker, void *_tunnel, void *
 
     assert(lineIsOnCurrentEventWorker(line));
 
-    if (! withLineLocked(line, tunnelNextUpStreamInit, tunnel))
+    if (! lineCallWithRef(line, tunnelNextUpStreamInit, tunnel))
     {
         /*
          * Category D: a persistent worker packet line is process-lifetime state

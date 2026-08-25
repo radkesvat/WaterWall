@@ -23,5 +23,5 @@ void streamtopacketsTunnelUpStreamInit(tunnel_t *t, line_t *l)
         return;
     }
 
-    discard withLineLocked(l, tunnelPrevDownStreamEst, t);
+    discard lineCallWithRef(l, tunnelPrevDownStreamEst, t);
 }

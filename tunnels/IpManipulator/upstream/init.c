@@ -5,7 +5,7 @@
 void ipmanipulatorUpStreamInit(tunnel_t *t, line_t *l)
 {
     ipmanipulator_tstate_t *ts = tunnelGetState(t);
-    if (! withLineLocked(l, tunnelNextUpStreamInit, t))
+    if (! lineCallWithRef(l, tunnelNextUpStreamInit, t))
     {
         LOGF("IpManipulator: next packet line died during upstream init");
         abortProgramNow(1);

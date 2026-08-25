@@ -46,12 +46,12 @@ bool headerserverLoadSettings(headerserver_tstate_t *ts, const cJSON *settings)
 
 void headerserverCloseLineFromUpstream(tunnel_t *t, line_t *l)
 {
-    lineLock(l);
+    lineRef(l);
 
     headerserver_lstate_t *ls = lineGetState(l, t);
     if (ls->phase == kHeaderServerPhaseNone)
     {
-        lineUnlock(l);
+        lineUnref(l);
         return;
     }
 
@@ -64,34 +64,34 @@ void headerserverCloseLineFromUpstream(tunnel_t *t, line_t *l)
         tunnelNextUpStreamFinish(t, l);
     }
 
-    lineUnlock(l);
+    lineUnref(l);
 }
 
 void headerserverCloseLineFromDownstream(tunnel_t *t, line_t *l)
 {
-    lineLock(l);
+    lineRef(l);
 
     headerserver_lstate_t *ls = lineGetState(l, t);
     if (ls->phase == kHeaderServerPhaseNone)
     {
-        lineUnlock(l);
+        lineUnref(l);
         return;
     }
 
     headerserverLinestateDestroy(ls);
     tunnelPrevDownStreamFinish(t, l);
 
-    lineUnlock(l);
+    lineUnref(l);
 }
 
 void headerserverCloseLineFromProtocolError(tunnel_t *t, line_t *l)
 {
-    lineLock(l);
+    lineRef(l);
 
     headerserver_lstate_t *ls = lineGetState(l, t);
     if (ls->phase == kHeaderServerPhaseNone)
     {
-        lineUnlock(l);
+        lineUnref(l);
         return;
     }
 
@@ -105,5 +105,5 @@ void headerserverCloseLineFromProtocolError(tunnel_t *t, line_t *l)
     }
 
     tunnelPrevDownStreamFinish(t, l);
-    lineUnlock(l);
+    lineUnref(l);
 }

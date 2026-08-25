@@ -26,7 +26,7 @@ static void speedtestclientStartStream(void *worker, void *arg1, void *arg2, voi
     state->owned_lines[stream_id] = l;
     ls->upstream_init_sent        = true;
 
-    if (! withLineLocked(l, tunnelNextUpStreamInit, t))
+    if (! lineCallWithRef(l, tunnelNextUpStreamInit, t))
     {
         return;
     }

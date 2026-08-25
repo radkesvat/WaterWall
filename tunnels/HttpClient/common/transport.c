@@ -381,7 +381,7 @@ static bool sendBytesUp(tunnel_t *t, line_t *l, const void *data, uint32_t len)
         sbufSetLength(buf, chunk);
         sbufWriteLarge(buf, ptr, chunk);
 
-        if (! withLineLockedWithBuf(l, tunnelNextUpStreamPayload, t, buf))
+        if (! lineCallWithRefWithBuf(l, tunnelNextUpStreamPayload, t, buf))
         {
             return false;
         }
@@ -424,7 +424,7 @@ static bool httpclientSendRawUp(tunnel_t *t, line_t *l, httpclient_lstate_t *ls,
         return httpclientTransportSendHttp2DataFrame(t, l, ls, buf, false);
     }
 
-    if (! withLineLockedWithBuf(l, tunnelNextUpStreamPayload, t, buf))
+    if (! lineCallWithRefWithBuf(l, tunnelNextUpStreamPayload, t, buf))
     {
         return false;
     }
@@ -793,7 +793,7 @@ static bool httpclientForwardDownstreamPayload(tunnel_t *t, line_t *l, httpclien
         lineReuseBuffer(l, buf);
         return false;
     }
-    return withLineLockedWithBuf(target, tunnelPrevDownStreamPayload, t, buf);
+    return lineCallWithRefWithBuf(target, tunnelPrevDownStreamPayload, t, buf);
 }
 
 bool httpclientTransportSendHttp1RequestHeaders(tunnel_t *t, line_t *l, bool upgrade_to_h2)
@@ -1133,7 +1133,7 @@ bool httpclientTransportSendHttp1ChunkedPayload(tunnel_t *t, line_t *l, sbuf_t *
 
     if (prefix_len <= 0)
     {
-        if (! withLineLockedWithBuf(l, tunnelNextUpStreamPayload, t, payload))
+        if (! lineCallWithRefWithBuf(l, tunnelNextUpStreamPayload, t, payload))
         {
             return false;
         }
@@ -1163,7 +1163,7 @@ bool httpclientTransportSendHttp1ChunkedPayload(tunnel_t *t, line_t *l, sbuf_t *
         appended_tail = true;
     }
 
-    if (! withLineLockedWithBuf(l, tunnelNextUpStreamPayload, t, payload))
+    if (! lineCallWithRefWithBuf(l, tunnelNextUpStreamPayload, t, payload))
     {
         return false;
     }
@@ -1371,7 +1371,7 @@ static bool sendNghttp2Outbound(tunnel_t *t, line_t *l, httpclient_lstate_t *ls)
             sbufSetLength(buf, chunk);
             sbufWriteLarge(buf, ptr, chunk);
 
-            if (! withLineLockedWithBuf(l, tunnelNextUpStreamPayload, t, buf))
+            if (! lineCallWithRefWithBuf(l, tunnelNextUpStreamPayload, t, buf))
             {
                 return false;
             }
@@ -2314,7 +2314,7 @@ static void httpclientTransportCloseDirections(tunnel_t *t, line_t *l, httpclien
         return;
     }
 
-    lineLock(l);
+    lineRef(l);
 
     bool send_next = close_next && ! ls->next_finished;
     bool send_prev = close_prev && ! ls->prev_finished;
@@ -2335,7 +2335,7 @@ static void httpclientTransportCloseDirections(tunnel_t *t, line_t *l, httpclien
         tunnelPrevDownStreamFinish(t, l);
     }
 
-    lineUnlock(l);
+    lineUnref(l);
 }
 
 void httpclientTransportCloseBothDirections(tunnel_t *t, line_t *l, httpclient_lstate_t *ls)
@@ -2467,16 +2467,16 @@ static bool drainDownEvents(tunnel_t *t, line_t *l, httpclient_lstate_t *ls)
     {
         context_t *ctx = contextqueuePop(&ls->events_down);
 
-        lineLock(l);
+        lineRef(l);
         contextApplyOnPrevTunnelD(ctx, t);
         contextDestroy(ctx);
 
         if (! lineIsAlive(l))
         {
-            lineUnlock(l);
+            lineUnref(l);
             return false;
         }
-        lineUnlock(l);
+        lineUnref(l);
     }
 
     return true;

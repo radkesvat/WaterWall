@@ -4,7 +4,7 @@
 
 void tlsclientTunnelUpStreamFinish(tunnel_t *t, line_t *l)
 {
-    lineLock(l);
+    lineRef(l);
 
     tlsclient_lstate_t *ls = lineGetState(l, t);
 
@@ -17,14 +17,14 @@ void tlsclientTunnelUpStreamFinish(tunnel_t *t, line_t *l)
         {
             if (! lineIsAlive(l))
             {
-                lineUnlock(l);
+                lineUnref(l);
                 return;
             }
 
             ls = lineGetState(l, t);
             if (ls->tunnel != t)
             {
-                lineUnlock(l);
+                lineUnref(l);
                 return;
             }
             LOGW("TlsClient: could not synchronously drain final shaped ciphertext; discarding the remainder");
@@ -32,13 +32,13 @@ void tlsclientTunnelUpStreamFinish(tunnel_t *t, line_t *l)
 
         if (! lineIsAlive(l))
         {
-            lineUnlock(l);
+            lineUnref(l);
             return;
         }
         ls = lineGetState(l, t);
         if (ls->tunnel != t)
         {
-            lineUnlock(l);
+            lineUnref(l);
             return;
         }
     }
@@ -49,5 +49,5 @@ void tlsclientTunnelUpStreamFinish(tunnel_t *t, line_t *l)
     tlsclientLinestateDestroy(ls);
 
     tunnelNextUpStreamFinish(t, l);
-    lineUnlock(l);
+    lineUnref(l);
 }

@@ -12,7 +12,7 @@ void muxserverTunnelUpStreamResume(tunnel_t *t, line_t *parent_l)
         return;
     }
 
-    lineLock(parent_l);
+    lineRef(parent_l);
     while (child_ls && lineIsAlive(parent_l))
     {
         muxserver_lstate_t *temp = child_ls->child_next;
@@ -22,5 +22,5 @@ void muxserverTunnelUpStreamResume(tunnel_t *t, line_t *parent_l)
         }
         child_ls = temp;
     }
-    lineUnlock(parent_l);
+    lineUnref(parent_l);
 }

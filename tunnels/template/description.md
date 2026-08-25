@@ -114,7 +114,7 @@ If you use this folder as the base for a new tunnel, remember the core Waterwall
 - upstream talks to `tunnelNext*`
 - downstream talks to `tunnelPrev*`
 - destroy per-line state before propagating `Finish`
-- protect lines around re-entrant callbacks with `withLineLocked()` or manual `lineLock()` and `lineUnlock()`
+- protect lines around re-entrant callbacks with `lineCallWithRef()` or manual `lineRef()` and `lineUnref()`
 - do not access line state after a callback path that may have closed the line
 - if your tunnel prepends bytes, update `required_padding_left` in `instance/node.c`
 

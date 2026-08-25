@@ -17,7 +17,7 @@ void trojanserverLinestateInitialize(trojanserver_lstate_t *ls, tunnel_t *t, lin
         .phase                                 = kTrojanServerPhaseWaitInitial,
         .line_kind                             = kind,
         .branch                                = kTrojanServerBranchNone,
-        .client_line_locked                    = false,
+        .client_line_ref_held                  = false,
         .user_handle_recorded                  = false,
         .fallback_close_draining               = false,
         .fallback_branch_finished_during_drain = false,

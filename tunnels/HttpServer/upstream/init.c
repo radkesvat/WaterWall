@@ -31,18 +31,18 @@ void httpserverTunnelUpStreamInit(tunnel_t *t, line_t *l)
              boolToTrueFalse(ts->enable_upgrade));
     }
 
-    lineLock(l);
+    lineRef(l);
 
-    if (! withLineLocked(l, tunnelNextUpStreamInit, t))
+    if (! lineCallWithRef(l, tunnelNextUpStreamInit, t))
     {
-        lineUnlock(l);
+        lineUnref(l);
         return;
     }
 
     if (ts->version_mode == kHttpServerVersionModeHttp1)
     {
         ls->runtime_proto = kHttpServerRuntimeHttp1;
-        lineUnlock(l);
+        lineUnref(l);
         return;
     }
 
@@ -52,10 +52,10 @@ void httpserverTunnelUpStreamInit(tunnel_t *t, line_t *l)
         {
             closeOrDestroyLine(t, l, ls);
         }
-        lineUnlock(l);
+        lineUnref(l);
         return;
     }
 
     ls->runtime_proto = kHttpServerRuntimeUnknown;
-    lineUnlock(l);
+    lineUnref(l);
 }

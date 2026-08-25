@@ -343,7 +343,7 @@ static void headerserverForwardBufferedPayload(tunnel_t *t, line_t *l)
 
     if (buf != NULL)
     {
-        discard withLineLockedWithBuf(l, tunnelNextUpStreamPayload, t, buf);
+        discard lineCallWithRefWithBuf(l, tunnelNextUpStreamPayload, t, buf);
     }
 }
 
@@ -379,7 +379,7 @@ void headerserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     ls->phase = kHeaderServerPhaseEstablished;
 
-    if (! withLineLocked(l, tunnelNextUpStreamInit, t))
+    if (! lineCallWithRef(l, tunnelNextUpStreamInit, t))
     {
         return;
     }

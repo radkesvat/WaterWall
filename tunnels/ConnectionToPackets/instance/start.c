@@ -39,7 +39,7 @@ void ctpQueueWorkerPacketInit(void *worker, void *arg1, void *arg2, void *arg3)
 
     line_t *l = tunnelchainGetWorkerPacketLine(tunnelGetChain(t), getCurrentEventWorkerWID());
 
-    if (UNLIKELY(! withLineLocked(l, tunnelNextUpStreamInit, t)))
+    if (UNLIKELY(! lineCallWithRef(l, tunnelNextUpStreamInit, t)))
     {
         /* Release non-line lifetime references before the Category-D abort. */
         ctpNextGateLeave(t);

@@ -24,7 +24,7 @@ void connectionfisherclientTunnelUpStreamInit(tunnel_t *t, line_t *main_l)
         return;
     }
 
-    lineLock(main_l);
+    lineRef(main_l);
 
     for (uint32_t i = 0; i < ts->simultaneous_tries_perline; ++i)
     {
@@ -35,11 +35,11 @@ void connectionfisherclientTunnelUpStreamInit(tunnel_t *t, line_t *main_l)
         main_ls->child_lines[i] = child_l;
         main_ls->open_child_count += 1;
 
-        if (! withLineLocked(child_l, tunnelNextUpStreamInit, t))
+        if (! lineCallWithRef(child_l, tunnelNextUpStreamInit, t))
         {
             if (! connectionfisherclientMainLineStillOpen(t, main_l))
             {
-                lineUnlock(main_l);
+                lineUnref(main_l);
                 return;
             }
 
@@ -50,14 +50,14 @@ void connectionfisherclientTunnelUpStreamInit(tunnel_t *t, line_t *main_l)
         {
             if (! connectionfisherclientMainLineStillOpen(t, main_l))
             {
-                lineUnlock(main_l);
+                lineUnref(main_l);
                 return;
             }
         }
 
         if (! connectionfisherclientMainLineStillOpen(t, main_l))
         {
-            lineUnlock(main_l);
+            lineUnref(main_l);
             return;
         }
     }
@@ -66,7 +66,7 @@ void connectionfisherclientTunnelUpStreamInit(tunnel_t *t, line_t *main_l)
     if (main_ls->open_child_count == 0)
     {
         connectionfisherclientCloseMainLine(t, main_l);
-        lineUnlock(main_l);
+        lineUnref(main_l);
         return;
     }
 
@@ -74,5 +74,5 @@ void connectionfisherclientTunnelUpStreamInit(tunnel_t *t, line_t *main_l)
     {
         connectionfisherclientCloseMainLine(t, main_l);
     }
-    lineUnlock(main_l);
+    lineUnref(main_l);
 }

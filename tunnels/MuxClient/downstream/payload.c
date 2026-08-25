@@ -65,7 +65,7 @@ static bool processFrameForChild(tunnel_t *t, line_t *parent_l, mux_frame_t *fra
         {
             return muxclientQueueChildPayload(t, parent_l, ts, parent_ls, child_ls, frame_buffer);
         }
-        if (! withLineLockedWithBuf(child_l, tunnelPrevDownStreamPayload, t, frame_buffer))
+        if (! lineCallWithRefWithBuf(child_l, tunnelPrevDownStreamPayload, t, frame_buffer))
         {
             return lineIsAlive(parent_l);
         }
@@ -127,20 +127,20 @@ void muxclientTunnelDownStreamPayload(tunnel_t *t, line_t *parent_l, sbuf_t *buf
             continue;
         }
 
-        lineLock(parent_l);
+        lineRef(parent_l);
         if (! processFrameForChild(t, parent_l, &frame, frame_buffer, ts, parent_ls, child_ls))
         {
-            lineUnlock(parent_l);
+            lineUnref(parent_l);
             return;
         }
 
         if (! lineIsAlive(parent_l))
         {
             LOGD("MuxClient: DownStreamPayload: Parent line is not alive, stopping processing for cid: %u", frame.cid);
-            lineUnlock(parent_l);
+            lineUnref(parent_l);
             return;
         }
-        lineUnlock(parent_l);
+        lineUnref(parent_l);
     }
 
     // Only the incomplete remainder counts toward the limit. A single batch may legally carry far more than

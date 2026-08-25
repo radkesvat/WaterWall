@@ -24,7 +24,7 @@ void tcpoverudpclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         buffer_pool_t *pool = lineGetBufferPool(l);
         if (UNLIKELY(! lineScheduleTask(l, pauseDownSide, t)))
         {
-            if (! withLineLocked(l, pauseDownSide, t))
+            if (! lineCallWithRef(l, pauseDownSide, t))
             {
                 bufferpoolReuseBuffer(pool, buf);
                 return;

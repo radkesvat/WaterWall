@@ -2,8 +2,8 @@
 
 #include "loggers/network_logger.h"
 
-static const uint8_t kConnectionFisherClientPing[kConnectionFisherHandshakeLength]   = {'F', 'I', 'S', 'H', '?'};
-static const uint8_t kConnectionFisherClientReply[kConnectionFisherHandshakeLength]  = {'F', 'I', 'S', 'H', '!'};
+static const uint8_t kConnectionFisherClientPing[kConnectionFisherHandshakeLength]  = {'F', 'I', 'S', 'H', '?'};
+static const uint8_t kConnectionFisherClientReply[kConnectionFisherHandshakeLength] = {'F', 'I', 'S', 'H', '!'};
 
 static bool connectionfisherclientReadMatches(const sbuf_t *buf, const uint8_t *expected)
 {
@@ -22,7 +22,7 @@ bool connectionfisherclientSendPing(tunnel_t *t, line_t *child_l)
     sbufSetLength(buf, kConnectionFisherHandshakeLength);
     memoryCopy(sbufGetMutablePtr(buf), kConnectionFisherClientPing, kConnectionFisherHandshakeLength);
 
-    return withLineLockedWithBuf(child_l, tunnelNextUpStreamPayload, t, buf);
+    return lineCallWithRefWithBuf(child_l, tunnelNextUpStreamPayload, t, buf);
 }
 
 bool connectionfisherclientFlushPendingToSelected(tunnel_t *t, line_t *main_l, line_t *child_l)
@@ -32,7 +32,7 @@ bool connectionfisherclientFlushPendingToSelected(tunnel_t *t, line_t *main_l, l
     while (bufferqueueGetBufCount(&main_ls->pending_up) > 0)
     {
         sbuf_t *buf = bufferqueuePopFront(&main_ls->pending_up);
-        if (! withLineLockedWithBuf(child_l, tunnelNextUpStreamPayload, t, buf))
+        if (! lineCallWithRefWithBuf(child_l, tunnelNextUpStreamPayload, t, buf))
         {
             return false;
         }
@@ -53,12 +53,12 @@ static void connectionfisherclientCloseMainLineInternal(tunnel_t *t, line_t *mai
         return;
     }
 
-    lineLock(main_l);
+    lineRef(main_l);
 
     connectionfisherclient_lstate_t *main_ls = lineGetState(main_l, t);
     if (main_ls->role != kConnectionFisherClientRoleMain)
     {
-        lineUnlock(main_l);
+        lineUnref(main_l);
         return;
     }
 
@@ -73,7 +73,7 @@ static void connectionfisherclientCloseMainLineInternal(tunnel_t *t, line_t *mai
     {
         if (children[i] != NULL)
         {
-            lineLock(children[i]);
+            lineRef(children[i]);
         }
     }
 
@@ -97,7 +97,7 @@ static void connectionfisherclientCloseMainLineInternal(tunnel_t *t, line_t *mai
             {
                 connectionfisherclientCloseChildLine(t, children[i], false);
             }
-            lineUnlock(children[i]);
+            lineUnref(children[i]);
         }
 
         memoryFree(children);
@@ -108,7 +108,7 @@ static void connectionfisherclientCloseMainLineInternal(tunnel_t *t, line_t *mai
         tunnelPrevDownStreamFinish(t, main_l);
     }
 
-    lineUnlock(main_l);
+    lineUnref(main_l);
 }
 
 void connectionfisherclientCloseMainLine(tunnel_t *t, line_t *main_l)
@@ -129,18 +129,18 @@ static void connectionfisherclientCloseChildLineInternal(tunnel_t *t, line_t *ch
         return;
     }
 
-    lineLock(child_l);
+    lineRef(child_l);
 
     connectionfisherclient_lstate_t *child_ls = lineGetState(child_l, t);
     if (child_ls->role != kConnectionFisherClientRoleChild)
     {
-        lineUnlock(child_l);
+        lineUnref(child_l);
         return;
     }
 
-    line_t   *main_l            = child_ls->main_line;
-    uint32_t  child_slot        = child_ls->child_slot;
-    bool      should_close_main = force_close_main;
+    line_t  *main_l            = child_ls->main_line;
+    uint32_t child_slot        = child_ls->child_slot;
+    bool     should_close_main = force_close_main;
 
     if (main_l != NULL && lineIsAlive(main_l))
     {
@@ -178,7 +178,7 @@ static void connectionfisherclientCloseChildLineInternal(tunnel_t *t, line_t *ch
     {
         lineDestroy(child_l);
     }
-    lineUnlock(child_l);
+    lineUnref(child_l);
 
     if (should_close_main && main_l != NULL && lineIsAlive(main_l))
     {
@@ -187,7 +187,7 @@ static void connectionfisherclientCloseChildLineInternal(tunnel_t *t, line_t *ch
 
     if (main_l != NULL)
     {
-        lineUnlock(main_l);
+        lineUnref(main_l);
     }
 }
 
@@ -213,7 +213,7 @@ bool connectionfisherclientSelectChild(tunnel_t *t, line_t *child_l)
      * Any of them may synchronously close a different line in this set.  The
      * creator references do not protect a line after such a close, so retain
      * the selected child and its main explicitly for the complete operation. */
-    lineLock(child_l);
+    lineRef(child_l);
 
     connectionfisherclient_lstate_t *child_ls = lineGetState(child_l, t);
     main_l                                    = child_ls->main_line;
@@ -223,7 +223,7 @@ bool connectionfisherclientSelectChild(tunnel_t *t, line_t *child_l)
         connectionfisherclientCloseChildLine(t, child_l, false);
         goto cleanup;
     }
-    lineLock(main_l);
+    lineRef(main_l);
     main_locked = true;
 
     connectionfisherclient_lstate_t *main_ls = lineGetState(main_l, t);
@@ -271,7 +271,7 @@ bool connectionfisherclientSelectChild(tunnel_t *t, line_t *child_l)
                 continue;
             }
 
-            lineLock(candidate);
+            lineRef(candidate);
             losers[loser_count++]   = candidate;
             main_ls->child_lines[i] = NULL;
         }
@@ -282,7 +282,7 @@ bool connectionfisherclientSelectChild(tunnel_t *t, line_t *child_l)
         {
             main_ls->main_est_forwarded = true;
 
-            if (! withLineLocked(main_l, tunnelPrevDownStreamEst, t))
+            if (! lineCallWithRef(main_l, tunnelPrevDownStreamEst, t))
             {
                 goto cleanup;
             }
@@ -327,7 +327,7 @@ bool connectionfisherclientSelectChild(tunnel_t *t, line_t *child_l)
     {
         sbuf_t *extra = bufferstreamFullRead(&child_ls->read_stream);
 
-        if (extra != NULL && ! withLineLockedWithBuf(main_l, tunnelPrevDownStreamPayload, t, extra))
+        if (extra != NULL && ! lineCallWithRefWithBuf(main_l, tunnelPrevDownStreamPayload, t, extra))
         {
             goto cleanup;
         }
@@ -346,14 +346,14 @@ cleanup:
         {
             connectionfisherclientCloseChildLine(t, losers[i], false);
         }
-        lineUnlock(losers[i]);
+        lineUnref(losers[i]);
     }
     memoryFree(losers);
     if (main_locked)
     {
-        lineUnlock(main_l);
+        lineUnref(main_l);
     }
-    lineUnlock(child_l);
+    lineUnref(child_l);
     return selected;
 }
 

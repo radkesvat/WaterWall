@@ -272,7 +272,7 @@ static bool speedtestserverSendFrame(tunnel_t *t, line_t *l, sbuf_t *buf)
         return false;
     }
 
-    return withLineLockedWithBuf(l, tunnelPrevDownStreamPayload, t, buf);
+    return lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, buf);
 }
 
 static bool speedtestserverReadHelloPayload(speedtestserver_lstate_t *ls, const speedtestserver_frame_t *frame)
@@ -824,7 +824,7 @@ static bool speedtestserverProcessFrameBuffer(tunnel_t *t, line_t *l, sbuf_t *fr
 {
     speedtestserver_frame_t frame;
 
-    lineLock(l);
+    lineRef(l);
 
     bool header_valid = speedtestserverReadHeader(sbufGetRawPtr(frame_buf), sbufGetLength(frame_buf), &frame);
     if (! header_valid || ! speedtestserverFramePayloadLengthValid(t, l, &frame) ||
@@ -834,21 +834,21 @@ static bool speedtestserverProcessFrameBuffer(tunnel_t *t, line_t *l, sbuf_t *fr
         {
             lineReuseBuffer(l, frame_buf);
             bool alive = lineIsAlive(l);
-            lineUnlock(l);
+            lineUnref(l);
             return alive;
         }
 
         lineReuseBuffer(l, frame_buf);
         speedtestserverFailLine(t, l, "received an invalid speed-test frame");
         bool alive = lineIsAlive(l);
-        lineUnlock(l);
+        lineUnref(l);
         return alive;
     }
 
     speedtestserverHandleFrame(t, l, &frame);
     lineReuseBuffer(l, frame_buf);
     bool alive = lineIsAlive(l);
-    lineUnlock(l);
+    lineUnref(l);
     return alive;
 }
 
@@ -950,10 +950,10 @@ static void speedtestserverCloseLineInternal(tunnel_t *t, line_t *l, bool count_
              (unsigned long long) ls->receiver.validation_errors);
     }
 
-    lineLock(l);
+    lineRef(l);
     speedtestserverLinestateDestroy(ls);
     tunnelPrevDownStreamFinish(t, l);
-    lineUnlock(l);
+    lineUnref(l);
 }
 
 static void speedtestserverCloseLine(tunnel_t *t, line_t *l, bool count_complete)

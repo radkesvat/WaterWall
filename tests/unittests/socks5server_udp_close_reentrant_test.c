@@ -129,11 +129,11 @@ static void providerCloseDynamicClient(tunnel_t *t, udplistener_dynamic_endpoint
 
     /* This mirrors UdpListener's provider-owned line close: Socks5Server only
      * borrows the client line, then the provider makes it logically dead. */
-    lineLock(fixture->client);
+    lineRef(fixture->client);
     socks5serverTunnelUpStreamFinish(fixture->server, fixture->client);
     twfRequire(lineIsAlive(fixture->client), "Socks5Server destroyed the provider-owned UDP client line");
     lineDestroy(fixture->client);
-    lineUnlock(fixture->client);
+    lineUnref(fixture->client);
 }
 
 static void closeControlDuringRemoteInit(tunnel_t *t, line_t *l)
@@ -241,10 +241,10 @@ static void fixtureSetup(socks5server_close_fixture_t *fixture)
     socks5serverLinestateInitialize(client_ls, fixture->server, fixture->client, kSocks5ServerLineKindUdpClient);
     socks5serverLinestateInitialize(remote_ls, fixture->server, fixture->remote, kSocks5ServerLineKindUdpRemote);
 
-    remote_ls->client_line        = fixture->client;
-    remote_ls->client_line_locked = true;
-    remote_ls->remote_key         = kSocks5ServerCloseRemoteKey;
-    lineLock(fixture->client);
+    remote_ls->client_line          = fixture->client;
+    remote_ls->client_line_ref_held = true;
+    remote_ls->remote_key           = kSocks5ServerCloseRemoteKey;
+    lineRef(fixture->client);
     twfRequire(
         socks5server_remote_map_t_insert(&client_ls->udp_remote_lines, remote_ls->remote_key, fixture->remote).ref !=
             NULL,
@@ -307,11 +307,11 @@ static line_t *fixtureAddUdpRemote(socks5server_close_fixture_t *fixture, hash_t
     socks5server_lstate_t *remote_ls = lineGetState(remote, fixture->server);
     socks5server_lstate_t *client_ls = lineGetState(fixture->client, fixture->server);
     socks5serverLinestateInitialize(remote_ls, fixture->server, remote, kSocks5ServerLineKindUdpRemote);
-    remote_ls->client_line        = fixture->client;
-    remote_ls->client_line_locked = true;
-    remote_ls->remote_key         = remote_key;
-    remote_ls->dynamic_handle     = client_ls->dynamic_handle;
-    lineLock(fixture->client);
+    remote_ls->client_line          = fixture->client;
+    remote_ls->client_line_ref_held = true;
+    remote_ls->remote_key           = remote_key;
+    remote_ls->dynamic_handle       = client_ls->dynamic_handle;
+    lineRef(fixture->client);
     twfRequire(socks5server_remote_map_t_insert(&client_ls->udp_remote_lines, remote_key, remote).ref != NULL,
                "failed to register a second fixture UDP remote");
     return remote;

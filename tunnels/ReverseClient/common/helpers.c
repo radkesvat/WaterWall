@@ -199,7 +199,7 @@ static void reverseclientBeginConnectMessageReceived(worker_t *worker, void *arg
     }
 
     pair->upstream_init_sent = true;
-    if (! withLineLocked(ul, tunnelNextUpStreamInit, t))
+    if (! lineCallWithRef(ul, tunnelNextUpStreamInit, t))
     {
         return;
     }

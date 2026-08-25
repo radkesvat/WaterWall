@@ -31,7 +31,7 @@ void reverseclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     reverseclientInitiateConnectOnWorker(t, wid, false);
 
     pair->downstream_init_sent = true;
-    if (! withLineLocked(pair->d, tunnelPrevDownStreamInit, t))
+    if (! lineCallWithRef(pair->d, tunnelPrevDownStreamInit, t))
     {
         reuseBuffer(buf);
         return;

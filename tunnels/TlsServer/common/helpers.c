@@ -306,7 +306,7 @@ static bool tlsserverTryRetireShaping(tunnel_t *t, line_t *l, tlsserver_lstate_t
     if (release_producer_pause && ! ls->shaping_wire_paused && ! ls->upstream_finished &&
         ! ls->downstream_finishing)
     {
-        if (! withLineLocked(l, tunnelNextUpStreamResume, t))
+        if (! lineCallWithRef(l, tunnelNextUpStreamResume, t))
         {
             return false;
         }
@@ -341,7 +341,7 @@ static bool tlsserverUpdateShapingBackpressure(tunnel_t *t, line_t *l, tlsserver
             ls->shaping_producer_paused = true;
             if (! ls->shaping_wire_paused && ! ls->upstream_finished && ! ls->downstream_finishing)
             {
-                if (! withLineLocked(l, tunnelNextUpStreamPause, t))
+                if (! lineCallWithRef(l, tunnelNextUpStreamPause, t))
                 {
                     return false;
                 }
@@ -356,7 +356,7 @@ static bool tlsserverUpdateShapingBackpressure(tunnel_t *t, line_t *l, tlsserver
         ls->shaping_producer_paused = true;
         if (! ls->shaping_wire_paused && ! ls->upstream_finished && ! ls->downstream_finishing)
         {
-            if (! withLineLocked(l, tunnelNextUpStreamPause, t))
+            if (! lineCallWithRef(l, tunnelNextUpStreamPause, t))
             {
                 return false;
             }
@@ -370,7 +370,7 @@ static bool tlsserverUpdateShapingBackpressure(tunnel_t *t, line_t *l, tlsserver
         ls->shaping_producer_paused = false;
         if (! ls->shaping_wire_paused && ! ls->upstream_finished && ! ls->downstream_finishing)
         {
-            if (! withLineLocked(l, tunnelNextUpStreamResume, t))
+            if (! lineCallWithRef(l, tunnelNextUpStreamResume, t))
             {
                 return false;
             }
@@ -405,7 +405,7 @@ bool tlsserverDrainShapedOutput(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls, 
             break;
         }
 
-        if (! withLineLockedWithBuf(l, tunnelPrevDownStreamPayload, t, record))
+        if (! lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, record))
         {
             return false;
         }
@@ -440,27 +440,27 @@ static void tlsserverShapingOutputTimerCallback(wtimer_t *timer)
 
     ls->shaping_output_timer = NULL;
 
-    lineLock(l);
+    lineRef(l);
     if (! tlsserverDrainShapedOutput(t, l, ls, false))
     {
         if (lineIsAlive(l))
         {
             bool state_is_active = ((tlsserver_lstate_t *) lineGetState(l, t))->tunnel == t;
-            lineUnlock(l);
+            lineUnref(l);
             if (state_is_active)
             {
                 tlsserverCloseLineFatal(t, l);
             }
             return;
         }
-        lineUnlock(l);
+        lineUnref(l);
         return;
     }
 
     ls = lineGetState(l, t);
     if (! tlsserverTryCompleteDeferredFinish(t, l, ls))
     {
-        lineUnlock(l);
+        lineUnref(l);
         return;
     }
 
@@ -469,7 +469,7 @@ static void tlsserverShapingOutputTimerCallback(wtimer_t *timer)
         if (lineIsAlive(l))
         {
             bool state_is_active = ((tlsserver_lstate_t *) lineGetState(l, t))->tunnel == t;
-            lineUnlock(l);
+            lineUnref(l);
             if (state_is_active)
             {
                 tlsserverCloseLineFatal(t, l);
@@ -477,7 +477,7 @@ static void tlsserverShapingOutputTimerCallback(wtimer_t *timer)
             return;
         }
     }
-    lineUnlock(l);
+    lineUnref(l);
 }
 
 bool tlsserverScheduleShapedOutput(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls)
@@ -591,7 +591,7 @@ bool tlsserverFlushSslOutput(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls)
                 continue;
             }
 
-            if (! withLineLockedWithBuf(l, tunnelPrevDownStreamPayload, t, ssl_buf))
+            if (! lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, ssl_buf))
             {
                 LOGW("TlsServer: line closed while flushing TLS bytes downstream");
                 return false;
@@ -766,7 +766,7 @@ bool tlsserverStartProtectedBranch(tunnel_t *t, line_t *l, tlsserver_lstate_t *l
     }
 
     ls->protected_init_sent = true;
-    return withLineLocked(l, tunnelNextUpStreamInit, t);
+    return lineCallWithRef(l, tunnelNextUpStreamInit, t);
 }
 
 static size_t tlsserverFallbackPendingCount(const tlsserver_lstate_t *ls)
@@ -935,7 +935,7 @@ bool tlsserverSendFallbackPayload(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls
     if (ts->fallback_intentional_delay_ms == 0 && ! ls->fallback_payload_paused &&
         tlsserverFallbackPendingCount(ls) == 0 && ! ls->fallback_delay_scheduled)
     {
-        return withLineLockedWithBuf(l, tunnelUpStreamPayload, fallback, buf);
+        return lineCallWithRefWithBuf(l, tunnelUpStreamPayload, fallback, buf);
     }
 
     buffer_queue_t *pending = tlsserverEnsureFallbackPendingQueue(ls);
@@ -1035,7 +1035,7 @@ bool tlsserverStartFallback(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls)
 
     sbuf_t *first = bufferstreamFullRead(&ls->fallback_probe);
 
-    lineLock(l);
+    lineRef(l);
 
     ls->fallback_mode = true;
     tlsserverDisarmHandshakeDeadline(ls);
@@ -1059,7 +1059,7 @@ bool tlsserverStartFallback(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls)
     }
 
     bool alive = lineIsAlive(l);
-    lineUnlock(l);
+    lineUnref(l);
     return alive;
 }
 
@@ -1084,7 +1084,7 @@ void tlsserverCloseFallbackFromUpstream(tunnel_t *t, line_t *l, tlsserver_lstate
     buffer_pool_t *pool = lineGetBufferPool(l);
     sbuf_t        *buf  = NULL;
 
-    lineLock(l);
+    lineRef(l);
     ls->fallback_close_draining               = true;
     ls->fallback_branch_finished_during_drain = false;
 
@@ -1102,7 +1102,7 @@ void tlsserverCloseFallbackFromUpstream(tunnel_t *t, line_t *l, tlsserver_lstate
         tunnelUpStreamPayload(fallback, l, buf);
         if (! lineIsAlive(l))
         {
-            lineUnlock(l);
+            lineUnref(l);
             return;
         }
     }
@@ -1114,7 +1114,7 @@ void tlsserverCloseFallbackFromUpstream(tunnel_t *t, line_t *l, tlsserver_lstate
     {
         tunnelUpStreamFin(fallback, l);
     }
-    lineUnlock(l);
+    lineUnref(l);
 }
 
 bool tlsserverSendCloseNotify(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls)
@@ -1180,7 +1180,7 @@ void tlsserverCloseLineFatal(tunnel_t *t, line_t *l)
          (int) close_next,
          (int) close_prev);
 
-    lineLock(l);
+    lineRef(l);
     tlsserverLinestateDestroy(ls);
 
     if (close_next)
@@ -1199,5 +1199,5 @@ void tlsserverCloseLineFatal(tunnel_t *t, line_t *l)
     {
         tunnelPrevDownStreamFinish(t, l);
     }
-    lineUnlock(l);
+    lineUnref(l);
 }

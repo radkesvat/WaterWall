@@ -127,7 +127,7 @@ static void fixtureDestroyClosedLine(tlsserver_fallback_fixture_t *fixture)
 
 static void closeFromPreviousOwner(tlsserver_fallback_fixture_t *fixture)
 {
-    lineLock(fixture->line);
+    lineRef(fixture->line);
     tlsserverTunnelUpStreamFinish(fixture->node, fixture->line);
     lineDestroy(fixture->line);
 }
@@ -135,7 +135,7 @@ static void closeFromPreviousOwner(tlsserver_fallback_fixture_t *fixture)
 static void releaseOwnerReference(tlsserver_fallback_fixture_t *fixture)
 {
     twfRequireEqualU32(twfLineRefCount(fixture->line), 1, "TlsServer close retained an unexpected line reference");
-    lineUnlock(fixture->line);
+    lineUnref(fixture->line);
     fixture->line = NULL;
 }
 

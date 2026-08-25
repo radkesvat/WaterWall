@@ -46,7 +46,7 @@ void muxclientTunnelUpStreamPayload(tunnel_t *t, line_t *child_l, sbuf_t *buf)
 
     muxclient_lstate_t *parent_ls = lineGetState(parent_line, t);
 
-    lineLock(parent_line);
+    lineRef(parent_line);
     parent_ls->last_writer = child_l; // update the last writer to the current child
 
     tunnelNextUpStreamPayload(t, parent_line, encoded);
@@ -55,5 +55,5 @@ void muxclientTunnelUpStreamPayload(tunnel_t *t, line_t *child_l, sbuf_t *buf)
     {
         parent_ls->last_writer = NULL; // reset the last writer after sending the payload
     }
-    lineUnlock(parent_line);
+    lineUnref(parent_line);
 }

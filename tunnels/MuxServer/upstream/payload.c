@@ -37,10 +37,10 @@ static bool rejectFreshOpen(tunnel_t *t, line_t *parent_l, muxserver_lstate_t *p
 
     sbuf_t *close_frame = bufferpoolGetSmallBuffer(lineGetBufferPool(parent_l));
     muxMakeMuxFrame(close_frame, cid, kMuxFlagClose);
-    lineLock(parent_l);
+    lineRef(parent_l);
     tunnelPrevDownStreamPayload(t, parent_l, close_frame);
     const bool parent_alive = lineIsAlive(parent_l);
-    lineUnlock(parent_l);
+    lineUnref(parent_l);
     return parent_alive;
 }
 
@@ -98,10 +98,10 @@ static bool handleOpenFrame(tunnel_t *t, line_t *parent_l, muxserver_lstate_t *p
     muxserverArmChildIdle(t, new_child_ls);
     muxserverJoinConnection(parent_ls, new_child_ls);
 
-    lineLock(parent_l);
-    discard withLineLocked(child_l, tunnelNextUpStreamInit, t);
+    lineRef(parent_l);
+    discard lineCallWithRef(child_l, tunnelNextUpStreamInit, t);
     bool    parent_alive = lineIsAlive(parent_l);
-    lineUnlock(parent_l);
+    lineUnref(parent_l);
     return parent_alive;
 }
 
@@ -156,7 +156,7 @@ static bool processFrameForChild(tunnel_t *t, line_t *parent_l, mux_frame_t *fra
         {
             return muxserverQueueChildPayload(t, parent_l, ts, parent_ls, child_ls, frame_buffer);
         }
-        if (! withLineLockedWithBuf(child_l, tunnelNextUpStreamPayload, t, frame_buffer))
+        if (! lineCallWithRefWithBuf(child_l, tunnelNextUpStreamPayload, t, frame_buffer))
         {
             return lineIsAlive(parent_l);
         }
@@ -230,20 +230,20 @@ void muxserverTunnelUpStreamPayload(tunnel_t *t, line_t *parent_l, sbuf_t *buf)
             continue;
         }
 
-        lineLock(parent_l);
+        lineRef(parent_l);
         if (! processFrameForChild(t, parent_l, &frame, frame_buffer, ts, parent_ls, child_ls))
         {
-            lineUnlock(parent_l);
+            lineUnref(parent_l);
             return;
         }
 
         if (! lineIsAlive(parent_l))
         {
             LOGD("MuxServer: UpStreamPayload: Parent line is not alive, stopping processing for cid: %u", frame.cid);
-            lineUnlock(parent_l);
+            lineUnref(parent_l);
             return;
         }
-        lineUnlock(parent_l);
+        lineUnref(parent_l);
     }
 
     // Only the incomplete remainder counts toward the limit. A single batch may legally carry far more than

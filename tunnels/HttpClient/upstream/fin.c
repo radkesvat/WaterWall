@@ -13,7 +13,7 @@ void httpclientTunnelUpStreamFinish(tunnel_t *t, line_t *l)
         return;
     }
 
-    lineLock(l);
+    lineRef(l);
 
     ls->prev_finished = true;
 
@@ -25,7 +25,7 @@ void httpclientTunnelUpStreamFinish(tunnel_t *t, line_t *l)
             {
                 httpclientTransportCloseNextDirection(t, l, ls);
             }
-            lineUnlock(l);
+            lineUnref(l);
             return;
         }
 
@@ -38,7 +38,7 @@ void httpclientTunnelUpStreamFinish(tunnel_t *t, line_t *l)
                 {
                     httpclientTransportCloseNextDirection(t, l, ls);
                 }
-                lineUnlock(l);
+                lineUnref(l);
                 return;
             }
         }
@@ -55,7 +55,7 @@ void httpclientTunnelUpStreamFinish(tunnel_t *t, line_t *l)
                 {
                     httpclientTransportCloseNextDirection(t, l, ls);
                 }
-                lineUnlock(l);
+                lineUnref(l);
                 return;
             }
         }
@@ -71,7 +71,7 @@ void httpclientTunnelUpStreamFinish(tunnel_t *t, line_t *l)
                 {
                     httpclientTransportCloseNextDirection(t, l, ls);
                 }
-                lineUnlock(l);
+                lineUnref(l);
                 return;
             }
         }
@@ -93,5 +93,5 @@ void httpclientTunnelUpStreamFinish(tunnel_t *t, line_t *l)
     {
         tunnelNextUpStreamFinish(t, l);
     }
-    lineUnlock(l);
+    lineUnref(l);
 }

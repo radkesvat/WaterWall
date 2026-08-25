@@ -155,14 +155,14 @@ void pingserverHandleUpstreamPacket(tunnel_t *t, line_t *l, sbuf_t *buf)
     if (reply != NULL)
     {
         lineSetRecalculateChecksum(l, false);
-        lineLock(l);
+        lineRef(l);
         tunnelPrevDownStreamPayload(t, l, reply);
         if (UNLIKELY(! lineIsAlive(l)))
         {
             LOGF("PingServer: worker packet line died during generated Echo Reply callback");
             abortProgramNow(1);
         }
-        lineUnlock(l);
+        lineUnref(l);
     }
 
     if (replay == kPingWireReplayDuplicate)

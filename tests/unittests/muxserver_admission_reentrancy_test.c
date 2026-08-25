@@ -318,7 +318,7 @@ static void caseAggregateCapAcrossParentsReusesOneReleasedSlot(void)
 
     muxserver_lstate_t *first_parent_ls = lineGetState(first_parent, fixture.mux);
     line_t             *victim_l        = first_parent_ls->child_next->l;
-    lineLock(victim_l);
+    lineRef(victim_l);
     muxserverTunnelDownStreamFinish(fixture.mux, victim_l);
     twfRequireOwnedLineReclaimed(victim_l, "MuxServer aggregate slot release");
     twfRequireEqualU32((uint32_t) atomicLoadRelaxed(&ts->live_children_count),
@@ -674,7 +674,7 @@ static void caseDuplicatePeerDrainingCidClosesParent(void)
 
     child_ls         = lineGetState(child_l, fixture.mux);
     child_ls->paused = false;
-    lineLock(child_l);
+    lineRef(child_l);
     muxserverTunnelDownStreamResume(fixture.mux, child_l);
     twfRequire(! lineIsAlive(child_l), "detached Resume did not finalize the owned child");
     twfRequireOwnedLineReclaimed(child_l, "MuxServer duplicate peer-draining cleanup");

@@ -7,7 +7,7 @@ void sniffrouterTunnelUpStreamFinish(tunnel_t *t, line_t *l)
     uint8_t   route  = ls->decided;
     tunnel_t *target = ls->target;
 
-    lineLock(l);
+    lineRef(l);
     sniffrouterLinestateDestroy(l, ls);
 
     if (route == kSniffRouteTarget)
@@ -19,5 +19,5 @@ void sniffrouterTunnelUpStreamFinish(tunnel_t *t, line_t *l)
         tunnelNextUpStreamFinish(t, l);
     }
 
-    lineUnlock(l);
+    lineUnref(l);
 }

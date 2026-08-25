@@ -286,7 +286,7 @@ static bool udpconnectorBeginSocket(tunnel_t *t, line_t *l, udpconnector_lstate_
     const bool resume_prev = ls->queue_pause_sent;
     ls->write_paused       = false;
 
-    lineLock(l);
+    lineRef(l);
     bool alive = true;
     if (! ls->established)
     {
@@ -313,7 +313,7 @@ static bool udpconnectorBeginSocket(tunnel_t *t, line_t *l, udpconnector_lstate_
         tunnelPrevDownStreamResume(t, l);
         alive = lineIsAlive(l);
     }
-    lineUnlock(l);
+    lineUnref(l);
 
     if (! alive)
     {

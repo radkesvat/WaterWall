@@ -33,11 +33,11 @@ void httpclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
              ts->path);
     }
 
-    lineLock(l);
+    lineRef(l);
 
-    if (! withLineLocked(l, tunnelNextUpStreamInit, t))
+    if (! lineCallWithRef(l, tunnelNextUpStreamInit, t))
     {
-        lineUnlock(l);
+        lineUnref(l);
         return;
     }
 
@@ -53,7 +53,7 @@ void httpclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
         {
             closeOrDestroyLine(t, l, ls);
         }
-        lineUnlock(l);
+        lineUnref(l);
         return;
     }
 
@@ -65,7 +65,7 @@ void httpclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
         {
             closeOrDestroyLine(t, l, ls);
         }
-        lineUnlock(l);
+        lineUnref(l);
         return;
     }
 
@@ -77,7 +77,7 @@ void httpclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
         {
             closeOrDestroyLine(t, l, ls);
         }
-        lineUnlock(l);
+        lineUnref(l);
         return;
     }
 
@@ -88,7 +88,7 @@ void httpclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
         {
             closeOrDestroyLine(t, l, ls);
         }
-        lineUnlock(l);
+        lineUnref(l);
         return;
     }
 
@@ -99,5 +99,5 @@ void httpclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
         closeOrDestroyLine(t, l, ls);
     }
 
-    lineUnlock(l);
+    lineUnref(l);
 }

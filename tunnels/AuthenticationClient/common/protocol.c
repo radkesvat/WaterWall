@@ -620,7 +620,7 @@ static bool authenticationclientSendRequestWithSnapshot(tunnel_t *t, uint8_t req
     if (LIKELY(ts->control_line != NULL && lineIsAlive(ts->control_line)))
     {
         line = ts->control_line;
-        lineLock(line);
+        lineRef(line);
     }
     mutexUnlock(&ts->control_mutex);
 
@@ -651,7 +651,7 @@ static bool authenticationclientSendRequestWithSnapshot(tunnel_t *t, uint8_t req
             authenticationclientClearPendingPushUsers(t);
         }
         authenticationclientDestroyUsers(push_snapshot);
-        lineUnlock(line);
+        lineUnref(line);
         return false;
     }
 
@@ -672,7 +672,7 @@ static bool authenticationclientSendRequestWithSnapshot(tunnel_t *t, uint8_t req
              (unsigned int) correlation_id);
     }
     authenticationclientDestroyUsers(push_snapshot);
-    lineUnlock(line);
+    lineUnref(line);
     return alive;
 }
 
@@ -694,7 +694,7 @@ static bool authenticationclientCloseTimedOutControlLine(tunnel_t *t)
                  authenticationclientPendingFindTimedOutLocked(ts, now_ms, &pending)))
     {
         line = ts->control_line;
-        lineLock(line);
+        lineRef(line);
     }
     mutexUnlock(&ts->control_mutex);
 
@@ -709,7 +709,7 @@ static bool authenticationclientCloseTimedOutControlLine(tunnel_t *t)
          (unsigned int) (now_ms - pending.created_at_ms));
 
     authenticationclientCloseControlLine(t, line, true);
-    lineUnlock(line);
+    lineUnref(line);
     authenticationclientScheduleReconnect(t);
     return true;
 }
@@ -1549,7 +1549,7 @@ void authenticationclientOpenControlLine(tunnel_t *t)
     ts->control_line = line;
     mutexUnlock(&ts->control_mutex);
 
-    if (UNLIKELY(! withLineLocked(line, tunnelNextUpStreamInit, t)))
+    if (UNLIKELY(! lineCallWithRef(line, tunnelNextUpStreamInit, t)))
     {
         if (ts->verbose)
         {

@@ -253,7 +253,7 @@ static void caseWorkerStopClosesPublishedControlLineExactlyOnce(void)
     twf_line_pool_t line_pool;
     twfLinePoolSetup(&line_pool, fixture.client->lstate_size, 2);
     line_t *line = twfLinePoolCreateLine(&line_pool);
-    lineLock(line);
+    lineRef(line);
 
     authenticationclient_lstate_t *ls = lineGetState(line, fixture.client);
     authenticationclientLinestateInitialize(ls, lineGetBufferPool(line));
@@ -269,7 +269,7 @@ static void caseWorkerStopClosesPublishedControlLineExactlyOnce(void)
     authenticationclientTunnelOnWorkerStop(fixture.client, 0, wwLifecycleProcessShutdown());
     twfRequireEqualU32(fixture.trace.next_finish, 1, "repeated worker stop finished the control line twice");
 
-    lineUnlock(line);
+    lineUnref(line);
     twfLinePoolTeardown(&line_pool);
     fixtureTeardown(&fixture);
 }

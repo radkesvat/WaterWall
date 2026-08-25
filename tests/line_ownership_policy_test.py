@@ -547,6 +547,41 @@ TEST_ROOTS = ("tests",)
 
 SOURCE_SUFFIXES = (".c", ".h", ".cc")
 
+# Roots and exclusions for the legacy naming policy check.
+NAMING_SCAN_ROOTS = (
+    "ww",
+    "tunnels",
+    "core",
+    "tests",
+    "WaterWall-Docs/docs",
+    "WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current",
+)
+NAMING_EXCLUDED_PREFIXES = (
+    "ww/vendor/",
+    "tunnels/TlsClient/boringssl/",
+    "tunnels/TlsClient/brotli/",
+    "tests/line_ownership_policy_test.py",
+)
+NAMING_EXCLUDED_FILENAMES = (
+    "LINE-REFERENCE-API-RENAME-IMPLEMENTATION-PLAN.md",
+)
+NAMING_SCAN_SUFFIXES = (".c", ".h", ".cc", ".cpp", ".py", ".md", ".mdx")
+
+FORBIDDEN_LEGACY_NAMES = tuple(
+    a + b
+    for a, b in [
+        ("line", "Lock"),
+        ("line", "Unlock"),
+        ("withLine", "Locked"),
+        ("withLine", "LockedWithBuf"),
+        ("line", "LockForce"),
+        ("client_line_", "locked"),
+    ]
+)
+_FORBIDDEN_LEGACY_NAMES_RE = re.compile(
+    r"\b(" + "|".join(FORBIDDEN_LEGACY_NAMES) + r")\b"
+)
+
 # lineCreate() and lineDestroy() are defined in line.h; that file is the contract,
 # not a call site.
 CONTRACT_HEADER = "ww/net/line.h"
@@ -592,6 +627,36 @@ def walk_sources(roots):
                 if not name.endswith(SOURCE_SUFFIXES):
                     continue
                 yield os.path.relpath(os.path.join(dirpath, name), ROOT).replace(os.sep, "/")
+
+
+_NAMING_SOURCES = None
+
+
+def walk_naming_sources():
+    """Yield source, test, template, and doc paths checked for legacy names."""
+    global _NAMING_SOURCES
+    if _NAMING_SOURCES is not None:
+        return _NAMING_SOURCES
+    paths = []
+    if os.path.exists(os.path.join(ROOT, "AGENTS.md")):
+        paths.append("AGENTS.md")
+    for root in NAMING_SCAN_ROOTS:
+        base = os.path.join(ROOT, root)
+        if not os.path.isdir(base):
+            continue
+        for dirpath, dirnames, filenames in os.walk(base):
+            dirnames.sort()
+            for name in sorted(filenames):
+                if name in NAMING_EXCLUDED_FILENAMES:
+                    continue
+                if not name.endswith(NAMING_SCAN_SUFFIXES):
+                    continue
+                rel_path = os.path.relpath(os.path.join(dirpath, name), ROOT).replace(os.sep, "/")
+                if any(rel_path.startswith(prefix) for prefix in NAMING_EXCLUDED_PREFIXES):
+                    continue
+                paths.append(rel_path)
+    _NAMING_SOURCES = tuple(paths)
+    return _NAMING_SOURCES
 
 
 def enclosing_function(definitions, offset):
@@ -675,6 +740,7 @@ def verify_policy(source_overrides=None, classification_overrides=None):
         "finish_handlers": 0,
         "tests": 0,
         "registrations": 0,
+        "naming_files": 0,
     }
 
     sites = {}
@@ -956,6 +1022,21 @@ def verify_policy(source_overrides=None, classification_overrides=None):
                     % (cmake_path, needle, rel_path, description)
                 )
 
+    # --- 9. legacy line-reference API identifiers are never reintroduced -----
+
+    scan_files = source_overrides.keys() if source_overrides else walk_naming_sources()
+    for rel_path in scan_files:
+        content = read_source(rel_path, source_overrides)
+        if content is None:
+            continue
+        checked["naming_files"] += 1
+        for match in _FORBIDDEN_LEGACY_NAMES_RE.finditer(content):
+            errors.append(
+                "[naming] %s:%d: forbidden legacy line-reference identifier %r found; "
+                "use reference-based naming (lineRef/lineUnref/lineCallWithRef/lineCallWithRefWithBuf/lineRefForce/client_line_ref_held)"
+                % (rel_path, line_of(content, match.start()), match.group(0))
+            )
+
     return errors, checked
 
 
@@ -989,7 +1070,7 @@ def mutate_drop_owner_destroy(content, function):
     match = _DESTROY_RE.search(masked, span[0], span[1])
     if match is None:
         raise AssertionError("no lineDestroy() in %s()" % function)
-    return content[:match.start()] + "lineUnlock(" + content[match.end():]
+    return content[:match.start()] + "lineUnref(" + content[match.end():]
 
 
 def mutate_drop_packet_abort(content, function, anchor):
@@ -1179,6 +1260,18 @@ def run_mutation_tests():
                 "%s lost the registration of %s" % (cmake_path, rel_path),
                 {cmake_path: mutate_drop_registration(cmake, needle)})
 
+    # 10: a forbidden legacy line-reference identifier reintroduced.
+    for rel_path, forbidden_name in (
+        ("ww/net/line.h", FORBIDDEN_LEGACY_NAMES[0]),
+        ("AGENTS.md", FORBIDDEN_LEGACY_NAMES[2]),
+    ):
+        content = read_source(rel_path, None)
+        if content is None:
+            continue
+        runner.expect_failure(
+            "%s reintroduced %s" % (rel_path, forbidden_name),
+            {rel_path: content + "\n/* " + forbidden_name + " */\n"})
+
     if runner.escaped:
         print("Mutation testing FAILED: %d mutation(s) were not detected:" % len(runner.escaped))
         for label in runner.escaped:
@@ -1201,10 +1294,11 @@ def main():
     print("Line Ownership Policy Check PASSED: %d creation site(s) classified, %d owner close path(s), "
           "%d lineDestroy() site(s), %d packet-anchor Finish handler(s), %d Finish handler(s) scanned, "
           "%d re-entrancy guard(s), %d destination guard contract(s), %d contract test(s) with "
-          "%d ctest registration(s)."
+          "%d ctest registration(s), %d file(s) scanned for legacy naming."
           % (checked["creations"], checked["owners"], checked["destroy_sites"],
              checked["packet_handlers"], checked["finish_handlers"], checked["guards"],
-             checked["guard_contracts"], checked["tests"], checked["registrations"]))
+             checked["guard_contracts"], checked["tests"], checked["registrations"],
+             checked["naming_files"]))
 
     if "--mutation-test" in sys.argv or "-m" in sys.argv:
         if not run_mutation_tests():

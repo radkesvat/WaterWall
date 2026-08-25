@@ -9,8 +9,8 @@ void routerTunnelDownStreamFinish(tunnel_t *t, line_t *l)
      * prev, because that path reaches the line-owning adapter and may destroy
      * the line before returning.
      */
-    lineLock(l);
+    lineRef(l);
     routerLinestateDestroy(l, ls);
     tunnelPrevDownStreamFinish(t, l);
-    lineUnlock(l);
+    lineUnref(l);
 }

@@ -200,8 +200,8 @@ static void splitFixtureSetup(httpclient_split_fixture_t *fixture)
     fixture->trace.capture_capacity = kHttp1FinalChunkSize;
 
     // Keep these allocations inspectable after HttpClient destroys the lines it owns.
-    lineLock(fixture->upload_line);
-    lineLock(fixture->download_line);
+    lineRef(fixture->upload_line);
+    lineRef(fixture->download_line);
 }
 
 static void splitFixtureTeardown(httpclient_split_fixture_t *fixture)
@@ -210,8 +210,8 @@ static void splitFixtureTeardown(httpclient_split_fixture_t *fixture)
 
     twfRequire(! lineIsAlive(fixture->upload_line), "split upload line was not destroyed before teardown");
     twfRequire(! lineIsAlive(fixture->download_line), "split download line was not destroyed before teardown");
-    lineUnlock(fixture->upload_line);
-    lineUnlock(fixture->download_line);
+    lineUnref(fixture->upload_line);
+    lineUnref(fixture->download_line);
 
     twfLinePoolTeardown(&fixture->transport_lines);
     twfLineDestroy(fixture->main_line);

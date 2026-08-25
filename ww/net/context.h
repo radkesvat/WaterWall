@@ -43,7 +43,7 @@ static inline line_t *contextGetLine(const context_t *const c)
 }
 
 /**
- * @brief Create a context bound to a line and lock that line.
+ * @brief Create a context bound to a line and acquire a reference to that line.
  *
  * @param line Target line.
  * @return context_t* Newly allocated context from the worker pool.
@@ -52,7 +52,7 @@ static inline context_t *contextCreate(line_t *const line)
 {
     context_t *new_ctx = genericpoolGetItem(getWorkerContextPool(lineGetWID(line)));
     *new_ctx           = (context_t){.line = line};
-    lineLock(line);
+    lineRef(line);
     return new_ctx;
 }
 
@@ -64,7 +64,7 @@ static inline context_t *contextCreate(line_t *const line)
  */
 static inline context_t *contextCreateFrom(const context_t *const source)
 {
-    lineLock(source->line);
+    lineRef(source->line);
     context_t *new_ctx = genericpoolGetItem(getWorkerContextPool(lineGetWID(contextGetLine(source))));
     *new_ctx           = (context_t){.line = source->line};
     return new_ctx;
@@ -172,8 +172,8 @@ static inline context_t *contextCreateResume(line_t *const line)
  */
 static inline context_t *contextSwitchLine(context_t *const c, line_t *const line)
 {
-    lineLock(line);
-    lineUnlock(c->line);
+    lineRef(line);
+    lineUnref(c->line);
     c->line = line;
     return c;
 }
@@ -219,7 +219,7 @@ static inline void bufferStreamPushContextPayload(buffer_stream_t *self, context
 }
 
 /**
- * @brief Destroy a context, releasing payload and unlocking the bound line.
+ * @brief Destroy a context, releasing payload and releasing the bound line reference.
  *
  * @param c Context to destroy.
  */
@@ -230,7 +230,7 @@ static inline void contextDestroy(context_t *c)
         contextReusePayload(c);
     }
     wid_t wid = lineGetWID(contextGetLine(c));
-    lineUnlock(c->line);
+    lineUnref(c->line);
     genericpoolReuseItem(getWorkerContextPool(wid), c);
 }
 

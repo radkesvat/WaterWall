@@ -44,7 +44,7 @@ static void handleQueuedWrite(tunnel_t *t, line_t *l, udpconnector_tstate_t *ts,
     if (! ls->queue_pause_sent && udpconnectorQueuedWriteBytes(ls) > kUdpMinPauseQueueSize)
     {
         buffer_pool_t *pool = lineGetBufferPool(l);
-        if (! withLineLocked(l, tunnelPrevDownStreamPause, t))
+        if (! lineCallWithRef(l, tunnelPrevDownStreamPause, t))
         {
             bufferpoolReuseBuffer(pool, buf);
             return;
@@ -137,7 +137,7 @@ static bool udpconnectorMaybeResumeQueuedSender(tunnel_t *t, line_t *l, udpconne
     }
 
     ls->queue_pause_sent = false;
-    return withLineLocked(l, tunnelPrevDownStreamResume, t);
+    return lineCallWithRef(l, tunnelPrevDownStreamResume, t);
 }
 
 static void udpconnectorPacketDestinationDropPending(udpconnector_packet_destination_t *cache)
@@ -177,7 +177,7 @@ static bool udpconnectorQueuePacketForDestination(tunnel_t *t, line_t *l, udpcon
     if (! ls->queue_pause_sent && udpconnectorQueuedWriteBytes(ls) > kUdpMinPauseQueueSize)
     {
         buffer_pool_t *pool = lineGetBufferPool(l);
-        if (! withLineLocked(l, tunnelPrevDownStreamPause, t))
+        if (! lineCallWithRef(l, tunnelPrevDownStreamPause, t))
         {
             bufferpoolReuseBuffer(pool, buf);
             return false;
@@ -204,7 +204,7 @@ static void udpconnectorOnPacketDnsResolved(void *userdata, int status, const ch
 
     if (request->cancelled || ! lineIsAlive(line))
     {
-        lineUnlock(line);
+        lineUnref(line);
         udpconnectorPacketDnsRequestDestroy(request);
         return;
     }
@@ -218,7 +218,7 @@ static void udpconnectorOnPacketDnsResolved(void *userdata, int status, const ch
 
     if (request->destination_index >= ls->packet_destinations_count)
     {
-        lineUnlock(line);
+        lineUnref(line);
         udpconnectorPacketDnsRequestDestroy(request);
         return;
     }
@@ -229,7 +229,7 @@ static void udpconnectorOnPacketDnsResolved(void *userdata, int status, const ch
     if (asyncdnsStatusIsShutdown(status))
     {
         discard udpconnectorPacketDestinationFail(t, line, ls, cache);
-        lineUnlock(line);
+        lineUnref(line);
         udpconnectorPacketDnsRequestDestroy(request);
         return;
     }
@@ -243,11 +243,11 @@ static void udpconnectorOnPacketDnsResolved(void *userdata, int status, const ch
                     error != NULL ? error : ares_strerror(status));
         if (! udpconnectorPacketDestinationFail(t, line, ls, cache))
         {
-            lineUnlock(line);
+            lineUnref(line);
             udpconnectorPacketDnsRequestDestroy(request);
             return;
         }
-        lineUnlock(line);
+        lineUnref(line);
         udpconnectorPacketDnsRequestDestroy(request);
         return;
     }
@@ -261,11 +261,11 @@ static void udpconnectorOnPacketDnsResolved(void *userdata, int status, const ch
                     request->domain);
         if (! udpconnectorPacketDestinationFail(t, line, ls, cache))
         {
-            lineUnlock(line);
+            lineUnref(line);
             udpconnectorPacketDnsRequestDestroy(request);
             return;
         }
-        lineUnlock(line);
+        lineUnref(line);
         udpconnectorPacketDnsRequestDestroy(request);
         return;
     }
@@ -273,12 +273,12 @@ static void udpconnectorOnPacketDnsResolved(void *userdata, int status, const ch
     cache->has_context = true;
     if (! udpconnectorFlushPacketDestinationQueue(t, line, ts, ls, cache))
     {
-        lineUnlock(line);
+        lineUnref(line);
         udpconnectorPacketDnsRequestDestroy(request);
         return;
     }
 
-    lineUnlock(line);
+    lineUnref(line);
     udpconnectorPacketDnsRequestDestroy(request);
 }
 
@@ -320,7 +320,7 @@ static bool udpconnectorStartPacketDnsResolve(tunnel_t *t, line_t *l, udpconnect
         .next              = NULL,
     };
 
-    lineLock(l);
+    lineRef(l);
     udpconnectorPacketDnsRequestLink(ls, request);
     cache->resolving = true;
 
@@ -330,7 +330,7 @@ static bool udpconnectorStartPacketDnsResolve(tunnel_t *t, line_t *l, udpconnect
     {
         udpconnectorPacketDnsRequestUnlink(ls, request);
         cache->resolving = false;
-        lineUnlock(l);
+        lineUnref(l);
         loggerPrint(getDnsLogger(),
                     LOG_LEVEL_ERROR,
                     "UdpConnector: failed to start packet async dns resolve for %s: %s",

@@ -15,7 +15,7 @@ void vlessserverLinestateInitialize(vlessserver_lstate_t *ls, tunnel_t *t, line_
         .auth_password                         = NULL,
         .phase                                 = kVlessServerPhaseWaitInitial,
         .line_kind                             = kind,
-        .client_line_locked                    = false,
+        .client_line_ref_held                  = false,
         .response_sent                         = false,
         .user_handle_recorded                  = false,
         .fallback_close_draining               = false,

@@ -122,7 +122,7 @@ CATEGORY_B = [
      "reference: runtime report-write failure, then Category-A completion"),
     ("tunnels/SpeedTestClient/common/helpers.c", "speedtestclientFinishLine",
      ("final_success ? 0 : 1",),
-     ("lineUnlock(l);",),
+     ("lineUnref(l);",),
      "reference: final speed-test result, success or failure"),
     ("tunnels/TesterClient/common/helpers.c", "testerclientRequestSuccessfulShutdown",
      ("0",),

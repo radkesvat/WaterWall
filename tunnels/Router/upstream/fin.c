@@ -7,7 +7,7 @@ void routerTunnelUpStreamFinish(tunnel_t *t, line_t *l)
     uint8_t   route  = ls->route;
     tunnel_t *target = ls->target;
 
-    lineLock(l);
+    lineRef(l);
     routerLinestateDestroy(l, ls);
 
     if (route == kRouterRouteTarget)
@@ -19,5 +19,5 @@ void routerTunnelUpStreamFinish(tunnel_t *t, line_t *l)
         tunnelNextUpStreamFinish(t, l);
     }
 
-    lineUnlock(l);
+    lineUnref(l);
 }

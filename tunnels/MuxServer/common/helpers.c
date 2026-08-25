@@ -500,20 +500,20 @@ bool muxserverSendControlFrame(tunnel_t *t, line_t *parent_l, muxserver_lstate_t
     sbuf_t *control_buf = bufferpoolGetLargeBuffer(lineGetBufferPool(parent_l));
     muxMakeMuxFrame(control_buf, cid, flag);
 
-    lineLock(child_l);
-    lineLock(parent_l);
+    lineRef(child_l);
+    lineRef(parent_l);
     parent_ls->last_writer = child_l;
     tunnelPrevDownStreamPayload(t, parent_l, control_buf);
     if (! lineIsAlive(parent_l))
     {
-        lineUnlock(parent_l);
-        lineUnlock(child_l);
+        lineUnref(parent_l);
+        lineUnref(child_l);
         return false;
     }
     parent_ls->last_writer = NULL;
     const bool child_alive = lineIsAlive(child_l);
-    lineUnlock(parent_l);
-    lineUnlock(child_l);
+    lineUnref(parent_l);
+    lineUnref(child_l);
     return child_alive;
 }
 
@@ -765,27 +765,27 @@ muxserver_child_drain_result_t muxserverDrainAttachedChild(tunnel_t *t, line_t *
     assert(child_ls->parent == parent_ls);
     assert(child_ls->close_state != kMuxServerChildCloseParentGoneDraining);
 
-    lineLock(parent_l);
+    lineRef(parent_l);
     while (! child_ls->paused && bufferqueueGetBufCount(&child_ls->pending_child_data) > 0)
     {
         sbuf_t *buf = bufferqueuePopFront(&child_ls->pending_child_data);
         muxserverSubtractParentPendingChildBytes(parent_ls, sbufGetLength(buf));
-        if (! withLineLockedWithBuf(child_l, tunnelNextUpStreamPayload, t, buf))
+        if (! lineCallWithRefWithBuf(child_l, tunnelNextUpStreamPayload, t, buf))
         {
-            lineUnlock(parent_l);
+            lineUnref(parent_l);
             return kMuxServerChildDrainChildGone;
         }
 
         if (! lineIsAlive(parent_l))
         {
-            lineUnlock(parent_l);
+            lineUnref(parent_l);
             return kMuxServerChildDrainParentGone;
         }
 
         child_ls = lineGetState(child_l, t);
         if (child_ls->close_state == kMuxServerChildCloseParentGoneDraining || child_ls->parent != parent_ls)
         {
-            lineUnlock(parent_l);
+            lineUnref(parent_l);
             return kMuxServerChildDrainParentGone;
         }
 
@@ -796,14 +796,14 @@ muxserver_child_drain_result_t muxserverDrainAttachedChild(tunnel_t *t, line_t *
 
         if (! muxserverHandleChildBufferAfterDrain(t, parent_l, ts, parent_ls, child_l, child_ls))
         {
-            lineUnlock(parent_l);
+            lineUnref(parent_l);
             return kMuxServerChildDrainParentGone;
         }
     }
 
     if (! child_ls->paused && ! muxserverHandleChildBufferAfterDrain(t, parent_l, ts, parent_ls, child_l, child_ls))
     {
-        lineUnlock(parent_l);
+        lineUnref(parent_l);
         return kMuxServerChildDrainParentGone;
     }
 
@@ -811,7 +811,7 @@ muxserver_child_drain_result_t muxserverDrainAttachedChild(tunnel_t *t, line_t *
         ! child_ls->paused && bufferqueueGetBufCount(&child_ls->pending_child_data) == 0
             ? kMuxServerChildDrainReadyToFinish
             : kMuxServerChildDrainBlocked;
-    lineUnlock(parent_l);
+    lineUnref(parent_l);
     return result;
 }
 
@@ -922,7 +922,7 @@ muxserver_child_drain_result_t muxserverDrainDetachedChild(tunnel_t *t, line_t *
         const size_t buf_len = sbufGetLength(buf);
         muxserverSubtractDetachedBytes(t, child_l, buf_len);
 
-        if (! withLineLockedWithBuf(child_l, tunnelNextUpStreamPayload, t, buf))
+        if (! lineCallWithRefWithBuf(child_l, tunnelNextUpStreamPayload, t, buf))
         {
             return kMuxServerChildDrainChildGone;
         }
@@ -979,7 +979,7 @@ bool muxserverFinalizeAttachedPeerClose(tunnel_t *t, line_t *parent_l, muxserver
     assert(! child_ls->paused);
     assert(bufferqueueGetBufCount(&child_ls->pending_child_data) == 0);
 
-    lineLock(parent_l);
+    lineRef(parent_l);
     if (parent_ls->last_writer == child_l)
     {
         parent_ls->last_writer = NULL;
@@ -993,7 +993,7 @@ bool muxserverFinalizeAttachedPeerClose(tunnel_t *t, line_t *parent_l, muxserver
     }
 
     const bool parent_alive = lineIsAlive(parent_l);
-    lineUnlock(parent_l);
+    lineUnref(parent_l);
     return parent_alive;
 }
 
@@ -1024,10 +1024,10 @@ bool muxserverBeginPeerCloseDrain(tunnel_t *t, line_t *parent_l, muxserver_tstat
 
     if (! source_was_paused)
     {
-        lineLock(parent_l);
-        discard    withLineLocked(child_l, tunnelNextUpStreamPause, t);
+        lineRef(parent_l);
+        discard    lineCallWithRef(child_l, tunnelNextUpStreamPause, t);
         const bool parent_alive = lineIsAlive(parent_l);
-        lineUnlock(parent_l);
+        lineUnref(parent_l);
         return parent_alive;
     }
     return true;
@@ -1048,7 +1048,7 @@ void muxserverHandleParentLoss(tunnel_t *t, line_t *parent_l, bool notify_parent
     size_t              detached_bytes    = 0;
 
     assert(lineIsOnCurrentEventWorker(parent_l));
-    lineLock(parent_l);
+    lineRef(parent_l);
     parent_ls->parent_finishing = true;
 
     while (parent_ls->child_next != NULL)
@@ -1106,7 +1106,7 @@ void muxserverHandleParentLoss(tunnel_t *t, line_t *parent_l, bool notify_parent
 
         if (! source_was_paused)
         {
-            discard withLineLocked(child_l, tunnelNextUpStreamPause, t);
+            discard lineCallWithRef(child_l, tunnelNextUpStreamPause, t);
         }
     }
 
@@ -1126,5 +1126,5 @@ void muxserverHandleParentLoss(tunnel_t *t, line_t *parent_l, bool notify_parent
     {
         tunnelPrevDownStreamFinish(t, parent_l);
     }
-    lineUnlock(parent_l);
+    lineUnref(parent_l);
 }

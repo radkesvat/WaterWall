@@ -191,7 +191,7 @@ bool authenticationserverFlushResponses(tunnel_t *t, line_t *l, authenticationse
             LOGD("AuthenticationServer: sending queued response message bytes=%u",
                  (unsigned int) sbufGetLength(response));
         }
-        if (UNLIKELY(! withLineLockedWithBuf(l, tunnelPrevDownStreamPayload, t, response)))
+        if (UNLIKELY(! lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, response)))
         {
             return false;
         }
@@ -228,7 +228,7 @@ static bool authenticationserverSendOrQueueResponse(tunnel_t *t, line_t *l, auth
         LOGD("AuthenticationServer: sending response message bytes=%u", (unsigned int) sbufGetLength(response));
     }
 
-    return withLineLockedWithBuf(l, tunnelPrevDownStreamPayload, t, response);
+    return lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, response);
 }
 
 static bool authenticationserverReadMessageHeader(authenticationserver_lstate_t *ls, uint32_t *message_body_len)

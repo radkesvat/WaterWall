@@ -255,7 +255,7 @@ static bool vlessserverFlushQueueToPrev(tunnel_t *t, line_t *l, buffer_queue_t *
     while (bufferqueueGetBufCount(queue) > 0)
     {
         sbuf_t *buf = bufferqueuePopFront(queue);
-        if (UNLIKELY(! withLineLockedWithBuf(l, tunnelPrevDownStreamPayload, t, buf)))
+        if (UNLIKELY(! lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, buf)))
         {
             bufferqueueDestroy(queue);
             return false;
@@ -279,7 +279,7 @@ static bool vlessserverSendResponseHeaderIfNeeded(tunnel_t *t, line_t *l, vlesss
     ptr[1]       = 0;
 
     ls->response_sent = true;
-    return withLineLockedWithBuf(l, tunnelPrevDownStreamPayload, t, buf);
+    return lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, buf);
 }
 
 static bool vlessserverForwardBufferedTcpPayload(tunnel_t *t, line_t *l, vlessserver_lstate_t *ls)
@@ -287,7 +287,7 @@ static bool vlessserverForwardBufferedTcpPayload(tunnel_t *t, line_t *l, vlessse
     while (! bufferstreamIsEmpty(&ls->in_stream))
     {
         sbuf_t *buf = bufferstreamIdealRead(&ls->in_stream);
-        if (UNLIKELY(! withLineLockedWithBuf(l, tunnelNextUpStreamPayload, t, buf)))
+        if (UNLIKELY(! lineCallWithRefWithBuf(l, tunnelNextUpStreamPayload, t, buf)))
         {
             return false;
         }
@@ -462,7 +462,7 @@ bool vlessserverSendFallbackPayload(tunnel_t *t, line_t *l, vlessserver_lstate_t
     if (ts->fallback_intentional_delay_ms == 0 && ! ls->fallback_payload_paused &&
         vlessserverFallbackPendingCount(ls) == 0 && ! ls->fallback_delay_scheduled)
     {
-        return withLineLockedWithBuf(l, tunnelUpStreamPayload, fallback, buf);
+        return lineCallWithRefWithBuf(l, tunnelUpStreamPayload, fallback, buf);
     }
 
     buffer_queue_t *pending = vlessserverEnsureFallbackPendingQueue(ls);
@@ -504,7 +504,7 @@ static bool vlessserverStartFallback(tunnel_t *t, line_t *l, vlessserver_lstate_
 
     sbuf_t *first = bufferstreamFullRead(&ls->in_stream);
 
-    lineLock(l);
+    lineRef(l);
 
     ls->phase = kVlessServerPhaseFallback;
     tunnelUpStreamInit(ts->fallback_tunnel, l);
@@ -521,7 +521,7 @@ static bool vlessserverStartFallback(tunnel_t *t, line_t *l, vlessserver_lstate_
     }
 
     bool alive = lineIsAlive(l);
-    lineUnlock(l);
+    lineUnref(l);
     return alive;
 }
 
@@ -529,7 +529,7 @@ static void vlessserverDetachRemoteFromClient(vlessserver_lstate_t *remote_ls)
 {
     line_t *client_line = remote_ls->client_line;
 
-    if (client_line != NULL && remote_ls->client_line_locked)
+    if (client_line != NULL && remote_ls->client_line_ref_held)
     {
         if (lineIsAlive(client_line))
         {
@@ -540,11 +540,11 @@ static void vlessserverDetachRemoteFromClient(vlessserver_lstate_t *remote_ls)
             }
         }
 
-        lineUnlock(client_line);
+        lineUnref(client_line);
     }
 
-    remote_ls->client_line        = NULL;
-    remote_ls->client_line_locked = false;
+    remote_ls->client_line          = NULL;
+    remote_ls->client_line_ref_held = false;
 }
 
 static line_t *vlessserverGetOrCreateUdpRemoteLine(tunnel_t *t, line_t *client_l, vlessserver_lstate_t *client_ls)
@@ -563,19 +563,19 @@ static line_t *vlessserverGetOrCreateUdpRemoteLine(tunnel_t *t, line_t *client_l
     vlessserver_lstate_t *remote_ls = lineGetState(remote_l, t);
 
     vlessserverLinestateInitialize(remote_ls, t, remote_l, kVlessServerLineKindUdpRemote);
-    remote_ls->client_line        = client_l;
-    remote_ls->client_line_locked = true;
-    remote_ls->user_handle        = client_ls->user_handle;
-    remote_ls->phase              = kVlessServerPhaseUdpConnecting;
+    remote_ls->client_line          = client_l;
+    remote_ls->client_line_ref_held = true;
+    remote_ls->user_handle          = client_ls->user_handle;
+    remote_ls->phase                = kVlessServerPhaseUdpConnecting;
 
-    lineLock(client_l);
+    lineRef(client_l);
 
     lineGetRoutingContext(remote_l)->local_listener_port = lineGetRoutingContext(client_l)->local_listener_port;
     lineCopyUsers(remote_l, client_l);
     vlessserverApplyDestinationContext(remote_l, &client_ls->udp_target, true);
     client_ls->udp_remote_line = remote_l;
 
-    if (UNLIKELY(! withLineLocked(remote_l, tunnelNextUpStreamInit, t)))
+    if (UNLIKELY(! lineCallWithRef(remote_l, tunnelNextUpStreamInit, t)))
     {
         return NULL;
     }
@@ -605,7 +605,7 @@ static bool vlessserverStartTcpBranch(tunnel_t *t, line_t *l, vlessserver_lstate
     vlessserverApplyDestinationContext(l, target, false);
     ls->phase = kVlessServerPhaseTcpConnecting;
 
-    if (UNLIKELY(! withLineLocked(l, tunnelNextUpStreamInit, t)))
+    if (UNLIKELY(! lineCallWithRef(l, tunnelNextUpStreamInit, t)))
     {
         return false;
     }
@@ -618,10 +618,10 @@ static bool vlessserverStartUdpBranch(tunnel_t *t, line_t *l, vlessserver_lstate
     addresscontextCopy(&ls->udp_target, target);
     ls->phase = kVlessServerPhaseUdpConnecting;
 
-    lineLock(l);
+    lineRef(l);
     line_t *remote_l     = vlessserverGetOrCreateUdpRemoteLine(t, l, ls);
     bool    client_alive = lineIsAlive(l);
-    lineUnlock(l);
+    lineUnref(l);
 
     if (UNLIKELY(! client_alive))
     {
@@ -802,10 +802,10 @@ static bool vlessserverDrainUdpPackets(tunnel_t *t, line_t *l, vlessserver_lstat
         sbuf_t        *packet = bufferstreamReadExact(&ls->in_stream, full_len);
         sbufShiftRight(packet, kVlessServerUdpHeaderLen);
 
-        lineLock(l);
+        lineRef(l);
         line_t *remote_l     = vlessserverGetOrCreateUdpRemoteLine(t, l, ls);
         bool    client_alive = lineIsAlive(l);
-        lineUnlock(l);
+        lineUnref(l);
 
         if (UNLIKELY(! client_alive))
         {
@@ -825,10 +825,10 @@ static bool vlessserverDrainUdpPackets(tunnel_t *t, line_t *l, vlessserver_lstat
             ls->phase = kVlessServerPhaseUdpConnecting;
         }
 
-        lineLock(l);
-        bool remote_alive = withLineLockedWithBuf(remote_l, tunnelNextUpStreamPayload, t, packet);
+        lineRef(l);
+        bool remote_alive = lineCallWithRefWithBuf(remote_l, tunnelNextUpStreamPayload, t, packet);
         client_alive      = lineIsAlive(l);
-        lineUnlock(l);
+        lineUnref(l);
 
         if (UNLIKELY(! client_alive))
         {
@@ -877,7 +877,7 @@ static void vlessserverCloseUdpRemoteLineInternal(tunnel_t *t, line_t *remote_l,
     }
 
     remote_ls->phase = kVlessServerPhaseClosing;
-    lineLock(remote_l);
+    lineRef(remote_l);
 
     vlessserverDetachRemoteFromClient(remote_ls);
     vlessserverLinestateDestroy(remote_ls);
@@ -892,7 +892,7 @@ static void vlessserverCloseUdpRemoteLineInternal(tunnel_t *t, line_t *remote_l,
         lineDestroy(remote_l);
     }
 
-    lineUnlock(remote_l);
+    lineUnref(remote_l);
 }
 
 static void vlessserverCloseOwnedUdpRemoteLine(tunnel_t *t, vlessserver_lstate_t *client_ls, bool close_next)
@@ -914,7 +914,7 @@ static void vlessserverCloseFallbackFromUpstream(tunnel_t *t, line_t *l, vlessse
     buffer_pool_t *pool = lineGetBufferPool(l);
     sbuf_t        *buf  = NULL;
 
-    lineLock(l);
+    lineRef(l);
     ls->phase                                 = kVlessServerPhaseClosing;
     ls->fallback_close_draining               = true;
     ls->fallback_branch_finished_during_drain = false;
@@ -933,7 +933,7 @@ static void vlessserverCloseFallbackFromUpstream(tunnel_t *t, line_t *l, vlessse
         tunnelUpStreamPayload(fallback, l, buf);
         if (! lineIsAlive(l))
         {
-            lineUnlock(l);
+            lineUnref(l);
             return;
         }
     }
@@ -946,7 +946,7 @@ static void vlessserverCloseFallbackFromUpstream(tunnel_t *t, line_t *l, vlessse
     {
         tunnelUpStreamFin(fallback, l);
     }
-    lineUnlock(l);
+    lineUnref(l);
 }
 
 static void vlessserverCloseLine(tunnel_t *t, line_t *l, vlessserver_close_origin_t origin)
@@ -976,7 +976,7 @@ static void vlessserverCloseLine(tunnel_t *t, line_t *l, vlessserver_close_origi
     }
 
     ls->phase = kVlessServerPhaseClosing;
-    lineLock(l);
+    lineRef(l);
 
     vlessserverCloseOwnedUdpRemoteLine(t, ls, origin != kVlessServerCloseFromNext);
     vlessserverLinestateDestroy(ls);
@@ -998,7 +998,7 @@ static void vlessserverCloseLine(tunnel_t *t, line_t *l, vlessserver_close_origi
         tunnelPrevDownStreamFinish(t, l);
     }
 
-    lineUnlock(l);
+    lineUnref(l);
 }
 
 void vlessserverCloseLineFromUpstream(tunnel_t *t, line_t *l)
@@ -1040,7 +1040,7 @@ void vlessserverOnSelectedEstablished(tunnel_t *t, line_t *l, vlessserver_lstate
             return;
         }
 
-        lineLock(l);
+        lineRef(l);
         vlessserver_lstate_t *client_ls = lineGetState(client_l, t);
         if (client_ls->phase == kVlessServerPhaseUdpWaitPacket || client_ls->phase == kVlessServerPhaseUdpConnecting)
         {
@@ -1049,32 +1049,32 @@ void vlessserverOnSelectedEstablished(tunnel_t *t, line_t *l, vlessserver_lstate
 
         if (! client_ls->response_sent)
         {
-            bool client_alive = withLineLocked(client_l, tunnelPrevDownStreamEst, t);
+            bool client_alive = lineCallWithRef(client_l, tunnelPrevDownStreamEst, t);
             bool remote_alive = lineIsAlive(l);
             if (UNLIKELY(! client_alive || ! remote_alive))
             {
                 bufferqueueDestroy(&down_local);
-                lineUnlock(l);
+                lineUnref(l);
                 return;
             }
 
             if (UNLIKELY(! vlessserverSendResponseHeaderIfNeeded(t, client_l, client_ls)))
             {
                 bufferqueueDestroy(&down_local);
-                lineUnlock(l);
+                lineUnref(l);
                 return;
             }
 
             if (UNLIKELY(! lineIsAlive(l)))
             {
                 bufferqueueDestroy(&down_local);
-                lineUnlock(l);
+                lineUnref(l);
                 return;
             }
         }
 
         discard vlessserverFlushQueueToPrev(t, client_l, &down_local);
-        lineUnlock(l);
+        lineUnref(l);
         return;
     }
 
@@ -1083,7 +1083,7 @@ void vlessserverOnSelectedEstablished(tunnel_t *t, line_t *l, vlessserver_lstate
         ls->phase = kVlessServerPhaseTcpEstablished;
     }
 
-    if (UNLIKELY(! withLineLocked(l, tunnelPrevDownStreamEst, t)))
+    if (UNLIKELY(! lineCallWithRef(l, tunnelPrevDownStreamEst, t)))
     {
         bufferqueueDestroy(&down_local);
         return;

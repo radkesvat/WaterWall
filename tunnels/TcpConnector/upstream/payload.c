@@ -31,7 +31,7 @@ static void handlePausedWrite(tunnel_t *t, line_t *l, tcpconnector_tstate_t *ts,
     if (bufferqueueGetBufLen(&ls->pause_queue) > kMinPauseQueueSize)
     {
         buffer_pool_t *pool = lineGetBufferPool(l);
-        if (! withLineLocked(l, tunnelPrevDownStreamPause, t))
+        if (! lineCallWithRef(l, tunnelPrevDownStreamPause, t))
         {
             bufferpoolReuseBuffer(pool, buf);
             return;

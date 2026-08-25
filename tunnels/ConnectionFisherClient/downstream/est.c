@@ -30,5 +30,5 @@ void connectionfisherclientTunnelDownStreamEst(tunnel_t *t, line_t *l)
     main_ls->main_est_forwarded = true;
     lineMarkEstablished(ls->main_line);
 
-    discard withLineLocked(ls->main_line, tunnelPrevDownStreamEst, t);
+    discard lineCallWithRef(ls->main_line, tunnelPrevDownStreamEst, t);
 }

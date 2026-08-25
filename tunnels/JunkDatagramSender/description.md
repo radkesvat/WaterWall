@@ -1,5 +1,5 @@
 <!--
-Documentation version: 152
+Documentation version: 153
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/JunkDatagramSender.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/JunkDatagramSender.mdx, and all files must keep the same documentation version.
 -->
 
@@ -91,7 +91,7 @@ The DNS module currently builds a real DNS query UDP payload with a question and
 
 ## Lifecycle Notes
 
-`JunkDatagramSender` stores only a per-line remaining trigger count initialized from `resend-again-times`. Delayed payloads are scheduled with Waterwall's `lineScheduleDelayedTaskWithBuf()`, so the core line scheduler owns the temporary line reference and releases the buffer if the line has closed before the task runs.
+`JunkDatagramSender` stores only a per-line remaining trigger count initialized from `resend-again-times`. For an immediate junk batch, it holds a temporary line reference with `lineRef()`, checks `lineIsAlive()` after the re-entrant sends, then releases that reference with `lineUnref()`. The reference preserves the allocation, not line contents or worker access. Delayed payloads are scheduled with Waterwall's `lineScheduleDelayedTaskWithBuf()`, so the core line scheduler owns the temporary line reference and releases the buffer if the line has closed before the task runs.
 
 Packet helper lines are not destroyed by this tunnel during runtime, and junk generation is skipped on worker packet lines so a layer-3 chain bootstrap does not emit connection-style junk payloads.
 

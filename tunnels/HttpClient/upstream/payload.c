@@ -21,25 +21,25 @@ void httpclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
-    lineLock(l);
+    lineRef(l);
 
     if (ts->websocket_enabled)
     {
         if (! ls->websocket_active)
         {
             bufferqueuePushBack(&ls->pending_up, buf);
-            lineUnlock(l);
+            lineUnref(l);
             return;
         }
 
         if (! httpclientTransportSendWebSocketData(t, l, ls, buf, 0x2))
         {
             failAndCloseU(t, l, ls);
-            lineUnlock(l);
+            lineUnref(l);
             return;
         }
 
-        lineUnlock(l);
+        lineUnref(l);
         return;
     }
 
@@ -48,10 +48,10 @@ void httpclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         if (! httpclientTransportSendHttp1ChunkedPayload(t, l, buf))
         {
             failAndCloseU(t, l, ls);
-            lineUnlock(l);
+            lineUnref(l);
             return;
         }
-        lineUnlock(l);
+        lineUnref(l);
         return;
     }
 
@@ -60,27 +60,27 @@ void httpclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         if (! httpclientTransportSendHttp2DataFrame(t, l, ls, buf, false))
         {
             failAndCloseU(t, l, ls);
-            lineUnlock(l);
+            lineUnref(l);
             return;
         }
-        lineUnlock(l);
+        lineUnref(l);
         return;
     }
 
     if (ls->runtime_proto == kHttpClientRuntimeUpgradedRaw)
     {
         tunnelNextUpStreamPayload(t, l, buf);
-        lineUnlock(l);
+        lineUnref(l);
         return;
     }
 
     if (ls->runtime_proto == kHttpClientRuntimeWaitUpgrade)
     {
         bufferqueuePushBack(&ls->pending_up, buf);
-        lineUnlock(l);
+        lineUnref(l);
         return;
     }
 
     bufferqueuePushBack(&ls->pending_up, buf);
-    lineUnlock(l);
+    lineUnref(l);
 }

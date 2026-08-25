@@ -166,7 +166,7 @@ bool __wrap_lineScheduleDelayedTask(line_t *const line, LineTaskFnNoBuf callback
         return false;
     }
 
-    lineLock(line);
+    lineRef(line);
     g_fallback_finish_task = (fallback_finish_scheduled_task_t) {
         .line     = line,
         .tunnel   = t,
@@ -189,5 +189,5 @@ static void fallbackFinishDriveDelayedTask(void)
     {
         task.callback(task.tunnel, task.line);
     }
-    lineUnlock(task.line);
+    lineUnref(task.line);
 }

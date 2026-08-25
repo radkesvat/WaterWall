@@ -393,7 +393,7 @@ static void caseSuccessfulDownstreamFinishClosesBeforeSweep(void)
     // dispatch per slot; worker 0 must skip its detached line, while worker 1
     // closes normally and supplies the second closed-worker count.
     previous_wid = tosSetCurrentWorker(1);
-    lineLock(lines[1]);
+    lineRef(lines[1]);
     testerclientMarkWorkerComplete(tester, lines[1]);
     discard tosSetCurrentWorker(previous_wid);
 
@@ -439,7 +439,7 @@ static void caseWorkerStopClosesUnscheduledOwnedLine(void)
     fixtureSetup(&fixture, false);
 
     testerclient_tstate_t *ts = tunnelGetState(fixture.tester);
-    lineLock(fixture.line);
+    lineRef(fixture.line);
     testerclientTunnelOnWorkerStop(fixture.tester, lineGetWID(fixture.line), wwLifecycleProcessShutdown());
 
     twfRequire(ts->workers[0].line == NULL, "worker Stop must detach the owned line");

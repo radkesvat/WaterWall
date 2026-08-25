@@ -875,7 +875,7 @@ void testerserverResponseSendTask(tunnel_t *t, line_t *l)
             sbuf_t *buf = bufferqueuePopFront(&ls->response_queue);
 
             ls->response_tx_index += 1;
-            if (! withLineLockedWithBuf(l, send_response, t, buf))
+            if (! lineCallWithRefWithBuf(l, send_response, t, buf))
             {
                 LOGF("TesterServer: packet line died during packet-mode response send");
                 abortProgramNow(1);
@@ -927,7 +927,7 @@ void testerserverResponseSendTask(tunnel_t *t, line_t *l)
             ls->response_tx_offset = 0;
         }
 
-        if (! withLineLockedWithBuf(l, tunnelPrevDownStreamPayload, t, buf))
+        if (! lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, buf))
         {
             return;
         }

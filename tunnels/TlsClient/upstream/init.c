@@ -47,7 +47,7 @@ void tlsclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
         ech_payload = NULL;
     }
 
-    if (! withLineLocked(l, tunnelNextUpStreamInit, t))
+    if (! lineCallWithRef(l, tunnelNextUpStreamInit, t))
     {
         return;
     }
@@ -77,7 +77,7 @@ void tlsclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
             goto failed;
         }
 
-        // the line is not touched after this forward, so no lock/lineIsAlive recheck is needed
+        // the line is not touched after this forward, so no reference/lineIsAlive recheck is needed
         tunnelNextUpStreamPayload(t, l, buf);
         return;
     }

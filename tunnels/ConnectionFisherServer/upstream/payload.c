@@ -20,16 +20,16 @@ void connectionfisherserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t 
 
         ls->next_init_sent = true;
 
-        if (! withLineLocked(l, tunnelNextUpStreamInit, t))
+        if (! lineCallWithRef(l, tunnelNextUpStreamInit, t))
         {
             bufferpoolReuseBuffer(pool, buf);
             return;
         }
 
-        ls = lineGetState(l, t);
+        ls        = lineGetState(l, t);
         ls->phase = kConnectionFisherServerPhaseEstablished;
 
-        if (! withLineLockedWithBuf(l, tunnelNextUpStreamPayload, t, buf))
+        if (! lineCallWithRefWithBuf(l, tunnelNextUpStreamPayload, t, buf))
         {
             return;
         }

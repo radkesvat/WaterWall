@@ -221,7 +221,7 @@ void domainresolverCloseBeforeInit(tunnel_t *t, line_t *l, domainresolver_direct
 {
     domainresolver_lstate_t *ls = lineGetState(l, t);
 
-    lineLock(l);
+    lineRef(l);
 
     domainresolverLinestateDestroy(t, l, ls);
 
@@ -234,20 +234,20 @@ void domainresolverCloseBeforeInit(tunnel_t *t, line_t *l, domainresolver_direct
         tunnelNextUpStreamFinish(t, l);
     }
 
-    lineUnlock(l);
+    lineUnref(l);
 }
 
 void domainresolverCloseLine(tunnel_t *t, line_t *l, domainresolver_direction_t direction)
 {
     domainresolver_lstate_t *ls       = lineGetState(l, t);
     bool                     was_open = ls->phase == kDomainResolverPhaseOpen;
-    lineLock(l);
+    lineRef(l);
 
     domainresolverLinestateDestroy(t, l, ls);
 
     if (! was_open)
     {
-        lineUnlock(l);
+        lineUnref(l);
         return;
     }
 
@@ -260,5 +260,5 @@ void domainresolverCloseLine(tunnel_t *t, line_t *l, domainresolver_direction_t 
         tunnelPrevDownStreamFinish(t, l);
     }
 
-    lineUnlock(l);
+    lineUnref(l);
 }

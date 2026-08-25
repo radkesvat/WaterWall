@@ -1808,13 +1808,13 @@ static WTHREAD_ROUTINE(lineFinalReleaseRoutine)
     require(getWID() == kInvalidWID, "final-release fixture inherited an event-worker identity");
 
     /* The line reference count is deliberately the only publication channel.
-     * This relaxed poll supplies no ordering: lineUnlock()'s final RMW and
+     * This relaxed poll supplies no ordering: lineUnref()'s final RMW and
      * acquire semantics must acquire the owner's 2 -> 1 release. */
     while (atomicLoadExplicit(&publication->line->refc, memory_order_relaxed) != 1U)
     {
         YIELD_THREAD();
     }
-    lineUnlock(publication->line);
+    lineUnref(publication->line);
     return 0;
 }
 
@@ -1828,7 +1828,7 @@ static void testLineRefcountPublishesTeardownToFinalReleaser(void)
     require(pool != NULL, "failed to create refcount-publication line pool");
     generic_pool_t *pools[] = {pool};
     line_t         *line    = lineCreateForWorker(0, pools, 0);
-    lineLock(line);
+    lineRef(line);
 
     line_refcount_publication_t publication = {.line = line};
     wthread_t                   final_releaser;
@@ -2155,7 +2155,7 @@ static void testResolverRejectsForeignCallers(void)
 static void testLineResolverRejectsForeignCallers(void)
 {
     // A line owned by worker 1, queried from worker 0: rejected before the
-    // line is even referenced, so a failed call cannot leak a lock.
+    // line is even referenced, so a failed call cannot leak a line reference.
     line_t foreign_line = {.wid = 1, .alive = true};
     atomicStoreRelaxed(&foreign_line.refc, 1);
 

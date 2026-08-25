@@ -84,7 +84,7 @@ typedef struct trojanserver_lstate_s
     trojanserver_phase_t      phase;
     trojanserver_line_kind_t  line_kind;
     trojanserver_branch_t     branch;
-    bool                      client_line_locked;
+    bool                      client_line_ref_held;
     bool                      user_handle_recorded;
     bool                      fallback_close_draining;
     bool                      fallback_branch_finished_during_drain;

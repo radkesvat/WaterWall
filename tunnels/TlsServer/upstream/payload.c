@@ -219,7 +219,7 @@ static bool tlsserverReadDecryptedData(tunnel_t *t, line_t *l, tlsserver_lstate_
                 return true;
             }
 
-            if (! withLineLockedWithBuf(l, tunnelNextUpStreamPayload, t, data_buf))
+            if (! lineCallWithRefWithBuf(l, tunnelNextUpStreamPayload, t, data_buf))
             {
                 LOGW("TlsServer: line closed while forwarding decrypted application bytes upstream");
                 return false;
@@ -278,7 +278,7 @@ static bool tlsserverReadDecryptedData(tunnel_t *t, line_t *l, tlsserver_lstate_
             {
                 LOGD("TlsServer: forwarding upstream Finish after peer close_notify");
             }
-            return withLineLocked(l, tunnelNextUpStreamFinish, t);
+            return lineCallWithRef(l, tunnelNextUpStreamFinish, t);
         default:
             LOGW("TlsServer: SSL_read failed while decrypting upstream TLS bytes (ssl_error=%d)", ssl_error);
             tlsserverPrintSSLError();
@@ -310,7 +310,7 @@ void tlsserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
-    lineLock(l);
+    lineRef(l);
 
     if (ls->verbose)
     {
@@ -328,13 +328,13 @@ void tlsserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             if (! alive)
             {
                 lineReuseBuffer(l, buf);
-                lineUnlock(l);
+                lineUnref(l);
                 return;
             }
 
             ls = lineGetState(l, t);
             discard tlsserverSendFallbackPayload(t, l, ls, buf);
-            lineUnlock(l);
+            lineUnref(l);
             return;
         }
 
@@ -361,12 +361,12 @@ void tlsserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             reuseBuffer(buf);
             if (lineIsAlive(l))
             {
-                lineUnlock(l);
+                lineUnref(l);
                 tlsserverPrintSSLState(ls->ssl);
                 tlsserverCloseLineFatal(t, l);
                 return;
             }
-            lineUnlock(l);
+            lineUnref(l);
             return;
         }
 
@@ -383,9 +383,9 @@ void tlsserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             if (handshake_result == kTlsServerHandshakeFallback)
             {
                 lineReuseBuffer(l, buf);
-                bool alive = tlsserverStartFallback(t, l, ls);
+                bool    alive = tlsserverStartFallback(t, l, ls);
                 discard alive;
-                lineUnlock(l);
+                lineUnref(l);
                 return;
             }
 
@@ -394,12 +394,12 @@ void tlsserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
                 reuseBuffer(buf);
                 if (lineIsAlive(l))
                 {
-                    lineUnlock(l);
+                    lineUnref(l);
                     tlsserverPrintSSLState(ls->ssl);
                     tlsserverCloseLineFatal(t, l);
                     return;
                 }
-                lineUnlock(l);
+                lineUnref(l);
                 return;
             }
 
@@ -414,16 +414,16 @@ void tlsserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             reuseBuffer(buf);
             if (lineIsAlive(l))
             {
-                lineUnlock(l);
+                lineUnref(l);
                 tlsserverPrintSSLState(ls->ssl);
                 tlsserverCloseLineFatal(t, l);
                 return;
             }
-            lineUnlock(l);
+            lineUnref(l);
             return;
         }
     }
 
     lineReuseBuffer(l, buf);
-    lineUnlock(l);
+    lineUnref(l);
 }

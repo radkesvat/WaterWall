@@ -24,14 +24,14 @@ void httpserverTunnelDownStreamFinish(tunnel_t *t, line_t *l)
         return;
     }
 
-    lineLock(l);
+    lineRef(l);
 
     ls->next_finished = true;
 
     if (! httpserverTransportFlushPendingDown(t, l, ls))
     {
         failAndCloseD(t, l, ls);
-        lineUnlock(l);
+        lineUnref(l);
         return;
     }
 
@@ -41,7 +41,7 @@ void httpserverTunnelDownStreamFinish(tunnel_t *t, line_t *l)
         // flushing queued response data. It owns nothing here, but it has finished the
         // direction back toward us: we must not send any more bytes or a Finish toward it.
         httpserverLinestateDestroy(ls);
-        lineUnlock(l);
+        lineUnref(l);
         return;
     }
 
@@ -50,7 +50,7 @@ void httpserverTunnelDownStreamFinish(tunnel_t *t, line_t *l)
         if (! httpserverTransportSendWebSocketClose(t, l, ls))
         {
             failAndCloseD(t, l, ls);
-            lineUnlock(l);
+            lineUnref(l);
             return;
         }
 
@@ -60,7 +60,7 @@ void httpserverTunnelDownStreamFinish(tunnel_t *t, line_t *l)
             if (! httpserverTransportSendHttp2DataFrame(t, l, ls, NULL, true))
             {
                 failAndCloseD(t, l, ls);
-                lineUnlock(l);
+                lineUnref(l);
                 return;
             }
         }
@@ -72,7 +72,7 @@ void httpserverTunnelDownStreamFinish(tunnel_t *t, line_t *l)
             if (! httpserverTransportSendHttp1ResponseHeaders(t, l))
             {
                 failAndCloseD(t, l, ls);
-                lineUnlock(l);
+                lineUnref(l);
                 return;
             }
             ls->h1_response_headers_sent = true;
@@ -84,7 +84,7 @@ void httpserverTunnelDownStreamFinish(tunnel_t *t, line_t *l)
             if (! httpserverTransportSendHttp1FinalChunk(t, l))
             {
                 failAndCloseD(t, l, ls);
-                lineUnlock(l);
+                lineUnref(l);
                 return;
             }
         }
@@ -96,7 +96,7 @@ void httpserverTunnelDownStreamFinish(tunnel_t *t, line_t *l)
             if (! httpserverTransportSubmitHttp2ResponseHeaders(t, l, ls, true))
             {
                 failAndCloseD(t, l, ls);
-                lineUnlock(l);
+                lineUnref(l);
                 return;
             }
             ls->fin_sent = true;
@@ -107,7 +107,7 @@ void httpserverTunnelDownStreamFinish(tunnel_t *t, line_t *l)
             if (! httpserverTransportSendHttp2DataFrame(t, l, ls, NULL, true))
             {
                 failAndCloseD(t, l, ls);
-                lineUnlock(l);
+                lineUnref(l);
                 return;
             }
         }
@@ -124,5 +124,5 @@ void httpserverTunnelDownStreamFinish(tunnel_t *t, line_t *l)
     {
         tunnelPrevDownStreamFinish(t, l);
     }
-    lineUnlock(l);
+    lineUnref(l);
 }

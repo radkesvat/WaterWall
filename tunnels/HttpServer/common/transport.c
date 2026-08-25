@@ -381,7 +381,7 @@ static bool sendBytesDown(tunnel_t *t, line_t *l, const void *data, uint32_t len
         sbufSetLength(buf, chunk);
         sbufWriteLarge(buf, ptr, chunk);
 
-        if (! withLineLockedWithBuf(l, tunnelPrevDownStreamPayload, t, buf))
+        if (! lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, buf))
         {
             return false;
         }
@@ -424,7 +424,7 @@ static bool httpserverSendRawDown(tunnel_t *t, line_t *l, httpserver_lstate_t *l
         return httpserverTransportSendHttp2DataFrame(t, l, ls, buf, false);
     }
 
-    if (! withLineLockedWithBuf(l, tunnelPrevDownStreamPayload, t, buf))
+    if (! lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, buf))
     {
         return false;
     }
@@ -548,7 +548,7 @@ static bool httpserverForwardUpstreamPayload(tunnel_t *t, line_t *l, httpserver_
         lineReuseBuffer(l, buf);
         return false;
     }
-    return withLineLockedWithBuf(target, tunnelNextUpStreamPayload, t, buf);
+    return lineCallWithRefWithBuf(target, tunnelNextUpStreamPayload, t, buf);
 }
 
 static void httpserverForwardUpstreamFinish(tunnel_t *t, line_t *l, httpserver_lstate_t *ls)
@@ -820,7 +820,7 @@ bool httpserverTransportSendHttp1ChunkedPayload(tunnel_t *t, line_t *l, sbuf_t *
 
     if (prefix_len <= 0)
     {
-        if (! withLineLockedWithBuf(l, tunnelPrevDownStreamPayload, t, payload))
+        if (! lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, payload))
         {
             return false;
         }
@@ -850,7 +850,7 @@ bool httpserverTransportSendHttp1ChunkedPayload(tunnel_t *t, line_t *l, sbuf_t *
         appended_tail = true;
     }
 
-    if (! withLineLockedWithBuf(l, tunnelPrevDownStreamPayload, t, payload))
+    if (! lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, payload))
     {
         return false;
     }
@@ -1166,7 +1166,7 @@ static bool sendNghttp2Outbound(tunnel_t *t, line_t *l, httpserver_lstate_t *ls)
             sbufSetLength(buf, chunk);
             sbufWriteLarge(buf, ptr, chunk);
 
-            if (! withLineLockedWithBuf(l, tunnelPrevDownStreamPayload, t, buf))
+            if (! lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, buf))
             {
                 return false;
             }
@@ -2207,16 +2207,16 @@ static bool drainUpEvents(tunnel_t *t, line_t *l, httpserver_lstate_t *ls)
     {
         context_t *ctx = contextqueuePop(&ls->events_up);
 
-        lineLock(l);
+        lineRef(l);
         contextApplyOnNextTunnelU(ctx, t);
         contextDestroy(ctx);
 
         if (! lineIsAlive(l))
         {
-            lineUnlock(l);
+            lineUnref(l);
             return false;
         }
-        lineUnlock(l);
+        lineUnref(l);
     }
 
     return true;
@@ -2797,7 +2797,7 @@ static void httpserverTransportCloseDirections(tunnel_t *t, line_t *l, httpserve
         return;
     }
 
-    lineLock(l);
+    lineRef(l);
 
     bool    send_next   = close_next && ! ls->next_finished;
     bool    send_prev   = close_prev && ! ls->prev_finished;
@@ -2818,7 +2818,7 @@ static void httpserverTransportCloseDirections(tunnel_t *t, line_t *l, httpserve
         tunnelPrevDownStreamFinish(t, l);
     }
 
-    lineUnlock(l);
+    lineUnref(l);
 }
 
 void httpserverTransportCloseBothDirections(tunnel_t *t, line_t *l, httpserver_lstate_t *ls)

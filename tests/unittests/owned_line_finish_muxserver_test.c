@@ -6,7 +6,7 @@
  * handler therefore has to leave one line dead and the other untouched, and the
  * caller has to be able to tell which happened.
  *
- * Every case runs the owner's Finish under an outer lineLock(), which is the
+ * Every case runs the owner's Finish under an outer lineRef(), which is the
  * frame the contract exists for: it keeps the allocation readable past the
  * owner's lineDestroy() so lineIsAlive() can be checked at all, and it is what a
  * real re-entrant caller holds.
@@ -175,7 +175,7 @@ static void caseParentFinishKillsOwnedChildren(void)
 
     // Hold the child the way a suspended frame would, then finish the parent from
     // its prev side. The parent is borrowed here, so only the child may die.
-    lineLock(fixture.child_l);
+    lineRef(fixture.child_l);
     muxserverTunnelUpStreamFinish(fixture.mux, fixture.parent_l);
 
     twfRequire(! lineIsAlive(fixture.child_l),
@@ -218,7 +218,7 @@ static void caseNestedDestroyIsNotRepeated(void)
     // Stand in for a nested frame that already closed this child: the line is
     // logically dead but the outer reference keeps it readable, which is the exact
     // state the owner's `if (lineIsAlive(...))` guard exists for.
-    lineLock(fixture.child_l);
+    lineRef(fixture.child_l);
     lineDestroy(fixture.child_l);
     twfRequire(! lineIsAlive(fixture.child_l), "the fixture must reach the owner with the child already dead");
 
@@ -342,7 +342,7 @@ static void caseParentBufferLimitClosesActualLargestQueue(void)
     muxserverJoinConnection(parent_ls, trigger_ls);
 
     muxserver_lstate_t *large_ls = lineGetState(large_l, fixture.mux);
-    lineLock(large_l);
+    lineRef(large_l);
 
     twfRequire(
         muxserverQueueChildPayload(
@@ -368,7 +368,7 @@ static void caseParentBufferLimitClosesActualLargestQueue(void)
     twfRequireEqualText(
         fixture.trace.seq, "pF", "queue pressure must emit one Close and child Finish without pausing the parent");
 
-    lineUnlock(large_l);
+    lineUnref(large_l);
     for (uint32_t i = 0; i < (uint32_t) kIdleChildren; ++i)
     {
         destroySurvivingServerChild(&fixture, idle[i]);
@@ -437,7 +437,7 @@ static void casePeerCloseWaitsForOwnedChildResume(void)
     twfRequire(child_ls->parent == parent_ls, "blocked peer-close child was removed from attached routing");
     requireLiveChildResources(&fixture, 1, "peer-close drain released a live child's slot or timer");
 
-    lineLock(fixture.child_l);
+    lineRef(fixture.child_l);
     muxserverTunnelDownStreamResume(fixture.mux, fixture.child_l);
     twfRequire(! lineIsAlive(fixture.child_l), "peer-close completion left the owned child alive");
     twfRequireEqualText(fixture.trace.seq, "UPPF", "server peer-close callback order is wrong");
@@ -485,7 +485,7 @@ static void caseParentLossRegistersAndDrainsOwnedChild(void)
     twfRequireEqualU32(fixture.trace.next_payload, 0, "parent loss forced Payload through child Pause");
     twfRequireEqualU32(fixture.trace.next_finish, 0, "parent loss finished a blocked owned child early");
 
-    lineLock(fixture.child_l);
+    lineRef(fixture.child_l);
     muxserverTunnelDownStreamResume(fixture.mux, fixture.child_l);
 
     twfRequire(! lineIsAlive(fixture.child_l), "detached Resume left the owned child alive");
@@ -544,7 +544,7 @@ static void caseWorkerStopDiscardsDetachedQueue(void)
 
     muxserver_lstate_t *child_ls = lineGetState(fixture.child_l, fixture.mux);
     child_ls->paused             = false; // writable still must not create new work after shutdown commit
-    lineLock(fixture.child_l);
+    lineRef(fixture.child_l);
     muxserverTunnelOnWorkerQuiesce(fixture.mux, 0, wwLifecycleProcessShutdown());
 
     muxserver_tstate_t *ts = tunnelGetState(fixture.mux);
@@ -579,7 +579,7 @@ static void caseDetachedChildLimitAbortsOnlyNewBlockedChild(void)
     muxserver_tstate_t *ts   = tunnelGetState(fixture.mux);
     ts->detached_child_limit = 1;
 
-    lineLock(fixture.child_l);
+    lineRef(fixture.child_l);
     muxserverTunnelUpStreamFinish(fixture.mux, fixture.parent_l);
 
     twfRequire(! lineIsAlive(fixture.child_l), "detached child limit retained the rejected child");
@@ -651,7 +651,7 @@ static void casePopulatedDetachedRegistrySupportsEveryRemovalPosition(void)
     line_t             *head_l     = head_ls->l;
     size_t              head_bytes = bufferqueueGetBufLen(&head_ls->pending_child_data);
     muxserver_lstate_t *head_next  = head_ls->detached_next;
-    lineLock(head_l);
+    lineRef(head_l);
     muxserverTunnelDownStreamResume(fixture.mux, head_l);
     twfRequire(! lineIsAlive(head_l), "draining the detached registry head left it alive");
     twfRequireLineStateZeroed(head_l, fixture.mux, "draining the detached registry head retained state");
@@ -670,7 +670,7 @@ static void casePopulatedDetachedRegistrySupportsEveryRemovalPosition(void)
     size_t              middle_bytes = bufferqueueGetBufLen(&middle_ls->pending_child_data);
     muxserver_lstate_t *middle_prev  = middle_ls->detached_prev;
     muxserver_lstate_t *middle_next  = middle_ls->detached_next;
-    lineLock(middle_l);
+    lineRef(middle_l);
     muxserverTunnelDownStreamFinish(fixture.mux, middle_l);
     twfRequire(! lineIsAlive(middle_l), "downstream Finish left the detached middle child alive");
     twfRequireLineStateZeroed(middle_l, fixture.mux, "downstream Finish retained detached middle state");
@@ -683,8 +683,8 @@ static void casePopulatedDetachedRegistrySupportsEveryRemovalPosition(void)
     twfRequireOwnedLineReclaimed(middle_l, "MuxServer detached registry middle Finish");
 
     line_t *remaining[2] = {registry->head->l, registry->head->detached_next->l};
-    lineLock(remaining[0]);
-    lineLock(remaining[1]);
+    lineRef(remaining[0]);
+    lineRef(remaining[1]);
     muxserverTunnelOnWorkerStop(fixture.mux, 0, wwLifecycleProcessShutdown());
     twfRequire(registry->head == NULL, "worker stop retained the final detached registry head");
     twfRequireEqualU32(registry->count, 0, "worker stop retained populated-registry children");
@@ -728,7 +728,7 @@ static void runMuxserverDetachedByteLimitCase(bool unlimited)
 
     ts->detached_child_limit  = kMuxDetachedLimitUnlimited;
     ts->detached_buffer_limit = unlimited ? kMuxDetachedLimitUnlimited : kOlderBytes + kNewBytes;
-    lineLock(new_child);
+    lineRef(new_child);
     muxserverTunnelUpStreamFinish(fixture.mux, new_parent);
 
     if (unlimited)
@@ -753,7 +753,7 @@ static void runMuxserverDetachedByteLimitCase(bool unlimited)
     twfRequireLineStateZeroed(new_parent, fixture.mux, "MuxServer retained second parent state after loss");
     lineDestroy(new_parent);
 
-    lineLock(fixture.child_l);
+    lineRef(fixture.child_l);
     muxserverTunnelDownStreamResume(fixture.mux, fixture.child_l);
     twfRequire(! lineIsAlive(fixture.child_l), "older detached server child did not drain after limit handling");
     twfRequireLineStateZeroed(fixture.child_l, fixture.mux, "older detached server child retained state");
@@ -809,7 +809,7 @@ static void caseDetachedDrainStopsOnReentrantPause(void)
     twfRequire(child_ls->paused, "re-entrant Pause was not retained on the detached child");
 
     fixture.next->fnPayloadU = twfNextPayload;
-    lineLock(fixture.child_l);
+    lineRef(fixture.child_l);
     muxserverTunnelDownStreamResume(fixture.mux, fixture.child_l);
 
     twfRequire(! lineIsAlive(fixture.child_l), "second Resume left the detached owned child alive");

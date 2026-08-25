@@ -1,5 +1,5 @@
 <!--
-Documentation version: 157
+Documentation version: 158
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/Socks5Server.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/Socks5Server.mdx, and all files must keep the same documentation version.
 -->
 
@@ -261,7 +261,7 @@ Registry entries store copied metadata only:
 - the authenticated `user_handle_t`, or an empty handle in no-auth mode
 - copied raw username/password strings, when authenticated mode is used
 
-They do not store a usable `line_t *`, and UDP lookup never calls `lineLock()` or `lineUnlock()` on
+They do not store a usable `line_t *`, and UDP lookup never calls `lineRef()` or `lineUnref()` on
 the TCP control line. The complete dynamic endpoint handle (owner WID plus
 generation) is the association identity; there is no network-tuple association
 key. A closing control line removes only the entry whose complete handle still

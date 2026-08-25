@@ -232,7 +232,7 @@ bool realityclientSendHandoffControl(tunnel_t *t, line_t *l, uint8_t record_kind
     {
         ls->handoff_confirm_sent = true;
     }
-    return withLineLockedWithBuf(l, tunnelNextUpStreamPayload, t, frame);
+    return lineCallWithRefWithBuf(l, tunnelNextUpStreamPayload, t, frame);
 }
 
 bool realityclientFlushPendingUpstream(tunnel_t *t, line_t *l)
@@ -305,7 +305,7 @@ static bool realityclientCompleteTls13Handoff(tunnel_t *t, line_t *l)
     }
 
     ls->downstream_est_sent = true;
-    if (! withLineLocked(l, tunnelPrevDownStreamEst, t))
+    if (! lineCallWithRef(l, tunnelPrevDownStreamEst, t))
     {
         return false;
     }
@@ -431,12 +431,12 @@ bool realityclientProcessHandoffDownstream(tunnel_t *t, line_t *l, sbuf_t *buf)
         memoryZero(plaintext, sizeof(plaintext));
 
         ls->handoff_cover_consume_in_progress = true;
-        lineLock(l);
+        lineRef(l);
         tlsclient_post_handshake_result_t consume_result =
             tlsclientTunnelConsumePostHandshakeRecord(ts->tls_tunnel, l, record);
         if (! lineIsAlive(l))
         {
-            lineUnlock(l);
+            lineUnref(l);
             return false;
         }
 
@@ -444,11 +444,11 @@ bool realityclientProcessHandoffDownstream(tunnel_t *t, line_t *l, sbuf_t *buf)
         if (ls->phase != kRealityClientPhaseTls13AwaitAck || ! ls->session_keys_ready || ! ls->handoff_request_sent ||
             ls->terminal_closing)
         {
-            lineUnlock(l);
+            lineUnref(l);
             return false;
         }
         ls->handoff_cover_consume_in_progress = false;
-        lineUnlock(l);
+        lineUnref(l);
         if (consume_result != kTlsClientPostHandshakeNeedMore)
         {
             return false;
@@ -499,7 +499,7 @@ bool realityclientEncryptAndSend(tunnel_t *t, line_t *l, sbuf_t *buf)
             src += chunk_len;
             remaining -= chunk_len;
 
-            if (! withLineLockedWithBuf(l, tunnelNextUpStreamPayload, t, frame_buf))
+            if (! lineCallWithRefWithBuf(l, tunnelNextUpStreamPayload, t, frame_buf))
             {
                 bufferpoolReuseBuffer(pool, buf);
                 return false;
@@ -528,7 +528,7 @@ bool realityclientEncryptAndSend(tunnel_t *t, line_t *l, sbuf_t *buf)
     }
 
     bufferpoolReuseBuffer(pool, buf);
-    return withLineLockedWithBuf(l, tunnelNextUpStreamPayload, t, frame_buf);
+    return lineCallWithRefWithBuf(l, tunnelNextUpStreamPayload, t, frame_buf);
 }
 
 bool realityclientProcessDownstream(tunnel_t *t, line_t *l, sbuf_t *buf)
@@ -709,7 +709,7 @@ bool realityclientProcessDownstream(tunnel_t *t, line_t *l, sbuf_t *buf)
         sbufShiftRight(frame_buffer, payload_offset);
         sbufSetLength(frame_buffer, payload_len);
 
-        if (! withLineLockedWithBuf(l, tunnelPrevDownStreamPayload, t, frame_buffer))
+        if (! lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, frame_buffer))
         {
             return false;
         }
@@ -784,11 +784,11 @@ void realityclientCloseLineBidirectional(tunnel_t *t, line_t *l)
         return;
     }
 
-    lineLock(l);
+    lineRef(l);
     realityclient_lstate_t *ls = lineGetState(l, t);
     if (ls->terminal_closing)
     {
-        lineUnlock(l);
+        lineUnref(l);
         return;
     }
 
@@ -803,7 +803,7 @@ void realityclientCloseLineBidirectional(tunnel_t *t, line_t *l)
         tunnelNextUpStreamFinish(t, l);
         if (! lineIsAlive(l))
         {
-            lineUnlock(l);
+            lineUnref(l);
             return;
         }
     }
@@ -811,7 +811,7 @@ void realityclientCloseLineBidirectional(tunnel_t *t, line_t *l)
     {
         tunnelPrevDownStreamFinish(t, l);
     }
-    lineUnlock(l);
+    lineUnref(l);
 }
 
 static void realityclientFinishFromSide(tunnel_t *t, line_t *l, bool received_prev_finish)
@@ -821,7 +821,7 @@ static void realityclientFinishFromSide(tunnel_t *t, line_t *l, bool received_pr
         return;
     }
 
-    lineLock(l);
+    lineRef(l);
     realityclient_lstate_t *ls = lineGetState(l, t);
     if (received_prev_finish)
     {
@@ -833,7 +833,7 @@ static void realityclientFinishFromSide(tunnel_t *t, line_t *l, bool received_pr
     }
     if (ls->terminal_closing)
     {
-        lineUnlock(l);
+        lineUnref(l);
         return;
     }
 
@@ -849,7 +849,7 @@ static void realityclientFinishFromSide(tunnel_t *t, line_t *l, bool received_pr
     {
         tunnelPrevDownStreamFinish(t, l);
     }
-    lineUnlock(l);
+    lineUnref(l);
 }
 
 static void realityclientSendFatalAndClose(tunnel_t *t, line_t *l)
@@ -859,11 +859,11 @@ static void realityclientSendFatalAndClose(tunnel_t *t, line_t *l)
         return;
     }
 
-    lineLock(l);
+    lineRef(l);
     realityclient_lstate_t *ls = lineGetState(l, t);
     if (ls->terminal_closing)
     {
-        lineUnlock(l);
+        lineUnref(l);
         return;
     }
 
@@ -891,7 +891,7 @@ static void realityclientSendFatalAndClose(tunnel_t *t, line_t *l)
             {
                 /* This close frame owns cleanup; terminal re-entry deliberately defers to it. */
                 realityclientLinestateDestroy(lineGetState(l, t));
-                lineUnlock(l);
+                lineUnref(l);
                 return;
             }
             ls = lineGetState(l, t);
@@ -907,7 +907,7 @@ static void realityclientSendFatalAndClose(tunnel_t *t, line_t *l)
         tunnelNextUpStreamFinish(t, l);
         if (! lineIsAlive(l))
         {
-            lineUnlock(l);
+            lineUnref(l);
             return;
         }
     }
@@ -915,7 +915,7 @@ static void realityclientSendFatalAndClose(tunnel_t *t, line_t *l)
     {
         tunnelPrevDownStreamFinish(t, l);
     }
-    lineUnlock(l);
+    lineUnref(l);
 }
 
 void realityclientFailAuthenticated(tunnel_t *t, line_t *l)

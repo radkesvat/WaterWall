@@ -87,7 +87,7 @@ static void fixtureDestroyClosedLine(vlessserver_fallback_fixture_t *fixture)
 
 static void closeFromPreviousOwner(vlessserver_fallback_fixture_t *fixture)
 {
-    lineLock(fixture->line);
+    lineRef(fixture->line);
     vlessserverTunnelUpStreamFinish(fixture->node, fixture->line);
     lineDestroy(fixture->line);
 }
@@ -95,7 +95,7 @@ static void closeFromPreviousOwner(vlessserver_fallback_fixture_t *fixture)
 static void releaseOwnerReference(vlessserver_fallback_fixture_t *fixture)
 {
     twfRequireEqualU32(twfLineRefCount(fixture->line), 1, "VlessServer close retained an unexpected line reference");
-    lineUnlock(fixture->line);
+    lineUnref(fixture->line);
     fixture->line = NULL;
 }
 

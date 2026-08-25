@@ -21,19 +21,19 @@ void httpserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
-    lineLock(l);
+    lineRef(l);
 
     if (ls->runtime_proto == kHttpServerRuntimeUpgradedRaw)
     {
         if (ls->prev_finished)
         {
             lineReuseBuffer(l, buf);
-            lineUnlock(l);
+            lineUnref(l);
             return;
         }
 
         tunnelPrevDownStreamPayload(t, l, buf);
-        lineUnlock(l);
+        lineUnref(l);
         return;
     }
 
@@ -42,7 +42,7 @@ void httpserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         if (! ls->websocket_active)
         {
             bufferqueuePushBack(&ls->pending_down, buf);
-            lineUnlock(l);
+            lineUnref(l);
             return;
         }
 
@@ -52,7 +52,7 @@ void httpserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             {
                 lineReuseBuffer(l, buf);
                 failAndCloseDownStream(t, l, ls);
-                lineUnlock(l);
+                lineUnref(l);
                 return;
             }
         }
@@ -60,10 +60,10 @@ void httpserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         if (! httpserverTransportSendWebSocketData(t, l, ls, buf, 0x2))
         {
             failAndCloseDownStream(t, l, ls);
-            lineUnlock(l);
+            lineUnref(l);
             return;
         }
-        lineUnlock(l);
+        lineUnref(l);
         return;
     }
 
@@ -72,7 +72,7 @@ void httpserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         if (! ls->h1_headers_parsed)
         {
             bufferqueuePushBack(&ls->pending_down, buf);
-            lineUnlock(l);
+            lineUnref(l);
             return;
         }
 
@@ -82,7 +82,7 @@ void httpserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             {
                 lineReuseBuffer(l, buf);
                 failAndCloseDownStream(t, l, ls);
-                lineUnlock(l);
+                lineUnref(l);
                 return;
             }
             ls->h1_response_headers_sent = true;
@@ -91,10 +91,10 @@ void httpserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         if (! httpserverTransportSendHttp1ChunkedPayload(t, l, buf))
         {
             failAndCloseDownStream(t, l, ls);
-            lineUnlock(l);
+            lineUnref(l);
             return;
         }
-        lineUnlock(l);
+        lineUnref(l);
         return;
     }
 
@@ -103,7 +103,7 @@ void httpserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         if (ls->h2_stream_id <= 0)
         {
             bufferqueuePushBack(&ls->pending_down, buf);
-            lineUnlock(l);
+            lineUnref(l);
             return;
         }
 
@@ -113,7 +113,7 @@ void httpserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             {
                 lineReuseBuffer(l, buf);
                 failAndCloseDownStream(t, l, ls);
-                lineUnlock(l);
+                lineUnref(l);
                 return;
             }
         }
@@ -121,13 +121,13 @@ void httpserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         if (! httpserverTransportSendHttp2DataFrame(t, l, ls, buf, false))
         {
             failAndCloseDownStream(t, l, ls);
-            lineUnlock(l);
+            lineUnref(l);
             return;
         }
-        lineUnlock(l);
+        lineUnref(l);
         return;
     }
 
     bufferqueuePushBack(&ls->pending_down, buf);
-    lineUnlock(l);
+    lineUnref(l);
 }

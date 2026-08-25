@@ -7,7 +7,7 @@
  * its line state and leave the line logically dead before returning - and on a
  * Finish for a line it does not own it must do none of those things.
  *
- * Both cases run the handler under an outer lineLock(), which is the frame the
+ * Both cases run the handler under an outer lineRef(), which is the frame the
  * contract exists for: it keeps the allocation readable past the owner's
  * lineDestroy() so lineIsAlive() can be checked at all.
  */
@@ -173,7 +173,7 @@ static void caseBorrowedLineFinishDoesNotDestroy(void)
     udpstateless_fixture_t fixture;
     fixtureSetup(&fixture, false);
 
-    lineLock(fixture.line);
+    lineRef(fixture.line);
     udpstatelesssocketTunnelDownStreamFinish(fixture.uss, fixture.line);
 
     twfRequire(lineIsAlive(fixture.line), "a borrowed line must not be destroyed by a tunnel that did not create it");
@@ -185,7 +185,7 @@ static void caseBorrowedLineFinishDoesNotDestroy(void)
     // The reference the fixture holds plus the creator's, still outstanding.
     twfRequireEqualU32(twfLineRefCount(fixture.line), 2, "a borrowed line must keep its creator's reference");
 
-    lineUnlock(fixture.line);
+    lineUnref(fixture.line);
 
     // Stand in for the real owner, so the line returns to the pool before teardown.
     memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(*ls)));

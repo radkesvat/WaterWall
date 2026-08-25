@@ -160,34 +160,42 @@ static inline bool lineIsAlive(const line_t *const line)
 void lineUnRefInternal(line_t *l);
 
 /**
- * @brief Increases the reference count of the line.
+ * @brief Acquire one physical line reference.
+ *
+ * A line reference keeps the underlying allocation memory present, but does
+ * not lock line contents, grant cross-thread access, or keep the line logically
+ * alive across callbacks.
  *
  * @param line Pointer to the line.
  */
-static inline void lineLock(line_t *const line)
+static inline void lineRef(line_t *const line)
 {
     assert(line->alive);
     assert(line->refc < LINE_REFC_MAX);
 
     if (UNLIKELY(! line->alive) || UNLIKELY(0 == atomicIncRelaxed(&line->refc)))
     {
-        printError("lineLock: attempted to lock dead line or reference count overflow");
+        printError("lineRef: attempted to reference a dead line or line reference count overflow");
         abortProgramNow(1);
     }
 }
 
 /**
- * @brief Decreases the reference count of the line.
+ * @brief Release one physical line reference.
+ *
+ * A final release reclaims the allocation only after lineDestroy() has marked
+ * the line logically dead. Releasing a live line to zero is a fatal contract
+ * violation.
  *
  * @param line Pointer to the line.
  */
-static inline void lineUnlock(line_t *const line)
+static inline void lineUnref(line_t *const line)
 {
     lineUnRefInternal(line);
 }
 
 /**
- * @brief Marks the line as destroyed and decreases its reference count.
+ * @brief Mark the line logically dead and release its creator reference.
  *
  * @param l Pointer to the line.
  */
@@ -200,7 +208,7 @@ static inline void lineDestroy(line_t *const l)
         abortProgramNow(1);
     }
     l->alive = false;
-    lineUnlock(l);
+    lineUnref(l);
 }
 
 /**
@@ -574,7 +582,11 @@ int lineResolveDomainServiceAsync(line_t *const line, const char *domain, const 
                                   LineDnsResolveFn cb, tunnel_t *t, void *userdata);
 
 /**
- * @brief Run a no-buffer task while holding a temporary line reference.
+ * @brief Acquire, hold, and release a temporary line reference around a task.
+ *
+ * The helper releases its temporary reference before returning. If it returns
+ * false, the callback destroyed the line and callers must touch neither the
+ * line nor its destroyed line state.
  *
  * @param line Target line.
  * @param task Callback to execute.
@@ -582,22 +594,26 @@ int lineResolveDomainServiceAsync(line_t *const line, const char *domain, const 
  * @return true Line remains alive after callback.
  * @return false Line was destroyed during callback.
  */
-static inline bool withLineLocked(line_t *const line, LineTaskFnNoBuf task, tunnel_t *t)
+static inline bool lineCallWithRef(line_t *const line, LineTaskFnNoBuf task, tunnel_t *t)
 {
-    lineLock(line);
+    lineRef(line);
     task(t, line);
 
     if (! lineIsAlive(line))
     {
-        lineUnlock(line);
+        lineUnref(line);
         return false;
     }
-    lineUnlock(line);
+    lineUnref(line);
     return true;
 }
 
 /**
- * @brief Run a buffered task while holding a temporary line reference.
+ * @brief Acquire, hold, and release a temporary line reference around a task.
+ *
+ * The helper releases its temporary reference before returning. If it returns
+ * false, the callback destroyed the line and callers must touch neither the
+ * line nor its destroyed line state.
  *
  * @param line Target line.
  * @param task Callback to execute.
@@ -606,16 +622,16 @@ static inline bool withLineLocked(line_t *const line, LineTaskFnNoBuf task, tunn
  * @return true Line remains alive after callback.
  * @return false Line was destroyed during callback.
  */
-static inline bool withLineLockedWithBuf(line_t *const line, LineTaskFnWithBuf task, tunnel_t *t, sbuf_t *buf)
+static inline bool lineCallWithRefWithBuf(line_t *const line, LineTaskFnWithBuf task, tunnel_t *t, sbuf_t *buf)
 {
-    lineLock(line);
+    lineRef(line);
     task(t, line, buf);
 
     if (! lineIsAlive(line))
     {
-        lineUnlock(line);
+        lineUnref(line);
         return false;
     }
-    lineUnlock(line);
+    lineUnref(line);
     return true;
 }

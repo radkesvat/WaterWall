@@ -16,7 +16,7 @@ void connectionfisherclientTunnelDownStreamPause(tunnel_t *t, line_t *l)
         connectionfisherclient_lstate_t *main_ls = lineGetState(ls->main_line, t);
         if (main_ls->role == kConnectionFisherClientRoleMain && main_ls->selected_child == l)
         {
-            discard withLineLocked(ls->main_line, tunnelPrevDownStreamPause, t);
+            discard lineCallWithRef(ls->main_line, tunnelPrevDownStreamPause, t);
         }
     }
 }

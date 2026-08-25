@@ -119,7 +119,7 @@ static bool packetstostreamSendSensitivePing(tunnel_t *t, line_t *packet_line, p
     ls->ping_sent_at_ms  = now;
     ls->pong_deadline_ms = now + ts->tolerance_ms;
 
-    if (withLineLockedWithBuf(stream_line, tunnelNextUpStreamPayload, t, buf))
+    if (lineCallWithRefWithBuf(stream_line, tunnelNextUpStreamPayload, t, buf))
     {
         return true;
     }
@@ -577,7 +577,7 @@ static void packetstostreamReplayDecodedPacketOnWorker(worker_t *worker, void *a
         bufferpoolReuseBuffer(worker->buffer_pool, buf);
     }
 
-    lineUnlock(packet_line);
+    lineUnref(packet_line);
 }
 
 static void packetstostreamCleanupDecodedPacket(void *arg1, void *arg2, void *arg3,
@@ -600,7 +600,7 @@ static void packetstostreamCleanupDecodedPacket(void *arg1, void *arg2, void *ar
         sbufDestroy(buf);
     }
 
-    lineUnlock(packet_line);
+    lineUnref(packet_line);
 }
 
 /*
@@ -635,7 +635,7 @@ void packetstostreamForwardDecodedPacket(tunnel_t *t, line_t *stream_line, sbuf_
         return;
     }
 
-    lineLock(packet_line);
+    lineRef(packet_line);
     WW_WORKER_MESSAGE_BENCHMARK_RECORD_CONTINUATION(kWorkerMessageBenchmarkContinuationBridgeRetryOrDelivery);
     sendWorkerMessageForceQueueBestEffortWithCleanup(target_wid,
                                                      (WorkerMessageCallback) packetstostreamReplayDecodedPacketOnWorker,
@@ -689,13 +689,13 @@ void packetstostreamCloseOutputLineAndScheduleRecreate(tunnel_t *t, line_t *pack
 
     if (stream_line != NULL && lineIsAlive(stream_line))
     {
-        lineLock(stream_line);
+        lineRef(stream_line);
         tunnelNextUpStreamFinish(t, stream_line);
         if (lineIsAlive(stream_line))
         {
             lineDestroy(stream_line);
         }
-        lineUnlock(stream_line);
+        lineUnref(stream_line);
     }
 
     packetstostreamScheduleRecreateOutputLine(t, packet_line, ls);
@@ -738,7 +738,7 @@ line_t *packetstostreamEnsureOutputLine(tunnel_t *t, line_t *packet_line, packet
     line_t *new_line = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), lineGetWID(packet_line));
     ls->line         = new_line;
 
-    if (! withLineLocked(new_line, tunnelNextUpStreamInit, t))
+    if (! lineCallWithRef(new_line, tunnelNextUpStreamInit, t))
     {
         if (ls->line == new_line)
         {

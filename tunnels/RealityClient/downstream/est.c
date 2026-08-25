@@ -20,12 +20,12 @@ void realityclientTunnelDownStreamEst(tunnel_t *t, line_t *l)
     reality_v2_record_profile_t    record_profile   = {0};
     sbuf_t                        *pending_raw      = NULL;
 
-    lineLock(l);
+    lineRef(l);
     buffer_pool_t          *pool = lineGetBufferPool(l);
     realityclient_lstate_t *ls   = lineGetState(l, t);
     if (ls->terminal_closing || ls->prev_finished || ls->phase != kRealityClientPhaseTlsHandshake)
     {
-        lineUnlock(l);
+        lineUnref(l);
         return;
     }
 
@@ -34,7 +34,7 @@ void realityclientTunnelDownStreamEst(tunnel_t *t, line_t *l)
     {
         LOGW("RealityClient: internal TLS handshake takeover failed");
         realityclientClearHandshakeTemporaries(&tls_binding, &reality_binding, &session_material);
-        lineUnlock(l);
+        lineUnref(l);
         realityclientCloseLineBidirectional(t, l);
         return;
     }
@@ -50,7 +50,7 @@ void realityclientTunnelDownStreamEst(tunnel_t *t, line_t *l)
     {
         LOGW("RealityClient: negotiated TLS session cannot initialize Reality v2");
         realityclientClearHandshakeTemporaries(&tls_binding, &reality_binding, &session_material);
-        lineUnlock(l);
+        lineUnref(l);
         realityclientCloseLineBidirectional(t, l);
         return;
     }
@@ -73,7 +73,7 @@ void realityclientTunnelDownStreamEst(tunnel_t *t, line_t *l)
         if (! tlsclientTunnelDeinitAfterHandshake(ts->tls_tunnel, l, &pending_raw))
         {
             LOGW("RealityClient: internal TLS 1.2 handshake deinitialization failed");
-            lineUnlock(l);
+            lineUnref(l);
             realityclientCloseLineBidirectional(t, l);
             return;
         }
@@ -85,7 +85,7 @@ void realityclientTunnelDownStreamEst(tunnel_t *t, line_t *l)
             {
                 bufferpoolReuseBuffer(pool, pending_raw);
             }
-            lineUnlock(l);
+            lineUnref(l);
             return;
         }
         if (! lineIsAlive(l))
@@ -94,7 +94,7 @@ void realityclientTunnelDownStreamEst(tunnel_t *t, line_t *l)
             {
                 bufferpoolReuseBuffer(pool, pending_raw);
             }
-            lineUnlock(l);
+            lineUnref(l);
             return;
         }
 
@@ -107,14 +107,14 @@ void realityclientTunnelDownStreamEst(tunnel_t *t, line_t *l)
             {
                 bufferpoolReuseBuffer(pool, pending_raw);
             }
-            lineUnlock(l);
+            lineUnref(l);
             return;
         }
         if (pending_raw != NULL)
         {
             realityclientProcessDownstream(t, l, pending_raw);
         }
-        lineUnlock(l);
+        lineUnref(l);
         return;
     }
 
@@ -125,7 +125,7 @@ void realityclientTunnelDownStreamEst(tunnel_t *t, line_t *l)
         {
             bufferpoolReuseBuffer(pool, pending_raw);
         }
-        lineUnlock(l);
+        lineUnref(l);
         realityclientCloseLineBidirectional(t, l);
         return;
     }
@@ -141,16 +141,16 @@ void realityclientTunnelDownStreamEst(tunnel_t *t, line_t *l)
     {
         if (lineIsAlive(l))
         {
-            lineUnlock(l);
+            lineUnref(l);
             realityclientCloseLineBidirectional(t, l);
             return;
         }
-        lineUnlock(l);
+        lineUnref(l);
         return;
     }
     if (! lineIsAlive(l))
     {
-        lineUnlock(l);
+        lineUnref(l);
         return;
     }
 
@@ -159,5 +159,5 @@ void realityclientTunnelDownStreamEst(tunnel_t *t, line_t *l)
     {
         realityclientProcessHandoffDownstream(t, l, NULL);
     }
-    lineUnlock(l);
+    lineUnref(l);
 }

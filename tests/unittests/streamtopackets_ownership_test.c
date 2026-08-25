@@ -715,7 +715,7 @@ static void caseMembershipChangeRemapsOnlyAffectedFlows(void)
                        g_fixture.s2p, flowHashOf(0xC0000201U, (uint16_t) (2000U + flow), 0x0A000001U, 443), &selected),
                    "selection failed on a three-line pool");
         before[flow] = selected.line;
-        lineUnlock(selected.line);
+        lineUnref(selected.line);
     }
 
     // Removing one line may only move the flows that line was carrying.
@@ -730,7 +730,7 @@ static void caseMembershipChangeRemapsOnlyAffectedFlows(void)
         twfRequire(streamtopacketsSelectReturnLine(
                        g_fixture.s2p, flowHashOf(0xC0000201U, (uint16_t) (2000U + flow), 0x0A000001U, 443), &selected),
                    "selection failed after a line was removed");
-        lineUnlock(selected.line);
+        lineUnref(selected.line);
 
         if (before[flow] == a2)
         {
@@ -758,7 +758,7 @@ static void caseMembershipChangeRemapsOnlyAffectedFlows(void)
         twfRequire(streamtopacketsSelectReturnLine(
                        g_fixture.s2p, flowHashOf(0xC0000201U, (uint16_t) (2000U + flow), 0x0A000001U, 443), &selected),
                    "selection failed after a line was added");
-        lineUnlock(selected.line);
+        lineUnref(selected.line);
 
         if (before[flow] != a2 && selected.line == before[flow])
         {
@@ -911,8 +911,8 @@ static void caseFinalLineFinishClearsSelection(void)
     /*
      * A write selected against the live pool must be rejected when the epoch ends
      * before the target worker runs it. The selection holds a reference, so the
-     * line stays readable and alive here: what rejects the write is the published
-     * generation, not a dead line.
+     * allocation remains present even if the line closes. The published generation,
+     * rather than storage reclamation, rejects the stale write.
      */
     streamtopackets_selected_line_t selected;
     const uint64_t                  flow = flowHashOf(0xC0000201U, 443, 0x0A000001U, 40000);

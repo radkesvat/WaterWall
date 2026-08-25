@@ -16,7 +16,7 @@ static void runMuxServerTlsClientCase(mxb_terminal_cause_t cause)
 
     fixture.parent = mxbCreateLine(&fixture);
     fixture.child  = mxbCreateLine(&fixture);
-    lineLock(fixture.child);
+    lineRef(fixture.child);
     mxbMuxServerInitializeLines(&fixture);
     mxbTlsClientInitializeLine(&fixture);
 
@@ -100,7 +100,7 @@ static void runMuxServerTlsClientCase(mxb_terminal_cause_t cause)
     }
     mxbRequirePlaintext(&fixture);
 
-    lineUnlock(fixture.child);
+    lineUnref(fixture.child);
     fixture.child = NULL;
     mxbMuxServerDestroy(&fixture);
     mxbTlsClientDestroy(&fixture);

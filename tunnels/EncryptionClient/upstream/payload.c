@@ -111,7 +111,7 @@ void encryptionclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             src += chunk_len;
             remaining -= chunk_len;
 
-            if (! withLineLockedWithBuf(l, tunnelNextUpStreamPayload, t, frame_buf))
+            if (! lineCallWithRefWithBuf(l, tunnelNextUpStreamPayload, t, frame_buf))
             {
                 bufferpoolReuseBuffer(pool, buf);
                 return;
@@ -130,7 +130,7 @@ void encryptionclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
-    if (! withLineLockedWithBuf(l, tunnelNextUpStreamPayload, t, buf))
+    if (! lineCallWithRefWithBuf(l, tunnelNextUpStreamPayload, t, buf))
     {
         return;
     }

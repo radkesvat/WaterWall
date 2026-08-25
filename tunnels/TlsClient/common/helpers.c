@@ -9,7 +9,7 @@ void tlsclientCloseLineBidirectional(tunnel_t *t, line_t *l)
         return;
     }
 
-    lineLock(l);
+    lineRef(l);
 
     tlsclient_lstate_t *ls = lineGetState(l, t);
     tlsclientLinestateDestroy(ls);
@@ -17,12 +17,12 @@ void tlsclientCloseLineBidirectional(tunnel_t *t, line_t *l)
     tunnelNextUpStreamFinish(t, l);
     if (! lineIsAlive(l))
     {
-        lineUnlock(l);
+        lineUnref(l);
         return;
     }
 
     tunnelPrevDownStreamFinish(t, l);
-    lineUnlock(l);
+    lineUnref(l);
 }
 
 void tlsclientPrintSSLState(const SSL *ssl)
@@ -269,7 +269,7 @@ static bool tlsclientTryRetireShaping(tunnel_t *t, line_t *l, tlsclient_lstate_t
 
     if (release_producer_pause && ! ls->shaping_wire_paused && ! ls->upstream_finished)
     {
-        if (! withLineLocked(l, tunnelPrevDownStreamResume, t))
+        if (! lineCallWithRef(l, tunnelPrevDownStreamResume, t))
         {
             return false;
         }
@@ -304,7 +304,7 @@ static bool tlsclientUpdateShapingBackpressure(tunnel_t *t, line_t *l, tlsclient
             ls->shaping_producer_paused = true;
             if (! ls->shaping_wire_paused && ! ls->upstream_finished)
             {
-                if (! withLineLocked(l, tunnelPrevDownStreamPause, t))
+                if (! lineCallWithRef(l, tunnelPrevDownStreamPause, t))
                 {
                     return false;
                 }
@@ -319,7 +319,7 @@ static bool tlsclientUpdateShapingBackpressure(tunnel_t *t, line_t *l, tlsclient
         ls->shaping_producer_paused = true;
         if (! ls->shaping_wire_paused && ! ls->upstream_finished)
         {
-            if (! withLineLocked(l, tunnelPrevDownStreamPause, t))
+            if (! lineCallWithRef(l, tunnelPrevDownStreamPause, t))
             {
                 return false;
             }
@@ -333,7 +333,7 @@ static bool tlsclientUpdateShapingBackpressure(tunnel_t *t, line_t *l, tlsclient
         ls->shaping_producer_paused = false;
         if (! ls->shaping_wire_paused && ! ls->upstream_finished)
         {
-            if (! withLineLocked(l, tunnelPrevDownStreamResume, t))
+            if (! lineCallWithRef(l, tunnelPrevDownStreamResume, t))
             {
                 return false;
             }
@@ -368,7 +368,7 @@ bool tlsclientDrainShapedOutput(tunnel_t *t, line_t *l, tlsclient_lstate_t *ls, 
             break;
         }
 
-        if (! withLineLockedWithBuf(l, tunnelNextUpStreamPayload, t, record))
+        if (! lineCallWithRefWithBuf(l, tunnelNextUpStreamPayload, t, record))
         {
             return false;
         }
@@ -402,20 +402,20 @@ static void tlsclientShapingOutputTimerCallback(wtimer_t *timer)
 
     ls->shaping_output_timer = NULL;
 
-    lineLock(l);
+    lineRef(l);
     if (! tlsclientDrainShapedOutput(t, l, ls, false))
     {
         if (lineIsAlive(l))
         {
             bool state_is_active = ((tlsclient_lstate_t *) lineGetState(l, t))->tunnel == t;
-            lineUnlock(l);
+            lineUnref(l);
             if (state_is_active)
             {
                 tlsclientCloseLineBidirectional(t, l);
             }
             return;
         }
-        lineUnlock(l);
+        lineUnref(l);
         return;
     }
 
@@ -425,7 +425,7 @@ static void tlsclientShapingOutputTimerCallback(wtimer_t *timer)
         if (lineIsAlive(l))
         {
             bool state_is_active = ((tlsclient_lstate_t *) lineGetState(l, t))->tunnel == t;
-            lineUnlock(l);
+            lineUnref(l);
             if (state_is_active)
             {
                 tlsclientCloseLineBidirectional(t, l);
@@ -433,7 +433,7 @@ static void tlsclientShapingOutputTimerCallback(wtimer_t *timer)
             return;
         }
     }
-    lineUnlock(l);
+    lineUnref(l);
 }
 
 bool tlsclientScheduleShapedOutput(tunnel_t *t, line_t *l, tlsclient_lstate_t *ls)
@@ -495,8 +495,8 @@ bool tlsclientFlushSslOutput(tunnel_t *t, line_t *l, tlsclient_lstate_t *ls)
         return false;
     }
 
-    tlsclient_tstate_t *ts = tunnelGetState(t);
-    bool shape_output = ts->record_shaping.enabled && ! ls->shaping_retired && ls->handshake_completed &&
+    tlsclient_tstate_t *ts           = tunnelGetState(t);
+    bool                shape_output = ts->record_shaping.enabled && ! ls->shaping_retired && ls->handshake_completed &&
                         SSL_version(ls->ssl) == TLS1_3_VERSION;
 
     if (ls->shaping_retired && ls->shaping_wire_paused)
@@ -526,7 +526,7 @@ bool tlsclientFlushSslOutput(tunnel_t *t, line_t *l, tlsclient_lstate_t *ls)
                 continue;
             }
 
-            if (! withLineLockedWithBuf(l, tunnelNextUpStreamPayload, t, ssl_buf))
+            if (! lineCallWithRefWithBuf(l, tunnelNextUpStreamPayload, t, ssl_buf))
             {
                 return false;
             }
@@ -800,7 +800,7 @@ tlsclient_post_handshake_result_t tlsclientTunnelConsumePostHandshakeRecord(tunn
         return kTlsClientPostHandshakeFatal;
     }
 
-    lineLock(l);
+    lineRef(l);
     tlsclient_tstate_t *ts = tunnelGetState(t);
     tlsclient_lstate_t *ls = lineGetState(l, t);
 
@@ -810,7 +810,7 @@ tlsclient_post_handshake_result_t tlsclientTunnelConsumePostHandshakeRecord(tunn
         ! tlsclientRawRecordIsComplete(record))
     {
         lineReuseBuffer(l, record);
-        lineUnlock(l);
+        lineUnref(l);
         return tlsclientPostHandshakeClose(t, l, true);
     }
 
@@ -824,7 +824,7 @@ tlsclient_post_handshake_result_t tlsclientTunnelConsumePostHandshakeRecord(tunn
     if (written != expected)
     {
         ls->post_handshake_consume_in_progress = false;
-        lineUnlock(l);
+        lineUnref(l);
         return tlsclientPostHandshakeClose(t, l, true);
     }
 
@@ -841,18 +841,18 @@ tlsclient_post_handshake_result_t tlsclientTunnelConsumePostHandshakeRecord(tunn
                 reuseBuffer(discard_buf);
                 if (! lineIsAlive(l))
                 {
-                    lineUnlock(l);
+                    lineUnref(l);
                     return kTlsClientPostHandshakeFatal;
                 }
 
                 ls = lineGetState(l, t);
                 if (! tlsclientPostHandshakeConsumeStateIsLive(ls))
                 {
-                    lineUnlock(l);
+                    lineUnref(l);
                     return kTlsClientPostHandshakeFatal;
                 }
                 ls->post_handshake_consume_in_progress = false;
-                lineUnlock(l);
+                lineUnref(l);
                 return tlsclientPostHandshakeClose(t, l, true);
             }
 
@@ -860,7 +860,7 @@ tlsclient_post_handshake_result_t tlsclientTunnelConsumePostHandshakeRecord(tunn
             if (! tlsclientPostHandshakeConsumeStateIsLive(ls))
             {
                 reuseBuffer(discard_buf);
-                lineUnlock(l);
+                lineUnref(l);
                 return kTlsClientPostHandshakeFatal;
             }
             continue;
@@ -874,18 +874,18 @@ tlsclient_post_handshake_result_t tlsclientTunnelConsumePostHandshakeRecord(tunn
                 reuseBuffer(discard_buf);
                 if (! lineIsAlive(l))
                 {
-                    lineUnlock(l);
+                    lineUnref(l);
                     return kTlsClientPostHandshakeFatal;
                 }
 
                 ls = lineGetState(l, t);
                 if (! tlsclientPostHandshakeConsumeStateIsLive(ls))
                 {
-                    lineUnlock(l);
+                    lineUnref(l);
                     return kTlsClientPostHandshakeFatal;
                 }
                 ls->post_handshake_consume_in_progress = false;
-                lineUnlock(l);
+                lineUnref(l);
                 return tlsclientPostHandshakeClose(t, l, true);
             }
 
@@ -893,7 +893,7 @@ tlsclient_post_handshake_result_t tlsclientTunnelConsumePostHandshakeRecord(tunn
             if (! tlsclientPostHandshakeConsumeStateIsLive(ls))
             {
                 reuseBuffer(discard_buf);
-                lineUnlock(l);
+                lineUnref(l);
                 return kTlsClientPostHandshakeFatal;
             }
 
@@ -907,17 +907,17 @@ tlsclient_post_handshake_result_t tlsclientTunnelConsumePostHandshakeRecord(tunn
             ls->post_handshake_consume_in_progress = false;
             if (! clean)
             {
-                lineUnlock(l);
+                lineUnref(l);
                 return tlsclientPostHandshakeClose(t, l, true);
             }
-            lineUnlock(l);
+            lineUnref(l);
             return kTlsClientPostHandshakeNeedMore;
         }
 
         reuseBuffer(discard_buf);
         bool clean_close                       = ssl_error == SSL_ERROR_ZERO_RETURN;
         ls->post_handshake_consume_in_progress = false;
-        lineUnlock(l);
+        lineUnref(l);
         return tlsclientPostHandshakeClose(t, l, ! clean_close);
     }
 }

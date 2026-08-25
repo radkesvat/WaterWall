@@ -10,7 +10,7 @@ void connectionfisherclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t 
     {
         if (ls->selected_child != NULL)
         {
-            discard withLineLockedWithBuf(ls->selected_child, tunnelNextUpStreamPayload, t, buf);
+            discard lineCallWithRefWithBuf(ls->selected_child, tunnelNextUpStreamPayload, t, buf);
             return;
         }
 

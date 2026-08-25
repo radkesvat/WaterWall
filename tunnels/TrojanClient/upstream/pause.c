@@ -16,7 +16,7 @@ void trojanclientTunnelUpStreamPause(tunnel_t *t, line_t *l)
         line_t *carrier_l = ls->carrier_line;
         if (carrier_l != NULL && lineIsAlive(carrier_l))
         {
-            discard withLineLocked(carrier_l, tunnelNextUpStreamPause, t);
+            discard lineCallWithRef(carrier_l, tunnelNextUpStreamPause, t);
         }
         return;
     }

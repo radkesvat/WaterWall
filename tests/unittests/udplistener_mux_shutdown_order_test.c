@@ -67,7 +67,7 @@ static void caseUdpSourceDrainsBeforeMuxWorkerStop(uint8_t mode)
                "failed to allocate detached MuxClient accounting");
 
     line_t *parent = twfLinePoolCreateLine(&lines);
-    lineLock(parent);
+    lineRef(parent);
     muxclient_lstate_t *parent_ls = lineGetState(parent, mux);
     muxclientLinestateInitialize(parent_ls, parent, false, 0);
 
@@ -86,7 +86,7 @@ static void caseUdpSourceDrainsBeforeMuxWorkerStop(uint8_t mode)
     }
 
     line_t *child = twfLinePoolCreateLine(&lines);
-    lineLock(child);
+    lineRef(child);
 
     local_idle_table_t *idle_table = localIdleTableCreate(env.loop);
     twfRequire(idle_table != NULL, "failed to create the UdpListener owner inventory");
@@ -116,8 +116,8 @@ static void caseUdpSourceDrainsBeforeMuxWorkerStop(uint8_t mode)
     twfRequireLineStateZeroed(child, udp, "UdpListener state survived source-owner drain");
     twfRequireLineStateZeroed(child, mux, "Mux borrowed-child state survived source-owner drain");
     twfRequireLineStateZeroed(parent, mux, "Mux parent state survived worker stop");
-    lineUnlock(child);
-    lineUnlock(parent);
+    lineUnref(child);
+    lineUnref(parent);
     twfRequireEqualU32(masterpoolGetCheckedOut(lines.master), 0, "shutdown retained a pooled line");
     twfRequireNoLeakedBuffers();
 
@@ -148,7 +148,7 @@ static void caseUdpSourceDrainWithoutMux(void)
     twfLinePoolSetup(&lines, udp->lstate_size, kShutdownLineCapacity);
 
     line_t *line = twfLinePoolCreateLine(&lines);
-    lineLock(line);
+    lineRef(line);
     local_idle_table_t *idle_table = localIdleTableCreate(env.loop);
     twfRequire(idle_table != NULL, "failed to create the UdpListener control inventory");
     local_idle_table_t *idle_tables[1] = {idle_table};
@@ -162,7 +162,7 @@ static void caseUdpSourceDrainWithoutMux(void)
     socketmanagerDrainUdpSocketForWorker(&socket, 0);
     twfRequireEqualU32(trace.next_finish, 1, "repeated non-Mux source drain emitted another Finish");
 
-    lineUnlock(line);
+    lineUnref(line);
     twfRequireEqualU32(masterpoolGetCheckedOut(lines.master), 0, "non-Mux source drain retained its line");
     tunnelDestroy(next);
     tunnelDestroy(udp);

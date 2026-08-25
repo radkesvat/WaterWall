@@ -84,14 +84,15 @@ static tunnel_t *getParentTunnel(tunnel_t *t)
     return t->prev;
 }
 
-/* Queued cleanup may run after logical line death, so it needs a physical-only
- * reference just like other worker-message cleanup paths. */
-static inline void lineLockForce(line_t *const line)
+/* Queued cleanup may run after logical line death, so it needs a physical
+ * reference just like other worker-message cleanup paths. Pair ownership keeps
+ * the count nonzero; this helper must never resurrect a reclaimed line. */
+static inline void lineRefForce(line_t *const line)
 {
     assert(line->refc < LINE_REFC_MAX);
     if (0 == atomicIncRelaxed(&line->refc))
     {
-        LOGF("PipeTunnel: forced lock failed due to reference count overflow");
+        LOGF("PipeTunnel: forced physical reference failed due to reference count overflow");
         abortProgramNow(1);
     }
 }
@@ -135,8 +136,8 @@ static void pipePairUnref(pipe_pair_t *pair)
      * references. Keeping them through the last queued message prevents a
      * sender from racing a detach and incrementing a line that has already
      * returned to the pool. */
-    lineUnlock(pair->borrowed_line);
-    lineUnlock(pair->owned_line);
+    lineUnref(pair->borrowed_line);
+    lineUnref(pair->owned_line);
     memoryFree(pair);
 }
 
@@ -227,14 +228,14 @@ static void pipeCloseBorrowed(pipe_pair_t *pair)
     tunnel_t *t    = pair->wrapper;
 
     pipePairRef(pair);
-    lineLockForce(line);
+    lineRefForce(line);
     pipePairDetach(pair, line);
 
     if (lineIsAlive(line) && ! atomicLoadExplicit(&pair->prev_finished, memory_order_acquire))
     {
         tunnelPrevDownStreamFinish(t, line);
     }
-    lineUnlock(line);
+    lineUnref(line);
     pipePairUnref(pair);
 }
 
@@ -244,7 +245,7 @@ static void pipeCloseOwned(pipe_pair_t *pair)
     tunnel_t *t    = pair->wrapper;
 
     pipePairRef(pair);
-    lineLockForce(line);
+    lineRefForce(line);
     pipePairDetach(pair, line);
 
     if (lineIsAlive(line) && atomicLoadExplicit(&pair->owned_init_delivered, memory_order_acquire) &&
@@ -256,7 +257,7 @@ static void pipeCloseOwned(pipe_pair_t *pair)
     {
         lineDestroy(line);
     }
-    lineUnlock(line);
+    lineUnref(line);
     pipePairUnref(pair);
 }
 
@@ -309,7 +310,7 @@ static void cleanupQueuedPipeMessage(void *arg1, void *arg2, void *arg3, worker_
     {
         pipeReconcileLine(pair, line_to);
     }
-    lineUnlock(line_to);
+    lineUnref(line_to);
     pipePairUnref(pair);
 }
 
@@ -333,7 +334,7 @@ static bool pipeMessageLineIsUsable(pipe_pair_t *pair, line_t *line_to, sbuf_t *
     atomicStoreExplicit(&pair->terminal, true, memory_order_release);
     pipeDiscardPayload(payload);
     pipeReconcileLine(pair, line_to);
-    lineUnlock(line_to);
+    lineUnref(line_to);
     pipePairUnref(pair);
     return false;
 }
@@ -351,7 +352,7 @@ static void pipeApplyUp(pipe_pair_t *pair, line_t *line_to, sbuf_t *payload, pip
     if (type == kPipeMessageFin)
     {
         pipeCloseOwned(pair);
-        lineUnlock(line_to);
+        lineUnref(line_to);
         pipePairUnref(pair);
         return;
     }
@@ -379,7 +380,7 @@ static void pipeApplyUp(pipe_pair_t *pair, line_t *line_to, sbuf_t *payload, pip
         break;
     }
 
-    lineUnlock(line_to);
+    lineUnref(line_to);
     pipePairUnref(pair);
 }
 
@@ -396,14 +397,14 @@ static void pipeApplyDown(pipe_pair_t *pair, line_t *line_to, sbuf_t *payload, p
     if (type == kPipeMessageFin)
     {
         pipeCloseBorrowed(pair);
-        lineUnlock(line_to);
+        lineUnref(line_to);
         pipePairUnref(pair);
         return;
     }
 
     if (type == kPipeMessageEst && lineIsEstablished(line_to))
     {
-        lineUnlock(line_to);
+        lineUnref(line_to);
         pipePairUnref(pair);
         return;
     }
@@ -428,7 +429,7 @@ static void pipeApplyDown(pipe_pair_t *pair, line_t *line_to, sbuf_t *payload, p
         break;
     }
 
-    lineUnlock(line_to);
+    lineUnref(line_to);
     pipePairUnref(pair);
 }
 
@@ -519,7 +520,7 @@ static pipe_send_result_t pipeSend(pipe_pair_t *pair, line_t *line_to, pipe_mess
     }
 
     pipePairRef(pair);
-    lineLockForce(line_to);
+    lineRefForce(line_to);
     if (sendWorkerMessageForceQueueWithCleanup(
             lineGetWID(line_to), callback, cleanupQueuedPipeMessage, pair, line_to, payload) ==
         kWorkerMessageSubmitAccepted)
@@ -1033,8 +1034,8 @@ bool pipeTo(tunnel_t *t, line_t *line, wid_t wid_to)
     atomicStoreExplicit(&pair->borrowed_attached, true, memory_order_relaxed);
     atomicStoreExplicit(&pair->owned_attached, true, memory_order_relaxed);
     atomicStoreExplicit(&pair->registered, true, memory_order_relaxed);
-    lineLock(line);
-    lineLock(owned);
+    lineRef(line);
+    lineRef(owned);
     *source                         = (pipetunnel_line_state_t) {.pair = pair, .role = kPipeLineBorrowed};
     pipetunnel_line_state_t *target = lineGetState(owned, parent);
     *target                         = (pipetunnel_line_state_t) {.pair = pair, .role = kPipeLineOwned};

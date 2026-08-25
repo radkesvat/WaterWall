@@ -357,7 +357,7 @@ static bool trojanserverFlushQueueToPrev(tunnel_t *t, line_t *l, buffer_queue_t 
     while (bufferqueueGetBufCount(queue) > 0)
     {
         sbuf_t *buf = bufferqueuePopFront(queue);
-        if (UNLIKELY(! withLineLockedWithBuf(l, tunnelPrevDownStreamPayload, t, buf)))
+        if (UNLIKELY(! lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, buf)))
         {
             bufferqueueDestroy(queue);
             return false;
@@ -372,7 +372,7 @@ static void trojanserverDetachRemoteFromClient(trojanserver_lstate_t *remote_ls)
 {
     line_t *client_line = remote_ls->client_line;
 
-    if (client_line != NULL && remote_ls->client_line_locked)
+    if (client_line != NULL && remote_ls->client_line_ref_held)
     {
         if (lineIsAlive(client_line))
         {
@@ -386,11 +386,11 @@ static void trojanserverDetachRemoteFromClient(trojanserver_lstate_t *remote_ls)
             }
         }
 
-        lineUnlock(client_line);
+        lineUnref(client_line);
     }
 
-    remote_ls->client_line        = NULL;
-    remote_ls->client_line_locked = false;
+    remote_ls->client_line          = NULL;
+    remote_ls->client_line_ref_held = false;
 }
 
 static line_t *trojanserverGetOrCreateUdpRemoteLine(tunnel_t *t, line_t *client_l, trojanserver_lstate_t *client_ls,
@@ -408,14 +408,14 @@ static line_t *trojanserverGetOrCreateUdpRemoteLine(tunnel_t *t, line_t *client_
     trojanserver_lstate_t *remote_ls = lineGetState(remote_l, t);
 
     trojanserverLinestateInitialize(remote_ls, t, remote_l, kTrojanServerLineKindUdpRemote);
-    remote_ls->client_line        = client_l;
-    remote_ls->client_line_locked = true;
-    remote_ls->remote_key         = remote_key;
-    remote_ls->user_handle        = client_ls->user_handle;
-    remote_ls->branch             = kTrojanServerBranchTrojan;
-    remote_ls->phase              = kTrojanServerPhaseUdpConnecting;
+    remote_ls->client_line          = client_l;
+    remote_ls->client_line_ref_held = true;
+    remote_ls->remote_key           = remote_key;
+    remote_ls->user_handle          = client_ls->user_handle;
+    remote_ls->branch               = kTrojanServerBranchTrojan;
+    remote_ls->phase                = kTrojanServerPhaseUdpConnecting;
 
-    lineLock(client_l);
+    lineRef(client_l);
 
     lineGetRoutingContext(remote_l)->local_listener_port = lineGetRoutingContext(client_l)->local_listener_port;
     trojanserverApplyDestinationContext(remote_l, target, true);
@@ -434,7 +434,7 @@ static line_t *trojanserverGetOrCreateUdpRemoteLine(tunnel_t *t, line_t *client_
 
     trojanserver_remote_map_t_insert(&client_ls->udp_remote_lines, remote_key, remote_l);
 
-    if (UNLIKELY(! withLineLocked(remote_l, tunnelNextUpStreamInit, t)))
+    if (UNLIKELY(! lineCallWithRef(remote_l, tunnelNextUpStreamInit, t)))
     {
         return NULL;
     }
@@ -619,7 +619,7 @@ bool trojanserverSendFallbackPayload(tunnel_t *t, line_t *l, trojanserver_lstate
     if (ts->fallback_intentional_delay_ms == 0 && ! ls->fallback_payload_paused &&
         trojanserverFallbackPendingCount(ls) == 0 && ! ls->fallback_delay_scheduled)
     {
-        return withLineLockedWithBuf(l, tunnelUpStreamPayload, fallback, buf);
+        return lineCallWithRefWithBuf(l, tunnelUpStreamPayload, fallback, buf);
     }
 
     buffer_queue_t *pending = trojanserverEnsureFallbackPendingQueue(ls);
@@ -658,7 +658,7 @@ static bool trojanserverForwardSelectedPayload(tunnel_t *t, line_t *l, trojanser
 
     if (ls->branch == kTrojanServerBranchTrojan)
     {
-        return withLineLockedWithBuf(l, tunnelNextUpStreamPayload, t, buf);
+        return lineCallWithRefWithBuf(l, tunnelNextUpStreamPayload, t, buf);
     }
 
     lineReuseBuffer(l, buf);
@@ -671,7 +671,7 @@ static bool trojanserverStartTrojanBranch(tunnel_t *t, line_t *l, trojanserver_l
     ls->branch = kTrojanServerBranchTrojan;
     ls->phase  = connecting_phase;
 
-    return withLineLocked(l, tunnelNextUpStreamInit, t);
+    return lineCallWithRef(l, tunnelNextUpStreamInit, t);
 }
 
 static bool trojanserverStartFallback(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls)
@@ -686,7 +686,7 @@ static bool trojanserverStartFallback(tunnel_t *t, line_t *l, trojanserver_lstat
 
     sbuf_t *first = bufferstreamFullRead(&ls->in_stream);
 
-    lineLock(l);
+    lineRef(l);
 
     ls->branch = kTrojanServerBranchFallback;
     ls->phase  = kTrojanServerPhaseFallback;
@@ -704,7 +704,7 @@ static bool trojanserverStartFallback(tunnel_t *t, line_t *l, trojanserver_lstat
     }
 
     bool alive = lineIsAlive(l);
-    lineUnlock(l);
+    lineUnref(l);
     return alive;
 }
 
@@ -892,10 +892,10 @@ static bool trojanserverDrainUdpPackets(tunnel_t *t, line_t *l, trojanserver_lst
         ls->phase = kTrojanServerPhaseUdpEstablished;
         // Sending to a backend UDP line can synchronously close that backend. Hold the
         // Trojan client line too, so we can safely decide whether to keep draining.
-        lineLock(l);
-        bool remote_alive = withLineLockedWithBuf(remote_l, tunnelNextUpStreamPayload, t, packet);
+        lineRef(l);
+        bool remote_alive = lineCallWithRefWithBuf(remote_l, tunnelNextUpStreamPayload, t, packet);
         bool client_alive = lineIsAlive(l);
-        lineUnlock(l);
+        lineUnref(l);
 
         if (UNLIKELY(! client_alive))
         {
@@ -1098,7 +1098,7 @@ static void trojanserverCloseUdpRemoteLineInternal(tunnel_t *t, line_t *remote_l
     }
 
     remote_ls->phase = kTrojanServerPhaseClosing;
-    lineLock(remote_l);
+    lineRef(remote_l);
 
     trojanserverDetachRemoteFromClient(remote_ls);
     trojanserverLinestateDestroy(remote_ls);
@@ -1113,7 +1113,7 @@ static void trojanserverCloseUdpRemoteLineInternal(tunnel_t *t, line_t *remote_l
         lineDestroy(remote_l);
     }
 
-    lineUnlock(remote_l);
+    lineUnref(remote_l);
 }
 
 static void trojanserverCloseUdpRemoteLines(tunnel_t *t, trojanserver_lstate_t *client_ls)
@@ -1151,7 +1151,7 @@ static void trojanserverCloseFallbackFromUpstream(tunnel_t *t, line_t *l, trojan
     buffer_pool_t *pool = lineGetBufferPool(l);
     sbuf_t        *buf  = NULL;
 
-    lineLock(l);
+    lineRef(l);
     ls->phase                                 = kTrojanServerPhaseClosing;
     ls->fallback_close_draining               = true;
     ls->fallback_branch_finished_during_drain = false;
@@ -1170,7 +1170,7 @@ static void trojanserverCloseFallbackFromUpstream(tunnel_t *t, line_t *l, trojan
         tunnelUpStreamPayload(fallback, l, buf);
         if (! lineIsAlive(l))
         {
-            lineUnlock(l);
+            lineUnref(l);
             return;
         }
     }
@@ -1183,7 +1183,7 @@ static void trojanserverCloseFallbackFromUpstream(tunnel_t *t, line_t *l, trojan
     {
         tunnelUpStreamFin(fallback, l);
     }
-    lineUnlock(l);
+    lineUnref(l);
 }
 
 static void trojanserverCloseLine(tunnel_t *t, line_t *l, trojanserver_close_origin_t origin)
@@ -1214,7 +1214,7 @@ static void trojanserverCloseLine(tunnel_t *t, line_t *l, trojanserver_close_ori
     }
 
     ls->phase = kTrojanServerPhaseClosing;
-    lineLock(l);
+    lineRef(l);
     trojanserverCloseUdpRemoteLines(t, ls);
     trojanserverLinestateDestroy(ls);
 
@@ -1235,7 +1235,7 @@ static void trojanserverCloseLine(tunnel_t *t, line_t *l, trojanserver_close_ori
         tunnelPrevDownStreamFinish(t, l);
     }
 
-    lineUnlock(l);
+    lineUnref(l);
 }
 
 void trojanserverCloseLineFromUpstream(tunnel_t *t, line_t *l)
@@ -1293,7 +1293,7 @@ void trojanserverOnSelectedEstablished(tunnel_t *t, line_t *l, trojanserver_lsta
         }
     }
 
-    if (UNLIKELY(! withLineLocked(l, tunnelPrevDownStreamEst, t)))
+    if (UNLIKELY(! lineCallWithRef(l, tunnelPrevDownStreamEst, t)))
     {
         bufferqueueDestroy(&down_local);
         return;

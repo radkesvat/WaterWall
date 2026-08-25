@@ -285,7 +285,7 @@ static bool speedtestclientSendFrame(tunnel_t *t, line_t *l, sbuf_t *buf)
         return false;
     }
 
-    return withLineLockedWithBuf(l, tunnelNextUpStreamPayload, t, buf);
+    return lineCallWithRefWithBuf(l, tunnelNextUpStreamPayload, t, buf);
 }
 
 static bool speedtestclientSendHello(tunnel_t *t, line_t *l, speedtestclient_lstate_t *ls)
@@ -845,7 +845,7 @@ static bool speedtestclientProcessFrameBuffer(tunnel_t *t, line_t *l, sbuf_t *fr
 {
     speedtestclient_frame_t frame;
 
-    lineLock(l);
+    lineRef(l);
 
     if (! speedtestclientReadHeader(sbufGetRawPtr(frame_buf), sbufGetLength(frame_buf), &frame) ||
         ! speedtestclientFramePayloadLengthValid(t, l, &frame) ||
@@ -854,14 +854,14 @@ static bool speedtestclientProcessFrameBuffer(tunnel_t *t, line_t *l, sbuf_t *fr
         lineReuseBuffer(l, frame_buf);
         speedtestclientFailLine(t, l, "received an invalid speed-test frame");
         bool alive = lineIsAlive(l);
-        lineUnlock(l);
+        lineUnref(l);
         return alive;
     }
 
     speedtestclientHandleFrame(t, l, &frame);
     lineReuseBuffer(l, frame_buf);
     bool alive = lineIsAlive(l);
-    lineUnlock(l);
+    lineUnref(l);
     return alive;
 }
 
@@ -1018,7 +1018,7 @@ static void speedtestclientFinishLine(tunnel_t *t, line_t *l, bool success, bool
     const bool         all_done      = completed == state->connection_count;
     const bool         final_success = atomicLoadRelaxed(&state->failed_streams) == 0;
 
-    lineLock(l);
+    lineRef(l);
     speedtestclientRemoveOwnedLine(t, l, ls->stream_id);
     speedtestclientLinestateDestroy(ls);
 
@@ -1031,7 +1031,7 @@ static void speedtestclientFinishLine(tunnel_t *t, line_t *l, bool success, bool
     {
         lineDestroy(l);
     }
-    lineUnlock(l);
+    lineUnref(l);
 
     if (all_done)
     {
@@ -1042,9 +1042,9 @@ static void speedtestclientFinishLine(tunnel_t *t, line_t *l, bool success, bool
              * Category A (expected test-driver completion). The last stream can
              * finish on any worker, so terminating here used to skip every
              * registered cleanup callback. The aggregate report is committed,
-             * aggregate_mutex is released and the line is destroyed and unlocked
-             * above, so this thread owns nothing: request an orderly shutdown
-             * and unwind.
+             * aggregate_mutex is released and the line is destroyed and its
+             * temporary reference is released above, so this thread owns
+             * nothing: request an orderly shutdown and unwind.
              */
             if (! requestProgramShutdown(final_success ? 0 : 1))
             {

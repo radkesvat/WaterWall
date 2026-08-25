@@ -7,7 +7,7 @@ static inline bool flushWriteQueue(tunnel_t *t, line_t *l, tlsclient_lstate_t *l
     while (bufferqueueGetBufCount(&(ls->bq)) > 0)
     {
         sbuf_t *buf = bufferqueuePopFront(&(ls->bq));
-        if (! withLineLockedWithBuf(l, tunnelUpStreamPayload, t, buf))
+        if (! lineCallWithRefWithBuf(l, tunnelUpStreamPayload, t, buf))
         {
             return false;
         }
@@ -178,7 +178,7 @@ static int performTakeoverHandshake(tunnel_t *t, line_t *l, tlsclient_lstate_t *
 
 static void processTakeoverHandshakePayload(tunnel_t *t, line_t *l, tlsclient_lstate_t *ls, sbuf_t *buf)
 {
-    lineLock(l);
+    lineRef(l);
     bufferstreamPush(&ls->takeover_stream, buf);
 
     while (true)
@@ -189,7 +189,7 @@ static void processTakeoverHandshakePayload(tunnel_t *t, line_t *l, tlsclient_ls
         {
             if (! invalid)
             {
-                lineUnlock(l);
+                lineUnref(l);
                 return;
             }
             goto failed;
@@ -206,7 +206,7 @@ static void processTakeoverHandshakePayload(tunnel_t *t, line_t *l, tlsclient_ls
         int handshake_result = performTakeoverHandshake(t, l, ls);
         if (handshake_result == -2)
         {
-            lineUnlock(l);
+            lineUnref(l);
             return;
         }
         if (handshake_result < 0)
@@ -215,7 +215,7 @@ static void processTakeoverHandshakePayload(tunnel_t *t, line_t *l, tlsclient_ls
         }
         if (handshake_result > 0)
         {
-            lineUnlock(l);
+            lineUnref(l);
             return;
         }
 
@@ -229,7 +229,7 @@ static void processTakeoverHandshakePayload(tunnel_t *t, line_t *l, tlsclient_ls
 failed:
     if (! lineIsAlive(l))
     {
-        lineUnlock(l);
+        lineUnref(l);
         return;
     }
     LOGW("TlsClient: downstream takeover handshake failed: boringssl state is printed below");
@@ -237,7 +237,7 @@ failed:
     {
         tlsclientPrintSSLState(ls->ssl);
     }
-    lineUnlock(l);
+    lineUnref(l);
     tlsclientCloseLineBidirectional(t, l);
 }
 
@@ -313,7 +313,7 @@ void tlsclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
-    lineLock(l);
+    lineRef(l);
     while (sbufGetLength(buf) > 0)
     {
         n = BIO_write(ls->rbio, sbufGetRawPtr(buf), (int) sbufGetLength(buf));
@@ -344,7 +344,7 @@ void tlsclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             if (handshake_result == 2)
             {
                 lineReuseBuffer(l, buf);
-                lineUnlock(l);
+                lineUnref(l);
                 return;
             }
 
@@ -368,10 +368,10 @@ void tlsclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             lineReuseBuffer(l, buf);
             if (! lineIsAlive(l))
             {
-                lineUnlock(l);
+                lineUnref(l);
                 return;
             }
-            lineUnlock(l);
+            lineUnref(l);
             LOGW("TlsClient: downstream payload failed while flushing TLS protocol output");
             tlsclientCloseLineBidirectional(t, l);
             return;
@@ -380,13 +380,13 @@ void tlsclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     // done with socket data
     lineReuseBuffer(l, buf);
-    lineUnlock(l);
+    lineUnref(l);
     return;
 
 failed:
     if (! lineIsAlive(l))
     {
-        lineUnlock(l);
+        lineUnref(l);
         return;
     }
 
@@ -396,6 +396,6 @@ failed:
         tlsclientPrintSSLState(ls->ssl);
     }
 
-    lineUnlock(l);
+    lineUnref(l);
     tlsclientCloseLineBidirectional(t, l);
 }

@@ -14,7 +14,7 @@ void vlessserverTunnelDownStreamPause(tunnel_t *t, line_t *l)
         line_t *client_l = ls->client_line;
         if (LIKELY(client_l != NULL && lineIsAlive(client_l)))
         {
-            discard withLineLocked(client_l, tunnelPrevDownStreamPause, t);
+            discard lineCallWithRef(client_l, tunnelPrevDownStreamPause, t);
         }
         return;
     }

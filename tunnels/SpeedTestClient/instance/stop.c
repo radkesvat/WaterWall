@@ -35,7 +35,7 @@ void speedtestclientTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycl
         speedtestclient_lstate_t *ls                 = lineGetState(l, t);
         const bool                upstream_init_sent = ls->upstream_init_sent;
 
-        lineLock(l);
+        lineRef(l);
         state->owned_lines[stream_id] = NULL;
         speedtestclientLinestateDestroy(ls);
         if (upstream_init_sent && lineIsAlive(l))
@@ -46,6 +46,6 @@ void speedtestclientTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycl
         {
             lineDestroy(l);
         }
-        lineUnlock(l);
+        lineUnref(l);
     }
 }

@@ -19,7 +19,7 @@ void httpserverTunnelUpStreamFinish(tunnel_t *t, line_t *l)
         return;
     }
 
-    lineLock(l);
+    lineRef(l);
 
     if (ls->next_finished)
     {
@@ -29,7 +29,7 @@ void httpserverTunnelUpStreamFinish(tunnel_t *t, line_t *l)
          * this is the re-entrant upstream Finish they can trigger while flushing.
          */
         ls->prev_finished = true;
-        lineUnlock(l);
+        lineUnref(l);
         return;
     }
 
@@ -41,12 +41,12 @@ void httpserverTunnelUpStreamFinish(tunnel_t *t, line_t *l)
         {
             httpserverTransportCloseNextDirection(t, l, ls);
         }
-        lineUnlock(l);
+        lineUnref(l);
         return;
     }
 
     httpserverLinestateDestroy(ls);
     tunnelNextUpStreamFinish(t, l);
 
-    lineUnlock(l);
+    lineUnref(l);
 }

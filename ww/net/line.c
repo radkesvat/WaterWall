@@ -383,7 +383,7 @@ static void lineCleanupScheduledTaskNoBuf(void *arg1, void *arg2, void *arg3, wo
     line_task_msg_t *msg  = (line_task_msg_t *) arg1;
     line_t          *line = msg->line;
 
-    lineUnlock(line);
+    lineUnref(line);
     lineTaskMessageRelease(msg);
 }
 
@@ -398,7 +398,7 @@ static void lineCleanupScheduledTaskWithBuf(void *arg1, void *arg2, void *arg3, 
 
     lineReleaseScheduledTaskBuffer(line, msg->buf);
 
-    lineUnlock(line);
+    lineUnref(line);
     lineTaskMessageRelease(msg);
 }
 
@@ -418,7 +418,7 @@ static void lineDnsResolveResult(void *userdata, int status, const char *error, 
         msg->callback(msg->tunnel, line, msg->userdata, status, error, addrs, naddrs);
     }
 
-    lineUnlock(line);
+    lineUnref(line);
     lineDnsResolveMsgDestroy(msg);
 }
 
@@ -447,7 +447,7 @@ static void lineRunScheduledTaskNoBuf(worker_t *worker, void *arg1, void *arg2, 
         task(t, line);
     }
 
-    lineUnlock(line);
+    lineUnref(line);
     lineTaskMessageRelease(msg);
 }
 
@@ -481,19 +481,19 @@ static void lineRunScheduledTaskWithBuf(worker_t *worker, void *arg1, void *arg2
         lineReleaseScheduledTaskBuffer(line, buf);
     }
 
-    lineUnlock(line);
+    lineUnref(line);
     lineTaskMessageRelease(msg);
 }
 
 bool lineScheduleTask(line_t *const line, LineTaskFnNoBuf task, tunnel_t *t)
 {
     WW_WORKER_MESSAGE_BENCHMARK_RECORD_LINE_TASK_SUBMISSION(currentThreadIsEventWorkerWID(lineGetWID(line)), false);
-    lineLock(line);
+    lineRef(line);
 
     line_task_msg_t *msg = lineTaskMessageCreate(line, t);
     msg->callback.no_buf = task;
 
-    // A refusal has already run lineCleanupScheduledTaskNoBuf(), so the lock
+    // A refusal has already run lineCleanupScheduledTaskNoBuf(), so the reference
     // above and the message are both released; only the answer is left to give.
     return sendWorkerMessageForceQueueWithCleanup(lineGetWID(line),
                                                   (WorkerMessageCallback) lineRunScheduledTaskNoBuf,
@@ -506,7 +506,7 @@ bool lineScheduleTask(line_t *const line, LineTaskFnNoBuf task, tunnel_t *t)
 bool lineScheduleTaskWithBuf(line_t *const line, LineTaskFnWithBuf task, tunnel_t *t, sbuf_t *buf)
 {
     WW_WORKER_MESSAGE_BENCHMARK_RECORD_LINE_TASK_SUBMISSION(currentThreadIsEventWorkerWID(lineGetWID(line)), false);
-    lineLock(line);
+    lineRef(line);
 
     line_task_msg_t *msg   = lineTaskMessageCreate(line, t);
     msg->callback.with_buf = task;
@@ -530,7 +530,7 @@ bool lineScheduleDelayedTask(line_t *const line, LineTaskFnNoBuf task, uint32_t 
     }
 
     WW_WORKER_MESSAGE_BENCHMARK_RECORD_LINE_TASK_SUBMISSION(true, true);
-    lineLock(line);
+    lineRef(line);
 
     line_task_msg_t *msg = lineTaskMessageCreate(line, t);
     msg->callback.no_buf = task;
@@ -555,7 +555,7 @@ bool lineScheduleDelayedTaskWithBuf(line_t *const line, LineTaskFnWithBuf task, 
     }
 
     WW_WORKER_MESSAGE_BENCHMARK_RECORD_LINE_TASK_SUBMISSION(true, true);
-    lineLock(line);
+    lineRef(line);
 
     line_task_msg_t *msg   = lineTaskMessageCreate(line, t);
     msg->callback.with_buf = task;
@@ -590,12 +590,12 @@ int lineResolveDomainServiceAsync(line_t *const line, const char *domain, const 
         return ARES_ENOTINITIALIZED;
     }
 
-    lineLock(line);
+    lineRef(line);
 
     line_dns_resolve_msg_t *msg = memoryAllocate(sizeof(*msg));
     if (msg == NULL)
     {
-        lineUnlock(line);
+        lineUnref(line);
         return ARES_ENOMEM;
     }
 
@@ -609,7 +609,7 @@ int lineResolveDomainServiceAsync(line_t *const line, const char *domain, const 
     int rc = workerResolveDomainServiceAsync(lineGetWID(line), domain, service, socktype, lineDnsResolveResult, msg);
     if (rc != ARES_SUCCESS)
     {
-        lineUnlock(line);
+        lineUnref(line);
         lineDnsResolveMsgDestroy(msg);
         return rc;
     }

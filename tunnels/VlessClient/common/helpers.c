@@ -25,7 +25,7 @@ static sbuf_t *allocProtocolBuffer(line_t *l, uint32_t len)
 
 static bool sendBufferUpstream(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    return withLineLockedWithBuf(l, tunnelNextUpStreamPayload, t, buf);
+    return lineCallWithRefWithBuf(l, tunnelNextUpStreamPayload, t, buf);
 }
 
 static bool flushQueueToNext(tunnel_t *t, line_t *l, buffer_queue_t *queue)
@@ -33,7 +33,7 @@ static bool flushQueueToNext(tunnel_t *t, line_t *l, buffer_queue_t *queue)
     while (bufferqueueGetBufCount(queue) > 0)
     {
         sbuf_t *buf = bufferqueuePopFront(queue);
-        if (UNLIKELY(! withLineLockedWithBuf(l, tunnelNextUpStreamPayload, t, buf)))
+        if (UNLIKELY(! lineCallWithRefWithBuf(l, tunnelNextUpStreamPayload, t, buf)))
         {
             bufferqueueDestroy(queue);
             return false;
@@ -49,7 +49,7 @@ static bool flushStreamToPrev(tunnel_t *t, line_t *l, buffer_stream_t *stream)
     while (! bufferstreamIsEmpty(stream))
     {
         sbuf_t *buf = bufferstreamIdealRead(stream);
-        if (UNLIKELY(! withLineLockedWithBuf(l, tunnelPrevDownStreamPayload, t, buf)))
+        if (UNLIKELY(! lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, buf)))
         {
             return false;
         }
@@ -380,7 +380,7 @@ static bool forwardUdpPayloadToCarrier(tunnel_t *t, line_t *app_l, vlessclient_l
         return false;
     }
 
-    return withLineLockedWithBuf(app_ls->carrier_line, tunnelNextUpStreamPayload, t, buf);
+    return lineCallWithRefWithBuf(app_ls->carrier_line, tunnelNextUpStreamPayload, t, buf);
 }
 
 static bool drainQueuedUdpPayloads(tunnel_t *t, line_t *app_l, vlessclient_lstate_t *app_ls, buffer_queue_t *queue)
@@ -401,7 +401,7 @@ static bool drainQueuedUdpPayloads(tunnel_t *t, line_t *app_l, vlessclient_lstat
 bool vlessclientStartUdpCarrier(tunnel_t *t, line_t *l, vlessclient_lstate_t *ls, bool *line_alive_out)
 {
     *line_alive_out = true;
-    lineLock(l);
+    lineRef(l);
 
     line_t               *carrier_l  = createInternalLine(t, l, kVlessClientLineKindUdpCarrier);
     vlessclient_lstate_t *carrier_ls = lineGetState(carrier_l, t);
@@ -412,14 +412,14 @@ bool vlessclientStartUdpCarrier(tunnel_t *t, line_t *l, vlessclient_lstate_t *ls
 
     ls->carrier_line = carrier_l;
 
-    if (UNLIKELY(! withLineLocked(carrier_l, tunnelNextUpStreamInit, t)))
+    if (UNLIKELY(! lineCallWithRef(carrier_l, tunnelNextUpStreamInit, t)))
     {
         if (lineIsAlive(l))
         {
             ls->carrier_line = NULL;
         }
         *line_alive_out = lineIsAlive(l);
-        lineUnlock(l);
+        lineUnref(l);
         return false;
     }
 
@@ -428,7 +428,7 @@ bool vlessclientStartUdpCarrier(tunnel_t *t, line_t *l, vlessclient_lstate_t *ls
     {
         vlessclientCloseOwnedLine(t, carrier_l);
     }
-    lineUnlock(l);
+    lineUnref(l);
 
     return true;
 }
@@ -506,10 +506,10 @@ static bool drainUdpFrames(tunnel_t *t, line_t *l, vlessclient_lstate_t *ls)
             return false;
         }
 
-        lineLock(l);
-        bool app_alive     = withLineLockedWithBuf(app_l, tunnelPrevDownStreamPayload, t, packet);
+        lineRef(l);
+        bool app_alive     = lineCallWithRefWithBuf(app_l, tunnelPrevDownStreamPayload, t, packet);
         bool carrier_alive = lineIsAlive(l);
-        lineUnlock(l);
+        lineUnref(l);
 
         if (UNLIKELY(! app_alive || ! carrier_alive))
         {
@@ -699,10 +699,10 @@ bool vlessclientOnTransportEstablished(tunnel_t *t, line_t *l, vlessclient_lstat
 
         // Forward Est before sending the VLESS request so re-entrant app payload queues locally;
         // the queued bytes are flushed only after the protocol header is on the wire.
-        lineLock(l);
-        bool app_alive     = withLineLocked(app_l, tunnelPrevDownStreamEst, t);
+        lineRef(l);
+        bool app_alive     = lineCallWithRef(app_l, tunnelPrevDownStreamEst, t);
         bool carrier_alive = lineIsAlive(l);
-        lineUnlock(l);
+        lineUnref(l);
 
         if (UNLIKELY(! app_alive || ! carrier_alive))
         {
@@ -748,7 +748,7 @@ bool vlessclientOnTransportEstablished(tunnel_t *t, line_t *l, vlessclient_lstat
 
     // Forward Est before sending the VLESS request so re-entrant app payload queues locally;
     // the queued bytes are flushed only after the protocol header is on the wire.
-    if (UNLIKELY(! withLineLocked(l, tunnelPrevDownStreamEst, t)))
+    if (UNLIKELY(! lineCallWithRef(l, tunnelPrevDownStreamEst, t)))
     {
         bufferqueueDestroy(&pending_local);
         return false;

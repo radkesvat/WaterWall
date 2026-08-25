@@ -15,7 +15,7 @@ static sbuf_t *tryReadCompletePacket(buffer_stream_t *stream)
     uint16_t total_packet_size_network;
     sbufByteCopy(&total_packet_size_network, packet_first_bytes, (uint32_t) sizeof(total_packet_size_network));
     uint16_t total_packet_size = ntohs(total_packet_size_network);
-    
+
     // Validate packet size (minimum IP header size, maximum reasonable size)
     if (total_packet_size < 1 || ((uint32_t) (total_packet_size  + kHeaderSize)) > (uint32_t) bufferstreamGetBufLen(stream))
     {
@@ -38,7 +38,7 @@ static bool initializeUpstream(tunnel_t *t, line_t *l, udpovertcpserver_lstate_t
 {
     setDestinationProtocol(l, protocol);
     ls->upstream_initialized = true;
-    return withLineLocked(l, tunnelNextUpStreamInit, t);
+    return lineCallWithRef(l, tunnelNextUpStreamInit, t);
 }
 
 static bool consumeProtocolMarker(tunnel_t *t, line_t *l, udpovertcpserver_lstate_t *ls)
@@ -49,7 +49,7 @@ static bool consumeProtocolMarker(tunnel_t *t, line_t *l, udpovertcpserver_lstat
     }
 
     uint8_t protocol = bufferstreamViewByteAt(&ls->read_stream, kHeaderSize);
-    sbuf_t *marker = bufferstreamReadExact(&ls->read_stream, kProtocolMarkerSize);
+    sbuf_t *marker   = bufferstreamReadExact(&ls->read_stream, kProtocolMarkerSize);
     lineReuseBuffer(l, marker);
 
     if (protocol != IP_PROTO_TCP && protocol != IP_PROTO_UDP)
@@ -129,7 +129,7 @@ void udpovertcpserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             break; // No complete packet available, exit the loop
         }
 
-        if (! withLineLockedWithBuf(l, tunnelNextUpStreamPayload, t, packet_buffer))
+        if (! lineCallWithRefWithBuf(l, tunnelNextUpStreamPayload, t, packet_buffer))
         {
             return; // Exit if the line is no longer alive
         }

@@ -24,7 +24,7 @@ static sbuf_t *allocProtocolBuffer(line_t *l, uint32_t len)
 
 static bool sendBufferUpstream(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    return withLineLockedWithBuf(l, tunnelNextUpStreamPayload, t, buf);
+    return lineCallWithRefWithBuf(l, tunnelNextUpStreamPayload, t, buf);
 }
 
 static bool flushQueueToNext(tunnel_t *t, line_t *l, buffer_queue_t *queue)
@@ -32,7 +32,7 @@ static bool flushQueueToNext(tunnel_t *t, line_t *l, buffer_queue_t *queue)
     while (bufferqueueGetBufCount(queue) > 0)
     {
         sbuf_t *buf = bufferqueuePopFront(queue);
-        if (UNLIKELY(! withLineLockedWithBuf(l, tunnelNextUpStreamPayload, t, buf)))
+        if (UNLIKELY(! lineCallWithRefWithBuf(l, tunnelNextUpStreamPayload, t, buf)))
         {
             bufferqueueDestroy(queue);
             return false;
@@ -48,7 +48,7 @@ static bool flushStreamToPrev(tunnel_t *t, line_t *l, buffer_stream_t *stream)
     while (! bufferstreamIsEmpty(stream))
     {
         sbuf_t *buf = bufferstreamIdealRead(stream);
-        if (UNLIKELY(! withLineLockedWithBuf(l, tunnelPrevDownStreamPayload, t, buf)))
+        if (UNLIKELY(! lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, buf)))
         {
             return false;
         }
@@ -481,7 +481,7 @@ static bool forwardUdpPayloadToCarrier(tunnel_t *t, line_t *app_l, trojanclient_
         return false;
     }
 
-    return withLineLockedWithBuf(app_ls->carrier_line, tunnelNextUpStreamPayload, t, buf);
+    return lineCallWithRefWithBuf(app_ls->carrier_line, tunnelNextUpStreamPayload, t, buf);
 }
 
 static bool drainQueuedUdpPayloads(tunnel_t *t, line_t *app_l, trojanclient_lstate_t *app_ls, buffer_queue_t *queue)
@@ -502,7 +502,7 @@ static bool drainQueuedUdpPayloads(tunnel_t *t, line_t *app_l, trojanclient_lsta
 bool trojanclientStartUdpCarrier(tunnel_t *t, line_t *l, trojanclient_lstate_t *ls, bool *line_alive_out)
 {
     *line_alive_out = true;
-    lineLock(l);
+    lineRef(l);
 
     line_t                *carrier_l  = createInternalLine(t, l, kTrojanClientLineKindUdpCarrier);
     trojanclient_lstate_t *carrier_ls = lineGetState(carrier_l, t);
@@ -513,14 +513,14 @@ bool trojanclientStartUdpCarrier(tunnel_t *t, line_t *l, trojanclient_lstate_t *
 
     ls->carrier_line = carrier_l;
 
-    if (UNLIKELY(! withLineLocked(carrier_l, tunnelNextUpStreamInit, t)))
+    if (UNLIKELY(! lineCallWithRef(carrier_l, tunnelNextUpStreamInit, t)))
     {
         if (lineIsAlive(l))
         {
             ls->carrier_line = NULL;
         }
         *line_alive_out = lineIsAlive(l);
-        lineUnlock(l);
+        lineUnref(l);
         return false;
     }
 
@@ -529,7 +529,7 @@ bool trojanclientStartUdpCarrier(tunnel_t *t, line_t *l, trojanclient_lstate_t *
     {
         trojanclientCloseOwnedLine(t, carrier_l);
     }
-    lineUnlock(l);
+    lineUnref(l);
 
     return true;
 }
@@ -696,10 +696,10 @@ static bool drainUdpFrames(tunnel_t *t, line_t *l, trojanclient_lstate_t *ls)
             return false;
         }
 
-        lineLock(l);
-        bool app_alive     = withLineLockedWithBuf(app_l, tunnelPrevDownStreamPayload, t, packet);
+        lineRef(l);
+        bool app_alive     = lineCallWithRefWithBuf(app_l, tunnelPrevDownStreamPayload, t, packet);
         bool carrier_alive = lineIsAlive(l);
-        lineUnlock(l);
+        lineUnref(l);
 
         if (UNLIKELY(! app_alive || ! carrier_alive))
         {
@@ -770,10 +770,10 @@ bool trojanclientOnTransportEstablished(tunnel_t *t, line_t *l, trojanclient_lst
             LOGD("TrojanClient: UDP association established");
         }
 
-        lineLock(l);
-        bool app_alive     = withLineLocked(app_l, tunnelPrevDownStreamEst, t);
+        lineRef(l);
+        bool app_alive     = lineCallWithRef(app_l, tunnelPrevDownStreamEst, t);
         bool carrier_alive = lineIsAlive(l);
-        lineUnlock(l);
+        lineUnref(l);
 
         if (UNLIKELY(! app_alive || ! carrier_alive))
         {
@@ -807,7 +807,7 @@ bool trojanclientOnTransportEstablished(tunnel_t *t, line_t *l, trojanclient_lst
         LOGD("TrojanClient: TCP request sent");
     }
 
-    if (UNLIKELY(! withLineLocked(l, tunnelPrevDownStreamEst, t)))
+    if (UNLIKELY(! lineCallWithRef(l, tunnelPrevDownStreamEst, t)))
     {
         bufferqueueDestroy(&pending_local);
         return false;

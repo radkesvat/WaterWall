@@ -91,9 +91,9 @@ static void rejectMainLineInit(tunnel_t *next, line_t *main_line)
     twfRequire(main_ls->upload_line == fixture->upload_line, "main Init referenced the wrong upload transport");
     twfRequire(main_ls->download_line == fixture->download_line, "main Init referenced the wrong download transport");
     twfRequireEqualU32(
-        twfLineRefCount(fixture->upload_line), 2, "the upload transport was not locked before main Init");
+        twfLineRefCount(fixture->upload_line), 2, "the upload transport reference was not held before main Init");
     twfRequireEqualU32(
-        twfLineRefCount(fixture->download_line), 2, "the download transport was not locked before main Init");
+        twfLineRefCount(fixture->download_line), 2, "the download transport reference was not held before main Init");
 
     halfduplexserverTunnelDownStreamFinish(fixture->halfduplex, main_line);
     twfRequire(! lineIsAlive(main_line), "rejected main Init did not destroy the owned main line");

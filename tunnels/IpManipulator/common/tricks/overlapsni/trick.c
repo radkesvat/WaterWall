@@ -140,7 +140,7 @@ static void overlapsnitrickDestroyHeldPacketLocked(ipmanipulator_overlap_flow_t 
     overlapsnitrickDestroyCapturedPacket(&held_packet);
     if (held_line != NULL)
     {
-        lineUnlock(held_line);
+        lineUnref(held_line);
     }
 }
 
@@ -368,7 +368,7 @@ static void overlapsnitrickReleaseTimedOutHold(tunnel_t *t, const ipmanipulator_
 
         if (held_line != NULL)
         {
-            lineUnlock(held_line);
+            lineUnref(held_line);
         }
     }
 }
@@ -383,7 +383,7 @@ static void overlapsnitrickRunHoldTimeout(worker_t *worker, void *arg1, void *ar
 
     overlapsnitrickReleaseTimedOutHold(t, &context->key, context->generation);
     memoryFree(context);
-    lineUnlock(l);
+    lineUnref(l);
 }
 
 static void overlapsnitrickCleanupHoldTimeout(void *arg1, void *arg2, void *arg3, worker_message_cancel_reason_e reason)
@@ -398,7 +398,7 @@ static void overlapsnitrickCleanupHoldTimeout(void *arg1, void *arg2, void *arg3
         overlapsnitrickReleaseTimedOutHold(t, &context->key, context->generation);
     }
     memoryFree(context);
-    lineUnlock(l);
+    lineUnref(l);
 }
 
 static bool overlapsnitrickScheduleHoldTimeout(tunnel_t *t, line_t *l, const ipmanipulator_flow_key_t *key,
@@ -424,7 +424,7 @@ static bool overlapsnitrickScheduleHoldTimeout(tunnel_t *t, line_t *l, const ipm
     };
 
     /* The queued message owns a separate reference from the held flow record. */
-    lineLock(l);
+    lineRef(l);
     WW_WORKER_MESSAGE_BENCHMARK_RECORD_CONTINUATION(kWorkerMessageBenchmarkContinuationIpManipulatorDeferred);
 #ifdef IPMANIPULATOR_OVERLAP_TEST_HOOKS
     bool scheduled = ipmanipulatorOverlapTestScheduleTimed(lineGetWID(l),
@@ -764,7 +764,7 @@ static void overlapsnitrickSendHeldThenCurrentNormal(tunnel_t *t, ipmanipulator_
         return;
     }
 
-    lineLock(line);
+    lineRef(line);
 
     bool alive = lineIsAlive(line);
 
@@ -795,7 +795,7 @@ static void overlapsnitrickSendHeldThenCurrentNormal(tunnel_t *t, ipmanipulator_
         }
     }
 
-    lineUnlock(line);
+    lineUnref(line);
 }
 
 static void overlapsnitrickSendOutputs(tunnel_t *t, line_t *l, overlapsnitrick_packet_sequence_t *normal_sequence)
@@ -806,7 +806,7 @@ static void overlapsnitrickSendOutputs(tunnel_t *t, line_t *l, overlapsnitrick_p
         return;
     }
 
-    lineLock(l);
+    lineRef(l);
 
     bool alive = lineIsAlive(l);
 
@@ -857,7 +857,7 @@ static void overlapsnitrickSendOutputs(tunnel_t *t, line_t *l, overlapsnitrick_p
     }
 
     normal_sequence->count = 0;
-    lineUnlock(l);
+    lineUnref(l);
 }
 
 static void overlapsnitrickLogRejectedFlow(const sbuf_t *combined_packet, const sni_match_t *match,
@@ -1122,7 +1122,7 @@ bool overlapsnitrickDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
         if (held_line != NULL)
         {
-            lineUnlock(held_line);
+            lineUnref(held_line);
         }
     }
 
@@ -1310,7 +1310,7 @@ bool overlapsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             }
             if (held_line != NULL)
             {
-                lineUnlock(held_line);
+                lineUnref(held_line);
             }
             overlapsnitrickSendNormalNow(t, l, buf);
             return true;
@@ -1318,7 +1318,7 @@ bool overlapsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         overlapsnitrickSendHeldThenCurrentNormal(t, &held_packet, l, buf);
         if (held_line != NULL)
         {
-            lineUnlock(held_line);
+            lineUnref(held_line);
         }
         return true;
     }
@@ -1374,7 +1374,7 @@ bool overlapsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         uint64_t hold_generation = flow->hold_generation;
 
         /* The flow record retains the packet line until the hold is detached. */
-        lineLock(l);
+        lineRef(l);
         ipmanipulatorFlowShardUnlock(shard);
 
         overlapsnitrickScheduleHoldTimeout(t, l, &key, hold_generation, state->trick_overlap_sni_hold_timeout_ms);
@@ -1420,7 +1420,7 @@ bool overlapsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             }
             if (held_line != NULL)
             {
-                lineUnlock(held_line);
+                lineUnref(held_line);
             }
             overlapsnitrickSendNormalNow(t, l, buf);
             return true;
@@ -1434,7 +1434,7 @@ bool overlapsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
         if (held_line != NULL)
         {
-            lineUnlock(held_line);
+            lineUnref(held_line);
         }
 
         /* The entry pointer did not survive the unlock; resolve the tuple again. */

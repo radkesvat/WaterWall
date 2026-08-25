@@ -391,7 +391,7 @@ static void caseDuplicateOpenClosesParent(void)
     sbufSetLength(open, kMuxFrameLength);
     writeFrameHeader(sbufGetMutablePtr(open), 0, kMuxFlagOpen, kTestChildCid);
 
-    lineLock(fixture.child_l);
+    lineRef(fixture.child_l);
     muxserverTunnelUpStreamPayload(fixture.mux, fixture.parent_l, open);
     twfRequire(! lineIsAlive(fixture.child_l), "duplicate Open left the owned child alive");
     twfRequireEqualU32(fixture.trace.prev_finish, 1, "duplicate Open did not close the parent toward its owner");
@@ -445,7 +445,7 @@ static void caseChildIdlePromotionAndImmediateRemoval(void)
 
     local_idle_table_t *table = ts->worker_states[0].child_idle_table;
     twfRequireEqualU32((uint32_t) localidletableGetItemCount(table), 1, "armed child idle item is absent");
-    lineLock(fixture.child_l);
+    lineRef(fixture.child_l);
     muxserverTunnelDownStreamFinish(fixture.mux, fixture.child_l);
     twfRequire(! lineIsAlive(fixture.child_l), "explicit child Finish left the owned child alive");
     twfRequireEqualU32(
@@ -519,7 +519,7 @@ static void casePeerCloseDropsLateFramesAndKeepsSiblingProgress(void)
                        "late terminal server Data was delivered or sibling bytes were lost");
     twfRequireEqualU32(fixture.trace.next_finish, 0, "duplicate server Close completed the blocked child early");
 
-    lineLock(fixture.child_l);
+    lineRef(fixture.child_l);
     muxserverTunnelDownStreamResume(fixture.mux, fixture.child_l);
     twfRequire(! lineIsAlive(fixture.child_l), "server terminal drain left its owned child alive");
     twfRequireEqualU32(fixture.trace.next_payload, 2, "server retained pre-Close payload was not delivered once");

@@ -13,7 +13,7 @@ static void reverseServerHandleBufferMerging(line_t *u, reverseserver_lstate_t *
 }
 
 static bool checkBufferSizeLimitU(tunnel_t *t, line_t *u, reverseserver_lstate_t *uls,
-                                 reverseserver_thread_box_t *this_tb, sbuf_t *buf)
+                                  reverseserver_thread_box_t *this_tb, sbuf_t *buf)
 {
     if (sbufGetLength(buf) > kMaxBuffering)
     {
@@ -62,7 +62,7 @@ static bool pairWithLocalDownstreamConnection(tunnel_t *t, line_t *u, reverseser
     sbuf_t *dbuf   = dls->buffering;
     dls->buffering = NULL;
 
-    if (! withLineLockedWithBuf(d, tunnelPrevDownStreamPayload, t, buf))
+    if (! lineCallWithRefWithBuf(d, tunnelPrevDownStreamPayload, t, buf))
     {
         if (dbuf)
         {
@@ -81,7 +81,7 @@ static bool pairWithLocalDownstreamConnection(tunnel_t *t, line_t *u, reverseser
 }
 
 static void handleUnpairedConnectionU(tunnel_t *t, line_t *u, reverseserver_lstate_t *uls,
-                                     reverseserver_thread_box_t *this_tb, sbuf_t *buf)
+                                      reverseserver_thread_box_t *this_tb, sbuf_t *buf)
 {
     reverseServerHandleBufferMerging(u, uls, &buf);
 

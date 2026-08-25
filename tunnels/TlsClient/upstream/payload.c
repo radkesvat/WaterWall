@@ -18,7 +18,7 @@ void tlsclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
-    lineLock(l);
+    lineRef(l);
     int len = (int) sbufGetLength(buf);
     while (len > 0)
     {
@@ -35,7 +35,7 @@ void tlsclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
                 lineReuseBuffer(l, buf);
                 if (! lineIsAlive(l))
                 {
-                    lineUnlock(l);
+                    lineUnref(l);
                     return;
                 }
                 goto failed;
@@ -56,7 +56,7 @@ void tlsclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         }
     }
     lineReuseBuffer(l, buf);
-    lineUnlock(l);
+    lineUnref(l);
     return;
 
 failed:
@@ -66,6 +66,6 @@ failed:
         tlsclientPrintSSLState(ls->ssl);
     }
 
-    lineUnlock(l);
+    lineUnref(l);
     tlsclientCloseLineBidirectional(t, l);
 }

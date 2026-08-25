@@ -229,7 +229,7 @@ void disturberTunnelPayload(tunnel_t *t, line_t *l, sbuf_t *buf, disturber_paylo
         }
         disturberScheduleForwardPayload(t, l, buf, direction);
 
-        discard withLineLockedWithBuf(l, forward, t, held_buf);
+        discard lineCallWithRefWithBuf(l, forward, t, held_buf);
         return;
     }
 

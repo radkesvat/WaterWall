@@ -21,7 +21,7 @@ static void ptcEmitPacketCleanup(void *arg1, void *arg2, void *arg3, worker_mess
 static void ptcEmitPacketBufferAdmitted(tunnel_t *t, line_t *packet_line, sbuf_t *buf)
 {
 #ifdef DEBUG
-    lineLock(packet_line);
+    lineRef(packet_line);
 #endif
 
     tunnelPrevDownStreamPayload(t, packet_line, buf);
@@ -33,7 +33,7 @@ static void ptcEmitPacketBufferAdmitted(tunnel_t *t, line_t *packet_line, sbuf_t
         abortProgramNow(1);
     }
 
-    lineUnlock(packet_line);
+    lineUnref(packet_line);
 #endif
 }
 

@@ -93,9 +93,10 @@ These guardrails do not replace the mandatory guide reading:
 3. Initialize per-line state in `Init`. Do not add an `initialized` flag to conceal
    unsafe ordering.
 4. Inter-tunnel `Init`, `Payload`, `Est`, `Pause`, and `Resume` may destroy the line
-   before returning. If work continues, lock across the call and re-check
-   `lineIsAlive()`; a lock preserves memory, not logical life. After a failed
-   `withLineLocked()`, touch neither the line nor its destroyed state.
+   before returning. If work continues, hold a temporary line reference across
+   the call and re-check `lineIsAlive()`; a reference preserves allocation memory,
+   not logical life. After a failed `lineCallWithRef()`, touch neither the line
+   nor its destroyed state.
 5. Receiving `Finish` closes the sender's direction. Send no callback back toward
    that side; destroy local state first and propagate only away from it. Only a
    normal line's creator calls `lineDestroy()`, and an owner receiving `Finish` must

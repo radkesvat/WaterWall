@@ -306,7 +306,7 @@ bool realityserverSendHandoffAckAtBoundary(tunnel_t *t, line_t *l)
     assert(ls->s2c_send_seq == 1);
     ls->handoff_ack_sent = true;
     ls->mode             = kRealityServerModeHandoffAwaitConfirm;
-    return withLineLockedWithBuf(l, tunnelPrevDownStreamPayload, t, frame);
+    return lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, frame);
 }
 
 static int realityserverTryReadTlsRecord(buffer_stream_t *stream, sbuf_t **record)
@@ -502,7 +502,7 @@ static bool realityserverDecryptFrame(realityserver_tstate_t *ts, realityserver_
 static bool realityserverForwardToDestination(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     realityserver_tstate_t *ts = tunnelGetState(t);
-    return withLineLockedWithBuf(l, tunnelUpStreamPayload, ts->destination_tunnel, buf);
+    return lineCallWithRefWithBuf(l, tunnelUpStreamPayload, ts->destination_tunnel, buf);
 }
 
 static bool realityserverFlushBufferedToDestination(tunnel_t *t, line_t *l, realityserver_lstate_t *ls)
@@ -566,7 +566,7 @@ static bool realityserverCloseDestinationForAuthorization(tunnel_t *t, line_t *l
         ls->destination_up_finished            = true;
         ls->closing_destination_for_authorized = true;
 
-        if (! withLineLocked(l, tunnelUpStreamFin, ts->destination_tunnel))
+        if (! lineCallWithRef(l, tunnelUpStreamFin, ts->destination_tunnel))
         {
             return false;
         }
@@ -589,7 +589,7 @@ static bool realityserverInitializeProtectedNext(tunnel_t *t, line_t *l)
     if (! ls->protected_init_sent)
     {
         ls->protected_init_sent = true;
-        if (! withLineLocked(l, tunnelNextUpStreamInit, t))
+        if (! lineCallWithRef(l, tunnelNextUpStreamInit, t))
         {
             return false;
         }
@@ -674,7 +674,7 @@ bool realityserverEncryptAndSendDownstream(tunnel_t *t, line_t *l, sbuf_t *buf)
             src += chunk_len;
             remaining -= chunk_len;
 
-            if (! withLineLockedWithBuf(l, tunnelPrevDownStreamPayload, t, frame_buf))
+            if (! lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, frame_buf))
             {
                 bufferpoolReuseBuffer(pool, buf);
                 return false;
@@ -703,7 +703,7 @@ bool realityserverEncryptAndSendDownstream(tunnel_t *t, line_t *l, sbuf_t *buf)
     }
 
     bufferpoolReuseBuffer(pool, buf);
-    return withLineLockedWithBuf(l, tunnelPrevDownStreamPayload, t, frame_buf);
+    return lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, frame_buf);
 }
 
 static bool realityserverForwardHandoffTail(tunnel_t *t, line_t *l, sbuf_t *record)
@@ -1027,7 +1027,7 @@ bool realityserverProcessUpstream(tunnel_t *t, line_t *l, sbuf_t *buf)
                 return false;
             }
 
-            if (! withLineLockedWithBuf(l, tunnelNextUpStreamPayload, t, candidate_buf))
+            if (! lineCallWithRefWithBuf(l, tunnelNextUpStreamPayload, t, candidate_buf))
             {
                 return false;
             }
@@ -1183,7 +1183,7 @@ static void realityserverTerminalClose(tunnel_t *t, line_t *l, uint8_t alert, bo
         return;
     }
 
-    lineLock(l);
+    lineRef(l);
     realityserver_tstate_t *ts = tunnelGetState(t);
     realityserver_lstate_t *ls = lineGetState(l, t);
     if (received_prev_finish)
@@ -1200,7 +1200,7 @@ static void realityserverTerminalClose(tunnel_t *t, line_t *l, uint8_t alert, bo
     }
     if (ls->terminal_closing)
     {
-        lineUnlock(l);
+        lineUnref(l);
         return;
     }
 
@@ -1223,7 +1223,7 @@ static void realityserverTerminalClose(tunnel_t *t, line_t *l, uint8_t alert, bo
             if (! lineIsAlive(l))
             {
                 realityserverLinestateDestroy(lineGetState(l, t));
-                lineUnlock(l);
+                lineUnref(l);
                 return;
             }
             ls = lineGetState(l, t);
@@ -1253,7 +1253,7 @@ static void realityserverTerminalClose(tunnel_t *t, line_t *l, uint8_t alert, bo
             {
                 /* This close frame owns cleanup; terminal re-entry deliberately defers to it. */
                 realityserverLinestateDestroy(lineGetState(l, t));
-                lineUnlock(l);
+                lineUnref(l);
                 return;
             }
             ls = lineGetState(l, t);
@@ -1278,14 +1278,14 @@ static void realityserverTerminalClose(tunnel_t *t, line_t *l, uint8_t alert, bo
 
     if ((close_protected || close_destination) && ! lineIsAlive(l))
     {
-        lineUnlock(l);
+        lineUnref(l);
         return;
     }
     if (close_prev)
     {
         tunnelPrevDownStreamFinish(t, l);
     }
-    lineUnlock(l);
+    lineUnref(l);
 }
 
 void realityserverFailAuthenticated(tunnel_t *t, line_t *l)

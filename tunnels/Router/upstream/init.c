@@ -12,7 +12,7 @@ static bool routerCanCommitRouteDuringInit(const router_tstate_t *ts)
 
 static void routerCommitInitialRoute(tunnel_t *t, line_t *l, router_lstate_t *ls, const router_match_t *match)
 {
-    lineLock(l);
+    lineRef(l);
 
     if (match->result == kRouterClassifyTarget)
     {
@@ -27,7 +27,7 @@ static void routerCommitInitialRoute(tunnel_t *t, line_t *l, router_lstate_t *ls
         tunnelNextUpStreamInit(t, l);
     }
 
-    lineUnlock(l);
+    lineUnref(l);
 }
 
 void routerTunnelUpStreamInit(tunnel_t *t, line_t *l)

@@ -67,7 +67,7 @@ static void ctpEmitPacketOnWorker(worker_t *worker, void *arg1, void *arg2, void
     }
 
 #ifdef DEBUG
-    lineLock(packet_line);
+    lineRef(packet_line);
 #endif
 
     tunnelNextUpStreamPayload(t, packet_line, buf);
@@ -79,7 +79,7 @@ static void ctpEmitPacketOnWorker(worker_t *worker, void *arg1, void *arg2, void
         abortProgramNow(1);
     }
 
-    lineUnlock(packet_line);
+    lineUnref(packet_line);
 #endif
 
     ctpNextGateLeave(t);

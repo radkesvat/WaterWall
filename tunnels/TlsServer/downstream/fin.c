@@ -21,7 +21,7 @@ void tlsserverTunnelDownStreamFinish(tunnel_t *t, line_t *l)
         return;
     }
 
-    lineLock(l);
+    lineRef(l);
 
     if (ls->verbose)
     {
@@ -41,22 +41,22 @@ void tlsserverTunnelDownStreamFinish(tunnel_t *t, line_t *l)
             tlsserverPrintSSLState(ls->ssl);
             tlsserverLinestateDestroy(ls);
             tunnelPrevDownStreamFinish(t, l);
-            lineUnlock(l);
+            lineUnref(l);
             return;
         }
 
         LOGW("TlsServer: line closed while sending close_notify");
-        lineUnlock(l);
+        lineUnref(l);
         return;
     }
 
     if (! lineIsAlive(l))
     {
-        lineUnlock(l);
+        lineUnref(l);
         return;
     }
 
-    ls = lineGetState(l, t);
+    ls                  = lineGetState(l, t);
     bool output_pending = ls->shaping_output.initialized &&
                           ! tlsrecordshapingOutputQueueIsEmpty(&ls->shaping_output);
     if (ls->shaping_retired && ls->ssl != NULL)
@@ -70,7 +70,7 @@ void tlsserverTunnelDownStreamFinish(tunnel_t *t, line_t *l)
         {
             LOGD("TlsServer: deferring downstream Finish until queued TLS ciphertext drains");
         }
-        lineUnlock(l);
+        lineUnref(l);
         return;
     }
 
@@ -81,5 +81,5 @@ void tlsserverTunnelDownStreamFinish(tunnel_t *t, line_t *l)
     tlsserverLinestateDestroy(ls);
     tunnelPrevDownStreamFinish(t, l);
 
-    lineUnlock(l);
+    lineUnref(l);
 }

@@ -72,7 +72,7 @@ bool tcpoverudpclientUpdateKcp(tcpoverudpclient_lstate_t *ls, bool flush)
 
     bool ret = true;
 
-    lineLock(l);
+    lineRef(l);
 
     if (flush)
     {
@@ -98,7 +98,7 @@ bool tcpoverudpclientUpdateKcp(tcpoverudpclient_lstate_t *ls, bool flush)
     }
     ret = lineIsAlive(l) && ls->k_handle != NULL;
 
-    lineUnlock(l);
+    lineUnref(l);
     return ret;
 }
 
@@ -139,13 +139,13 @@ void tcpoverudpclientKcpLoopIntervalCallback(wtimer_t *timer)
             tunnel_t *t = ls->tunnel;
             line_t   *l = ls->line;
 
-            lineLock(l);
+            lineRef(l);
             tunnelUpStreamFin(t, l);
             if (lineIsAlive(l))
             {
                 tunnelPrevDownStreamFinish(t, l);
             }
-            lineUnlock(l);
+            lineUnref(l);
             return;
         }
     }

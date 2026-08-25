@@ -161,7 +161,7 @@ static void firstsnitrickSendPreparedBatchNow(tunnel_t *t, line_t *l, sbuf_t **p
         return;
     }
 
-    lineLock(l);
+    lineRef(l);
 
     bool alive = lineIsAlive(l);
     for (uint8_t i = 0; i < count; ++i)
@@ -182,7 +182,7 @@ static void firstsnitrickSendPreparedBatchNow(tunnel_t *t, line_t *l, sbuf_t **p
         packets[i] = NULL;
     }
 
-    lineUnlock(l);
+    lineUnref(l);
 }
 
 static void firstsnitrickSendOrderedNow(tunnel_t *t, ipmanipulator_ordered_output_t *outputs, uint32_t count)
@@ -202,9 +202,9 @@ static void firstsnitrickSendOrderedNow(tunnel_t *t, ipmanipulator_ordered_outpu
         }
         else if (lineIsAlive(output->line))
         {
-            lineLock(output->line);
+            lineRef(output->line);
             output->send(t, output->line, output->buf);
-            lineUnlock(output->line);
+            lineUnref(output->line);
         }
         else
         {
@@ -731,14 +731,14 @@ static bool firstsnitrickHandleClientHello(tunnel_t *t, line_t *l, sbuf_t *buf, 
          (unsigned int) match.ip_total_len,
          (unsigned int) match.tls_record_len);
 
-    lineLock(l);
+    lineRef(l);
 
     firstsnitrickSendCraftedPacket(t, l, fake_packet);
 
     if (! lineIsAlive(l))
     {
         reuseBuffer(buf);
-        lineUnlock(l);
+        lineUnref(l);
         return true;
     }
 
@@ -749,12 +749,12 @@ static bool firstsnitrickHandleClientHello(tunnel_t *t, line_t *l, sbuf_t *buf, 
             sbuf_t *barrier_packets[] = {buf};
             firstsnitrickStartDelayBarrier(
                 t, l, barrier_packets, 1, NULL, 0, now_ms + state->trick_first_sni_final_delay_ms, now_ms);
-            lineUnlock(l);
+            lineUnref(l);
             return true;
         }
 
         firstsnitrickSendOriginalPacket(t, l, buf);
-        lineUnlock(l);
+        lineUnref(l);
         return true;
     }
 
@@ -772,7 +772,7 @@ static bool firstsnitrickHandleClientHello(tunnel_t *t, line_t *l, sbuf_t *buf, 
             if (! lineIsAlive(l))
             {
                 reuseBuffer(buf);
-                lineUnlock(l);
+                lineUnref(l);
                 return true;
             }
         }
@@ -782,12 +782,12 @@ static bool firstsnitrickHandleClientHello(tunnel_t *t, line_t *l, sbuf_t *buf, 
             sbuf_t *barrier_packets[] = {buf};
             firstsnitrickStartDelayBarrier(
                 t, l, barrier_packets, 1, NULL, 0, now_ms + state->trick_first_sni_final_delay_ms, now_ms);
-            lineUnlock(l);
+            lineUnref(l);
             return true;
         }
 
         firstsnitrickSendOriginalPacket(t, l, buf);
-        lineUnlock(l);
+        lineUnref(l);
         return true;
     }
 
@@ -796,7 +796,7 @@ static bool firstsnitrickHandleClientHello(tunnel_t *t, line_t *l, sbuf_t *buf, 
     if (ordered_capacity > UINT32_MAX / sizeof(ipmanipulator_ordered_output_t))
     {
         firstsnitrickSendOriginalPacket(t, l, buf);
-        lineUnlock(l);
+        lineUnref(l);
         return true;
     }
 
@@ -804,7 +804,7 @@ static bool firstsnitrickHandleClientHello(tunnel_t *t, line_t *l, sbuf_t *buf, 
     if (ordered_outputs == NULL)
     {
         firstsnitrickSendOriginalPacket(t, l, buf);
-        lineUnlock(l);
+        lineUnref(l);
         return true;
     }
 
@@ -833,7 +833,7 @@ static bool firstsnitrickHandleClientHello(tunnel_t *t, line_t *l, sbuf_t *buf, 
         t, l, barrier_packets, 1, ordered_outputs, ordered_count, now_ms + tail_delay_ms, now_ms);
     memoryFree(ordered_outputs);
 
-    lineUnlock(l);
+    lineUnref(l);
     return true;
 }
 

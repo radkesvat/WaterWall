@@ -34,7 +34,7 @@ void socks5serverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         line_t *client_l = ls->client_line;
         bool    client_alive;
 
-        if (client_l == NULL || ! ls->client_line_locked || ! lineIsAlive(client_l))
+        if (client_l == NULL || ! ls->client_line_ref_held || ! lineIsAlive(client_l))
         {
             lineReuseBuffer(l, buf);
             socks5serverCloseUdpRemoteLine(t, l);
@@ -66,12 +66,12 @@ void socks5serverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
          * Socks5Server close drains every registered UDP remote, including
          * this exact line. Keep the remote allocation present until the
          * outer frame can observe whether that owner path already closed it. */
-        lineLock(l);
-        client_alive = withLineLockedWithBuf(client_l, tunnelPrevDownStreamPayload, t, buf);
+        lineRef(l);
+        client_alive = lineCallWithRefWithBuf(client_l, tunnelPrevDownStreamPayload, t, buf);
 
         if (! lineIsAlive(l))
         {
-            lineUnlock(l);
+            lineUnref(l);
             return;
         }
 
@@ -79,7 +79,7 @@ void socks5serverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         {
             socks5serverCloseUdpRemoteLine(t, l);
         }
-        lineUnlock(l);
+        lineUnref(l);
         return;
     }
 

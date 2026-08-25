@@ -451,7 +451,7 @@ static void testKind(ipmanipulator_delay_barrier_kind_e kind)
             "byte-bound fail-open changed FIFO order");
     removeEntry(state, kind, &key);
 
-    /* Destruction of an armed barrier must recycle every buffer and unlock its line. */
+    /* Destruction of an armed barrier must recycle every buffer and release its line reference. */
     discard reserveEntry(state, kind, &key);
     barrier = findBarrierLocked(state, kind, &key, &shard);
     ipmanipulatorDelayBarrierInitialize(state, barrier, 400);

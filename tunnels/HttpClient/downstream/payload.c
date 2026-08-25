@@ -21,7 +21,7 @@ void httpclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
-    lineLock(l);
+    lineRef(l);
 
     if (ls->runtime_proto == kHttpClientRuntimeHttp1 && ls->response_complete)
     {
@@ -31,7 +31,7 @@ void httpclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             ls->h1_trailing_bytes_logged = true;
         }
         lineReuseBuffer(l, buf);
-        lineUnlock(l);
+        lineUnref(l);
         return;
     }
 
@@ -40,16 +40,16 @@ void httpclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         if (! httpclientTransportFeedHttp2Input(t, l, ls, buf))
         {
             failAndCloseD(t, l, ls);
-            lineUnlock(l);
+            lineUnref(l);
             return;
         }
         if (ts->websocket_enabled && ls->websocket_active && ls->websocket_close_received)
         {
             httpclientTransportCloseBothDirections(t, l, ls);
-            lineUnlock(l);
+            lineUnref(l);
             return;
         }
-        lineUnlock(l);
+        lineUnref(l);
         return;
     }
 
@@ -58,12 +58,12 @@ void httpclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         if (ls->prev_finished)
         {
             lineReuseBuffer(l, buf);
-            lineUnlock(l);
+            lineUnref(l);
             return;
         }
 
         tunnelPrevDownStreamPayload(t, l, buf);
-        lineUnlock(l);
+        lineUnref(l);
         return;
     }
 
@@ -73,16 +73,16 @@ void httpclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         if (! httpclientTransportDrainWebSocketDown(t, l, ls))
         {
             failAndCloseD(t, l, ls);
-            lineUnlock(l);
+            lineUnref(l);
             return;
         }
         if (ls->websocket_close_received)
         {
             httpclientTransportCloseBothDirections(t, l, ls);
-            lineUnlock(l);
+            lineUnref(l);
             return;
         }
-        lineUnlock(l);
+        lineUnref(l);
         return;
     }
 
@@ -91,13 +91,13 @@ void httpclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     if (! httpclientTransportHandleHttp1ResponseHeaderPhase(t, l, ls))
     {
         failAndCloseD(t, l, ls);
-        lineUnlock(l);
+        lineUnref(l);
         return;
     }
 
     if (! lineIsAlive(l))
     {
-        lineUnlock(l);
+        lineUnref(l);
         return;
     }
 
@@ -109,18 +109,18 @@ void httpclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             if (! httpclientTransportFeedHttp2Input(t, l, ls, leftover))
             {
                 failAndCloseD(t, l, ls);
-                lineUnlock(l);
+                lineUnref(l);
                 return;
             }
 
             if (! lineIsAlive(l))
             {
-                lineUnlock(l);
+                lineUnref(l);
                 return;
             }
         }
 
-        lineUnlock(l);
+        lineUnref(l);
         return;
     }
 
@@ -129,14 +129,14 @@ void httpclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         if (! httpclientTransportDrainHttp1Body(t, l, ls))
         {
             failAndCloseD(t, l, ls);
-            lineUnlock(l);
+            lineUnref(l);
             return;
         }
     }
 
     if (! lineIsAlive(l))
     {
-        lineUnlock(l);
+        lineUnref(l);
         return;
     }
 
@@ -148,9 +148,9 @@ void httpclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     if (ts->websocket_enabled && ls->websocket_active && ls->websocket_close_received)
     {
         httpclientTransportCloseBothDirections(t, l, ls);
-        lineUnlock(l);
+        lineUnref(l);
         return;
     }
 
-    lineUnlock(l);
+    lineUnref(l);
 }

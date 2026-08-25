@@ -68,8 +68,8 @@ static uint32_t headerclientBuildProxyProtocolV1(headerclient_tstate_t *ts, line
         return stringFormatFits(written, kHeaderClientProxyProtocolV1MaxHeaderSize) ? (uint32_t) written : 0;
     }
 
-    char        src_ip[SOCKADDR_STRLEN]  = {0};
-    char        dest_ip[SOCKADDR_STRLEN] = {0};
+    char src_ip[SOCKADDR_STRLEN]  = {0};
+    char dest_ip[SOCKADDR_STRLEN] = {0};
 
     written = stringNPrintf((char *) out,
                             kHeaderClientProxyProtocolV1MaxHeaderSize,
@@ -149,11 +149,11 @@ static uint32_t headerclientBuildHeader(headerclient_tstate_t *ts, line_t *l, ui
 
 static void headerclientCloseLineFromHeaderError(tunnel_t *t, line_t *l, headerclient_lstate_t *ls)
 {
-    lineLock(l);
+    lineRef(l);
     headerclientLinestateDestroy(ls);
     tunnelNextUpStreamFinish(t, l);
     tunnelPrevDownStreamFinish(t, l);
-    lineUnlock(l);
+    lineUnref(l);
 }
 
 void headerclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)

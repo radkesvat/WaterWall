@@ -13,7 +13,7 @@ void httpclientTunnelDownStreamFinish(tunnel_t *t, line_t *l)
         return;
     }
 
-    lineLock(l);
+    lineRef(l);
 
     ls->next_finished = true;
 
@@ -22,7 +22,7 @@ void httpclientTunnelDownStreamFinish(tunnel_t *t, line_t *l)
         // Re-entrant downstream Finish: our own upStreamFinish is currently flushing final
         // bytes toward next and has already marked prev as finished. That frame owns the
         // line-state destruction, and nothing may be sent back toward the finished prev.
-        lineUnlock(l);
+        lineUnref(l);
         return;
     }
 
@@ -58,5 +58,5 @@ void httpclientTunnelDownStreamFinish(tunnel_t *t, line_t *l)
 
     httpclientLinestateDestroy(ls);
     tunnelPrevDownStreamFinish(t, l);
-    lineUnlock(l);
+    lineUnref(l);
 }

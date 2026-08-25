@@ -36,7 +36,7 @@ void tcpoverudpclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf
         return;
     }
 
-    lineLock(l);
+    lineRef(l);
     while (true)
     {
         sbuf_t *large_buf = bufferpoolGetLargeBuffer(lineGetBufferPool(l));
@@ -101,5 +101,5 @@ void tcpoverudpclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf
         }
     }
 
-    lineUnlock(l);
+    lineUnref(l);
 }

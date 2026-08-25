@@ -513,7 +513,7 @@ static void packetsenderSendReadyPackets(packetsender_worker_state_t *slot)
         packetsenderApplyRoutingContext(state, slot->line, src_addr_network, src_addr_host, protocol);
         lineSetRecalculateChecksum(slot->line, false);
 
-        if (! withLineLockedWithBuf(slot->line, tunnelNextUpStreamPayload, slot->tunnel, buf))
+        if (! lineCallWithRefWithBuf(slot->line, tunnelNextUpStreamPayload, slot->tunnel, buf))
         {
             LOGF("PacketSender: worker packet line died during payload send");
             abortProgramNow(1);

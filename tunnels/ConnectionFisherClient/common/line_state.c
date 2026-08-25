@@ -42,7 +42,7 @@ bool connectionfisherclientLinestateInitializeMain(connectionfisherclient_lstate
 void connectionfisherclientLinestateInitializeChild(connectionfisherclient_lstate_t *ls, line_t *l, line_t *main_l,
                                                     uint32_t slot)
 {
-    lineLock(main_l);
+    lineRef(main_l);
 
     *ls = (connectionfisherclient_lstate_t) {
         .role                     = kConnectionFisherClientRoleChild,

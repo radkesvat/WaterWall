@@ -614,7 +614,7 @@ static line_t *twfLinePoolCreateLine(twf_line_pool_t *lp)
 
 /**
  * Release the pool. Every line taken from it must already have been reclaimed, which for a line the test still
- * holds means lineDestroy() plus the matching lineUnlock().
+ * holds means lineDestroy() plus the matching lineUnref().
  */
 static void twfLinePoolTeardown(twf_line_pool_t *lp)
 {
@@ -631,9 +631,9 @@ typedef void (*TwfOwnerFinishFn)(tunnel_t *t, line_t *l);
 /**
  * Run an owner's Finish handler the way a re-entrant caller does, and require the postcondition:
  *
- *     lineLock(line); owner_finish(owner, line); assert(! lineIsAlive(line)); lineUnlock(line);
+ *     lineRef(line); owner_finish(owner, line); assert(! lineIsAlive(line)); lineUnref(line);
  *
- * The outer lock is what makes the assertion legal at all - it keeps the allocation present past the owner's
+ * The outer reference is what makes the assertion legal at all - it keeps the allocation present past the owner's
  * lineDestroy(), which is exactly the frame the contract exists to protect. The caller still owns that reference
  * afterwards and releases it with twfRequireOwnedLineReclaimed().
  *
@@ -644,7 +644,7 @@ static void twfRunOwnerFinish(tunnel_t *t, line_t *l, TwfOwnerFinishFn finish, c
     char message[192];
 
     twfRequire(lineIsAlive(l), "the line must be alive before the owner's Finish handler runs");
-    lineLock(l);
+    lineRef(l);
 
     finish(t, l);
 
@@ -672,5 +672,5 @@ static void twfRequireOwnedLineReclaimed(line_t *l, const char *what)
              what);
     twfRequireEqualU32(twfLineRefCount(l), 1, message);
 
-    lineUnlock(l);
+    lineUnref(l);
 }

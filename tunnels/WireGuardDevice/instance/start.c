@@ -27,7 +27,7 @@ void wireguarddeviceQueueWorkerPacketInit(void *worker, void *arg1, void *arg2, 
     tunnel_t *t = arg1;
     line_t   *l = tunnelchainGetWorkerPacketLine(tunnelGetChain(t), wid);
 
-    if (UNLIKELY(! withLineLocked(l, tunnelNextUpStreamInit, t)))
+    if (UNLIKELY(! lineCallWithRef(l, tunnelNextUpStreamInit, t)))
     {
         LOGF("WireGuardDevice: worker packet line died during packet-side init");
         abortProgramNow(1);

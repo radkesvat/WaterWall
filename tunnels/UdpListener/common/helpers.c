@@ -98,7 +98,7 @@ void onUdpListenerFilteredPayloadReceived(wevent_t *ev)
         idle->userdata  = ls;
         ls->idle_handle = idle;
 
-        if (! withLineLocked(l, tunnelNextUpStreamInit, t))
+        if (! lineCallWithRef(l, tunnelNextUpStreamInit, t))
         {
             LOGW("UdpListener: socket just got closed by upstream before anything happend");
 

@@ -162,7 +162,7 @@ bool usercontrollerRegisterLine(tunnel_t *t, line_t *l, usercontroller_lstate_t 
         return false;
     }
 
-    lineLock(l);
+    lineRef(l);
     ws->lines[ws->line_count] = l;
     ws->line_count += 1U;
     ls->registered = true;
@@ -199,7 +199,7 @@ void usercontrollerUnregisterLine(tunnel_t *t, line_t *l, usercontroller_lstate_
     }
 
     ls->registered = false;
-    lineUnlock(l);
+    lineUnref(l);
 }
 
 void usercontrollerWorkerClearRegistry(tunnel_t *t, wid_t wid)
@@ -222,7 +222,7 @@ void usercontrollerWorkerClearRegistry(tunnel_t *t, wid_t wid)
             ls->registered              = false;
         }
 
-        lineUnlock(line);
+        lineUnref(line);
     }
 }
 
@@ -329,7 +329,7 @@ void usercontrollerSweepTimerCallback(wtimer_t *timer)
             ws->line_count -= 1U;
             ws->lines[i]              = ws->lines[ws->line_count];
             ws->lines[ws->line_count] = NULL;
-            lineUnlock(line);
+            lineUnref(line);
             continue;
         }
 
@@ -377,7 +377,7 @@ static void usercontrollerReleaseAccounting(tunnel_t *t, line_t *l, usercontroll
 //   kUserControllerCloseInternal : our decision     -> close upstream first, then downstream
 //
 // We never send protocol bytes here, so the only re-entrancy boundary is the finish propagation
-// itself, which Waterwall guarantees is non re-entrant. lineLock keeps the line memory valid until
+// itself, which Waterwall guarantees is non re-entrant. lineRef keeps the line memory valid until
 // we return; `closing` collapses any re-entrant teardown into a no-op.
 void usercontrollerCloseLine(tunnel_t *t, line_t *l, usercontroller_close_origin_t origin)
 {
@@ -392,7 +392,7 @@ void usercontrollerCloseLine(tunnel_t *t, line_t *l, usercontroller_close_origin
     bool close_prev = origin != kUserControllerCloseFromPrev;
 
     ls->closing = true;
-    lineLock(l);
+    lineRef(l);
 
     usercontrollerReleaseAccounting(t, l, ls);
 
@@ -408,5 +408,5 @@ void usercontrollerCloseLine(tunnel_t *t, line_t *l, usercontroller_close_origin
         tunnelPrevDownStreamFinish(t, l);
     }
 
-    lineUnlock(l);
+    lineUnref(l);
 }

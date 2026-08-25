@@ -119,15 +119,15 @@ line_t *wireguarddeviceEnsureTransportLine(wgd_tstate_t *state, wid_t wid)
     line                        = lineCreate(tunnelchainGetLinePools(chain), wid);
     state->transport_lines[wid] = line;
 
-    lineLock(line);
+    lineRef(line);
     wireguarddeviceTransportLineInit(tunnel, line);
     if (! lineIsAlive(line))
     {
         state->transport_lines[wid] = NULL;
-        lineUnlock(line);
+        lineUnref(line);
         return NULL;
     }
-    lineUnlock(line);
+    lineUnref(line);
 
     return line;
 }
@@ -151,7 +151,7 @@ void wireguarddeviceCloseTransportLine(tunnel_t *t, wid_t wid)
         return;
     }
 
-    lineLock(line);
+    lineRef(line);
     if (wireguarddeviceTransportSideIsNext(state))
     {
         tunnelNextUpStreamFinish(t, line);
@@ -165,7 +165,7 @@ void wireguarddeviceCloseTransportLine(tunnel_t *t, wid_t wid)
     {
         lineDestroy(line);
     }
-    lineUnlock(line);
+    lineUnref(line);
 }
 
 /*
@@ -218,7 +218,7 @@ bool wireguarddeviceForwardTransportPacket(wgd_tstate_t *state, line_t *line, sb
     tunnel_t *tunnel = state->tunnel;
     wid_t     wid    = lineGetWID(line);
 
-    lineLock(line);
+    lineRef(line);
     if (wireguarddeviceTransportSideIsNext(state))
     {
         tunnelNextUpStreamPayload(tunnel, line, buf);
@@ -234,11 +234,11 @@ bool wireguarddeviceForwardTransportPacket(wgd_tstate_t *state, line_t *line, sb
         {
             state->transport_lines[wid] = NULL;
         }
-        lineUnlock(line);
+        lineUnref(line);
         return false;
     }
 
-    lineUnlock(line);
+    lineUnref(line);
     return true;
 }
 
@@ -287,7 +287,7 @@ static void wireguarddeviceReplayInnerPacketOnWorker(worker_t *worker, void *arg
         bufferpoolReuseBuffer(worker->buffer_pool, buf);
     }
 
-    lineUnlock(line);
+    lineUnref(line);
 }
 
 static void wireguarddeviceCleanupInnerPacket(void *arg1, void *arg2, void *arg3, worker_message_cancel_reason_e reason)
@@ -309,7 +309,7 @@ static void wireguarddeviceCleanupInnerPacket(void *arg1, void *arg2, void *arg3
         sbufDestroy(buf);
     }
 
-    lineUnlock(line);
+    lineUnref(line);
 }
 
 void wireguarddeviceForwardInnerPacket(wgd_tstate_t *state, line_t *line, sbuf_t *buf)
@@ -327,7 +327,7 @@ void wireguarddeviceForwardInnerPacket(wgd_tstate_t *state, line_t *line, sbuf_t
     line_t *target = tunnelchainGetWorkerPacketLine(state->tunnel->chain, target_wid);
 
     assert(target != NULL);
-    lineLock(target);
+    lineRef(target);
     sendWorkerMessageForceQueueBestEffortWithCleanup(target_wid,
                                                      (WorkerMessageCallback) wireguarddeviceReplayInnerPacketOnWorker,
                                                      wireguarddeviceCleanupInnerPacket,

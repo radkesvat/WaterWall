@@ -343,7 +343,7 @@ void speedlimitCloseLineOnDrainFailure(speedlimit_lstate_t *ls, sbuf_t *detached
     line_t   *l = ls->line;
 
     // both sides of this line are initialized and the close below may destroy the line re-entrantly
-    lineLock(l);
+    lineRef(l);
 
     if (detached_buf != NULL)
     {
@@ -361,5 +361,5 @@ void speedlimitCloseLineOnDrainFailure(speedlimit_lstate_t *ls, sbuf_t *detached
         tunnelPrevDownStreamFinish(t, l);
     }
 
-    lineUnlock(l);
+    lineUnref(l);
 }

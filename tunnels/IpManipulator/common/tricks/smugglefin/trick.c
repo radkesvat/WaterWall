@@ -521,7 +521,7 @@ static void smugglefintrickRunDelayedRelease(worker_t *worker, void *arg1, void 
     }
 
     memoryFree(context);
-    lineUnlock(l);
+    lineUnref(l);
 }
 
 static void smugglefintrickCleanupDelayedRelease(void *arg1, void *arg2, void *arg3,
@@ -538,7 +538,7 @@ static void smugglefintrickCleanupDelayedRelease(void *arg1, void *arg2, void *a
         smugglefintrickReleaseQueuedPacketsNow(t, l, context);
     }
     memoryFree(context);
-    lineUnlock(l);
+    lineUnref(l);
 }
 
 static bool smugglefintrickScheduleQueuedRelease(tunnel_t *t, line_t *l, uint32_t delay_ms,
@@ -555,7 +555,7 @@ static bool smugglefintrickScheduleQueuedRelease(tunnel_t *t, line_t *l, uint32_
     recovery_context.force                             = true;
     const bool recover_on_caller                       = lineIsOnCurrentEventWorker(l) && lineIsAlive(l);
 
-    lineLock(l);
+    lineRef(l);
     WW_WORKER_MESSAGE_BENCHMARK_RECORD_CONTINUATION(kWorkerMessageBenchmarkContinuationIpManipulatorDeferred);
 #ifdef IPMANIPULATOR_SMUGGLEFIN_TEST_HOOKS
     bool scheduled = ipmanipulatorSmuggleFinTestScheduleTimed(lineGetWID(l),
@@ -639,7 +639,7 @@ static void smugglefintrickCleanupHandoffMessage(void *arg1, void *arg2, void *a
     discard arg1;
 
     memoryFree(arg3);
-    lineUnlock((line_t *) arg2);
+    lineUnref((line_t *) arg2);
 }
 
 static void smugglefintrickRunHandoffMessage(worker_t *worker, void *arg1, void *arg2, void *arg3)
@@ -659,7 +659,7 @@ static void smugglefintrickRunHandoffMessage(worker_t *worker, void *arg1, void 
     if (! lineIsAlive(owner_line))
     {
         memoryFree(message);
-        lineUnlock(owner_line);
+        lineUnref(owner_line);
         LOGF("IpManipulator: worker packet line died before a smuggle-fin handoff ran");
         abortProgramNow(1);
     }
@@ -683,7 +683,7 @@ static void smugglefintrickRunHandoffMessage(worker_t *worker, void *arg1, void 
     if (buf == NULL)
     {
         memoryFree(message);
-        lineUnlock(owner_line);
+        lineUnref(owner_line);
         LOGF("IpManipulator: failed to allocate an owner-worker buffer for a smuggle-fin handoff");
         abortProgramNow(1);
     }
@@ -709,7 +709,7 @@ static void smugglefintrickRunHandoffMessage(worker_t *worker, void *arg1, void 
         {
             lineSetRecalculateChecksum(owner_line, false);
             ipmanipulatorFlowShardUnlock(shard);
-            lineUnlock(owner_line);
+            lineUnref(owner_line);
             return;
         }
 
@@ -730,12 +730,12 @@ static void smugglefintrickRunHandoffMessage(worker_t *worker, void *arg1, void 
 
     if (! lineIsAlive(owner_line))
     {
-        lineUnlock(owner_line);
+        lineUnref(owner_line);
         LOGF("IpManipulator: worker packet line died while resuming a smuggle-fin handoff");
         abortProgramNow(1);
     }
 
-    lineUnlock(owner_line);
+    lineUnref(owner_line);
 }
 
 bool smugglefintrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
@@ -915,7 +915,7 @@ bool smugglefintrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     smugglefintrickScheduleQueuedRelease(t, l, state->trick_smuggle_fin_pause_timeout_ms, timeout_context);
 
-    lineLock(l);
+    lineRef(l);
     lineSetRecalculateChecksum(l, true);
 
     /*
@@ -926,13 +926,13 @@ bool smugglefintrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     if (! lineIsAlive(l))
     {
-        lineUnlock(l);
+        lineUnref(l);
         LOGF("IpManipulator: worker packet line died during smuggle-fin send");
         abortProgramNow(1);
     }
 
     lineSetRecalculateChecksum(l, false);
-    lineUnlock(l);
+    lineUnref(l);
 
     LOGD("IpManipulator: smuggle-fin sent a mirrored FIN packet to \"%s\" and paused flow generation %u",
          state->trick_real_fin_upstream_node != NULL ? state->trick_real_fin_upstream_node->name : "(null)",
@@ -1031,7 +1031,7 @@ bool smugglefintrickDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
                 uint32_t packet_length = sbufGetLength(buf);
                 wid_t    owner_wid     = lineGetWID(owner_line);
 
-                lineLock(owner_line);
+                lineRef(owner_line);
 
                 uint32_t src_addr         = flow->src_addr;
                 uint32_t dst_addr         = flow->dst_addr;
@@ -1044,7 +1044,7 @@ bool smugglefintrickDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 #if WW_COMPILE_FOR_32BIT
                 if (packet_length > (uint32_t) (SIZE_MAX - sizeof(smugglefintrick_handoff_message_t)))
                 {
-                    lineUnlock(owner_line);
+                    lineUnref(owner_line);
                     return false;
                 }
 #endif
@@ -1052,7 +1052,7 @@ bool smugglefintrickDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
                 smugglefintrick_handoff_message_t *message = memoryAllocate(sizeof(*message) + (size_t) packet_length);
                 if (message == NULL)
                 {
-                    lineUnlock(owner_line);
+                    lineUnref(owner_line);
                     return false;
                 }
 

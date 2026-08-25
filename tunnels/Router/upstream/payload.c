@@ -29,12 +29,12 @@ static void routerForwardPayload(tunnel_t *t, line_t *l, router_lstate_t *ls, sb
 
 static void routerCommitRoute(tunnel_t *t, line_t *l, router_lstate_t *ls, tunnel_t *target, sbuf_t *first)
 {
-    lineLock(l);
+    lineRef(l);
 
     if (target != NULL)
     {
-        ls->target  = target;
-        ls->route   = kRouterRouteTarget;
+        ls->target = target;
+        ls->route  = kRouterRouteTarget;
         tunnelUpStreamInit(target, l);
         if (lineIsAlive(l))
         {
@@ -44,8 +44,8 @@ static void routerCommitRoute(tunnel_t *t, line_t *l, router_lstate_t *ls, tunne
     }
     else
     {
-        ls->target  = NULL;
-        ls->route   = kRouterRouteDefault;
+        ls->target = NULL;
+        ls->route  = kRouterRouteDefault;
         tunnelNextUpStreamInit(t, l);
         if (lineIsAlive(l))
         {
@@ -59,7 +59,7 @@ static void routerCommitRoute(tunnel_t *t, line_t *l, router_lstate_t *ls, tunne
         lineReuseBuffer(l, first);
     }
 
-    lineUnlock(l);
+    lineUnref(l);
 }
 
 void routerTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)

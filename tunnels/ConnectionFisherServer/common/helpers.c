@@ -13,7 +13,7 @@ static bool connectionfisherserverEnsureNextInit(tunnel_t *t, line_t *l, connect
     }
 
     ls->next_init_sent = true;
-    if (! withLineLocked(l, tunnelNextUpStreamInit, t))
+    if (! lineCallWithRef(l, tunnelNextUpStreamInit, t))
     {
         return false;
     }
@@ -49,8 +49,8 @@ static sbuf_t *connectionfisherserverMakeReply(line_t *l)
 
 void connectionfisherserverCloseLineFromUpstream(tunnel_t *t, line_t *l)
 {
-    connectionfisherserver_lstate_t *ls = lineGetState(l, t);
-    bool close_next = ls->next_init_sent;
+    connectionfisherserver_lstate_t *ls         = lineGetState(l, t);
+    bool                             close_next = ls->next_init_sent;
 
     connectionfisherserverLinestateDestroy(ls);
 
@@ -69,8 +69,8 @@ void connectionfisherserverCloseLineFromDownstream(tunnel_t *t, line_t *l)
 
 void connectionfisherserverCloseLineFromProtocolError(tunnel_t *t, line_t *l)
 {
-    connectionfisherserver_lstate_t *ls = lineGetState(l, t);
-    bool close_next = ls->next_init_sent;
+    connectionfisherserver_lstate_t *ls         = lineGetState(l, t);
+    bool                             close_next = ls->next_init_sent;
 
     connectionfisherserverLinestateDestroy(ls);
 
@@ -100,7 +100,7 @@ void connectionfisherserverHandleHandshakePayload(tunnel_t *t, line_t *l, sbuf_t
         return;
     }
 
-    sbuf_t *ping = bufferstreamReadExact(&ls->in_stream, kConnectionFisherServerHandshakeLength);
+    sbuf_t *ping  = bufferstreamReadExact(&ls->in_stream, kConnectionFisherServerHandshakeLength);
     bool    valid = connectionfisherserverReadMatches(ping, kConnectionFisherServerPing);
 
     lineReuseBuffer(l, ping);
@@ -115,7 +115,7 @@ void connectionfisherserverHandleHandshakePayload(tunnel_t *t, line_t *l, sbuf_t
 
     ls->phase = kConnectionFisherServerPhaseWaitPayload;
 
-    if (! withLineLockedWithBuf(l, tunnelPrevDownStreamPayload, t, connectionfisherserverMakeReply(l)))
+    if (! lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, connectionfisherserverMakeReply(l)))
     {
         return;
     }
@@ -127,9 +127,9 @@ void connectionfisherserverHandleHandshakePayload(tunnel_t *t, line_t *l, sbuf_t
             return;
         }
 
-        ls = lineGetState(l, t);
+        ls            = lineGetState(l, t);
         sbuf_t *extra = bufferstreamFullRead(&ls->in_stream);
-        if (extra != NULL && ! withLineLockedWithBuf(l, tunnelNextUpStreamPayload, t, extra))
+        if (extra != NULL && ! lineCallWithRefWithBuf(l, tunnelNextUpStreamPayload, t, extra))
         {
             return;
         }

@@ -105,7 +105,7 @@ static bool pairWithLocalUpstreamConnection(tunnel_t *t, line_t *d, reverseserve
     uls->buffering = NULL;
 
     // since we are paired, if this call returns false that means both linses are closed
-    if (! withLineLockedWithBuf(d, tunnelPrevDownStreamPayload, t, ubuf))
+    if (! lineCallWithRefWithBuf(d, tunnelPrevDownStreamPayload, t, ubuf))
     {
         if (dbuf)
         {
@@ -145,7 +145,7 @@ static bool pipeToRemoteWorker(tunnel_t *t, line_t *d, reverseserver_lstate_t *d
     sbuf_t   *handshake_buf = createHandshakeBuffer(d, ts);
     tunnel_t *prev_tun      = t->prev;
 
-    if (! withLineLockedWithBuf(d, tunnelUpStreamPayload, prev_tun, handshake_buf))
+    if (! lineCallWithRefWithBuf(d, tunnelUpStreamPayload, prev_tun, handshake_buf))
     {
         if (buf != NULL)
         {
@@ -156,7 +156,7 @@ static bool pipeToRemoteWorker(tunnel_t *t, line_t *d, reverseserver_lstate_t *d
 
     if (buf != NULL)
     {
-        discard withLineLockedWithBuf(d, tunnelUpStreamPayload, prev_tun, buf);
+        discard lineCallWithRefWithBuf(d, tunnelUpStreamPayload, prev_tun, buf);
     }
 
     return true;

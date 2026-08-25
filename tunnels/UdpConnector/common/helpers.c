@@ -88,7 +88,7 @@ void udpconnectorOnRecvFrom(wio_t *io, sbuf_t *buf)
     if (! ls->established)
     {
         ls->established = true;
-        if (! withLineLocked(l, tunnelPrevDownStreamEst, t))
+        if (! lineCallWithRef(l, tunnelPrevDownStreamEst, t))
         {
             LOGW("UdpConnector: socket just got closed by upstream before anything happend");
             bufferpoolReuseBuffer(wloopGetBufferPool(weventGetLoop(io)), payload);

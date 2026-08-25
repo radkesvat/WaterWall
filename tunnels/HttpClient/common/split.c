@@ -93,24 +93,24 @@ static void httpclientSplitCloseFromTransport(tunnel_t *t, line_t *transport_lin
     line_t              *upload_line   = transport_ls->split_upload_line;
     line_t              *download_line = transport_ls->split_download_line;
 
-    lineLock(transport_line);
-    bool main_locked     = false;
-    bool upload_locked   = false;
-    bool download_locked = false;
+    lineRef(transport_line);
+    bool main_ref_held     = false;
+    bool upload_ref_held   = false;
+    bool download_ref_held = false;
     if (main_line != NULL && lineIsAlive(main_line))
     {
-        lineLock(main_line);
-        main_locked = true;
+        lineRef(main_line);
+        main_ref_held = true;
     }
     if (upload_line != NULL && upload_line != transport_line && lineIsAlive(upload_line))
     {
-        lineLock(upload_line);
-        upload_locked = true;
+        lineRef(upload_line);
+        upload_ref_held = true;
     }
     if (download_line != NULL && download_line != transport_line && lineIsAlive(download_line))
     {
-        lineLock(download_line);
-        download_locked = true;
+        lineRef(download_line);
+        download_ref_held = true;
     }
 
     if (upload_line != NULL && upload_line != transport_line)
@@ -135,24 +135,24 @@ static void httpclientSplitCloseFromTransport(tunnel_t *t, line_t *transport_lin
     if (lineIsAlive(transport_line))
     {
         // The transport line is one we created, so finish its next side (unless our caller
-        // already received that Finish) and destroy it. We hold an extra lock above, so the
-        // line survives until the unlock below.
+        // already received that Finish) and destroy it. We hold an extra line reference above,
+        // so the allocation survives until the unref below.
         httpclientSplitDestroyCreatedLine(t, transport_line, finish_sender);
     }
 
-    if (download_locked)
+    if (download_ref_held)
     {
-        lineUnlock(download_line);
+        lineUnref(download_line);
     }
-    if (upload_locked)
+    if (upload_ref_held)
     {
-        lineUnlock(upload_line);
+        lineUnref(upload_line);
     }
-    if (main_locked)
+    if (main_ref_held)
     {
-        lineUnlock(main_line);
+        lineUnref(main_line);
     }
-    lineUnlock(transport_line);
+    lineUnref(transport_line);
 }
 
 static void httpclientSplitFailMain(tunnel_t *t, line_t *main_line)
@@ -168,16 +168,16 @@ static void httpclientSplitFailMain(tunnel_t *t, line_t *main_line)
 
     if (upload_line != NULL && lineIsAlive(upload_line))
     {
-        lineLock(upload_line);
+        lineRef(upload_line);
         httpclientSplitDestroyCreatedLine(t, upload_line, true);
-        lineUnlock(upload_line);
+        lineUnref(upload_line);
     }
 
     if (download_line != NULL && lineIsAlive(download_line))
     {
-        lineLock(download_line);
+        lineRef(download_line);
         httpclientSplitDestroyCreatedLine(t, download_line, true);
-        lineUnlock(download_line);
+        lineUnref(download_line);
     }
 
     httpclientLinestateDestroy(main_ls);
@@ -205,26 +205,26 @@ void httpclientSplitUpStreamInit(tunnel_t *t, line_t *l)
              ts->split_download_path);
     }
 
-    lineLock(l);
+    lineRef(l);
 
     line_t *upload_line   = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), lineGetWID(l));
     ls->split_upload_line = upload_line;
     httpclientSplitInitTransportState(t, upload_line, l, upload_line, NULL, kHttpClientSplitRoleUpload, ls->split_id);
 
-    if (! withLineLocked(upload_line, tunnelNextUpStreamInit, t))
+    if (! lineCallWithRef(upload_line, tunnelNextUpStreamInit, t))
     {
         if (lineIsAlive(l))
         {
             httpclientLinestateDestroy(ls);
             tunnelPrevDownStreamFinish(t, l);
         }
-        lineUnlock(l);
+        lineUnref(l);
         return;
     }
 
     if (! lineIsAlive(l))
     {
-        lineUnlock(l);
+        lineUnref(l);
         return;
     }
 
@@ -237,47 +237,47 @@ void httpclientSplitUpStreamInit(tunnel_t *t, line_t *l)
     httpclientSplitInitTransportState(
         t, download_line, l, upload_line, download_line, kHttpClientSplitRoleDownload, ls->split_id);
 
-    lineLock(upload_line);
-    bool download_init_ok = withLineLocked(download_line, tunnelNextUpStreamInit, t);
+    lineRef(upload_line);
+    bool download_init_ok = lineCallWithRef(download_line, tunnelNextUpStreamInit, t);
     if (! download_init_ok)
     {
         if (lineIsAlive(upload_line))
         {
             httpclientSplitDestroyCreatedLine(t, upload_line, true);
         }
-        lineUnlock(upload_line);
+        lineUnref(upload_line);
         if (lineIsAlive(l))
         {
             httpclientLinestateDestroy(ls);
             tunnelPrevDownStreamFinish(t, l);
         }
-        lineUnlock(l);
+        lineUnref(l);
         return;
     }
-    lineUnlock(upload_line);
+    lineUnref(upload_line);
 
     if (! lineIsAlive(l))
     {
-        lineUnlock(l);
+        lineUnref(l);
         return;
     }
 
     bool ok = true;
-    lineLock(upload_line);
+    lineRef(upload_line);
     if (! httpclientTransportSendHttp1SplitRequestHeaders(t, upload_line) || ! lineIsAlive(upload_line))
     {
         ok = false;
     }
-    lineUnlock(upload_line);
+    lineUnref(upload_line);
 
     if (ok)
     {
-        lineLock(download_line);
+        lineRef(download_line);
         if (! httpclientTransportSendHttp1SplitRequestHeaders(t, download_line) || ! lineIsAlive(download_line))
         {
             ok = false;
         }
-        lineUnlock(download_line);
+        lineUnref(download_line);
     }
 
     if (! ok && lineIsAlive(l))
@@ -285,7 +285,7 @@ void httpclientSplitUpStreamInit(tunnel_t *t, line_t *l)
         httpclientSplitFailMain(t, l);
     }
 
-    lineUnlock(l);
+    lineUnref(l);
 }
 
 void httpclientSplitUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
@@ -300,8 +300,8 @@ void httpclientSplitUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
-    lineLock(l);
-    lineLock(upload_line);
+    lineRef(l);
+    lineRef(upload_line);
 
     bool ok = httpclientTransportSendHttp1ChunkedPayload(t, upload_line, buf);
     if ((! ok || ! lineIsAlive(upload_line)) && lineIsAlive(l))
@@ -309,8 +309,8 @@ void httpclientSplitUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         httpclientSplitFailMain(t, l);
     }
 
-    lineUnlock(upload_line);
-    lineUnlock(l);
+    lineUnref(upload_line);
+    lineUnref(l);
 }
 
 void httpclientSplitUpStreamFinish(tunnel_t *t, line_t *l)
@@ -319,7 +319,7 @@ void httpclientSplitUpStreamFinish(tunnel_t *t, line_t *l)
     line_t              *upload_line   = ls->split_upload_line;
     line_t              *download_line = ls->split_download_line;
 
-    lineLock(l);
+    lineRef(l);
     ls->prev_finished = true;
 
     // The main line was created by the upstream adapter (e.g. TcpListener), which destroys it
@@ -330,7 +330,7 @@ void httpclientSplitUpStreamFinish(tunnel_t *t, line_t *l)
 
     if (upload_line != NULL && lineIsAlive(upload_line))
     {
-        lineLock(upload_line);
+        lineRef(upload_line);
         httpclient_lstate_t *upload_ls = lineGetState(upload_line, t);
         // Upload backpressure is re-homed to main's prev, which has already finished this split trio.
         upload_ls->prev_finished = true;
@@ -339,21 +339,21 @@ void httpclientSplitUpStreamFinish(tunnel_t *t, line_t *l)
         {
             httpclientSplitDestroyCreatedLine(t, upload_line, true);
         }
-        lineUnlock(upload_line);
+        lineUnref(upload_line);
     }
 
     if (download_line != NULL && lineIsAlive(download_line))
     {
-        lineLock(download_line);
+        lineRef(download_line);
         httpclientSplitDestroyCreatedLine(t, download_line, true);
-        lineUnlock(download_line);
+        lineUnref(download_line);
     }
 
     if (lineIsAlive(l))
     {
         httpclientLinestateDestroy(ls);
     }
-    lineUnlock(l);
+    lineUnref(l);
 }
 
 void httpclientSplitDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
@@ -381,8 +381,8 @@ void httpclientSplitDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
-    lineLock(l);
-    lineLock(main_line);
+    lineRef(l);
+    lineRef(main_line);
 
     if (ls->response_complete)
     {
@@ -393,8 +393,8 @@ void httpclientSplitDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             ls->h1_trailing_bytes_logged = true;
         }
         lineReuseBuffer(l, buf);
-        lineUnlock(main_line);
-        lineUnlock(l);
+        lineUnref(main_line);
+        lineUnref(l);
         return;
     }
 
@@ -414,8 +414,8 @@ void httpclientSplitDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         httpclientSplitCloseFromTransport(t, l, true, true);
     }
 
-    lineUnlock(main_line);
-    lineUnlock(l);
+    lineUnref(main_line);
+    lineUnref(l);
 }
 
 void httpclientSplitDownStreamFinish(tunnel_t *t, line_t *l)
@@ -427,15 +427,15 @@ void httpclientSplitDownStreamFinish(tunnel_t *t, line_t *l)
         line_t *main_line = ls->split_main_line;
         if (main_line != NULL && lineIsAlive(main_line))
         {
-            lineLock(main_line);
+            lineRef(main_line);
             httpclient_lstate_t *main_ls = lineGetState(main_line, t);
             if (main_ls->prev_finished)
             {
                 httpclientSplitDestroyCreatedLine(t, l, false);
-                lineUnlock(main_line);
+                lineUnref(main_line);
                 return;
             }
-            lineUnlock(main_line);
+            lineUnref(main_line);
         }
     }
 

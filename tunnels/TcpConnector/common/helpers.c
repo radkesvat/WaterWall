@@ -137,7 +137,7 @@ void tcpconnectorOnOutBoundConnected(wio_t *upstream_io)
             wioSetCallBackWrite(lstate->io, NULL);
             lstate->write_paused = false;
 
-            if (! withLineLocked(l, tunnelPrevDownStreamResume, t))
+            if (! lineCallWithRef(l, tunnelPrevDownStreamResume, t))
             {
                 return;
             }

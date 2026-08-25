@@ -207,7 +207,7 @@ static void synfinsnitrickDestroyHeldPacketLocked(ipmanipulator_synfin_flow_t *f
     synfinsnitrickDestroyCapturedPacket(&held_packet);
     if (held_line != NULL)
     {
-        lineUnlock(held_line);
+        lineUnref(held_line);
     }
 }
 
@@ -469,7 +469,7 @@ static void synfinsnitrickReleaseTimedOutHold(tunnel_t *t, const ipmanipulator_f
 
         if (held_line != NULL)
         {
-            lineUnlock(held_line);
+            lineUnref(held_line);
         }
     }
 }
@@ -484,7 +484,7 @@ static void synfinsnitrickRunHoldTimeout(worker_t *worker, void *arg1, void *arg
 
     synfinsnitrickReleaseTimedOutHold(t, &context->key, context->generation);
     memoryFree(context);
-    lineUnlock(l);
+    lineUnref(l);
 }
 
 static void synfinsnitrickCleanupHoldTimeout(void *arg1, void *arg2, void *arg3, worker_message_cancel_reason_e reason)
@@ -499,7 +499,7 @@ static void synfinsnitrickCleanupHoldTimeout(void *arg1, void *arg2, void *arg3,
         synfinsnitrickReleaseTimedOutHold(t, &context->key, context->generation);
     }
     memoryFree(context);
-    lineUnlock(l);
+    lineUnref(l);
 }
 
 static bool synfinsnitrickScheduleHoldTimeout(tunnel_t *t, line_t *l, const ipmanipulator_flow_key_t *key,
@@ -525,7 +525,7 @@ static bool synfinsnitrickScheduleHoldTimeout(tunnel_t *t, line_t *l, const ipma
     };
 
     /* The queued message owns a separate reference from the held flow record. */
-    lineLock(l);
+    lineRef(l);
     WW_WORKER_MESSAGE_BENCHMARK_RECORD_CONTINUATION(kWorkerMessageBenchmarkContinuationIpManipulatorDeferred);
 #ifdef IPMANIPULATOR_SYNFIN_TEST_HOOKS
     bool scheduled = ipmanipulatorSynfinTestScheduleTimed(lineGetWID(l),
@@ -1109,7 +1109,7 @@ static void synfinsnitrickSendHeldThenCurrentNormal(tunnel_t *t, ipmanipulator_c
         return;
     }
 
-    lineLock(line);
+    lineRef(line);
 
     bool alive = lineIsAlive(line);
 
@@ -1140,7 +1140,7 @@ static void synfinsnitrickSendHeldThenCurrentNormal(tunnel_t *t, ipmanipulator_c
         }
     }
 
-    lineUnlock(line);
+    lineUnref(line);
 }
 
 static void synfinsnitrickSendOutputs(tunnel_t *t, line_t *l, synfinsnitrick_packet_sequence_t *sequence)
@@ -1151,7 +1151,7 @@ static void synfinsnitrickSendOutputs(tunnel_t *t, line_t *l, synfinsnitrick_pac
         return;
     }
 
-    lineLock(l);
+    lineRef(l);
 
     bool alive = lineIsAlive(l);
 
@@ -1181,7 +1181,7 @@ static void synfinsnitrickSendOutputs(tunnel_t *t, line_t *l, synfinsnitrick_pac
     }
 
     sequence->count = 0;
-    lineUnlock(l);
+    lineUnref(l);
 }
 
 #ifdef IPMANIPULATOR_SYNFIN_TEST_HOOKS
@@ -1505,7 +1505,7 @@ bool synfinsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             }
             if (held_line != NULL)
             {
-                lineUnlock(held_line);
+                lineUnref(held_line);
             }
             synfinsnitrickSendNormalNow(t, l, buf);
             return true;
@@ -1513,7 +1513,7 @@ bool synfinsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         synfinsnitrickSendHeldThenCurrentNormal(t, &held_packet, l, buf);
         if (held_line != NULL)
         {
-            lineUnlock(held_line);
+            lineUnref(held_line);
         }
         return true;
     }
@@ -1569,7 +1569,7 @@ bool synfinsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         uint64_t hold_generation = flow->hold_generation;
 
         /* The flow record retains the packet line until the hold is detached. */
-        lineLock(l);
+        lineRef(l);
         ipmanipulatorFlowShardUnlock(shard);
 
         synfinsnitrickScheduleHoldTimeout(t, l, &key, hold_generation, state->trick_synfin_sni_hold_timeout_ms);
@@ -1611,7 +1611,7 @@ bool synfinsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             }
             if (held_line != NULL)
             {
-                lineUnlock(held_line);
+                lineUnref(held_line);
             }
             synfinsnitrickSendNormalNow(t, l, buf);
             return true;
@@ -1633,7 +1633,7 @@ bool synfinsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
         if (held_line != NULL)
         {
-            lineUnlock(held_line);
+            lineUnref(held_line);
         }
 
         synfinsnitrickDestroyStandalonePacket(&syn_packet_template);

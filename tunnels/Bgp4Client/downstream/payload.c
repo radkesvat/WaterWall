@@ -22,7 +22,7 @@ void bgp4clientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             break;
         }
 
-        if (! withLineLockedWithBuf(l, tunnelPrevDownStreamPayload, t, payload))
+        if (! lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, payload))
         {
             return;
         }

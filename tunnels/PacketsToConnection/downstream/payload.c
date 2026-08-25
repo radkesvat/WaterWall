@@ -240,7 +240,7 @@ void ptcTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     {
         if (ptcNextGateEnter(t))
         {
-            discard withLineLocked(l, tunnelNextUpStreamPause, t);
+            discard lineCallWithRef(l, tunnelNextUpStreamPause, t);
             ptcNextGateLeave(t);
         }
     }

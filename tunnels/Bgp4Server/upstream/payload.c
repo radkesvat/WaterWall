@@ -28,7 +28,7 @@ void bgp4serverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             return;
         }
 
-        if (! withLineLockedWithBuf(l, tunnelNextUpStreamPayload, t, body))
+        if (! lineCallWithRefWithBuf(l, tunnelNextUpStreamPayload, t, body))
         {
             return;
         }

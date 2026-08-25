@@ -62,13 +62,13 @@ static void packetstostreamCloseWorkerOutputLine(tunnel_t *t, line_t *packet_lin
         return;
     }
 
-    lineLock(stream_line);
+    lineRef(stream_line);
     tunnelNextUpStreamFinish(t, stream_line);
     if (lineIsAlive(stream_line))
     {
         lineDestroy(stream_line);
     }
-    lineUnlock(stream_line);
+    lineUnref(stream_line);
 }
 
 void packetstostreamTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context)

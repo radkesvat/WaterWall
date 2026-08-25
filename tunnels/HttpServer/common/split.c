@@ -619,7 +619,7 @@ static void splitCloseFromTransport(tunnel_t *t, line_t *l, bool finish_sender)
 
     if (download_line != NULL && download_line != l && lineIsAlive(download_line))
     {
-        lineLock(download_line);
+        lineRef(download_line);
         httpserver_lstate_t *dls = lineGetState(download_line, t);
         dls->next_finished       = true;
         if (dls->h1_response_headers_sent && ! dls->fin_sent)
@@ -631,21 +631,21 @@ static void splitCloseFromTransport(tunnel_t *t, line_t *l, bool finish_sender)
         {
             splitCloseTransport(t, download_line, true);
         }
-        lineUnlock(download_line);
+        lineUnref(download_line);
     }
 
     if (upload_line != NULL && upload_line != l && lineIsAlive(upload_line))
     {
-        lineLock(upload_line);
+        lineRef(upload_line);
         splitCloseTransport(t, upload_line, true);
-        lineUnlock(upload_line);
+        lineUnref(upload_line);
     }
 
     if (main_line != NULL && lineIsAlive(main_line))
     {
-        lineLock(main_line);
+        lineRef(main_line);
         splitCloseMain(t, main_line, true);
-        lineUnlock(main_line);
+        lineUnref(main_line);
     }
 
     splitCloseTransport(t, l, finish_sender);
@@ -673,13 +673,13 @@ static bool splitPair(tunnel_t *t, line_t *upload_line, line_t *download_line)
     dls->split_upload_line   = upload_line;
     dls->split_download_line = download_line;
 
-    if (! withLineLocked(main_line, tunnelNextUpStreamInit, t))
+    if (! lineCallWithRef(main_line, tunnelNextUpStreamInit, t))
     {
         return false;
     }
 
-    // Init can re-enter and close both transports. Callers hold a lock on the waiting peer, so
-    // both lines stay readable here, but their line states may already have been destroyed.
+    // Init can re-enter and close both transports. Callers hold a reference to the waiting peer, so
+    // both allocations remain present here, but their line states may already have been destroyed.
     if (! lineIsAlive(upload_line) || ! lineIsAlive(download_line))
     {
         return false;
@@ -751,9 +751,9 @@ static bool splitInsertOrPairUpload(tunnel_t *t, line_t *l, size_t header_end, c
         }
         hmap_httpserver_split_t_erase_at(&ts->split_download_map, it);
         // splitPair() re-enters the chain and can close this peer down to its last reference. A
-        // lock is a reference, not a claim that the line is alive, so it keeps the allocation
-        // readable for the liveness check below instead of letting it return to the pool.
-        lineLock(download_line);
+        // reference keeps the allocation readable for the liveness check below instead of letting
+        // it return to the pool, but does not claim that the line remains alive.
+        lineRef(download_line);
         splitApplyParsedHeader(l, ls, header_end, info, kHttpServerSplitRoleUpload, hash);
         splitUnlockMaps(ts);
         bool ok = splitPair(t, l, download_line);
@@ -761,7 +761,7 @@ static bool splitInsertOrPairUpload(tunnel_t *t, line_t *l, size_t header_end, c
         {
             splitCloseTransport(t, download_line, true);
         }
-        lineUnlock(download_line);
+        lineUnref(download_line);
         return ok;
     }
 
@@ -803,9 +803,9 @@ static bool splitInsertOrPairDownload(tunnel_t *t, line_t *l, size_t header_end,
         }
         hmap_httpserver_split_t_erase_at(&ts->split_upload_map, it);
         // splitPair() re-enters the chain and can close this peer down to its last reference. A
-        // lock is a reference, not a claim that the line is alive, so it keeps the allocation
-        // readable for the liveness check below instead of letting it return to the pool.
-        lineLock(upload_line);
+        // reference keeps the allocation readable for the liveness check below instead of letting
+        // it return to the pool, but does not claim that the line remains alive.
+        lineRef(upload_line);
         splitApplyParsedHeader(l, ls, header_end, info, kHttpServerSplitRoleDownload, hash);
         splitUnlockMaps(ts);
         bool ok = splitPair(t, upload_line, l);
@@ -813,7 +813,7 @@ static bool splitInsertOrPairDownload(tunnel_t *t, line_t *l, size_t header_end,
         {
             splitCloseTransport(t, upload_line, true);
         }
-        lineUnlock(upload_line);
+        lineUnref(upload_line);
         return ok;
     }
 
@@ -911,7 +911,7 @@ void httpserverSplitUpStreamInit(tunnel_t *t, line_t *l)
 void httpserverSplitUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     httpserver_lstate_t *ls = lineGetState(l, t);
-    lineLock(l);
+    lineRef(l);
 
     if (ls->h1_request_finished)
     {
@@ -922,7 +922,7 @@ void httpserverSplitUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             ls->h1_trailing_bytes_logged = true;
         }
         lineReuseBuffer(l, buf);
-        lineUnlock(l);
+        lineUnref(l);
         return;
     }
 
@@ -951,7 +951,7 @@ void httpserverSplitUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         splitCloseFromTransport(t, l, true);
     }
 
-    lineUnlock(l);
+    lineUnref(l);
 }
 
 void httpserverSplitUpStreamFinish(tunnel_t *t, line_t *l)
@@ -985,8 +985,8 @@ void httpserverSplitDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
-    lineLock(l);
-    lineLock(download_line);
+    lineRef(l);
+    lineRef(download_line);
     httpserver_lstate_t *dls = lineGetState(download_line, t);
     if (! dls->h1_response_headers_sent)
     {
@@ -997,8 +997,8 @@ void httpserverSplitDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             {
                 splitCloseFromTransport(t, download_line, true);
             }
-            lineUnlock(download_line);
-            lineUnlock(l);
+            lineUnref(download_line);
+            lineUnref(l);
             return;
         }
         dls->h1_response_headers_sent = true;
@@ -1010,12 +1010,12 @@ void httpserverSplitDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         {
             splitCloseFromTransport(t, download_line, true);
         }
-        lineUnlock(download_line);
-        lineUnlock(l);
+        lineUnref(download_line);
+        lineUnref(l);
         return;
     }
-    lineUnlock(download_line);
-    lineUnlock(l);
+    lineUnref(download_line);
+    lineUnref(l);
 }
 
 void httpserverSplitDownStreamFinish(tunnel_t *t, line_t *l)
@@ -1024,11 +1024,11 @@ void httpserverSplitDownStreamFinish(tunnel_t *t, line_t *l)
     line_t              *upload_line   = mls->split_upload_line;
     line_t              *download_line = mls->split_download_line;
 
-    lineLock(l);
+    lineRef(l);
 
     if (download_line != NULL && lineIsAlive(download_line))
     {
-        lineLock(download_line);
+        lineRef(download_line);
         httpserver_lstate_t *dls = lineGetState(download_line, t);
         dls->next_finished       = true;
         if (! dls->h1_response_headers_sent)
@@ -1039,12 +1039,12 @@ void httpserverSplitDownStreamFinish(tunnel_t *t, line_t *l)
                 {
                     splitCloseFromTransport(t, download_line, true);
                 }
-                lineUnlock(download_line);
+                lineUnref(download_line);
                 if (lineIsAlive(l))
                 {
                     splitCloseMain(t, l, false);
                 }
-                lineUnlock(l);
+                lineUnref(l);
                 return;
             }
             if (lineIsAlive(download_line))
@@ -1057,12 +1057,12 @@ void httpserverSplitDownStreamFinish(tunnel_t *t, line_t *l)
             dls->fin_sent = true;
             if (! httpserverTransportSendHttp1FinalChunk(t, download_line) && ! lineIsAlive(download_line))
             {
-                lineUnlock(download_line);
+                lineUnref(download_line);
                 if (lineIsAlive(l))
                 {
                     splitCloseMain(t, l, false);
                 }
-                lineUnlock(l);
+                lineUnref(l);
                 return;
             }
         }
@@ -1070,19 +1070,19 @@ void httpserverSplitDownStreamFinish(tunnel_t *t, line_t *l)
         {
             splitCloseTransport(t, download_line, true);
         }
-        lineUnlock(download_line);
+        lineUnref(download_line);
     }
 
     if (upload_line != NULL && lineIsAlive(upload_line))
     {
-        lineLock(upload_line);
+        lineRef(upload_line);
         splitCloseTransport(t, upload_line, true);
-        lineUnlock(upload_line);
+        lineUnref(upload_line);
     }
 
     if (lineIsAlive(l))
     {
         splitCloseMain(t, l, false);
     }
-    lineUnlock(l);
+    lineUnref(l);
 }

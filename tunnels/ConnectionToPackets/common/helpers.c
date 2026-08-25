@@ -76,7 +76,7 @@ static void ctpTerminalEnqueue(tunnel_t *t, ctp_lstate_t *ls)
     rwlockWriteLock(&ts->flows_lock);
     if (! ls->terminal_pending)
     {
-        lineLock(ls->line);
+        lineRef(ls->line);
         line_t *head      = ts->terminal_lines[wid];
         ls->terminal_prev = NULL;
         ls->terminal_next = head;
@@ -127,7 +127,7 @@ void ctpTerminalCancel(ctp_lstate_t *ls)
 
     if (release_reference)
     {
-        lineUnlock(ls->line);
+        lineUnref(ls->line);
     }
 }
 
@@ -185,7 +185,7 @@ void ctpDrainTerminalLinesOnCurrentWorker(tunnel_t *t, wid_t wid)
             ctpCloseLineTowardPrevWithoutDrain(t, line);
         }
         /* Release the terminal registry's preallocated handoff reference. */
-        lineUnlock(line);
+        lineUnref(line);
     }
 }
 
@@ -422,14 +422,14 @@ static void ctpCloseLineTowardPrevInternal(tunnel_t *t, line_t *l, bool graceful
         return;
     }
 
-    lineLock(l);
+    lineRef(l);
 
     ctp_lstate_t *ls = lineGetState(l, t);
 
     if (ls->tunnel == NULL)
     {
         // Another close path already ran for this line.
-        lineUnlock(l);
+        lineUnref(l);
         return;
     }
 
@@ -452,7 +452,7 @@ static void ctpCloseLineTowardPrevInternal(tunnel_t *t, line_t *l, bool graceful
         ctpPrevGateLeave(t);
     }
 
-    lineUnlock(l);
+    lineUnref(l);
 }
 
 void ctpCloseLineTowardPrev(tunnel_t *t, line_t *l)
@@ -524,7 +524,7 @@ static void ctpConnectDeadlineTimerCallback(wtimer_t *timer)
         ctpCloseLineTowardPrev(t, l);
     }
 
-    lineUnlock(l);
+    lineUnref(l);
 }
 
 bool ctpArmConnectDeadline(tunnel_t *t, line_t *l, ctp_lstate_t *ls)
@@ -545,7 +545,7 @@ bool ctpArmConnectDeadline(tunnel_t *t, line_t *l, ctp_lstate_t *ls)
 
     // The timer's own reference, released exactly once - by its callback, or by
     // ctpCancelConnectDeadline().
-    lineLock(l);
+    lineRef(l);
     return true;
 }
 
@@ -562,7 +562,7 @@ void ctpCancelConnectDeadline(ctp_lstate_t *ls)
     wtimerDelete(ls->connect_timer);
     ls->connect_timer = NULL;
 
-    lineUnlock(ls->line);
+    lineUnref(ls->line);
 }
 
 // ---------------------------------------------------------------------------
@@ -602,7 +602,7 @@ void ctpDeliverPayloadTask(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
-    const bool alive = withLineLockedWithBuf(l, tunnelPrevDownStreamPayload, t, buf);
+    const bool alive = lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, buf);
     ctpPrevGateLeave(t);
     if (! alive)
     {
@@ -689,7 +689,7 @@ void ctpEstablishedTask(tunnel_t *t, line_t *l)
     {
         return;
     }
-    const bool alive = withLineLocked(l, tunnelPrevDownStreamEst, t);
+    const bool alive = lineCallWithRef(l, tunnelPrevDownStreamEst, t);
     ctpPrevGateLeave(t);
     if (! alive)
     {
@@ -790,7 +790,7 @@ void ctpApplyWriteBackpressure(tunnel_t *t, line_t *l)
         ls->write_paused = true;
         if (ctpPrevGateEnter(t))
         {
-            discard withLineLocked(l, tunnelPrevDownStreamPause, t);
+            discard lineCallWithRef(l, tunnelPrevDownStreamPause, t);
             ctpPrevGateLeave(t);
         }
         return;
@@ -801,7 +801,7 @@ void ctpApplyWriteBackpressure(tunnel_t *t, line_t *l)
         ls->write_paused = false;
         if (ctpPrevGateEnter(t))
         {
-            discard withLineLocked(l, tunnelPrevDownStreamResume, t);
+            discard lineCallWithRef(l, tunnelPrevDownStreamResume, t);
             ctpPrevGateLeave(t);
         }
     }

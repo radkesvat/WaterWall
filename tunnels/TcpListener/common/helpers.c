@@ -152,7 +152,7 @@ void tcplistenerOnInboundConnected(wevent_t *ev)
     }
 
     // send the init packet
-    if (! withLineLocked(l, tunnelNextUpStreamInit, t))
+    if (! lineCallWithRef(l, tunnelNextUpStreamInit, t))
     {
         LOGW("TcpListener: socket just got closed by upstream before anything happend");
         return;

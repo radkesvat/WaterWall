@@ -13,7 +13,7 @@ void realityserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     if (ls->mode == kRealityServerModeVisitor)
     {
-        withLineLockedWithBuf(l, tunnelUpStreamPayload, ts->destination_tunnel, buf);
+        lineCallWithRefWithBuf(l, tunnelUpStreamPayload, ts->destination_tunnel, buf);
         return;
     }
 

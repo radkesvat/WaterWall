@@ -933,7 +933,7 @@ static void testRejectedCrossWorkerHandoffLeavesPacketWithCaller(void)
             "rejected cross-worker handoff consumed the source packet");
     require(lineGetRecalculateChecksum(&foreign_line),
             "rejected cross-worker handoff cleared the source checksum intent");
-    require(atomicLoadRelaxed(&owner_line.refc) == 2, "rejected cross-worker handoff leaked the owner-line lock");
+    require(atomicLoadRelaxed(&owner_line.refc) == 2, "rejected cross-worker handoff leaked the owner-line reference");
 
     ipmanipulatorDownStreamPayloadAfterSmuggleFin(t, &foreign_line, reverse);
     require(downstream_after_smuggle_fin_packets == 1 && replayed_downstream_checksum_intents[0],

@@ -11,15 +11,15 @@ void junkdatagramsenderTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf
 
         ls->remaining_resend_again_times--;
 
-        lineLock(l);
+        lineRef(l);
         bool alive = junkdatagramsenderSendJunk(t, l, kJunkDatagramSenderDirectionUpstream);
         if (! alive || ! lineIsAlive(l))
         {
-            lineUnlock(l);
+            lineUnref(l);
             bufferpoolReuseBuffer(pool, buf);
             return;
         }
-        lineUnlock(l);
+        lineUnref(l);
     }
 
     tunnelNextUpStreamPayload(t, l, buf);

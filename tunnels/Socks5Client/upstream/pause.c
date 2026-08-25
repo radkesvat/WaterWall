@@ -11,7 +11,7 @@ void socks5clientTunnelUpStreamPause(tunnel_t *t, line_t *l)
         line_t *udp_l = ls->udp_line;
         if (udp_l != NULL && lineIsAlive(udp_l))
         {
-            discard withLineLocked(udp_l, tunnelNextUpStreamPause, t);
+            discard lineCallWithRef(udp_l, tunnelNextUpStreamPause, t);
         }
         return;
     }

@@ -112,7 +112,7 @@ void encryptionserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         sbufShiftRight(frame_buffer, kEncryptionFramePrefixSize);
         sbufSetLength(frame_buffer, ciphertext_len - kEncryptionTagSize);
 
-        if (! withLineLockedWithBuf(l, tunnelNextUpStreamPayload, t, frame_buffer))
+        if (! lineCallWithRefWithBuf(l, tunnelNextUpStreamPayload, t, frame_buffer))
         {
             return;
         }

@@ -384,10 +384,10 @@ static void udpstatelesssocketHandleRecvFrom(tunnel_t *t, wio_t *io, sbuf_t *buf
 
         idle->userdata = ls;
 
-        lineLock(l);
+        lineRef(l);
         udpstatelesssocketForwardPeerInit(t, l, is_chain_end);
         bool alive = lineIsAlive(l);
-        lineUnlock(l);
+        lineUnref(l);
 
         if (! alive)
         {
@@ -662,11 +662,11 @@ static void udpstatelesssocketOnDnsResolved(void *userdata, int status, const ch
 
     if (asyncdnsStatusIsShutdown(status) || ! lineIsAlive(line))
     {
-        /* The request's line lock preserves allocation memory, not its logical
+        /* The request's line reference preserves allocation memory, not its logical
          * life. DNS completion always runs on the submitting owner worker, so
          * recycle through that worker rather than reading a dead line. */
         bufferpoolReuseBuffer(getCurrentEventWorkerBufferPool(), buf);
-        lineUnlock(line);
+        lineUnref(line);
         udpstatelesssocketDnsRequestDestroy(request);
         return;
     }
@@ -679,7 +679,7 @@ static void udpstatelesssocketOnDnsResolved(void *userdata, int status, const ch
                     request->domain,
                     error != NULL ? error : ares_strerror(status));
         lineReuseBuffer(line, buf);
-        lineUnlock(line);
+        lineUnref(line);
         udpstatelesssocketDnsRequestDestroy(request);
         return;
     }
@@ -695,7 +695,7 @@ static void udpstatelesssocketOnDnsResolved(void *userdata, int status, const ch
                     "UdpStatelessSocket: async dns resolve returned no usable address for %s",
                     request->domain);
         lineReuseBuffer(line, buf);
-        lineUnlock(line);
+        lineUnref(line);
         udpstatelesssocketDnsRequestDestroy(request);
         return;
     }
@@ -712,7 +712,7 @@ static void udpstatelesssocketOnDnsResolved(void *userdata, int status, const ch
 
     udpstatelesssocketDnsCacheStore(tunnelGetState(t), request->domain, request->port, request->strategy, &peer_addr);
     udpstatelesssocketDispatchToPeer(t, buf, &peer_addr);
-    lineUnlock(line);
+    lineUnref(line);
     udpstatelesssocketDnsRequestDestroy(request);
 }
 
@@ -751,12 +751,12 @@ static bool udpstatelesssocketStartDnsResolve(tunnel_t *t, line_t *l, sbuf_t *bu
         .strategy = dest_ctx->domain_strategy,
     };
 
-    lineLock(l);
+    lineRef(l);
     int rc = workerResolveDomainServiceAsync(
         lineGetWID(l), request->domain, NULL, SOCK_DGRAM, udpstatelesssocketOnDnsResolved, request);
     if (rc != ARES_SUCCESS)
     {
-        lineUnlock(l);
+        lineUnref(l);
         loggerPrint(getDnsLogger(),
                     LOG_LEVEL_ERROR,
                     "UdpStatelessSocket: failed to start async dns resolve for %s: %s",

@@ -11,7 +11,7 @@ bool ctpLinestateInitialize(ctp_lstate_t *ls, tunnel_t *t, line_t *l, ctp_line_k
 {
     assert(kind == kCtpLineKindTcp || kind == kCtpLineKindUdp);
 
-    lineLock(l);
+    lineRef(l);
 
     memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(*ls)));
     ls->tunnel = t;
@@ -23,7 +23,7 @@ bool ctpLinestateInitialize(ctp_lstate_t *ls, tunnel_t *t, line_t *l, ctp_line_k
     {
         bufferqueueDestroy(&ls->pending_queue);
         memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(*ls)));
-        lineUnlock(l);
+        lineUnref(l);
         return false;
     }
 
@@ -64,5 +64,5 @@ void ctpLinestateDestroy(ctp_lstate_t *ls)
 #endif
 
     memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(ctp_lstate_t)));
-    lineUnlock(l);
+    lineUnref(l);
 }

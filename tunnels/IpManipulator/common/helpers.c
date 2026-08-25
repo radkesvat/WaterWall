@@ -216,7 +216,7 @@ static void ipmanipulatorReplayCapturedPacketOnWorker(worker_t *worker, void *ar
         lineReuseBuffer(l, buf);
     }
 
-    lineUnlock(l);
+    lineUnref(l);
 }
 
 static void ipmanipulatorRecycleCapturedPacketOnWorker(worker_t *worker, void *arg1, void *arg2, void *arg3)
@@ -228,7 +228,7 @@ static void ipmanipulatorRecycleCapturedPacketOnWorker(worker_t *worker, void *a
     sbuf_t *buf = arg2;
 
     lineReuseBuffer(l, buf);
-    lineUnlock(l);
+    lineUnref(l);
 }
 
 static void ipmanipulatorCleanupPacketBuffer(line_t *l, sbuf_t *buf)
@@ -259,7 +259,7 @@ static void ipmanipulatorCleanupCapturedPacketNormal(void *arg1, void *arg2, voi
     sbuf_t *buf = arg3;
 
     ipmanipulatorCleanupPacketBuffer(l, buf);
-    lineUnlock(l);
+    lineUnref(l);
 }
 
 static void ipmanipulatorCleanupCapturedPacketReuse(void *arg1, void *arg2, void *arg3,
@@ -272,7 +272,7 @@ static void ipmanipulatorCleanupCapturedPacketReuse(void *arg1, void *arg2, void
     sbuf_t *buf = arg2;
 
     ipmanipulatorCleanupPacketBuffer(l, buf);
-    lineUnlock(l);
+    lineUnref(l);
 }
 
 void ipmanipulatorForwardCapturedPacketNormal(tunnel_t *t, line_t *l, sbuf_t *buf)
@@ -290,7 +290,7 @@ void ipmanipulatorForwardCapturedPacketNormal(tunnel_t *t, line_t *l, sbuf_t *bu
         return;
     }
 
-    lineLock(l);
+    lineRef(l);
     WW_WORKER_MESSAGE_BENCHMARK_RECORD_CONTINUATION(kWorkerMessageBenchmarkContinuationIpManipulatorDeferred);
     sendWorkerMessageForceQueueBestEffortWithCleanup(lineGetWID(l),
                                                      (WorkerMessageCallback) ipmanipulatorReplayCapturedPacketOnWorker,
@@ -308,7 +308,7 @@ static void ipmanipulatorScheduleCapturedPacketReuse(line_t *l, sbuf_t *buf)
         return;
     }
 
-    lineLock(l);
+    lineRef(l);
     WW_WORKER_MESSAGE_BENCHMARK_RECORD_CONTINUATION(kWorkerMessageBenchmarkContinuationIpManipulatorDeferred);
     sendWorkerMessageForceQueueBestEffortWithCleanup(lineGetWID(l),
                                                      (WorkerMessageCallback) ipmanipulatorRecycleCapturedPacketOnWorker,
@@ -1467,7 +1467,7 @@ static bool ipmanipulatorSendEgressMaybeSegmented(tunnel_t *t, line_t *l, sbuf_t
          GLOBAL_MTU_SIZE,
          max_segment_payload);
 
-    lineLock(l);
+    lineRef(l);
 
     while (payload_offset < total_payload_len)
     {
@@ -1519,7 +1519,7 @@ static bool ipmanipulatorSendEgressMaybeSegmented(tunnel_t *t, line_t *l, sbuf_t
         segment_index += 1;
     }
 
-    lineUnlock(l);
+    lineUnref(l);
     reuseBuffer(buf);
     return line_alive;
 }
@@ -1582,7 +1582,7 @@ void ipmanipulatorDelayBarrierDestroy(ipmanipulator_delay_barrier_t *barrier)
         }
         if (packet->line != NULL)
         {
-            lineUnlock(packet->line);
+            lineUnref(packet->line);
         }
     }
 
@@ -1596,7 +1596,7 @@ void ipmanipulatorDelayBarrierDestroy(ipmanipulator_delay_barrier_t *barrier)
         }
         if (output->line != NULL)
         {
-            lineUnlock(output->line);
+            lineUnref(output->line);
         }
     }
     memoryFree(barrier->ordered_outputs);
@@ -1657,7 +1657,7 @@ bool ipmanipulatorDelayBarrierTryEnqueue(tunnel_t *t, ipmanipulator_delay_barrie
         barrier->owner_wid = lineGetWID(l);
     }
 
-    lineLock(l);
+    lineRef(l);
     barrier->packets[barrier->count] = (ipmanipulator_captured_packet_t) {.line = l, .buf = buf};
     barrier->count += 1U;
     barrier->retained_bytes += packet_len;
@@ -1729,7 +1729,7 @@ bool ipmanipulatorDelayBarrierInstallOrdered(tunnel_t *t, ipmanipulator_delay_ba
 
     for (uint32_t i = 0; i < count; ++i)
     {
-        lineLock(outputs[i].line);
+        lineRef(outputs[i].line);
         owned_outputs[i] = outputs[i];
         outputs[i].line  = NULL;
         outputs[i].buf   = NULL;
@@ -1797,7 +1797,7 @@ static bool ipmanipulatorDelayOrderedOutputSendUpstream(tunnel_t *t, ipmanipulat
 
     if (output->buf == NULL)
     {
-        lineUnlock(output->line);
+        lineUnref(output->line);
         output->line = NULL;
         return true;
     }
@@ -1808,7 +1808,7 @@ static bool ipmanipulatorDelayOrderedOutputSendUpstream(tunnel_t *t, ipmanipulat
              workerWIDForLog(getCurrentEventWorkerWID()),
              workerWIDForLog(lineGetWID(output->line)));
         ipmanipulatorForwardCapturedPacketNormal(t, output->line, output->buf);
-        lineUnlock(output->line);
+        lineUnref(output->line);
         output->line = NULL;
         output->buf  = NULL;
         return true;
@@ -1827,7 +1827,7 @@ static bool ipmanipulatorDelayOrderedOutputSendUpstream(tunnel_t *t, ipmanipulat
         lineReuseBuffer(output->line, output->buf);
     }
 
-    lineUnlock(output->line);
+    lineUnref(output->line);
     output->line = NULL;
     output->buf  = NULL;
     return alive;
@@ -1867,7 +1867,7 @@ bool ipmanipulatorDelayBatchSendUpstream(tunnel_t *t, ipmanipulator_delay_batch_
             {
                 ipmanipulatorForwardCapturedPacketNormal(t, packet->line, packet->buf);
             }
-            lineUnlock(packet->line);
+            lineUnref(packet->line);
             packet->line = NULL;
             packet->buf  = NULL;
             continue;
@@ -1894,7 +1894,7 @@ bool ipmanipulatorDelayBatchSendUpstream(tunnel_t *t, ipmanipulator_delay_batch_
                 all_alive = false;
             }
 
-            lineUnlock(packet->line);
+            lineUnref(packet->line);
         }
 
         packet->line = NULL;
@@ -2918,7 +2918,7 @@ static void ipmanipulatorSendWithDuplicates(tunnel_t *t, line_t *l, sbuf_t *buf,
 
     buffer_pool_t *pool = lineGetBufferPool(l);
 
-    lineLock(l);
+    lineRef(l);
 
     for (int i = 0; i < state->trick_packet_duplicate_count; ++i)
     {
@@ -2930,14 +2930,14 @@ static void ipmanipulatorSendWithDuplicates(tunnel_t *t, line_t *l, sbuf_t *buf,
         if (! lineIsAlive(l))
         {
             reuseBuffer(buf);
-            lineUnlock(l);
+            lineUnref(l);
             return;
         }
     }
 
     lineSetRecalculateChecksum(l, recalculate_checksum);
     forward(t, l, buf);
-    lineUnlock(l);
+    lineUnref(l);
 }
 
 static void ipmanipulatorSendUpstreamDuplicates(tunnel_t *t, line_t *l, sbuf_t *buf)

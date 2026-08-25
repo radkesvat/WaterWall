@@ -54,7 +54,7 @@ void udpovertcpclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf
             break; // No complete packet available, exit the loop
         }
 
-        if (! withLineLockedWithBuf(l, tunnelPrevDownStreamPayload, t, packet_buffer))
+        if (! lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, packet_buffer))
         {
             return; // Exit if the line is no longer alive
         }

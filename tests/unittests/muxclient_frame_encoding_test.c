@@ -685,7 +685,7 @@ static void caseParentLossDetachesAndDrainsBorrowedChild(void)
     muxclient_lstate_t *child_ls = lineGetState(fixture.child_l, fixture.mux);
     ts->unsatisfied_lines[0]     = fixture.parent_l;
 
-    lineLock(fixture.parent_l);
+    lineRef(fixture.parent_l);
     muxclientTunnelDownStreamFinish(fixture.mux, fixture.parent_l);
 
     twfRequire(! lineIsAlive(fixture.parent_l), "MuxClient parent Finish left its owned parent alive");
@@ -701,7 +701,7 @@ static void caseParentLossDetachesAndDrainsBorrowedChild(void)
     twfRequireEqualU32(fixture.trace.prev_payload, 0, "parent loss forced Payload through child Pause");
     twfRequireEqualU32(fixture.trace.prev_finish, 0, "parent loss finished a blocked child early");
 
-    lineUnlock(fixture.parent_l);
+    lineUnref(fixture.parent_l);
     fixture.parent_l = NULL;
 
     muxclientTunnelUpStreamResume(fixture.mux, fixture.child_l);
@@ -827,9 +827,9 @@ static void caseDetachedBorrowedLocalFinishReleasesAccounting(void)
     queueTwoPausedClientPayloads(&fixture, 11, 29);
 
     muxclient_tstate_t *ts = tunnelGetState(fixture.mux);
-    lineLock(fixture.parent_l);
+    lineRef(fixture.parent_l);
     muxclientTunnelDownStreamFinish(fixture.mux, fixture.parent_l);
-    lineUnlock(fixture.parent_l);
+    lineUnref(fixture.parent_l);
     fixture.parent_l = NULL;
 
     muxclientTunnelUpStreamFinish(fixture.mux, fixture.child_l);
@@ -874,11 +874,11 @@ static line_t *createClientChildOnParent(muxclient_fixture_t *fixture, line_t *p
 
 static void detachClientParent(muxclient_fixture_t *fixture, line_t *parent_l)
 {
-    lineLock(parent_l);
+    lineRef(parent_l);
     muxclientTunnelDownStreamFinish(fixture->mux, parent_l);
     twfRequire(! lineIsAlive(parent_l), "MuxClient did not destroy an owned detached-limit parent");
     twfRequireLineStateZeroed(parent_l, fixture->mux, "detached-limit parent state survived parent loss");
-    lineUnlock(parent_l);
+    lineUnref(parent_l);
 }
 
 static void runMuxclientDetachedAggregateLimitCase(bool unlimited_bytes, bool count_limit)
@@ -990,9 +990,9 @@ static void runMuxclientReentrantPauseCase(bool parent_loss)
 
     if (parent_loss)
     {
-        lineLock(fixture.parent_l);
+        lineRef(fixture.parent_l);
         muxclientTunnelDownStreamFinish(fixture.mux, fixture.parent_l);
-        lineUnlock(fixture.parent_l);
+        lineUnref(fixture.parent_l);
         fixture.parent_l = NULL;
         twfRequireEqualU32((uint32_t) ts->detached_queued_bytes[0],
                            kSecond,

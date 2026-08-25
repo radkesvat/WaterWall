@@ -70,7 +70,7 @@ void testerclientTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_c
     assert(currentThreadIsEventWorkerWID(wid));
     assert(lineGetWID(l) == wid);
 
-    lineLock(l);
+    lineRef(l);
     slot->line            = NULL;
     slot->close_scheduled = true;
     slot->closed          = true;
@@ -85,5 +85,5 @@ void testerclientTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_c
     {
         lineDestroy(l);
     }
-    lineUnlock(l);
+    lineUnref(l);
 }

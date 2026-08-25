@@ -15,7 +15,7 @@ void streamtopacketsTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
-    lineLock(l);
+    lineRef(l);
 
     while (true)
     {
@@ -40,13 +40,13 @@ void streamtopacketsTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             if (streamtopacketsAuthorizeLine(t, l) == 0)
             {
                 LOGD("StreamToPackets: dropping a sensitive-mode ping from an unauthorized stream line");
-                lineUnlock(l);
+                lineUnref(l);
                 return;
             }
 
             if (! streamtopacketsSendSensitivePong(t, l))
             {
-                lineUnlock(l);
+                lineUnref(l);
                 return;
             }
             continue;
@@ -75,10 +75,10 @@ void streamtopacketsTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
         if (! lineIsAlive(l))
         {
-            lineUnlock(l);
+            lineUnref(l);
             return;
         }
     }
 
-    lineUnlock(l);
+    lineUnref(l);
 }

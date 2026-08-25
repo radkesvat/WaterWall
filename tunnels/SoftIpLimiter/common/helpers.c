@@ -604,7 +604,7 @@ void softiplimiterCloseLine(tunnel_t *t, line_t *l, softiplimiter_close_origin_t
 
     ls->closing = true;
     ls->phase   = kSoftIpLimiterPhaseClosing;
-    lineLock(l);
+    lineRef(l);
 
     softiplimiterReleaseLine(t, ls);
     /* Finish must not reflect to the initiating side; close targets are captured before destroying this state. */
@@ -620,7 +620,7 @@ void softiplimiterCloseLine(tunnel_t *t, line_t *l, softiplimiter_close_origin_t
         tunnelPrevDownStreamFinish(t, l);
     }
 
-    lineUnlock(l);
+    lineUnref(l);
 }
 
 static bool softiplimiterEnsureNextInitAndFlushAs(tunnel_t *t, line_t *l, softiplimiter_lstate_t *ls,
@@ -629,7 +629,7 @@ static bool softiplimiterEnsureNextInitAndFlushAs(tunnel_t *t, line_t *l, softip
     if (! ls->next_init_sent)
     {
         ls->next_init_sent = true;
-        if (! withLineLocked(l, tunnelNextUpStreamInit, t))
+        if (! lineCallWithRef(l, tunnelNextUpStreamInit, t))
         {
             return false;
         }
@@ -643,7 +643,7 @@ static bool softiplimiterEnsureNextInitAndFlushAs(tunnel_t *t, line_t *l, softip
     ls->phase = phase;
 
     sbuf_t *replay = bufferstreamFullRead(&ls->in_stream);
-    if (replay != NULL && ! withLineLockedWithBuf(l, tunnelNextUpStreamPayload, t, replay))
+    if (replay != NULL && ! lineCallWithRefWithBuf(l, tunnelNextUpStreamPayload, t, replay))
     {
         return false;
     }

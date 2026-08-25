@@ -63,7 +63,7 @@ static void captureUpstream(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     if (kill_after_count != 0 && emitted_count == kill_after_count)
     {
-        /* Model a re-entrant downstream close while the outer line lock remains held. */
+        /* Model a re-entrant downstream close while the outer line reference remains held. */
         l->alive = false;
     }
 }

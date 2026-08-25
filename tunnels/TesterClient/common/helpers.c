@@ -518,10 +518,10 @@ void testerclientFailOwnedLine(tunnel_t *t, line_t *l, const char *reason, bool 
 
     assert(! ts->packet_mode);
 
-    // lineDestroy() below can drop the last reference. A lock is a reference, not
-    // a claim that the line is alive, so holding one keeps the allocation readable
-    // long enough for the verdict helper to still name its worker.
-    lineLock(l);
+    // lineDestroy() below can drop the last reference. A line reference keeps
+    // the allocation readable long enough for the verdict helper to still name
+    // its worker, but does not claim that the line remains alive.
+    lineRef(l);
 
     // Detach before destroying: the completion sweep schedules close tasks
     // straight off this slot, and it must not find a line that is about to die.
@@ -546,7 +546,7 @@ void testerclientFailOwnedLine(tunnel_t *t, line_t *l, const char *reason, bool 
 
     testerclientFail(t, l, reason);
 
-    lineUnlock(l);
+    lineUnref(l);
 }
 
 uint8_t testerclientGetChunkCount(tunnel_t *t)
@@ -794,7 +794,7 @@ void testerclientRequestSendTask(tunnel_t *t, line_t *l)
             ls->request_tx_offset = 0;
         }
 
-        if (! withLineLockedWithBuf(l, tunnelNextUpStreamPayload, t, buf))
+        if (! lineCallWithRefWithBuf(l, tunnelNextUpStreamPayload, t, buf))
         {
             return;
         }

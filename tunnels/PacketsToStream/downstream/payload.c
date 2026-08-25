@@ -29,7 +29,7 @@ void packetstostreamTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
      * again. The parser, heartbeat and output-line recreation state stay owned by
      * this stream line's worker; only the decoded packets are re-affinitized.
      */
-    lineLock(l);
+    lineRef(l);
 
     while (true)
     {
@@ -57,7 +57,7 @@ void packetstostreamTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
                 LOGW("PacketsToStream: sensitive-mode pong exceeded tolerance after %llums, resetting connection",
                      (unsigned long long) elapsed_ms);
                 packetstostreamCloseOutputLineAndScheduleRecreate(t, packet_line, ls);
-                lineUnlock(l);
+                lineUnref(l);
                 return;
             }
 
@@ -82,10 +82,10 @@ void packetstostreamTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
         if (! lineIsAlive(l) || ls->line != l || ls->read_stream.pool == NULL)
         {
-            lineUnlock(l);
+            lineUnref(l);
             return;
         }
     }
 
-    lineUnlock(l);
+    lineUnref(l);
 }

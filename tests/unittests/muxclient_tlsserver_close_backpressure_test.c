@@ -16,7 +16,7 @@ static void runMuxClientTlsServerCase(mxb_terminal_cause_t cause)
 
     fixture.parent = mxbCreateLine(&fixture);
     fixture.child  = mxbCreateLine(&fixture);
-    lineLock(fixture.child);
+    lineRef(fixture.child);
     mxbMuxClientInitializeLines(&fixture);
     mxbTlsServerInitializeLine(&fixture);
 
@@ -27,11 +27,11 @@ static void runMuxClientTlsServerCase(mxb_terminal_cause_t cause)
     mxbMuxClientFeedParent(&fixture, cause == kMxbTerminalPeerClose);
     if (cause == kMxbTerminalParentLoss)
     {
-        lineLock(fixture.parent);
+        lineRef(fixture.parent);
         mxbMuxClientFinishParent(&fixture);
         mxbRequire(! lineIsAlive(fixture.parent), "MuxClient parent loss left its owned parent alive");
         mxbRequire(mxbLineStateIsZero(fixture.parent, fixture.mux), "MuxClient parent loss retained parent line state");
-        lineUnlock(fixture.parent);
+        lineUnref(fixture.parent);
         fixture.parent = NULL;
     }
 
@@ -101,7 +101,7 @@ static void runMuxClientTlsServerCase(mxb_terminal_cause_t cause)
     }
     mxbRequirePlaintext(&fixture);
 
-    lineUnlock(fixture.child);
+    lineUnref(fixture.child);
     fixture.child = NULL;
     mxbMuxClientDestroy(&fixture);
     mxbTlsServerDestroy(&fixture);

@@ -469,7 +469,7 @@ static void streamtopacketsReplayDecodedPacketOnWorker(worker_t *worker, void *a
         tunnelNextUpStreamPayload(msg->tunnel, msg->packet_line, msg->buf);
     }
 
-    lineUnlock(msg->packet_line);
+    lineUnref(msg->packet_line);
     memoryFree(msg);
 }
 
@@ -493,7 +493,7 @@ static void streamtopacketsCleanupDecodedPacket(void *arg1, void *arg2, void *ar
         sbufDestroy(msg->buf);
     }
 
-    lineUnlock(msg->packet_line);
+    lineUnref(msg->packet_line);
     memoryFree(msg);
 }
 
@@ -549,7 +549,7 @@ void streamtopacketsForwardDecodedPacket(tunnel_t *t, line_t *stream_line, sbuf_
     *msg = (streamtopackets_packet_msg_t) {
         .tunnel = t, .packet_line = packet_line, .buf = packet, .generation = generation};
 
-    lineLock(packet_line);
+    lineRef(packet_line);
     WW_WORKER_MESSAGE_BENCHMARK_RECORD_CONTINUATION(kWorkerMessageBenchmarkContinuationBridgeRetryOrDelivery);
     sendWorkerMessageForceQueueBestEffortWithCleanup(target_wid,
                                                      (WorkerMessageCallback) streamtopacketsReplayDecodedPacketOnWorker,

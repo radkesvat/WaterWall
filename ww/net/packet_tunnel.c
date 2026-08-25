@@ -141,7 +141,7 @@ void packettunnelLifecycleAnchorPublish(tunnel_t *t, line_t *packet_line, sbuf_t
         abortProgramNow(1);
     }
 
-    lineLock(packet_line);
+    lineRef(packet_line);
 
     anchor->publication_callback(anchor->publication_tunnel, packet_line, buf);
 
@@ -150,7 +150,7 @@ void packettunnelLifecycleAnchorPublish(tunnel_t *t, line_t *packet_line, sbuf_t
         LOGF("%s: packet line died during runtime", anchor->name);
         abortProgramNow(1);
     }
-    lineUnlock(packet_line);
+    lineUnref(packet_line);
 }
 
 bool packettunnelTakeChecksumRequest(line_t *line)

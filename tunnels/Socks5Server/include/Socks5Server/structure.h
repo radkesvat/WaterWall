@@ -88,7 +88,7 @@ typedef struct socks5server_lstate_s
     socks5server_phase_t                  phase;
     socks5server_line_kind_t              kind;
     bool                                  connect_reply_sent;
-    bool                                  client_line_locked;
+    bool                                  client_line_ref_held;
     bool                                  user_handle_recorded;
     bool                                  udp_first_payload_validated;
     bool                                  prev_finished; // prev/downstream side already finished this control line

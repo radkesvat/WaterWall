@@ -35,7 +35,7 @@ void vlessserverTunnelUpStreamResume(tunnel_t *t, line_t *l)
         line_t *remote_l = ls->udp_remote_line;
         if (LIKELY(remote_l != NULL && lineIsAlive(remote_l)))
         {
-            discard withLineLocked(remote_l, tunnelNextUpStreamResume, t);
+            discard lineCallWithRef(remote_l, tunnelNextUpStreamResume, t);
         }
     }
 }

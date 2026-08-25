@@ -20,7 +20,7 @@ void tlsclientTunnelDownStreamResume(tunnel_t *t, line_t *l)
     if (ts->record_shaping.enabled && ls->handshake_completed && ls->ssl != NULL &&
         SSL_version(ls->ssl) == TLS1_3_VERSION)
     {
-        lineLock(l);
+        lineRef(l);
         bool shaping_pause_was_active = ls->shaping_producer_paused;
         bool output_ok = ls->shaping_retired ? tlsclientFlushSslOutput(t, l, ls)
                                              : tlsclientDrainShapedOutput(t, l, ls, false);
@@ -29,14 +29,14 @@ void tlsclientTunnelDownStreamResume(tunnel_t *t, line_t *l)
             if (lineIsAlive(l))
             {
                 bool state_is_active = ((tlsclient_lstate_t *) lineGetState(l, t))->tunnel == t;
-                lineUnlock(l);
+                lineUnref(l);
                 if (state_is_active)
                 {
                     tlsclientCloseLineBidirectional(t, l);
                 }
                 return;
             }
-            lineUnlock(l);
+            lineUnref(l);
             return;
         }
 
@@ -46,26 +46,26 @@ void tlsclientTunnelDownStreamResume(tunnel_t *t, line_t *l)
             if (lineIsAlive(l))
             {
                 bool state_is_active = ((tlsclient_lstate_t *) lineGetState(l, t))->tunnel == t;
-                lineUnlock(l);
+                lineUnref(l);
                 if (state_is_active)
                 {
                     tlsclientCloseLineBidirectional(t, l);
                 }
                 return;
             }
-            lineUnlock(l);
+            lineUnref(l);
             return;
         }
 
         ls = lineGetState(l, t);
         if (shaping_pause_was_active || ls->shaping_producer_paused || ls->shaping_wire_paused || ls->upstream_finished)
         {
-            lineUnlock(l);
+            lineUnref(l);
             return;
         }
 
         tunnelPrevDownStreamResume(t, l);
-        lineUnlock(l);
+        lineUnref(l);
         return;
     }
     tunnelPrevDownStreamResume(t, l);

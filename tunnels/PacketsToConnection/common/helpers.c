@@ -563,7 +563,7 @@ static void ptcUdpIdleTimerCallback(wtimer_t *timer)
     {
         ptcCloseLineForStop(t, l);
     }
-    lineUnlock(l);
+    lineUnref(l);
 }
 
 bool ptcArmUdpIdleOnOwnerThread(ptc_lstate_t *ls)
@@ -586,7 +586,7 @@ bool ptcArmUdpIdleOnOwnerThread(ptc_lstate_t *ls)
         return false;
     }
     weventSetUserData(ls->udp_idle_timer, ls);
-    lineLock(ls->line);
+    lineRef(ls->line);
     return true;
 }
 
@@ -599,7 +599,7 @@ void ptcCancelUdpIdleTimer(ptc_lstate_t *ls)
     weventSetUserData(ls->udp_idle_timer, NULL);
     wtimerDelete(ls->udp_idle_timer);
     ls->udp_idle_timer = NULL;
-    lineUnlock(ls->line);
+    lineUnref(ls->line);
 }
 
 bool ptcEnsureNextInit(tunnel_t *t, line_t *l, ptc_lstate_t *ls)
@@ -610,7 +610,7 @@ bool ptcEnsureNextInit(tunnel_t *t, line_t *l, ptc_lstate_t *ls)
     }
 
     ls->next_init_sent = true;
-    return withLineLocked(l, tunnelNextUpStreamInit, t);
+    return lineCallWithRef(l, tunnelNextUpStreamInit, t);
 }
 
 void ptcOpenLineTask(tunnel_t *t, line_t *l)
@@ -677,7 +677,7 @@ void ptcDeliverPayloadTask(tunnel_t *t, line_t *l, sbuf_t *buf)
         }
     }
 
-    if (! withLineLockedWithBuf(l, tunnelNextUpStreamPayload, t, buf))
+    if (! lineCallWithRefWithBuf(l, tunnelNextUpStreamPayload, t, buf))
     {
         ptcNextGateLeave(t);
         return;
@@ -711,7 +711,7 @@ static void ptcCloseOwnedLine(tunnel_t *t, line_t *l, bool graceful_tcp, bool fi
         return;
     }
 
-    lineLock(l);
+    lineRef(l);
 
     ptc_lstate_t *ls = lineGetState(l, t);
 
@@ -752,7 +752,7 @@ static void ptcCloseOwnedLine(tunnel_t *t, line_t *l, bool graceful_tcp, bool fi
         lineDestroy(l);
     }
 
-    lineUnlock(l);
+    lineUnref(l);
 }
 
 void ptcCloseLineFromNetwork(tunnel_t *t, line_t *l)
@@ -793,7 +793,7 @@ void ptcResumeUpstreamTask(tunnel_t *t, line_t *l)
         ptcCloseLineForStop(t, l);
         return;
     }
-    discard withLineLocked(l, tunnelNextUpStreamResume, t);
+    discard lineCallWithRef(l, tunnelNextUpStreamResume, t);
     ptcNextGateLeave(t);
 }
 
@@ -877,7 +877,7 @@ void ptcDrainOwnedLinesOnCurrentWorker(tunnel_t *t, wid_t wid)
         line_t *line = state->owned_lines[wid];
         if (line != NULL)
         {
-            lineLock(line);
+            lineRef(line);
         }
         mutexUnlock(&state->owned_lines_lock);
 
@@ -887,7 +887,7 @@ void ptcDrainOwnedLinesOnCurrentWorker(tunnel_t *t, wid_t wid)
         }
 
         ptcCloseLineForStop(t, line);
-        lineUnlock(line);
+        lineUnref(line);
     }
 }
 
@@ -912,7 +912,7 @@ void ptcDrainTerminalLinesOnCurrentWorker(tunnel_t *t, wid_t wid)
             if (ls->terminal_required)
             {
                 ls->terminal_required = false;
-                lineLock(line);
+                lineRef(line);
                 terminal = line;
                 break;
             }
@@ -929,6 +929,6 @@ void ptcDrainTerminalLinesOnCurrentWorker(tunnel_t *t, wid_t wid)
          * owner now performs line-state teardown, directionally legal Finish
          * (only if Init was sent), and the owner-only lineDestroy(). */
         ptcCloseLineForStop(t, terminal);
-        lineUnlock(terminal);
+        lineUnref(terminal);
     }
 }

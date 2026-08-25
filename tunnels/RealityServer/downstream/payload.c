@@ -34,7 +34,7 @@ static bool realityserverForwardCoverDownstream(tunnel_t *t, line_t *l, sbuf_t *
     }
 
     ++ls->destination_downstream_forward_depth;
-    if (! withLineLockedWithBuf(l, tunnelPrevDownStreamPayload, t, buf))
+    if (! lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, buf))
     {
         return false;
     }
@@ -94,15 +94,15 @@ static void realityserverHandlePendingDestinationPayload(tunnel_t *t, line_t *l,
             return;
         }
 
-        lineLock(l);
+        lineRef(l);
         bool alive = realityserverObserveDownstreamHandshake(t, l, data + offset, chunk_len);
         if (! alive || ! lineIsAlive(l))
         {
             bufferpoolReuseBuffer(pool, buf);
-            lineUnlock(l);
+            lineUnref(l);
             return;
         }
-        lineUnlock(l);
+        lineUnref(l);
 
         ls = lineGetState(l, t);
         if (ls->mode == kRealityServerModeVisitor)

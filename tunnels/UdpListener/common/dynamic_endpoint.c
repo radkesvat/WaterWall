@@ -256,17 +256,17 @@ void udplistenerDynamicEndpointClose(tunnel_t *t, udplistener_dynamic_endpoint_h
         /* The provider owns this normal line. Keep a temporary reference
          * across the callback so a broken downstream implementation cannot
          * turn the diagnostic below into a use-after-free. */
-        lineLock(l);
+        lineRef(l);
         udplistenerLinestateDestroy(lineGetState(l, t));
         tunnelNextUpStreamFinish(t, l);
         if (UNLIKELY(! lineIsAlive(l)))
         {
-            lineUnlock(l);
+            lineUnref(l);
             LOGF("UdpListener: a downstream tunnel destroyed a provider-owned dynamic UDP line during Finish");
             abortProgramNow(1);
         }
         lineDestroy(l);
-        lineUnlock(l);
+        lineUnref(l);
     }
 
     memoryFree(ep);
@@ -409,7 +409,7 @@ void udplistenerOnDynamicEndpointRead(wio_t *io, sbuf_t *buf)
 
         /* Publish before Init: synchronous Finish can now detach it exactly once. */
         ep->line = line;
-        if (! withLineLocked(line, tunnelNextUpStreamInit, listener))
+        if (! lineCallWithRef(line, tunnelNextUpStreamInit, listener))
         {
             /* The endpoint, WIO, and line may all have been reclaimed during
              * Init. callback_pool remains valid for the current worker. */

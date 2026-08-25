@@ -38,7 +38,7 @@ void trojanserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             return;
         }
 
-        if (UNLIKELY(! withLineLockedWithBuf(client_l, tunnelPrevDownStreamPayload, t, buf)))
+        if (UNLIKELY(! lineCallWithRefWithBuf(client_l, tunnelPrevDownStreamPayload, t, buf)))
         {
             return;
         }

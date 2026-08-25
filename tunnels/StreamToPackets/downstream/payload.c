@@ -58,7 +58,7 @@ void streamtopacketsTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         // The same validated delivery routine as the queued path: being on the
         // right worker is not a reason to skip a check.
         streamtopacketsDeliverSelectedWrite(t, selected.line, selected.line_id, selected.generation, buf);
-        lineUnlock(selected.line);
+        lineUnref(selected.line);
         return;
     }
 

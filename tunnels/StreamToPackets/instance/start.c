@@ -11,7 +11,7 @@ void streamtopacketsQueueWorkerPacketInit(void *worker, void *arg1, void *arg2, 
     tunnel_t *t = arg1;
     line_t   *l = tunnelchainGetWorkerPacketLine(tunnelGetChain(t), getCurrentEventWorkerWID());
 
-    if (UNLIKELY(! withLineLocked(l, tunnelNextUpStreamInit, t)))
+    if (UNLIKELY(! lineCallWithRef(l, tunnelNextUpStreamInit, t)))
     {
         LOGF("StreamToPackets: worker packet line died during packet-side init");
         abortProgramNow(1);

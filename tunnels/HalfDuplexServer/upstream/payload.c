@@ -64,7 +64,7 @@ static line_t *createAndInitializeMainLine(tunnel_t *t, line_t *upload_line, lin
 static bool initializeMainLineConnection(tunnel_t *t, line_t *main_line)
 {
 
-    if (! withLineLocked(main_line, tunnelNextUpStreamInit, t))
+    if (! lineCallWithRef(main_line, tunnelNextUpStreamInit, t))
     {
         return false;
     }
@@ -111,20 +111,20 @@ static bool handleUploadConnectionFound(tunnel_t *t, line_t *l, sbuf_t *buf, hal
     line_t *main_line = createAndInitializeMainLine(t, l, download_line, ls, download_line_ls);
 
     buffer_pool_t *buffer_pool = lineGetBufferPool(l);
-    lineLock(l);
-    lineLock(download_line);
+    lineRef(l);
+    lineRef(download_line);
 
     bool initialized = initializeMainLineConnection(t, main_line);
     if (! initialized)
     {
         bufferpoolReuseBuffer(buffer_pool, buf);
-        lineUnlock(download_line);
-        lineUnlock(l);
+        lineUnref(download_line);
+        lineUnref(l);
         return true;
     }
 
-    lineUnlock(download_line);
-    lineUnlock(l);
+    lineUnref(download_line);
+    lineUnref(l);
 
     sbufShiftRight(buf, sizeof(uint64_t));
     if (sbufGetLength(buf) > 0)
@@ -188,20 +188,20 @@ static bool handleDownloadConnectionFound(tunnel_t *t, line_t *l, sbuf_t *buf, h
     upload_line_ls->buffering = NULL;
 
     buffer_pool_t *buffer_pool = lineGetBufferPool(l);
-    lineLock(upload_line);
-    lineLock(l);
+    lineRef(upload_line);
+    lineRef(l);
 
     bool initialized = initializeMainLineConnection(t, main_line);
     if (! initialized)
     {
         bufferpoolReuseBuffer(buffer_pool, buf_upline);
-        lineUnlock(l);
-        lineUnlock(upload_line);
+        lineUnref(l);
+        lineUnref(upload_line);
         return true;
     }
 
-    lineUnlock(l);
-    lineUnlock(upload_line);
+    lineUnref(l);
+    lineUnref(upload_line);
 
     if (sbufGetLength(buf_upline) > 0)
     {

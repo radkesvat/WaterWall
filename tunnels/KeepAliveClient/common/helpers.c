@@ -63,7 +63,7 @@ static bool keepaliveclientSendFrameNext(tunnel_t *t, line_t *l, sbuf_t *buf, ui
     frame[kKeepAliveFrameLengthSize] = frame_kind;
 
     sbufSetLength(buf, frame_len);
-    return withLineLockedWithBuf(l, tunnelNextUpStreamPayload, t, buf);
+    return lineCallWithRefWithBuf(l, tunnelNextUpStreamPayload, t, buf);
 }
 
 static bool keepaliveclientSendControlFrame(tunnel_t *t, line_t *l, uint8_t frame_kind)
@@ -122,7 +122,7 @@ static keepaliveclient_consume_result_t keepaliveclientConsumeOneFrame(tunnel_t 
         }
 
         sbufShiftRight(frame, kKeepAliveFrameTypeSize);
-        if (! withLineLockedWithBuf(l, tunnelPrevDownStreamPayload, t, frame))
+        if (! lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, frame))
         {
             return kKeepAliveClientConsumeLineDead;
         }
@@ -243,7 +243,7 @@ void keepaliveclientWorkerTimerCallback(wtimer_t *timer)
                  * tracked line. Retain every snapshot entry while the registry
                  * lock still proves it is live, so later entries remain
                  * physically valid after such re-entrant removal. */
-                lineLock(it->line);
+                lineRef(it->line);
                 lines[index++] = it->line;
             }
         }
@@ -258,7 +258,7 @@ void keepaliveclientWorkerTimerCallback(wtimer_t *timer)
             discard keepaliveclientSendPingFrame(t, lines[i]);
         }
 
-        lineUnlock(lines[i]);
+        lineUnref(lines[i]);
     }
 
     if (lines != NULL)
