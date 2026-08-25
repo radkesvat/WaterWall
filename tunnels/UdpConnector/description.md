@@ -1,5 +1,5 @@
 <!--
-Documentation version: 152
+Documentation version: 154
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/UdpConnector.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/UdpConnector.mdx, and all files must keep the same documentation version.
 -->
 
@@ -216,6 +216,16 @@ The destination port can come from:
 - `random(x,y)`
 
 This makes `UdpConnector` useful after nodes that fill routing context dynamically.
+
+An internal protocol tunnel can also mark a negotiated destination as authoritative for one outbound adapter. In that
+case `UdpConnector` preserves the supplied address and port instead of applying its configured destination selector or
+packet balancing. This is internal chain metadata, not a user JSON setting; it lets a SOCKS5 UDP relay use the
+`BND.ADDR`/`BND.PORT` that its proxy negotiated.
+
+Observed-protocol metadata may be cleared by a preceding `Router` or sniffer,
+but this route-control authority survives that narrow reset. `UdpConnector`
+consumes the authority exactly once during outbound setup and clears it before
+normal later routing decisions.
 
 When `addresses` is used, the same selection rules apply inside each array element.
 In the default `"connection"` balance mode, the connector first picks one destination object by weight, then resolves that chosen object's `address` and `port` for the line.

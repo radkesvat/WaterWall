@@ -1,5 +1,5 @@
 <!--
-Documentation version: 152
+Documentation version: 154
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/Socks5Client.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/Socks5Client.mdx, and all files must keep the same documentation version.
 -->
 
@@ -164,11 +164,19 @@ falls back to IPv6.
 - on handshake failure it destroys local state first, then closes both directions
 - in UDP mode, upstream payload is wrapped in a SOCKS5 UDP request header and sent through the UDP relay line
 - in UDP mode, downstream relay datagrams have the SOCKS5 UDP header stripped before payload is forwarded back
+- in UDP mode, the relay line uses the `BND.ADDR` and `BND.PORT` returned by the successful `UDP ASSOCIATE` reply;
+  it does not reuse the TCP control port or overwrite the negotiated endpoint with the next connector's static proxy port
+
+The negotiated relay authority survives `Router`/sniffer clearing of observed
+application-protocol metadata. The outbound UDP adapter consumes it exactly once,
+then clears the internal marker so it cannot affect later unrelated routing.
 
 ## Notes And Caveats
 
 - SOCKS5 UDP fragmentation is not reassembled; datagrams with `FRAG != 0` are ignored conservatively.
 - UDP mode expects the proxy listener topology to make the UDP associate reply address reachable from the client.
+- A server may return a dedicated dynamic UDP port, so firewall and NAT policy must permit the returned relay endpoint,
+  not only the TCP control port.
 - `required_padding_left` is set for the worst-case SOCKS5 UDP header so UDP mode can prepend datagram headers without
   breaking Waterwall buffer-padding assumptions.
 

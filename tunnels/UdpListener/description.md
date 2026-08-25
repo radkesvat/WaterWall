@@ -1,5 +1,5 @@
 <!--
-Documentation version: 152
+Documentation version: 155
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/UdpListener.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/UdpListener.mdx, and all files must keep the same documentation version.
 -->
 
@@ -94,12 +94,12 @@ One of `port` or `port-range` is required.
 
 - `large-send-buffer` `(boolean or positive integer)`
   Sets `SO_SNDBUF` on UDP listener sockets.
-  `true` uses WaterWall's default large socket buffer size, currently `4194304` bytes. `false` leaves the kernel default unchanged. A positive integer sets the requested byte size directly.
+  `true` uses WaterWall's default large socket buffer size, currently `4194304` bytes. `false` leaves the kernel default unchanged, including for dynamic association sockets. A positive integer sets the requested byte size directly.
   Default: `true`
 
 - `large-recv-buffer` `(boolean or positive integer)`
   Sets `SO_RCVBUF` on UDP listener sockets.
-  `true` uses WaterWall's default large socket buffer size, currently `4194304` bytes. `false` leaves the kernel default unchanged. A positive integer sets the requested byte size directly.
+  `true` uses WaterWall's default large socket buffer size, currently `4194304` bytes. `false` leaves the kernel default unchanged, including for dynamic association sockets. A positive integer sets the requested byte size directly.
   Default: `true`
 
 - `balance-group` `(string)`
@@ -180,6 +180,36 @@ Current timeouts:
 
 If the peer line expires, the line is finished upstream and destroyed.
 
+### Dynamic endpoint provider
+
+`UdpListener` also exposes a typed, in-process dynamic-endpoint provider to compatible protocol tunnels later in the
+same chain. `Socks5Server` is one consumer of this capability. For a normal SOCKS5 service, use `TcpUdpListener`: its
+internal `TcpListener` accepts the required TCP control connection and its internal `UdpListener` delegates this
+provider. A bare `UdpListener` cannot provide a complete SOCKS5 entry by itself because it cannot accept that TCP
+control connection.
+
+This is not a JSON setting or an external `instance/api.c` message API. `Socks5Server` discovers it automatically from
+its finalized preceding path; operators do not configure a provider node name.
+
+The provider opens one dedicated UDP socket with an exclusive `port: 0` bind on the requesting event worker and returns
+an opaque value handle (`owner_wid` plus generation), the kernel-assigned local address, and the actual local port. The
+handle is valid only on its owner worker and may be closed repeatedly without affecting a newer endpoint.
+
+Dynamic ingress uses the normal callback path: dynamic UDP socket -> `UdpListener` -> any wrapper such as
+`TcpUdpListener` -> the configured next chain. Downstream replies return through that same endpoint to its pinned peer.
+The dynamic socket honors the listener address, interface, `fwmark`, send/receive buffers, whitelist, and blacklist. It
+does not use the configured static `port`, port range, balance group, or multiport backend.
+
+Before a dynamic datagram can create or use its provider-owned line, its normalized
+peer IP must equal the endpoint's expected peer IP. A configured nonzero source
+port must also match exactly; source port zero pins the first valid sender and all
+later ports must match that pin. Mismatching datagrams are silently dropped and
+never close or message the TCP control association.
+
+On quiesce, new endpoint opens and activations are refused. On each worker, the listener detaches endpoint WIO callbacks
+before drain, removes the endpoint from its worker-local registry, and uses one idempotent close path to finish and
+destroy any provider-owned dynamic line. This inventory is separate from the ordinary socket-manager peer table.
+
 ### Whitelist, blacklist, and balance behavior
 
 Filtering and balancing are handled through the shared socket manager:
@@ -199,6 +229,10 @@ three ports, not on the whole range between `123` and `5353`.
 - `port` is parsed as a number or an array of explicit port numbers, and `port-range` is parsed as a two-item range array.
 - `fwmark` and device binding are platform-dependent. `fwmark` is not available on Windows.
 - Paused peer lines drop inbound datagrams instead of buffering them.
+- Dynamic endpoints are internal capability plumbing for protocol tunnels; they are not additional public listening
+  ports configured by `port` or `port-range`.
+- For built-in SOCKS5 UDP service, configure `TcpUdpListener -> ... -> Socks5Server`, not a standalone `UdpListener` or
+  `TcpListener` entry.
 
 ## Node Metadata
 

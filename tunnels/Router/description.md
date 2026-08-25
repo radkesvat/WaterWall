@@ -1,13 +1,14 @@
 <!--
-Documentation version: 152
+Documentation version: 153
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/Router.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/Router.mdx, and all files must keep the same documentation version.
 -->
 
 # Router
 
-A layer-4 **rule-based router**. It sits in a chain like a middle tunnel and, on
-the **first upstream payload** of each connection, walks an ordered list of rules
-to decide where that connection should go:
+A layer-4 **rule-based router**. It sits in a chain like a middle tunnel and
+walks an ordered list of rules to decide where each connection should go. Rules
+that use only line metadata already available at `Init` are selected immediately;
+rules that need sniffed content are selected from the first upstream payload:
 
 - the **first** rule whose conditions **all** match (logical `AND`) wins, and the
   connection is handed to that rule's `target` node;
@@ -15,7 +16,8 @@ to decide where that connection should go:
   `next` — the **default route**.
 
 ```text
-client ──▶ Router ──▶ evaluate rules on the first payload
+client ──▶ Router ──▶ metadata-only rules: evaluate at Init
+                        payload-dependent rules: evaluate first payload
                         │
                         ├─ first matching rule ──▶ its target node
                         └─ no rule matches     ──▶ next (default route)
@@ -51,15 +53,19 @@ it (`username`, `password`). The full list is in the
 
 ## How a connection is routed
 
-The word "router" suggests an immediate, stateless decision. `Router` is the
-opposite — a **deferred branch selector**. It holds the connection until the
-first upstream payload arrives, so that content-based matchers (`protocol`,
-`attributes`, domain sniffing) have bytes to inspect, and only then commits the
-whole connection to one branch:
+`Router` commits as early as its configured matchers allow. A configuration
+that uses only metadata available at `Init` (source/destination metadata,
+network, or credentials) chooses and initializes its branch immediately. When
+it uses content-based matchers (`protocol`, `attributes`, or configured domain
+sniffing), it remains a **deferred branch selector** until it has bytes to
+inspect:
 
 ```text
-upstream Init ──▶ Router sets up only its own per-line state
-                  (no branch is chosen or initialized yet)
+upstream Init ──▶ clear stale detected-protocol observations
+                  │
+                  ├─ metadata-only rules ──▶ evaluate ──▶ Init selected branch
+                  │
+                  └─ payload-dependent rules ──▶ wait for first payload
 
 first payload ──▶ buffer ──▶ sniff ──▶ evaluate rules top to bottom
                      ▲          │
@@ -76,19 +82,23 @@ first payload ──▶ buffer ──▶ sniff ──▶ evaluate rules top to b
 
 Step by step:
 
-1. Upstream `Init` initializes only the router's own per-line state and clears
-   stale optional routing metadata (detected-protocol flags) on the destination.
-   **No branch is initialized yet.**
-2. The first upstream payload is buffered and handed to the classifier
+1. Upstream `Init` initializes router state and clears stale
+   detected-protocol observations on the destination. It preserves separate
+   one-shot route-control metadata, such as a negotiated SOCKS UDP relay.
+2. If no configured rule or root setting needs first-payload inspection, Router
+   evaluates the metadata-only rules immediately and initializes the selected
+   branch. This supports handshake and server-first paths that need downstream
+   establishment before they can send upstream bytes.
+3. Otherwise, the first upstream payload is buffered and handed to the classifier
    (`routerClassify`).
-3. **Sniffing runs first**, scoped to what the config actually needs (see
+4. **Sniffing runs first**, scoped to what the config actually needs (see
    [Sniffing](#sniffing)). If a detector needs more bytes, Router keeps
    buffering and re-runs classification on the next payload, within a bounded
    window (see [The sniff window](#the-sniff-window)).
-4. **Rules are tested top to bottom in JSON order.** For each rule every
+5. **Rules are tested top to bottom in JSON order.** For each rule every
    configured condition is evaluated and `AND`-combined; the first fully
    matching rule selects its `target`.
-5. The chosen branch (a rule `target`, or the default `next`) receives `Init`,
+6. The chosen branch (a rule `target`, or the default `next`) receives `Init`,
    and the buffered bytes are **replayed** to it — nothing is lost. From then on
    payloads flow straight through to that branch, and downstream traffic returns
    through the router.
@@ -286,10 +296,12 @@ first upstream payload. It needs no root `sniffing`: if any rule uses
   `bittorrent` are stronger structural/signature checks.
 
 Detected bits live in `dest_ctx.optional_flags.detected_protocols`. They are
-**optional routing metadata, not endpoint identity**: only Router's own
-sniffing sets them, and Router **clears them in upstream `Init`** before each
-new classification — so chaining two Routers never lets the second inherit
-stale protocol bits from the first.
+**optional routing metadata, not endpoint identity**: Router's sniffing sets
+the detected-protocol subset, and Router clears only that subset in upstream
+`Init` before each classification — so chaining two Routers never lets the
+second inherit stale protocol bits from the first. The storage also carries
+separate one-shot route-control bits for protocol tunnels; Router preserves
+those bits and never treats them as a `protocol` match.
 
 ### Attribute sniffing
 
