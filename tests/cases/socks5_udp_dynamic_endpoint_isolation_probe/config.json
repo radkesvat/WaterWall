@@ -1,0 +1,34 @@
+{
+  "name": "socks5-udp-dynamic-endpoint-isolation-probe",
+  "nodes": [
+    {
+      "name": "proxy-listener",
+      "type": "TcpUdpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 24700,
+        "nodelay": true
+      },
+      "next": "socks5-server"
+    },
+    {
+      "name": "socks5-server",
+      "type": "Socks5Server",
+      "settings": {
+        "no-auth": true,
+        "connect": false,
+        "udp": true,
+        "ipv4": "127.0.0.1"
+      },
+      "next": "target-connector"
+    },
+    {
+      "name": "target-connector",
+      "type": "UdpConnector",
+      "settings": {
+        "address": "dest_context->address",
+        "port": "dest_context->port"
+      }
+    }
+  ]
+}

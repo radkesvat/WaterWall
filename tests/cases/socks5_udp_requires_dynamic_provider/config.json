@@ -1,0 +1,34 @@
+{
+  "name": "socks5-udp-requires-dynamic-provider",
+  "nodes": [
+    {
+      "name": "tcp-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 24600,
+        "nodelay": true
+      },
+      "next": "socks5-server"
+    },
+    {
+      "name": "socks5-server",
+      "type": "Socks5Server",
+      "settings": {
+        "no-auth": true,
+        "connect": false,
+        "udp": true,
+        "ipv4": "127.0.0.1"
+      },
+      "next": "target-connector"
+    },
+    {
+      "name": "target-connector",
+      "type": "UdpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 9
+      }
+    }
+  ]
+}

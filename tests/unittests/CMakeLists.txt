@@ -2880,6 +2880,106 @@ if(TARGET Socks5Server)
     socks5server_udp_close_reentrant_test
     "unit;tunnels;socks5server;udp;reentrant;finish;lifetime;ownership;payload"
   )
+
+  add_executable(socks5server_dynamic_provider_test
+    socks5server_dynamic_provider_test.c
+    ${WATERWALL_LINE_FAILURE_WW_SOURCES}
+  )
+  waterwall_line_failure_test_use_tunnel(socks5server_dynamic_provider_test Socks5Server)
+  target_link_options(socks5server_dynamic_provider_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS})
+  target_link_libraries(socks5server_dynamic_provider_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests socks5server_dynamic_provider_test)
+
+  add_waterwall_unit_test(
+    waterwall.socks5server_dynamic_provider_unit
+    socks5server_dynamic_provider_test
+    "unit;tunnels;socks5server;udp;dynamic;provider;worker"
+  )
+endif()
+
+add_executable(bound_udp_socket_test
+  bound_udp_socket_test.c
+  ${WATERWALL_LINE_FAILURE_WW_SOURCES}
+)
+target_link_options(bound_udp_socket_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS})
+if(LINUX)
+  target_link_options(bound_udp_socket_test PRIVATE "-Wl,--wrap=setsockopt")
+endif()
+target_link_libraries(bound_udp_socket_test PRIVATE ww)
+add_dependencies(waterwall_unit_tests bound_udp_socket_test)
+add_waterwall_unit_test(
+  waterwall.bound_udp_socket_unit
+  bound_udp_socket_test
+  "unit;net;udp;socket;bound;ephemeral"
+)
+
+if(TARGET UdpListener)
+  add_executable(
+    udplistener_acl_copy_test
+    udplistener_acl_copy_test.c
+    ${CMAKE_SOURCE_DIR}/tunnels/UdpListener/instance/create.c
+    ${CMAKE_SOURCE_DIR}/tunnels/UdpListener/instance/destroy.c
+  )
+  set_target_properties(udplistener_acl_copy_test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+  target_compile_definitions(udplistener_acl_copy_test PRIVATE UDPLISTENER_CREATE_TEST_HOOKS=1)
+  target_include_directories(
+    udplistener_acl_copy_test
+    PRIVATE
+      ${CMAKE_SOURCE_DIR}/tunnels/UdpListener/include
+      ${CMAKE_SOURCE_DIR}/tunnels/UdpListener/include/UdpListener
+  )
+  if(LINUX)
+    target_link_options(udplistener_acl_copy_test PRIVATE
+      "-Wl,--wrap=socketacceptorRegister"
+      "-Wl,--wrap=socketfilteroptionDeInit"
+      "-Wl,--wrap=tunnelDestroy"
+    )
+  endif()
+  target_link_libraries(udplistener_acl_copy_test PRIVATE UdpListener ww)
+  add_dependencies(waterwall_unit_tests udplistener_acl_copy_test)
+  add_waterwall_unit_test(
+    waterwall.udplistener_acl_copy_unit
+    udplistener_acl_copy_test
+    "unit;tunnels;udplistener;acl;allocation;startup"
+  )
+
+  if(TARGET TcpUdpListener)
+    add_executable(tcpudplistener_dynamic_provider_test tcpudplistener_dynamic_provider_test.c)
+    target_include_directories(
+      tcpudplistener_dynamic_provider_test
+      PRIVATE
+        ${CMAKE_SOURCE_DIR}/tunnels/TcpUdpListener/include
+        ${CMAKE_SOURCE_DIR}/tunnels/TcpUdpListener/include/TcpUdpListener
+        ${CMAKE_SOURCE_DIR}/tunnels/UdpListener/include
+        ${CMAKE_SOURCE_DIR}/tunnels/UdpListener/include/UdpListener
+    )
+    target_link_libraries(tcpudplistener_dynamic_provider_test PRIVATE TcpUdpListener UdpListener ww)
+    add_dependencies(waterwall_unit_tests tcpudplistener_dynamic_provider_test)
+    add_waterwall_unit_test(
+      waterwall.tcpudplistener_dynamic_provider_unit
+      tcpudplistener_dynamic_provider_test
+      "unit;tunnels;tcpudplistener;udplistener;udp;dynamic;provider;delegation"
+    )
+  endif()
+
+  add_executable(udplistener_dynamic_endpoint_test
+    udplistener_dynamic_endpoint_test.c
+    ${WATERWALL_LINE_FAILURE_WW_SOURCES}
+  )
+  waterwall_line_failure_test_use_tunnel(udplistener_dynamic_endpoint_test UdpListener)
+  target_compile_definitions(udplistener_dynamic_endpoint_test PRIVATE UDPLISTENER_DYNAMIC_ENDPOINT_TEST_HOOKS=1)
+  target_link_options(udplistener_dynamic_endpoint_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS})
+  if(LINUX)
+    target_link_options(udplistener_dynamic_endpoint_test PRIVATE "-Wl,--wrap=wioRead")
+  endif()
+  target_link_libraries(udplistener_dynamic_endpoint_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests udplistener_dynamic_endpoint_test)
+
+  add_waterwall_unit_test(
+    waterwall.udplistener_dynamic_endpoint_unit
+    udplistener_dynamic_endpoint_test
+    "unit;tunnels;udplistener;udp;dynamic;endpoint;lifecycle"
+  )
 endif()
 
 add_executable(local_idle_table_indexed_test local_idle_table_indexed_test.c)

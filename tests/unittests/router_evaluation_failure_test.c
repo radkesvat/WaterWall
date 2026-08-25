@@ -3,8 +3,8 @@
  *
  * A MaxMind lookup failure or a regex engine failure means Router could not establish the facts a rule asks
  * about. That is not "the rule did not match": falling through would silently route the connection somewhere the
- * operator never approved. Classification must stop at the first evaluation error, and the undecided line must be
- * closed toward the previous side only, because Router initializes its selected branch lazily.
+ * operator never approved. Classification must stop at the first evaluation error, and a payload-dependent undecided
+ * line must be closed toward the previous side only because its selected branch has not been initialized yet.
  */
 #include "Router/structure.h"
 
@@ -269,6 +269,12 @@ static void caseUndecidedLineIsClosedSafely(void)
     router_fixture_t fixture;
     fixtureSetup(&fixture);
     useGeoipRule(&fixture);
+
+    /* Root sniffing deliberately makes this configuration payload-dependent.
+     * Metadata-only GeoIP rules now commit during Init, while this fixture must
+     * exercise an evaluation error before a branch becomes reachable. */
+    router_tstate_t *ts = tunnelGetState(fixture.router);
+    ts->sniffing_modes  = kRouterSniffHttp1;
 
     line_t        *l              = makeIpv4Line(&fixture);
     const uint32_t refc_at_start  = twfLineRefCount(l);

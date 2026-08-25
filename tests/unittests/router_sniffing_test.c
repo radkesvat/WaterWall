@@ -34,7 +34,9 @@ static line_t *testLineCreate(void)
 {
     line_t *line = memoryAllocateZero(sizeof(*line) + sizeof(router_lstate_t));
     require(line != NULL, "failed to allocate test line");
+    atomic_init(&line->refc, 1);
     line->alive = true;
+    line->wid   = 0;
     return line;
 }
 
@@ -936,24 +938,92 @@ static void testPortMatchers(void)
     testLineDestroy(line);
 }
 
-static void testRouterInitClearsOptionalFlags(void)
+static uint32_t gRouterTargetInitCalls;
+static uint32_t gRouterFallbackInitCalls;
+
+static void recordRouterTargetInit(tunnel_t *t, line_t *l)
+{
+    discard t;
+    discard l;
+    ++gRouterTargetInitCalls;
+}
+
+static void recordRouterFallbackInit(tunnel_t *t, line_t *l)
+{
+    discard t;
+    discard l;
+    ++gRouterFallbackInitCalls;
+}
+
+static void testRouterInitClearsDetectedProtocolsAndPreservesRouteControl(void)
 {
     line_t *line = testLineCreate();
     line->routing_context.dest_ctx.optional_flags.detected_protocols =
-        kAddressContextProtocolHttp1 | kAddressContextProtocolBittorrent;
+        kAddressContextProtocolHttp1 | kAddressContextProtocolBittorrent | kAddressContextRouteFlagPinnedDestination;
 
-    tunnel_t tunnel      = {0};
-    tunnel.lstate_offset = 0;
+    tunnel_t *router   = tunnelCreate(NULL, sizeof(router_tstate_t), sizeof(router_lstate_t));
+    tunnel_t *fallback = tunnelCreate(NULL, 0, 0);
+    require(router != NULL && fallback != NULL, "failed to allocate Router Init test tunnels");
+    fallback->fnInitU = recordRouterFallbackInit;
+    tunnelBind(router, fallback);
 
-    routerTunnelUpStreamInit(&tunnel, line);
+    router_tstate_t *ts = tunnelGetState(router);
+    ts->sniffing_modes  = kRouterSniffHttp1;
 
-    router_lstate_t *ls = lineGetState(line, &tunnel);
-    require(line->routing_context.dest_ctx.optional_flags.detected_protocols == 0,
-            "Router upstream init did not clear destination optional protocol flags");
+    gRouterFallbackInitCalls = 0;
+    routerTunnelUpStreamInit(router, line);
+
+    router_lstate_t *ls = lineGetState(line, router);
+    require(line->routing_context.dest_ctx.optional_flags.detected_protocols ==
+                kAddressContextRouteFlagPinnedDestination,
+            "Router upstream Init did not preserve route-control metadata while clearing detected protocols");
     require(ls->route == kRouterRouteUndecided, "Router upstream init did not initialize line state");
     require(ls->pending == NULL, "Router upstream init left pending payload state");
+    require(gRouterFallbackInitCalls == 0, "payload-dependent Router rule selection initialized a branch too early");
 
     testLineDestroy(line);
+    tunnelDestroy(fallback);
+    tunnelDestroy(router);
+}
+
+static void testRouterInitCommitsStaticRoute(void)
+{
+    line_t *line = testLineCreate();
+    require(addresscontextSetIpAddressPortProtocol(&line->routing_context.dest_ctx, "198.51.100.10", 443, IP_PROTO_TCP),
+            "failed to set static Router destination");
+
+    tunnel_t *router   = tunnelCreate(NULL, sizeof(router_tstate_t), sizeof(router_lstate_t));
+    tunnel_t *target   = tunnelCreate(NULL, 0, 0);
+    tunnel_t *fallback = tunnelCreate(NULL, 0, 0);
+    require(router != NULL && target != NULL && fallback != NULL,
+            "failed to allocate static Router route test tunnels");
+    target->fnInitU   = recordRouterTargetInit;
+    fallback->fnInitU = recordRouterFallbackInit;
+    tunnelBind(router, fallback);
+
+    router_tstate_t *ts = tunnelGetState(router);
+    ts->rules           = memoryAllocateZero(sizeof(*ts->rules));
+    require(ts->rules != NULL, "failed to allocate static Router rule");
+    ts->rules_count              = 1;
+    ts->rules[0].network.present = true;
+    ts->rules[0].network.wanted  = kRouterNetworkTcp;
+    ts->rules[0].target_tunnel   = target;
+
+    gRouterTargetInitCalls   = 0;
+    gRouterFallbackInitCalls = 0;
+    routerTunnelUpStreamInit(router, line);
+
+    router_lstate_t *ls = lineGetState(line, router);
+    require(gRouterTargetInitCalls == 1, "static Router target was not initialized during Init");
+    require(gRouterFallbackInitCalls == 0, "static Router target fell through to the default branch");
+    require(ls->route == kRouterRouteTarget && ls->target == target,
+            "static Router route was not committed before the first payload");
+
+    testLineDestroy(line);
+    memoryFree(ts->rules);
+    tunnelDestroy(fallback);
+    tunnelDestroy(target);
+    tunnelDestroy(router);
 }
 
 static void testHttpSniffingMatchesDestinationDomain(void)
@@ -1640,7 +1710,8 @@ int main(void)
     testProtocolConfig();
     testProtocolDescriptorTable();
     testPortMatchers();
-    testRouterInitClearsOptionalFlags();
+    testRouterInitClearsDetectedProtocolsAndPreservesRouteControl();
+    testRouterInitCommitsStaticRoute();
     testHttpSniffingMatchesDestinationDomain();
     testTlsSniffingMatchesDestinationDomain();
 #ifdef ROUTER_ENABLE_HTTP2_SNIFFING

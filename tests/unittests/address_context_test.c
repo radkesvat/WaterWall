@@ -175,6 +175,22 @@ static void testResetClearsOptionalFlags(void)
     requireOptionalProtocols(&ctx, 0, "reset did not clear optional protocols");
 }
 
+static void testClearDetectedProtocolsPreservesRouteControl(void)
+{
+    address_context_t ctx = {0};
+
+    ctx.optional_flags.detected_protocols =
+        kAddressContextDetectedProtocolMask | kAddressContextRouteFlagPinnedDestination;
+    addresscontextClearDetectedProtocols(&ctx);
+    requireOptionalProtocols(
+        &ctx, kAddressContextRouteFlagPinnedDestination, "detected-protocol reset erased negotiated route control");
+    require(addresscontextDestinationIsPinned(&ctx), "pinned destination marker was not preserved");
+
+    addresscontextClearOptionalFlags(&ctx);
+    requireOptionalProtocols(&ctx, 0, "full optional-metadata reset did not clear route control");
+    require(! addresscontextDestinationIsPinned(&ctx), "full optional-metadata reset retained pinned destination");
+}
+
 static void testEndpointSettersClearOptionalFlags(void)
 {
     address_context_t ctx = {0};
@@ -234,6 +250,7 @@ int main(void)
     testConstantDomainCopyKeepsMetadata();
     testIpCopyKeepsMetadata();
     testResetClearsOptionalFlags();
+    testClearDetectedProtocolsPreservesRouteControl();
     testEndpointSettersClearOptionalFlags();
     testObservedDomainPreservesOptionalFlags();
     testResolvedDomainConvertsToSockAddr();

@@ -1,0 +1,111 @@
+{
+  "name": "socks5-noauth-udp-router-connector-loopback",
+  "nodes": [
+    {
+      "name": "tester-client",
+      "type": "TesterClient",
+      "settings": {
+        "max-payload-size": 3800,
+        "chunk-count": 9,
+        "split-payload-burst": 1
+      },
+      "next": "socks5-client"
+    },
+    {
+      "name": "socks5-client",
+      "type": "Socks5Client",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 24501,
+        "protocol": "udp"
+      },
+      "next": "relay-router"
+    },
+    {
+      "name": "relay-router",
+      "type": "Router",
+      "settings": {
+        "rules": [
+          {
+            "network": "tcp,udp",
+            "target": "proxy-connector"
+          }
+        ]
+      },
+      "next": "reject-connector"
+    },
+    {
+      "name": "proxy-connector",
+      "type": "TcpUdpConnector",
+      "settings": {
+        "balance-mode": "packet",
+        "addresses": [
+          {
+            "address": "127.0.0.1",
+            "port": 24500,
+            "weight": 1
+          }
+        ],
+        "nodelay": true,
+        "fastopen": false
+      }
+    },
+    {
+      "name": "reject-connector",
+      "type": "TcpUdpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 9,
+        "nodelay": true,
+        "fastopen": false
+      }
+    },
+    {
+      "name": "proxy-listener",
+      "type": "TcpUdpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 24500,
+        "nodelay": true
+      },
+      "next": "socks5-server"
+    },
+    {
+      "name": "socks5-server",
+      "type": "Socks5Server",
+      "settings": {
+        "no-auth": true,
+        "connect": false,
+        "udp": true,
+        "ipv4": "127.0.0.1"
+      },
+      "next": "target-connector"
+    },
+    {
+      "name": "target-connector",
+      "type": "UdpConnector",
+      "settings": {
+        "address": "dest_context->address",
+        "port": "dest_context->port"
+      }
+    },
+    {
+      "name": "target-listener",
+      "type": "UdpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 24501
+      },
+      "next": "tester-server"
+    },
+    {
+      "name": "tester-server",
+      "type": "TesterServer",
+      "settings": {
+        "max-payload-size": 3800,
+        "chunk-count": 9,
+        "split-payload-burst": 1
+      }
+    }
+  ]
+}

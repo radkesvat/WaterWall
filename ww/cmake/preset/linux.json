@@ -262,7 +262,11 @@
                 "reverseclient_owner_drain_test",
                 "packetstostream_orderly_shutdown_test",
                 "packetsender_orderly_shutdown_test",
-                "wchan_close_semantics_test"
+                "wchan_close_semantics_test",
+                "socks5server_udp_close_reentrant_test",
+                "socks5server_dynamic_provider_test",
+                "udplistener_dynamic_endpoint_test",
+                "tcpudplistener_dynamic_provider_test"
             ],
             "inherits": [
                 "host-linux"
@@ -551,7 +555,7 @@
             "configuration": "Debug",
             "filter": {
                 "include": {
-                    "name": "^waterwall\\.((shutdown_manager|wloop_stop_request|worker_context_helpers|device_reader_session|wchan_close_semantics|idle_table_contract|local_idle_table_indexed|widle_table_cancellation|system_memory_snapshot|system_memory_linux_provider|muxserver_admission_limit|muxserver_admission_concurrency|reverseclient_owner_drain|packetstostream_orderly_shutdown|packetsender_orderly_shutdown|ping_tracker)_unit|shutdown_production_sequence|reverse_tcp_bridge_roundtrip)$"
+                    "name": "^waterwall\\.((shutdown_manager|wloop_stop_request|worker_context_helpers|device_reader_session|wchan_close_semantics|idle_table_contract|local_idle_table_indexed|widle_table_cancellation|system_memory_snapshot|system_memory_linux_provider|muxserver_admission_limit|muxserver_admission_concurrency|reverseclient_owner_drain|packetstostream_orderly_shutdown|packetsender_orderly_shutdown|ping_tracker|socks5server_udp_close_reentrant|socks5server_dynamic_provider|udplistener_dynamic_endpoint|tcpudplistener_dynamic_provider)_unit|shutdown_production_sequence|reverse_tcp_bridge_roundtrip)$"
                 }
             },
             "inherits": [

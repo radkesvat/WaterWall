@@ -28,42 +28,21 @@ typedef struct socks5server_close_fixture_s
     tunnel_t        *prev;
     tunnel_t        *server;
     tunnel_t        *next;
+    tunnel_t        *provider;
+    tunnel_chain_t  *chain;
     line_t          *client;
     line_t          *remote;
+    line_t          *remote_second;
+    line_t          *control;
     uint32_t         client_payload_calls;
     uint32_t         upstream_finish_calls;
     uint32_t         upstream_finish_refcount;
-    uint32_t         assoc_shard_index;
-    bool             assoc_shard_initialized;
+    uint32_t         remote_init_calls;
+    uint32_t         provider_close_calls;
+    uint32_t         remote_registry_count_on_finish;
+    bool             provider_closed;
+    bool             assoc_initialized;
 } socks5server_close_fixture_t;
-
-static hash_t fixtureAssociationKey(const ip_addr_t *ip, uint16_t udp_port, uint16_t local_port)
-{
-    struct
-    {
-        uint16_t   listener_port;
-        uint16_t   client_port;
-        uint8_t    ip_type;
-        uint8_t    padding[5];
-        ip4_addr_t ip4;
-        ip6_addr_t ip6;
-    } key = {0};
-
-    key.listener_port = local_port;
-    key.client_port   = udp_port;
-    key.ip_type       = ip->type;
-
-    if (ip->type == IPADDR_TYPE_V4)
-    {
-        key.ip4 = ip->u_addr.ip4;
-    }
-    else
-    {
-        key.ip6 = ip->u_addr.ip6;
-    }
-
-    return calcHashBytes(&key, sizeof(key));
-}
 
 static ip_addr_t fixtureIpv4(const char *text)
 {
@@ -79,6 +58,12 @@ static void countNextFinish(tunnel_t *t, line_t *l)
     twfRequire(l == fixture->remote, "Socks5Server finished the wrong UDP remote line");
     ++fixture->upstream_finish_calls;
     fixture->upstream_finish_refcount = twfLineRefCount(l);
+    if (fixture->client != NULL && lineIsAlive(fixture->client))
+    {
+        socks5server_lstate_t *client_ls = lineGetState(fixture->client, fixture->server);
+        fixture->remote_registry_count_on_finish =
+            (uint32_t) socks5server_remote_map_t_size(&client_ls->udp_remote_lines);
+    }
 }
 
 static void closeClientFromPrevPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
@@ -110,6 +95,80 @@ static void illegalNextFinishDestroysRemote(tunnel_t *t, line_t *l)
     lineDestroy(l);
 }
 
+static bool providerGetDynamicLineInfo(tunnel_t *t, const line_t *line, udplistener_dynamic_line_info_t *info_out)
+{
+    socks5server_close_fixture_t *fixture = *(socks5server_close_fixture_t **) tunnelGetState(t);
+
+    if (line != fixture->client || ! lineIsAlive((line_t *) line))
+    {
+        return false;
+    }
+
+    *info_out = (udplistener_dynamic_line_info_t) {
+        .handle           = {.owner_wid = 0, .generation = 1},
+        .expected_wid     = 0,
+        .generation       = 1,
+        .bound_local_port = kSocks5ServerCloseListenerPort,
+        .is_dynamic       = true,
+    };
+    return true;
+}
+
+static void providerCloseDynamicClient(tunnel_t *t, udplistener_dynamic_endpoint_handle_t handle)
+{
+    socks5server_close_fixture_t *fixture = *(socks5server_close_fixture_t **) tunnelGetState(t);
+
+    twfRequire(udplistenerDynamicEndpointHandleEquals(
+                   handle, (udplistener_dynamic_endpoint_handle_t) {.owner_wid = 0, .generation = 1}),
+               "provider close received the wrong dynamic endpoint handle");
+    twfRequire(! fixture->provider_closed, "provider closed the dynamic endpoint more than once");
+    twfRequire(fixture->client != NULL && lineIsAlive(fixture->client), "provider close lost its UDP client line");
+
+    fixture->provider_closed = true;
+    ++fixture->provider_close_calls;
+
+    /* This mirrors UdpListener's provider-owned line close: Socks5Server only
+     * borrows the client line, then the provider makes it logically dead. */
+    lineLock(fixture->client);
+    socks5serverTunnelUpStreamFinish(fixture->server, fixture->client);
+    twfRequire(lineIsAlive(fixture->client), "Socks5Server destroyed the provider-owned UDP client line");
+    lineDestroy(fixture->client);
+    lineUnlock(fixture->client);
+}
+
+static void closeControlDuringRemoteInit(tunnel_t *t, line_t *l)
+{
+    socks5server_close_fixture_t *fixture = *(socks5server_close_fixture_t **) tunnelGetState(t);
+
+    twfRequire(l != fixture->client, "remote Init received the UDP client line");
+    fixture->remote = l;
+    ++fixture->remote_init_calls;
+    socks5serverCloseControlLineFromUpstream(fixture->server, fixture->control);
+}
+
+static void closeProviderDuringRemoteFinish(tunnel_t *t, line_t *l)
+{
+    socks5server_close_fixture_t *fixture = *(socks5server_close_fixture_t **) tunnelGetState(t);
+
+    twfRequire(l == fixture->remote || l == fixture->remote_second,
+               "client drain finished an unregistered UDP remote line");
+    ++fixture->upstream_finish_calls;
+    if (! fixture->provider_closed)
+    {
+        providerCloseDynamicClient(fixture->provider,
+                                   (udplistener_dynamic_endpoint_handle_t) {.owner_wid = 0, .generation = 1});
+    }
+}
+
+static void fixtureAttachSingleWorkerChain(socks5server_close_fixture_t *fixture)
+{
+    fixture->chain = memoryAllocateZero(sizeof(tunnel_chain_t) + sizeof(generic_pool_t *));
+    twfRequire(fixture->chain != NULL, "failed to allocate Socks5Server test chain");
+    fixture->chain->workers_count = 1;
+    fixture->chain->line_pools[0] = fixture->lines.pools[0];
+    fixture->server->chain        = fixture->chain;
+}
+
 static void fixtureInitializeAssociation(socks5server_close_fixture_t *fixture)
 {
     const ip_addr_t client_ip = fixtureIpv4("192.0.2.10");
@@ -120,25 +179,38 @@ static void fixtureInitializeAssociation(socks5server_close_fixture_t *fixture)
     client_route->peer_source_port    = kSocks5ServerCloseClientPort;
     client_route->local_listener_port = kSocks5ServerCloseListenerPort;
 
-    addresscontextSetIpPortProtocol(
-        lineGetDestinationAddressContext(fixture->remote), &remote_ip, kSocks5ServerCloseRemotePort, IP_PROTO_UDP);
+    if (fixture->remote != NULL)
+    {
+        addresscontextSetIpPortProtocol(
+            lineGetDestinationAddressContext(fixture->remote), &remote_ip, kSocks5ServerCloseRemotePort, IP_PROTO_UDP);
+    }
 
-    const hash_t key = fixtureAssociationKey(&client_ip, kSocks5ServerCloseClientPort, kSocks5ServerCloseListenerPort);
-    fixture->assoc_shard_index = (uint32_t) (key & (hash_t) (kSocks5ServerAssocShardCount - 1U));
+    socks5server_tstate_t *ts  = tunnelGetState(fixture->server);
+    ts->workers_count          = 1;
+    ts->worker_associations    = memoryAllocateZero(sizeof(socks5server_assoc_map_t));
+    ts->worker_associations[0] = socks5server_assoc_map_t_init();
+    fixture->assoc_initialized = true;
 
-    socks5server_tstate_t      *ts    = tunnelGetState(fixture->server);
-    socks5server_assoc_shard_t *shard = &ts->assoc_shards[fixture->assoc_shard_index];
-    shard->map                        = socks5server_assoc_map_t_init();
-    twfRequire(rwlockTryInit(&shard->lock), "failed to initialize the fixture association lock");
-    fixture->assoc_shard_initialized = true;
-    twfRequire(socks5server_assoc_map_t_reserve(&shard->map, 1), "failed to reserve the fixture association map");
+    socks5server_lstate_t *client_ls = lineGetState(fixture->client, fixture->server);
+    socks5server_lstate_t *remote_ls = fixture->remote != NULL ? lineGetState(fixture->remote, fixture->server) : NULL;
+
+    client_ls->dynamic_handle = (udplistener_dynamic_endpoint_handle_t) {.owner_wid = 0, .generation = 1};
+    if (remote_ls != NULL)
+    {
+        remote_ls->dynamic_handle = client_ls->dynamic_handle;
+    }
 
     socks5server_assoc_entry_t entry = {
-        .token       = 1,
-        .owner_wid   = 0,
-        .user_handle = userHandleEmpty(),
+        .generation     = 1,
+        .owner_wid      = 0,
+        .dynamic_handle = client_ls->dynamic_handle,
+        .assigned_port  = kSocks5ServerCloseListenerPort,
+        .user_handle    = userHandleEmpty(),
+        .auth_username  = NULL,
+        .auth_password  = NULL,
+        .active         = true,
     };
-    twfRequire(socks5server_assoc_map_t_insert(&shard->map, key, entry).ref != NULL,
+    twfRequire(socks5server_assoc_map_t_insert(&ts->worker_associations[0], 1, entry).ref != NULL,
                "failed to insert the fixture UDP association");
 }
 
@@ -181,8 +253,81 @@ static void fixtureSetup(socks5server_close_fixture_t *fixture)
     fixtureInitializeAssociation(fixture);
 }
 
+static void fixtureSetupRemoteInitClose(socks5server_close_fixture_t *fixture)
+{
+    memoryZero(fixture, sizeof(*fixture));
+    twfWorkerEnvSetup(&fixture->env, kSocks5ServerCloseTestLargeBuffer, 0);
+
+    fixture->prev     = tunnelCreate(NULL, sizeof(socks5server_close_fixture_t *), 0);
+    fixture->server   = tunnelCreate(NULL, sizeof(socks5server_tstate_t), sizeof(socks5server_lstate_t));
+    fixture->next     = tunnelCreate(NULL, sizeof(socks5server_close_fixture_t *), 0);
+    fixture->provider = tunnelCreate(NULL, sizeof(socks5server_close_fixture_t *), 0);
+    twfRequire(fixture->prev != NULL && fixture->server != NULL && fixture->next != NULL && fixture->provider != NULL,
+               "failed to create remote-Init close fixture tunnels");
+
+    *(socks5server_close_fixture_t **) tunnelGetState(fixture->next)     = fixture;
+    *(socks5server_close_fixture_t **) tunnelGetState(fixture->provider) = fixture;
+    fixture->next->fnInitU                                               = closeControlDuringRemoteInit;
+    fixture->next->fnFinU                                                = countNextFinish;
+    tunnelBind(fixture->prev, fixture->server);
+    tunnelBind(fixture->server, fixture->next);
+
+    twfLinePoolSetup(&fixture->lines, fixture->server->lstate_size, kSocks5ServerCloseTestLinePoolCap);
+    fixtureAttachSingleWorkerChain(fixture);
+    fixture->client  = twfLinePoolCreateLine(&fixture->lines);
+    fixture->control = twfLinePoolCreateLine(&fixture->lines);
+
+    socks5serverLinestateInitialize(lineGetState(fixture->client, fixture->server),
+                                    fixture->server,
+                                    fixture->client,
+                                    kSocks5ServerLineKindUdpClient);
+    socks5serverLinestateInitialize(lineGetState(fixture->control, fixture->server),
+                                    fixture->server,
+                                    fixture->control,
+                                    kSocks5ServerLineKindControlTcp);
+    fixtureInitializeAssociation(fixture);
+
+    socks5server_tstate_t *ts = tunnelGetState(fixture->server);
+    ts->dynamic_provider      = (udplistener_dynamic_provider_t) {
+             .instance      = fixture->provider,
+             .close         = providerCloseDynamicClient,
+             .get_line_info = providerGetDynamicLineInfo,
+    };
+
+    socks5server_lstate_t *client_ls  = lineGetState(fixture->client, fixture->server);
+    socks5server_lstate_t *control_ls = lineGetState(fixture->control, fixture->server);
+    client_ls->user_handle            = userHandleEmpty();
+    control_ls->phase                 = kSocks5ServerPhaseUdpControl;
+    control_ls->dynamic_handle        = client_ls->dynamic_handle;
+}
+
+static line_t *fixtureAddUdpRemote(socks5server_close_fixture_t *fixture, hash_t remote_key)
+{
+    line_t                *remote    = twfLinePoolCreateLine(&fixture->lines);
+    socks5server_lstate_t *remote_ls = lineGetState(remote, fixture->server);
+    socks5server_lstate_t *client_ls = lineGetState(fixture->client, fixture->server);
+    socks5serverLinestateInitialize(remote_ls, fixture->server, remote, kSocks5ServerLineKindUdpRemote);
+    remote_ls->client_line        = fixture->client;
+    remote_ls->client_line_locked = true;
+    remote_ls->remote_key         = remote_key;
+    remote_ls->dynamic_handle     = client_ls->dynamic_handle;
+    lineLock(fixture->client);
+    twfRequire(socks5server_remote_map_t_insert(&client_ls->udp_remote_lines, remote_key, remote).ref != NULL,
+               "failed to register a second fixture UDP remote");
+    return remote;
+}
+
 static void fixtureTeardown(socks5server_close_fixture_t *fixture)
 {
+    if (fixture->remote_second != NULL)
+    {
+        socks5server_lstate_t *remote_ls = lineGetState(fixture->remote_second, fixture->server);
+        socks5serverDetachRemoteFromClient(remote_ls);
+        socks5serverLinestateDestroy(remote_ls);
+        lineDestroy(fixture->remote_second);
+        fixture->remote_second = NULL;
+    }
+
     if (fixture->remote != NULL)
     {
         socks5server_lstate_t *remote_ls = lineGetState(fixture->remote, fixture->server);
@@ -199,16 +344,35 @@ static void fixtureTeardown(socks5server_close_fixture_t *fixture)
         fixture->client = NULL;
     }
 
-    if (fixture->assoc_shard_initialized)
+    if (fixture->control != NULL)
     {
-        socks5server_tstate_t      *ts    = tunnelGetState(fixture->server);
-        socks5server_assoc_shard_t *shard = &ts->assoc_shards[fixture->assoc_shard_index];
-        socks5server_assoc_map_t_drop(&shard->map);
-        rwlockDestroy(&shard->lock);
-        fixture->assoc_shard_initialized = false;
+        socks5serverLinestateDestroy(lineGetState(fixture->control, fixture->server));
+        lineDestroy(fixture->control);
+        fixture->control = NULL;
+    }
+
+    if (fixture->assoc_initialized)
+    {
+        socks5server_tstate_t *ts = tunnelGetState(fixture->server);
+        socks5server_assoc_map_t_drop(&ts->worker_associations[0]);
+        memoryFree(ts->worker_associations);
+        ts->worker_associations    = NULL;
+        fixture->assoc_initialized = false;
+    }
+
+    if (fixture->chain != NULL)
+    {
+        fixture->server->chain = NULL;
+        memoryFree(fixture->chain);
+        fixture->chain = NULL;
     }
 
     twfLinePoolTeardown(&fixture->lines);
+    if (fixture->provider != NULL)
+    {
+        tunnelDestroy(fixture->provider);
+        fixture->provider = NULL;
+    }
     tunnelDestroy(fixture->next);
     tunnelDestroy(fixture->server);
     tunnelDestroy(fixture->prev);
@@ -240,6 +404,136 @@ static void caseClientPayloadCloseDrainsCurrentRemoteSafely(void)
     tosRequireNoProcessApiCall();
 
     fixture.client = NULL;
+    fixture.remote = NULL;
+    fixtureTeardown(&fixture);
+}
+
+static void caseRemoteInitCanCloseProviderClientSafely(void)
+{
+    twfSetCase("socks5server remote Init can close the provider-owned UDP client safely");
+    tosResetProcessApi(true);
+
+    socks5server_close_fixture_t fixture;
+    fixtureSetupRemoteInitClose(&fixture);
+
+    const uint8_t first_datagram[] = {0x00, 0x00, 0x00, 0x01, 198, 51, 100, 20, 0x00, 0x35};
+    sbuf_t       *payload          = bufferpoolGetSmallBuffer(lineGetBufferPool(fixture.client));
+    sbufSetLength(payload, sizeof(first_datagram));
+    memoryCopy(sbufGetMutablePtr(payload), first_datagram, sizeof(first_datagram));
+    const uint32_t recycle_count_before = twfRecycleCount();
+
+    twfRequire(! socks5serverHandleUdpClientPayload(
+                   fixture.server, fixture.client, lineGetState(fixture.client, fixture.server), payload),
+               "remote Init close must stop the first UDP datagram path");
+    twfRequireEqualU32(fixture.remote_init_calls, 1, "the first datagram did not initialize one remote line");
+    twfRequireEqualU32(fixture.provider_close_calls, 1, "the provider endpoint did not close exactly once");
+    twfRequireEqualU32(fixture.upstream_finish_calls, 1, "the newly-created remote did not finish exactly once");
+    twfRequireEqualU32(
+        fixture.remote_registry_count_on_finish, 0, "remote Init close left the remote registered on the dead client");
+    twfRequireEqualU32(twfRecycleCount(),
+                       recycle_count_before + 1U,
+                       "the pending first UDP datagram was not recycled exactly once through the captured pool");
+
+    /* The handler's temporary client reference is now released, so both the
+     * provider-owned client and Socks5Server-owned remote are fully reclaimed. */
+    fixture.client = NULL;
+    fixture.remote = NULL;
+    lineDestroy(fixture.control);
+    fixture.control = NULL;
+    twfRequireEqualU32(masterpoolGetCheckedOut(fixture.lines.master),
+                       0,
+                       "remote Init close retained a client, remote, or control line reference");
+    twfRequireNoLeakedBuffers();
+    tosRequireNoProcessApiCall();
+    fixtureTeardown(&fixture);
+}
+
+static void caseMultiRemoteDrainStopsAfterProviderClose(void)
+{
+    twfSetCase("socks5server multi-remote client drain stops after provider close re-entry");
+    tosResetProcessApi(true);
+
+    socks5server_close_fixture_t fixture;
+    fixtureSetup(&fixture);
+    fixture.remote_second = fixtureAddUdpRemote(&fixture, kSocks5ServerCloseRemoteKey + 1U);
+    fixture.provider      = tunnelCreate(NULL, sizeof(socks5server_close_fixture_t *), 0);
+    twfRequire(fixture.provider != NULL, "failed to create a provider-close fixture tunnel");
+    *(socks5server_close_fixture_t **) tunnelGetState(fixture.provider) = &fixture;
+
+    socks5server_tstate_t *ts = tunnelGetState(fixture.server);
+    ts->dynamic_provider      = (udplistener_dynamic_provider_t) {
+             .instance = fixture.provider,
+             .close    = providerCloseDynamicClient,
+    };
+    fixture.next->fnFinU = closeProviderDuringRemoteFinish;
+
+    socks5serverCloseUdpClientLineFromUpstream(fixture.server, fixture.client);
+
+    twfRequireEqualU32(fixture.provider_close_calls, 1, "nested provider close did not run exactly once");
+    twfRequireEqualU32(fixture.upstream_finish_calls,
+                       2,
+                       "multi-remote drain did not finish each remote exactly once before observing client death");
+    fixture.client        = NULL;
+    fixture.remote        = NULL;
+    fixture.remote_second = NULL;
+    twfRequireEqualU32(masterpoolGetCheckedOut(fixture.lines.master),
+                       0,
+                       "multi-remote provider close retained a client or remote line");
+    twfRequireNoLeakedBuffers();
+    tosRequireNoProcessApiCall();
+    fixtureTeardown(&fixture);
+}
+
+static void caseInactiveAssociationReplyClosesOnlyItsRemote(void)
+{
+    twfSetCase("socks5server drops a late UDP remote reply after its association becomes inactive");
+    tosResetProcessApi(true);
+
+    socks5server_close_fixture_t fixture;
+    fixtureSetup(&fixture);
+
+    socks5server_tstate_t           *ts                    = tunnelGetState(fixture.server);
+    const socks5server_assoc_entry_t unrelated_association = {
+        .generation     = 2,
+        .owner_wid      = 0,
+        .dynamic_handle = {.owner_wid = 0, .generation = 2},
+        .assigned_port  = kSocks5ServerCloseListenerPort + 1,
+        .user_handle    = userHandleEmpty(),
+        .active         = true,
+    };
+    twfRequire(socks5server_assoc_map_t_insert(&ts->worker_associations[0], 2, unrelated_association).inserted,
+               "failed to install unrelated UDP association sentinel");
+
+    socks5server_assoc_map_t_erase(&ts->worker_associations[0], 1);
+    const uint32_t recycle_count_before = twfRecycleCount();
+    sbuf_t        *payload              = bufferpoolGetSmallBuffer(lineGetBufferPool(fixture.remote));
+    sbufSetLength(payload, 1);
+    sbufGetMutablePtr(payload)[0] = UINT8_C(0x5A);
+    socks5serverTunnelDownStreamPayload(fixture.server, fixture.remote, payload);
+
+    twfRequireEqualU32(fixture.client_payload_calls,
+                       0,
+                       "late inactive-association reply emitted UDP client payload or touched its TCP control path");
+    twfRequireEqualU32(fixture.upstream_finish_calls,
+                       1,
+                       "late inactive-association reply did not finish its Socks5Server-owned remote exactly once");
+    twfRequireEqualU32(twfRecycleCount(),
+                       recycle_count_before + 1U,
+                       "late inactive-association reply buffer was not recycled exactly once");
+    socks5server_lstate_t *client_ls = lineGetState(fixture.client, fixture.server);
+    twfRequireEqualU32((uint32_t) socks5server_remote_map_t_size(&client_ls->udp_remote_lines),
+                       0,
+                       "late inactive-association reply left its remote registered on the client line");
+    socks5server_assoc_map_t_iter unrelated = socks5server_assoc_map_t_find(&ts->worker_associations[0], 2);
+    twfRequire(unrelated.ref != socks5server_assoc_map_t_end(&ts->worker_associations[0]).ref &&
+                   unrelated.ref->second.active,
+               "late inactive-association reply touched an unrelated live association");
+    twfRequireEqualU32(masterpoolGetCheckedOut(fixture.lines.master),
+                       1,
+                       "late inactive-association reply retained or destroyed the wrong client/remote line");
+    twfRequireNoLeakedBuffers();
+    tosRequireNoProcessApiCall();
+
     fixture.remote = NULL;
     fixtureTeardown(&fixture);
 }
@@ -287,6 +581,9 @@ static void caseOwnerCloseRejectsNextLineDestruction(void)
 int main(void)
 {
     caseClientPayloadCloseDrainsCurrentRemoteSafely();
+    caseRemoteInitCanCloseProviderClientSafely();
+    caseMultiRemoteDrainStopsAfterProviderClose();
+    caseInactiveAssociationReplyClosesOnlyItsRemote();
     caseOwnerCloseRejectsNextLineDestruction();
 
     puts("socks5server_udp_close_reentrant_test: all cases passed");

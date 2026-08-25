@@ -104,6 +104,8 @@ CREATION_SITES = [
      "one accepted TCP connection"),
     ("tunnels/UdpListener/common/helpers.c", "onUdpListenerFilteredPayloadReceived", NORMAL_OWNER,
      "one stateful UDP peer flow"),
+    ("tunnels/UdpListener/common/dynamic_endpoint.c", "udplistenerOnDynamicEndpointRead", NORMAL_OWNER,
+     "one dynamic UDP endpoint line"),
     ("tunnels/UdpStatelessSocket/common/helpers.c", "udpstatelesssocketHandleRecvFrom", NORMAL_OWNER,
      "one stateless UDP peer line"),
 
@@ -290,6 +292,7 @@ OWNER_CLOSE_SITES = [
 # How many lines an owner close path destroys, where that is not one. A handler
 # that closes a set of related lines has to keep closing all of them.
 OWNER_DESTROY_COUNTS = {
+    ("tunnels/UdpListener/downstream/fin.c", "udplistenerTunnelDownStreamFinish"): 2,
     ("tunnels/PacketsToStream/downstream/fin.c", "packetstostreamTunnelDownStreamFinish"): 2,
     ("tunnels/MuxServer/common/helpers.c", "muxserverCloseChildKeepParent"): 2,
     ("tunnels/ReverseClient/common/helpers.c", "reverseclientClosePair"): 2,

@@ -259,10 +259,32 @@ There are several valid ways to run tests:
   `domain-strategy=resolve-domains-and-use-only-ipv4` before `Socks5Server` reaches the separate tester TCP listener
   through a `TcpConnector` using `dest_context`, so the case covers method `0x00` negotiation, client-side target
   resolution, and CONNECT target forwarding.
+  It also proves `Socks5Server(udp=false)` remains valid behind a TCP-only listener and does not require a dynamic UDP
+  provider.
+- `socks5_udp_requires_dynamic_provider`
+  Expected startup failure: `Socks5Server(udp=true)` behind a TCP-only `TcpListener` is rejected because the finalized
+  preceding path has no dynamic `UdpListener`/`TcpUdpListener` provider.
+- `socks5_udp_dynamic_endpoint_isolation_probe`
+  Uses the real SOCKS5 wire protocol to open two same-IP UDP associations, verifies distinct dynamic relay ports and
+  source-port pinning, then proves cross-association traffic, the old fixed listener port, and a closed association are
+  rejected while the remaining association stays usable. It also checks a concrete foreign peer-IP hint is refused.
 - `socks5_noauth_udp_loopback`
   Verifies `Socks5Client(protocol=udp)` without credentials against `Socks5Server(no-auth=true, udp=true)`. The proxy
-  endpoint is a shared `TcpUdpListener`/`TcpUdpConnector` port, so the client negotiates UDP ASSOCIATE over TCP and then
-  sends tester payloads as SOCKS UDP datagrams to a separate UDP tester listener selected from the SOCKS target setting.
+  control endpoint is a shared `TcpUdpListener`/`TcpUdpConnector` port, while the server returns a dedicated dynamic
+  UDP relay port. The client must negotiate `UDP ASSOCIATE` over TCP and then send tester payloads to the returned relay
+  endpoint, not the TCP control port.
+- `socks5_noauth_udp_encryption_loopback`
+  Verifies the same dynamic relay behavior through
+  `Socks5Client -> EncryptionClient -> TcpUdpConnector` and
+  `TcpUdpListener -> EncryptionServer -> Socks5Server`. This guards that dynamic UDP ingress and replies traverse the
+  normal encrypted chain instead of bypassing its middle tunnels.
+- `socks5_noauth_udp_packet_balanced_connector_loopback`
+  Verifies a dynamically negotiated SOCKS UDP relay remains authoritative even when the client-side `TcpUdpConnector`
+  uses UDP packet balancing. It covers queued first payload replay as well as ordinary relay writes.
+- `socks5_noauth_udp_router_connector_loopback`
+  Verifies metadata-only `Router` selection initializes the proxy path for the SOCKS handshake, and that negotiated UDP
+  relay authority survives Router's Init-time detected-protocol reset before reaching a packet-balanced
+  `TcpUdpConnector`; the relay's dynamic `BND.PORT`, rather than the configured proxy port, is used.
 - `socks5_noauth_dest_protocol_tcp_loopback`
   Verifies `Socks5Client(protocol=dest_context->protocol)` preserves an incoming TCP destination protocol and performs
   a SOCKS5 `CONNECT` through shared `TcpUdpListener`/`TcpUdpConnector` proxy endpoints.
