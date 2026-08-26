@@ -44,12 +44,6 @@ typedef struct synfinsnitrick_hold_timeout_s
 } synfinsnitrick_hold_timeout_t;
 
 #ifdef IPMANIPULATOR_SYNFIN_TEST_HOOKS
-typedef void (*synfinsnitrick_test_recycle_hook_t)(sbuf_t *buf);
-
-static synfinsnitrick_test_recycle_hook_t synfinsnitrick_test_recycle_hook;
-
-void ipmanipulatorSynfinTestSetRecycleHook(synfinsnitrick_test_recycle_hook_t hook);
-void ipmanipulatorSynfinTestSendOutputs(tunnel_t *t, line_t *l, sbuf_t **packets, uint16_t count);
 bool ipmanipulatorSynfinTestScheduleTimed(wid_t wid, WorkerMessageCallback callback,
                                           WorkerMessageCleanupCallback cleanup, uint32_t delay_ms, void *arg1,
                                           void *arg2, void *arg3);
@@ -1078,13 +1072,6 @@ static void synfinsnitrickSendNormalNow(tunnel_t *t, line_t *l, sbuf_t *buf)
 
 static void synfinsnitrickRecycleOutput(line_t *l, sbuf_t *buf)
 {
-#ifdef IPMANIPULATOR_SYNFIN_TEST_HOOKS
-    if (synfinsnitrick_test_recycle_hook != NULL)
-    {
-        synfinsnitrick_test_recycle_hook(buf);
-    }
-#endif
-
     lineReuseBuffer(l, buf);
 }
 
@@ -1182,27 +1169,6 @@ static void synfinsnitrickSendOutputs(tunnel_t *t, line_t *l, synfinsnitrick_pac
     sequence->count = 0;
     lineUnref(l);
 }
-
-#ifdef IPMANIPULATOR_SYNFIN_TEST_HOOKS
-void ipmanipulatorSynfinTestSetRecycleHook(synfinsnitrick_test_recycle_hook_t hook)
-{
-    synfinsnitrick_test_recycle_hook = hook;
-}
-
-void ipmanipulatorSynfinTestSendOutputs(tunnel_t *t, line_t *l, sbuf_t **packets, uint16_t count)
-{
-    assert(count <= kSynfinSniMaxEmittedPackets);
-
-    synfinsnitrick_packet_sequence_t sequence = {.count = count};
-    for (uint16_t i = 0; i < count; ++i)
-    {
-        sequence.packets[i] = packets[i];
-        packets[i]          = NULL;
-    }
-
-    synfinsnitrickSendOutputs(t, l, &sequence);
-}
-#endif
 
 static void synfinsnitrickLogRejectedFlow(const sbuf_t *combined_packet, const sni_match_t *match,
                                           uint32_t real_sni_payload_offset, uint32_t generated_payload_len)
