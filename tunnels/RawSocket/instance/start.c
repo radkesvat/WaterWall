@@ -33,21 +33,28 @@ void rawsocketOnStart(tunnel_t *t)
 {
     rawsocket_tstate_t *state = tunnelGetState(t);
 
-    if (! packettunnelLifecycleAnchorBind(t))
+    if (state->capture_range_count > 0 && ! packettunnelLifecycleAnchorBind(t))
     {
         LOGF("RawSocket: packet publication side is not chained");
         startupFailureRecord(1);
         return;
     }
 
-    state->capture_device = caputredeviceCreate(
-        state->capture_device_name, state->capture_ranges, state->capture_range_count, t, rawsocketOnIPPacketReceived);
-
-    if (state->capture_device == NULL)
+    if (state->capture_range_count > 0)
     {
-        LOGF("CaptureDevice: could not create device");
-        startupFailureRecord(1);
-        return;
+        state->capture_device = caputredeviceCreate(state->capture_device_name,
+                                                    state->capture_ranges,
+                                                    state->capture_range_count,
+                                                    state->skip_sysctl,
+                                                    t,
+                                                    rawsocketOnIPPacketReceived);
+
+        if (state->capture_device == NULL)
+        {
+            LOGF("CaptureDevice: could not create device");
+            startupFailureRecord(1);
+            return;
+        }
     }
 
     // we are not going to read, so pass read call back as null therfore no buffers for read will be allocated
@@ -70,7 +77,7 @@ void rawsocketOnStart(tunnel_t *t)
         startupFailureRecord(1);
         return;
     }
-    if (! caputredeviceBringUp(state->capture_device))
+    if (state->capture_device != NULL && ! caputredeviceBringUp(state->capture_device))
     {
         rawsocketStopStartupDevices(state);
         rawsocketDestroyStartupDevices(state);

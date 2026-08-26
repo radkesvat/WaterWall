@@ -8,7 +8,8 @@ static raw_device_t     fake_raw_device;
 static bool             fake_raw_device_up;
 
 capture_device_t *__wrap_caputredeviceCreate(const char *name, const ipmask_t *capture_ranges,
-                                             uint32_t capture_range_count, void *userdata, CaptureReadEventHandle cb);
+                                             uint32_t capture_range_count, bool skip_sysctl, void *userdata,
+                                             CaptureReadEventHandle cb);
 raw_device_t     *__wrap_rawdeviceCreate(const char *name, uint32_t mark, void *userdata);
 bool              __wrap_caputredeviceBringUp(capture_device_t *cdev);
 bool              __wrap_rawdeviceBringUp(raw_device_t *rdev);
@@ -51,11 +52,13 @@ void rawsocketOnIPPacketReceived(struct capture_device_s *cdev, void *userdata, 
 }
 
 capture_device_t *__wrap_caputredeviceCreate(const char *name, const ipmask_t *capture_ranges,
-                                             uint32_t capture_range_count, void *userdata, CaptureReadEventHandle cb)
+                                             uint32_t capture_range_count, bool skip_sysctl, void *userdata,
+                                             CaptureReadEventHandle cb)
 {
     require(name != NULL, "RawSocket did not pass a capture device name");
     require(capture_ranges != NULL, "RawSocket did not pass capture ranges");
     require(capture_range_count == 1, "RawSocket passed the wrong capture range count");
+    require(skip_sysctl, "RawSocket did not pass skip-sysctl to the capture device");
     require(userdata != NULL, "RawSocket did not pass tunnel userdata to capture device");
     require(cb == rawsocketOnIPPacketReceived, "RawSocket passed the wrong capture callback");
 
@@ -148,6 +151,7 @@ static void runRawSocketStartWithCaptureBringupFailure(int write_fd)
     state->raw_device_name     = raw_name;
     state->capture_ranges      = &capture_range;
     state->capture_range_count = 1;
+    state->skip_sysctl         = true;
     state->firewall_mark       = 7;
 
     ww_startup_context_t startup = {0};

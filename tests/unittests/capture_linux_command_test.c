@@ -332,7 +332,7 @@ static void testQueueSelectionAvoidsReferencedNumbers(void)
 static void testSysctlUsesDirectArgvWithGroupedValues(void)
 {
     resetRecording(kFakeOutcomeSuccess, SIZE_MAX);
-    capturedeviceApplySysctls();
+    capturedeviceApplySysctls(false);
     require(recorded_call_count > 1, "the sysctl batch must apply every setting");
     require(dropped_result_count == recorded_call_count, "every sysctl result must be dropped exactly once");
     requireNoShellInvocation();
@@ -358,13 +358,13 @@ static void testSysctlUsesDirectArgvWithGroupedValues(void)
 static void testSysctlNonzeroExitStaysBestEffort(void)
 {
     resetRecording(kFakeOutcomeSuccess, SIZE_MAX);
-    capturedeviceApplySysctls();
+    capturedeviceApplySysctls(false);
     const size_t total_settings = recorded_call_count;
 
     // Fail the very first setting with an ordinary nonzero exit: the batch must
     // still attempt every remaining setting.
     resetRecording(kFakeOutcomeNonzeroExit, 0);
-    capturedeviceApplySysctls();
+    capturedeviceApplySysctls(false);
     require(recorded_call_count == total_settings, "a normal sysctl failure must remain best-effort");
     require(dropped_result_count == recorded_call_count, "every sysctl result must be dropped exactly once");
 }
@@ -372,27 +372,35 @@ static void testSysctlNonzeroExitStaysBestEffort(void)
 static void testSysctlTimeoutStopsTheRestOfTheBatch(void)
 {
     resetRecording(kFakeOutcomeSuccess, SIZE_MAX);
-    capturedeviceApplySysctls();
+    capturedeviceApplySysctls(false);
     const size_t total_settings = recorded_call_count;
     require(total_settings > 2, "the sysctl batch must contain enough settings for this test");
 
     // Time out on the second setting: the first is attempted, the second hangs,
     // and nothing after it is retried.
     resetRecording(kFakeOutcomeTimeout, 1);
-    capturedeviceApplySysctls();
+    capturedeviceApplySysctls(false);
     require(recorded_call_count == 2, "a sysctl timeout must stop the rest of the tuning batch");
     require(dropped_result_count == recorded_call_count, "every sysctl result must be dropped exactly once");
 
     // A parent-side spawn failure stops the batch for the same reason.
     resetRecording(kFakeOutcomeSpawnFailure, 0);
-    capturedeviceApplySysctls();
+    capturedeviceApplySysctls(false);
     require(recorded_call_count == 1, "a sysctl spawn failure must stop the rest of the tuning batch");
     require(dropped_result_count == recorded_call_count, "every sysctl result must be dropped exactly once");
 
     resetRecording(kFakeOutcomeOutputTooLarge, 0);
-    capturedeviceApplySysctls();
+    capturedeviceApplySysctls(false);
     require(recorded_call_count == 1, "a sysctl output-limit termination must stop the rest of the tuning batch");
     require(dropped_result_count == recorded_call_count, "every sysctl result must be dropped exactly once");
+}
+
+static void testSysctlSkipRunsNoCommands(void)
+{
+    resetRecording(kFakeOutcomeSuccess, SIZE_MAX);
+    capturedeviceApplySysctls(true);
+    require(recorded_call_count == 0, "skip-sysctl must suppress every sysctl command");
+    require(dropped_result_count == 0, "skip-sysctl unexpectedly produced a command result");
 }
 
 int main(void)
@@ -406,6 +414,7 @@ int main(void)
     testSysctlUsesDirectArgvWithGroupedValues();
     testSysctlNonzeroExitStaysBestEffort();
     testSysctlTimeoutStopsTheRestOfTheBatch();
+    testSysctlSkipRunsNoCommands();
 
     printf("capture_linux_command_test: all tests passed\n");
     return 0;

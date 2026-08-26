@@ -82,7 +82,9 @@ bool caputredeviceBringUp(capture_device_t *cdev);
 bool capturedeviceRequestStop(capture_device_t *cdev);
 bool caputredeviceBringDown(capture_device_t *cdev);
 
+/* skip_sysctl suppresses only optional Linux kernel tuning; required capture
+ * backend and filtering setup is unaffected. */
 capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_ranges, uint32_t capture_range_count,
-                                      void *userdata, CaptureReadEventHandle cb);
+                                      bool skip_sysctl, void *userdata, CaptureReadEventHandle cb);
 
 void capturedeviceDestroy(capture_device_t *cdev);

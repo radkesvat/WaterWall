@@ -1,19 +1,19 @@
 <!--
-Documentation version: 152
+Documentation version: 153
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/RawSocket.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/RawSocket.mdx, and all files must keep the same documentation version.
 -->
 
 # RawSocket Node
 
-`RawSocket` connects WaterWall to raw IPv4 packet capture and raw packet injection. It captures matching IP packets from the host networking stack and forwards them into the chain, and it can also inject raw IP packets coming from the chain back into the system.
+`RawSocket` connects WaterWall to raw IPv4 packet capture and raw packet injection. When capture ranges are configured, it captures matching IP packets from the host networking stack and forwards them into the chain. Independently, it can inject raw IP packets coming from the chain back into the system.
 
 This node is a layer-3 adapter rather than a connection-oriented tunnel.
 
 ## What It Does
 
-- Creates a capture device for matching IPv4 packets.
+- Optionally creates a capture device for matching IPv4 packets.
 - Creates a raw output device for sending raw IPv4 packets.
-- Captures packets that match a configured IP filter and drops them from the host kernel network stack so only WaterWall receives and accesses them.
+- When capture is enabled, captures packets that match the configured IP filter and drops them from the host kernel network stack so only WaterWall receives and accesses them.
 - Forwards captured packets to the adjacent chain side.
 - Writes raw IP packets from the chain out through the raw device.
 - Applies checksum recalculation before writing when the line requests it.
@@ -61,6 +61,19 @@ inserted into an unrelated Echo Reply.
 }
 ```
 
+For write-only packet injection, omit all capture-range keys:
+
+```json
+{
+  "name": "raw-output",
+  "type": "RawSocket",
+  "settings": {
+    "raw-device-name": "raw-out",
+    "mark": 10
+  }
+}
+```
+
 ## Required JSON Fields
 
 ### Top-level fields
@@ -71,24 +84,26 @@ inserted into an unrelated Echo Reply.
 - `type` `(string)`
   Must be exactly `"RawSocket"`.
 
-### `settings`
+## Optional `settings` Fields
+
+- `capture-ips` or `capture-ip` `(string or array of strings)`
+  Equivalent names for the IPv4 addresses or IPv4 CIDR ranges used by the capture device filter. Either key accepts one string or an array, and every array element becomes a capture range. `listen-ips` remains accepted as a compatibility alias with the same input shapes.
+
+  Each value may be a single IPv4 address such as `"192.0.2.10"` or a CIDR range such as `"198.51.100.0/24"`. IPv6 entries are rejected. If no capture key is present, or the selected key contains an empty array, capture is disabled and `RawSocket` starts only its raw output device.
 
 - `capture-filter-mode` `(string)`
-  Filter mode for captured traffic.
+  Filter mode for captured traffic. This field is required when at least one capture range is configured and is ignored in write-only mode.
 
   Parsed values are:
   - `"source-ip"`
   - `"dest-ip"`
 
-  Important note: the current implementation only accepts `"source-ip"`. If `"dest-ip"` is selected, tunnel creation fails with a message telling you to use `TunDevice` for outgoing capture instead.
+  The current implementation only accepts `"source-ip"`. If `"dest-ip"` is selected, tunnel creation fails with a message telling you to use `TunDevice` for outgoing capture instead.
 
-- `capture-ips` `(array of strings)`
-  IPv4 addresses or IPv4 CIDR ranges used by the capture device filter.
+- `skip-sysctl` `(boolean)`
+  On Linux, skip Capture's best-effort `sysctl` performance tuning. NFQUEUE socket configuration and the iptables rules required to direct packets into NFQUEUE still run.
 
-  Each item may be a single IPv4 address such as `"192.0.2.10"` or a CIDR range such as `"198.51.100.0/24"`.
-  IPv6 entries are rejected. The legacy `capture-ip` string is still accepted as a single-entry `/32` filter.
-
-## Optional `settings` Fields
+  Default: `false`
 
 - `capture-device-name` `(string)`
   User-visible or internal name for the capture device.
@@ -109,12 +124,13 @@ inserted into an unrelated Echo Reply.
 
 ### Capture path
 
-During `onPrepare`, `RawSocket`:
+During `onStart`, `RawSocket`:
 
-- decides which adjacent tunnel should receive captured packets
-- creates the capture device using `capture-ips`
+- when at least one capture range is configured, decides which adjacent tunnel should receive captured packets and creates the capture device
 - creates the raw output device
-- brings both devices up
+- brings the raw output device up before activating capture rules
+
+With no configured capture range, no capture device, NFQUEUE socket, capture reader, or capture rule is created. Only the raw output device is started.
 
 When a packet is captured:
 
@@ -153,13 +169,15 @@ Both upstream and downstream payload handlers write to the same raw output devic
 
 ### Capture filter behavior
 
-The capture device is configured using `capture-ips`. Captured packets matching the configured source IP filter are dropped from the host kernel networking stack: the host operating system kernel does not process them, and only WaterWall receives and has access to them.
+The capture device is configured from the ranges supplied through either `capture-ips` or `capture-ip`. Captured packets matching the configured source IP filter are dropped from the host kernel networking stack: the host operating system kernel does not process them, and only WaterWall receives and has access to them.
 
 Current implementation behavior:
 
 - on Windows, the capture filter is built from equivalent `ip.SrcAddr` equality or inclusive range checks
 - on Linux, one netfilter queue rule is created for each configured IPv4 address or CIDR range
 - `capture-filter-mode` is parsed, but only the `source-ip` path is currently implemented
+
+By default the Linux capture backend also applies best-effort `sysctl` tuning before creating NFQUEUE resources. `"skip-sysctl": true` suppresses only that tuning batch. The netlink operations and iptables commands needed to configure NFQUEUE remain enabled.
 
 On Linux, the NFQUEUE rules use `--queue-bypass`. If WaterWall is not listening
 on the queue, matching packets continue through the host firewall instead of
@@ -207,8 +225,8 @@ those lines and has zero bytes of line state.
 ## Notes And Caveats
 
 - The current receive path only forwards IPv4 packets.
-- `capture-filter-mode` is effectively limited to `"source-ip"` right now.
-- `capture-ips` should be provided explicitly.
+- `capture-filter-mode` is effectively limited to `"source-ip"` when capture is enabled.
+- Omitting capture ranges intentionally selects write-only raw packet injection.
 - Platform support depends on the raw/capture backend available on the operating system.
 
 ## Node Metadata

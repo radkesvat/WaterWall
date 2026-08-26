@@ -386,9 +386,15 @@ static capturedevice_command_status_t capturedeviceSetSysctl(const capturedevice
 // batch continues. A timeout, output-limit termination, or parent-side execution
 // failure stops the remaining attempts instead: the command path is unusable, so
 // re-running it for every setting would turn one bounded failure into fourteen.
-// Either way Capture creation continues.
-void capturedeviceApplySysctls(void)
+// Either way Capture creation continues. A true skip_sysctl is an explicit
+// per-device opt-out and runs none of the tuning commands.
+void capturedeviceApplySysctls(bool skip_sysctl)
 {
+    if (skip_sysctl)
+    {
+        return;
+    }
+
     for (size_t i = 0; i < sizeof(sysctl_settings) / sizeof(sysctl_settings[0]); ++i)
     {
         const capturedevice_command_status_t status = capturedeviceSetSysctl(&sysctl_settings[i]);
@@ -2206,7 +2212,7 @@ bool caputredeviceBringDown(capture_device_t *cdev)
 }
 
 capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_ranges, uint32_t capture_range_count,
-                                      void *userdata, CaptureReadEventHandle cb)
+                                      bool skip_sysctl, void *userdata, CaptureReadEventHandle cb)
 {
     if (capture_ranges == NULL || capture_range_count == 0)
     {
@@ -2215,7 +2221,7 @@ capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_
     }
 
     /* Best-effort kernel tuning; capture startup must continue if a sysctl fails. */
-    capturedeviceApplySysctls();
+    capturedeviceApplySysctls(skip_sysctl);
 
     int socket_netfilter = socket(AF_NETLINK, SOCK_RAW, NETLINK_NETFILTER);
     if (socket_netfilter < 0)

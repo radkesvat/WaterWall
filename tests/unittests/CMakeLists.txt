@@ -1056,6 +1056,16 @@ if(TARGET ww)
     )
 
     if(TARGET RawSocket)
+      add_executable(rawsocket_config_test rawsocket_config_test.c)
+      target_link_libraries(rawsocket_config_test PRIVATE RawSocket ww)
+      add_dependencies(waterwall_unit_tests rawsocket_config_test)
+
+      add_waterwall_unit_test(
+        waterwall.rawsocket_config_unit
+        rawsocket_config_test
+        "unit;net;rawsocket;config"
+      )
+
       add_executable(rawsocket_startup_failure_test
         rawsocket_startup_failure_test.c
         ${CMAKE_SOURCE_DIR}/tunnels/RawSocket/instance/start.c
@@ -1081,6 +1091,37 @@ if(TARGET ww)
         waterwall.rawsocket_startup_failure_unit
         rawsocket_startup_failure_test
         "unit;net;rawsocket;startup;failure"
+      )
+
+      add_executable(rawsocket_write_only_startup_test
+        rawsocket_write_only_startup_test.c
+        ${CMAKE_SOURCE_DIR}/tunnels/RawSocket/instance/start.c
+        ${CMAKE_SOURCE_DIR}/tunnels/RawSocket/instance/stop.c
+        ${CMAKE_SOURCE_DIR}/tunnels/RawSocket/instance/destroy.c
+      )
+      target_include_directories(rawsocket_write_only_startup_test PRIVATE
+        ${CMAKE_SOURCE_DIR}/tunnels/RawSocket/include
+        ${CMAKE_SOURCE_DIR}/tunnels/RawSocket/include/RawSocket
+      )
+      target_link_options(rawsocket_write_only_startup_test PRIVATE
+        "-Wl,--wrap=caputredeviceCreate"
+        "-Wl,--wrap=caputredeviceBringUp"
+        "-Wl,--wrap=capturedeviceRequestStop"
+        "-Wl,--wrap=caputredeviceBringDown"
+        "-Wl,--wrap=capturedeviceDestroy"
+        "-Wl,--wrap=rawdeviceCreate"
+        "-Wl,--wrap=rawdeviceBringUp"
+        "-Wl,--wrap=rawdeviceRequestStop"
+        "-Wl,--wrap=rawdeviceBringDown"
+        "-Wl,--wrap=rawdeviceDestroy"
+      )
+      target_link_libraries(rawsocket_write_only_startup_test PRIVATE ww)
+      add_dependencies(waterwall_unit_tests rawsocket_write_only_startup_test)
+
+      add_waterwall_unit_test(
+        waterwall.rawsocket_write_only_startup_unit
+        rawsocket_write_only_startup_test
+        "unit;net;rawsocket;startup;write-only"
       )
     endif()
 

@@ -54,7 +54,7 @@ typedef enum capturedevice_command_status_e
 capturedevice_command_status_t capturedeviceRunIptablesQueueRule(const char *operation, const char *cidr,
                                                                  uint32_t queue_number, const char *rule_comment);
 capturedevice_command_status_t capturedeviceReadIptablesInputRules(char **input_rules);
-void                           capturedeviceApplySysctls(void);
+void                           capturedeviceApplySysctls(bool skip_sysctl);
 
 // Select the first queue at or after `start` (with uint16_t wraparound) that is
 // not referenced by an existing `--queue-num` or `--queue-balance` rule in an

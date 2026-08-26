@@ -68,81 +68,90 @@ static bool rawsocketParseIpv4CaptureRange(ipmask_t *dest, const char *value, co
 
 static bool rawsocketLoadCaptureRanges(rawsocket_tstate_t *state, const cJSON *settings)
 {
-    const cJSON *ranges_json = cJSON_GetObjectItemCaseSensitive(settings, "capture-ips");
+    const char  *field_name  = "capture-ips";
+    const cJSON *ranges_json = cJSON_GetObjectItemCaseSensitive(settings, field_name);
     if (ranges_json == NULL)
     {
-        ranges_json = cJSON_GetObjectItemCaseSensitive(settings, "listen-ips");
+        field_name  = "listen-ips";
+        ranges_json = cJSON_GetObjectItemCaseSensitive(settings, field_name);
     }
-
-    if (ranges_json != NULL)
+    if (ranges_json == NULL)
     {
-        if (! cJSON_IsArray(ranges_json) || cJSON_GetArraySize(ranges_json) <= 0)
-        {
-            LOGF("JSON Error: RawSocket->settings->capture-ips (array field) : expected a non-empty array of IPv4 "
-                 "addresses or IPv4 CIDR ranges");
-            return false;
-        }
-
-        const int range_count = cJSON_GetArraySize(ranges_json);
-        size_t    ranges_size;
-        if (! memoryTryComputeArraySize((size_t) range_count, sizeof(ipmask_t), &ranges_size))
-        {
-            LOGF("JSON Error: RawSocket->settings->capture-ips (array field) : range array is too large");
-            return false;
-        }
-        ipmask_t *ranges = memoryAllocateZero(ranges_size);
-        if (ranges == NULL)
-        {
-            LOGE("RawSocket: failed to allocate capture ranges");
-            return false;
-        }
-
-        for (int i = 0; i < range_count; ++i)
-        {
-            const cJSON *range_json = cJSON_GetArrayItem(ranges_json, i);
-            char         json_path[128];
-            stringNPrintf(json_path, sizeof(json_path), "RawSocket->settings->capture-ips[%d]", i);
-
-            if (! cJSON_IsString(range_json) || range_json->valuestring == NULL)
-            {
-                LOGF("JSON Error: %s (string field) : each entry must be an IPv4 address or IPv4 CIDR range",
-                     json_path);
-                memoryFree(ranges);
-                return false;
-            }
-
-            if (! rawsocketParseIpv4CaptureRange(&ranges[i], range_json->valuestring, json_path))
-            {
-                memoryFree(ranges);
-                return false;
-            }
-        }
-        state->capture_ranges      = ranges;
-        state->capture_range_count = (uint32_t) range_count;
+        field_name  = "capture-ip";
+        ranges_json = cJSON_GetObjectItemCaseSensitive(settings, field_name);
+    }
+    if (ranges_json == NULL)
+    {
         return true;
     }
 
-    const cJSON *legacy_capture_ip = cJSON_GetObjectItemCaseSensitive(settings, "capture-ip");
-    if (! cJSON_IsString(legacy_capture_ip) || legacy_capture_ip->valuestring == NULL)
+    const bool is_array = cJSON_IsArray(ranges_json);
+    int        range_count;
+    if (cJSON_IsString(ranges_json) && ranges_json->valuestring != NULL)
     {
-        LOGF("JSON Error: RawSocket->settings->capture-ips (array field) : expected a non-empty array of IPv4 "
-             "addresses or IPv4 CIDR ranges");
+        range_count = 1;
+    }
+    else if (is_array)
+    {
+        range_count = cJSON_GetArraySize(ranges_json);
+    }
+    else
+    {
+        LOGF("JSON Error: RawSocket->settings->%s (string or array field) : expected an IPv4 address, IPv4 CIDR "
+             "range, or an array of them",
+             field_name);
         return false;
     }
 
-    ipmask_t *range = memoryAllocateZero(sizeof(*range));
-    if (range == NULL)
+    if (range_count == 0)
     {
-        LOGE("RawSocket: failed to allocate the legacy capture range");
+        return true;
+    }
+
+    size_t ranges_size;
+    if (range_count < 0 || ! memoryTryComputeArraySize((size_t) range_count, sizeof(ipmask_t), &ranges_size))
+    {
+        LOGF("JSON Error: RawSocket->settings->%s (string or array field) : range array is too large", field_name);
         return false;
     }
-    if (! rawsocketParseIpv4CaptureRange(range, legacy_capture_ip->valuestring, "RawSocket->settings->capture-ip"))
+
+    ipmask_t *ranges = memoryAllocateZero(ranges_size);
+    if (ranges == NULL)
     {
-        memoryFree(range);
+        LOGE("RawSocket: failed to allocate capture ranges");
         return false;
     }
-    state->capture_ranges      = range;
-    state->capture_range_count = 1;
+
+    for (int i = 0; i < range_count; ++i)
+    {
+        const cJSON *range_json = is_array ? cJSON_GetArrayItem(ranges_json, i) : ranges_json;
+        char         json_path[128];
+
+        if (is_array)
+        {
+            stringNPrintf(json_path, sizeof(json_path), "RawSocket->settings->%s[%d]", field_name, i);
+        }
+        else
+        {
+            stringNPrintf(json_path, sizeof(json_path), "RawSocket->settings->%s", field_name);
+        }
+
+        if (! cJSON_IsString(range_json) || range_json->valuestring == NULL)
+        {
+            LOGF("JSON Error: %s (string field) : each entry must be an IPv4 address or IPv4 CIDR range", json_path);
+            memoryFree(ranges);
+            return false;
+        }
+
+        if (! rawsocketParseIpv4CaptureRange(&ranges[i], range_json->valuestring, json_path))
+        {
+            memoryFree(ranges);
+            return false;
+        }
+    }
+
+    state->capture_ranges      = ranges;
+    state->capture_range_count = (uint32_t) range_count;
     return true;
 }
 
@@ -177,41 +186,52 @@ tunnel_t *rawsocketCreate(node_t *node)
     rawsocket_tstate_t *state    = tunnelGetState(t);
     const cJSON        *settings = node->node_settings_json;
 
-    // not forced
-    state->capture_device_name =
-        rawsocketDuplicateSettingOrDefault(settings, "capture-device-name", "unnamed-capture-device");
+    if (! rawsocketLoadCaptureRanges(state, settings))
+    {
+        rawsocketDestroy(t, wwLifecycleStartupRollback());
+        return NULL;
+    }
+
+    const cJSON *skip_sysctl = cJSON_GetObjectItemCaseSensitive(settings, "skip-sysctl");
+    if (skip_sysctl != NULL && ! cJSON_IsBool(skip_sysctl))
+    {
+        LOGF("JSON Error: RawSocket->settings->skip-sysctl (boolean field) : expected true or false");
+        rawsocketDestroy(t, wwLifecycleStartupRollback());
+        return NULL;
+    }
+    state->skip_sysctl = cJSON_IsTrue(skip_sysctl);
+
     state->raw_device_name = rawsocketDuplicateSettingOrDefault(settings, "raw-device-name", "unnamed-raw-device");
-    if (state->capture_device_name == NULL || state->raw_device_name == NULL)
+    if (state->capture_range_count > 0)
+    {
+        state->capture_device_name =
+            rawsocketDuplicateSettingOrDefault(settings, "capture-device-name", "unnamed-capture-device");
+    }
+    if (state->raw_device_name == NULL || (state->capture_range_count > 0 && state->capture_device_name == NULL))
     {
         LOGE("RawSocket: failed to allocate device names");
         rawsocketDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
-    dynamic_value_t fmode =
-        parseDynamicNumericValueFromJsonObject(settings, "capture-filter-mode", 2, "source-ip", "dest-ip");
-    if (fmode.status < kDvsSourceIp)
+    if (state->capture_range_count > 0)
     {
-        LOGF("JSON Error: RawSocket->settings->capture-filter-mode (string field) : mode is not specified or invalid");
-        rawsocketDestroy(t, wwLifecycleStartupRollback());
-        return NULL;
-    }
+        dynamic_value_t fmode =
+            parseDynamicNumericValueFromJsonObject(settings, "capture-filter-mode", 2, "source-ip", "dest-ip");
+        if (fmode.status < kDvsSourceIp)
+        {
+            LOGF("JSON Error: RawSocket->settings->capture-filter-mode (string field) : mode is not specified or "
+                 "invalid");
+            rawsocketDestroy(t, wwLifecycleStartupRollback());
+            return NULL;
+        }
 
-    if (fmode.status == kDvsSourceIp)
-    {
-        ;
-    }
-    else
-    {
-        LOGF("RawSocket cannot yet capture outgoing, use tun device for that");
-        rawsocketDestroy(t, wwLifecycleStartupRollback());
-        return NULL;
-    }
-
-    if (! rawsocketLoadCaptureRanges(state, settings))
-    {
-        rawsocketDestroy(t, wwLifecycleStartupRollback());
-        return NULL;
+        if (fmode.status != kDvsSourceIp)
+        {
+            LOGF("RawSocket cannot yet capture outgoing, use tun device for that");
+            rawsocketDestroy(t, wwLifecycleStartupRollback());
+            return NULL;
+        }
     }
 
     getIntFromJsonObjectOrDefault((&state->firewall_mark), settings, "mark", 0);
