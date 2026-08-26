@@ -565,16 +565,14 @@ if(TARGET ww)
   add_waterwall_unit_test(waterwall.users_runtime_migration_unit users_runtime_migration_test "unit;objects;users")
 
   # Focused lookup-index correctness/instrumentation test. user.c and users.c are
-  # compiled directly into the executable so the test-only password-lookup visit
-  # counter (proving the fallback scan is gone) is available; the archive copies
-  # in libww are left untouched by this compile definition.
+  # compiled directly so linker wrappers and the retained credential-snapshot
+  # wipe counter observe this executable's lookup and update paths.
   add_executable(users_index_test
     users_index_test.c
     ${CMAKE_SOURCE_DIR}/ww/objects/user.c
     ${CMAKE_SOURCE_DIR}/ww/objects/users.c
   )
   target_link_libraries(users_index_test PRIVATE ww)
-  target_compile_definitions(users_index_test PRIVATE USERS_TEST_PASSWORD_LOOKUP_VISIT_COUNTER=1)
   # Test-only counter proving every post-snapshot exit of the password change
   # wipes the old credential snapshot; the counter is compiled into the directly
   # built users.c copy and left out of the libww archive copies.

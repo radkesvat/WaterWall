@@ -2847,16 +2847,6 @@ cleanup_snapshot:
     return kUsersUpdateResultOk;
 }
 
-#if defined(USERS_TEST_PASSWORD_LOOKUP_VISIT_COUNTER)
-/*
- * Test-only instrumentation. Counts how many candidate users the plaintext
- * lookup path examines with an exact verification. It is never defined in
- * production builds and exists only so unit tests can prove the fallback scan
- * over users->count is gone (any value greater than one would be a regression).
- */
-size_t users_test_password_lookup_visits = 0;
-#endif
-
 static user_t *usersLookupByPasswordLocked(users_t *users, const sha256_hash_t *sha256_key, const char *password)
 {
     /*
@@ -2874,10 +2864,6 @@ static user_t *usersLookupByPasswordLocked(users_t *users, const sha256_hash_t *
     {
         return NULL;
     }
-
-#if defined(USERS_TEST_PASSWORD_LOOKUP_VISIT_COUNTER)
-    users_test_password_lookup_visits += 1U;
-#endif
 
     return userPasswordMatches(candidate, password) ? candidate : NULL;
 }

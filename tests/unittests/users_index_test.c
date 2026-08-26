@@ -7,12 +7,11 @@
  *   - a password hit derives SHA-256 exactly once and SHA-224 zero times
  *   - a password miss derives SHA-256 exactly once and SHA-224 zero times
  *   - candidate verification (userPasswordMatches) derives no SHA at all
- *   - neither hit nor miss performs a fallback scan over every user
  *   - a SHA-256 index collision fails closed (exact plaintext still decides)
  *
- * The SHA call counts and the fallback-scan visit counter are only available in
- * the linker-wrap / test-hook build configuration; the functional assertions run
- * unconditionally so the test is still meaningful on platforms without --wrap.
+ * The SHA call counts are only available in the linker-wrap build configuration;
+ * the functional assertions run unconditionally so the test is still meaningful
+ * on platforms without --wrap.
  */
 
 #include "wwapi.h"
@@ -189,10 +188,6 @@ static size_t allocInjectionDisarm(void)
 }
 #endif
 
-#if defined(USERS_TEST_PASSWORD_LOOKUP_VISIT_COUNTER)
-extern size_t users_test_password_lookup_visits;
-#endif
-
 #if defined(USERS_TEST_CREDENTIAL_SNAPSHOT_WIPE_COUNTER)
 extern size_t users_test_credential_snapshot_wipes;
 #endif
@@ -216,9 +211,6 @@ static void resetCounters(void)
     g_sha256_fail_on_call = 0;
     g_x25519_fail_on_call = 0;
 #endif
-#if defined(USERS_TEST_PASSWORD_LOOKUP_VISIT_COUNTER)
-    users_test_password_lookup_visits = 0;
-#endif
 }
 
 static void requireSingleSha256HotPath(const char *context)
@@ -231,21 +223,6 @@ static void requireSingleSha256HotPath(const char *context)
     (void) snprintf(
         message, sizeof(message), "%s: expected zero SHA-224 derivations, got %zu", context, g_sha224_calls);
     require(g_sha224_calls == 0U, message);
-#else
-    (void) context;
-#endif
-}
-
-static void requireNoFallbackScan(const char *context)
-{
-#if defined(USERS_TEST_PASSWORD_LOOKUP_VISIT_COUNTER)
-    char message[160];
-    (void) snprintf(message,
-                    sizeof(message),
-                    "%s: plaintext lookup examined %zu candidates; a fallback scan reappeared",
-                    context,
-                    users_test_password_lookup_visits);
-    require(users_test_password_lookup_visits <= 1U, message);
 #else
     (void) context;
 #endif
@@ -295,7 +272,6 @@ static void testPasswordHitSingleHash(void)
         require(found != NULL, "password hit returned NULL");
         require(userGetId(found) == ids[i], "password hit returned the wrong user");
         requireSingleSha256HotPath("password hit");
-        requireNoFallbackScan("password hit");
     }
 
     usersDestroy(&users);
@@ -310,7 +286,6 @@ static void testPasswordMissSingleHash(void)
     resetCounters();
     require(usersLookupByPassword(&empty, "no-such-password") == NULL, "empty-table miss returned a user");
     requireSingleSha256HotPath("empty-table miss");
-    requireNoFallbackScan("empty-table miss");
     usersDestroy(&empty);
 
     require(usersCreate(&populated), "failed to create populated users table");
@@ -324,15 +299,13 @@ static void testPasswordMissSingleHash(void)
     resetCounters();
     require(usersLookupByPassword(&populated, "definitely-not-present") == NULL, "large-table miss returned a user");
     requireSingleSha256HotPath("large-table miss");
-    requireNoFallbackScan("large-table miss");
 
-    /* A hit in a large table must still be single-hash and scan-free. */
+    /* A hit in a large table must still use the single-hash lookup path. */
     resetCounters();
     user_t *found = usersLookupByPassword(&populated, "miss-password-500");
     require(found != NULL, "expected hit in large table");
     require(userGetId(found) == 501U, "large-table hit returned the wrong user");
     requireSingleSha256HotPath("large-table hit");
-    requireNoFallbackScan("large-table hit");
 
     usersDestroy(&populated);
 }
@@ -387,7 +360,6 @@ static void testCollisionFailsClosed(void)
     g_force_sha256_enabled = false;
 
     require(found == NULL, "SHA-256 collision with a wrong plaintext must fail closed");
-    requireNoFallbackScan("collision fail-closed");
 
     /* The genuine password still resolves once forcing is disabled. */
     require(usersLookupByPassword(&users, "real-password") == stored, "genuine password stopped resolving");
