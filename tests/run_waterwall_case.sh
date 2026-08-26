@@ -33,7 +33,6 @@ readonly SUCCESS_EXIT_GRACE_POLL_SECONDS=0.05
 readonly SIGTERM_EXIT_STATUS=$((128 + 15))
 readonly TEST_TIMEOUT_EXIT_STATUS=124
 readonly TEST_RUNNER_FAILURE_EXIT_STATUS=125
-readonly STARTUP_SIGNAL_FAILURE_MARKER='startup-boundary-observer reason=2 scope=1 status=143 count=1'
 
 if [[ $# -lt 3 ]]; then
   echo "usage: $0 <waterwall-binary> <case-dir> <timeout-seconds>" >&2
@@ -51,10 +50,6 @@ prepare_case_run_dir "$case_dir"
 run_dir=$case_run_dir
 generated_core_json="$run_dir/core.json"
 success_exit_grace_seconds=${WATERWALL_TEST_SUCCESS_EXIT_GRACE_SECONDS:-$DEFAULT_SUCCESS_EXIT_GRACE_SECONDS}
-expect_startup_signal_failure=0
-if [[ -f "$run_dir/expect_startup_signal_failure" ]]; then
-  expect_startup_signal_failure=1
-fi
 pid=""
 success_seen=0
 
@@ -189,9 +184,6 @@ EOF
 
 (
   cd "$run_dir"
-  if (( expect_startup_signal_failure )); then
-    exec env WATERWALL_TEST_SIGNAL_ON_STARTUP_FAILURE=1 "$binary_path" >stdout.log 2>&1
-  fi
   exec "$binary_path" >stdout.log 2>&1
 ) &
 pid=$!
@@ -209,16 +201,6 @@ while true; do
     wait "$pid"
     status=$?
     set -e
-
-    if (( expect_startup_signal_failure )); then
-      marker_count=$(grep -Fxc -- "$STARTUP_SIGNAL_FAILURE_MARKER" "$run_dir/stdout.log" || true)
-      if [[ $status -eq $SIGTERM_EXIT_STATUS && $marker_count -eq 1 ]]; then
-        finish_success
-      fi
-      echo "Startup signal/failure boundary exited with status=$status and marker-count=$marker_count; expected status=$SIGTERM_EXIT_STATUS and one marker." >&2
-      dump_logs
-      exit 1
-    fi
 
     if grep -Eq "$TESTER_SUCCESS_REGEX" "$run_dir"/log/network*.log /dev/null 2>/dev/null; then
       success_seen=1

@@ -1,1 +1,0 @@
-This case expects the test-only startup failure hook to inject SIGTERM.

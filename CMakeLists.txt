@@ -1182,7 +1182,7 @@ endif()
 target_compile_definitions(Waterwall PUBLIC WATERWALL_VERSION=${Waterwall_VERSION})
 
 if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING)
-  target_compile_definitions(Waterwall PRIVATE WATERWALL_TEST_HOOKS=1)
+  target_compile_definitions(Waterwall PRIVATE WATERWALL_SYSTEM_LOAD_TEST_HOOKS=1)
   add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tests)
 elseif(BUILD_TESTING)
   # The tests/ subtree above is Linux-only, but neither tunnel hard-abort test

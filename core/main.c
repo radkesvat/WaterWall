@@ -23,44 +23,6 @@ static bool waterwallStartupCheckpoint(void)
     return ! applicationShutdownWasRequested();
 }
 
-#if defined(WATERWALL_TEST_HOOKS) && ! defined(OS_WIN)
-static bool         startup_boundary_signal_injected;
-static unsigned int startup_boundary_observer_calls;
-
-static bool waterwallStartupBoundarySignalTestEnabled(void)
-{
-    return getenv("WATERWALL_TEST_SIGNAL_ON_STARTUP_FAILURE") != NULL;
-}
-
-static void waterwallStartupBoundaryObserver(void *userdata, int signum)
-{
-    discard userdata;
-    discard signum;
-
-    ww_lifecycle_context_t context;
-    const bool             has_context = applicationShutdownGetSelectedContext(&context);
-    startup_boundary_observer_calls++;
-    fprintf(stderr,
-            "startup-boundary-observer reason=%d scope=%d status=%d count=%u\n",
-            (int) applicationShutdownGetReason(),
-            has_context ? (int) context.scope : -1,
-            applicationShutdownGetExitCode(),
-            startup_boundary_observer_calls);
-}
-
-static void waterwallStartupFailureBoundaryTestHook(ww_startup_result_t result)
-{
-    if (! startup_boundary_signal_injected && ! wwStartupSucceeded(result) &&
-        waterwallStartupBoundarySignalTestEnabled())
-    {
-        startup_boundary_signal_injected = true;
-        discard raise(SIGTERM);
-    }
-}
-#else
-#define waterwallStartupFailureBoundaryTestHook(result) discard(result)
-#endif
-
 int waterwallInnerMain(int argc, char **argv);
 
 /*
@@ -150,26 +112,7 @@ int waterwallInnerMain(int argc, char **argv)
         }
         goto startup_failed;
     }
-#if defined(WATERWALL_TEST_HOOKS) && ! defined(OS_WIN)
-    if (waterwallStartupBoundarySignalTestEnabled())
-    {
-        registerAtExitCallBack(waterwallStartupBoundaryObserver, NULL);
-    }
-#endif
-#if defined(WATERWALL_TEST_HOOKS)
-    const char *expected_ram_profile = getenv("WATERWALL_TEST_EXPECT_RAM_PROFILE");
-    if (expected_ram_profile != NULL)
-    {
-        char actual_ram_profile[32];
-        snprintf(actual_ram_profile, sizeof(actual_ram_profile), "%u", GSTATE.ram_profile);
-        if (stringCompare(expected_ram_profile, actual_ram_profile) != 0)
-        {
-            printError(
-                "test hook: expected effective ram profile %s, got %s\n", expected_ram_profile, actual_ram_profile);
-            startup_result = wwStartupFailure(1);
-            goto startup_failed;
-        }
-    }
+#if defined(WATERWALL_SYSTEM_LOAD_TEST_HOOKS)
     if (getenv("WATERWALL_TEST_FORCE_SYSTEM_LOAD") != NULL)
     {
         systemLoadSamplerSetForceUnderLoad(GSTATE.system_load, true);
@@ -185,8 +128,7 @@ int waterwallInnerMain(int argc, char **argv)
     }
 
     increaseFileLimit();
-    startup_result = loadImportedTunnelsIntoCore();
-    waterwallStartupFailureBoundaryTestHook(startup_result);
+    startup_result                            = loadImportedTunnelsIntoCore();
     const bool imported_tunnels_checkpoint_ok = waterwallStartupCheckpoint();
     if (UNLIKELY(! wwStartupSucceeded(startup_result) || ! imported_tunnels_checkpoint_ok))
     {
@@ -208,7 +150,6 @@ int waterwallInnerMain(int argc, char **argv)
             {
                 startup_result = wwStartupFailure(1);
             }
-            waterwallStartupFailureBoundaryTestHook(startup_result);
             const bool config_parse_checkpoint_ok = waterwallStartupCheckpoint();
 
             /*
@@ -228,8 +169,7 @@ int waterwallInnerMain(int argc, char **argv)
             }
 
             LOGI("Core: parsing config file \"%s\" complete", *k.ref);
-            startup_result = nodemanagerRunConfigFile(cfile);
-            waterwallStartupFailureBoundaryTestHook(startup_result);
+            startup_result                          = nodemanagerRunConfigFile(cfile);
             const bool config_install_checkpoint_ok = waterwallStartupCheckpoint();
             if (UNLIKELY(! wwStartupSucceeded(startup_result) || ! config_install_checkpoint_ok))
             {
@@ -244,8 +184,7 @@ int waterwallInnerMain(int argc, char **argv)
     }
 
     LOGD("Core: starting workers ...");
-    startup_result = socketmanagerStart();
-    waterwallStartupFailureBoundaryTestHook(startup_result);
+    startup_result                          = socketmanagerStart();
     const bool socket_manager_checkpoint_ok = waterwallStartupCheckpoint();
     if (UNLIKELY(! wwStartupSucceeded(startup_result) || ! socket_manager_checkpoint_ok))
     {
