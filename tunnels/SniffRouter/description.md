@@ -1,5 +1,5 @@
 <!--
-Documentation version: 153
+Documentation version: 154
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/SniffRouter.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/SniffRouter.mdx, and all files must keep the same documentation version.
 -->
 
@@ -14,9 +14,6 @@ termination to route by the TLS ClientHello SNI.
   handed to that route's `next` node;
 - if TLS ClientHello detection is enabled for a route and the SNI matches, the
   connection is handed to that route's `next` node;
-- if reverse detection is enabled for a route and the decrypted stream begins
-  with the `ReverseClient`/`ReverseServer` reverse-link handshake, the
-  connection is handed to that route's `next` node (no domain match needed);
 - otherwise, including non-HTTP traffic and HTTP traffic with no matching host,
   the connection continues to the node's normal top-level `next`.
 
@@ -28,12 +25,6 @@ flexible [`Router`](../Router/description.md) node. Start with `SniffRouter` whe
 you want the shorter domain-to-destination configuration shown here. Use
 `Router` when you need HTTP/2 or HTTP/3 sniffing, richer matching, combined rule
 conditions, or more flexible routing behavior.
-
-The current exception is reverse-link handshake detection: `SniffRouter` can
-recognize the handshake sent by `ReverseClient`, while `Router` does not yet
-have that detector. Reverse detection is expected to be added to `Router` in
-the future, so this is a current capability difference rather than a permanent
-architectural distinction.
 
 ## How it works
 
@@ -68,20 +59,17 @@ ClientHello must arrive within the bounded sniff window.
 | key | type | required | description |
 |-----|------|----------|-------------|
 | `routes` | array | no | ordered list of domain routes |
-| `reverse-secret-length` | integer | no | reverse handshake length for `reverse` detection; default `640`, valid range `1` to `1024` |
-| `reverse-secret` | string | no | XOR secret used to derive the reverse handshake bytes for `reverse` detection |
 
 Each route object:
 
 | key | type | required | description |
 |-----|------|----------|-------------|
-| `domains` | string or array of strings | required unless detection is reverse-only | domain patterns for this route |
-| `detection` | string or array of strings | no | `http1` by default; use `tls` for SNI routing; use `reverse` (aliases `reverse-tls`, `reverse-handshake`) for reverse-link routing; combine in an array, e.g. `["http1", "tls"]` |
+| `domains` | string or array of strings | yes | domain patterns for HTTP/1 Host and TLS SNI matching |
+| `detection` | string or array of strings | no | omitted means both `["http1", "tls"]`; set one value explicitly to restrict the route to one method |
 | `next` | string | yes | target node name for matching connections |
 
 `domain` may be used instead of `domains` for a single domain. `target` is
-accepted as an alias for route `next`. `domains` is ignored for a route whose
-only detection mode is `reverse`, and may be omitted there.
+accepted as an alias for route `next`.
 
 The old `http` detection value has been removed and migrated to `http1`.
 Former TLS aliases such as `client-hello` and `tls-client-hello` have also been
@@ -135,60 +123,6 @@ fallback. The main difference for this basic case is vocabulary: a
 `SniffRouter` route uses `domain`/`domains` and `next`, while a `Router` rule
 uses `destination-domain` and `target`.
 
-## Reverse-link detection (single-SNI tunnels)
-
-`reverse` detection lets one TLS entry point carry both a `ReverseServer`
-reverse tunnel and a real camouflage website without giving the tunnel a
-different SNI. Host/SNI routing cannot separate them when everything shares one
-SNI, but the reverse link is identifiable by its content: by default,
-`ReverseClient` sends a fixed handshake (a 640-byte run of `0xFF`) as the first
-bytes of every reverse connection, which does not collide with an HTTP request
-or a TLS ClientHello.
-
-If `reverse-secret-length` and/or `reverse-secret` are configured, the reverse
-signature is derived the same way as `ReverseClient` and `ReverseServer`: the
-default handshake bytes are repeated as needed and XORed with the ASCII bytes of
-`reverse-secret` repeatedly. These settings must match the `ReverseClient` and
-`ReverseServer` nodes. If they do not match, SniffRouter will not classify the
-connection as reverse traffic and will use the default `next` path.
-
-A route with reverse detection matches purely on that signature and ignores
-`domains`. Place `SniffRouter` on the **decrypted** stream (i.e. after TLS has
-been terminated, whether by an upstream `TlsServer` node or by a fronting proxy
-that forwards the plaintext), send the matched route to `ReverseServer`, and let
-the top-level `next` fallback serve the camouflage site:
-
-```json
-{
-    "name": "sniff-router",
-    "type": "SniffRouter",
-    "settings": {
-        "routes": [
-            {
-                "detection": "reverse",
-                "next": "reverse_server"
-            }
-        ]
-    },
-    "next": "tcp_to_nginx"
-}
-```
-
-`SniffRouter` only peeks at the handshake; the buffered bytes are replayed
-intact to `ReverseServer`, which re-validates the full handshake and strips it.
-A connection that merely starts with `0xFF` but is not a real reverse link is
-forwarded to `ReverseServer` and dropped there by the same validation, so it
-cannot leak into the tunnel.
-
-The complete reverse handshake must be present in the first payload chunk seen
-by `SniffRouter`. If the first payload only contains a prefix of the configured
-reverse handshake, `SniffRouter` logs a warning and immediately uses the default
-`next` path instead of buffering more bytes.
-
-The handshake must be at the very start of the decrypted stream. If a fronting
-proxy forwards traffic with a PROXY-protocol header prepended, strip it before
-`SniffRouter` (the leading bytes would otherwise not be the handshake).
-
 ## TLS SNI routing and Nginx Camouflage
 
 `SniffRouter` can be placed **before** `TlsServer` to inspect the TLS ClientHello SNI and route matching domains to a protected TLS termination pipeline, while falling back all other connections to a real cover service (such as an nginx HTTPS server).
@@ -209,7 +143,6 @@ Configuration example:
     "routes": [
       {
         "domain": "vpn.example.com",
-        "detection": "tls",
         "next": "protected-tls-server"
       }
     ]
@@ -241,3 +174,59 @@ Source-backed metadata:
 | `layer_group_prev_node` | `kNodeLayer4` |
 | `layer_group_next_node` | `kNodeLayer4` |
 | `required_padding_left` | `0` bytes |
+
+## Advanced: Reverse-Tunnel Handshake Routing
+
+This feature is only for a reverse-tunneling topology that contains
+`ReverseClient` and `ReverseServer`. It is not a general traffic-direction
+setting. `ReverseClient` creates spare outbound links and supplies a private
+handshake at the start of each link; ordinary chains without these nodes do not
+supply that handshake and should not configure this detector.
+
+It is useful when one decrypted TLS entry point carries both those spare links
+and a camouflage website with the same SNI:
+
+```text
+TcpListener -> TlsServer -> SniffRouter
+                              |-- private link handshake -> ReverseServer
+                              `-- default next           -> TcpConnector nginx
+```
+
+Advanced settings:
+
+| key | type | required | description |
+|-----|------|----------|-------------|
+| `reverse-secret-length` | integer | no | private handshake length; default `640`, valid range `1` to `1024` |
+| `reverse-secret` | ASCII string | no | XOR secret used to derive the private handshake; must match both peer nodes |
+
+Use `"detection": "reverse"` on the route. `"reverse-tls"` and
+`"reverse-handshake"` are aliases. A route using only this detector may omit
+`domain`/`domains`, and supplied domain patterns are ignored. If it is combined
+with `http1` or `tls`, domains remain required for those matching methods.
+
+```json
+{
+  "name": "sniff-router",
+  "type": "SniffRouter",
+  "settings": {
+    "reverse-secret-length": 640,
+    "reverse-secret": "shared-secret",
+    "routes": [
+      {
+        "detection": "reverse",
+        "next": "reverse_server"
+      }
+    ]
+  },
+  "next": "camouflage_site"
+}
+```
+
+The default signature is 640 bytes of `0xFF`. SniffRouter derives customized
+bytes exactly as `ReverseClient` and `ReverseServer` do, so all three nodes must
+use identical settings. Put SniffRouter after TLS termination: the handshake
+must start at byte zero of the decrypted stream. SniffRouter replays it intact,
+and `ReverseServer` re-validates and strips it. A partial first-payload prefix
+logs a warning and immediately uses top-level `next`; a fronting proxy's
+PROXY-protocol header must be stripped before SniffRouter. `Router` does not
+currently provide this detector.

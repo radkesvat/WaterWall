@@ -20,7 +20,6 @@
         "routes": [
           {
             "domains": ["protected.integration.test"],
-            "detection": ["tls"],
             "next": "protected-tls-server"
           }
         ]

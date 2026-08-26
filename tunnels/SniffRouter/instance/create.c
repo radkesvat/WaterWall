@@ -196,7 +196,7 @@ static bool loadRouteDetection(sniffrouter_route_t *route, const cJSON *route_js
 
     if (detection == NULL)
     {
-        route->detection = kSniffDetectionHttp1;
+        route->detection = kSniffDetectionHttp1 | kSniffDetectionTlsClientHello;
         return true;
     }
 
