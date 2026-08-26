@@ -132,18 +132,6 @@ typedef enum system_memory_provider_result_e
 typedef system_memory_provider_result_t (*SystemMemoryProviderFn)(void *userdata, system_memory_snapshot_t *snapshot);
 typedef uint64_t (*SystemMemoryNowMsFn)(void *userdata);
 
-#ifdef WW_SYSINFO_TEST_SEAM
-typedef void (*SystemLoadSamplerTestTimerCallback)(void *callback_userdata);
-typedef struct system_load_sampler_timer_test_ops_s
-{
-    wtimer_t *(*add)(void *userdata, wloop_t *loop, SystemLoadSamplerTestTimerCallback callback,
-                     void *callback_userdata, uint32_t timeout_ms, uint32_t repeat);
-    void (*set_userdata)(void *userdata, wtimer_t *timer, void *timer_userdata);
-    void *(*get_userdata)(void *userdata, wtimer_t *timer);
-    void (*delete_timer)(void *userdata, wtimer_t *timer);
-} system_load_sampler_timer_test_ops_t;
-#endif
-
 typedef struct system_load_state_s
 {
     wmutex_t  mutex;
@@ -188,10 +176,6 @@ typedef struct system_load_state_s
     void                  *memory_provider_userdata;
     void                  *memory_now_userdata;
     void                  *memory_provider_state;
-#ifdef WW_SYSINFO_TEST_SEAM
-    const system_load_sampler_timer_test_ops_t *test_timer_ops;
-    void                                       *test_timer_userdata;
-#endif
 } system_load_state_t;
 
 bool systemLoadSamplerTryInit(system_load_state_t *state);
@@ -209,18 +193,13 @@ void systemLoadSamplerSetForceUnderLoad(system_load_state_t *state, bool force_u
  */
 system_memory_snapshot_status_t systemMemorySnapshotGet(system_memory_snapshot_t *snapshot);
 
+#ifdef WW_SYSINFO_TEST_SEAM
 /**
  * Deterministic provider/clock seam used by focused sampler tests. Configure
  * it before publishing the state or starting concurrent readers.
  */
 void systemLoadSamplerSetMemoryTestHooks(system_load_state_t *state, SystemMemoryProviderFn provider,
                                          SystemMemoryNowMsFn now_ms, void *userdata);
-
-#ifdef WW_SYSINFO_TEST_SEAM
-bool systemLoadSamplerTryInitWithMemoryTestHooks(system_load_state_t *state, SystemMemoryProviderFn provider,
-                                                 SystemMemoryNowMsFn now_ms, void *userdata,
-                                                 const system_load_sampler_timer_test_ops_t *timer_ops,
-                                                 void                                       *timer_userdata);
 #endif
 
 /* Pure parsers used by the Linux provider and deterministic unit coverage. */

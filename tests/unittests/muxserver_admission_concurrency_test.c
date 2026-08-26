@@ -440,9 +440,9 @@ static void runAggregateCase(system_memory_provider_result_t memory_result, uint
     race_memory_provider_t provider = {.result = memory_result};
     atomicStoreU64Relaxed(&provider.now_ms, 100);
     system_load_state_t sampler = {0};
-    require(
-        systemLoadSamplerTryInitWithMemoryTestHooks(&sampler, raceMemoryProvider, raceMemoryNow, &provider, NULL, NULL),
-        "failed to initialize aggregate race sampler");
+    require(systemLoadSamplerTryInit(&sampler), "failed to initialize aggregate race sampler");
+    systemLoadSamplerSetMemoryTestHooks(&sampler, raceMemoryProvider, raceMemoryNow, &provider);
+    discard              systemLoadSamplerUpdate(&sampler);
     system_load_state_t *saved_sampler = GSTATE.system_load;
     GSTATE.system_load                 = &sampler;
 

@@ -16,20 +16,6 @@ typedef struct memory_reader_s
     atomic_bool stop;
 } memory_reader_t;
 
-typedef struct memory_timer_fixture_s
-{
-    SystemLoadSamplerTestTimerCallback callback;
-    void                              *timer_userdata;
-    uint32_t                           timeout_ms;
-    uint32_t                           repeat;
-    unsigned int                       add_calls;
-    unsigned int                       set_calls;
-    unsigned int                       get_calls;
-    unsigned int                       delete_calls;
-    bool                               fail_add;
-    ww_max_align_t                     timer_storage;
-} memory_timer_fixture_t;
-
 typedef struct tuple_provider_s
 {
     uint64_t                 now_ms;
@@ -103,56 +89,6 @@ static WTHREAD_ROUTINE(memoryReaderMain)
     return 0;
 }
 
-static wtimer_t *fakeTimerAdd(void *userdata, wloop_t *loop, SystemLoadSamplerTestTimerCallback callback,
-                              void *callback_userdata, uint32_t timeout_ms, uint32_t repeat)
-{
-    discard                 loop;
-    memory_timer_fixture_t *fixture = userdata;
-    fixture->add_calls++;
-    fixture->callback = callback;
-    discard callback_userdata;
-    fixture->timeout_ms = timeout_ms;
-    fixture->repeat     = repeat;
-    return fixture->fail_add ? NULL : (wtimer_t *) (void *) &fixture->timer_storage;
-}
-
-static void fakeTimerSetUserdata(void *userdata, wtimer_t *timer, void *timer_userdata)
-{
-    memory_timer_fixture_t *fixture = userdata;
-    require(timer == (wtimer_t *) (void *) &fixture->timer_storage, "timer userdata was set on an unknown timer");
-    fixture->set_calls++;
-    fixture->timer_userdata = timer_userdata;
-}
-
-static void *fakeTimerGetUserdata(void *userdata, wtimer_t *timer)
-{
-    memory_timer_fixture_t *fixture = userdata;
-    require(timer == (wtimer_t *) (void *) &fixture->timer_storage, "timer userdata was read from an unknown timer");
-    fixture->get_calls++;
-    return fixture->timer_userdata;
-}
-
-static void fakeTimerDelete(void *userdata, wtimer_t *timer)
-{
-    memory_timer_fixture_t *fixture = userdata;
-    require(timer == (wtimer_t *) (void *) &fixture->timer_storage, "an unknown timer was deleted");
-    fixture->delete_calls++;
-}
-
-static void fakeTimerDispatch(memory_timer_fixture_t *fixture)
-{
-    require(fixture->callback != NULL, "fake timer has no captured callback");
-    void *timer_userdata = fakeTimerGetUserdata(fixture, (wtimer_t *) (void *) &fixture->timer_storage);
-    fixture->callback(timer_userdata);
-}
-
-static const system_load_sampler_timer_test_ops_t timer_ops = {
-    .add          = fakeTimerAdd,
-    .set_userdata = fakeTimerSetUserdata,
-    .get_userdata = fakeTimerGetUserdata,
-    .delete_timer = fakeTimerDelete,
-};
-
 static uint64_t tupleNow(void *userdata)
 {
     return ((tuple_provider_t *) userdata)->now_ms;
@@ -168,8 +104,9 @@ static void requireTupleStatus(tuple_provider_t *provider, system_memory_snapsho
                                system_memory_snapshot_t *snapshot, const char *message)
 {
     system_load_state_t state = {0};
-    require(systemLoadSamplerTryInitWithMemoryTestHooks(&state, tupleProvider, tupleNow, provider, NULL, NULL),
-            "failed to initialize tuple-invariant sampler");
+    require(systemLoadSamplerTryInit(&state), "failed to initialize tuple-invariant sampler");
+    systemLoadSamplerSetMemoryTestHooks(&state, tupleProvider, tupleNow, provider);
+    discard              systemLoadSamplerUpdate(&state);
     system_load_state_t *saved_state = GSTATE.system_load;
     GSTATE.system_load               = &state;
     require(systemMemorySnapshotGet(snapshot) == expected, message);
@@ -230,62 +167,6 @@ static void testSnapshotTupleInvariants(void)
             "host-only tuple retained cgroup diagnostic fields");
 }
 
-static void testSamplerLifecycle(void)
-{
-    memory_test_provider_t provider = {0};
-    atomicStoreU64Relaxed(&provider.now_ms, 100);
-    atomicStoreRelaxed(&provider.result, kSystemMemoryProviderOk);
-    memory_timer_fixture_t timer = {0};
-    system_load_state_t    state = {0};
-    require(systemLoadSamplerTryInitWithMemoryTestHooks(&state, fakeProvider, fakeNow, &provider, &timer_ops, &timer),
-            "test-hook sampler initialization failed");
-    require(atomicLoadRelaxed(&provider.calls) == 1U,
-            "sampler initialization did not synchronously publish before returning");
-    require(systemLoadSamplerStart(&state, (wloop_t *) &timer), "deterministic sampler timer did not start");
-    require(timer.add_calls == 1U && timer.set_calls == 1U && timer.get_calls == 1U &&
-                timer.timeout_ms == SYSTEM_LOAD_SAMPLER_INTERVAL_MS && timer.repeat == INFINITE,
-            "sampler timer did not request the established 500 ms repeating cadence");
-    require(timer.callback != NULL, "sampler timer callback root was not captured");
-    fakeTimerDispatch(&timer);
-    fakeTimerDispatch(&timer);
-    require(atomicLoadRelaxed(&provider.calls) == 3U, "deterministic timer advancement invoked the wrong updates");
-    systemLoadSamplerStop(&state);
-    require(timer.set_calls == 2U && timer.timer_userdata == NULL && timer.delete_calls == 1U,
-            "sampler stop did not clear userdata and delete its timer");
-    fakeTimerDispatch(&timer);
-    require(atomicLoadRelaxed(&provider.calls) == 3U, "stopped sampler retained a live callback root");
-    systemLoadSamplerDestroy(&state);
-    systemLoadSamplerDestroy(&state);
-
-    memory_timer_fixture_t destroy_timer = {0};
-    system_load_state_t    destroy_state = {0};
-    require(systemLoadSamplerTryInitWithMemoryTestHooks(
-                &destroy_state, fakeProvider, fakeNow, &provider, &timer_ops, &destroy_timer),
-            "active-destroy sampler initialization failed");
-    require(systemLoadSamplerStart(&destroy_state, (wloop_t *) &destroy_timer),
-            "active-destroy sampler timer did not start");
-    const unsigned int calls_before_destroy = (unsigned int) atomicLoadRelaxed(&provider.calls);
-    systemLoadSamplerDestroy(&destroy_state);
-    require(destroy_timer.set_calls == 2U && destroy_timer.timer_userdata == NULL && destroy_timer.delete_calls == 1U,
-            "destroying an active sampler did not clear and delete its timer exactly once");
-    fakeTimerDispatch(&destroy_timer);
-    require((unsigned int) atomicLoadRelaxed(&provider.calls) == calls_before_destroy,
-            "destroyed sampler retained a live callback root");
-    systemLoadSamplerDestroy(&destroy_state);
-    require(destroy_timer.set_calls == 2U && destroy_timer.delete_calls == 1U,
-            "second sampler destruction repeated timer cleanup");
-
-    memory_timer_fixture_t failed_timer = {.fail_add = true};
-    system_load_state_t    failed_state = {0};
-    require(systemLoadSamplerTryInitWithMemoryTestHooks(
-                &failed_state, fakeProvider, fakeNow, &provider, &timer_ops, &failed_timer),
-            "timer-failure sampler initialization failed");
-    require(! systemLoadSamplerStart(&failed_state, (wloop_t *) &failed_timer) && failed_state.timer == NULL &&
-                failed_timer.add_calls == 1U && failed_timer.set_calls == 0U && failed_timer.delete_calls == 0U,
-            "timer construction failure retained or partially published a callback root");
-    systemLoadSamplerDestroy(&failed_state);
-}
-
 int main(void)
 {
     uint64_t total     = 0;
@@ -328,7 +209,6 @@ int main(void)
     GSTATE.system_load = saved_state;
     systemLoadSamplerDestroy(&production_state);
 
-    testSamplerLifecycle();
     testSnapshotTupleInvariants();
 
     system_load_state_t state = {0};

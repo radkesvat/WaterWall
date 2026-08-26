@@ -687,24 +687,7 @@ static void systemLoadTimerHandle(wtimer_t *timer)
     systemLoadSamplerUpdate(state);
 }
 
-#ifdef WW_SYSINFO_TEST_SEAM
-static void systemLoadTestTimerHandle(void *userdata)
-{
-    system_load_state_t *state = userdata;
-    if (state != NULL && state->initialized && state->timer != NULL)
-    {
-        discard systemLoadSamplerUpdate(state);
-    }
-}
-#endif
-
-static bool systemLoadSamplerTryInitCommon(system_load_state_t *state, bool use_default_provider,
-                                           SystemMemoryProviderFn provider, SystemMemoryNowMsFn now_ms, void *userdata
-#ifdef WW_SYSINFO_TEST_SEAM
-                                           ,
-                                           const system_load_sampler_timer_test_ops_t *timer_ops, void *timer_userdata
-#endif
-)
+bool systemLoadSamplerTryInit(system_load_state_t *state)
 {
     if (state == NULL)
     {
@@ -715,61 +698,16 @@ static bool systemLoadSamplerTryInitCommon(system_load_state_t *state, bool use_
     {
         return false;
     }
-    state->initialized         = true;
-    state->supported           = true;
-    state->memory_now_ms       = now_ms != NULL ? now_ms : systemMemoryDefaultNowMS;
-    state->memory_now_userdata = userdata;
-#ifdef WW_SYSINFO_TEST_SEAM
-    state->test_timer_ops      = timer_ops;
-    state->test_timer_userdata = timer_userdata;
-#endif
+    state->initialized   = true;
+    state->supported     = true;
+    state->memory_now_ms = systemMemoryDefaultNowMS;
     atomicStoreU64Relaxed(&state->memory_generation, 0);
     atomicStoreRelaxed(&state->memory_provider_unavailable, true);
-    bool memory_supported = false;
-    if (use_default_provider)
-    {
-        memory_supported = systemMemoryDefaultProviderInit(state);
-    }
-    else
-    {
-        state->memory_provider          = provider;
-        state->memory_provider_userdata = userdata;
-        memory_supported                = provider != NULL;
-    }
+    const bool memory_supported = systemMemoryDefaultProviderInit(state);
     atomicStoreRelaxed(&state->memory_provider_supported, memory_supported);
     discard systemLoadSamplerUpdate(state);
     return true;
 }
-
-bool systemLoadSamplerTryInit(system_load_state_t *state)
-{
-    return systemLoadSamplerTryInitCommon(state,
-                                          true,
-                                          NULL,
-                                          systemMemoryDefaultNowMS,
-                                          NULL
-#ifdef WW_SYSINFO_TEST_SEAM
-                                          ,
-                                          NULL,
-                                          NULL
-#endif
-    );
-}
-
-#ifdef WW_SYSINFO_TEST_SEAM
-bool systemLoadSamplerTryInitWithMemoryTestHooks(system_load_state_t *state, SystemMemoryProviderFn provider,
-                                                 SystemMemoryNowMsFn now_ms, void *userdata,
-                                                 const system_load_sampler_timer_test_ops_t *timer_ops,
-                                                 void                                       *timer_userdata)
-{
-    if (timer_ops != NULL && (timer_ops->add == NULL || timer_ops->set_userdata == NULL ||
-                              timer_ops->get_userdata == NULL || timer_ops->delete_timer == NULL))
-    {
-        return false;
-    }
-    return systemLoadSamplerTryInitCommon(state, false, provider, now_ms, userdata, timer_ops, timer_userdata);
-}
-#endif
 
 void systemLoadSamplerInit(system_load_state_t *state)
 {
@@ -805,31 +743,7 @@ bool systemLoadSamplerStart(system_load_state_t *state, wloop_t *loop)
         return false;
     }
 
-    wtimer_t *timer = NULL;
-#ifdef WW_SYSINFO_TEST_SEAM
-    if (state->test_timer_ops != NULL)
-    {
-        timer = state->test_timer_ops->add(state->test_timer_userdata,
-                                           loop,
-                                           systemLoadTestTimerHandle,
-                                           state,
-                                           SYSTEM_LOAD_SAMPLER_INTERVAL_MS,
-                                           INFINITE);
-        if (timer != NULL)
-        {
-            state->test_timer_ops->set_userdata(state->test_timer_userdata, timer, state);
-            if (state->test_timer_ops->get_userdata(state->test_timer_userdata, timer) != state)
-            {
-                state->test_timer_ops->delete_timer(state->test_timer_userdata, timer);
-                timer = NULL;
-            }
-        }
-    }
-    else
-#endif
-    {
-        timer = wtimerAdd(loop, systemLoadTimerHandle, SYSTEM_LOAD_SAMPLER_INTERVAL_MS, INFINITE);
-    }
+    wtimer_t *timer = wtimerAdd(loop, systemLoadTimerHandle, SYSTEM_LOAD_SAMPLER_INTERVAL_MS, INFINITE);
     if (timer == NULL)
     {
         state->sample_error      = true;
@@ -838,12 +752,7 @@ bool systemLoadSamplerStart(system_load_state_t *state, wloop_t *loop)
         return false;
     }
 
-#ifdef WW_SYSINFO_TEST_SEAM
-    if (state->test_timer_ops == NULL)
-#endif
-    {
-        weventSetUserData(timer, state);
-    }
+    weventSetUserData(timer, state);
     state->timer = timer;
     mutexUnlock(&state->mutex);
     return true;
@@ -863,18 +772,8 @@ void systemLoadSamplerStop(system_load_state_t *state)
 
     if (timer != NULL)
     {
-#ifdef WW_SYSINFO_TEST_SEAM
-        if (state->test_timer_ops != NULL)
-        {
-            state->test_timer_ops->set_userdata(state->test_timer_userdata, timer, NULL);
-            state->test_timer_ops->delete_timer(state->test_timer_userdata, timer);
-        }
-        else
-#endif
-        {
-            weventSetUserData(timer, NULL);
-            wtimerDelete(timer);
-        }
+        weventSetUserData(timer, NULL);
+        wtimerDelete(timer);
     }
 }
 
@@ -1016,6 +915,7 @@ void systemLoadSamplerSetForceUnderLoad(system_load_state_t *state, bool force_u
     mutexUnlock(&state->mutex);
 }
 
+#ifdef WW_SYSINFO_TEST_SEAM
 void systemLoadSamplerSetMemoryTestHooks(system_load_state_t *state, SystemMemoryProviderFn provider,
                                          SystemMemoryNowMsFn now_ms, void *userdata)
 {
@@ -1032,6 +932,7 @@ void systemLoadSamplerSetMemoryTestHooks(system_load_state_t *state, SystemMemor
     atomicStoreRelaxed(&state->memory_provider_unavailable, provider != NULL);
     state->memory_sample_valid = false;
 }
+#endif
 
 system_memory_snapshot_status_t systemMemorySnapshotGet(system_memory_snapshot_t *snapshot)
 {

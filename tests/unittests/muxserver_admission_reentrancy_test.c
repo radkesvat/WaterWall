@@ -418,9 +418,9 @@ static void caseReserveBoundaryAndTwoConditionRecovery(void)
                                          .cgroup_limited = true};
     atomicStoreU64Relaxed(&provider.now_ms, 100);
     system_load_state_t sampler = {0};
-    twfRequire(systemLoadSamplerTryInitWithMemoryTestHooks(
-                   &sampler, serverMemoryProvider, serverMemoryNow, &provider, NULL, NULL),
-               "failed to initialize isolated reserve sampler");
+    twfRequire(systemLoadSamplerTryInit(&sampler), "failed to initialize isolated reserve sampler");
+    systemLoadSamplerSetMemoryTestHooks(&sampler, serverMemoryProvider, serverMemoryNow, &provider);
+    discard              systemLoadSamplerUpdate(&sampler);
     system_load_state_t *saved_sampler = GSTATE.system_load;
     GSTATE.system_load                 = &sampler;
     muxserver_lstate_t *parent_ls      = lineGetState(parent_l, fixture.mux);
@@ -482,9 +482,9 @@ static void caseInitialProviderStatusUsesImmediateFallback(system_memory_provide
     server_memory_provider_t provider = {.result = result};
     atomicStoreU64Relaxed(&provider.now_ms, 100);
     system_load_state_t sampler = {0};
-    twfRequire(systemLoadSamplerTryInitWithMemoryTestHooks(
-                   &sampler, serverMemoryProvider, serverMemoryNow, &provider, NULL, NULL),
-               "failed to initialize isolated initial-status sampler");
+    twfRequire(systemLoadSamplerTryInit(&sampler), "failed to initialize isolated initial-status sampler");
+    systemLoadSamplerSetMemoryTestHooks(&sampler, serverMemoryProvider, serverMemoryNow, &provider);
+    discard              systemLoadSamplerUpdate(&sampler);
     system_load_state_t *saved_sampler = GSTATE.system_load;
     GSTATE.system_load                 = &sampler;
     muxserver_lstate_t *parent_ls      = lineGetState(parent_l, fixture.mux);
@@ -522,9 +522,9 @@ static void caseLastValidFreshnessThenFallback(void)
     server_memory_provider_t provider = {.host_total = 1000, .host_available = 500, .result = kSystemMemoryProviderOk};
     atomicStoreU64Relaxed(&provider.now_ms, 100);
     system_load_state_t sampler = {0};
-    twfRequire(systemLoadSamplerTryInitWithMemoryTestHooks(
-                   &sampler, serverMemoryProvider, serverMemoryNow, &provider, NULL, NULL),
-               "failed to initialize last-valid sampler");
+    twfRequire(systemLoadSamplerTryInit(&sampler), "failed to initialize last-valid sampler");
+    systemLoadSamplerSetMemoryTestHooks(&sampler, serverMemoryProvider, serverMemoryNow, &provider);
+    discard              systemLoadSamplerUpdate(&sampler);
     system_load_state_t *saved_sampler = GSTATE.system_load;
     GSTATE.system_load                 = &sampler;
     muxserver_lstate_t *parent_ls      = lineGetState(parent_l, fixture.mux);
@@ -561,9 +561,9 @@ static void caseFreshAbundantUsesButNeverBypassesHardCeiling(void)
     server_memory_provider_t provider = {.host_total = 1000, .host_available = 900, .result = kSystemMemoryProviderOk};
     atomicStoreU64Relaxed(&provider.now_ms, 100);
     system_load_state_t sampler = {0};
-    twfRequire(systemLoadSamplerTryInitWithMemoryTestHooks(
-                   &sampler, serverMemoryProvider, serverMemoryNow, &provider, NULL, NULL),
-               "failed to initialize abundant sampler");
+    twfRequire(systemLoadSamplerTryInit(&sampler), "failed to initialize abundant sampler");
+    systemLoadSamplerSetMemoryTestHooks(&sampler, serverMemoryProvider, serverMemoryNow, &provider);
+    discard              systemLoadSamplerUpdate(&sampler);
     system_load_state_t *saved_sampler = GSTATE.system_load;
     GSTATE.system_load                 = &sampler;
     muxserver_lstate_t *parent_ls      = lineGetState(parent_l, fixture.mux);
