@@ -1,7 +1,6 @@
 #include "werr.h"
 #include "wplatform.h"
 #include "wdef.h"
-#include <string.h> // for strerror
 
 // errcode => errmsg
 const char* errorCodeToString(int err) {

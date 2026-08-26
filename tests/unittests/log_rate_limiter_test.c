@@ -1,9 +1,5 @@
 #include "loggers/log_rate_limiter.h"
 
-#include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
-
 static void require(bool condition, const char *message)
 {
     if (! condition)

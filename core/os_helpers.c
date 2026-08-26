@@ -3,8 +3,6 @@
 #include "loggers/core_logger.h"
 #include "wproc.h"
 
-#include <ctype.h>
-
 #ifdef OS_UNIX
 #include <sys/resource.h>
 void increaseFileLimit(void)

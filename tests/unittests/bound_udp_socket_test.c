@@ -1,10 +1,7 @@
 #include "bound_udp_socket.h"
 #include "tunnel_orderly_shutdown_harness.h"
 
-#include <limits.h>
-
 #if defined(OS_LINUX)
-#include <errno.h>
 #include <fcntl.h>
 
 typedef struct bound_udp_socket_option_probe_s

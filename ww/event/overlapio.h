@@ -8,7 +8,6 @@
 #include "hbuf.h"
 #include "wsocket.h"
 #include <mswsock.h>
-#include <stddef.h>
 #ifdef _MSC_VER
 #pragma comment(lib, "mswsock.lib")
 #endif

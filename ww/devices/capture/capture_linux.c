@@ -10,10 +10,7 @@
 #include "wproc.h"
 #include "wtime.h"
 #include <arpa/inet.h>
-#include <ctype.h>
-#include <errno.h>
 #include <fcntl.h>
-#include <limits.h>
 #include <linux/if_ether.h>
 #include <linux/ipv6.h>
 #include <linux/netfilter.h>
@@ -23,9 +20,6 @@
 #include <netinet/in.h>
 #include <netinet/ip.h>
 #include <poll.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <unistd.h>

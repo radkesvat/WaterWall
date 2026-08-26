@@ -10,7 +10,6 @@
  */
 
 #include "wlibc.h"
-#include <limits.h>
 
 #ifdef ENABLE_UDS
 #ifdef OS_WIN

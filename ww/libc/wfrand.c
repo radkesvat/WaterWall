@@ -4,7 +4,6 @@
 #include "global_state.h"
 
 #if defined(OS_LINUX)
-#include <errno.h>
 #include <sys/syscall.h>
 
 #if defined(SYS_getrandom)
@@ -14,17 +13,8 @@
 #endif
 #endif
 
-#if defined(OS_WIN)
-#include <limits.h>
-#endif
-
 #if defined(OS_UNIX)
-#include <errno.h>
 #include <unistd.h>
-#endif
-
-#if defined(OS_DARWIN) || defined(OS_BSD)
-#include <stdlib.h>
 #endif
 
 thread_local uint32_t frand_seed32      = 0;

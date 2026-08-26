@@ -1,7 +1,5 @@
 #include "objects/node.h"
 
-#include <stdint.h>
-
 #ifdef OS_WIN
 #define FIXTURE_EXPORT __declspec(dllexport)
 #else

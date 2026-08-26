@@ -6,8 +6,6 @@
 
 #include "utils/json_helpers.h"
 
-#include <stddef.h>
-
 _Static_assert(offsetof(user_t, sha224_pass) % 32U == 0, "user_t.sha224_pass must be 32-byte aligned");
 _Static_assert(offsetof(user_t, sha256_pass) % 32U == 0, "user_t.sha256_pass must be 32-byte aligned");
 _Static_assert(_Alignof(user_t) >= 32U, "user_t storage must be at least 32-byte aligned");

@@ -8,13 +8,11 @@
 #include "wchan.h"
 #include "worker.h"
 #include <arpa/inet.h>
-#include <errno.h>
 #include <fcntl.h>
 #include <linux/if.h>
 #include <linux/ipv6.h>
 #include <netinet/ip.h>
 #include <poll.h>
-#include <string.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <unistd.h>

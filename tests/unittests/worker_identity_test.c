@@ -4,7 +4,6 @@
 
 #if defined(__unix__) || defined(__APPLE__) || defined(UNIX)
 #include <pthread.h>
-#include <signal.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #define HAS_UNIX_FORK    1

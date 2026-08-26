@@ -2,9 +2,6 @@
 
 #include "wtime.h"
 
-#include <assert.h>
-#include <limits.h>
-
 static uint64_t logRateLimiterNowMs(void)
 {
     return getTimeOfDayMS();

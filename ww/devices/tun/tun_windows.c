@@ -13,8 +13,6 @@
 #include "wplatform.h"
 #include "wproc.h"
 #include "wthread.h"
-#include <ctype.h>
-#include <errno.h>
 #include <iphlpapi.h>
 #include <netioapi.h>
 

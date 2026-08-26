@@ -3,9 +3,6 @@
 #include "node_builder/node_library.h"
 #include "objects/node.h"
 
-#include <stdlib.h>
-#include <string.h>
-
 #ifdef OS_WIN
 #include <malloc.h>
 #include <windows.h>

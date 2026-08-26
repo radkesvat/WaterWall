@@ -6,8 +6,6 @@
 
 #include "loggers/internal_logger.h"
 
-#include <stddef.h>
-
 enum
 {
     kUsersBlockSize            = 64,

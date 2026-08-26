@@ -6,8 +6,6 @@
 #include "wlog.h"
 #include "wmutex.h"
 
-#include <limits.h>
-
 // #include "wtime.h"
 #define SECONDS_PER_HOUR 3600
 #define SECONDS_PER_DAY  86400  // 24*3600

@@ -8,11 +8,6 @@
  * LIFO: push_back,pop_back
  */
 
-#include <assert.h> // for assert
-#include <stddef.h> // for NULL
-#include <stdlib.h> // for malloc,realloc,free
-#include <string.h> // for memorySet,memoryMove
-
 #include "ev_memory.h"  // for EVENTLOOP_ALLOC, EVENTLOOP_FREE
 
 #define QUEUE_INIT_SIZE     16

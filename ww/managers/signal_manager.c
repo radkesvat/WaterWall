@@ -27,8 +27,6 @@
 #include "application_shutdown.h"
 #include "global_state.h"
 
-#include <errno.h>
-
 static signal_manager_t *signalmanager_gstate = NULL;
 
 #define SHUTDOWN_PIPE_READ  0

@@ -13,8 +13,6 @@
 #include "wplatform.h"
 #include "wtime.h"
 
-#include <stdlib.h>
-
 /* Unit tests may provide this hook to refuse an exact construction stage. */
 #if defined(WW_SYNC_INIT_TEST_SEAM)
 bool wSyncInitTestShouldFail(void);

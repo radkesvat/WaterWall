@@ -20,7 +20,6 @@
 #if WW_HAVE_C11_ATOMICS
 
 // c11
-#include <limits.h>
 #include <stdatomic.h>
 
 typedef int                w_atomic_int_value_t;
@@ -30,9 +29,6 @@ typedef unsigned long long w_atomic_ullong_value_t;
 #define W_ATOMIC_UINT_VALUE_MAX    UINT_MAX
 
 #elif defined(OS_WIN)
-
-#include <stddef.h>
-#include <stdint.h>
 
 #define ATOMIC_FLAG_INIT 0
 

@@ -1,7 +1,5 @@
 #include "wtime.h"
 #include "wdef.h"
-#define __STDC_WANT_LIB_EXT1__ 1
-#include <time.h>
 
 static const char *s_weekdays[] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
 

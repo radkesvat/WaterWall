@@ -9,9 +9,7 @@
 
 #if defined(OS_LINUX)
 #include <fcntl.h>
-#include <limits.h>
 #include <poll.h>
-#include <signal.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #endif

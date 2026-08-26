@@ -3,9 +3,6 @@
 #include "watomic.h"
 #include "wexport.h"
 
-#include <stdbool.h>
-#include <stdint.h>
-
 /*
  * A zero-initialized aggregate limiter is ready for use. The caller must
  * serialize access to it. Each recorded event contributes to the lifetime

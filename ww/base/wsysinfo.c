@@ -9,8 +9,6 @@
 #include "wlibc.h"
 #include "wsysinfo_linux.h"
 
-#include <ctype.h>
-
 typedef enum system_load_read_result_e
 {
     kSystemLoadReadOk,

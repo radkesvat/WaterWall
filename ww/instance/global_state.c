@@ -19,12 +19,8 @@
 #include <ares.h>
 
 #if defined(OS_UNIX) && ! (defined(OS_DARWIN) || defined(OS_BSD))
-#include <errno.h>
 #include <fcntl.h>
 #include <unistd.h>
-#endif
-#if defined(OS_UNIX)
-#include <string.h>
 #endif
 
 #include "crypto/wcrypto.h"

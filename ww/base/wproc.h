@@ -13,7 +13,6 @@
 #include "wlibc.h"
 
 #ifdef OS_UNIX
-#include <errno.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #if defined(OS_LINUX)

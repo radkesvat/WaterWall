@@ -3,8 +3,6 @@
 #include "instance/lifecycle.h"
 #include "instance/worker.h"
 
-#include <stdint.h>
-
 enum
 {
     kLifecycleNodeFixtureStageCount = 6,

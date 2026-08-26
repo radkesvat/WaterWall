@@ -1,7 +1,5 @@
 #include "ev_memory.h"
 
-#include <stdlib.h>
-
 #ifdef OS_DARWIN
 #include <mach-o/dyld.h> // for _NSGetExecutablePath
 #endif

@@ -10,11 +10,6 @@
  * add,del
  */
 
-#include <assert.h> // for assert
-#include <stddef.h> // for NULL
-#include <stdlib.h> // for malloc,realloc,free
-#include <string.h> // for memorySet,memoryMove
-
 #include "ev_memory.h"  // for EVENTLOOP_ALLOC, EVENTLOOP_FREE
 
 #define ARRAY_INIT_SIZE     16

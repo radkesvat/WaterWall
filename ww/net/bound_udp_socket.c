@@ -1,8 +1,6 @@
 #include "bound_udp_socket.h"
 #include "egress_pin.h"
 
-#include <limits.h>
-
 wio_t *boundUdpSocketCreate(wloop_t *loop, const bound_udp_config_t *config)
 {
     if (loop == NULL || config == NULL)

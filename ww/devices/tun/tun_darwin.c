@@ -13,8 +13,6 @@
 #include "wthread.h"
 
 #include <arpa/inet.h>
-#include <ctype.h>
-#include <errno.h>
 #include <fcntl.h>
 #include <net/if.h>
 #include <net/if_utun.h>
@@ -23,7 +21,6 @@
 #include <netinet6/in6_var.h>
 #include <netinet6/nd6.h>
 #include <poll.h>
-#include <stdio.h>
 #include <sys/ioctl.h>
 #include <sys/kern_control.h>
 #include <sys/socket.h>
