@@ -555,6 +555,19 @@ set_tests_properties(
     RESOURCE_LOCK waterwall_reality_configuration
 )
 add_test(
+  NAME waterwall.core_json_input
+  COMMAND
+    "${PYTHON3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/core_json_input_test.py"
+    "$<TARGET_FILE:Waterwall>"
+)
+set_tests_properties(
+  waterwall.core_json_input
+  PROPERTIES
+    TIMEOUT 30
+    LABELS "integration;core;startup;configuration"
+)
+add_test(
   NAME waterwall.tunnels_abort_policy_test
   COMMAND
     "${PYTHON3_EXECUTABLE}"

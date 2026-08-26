@@ -4,18 +4,13 @@
 #include "imported_tunnels.h"
 #include "loggers/core_logger.h"
 #include "os_helpers.h"
+#include "startup_options.h"
 
 // #ifdef COMPILER_MSVC
 // #define _CRTDBG_MAP_ALLOC
 // #pragma warning (disable: 4005)
 // #include <crtdbg.h>
 // #endif
-
-static bool isVersionArgument(const char *arg)
-{
-    return stringCompare(arg, "-v") == 0 || stringCompare(arg, "-version") == 0 ||
-           stringCompare(arg, "--version") == 0 || stringCompare(arg, "--v") == 0 || stringCompare(arg, "version") == 0;
-}
 
 static bool waterwallStartupCheckpoint(void)
 {
@@ -33,10 +28,12 @@ int waterwallInnerMain(int argc, char **argv);
  */
 int waterwallInnerMain(int argc, char **argv)
 {
-    if (argc > 1 && isVersionArgument(argv[1]))
+    waterwall_startup_options_t                startup_options = {0};
+    const waterwall_startup_arguments_result_e arguments_result =
+        waterwallStartupOptionsParse(argc, argv, &startup_options);
+    if (arguments_result != kWaterwallStartupArgumentsRun)
     {
-        printDebug("Waterwall version %s\n", TOSTRING(WATERWALL_VERSION));
-        return 0;
+        return arguments_result == kWaterwallStartupArgumentsExitSuccess ? 0 : 1;
     }
 
     // #ifdef COMPILER_MSVC
@@ -51,14 +48,10 @@ int waterwallInnerMain(int argc, char **argv)
 
     ww_startup_result_t startup_result = wwStartupSuccess();
 
-    static const char *core_file_name    = "core.json";
-    char              *core_file_content = readFile(core_file_name);
+    char *core_file_content = waterwallStartupOptionsReadCoreJson(&startup_options);
 
     if (core_file_content == NULL)
     {
-        printError("Waterwall version %s\nCould not read core settings file \"%s\" \n",
-                   TOSTRING(WATERWALL_VERSION),
-                   core_file_name);
         return 1;
     }
     ww_startup_context_t core_settings_scope = {0};
@@ -68,6 +61,7 @@ int waterwallInnerMain(int argc, char **argv)
     memoryFree(core_file_content);
     if (! core_settings_parsed)
     {
+        waterwallStartupOptionsReportCoreJsonParseFailure(&startup_options);
         destroyCoreSettings();
         return startup_result.exit_code;
     }
@@ -121,7 +115,7 @@ int waterwallInnerMain(int argc, char **argv)
     nodelibrarySetSearchPath(getCoreSettings()->libs_path);
 
     LOGI("Starting Waterwall version %s", TOSTRING(WATERWALL_VERSION));
-    LOGI("Parsing core file complete");
+    LOGI("Parsing core settings complete");
     if (getCoreSettings()->try_enabling_bbr)
     {
         tryEnableBbr();

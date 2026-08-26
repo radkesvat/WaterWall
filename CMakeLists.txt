@@ -332,6 +332,7 @@ add_executable(Waterwall
   core/core_settings.c
   core/imported_tunnels.c
   core/os_helpers.c
+  core/startup_options.c
   # core/tests/bench_memcpy.c
 )
 

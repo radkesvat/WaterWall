@@ -1,5 +1,5 @@
 <!--
-Documentation version: 152
+Documentation version: 153
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/01-getting-started/tutorial-part1.mdx, and both English files must keep the same documentation version. User-facing behavior changes should also update WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/01-getting-started/tutorial-part1.mdx.
 -->
 
@@ -12,6 +12,41 @@ used, and how the shared async DNS resolver should behave.
 
 The core file does not define tunnels directly. Tunnel chains are loaded from the
 paths listed in `configs`.
+
+## Core JSON Input
+
+With no startup option or environment override, Waterwall keeps its original
+behavior and reads `./core.json` from the process working directory.
+
+Use any one of these equivalent command-line forms to select another source:
+
+```text
+-c:PATH
+--c:PATH
+-config:PATH
+--config:PATH
+config:PATH
+```
+
+The colon is required. `PATH` may be relative to the process working directory
+or absolute. The special value `stdin` reads the core JSON from standard input:
+
+```bash
+./Waterwall --config:/etc/waterwall/core.json
+./Waterwall --config:stdin < core.json
+```
+
+The `WW_CORE_JSON_INPUT` environment variable accepts the same path or `stdin`
+value. Input selection follows this precedence:
+
+```text
+CLI option > WW_CORE_JSON_INPUT > ./core.json
+```
+
+Selecting a core input does not change the process working directory. Relative
+paths inside `core.json`, including entries in `configs`, therefore remain
+relative to the directory where Waterwall was started rather than to the
+selected core file's directory.
 
 ## Structural Example
 

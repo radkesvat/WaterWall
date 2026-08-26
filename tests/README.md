@@ -25,11 +25,11 @@ Both modes provide loopback-only isolation without public internet access, enabl
 Tests are organized into distinct execution lanes via `tests/run_test_lane.sh`:
 
 - `support`: Production policy and harness tests (13 tests), run strictly serially.
-- `functional`: Deterministic integration tests (148 tests) run concurrently in isolated network namespaces. Parallelism is calculated adaptively as `min(32, max(4, 4 * CPUs))` (e.g. 16 jobs on a 4-CPU machine). Override with `WATERWALL_INTEGRATION_TEST_JOBS`.
+- `functional`: Deterministic integration tests (149 tests) run concurrently in isolated network namespaces. Parallelism is calculated adaptively as `min(32, max(4, 4 * CPUs))` (e.g. 16 jobs on a 4-CPU machine). Override with `WATERWALL_INTEGRATION_TEST_JOBS`.
 - `external`: Tests requiring live host network connectivity (e.g., `reality_google_roundtrip`). Runs strictly serially on host network.
 - `speed`: Multi-stream speed tests (16 tests). Runs strictly serially (`RUN_SERIAL TRUE`) to avoid CPU and bandwidth contention.
 - `privileged`: Tests requiring root/TUN permissions (`sudo -E`, 6 tests). Runs serially.
-- `all`: Runs preflight, support (serial), functional (parallel), external (serial), and speed (serial) in sequence (178 tests total).
+- `all`: Runs preflight, support (serial), functional (parallel), external (serial), and speed (serial) in sequence (179 tests total).
 - `preflight`: Verifies the namespace capabilities required by the current caller (user + network namespaces for non-root, network namespace only for root).
 
 ### Performance Baseline & Post-Change Timings
@@ -37,11 +37,11 @@ Tests are organized into distinct execution lanes via `tests/run_test_lane.sh`:
 | Test Suite / Lane | Pre-Isolation (Host Serial) | Post-Isolation (Parallel Lanes) |
 |---|---|---|
 | **Support Tests** (13 tests) | ~55s (serial) | **~55s** (serial) |
-| **Deterministic Functional** (148 tests) | ~173s (sequential) | **~22–24s** (16 jobs on 4 CPUs) / **~71s** (1 CPU, 4 jobs) |
+| **Deterministic Functional** (149 tests) | ~173s (sequential) | **~22–24s** (16 jobs on 4 CPUs) / **~71s** (1 CPU, 4 jobs) |
 | **External Network** (1 test) | ~1s | **<1s** (serial) |
 | **Speed Tests** (16 tests) | ~48s (sequential) | **~46–48s** (serial) |
 | **Privileged Integration** (6 tests) | ~15s (sequential) | **~14–15s** (serial) |
-| **Ordinary non-privileged production sequence (`all`)** | ~277s | **~127s (~2m)** (support + functional + external + speed, 178 tests) |
+| **Ordinary non-privileged production sequence (`all`)** | ~277s | **~127s (~2m)** (support + functional + external + speed, 179 tests) |
 
 These are warm-build planning measurements from the 4-CPU reference host, not
 portable performance guarantees. The `all` total includes the production
