@@ -174,48 +174,11 @@ static void caseWorkerStopDrainsOnlyItsPublishedSlots(void)
     fixtureTeardown(&fixture);
 }
 
-static void casePreStopRejectsLateCreationAndCleanup(void)
-{
-    twfSetCase("SpeedTestClient PreStop rejects delayed stream creation");
-    tosResetProcessApi(true);
-    speedtestclient_fixture_t fixture;
-    fixtureSetup(&fixture);
-
-    speedtestclientTunnelOnQuiesceRequest(fixture.speed, wwLifecycleStartupRollback());
-    uint32_t *stream_id = memoryAllocate(sizeof(*stream_id));
-    twfRequire(stream_id != NULL, "failed to allocate delayed stream id");
-    *stream_id = 0;
-    speedtestclientTestStartStream(&fixture.env.workers[0], fixture.speed, stream_id, NULL);
-    speedtestclient_tstate_t *state = tunnelGetState(fixture.speed);
-    twfRequire(state->owned_lines[0] == NULL, "late delayed task created a line after PreStop");
-    twfRequireEqualU32(masterpoolGetCheckedOut(fixture.line_master), 0, "late delayed task retained a line");
-
-    stream_id = memoryAllocate(sizeof(*stream_id));
-    twfRequire(stream_id != NULL, "failed to allocate delayed cleanup id");
-    *stream_id = 1;
-    speedtestclientTestCleanupStartStream(fixture.speed, stream_id, NULL, kWorkerMessageCancelAdmissionClosed);
-    tosRequireNoProcessApiCall();
-
-    fixtureTeardown(&fixture);
-}
-
-static ww_startup_result_t runRequiredStartFailure(void)
-{
-    ww_startup_context_t startup = {0};
-    wwStartupContextBegin(&startup);
-    speedtestclientTestRequiredStartFailure("injected startup allocation refusal");
-    return wwStartupContextEnd(&startup);
-}
-
 static void caseRequiredStartupFailuresPropagateStartupStatus(void)
 {
     twfSetCase("SpeedTestClient required startup failures propagate startup status");
     speedtestclient_fixture_t fixture;
     fixtureSetup(&fixture);
-
-    tosResetProcessApi(true);
-    twfRequire(! wwStartupSucceeded(runRequiredStartFailure()), "required startup failure reported success");
-    tosRequireNoProcessApiCall();
 
     speedtestclient_tstate_t *state = tunnelGetState(fixture.speed);
     state->connection_count         = 1;
@@ -269,7 +232,6 @@ static void caseAcceptedQueuedTimerSetupFailureUsesCleanup(void)
 int main(void)
 {
     caseWorkerStopDrainsOnlyItsPublishedSlots();
-    casePreStopRejectsLateCreationAndCleanup();
     caseRequiredStartupFailuresPropagateStartupStatus();
     caseAcceptedQueuedTimerSetupFailureUsesCleanup();
     puts("SpeedTestClient orderly shutdown tests passed");

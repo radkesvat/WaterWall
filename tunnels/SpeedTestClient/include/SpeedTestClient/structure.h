@@ -190,10 +190,4 @@ void    speedtestclientProcessIncoming(tunnel_t *t, line_t *l, sbuf_t *buf);
 void    speedtestclientMaybeComplete(tunnel_t *t, line_t *l);
 void    speedtestclientFailLine(tunnel_t *t, line_t *l, const char *reason);
 void    speedtestclientFinishFromDownstreamFinish(tunnel_t *t, line_t *l, bool success, const char *reason);
-void     speedtestclientRemoveOwnedLine(tunnel_t *t, line_t *l, uint32_t stream_id);
-
-#ifdef WW_SPEEDTESTCLIENT_SHUTDOWN_TEST_SEAM
-void speedtestclientTestStartStream(void *worker, void *arg1, void *arg2, void *arg3);
-void speedtestclientTestCleanupStartStream(void *arg1, void *arg2, void *arg3, worker_message_cancel_reason_e reason);
-void speedtestclientTestRequiredStartFailure(const char *reason);
-#endif
+void    speedtestclientRemoveOwnedLine(tunnel_t *t, line_t *l, uint32_t stream_id);

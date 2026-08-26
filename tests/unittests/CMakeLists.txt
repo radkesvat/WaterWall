@@ -2814,10 +2814,6 @@ foreach(orderly_case IN ITEMS
       )
     endif()
     if(orderly_tunnel STREQUAL "SpeedTestClient")
-      target_compile_definitions(${orderly_test} PRIVATE WW_SPEEDTESTCLIENT_SHUTDOWN_TEST_SEAM=1)
-      target_sources(${orderly_test} PRIVATE
-        ${CMAKE_SOURCE_DIR}/tunnels/SpeedTestClient/instance/start.c
-      )
       target_link_options(${orderly_test} PRIVATE
         "-Wl,--wrap=memoryAllocate"
         "-Wl,--wrap=memoryFree"

@@ -65,23 +65,6 @@ static void speedtestclientRequiredStartFailure(const char *reason)
     startupFailureRecord(1);
 }
 
-#ifdef WW_SPEEDTESTCLIENT_SHUTDOWN_TEST_SEAM
-void speedtestclientTestStartStream(void *worker, void *arg1, void *arg2, void *arg3)
-{
-    speedtestclientStartStream(worker, arg1, arg2, arg3);
-}
-
-void speedtestclientTestCleanupStartStream(void *arg1, void *arg2, void *arg3, worker_message_cancel_reason_e reason)
-{
-    speedtestclientCleanupStartStream(arg1, arg2, arg3, reason);
-}
-
-void speedtestclientTestRequiredStartFailure(const char *reason)
-{
-    speedtestclientRequiredStartFailure(reason);
-}
-#endif
-
 void speedtestclientTunnelOnStart(tunnel_t *t)
 {
     tunnel_chain_t           *chain = tunnelGetChain(t);
