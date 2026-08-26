@@ -2,10 +2,6 @@
 
 #include "wlibc.h"
 
-#include <errno.h>
-#include <stdio.h>
-#include <string.h>
-
 #define WATERWALL_CORE_JSON_INPUT_ENV        "WW_CORE_JSON_INPUT"
 #define WATERWALL_DEFAULT_CORE_JSON_INPUT    "core.json"
 #define WATERWALL_CORE_JSON_INITIAL_CAPACITY 4096U
