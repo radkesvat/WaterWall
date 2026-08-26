@@ -1,5 +1,5 @@
 <!--
-Documentation version: 152
+Documentation version: 153
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/SniffRouter.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/SniffRouter.mdx, and all files must keep the same documentation version.
 -->
 
@@ -188,6 +188,45 @@ reverse handshake, `SniffRouter` logs a warning and immediately uses the default
 The handshake must be at the very start of the decrypted stream. If a fronting
 proxy forwards traffic with a PROXY-protocol header prepended, strip it before
 `SniffRouter` (the leading bytes would otherwise not be the handshake).
+
+## TLS SNI routing and Nginx Camouflage
+
+`SniffRouter` can be placed **before** `TlsServer` to inspect the TLS ClientHello SNI and route matching domains to a protected TLS termination pipeline, while falling back all other connections to a real cover service (such as an nginx HTTPS server).
+
+```text
+TcpListener :443 -> SniffRouter
+                      |-- route (expected SNI) -> TlsServer -> VlessServer -> ...
+                      `-- default (unmatched)  -> TcpConnector -> real nginx :443
+```
+
+Configuration example:
+
+```json
+{
+  "name": "sniff-router",
+  "type": "SniffRouter",
+  "settings": {
+    "routes": [
+      {
+        "domain": "vpn.example.com",
+        "detection": "tls",
+        "next": "protected-tls-server"
+      }
+    ]
+  },
+  "next": "nginx-fallback-connector"
+}
+```
+
+### Routing and Buffering Behavior
+
+- **Matching SNI**: Connections presenting a valid TLS ClientHello with an SNI matching the configured domain route to `protected-tls-server`.
+- **Default Fallback**: Connections with mismatched SNI, absent SNI, unparseable input, or plaintext HTTP on the TLS port route to top-level `next` (`nginx-fallback-connector`).
+- **Stream Replay**: Initial bytes buffered during sniffing are replayed intact to the selected branch in FIFO stream order (callback and TCP packet segmentation are not preserved).
+- **8192-byte Sniff Window**: Complete ClientHellos are parsed and classified first, even if larger than 8192 bytes. If an input remains incomplete and the accumulated prefix reaches 8192 bytes, `SniffRouter` stops waiting and selects the default `next` branch.
+- **Listener-Owned Idle Timeout**: Incomplete ClientHellos below 8192 bytes remain unassigned. `SniffRouter` does not set an internal timer; the front listener's idle settings (e.g. `TcpListener`) govern the timeout.
+- **Why a Real Nginx TLS Fallback**: Routing default traffic to a real nginx HTTPS listener ensures unknown SNI handshakes, no-SNI handshakes, and plaintext HTTP receive authentic nginx responses and error pages (such as HTTP 400 "The plain HTTP request was sent to HTTPS port"), avoiding synthetic handshake rejection fingerprints.
+- See `tests/examples/vless_tls_sni_camouflage_server.json` for a complete server example.
 
 ## Node Metadata
 

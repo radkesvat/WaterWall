@@ -131,7 +131,8 @@ static bool validateFallbackCompatibility(tlsserver_tstate_t *ts, tunnel_t *t)
     {
         LOGF(
             "TlsServer: fallback-node-name/fallback-node/fallback cannot be combined with sni because mismatched valid "
-            "ClientHellos would be routed to fallback as plaintext");
+            "ClientHellos would be routed to fallback as plaintext. For SNI-based routing, place SniffRouter before "
+            "TlsServer and use its default next branch for the TLS fallback.");
         tlsserverTunnelDestroy(t, wwLifecycleStartupRollback());
         return false;
     }

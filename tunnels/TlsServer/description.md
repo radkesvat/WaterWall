@@ -1,5 +1,5 @@
 <!--
-Documentation version: 153
+Documentation version: 155
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/TlsServer.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/TlsServer.mdx, and all files must keep the same documentation version.
 -->
 
@@ -372,6 +372,54 @@ helps avoid a fingerprint where Waterwall closes or alerts differently from ngin
 Fallback health is also part of the public fingerprint. A down fallback, immediate connection close, generic proxy error,
 mismatched headers or body, mismatched certificate behavior, or mismatched timing can all identify the deployment even if
 the handoff logic is correct.
+
+### SNI routing with a real TLS fallback
+
+Nginx distinguishes two kinds of unexpected public inputs on an HTTPS listener:
+
+1. **Plaintext HTTP on the HTTPS port**: Nginx classifies a regular request sent to an HTTPS port with internal status 497. Without `error_page` customization, its stock response is normally the recognizable outward 400 HTML page ("The plain HTTP request was sent to HTTPS port"). `TlsServer`'s `fallback-node-name` handles this by forwarding non-TLS bytes to a fallback connector before TLS commitment. See nginx's [SSL error processing](https://nginx.org/en/docs/http/ngx_http_ssl_module.html#errors).
+2. **TLS ClientHello with unknown or mismatched SNI**: A connection begins in nginx's default-server context and, without an SNI match, ordinarily completes the TLS handshake using that context's certificate and settings. A default server can instead reject these handshakes explicitly with [`ssl_reject_handshake on`](https://nginx.org/en/docs/http/ngx_http_ssl_module.html#ssl_reject_handshake). See nginx's [virtual-server selection](https://nginx.org/en/docs/http/server_names.html#virtual_server_selection).
+
+The `TlsServer.sni` setting models strict handshake rejection (`ssl_reject_handshake on`), not nginx default-vhost routing. Because `TlsServer.sni` cannot be combined with `fallback-node-name`, deployments requiring full nginx camouflage—where unknown SNI, absent SNI, and plaintext HTTP all reach a real nginx HTTPS listener—should place `SniffRouter` **before** `TlsServer`:
+
+```text
+TcpListener :443 -> SniffRouter
+                      |-- route (expected SNI) -> TlsServer -> protected backend
+                      `-- default (unmatched)  -> TcpConnector -> real nginx HTTPS listener
+```
+
+Minimal configuration pattern:
+
+```json
+{
+  "name": "sniff-router",
+  "type": "SniffRouter",
+  "settings": {
+    "routes": [
+      {
+        "domain": "vpn.example.com",
+        "detection": "tls",
+        "next": "protected-tls-server"
+      }
+    ]
+  },
+  "next": "nginx-fallback-connector"
+}
+```
+
+In this architecture:
+- `SniffRouter` classifies the visible ClientHello SNI before TLS termination.
+- Matching ClientHellos proceed to `TlsServer` (which does not configure `fallback-node-name`). An exact `sni` gate on `TlsServer` is optional as a redundant fail-closed check, but is not the routing mechanism.
+- Mismatched visible SNIs, ClientHellos without visible SNI, and plaintext HTTP follow `SniffRouter`'s default `next` branch to the real nginx HTTPS listener without TLS decryption by WaterWall.
+- ECH hides the inner SNI, but its outer ClientHello may still contain a visible server name. `SniffRouter` routes on that visible outer value: a matching outer name reaches the protected branch, while an absent or nonmatching outer name follows the default branch. It cannot route on the encrypted inner name.
+- Complete ClientHellos are classified before threshold evaluation. An incomplete ClientHello below the 8192-byte `NeedMore` buffer threshold remains unassigned; `SniffRouter` has no classification timer, so listener idle timeouts (e.g. in `TcpListener`) govern unassigned timeouts.
+- See `tests/examples/vless_tls_sni_camouflage_server.json` for a complete end-to-end configuration example.
+
+**Residual Detection Boundaries**:
+- **SNI is routing metadata, not authentication**: Any probe that presents the expected SNI will reach the protected `TlsServer`. Authentication must be enforced by inner protocols (such as VLESS or Trojan).
+- **Inner-protocol behavior remains observable**: Rejection or fallback response bytes, connection-close behavior, and timing after a probe reaches the protected SNI can still identify the inner protocol or deployment.
+- **Fallback health and observability**: If the real nginx fallback service is unreachable, returns unexpected error pages, or exhibits distinct certificate/ALPN/cipher/session properties, the deployment can be identified.
+- **Timing and timeouts**: `SniffRouter` buffering and connector relay introduce small timing characteristics. Align `TcpListener` idle timeouts with the cover nginx server. WaterWall does not claim complete timing indistinguishability or byte-level TLS fingerprint equivalence.
 
 ### Finish behavior
 
