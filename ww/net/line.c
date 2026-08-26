@@ -342,14 +342,12 @@ static line_task_msg_t *lineTaskMessageCreate(line_t *line, tunnel_t *t)
 
     masterpoolGetItems(GSTATE.masterpool_messages, (void **) &(msg), 1, NULL);
     *msg = (line_task_msg_t) {.tunnel = t, .line = line, .buf = NULL};
-    WW_WORKER_MESSAGE_BENCHMARK_RECORD_LINE_TASK_ALLOCATION();
 
     return msg;
 }
 
 static void lineTaskMessageRelease(line_task_msg_t *msg)
 {
-    WW_WORKER_MESSAGE_BENCHMARK_RECORD_LINE_TASK_RELEASE();
     masterpoolReuseItems(GSTATE.masterpool_messages, (void **) &msg, 1);
 }
 
@@ -487,7 +485,6 @@ static void lineRunScheduledTaskWithBuf(worker_t *worker, void *arg1, void *arg2
 
 bool lineScheduleTask(line_t *const line, LineTaskFnNoBuf task, tunnel_t *t)
 {
-    WW_WORKER_MESSAGE_BENCHMARK_RECORD_LINE_TASK_SUBMISSION(currentThreadIsEventWorkerWID(lineGetWID(line)), false);
     lineRef(line);
 
     line_task_msg_t *msg = lineTaskMessageCreate(line, t);
@@ -505,7 +502,6 @@ bool lineScheduleTask(line_t *const line, LineTaskFnNoBuf task, tunnel_t *t)
 
 bool lineScheduleTaskWithBuf(line_t *const line, LineTaskFnWithBuf task, tunnel_t *t, sbuf_t *buf)
 {
-    WW_WORKER_MESSAGE_BENCHMARK_RECORD_LINE_TASK_SUBMISSION(currentThreadIsEventWorkerWID(lineGetWID(line)), false);
     lineRef(line);
 
     line_task_msg_t *msg   = lineTaskMessageCreate(line, t);
@@ -529,7 +525,6 @@ bool lineScheduleDelayedTask(line_t *const line, LineTaskFnNoBuf task, uint32_t 
         return false;
     }
 
-    WW_WORKER_MESSAGE_BENCHMARK_RECORD_LINE_TASK_SUBMISSION(true, true);
     lineRef(line);
 
     line_task_msg_t *msg = lineTaskMessageCreate(line, t);
@@ -554,7 +549,6 @@ bool lineScheduleDelayedTaskWithBuf(line_t *const line, LineTaskFnWithBuf task, 
         return false;
     }
 
-    WW_WORKER_MESSAGE_BENCHMARK_RECORD_LINE_TASK_SUBMISSION(true, true);
     lineRef(line);
 
     line_task_msg_t *msg   = lineTaskMessageCreate(line, t);

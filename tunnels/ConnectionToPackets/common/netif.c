@@ -181,7 +181,6 @@ err_t ctpNetifOutput(struct netif *netif, struct pbuf *p, const ip4_addr_t *ipad
 
     const wid_t packet_wid = ctpSelectPacketWorkerLocked(ctx, packet_msg->data, packet_msg->len);
 
-    WW_WORKER_MESSAGE_BENCHMARK_RECORD_CONTINUATION(kWorkerMessageBenchmarkContinuationBridgeRetryOrDelivery);
     if (sendWorkerMessageForceQueueWithCleanup(packet_wid,
                                                (WorkerMessageCallback) ctpEmitPacketOnWorker,
                                                ctpEmitPacketCleanup,

@@ -177,13 +177,6 @@ add_library(ww STATIC
 target_compile_features(ww PUBLIC c_std_11)
 set_target_properties(ww PROPERTIES LANGUAGES C)
 
-# The worker-message benchmark can opt into detailed mailbox diagnostics. Keep
-# this definition off by default: its counters deliberately live in the hot
-# paths only in a separately instrumented build.
-if(WW_WORKER_MESSAGE_BENCHMARK_INSTRUMENTATION)
-    target_compile_definitions(ww PUBLIC WW_WORKER_MESSAGE_BENCHMARK_INSTRUMENTATION=1)
-endif()
-
 ################################################################################
 # Include Directories
 ################################################################################

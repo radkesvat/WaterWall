@@ -1080,7 +1080,6 @@ static bool echsnitrickScheduleOriginalRelease(tunnel_t *t, const echsnitrick_fl
         return true;
     }
 
-    WW_WORKER_MESSAGE_BENCHMARK_RECORD_CONTINUATION(kWorkerMessageBenchmarkContinuationIpManipulatorDeferred);
 #ifdef IPMANIPULATOR_ECHSNI_TEST_HOOKS
     return ipmanipulatorEchSniTestScheduleTimed(wid,
                                                 (WorkerMessageCallback) echsnitrickRunDelayedOriginalRelease,

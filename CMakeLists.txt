@@ -80,42 +80,6 @@ include(CTest)
 #--------------------------------------------------------------------------------
 option(WW_ENABLE_IPO "Enable interprocedural optimization for production targets" ON)
 option(WW_BUILD_UNIT_TESTS "Register compiled native unit-test targets" OFF)
-option(WW_WORKER_MESSAGE_BENCHMARK_INSTRUMENTATION
-       "Compile worker-message benchmark counters into the ww library" OFF)
-# The production worker-message drain budget is an internal contract, not a
-# deployment knob.  Benchmark candidate builds may override it through a
-# generated private header without exporting a compile definition to consumers
-# of ww's public precompiled header.
-# Batch 256 is the accepted production value. The retained post-affinity-fix
-# seven-workload, equal-weight normalized-median aggregate in
-# WORKER_MESSAGING_OPTIMIZATION_RESULTS.md scores 0.935696; it is the only
-# candidate within 5% of the best score that also meets the isolated-poller
-# latency bounds.
-set(WW_WORKER_MESSAGE_PRODUCTION_DRAIN_BATCH_SIZE 256)
-option(WW_WORKER_MESSAGE_BENCHMARK_CANDIDATE_BUILD
-       "Use the developer-only worker-message benchmark batch candidate" OFF)
-set(WW_WORKER_MESSAGE_BENCHMARK_CANDIDATE_BATCH_SIZE "128" CACHE STRING
-    "Developer-only worker-message benchmark candidate batch size")
-set_property(CACHE WW_WORKER_MESSAGE_BENCHMARK_CANDIDATE_BATCH_SIZE PROPERTY STRINGS 32 64 128 256)
-mark_as_advanced(WW_WORKER_MESSAGE_BENCHMARK_CANDIDATE_BUILD
-                 WW_WORKER_MESSAGE_BENCHMARK_CANDIDATE_BATCH_SIZE)
-unset(WW_WORKER_MESSAGE_DRAIN_BATCH_SIZE CACHE)
-
-set(WW_WORKER_MESSAGE_EFFECTIVE_DRAIN_BATCH_SIZE ${WW_WORKER_MESSAGE_PRODUCTION_DRAIN_BATCH_SIZE})
-if(WW_WORKER_MESSAGE_BENCHMARK_CANDIDATE_BUILD)
-  if(NOT WW_WORKER_MESSAGE_BENCHMARK_CANDIDATE_BATCH_SIZE MATCHES "^[1-9][0-9]*$" OR
-     WW_WORKER_MESSAGE_BENCHMARK_CANDIDATE_BATCH_SIZE GREATER 1024)
-    message(FATAL_ERROR
-      "WW_WORKER_MESSAGE_BENCHMARK_CANDIDATE_BATCH_SIZE must be an integer in [1, 1024]")
-  endif()
-  set(WW_WORKER_MESSAGE_EFFECTIVE_DRAIN_BATCH_SIZE
-      ${WW_WORKER_MESSAGE_BENCHMARK_CANDIDATE_BATCH_SIZE})
-endif()
-configure_file(
-  "${CMAKE_CURRENT_SOURCE_DIR}/ww/instance/worker_message_batch_config.h.in"
-  "${CMAKE_CURRENT_BINARY_DIR}/ww/worker_message_batch_config.h"
-  @ONLY
-)
 option(WW_NATIVE_UNIT_TEST_EXECUTABLE_RUNNABLE
   "The selected native unit-test binaries are runnable on this CI host" OFF)
 

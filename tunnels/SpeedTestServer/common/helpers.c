@@ -378,7 +378,6 @@ void speedtestserverScheduleSend(tunnel_t *t, line_t *l, speedtestserver_lstate_
     }
 
     ls->send_scheduled = true;
-    WW_WORKER_MESSAGE_BENCHMARK_RECORD_CONTINUATION(kWorkerMessageBenchmarkContinuationSpeedTestSend);
     if (UNLIKELY(! lineScheduleTask(l, speedtestserverSendTask, ls->tunnel)))
     {
         ls->send_scheduled = false;
@@ -495,7 +494,6 @@ void speedtestserverSendTask(tunnel_t *t, line_t *l)
         if (speedtestserverShouldWaitForPace(ls, now_us, &delay_ms))
         {
             ls->send_scheduled = true;
-            WW_WORKER_MESSAGE_BENCHMARK_RECORD_CONTINUATION(kWorkerMessageBenchmarkContinuationSpeedTestSend);
             if (UNLIKELY(! lineScheduleDelayedTask(l, speedtestserverSendTask, delay_ms, t)))
             {
                 ls->send_scheduled = false;

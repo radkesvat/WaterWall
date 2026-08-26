@@ -425,7 +425,6 @@ static bool overlapsnitrickScheduleHoldTimeout(tunnel_t *t, line_t *l, const ipm
 
     /* The queued message owns a separate reference from the held flow record. */
     lineRef(l);
-    WW_WORKER_MESSAGE_BENCHMARK_RECORD_CONTINUATION(kWorkerMessageBenchmarkContinuationIpManipulatorDeferred);
 #ifdef IPMANIPULATOR_OVERLAP_TEST_HOOKS
     bool scheduled = ipmanipulatorOverlapTestScheduleTimed(lineGetWID(l),
                                                            (WorkerMessageCallback) overlapsnitrickRunHoldTimeout,

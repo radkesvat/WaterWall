@@ -1,6 +1,0 @@
-#pragma once
-
-/* CMake-generated developer/build configuration. */
-// clang-format off: CMake's substitution token must remain contiguous.
-#define WW_WORKER_MESSAGE_EFFECTIVE_DRAIN_BATCH_SIZE @WW_WORKER_MESSAGE_EFFECTIVE_DRAIN_BATCH_SIZE@
-// clang-format on

@@ -788,9 +788,6 @@ static bool wloopArmWakeupLocked(wloop_t *loop)
     }
 
 retry:;
-#ifdef WW_WORKER_MESSAGE_BENCHMARK_INSTRUMENTATION
-    workerMessagesBenchmarkRecordLoopWakeWriteAttempt();
-#endif
 #ifdef WATERWALL_WLOOP_TEST_HOOKS
     ++s_wloop_test_wake_write_attempts;
     if (s_wloop_test_next_wake_write_error != 0)

@@ -822,11 +822,6 @@ WW_EXPORT void destroyGlobalState(void)
 {
     socketmanagerDestroy();
     nodemanagerDestroy();
-#ifdef WW_WORKER_MESSAGE_BENCHMARK_INSTRUMENTATION
-    /* Instrumented production workloads report after their line tasks have
-     * settled and before the shared master pool is released. */
-    workerMessagesBenchmarkPrintWorkloadCounters();
-#endif
 #if defined(OS_WIN)
     tundevicePlatformShutdown();
 #endif

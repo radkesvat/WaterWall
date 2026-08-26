@@ -291,7 +291,6 @@ void ipmanipulatorForwardCapturedPacketNormal(tunnel_t *t, line_t *l, sbuf_t *bu
     }
 
     lineRef(l);
-    WW_WORKER_MESSAGE_BENCHMARK_RECORD_CONTINUATION(kWorkerMessageBenchmarkContinuationIpManipulatorDeferred);
     sendWorkerMessageForceQueueBestEffortWithCleanup(lineGetWID(l),
                                                      (WorkerMessageCallback) ipmanipulatorReplayCapturedPacketOnWorker,
                                                      ipmanipulatorCleanupCapturedPacketNormal,
@@ -309,7 +308,6 @@ static void ipmanipulatorScheduleCapturedPacketReuse(line_t *l, sbuf_t *buf)
     }
 
     lineRef(l);
-    WW_WORKER_MESSAGE_BENCHMARK_RECORD_CONTINUATION(kWorkerMessageBenchmarkContinuationIpManipulatorDeferred);
     sendWorkerMessageForceQueueBestEffortWithCleanup(lineGetWID(l),
                                                      (WorkerMessageCallback) ipmanipulatorRecycleCapturedPacketOnWorker,
                                                      ipmanipulatorCleanupCapturedPacketReuse,
@@ -430,7 +428,6 @@ static bool ipmanipulatorSchedulePrestartTimeout(tunnel_t *t, uint32_t slot_inde
         .generation = generation,
     };
 
-    WW_WORKER_MESSAGE_BENCHMARK_RECORD_CONTINUATION(kWorkerMessageBenchmarkContinuationIpManipulatorDeferred);
     return sendWorkerMessageTimedWithCleanup(getCurrentEventWorkerWID(),
                                              (WorkerMessageCallback) ipmanipulatorReleasePendingPrestartOnWorker,
                                              ipmanipulatorCleanupPendingPrestartMessage,
@@ -502,7 +499,6 @@ static bool ipmanipulatorScheduleCaptureTimeout(tunnel_t *t, uint32_t slot_index
         .generation = generation,
     };
 
-    WW_WORKER_MESSAGE_BENCHMARK_RECORD_CONTINUATION(kWorkerMessageBenchmarkContinuationIpManipulatorDeferred);
     return sendWorkerMessageTimedWithCleanup(getCurrentEventWorkerWID(),
                                              (WorkerMessageCallback) ipmanipulatorReleasePendingCaptureOnWorker,
                                              ipmanipulatorCleanupPendingCaptureMessage,
@@ -2202,7 +2198,6 @@ bool ipmanipulatorDelayBarrierSchedule(tunnel_t *t, const ipmanipulator_flow_key
     }
 
     *msg = (ipmanipulator_delay_timer_message_t) {.key = *key, .kind = kind, .generation = generation, .wid = wid};
-    WW_WORKER_MESSAGE_BENCHMARK_RECORD_CONTINUATION(kWorkerMessageBenchmarkContinuationIpManipulatorDeferred);
     return sendWorkerMessageTimedWithCleanup(wid,
                                              (WorkerMessageCallback) ipmanipulatorDelayBarrierRunTimer,
                                              ipmanipulatorDelayBarrierCleanupTimer,

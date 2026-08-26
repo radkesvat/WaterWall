@@ -556,7 +556,6 @@ static bool smugglefintrickScheduleQueuedRelease(tunnel_t *t, line_t *l, uint32_
     const bool recover_on_caller                       = lineIsOnCurrentEventWorker(l) && lineIsAlive(l);
 
     lineRef(l);
-    WW_WORKER_MESSAGE_BENCHMARK_RECORD_CONTINUATION(kWorkerMessageBenchmarkContinuationIpManipulatorDeferred);
 #ifdef IPMANIPULATOR_SMUGGLEFIN_TEST_HOOKS
     bool scheduled = ipmanipulatorSmuggleFinTestScheduleTimed(lineGetWID(l),
                                                               (WorkerMessageCallback) smugglefintrickRunDelayedRelease,

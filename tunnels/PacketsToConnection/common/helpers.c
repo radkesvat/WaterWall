@@ -529,7 +529,6 @@ err_t ptcTcpPollCallback(void *arg, struct tcp_pcb *tpcb)
     }
 
     ls->write_retry_queued = true;
-    WW_WORKER_MESSAGE_BENCHMARK_RECORD_CONTINUATION(kWorkerMessageBenchmarkContinuationBridgeRetryOrDelivery);
     if (! lineIsAlive(ls->line) || ! lineScheduleTask(ls->line, ptcWriteRetryTask, ls->tunnel))
     {
         ls->write_retry_queued = false;

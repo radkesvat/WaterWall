@@ -8,13 +8,6 @@
 
 #include "loggers/internal_logger.h"
 
-#ifdef WW_WORKER_MESSAGE_BENCHMARK_INSTRUMENTATION
-#include "mimalloc.h"
-#if defined(__linux__)
-#include <malloc.h>
-#endif
-#endif
-
 /* Ordinary messages live by value in the target worker's deque. Delayed
  * messages need a stable address because their timer stores it in userdata. */
 typedef struct queued_worker_msg_s
@@ -44,229 +37,9 @@ struct worker_message_queue_s
     /* Protected by worker_t::control_mutex. True while a drain root is queued
      * or executing; this is distinct from wloop_t::wakeup_pending. */
     bool wakeup_pending;
-#ifdef WW_WORKER_MESSAGE_BENCHMARK_INSTRUMENTATION
-    worker_message_benchmark_counters_t benchmark;
-#endif
 };
 
 static void workerMessageReceived(wevent_t *ev);
-
-#ifdef WW_WORKER_MESSAGE_BENCHMARK_INSTRUMENTATION
-static atomic_uint_fast64_t g_worker_message_benchmark_loop_wake_write_attempts = ATOMIC_VAR_INIT(0);
-
-typedef struct worker_message_benchmark_workload_atomic_counters_s
-{
-    atomic_uint_fast64_t line_task_submissions;
-    atomic_uint_fast64_t line_task_same_worker_submissions;
-    atomic_uint_fast64_t line_task_foreign_worker_submissions;
-    atomic_uint_fast64_t line_task_delayed_submissions;
-    atomic_uint_fast64_t line_task_allocations;
-    atomic_uint_fast64_t line_task_releases;
-    atomic_uint_fast64_t line_task_checked_out;
-    atomic_uint_fast64_t line_task_peak_checked_out;
-    atomic_uint_fast64_t speedtest_send_progress_continuations;
-    atomic_uint_fast64_t tester_send_progress_continuations;
-    atomic_uint_fast64_t bridge_retry_or_delivery_continuations;
-    atomic_uint_fast64_t ipmanipulator_deferred_continuations;
-} worker_message_benchmark_workload_atomic_counters_t;
-
-static worker_message_benchmark_workload_atomic_counters_t g_worker_message_benchmark_workload;
-
-static void workerMessagesBenchmarkResetWorkloadCounters(void)
-{
-#define RESET_WORKLOAD_COUNTER(field)                                                                                  \
-    atomic_store_explicit(&g_worker_message_benchmark_workload.field, 0, memory_order_relaxed)
-    RESET_WORKLOAD_COUNTER(line_task_submissions);
-    RESET_WORKLOAD_COUNTER(line_task_same_worker_submissions);
-    RESET_WORKLOAD_COUNTER(line_task_foreign_worker_submissions);
-    RESET_WORKLOAD_COUNTER(line_task_delayed_submissions);
-    RESET_WORKLOAD_COUNTER(line_task_allocations);
-    RESET_WORKLOAD_COUNTER(line_task_releases);
-    RESET_WORKLOAD_COUNTER(line_task_checked_out);
-    RESET_WORKLOAD_COUNTER(line_task_peak_checked_out);
-    RESET_WORKLOAD_COUNTER(speedtest_send_progress_continuations);
-    RESET_WORKLOAD_COUNTER(tester_send_progress_continuations);
-    RESET_WORKLOAD_COUNTER(bridge_retry_or_delivery_continuations);
-    RESET_WORKLOAD_COUNTER(ipmanipulator_deferred_continuations);
-#undef RESET_WORKLOAD_COUNTER
-}
-
-void workerMessagesBenchmarkRecordLineTaskSubmission(bool same_worker, bool delayed)
-{
-    atomic_fetch_add_explicit(&g_worker_message_benchmark_workload.line_task_submissions, 1, memory_order_relaxed);
-    if (same_worker)
-    {
-        atomic_fetch_add_explicit(
-            &g_worker_message_benchmark_workload.line_task_same_worker_submissions, 1, memory_order_relaxed);
-    }
-    else
-    {
-        atomic_fetch_add_explicit(
-            &g_worker_message_benchmark_workload.line_task_foreign_worker_submissions, 1, memory_order_relaxed);
-    }
-    if (delayed)
-    {
-        atomic_fetch_add_explicit(
-            &g_worker_message_benchmark_workload.line_task_delayed_submissions, 1, memory_order_relaxed);
-    }
-}
-
-void workerMessagesBenchmarkRecordLineTaskAllocation(void)
-{
-    atomic_fetch_add_explicit(&g_worker_message_benchmark_workload.line_task_allocations, 1, memory_order_relaxed);
-    const uint_fast64_t checked_out =
-        atomic_fetch_add_explicit(&g_worker_message_benchmark_workload.line_task_checked_out, 1, memory_order_relaxed) +
-        1;
-    uint_fast64_t peak =
-        atomic_load_explicit(&g_worker_message_benchmark_workload.line_task_peak_checked_out, memory_order_relaxed);
-    while (peak < checked_out &&
-           ! atomic_compare_exchange_weak_explicit(&g_worker_message_benchmark_workload.line_task_peak_checked_out,
-                                                   &peak,
-                                                   checked_out,
-                                                   memory_order_relaxed,
-                                                   memory_order_relaxed))
-    {
-    }
-}
-
-void workerMessagesBenchmarkRecordLineTaskRelease(void)
-{
-    const uint_fast64_t checked_out =
-        atomic_fetch_sub_explicit(&g_worker_message_benchmark_workload.line_task_checked_out, 1, memory_order_relaxed);
-    if (UNLIKELY(checked_out == 0))
-    {
-        LOGF("worker-message benchmark line-task accounting underflow");
-        abortProgramNow(1);
-    }
-    atomic_fetch_add_explicit(&g_worker_message_benchmark_workload.line_task_releases, 1, memory_order_relaxed);
-}
-
-void workerMessagesBenchmarkRecordContinuation(worker_message_benchmark_continuation_e continuation)
-{
-    switch (continuation)
-    {
-    case kWorkerMessageBenchmarkContinuationSpeedTestSend:
-        atomic_fetch_add_explicit(
-            &g_worker_message_benchmark_workload.speedtest_send_progress_continuations, 1, memory_order_relaxed);
-        break;
-    case kWorkerMessageBenchmarkContinuationTesterSend:
-        atomic_fetch_add_explicit(
-            &g_worker_message_benchmark_workload.tester_send_progress_continuations, 1, memory_order_relaxed);
-        break;
-    case kWorkerMessageBenchmarkContinuationBridgeRetryOrDelivery:
-        atomic_fetch_add_explicit(
-            &g_worker_message_benchmark_workload.bridge_retry_or_delivery_continuations, 1, memory_order_relaxed);
-        break;
-    case kWorkerMessageBenchmarkContinuationIpManipulatorDeferred:
-        atomic_fetch_add_explicit(
-            &g_worker_message_benchmark_workload.ipmanipulator_deferred_continuations, 1, memory_order_relaxed);
-        break;
-    }
-}
-
-void workerMessagesBenchmarkGetWorkloadCounters(worker_message_benchmark_workload_counters_t *counters)
-{
-    if (counters == NULL)
-    {
-        return;
-    }
-
-    *counters = (worker_message_benchmark_workload_counters_t) {
-        .line_task_submissions =
-            atomic_load_explicit(&g_worker_message_benchmark_workload.line_task_submissions, memory_order_relaxed),
-        .line_task_same_worker_submissions = atomic_load_explicit(
-            &g_worker_message_benchmark_workload.line_task_same_worker_submissions, memory_order_relaxed),
-        .line_task_foreign_worker_submissions = atomic_load_explicit(
-            &g_worker_message_benchmark_workload.line_task_foreign_worker_submissions, memory_order_relaxed),
-        .line_task_delayed_submissions = atomic_load_explicit(
-            &g_worker_message_benchmark_workload.line_task_delayed_submissions, memory_order_relaxed),
-        .line_task_allocations =
-            atomic_load_explicit(&g_worker_message_benchmark_workload.line_task_allocations, memory_order_relaxed),
-        .line_task_releases =
-            atomic_load_explicit(&g_worker_message_benchmark_workload.line_task_releases, memory_order_relaxed),
-        .line_task_peak_checked_out =
-            atomic_load_explicit(&g_worker_message_benchmark_workload.line_task_peak_checked_out, memory_order_relaxed),
-        .speedtest_send_progress_continuations = atomic_load_explicit(
-            &g_worker_message_benchmark_workload.speedtest_send_progress_continuations, memory_order_relaxed),
-        .tester_send_progress_continuations = atomic_load_explicit(
-            &g_worker_message_benchmark_workload.tester_send_progress_continuations, memory_order_relaxed),
-        .bridge_retry_or_delivery_continuations = atomic_load_explicit(
-            &g_worker_message_benchmark_workload.bridge_retry_or_delivery_continuations, memory_order_relaxed),
-        .ipmanipulator_deferred_continuations = atomic_load_explicit(
-            &g_worker_message_benchmark_workload.ipmanipulator_deferred_continuations, memory_order_relaxed),
-    };
-}
-
-void workerMessagesBenchmarkPrintWorkloadCounters(void)
-{
-    worker_message_benchmark_workload_counters_t counters;
-    workerMessagesBenchmarkGetWorkloadCounters(&counters);
-    if (counters.line_task_submissions == 0 && counters.speedtest_send_progress_continuations == 0 &&
-        counters.tester_send_progress_continuations == 0 && counters.bridge_retry_or_delivery_continuations == 0 &&
-        counters.ipmanipulator_deferred_continuations == 0)
-    {
-        return;
-    }
-
-    fprintf(stderr,
-            "worker-message-benchmark workload: line-task submissions=%" PRIu64 " same-worker=%" PRIu64
-            " foreign-worker=%" PRIu64 " delayed=%" PRIu64 " allocations=%" PRIu64 " releases=%" PRIu64
-            " peak-checked-out=%" PRIu64 "\n",
-            counters.line_task_submissions,
-            counters.line_task_same_worker_submissions,
-            counters.line_task_foreign_worker_submissions,
-            counters.line_task_delayed_submissions,
-            counters.line_task_allocations,
-            counters.line_task_releases,
-            counters.line_task_peak_checked_out);
-    fprintf(stderr,
-            "worker-message-benchmark workload: continuations speedtest=%" PRIu64 " tester=%" PRIu64
-            " bridge-retry-or-delivery=%" PRIu64 " ipmanipulator-deferred=%" PRIu64 "\n",
-            counters.speedtest_send_progress_continuations,
-            counters.tester_send_progress_continuations,
-            counters.bridge_retry_or_delivery_continuations,
-            counters.ipmanipulator_deferred_continuations);
-}
-
-typedef enum worker_message_benchmark_delayed_counter_e
-{
-    kWorkerMessageBenchmarkDelayedCompletion,
-    kWorkerMessageBenchmarkDelayedRearm,
-    kWorkerMessageBenchmarkDelayedCancellation,
-} worker_message_benchmark_delayed_counter_e;
-
-static void workerMessageBenchmarkRecordDelayed(worker_t *worker, worker_message_benchmark_delayed_counter_e counter)
-{
-    if (worker == NULL)
-    {
-        return;
-    }
-
-    mutexLock(&worker->control_mutex);
-    worker_message_queue_t *queue = worker->message_queue;
-    if (queue != NULL)
-    {
-        switch (counter)
-        {
-        case kWorkerMessageBenchmarkDelayedCompletion:
-            ++queue->benchmark.delayed_timer_completions;
-            break;
-        case kWorkerMessageBenchmarkDelayedRearm:
-            ++queue->benchmark.delayed_timer_rearms;
-            break;
-        case kWorkerMessageBenchmarkDelayedCancellation:
-            ++queue->benchmark.delayed_timer_cancellations;
-            break;
-        }
-    }
-    mutexUnlock(&worker->control_mutex);
-}
-
-void workerMessagesBenchmarkRecordLoopWakeWriteAttempt(void)
-{
-    atomic_fetch_add_explicit(&g_worker_message_benchmark_loop_wake_write_attempts, 1, memory_order_relaxed);
-}
-#endif
 
 #ifdef WW_WORKER_MESSAGE_TEST_SEAM
 static worker_message_init_test_failure_e    g_worker_message_init_failure;
@@ -329,88 +102,6 @@ static void destroyWorkerMessage(master_pool_item_t *item)
     memoryFree(item);
 }
 
-#ifdef WW_WORKER_MESSAGE_BENCHMARK_INSTRUMENTATION
-static size_t workerMessageBenchmarkAllocationUsableSize(size_t requested_size)
-{
-    void *allocation = memoryAllocate(requested_size);
-    if (allocation == NULL)
-    {
-        return 0;
-    }
-
-    size_t usable_size = requested_size;
-#if defined(ALLOCATOR_BYPASS) && ALLOCATOR_BYPASS
-#if defined(__linux__)
-    usable_size = malloc_usable_size(allocation);
-#endif
-#else
-    usable_size = mi_usable_size(allocation);
-#endif
-    memoryFree(allocation);
-    return usable_size;
-}
-
-void workerMessagesBenchmarkResetCounters(worker_t *worker)
-{
-    atomic_store_explicit(&g_worker_message_benchmark_loop_wake_write_attempts, 0, memory_order_relaxed);
-    if (worker == NULL)
-    {
-        return;
-    }
-
-    mutexLock(&worker->control_mutex);
-    if (worker->message_queue != NULL)
-    {
-        worker->message_queue->benchmark = (worker_message_benchmark_counters_t) {0};
-    }
-    mutexUnlock(&worker->control_mutex);
-}
-
-void workerMessagesBenchmarkGetCounters(worker_t *worker, worker_message_benchmark_counters_t *counters)
-{
-    if (counters == NULL)
-    {
-        return;
-    }
-
-    const size_t measured_timed_record_usable_size =
-        workerMessageBenchmarkAllocationUsableSize(sizeof(timed_worker_msg_t));
-    *counters = (worker_message_benchmark_counters_t) {
-        .loop_os_wake_write_attempts =
-            atomic_load_explicit(&g_worker_message_benchmark_loop_wake_write_attempts, memory_order_relaxed),
-        .timed_record_size                         = sizeof(timed_worker_msg_t),
-        .timed_record_usable_size                  = measured_timed_record_usable_size,
-        .line_task_record_size                     = sizeof(worker_msg_t),
-        .line_task_effective_pool_item_usable_size = measured_timed_record_usable_size,
-    };
-    if (worker == NULL)
-    {
-        return;
-    }
-
-    mutexLock(&worker->control_mutex);
-    if (worker->message_queue != NULL)
-    {
-        const uint64_t loop_wake_write_attempts = counters->loop_os_wake_write_attempts;
-        const size_t   timed_record_size        = counters->timed_record_size;
-        const size_t   timed_record_usable_size = counters->timed_record_usable_size;
-        const size_t   line_task_record_size    = counters->line_task_record_size;
-        *counters                               = worker->message_queue->benchmark;
-        counters->loop_os_wake_write_attempts   = loop_wake_write_attempts;
-        counters->timed_record_size             = timed_record_size;
-        counters->timed_record_usable_size      = timed_record_usable_size;
-        counters->line_task_record_size         = line_task_record_size;
-    }
-    mutexUnlock(&worker->control_mutex);
-
-    /* Compact line-task records use this same master pool, whose create
-     * callback allocates the timed-record shape. Report their effective pool
-     * item cost rather than the unrelated size class of a standalone
-     * sizeof(worker_msg_t) allocation. */
-    counters->line_task_effective_pool_item_usable_size = counters->timed_record_usable_size;
-}
-#endif
-
 static timed_worker_msg_t *getTimedWorkerMessage(WorkerMessageCallback cb, WorkerMessageCleanupCallback cleanup,
                                                  void *arg1, void *arg2, void *arg3)
 {
@@ -466,12 +157,7 @@ static void cleanupTimedWorkerMessage(timed_worker_msg_t *msg, worker_message_ca
 static void cleanupQueuedTimedWorkerMessage(void *arg1, void *arg2, void *arg3, worker_message_cancel_reason_e reason)
 {
     discard arg1;
-
-#ifdef WW_WORKER_MESSAGE_BENCHMARK_INSTRUMENTATION
-    workerMessageBenchmarkRecordDelayed((worker_t *) arg3, kWorkerMessageBenchmarkDelayedCancellation);
-#else
     discard arg3;
-#endif
     cleanupTimedWorkerMessage((timed_worker_msg_t *) arg2, reason);
 }
 
@@ -547,9 +233,6 @@ static void workerMessageDrainQueue(worker_t *worker)
     /* Queued callbacks are written assuming they run on their target worker. */
     assert(currentThreadIsEventWorkerWID(worker->wid));
 
-#ifdef WW_WORKER_MESSAGE_BENCHMARK_INSTRUMENTATION
-    bool drain_callback_recorded = false;
-#endif
     for (;;)
     {
         queued_worker_msg_t batch[kWorkerMessageDrainBatchSize];
@@ -563,13 +246,6 @@ static void workerMessageDrainQueue(worker_t *worker)
             mutexUnlock(&worker->control_mutex);
             return;
         }
-#ifdef WW_WORKER_MESSAGE_BENCHMARK_INSTRUMENTATION
-        if (! drain_callback_recorded)
-        {
-            ++queue->benchmark.worker_drain_callbacks;
-            drain_callback_recorded = true;
-        }
-#endif
         if (! wloopNormalDispatchAllowed(loop))
         {
             queue->wakeup_pending = false;
@@ -581,13 +257,6 @@ static void workerMessageDrainQueue(worker_t *worker)
         {
             batch[batch_count++] = worker_msg_deque_t_pull_front(&queue->queued);
         }
-#ifdef WW_WORKER_MESSAGE_BENCHMARK_INSTRUMENTATION
-        queue->benchmark.messages_captured_by_drains += batch_count;
-        if (queue->benchmark.maximum_messages_captured_by_one_drain < batch_count)
-        {
-            queue->benchmark.maximum_messages_captured_by_one_drain = batch_count;
-        }
-#endif
         if (batch_count == 0)
         {
             queue->wakeup_pending = false;
@@ -635,9 +304,6 @@ static void workerMessageDrainQueue(worker_t *worker)
         /* A successor is deliberately appended at the loop tail. That gives
          * ready I/O, timers, control work, and existing custom events a turn
          * between bounded worker-message snapshots. */
-#ifdef WW_WORKER_MESSAGE_BENCHMARK_INSTRUMENTATION
-        ++queue->benchmark.successor_wake_post_attempts;
-#endif
         if (LIKELY(workerMessagePostWakeup(worker, loop)))
         {
             mutexUnlock(&worker->control_mutex);
@@ -651,9 +317,6 @@ static void workerMessageDrainQueue(worker_t *worker)
             return;
         }
 
-#ifdef WW_WORKER_MESSAGE_BENCHMARK_INSTRUMENTATION
-        ++queue->benchmark.hard_successor_wake_fallbacks;
-#endif
         /* A hard wake failure cannot revoke already accepted work. Preserve
          * ownership and make progress from the admitted current callback; this
          * rare fallback intentionally trades fairness for settlement. */
@@ -719,9 +382,6 @@ static bool workerMessageRejectUndeliverable(wid_t wid, WorkerMessageCleanupCall
 
 void workerMessagesInstallMasterPoolCallbacks(master_pool_t *pool)
 {
-#ifdef WW_WORKER_MESSAGE_BENCHMARK_INSTRUMENTATION
-    workerMessagesBenchmarkResetWorkloadCounters();
-#endif
     masterpoolInstallCallBacks(pool, allocWorkerMessage, destroyWorkerMessage);
 }
 
@@ -871,12 +531,6 @@ void workerMessagesCleanupPending(worker_t *worker)
     if (queue != NULL)
     {
         workerMessagesTakePending(queue, &queued, &timed);
-#ifdef WW_WORKER_MESSAGE_BENCHMARK_INSTRUMENTATION
-        for (const struct list_node *node = timed.next; node != &timed; node = node->next)
-        {
-            ++queue->benchmark.delayed_timer_cancellations;
-        }
-#endif
     }
     mutexUnlock(&worker->control_mutex);
 
@@ -1014,14 +668,6 @@ static worker_message_submit_result_e sendWorkerMessageForceQueueTransactional(w
         return retain_on_refusal ? kWorkerMessageSubmitRejectedCallerRetains : kWorkerMessageSubmitRejectedCleanupRan;
     }
 
-#ifdef WW_WORKER_MESSAGE_BENCHMARK_INSTRUMENTATION
-    const uint64_t queued_count = (uint64_t) worker_msg_deque_t_size(&queue->queued);
-    if (queue->benchmark.ordinary_queue_high_watermark < queued_count)
-    {
-        queue->benchmark.ordinary_queue_high_watermark = queued_count;
-    }
-#endif
-
     if (queue->wakeup_pending)
     {
         mutexUnlock(&worker->control_mutex);
@@ -1029,9 +675,6 @@ static worker_message_submit_result_e sendWorkerMessageForceQueueTransactional(w
     }
 
     queue->wakeup_pending = true;
-#ifdef WW_WORKER_MESSAGE_BENCHMARK_INSTRUMENTATION
-    ++queue->benchmark.initial_wake_post_attempts;
-#endif
     if (LIKELY(! workerMessagesEnqueueTestRefuse(kWorkerMessageEnqueueFailWakeupPost) &&
                workerMessagePostWakeup(worker, loop)))
     {
@@ -1121,17 +764,8 @@ static void runTimedTask(wtimer_t *timer)
         {
             workerTimedMessageDetachFromOwner(worker, loop, timed_msg, "timer reset failure");
             weventSetUserData(timer, NULL);
-#ifdef WW_WORKER_MESSAGE_BENCHMARK_INSTRUMENTATION
-            workerMessageBenchmarkRecordDelayed(worker, kWorkerMessageBenchmarkDelayedCancellation);
-#endif
             cleanupTimedWorkerMessage(timed_msg, kWorkerMessageCancelAdmissionClosed);
         }
-#ifdef WW_WORKER_MESSAGE_BENCHMARK_INSTRUMENTATION
-        else
-        {
-            workerMessageBenchmarkRecordDelayed(worker, kWorkerMessageBenchmarkDelayedRearm);
-        }
-#endif
         return;
     }
 
@@ -1141,16 +775,10 @@ static void runTimedTask(wtimer_t *timer)
     {
         weventSetUserData(timer, NULL);
         wtimerDelete(timer);
-#ifdef WW_WORKER_MESSAGE_BENCHMARK_INSTRUMENTATION
-        workerMessageBenchmarkRecordDelayed(worker, kWorkerMessageBenchmarkDelayedCancellation);
-#endif
         cleanupTimedWorkerMessage(timed_msg, kWorkerMessageCancelQuiesced);
         return;
     }
 
-#ifdef WW_WORKER_MESSAGE_BENCHMARK_INSTRUMENTATION
-    workerMessageBenchmarkRecordDelayed(worker, kWorkerMessageBenchmarkDelayedCompletion);
-#endif
     WorkerMessageCallback cb = timed_msg->task.base.callback;
     cb(worker, timed_msg->task.base.arg1, timed_msg->task.base.arg2, timed_msg->task.base.arg3);
 
@@ -1183,9 +811,6 @@ static bool setupTimedTaskChecked(worker_t *worker, void *arg1, void *arg2, void
         }
         else
         {
-#ifdef WW_WORKER_MESSAGE_BENCHMARK_INSTRUMENTATION
-            workerMessageBenchmarkRecordDelayed(worker, kWorkerMessageBenchmarkDelayedCancellation);
-#endif
             cleanupTimedWorkerMessage(timed_msg, kWorkerMessageCancelAdmissionClosed);
         }
         return false;
@@ -1204,9 +829,6 @@ static bool setupTimedTaskChecked(worker_t *worker, void *arg1, void *arg2, void
         }
         else
         {
-#ifdef WW_WORKER_MESSAGE_BENCHMARK_INSTRUMENTATION
-            workerMessageBenchmarkRecordDelayed(worker, kWorkerMessageBenchmarkDelayedCancellation);
-#endif
             cleanupTimedWorkerMessage(timed_msg, kWorkerMessageCancelResourceFailure);
         }
         return false;
@@ -1218,9 +840,6 @@ static bool setupTimedTaskChecked(worker_t *worker, void *arg1, void *arg2, void
     assert(timed_msg->detached_timer == NULL);
     assert(list_empty(&timed_msg->timed_node));
     list_add_tail(&timed_msg->timed_node, &queue->timed);
-#ifdef WW_WORKER_MESSAGE_BENCHMARK_INSTRUMENTATION
-    ++queue->benchmark.delayed_timer_setups;
-#endif
     mutexUnlock(&worker->control_mutex);
     return true;
 }

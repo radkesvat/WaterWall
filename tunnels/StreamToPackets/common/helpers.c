@@ -550,7 +550,6 @@ void streamtopacketsForwardDecodedPacket(tunnel_t *t, line_t *stream_line, sbuf_
         .tunnel = t, .packet_line = packet_line, .buf = packet, .generation = generation};
 
     lineRef(packet_line);
-    WW_WORKER_MESSAGE_BENCHMARK_RECORD_CONTINUATION(kWorkerMessageBenchmarkContinuationBridgeRetryOrDelivery);
     sendWorkerMessageForceQueueBestEffortWithCleanup(target_wid,
                                                      (WorkerMessageCallback) streamtopacketsReplayDecodedPacketOnWorker,
                                                      streamtopacketsCleanupDecodedPacket,

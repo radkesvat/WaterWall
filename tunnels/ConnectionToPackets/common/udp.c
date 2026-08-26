@@ -245,7 +245,6 @@ void ctpUdpRecvCallback(void *arg, struct udp_pcb *upcb, struct pbuf *p, const i
     if (lineIsAlive(l))
     {
         /* UDP is intentionally lossy when the worker queue refuses admission. */
-        WW_WORKER_MESSAGE_BENCHMARK_RECORD_CONTINUATION(kWorkerMessageBenchmarkContinuationBridgeRetryOrDelivery);
         discard lineScheduleTaskWithBuf(l, ctpDeliverPayloadTask, ls->tunnel, buf);
     }
     else
