@@ -178,10 +178,9 @@ static void flowtableBucketRemove(ipmanipulator_flow_shard_t *shard, ipmanipulat
 
 /* ------------------------------------------------------------ lifecycle --- */
 
-bool ipmanipulatorFlowTableInitWithSeed(ipmanipulator_flow_table_t *table, const char *name, uint32_t limit,
-                                        uint32_t worker_count, size_t record_size,
-                                        ipmanipulator_flow_record_destructor_t destructor, void *destructor_context,
-                                        const uint64_t *forced_seed)
+bool ipmanipulatorFlowTableInit(ipmanipulator_flow_table_t *table, const char *name, uint32_t limit,
+                                uint32_t worker_count, size_t record_size,
+                                ipmanipulator_flow_record_destructor_t destructor, void *destructor_context)
 {
     if (table == NULL || record_size == 0)
     {
@@ -201,11 +200,7 @@ bool ipmanipulatorFlowTableInitWithSeed(ipmanipulator_flow_table_t *table, const
     }
 
     uint64_t seed = 0;
-    if (forced_seed != NULL)
-    {
-        seed = *forced_seed;
-    }
-    else if (! secureRandomBytes(&seed, sizeof(seed)))
+    if (! secureRandomBytes(&seed, sizeof(seed)))
     {
         /*
          * A predictable hash lets an attacker pick tuples that all land in one
@@ -305,14 +300,6 @@ bool ipmanipulatorFlowTableInitWithSeed(ipmanipulator_flow_table_t *table, const
     }
 
     return true;
-}
-
-bool ipmanipulatorFlowTableInit(ipmanipulator_flow_table_t *table, const char *name, uint32_t limit,
-                                uint32_t worker_count, size_t record_size,
-                                ipmanipulator_flow_record_destructor_t destructor, void *destructor_context)
-{
-    return ipmanipulatorFlowTableInitWithSeed(
-        table, name, limit, worker_count, record_size, destructor, destructor_context, NULL);
 }
 
 static void flowtableDestroyEntry(ipmanipulator_flow_table_t *table, ipmanipulator_flow_entry_t *entry)
@@ -566,24 +553,4 @@ uint32_t ipmanipulatorFlowTableCount(ipmanipulator_flow_table_t *table)
     }
 
     return total;
-}
-
-void ipmanipulatorFlowTableForEach(ipmanipulator_flow_table_t *table,
-                                   void (*visit)(ipmanipulator_flow_entry_t *entry, void *context), void *context)
-{
-    assert(ipmanipulatorFlowTableIsReady(table) && visit != NULL);
-
-    for (uint32_t i = 0; i < table->shard_count; ++i)
-    {
-        ipmanipulator_flow_shard_t *shard = &table->shards[i];
-
-        mutexLock(&shard->mutex);
-
-        for (uint32_t h = 0; h < shard->heap_count; ++h)
-        {
-            visit(shard->heap[h], context);
-        }
-
-        mutexUnlock(&shard->mutex);
-    }
 }

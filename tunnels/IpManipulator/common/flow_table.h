@@ -129,16 +129,6 @@ bool ipmanipulatorFlowTableInit(ipmanipulator_flow_table_t *table, const char *n
                                 uint32_t worker_count, size_t record_size,
                                 ipmanipulator_flow_record_destructor_t destructor, void *destructor_context);
 
-/*
- * Test-only variant that pins the hash seed for reproducible bucket placement.
- * Production code must call ipmanipulatorFlowTableInit(), which always seeds
- * from secureRandomBytes().
- */
-bool ipmanipulatorFlowTableInitWithSeed(ipmanipulator_flow_table_t *table, const char *name, uint32_t limit,
-                                        uint32_t worker_count, size_t record_size,
-                                        ipmanipulator_flow_record_destructor_t destructor, void *destructor_context,
-                                        const uint64_t *forced_seed);
-
 /* Releases every remaining entry through the destructor exactly once. */
 void ipmanipulatorFlowTableDestroy(ipmanipulator_flow_table_t *table);
 
@@ -182,11 +172,3 @@ uint32_t ipmanipulatorFlowShardExpire(ipmanipulator_flow_table_t *table, ipmanip
                                       uint64_t now_ms, uint32_t budget);
 
 uint32_t ipmanipulatorFlowTableCount(ipmanipulator_flow_table_t *table);
-
-/*
- * Full-table iteration. Only for tunnel teardown and dedicated test/debug
- * operations -- never from a packet callback. The visitor runs with the shard
- * mutex held and must not remove entries.
- */
-void ipmanipulatorFlowTableForEach(ipmanipulator_flow_table_t *table,
-                                   void (*visit)(ipmanipulator_flow_entry_t *entry, void *context), void *context);

@@ -67,11 +67,10 @@ static void resetDestructorCounters(void)
 static ipmanipulator_flow_table_t makeTable(uint32_t limit, uint32_t worker_count)
 {
     ipmanipulator_flow_table_t table = {0};
-    const uint64_t             seed  = 0x0123456789ABCDEFULL;
 
     expected_destructor_context = &destroy_calls;
-    require(ipmanipulatorFlowTableInitWithSeed(
-                &table, "unit", limit, worker_count, sizeof(test_record_t), recordDestructor, &destroy_calls, &seed),
+    require(ipmanipulatorFlowTableInit(
+                &table, "unit", limit, worker_count, sizeof(test_record_t), recordDestructor, &destroy_calls),
             "failed to initialize the flow table");
     return table;
 }
@@ -244,7 +243,7 @@ static void testBucketCollisionsDoNotAlias(void)
         }
     }
 
-    require(collisions_seen == 1, "could not construct a bucket collision for the pinned seed");
+    require(collisions_seen == 1, "could not construct a bucket collision for the current hash seed");
 
     require(insertFlow(&table, 0x0A000001U, 40000, 0x0A000002U, 443, 10, 1000), "failed to admit the base flow");
     require(insertFlow(&table, 0x0A000001U, colliding_port, 0x0A000002U, 443, 11, 1000),
