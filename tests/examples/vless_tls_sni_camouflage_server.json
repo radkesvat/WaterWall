@@ -1,0 +1,107 @@
+{
+  "name": "vless-tls-sni-camouflage-server",
+  "variables": {
+    "protected_sni": "vpn.example.com",
+    "cert_file": "/root/fullchain.pem",
+    "key_file": "/root/privkey.pem",
+    "nginx_fallback_address": "127.0.0.1",
+    "nginx_fallback_port": 8443,
+    "vless_uuid": "5783a3e7-e373-51cd-8642-c83782b807c5",
+    "vless_inner_fallback_http": "127.0.0.1",
+    "vless_inner_fallback_port": 80,
+    "outbound_interface": "eth0"
+  },
+  "nodes": [
+    {
+      "name": "proxy-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "0.0.0.0",
+        "port": 443,
+        "nodelay": true
+      },
+      "next": "sniff-router"
+    },
+    {
+      "name": "sniff-router",
+      "type": "SniffRouter",
+      "settings": {
+        "routes": [
+          {
+            "domain": $protected_sni$,
+            "detection": "tls",
+            "next": "tls-server"
+          }
+        ]
+      },
+      "next": "nginx-fallback-connector"
+    },
+    {
+      // The default branch forwards untouched wire bytes (TLS ClientHellos with
+      // mismatched or absent SNI, plaintext HTTP, etc.) directly to the real
+      // nginx HTTPS listener without WaterWall TLS termination.
+      "name": "nginx-fallback-connector",
+      "type": "TcpConnector",
+      "settings": {
+        "address": $nginx_fallback_address$,
+        "port": $nginx_fallback_port$,
+        "nodelay": true,
+        "fastopen": false
+      }
+    },
+    {
+      "name": "tls-server",
+      "type": "TlsServer",
+      "settings": {
+        "cert-file": $cert_file$,
+        "key-file": $key_file$,
+        "min-version": "TLSv1.2",
+        "max-version": "TLSv1.3",
+        "ciphers": "HIGH:!aNULL:!MD5",
+        "session-cache": "none",
+        "session-tickets": true,
+        // SniffRouter before TlsServer owns the public SNI routing decision.
+        // Omitting a second exact SNI gate also avoids a separate hostname
+        // normalization/rejection point. TlsServer must NOT set
+        // fallback-node-name here.
+        "verbose": false
+      },
+      "next": "vless-server"
+    },
+    {
+      "name": "vless-server",
+      "type": "VlessServer",
+      "settings": {
+        "uuid": $vless_uuid$,
+        "connect": true,
+        "udp": true,
+        // The VLESS inner fallback is a separate post-TLS authentication decision
+        // and routes decrypted traffic for unauthorized clients to an internal HTTP service.
+        "fallback-node-name": "vless-inner-fallback-connector",
+        "fallback-intentional-delay-ms": 7,
+        "fallback-intentional-delay-jitter-ms": 1
+      },
+      "next": "target-connector"
+    },
+    {
+      "name": "target-connector",
+      "type": "TcpUdpConnector",
+      "settings": {
+        "address": "dest_context->address",
+        "port": "dest_context->port",
+        "nodelay": true,
+        "interface": $outbound_interface$
+      }
+    },
+    {
+      "name": "vless-inner-fallback-connector",
+      "type": "TcpConnector",
+      "settings": {
+        "address": $vless_inner_fallback_http$,
+        "port": $vless_inner_fallback_port$,
+        "nodelay": true,
+        "fastopen": false
+      }
+    }
+  ]
+}
