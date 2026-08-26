@@ -25,11 +25,11 @@ Both modes provide loopback-only isolation without public internet access, enabl
 Tests are organized into distinct execution lanes via `tests/run_test_lane.sh`:
 
 - `support`: Production policy and harness tests (13 tests), run strictly serially.
-- `functional`: Deterministic integration tests (139 tests) run concurrently in isolated network namespaces. Parallelism is calculated adaptively as `min(32, max(4, 4 * CPUs))` (e.g. 16 jobs on a 4-CPU machine). Override with `WATERWALL_INTEGRATION_TEST_JOBS`.
+- `functional`: Deterministic integration tests (148 tests) run concurrently in isolated network namespaces. Parallelism is calculated adaptively as `min(32, max(4, 4 * CPUs))` (e.g. 16 jobs on a 4-CPU machine). Override with `WATERWALL_INTEGRATION_TEST_JOBS`.
 - `external`: Tests requiring live host network connectivity (e.g., `reality_google_roundtrip`). Runs strictly serially on host network.
 - `speed`: Multi-stream speed tests (16 tests). Runs strictly serially (`RUN_SERIAL TRUE`) to avoid CPU and bandwidth contention.
 - `privileged`: Tests requiring root/TUN permissions (`sudo -E`, 6 tests). Runs serially.
-- `all`: Runs preflight, support (serial), functional (parallel), external (serial), and speed (serial) in sequence (169 tests total).
+- `all`: Runs preflight, support (serial), functional (parallel), external (serial), and speed (serial) in sequence (178 tests total).
 - `preflight`: Verifies the namespace capabilities required by the current caller (user + network namespaces for non-root, network namespace only for root).
 
 ### Performance Baseline & Post-Change Timings
@@ -37,11 +37,11 @@ Tests are organized into distinct execution lanes via `tests/run_test_lane.sh`:
 | Test Suite / Lane | Pre-Isolation (Host Serial) | Post-Isolation (Parallel Lanes) |
 |---|---|---|
 | **Support Tests** (13 tests) | ~55s (serial) | **~55s** (serial) |
-| **Deterministic Functional** (147 tests) | ~173s (sequential) | **~22–24s** (16 jobs on 4 CPUs) / **~71s** (1 CPU, 4 jobs) |
+| **Deterministic Functional** (148 tests) | ~173s (sequential) | **~22–24s** (16 jobs on 4 CPUs) / **~71s** (1 CPU, 4 jobs) |
 | **External Network** (1 test) | ~1s | **<1s** (serial) |
 | **Speed Tests** (16 tests) | ~48s (sequential) | **~46–48s** (serial) |
 | **Privileged Integration** (6 tests) | ~15s (sequential) | **~14–15s** (serial) |
-| **Ordinary non-privileged production sequence (`all`)** | ~277s | **~127s (~2m)** (support + functional + external + speed, 177 tests) |
+| **Ordinary non-privileged production sequence (`all`)** | ~277s | **~127s (~2m)** (support + functional + external + speed, 178 tests) |
 
 These are warm-build planning measurements from the 4-CPU reference host, not
 portable performance guarantees. The `all` total includes the production
@@ -253,6 +253,10 @@ There are several valid ways to run tests:
   Verifies that `SniffRouter` parses an HTTP/1.1 Host header, matches a wildcard domain from a multi-domain route, and
   forwards to that route's target while the top-level fallback `next` points at an invalid connector. The route enables
   both HTTP and TLS detection to exercise the combined detection setting while matching HTTP.
+- `sniffrouter_tls_sni_camouflage_probe`
+  Verifies SNI routing with real-TLS cover fallback using a loopback probe: expected SNI completes through the protected
+  `TlsServer` branch, while mismatched SNI, absent SNI, and plaintext HTTP on the public TLS port are routed untouched to
+  the default cover fixture (which completes TLS with the observed SNI or returns an nginx-like 400 Bad Request error).
 - `socks5_noauth_tcp_loopback`
   Verifies `Socks5Client` without credentials against `Socks5Server(no-auth=true)` across a real TCP proxy hop. The
   SOCKS request target is configured as `localhost` and resolved by

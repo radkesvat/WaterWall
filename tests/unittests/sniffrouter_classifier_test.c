@@ -3,7 +3,7 @@
 static uint32_t make_client_hello(uint8_t *buf, const char *sni)
 {
     uint8_t *cursor  = buf;
-    uint32_t sni_len = (uint32_t) stringLength(sni);
+    uint32_t sni_len = sni != NULL ? (uint32_t) stringLength(sni) : 0;
 
     *cursor++           = 0x16;
     *cursor++           = 0x03;
@@ -31,25 +31,29 @@ static uint32_t make_client_hello(uint8_t *buf, const char *sni)
     *cursor++ = 1;
     *cursor++ = 0;
 
-    uint8_t *extensions_len = cursor;
-    cursor += 2;
+    if (sni != NULL)
+    {
+        uint8_t *extensions_len = cursor;
+        cursor += 2;
 
-    PUT_BE16(cursor, 0x0000);
-    cursor += 2;
-    PUT_BE16(cursor, (uint16_t) (2U + 3U + sni_len));
-    cursor += 2;
-    PUT_BE16(cursor, (uint16_t) (3U + sni_len));
-    cursor += 2;
-    *cursor++ = 0;
-    PUT_BE16(cursor, (uint16_t) sni_len);
-    cursor += 2;
-    memoryCopy(cursor, sni, sni_len);
-    cursor += sni_len;
+        PUT_BE16(cursor, 0x0000);
+        cursor += 2;
+        PUT_BE16(cursor, (uint16_t) (2U + 3U + sni_len));
+        cursor += 2;
+        PUT_BE16(cursor, (uint16_t) (3U + sni_len));
+        cursor += 2;
+        *cursor++ = 0;
+        PUT_BE16(cursor, (uint16_t) sni_len);
+        cursor += 2;
+        memoryCopy(cursor, sni, sni_len);
+        cursor += sni_len;
 
-    uint32_t ext_len  = (uint32_t) (cursor - extensions_len - 2);
+        uint32_t ext_len = (uint32_t) (cursor - extensions_len - 2);
+        PUT_BE16(extensions_len, (uint16_t) ext_len);
+    }
+
     uint32_t body_len = (uint32_t) (cursor - body);
 
-    PUT_BE16(extensions_len, (uint16_t) ext_len);
     PUT_BE24(hello_len, body_len);
     PUT_BE16(record_len, (uint16_t) (4U + body_len));
 
@@ -76,13 +80,16 @@ static int expect_match(const char *name, sniffrouter_match_t got, enum sniffrou
 
 int main(void)
 {
-    tunnel_t *http_target = (tunnel_t *) (uintptr_t) 0x10;
-    tunnel_t *tls_target  = (tunnel_t *) (uintptr_t) 0x20;
+    tunnel_t *http_target  = (tunnel_t *) (uintptr_t) 0x10;
+    tunnel_t *tls_target   = (tunnel_t *) (uintptr_t) 0x20;
+    tunnel_t *exact_target = (tunnel_t *) (uintptr_t) 0x28;
 
-    char  http_domain[]  = "api.example.test";
-    char  tls_domain[]   = "*.example.test";
-    char *http_domains[] = {http_domain};
-    char *tls_domains[]  = {tls_domain};
+    char  http_domain[]   = "api.example.test";
+    char  tls_domain[]    = "*.example.test";
+    char  exact_domain[]  = "protected.integration.test";
+    char *http_domains[]  = {http_domain};
+    char *tls_domains[]   = {tls_domain};
+    char *exact_domains[] = {exact_domain};
 
     sniffrouter_route_t routes[] = {
         {
@@ -97,11 +104,17 @@ int main(void)
             .domains_count = 1,
             .detection     = kSniffDetectionTlsClientHello,
         },
+        {
+            .tunnel        = exact_target,
+            .domains       = exact_domains,
+            .domains_count = 1,
+            .detection     = kSniffDetectionTlsClientHello,
+        },
     };
 
     sniffrouter_tstate_t ts = {
         .routes       = routes,
-        .routes_count = 2,
+        .routes_count = 3,
     };
 
     const uint8_t http_request[] = "GET / HTTP/1.1\r\nHost: api.example.test:443\r\n\r\n";
@@ -113,28 +126,81 @@ int main(void)
         return 1;
     }
 
-    uint8_t  hello[256];
-    uint32_t hello_len = make_client_hello(hello, "www.example.test");
-    if (expect_match("partial tls route", sniffrouterClassify(&ts, hello, 3), kSniffClassifyNeedMore, NULL) != 0)
+    uint8_t  wildcard_hello[256];
+    uint32_t wildcard_hello_len = make_client_hello(wildcard_hello, "www.example.test");
+    if (expect_match("partial tls route", sniffrouterClassify(&ts, wildcard_hello, 3), kSniffClassifyNeedMore, NULL) !=
+        0)
     {
         return 1;
     }
 
-    if (expect_match("partial tls record body", sniffrouterClassify(&ts, hello, 5), kSniffClassifyNeedMore, NULL) != 0)
+    if (expect_match(
+            "partial tls record body", sniffrouterClassify(&ts, wildcard_hello, 5), kSniffClassifyNeedMore, NULL) != 0)
     {
         return 1;
     }
 
-    if (expect_match("tls route", sniffrouterClassify(&ts, hello, hello_len), kSniffClassifyTarget, tls_target) != 0)
+    if (expect_match("tls wildcard route",
+                     sniffrouterClassify(&ts, wildcard_hello, wildcard_hello_len),
+                     kSniffClassifyTarget,
+                     tls_target) != 0)
+    {
+        return 1;
+    }
+
+    uint8_t  wildcard_upper_hello[256];
+    uint32_t wildcard_upper_len = make_client_hello(wildcard_upper_hello, "WWW.EXAMPLE.TEST");
+    if (expect_match("tls wildcard case-insensitive",
+                     sniffrouterClassify(&ts, wildcard_upper_hello, wildcard_upper_len),
+                     kSniffClassifyTarget,
+                     tls_target) != 0)
+    {
+        return 1;
+    }
+
+    uint8_t  exact_hello[256];
+    uint32_t exact_len = make_client_hello(exact_hello, "protected.integration.test");
+    if (expect_match(
+            "tls exact route", sniffrouterClassify(&ts, exact_hello, exact_len), kSniffClassifyTarget, exact_target) !=
+        0)
+    {
+        return 1;
+    }
+
+    uint8_t  exact_upper_hello[256];
+    uint32_t exact_upper_len = make_client_hello(exact_upper_hello, "PROTECTED.INTEGRATION.TEST");
+    if (expect_match("tls exact case-insensitive",
+                     sniffrouterClassify(&ts, exact_upper_hello, exact_upper_len),
+                     kSniffClassifyTarget,
+                     exact_target) != 0)
+    {
+        return 1;
+    }
+
+    uint8_t  nonmatching_hello[256];
+    uint32_t nonmatching_len = make_client_hello(nonmatching_hello, "cover.integration.test");
+    if (expect_match("tls nonmatching sni falls back",
+                     sniffrouterClassify(&ts, nonmatching_hello, nonmatching_len),
+                     kSniffClassifyDefault,
+                     NULL) != 0)
+    {
+        return 1;
+    }
+
+    uint8_t  no_sni_hello[256];
+    uint32_t no_sni_len = make_client_hello(no_sni_hello, NULL);
+    if (expect_match(
+            "tls no-sni falls back", sniffrouterClassify(&ts, no_sni_hello, no_sni_len), kSniffClassifyDefault, NULL) !=
+        0)
     {
         return 1;
     }
 
     uint8_t bad_version_hello[256];
-    memoryCopy(bad_version_hello, hello, hello_len);
+    memoryCopy(bad_version_hello, wildcard_hello, wildcard_hello_len);
     bad_version_hello[2] = 0x04;
     if (expect_match("invalid tls record version",
-                     sniffrouterClassify(&ts, bad_version_hello, hello_len),
+                     sniffrouterClassify(&ts, bad_version_hello, wildcard_hello_len),
                      kSniffClassifyDefault,
                      NULL) != 0)
     {
@@ -142,16 +208,21 @@ int main(void)
     }
 
     routes[1].detection = kSniffDetectionHttp1;
-    if (expect_match(
-            "tls disabled for route", sniffrouterClassify(&ts, hello, hello_len), kSniffClassifyDefault, NULL) != 0)
+    routes[2].detection = kSniffDetectionHttp1;
+    if (expect_match("tls disabled for route",
+                     sniffrouterClassify(&ts, wildcard_hello, wildcard_hello_len),
+                     kSniffClassifyDefault,
+                     NULL) != 0)
     {
         return 1;
     }
 
     routes[1].detection = kSniffDetectionHttp1 | kSniffDetectionTlsClientHello;
-    if (expect_match(
-            "combined detection route", sniffrouterClassify(&ts, hello, hello_len), kSniffClassifyTarget, tls_target) !=
-        0)
+    routes[2].detection = kSniffDetectionHttp1 | kSniffDetectionTlsClientHello;
+    if (expect_match("combined detection route",
+                     sniffrouterClassify(&ts, wildcard_hello, wildcard_hello_len),
+                     kSniffClassifyTarget,
+                     tls_target) != 0)
     {
         return 1;
     }
