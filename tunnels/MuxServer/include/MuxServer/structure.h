@@ -82,11 +82,6 @@ typedef struct muxserver_tstate_s
     atomic_log_rate_limiter_t memory_transition_log_limiter;
     atomic_log_rate_limiter_t idle_expiry_log_limiter;
 
-#ifdef WW_MUXSERVER_TEST_SEAM
-    uint64_t (*test_now_ms)(void *userdata);
-    void *test_now_userdata;
-#endif
-
     muxserver_worker_state_t worker_states[];
 } muxserver_tstate_t;
 

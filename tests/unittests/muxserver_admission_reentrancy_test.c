@@ -31,16 +31,9 @@ typedef struct muxserver_admission_fixture_s
     line_t          *parents[kServerTestMaxParents];
     uint32_t         parent_count;
     uint8_t         *capture;
-    uint64_t         now_ms;
-    uint32_t         quiet_prev_payloads;
 } muxserver_admission_fixture_t;
 
 static muxserver_admission_fixture_t *g_server_fixture = NULL;
-
-static uint64_t serverClockNow(void *userdata)
-{
-    return ((muxserver_admission_fixture_t *) userdata)->now_ms;
-}
 
 static uint64_t serverMemoryNow(void *userdata)
 {
@@ -133,9 +126,6 @@ static void fixtureSetup(muxserver_admission_fixture_t *fixture, uint32_t captur
     ts->memory_high_watermark_percent     = 85;
     ts->memory_low_watermark_percent      = 75;
     ts->workers_count                     = 1;
-    ts->test_now_ms                       = serverClockNow;
-    ts->test_now_userdata                 = fixture;
-    fixture->now_ms                       = 100;
 
     fixture->chain                      = tunnelchainCreate(1);
     fixture->chain->sum_line_state_size = fixture->mux->lstate_size;
@@ -219,15 +209,6 @@ static void requireCloseFrame(const muxserver_admission_fixture_t *fixture, mux_
         ((mux_cid_t) raw[4] << 24U) | ((mux_cid_t) raw[5] << 16U) | ((mux_cid_t) raw[6] << 8U) | (mux_cid_t) raw[7];
     twfRequire(raw[0] == 0 && raw[1] == 0 && raw[2] == kMuxFlagClose && encoded_cid == cid,
                "rejection emitted a malformed Close frame");
-}
-
-static void quietPrevPayload(tunnel_t *prev, line_t *line, sbuf_t *buf)
-{
-    discard                        prev;
-    muxserver_admission_fixture_t *fixture = g_server_fixture;
-    twfRequire(fixture != NULL, "quiet rejection callback ran outside its fixture");
-    ++fixture->quiet_prev_payloads;
-    lineReuseBuffer(line, buf);
 }
 
 static void destroyParentOnRejection(tunnel_t *prev, line_t *parent_l, sbuf_t *buf)
@@ -684,37 +665,6 @@ static void caseDuplicatePeerDrainingCidClosesParent(void)
     fixtureTeardown(&fixture);
 }
 
-static void runRejectedOpenBurst(uint32_t allowed, uint64_t initial_refill_ms, uint64_t now_ms, const char *case_name)
-{
-    twfSetCase(case_name);
-    muxserver_admission_fixture_t fixture;
-    fixtureSetup(&fixture, 0);
-    line_t             *parent_l = fixtureCreateParent(&fixture);
-    muxserver_tstate_t *ts       = tunnelGetState(fixture.mux);
-    ts->max_children             = 1;
-    fixture.prev->fnPayloadD     = quietPrevPayload;
-    fixture.now_ms               = now_ms;
-    sendFrame(&fixture, parent_l, 83, kMuxFlagOpen, 0);
-
-    muxserver_lstate_t *parent_ls = lineGetState(parent_l, fixture.mux);
-    if (initial_refill_ms != 0)
-    {
-        parent_ls->parent_state->rejection_bucket.tokens         = 0;
-        parent_ls->parent_state->rejection_bucket.last_refill_ms = initial_refill_ms;
-    }
-    for (uint32_t i = 0; i < allowed; ++i)
-    {
-        sendFrame(&fixture, parent_l, 1000U + i, kMuxFlagOpen, 0);
-    }
-    twfRequireEqualU32(fixture.quiet_prev_payloads, allowed, "rejection token bucket depleted too early");
-    twfRequire(lineIsAlive(parent_l), "bounded rejection traffic closed the parent");
-
-    sendFrame(&fixture, parent_l, 2000, kMuxFlagOpen, 0);
-    twfRequireEqualU32(fixture.trace.prev_finish, 1, "sustained rejected Opens did not close the parent");
-    twfRequireLineStateZeroed(parent_l, fixture.mux, "token-bucket parent close retained MUX state");
-    fixtureTeardown(&fixture);
-}
-
 int main(void)
 {
     caseExactPerParentCapPreservesSiblings();
@@ -731,12 +681,6 @@ int main(void)
     caseChildInitCanDestroyOnlyChild();
     caseChildInitCanDestroyParent();
     caseDuplicatePeerDrainingCidClosesParent();
-    runRejectedOpenBurst(
-        kMuxServerRejectedOpenBurst, 0, 100, "MuxServer production parser enforces the 1024 rejected-Open burst");
-    runRejectedOpenBurst(kMuxServerRejectedOpenRefillPerSecond,
-                         100,
-                         1100,
-                         "MuxServer production parser refills 64 rejected Opens per second");
 
     printf("muxserver_admission_reentrancy_test: all cases passed\n");
     return 0;

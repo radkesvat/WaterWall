@@ -5,13 +5,8 @@
 static bool rejectFreshOpen(tunnel_t *t, line_t *parent_l, muxserver_lstate_t *parent_ls, mux_cid_t cid,
                             const char *reason)
 {
-    muxserver_tstate_t *ts = tunnelGetState(t);
-#ifdef WW_MUXSERVER_TEST_SEAM
-    const uint64_t now_ms = ts->test_now_ms != NULL ? ts->test_now_ms(ts->test_now_userdata)
-                                                    : wloopNowMS(getWorkerLoop(lineGetWID(parent_l)));
-#else
-    const uint64_t now_ms = wloopNowMS(getWorkerLoop(lineGetWID(parent_l)));
-#endif
+    muxserver_tstate_t *ts     = tunnelGetState(t);
+    const uint64_t      now_ms = wloopNowMS(getWorkerLoop(lineGetWID(parent_l)));
 
     if (! muxserverConsumeRejectedOpenToken(parent_ls, now_ms))
     {

@@ -2542,7 +2542,6 @@ if(TARGET MuxServer)
     ${CMAKE_SOURCE_DIR}/tunnels/Internals/MuxCommon/src/mux_wire.c
   )
   waterwall_line_failure_test_use_tunnel(muxserver_admission_reentrancy_test MuxServer)
-  target_compile_definitions(muxserver_admission_reentrancy_test PRIVATE WW_MUXSERVER_TEST_SEAM=1)
   target_link_options(muxserver_admission_reentrancy_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS})
   target_link_libraries(muxserver_admission_reentrancy_test PRIVATE ww)
   add_dependencies(waterwall_unit_tests muxserver_admission_reentrancy_test)
