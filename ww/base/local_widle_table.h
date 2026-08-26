@@ -186,10 +186,8 @@ size_t localidletableGetItemCount(local_idle_table_t *self);
 void localidletableDrainItems(local_idle_table_t *self);
 
 #ifdef WW_IDLE_TABLE_TEST_SEAM
-void         localidletableTestSetNowMS(local_idle_table_t *self, uint64_t now_ms);
-void         localidletableTestRunExpiry(local_idle_table_t *self);
-uint64_t     localidletableTestGetDeadline(const local_idle_item_t *item);
-bool         localidletableTestIsQuiesced(const local_idle_table_t *self);
-unsigned int localidletableTestGetLiveItemCount(void);
-unsigned int localidletableTestGetLiveTableCount(void);
+void     localidletableTestSetNowMS(local_idle_table_t *self, uint64_t now_ms);
+void     localidletableTestRunExpiry(local_idle_table_t *self);
+uint64_t localidletableTestGetDeadline(const local_idle_item_t *item);
+bool     localidletableTestIsQuiesced(const local_idle_table_t *self);
 #endif

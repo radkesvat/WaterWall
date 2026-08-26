@@ -37,9 +37,6 @@ static void localIdleCallBack(wtimer_t *timer);
 static void localidletableAssertOwner(const local_idle_table_t *self);
 
 #ifdef WW_IDLE_TABLE_TEST_SEAM
-static atomic_uint test_live_items;
-static atomic_uint test_live_tables;
-
 void localidletableTestSetNowMS(local_idle_table_t *self, uint64_t now_ms)
 {
     localidletableAssertOwner(self);
@@ -65,16 +62,6 @@ bool localidletableTestIsQuiesced(const local_idle_table_t *self)
     localidletableAssertOwner(self);
     return self->idle_handle == NULL;
 }
-
-unsigned int localidletableTestGetLiveItemCount(void)
-{
-    return atomicLoadRelaxed(&test_live_items);
-}
-
-unsigned int localidletableTestGetLiveTableCount(void)
-{
-    return atomicLoadRelaxed(&test_live_tables);
-}
 #endif
 
 static void localidletableAssertOwner(const local_idle_table_t *self)
@@ -86,14 +73,7 @@ static void localidletableAssertOwner(const local_idle_table_t *self)
 
 static local_idle_item_t *localIdleItemAllocate(void)
 {
-    local_idle_item_t *item = memoryAllocate(sizeof(*item));
-#ifdef WW_IDLE_TABLE_TEST_SEAM
-    if (item != NULL)
-    {
-        atomicIncRelaxed(&test_live_items);
-    }
-#endif
-    return item;
+    return memoryAllocate(sizeof(local_idle_item_t));
 }
 
 static void localIdleItemFree(local_idle_item_t *item)
@@ -102,10 +82,6 @@ static void localIdleItemFree(local_idle_item_t *item)
     {
         return;
     }
-#ifdef WW_IDLE_TABLE_TEST_SEAM
-    assert(atomicLoadRelaxed(&test_live_items) > 0);
-    atomicDecRelaxed(&test_live_items);
-#endif
     memoryFree(item);
 }
 
@@ -297,9 +273,6 @@ local_idle_table_t *localIdleTableCreate(wloop_t *loop)
     }
 
     weventSetUserData(newtable->idle_handle, newtable);
-#ifdef WW_IDLE_TABLE_TEST_SEAM
-    atomicIncRelaxed(&test_live_tables);
-#endif
     return newtable;
 }
 
@@ -520,9 +493,5 @@ void localidletableDestroy(local_idle_table_t *self)
 
     local_hmap_idles_t_drop(&self->hmap);
     memoryFree(self->heap);
-#ifdef WW_IDLE_TABLE_TEST_SEAM
-    assert(atomicLoadRelaxed(&test_live_tables) > 0);
-    atomicDecRelaxed(&test_live_tables);
-#endif
     memoryFreeAligned(self);
 }

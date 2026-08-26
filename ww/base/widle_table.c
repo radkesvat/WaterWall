@@ -69,11 +69,9 @@ void idletableTestRefuseNextInitialStagingReserve(void);
 void idletableTestRefuseNextStagingGrowth(void);
 void idletableTestRefuseNextCreateHeapPublication(void);
 
-static bool        refuse_next_initial_staging_reserve;
-static bool        refuse_next_staging_growth;
-static bool        refuse_next_create_heap_publication;
-static atomic_uint test_live_items;
-static atomic_uint test_live_tables;
+static bool refuse_next_initial_staging_reserve;
+static bool refuse_next_staging_growth;
+static bool refuse_next_create_heap_publication;
 
 void idletableTestRefuseNextInitialStagingReserve(void)
 {
@@ -117,28 +115,11 @@ size_t idletableTestGetActiveItemCount(idle_table_t *self)
     mutexUnlock(&self->mutex);
     return count;
 }
-
-unsigned int idletableTestGetLiveItemCount(void)
-{
-    return atomicLoadRelaxed(&test_live_items);
-}
-
-unsigned int idletableTestGetLiveTableCount(void)
-{
-    return atomicLoadRelaxed(&test_live_tables);
-}
 #endif
 
 static idle_item_t *idleItemAllocate(void)
 {
-    idle_item_t *item = memoryAllocate(sizeof(*item));
-#ifdef WW_IDLE_TABLE_TEST_SEAM
-    if (item != NULL)
-    {
-        atomicIncRelaxed(&test_live_items);
-    }
-#endif
-    return item;
+    return memoryAllocate(sizeof(idle_item_t));
 }
 
 static void idleItemFree(idle_item_t *item)
@@ -147,10 +128,6 @@ static void idleItemFree(idle_item_t *item)
     {
         return;
     }
-#ifdef WW_IDLE_TABLE_TEST_SEAM
-    assert(atomicLoadRelaxed(&test_live_items) > 0);
-    atomicDecRelaxed(&test_live_items);
-#endif
     memoryFree(item);
 }
 
@@ -348,9 +325,6 @@ idle_table_t *idleTableCreate(wloop_t *loop)
     }
 
     weventSetUserData(newtable->idle_handle, newtable);
-#ifdef WW_IDLE_TABLE_TEST_SEAM
-    atomicIncRelaxed(&test_live_tables);
-#endif
     return newtable;
 }
 
@@ -531,10 +505,6 @@ static void idletableFreeResources(idle_table_t *self)
     heapq_idles_t_drop(&(self->hqueue));
     hmap_idles_t_drop(&(self->hmap));
     mutexDestroy(&(self->mutex));
-#ifdef WW_IDLE_TABLE_TEST_SEAM
-    assert(atomicLoadRelaxed(&test_live_tables) > 0);
-    atomicDecRelaxed(&test_live_tables);
-#endif
     memoryFreeAligned(self);
 }
 

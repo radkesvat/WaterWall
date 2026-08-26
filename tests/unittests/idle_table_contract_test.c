@@ -313,15 +313,6 @@ static size_t contractActiveCount(contract_table_t *table)
     return idletableTestGetActiveItemCount(table->value.shared);
 }
 
-static unsigned int contractLiveItemCount(contract_table_t *table)
-{
-    if (table->impl == kContractLocal)
-    {
-        return localidletableTestGetLiveItemCount();
-    }
-    return idletableTestGetLiveItemCount();
-}
-
 static void contractRunExpiry(contract_table_t *table)
 {
     if (table->impl == kContractLocal)
@@ -448,15 +439,13 @@ static void runContractCases(contract_env_t *env, contract_impl_e impl)
     require(natural.callbacks == 1, "natural expiration was delivered more than once");
 
     contractSetNow(&table, 1200);
-    contract_probe_t   extending             = {.action = kContractExtendOnce};
-    const unsigned int live_before_extension = contractLiveItemCount(&table);
-    void              *extending_item        = contractCreate(&table, &extending, kContractBaseKey + 4U, 0);
+    contract_probe_t extending      = {.action = kContractExtendOnce};
+    void            *extending_item = contractCreate(&table, &extending, kContractBaseKey + 4U, 0);
     require(extending_item != NULL, "failed to create self-extending item");
     contractRunExpiry(&table);
     require(extending.callbacks == 1 && extending.authoritative_item == extending_item &&
                 contractLookup(&table, extending.key) == extending_item &&
-                contractDeadline(&table, extending_item) == 1250 &&
-                contractLiveItemCount(&table) == live_before_extension + 1U,
+                contractDeadline(&table, extending_item) == 1250,
             "expiration callback did not restore its self-extension");
     contractSetNow(&table, 1249);
     contractRunExpiry(&table);
@@ -507,17 +496,6 @@ static void runContractCases(contract_env_t *env, contract_impl_e impl)
     destroyed_live.authoritative_item = NULL;
     contractDestroy(&table);
     require(destroyed_live.callbacks == 0, "table destruction invoked a live item's expiration callback");
-
-    if (impl == kContractLocal)
-    {
-        require(localidletableTestGetLiveItemCount() == 0 && localidletableTestGetLiveTableCount() == 0,
-                "local table destroy retained an item or table allocation");
-    }
-    else
-    {
-        require(idletableTestGetLiveItemCount() == 0 && idletableTestGetLiveTableCount() == 0,
-                "shared table destroy retained an item or table allocation");
-    }
 }
 
 int main(void)

@@ -180,14 +180,12 @@ void idletableDrainWorkerItems(idle_table_t *self, wid_t wid);
 bool idletableRemoveIdleItemByHash(wid_t wid, idle_table_t *self, hash_t key);
 
 #ifdef WW_IDLE_TABLE_TEST_SEAM
-void         idleCallBack(wtimer_t *timer);
-void         idletableTestRefuseNextInitialStagingReserve(void);
-void         idletableTestRefuseNextStagingGrowth(void);
-void         idletableTestRefuseNextCreateHeapPublication(void);
-void         idletableTestSetNowMS(idle_table_t *self, uint64_t now_ms);
-void         idletableTestRunExpiry(idle_table_t *self);
-uint64_t     idletableTestGetDeadline(const idle_item_t *item);
-size_t       idletableTestGetActiveItemCount(idle_table_t *self);
-unsigned int idletableTestGetLiveItemCount(void);
-unsigned int idletableTestGetLiveTableCount(void);
+void     idleCallBack(wtimer_t *timer);
+void     idletableTestRefuseNextInitialStagingReserve(void);
+void     idletableTestRefuseNextStagingGrowth(void);
+void     idletableTestRefuseNextCreateHeapPublication(void);
+void     idletableTestSetNowMS(idle_table_t *self, uint64_t now_ms);
+void     idletableTestRunExpiry(idle_table_t *self);
+uint64_t idletableTestGetDeadline(const idle_item_t *item);
+size_t   idletableTestGetActiveItemCount(idle_table_t *self);
 #endif
