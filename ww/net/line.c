@@ -1,10 +1,12 @@
 #include "line.h"
+#include "line_task_internal.h"
 
 /*
  * Implements worker-thread task scheduling helpers for line-bound callbacks.
  */
 
 #include "loggers/internal_logger.h"
+#include "worker_messages_internal.h"
 
 static void lineFreeCredentialString(char **value, bool secret)
 {
@@ -301,21 +303,6 @@ bool lineHasAuthenticatedPassword(const line_t *const line, const char *password
     return lineHasAuthenticatedCredentials(line, NULL, password);
 }
 
-typedef union line_task_callback_u {
-    LineTaskFnNoBuf   no_buf;
-    LineTaskFnWithBuf with_buf;
-} line_task_callback_t;
-
-typedef struct line_task_msg_s
-{
-    line_task_callback_t callback;
-    tunnel_t            *tunnel;
-    line_t              *line;
-    sbuf_t              *buf;
-} line_task_msg_t;
-
-static_assert(sizeof(line_task_msg_t) == sizeof(worker_msg_t), "line_task_msg_t size should match worker_msg_t size");
-
 typedef struct line_dns_resolve_msg_s
 {
     LineDnsResolveFn callback;
@@ -336,19 +323,17 @@ static void lineCheckScheduledTaskWorker(worker_t *worker, const line_t *line)
     }
 }
 
-static line_task_msg_t *lineTaskMessageCreate(line_t *line, tunnel_t *t)
+static line_task_msg_t *lineTaskMessageCreate(line_t *line, tunnel_t *t, LineTaskCancelFn on_cancel)
 {
-    line_task_msg_t *msg;
-
-    masterpoolGetItems(GSTATE.masterpool_messages, (void **) &(msg), 1, NULL);
-    *msg = (line_task_msg_t) {.tunnel = t, .line = line, .buf = NULL};
+    line_task_msg_t *msg = workerMessagePoolAcquire(sizeof(*msg));
+    *msg                 = (line_task_msg_t) {.on_cancel = on_cancel, .tunnel = t, .line = line, .buf = NULL};
 
     return msg;
 }
 
 static void lineTaskMessageRelease(line_task_msg_t *msg)
 {
-    masterpoolReuseItems(GSTATE.masterpool_messages, (void **) &msg, 1);
+    workerMessagePoolRelease(msg);
 }
 
 static void lineReleaseScheduledTaskBuffer(line_t *line, sbuf_t *buf)
@@ -372,32 +357,55 @@ static void lineReleaseScheduledTaskBuffer(line_t *line, sbuf_t *buf)
     sbufDestroy(buf);
 }
 
-static void lineCleanupScheduledTaskNoBuf(void *arg1, void *arg2, void *arg3, worker_message_cancel_reason_e reason)
+static line_task_cancel_reason_e lineMapWorkerTaskCancelReason(worker_message_cancel_reason_e reason)
 {
-    discard reason;
-    discard arg2;
-    discard arg3;
+    switch (reason)
+    {
+    case kWorkerMessageCancelTargetUnavailable:
+        return kLineTaskCancelTargetUnavailable;
+    case kWorkerMessageCancelAdmissionClosed:
+        return kLineTaskCancelAdmissionClosed;
+    case kWorkerMessageCancelEnqueueFailure:
+        return kLineTaskCancelEnqueueFailure;
+    case kWorkerMessageCancelResourceFailure:
+        return kLineTaskCancelResourceFailure;
+    case kWorkerMessageCancelQuiesced:
+        return kLineTaskCancelQuiesced;
+    case kWorkerMessageCancelTeardown:
+        return kLineTaskCancelTeardown;
+    }
 
-    line_task_msg_t *msg  = (line_task_msg_t *) arg1;
-    line_t          *line = msg->line;
-
-    lineUnref(line);
-    lineTaskMessageRelease(msg);
+    LOGF("Line: unknown worker-message cancellation reason %d", (int) reason);
+    abortProgramNow(1);
 }
 
-static void lineCleanupScheduledTaskWithBuf(void *arg1, void *arg2, void *arg3, worker_message_cancel_reason_e reason)
+static void lineSettleCancelledTask(line_task_msg_t *msg, line_task_cancel_reason_e reason)
 {
-    discard reason;
+    LineTaskCancelFn on_cancel = msg->on_cancel;
+    tunnel_t        *t         = msg->tunnel;
+    line_t          *line      = msg->line;
+    sbuf_t          *buf       = msg->buf;
+
+    /* The worker record no longer needs this scheduling record. Return it
+     * before invoking re-entrant user code, retaining all settlement values in
+     * locals and the scheduler's physical line reference until the end. */
+    lineTaskMessageRelease(msg);
+
+    if (on_cancel != NULL)
+    {
+        on_cancel(t, line, reason);
+    }
+
+    lineReleaseScheduledTaskBuffer(line, buf);
+    lineUnref(line);
+}
+
+static void lineCleanupScheduledTask(void *arg1, void *arg2, void *arg3, worker_message_cancel_reason_e reason)
+{
     discard arg2;
     discard arg3;
 
-    line_task_msg_t *msg  = (line_task_msg_t *) arg1;
-    line_t          *line = msg->line;
-
-    lineReleaseScheduledTaskBuffer(line, msg->buf);
-
-    lineUnref(line);
-    lineTaskMessageRelease(msg);
+    lineSettleCancelledTask((line_task_msg_t *) arg1, lineMapWorkerTaskCancelReason(reason));
 }
 
 static void lineDnsResolveMsgDestroy(line_dns_resolve_msg_t *msg)
@@ -440,13 +448,15 @@ static void lineRunScheduledTaskNoBuf(worker_t *worker, void *arg1, void *arg2, 
 
     lineCheckScheduledTaskWorker(worker, line);
 
-    if (lineIsAlive(line))
+    if (! lineIsAlive(line))
     {
-        task(t, line);
+        lineSettleCancelledTask(msg, kLineTaskCancelLineDead);
+        return;
     }
 
-    lineUnref(line);
     lineTaskMessageRelease(msg);
+    task(t, line);
+    lineUnref(line);
 }
 
 /**
@@ -470,98 +480,114 @@ static void lineRunScheduledTaskWithBuf(worker_t *worker, void *arg1, void *arg2
 
     lineCheckScheduledTaskWorker(worker, line);
 
-    if (lineIsAlive(line))
+    if (! lineIsAlive(line))
     {
-        task(t, line, buf);
-    }
-    else
-    {
-        lineReleaseScheduledTaskBuffer(line, buf);
+        lineSettleCancelledTask(msg, kLineTaskCancelLineDead);
+        return;
     }
 
-    lineUnref(line);
     lineTaskMessageRelease(msg);
+    task(t, line, buf);
+    lineUnref(line);
 }
 
-bool lineScheduleTask(line_t *const line, LineTaskFnNoBuf task, tunnel_t *t)
+static line_task_submit_result_e lineMapQueuedTaskSubmitResult(worker_message_submit_result_e result)
 {
+    if (result == kWorkerMessageSubmitAccepted)
+    {
+        return kLineTaskSubmitAcceptedAsync;
+    }
+    if (result == kWorkerMessageSubmitRejectedCleanupRan)
+    {
+        return kLineTaskSubmitRejectedSettled;
+    }
+
+    LOGF("Line: cleanup-owned worker submission unexpectedly retained caller ownership");
+    abortProgramNow(1);
+}
+
+line_task_submit_result_e lineScheduleTask(line_t *const line, LineTaskFnNoBuf task, tunnel_t *t,
+                                           LineTaskCancelFn on_cancel)
+{
+    const wid_t target_wid = lineGetWID(line);
     lineRef(line);
 
-    line_task_msg_t *msg = lineTaskMessageCreate(line, t);
+    line_task_msg_t *msg = lineTaskMessageCreate(line, t, on_cancel);
     msg->callback.no_buf = task;
 
-    // A refusal has already run lineCleanupScheduledTaskNoBuf(), so the reference
-    // above and the message are both released; only the answer is left to give.
-    return sendWorkerMessageForceQueueWithCleanup(lineGetWID(line),
-                                                  (WorkerMessageCallback) lineRunScheduledTaskNoBuf,
-                                                  lineCleanupScheduledTaskNoBuf,
-                                                  msg,
-                                                  NULL,
-                                                  NULL) == kWorkerMessageSubmitAccepted;
+    /* A refusal may synchronously cancel, free msg, and destroy line. Only the
+     * captured target and generic submission result remain valid afterward. */
+    const worker_message_submit_result_e result = sendWorkerMessageForceQueueWithCleanup(
+        target_wid, (WorkerMessageCallback) lineRunScheduledTaskNoBuf, lineCleanupScheduledTask, msg, NULL, NULL);
+    return lineMapQueuedTaskSubmitResult(result);
 }
 
-bool lineScheduleTaskWithBuf(line_t *const line, LineTaskFnWithBuf task, tunnel_t *t, sbuf_t *buf)
+line_task_submit_result_e lineScheduleTaskWithBuf(line_t *const line, LineTaskFnWithBuf task, tunnel_t *t, sbuf_t *buf,
+                                                  LineTaskCancelFn on_cancel)
 {
+    const wid_t target_wid = lineGetWID(line);
     lineRef(line);
 
-    line_task_msg_t *msg   = lineTaskMessageCreate(line, t);
+    line_task_msg_t *msg   = lineTaskMessageCreate(line, t, on_cancel);
     msg->callback.with_buf = task;
     msg->buf               = buf;
 
-    return sendWorkerMessageForceQueueWithCleanup(lineGetWID(line),
-                                                  (WorkerMessageCallback) lineRunScheduledTaskWithBuf,
-                                                  lineCleanupScheduledTaskWithBuf,
-                                                  msg,
-                                                  NULL,
-                                                  NULL) == kWorkerMessageSubmitAccepted;
+    const worker_message_submit_result_e result = sendWorkerMessageForceQueueWithCleanup(
+        target_wid, (WorkerMessageCallback) lineRunScheduledTaskWithBuf, lineCleanupScheduledTask, msg, NULL, NULL);
+    return lineMapQueuedTaskSubmitResult(result);
 }
 
-bool lineScheduleDelayedTask(line_t *const line, LineTaskFnNoBuf task, uint32_t delay_ms, tunnel_t *t)
+line_task_submit_result_e lineScheduleDelayedTask(line_t *const line, LineTaskFnNoBuf task, uint32_t delay_ms,
+                                                  tunnel_t *t, LineTaskCancelFn on_cancel)
 {
-    if (! lineIsOnCurrentEventWorker(line))
-    {
-        LOGF("Attempted to schedule a delayed task on a line from a thread that does not own it");
-        abortProgramNow(1);
-        return false;
-    }
-
+    const wid_t target_wid      = lineGetWID(line);
+    const bool  timer_is_direct = delay_ms > 0 && currentThreadIsEventWorkerWID(target_wid);
     lineRef(line);
 
-    line_task_msg_t *msg = lineTaskMessageCreate(line, t);
+    line_task_msg_t *msg = lineTaskMessageCreate(line, t, on_cancel);
     msg->callback.no_buf = task;
 
-    return sendWorkerMessageTimedWithCleanup(lineGetWID(line),
-                                             (WorkerMessageCallback) lineRunScheduledTaskNoBuf,
-                                             lineCleanupScheduledTaskNoBuf,
-                                             delay_ms,
-                                             (void *) msg,
-                                             NULL,
-                                             NULL) == kWorkerMessageSubmitAccepted;
+    const worker_message_submit_result_e result =
+        sendWorkerMessageTimedWithCleanup(target_wid,
+                                          (WorkerMessageCallback) lineRunScheduledTaskNoBuf,
+                                          lineCleanupScheduledTask,
+                                          delay_ms,
+                                          (void *) msg,
+                                          NULL,
+                                          NULL);
+    const line_task_submit_result_e mapped = lineMapQueuedTaskSubmitResult(result);
+    if (mapped == kLineTaskSubmitAcceptedAsync && timer_is_direct)
+    {
+        return kLineTaskSubmitTimerArmed;
+    }
+    return mapped;
 }
 
-bool lineScheduleDelayedTaskWithBuf(line_t *const line, LineTaskFnWithBuf task, uint32_t delay_ms, tunnel_t *t,
-                                    sbuf_t *buf)
+line_task_submit_result_e lineScheduleDelayedTaskWithBuf(line_t *const line, LineTaskFnWithBuf task, uint32_t delay_ms,
+                                                         tunnel_t *t, sbuf_t *buf, LineTaskCancelFn on_cancel)
 {
-    if (! lineIsOnCurrentEventWorker(line))
-    {
-        LOGF("Attempted to schedule a delayed task on a line from a thread that does not own it");
-        abortProgramNow(1);
-        return false;
-    }
-
+    const wid_t target_wid      = lineGetWID(line);
+    const bool  timer_is_direct = delay_ms > 0 && currentThreadIsEventWorkerWID(target_wid);
     lineRef(line);
 
-    line_task_msg_t *msg   = lineTaskMessageCreate(line, t);
+    line_task_msg_t *msg   = lineTaskMessageCreate(line, t, on_cancel);
     msg->callback.with_buf = task;
     msg->buf               = buf;
 
-    return sendWorkerMessageTimedWithCleanup(lineGetWID(line),
-                                             (WorkerMessageCallback) lineRunScheduledTaskWithBuf,
-                                             lineCleanupScheduledTaskWithBuf,
-                                             delay_ms,
-                                             (void *) msg,
-                                             NULL,
-                                             NULL) == kWorkerMessageSubmitAccepted;
+    const worker_message_submit_result_e result =
+        sendWorkerMessageTimedWithCleanup(target_wid,
+                                          (WorkerMessageCallback) lineRunScheduledTaskWithBuf,
+                                          lineCleanupScheduledTask,
+                                          delay_ms,
+                                          (void *) msg,
+                                          NULL,
+                                          NULL);
+    const line_task_submit_result_e mapped = lineMapQueuedTaskSubmitResult(result);
+    if (mapped == kLineTaskSubmitAcceptedAsync && timer_is_direct)
+    {
+        return kLineTaskSubmitTimerArmed;
+    }
+    return mapped;
 }
 
 int lineResolveDomainServiceAsync(line_t *const line, const char *domain, const char *service, int socktype,

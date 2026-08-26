@@ -30,13 +30,18 @@ typedef struct halfduplexserver_fixture_s
     buffer_pool_t   *unavailable_pool_shortcut[1];
     uint32_t         scheduled_closes;
     bool             buffer_shortcut_hidden;
+    bool             refuse_scheduled_closes;
+    bool             closed_upload_ref_held;
+    bool             scheduled_upload_ref_held;
 } halfduplexserver_fixture_t;
 
 static halfduplexserver_fixture_t *g_fixture = NULL;
 
-bool __wrap_lineScheduleTask(line_t *const line, LineTaskFnNoBuf task, tunnel_t *t);
+line_task_submit_result_e __wrap_lineScheduleTask(line_t *const line, LineTaskFnNoBuf task, tunnel_t *t,
+                                                  LineTaskCancelFn on_cancel);
 
-bool __wrap_lineScheduleTask(line_t *const line, LineTaskFnNoBuf task, tunnel_t *t)
+line_task_submit_result_e __wrap_lineScheduleTask(line_t *const line, LineTaskFnNoBuf task, tunnel_t *t,
+                                                  LineTaskCancelFn on_cancel)
 {
     discard task;
     discard t;
@@ -45,9 +50,17 @@ bool __wrap_lineScheduleTask(line_t *const line, LineTaskFnNoBuf task, tunnel_t 
     twfRequire(fixture != NULL, "HalfDuplexServer scheduled a close outside the active fixture");
     twfRequire(line == fixture->upload_line, "HalfDuplexServer scheduled the wrong transport for closure");
     twfRequireEqualU32(
-        twfLineRefCount(line), 2, "the upload transport was not retained across the re-entrant main Init");
+        twfLineRefCount(line), 3, "the upload transport was not retained across the re-entrant main Init");
+    twfRequire(on_cancel == NULL, "HalfDuplexServer unexpectedly requested cancellation notification");
     ++fixture->scheduled_closes;
-    return true;
+    lineRef(line);
+    if (fixture->refuse_scheduled_closes)
+    {
+        lineUnref(line);
+        return kLineTaskSubmitRejectedSettled;
+    }
+    fixture->scheduled_upload_ref_held = true;
+    return kLineTaskSubmitAcceptedAsync;
 }
 
 static void transportOwnerDownstreamFinish(tunnel_t *prev, line_t *line)
@@ -55,13 +68,24 @@ static void transportOwnerDownstreamFinish(tunnel_t *prev, line_t *line)
     halfduplexserver_fixture_t *fixture = g_fixture;
     twfRequire(fixture != NULL, "the transport owner ran outside the active fixture");
     twfRequire(prev == fixture->prev, "the wrong previous tunnel received the transport Finish");
-    twfRequire(line == fixture->download_line, "HalfDuplexServer finished the wrong transport synchronously");
-    twfRequireEqualU32(
-        twfLineRefCount(line), 2, "the download transport was not retained across the re-entrant main Init");
+    twfRequire(line == fixture->download_line || line == fixture->upload_line,
+               "HalfDuplexServer finished an untracked transport synchronously");
 
     ++fixture->trace.prev_finish;
     twfRecord(&fixture->trace, 'f');
 
+    if (line == fixture->upload_line)
+    {
+        twfRequire(fixture->refuse_scheduled_closes,
+                   "HalfDuplexServer closed the upload transport after successful task admission");
+        lineRef(line);
+        fixture->closed_upload_ref_held = true;
+        lineDestroy(line);
+        return;
+    }
+
+    twfRequireEqualU32(
+        twfLineRefCount(line), 3, "the download transport was not retained across the re-entrant main Init");
     lineDestroy(line);
     twfRequire(! lineIsAlive(line), "the synthetic transport owner did not destroy the download line");
 
@@ -162,10 +186,21 @@ static void fixtureTeardown(halfduplexserver_fixture_t *fixture)
         fixture->buffer_shortcut_hidden = false;
     }
 
+    /* Model quiescence cancellation of the accepted close before owner drain. */
+    if (fixture->scheduled_upload_ref_held)
+    {
+        lineUnref(fixture->upload_line);
+        fixture->scheduled_upload_ref_held = false;
+    }
     if (fixture->upload_line != NULL && lineIsAlive(fixture->upload_line))
     {
         halfduplexserverTunnelUpStreamFinish(fixture->halfduplex, fixture->upload_line);
         lineDestroy(fixture->upload_line);
+    }
+    if (fixture->closed_upload_ref_held)
+    {
+        lineUnref(fixture->upload_line);
+        fixture->closed_upload_ref_held = false;
     }
     if (fixture->replacement_line != NULL && lineIsAlive(fixture->replacement_line))
     {
@@ -180,13 +215,17 @@ static void fixtureTeardown(halfduplexserver_fixture_t *fixture)
     g_fixture = NULL;
 }
 
-static void runRejectedPairingCase(bool upload_first)
+static void runRejectedPairingCase(bool upload_first, bool refuse_scheduled_close)
 {
-    twfSetCase(upload_first ? "HalfDuplexServer upload-first rejected main Init"
-                            : "HalfDuplexServer download-first rejected main Init");
+    twfSetCase(refuse_scheduled_close
+                   ? (upload_first ? "HalfDuplexServer upload-first rejected main Init and close task"
+                                   : "HalfDuplexServer download-first rejected main Init and close task")
+                   : (upload_first ? "HalfDuplexServer upload-first rejected main Init"
+                                   : "HalfDuplexServer download-first rejected main Init"));
 
     halfduplexserver_fixture_t fixture;
     fixtureSetup(&fixture);
+    fixture.refuse_scheduled_closes = refuse_scheduled_close;
 
     if (upload_first)
     {
@@ -207,23 +246,30 @@ static void runRejectedPairingCase(bool upload_first)
     GSTATE.shortcut_buffer_pools   = fixture.env.pool_shortcut;
     fixture.buffer_shortcut_hidden = false;
 
-    twfRequireEqualText(fixture.trace.seq, "eeIf", "unexpected callback order during rejected main Init");
+    twfRequireEqualText(fixture.trace.seq,
+                        refuse_scheduled_close ? "eeIff" : "eeIf",
+                        "unexpected callback order during rejected main Init");
     twfRequireEqualU32(fixture.trace.next_init, 1, "the reconstructed main line was not initialized exactly once");
-    twfRequireEqualU32(
-        fixture.trace.prev_finish, 1, "the download transport was not synchronously finished exactly once");
+    twfRequireEqualU32(fixture.trace.prev_finish,
+                       refuse_scheduled_close ? 2 : 1,
+                       "the required transports were not synchronously finished exactly once");
     twfRequireEqualU32(fixture.scheduled_closes, 1, "the upload transport close was not scheduled exactly once");
     twfRequireEqualU32(twfRecycleCount(), 2, "the two intro buffers were not recycled exactly once");
-    twfRequire(lineIsAlive(fixture.upload_line), "the borrowed upload transport was destroyed");
-    twfRequireEqualU32(
-        twfLineRefCount(fixture.upload_line), 1, "HalfDuplexServer leaked its upload transport reference");
+    twfRequire(lineIsAlive(fixture.upload_line) != refuse_scheduled_close,
+               "the upload transport had the wrong logical-life result after task admission");
+    twfRequireEqualU32(twfLineRefCount(fixture.upload_line),
+                       refuse_scheduled_close ? 1 : 2,
+                       "HalfDuplexServer leaked its upload transport reference");
 
     fixtureTeardown(&fixture);
 }
 
 int main(void)
 {
-    runRejectedPairingCase(true);
-    runRejectedPairingCase(false);
+    runRejectedPairingCase(true, false);
+    runRejectedPairingCase(false, false);
+    runRejectedPairingCase(true, true);
+    runRejectedPairingCase(false, true);
 
     printf("halfduplexserver_reentrant_init_test: all cases passed\n");
     return 0;

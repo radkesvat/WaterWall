@@ -51,7 +51,9 @@ static LineTaskFnWithBuf disturberGetForwardPayloadFn(disturber_payload_directio
 static void disturberScheduleForwardPayload(tunnel_t *t, line_t *l, sbuf_t *buf,
                                             disturber_payload_direction_e direction)
 {
-    discard lineScheduleTaskWithBuf(l, disturberGetForwardPayloadFn(direction), t, buf);
+    const line_task_submit_result_e result =
+        lineScheduleTaskWithBuf(l, disturberGetForwardPayloadFn(direction), t, buf, NULL);
+    discard result;
 }
 
 bool disturberIsWorkerPacketLine(tunnel_t *t, line_t *l)
@@ -254,7 +256,8 @@ void disturberTunnelPayload(tunnel_t *t, line_t *l, sbuf_t *buf, disturber_paylo
         int delay_ms = ts->delay_min_ms + ((int) fastRand() % delay_range);
         LOGD("Disturber: Delaying %s payload by %d ms (chance: %d%%)", dir_name, delay_ms, ts->chance_payload_delay);
         /* Fault-injection delay traffic is intentionally lossy on refusal. */
-        discard lineScheduleDelayedTaskWithBuf(l, forward, delay_ms, t, buf);
+        const line_task_submit_result_e result = lineScheduleDelayedTaskWithBuf(l, forward, delay_ms, t, buf, NULL);
+        discard                         result;
         if (dup_buf != NULL)
         {
             disturberScheduleForwardPayload(t, l, dup_buf, direction);

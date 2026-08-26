@@ -484,37 +484,123 @@ static inline address_context_t *lineGetDestinationAddressContext(line_t *const 
 
 typedef void (*LineTaskFnWithBuf)(tunnel_t *t, line_t *l, sbuf_t *buf);
 typedef void (*LineTaskFnNoBuf)(tunnel_t *t, line_t *l);
+
+/** Terminal reason delivered when an admitted or rejected line task will not execute. */
+typedef enum line_task_cancel_reason_e
+{
+    /** Target WID does not own an ordinary event-worker queue. */
+    kLineTaskCancelTargetUnavailable = 0,
+    /** Target worker no longer admits normal work or timer setup. */
+    kLineTaskCancelAdmissionClosed,
+    /** Queue growth or wake publication refused the submission. */
+    kLineTaskCancelEnqueueFailure,
+    /** Owner-side delayed resource installation failed after/before admission. */
+    kLineTaskCancelResourceFailure,
+    /** Worker quiescence settled accepted work before execution. */
+    kLineTaskCancelQuiesced,
+    /** Detached queue teardown settled the task before execution. */
+    kLineTaskCancelTeardown,
+    /** The physical line remained present but was logically dead at dispatch. */
+    kLineTaskCancelLineDead
+} line_task_cancel_reason_e;
+
+/** What the scheduler has proved when a line-task submission function returns. */
+typedef enum line_task_submit_result_e
+{
+    /** Refused; cancellation notification and all scheduler-owned settlement have completed. */
+    kLineTaskSubmitRejectedSettled = 0,
+    /** Ownership entered an asynchronous queue/setup path; later execution is not guaranteed. */
+    kLineTaskSubmitAcceptedAsync,
+    /** A non-zero-delay timer was installed synchronously on the line owner worker. */
+    kLineTaskSubmitTimerArmed
+} line_task_submit_result_e;
+
+/**
+ * @brief Notify a caller that its line task will not execute.
+ *
+ * Cancellation may be synchronous and re-entrant before the scheduling call
+ * returns, or later on the owner worker, submitting thread, or a teardown
+ * thread. The scheduler keeps its physical line reference during this call,
+ * but @p l may be logically dead and its tunnel line state may already be
+ * destroyed. The callback must not assume worker affinity or touch owner-only
+ * state without an independent context proof. Quiescence and teardown are
+ * terminal ownership settlement and must not restart normal work.
+ *
+ * @param t Tunnel supplied to the scheduling call.
+ * @param l Physically retained target line, which may be logically dead.
+ * @param reason Terminal settlement reason which won the cancellation path.
+ */
+typedef void (*LineTaskCancelFn)(tunnel_t *t, line_t *l, line_task_cancel_reason_e reason);
+
 typedef void (*LineDnsResolveFn)(tunnel_t *t, line_t *l, void *userdata, int status, const char *error,
                                  const dns_resolved_addr_t *addrs, size_t naddrs);
 
 /**
  * @brief Schedule a no-buffer task on the line's next event-loop iteration.
  *
+ * Submission is allowed from any thread only while the caller holds an
+ * independently synchronized live handle which prevents logical destruction
+ * and final reclamation until this function acquires its own reference. A raw
+ * pointer, or a physical reference without a logical-life gate, is not enough
+ * to race lineDestroy(). The task always executes on the immutable owner WID
+ * and is force-queued rather than called inline.
+ *
+ * With non-NULL @p on_cancel, exactly one of @p task or @p on_cancel executes.
+ * Cancellation may run synchronously before return. A NULL callback deliberately
+ * declines notification; internal line/message settlement is still mandatory.
+ * The pooled scheduling-record allocator is an invariant/fail-fast facility;
+ * recoverable submission failures are reported through the result and callback.
+ * The scheduler does not retain @p t independently: runtime/component lifetime
+ * must keep that tunnel valid until task-or-cancellation settlement completes.
+ *
  * @param line Target line.
  * @param task Task callback.
  * @param t Tunnel argument forwarded to callback.
- * @return true if the task was queued; false if the worker refused it, in which
- *         case the line reference has already been released and the task will
- *         never run. Callers that track "a retry is already pending" need this
- *         to avoid latching that state on a message nobody will deliver.
+ * @param on_cancel Optional typed cancellation/settlement callback.
+ * @return kLineTaskSubmitAcceptedAsync on admission, or
+ *         kLineTaskSubmitRejectedSettled after synchronous cancellation and
+ *         scheduler-owned settlement. Immediate submission never reports
+ *         kLineTaskSubmitTimerArmed.
  */
-bool lineScheduleTask(line_t *const line, LineTaskFnNoBuf task, tunnel_t *t);
+WW_MUST_USE line_task_submit_result_e lineScheduleTask(line_t *const line, LineTaskFnNoBuf task, tunnel_t *t,
+                                                       LineTaskCancelFn on_cancel);
 
 /**
  * @brief Schedule a task with a payload buffer on the line's worker loop.
  *
+ * This has the same stable-handle, owner-worker execution, result, cancellation,
+ * and exactly-once contract as lineScheduleTask(). Calling transfers @p buf to
+ * the scheduler even on synchronous rejection. The task owns it only when the
+ * task callback executes. Otherwise the scheduler recycles it only on the owner
+ * worker and destroys it on a foreign cleanup thread. Cancellation is
+ * notification only and never owns or settles the buffer; it runs while the
+ * physical line reference is held and before internal buffer settlement.
+ *
  * @param line Target line.
  * @param task Task callback.
  * @param t Tunnel argument forwarded to callback.
- * @param buf Buffer argument forwarded to callback.
- * @return true if the task was queued; false if admission failed. On false the
- *         scheduler has already released the line reference and recycled buf.
+ * @param buf Buffer whose ownership always transfers to the scheduler.
+ * @param on_cancel Optional typed cancellation/settlement callback.
+ * @return kLineTaskSubmitAcceptedAsync on admission, or
+ *         kLineTaskSubmitRejectedSettled after notification and all internal
+ *         settlement. This function never reports kLineTaskSubmitTimerArmed.
  */
-bool lineScheduleTaskWithBuf(line_t *const line, LineTaskFnWithBuf task, tunnel_t *t, sbuf_t *buf);
+WW_MUST_USE line_task_submit_result_e lineScheduleTaskWithBuf(line_t *const line, LineTaskFnWithBuf task, tunnel_t *t,
+                                                              sbuf_t *buf, LineTaskCancelFn on_cancel);
 
 /**
  * @brief Schedule a delayed no-buffer task on the line's worker thread.
  *
+ * The stable-handle and exactly-one task-or-cancellation rules from
+ * lineScheduleTask() apply. delay_ms == 0 is force-queued for a later loop
+ * iteration and returns kLineTaskSubmitAcceptedAsync. A positive delay called
+ * on the owner worker returns kLineTaskSubmitTimerArmed only after timer
+ * installation succeeds. A foreign positive-delay submission returns
+ * kLineTaskSubmitAcceptedAsync once owner-side setup is queued; timer allocation
+ * may then fail asynchronously with kLineTaskCancelResourceFailure. Timer
+ * failure never invokes the task inline. Quiescence/teardown cancels pending
+ * work rather than rearming it.
+ *
  * Delayed tasks are independent timer submissions; ordering is not guaranteed
  * between multiple delayed tasks, even when they use the same delay. If ordered
  * delivery matters, schedule one drain task and keep the ordered items in a
@@ -524,12 +610,25 @@ bool lineScheduleTaskWithBuf(line_t *const line, LineTaskFnWithBuf task, tunnel_
  * @param task Task callback.
  * @param delay_ms Minimum delay before execution.
  * @param t Tunnel argument forwarded to callback.
+ * @param on_cancel Optional typed cancellation/settlement callback.
+ * @return One of all three line_task_submit_result_e states according to the
+ *         synchronous proof described above. AcceptedAsync does not prove that
+ *         a timer was armed or that work remains pending when observed.
  */
-bool lineScheduleDelayedTask(line_t *const line, LineTaskFnNoBuf task, uint32_t delay_ms, tunnel_t *t);
+WW_MUST_USE line_task_submit_result_e lineScheduleDelayedTask(line_t *const line, LineTaskFnNoBuf task,
+                                                              uint32_t delay_ms, tunnel_t *t,
+                                                              LineTaskCancelFn on_cancel);
 
 /**
  * @brief Schedule a delayed task with a buffer on the line's worker thread.
  *
+ * This combines lineScheduleDelayedTask()'s immediate/zero/owner/foreign result
+ * rules with lineScheduleTaskWithBuf()'s unconditional buffer transfer and
+ * cancellation-before-internal-settlement ordering. A positive-delay timer
+ * allocation failure is reported as kLineTaskCancelResourceFailure and never
+ * by running @p task early. A NULL cancellation callback suppresses only caller
+ * notification, not buffer, line-reference, or record settlement.
+ *
  * Delayed tasks are independent timer submissions; ordering is not guaranteed
  * between multiple delayed tasks, even when they use the same delay. If ordered
  * delivery matters, schedule one drain task and keep the ordered items in a
@@ -539,10 +638,14 @@ bool lineScheduleDelayedTask(line_t *const line, LineTaskFnNoBuf task, uint32_t 
  * @param task Task callback.
  * @param delay_ms Minimum delay before execution.
  * @param t Tunnel argument forwarded to callback.
- * @param buf Buffer argument forwarded to callback.
+ * @param buf Buffer whose ownership always transfers to the scheduler.
+ * @param on_cancel Optional typed cancellation/settlement callback.
+ * @return RejectedSettled, AcceptedAsync, or TimerArmed under the same proof
+ *         rules as the no-buffer delayed form.
  */
-bool lineScheduleDelayedTaskWithBuf(line_t *const line, LineTaskFnWithBuf task, uint32_t delay_ms, tunnel_t *t,
-                                    sbuf_t *buf);
+WW_MUST_USE line_task_submit_result_e lineScheduleDelayedTaskWithBuf(line_t *const line, LineTaskFnWithBuf task,
+                                                                     uint32_t delay_ms, tunnel_t *t, sbuf_t *buf,
+                                                                     LineTaskCancelFn on_cancel);
 
 /**
  * @brief Resolve a domain on the line's worker while keeping the line alive.

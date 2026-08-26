@@ -18,42 +18,69 @@ static void localAsyncCloseLine(tunnel_t *t, line_t *l)
 
 void halfduplexclientTunnelDownStreamFinish(tunnel_t *t, line_t *l)
 {
-    halfduplexclient_lstate_t *ls = lineGetState(l, t);
+    halfduplexclient_lstate_t *ls           = lineGetState(l, t);
+    line_t *const              main_line    = ls->main_line;
+    line_t *const              sibling_line = l == ls->download_line ? ls->upload_line : ls->download_line;
 
-    if (l == ls->download_line)
+    /* Cross-line callbacks below can close any other tracked line. Retain all
+     * three allocations and detach/destroy this tunnel's state before the
+     * first callback, so no continuation reads a re-entrantly destroyed slot. */
+    lineRef(l);
+    if (sibling_line != NULL)
     {
-        if (ls->upload_line)
+        lineRef(sibling_line);
+        halfduplexclient_lstate_t *sibling_ls = lineGetState(sibling_line, t);
+        sibling_ls->main_line                 = NULL;
+        if (l == ls->download_line)
         {
-            halfduplexclient_lstate_t *ls_upload_line = lineGetState(ls->upload_line, t);
-            ls_upload_line->download_line             = NULL;
-            ls_upload_line->main_line                 = NULL;
-            if (! lineScheduleTask(ls->upload_line, localAsyncCloseLine, t) && lineIsAlive(ls->upload_line))
+            sibling_ls->download_line = NULL;
+        }
+        else
+        {
+            sibling_ls->upload_line = NULL;
+        }
+    }
+    if (main_line != NULL)
+    {
+        lineRef(main_line);
+        halfduplexclientLinestateDestroy(lineGetState(main_line, t));
+    }
+    halfduplexclientLinestateDestroy(ls);
+
+    if (sibling_line != NULL && lineIsAlive(sibling_line))
+    {
+        const line_task_submit_result_e result = lineScheduleTask(sibling_line, localAsyncCloseLine, t, NULL);
+        if (result == kLineTaskSubmitRejectedSettled)
+        {
+            if (lineIsAlive(sibling_line))
             {
                 /* HalfDuplexClient creates both companions on this worker. */
-                localAsyncCloseLine(t, ls->upload_line);
+                localAsyncCloseLine(t, sibling_line);
             }
         }
-    }
-    else
-    {
-        if (ls->download_line)
+        else
         {
-            halfduplexclient_lstate_t *ls_download_line = lineGetState(ls->download_line, t);
-            ls_download_line->upload_line               = NULL;
-            ls_download_line->main_line                 = NULL;
-            if (! lineScheduleTask(ls->download_line, localAsyncCloseLine, t) && lineIsAlive(ls->download_line))
-            {
-                localAsyncCloseLine(t, ls->download_line);
-            }
+            assert(result == kLineTaskSubmitAcceptedAsync);
         }
     }
 
-    if (ls->main_line)
+    if (main_line != NULL && lineIsAlive(main_line))
     {
-        halfduplexclientLinestateDestroy(lineGetState(ls->main_line, t));
-        tunnelPrevDownStreamFinish(t, ls->main_line);
+        tunnelPrevDownStreamFinish(t, main_line);
     }
 
-    halfduplexclientLinestateDestroy(ls);
-    lineDestroy(l);
+    if (lineIsAlive(l))
+    {
+        lineDestroy(l);
+    }
+
+    if (main_line != NULL)
+    {
+        lineUnref(main_line);
+    }
+    if (sibling_line != NULL)
+    {
+        lineUnref(sibling_line);
+    }
+    lineUnref(l);
 }

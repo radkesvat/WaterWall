@@ -1,5 +1,5 @@
 <!--
-Documentation version: 153
+Documentation version: 155
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/MuxServer.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/MuxServer.mdx, and all files must keep the same documentation version.
 -->
 
@@ -149,7 +149,9 @@ There are no required tunnel-specific settings in the current implementation.
   byte/child values, through an independent admission-default policy.
 
 - `log-main-line-stats` `(boolean, optional)`
-  When `true`, each active parent transport line logs mux diagnostics every `5` seconds.
+  When `true`, each active parent transport line logs best-effort mux diagnostics every `5` seconds. Parent logical
+  death suppresses normal stats execution; when the queued or timed runner is reached, the task settles as `LineDead`.
+  Worker quiescence actively cancels pending queued or timed stats work. Neither path rearms it.
 
   The log keeps `parent-line-read-paused=no` for compatibility and also reports `parent-queued-bytes` and
   `children-close-pending`, along with `wid`, parent-line write pause state, child count, child read-pause count, and
@@ -284,7 +286,7 @@ previous side, and applies the same detached drain behavior to already parsed ch
 
 - `MuxServer` is intended to be paired with `MuxClient`.
 - `UpStreamEst` and `DownStreamInit` are disabled in the current implementation.
-- Duplicate `Open` frames for an already existing `cid` are ignored.
+- A duplicate `Open` for an already indexed `cid` is a protocol violation that closes the parent.
 - A service-side Finish or orderly worker shutdown may discard residual detached data. Worker shutdown forwards no
   queued Payload, even for a writable child, before closing every remaining owned child.
 - The detached drain changes no MUX wire bytes or peer capability requirements.

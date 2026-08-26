@@ -15,11 +15,8 @@
 
 #include "wlibc.h"
 
-#if defined(__GNUC__) || defined(__clang__)
-#define WCRYPTO_MUST_USE __attribute__((warn_unused_result))
-#else
-#define WCRYPTO_MUST_USE
-#endif
+/* Compatibility spelling for consumers of the crypto API. */
+#define WCRYPTO_MUST_USE WW_MUST_USE
 
 typedef enum wcrypto_status_e
 {

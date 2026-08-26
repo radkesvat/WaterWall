@@ -202,8 +202,10 @@ void tunnelchainDestroy(tunnel_chain_t *tc)
             lineDestroy(tc->packet_lines[i]);
         }
     }
-    // since we destroyed all lines on main thread, we need to free line pools later, not there after each line
-    // because on dsetruction of each line it needs pool[getWID()] to be valid
+    /* Final release uses either the exact owner-local pool or the pool family's
+     * shared master through stable provenance metadata. Keep the complete pool
+     * family alive until every packet-line and external scheduling reference
+     * has returned; the checked-out count enforces that ordering. */
     if (tc->masterpool_line_pool && masterpoolGetCheckedOut(tc->masterpool_line_pool) != 0)
     {
         LOGF("TunnelChain: line-pool family still has %zu outstanding physical reference(s) at teardown",
@@ -231,9 +233,8 @@ void tunnelchainDestroy(tunnel_chain_t *tc)
     memoryFree(tc);
 }
 
-static bool tunnelchainLayerRelationsMatch(
-    const tunnel_layer_relation_registration_t *left,
-    const tunnel_layer_relation_registration_t *right)
+static bool tunnelchainLayerRelationsMatch(const tunnel_layer_relation_registration_t *left,
+                                           const tunnel_layer_relation_registration_t *right)
 {
     if (left->kind != right->kind)
     {
@@ -246,13 +247,9 @@ static bool tunnelchainLayerRelationsMatch(
             left->right_tunnel == right->left_tunnel && left->right_side == right->left_side);
 }
 
-bool tunnelchainRegisterLayerRelation(
-    tunnel_chain_t              *chain,
-    tunnel_t                    *left,
-    tunnel_layer_side_t          left_side,
-    tunnel_t                    *right,
-    tunnel_layer_side_t          right_side,
-    tunnel_layer_relation_kind_t kind)
+bool tunnelchainRegisterLayerRelation(tunnel_chain_t *chain, tunnel_t *left, tunnel_layer_side_t left_side,
+                                      tunnel_t *right, tunnel_layer_side_t right_side,
+                                      tunnel_layer_relation_kind_t kind)
 {
     if (chain == NULL || left == NULL || right == NULL)
     {
@@ -298,7 +295,8 @@ bool tunnelchainRegisterLayerRelation(
     if (chain->layer_relations_count >= kMaxLayerRelations)
     {
         LOGF("tunnelchainRegisterLayerRelation: capacity overflow (%u >= %u)",
-             chain->layer_relations_count, (unsigned int) kMaxLayerRelations);
+             chain->layer_relations_count,
+             (unsigned int) kMaxLayerRelations);
         startupFailureRecord(1);
         return false;
     }
@@ -351,7 +349,7 @@ void tunnelchainCombine(tunnel_chain_t *destination, tunnel_chain_t *source)
     for (uint16_t i = 0; i < source->layer_relations_count; ++i)
     {
         const tunnel_layer_relation_registration_t *candidate = &source->layer_relations[i];
-        bool duplicate = false;
+        bool                                        duplicate = false;
 
         for (uint16_t j = 0; j < destination->layer_relations_count; ++j)
         {
@@ -424,10 +422,8 @@ void tunnelchainCombine(tunnel_chain_t *destination, tunnel_chain_t *source)
     for (uint16_t i = 0; i < source->layer_relations_count; i++)
     {
         const tunnel_layer_relation_registration_t *r = &source->layer_relations[i];
-        if (! tunnelchainRegisterLayerRelation(destination,
-                                               r->left_tunnel, r->left_side,
-                                               r->right_tunnel, r->right_side,
-                                               r->kind))
+        if (! tunnelchainRegisterLayerRelation(
+                destination, r->left_tunnel, r->left_side, r->right_tunnel, r->right_side, r->kind))
         {
             return;
         }

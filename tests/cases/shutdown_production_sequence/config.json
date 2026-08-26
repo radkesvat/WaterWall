@@ -33,13 +33,17 @@
       "type": "MuxClient",
       "settings": {
         "mode": "fixed-connections-count",
-        "per-worker-connections-count": 2
+        "per-worker-connections-count": 2,
+        "log-main-line-stats": true
       },
       "next": "mux-server"
     },
     {
       "name": "mux-server",
       "type": "MuxServer",
+      "settings": {
+        "log-main-line-stats": true
+      },
       "next": "tester-server"
     },
     {

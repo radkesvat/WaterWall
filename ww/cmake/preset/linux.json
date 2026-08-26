@@ -250,6 +250,7 @@
                 "shutdown_manager_test",
                 "wloop_stop_request_test",
                 "worker_context_helpers_test",
+                "line_task_scheduling_test",
                 "device_reader_session_test",
                 "ping_tracker_test",
                 "idle_table_contract_test",
@@ -555,7 +556,7 @@
             "configuration": "Debug",
             "filter": {
                 "include": {
-                    "name": "^waterwall\\.((shutdown_manager|wloop_stop_request|worker_context_helpers|device_reader_session|wchan_close_semantics|idle_table_contract|local_idle_table_indexed|widle_table_cancellation|system_memory_snapshot|system_memory_linux_provider|muxserver_admission_limit|muxserver_admission_concurrency|reverseclient_owner_drain|packetstostream_orderly_shutdown|packetsender_orderly_shutdown|ping_tracker|socks5server_udp_close_reentrant|socks5server_dynamic_provider|udplistener_dynamic_endpoint|tcpudplistener_dynamic_provider)_unit|shutdown_production_sequence|reverse_tcp_bridge_roundtrip)$"
+                    "name": "^waterwall\\.((shutdown_manager|wloop_stop_request|worker_context_helpers|line_task_scheduling|device_reader_session|wchan_close_semantics|idle_table_contract|local_idle_table_indexed|widle_table_cancellation|system_memory_snapshot|system_memory_linux_provider|muxserver_admission_limit|muxserver_admission_concurrency|reverseclient_owner_drain|packetstostream_orderly_shutdown|packetsender_orderly_shutdown|ping_tracker|socks5server_udp_close_reentrant|socks5server_dynamic_provider|udplistener_dynamic_endpoint|tcpudplistener_dynamic_provider)_unit|shutdown_production_sequence|reverse_tcp_bridge_roundtrip)$"
                 }
             },
             "inherits": [

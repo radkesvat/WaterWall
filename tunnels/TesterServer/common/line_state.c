@@ -13,7 +13,8 @@ void testerserverLinestateInitialize(testerserver_lstate_t *ls, buffer_pool_t *p
                                    .response_paused         = false,
                                    .response_send_scheduled = false,
                                    .response_sent           = false,
-                                   .response_to_next        = false};
+                                   .response_to_next        = false,
+                                   .terminal_failure        = false};
 }
 
 void testerserverLinestateDestroy(testerserver_lstate_t *ls)

@@ -736,8 +736,9 @@ void testerclientScheduleRequestSend(tunnel_t *t, line_t *l, testerclient_lstate
         return;
     }
 
-    ls->request_send_scheduled = true;
-    if (UNLIKELY(! lineScheduleTask(l, testerclientRequestSendTask, t)))
+    ls->request_send_scheduled             = true;
+    const line_task_submit_result_e result = lineScheduleTask(l, testerclientRequestSendTask, t, NULL);
+    if (UNLIKELY(result == kLineTaskSubmitRejectedSettled))
     {
         ls->request_send_scheduled = false;
         testerclient_tstate_t *ts  = tunnelGetState(t);
@@ -749,6 +750,10 @@ void testerclientScheduleRequestSend(tunnel_t *t, line_t *l, testerclient_lstate
         {
             testerclientFailOwnedLine(t, l, "failed to schedule request progress", true);
         }
+    }
+    else
+    {
+        assert(result == kLineTaskSubmitAcceptedAsync);
     }
 }
 
@@ -807,7 +812,8 @@ void testerclientRequestSendTask(tunnel_t *t, line_t *l)
                 ls->request_send_scheduled = true;
                 if (ts->split_payload_delay_ms == 0)
                 {
-                    if (UNLIKELY(! lineScheduleTask(l, testerclientRequestSendTask, t)))
+                    const line_task_submit_result_e result = lineScheduleTask(l, testerclientRequestSendTask, t, NULL);
+                    if (UNLIKELY(result == kLineTaskSubmitRejectedSettled))
                     {
                         ls->request_send_scheduled = false;
                         if (ts->packet_mode)
@@ -819,11 +825,16 @@ void testerclientRequestSendTask(tunnel_t *t, line_t *l)
                             testerclientFailOwnedLine(t, l, "failed to schedule split request progress", true);
                         }
                     }
+                    else
+                    {
+                        assert(result == kLineTaskSubmitAcceptedAsync);
+                    }
                 }
                 else
                 {
-                    if (UNLIKELY(
-                            ! lineScheduleDelayedTask(l, testerclientRequestSendTask, ts->split_payload_delay_ms, t)))
+                    const line_task_submit_result_e result =
+                        lineScheduleDelayedTask(l, testerclientRequestSendTask, ts->split_payload_delay_ms, t, NULL);
+                    if (UNLIKELY(result == kLineTaskSubmitRejectedSettled))
                     {
                         ls->request_send_scheduled = false;
                         if (ts->packet_mode)
@@ -834,6 +845,10 @@ void testerclientRequestSendTask(tunnel_t *t, line_t *l)
                         {
                             testerclientFailOwnedLine(t, l, "failed to schedule delayed split request progress", true);
                         }
+                    }
+                    else
+                    {
+                        assert(result == kLineTaskSubmitTimerArmed);
                     }
                 }
                 return;
@@ -877,10 +892,16 @@ static void testerclientScheduleCompletedStreamCloseOnWorker(void *worker, void 
     if (slot->line != NULL && slot->completed && ! slot->close_scheduled && ! slot->closed)
     {
         slot->close_scheduled = true;
-        if (UNLIKELY(! lineScheduleTask(slot->line, testerclientCloseCompletedStreamTask, t)))
+        const line_task_submit_result_e result =
+            lineScheduleTask(slot->line, testerclientCloseCompletedStreamTask, t, NULL);
+        if (UNLIKELY(result == kLineTaskSubmitRejectedSettled))
         {
             slot->close_scheduled = false;
             testerclientFailOwnedLine(t, slot->line, "failed to schedule completed-line close", true);
+        }
+        else
+        {
+            assert(result == kLineTaskSubmitAcceptedAsync);
         }
     }
 }
@@ -986,12 +1007,15 @@ void testerclientCloseCompletedStreamTask(tunnel_t *t, line_t *l)
     if (! ls->request_complete)
     {
         slot->close_scheduled = false;
-        if (lineScheduleDelayedTask(l, testerclientCloseCompletedStreamTask, kTesterClientSplitPayloadDelayMs, t))
+        const line_task_submit_result_e result =
+            lineScheduleDelayedTask(l, testerclientCloseCompletedStreamTask, kTesterClientSplitPayloadDelayMs, t, NULL);
+        if (result == kLineTaskSubmitTimerArmed)
         {
             slot->close_scheduled = true;
         }
         else
         {
+            assert(result == kLineTaskSubmitRejectedSettled);
             testerclientFailOwnedLine(t, l, "failed to reschedule completed-line close", true);
         }
         return;

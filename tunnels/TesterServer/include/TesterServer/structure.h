@@ -63,6 +63,7 @@ typedef struct testerserver_lstate_s
     bool response_send_scheduled;
     bool response_sent;
     bool response_to_next;
+    bool terminal_failure;
 } testerserver_lstate_t;
 
 enum

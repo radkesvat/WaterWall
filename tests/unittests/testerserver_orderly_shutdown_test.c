@@ -33,6 +33,58 @@ typedef struct testerserver_fixture_s
     line_t          *line;
 } testerserver_fixture_t;
 
+static bool         refuse_next_line_task;
+static bool         refuse_next_delayed_line_task;
+static unsigned int line_task_submissions;
+static unsigned int delayed_line_task_submissions;
+
+line_task_submit_result_e __real_lineScheduleTask(line_t *const line, LineTaskFnNoBuf task, tunnel_t *t,
+                                                  LineTaskCancelFn on_cancel);
+line_task_submit_result_e __wrap_lineScheduleTask(line_t *const line, LineTaskFnNoBuf task, tunnel_t *t,
+                                                  LineTaskCancelFn on_cancel);
+line_task_submit_result_e __real_lineScheduleDelayedTask(line_t *const line, LineTaskFnNoBuf task, uint32_t delay_ms,
+                                                         tunnel_t *t, LineTaskCancelFn on_cancel);
+line_task_submit_result_e __wrap_lineScheduleDelayedTask(line_t *const line, LineTaskFnNoBuf task, uint32_t delay_ms,
+                                                         tunnel_t *t, LineTaskCancelFn on_cancel);
+
+line_task_submit_result_e __wrap_lineScheduleTask(line_t *const line, LineTaskFnNoBuf task, tunnel_t *t,
+                                                  LineTaskCancelFn on_cancel)
+{
+    line_task_submissions += 1U;
+    if (! refuse_next_line_task)
+    {
+        return __real_lineScheduleTask(line, task, t, on_cancel);
+    }
+
+    refuse_next_line_task = false;
+    lineRef(line);
+    if (on_cancel != NULL)
+    {
+        on_cancel(t, line, kLineTaskCancelEnqueueFailure);
+    }
+    lineUnref(line);
+    return kLineTaskSubmitRejectedSettled;
+}
+
+line_task_submit_result_e __wrap_lineScheduleDelayedTask(line_t *const line, LineTaskFnNoBuf task, uint32_t delay_ms,
+                                                         tunnel_t *t, LineTaskCancelFn on_cancel)
+{
+    delayed_line_task_submissions += 1U;
+    if (! refuse_next_delayed_line_task)
+    {
+        return __real_lineScheduleDelayedTask(line, task, delay_ms, t, on_cancel);
+    }
+
+    refuse_next_delayed_line_task = false;
+    lineRef(line);
+    if (on_cancel != NULL)
+    {
+        on_cancel(t, line, kLineTaskCancelResourceFailure);
+    }
+    lineUnref(line);
+    return kLineTaskSubmitRejectedSettled;
+}
+
 static void fixtureSetup(testerserver_fixture_t *fixture, bool packet_mode, bool packet_stateless)
 {
     memoryZero(&fixture->trace, sizeof(fixture->trace));
@@ -178,6 +230,177 @@ static void caseStatelessPacketRequestMismatch(void)
     requireVerdictLeftNothingBehind(&fixture);
 
     fixtureTeardown(&fixture);
+}
+
+// ---------------------------------------------------------------------------
+// Packet-line task refusal is a verdict, never a packet Finish
+// ---------------------------------------------------------------------------
+
+static void casePacketResponseScheduleRefusalKeepsStateForWorkerStop(void)
+{
+    twfSetCase("testerserver packet response schedule refusal");
+    tosResetProcessApi(true);
+
+    testerserver_fixture_t fixture;
+    fixtureSetup(&fixture, true, false);
+
+    testerserver_lstate_t *ls = lineGetState(fixture.line, fixture.tester);
+    ls->response_to_next      = false;
+    bufferqueuePushBack(&ls->response_queue,
+                        testerserverCreatePayload(fixture.tester,
+                                                  fixture.line,
+                                                  0,
+                                                  0,
+                                                  testerserverGetChunkSize(fixture.tester, 0),
+                                                  kTesterServerDirectionResponse));
+
+    line_task_submissions = 0;
+    refuse_next_line_task = true;
+    testerserverScheduleResponseSend(fixture.tester, fixture.line, ls);
+
+    tosRequireAcceptedRequest(1);
+    twfRequire(lineIsAlive(fixture.line), "schedule refusal destroyed the chain-owned packet line");
+    twfRequireEqualU32(fixture.trace.prev_finish, 0, "schedule refusal emitted a packet-line Finish");
+    twfRequireEqualU32(fixture.trace.next_finish, 0, "schedule refusal reflected a packet-line Finish");
+    twfRequire(ls->terminal_failure, "schedule refusal did not publish a terminal packet verdict");
+    twfRequire(! ls->response_send_scheduled, "rejected response remained marked as scheduled");
+    twfRequireEqualU32(
+        bufferqueueGetBufCount(&ls->response_queue), 1, "schedule refusal settled owner-worker queue state early");
+    twfRequireEqualU32(line_task_submissions, 1, "initial response used the wrong number of task submissions");
+
+    /* Resume or another payload root may arrive before the coordinator closes
+     * this worker. Neither is allowed to restart response scheduling. */
+    testerserverScheduleResponseSend(fixture.tester, fixture.line, ls);
+    twfRequireEqualU32(line_task_submissions, 1, "terminal packet verdict restarted response scheduling");
+
+    const uint32_t recycles_before = twfRecycleCount();
+    sbuf_t        *late_request    = testerserverCreatePayload(
+        fixture.tester, fixture.line, 0, 0, testerserverGetChunkSize(fixture.tester, 0), kTesterServerDirectionRequest);
+    testerserverTunnelDownStreamPayload(fixture.tester, fixture.line, late_request);
+    twfRequireEqualU32(
+        twfRecycleCount() - recycles_before, 1, "terminal packet verdict did not discard a later payload once");
+    twfRequireEqualU32(
+        bufferqueueGetBufCount(&ls->response_queue), 1, "terminal packet verdict retained a later response");
+    twfRequireEqualU32(line_task_submissions, 1, "late packet payload restarted response scheduling");
+
+    fixtureTeardown(&fixture);
+    twfRequireNoLeakedBuffers();
+}
+
+typedef struct testerserver_borrowed_fixture_s
+{
+    twf_worker_env_t env;
+    twf_line_pool_t  lines;
+    twf_trace_t      trace;
+    tunnel_t        *prev;
+    tunnel_t        *tester;
+    tunnel_t        *next;
+    line_t          *line;
+} testerserver_borrowed_fixture_t;
+
+static void testerserverOwnerFinish(tunnel_t *t, line_t *l)
+{
+    twf_trace_t *trace = *(twf_trace_t **) tunnelGetState(t);
+    ++trace->prev_finish;
+    twfRecord(trace, 'f');
+    lineDestroy(l);
+}
+
+static void borrowedFixtureSetup(testerserver_borrowed_fixture_t *fixture)
+{
+    memoryZero(fixture, sizeof(*fixture));
+    twfWorkerEnvSetupWithSmallBuffers(&fixture->env, kTestLargeBufferSize, kTestSmallBufferSize, 0);
+
+    fixture->prev   = twfCreatePrevTunnel(&fixture->trace);
+    fixture->tester = tunnelCreate(NULL, sizeof(testerserver_tstate_t), sizeof(testerserver_lstate_t));
+    fixture->next   = twfCreateNextTunnel(&fixture->trace);
+    twfRequire(fixture->tester != NULL, "failed to create the borrowed TesterServer fixture");
+    tunnelBind(fixture->prev, fixture->tester);
+    tunnelBind(fixture->tester, fixture->next);
+    fixture->prev->fnFinD = testerserverOwnerFinish;
+
+    testerserver_tstate_t *ts = tunnelGetState(fixture->tester);
+    ts->chunk_count           = kTestChunkCount;
+    ts->split_payload_burst   = 1;
+
+    twfLinePoolSetup(&fixture->lines, fixture->tester->lstate_size, 4);
+    fixture->line = twfLinePoolCreateLine(&fixture->lines);
+    testerserverLinestateInitialize(lineGetState(fixture->line, fixture->tester), lineGetBufferPool(fixture->line));
+}
+
+static void borrowedFixtureTeardown(testerserver_borrowed_fixture_t *fixture)
+{
+    twfRequireEqualU32(
+        (uint32_t) masterpoolGetCheckedOut(fixture->lines.master), 0, "borrowed TesterServer fixture retained a line");
+    twfLinePoolTeardown(&fixture->lines);
+    tunnelDestroy(fixture->next);
+    tunnelDestroy(fixture->tester);
+    tunnelDestroy(fixture->prev);
+    twfWorkerEnvTeardown(&fixture->env);
+}
+
+static void caseBorrowedResponseScheduleRefusalFinishesOwner(void)
+{
+    twfSetCase("testerserver borrowed response schedule refusal finishes its owner");
+    tosResetProcessApi(true);
+
+    testerserver_borrowed_fixture_t fixture;
+    borrowedFixtureSetup(&fixture);
+    testerserver_lstate_t *ls = lineGetState(fixture.line, fixture.tester);
+    ls->response_ready        = true;
+
+    lineRef(fixture.line);
+    line_task_submissions         = 0;
+    delayed_line_task_submissions = 0;
+    refuse_next_line_task         = true;
+    testerserverScheduleResponseSend(fixture.tester, fixture.line, ls);
+
+    tosRequireAcceptedRequest(1);
+    twfRequire(! lineIsAlive(fixture.line), "response refusal left the borrowed normal line alive");
+    twfRequireLineStateZeroed(fixture.line, fixture.tester, "response refusal retained TesterServer state");
+    twfRequireEqualU32(fixture.trace.prev_finish, 1, "response refusal did not finish toward the real owner");
+    twfRequireEqualU32(fixture.trace.next_finish, 0, "response refusal reflected Finish away from the owner");
+    twfRequireEqualU32(line_task_submissions, 1, "response refusal used the wrong number of task submissions");
+    twfRequireEqualU32(delayed_line_task_submissions, 0, "response refusal armed later response work");
+
+    lineUnref(fixture.line);
+    twfRequireNoLeakedBuffers();
+    borrowedFixtureTeardown(&fixture);
+}
+
+static void caseBorrowedDelayedSplitRefusalFinishesOwner(void)
+{
+    twfSetCase("testerserver borrowed delayed split refusal finishes its owner");
+    tosResetProcessApi(true);
+
+    testerserver_borrowed_fixture_t fixture;
+    borrowedFixtureSetup(&fixture);
+    testerserver_tstate_t *ts  = tunnelGetState(fixture.tester);
+    ts->max_payload_size       = 1;
+    ts->split_payload_delay_ms = 1;
+
+    testerserver_lstate_t *ls   = lineGetState(fixture.line, fixture.tester);
+    ls->response_ready          = true;
+    ls->response_send_scheduled = true;
+
+    lineRef(fixture.line);
+    line_task_submissions         = 0;
+    delayed_line_task_submissions = 0;
+    refuse_next_delayed_line_task = true;
+    testerserverResponseSendTask(fixture.tester, fixture.line);
+
+    tosRequireAcceptedRequest(1);
+    twfRequire(! lineIsAlive(fixture.line), "delayed split refusal left the borrowed normal line alive");
+    twfRequireLineStateZeroed(fixture.line, fixture.tester, "delayed split refusal retained its latch or state");
+    twfRequireEqualU32(fixture.trace.prev_payload, 1, "delayed split fixture did not send one partial response");
+    twfRequireEqualU32(fixture.trace.prev_finish, 1, "delayed split refusal did not finish toward the real owner");
+    twfRequireEqualU32(fixture.trace.next_finish, 0, "delayed split refusal reflected Finish away from the owner");
+    twfRequireEqualU32(line_task_submissions, 0, "delayed split refusal armed immediate response work");
+    twfRequireEqualU32(delayed_line_task_submissions, 1, "delayed split refusal armed later response work");
+
+    lineUnref(fixture.line);
+    twfRequireNoLeakedBuffers();
+    borrowedFixtureTeardown(&fixture);
 }
 
 // ---------------------------------------------------------------------------
@@ -591,6 +814,9 @@ int main(void)
     caseIncompleteFinishDestroysLineState();
     casePacketRequestMismatch();
     caseStatelessPacketRequestMismatch();
+    casePacketResponseScheduleRefusalKeepsStateForWorkerStop();
+    caseBorrowedResponseScheduleRefusalFinishesOwner();
+    caseBorrowedDelayedSplitRefusalFinishesOwner();
     caseStreamRequestMismatch();
     caseRefusedHandoffAborts();
     casePayloadGeneratorInvariantAborts();

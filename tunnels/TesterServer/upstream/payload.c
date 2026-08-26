@@ -7,6 +7,12 @@ void testerserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     testerserver_lstate_t *ls = lineGetState(l, t);
     testerserver_tstate_t *ts = tunnelGetState(t);
 
+    if (UNLIKELY(ls->terminal_failure))
+    {
+        lineReuseBuffer(l, buf);
+        return;
+    }
+
     if (ts->packet_mode)
     {
         ls->response_to_next = false;

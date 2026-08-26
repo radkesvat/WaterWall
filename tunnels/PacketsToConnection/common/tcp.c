@@ -20,9 +20,14 @@ void lwipThreadPtcTcpConnectionErrorCallback(void *arg, err_t err)
 
     if (lineIsAlive(ls->line))
     {
-        if (! lineScheduleTask(ls->line, ptcCloseLineTask, ls->tunnel))
+        const line_task_submit_result_e result = lineScheduleTask(ls->line, ptcCloseLineTask, ls->tunnel, NULL);
+        if (result == kLineTaskSubmitRejectedSettled)
         {
             discard ptcRequiredControlRefusedLocked(ls, "TCP error close");
+        }
+        else
+        {
+            assert(result == kLineTaskSubmitAcceptedAsync);
         }
     }
 }
@@ -55,9 +60,14 @@ err_t lwipThreadPtcTcpRecvCallback(void *arg, struct tcp_pcb *tpcb, struct pbuf 
 
         if (lineIsAlive(ls->line))
         {
-            if (! lineScheduleTask(ls->line, ptcCloseLineTask, ls->tunnel))
+            const line_task_submit_result_e result = lineScheduleTask(ls->line, ptcCloseLineTask, ls->tunnel, NULL);
+            if (result == kLineTaskSubmitRejectedSettled)
             {
                 discard ptcRequiredControlRefusedLocked(ls, "TCP receive-error close");
+            }
+            else
+            {
+                assert(result == kLineTaskSubmitAcceptedAsync);
             }
         }
         return ERR_ABRT;
@@ -65,11 +75,19 @@ err_t lwipThreadPtcTcpRecvCallback(void *arg, struct tcp_pcb *tpcb, struct pbuf 
 
     if (p == NULL)
     {
-        if (lineIsAlive(ls->line) && ! lineScheduleTask(ls->line, ptcCloseLineTask, ls->tunnel))
+        if (lineIsAlive(ls->line))
         {
-            if (ptcRequiredControlRefusedLocked(ls, "TCP peer-FIN close"))
+            const line_task_submit_result_e result = lineScheduleTask(ls->line, ptcCloseLineTask, ls->tunnel, NULL);
+            if (result == kLineTaskSubmitRejectedSettled)
             {
-                return ERR_ABRT;
+                if (ptcRequiredControlRefusedLocked(ls, "TCP peer-FIN close"))
+                {
+                    return ERR_ABRT;
+                }
+            }
+            else
+            {
+                assert(result == kLineTaskSubmitAcceptedAsync);
             }
         }
         return ERR_OK;
@@ -80,14 +98,23 @@ err_t lwipThreadPtcTcpRecvCallback(void *arg, struct tcp_pcb *tpcb, struct pbuf 
     {
         if (! ls->refused_retry_queued)
         {
-            ls->refused_retry_queued = true;
-            if (! lineIsAlive(ls->line) || ! lineScheduleTask(ls->line, ptcRefusedDataRetryTask, ls->tunnel))
+            ls->refused_retry_queued         = true;
+            line_task_submit_result_e result = kLineTaskSubmitRejectedSettled;
+            if (lineIsAlive(ls->line))
+            {
+                result = lineScheduleTask(ls->line, ptcRefusedDataRetryTask, ls->tunnel, NULL);
+            }
+            if (result == kLineTaskSubmitRejectedSettled)
             {
                 ls->refused_retry_queued = false;
                 if (ptcRequiredControlRefusedLocked(ls, "refused TCP data replay"))
                 {
                     return ERR_ABRT;
                 }
+            }
+            else
+            {
+                assert(result == kLineTaskSubmitAcceptedAsync);
             }
         }
         return ERR_MEM;
@@ -114,12 +141,15 @@ err_t lwipThreadPtcTcpRecvCallback(void *arg, struct tcp_pcb *tpcb, struct pbuf 
         return ERR_ABRT;
     }
 
-    if (! lineScheduleTaskWithBuf(ls->line, ptcDeliverPayloadTask, ls->tunnel, buf))
+    const line_task_submit_result_e delivery_result =
+        lineScheduleTaskWithBuf(ls->line, ptcDeliverPayloadTask, ls->tunnel, buf, NULL);
+    if (delivery_result == kLineTaskSubmitRejectedSettled)
     {
         /* Scheduler cleanup owns the copied sbuf; lwIP retains and replays p. */
         ptcReceiveCreditRollbackLocked(ls, p->tot_len);
         return ERR_MEM;
     }
+    assert(delivery_result == kLineTaskSubmitAcceptedAsync);
 
     pbuf_free(p);
     return ERR_OK;
@@ -206,10 +236,12 @@ err_t lwipThreadPtcTcpAccptCallback(void *arg, struct tcp_pcb *newpcb, err_t err
              (unsigned int) newpcb->remote_port);
     }
 
-    if (! lineScheduleTask(l, ptcOpenLineTask, t))
+    const line_task_submit_result_e result = lineScheduleTask(l, ptcOpenLineTask, t, NULL);
+    if (result == kLineTaskSubmitRejectedSettled)
     {
         discard ptcRequiredControlRefusedLocked(ls, "TCP accepted-line Init");
         return ERR_ABRT;
     }
+    assert(result == kLineTaskSubmitAcceptedAsync);
     return ERR_OK;
 }

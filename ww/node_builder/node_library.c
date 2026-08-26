@@ -326,17 +326,17 @@ static node_t dynLoadNodeLib(hash_t htype)
             if (! dynGetSymbol(handle, WW_EXTERNAL_NODE_LIFECYCLE_ABI_SYMBOL, &lifecycle_abi, sizeof(lifecycle_abi)) ||
                 lifecycle_abi == NULL)
             {
-                LOGE("NodeLibrary: rejecting \"%s\": missing lifecycle ABI v2 descriptor", full_path);
+                LOGE("NodeLibrary: rejecting \"%s\": missing external-node ABI v3 descriptor", full_path);
                 dynCloseLibrary(handle);
                 continue;
             }
             const uint32_t lifecycle_version = lifecycle_abi();
-            if (lifecycle_version != WW_EXTERNAL_NODE_LIFECYCLE_ABI_VERSION)
+            if (lifecycle_version != WW_EXTERNAL_NODE_ABI_VERSION)
             {
-                LOGE("NodeLibrary: rejecting \"%s\": lifecycle ABI %u is incompatible with required ABI %u",
+                LOGE("NodeLibrary: rejecting \"%s\": external-node ABI %u is incompatible with required ABI %u",
                      full_path,
                      lifecycle_version,
-                     WW_EXTERNAL_NODE_LIFECYCLE_ABI_VERSION);
+                     WW_EXTERNAL_NODE_ABI_VERSION);
                 dynCloseLibrary(handle);
                 continue;
             }

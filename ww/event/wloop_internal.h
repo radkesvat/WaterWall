@@ -18,3 +18,21 @@ typedef void (*wloop_callback_root_cb)(void *context);
 bool wloopInvokeNormalCallback(wloop_t *loop, wloop_callback_root_cb cb, void *context);
 void wloopInvokeControlCallback(wloop_t *loop, wloop_callback_root_cb cb, void *context);
 bool wloopInvokeWriteCallback(wio_t *io, wwrite_cb cb);
+
+typedef enum wtimer_try_add_result_e
+{
+    kWTimerTryAddInstalled = 0,
+    kWTimerTryAddAdmissionClosed,
+    kWTimerTryAddResourceFailure
+} wtimer_try_add_result_e;
+
+/* Internal recoverable timer-install boundary. Public wtimerAdd() deliberately
+ * retains its historical fail-fast allocation behavior. */
+WW_MUST_USE wtimer_try_add_result_e wtimerTryAdd(wloop_t *loop, wtimer_cb cb, uint32_t timeout_ms, uint32_t repeat,
+                                                 wtimer_t **timer_out);
+
+#ifdef WW_EVENT_MEMORY_TEST_SEAM
+/* Reproduce the exact due one-shot state after heap removal and before pending
+ * dispatch, so raw-loop destruction can verify its reclamation route. */
+void wtimerTestMakePendingOneShot(wtimer_t *timer);
+#endif

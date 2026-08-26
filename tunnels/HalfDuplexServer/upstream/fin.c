@@ -11,6 +11,72 @@ static void localAsyncCloseLineUpStream(tunnel_t *t, line_t *l)
     tunnelPrevDownStreamFinish(t, l);
 }
 
+static void closeDirectTransportPair(tunnel_t *t, line_t *current_line, bool current_is_download)
+{
+    halfduplexserver_lstate_t *current_ls   = lineGetState(current_line, t);
+    line_t *const              main_line    = current_ls->main_line;
+    line_t *const              sibling_line = current_is_download ? current_ls->upload_line : current_ls->download_line;
+
+    lineRef(current_line);
+    if (main_line != NULL)
+    {
+        lineRef(main_line);
+        halfduplexserverLinestateDestroy(lineGetState(main_line, t));
+    }
+    if (sibling_line != NULL)
+    {
+        lineRef(sibling_line);
+        halfduplexserver_lstate_t *sibling_ls = lineGetState(sibling_line, t);
+        sibling_ls->main_line                 = NULL;
+        if (current_is_download)
+        {
+            sibling_ls->download_line = NULL;
+        }
+        else
+        {
+            sibling_ls->upload_line = NULL;
+        }
+    }
+
+    /* No direct-pair state may be read after the first cross-line callback. */
+    halfduplexserverLinestateDestroy(current_ls);
+
+    if (main_line != NULL && lineIsAlive(main_line))
+    {
+        tunnelNextUpStreamFinish(t, main_line);
+        if (lineIsAlive(main_line))
+        {
+            lineDestroy(main_line);
+        }
+    }
+
+    if (sibling_line != NULL && lineIsAlive(sibling_line))
+    {
+        const line_task_submit_result_e result = lineScheduleTask(sibling_line, localAsyncCloseLineUpStream, t, NULL);
+        if (result == kLineTaskSubmitRejectedSettled)
+        {
+            if (lineIsAlive(sibling_line))
+            {
+                localAsyncCloseLineUpStream(t, sibling_line);
+            }
+        }
+        else
+        {
+            assert(result == kLineTaskSubmitAcceptedAsync);
+        }
+    }
+
+    if (sibling_line != NULL)
+    {
+        lineUnref(sibling_line);
+    }
+    if (main_line != NULL)
+    {
+        lineUnref(main_line);
+    }
+    lineUnref(current_line);
+}
+
 void halfduplexserverTunnelUpStreamFinish(tunnel_t *t, line_t *l)
 {
     halfduplexserver_tstate_t *ts = tunnelGetState(t);
@@ -70,76 +136,12 @@ void halfduplexserverTunnelUpStreamFinish(tunnel_t *t, line_t *l)
     break;
 
     case kCsDownloadDirect: {
-        halfduplexserver_lstate_t *ls_download_line = ls;
-        //  halfduplexserver_lstate_t *ls_upload_line = ls;
-        //  halfduplexserver_lstate_t *ls_main_line = ls;
-
-        ls_download_line->download_line = NULL;
-
-        line_t *main_line = ls_download_line->main_line;
-        if (main_line)
-        {
-            halfduplexserver_lstate_t *ls_main_line = lineGetState(main_line, t);
-
-            halfduplexserverLinestateDestroy(ls_main_line);
-            tunnelNextUpStreamFinish(t, main_line);
-            lineDestroy(main_line);
-            ls_download_line->main_line = NULL;
-        }
-
-        line_t *upload_line           = ls_download_line->upload_line;
-        ls_download_line->upload_line = NULL;
-
-        if (upload_line)
-        {
-            halfduplexserver_lstate_t *ls_upload_line = lineGetState(upload_line, t);
-            ls_upload_line->main_line                 = NULL;
-            ls_upload_line->download_line             = NULL;
-
-            if (! lineScheduleTask(upload_line, localAsyncCloseLineUpStream, t) && lineIsAlive(upload_line))
-            {
-                /* Direct companions are paired only when both belong to this
-                 * worker; cross-worker pairs use PipeTunnel instead. */
-                localAsyncCloseLineUpStream(t, upload_line);
-            }
-        }
-
-        halfduplexserverLinestateDestroy(ls_download_line);
+        closeDirectTransportPair(t, l, true);
     }
     break;
 
     case kCsUploadDirect: {
-        halfduplexserver_lstate_t *ls_upload_line = ls;
-
-        ls_upload_line->upload_line = NULL;
-
-        line_t *main_line = ls_upload_line->main_line;
-
-        if (main_line)
-        {
-            halfduplexserver_lstate_t *ls_main_line = lineGetState(main_line, t);
-            ;
-
-            halfduplexserverLinestateDestroy(ls_main_line);
-            tunnelNextUpStreamFinish(t, main_line);
-            lineDestroy(main_line);
-            ls_upload_line->main_line = NULL;
-        }
-        line_t *download_line = ls_upload_line->download_line;
-
-        if (download_line)
-        {
-            halfduplexserver_lstate_t *ls_download_line = lineGetState(download_line, t);
-            ls_download_line->main_line                 = NULL;
-            ls_download_line->upload_line               = NULL;
-
-            if (! lineScheduleTask(download_line, localAsyncCloseLineUpStream, t) && lineIsAlive(download_line))
-            {
-                localAsyncCloseLineUpStream(t, download_line);
-            }
-        }
-
-        halfduplexserverLinestateDestroy(ls_upload_line);
+        closeDirectTransportPair(t, l, false);
     }
     break;
 

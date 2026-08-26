@@ -20,15 +20,20 @@ void tcpoverudpserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf
 
     if (ikcp_waitsnd(ls->k_handle) > tcpoverudpserverGetKcpSendBufferLimit(ls))
     {
-        ls->write_paused    = true;
-        buffer_pool_t *pool = lineGetBufferPool(l);
-        if (UNLIKELY(! lineScheduleTask(l, pauseDownSide, t)))
+        ls->write_paused                       = true;
+        buffer_pool_t                  *pool   = lineGetBufferPool(l);
+        const line_task_submit_result_e result = lineScheduleTask(l, pauseDownSide, t, NULL);
+        if (UNLIKELY(result == kLineTaskSubmitRejectedSettled))
         {
             if (! lineCallWithRef(l, pauseDownSide, t))
             {
                 bufferpoolReuseBuffer(pool, buf);
                 return;
             }
+        }
+        else
+        {
+            assert(result == kLineTaskSubmitAcceptedAsync);
         }
     }
 

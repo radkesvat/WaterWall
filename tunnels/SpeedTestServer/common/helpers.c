@@ -377,11 +377,16 @@ void speedtestserverScheduleSend(tunnel_t *t, line_t *l, speedtestserver_lstate_
         return;
     }
 
-    ls->send_scheduled = true;
-    if (UNLIKELY(! lineScheduleTask(l, speedtestserverSendTask, ls->tunnel)))
+    ls->send_scheduled                     = true;
+    const line_task_submit_result_e result = lineScheduleTask(l, speedtestserverSendTask, ls->tunnel, NULL);
+    if (UNLIKELY(result == kLineTaskSubmitRejectedSettled))
     {
         ls->send_scheduled = false;
         speedtestserverFailLine(t, l, "failed to schedule send progress");
+    }
+    else
+    {
+        assert(result == kLineTaskSubmitAcceptedAsync);
     }
 }
 
@@ -393,10 +398,16 @@ void speedtestserverScheduleReport(tunnel_t *t, line_t *l, speedtestserver_lstat
     }
 
     ls->report_scheduled = true;
-    if (UNLIKELY(! lineScheduleDelayedTask(l, speedtestserverReportTask, ls->report_interval_ms, t)))
+    const line_task_submit_result_e result =
+        lineScheduleDelayedTask(l, speedtestserverReportTask, ls->report_interval_ms, t, NULL);
+    if (UNLIKELY(result == kLineTaskSubmitRejectedSettled))
     {
         ls->report_scheduled = false;
         speedtestserverFailLine(t, l, "failed to schedule report progress");
+    }
+    else
+    {
+        assert(result == kLineTaskSubmitTimerArmed);
     }
 }
 
@@ -494,10 +505,17 @@ void speedtestserverSendTask(tunnel_t *t, line_t *l)
         if (speedtestserverShouldWaitForPace(ls, now_us, &delay_ms))
         {
             ls->send_scheduled = true;
-            if (UNLIKELY(! lineScheduleDelayedTask(l, speedtestserverSendTask, delay_ms, t)))
+            const line_task_submit_result_e result =
+                lineScheduleDelayedTask(l, speedtestserverSendTask, delay_ms, t, NULL);
+            if (UNLIKELY(result == kLineTaskSubmitRejectedSettled))
             {
                 ls->send_scheduled = false;
                 speedtestserverFailLine(t, l, "failed to schedule paced send");
+            }
+            else
+            {
+                assert((delay_ms == 0 && result == kLineTaskSubmitAcceptedAsync) ||
+                       (delay_ms > 0 && result == kLineTaskSubmitTimerArmed));
             }
             return;
         }
@@ -784,11 +802,21 @@ static void speedtestserverHandleHello(tunnel_t *t, line_t *l, const speedtestse
         return;
     }
 
+    /* Send admission can synchronously propagate Finish to the real owner.
+     * Retain the borrowed allocation and do not schedule a report through
+     * destroyed line state after that close. */
+    lineRef(l);
     if (ls->download)
     {
         speedtestserverScheduleSend(t, l, ls);
     }
+    if (! lineIsAlive(l))
+    {
+        lineUnref(l);
+        return;
+    }
     speedtestserverScheduleReport(t, l, ls);
+    lineUnref(l);
 }
 
 static void speedtestserverHandleFrame(tunnel_t *t, line_t *l, const speedtestserver_frame_t *frame)

@@ -1,8 +1,10 @@
 #include "worker_messages.h"
 #include "wloop_internal.h"
 #include "worker_message_batch.h"
+#include "worker_messages_internal.h"
 
 #include "global_state.h"
+#include "line_task_internal.h"
 #include "list.h"
 #include "wmutex.h"
 
@@ -26,6 +28,14 @@ typedef struct timed_worker_msg_s
     struct list_node timed_node;
 } timed_worker_msg_t;
 
+/* This union is the allocation geometry of GSTATE.masterpool_messages. Every
+ * pooled record shape is named here, so line-task growth cannot silently rely
+ * on spare bytes in the timed record. */
+typedef union worker_message_pool_record_u {
+    timed_worker_msg_t timed;
+    line_task_msg_t    line_task;
+} worker_message_pool_record_t;
+
 #define i_type worker_msg_deque_t
 #define i_key  queued_worker_msg_t
 #include "stc/deque.h"
@@ -44,6 +54,7 @@ static void workerMessageReceived(wevent_t *ev);
 #ifdef WW_WORKER_MESSAGE_TEST_SEAM
 static worker_message_init_test_failure_e    g_worker_message_init_failure;
 static worker_message_enqueue_test_failure_e g_worker_message_enqueue_failure;
+static atomic_bool                           g_worker_message_close_timer_install_admission;
 
 void workerMessagesInitTestSetFailure(worker_message_init_test_failure_e failure)
 {
@@ -53,6 +64,11 @@ void workerMessagesInitTestSetFailure(worker_message_init_test_failure_e failure
 void workerMessagesEnqueueTestSetFailure(worker_message_enqueue_test_failure_e failure)
 {
     g_worker_message_enqueue_failure = failure;
+}
+
+void workerMessagesTimerInstallTestCloseAdmission(void)
+{
+    atomicStoreExplicit(&g_worker_message_close_timer_install_admission, true, memory_order_release);
 }
 
 static bool workerMessagesInitTestRefuse(worker_message_init_test_failure_e failure)
@@ -74,6 +90,11 @@ static bool workerMessagesEnqueueTestRefuse(worker_message_enqueue_test_failure_
     g_worker_message_enqueue_failure = kWorkerMessageEnqueueFailNone;
     return true;
 }
+
+static bool workerMessagesTimerInstallTestShouldCloseAdmission(void)
+{
+    return atomicExchangeExplicit(&g_worker_message_close_timer_install_admission, false, memory_order_acq_rel);
+}
 #else
 static bool workerMessagesInitTestRefuse(int failure)
 {
@@ -88,13 +109,34 @@ static bool workerMessagesEnqueueTestRefuse(int failure)
 }
 #endif
 
-/* GSTATE.masterpool_messages is also used by compact line-task records. Keep
- * this allocation at least as large as both record shapes; only delayed worker
- * messages take this path. */
+/* GSTATE.masterpool_messages stores the explicit record union above. */
 static master_pool_item_t *allocWorkerMessage(void *userdata)
 {
     discard userdata;
-    return memoryAllocate(sizeof(timed_worker_msg_t));
+    return memoryAllocate(sizeof(worker_message_pool_record_t));
+}
+
+void *workerMessagePoolAcquire(size_t record_size)
+{
+    if (UNLIKELY(record_size == 0 || record_size > sizeof(worker_message_pool_record_t)))
+    {
+        LOGF("worker message pooled record size %zu exceeds capacity %zu",
+             record_size,
+             sizeof(worker_message_pool_record_t));
+        abortProgramNow(1);
+    }
+
+    void *record;
+    masterpoolRecordCheckout(GSTATE.masterpool_messages);
+    masterpoolGetItems(GSTATE.masterpool_messages, &record, 1, NULL);
+    return record;
+}
+
+void workerMessagePoolRelease(void *record)
+{
+    assert(record != NULL);
+    masterpoolReuseItems(GSTATE.masterpool_messages, &record, 1);
+    masterpoolRecordReturn(GSTATE.masterpool_messages);
 }
 
 static void destroyWorkerMessage(master_pool_item_t *item)
@@ -105,13 +147,12 @@ static void destroyWorkerMessage(master_pool_item_t *item)
 static timed_worker_msg_t *getTimedWorkerMessage(WorkerMessageCallback cb, WorkerMessageCleanupCallback cleanup,
                                                  void *arg1, void *arg2, void *arg3)
 {
-    timed_worker_msg_t *msg;
-    masterpoolGetItems(GSTATE.masterpool_messages, (void **) &msg, 1, NULL);
-    *msg = (timed_worker_msg_t) {
-        .task =
+    timed_worker_msg_t *msg = workerMessagePoolAcquire(sizeof(*msg));
+    *msg                    = (timed_worker_msg_t) {
+                           .task =
             {
-                .base    = {.callback = cb, .arg1 = arg1, .arg2 = arg2, .arg3 = arg3},
-                .cleanup = cleanup,
+                                   .base    = {.callback = cb, .arg1 = arg1, .arg2 = arg2, .arg3 = arg3},
+                                   .cleanup = cleanup,
             },
     };
     list_init(&msg->timed_node);
@@ -144,7 +185,7 @@ static void reuseTimedWorkerMessage(timed_worker_msg_t *msg)
         assert(msg->detached_timer == NULL);
         msg->task.cleanup = NULL;
         msg->timer        = NULL;
-        masterpoolReuseItems(GSTATE.masterpool_messages, (void **) &msg, 1);
+        workerMessagePoolRelease(msg);
     }
 }
 
@@ -816,8 +857,16 @@ static bool setupTimedTaskChecked(worker_t *worker, void *arg1, void *arg2, void
         return false;
     }
 
-    wtimer_t *k_timer = wtimerAdd(loop, runTimedTask, delay_ms, 1);
-    if (UNLIKELY(k_timer == NULL))
+#ifdef WW_WORKER_MESSAGE_TEST_SEAM
+    if (workerMessagesTimerInstallTestShouldCloseAdmission())
+    {
+        discard wloopCloseNormalAdmission(loop);
+    }
+#endif
+
+    wtimer_t                     *k_timer      = NULL;
+    const wtimer_try_add_result_e timer_result = wtimerTryAdd(loop, runTimedTask, delay_ms, 1, &k_timer);
+    if (UNLIKELY(timer_result != kWTimerTryAddInstalled))
     {
         /* A delayed callback may depend on a minimum delay and may schedule
          * itself again. Running it inline turns allocation pressure into
@@ -829,7 +878,10 @@ static bool setupTimedTaskChecked(worker_t *worker, void *arg1, void *arg2, void
         }
         else
         {
-            cleanupTimedWorkerMessage(timed_msg, kWorkerMessageCancelResourceFailure);
+            const worker_message_cancel_reason_e reason = timer_result == kWTimerTryAddAdmissionClosed
+                                                              ? kWorkerMessageCancelAdmissionClosed
+                                                              : kWorkerMessageCancelResourceFailure;
+            cleanupTimedWorkerMessage(timed_msg, reason);
         }
         return false;
     }

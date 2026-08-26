@@ -31,9 +31,16 @@ static void speedtestclientStartStream(void *worker, void *arg1, void *arg2, voi
         return;
     }
 
-    if (UNLIKELY(! lineScheduleDelayedTask(l, speedtestclientWatchdogTask, state->timeout_ms, t)))
+    const line_task_submit_result_e result =
+        lineScheduleDelayedTask(l, speedtestclientWatchdogTask, state->timeout_ms, t, NULL);
+    if (UNLIKELY(result == kLineTaskSubmitRejectedSettled))
     {
         speedtestclientFailLine(t, l, "failed to arm watchdog");
+    }
+    else
+    {
+        assert((state->timeout_ms == 0 && result == kLineTaskSubmitAcceptedAsync) ||
+               (state->timeout_ms > 0 && result == kLineTaskSubmitTimerArmed));
     }
 }
 

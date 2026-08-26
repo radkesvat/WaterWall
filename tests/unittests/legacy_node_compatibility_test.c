@@ -18,8 +18,8 @@
 #ifndef MISMATCHED_NODE_LIBRARY_PATH
 #error "MISMATCHED_NODE_LIBRARY_PATH is required"
 #endif
-#ifndef LIFECYCLE_V2_NODE_LIBRARY_PATH
-#error "LIFECYCLE_V2_NODE_LIBRARY_PATH is required"
+#ifndef EXTERNAL_NODE_ABI_V3_LIBRARY_PATH
+#error "EXTERNAL_NODE_ABI_V3_LIBRARY_PATH is required"
 #endif
 
 typedef void (*RejectedResetCounters)(void);
@@ -228,13 +228,13 @@ static void driveWorkerStage(worker_stage_driver_t *driver, unsigned int command
     condmutexUnlock(&driver->condition_mutex);
 }
 
-static void verifyLifecycleV2(const char *path, const char *directory)
+static void verifyExternalNodeAbiV3(const char *path, const char *directory)
 {
     const char *type = "LifecycleV2Fixture";
     char        candidate[MAX_PATH];
     stageCandidate(path, directory, type, candidate, sizeof(candidate));
     void *handle = openLibrary(candidate);
-    require(handle != NULL, "failed to open lifecycle-v2 fixture");
+    require(handle != NULL, "failed to open external-node ABI v3 fixture");
 
     LifecycleReset        reset         = NULL;
     LifecycleSetAllocator set_allocator = NULL;
@@ -246,9 +246,9 @@ static void verifyLifecycleV2(const char *path, const char *directory)
     reset();
 
     node_t node = nodelibraryLoadByTypeName(type);
-    require(node.createHandle != NULL, "lifecycle ABI v2 fixture was rejected");
+    require(node.createHandle != NULL, "external-node ABI v3 fixture was rejected");
     tunnel_t *tunnel = nodemanagerCreateTunnelInstance(&node);
-    require(tunnel != NULL, "lifecycle ABI v2 tunnel construction failed");
+    require(tunnel != NULL, "external-node ABI v3 tunnel construction failed");
 
     const ww_lifecycle_context_t context = {
         .scope        = kWwLifecycleProcessShutdown,
@@ -311,13 +311,13 @@ static void verifyLifecycleV2(const char *path, const char *directory)
 int main(void)
 {
     char directory[MAX_PATH];
-    libraryDirectory(LIFECYCLE_V2_NODE_LIBRARY_PATH, directory, sizeof(directory));
+    libraryDirectory(EXTERNAL_NODE_ABI_V3_LIBRARY_PATH, directory, sizeof(directory));
     nodelibrarySetSearchPath(directory);
 
     verifyRejectedLibrary(MISSING_NODE_LIBRARY_PATH, directory, "MissingAbiFixture");
     verifyRejectedLibrary(MISMATCHED_NODE_LIBRARY_PATH, directory, "MismatchedAbiFixture");
-    verifyLifecycleV2(LIFECYCLE_V2_NODE_LIBRARY_PATH, directory);
+    verifyExternalNodeAbiV3(EXTERNAL_NODE_ABI_V3_LIBRARY_PATH, directory);
 
-    puts("lifecycle node ABI v2 tests passed");
+    puts("external-node ABI v3 tests passed");
     return 0;
 }

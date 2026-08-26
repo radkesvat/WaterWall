@@ -102,10 +102,15 @@ void ctpTunnelUpStreamInit(tunnel_t *t, line_t *l)
 
         // A connected UDP pcb is usable the moment it is registered, but Est is
         // still scheduled so prev is never re-entered from inside its own Init.
-        ls->connected = true;
-        if (! lineScheduleTask(l, ctpEstablishedTask, t))
+        ls->connected                          = true;
+        const line_task_submit_result_e result = lineScheduleTask(l, ctpEstablishedTask, t, NULL);
+        if (result == kLineTaskSubmitRejectedSettled)
         {
             ctpFailEstablishedTaskAdmission(t, l);
+        }
+        else
+        {
+            assert(result == kLineTaskSubmitAcceptedAsync);
         }
         return;
     }

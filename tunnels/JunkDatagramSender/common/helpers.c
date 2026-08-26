@@ -52,11 +52,23 @@ static junkdatagramsender_protocol_t junkdatagramsenderPickProtocol(uint64_t mas
 
 static void junkdatagramsenderDelayedUpstreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
+    junkdatagramsender_lstate_t *ls = lineGetState(l, t);
+    if (ls->upstream_finished)
+    {
+        lineReuseBuffer(l, buf);
+        return;
+    }
     tunnelNextUpStreamPayload(t, l, buf);
 }
 
 static void junkdatagramsenderDelayedDownstreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
+    junkdatagramsender_lstate_t *ls = lineGetState(l, t);
+    if (ls->downstream_finished)
+    {
+        lineReuseBuffer(l, buf);
+        return;
+    }
     tunnelPrevDownStreamPayload(t, l, buf);
 }
 
@@ -93,7 +105,12 @@ static bool junkdatagramsenderGeneratePayload(tunnel_t *t, line_t *l, sbuf_t *bu
 static bool junkdatagramsenderSendOne(tunnel_t *t, line_t *l, junkdatagramsender_direction_t direction)
 {
     junkdatagramsender_tstate_t *ts = tunnelGetState(t);
+    junkdatagramsender_lstate_t *ls = lineGetState(l, t);
 
+    if (junkdatagramsenderDirectionIsFinished(ls, direction))
+    {
+        return false;
+    }
     if (ts->selected_protocol_mask == 0)
     {
         return true;
@@ -112,9 +129,11 @@ static bool junkdatagramsenderSendOne(tunnel_t *t, line_t *l, junkdatagramsender
     {
         sbuf_t  *scheduled = sbufDuplicateByPool(lineGetBufferPool(l), buf);
         uint32_t delay_ms  = fastRandRange32(1, ts->keep_sending_max_ms);
-        /* Synthetic junk traffic is intentionally lossy on timer refusal. */
-        discard lineScheduleDelayedTaskWithBuf(
-            l, junkdatagramsenderDelayedPayloadFn(direction), delay_ms, t, scheduled);
+        /* Synthetic junk traffic is intentionally lossy on refusal or later
+         * cancellation; packet-line Finish is gated by the task callback. */
+        const line_task_submit_result_e result = lineScheduleDelayedTaskWithBuf(
+            l, junkdatagramsenderDelayedPayloadFn(direction), delay_ms, t, scheduled, NULL);
+        discard result;
     }
 
     if (direction == kJunkDatagramSenderDirectionUpstream)
@@ -126,13 +145,43 @@ static bool junkdatagramsenderSendOne(tunnel_t *t, line_t *l, junkdatagramsender
         tunnelPrevDownStreamPayload(t, l, buf);
     }
 
-    return lineIsAlive(l);
+    if (! lineIsAlive(l))
+    {
+        return false;
+    }
+    return ! junkdatagramsenderDirectionIsFinished(lineGetState(l, t), direction);
+}
+
+bool junkdatagramsenderIsWorkerPacketLine(tunnel_t *t, line_t *l)
+{
+    return tunnelchainIsWorkerPacketLine(tunnelGetChain(t), l);
+}
+
+void junkdatagramsenderPacketLineFinish(tunnel_t *t, line_t *l)
+{
+    if (UNLIKELY(! junkdatagramsenderIsWorkerPacketLine(t, l) || ! lineIsOnCurrentEventWorker(l)))
+    {
+        LOGF("JunkDatagramSender: packet Finish ran outside the exact owner packet line");
+        abortProgramNow(1);
+    }
+
+    /* A persistent packet line survives Finish, so keep its state present and
+     * explicitly close both publication directions. Same-direction delayed
+     * payload must not overtake the propagated Finish, and opposite-direction
+     * payload must not reflect toward its sender. */
+    junkdatagramsender_lstate_t *ls = lineGetState(l, t);
+    ls->upstream_finished           = true;
+    ls->downstream_finished         = true;
 }
 
 bool junkdatagramsenderSendJunk(tunnel_t *t, line_t *l, junkdatagramsender_direction_t direction)
 {
     junkdatagramsender_tstate_t *ts = tunnelGetState(t);
 
+    if (junkdatagramsenderDirectionIsFinished(lineGetState(l, t), direction))
+    {
+        return false;
+    }
     if (ts->packet_count_max == 0 || ts->selected_protocol_mask == 0)
     {
         return true;

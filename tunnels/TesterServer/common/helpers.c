@@ -812,6 +812,20 @@ void testerserverHandlePacketStatelessRequestPayload(tunnel_t *t, line_t *l, sbu
 
 static void testerserverFailResponseProgressAdmission(tunnel_t *t, line_t *l, testerserver_lstate_t *ls)
 {
+    testerserver_tstate_t *ts = tunnelGetState(t);
+
+    if (ts->packet_mode)
+    {
+        /* The chain owns this persistent packet line. Record a terminal local
+         * verdict so no later packet callback can restart response progress;
+         * owner-worker Stop remains responsible for the queued buffers and
+         * line state. A packet-line Finish would be a contract violation for
+         * the peer rather than an orderly failure signal. */
+        ls->terminal_failure = true;
+        testerserverFail(t, l, "response progress task admission failed");
+        return;
+    }
+
     LOGF("TesterServer: response progress cannot continue after required task admission failed");
     testerserverLinestateDestroy(ls);
     tunnelPrevDownStreamFinish(t, l);
@@ -825,7 +839,7 @@ void testerserverScheduleResponseSend(tunnel_t *t, line_t *l, testerserver_lstat
 {
     testerserver_tstate_t *ts = tunnelGetState(t);
 
-    if (ls->response_send_scheduled || ls->response_sent)
+    if (ls->terminal_failure || ls->response_send_scheduled || ls->response_sent)
     {
         return;
     }
@@ -848,12 +862,17 @@ void testerserverScheduleResponseSend(tunnel_t *t, line_t *l, testerserver_lstat
         }
     }
 
-    ls->response_send_scheduled = true;
-    if (UNLIKELY(! lineScheduleTask(l, testerserverResponseSendTask, t)))
+    ls->response_send_scheduled            = true;
+    const line_task_submit_result_e result = lineScheduleTask(l, testerserverResponseSendTask, t, NULL);
+    if (UNLIKELY(result == kLineTaskSubmitRejectedSettled))
     {
         ls->response_send_scheduled = false;
         LOGE("TesterServer: failed to schedule response progress");
         testerserverFailResponseProgressAdmission(t, l, ls);
+    }
+    else
+    {
+        assert(result == kLineTaskSubmitAcceptedAsync);
     }
 }
 
@@ -940,21 +959,31 @@ void testerserverResponseSendTask(tunnel_t *t, line_t *l)
                 ls->response_send_scheduled = true;
                 if (ts->split_payload_delay_ms == 0)
                 {
-                    if (UNLIKELY(! lineScheduleTask(l, testerserverResponseSendTask, t)))
+                    const line_task_submit_result_e result = lineScheduleTask(l, testerserverResponseSendTask, t, NULL);
+                    if (UNLIKELY(result == kLineTaskSubmitRejectedSettled))
                     {
                         ls->response_send_scheduled = false;
                         LOGE("TesterServer: failed to schedule split response progress");
                         testerserverFailResponseProgressAdmission(t, l, ls);
                     }
+                    else
+                    {
+                        assert(result == kLineTaskSubmitAcceptedAsync);
+                    }
                 }
                 else
                 {
-                    if (UNLIKELY(
-                            ! lineScheduleDelayedTask(l, testerserverResponseSendTask, ts->split_payload_delay_ms, t)))
+                    const line_task_submit_result_e result =
+                        lineScheduleDelayedTask(l, testerserverResponseSendTask, ts->split_payload_delay_ms, t, NULL);
+                    if (UNLIKELY(result == kLineTaskSubmitRejectedSettled))
                     {
                         ls->response_send_scheduled = false;
                         LOGE("TesterServer: failed to schedule delayed split response progress");
                         testerserverFailResponseProgressAdmission(t, l, ls);
+                    }
+                    else
+                    {
+                        assert(result == kLineTaskSubmitTimerArmed);
                     }
                 }
                 return;

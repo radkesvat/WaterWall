@@ -12,6 +12,7 @@
  */
 #include "TesterClient/structure.h"
 
+#include "ev_memory.h"
 #include "startup.h"
 #include "tunnel_orderly_shutdown_harness.h"
 
@@ -36,19 +37,62 @@ typedef struct testerclient_fixture_s
     line_t          *line;
 } testerclient_fixture_t;
 
-static bool fail_next_timer_add;
+static bool         fail_next_line_task;
+static bool         fail_next_delayed_line_task;
+static bool         forbid_delayed_line_task;
+static bool         forbid_delayed_line_task_after_refusal;
+static unsigned int delayed_line_task_submissions;
 
-wtimer_t *__real_wtimerAdd(wloop_t *loop, wtimer_cb cb, uint32_t timeout_ms, uint32_t repeat);
-wtimer_t *__wrap_wtimerAdd(wloop_t *loop, wtimer_cb cb, uint32_t timeout_ms, uint32_t repeat);
+line_task_submit_result_e __real_lineScheduleTask(line_t *const line, LineTaskFnNoBuf task, tunnel_t *t,
+                                                  LineTaskCancelFn on_cancel);
+line_task_submit_result_e __wrap_lineScheduleTask(line_t *const line, LineTaskFnNoBuf task, tunnel_t *t,
+                                                  LineTaskCancelFn on_cancel);
+line_task_submit_result_e __real_lineScheduleDelayedTask(line_t *const line, LineTaskFnNoBuf task, uint32_t delay_ms,
+                                                         tunnel_t *t, LineTaskCancelFn on_cancel);
+line_task_submit_result_e __wrap_lineScheduleDelayedTask(line_t *const line, LineTaskFnNoBuf task, uint32_t delay_ms,
+                                                         tunnel_t *t, LineTaskCancelFn on_cancel);
+void                      testerclientStartWorkerTestInvoke(worker_t *worker, tunnel_t *t);
 
-wtimer_t *__wrap_wtimerAdd(wloop_t *loop, wtimer_cb cb, uint32_t timeout_ms, uint32_t repeat)
+line_task_submit_result_e __wrap_lineScheduleTask(line_t *const line, LineTaskFnNoBuf task, tunnel_t *t,
+                                                  LineTaskCancelFn on_cancel)
 {
-    if (fail_next_timer_add)
+    if (! fail_next_line_task)
     {
-        fail_next_timer_add = false;
-        return NULL;
+        return __real_lineScheduleTask(line, task, t, on_cancel);
     }
-    return __real_wtimerAdd(loop, cb, timeout_ms, repeat);
+
+    fail_next_line_task = false;
+    lineRef(line);
+    if (on_cancel != NULL)
+    {
+        on_cancel(t, line, kLineTaskCancelEnqueueFailure);
+    }
+    lineUnref(line);
+    return kLineTaskSubmitRejectedSettled;
+}
+
+line_task_submit_result_e __wrap_lineScheduleDelayedTask(line_t *const line, LineTaskFnNoBuf task, uint32_t delay_ms,
+                                                         tunnel_t *t, LineTaskCancelFn on_cancel)
+{
+    delayed_line_task_submissions += 1U;
+    if (fail_next_delayed_line_task)
+    {
+        fail_next_delayed_line_task = false;
+        lineRef(line);
+        if (on_cancel != NULL)
+        {
+            on_cancel(t, line, kLineTaskCancelResourceFailure);
+        }
+        lineUnref(line);
+        if (forbid_delayed_line_task_after_refusal)
+        {
+            forbid_delayed_line_task = true;
+        }
+        return kLineTaskSubmitRejectedSettled;
+    }
+
+    twfRequire(! forbid_delayed_line_task, "TesterClient armed a watchdog after request admission failed");
+    return __real_lineScheduleDelayedTask(line, task, delay_ms, t, on_cancel);
 }
 
 static void fixtureSetup(testerclient_fixture_t *fixture, bool packet_mode)
@@ -224,7 +268,7 @@ static void caseSynchronousStartRefusalPropagatesStartupStatus(void)
     tester->chain        = &chain;
 
     ww_startup_context_t startup = {0};
-    fail_next_timer_add          = true;
+    eventloopTestFailNextTryZalloc();
     wwStartupContextBegin(&startup);
     testerclientTunnelOnStart(tester);
     twfRequire(! wwStartupSucceeded(wwStartupContextEnd(&startup)),
@@ -253,13 +297,157 @@ static void caseAcceptedQueuedTimerSetupFailureUsesCleanup(void)
     twfRequire(wwStartupSucceeded(wwStartupContextEnd(&startup)), "accepted queued setup reported startup failure");
     tosRequireNoProcessApiCall();
 
-    fail_next_timer_add = true;
+    eventloopTestFailNextTryZalloc();
     tosPumpWorker(&env, 0);
     tosRequireAcceptedRequest(1);
 
     discard tosSetCurrentWorker(previous_wid);
     tunnelDestroy(tester);
     tosWorkerEnvTeardown(&env);
+}
+
+static void runPacketStartScheduleRefusal(uint32_t start_delay_ms)
+{
+    tosResetProcessApi(true);
+
+    tos_worker_env_t env;
+    tosWorkerEnvSetup(&env, 1, kTestLargeBufferSize, kTestSmallBufferSize);
+
+    twf_trace_t trace  = {0};
+    tunnel_t   *tester = tunnelCreate(NULL, sizeof(testerclient_tstate_t), sizeof(testerclient_lstate_t));
+    twfRequire(tester != NULL, "failed to create the packet-start TesterClient fixture");
+    tunnel_t *next = twfCreateNextTunnel(&trace);
+    tunnelBind(tester, next);
+
+    tunnel_chain_t *chain = memoryAllocateZero(sizeof(tunnel_chain_t) + sizeof(generic_pool_t *));
+    twfRequire(chain != NULL, "failed to allocate the packet-start chain");
+    line_t *packet_lines[1]     = {twfLineCreate(tester->lstate_size)};
+    chain->workers_count        = 1;
+    chain->contains_packet_node = true;
+    chain->finalized            = true;
+    chain->packet_lines         = packet_lines;
+    tester->chain               = chain;
+    next->chain                 = chain;
+
+    testerclient_tstate_t *ts    = tunnelGetState(tester);
+    ts->chunk_count              = kTestChunkCount;
+    ts->packet_mode              = true;
+    ts->packet_start_immediately = true;
+    ts->packet_start_delay_ms    = start_delay_ms;
+    ts->split_payload_burst      = kTesterClientSplitPayloadBurst;
+
+    const wid_t previous_wid               = tosSetCurrentWorker(0);
+    fail_next_line_task                    = start_delay_ms == 0;
+    fail_next_delayed_line_task            = start_delay_ms > 0;
+    forbid_delayed_line_task               = start_delay_ms == 0;
+    forbid_delayed_line_task_after_refusal = start_delay_ms > 0;
+    delayed_line_task_submissions          = 0;
+    testerclientStartWorkerTestInvoke(getWorker(0), tester);
+
+    tosRequireAcceptedRequest(1);
+    twfRequireEqualU32(delayed_line_task_submissions,
+                       start_delay_ms > 0 ? 1U : 0U,
+                       "request admission failure still submitted a line watchdog");
+    twfRequire(lineIsAlive(packet_lines[0]), "request admission failure destroyed the worker packet line");
+    testerclient_lstate_t *ls = lineGetState(packet_lines[0], tester);
+    twfRequire(! ls->request_send_scheduled, "rejected packet request remained marked as scheduled");
+
+    forbid_delayed_line_task               = false;
+    forbid_delayed_line_task_after_refusal = false;
+    testerclientTunnelOnWorkerStop(tester, 0, wwLifecycleProcessShutdown());
+    twfRequireLineStateZeroed(packet_lines[0], tester, "worker Stop left rejected packet-start state alive");
+    discard tosSetCurrentWorker(previous_wid);
+
+    twfLineDestroy(packet_lines[0]);
+    memoryFree(chain);
+    tunnelDestroy(next);
+    tunnelDestroy(tester);
+    tosWorkerEnvTeardown(&env);
+}
+
+static void casePacketStartRefusalDoesNotArmWatchdog(void)
+{
+    twfSetCase("testerclient packet request refusal does not arm watchdog");
+    runPacketStartScheduleRefusal(0);
+}
+
+static void caseDelayedPacketStartRefusalDoesNotArmWatchdog(void)
+{
+    twfSetCase("testerclient delayed packet request refusal does not arm watchdog");
+    runPacketStartScheduleRefusal(1);
+}
+
+static void caseOwnedRequestScheduleRefusalClosesLine(void)
+{
+    twfSetCase("testerclient owned request schedule refusal closes the line");
+    tosResetProcessApi(true);
+
+    testerclient_fixture_t fixture;
+    fixtureSetup(&fixture, false);
+
+    testerclient_tstate_t *ts = tunnelGetState(fixture.tester);
+    testerclient_lstate_t *ls = lineGetState(fixture.line, fixture.tester);
+    ls->est_received          = true;
+    ls->request_complete      = false;
+
+    lineRef(fixture.line);
+    fail_next_line_task = true;
+    testerclientScheduleRequestSend(fixture.tester, fixture.line, ls);
+
+    tosRequireAcceptedRequest(1);
+    twfRequire(! lineIsAlive(fixture.line), "request refusal left the owned normal line alive");
+    twfRequire(ts->workers[0].line == NULL, "request refusal left the owned line published");
+    twfRequire(ts->workers[0].closed, "request refusal did not mark the owned line closed");
+    twfRequireEqualU32(fixture.trace.next_finish, 1, "request refusal did not finish away from the owner");
+    twfRequireLineStateZeroed(fixture.line, fixture.tester, "request refusal left TesterClient state alive");
+
+    lineUnref(fixture.line);
+    fixture.line = NULL;
+    twfRequireEqualU32(
+        (uint32_t) masterpoolGetCheckedOut(fixture.lines.master), 0, "request refusal retained the owned line");
+    fixtureTeardown(&fixture);
+}
+
+static void caseDelayedSplitRequestRefusalClosesLine(void)
+{
+    twfSetCase("testerclient delayed split request refusal closes the line");
+    tosResetProcessApi(true);
+
+    testerclient_fixture_t fixture;
+    fixtureSetup(&fixture, false);
+
+    testerclient_tstate_t *ts  = tunnelGetState(fixture.tester);
+    ts->max_payload_size       = 1;
+    ts->split_payload_delay_ms = 1;
+    ts->split_payload_burst    = 1;
+
+    testerclient_lstate_t *ls  = lineGetState(fixture.line, fixture.tester);
+    ls->est_received           = true;
+    ls->request_complete       = false;
+    ls->request_send_scheduled = true;
+
+    lineRef(fixture.line);
+    fail_next_delayed_line_task            = true;
+    forbid_delayed_line_task_after_refusal = true;
+    forbid_delayed_line_task               = false;
+    delayed_line_task_submissions          = 0;
+    testerclientRequestSendTask(fixture.tester, fixture.line);
+
+    tosRequireAcceptedRequest(1);
+    twfRequire(! lineIsAlive(fixture.line), "split-progress refusal left the owned normal line alive");
+    twfRequire(ts->workers[0].line == NULL, "split-progress refusal left the owned line published");
+    twfRequireEqualU32(fixture.trace.next_payload, 1, "split-progress fixture did not send one partial payload");
+    twfRequireEqualU32(fixture.trace.next_finish, 1, "split-progress refusal did not finish away from the owner");
+    twfRequireEqualU32(delayed_line_task_submissions, 1, "split-progress refusal armed later work");
+    twfRequireLineStateZeroed(fixture.line, fixture.tester, "split-progress refusal left its latch or state alive");
+
+    forbid_delayed_line_task               = false;
+    forbid_delayed_line_task_after_refusal = false;
+    lineUnref(fixture.line);
+    fixture.line = NULL;
+    twfRequireEqualU32(
+        (uint32_t) masterpoolGetCheckedOut(fixture.lines.master), 0, "split-progress refusal retained the owned line");
+    fixtureTeardown(&fixture);
 }
 
 // ---------------------------------------------------------------------------
@@ -793,6 +981,10 @@ int main(void)
 {
     caseSynchronousStartRefusalPropagatesStartupStatus();
     caseAcceptedQueuedTimerSetupFailureUsesCleanup();
+    casePacketStartRefusalDoesNotArmWatchdog();
+    caseDelayedPacketStartRefusalDoesNotArmWatchdog();
+    caseOwnedRequestScheduleRefusalClosesLine();
+    caseDelayedSplitRequestRefusalClosesLine();
     casePacketResponseMismatch();
     caseStreamResponseMismatch();
     caseRefusedHandoffAborts();

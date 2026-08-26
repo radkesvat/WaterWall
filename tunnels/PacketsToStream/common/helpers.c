@@ -652,11 +652,17 @@ void packetstostreamScheduleRecreateOutputLine(tunnel_t *t, line_t *packet_line,
     }
 
     ls->recreate_scheduled = true;
-    if (UNLIKELY(! lineScheduleTask(packet_line, packetstostreamRecreateOutputLineTask, t)))
+    const line_task_submit_result_e result =
+        lineScheduleTask(packet_line, packetstostreamRecreateOutputLineTask, t, NULL);
+    if (UNLIKELY(result == kLineTaskSubmitRejectedSettled))
     {
         /* Leave the packet worker retryable; the next packet/heartbeat may
          * schedule another attempt instead of permanently latching blackhole. */
         ls->recreate_scheduled = false;
+    }
+    else
+    {
+        assert(result == kLineTaskSubmitAcceptedAsync);
     }
 }
 

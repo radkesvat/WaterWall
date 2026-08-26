@@ -2,6 +2,10 @@
 
 #include "loggers/network_logger.h"
 
+#ifdef WW_TESTERCLIENT_START_TEST_SEAM
+void testerclientStartWorkerTestInvoke(worker_t *worker, tunnel_t *t);
+#endif
+
 static void testerclientStartWorker(void *worker, void *arg1, void *arg2, void *arg3)
 {
     worker_t                    *real_worker = worker;
@@ -44,20 +48,33 @@ static void testerclientStartWorker(void *worker, void *arg1, void *arg2, void *
         if (ts->packet_start_delay_ms > 0)
         {
             ls->request_send_scheduled = true;
-            if (UNLIKELY(! lineScheduleDelayedTask(l, testerclientRequestSendTask, ts->packet_start_delay_ms, t)))
+            const line_task_submit_result_e result =
+                lineScheduleDelayedTask(l, testerclientRequestSendTask, ts->packet_start_delay_ms, t, NULL);
+            if (UNLIKELY(result == kLineTaskSubmitRejectedSettled))
             {
                 ls->request_send_scheduled = false;
                 testerclientFail(t, l, "failed to schedule packet-mode request start");
                 return;
             }
+            assert(result == kLineTaskSubmitTimerArmed);
         }
         else
         {
             testerclientScheduleRequestSend(t, l, ls);
+            /* Force-queued work cannot run before this owner callback returns,
+             * so a clear latch here means synchronous admission rejection.
+             * testerclientScheduleRequestSend() already recorded the terminal
+             * verdict; do not arm fresh watchdog work after that request. */
+            if (UNLIKELY(! ls->request_send_scheduled))
+            {
+                return;
+            }
         }
     }
 
-    if (UNLIKELY(! lineScheduleDelayedTask(l, testerclientWatchdogTask, kTesterClientWatchdogMs, t)))
+    const line_task_submit_result_e watchdog_result =
+        lineScheduleDelayedTask(l, testerclientWatchdogTask, kTesterClientWatchdogMs, t, NULL);
+    if (UNLIKELY(watchdog_result == kLineTaskSubmitRejectedSettled))
     {
         if (ts->packet_mode)
         {
@@ -68,7 +85,18 @@ static void testerclientStartWorker(void *worker, void *arg1, void *arg2, void *
             testerclientFailOwnedLine(t, l, "failed to arm watchdog", true);
         }
     }
+    else
+    {
+        assert(watchdog_result == kLineTaskSubmitTimerArmed);
+    }
 }
+
+#ifdef WW_TESTERCLIENT_START_TEST_SEAM
+void testerclientStartWorkerTestInvoke(worker_t *worker, tunnel_t *t)
+{
+    testerclientStartWorker(worker, t, NULL, NULL);
+}
+#endif
 
 static void testerclientCleanupStartWorker(void *arg1, void *arg2, void *arg3, worker_message_cancel_reason_e reason)
 {

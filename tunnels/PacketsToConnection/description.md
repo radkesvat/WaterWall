@@ -1,5 +1,5 @@
 <!--
-Documentation version: 152
+Documentation version: 153
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/PacketsToConnection.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/PacketsToConnection.mdx, and all files must keep the same documentation version.
 -->
 
@@ -121,7 +121,10 @@ Important internal rules:
 - the packet line is not closed during runtime
 - packet-line `Init` is a startup/bootstrap event, not a per-flow open
 - generated TCP/UDP Waterwall lines are owned by the packet worker that accepted the flow
-- lwIP callbacks hand work back to the owning line worker through `lineScheduleTask()` and `lineScheduleTaskWithBuf()`
+- lwIP callbacks hand work back to the owning line worker through the typed-result `lineScheduleTask()` and
+  `lineScheduleTaskWithBuf()` contract. Required control refusal makes the producer terminal while the lwIP core lock
+  still protects its registry; optional cancellation is deliberately null so cleanup cannot re-enter that lock.
+  Buffered delivery transfers its copied buffer on every result
 - UDP idle close uses one cancellable owner-worker timer. The timer owns exactly one line reference while armed,
   activity resets the same timer, and close cancels it and drops the reference before line state is zeroed
 - packets emitted back to the packet side use the worker packet line for that packet worker

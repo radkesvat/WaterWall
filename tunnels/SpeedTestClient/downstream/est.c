@@ -5,7 +5,7 @@
 void speedtestclientTunnelDownStreamEst(tunnel_t *t, line_t *l)
 {
     speedtestclient_tstate_t *state = tunnelGetState(t);
-    speedtestclient_lstate_t *ls = lineGetState(l, t);
+    speedtestclient_lstate_t *ls    = lineGetState(l, t);
     char                      target_buf[64];
 
     lineMarkEstablished(l);
@@ -28,6 +28,10 @@ void speedtestclientTunnelDownStreamEst(tunnel_t *t, line_t *l)
          state->download ? "download" : "",
          target_buf);
 
+    /* A synchronous scheduling refusal closes this owned line. Keep the
+     * allocation present across the first admission and stop before the
+     * second scheduler reads destroyed lstate. */
+    lineRef(l);
     if (state->upload)
     {
         speedtestclientScheduleSend(t, l, ls);
@@ -36,5 +40,11 @@ void speedtestclientTunnelDownStreamEst(tunnel_t *t, line_t *l)
     {
         speedtestclientScheduleSend(t, l, ls);
     }
+    if (! lineIsAlive(l))
+    {
+        lineUnref(l);
+        return;
+    }
     speedtestclientScheduleReport(t, l, ls);
+    lineUnref(l);
 }

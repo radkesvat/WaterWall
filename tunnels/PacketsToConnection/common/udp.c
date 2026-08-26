@@ -119,9 +119,14 @@ void ptcUdpReceived(void *arg, struct udp_pcb *upcb, struct pbuf *p, const ip_ad
             // line still owns its lwIP refs. Defer the full teardown to the owner worker;
             // ptcCloseLineFromNetwork() detaches the lwIP state and destroys the line state
             // outside the core lock. next_init was never sent, so no Finish is propagated.
-            if (! lineScheduleTask(line, ptcCloseLineTask, t))
+            const line_task_submit_result_e result = lineScheduleTask(line, ptcCloseLineTask, t, NULL);
+            if (result == kLineTaskSubmitRejectedSettled)
             {
                 discard ptcRequiredControlRefusedLocked(ls, "duplicate UDP-flow close");
+            }
+            else
+            {
+                assert(result == kLineTaskSubmitAcceptedAsync);
             }
             pbuf_free(p);
             return;
@@ -145,12 +150,17 @@ void ptcUdpReceived(void *arg, struct udp_pcb *upcb, struct pbuf *p, const ip_ad
         }
     }
 
-    if (new_flow && ! lineScheduleTask(line, ptcOpenLineTask, t))
+    if (new_flow)
     {
-        /* Init is required control: publishing payload without it strands an owned line. */
-        discard ptcRequiredControlRefusedLocked(lineGetState(line, t), "UDP-flow open");
-        pbuf_free(p);
-        return;
+        const line_task_submit_result_e result = lineScheduleTask(line, ptcOpenLineTask, t, NULL);
+        if (result == kLineTaskSubmitRejectedSettled)
+        {
+            /* Init is required control: publishing payload without it strands an owned line. */
+            discard ptcRequiredControlRefusedLocked(lineGetState(line, t), "UDP-flow open");
+            pbuf_free(p);
+            return;
+        }
+        assert(result == kLineTaskSubmitAcceptedAsync);
     }
 
     buffer_pool_t *pool = lineGetBufferPool(line);
@@ -162,7 +172,8 @@ void ptcUdpReceived(void *arg, struct udp_pcb *upcb, struct pbuf *p, const ip_ad
     if (lineIsAlive(line))
     {
         /* UDP is intentionally lossy when the worker queue refuses admission. */
-        discard lineScheduleTaskWithBuf(line, ptcDeliverPayloadTask, t, buf);
+        const line_task_submit_result_e result = lineScheduleTaskWithBuf(line, ptcDeliverPayloadTask, t, buf, NULL);
+        discard                         result;
     }
     else
     {

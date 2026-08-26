@@ -105,12 +105,14 @@ enum
 
 typedef struct twf_buffer_ledger_s
 {
-    sbuf_t  *live[kTwfMaxTrackedBuffers];
-    uint32_t live_count;
-    sbuf_t  *recycled[kTwfMaxTrackedBuffers];
-    uint32_t recycled_count;
-    uint32_t total_acquired;
-    uint32_t total_recycled;
+    sbuf_t        *live[kTwfMaxTrackedBuffers];
+    uint32_t       live_count;
+    sbuf_t        *recycled[kTwfMaxTrackedBuffers];
+    uint32_t       recycled_count;
+    uint32_t       total_acquired;
+    uint32_t       total_recycled;
+    sbuf_t        *last_recycled_buffer;
+    buffer_pool_t *last_recycle_pool;
 } twf_buffer_ledger_t;
 
 static twf_buffer_ledger_t g_twf_buffers;
@@ -203,6 +205,8 @@ void __wrap_bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *b)
     }
 
     ++g_twf_buffers.total_recycled;
+    g_twf_buffers.last_recycled_buffer = b;
+    g_twf_buffers.last_recycle_pool    = pool;
     __real_bufferpoolReuseBuffer(pool, b);
 }
 
@@ -234,6 +238,11 @@ static void twfRequireNoLeakedBuffers(void)
 static uint32_t twfRecycleCount(void)
 {
     return g_twf_buffers.total_recycled;
+}
+
+static void twfRequireLastRecycle(const sbuf_t *buffer, const buffer_pool_t *pool, const char *message)
+{
+    twfRequire(g_twf_buffers.last_recycled_buffer == buffer && g_twf_buffers.last_recycle_pool == pool, message);
 }
 
 // ---------------------------------------------------------------------------

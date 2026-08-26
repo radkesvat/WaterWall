@@ -16,9 +16,17 @@ static bool ptcReceiveCreditFailureLocked(ptc_lstate_t *ls, const char *reason)
     ls->rx_uncredited   = 0;
     ls->read_paused_len = 0;
 
-    if (lineIsAlive(ls->line) && ! lineScheduleTask(ls->line, ptcCloseLineTask, ls->tunnel))
+    if (lineIsAlive(ls->line))
     {
-        discard ptcRequiredControlRefusedLocked(ls, "receive-credit failure close");
+        const line_task_submit_result_e result = lineScheduleTask(ls->line, ptcCloseLineTask, ls->tunnel, NULL);
+        if (result == kLineTaskSubmitRejectedSettled)
+        {
+            discard ptcRequiredControlRefusedLocked(ls, "receive-credit failure close");
+        }
+        else
+        {
+            assert(result == kLineTaskSubmitAcceptedAsync);
+        }
     }
     return false;
 }

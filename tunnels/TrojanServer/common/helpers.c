@@ -549,11 +549,15 @@ bool trojanserverScheduleFallbackPayloadDrain(tunnel_t *t, line_t *l, trojanserv
                           : fastRandJittered32(ts->fallback_intentional_delay_ms, ts->fallback_intentional_delay_jitter_ms);
 
     ls->fallback_delay_scheduled = true;
-    if (UNLIKELY(! lineScheduleDelayedTask(l, trojanserverDelayedFallbackPayloadTask, delay_ms, t)))
+    const line_task_submit_result_e result =
+        lineScheduleDelayedTask(l, trojanserverDelayedFallbackPayloadTask, delay_ms, t, NULL);
+    if (UNLIKELY(result == kLineTaskSubmitRejectedSettled))
     {
         ls->fallback_delay_scheduled = false;
         return false;
     }
+    assert((delay_ms == 0 && result == kLineTaskSubmitAcceptedAsync) ||
+           (delay_ms > 0 && result == kLineTaskSubmitTimerArmed));
     return true;
 }
 

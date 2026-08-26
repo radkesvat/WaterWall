@@ -25,12 +25,6 @@ typedef enum worker_message_submit_result_e
 
 typedef void (*WorkerMessageCleanupCallback)(void *, void *, void *, worker_message_cancel_reason_e);
 
-#if defined(__GNUC__) || defined(__clang__)
-#define WW_WORKER_MESSAGE_MUST_USE __attribute__((warn_unused_result))
-#else
-#define WW_WORKER_MESSAGE_MUST_USE
-#endif
-
 typedef struct worker_msg_s
 {
     WorkerMessageCallback callback;
@@ -80,6 +74,9 @@ void workerMessageEnqueueTestSeam(worker_t *worker, worker_message_enqueue_test_
 void workerMessageTimedRearmTestSeam(worker_t *worker, uint64_t *deadline_us);
 void workerMessagesInitTestSetFailure(worker_message_init_test_failure_e failure);
 void workerMessagesEnqueueTestSetFailure(worker_message_enqueue_test_failure_e failure);
+/* Close the target loop's normal admission immediately before the next timed
+ * install attempt, after the worker-message precheck has passed. */
+void workerMessagesTimerInstallTestCloseAdmission(void);
 #endif
 
 void sendWorkerMessage(wid_t wid, WorkerMessageCallback cb, void *arg1, void *arg2, void *arg3);
@@ -91,10 +88,11 @@ void sendWorkerMessageForceQueueBestEffort(wid_t wid, WorkerMessageCallback cb, 
 void sendWorkerMessageForceQueueBestEffortWithCleanup(wid_t wid, WorkerMessageCallback cb,
                                                       WorkerMessageCleanupCallback cleanup, void *arg1, void *arg2,
                                                       void *arg3);
-WW_WORKER_MESSAGE_MUST_USE worker_message_submit_result_e sendWorkerMessageForceQueueWithCleanup(
-    wid_t wid, WorkerMessageCallback cb, WorkerMessageCleanupCallback cleanup, void *arg1, void *arg2, void *arg3);
+WW_MUST_USE worker_message_submit_result_e sendWorkerMessageForceQueueWithCleanup(wid_t wid, WorkerMessageCallback cb,
+                                                                                  WorkerMessageCleanupCallback cleanup,
+                                                                                  void *arg1, void *arg2, void *arg3);
 /* Refusal retains caller ownership; acceptance transfers it to callback-or-cleanup settlement. */
-WW_WORKER_MESSAGE_MUST_USE worker_message_submit_result_e sendWorkerMessageForceQueueRetainOnRefusal(
+WW_MUST_USE worker_message_submit_result_e sendWorkerMessageForceQueueRetainOnRefusal(
     wid_t wid, WorkerMessageCallback cb, WorkerMessageCleanupCallback cleanup, void *arg1, void *arg2, void *arg3);
 
 // Same as above but with a delay in ms. delay=0 means next event-loop iteration.
@@ -102,12 +100,12 @@ WW_WORKER_MESSAGE_MUST_USE worker_message_submit_result_e sendWorkerMessageForce
 // use your own FIFO queue (like buffer_queue_t forexample).
 void sendWorkerMessageTimed(wid_t wid, WorkerMessageCallback cb, uint32_t delay_ms, void *arg1, void *arg2, void *arg3);
 /* Accepted work runs its callback or receives one typed cancellation cleanup. */
-WW_WORKER_MESSAGE_MUST_USE worker_message_submit_result_e
-sendWorkerMessageTimedWithCleanup(wid_t wid, WorkerMessageCallback cb, WorkerMessageCleanupCallback cleanup,
-                                  uint32_t delay_ms, void *arg1, void *arg2, void *arg3);
+WW_MUST_USE worker_message_submit_result_e sendWorkerMessageTimedWithCleanup(wid_t wid, WorkerMessageCallback cb,
+                                                                             WorkerMessageCleanupCallback cleanup,
+                                                                             uint32_t delay_ms, void *arg1, void *arg2,
+                                                                             void *arg3);
 /* Refusal retains caller ownership; acceptance transfers it to callback-or-cleanup settlement. */
-WW_WORKER_MESSAGE_MUST_USE worker_message_submit_result_e
-sendWorkerMessageTimedRetainOnRefusal(wid_t wid, WorkerMessageCallback cb, WorkerMessageCleanupCallback cleanup,
-                                      uint32_t delay_ms, void *arg1, void *arg2, void *arg3);
-
-#undef WW_WORKER_MESSAGE_MUST_USE
+WW_MUST_USE worker_message_submit_result_e sendWorkerMessageTimedRetainOnRefusal(wid_t wid, WorkerMessageCallback cb,
+                                                                                 WorkerMessageCleanupCallback cleanup,
+                                                                                 uint32_t delay_ms, void *arg1,
+                                                                                 void *arg2, void *arg3);

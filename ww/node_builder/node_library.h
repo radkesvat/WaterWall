@@ -8,7 +8,10 @@
 
 #include "objects/node.h"
 
-#define WW_EXTERNAL_NODE_LIFECYCLE_ABI_VERSION 2u
+/* The historical descriptor symbol name is retained, but version 3 gates the
+ * complete external-node ABI, including the public line-task call ABI. */
+#define WW_EXTERNAL_NODE_ABI_VERSION           3u
+#define WW_EXTERNAL_NODE_LIFECYCLE_ABI_VERSION WW_EXTERNAL_NODE_ABI_VERSION
 #define WW_EXTERNAL_NODE_LIFECYCLE_ABI_SYMBOL  "waterwallNodeLifecycleAbiVersion"
 
 typedef uint32_t (*node_lifecycle_abi_version_fn)(void);

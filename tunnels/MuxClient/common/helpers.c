@@ -224,7 +224,9 @@ static void muxclientParentStatsLogTask(tunnel_t *t, line_t *parent_l)
     if (! parent_ls->parent_finishing)
     {
         /* Optional statistics sampling is intentionally lossy under pressure. */
-        discard lineScheduleDelayedTask(parent_l, muxclientParentStatsLogTask, kMuxMainLineStatsLogIntervalMs, t);
+        const line_task_submit_result_e result =
+            lineScheduleDelayedTask(parent_l, muxclientParentStatsLogTask, kMuxMainLineStatsLogIntervalMs, t, NULL);
+        discard result;
     }
 }
 
@@ -238,7 +240,9 @@ void muxclientScheduleParentStatsLog(tunnel_t *t, line_t *parent_l)
     }
 
     /* Optional statistics sampling is intentionally lossy under pressure. */
-    discard lineScheduleDelayedTask(parent_l, muxclientParentStatsLogTask, kMuxMainLineStatsLogIntervalMs, t);
+    const line_task_submit_result_e result =
+        lineScheduleDelayedTask(parent_l, muxclientParentStatsLogTask, kMuxMainLineStatsLogIntervalMs, t, NULL);
+    discard result;
 }
 
 static bool muxclientCreateParentLine(tunnel_t *t, wid_t wid, line_t **selection_slot)

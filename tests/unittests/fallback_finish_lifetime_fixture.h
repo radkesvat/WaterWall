@@ -37,12 +37,13 @@ struct fallback_finish_fixture_s
 
 typedef struct fallback_finish_scheduled_task_s
 {
-    line_t         *line;
-    tunnel_t       *tunnel;
-    LineTaskFnNoBuf callback;
-    uint32_t        delay_ms;
-    bool            pending;
-    bool            refuse;
+    line_t          *line;
+    tunnel_t        *tunnel;
+    LineTaskFnNoBuf  callback;
+    LineTaskCancelFn on_cancel;
+    uint32_t         delay_ms;
+    bool             pending;
+    bool             refuse;
 } fallback_finish_scheduled_task_t;
 
 static fallback_finish_scheduled_task_t g_fallback_finish_task;
@@ -155,27 +156,36 @@ static void fallbackFinishResetScheduledTask(void)
     memoryZero(&g_fallback_finish_task, sizeof(g_fallback_finish_task));
 }
 
-bool __wrap_lineScheduleDelayedTask(line_t *const line, LineTaskFnNoBuf callback, uint32_t delay_ms, tunnel_t *t);
+line_task_submit_result_e __wrap_lineScheduleDelayedTask(line_t *const line, LineTaskFnNoBuf callback,
+                                                         uint32_t delay_ms, tunnel_t *t, LineTaskCancelFn on_cancel);
 
-bool __wrap_lineScheduleDelayedTask(line_t *const line, LineTaskFnNoBuf callback, uint32_t delay_ms, tunnel_t *t)
+line_task_submit_result_e __wrap_lineScheduleDelayedTask(line_t *const line, LineTaskFnNoBuf callback,
+                                                         uint32_t delay_ms, tunnel_t *t, LineTaskCancelFn on_cancel)
 {
     twfRequire(! g_fallback_finish_task.pending, "more than one delayed fallback task was scheduled");
 
     if (g_fallback_finish_task.refuse)
     {
-        return false;
+        lineRef(line);
+        if (on_cancel != NULL)
+        {
+            on_cancel(t, line, kLineTaskCancelResourceFailure);
+        }
+        lineUnref(line);
+        return kLineTaskSubmitRejectedSettled;
     }
 
     lineRef(line);
     g_fallback_finish_task = (fallback_finish_scheduled_task_t) {
-        .line     = line,
-        .tunnel   = t,
-        .callback = callback,
-        .delay_ms = delay_ms,
-        .pending  = true,
-        .refuse   = false,
+        .line      = line,
+        .tunnel    = t,
+        .callback  = callback,
+        .on_cancel = on_cancel,
+        .delay_ms  = delay_ms,
+        .pending   = true,
+        .refuse    = false,
     };
-    return true;
+    return delay_ms == 0 ? kLineTaskSubmitAcceptedAsync : kLineTaskSubmitTimerArmed;
 }
 
 static void fallbackFinishDriveDelayedTask(void)
@@ -188,6 +198,10 @@ static void fallbackFinishDriveDelayedTask(void)
     if (lineIsAlive(task.line))
     {
         task.callback(task.tunnel, task.line);
+    }
+    else if (task.on_cancel != NULL)
+    {
+        task.on_cancel(task.tunnel, task.line, kLineTaskCancelLineDead);
     }
     lineUnref(task.line);
 }

@@ -7,6 +7,7 @@
  * worker-local state, and nothing ever silently falls back to worker 0.
  */
 
+#include "ev_memory.h"
 #include "global_state.h"
 #include "wloop_internal.h"
 #include "worker.h"
@@ -319,14 +320,11 @@ static void pipeTestBorrowedFinish(tunnel_t *t, line_t *line)
 
 #ifdef WW_WORKER_MESSAGE_LINK_WRAP
 static atomic_bool g_fail_wakeup_post;
-static atomic_bool g_fail_timer_add;
 static atomic_uint g_pipe_shutdown_requests;
 
-bool      __real_wloopPostEvent(wloop_t *loop, wevent_t *event);
-bool      __wrap_wloopPostEvent(wloop_t *loop, wevent_t *event);
-wtimer_t *__real_wtimerAdd(wloop_t *loop, wtimer_cb cb, uint32_t timeout_ms, uint32_t repeat);
-wtimer_t *__wrap_wtimerAdd(wloop_t *loop, wtimer_cb cb, uint32_t timeout_ms, uint32_t repeat);
-bool      __wrap_signalmanagerRequestShutdownPreservingAcceptedStatus(int exit_code);
+bool __real_wloopPostEvent(wloop_t *loop, wevent_t *event);
+bool __wrap_wloopPostEvent(wloop_t *loop, wevent_t *event);
+bool __wrap_signalmanagerRequestShutdownPreservingAcceptedStatus(int exit_code);
 
 bool __wrap_signalmanagerRequestShutdownPreservingAcceptedStatus(int exit_code)
 {
@@ -342,15 +340,6 @@ bool __wrap_wloopPostEvent(wloop_t *loop, wevent_t *event)
         return false;
     }
     return __real_wloopPostEvent(loop, event);
-}
-
-wtimer_t *__wrap_wtimerAdd(wloop_t *loop, wtimer_cb cb, uint32_t timeout_ms, uint32_t repeat)
-{
-    if (atomicLoadExplicit(&g_fail_timer_add, memory_order_acquire))
-    {
-        return NULL;
-    }
-    return __real_wtimerAdd(loop, cb, timeout_ms, repeat);
 }
 #endif
 
@@ -767,11 +756,11 @@ static void testWakeupFailurePreservesBothOwnershipContracts(void)
 static void testTimerAllocationFailureRefusesWithoutEarlyExecution(void)
 {
     probeReset();
-    atomicStoreExplicit(&g_fail_timer_add, true, memory_order_release);
-    require(! sendWorkerMessageTimedWithCleanup(
-                0, (WorkerMessageCallback) probeCallback, probeCleanup, 25U, NULL, NULL, NULL),
+    eventloopTestFailNextTryZalloc();
+    require(sendWorkerMessageTimedWithCleanup(
+                0, (WorkerMessageCallback) probeCallback, probeCleanup, 25U, NULL, NULL, NULL) ==
+                kWorkerMessageSubmitRejectedCleanupRan,
             "timer-allocation failure was reported as an armed delayed task");
-    atomicStoreExplicit(&g_fail_timer_add, false, memory_order_release);
 
     require(atomicLoadRelaxed(&g_probe.ran) == 0,
             "timer-allocation failure executed a minimum-delay callback synchronously");
@@ -1783,11 +1772,11 @@ typedef struct teardown_admission_probe_s
 
 typedef struct line_refusal_poster_s
 {
-    line_t *line;
-    sbuf_t *buf;
-    bool    with_buffer;
-    bool    bind_lwip;
-    bool    accepted;
+    line_t                   *line;
+    sbuf_t                   *buf;
+    bool                      with_buffer;
+    bool                      bind_lwip;
+    line_task_submit_result_e result;
 } line_refusal_poster_t;
 
 typedef struct line_buffer_lifetime_s
@@ -1893,11 +1882,11 @@ static WTHREAD_ROUTINE(lineRefusalPosterRoutine)
 
     if (poster->with_buffer)
     {
-        poster->accepted = lineScheduleTaskWithBuf(poster->line, refusedLineTaskWithBuffer, NULL, poster->buf);
+        poster->result = lineScheduleTaskWithBuf(poster->line, refusedLineTaskWithBuffer, NULL, poster->buf, NULL);
     }
     else
     {
-        poster->accepted = lineScheduleTask(poster->line, refusedLineTask, NULL);
+        poster->result = lineScheduleTask(poster->line, refusedLineTask, NULL, NULL);
     }
 
     if (poster->bind_lwip)
@@ -1970,7 +1959,8 @@ static void exerciseForeignFinalLineReleaseDuringDetach(void)
     require(threadJoin(lwip_thread) == 0, "failed to join lwIP line-refusal poster");
     clearRaceSeam();
 
-    require(! plain.accepted && ! lwip.accepted, "post-detach line scheduling unexpectedly reported admission");
+    require(plain.result == kLineTaskSubmitRejectedSettled && lwip.result == kLineTaskSubmitRejectedSettled,
+            "post-detach line scheduling did not report settled rejection");
     require(atomicLoadRelaxed(&lifetime.releases) == 1,
             "refused buffered task did not destroy its standalone buffer exactly once");
     require(genericpoolGetInUse(pool) == 0, "foreign final line release left checked-out pool items");

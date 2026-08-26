@@ -208,6 +208,12 @@ CREATION_SITES = [
      "a replacement fixture line used to prove the finished transport allocation remains retained"),
     ("tests/unittests/halfduplexserver_reentrant_init_test.c", "createTransportLine", TEST_ONLY,
      "the borrowed upload and download transport fixture lines"),
+    ("tests/unittests/line_task_scheduling_test.c", "createLine", TEST_ONLY,
+     "the owner-local and cross-worker lines used by the scheduler contract matrix"),
+    ("tests/unittests/connectiontopackets_schedule_rejection_test.c", "ctpFixtureSetup", TEST_ONLY,
+     "the borrowed normal line used for foreign CTP scheduler-refusal settlement"),
+    ("tests/unittests/packetstoconnection_schedule_rejection_test.c", "ptcFixtureSetup", TEST_ONLY,
+     "the owned normal line used for foreign PTC scheduler-refusal settlement"),
 ]
 
 # How many lines a site creates, where that is not one. Losing one of a pair is a
@@ -218,6 +224,7 @@ CREATION_COUNTS = {
     ("tunnels/HttpClient/common/split.c", "httpclientSplitUpStreamInit"): 2,
     ("tests/unittests/worker_context_helpers_test.c", "exerciseForeignFinalLineReleaseDuringDetach"): 3,
     ("tests/unittests/worker_context_helpers_test.c", "testPipePublicationIsLinearizedWithPreStop"): 6,
+    ("tests/unittests/line_task_scheduling_test.c", "createLine"): 2,
 }
 
 # ---------------------------------------------------------------------------
@@ -473,7 +480,7 @@ REQUIRED_CONTRACT_TESTS = [
       "caseSuccessfulDownstreamFinishClosesBeforeSweep",
       "casePacketModeFinishAborts",
       "testerclientTunnelDownStreamFinish"),
-     ((UNIT_CMAKE, '"TesterClient|testerclient_orderly_shutdown_test|testerclient|ON"'),),
+     ((UNIT_CMAKE, '"TesterClient|testerclient_orderly_shutdown_test|testerclient|OFF"'),),
      "TesterClient's terminal Finish, normal mode and packet mode"),
     ("tests/unittests/wireguarddevice_orderly_shutdown_test.c",
      ("casePacketLineFinishAborts",

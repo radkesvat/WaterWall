@@ -416,11 +416,16 @@ void speedtestclientScheduleSend(tunnel_t *t, line_t *l, speedtestclient_lstate_
         return;
     }
 
-    ls->send_scheduled = true;
-    if (UNLIKELY(! lineScheduleTask(l, speedtestclientSendTask, ls->tunnel)))
+    ls->send_scheduled                     = true;
+    const line_task_submit_result_e result = lineScheduleTask(l, speedtestclientSendTask, ls->tunnel, NULL);
+    if (UNLIKELY(result == kLineTaskSubmitRejectedSettled))
     {
         ls->send_scheduled = false;
         speedtestclientFailLine(t, l, "failed to schedule send progress");
+    }
+    else
+    {
+        assert(result == kLineTaskSubmitAcceptedAsync);
     }
 }
 
@@ -434,10 +439,16 @@ void speedtestclientScheduleReport(tunnel_t *t, line_t *l, speedtestclient_lstat
     }
 
     ls->report_scheduled = true;
-    if (UNLIKELY(! lineScheduleDelayedTask(l, speedtestclientReportTask, state->report_interval_ms, t)))
+    const line_task_submit_result_e result =
+        lineScheduleDelayedTask(l, speedtestclientReportTask, state->report_interval_ms, t, NULL);
+    if (UNLIKELY(result == kLineTaskSubmitRejectedSettled))
     {
         ls->report_scheduled = false;
         speedtestclientFailLine(t, l, "failed to schedule report progress");
+    }
+    else
+    {
+        assert(result == kLineTaskSubmitTimerArmed);
     }
 }
 
@@ -479,10 +490,16 @@ void speedtestclientSendTask(tunnel_t *t, line_t *l)
                 retry_ms = 1;
             }
             ls->send_scheduled = true;
-            if (UNLIKELY(! lineScheduleDelayedTask(l, speedtestclientSendTask, retry_ms, t)))
+            const line_task_submit_result_e result =
+                lineScheduleDelayedTask(l, speedtestclientSendTask, retry_ms, t, NULL);
+            if (UNLIKELY(result == kLineTaskSubmitRejectedSettled))
             {
                 ls->send_scheduled = false;
                 speedtestclientFailLine(t, l, "failed to schedule UDP handshake retry");
+            }
+            else
+            {
+                assert(result == kLineTaskSubmitTimerArmed);
             }
         }
         return;
@@ -509,10 +526,17 @@ void speedtestclientSendTask(tunnel_t *t, line_t *l)
         if (speedtestclientShouldWaitForPace(state, ls, now_us, &delay_ms))
         {
             ls->send_scheduled = true;
-            if (UNLIKELY(! lineScheduleDelayedTask(l, speedtestclientSendTask, delay_ms, t)))
+            const line_task_submit_result_e result =
+                lineScheduleDelayedTask(l, speedtestclientSendTask, delay_ms, t, NULL);
+            if (UNLIKELY(result == kLineTaskSubmitRejectedSettled))
             {
                 ls->send_scheduled = false;
                 speedtestclientFailLine(t, l, "failed to schedule paced send");
+            }
+            else
+            {
+                assert((delay_ms == 0 && result == kLineTaskSubmitAcceptedAsync) ||
+                       (delay_ms > 0 && result == kLineTaskSubmitTimerArmed));
             }
             return;
         }
@@ -802,11 +826,16 @@ static void speedtestclientHandleFrame(tunnel_t *t, line_t *l, const speedtestcl
             ls->ack_received = true;
             if (! ls->send_paused && ! ls->sender_finished)
             {
-                ls->send_scheduled = true;
-                if (UNLIKELY(! lineScheduleTask(l, speedtestclientSendTask, t)))
+                ls->send_scheduled                     = true;
+                const line_task_submit_result_e result = lineScheduleTask(l, speedtestclientSendTask, t, NULL);
+                if (UNLIKELY(result == kLineTaskSubmitRejectedSettled))
                 {
                     ls->send_scheduled = false;
                     speedtestclientFailLine(t, l, "failed to schedule acknowledged send");
+                }
+                else
+                {
+                    assert(result == kLineTaskSubmitAcceptedAsync);
                 }
             }
         }

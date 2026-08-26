@@ -70,9 +70,15 @@ void connectionfisherclientTunnelUpStreamInit(tunnel_t *t, line_t *main_l)
         return;
     }
 
-    if (UNLIKELY(! lineScheduleDelayedTask(main_l, connectionfisherclientTimeoutTask, kConnectionFisherTimeoutMs, t)))
+    const line_task_submit_result_e result =
+        lineScheduleDelayedTask(main_l, connectionfisherclientTimeoutTask, kConnectionFisherTimeoutMs, t, NULL);
+    if (UNLIKELY(result == kLineTaskSubmitRejectedSettled))
     {
         connectionfisherclientCloseMainLine(t, main_l);
+    }
+    else
+    {
+        assert(result == kLineTaskSubmitTimerArmed);
     }
     lineUnref(main_l);
 }

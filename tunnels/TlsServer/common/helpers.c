@@ -170,8 +170,8 @@ size_t tlsserverRecordPaddingCallback(SSL *ssl, int type, size_t len, void *arg)
     discard arg;
 
     tlsserver_lstate_t *ls = SSL_get_app_data(ssl);
-    if (ls == NULL || ls->ssl != ssl || ls->resources_released || ls->shaping_retired ||
-        ! ls->handshake_completed || ls->tunnel == NULL || SSL_version(ssl) != TLS1_3_VERSION)
+    if (ls == NULL || ls->ssl != ssl || ls->resources_released || ls->shaping_retired || ! ls->handshake_completed ||
+        ls->tunnel == NULL || SSL_version(ssl) != TLS1_3_VERSION)
     {
         return 0;
     }
@@ -264,8 +264,7 @@ void tlsserverCancelShapedOutputTimer(tlsserver_lstate_t *ls)
 static bool tlsserverShapingStateIsActive(tunnel_t *t, line_t *l)
 {
     tlsserver_lstate_t *ls = lineGetState(l, t);
-    return ls->tunnel == t && ! ls->resources_released &&
-           (ls->shaping_retired || ls->shaping_output.initialized);
+    return ls->tunnel == t && ! ls->resources_released && (ls->shaping_retired || ls->shaping_output.initialized);
 }
 
 static bool tlsserverTryRetireShaping(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls)
@@ -303,8 +302,7 @@ static bool tlsserverTryRetireShaping(tunnel_t *t, line_t *l, tlsserver_lstate_t
         LOGD("TlsServer: configured TLS 1.3 record shaping scope drained; output shaper retired");
     }
 
-    if (release_producer_pause && ! ls->shaping_wire_paused && ! ls->upstream_finished &&
-        ! ls->downstream_finishing)
+    if (release_producer_pause && ! ls->shaping_wire_paused && ! ls->upstream_finished && ! ls->downstream_finishing)
     {
         if (! lineCallWithRef(l, tunnelNextUpStreamResume, t))
         {
@@ -864,11 +862,15 @@ bool tlsserverScheduleFallbackPayloadDrain(tunnel_t *t, line_t *l, tlsserver_lst
                        : fastRandJittered32(ts->fallback_intentional_delay_ms, ts->fallback_intentional_delay_jitter_ms);
 
     ls->fallback_delay_scheduled = true;
-    if (UNLIKELY(! lineScheduleDelayedTask(l, tlsserverDelayedFallbackPayloadTask, delay_ms, t)))
+    const line_task_submit_result_e result =
+        lineScheduleDelayedTask(l, tlsserverDelayedFallbackPayloadTask, delay_ms, t, NULL);
+    if (UNLIKELY(result == kLineTaskSubmitRejectedSettled))
     {
         ls->fallback_delay_scheduled = false;
         return false;
     }
+    assert((delay_ms == 0 && result == kLineTaskSubmitAcceptedAsync) ||
+           (delay_ms > 0 && result == kLineTaskSubmitTimerArmed));
     return true;
 }
 

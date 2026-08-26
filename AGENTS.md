@@ -3,10 +3,8 @@
 Operating policy for AI coding agents and contributors working on **WaterWall**,
 a modular, chain-based tunneling runtime written in C.
 
-This file is the always-loaded operating kernel. Detailed contracts, examples, and
-rationale live in `WaterWall-Docs/docs/05-devguides/` and are loaded by task through
-the mandatory routing table. Keep this file below 16 KiB so the instruction chain
-fits Codex's default 32 KiB limit.
+This always-loaded kernel routes detailed contracts and examples from
+`WaterWall-Docs/docs/05-devguides/`. Keep it below 16 KiB.
 
 ## 1. Task Authority, Scope, And Evidence
 
@@ -18,13 +16,10 @@ fits Codex's default 32 KiB limit.
 - For requests to **fix, change, build, implement, or review-and-fix**, make the
   requested in-scope local changes and run relevant non-destructive validation. Do
   not stop at a plan when a safe, complete in-scope fix is available.
-- Routine read-only investigation, local edits within the requested scope, builds,
-  tests, and formatting do not require another confirmation. Ask only when a
-  consequential requirement or scope decision cannot be resolved from the
-  repository, or when the next action is destructive, external, or materially
-  expands the request.
-- An explicit user request is maintainer authorization for that request. Do not ask
-  the user to approve the same scope a second time.
+- Read-only investigation, in-scope edits, builds, tests, and formatting need no
+  further confirmation. Ask only for an unresolved consequential decision or a
+  destructive, external, or materially broader action. An explicit request is
+  maintainer authorization; do not seek duplicate approval.
 - Preserve unrelated work in a dirty worktree. Do not discard, overwrite, or
   reformat user changes outside the task.
 
@@ -37,15 +32,14 @@ irrelevant tunnel analysis into a task.
 
 ### Durable project knowledge
 
-The Developer Guide is durable project memory, not a task journal. During authorized
-implementation, update its relevant canonical section when in-scope work changes a
-contract or confirms reusable knowledge whose omission would mislead. Keep it
-concise and current; documentation is not redesign authority.
+The Developer Guide is durable project memory, not a task journal. During
+implementation, update its canonical section when in-scope work changes a contract
+or confirms reusable knowledge whose omission would mislead. Documentation is not
+redesign authority.
 
-Never record speculation, pending ideas, debug/review history, artifacts, or one-off
-details as contracts, or promote patterns without confirming intent from
-requirements, callers, tests, docs, or maintainer direction. Report or ask when
-evidence conflicts or intent is unclear.
+Never record speculation, pending ideas, review history, artifacts, or one-off
+details as contracts, or promote patterns without confirming intent. Report
+conflicting or unclear evidence.
 
 Read-only tasks only propose doc edits. Implementation may sync related guide text;
 report unrelated findings. Change `AGENTS.md` only if authorized work changes
@@ -120,6 +114,10 @@ These guardrails do not replace the mandatory guide reading:
 11. Tunnel constructors may return `NULL`; check before assigning callbacks or
     accessing state. External callback roots must close admission and quiesce before
     their reachable state is reclaimed.
+12. Line scheduling transfers any buffer on every result. A non-null cancellation
+    callback is task-XOR-cancel and may run synchronously, on a foreign or teardown
+    thread, or with the line logically dead. Treat cancellation as notification only;
+    never access owner-only state without an independent context proof.
 
 ## 4. Implementation Workflow
 
@@ -159,18 +157,12 @@ These guardrails do not replace the mandatory guide reading:
   tests, policy checks, and comments are evidence, not proof; categories never
   suppress real defects.
 - Report all known blockers together with severity, a safe correction, and finite
-  acceptance conditions. Separate questions and optional improvements. Valid
-  alternatives, style, cleanup/refactors, speculation, and unmeasured optimizations
-  are non-blocking. A better design blocks only when the current one creates a
-  concrete material problem. Report out-of-scope defects separately; do not extend
-  the task without authorization.
+  acceptance conditions. Separate optional, stylistic, speculative, unmeasured,
+  and out-of-scope findings; do not extend scope without authorization.
 - Accepted decisions and resolved blockers stay closed unless new evidence
   contradicts the earlier conclusion; preference or reinterpretation is insufficient.
-- Follow-ups verify requested fixes and regressions caused or exposed by their delta;
-  do not restart design review. Keep a finite blocker list. A verified fix closes its
-  blocker and cannot be replaced by non-essential work. Scope must shrink unless new
-  evidence establishes a material defect. A later new or reopened blocker explains
-  what evidence changes the earlier conclusion.
+- Follow-ups verify requested fixes and delta regressions, not restart design review.
+  Keep a finite, shrinking blocker list; reopening one requires new material evidence.
 - End each review with **accepted**, **accepted with optional follow-ups**, **changes
   required**, or **inconclusive**. `changes required` gives remaining blockers
   and finite acceptance conditions. `inconclusive` names the exact missing evidence

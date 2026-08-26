@@ -176,7 +176,7 @@ static tunnel_t *fixtureCreate(node_t *node)
 
 FIXTURE_EXPORT uint32_t waterwallNodeLifecycleAbiVersion(void)
 {
-    return WW_EXTERNAL_NODE_LIFECYCLE_ABI_VERSION;
+    return WW_EXTERNAL_NODE_ABI_VERSION;
 }
 
 FIXTURE_EXPORT node_t nodeGet(void)

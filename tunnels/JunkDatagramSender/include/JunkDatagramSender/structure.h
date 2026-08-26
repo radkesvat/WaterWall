@@ -21,6 +21,8 @@ typedef struct junkdatagramsender_tstate_s
 typedef struct junkdatagramsender_lstate_s
 {
     uint32_t remaining_resend_again_times;
+    bool     upstream_finished;
+    bool     downstream_finished;
 } junkdatagramsender_lstate_t;
 
 enum
@@ -41,6 +43,7 @@ WW_EXPORT api_result_t junkdatagramsenderTunnelApi(tunnel_t *instance, sbuf_t *m
 
 void junkdatagramsenderTunnelOnPrepair(tunnel_t *t);
 void junkdatagramsenderTunnelOnStart(tunnel_t *t);
+void junkdatagramsenderTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);
 void junkdatagramsenderTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context);
 
 void junkdatagramsenderTunnelUpStreamInit(tunnel_t *t, line_t *l);
@@ -62,3 +65,11 @@ bool junkdatagramsenderLoadSettings(junkdatagramsender_tstate_t *ts, const cJSON
 void junkdatagramsenderLinestateInitialize(junkdatagramsender_lstate_t *ls, const junkdatagramsender_tstate_t *ts);
 void junkdatagramsenderLinestateDestroy(junkdatagramsender_lstate_t *ls);
 bool junkdatagramsenderSendJunk(tunnel_t *t, line_t *l, junkdatagramsender_direction_t direction);
+bool junkdatagramsenderIsWorkerPacketLine(tunnel_t *t, line_t *l);
+void junkdatagramsenderPacketLineFinish(tunnel_t *t, line_t *l);
+
+static inline bool junkdatagramsenderDirectionIsFinished(const junkdatagramsender_lstate_t *ls,
+                                                         junkdatagramsender_direction_t     direction)
+{
+    return direction == kJunkDatagramSenderDirectionUpstream ? ls->upstream_finished : ls->downstream_finished;
+}

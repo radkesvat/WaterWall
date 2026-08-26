@@ -1,19 +1,23 @@
 #ifndef WW_EXPORT_H_
 #define WW_EXPORT_H_
 
+#if defined(_MSC_VER) && ! defined(__clang__)
+#include <sal.h>
+#endif
+
 // WW_EXPORT
 #if defined(WW_STATICLIB) || defined(WW_SOURCE)
-    #define WW_EXPORT
+#define WW_EXPORT
 #elif defined(_MSC_VER)
-    #if defined(WW_DYNAMICLIB) || defined(WW_EXPORTS) || defined(hv_EXPORTS)
-        #define WW_EXPORT  __declspec(dllexport)
-    #else
-        #define WW_EXPORT  __declspec(dllimport)
-    #endif
-#elif defined(__GNUC__)
-    #define WW_EXPORT  __attribute__((visibility("default")))
+#if defined(WW_DYNAMICLIB) || defined(WW_EXPORTS) || defined(hv_EXPORTS)
+#define WW_EXPORT __declspec(dllexport)
 #else
-    #define WW_EXPORT
+#define WW_EXPORT __declspec(dllimport)
+#endif
+#elif defined(__GNUC__)
+#define WW_EXPORT __attribute__((visibility("default")))
+#else
+#define WW_EXPORT
 #endif
 
 // WW_INLINE
@@ -23,18 +27,27 @@
 #if defined(WW_NO_DEPRECATED)
 #define WW_DEPRECATED
 #elif defined(__GNUC__) || defined(__clang__)
-#define WW_DEPRECATED   __attribute__((deprecated))
+#define WW_DEPRECATED __attribute__((deprecated))
 #elif defined(_MSC_VER)
-#define WW_DEPRECATED   __declspec(deprecated)
+#define WW_DEPRECATED __declspec(deprecated)
 #else
 #define WW_DEPRECATED
 #endif
 
+// WW_MUST_USE
+#if defined(__GNUC__) || defined(__clang__)
+#define WW_MUST_USE __attribute__((warn_unused_result))
+#elif defined(_MSC_VER)
+#define WW_MUST_USE _Check_return_
+#else
+#define WW_MUST_USE
+#endif
+
 // WW_UNUSED
 #if defined(__GNUC__)
-    #define WW_UNUSED   __attribute__((visibility("unused")))
+#define WW_UNUSED __attribute__((visibility("unused")))
 #else
-    #define WW_UNUSED
+#define WW_UNUSED
 #endif
 
 // @param[IN | OUT | INOUT]
@@ -66,23 +79,27 @@
 #ifdef __cplusplus
 
 #ifndef EXTERN_C
-#define EXTERN_C            extern "C"
+#define EXTERN_C extern "C"
 #endif
 
 #ifndef BEGIN_EXTERN_C
-#define BEGIN_EXTERN_C      extern "C" {
+#define BEGIN_EXTERN_C                                                                                                 \
+    extern "C"                                                                                                         \
+    {
 #endif
 
 #ifndef END_EXTERN_C
-#define END_EXTERN_C        } // extern "C"
+#define END_EXTERN_C } // extern "C"
 #endif
 
 #ifndef BEGIN_NAMESPACE
-#define BEGIN_NAMESPACE(ns) namespace ns {
+#define BEGIN_NAMESPACE(ns)                                                                                            \
+    namespace ns                                                                                                       \
+    {
 #endif
 
 #ifndef END_NAMESPACE
-#define END_NAMESPACE(ns)   } // namespace ns
+#define END_NAMESPACE(ns) } // namespace ns
 #endif
 
 #ifndef USING_NAMESPACE
@@ -90,20 +107,20 @@
 #endif
 
 #ifndef DEFAULT
-#define DEFAULT(x)  = x
+#define DEFAULT(x) = x
 #endif
 
 #ifndef ENUM
-#define ENUM(e)     enum e
+#define ENUM(e) enum e
 #endif
 
 #ifndef STRUCT
-#define STRUCT(s)   struct s
+#define STRUCT(s) struct s
 #endif
 
 #else
 
-#define EXTERN_C    extern
+#define EXTERN_C extern
 #define BEGIN_EXTERN_C
 #define END_EXTERN_C
 
@@ -116,28 +133,28 @@
 #endif
 
 #ifndef ENUM
-#define ENUM(e)\
-typedef enum e e;\
-enum e
+#define ENUM(e)                                                                                                        \
+    typedef enum e e;                                                                                                  \
+    enum e
 #endif
 
 #ifndef STRUCT
-#define STRUCT(s)\
-typedef struct s s;\
-struct s
+#define STRUCT(s)                                                                                                      \
+    typedef struct s s;                                                                                                \
+    struct s
 #endif
 
 #endif // __cplusplus
 
-#define BEGIN_NAMESPACE_HV  BEGIN_NAMESPACE(hv)
-#define END_NAMESPACE_HV    END_NAMESPACE(hv)
-#define USING_NAMESPACE_HV  USING_NAMESPACE(hv)
+#define BEGIN_NAMESPACE_HV BEGIN_NAMESPACE(hv)
+#define END_NAMESPACE_HV   END_NAMESPACE(hv)
+#define USING_NAMESPACE_HV USING_NAMESPACE(hv)
 
 // MSVC ports
 #ifdef _MSC_VER
 
-#pragma warning (disable: 4251) // STL dll
-#pragma warning (disable: 4275) // dll-interface
+#pragma warning(disable : 4251) // STL dll
+#pragma warning(disable : 4275) // dll-interface
 
 #if _MSC_VER < 1900 // < VS2015
 

@@ -7,6 +7,7 @@
  */
 #include "ConnectionFisherClient/structure.h"
 
+#include "ev_memory.h"
 #include "tunnel_line_failure_harness.h"
 
 enum
@@ -198,11 +199,182 @@ static void caseSelectedChildFinishClosesDetachedLosers(void)
     fixtureTeardown(&fixture);
 }
 
+typedef struct connectionfisher_timeout_fixture_s
+{
+    twf_worker_env_t env;
+    twf_line_pool_t  lines;
+    master_pool_t   *message_master;
+    tunnel_t        *prev;
+    tunnel_t        *fisher;
+    tunnel_t        *next;
+    tunnel_chain_t  *chain;
+    line_t          *children[kConnectionFisherSelectionChildCount];
+    uint32_t         child_init_count;
+    uint32_t         child_ping_count;
+    uint32_t         child_finish_count[kConnectionFisherSelectionChildCount];
+    uint32_t         main_finish_count;
+    uint32_t         reentrant_target_refcount;
+    bool             reentered;
+} connectionfisher_timeout_fixture_t;
+
+static connectionfisher_timeout_fixture_t *timeoutFixtureFromTunnel(tunnel_t *t)
+{
+    return *(connectionfisher_timeout_fixture_t **) tunnelGetState(t);
+}
+
+static uint32_t timeoutChildIndex(connectionfisher_timeout_fixture_t *fixture, line_t *line)
+{
+    for (uint32_t i = 0; i < fixture->child_init_count; ++i)
+    {
+        if (fixture->children[i] == line)
+        {
+            return i;
+        }
+    }
+
+    twfRequire(false, "ConnectionFisher callback named an unknown child line");
+    return 0;
+}
+
+static void timeoutNextInit(tunnel_t *t, line_t *line)
+{
+    connectionfisher_timeout_fixture_t *fixture = timeoutFixtureFromTunnel(t);
+    twfRequire(fixture->child_init_count < kConnectionFisherSelectionChildCount,
+               "ConnectionFisher created too many timeout candidates");
+    fixture->children[fixture->child_init_count++] = line;
+}
+
+static void timeoutNextPayload(tunnel_t *t, line_t *line, sbuf_t *buf)
+{
+    connectionfisher_timeout_fixture_t *fixture = timeoutFixtureFromTunnel(t);
+    discard                             timeoutChildIndex(fixture, line);
+    ++fixture->child_ping_count;
+    lineReuseBuffer(line, buf);
+}
+
+static void timeoutNextFinish(tunnel_t *t, line_t *line)
+{
+    connectionfisher_timeout_fixture_t *fixture = timeoutFixtureFromTunnel(t);
+    const uint32_t                      index   = timeoutChildIndex(fixture, line);
+    ++fixture->child_finish_count[index];
+
+    if (index == 0 && ! fixture->reentered)
+    {
+        fixture->reentered                 = true;
+        fixture->reentrant_target_refcount = twfLineRefCount(fixture->children[1]);
+
+        /* The next-side owner independently closes a different candidate.
+         * That downstream Finish must not be reflected back toward it. */
+        tunnelPrevDownStreamFinish(t, fixture->children[1]);
+    }
+}
+
+static void timeoutMainOwnerFinish(tunnel_t *t, line_t *line)
+{
+    connectionfisher_timeout_fixture_t *fixture = timeoutFixtureFromTunnel(t);
+    ++fixture->main_finish_count;
+    lineDestroy(line);
+}
+
+static void timeoutFixtureSetup(connectionfisher_timeout_fixture_t *fixture, line_t **main_line)
+{
+    memoryZero(fixture, sizeof(*fixture));
+    twfWorkerEnvSetup(&fixture->env, kConnectionFisherSelectionLargeBuffer, 0);
+    fixture->env.loop->status = WLOOP_STATUS_RUNNING;
+
+    fixture->message_master = masterpoolCreateWithCapacity(16);
+    twfRequire(fixture->message_master != NULL, "failed to create the ConnectionFisher message pool");
+    workerMessagesInstallMasterPoolCallbacks(fixture->message_master);
+    GSTATE.masterpool_messages = fixture->message_master;
+    mutexInit(&fixture->env.worker.control_mutex);
+    twfRequire(workerMessagesInit(&fixture->env.worker), "failed to create the ConnectionFisher message queue");
+    twfRequire(workerMessagesOpenAdmission(&fixture->env.worker), "failed to open ConnectionFisher message admission");
+
+    fixture->prev = tunnelCreate(NULL, sizeof(connectionfisher_timeout_fixture_t *), 0);
+    fixture->fisher =
+        tunnelCreate(NULL, sizeof(connectionfisherclient_tstate_t), sizeof(connectionfisherclient_lstate_t));
+    fixture->next = tunnelCreate(NULL, sizeof(connectionfisher_timeout_fixture_t *), 0);
+    twfRequire(fixture->prev != NULL && fixture->fisher != NULL && fixture->next != NULL,
+               "failed to create the ConnectionFisher timeout fixture tunnels");
+    *(connectionfisher_timeout_fixture_t **) tunnelGetState(fixture->prev) = fixture;
+    *(connectionfisher_timeout_fixture_t **) tunnelGetState(fixture->next) = fixture;
+    fixture->prev->fnFinD                                                  = timeoutMainOwnerFinish;
+    fixture->next->fnInitU                                                 = timeoutNextInit;
+    fixture->next->fnPayloadU                                              = timeoutNextPayload;
+    fixture->next->fnFinU                                                  = timeoutNextFinish;
+    fixture->fisher->fnFinD = connectionfisherclientTunnelDownStreamFinish;
+    tunnelBind(fixture->prev, fixture->fisher);
+    tunnelBind(fixture->fisher, fixture->next);
+
+    twfLinePoolSetup(&fixture->lines, fixture->fisher->lstate_size, kConnectionFisherSelectionLineCap);
+    fixture->chain = memoryAllocateZero(sizeof(*fixture->chain) + sizeof(generic_pool_t *));
+    twfRequire(fixture->chain != NULL, "failed to create the ConnectionFisher timeout fixture chain");
+    fixture->chain->workers_count = 1;
+    fixture->chain->line_pools[0] = fixture->lines.pools[0];
+    fixture->fisher->chain        = fixture->chain;
+
+    connectionfisherclient_tstate_t *state = tunnelGetState(fixture->fisher);
+    state->simultaneous_tries_perline      = kConnectionFisherSelectionChildCount;
+    *main_line                             = twfLinePoolCreateLine(&fixture->lines);
+}
+
+static void timeoutFixtureTeardown(connectionfisher_timeout_fixture_t *fixture)
+{
+    twfRequireEqualU32((uint32_t) masterpoolGetCheckedOut(fixture->lines.master),
+                       0,
+                       "timeout refusal retained a main or candidate line");
+    twfLinePoolTeardown(&fixture->lines);
+    memoryFree(fixture->chain);
+    tunnelDestroy(fixture->next);
+    tunnelDestroy(fixture->fisher);
+    tunnelDestroy(fixture->prev);
+
+    workerMessagesDestroy(&fixture->env.worker);
+    mutexDestroy(&fixture->env.worker.control_mutex);
+    twfRequireEqualU32(
+        (uint32_t) masterpoolGetCheckedOut(fixture->message_master), 0, "timeout refusal retained a scheduling record");
+    GSTATE.masterpool_messages = NULL;
+    masterpoolMakeEmpty(fixture->message_master);
+    masterpoolDestroy(fixture->message_master);
+    twfWorkerEnvTeardown(&fixture->env);
+}
+
+static void caseTimeoutInstallFailureClosesEveryRoleOnce(void)
+{
+    twfSetCase("connectionfisher timeout install failure closes every role once");
+
+    connectionfisher_timeout_fixture_t fixture;
+    line_t                            *main_line = NULL;
+    timeoutFixtureSetup(&fixture, &main_line);
+
+    eventloopTestFailNextTryZalloc();
+    connectionfisherclientTunnelUpStreamInit(fixture.fisher, main_line);
+
+    twfRequireEqualU32((uint32_t) fixture.env.loop->ntimers, 0, "failed ConnectionFisher timeout remained armed");
+    twfRequireEqualU32(fixture.child_init_count,
+                       kConnectionFisherSelectionChildCount,
+                       "timeout fixture did not initialize every candidate");
+    twfRequireEqualU32(
+        fixture.child_ping_count, kConnectionFisherSelectionChildCount, "timeout fixture did not ping every candidate");
+    twfRequire(fixture.reentered, "timeout failure did not exercise re-entrant candidate closure");
+    twfRequireEqualU32(fixture.reentrant_target_refcount,
+                       2,
+                       "timeout close did not retain the re-entrantly closed candidate snapshot");
+    twfRequireEqualU32(fixture.child_finish_count[0], 1, "first candidate did not receive one upstream Finish");
+    twfRequireEqualU32(fixture.child_finish_count[1], 0, "downstream candidate Finish was reflected to its sender");
+    twfRequireEqualU32(fixture.child_finish_count[2], 1, "last candidate did not receive one upstream Finish");
+    twfRequireEqualU32(fixture.main_finish_count, 1, "main owner did not receive one downstream Finish");
+    twfRequireNoLeakedBuffers();
+
+    timeoutFixtureTeardown(&fixture);
+}
+
 int main(void)
 {
     caseReentrantSiblingFinishKeepsSnapshotValid();
     caseReentrantSiblingFinishKeepsMainCloseSnapshotValid();
     caseSelectedChildFinishClosesDetachedLosers();
+    caseTimeoutInstallFailureClosesEveryRoleOnce();
     puts("connectionfisherclient_reentrant_selection_test: all cases passed");
     return 0;
 }

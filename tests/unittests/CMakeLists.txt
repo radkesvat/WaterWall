@@ -504,16 +504,16 @@ if(TARGET ww)
   add_library(mismatched_abi_node_library SHARED legacy_node_library.c)
   target_compile_definitions(
     mismatched_abi_node_library
-    PRIVATE FIXTURE_NODE_TYPE="MismatchedAbiFixture" FIXTURE_ABI_VERSION=1
+    PRIVATE FIXTURE_NODE_TYPE="MismatchedAbiFixture" FIXTURE_ABI_VERSION=2
   )
   set_target_properties(mismatched_abi_node_library PROPERTIES PREFIX "")
-  add_library(lifecycle_v2_node_library SHARED lifecycle_v2_node_library.c)
-  set_target_properties(lifecycle_v2_node_library PROPERTIES PREFIX "")
+  add_library(external_node_abi_v3_library SHARED lifecycle_v2_node_library.c)
+  set_target_properties(external_node_abi_v3_library PROPERTIES PREFIX "")
   if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     foreach(node_fixture_target IN ITEMS
         missing_abi_node_library
         mismatched_abi_node_library
-        lifecycle_v2_node_library)
+        external_node_abi_v3_library)
       # At -O0 the public headers emit otherwise-unused static helpers whose
       # application-owned symbols cannot resolve inside a standalone fixture.
       # Give the linker one section per helper so it can retain only the ABI
@@ -528,20 +528,20 @@ if(TARGET ww)
     PRIVATE
       MISSING_NODE_LIBRARY_PATH="$<TARGET_FILE:missing_abi_node_library>"
       MISMATCHED_NODE_LIBRARY_PATH="$<TARGET_FILE:mismatched_abi_node_library>"
-      LIFECYCLE_V2_NODE_LIBRARY_PATH="$<TARGET_FILE:lifecycle_v2_node_library>"
+      EXTERNAL_NODE_ABI_V3_LIBRARY_PATH="$<TARGET_FILE:external_node_abi_v3_library>"
   )
   target_link_libraries(legacy_node_compatibility_test PRIVATE ww)
   add_dependencies(
     legacy_node_compatibility_test
     missing_abi_node_library
     mismatched_abi_node_library
-    lifecycle_v2_node_library
+    external_node_abi_v3_library
   )
   add_dependencies(waterwall_unit_tests legacy_node_compatibility_test)
   add_waterwall_unit_test(
-    waterwall.lifecycle_node_abi_v2_unit
+    waterwall.external_node_abi_v3_unit
     legacy_node_compatibility_test
-    "unit;net;tunnels;node-manager;abi;lifecycle-v2;portable"
+    "unit;net;tunnels;node-manager;abi;external-node-v3;portable"
   )
 
   add_executable(users_runtime_migration_test
@@ -1020,12 +1020,12 @@ if(TARGET ww)
     target_compile_definitions(worker_context_helpers_test PRIVATE
       WW_WORKER_MESSAGE_TEST_SEAM=1
       WW_PIPE_TUNNEL_TEST_SEAM=1
+      WW_EVENT_MEMORY_TEST_SEAM=1
     )
     if(NOT MSVC)
       target_compile_definitions(worker_context_helpers_test PRIVATE WW_WORKER_MESSAGE_LINK_WRAP=1)
       target_link_options(worker_context_helpers_test PRIVATE
         "-Wl,--wrap=wloopPostEvent"
-        "-Wl,--wrap=wtimerAdd"
         "-Wl,--wrap=signalmanagerRequestShutdownPreservingAcceptedStatus"
       )
     endif()
@@ -1036,6 +1036,23 @@ if(TARGET ww)
       waterwall.worker_context_helpers_unit
       worker_context_helpers_test
       "unit;worker;identity;messages;buffers"
+    )
+
+    add_executable(line_task_scheduling_test
+      line_task_scheduling_test.c
+      ${CMAKE_SOURCE_DIR}/ww/instance/worker_messages.c
+    )
+    target_compile_definitions(line_task_scheduling_test PRIVATE
+      WW_WORKER_MESSAGE_TEST_SEAM=1
+      WW_EVENT_MEMORY_TEST_SEAM=1
+    )
+    target_link_libraries(line_task_scheduling_test PRIVATE ww)
+    add_dependencies(waterwall_unit_tests line_task_scheduling_test)
+
+    add_waterwall_unit_test(
+      waterwall.line_task_scheduling_unit
+      line_task_scheduling_test
+      "unit;net;line;worker;messages;buffers;cancellation;concurrency"
     )
 
     if(TARGET RawSocket)
@@ -2089,6 +2106,50 @@ if(TARGET PacketsToConnection)
   endif()
 endif()
 
+if(LINUX AND TARGET ConnectionToPackets)
+  add_executable(connectiontopackets_schedule_rejection_test
+    connectiontopackets_schedule_rejection_test.c
+    ${WATERWALL_LINE_FAILURE_WW_SOURCES}
+  )
+  waterwall_line_failure_test_use_tunnel(connectiontopackets_schedule_rejection_test ConnectionToPackets)
+  target_link_options(connectiontopackets_schedule_rejection_test PRIVATE
+    ${WATERWALL_LINE_FAILURE_WRAPS}
+    "-Wl,--wrap=lineScheduleTask"
+    "-Wl,--wrap=lineScheduleTaskWithBuf"
+    "-Wl,--wrap=sys_lock_tcpip_core"
+    "-Wl,--wrap=sys_unlock_tcpip_core"
+  )
+  target_link_libraries(connectiontopackets_schedule_rejection_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests connectiontopackets_schedule_rejection_test)
+  add_waterwall_unit_test(
+    waterwall.connectiontopackets_schedule_rejection_unit
+    connectiontopackets_schedule_rejection_test
+    "unit;tunnels;connectiontopackets;lwip;scheduling;rejection;buffers;ownership"
+  )
+endif()
+
+if(LINUX AND TARGET PacketsToConnection)
+  add_executable(packetstoconnection_schedule_rejection_test
+    packetstoconnection_schedule_rejection_test.c
+    ${WATERWALL_LINE_FAILURE_WW_SOURCES}
+  )
+  waterwall_line_failure_test_use_tunnel(packetstoconnection_schedule_rejection_test PacketsToConnection)
+  target_link_options(packetstoconnection_schedule_rejection_test PRIVATE
+    ${WATERWALL_LINE_FAILURE_WRAPS}
+    "-Wl,--wrap=lineScheduleTask"
+    "-Wl,--wrap=lineScheduleTaskWithBuf"
+    "-Wl,--wrap=sys_lock_tcpip_core"
+    "-Wl,--wrap=sys_unlock_tcpip_core"
+  )
+  target_link_libraries(packetstoconnection_schedule_rejection_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests packetstoconnection_schedule_rejection_test)
+  add_waterwall_unit_test(
+    waterwall.packetstoconnection_schedule_rejection_unit
+    packetstoconnection_schedule_rejection_test
+    "unit;tunnels;packetstoconnection;lwip;scheduling;rejection;credit;buffers;ownership"
+  )
+endif()
+
 if(LINUX AND TARGET RawSocket)
   add_executable(rawsocket_ipv4_boundary_test
     rawsocket_ipv4_boundary_test.c
@@ -2195,6 +2256,26 @@ if(TARGET HttpServer)
   )
 endif()
 
+if(TARGET HalfDuplexClient)
+  add_executable(halfduplexclient_reentrant_close_test
+    halfduplexclient_reentrant_close_test.c
+    ${WATERWALL_LINE_FAILURE_WW_SOURCES}
+  )
+  waterwall_line_failure_test_use_tunnel(halfduplexclient_reentrant_close_test HalfDuplexClient)
+  target_link_options(halfduplexclient_reentrant_close_test PRIVATE
+    ${WATERWALL_LINE_FAILURE_WRAPS}
+    "-Wl,--wrap=lineScheduleTask"
+  )
+  target_link_libraries(halfduplexclient_reentrant_close_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests halfduplexclient_reentrant_close_test)
+
+  add_waterwall_unit_test(
+    waterwall.halfduplexclient_reentrant_close_unit
+    halfduplexclient_reentrant_close_test
+    "unit;tunnels;halfduplexclient;scheduling;reentrant;finish;lifetime;ownership"
+  )
+endif()
+
 if(TARGET HalfDuplexServer)
   add_executable(halfduplexserver_reentrant_init_test
     halfduplexserver_reentrant_init_test.c
@@ -2251,6 +2332,46 @@ if(TARGET Disturber)
     waterwall.disturber_packet_lifecycle_unit
     disturber_packet_lifecycle_test
     "unit;tunnels;disturber;packet;finish;lifecycle;affinity;ownership"
+  )
+endif()
+
+if(TARGET JunkDatagramSender)
+  add_executable(junkdatagramsender_packet_lifecycle_test
+    junkdatagramsender_packet_lifecycle_test.c
+    ${WATERWALL_LINE_FAILURE_WW_SOURCES}
+  )
+  waterwall_line_failure_test_use_tunnel(junkdatagramsender_packet_lifecycle_test JunkDatagramSender)
+  target_link_options(junkdatagramsender_packet_lifecycle_test PRIVATE
+    ${WATERWALL_LINE_FAILURE_WRAPS}
+  )
+  target_link_libraries(junkdatagramsender_packet_lifecycle_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests junkdatagramsender_packet_lifecycle_test)
+
+  add_waterwall_unit_test(
+    waterwall.junkdatagramsender_packet_lifecycle_unit
+    junkdatagramsender_packet_lifecycle_test
+    "unit;tunnels;junkdatagramsender;packet;finish;delayed;buffers;ownership"
+  )
+endif()
+
+if(TARGET SpeedTestServer)
+  add_executable(speedtestserver_schedule_rejection_test
+    speedtestserver_schedule_rejection_test.c
+    ${WATERWALL_LINE_FAILURE_WW_SOURCES}
+  )
+  waterwall_line_failure_test_use_tunnel(speedtestserver_schedule_rejection_test SpeedTestServer)
+  target_link_options(speedtestserver_schedule_rejection_test PRIVATE
+    ${WATERWALL_LINE_FAILURE_WRAPS}
+    "-Wl,--wrap=lineScheduleTask"
+    "-Wl,--wrap=lineScheduleDelayedTask"
+  )
+  target_link_libraries(speedtestserver_schedule_rejection_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests speedtestserver_schedule_rejection_test)
+
+  add_waterwall_unit_test(
+    waterwall.speedtestserver_schedule_rejection_unit
+    speedtestserver_schedule_rejection_test
+    "unit;tunnels;speedtestserver;scheduling;reentrant;lifetime;ownership"
   )
 endif()
 
@@ -2475,6 +2596,7 @@ foreach(tcpoverudp_side Client Server)
       "-Wl,--wrap=tcpoverudpFecDecoderCreate"
       "-Wl,--wrap=tcpoverudpFecEncoderDestroy"
       "-Wl,--wrap=tcpoverudpFecDecoderDestroy"
+      "-Wl,--wrap=lineScheduleTask"
     )
     target_link_libraries(${tcpoverudp_test} PRIVATE ww)
     add_dependencies(waterwall_unit_tests ${tcpoverudp_test})
@@ -2769,11 +2891,11 @@ add_waterwall_unit_test(
 
 # Category-B orderly-shutdown failure injection. One executable per tunnel so
 # that only one tunnel's structure.h is ever visible in a translation unit.
-# wtimerAdd is wrapped alongside the process APIs wherever the injected failure
-# is a timer that cannot be created.
+# Direct public-wtimer callers wrap wtimerAdd. Scheduler-backed delayed callers
+# inject at eventloopTryZalloc(), the production recoverable timer boundary.
 foreach(orderly_case IN ITEMS
-  "TesterClient|testerclient_orderly_shutdown_test|testerclient|ON"
-  "SpeedTestClient|speedtestclient_orderly_shutdown_test|speedtestclient|ON"
+  "TesterClient|testerclient_orderly_shutdown_test|testerclient|OFF"
+  "SpeedTestClient|speedtestclient_orderly_shutdown_test|speedtestclient|OFF"
   "TesterServer|testerserver_orderly_shutdown_test|testerserver|OFF"
   "PacketsToStream|packetstostream_orderly_shutdown_test|packetstostream|ON"
   "PacketSender|packetsender_orderly_shutdown_test|packetsender|ON"
@@ -2801,6 +2923,9 @@ foreach(orderly_case IN ITEMS
     if(orderly_tunnel STREQUAL "PacketsToStream" OR orderly_tunnel STREQUAL "PacketSender")
       target_link_options(${orderly_test} PRIVATE "-Wl,--wrap=wtimerReset")
     endif()
+    if(orderly_tunnel STREQUAL "PacketsToStream")
+      target_link_options(${orderly_test} PRIVATE "-Wl,--wrap=lineScheduleTask")
+    endif()
     if(orderly_tunnel STREQUAL "WireGuardDevice")
       target_sources(${orderly_test} PRIVATE
         ${CMAKE_SOURCE_DIR}/tunnels/WireGuardDevice/instance/start.c
@@ -2815,11 +2940,24 @@ foreach(orderly_case IN ITEMS
       target_link_options(${orderly_test} PRIVATE
         "-Wl,--wrap=memoryAllocate"
         "-Wl,--wrap=memoryFree"
+        "-Wl,--wrap=lineScheduleTask"
+        "-Wl,--wrap=lineScheduleDelayedTask"
+      )
+    endif()
+    if(orderly_tunnel STREQUAL "TesterServer")
+      target_link_options(${orderly_test} PRIVATE
+        "-Wl,--wrap=lineScheduleTask"
+        "-Wl,--wrap=lineScheduleDelayedTask"
       )
     endif()
     if(orderly_tunnel STREQUAL "TesterClient")
       target_sources(${orderly_test} PRIVATE
         ${CMAKE_SOURCE_DIR}/tunnels/TesterClient/instance/start.c
+      )
+      target_compile_definitions(${orderly_test} PRIVATE WW_TESTERCLIENT_START_TEST_SEAM=1)
+      target_link_options(${orderly_test} PRIVATE
+        "-Wl,--wrap=lineScheduleTask"
+        "-Wl,--wrap=lineScheduleDelayedTask"
       )
     endif()
     target_link_libraries(${orderly_test} PRIVATE ww)

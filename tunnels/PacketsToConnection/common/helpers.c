@@ -494,20 +494,35 @@ err_t ptcTcpSendCompleteCallback(void *arg, struct tcp_pcb *tpcb, u16_t len)
             {
                 tcp_abort(pcb);
             }
-            if (lineIsAlive(ls->line) && ! lineScheduleTask(ls->line, ptcCloseLineTask, ls->tunnel))
+            if (lineIsAlive(ls->line))
             {
-                discard ptcRequiredControlRefusedLocked(ls, "terminal-write close");
+                const line_task_submit_result_e submit_result =
+                    lineScheduleTask(ls->line, ptcCloseLineTask, ls->tunnel, NULL);
+                if (submit_result == kLineTaskSubmitRejectedSettled)
+                {
+                    discard ptcRequiredControlRefusedLocked(ls, "terminal-write close");
+                }
+                else
+                {
+                    assert(submit_result == kLineTaskSubmitAcceptedAsync);
+                }
             }
             return ERR_ABRT;
         }
         if (! ls->write_paused && lineIsAlive(ls->line))
         {
-            if (! lineScheduleTask(ls->line, ptcResumeUpstreamTask, ls->tunnel))
+            const line_task_submit_result_e submit_result =
+                lineScheduleTask(ls->line, ptcResumeUpstreamTask, ls->tunnel, NULL);
+            if (submit_result == kLineTaskSubmitRejectedSettled)
             {
                 if (ptcRequiredControlRefusedLocked(ls, "write Resume"))
                 {
                     return ERR_ABRT;
                 }
+            }
+            else
+            {
+                assert(submit_result == kLineTaskSubmitAcceptedAsync);
             }
         }
     }
@@ -528,8 +543,13 @@ err_t ptcTcpPollCallback(void *arg, struct tcp_pcb *tpcb)
         return ERR_OK;
     }
 
-    ls->write_retry_queued = true;
-    if (! lineIsAlive(ls->line) || ! lineScheduleTask(ls->line, ptcWriteRetryTask, ls->tunnel))
+    ls->write_retry_queued                  = true;
+    line_task_submit_result_e submit_result = kLineTaskSubmitRejectedSettled;
+    if (lineIsAlive(ls->line))
+    {
+        submit_result = lineScheduleTask(ls->line, ptcWriteRetryTask, ls->tunnel, NULL);
+    }
+    if (submit_result == kLineTaskSubmitRejectedSettled)
     {
         ls->write_retry_queued = false;
         tcp_poll(tpcb, NULL, 0);
@@ -538,6 +558,10 @@ err_t ptcTcpPollCallback(void *arg, struct tcp_pcb *tpcb)
         {
             return ERR_ABRT;
         }
+    }
+    else
+    {
+        assert(submit_result == kLineTaskSubmitAcceptedAsync);
     }
     return ERR_OK;
 }

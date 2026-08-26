@@ -36,6 +36,7 @@
 static void __widle_del(widle_t *idle);
 static void __wtimer_del(wtimer_t *timer);
 static void wtimerQuiesce(wtimer_t *timer);
+static void wtimerFreeAllocation(wtimer_t *timer);
 static void wioReleaseNoCloseNow(wio_t *io);
 
 static thread_local wloop_t *normal_callback_loop;
@@ -188,6 +189,17 @@ static int timersCompare(const struct heap_node *lhs, const struct heap_node *rh
     return TIMER_ENTRY(lhs)->next_timeout < TIMER_ENTRY(rhs)->next_timeout;
 }
 
+static void wtimerFreeAllocation(wtimer_t *timer)
+{
+    assert(timer != NULL);
+    if (timer->fallible_allocation)
+    {
+        eventloopTryFree(timer);
+        return;
+    }
+    eventloopFree(timer);
+}
+
 static int wloopProcessIdles(wloop_t *loop)
 {
     int               nidles = 0;
@@ -293,9 +305,6 @@ static bool wloopHasPollWork(const wloop_t *loop)
 
 static void wloopReleasePending(wevent_t *event, bool callback_suppressed)
 {
-#ifndef EVENT_IOCP
-    discard callback_suppressed;
-#endif
     event->pending = 0;
 
     if (callback_suppressed && event->destroy && (event->event_type & WEVENT_TYPE_TIMER) != 0)
@@ -326,6 +335,12 @@ static void wloopReleasePending(wevent_t *event, bool callback_suppressed)
 #endif
     if (event->destroy)
     {
+        if ((event->event_type & WEVENT_TYPE_TIMER) != 0)
+        {
+            EVENT_INACTIVE(event);
+            wtimerFreeAllocation((wtimer_t *) event);
+            return;
+        }
 #ifdef EVENT_IOCP
         if (event->event_type == WEVENT_TYPE_IO && ((wio_t *) event)->iocp_deferred_finalize)
         {
@@ -1024,11 +1039,11 @@ static bool wloopCleanup(wloop_t *loop)
     printd("cleanup pendings...\n");
     for (int i = 0; i < WEVENT_PRIORITY_SIZE; ++i)
     {
-#ifdef EVENT_IOCP
         /*
          * Pending membership is a lifetime reference. Shutdown suppresses these
-         * callbacks, but must consume every linked node before an IO can finalize
-         * or the pending array can be discarded.
+         * callbacks, but a due one-shot timer has already left its heap and must
+         * be moved onto the quiesced reclamation list before the pending array is
+         * discarded. Non-timer cleanup remains owned by the collections below.
          */
         wevent_t *cur = loop->pendings[i];
         while (cur != NULL)
@@ -1036,17 +1051,25 @@ static bool wloopCleanup(wloop_t *loop)
             wevent_t *next = cur->pending_next;
             if (cur->pending && cur->loop == loop)
             {
-                cur->pending = 0;
+                if ((cur->event_type & WEVENT_TYPE_TIMER) != 0)
+                {
+                    wloopReleasePending(cur, true);
+                }
+#ifdef EVENT_IOCP
+                else
+                {
+                    cur->pending = 0;
+                }
                 if (cur->event_type == WEVENT_TYPE_IO)
                 {
                     wio_t *io                 = (wio_t *) cur;
                     io->iocp_pending_dispatch = 0;
                     wioIocpRetireCompletedWithoutCallbacks(io);
                 }
+#endif
             }
             cur = next;
         }
-#endif
         loop->pendings[i] = NULL;
     }
     loop->npendings = 0;
@@ -1098,14 +1121,14 @@ static bool wloopCleanup(wloop_t *loop)
     {
         timer = TIMER_ENTRY(loop->timers.root);
         heap_dequeue(&loop->timers);
-        EVENTLOOP_FREE(timer);
+        wtimerFreeAllocation(timer);
     }
     heap_init(&loop->timers, NULL);
     while (loop->realtimers.root)
     {
         timer = TIMER_ENTRY(loop->realtimers.root);
         heap_dequeue(&loop->realtimers);
-        EVENTLOOP_FREE(timer);
+        wtimerFreeAllocation(timer);
     }
     heap_init(&loop->realtimers, NULL);
     while (! list_empty(&loop->quiesced_timers))
@@ -1113,7 +1136,7 @@ static bool wloopCleanup(wloop_t *loop)
         struct list_node *timer_node = loop->quiesced_timers.next;
         list_del(timer_node);
         timer = container_of(timer_node, wtimer_t, quiesced_node);
-        EVENTLOOP_FREE(timer);
+        wtimerFreeAllocation(timer);
     }
     list_init(&loop->quiesced_timers);
 
@@ -1594,6 +1617,68 @@ wtimer_t *wtimerAdd(wloop_t *loop, wtimer_cb cb, uint32_t timeout_ms, uint32_t r
     return (wtimer_t *) timer;
 }
 
+wtimer_try_add_result_e wtimerTryAdd(wloop_t *loop, wtimer_cb cb, uint32_t timeout_ms, uint32_t repeat,
+                                     wtimer_t **timer_out)
+{
+    assert(timer_out != NULL);
+    if (timer_out == NULL)
+    {
+        return kWTimerTryAddResourceFailure;
+    }
+    *timer_out = NULL;
+
+    if (loop == NULL || cb == NULL || timeout_ms == 0)
+    {
+        return kWTimerTryAddAdmissionClosed;
+    }
+
+    mutexLock(&loop->normal_admission_mutex);
+    if (! wloopNormalDispatchAllowed(loop))
+    {
+        mutexUnlock(&loop->normal_admission_mutex);
+        return kWTimerTryAddAdmissionClosed;
+    }
+
+    wtimeout_t *timer = eventloopTryZalloc(sizeof(*timer));
+    if (timer == NULL)
+    {
+        mutexUnlock(&loop->normal_admission_mutex);
+        return kWTimerTryAddResourceFailure;
+    }
+
+    timer->fallible_allocation = 1;
+    timer->event_type          = WEVENT_TYPE_TIMEOUT;
+    timer->priority            = WEVENT_HIGHEST_PRIORITY;
+    timer->repeat              = repeat;
+    timer->timeout             = timeout_ms;
+    wloopUpdateTime(loop);
+    timer->next_timeout = loop->cur_hrtime + (uint64_t) timeout_ms * 1000;
+    if (timeout_ms >= 1000 && timeout_ms % 100 == 0)
+    {
+        timer->next_timeout = timer->next_timeout / 100000 * 100000;
+    }
+    heap_insert(&loop->timers, &timer->node);
+    EVENT_ADD(loop, timer, cb);
+    loop->ntimers++;
+    mutexUnlock(&loop->normal_admission_mutex);
+
+    *timer_out = (wtimer_t *) timer;
+    return kWTimerTryAddInstalled;
+}
+
+#ifdef WW_EVENT_MEMORY_TEST_SEAM
+void wtimerTestMakePendingOneShot(wtimer_t *timer)
+{
+    assert(timer != NULL);
+    assert(timer->active);
+    assert(! timer->pending);
+    assert(! timer->destroy);
+    assert(timer->repeat == 1);
+    __wtimer_del(timer);
+    EVENT_PENDING(timer);
+}
+#endif
+
 bool wtimerReset(wtimer_t *timer, uint32_t timeout_ms)
 {
     if (timer == NULL || timer->quiesced)
@@ -1716,13 +1801,17 @@ void wtimerDelete(wtimer_t *timer)
     {
         list_del(&timer->quiesced_node);
         timer->quiesced = 0;
-        EVENTLOOP_FREE(timer);
+        wtimerFreeAllocation(timer);
         return;
     }
     if (! timer->active)
         return;
     __wtimer_del(timer);
-    EVENT_DEL(timer);
+    EVENT_INACTIVE(timer);
+    if (! timer->pending)
+    {
+        wtimerFreeAllocation(timer);
+    }
 }
 
 const char *wioGetEngine(void)

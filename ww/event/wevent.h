@@ -104,13 +104,16 @@ struct widle_s
     struct list_node node;
 };
 
+/* `fallible_allocation` records the matching release family for the internal
+ * recoverable timer path. Normal public timers are zero-initialized here. */
 #define WTIMER_FIELDS                                                                                                  \
     WEVENT_FIELDS                                                                                                      \
     uint32_t         repeat;                                                                                           \
     uint64_t         next_timeout;                                                                                     \
     struct heap_node node;                                                                                             \
     struct list_node quiesced_node;                                                                                    \
-    unsigned         quiesced : 1;
+    unsigned         quiesced : 1;                                                                                     \
+    unsigned         fallible_allocation : 1;
 
 struct wtimer_s
 {

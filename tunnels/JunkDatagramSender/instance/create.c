@@ -24,10 +24,11 @@ tunnel_t *junkdatagramsenderTunnelCreate(node_t *node)
     t->fnPauseD   = &junkdatagramsenderTunnelDownStreamPause;
     t->fnResumeD  = &junkdatagramsenderTunnelDownStreamResume;
 
-    t->onPrepare = &junkdatagramsenderTunnelOnPrepair;
-    t->onStart   = &junkdatagramsenderTunnelOnStart;
-    t->onStop    = &junkdatagramsenderTunnelOnStop;
-    t->onDestroy = &junkdatagramsenderTunnelDestroy;
+    t->onPrepare    = &junkdatagramsenderTunnelOnPrepair;
+    t->onStart      = &junkdatagramsenderTunnelOnStart;
+    t->onWorkerStop = &junkdatagramsenderTunnelOnWorkerStop;
+    t->onStop       = &junkdatagramsenderTunnelOnStop;
+    t->onDestroy    = &junkdatagramsenderTunnelDestroy;
 
     junkdatagramsender_tstate_t *ts = tunnelGetState(t);
     if (! junkdatagramsenderLoadSettings(ts, node->node_settings_json))

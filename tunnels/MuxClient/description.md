@@ -1,5 +1,5 @@
 <!--
-Documentation version: 153
+Documentation version: 155
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/MuxClient.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/MuxClient.mdx, and all files must keep the same documentation version.
 -->
 
@@ -184,7 +184,9 @@ Fixed connection count mode:
   nearest whole MiB. An explicit setting overrides the profile-derived value independently for that limit.
 
 - `log-main-line-stats` `(boolean, optional)`
-  When `true`, each active parent transport line logs mux diagnostics every `5` seconds.
+  When `true`, each active parent transport line logs best-effort mux diagnostics every `5` seconds. Parent logical
+  death suppresses normal stats execution; when the queued or timed runner is reached, the task settles as `LineDead`.
+  Worker quiescence actively cancels pending queued or timed stats work. Neither path rearms it.
 
   The log keeps `parent-line-read-paused=no` for compatibility and also reports `parent-queued-bytes` and
   `children-close-pending`, along with `wid`, parent-line write pause state, child count, child read-pause count, and

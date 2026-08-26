@@ -16,13 +16,19 @@
 // wtimerAdd injection
 // ---------------------------------------------------------------------------
 
-static bool g_timer_fails                  = false;
-static bool g_timer_reset_closes_admission = false;
+static bool         g_timer_fails                  = false;
+static bool         g_timer_reset_closes_admission = false;
+static unsigned int g_recreate_refusals;
+static unsigned int g_recreate_submissions;
 
-wtimer_t *__real_wtimerAdd(wloop_t *loop, wtimer_cb cb, uint32_t timeout_ms, uint32_t repeat);
-wtimer_t *__wrap_wtimerAdd(wloop_t *loop, wtimer_cb cb, uint32_t timeout_ms, uint32_t repeat);
-bool      __real_wtimerReset(wtimer_t *timer, uint32_t timeout_ms);
-bool      __wrap_wtimerReset(wtimer_t *timer, uint32_t timeout_ms);
+wtimer_t                 *__real_wtimerAdd(wloop_t *loop, wtimer_cb cb, uint32_t timeout_ms, uint32_t repeat);
+wtimer_t                 *__wrap_wtimerAdd(wloop_t *loop, wtimer_cb cb, uint32_t timeout_ms, uint32_t repeat);
+bool                      __real_wtimerReset(wtimer_t *timer, uint32_t timeout_ms);
+bool                      __wrap_wtimerReset(wtimer_t *timer, uint32_t timeout_ms);
+line_task_submit_result_e __real_lineScheduleTask(line_t *const line, LineTaskFnNoBuf task, tunnel_t *t,
+                                                  LineTaskCancelFn on_cancel);
+line_task_submit_result_e __wrap_lineScheduleTask(line_t *const line, LineTaskFnNoBuf task, tunnel_t *t,
+                                                  LineTaskCancelFn on_cancel);
 
 wtimer_t *__wrap_wtimerAdd(wloop_t *loop, wtimer_cb cb, uint32_t timeout_ms, uint32_t repeat)
 {
@@ -41,6 +47,25 @@ bool __wrap_wtimerReset(wtimer_t *timer, uint32_t timeout_ms)
         twfRequire(wloopCloseNormalAdmission(weventGetLoop(timer)), "failed to close admission before timer reset");
     }
     return __real_wtimerReset(timer, timeout_ms);
+}
+
+line_task_submit_result_e __wrap_lineScheduleTask(line_t *const line, LineTaskFnNoBuf task, tunnel_t *t,
+                                                  LineTaskCancelFn on_cancel)
+{
+    g_recreate_submissions += 1U;
+    if (g_recreate_refusals == 0)
+    {
+        return __real_lineScheduleTask(line, task, t, on_cancel);
+    }
+
+    --g_recreate_refusals;
+    lineRef(line);
+    if (on_cancel != NULL)
+    {
+        on_cancel(t, line, kLineTaskCancelEnqueueFailure);
+    }
+    lineUnref(line);
+    return kLineTaskSubmitRejectedSettled;
 }
 
 // ---------------------------------------------------------------------------
@@ -233,6 +258,41 @@ static void caseDueTimeoutTimerRearmRefusalClearsSlot(void)
                        timers_before - 1U,
                        "the event loop did not reclaim the due one-shot timer exactly once");
 
+    fixtureTeardown(&fixture);
+}
+
+static void caseRecreateRefusalRemainsRetryableUntilWorkerStop(void)
+{
+    twfSetCase("packetstostream recreate refusal remains retryable until worker Stop");
+    tosResetProcessApi(true);
+
+    packetstostream_fixture_t fixture;
+    fixtureSetup(&fixture);
+    packetstostream_lstate_t *ls = lineGetState(fixture.packet_line, fixture.p2s);
+
+    g_recreate_refusals    = 2;
+    g_recreate_submissions = 0;
+    packetstostreamScheduleRecreateOutputLine(fixture.p2s, fixture.packet_line, ls);
+
+    twfRequire(! ls->recreate_scheduled, "first recreate refusal left the retry latch set");
+    twfRequire(lineIsAlive(fixture.packet_line), "first recreate refusal destroyed the persistent packet line");
+    twfRequireEqualU32(g_recreate_submissions, 1, "first recreate attempt submitted the wrong number of tasks");
+
+    /* A later packet or heartbeat reaches the same helper. The cleared latch
+     * must permit exactly one new attempt instead of permanently blackholing
+     * this worker. */
+    packetstostreamScheduleRecreateOutputLine(fixture.p2s, fixture.packet_line, ls);
+    twfRequire(! ls->recreate_scheduled, "retry refusal left the recreate latch set");
+    twfRequireEqualU32(g_recreate_submissions, 2, "later activity did not retry recreate exactly once");
+    twfRequireEqualU32(g_recreate_refusals, 0, "recreate retry did not consume both settled refusals");
+
+    packetstostreamTunnelOnWorkerStop(fixture.p2s, 0, wwLifecycleProcessShutdown());
+    twfRequire(lineIsAlive(fixture.packet_line), "worker Stop destroyed the chain-owned packet line");
+    twfRequireLineStateZeroed(fixture.packet_line, fixture.p2s, "worker Stop retained recreate or parser state");
+    twfRequireEqualU32(fixture.trace.next_finish, 1, "worker Stop did not close the owned output line once");
+    fixture.stream_line = NULL;
+
+    tosRequireNoProcessApiCall();
     fixtureTeardown(&fixture);
 }
 
@@ -560,6 +620,7 @@ int main(void)
     caseHealthyPingArmsTheTimer();
     caseTimeoutTimerFailure();
     caseDueTimeoutTimerRearmRefusalClearsSlot();
+    caseRecreateRefusalRemainsRetryableUntilWorkerStop();
     caseWorkerStopClosesOwnedOutputLine();
     casePacketWorkerStopSettlesOwnerState();
     caseDestroyRejectsUndrainedFinalizedPacketState();
