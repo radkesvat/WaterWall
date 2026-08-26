@@ -1,18 +1,22 @@
+# Language overrides
 *.h linguist-language=C
+*.in linguist-language=C
+*.inc linguist-language=C
+
+# Vendored code
+*.asm linguist-vendored
+*.s linguist-vendored
 tests/** linguist-vendored
-tests/**/*.py linguist-vendored
-tests/unittests/fixtures/router_quic_sni/gen_quic_sni_vectors.go linguist-vendored
-tests/cases/**/probe.py linguist-vendored
-ww/lwip/** linguist-vendored
-ww/vendor/** linguist-vendored
-ww/utils/freeres_wrap.cc linguist-vendored
-tunnels/TlsClient/boringssl/** linguist-vendored
+tunnels/Router/geosite_ww_style_generator/domain-list-community/** linguist-vendored
 tunnels/TcpOverUdpClient/fec/** linguist-vendored
 tunnels/TcpOverUdpClient/kcp/** linguist-vendored
 tunnels/TcpOverUdpServer/fec/** linguist-vendored
 tunnels/TcpOverUdpServer/kcp/** linguist-vendored
+tunnels/TlsClient/boringssl/** linguist-vendored
+ww/lwip/** linguist-vendored
+ww/utils/freeres_wrap.cc linguist-vendored
+ww/vendor/** linguist-vendored
+
+# Generated files
 tunnels/Router/geosite_ww_style_generator/*.py linguist-generated=true
 tunnels/Router/geosite_ww_style_generator/geosite_generated.json linguist-generated=true
-tunnels/Router/geosite_ww_style_generator/domain-list-community/** linguist-vendored
-*.asm linguist-vendored
-*.s linguist-vendored
