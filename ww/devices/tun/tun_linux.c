@@ -2080,11 +2080,6 @@ device_writer_channel_t *tunLinuxWriterChannel(tun_device_t *tdev)
     return &tdev->writer_channel;
 }
 
-int tunLinuxStopPipeWriteFD(const tun_device_t *tdev)
-{
-    return tdev->linux_pipe_fds[1];
-}
-
 void tunLinuxSetReaderRoutine(tun_device_t *tdev, wthread_routine routine)
 {
     tdev->routine_reader = routine;
@@ -2098,13 +2093,6 @@ void tunLinuxSetWriterRoutine(tun_device_t *tdev, wthread_routine routine)
 tun_lifecycle_state_t tunLinuxLifecycleState(const tun_device_t *tdev)
 {
     return tunLifecycleLoad(&tdev->lifecycle);
-}
-
-bool tunLinuxWriterChannelIsUnpublished(const tun_device_t *tdev)
-{
-    return ! deviceWriterChannelHasCurrent(&tdev->writer_channel) && tdev->writer_channel.retired == NULL &&
-           tdev->writer_channel.retired_generation_count == 0 &&
-           atomicLoadExplicit(&tdev->writer_channel.published_generation, memory_order_acquire) == (uintptr_t) NULL;
 }
 
 #endif
