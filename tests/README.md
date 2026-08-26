@@ -37,11 +37,11 @@ Tests are organized into distinct execution lanes via `tests/run_test_lane.sh`:
 | Test Suite / Lane | Pre-Isolation (Host Serial) | Post-Isolation (Parallel Lanes) |
 |---|---|---|
 | **Support Tests** (13 tests) | ~55s (serial) | **~55s** (serial) |
-| **Deterministic Functional** (143 tests) | ~173s (sequential) | **~22–24s** (16 jobs on 4 CPUs) / **~71s** (1 CPU, 4 jobs) |
+| **Deterministic Functional** (147 tests) | ~173s (sequential) | **~22–24s** (16 jobs on 4 CPUs) / **~71s** (1 CPU, 4 jobs) |
 | **External Network** (1 test) | ~1s | **<1s** (serial) |
 | **Speed Tests** (16 tests) | ~48s (sequential) | **~46–48s** (serial) |
 | **Privileged Integration** (6 tests) | ~15s (sequential) | **~14–15s** (serial) |
-| **Ordinary non-privileged production sequence (`all`)** | ~277s | **~127s (~2m)** (support + functional + external + speed, 173 tests) |
+| **Ordinary non-privileged production sequence (`all`)** | ~277s | **~127s (~2m)** (support + functional + external + speed, 177 tests) |
 
 These are warm-build planning measurements from the 4-CPU reference host, not
 portable performance guarantees. The `all` total includes the production
