@@ -119,14 +119,47 @@ static bool wireguarddeviceGetPlaintextPacketMetadata(const sbuf_t *buf, ip_addr
     return false;
 }
 
+sbuf_t *wireguarddeviceDecryptTransportPayload(buffer_pool_t *pool, const uint8_t *ciphertext, uint32_t ciphertext_len,
+                                               uint64_t nonce, wireguard_keypair_t *keypair)
+{
+    assert(pool != NULL);
+    assert(ciphertext != NULL);
+    assert(keypair != NULL);
+
+    if (UNLIKELY(ciphertext_len < WIREGUARD_AUTHTAG_LEN))
+    {
+        return NULL;
+    }
+
+    const uint32_t plaintext_len = ciphertext_len - WIREGUARD_AUTHTAG_LEN;
+    sbuf_t        *buf           = bufferpoolGetBestFit(pool, plaintext_len, bufferpoolGetLargeBufferPadding(pool));
+
+    if (UNLIKELY(sbufGetMaximumWriteableSize(buf) < plaintext_len))
+    {
+        LOGF("WireGuardDevice: best-fit decryption buffer has %u writable bytes for a %u-byte plaintext",
+             (unsigned int) sbufGetMaximumWriteableSize(buf),
+             (unsigned int) plaintext_len);
+        abortProgramNow(1);
+    }
+
+    if (UNLIKELY(! wireguardDecryptPacket(
+            sbufGetMutablePtr(buf), sbufGetMaximumWriteableSize(buf), ciphertext, ciphertext_len, nonce, keypair)))
+    {
+        bufferpoolReuseBuffer(pool, buf);
+        return NULL;
+    }
+
+    sbufSetLength(buf, plaintext_len);
+    return buf;
+}
+
 static void wireguardifProcessDataMessage(wireguard_device_t *device, wireguard_peer_t *peer,
-                                          message_transport_data_t *data_hdr, size_t data_len, const ip_addr_t *addr,
+                                          message_transport_data_t *data_hdr, uint32_t data_len, const ip_addr_t *addr,
                                           uint16_t port)
 {
     wireguard_keypair_t *keypair;
     uint64_t             nonce;
     uint8_t             *src;
-    uint32_t             src_len;
     sbuf_t              *buf = NULL;
     ip_addr_t            source;
     uint32_t             now;
@@ -134,112 +167,85 @@ static void wireguardifProcessDataMessage(wireguard_device_t *device, wireguard_
     uint32_t             idx        = data_hdr->receiver;
 
     keypair = getPeerKeypairForIdx(peer, idx);
+    assert(keypair != NULL);
 
-    if (keypair)
+    nonce = U8TO64_LITTLE(data_hdr->counter);
+    src   = &data_hdr->enc_packet[0];
+
+    if (UNLIKELY(! keypair->receiving_valid || wireguardExpired(keypair->keypair_millis, REJECT_AFTER_TIME)))
     {
-        nonce   = U8TO64_LITTLE(data_hdr->counter);
-        src     = &data_hdr->enc_packet[0];
-        src_len = (uint32_t) data_len;
+        // Reject-After-Time has passed for this keypair. Drop this packet and force a new handshake.
+        keypairDestroy(keypair);
+        goto finish;
+    }
 
-        if (src_len < WIREGUARD_AUTHTAG_LEN)
+    if (UNLIKELY(nonce >= REJECT_AFTER_MESSAGES))
+    {
+        goto finish;
+    }
+
+    buf = wireguarddeviceDecryptTransportPayload(getCurrentEventWorkerBufferPool(), src, data_len, nonce, keypair);
+    if (LIKELY(buf != NULL))
+    {
+        if (UNLIKELY(! wireguardCheckReplay(keypair, nonce)))
         {
             goto finish;
         }
 
-        if (! keypair->receiving_valid || wireguardExpired(keypair->keypair_millis, REJECT_AFTER_TIME))
+        // 3. Since the packet has authenticated correctly, the source IP of the outer UDP/IP packet is used
+        // to update the endpoint for peer TrMv...WXX0. Update the peer location
+        updatePeerAddr(peer, addr, port);
+
+        now              = getTickMS();
+        keypair->last_rx = now;
+        peer->last_rx    = now;
+
+        if (UNLIKELY(peer->pending_handshake.valid &&
+                     peer->pending_handshake.message_type == MESSAGE_HANDSHAKE_RESPONSE &&
+                     peer->pending_handshake.sender == idx))
         {
-            // Reject-After-Time has passed for this keypair. Drop this packet and force a new handshake.
-            keypairDestroy(keypair);
-            goto finish;
+            wireguardClearPendingHandshake(peer);
         }
 
-        if (nonce >= REJECT_AFTER_MESSAGES)
+        // Might need to shuffle next key --> current keypair
+        keypairUpdate(peer, keypair);
+        keypair = getPeerKeypairForIdx(peer, idx);
+        assert(keypair != NULL);
+
+        // Make sure that link is reported as up
+        device->status_connected = true;
+
+        // Check to see if we should rekey
+        if (UNLIKELY(keypair->initiator &&
+                     wireguardExpired(keypair->keypair_millis,
+                                      REJECT_AFTER_TIME - peer->keepalive_interval - REKEY_TIMEOUT)))
         {
-            goto finish;
+            peer->send_handshake = true;
         }
 
-        // We don't know the unpadded size until we have decrypted the packet and validated/inspected the IP header
-        buf = bufferpoolGetSmallBuffer(getCurrentEventWorkerBufferPool());
-        if (buf)
+        if (sbufGetLength(buf) > 0)
         {
-            // Decrypt the packet
-            sbufSetLength(buf, src_len - WIREGUARD_AUTHTAG_LEN);
-            sbufWriteZeros(buf, sbufGetLength(buf));
-            if (wireguardDecryptPacket(
-                    sbufGetMutablePtr(buf), sbufGetMaximumWriteableSize(buf), src, src_len, nonce, keypair))
+            if (wireguarddeviceGetPlaintextPacketMetadata(buf, &source, &packet_len) &&
+                wireguarddeviceCheckPeerAllowedIp(peer, &source))
             {
-                if (! wireguardCheckReplay(keypair, nonce))
-                {
-                    goto finish;
-                }
+                wgd_tstate_t *ts   = (wgd_tstate_t *) device;
+                line_t       *line = tunnelchainGetWorkerPacketLine(ts->tunnel->chain, getCurrentEventWorkerWID());
 
-                // 3. Since the packet has authenticated correctly, the source IP of the outer UDP/IP packet is used
-                // to update the endpoint for peer TrMv...WXX0. Update the peer location
-                updatePeerAddr(peer, addr, port);
+                sbufSetLength(buf, packet_len);
+                wireguarddeviceStateUnlock(ts);
+                wireguarddeviceForwardInnerPacket(ts, line, buf);
+                wireguarddeviceStateLock(ts);
 
-                now              = getTickMS();
-                keypair->last_rx = now;
-                peer->last_rx    = now;
-
-                if (peer->pending_handshake.valid &&
-                    peer->pending_handshake.message_type == MESSAGE_HANDSHAKE_RESPONSE &&
-                    peer->pending_handshake.sender == idx)
-                {
-                    wireguardClearPendingHandshake(peer);
-                }
-
-                // Might need to shuffle next key --> current keypair
-                keypairUpdate(peer, keypair);
-                keypair = getPeerKeypairForIdx(peer, idx);
-
-                if (keypair != NULL)
-                {
-                    // Make sure that link is reported as up
-                    device->status_connected = true;
-
-                    // Check to see if we should rekey
-                    if (keypair->initiator &&
-                        wireguardExpired(keypair->keypair_millis,
-                                         REJECT_AFTER_TIME - peer->keepalive_interval - REKEY_TIMEOUT))
-                    {
-                        peer->send_handshake = true;
-                    }
-                }
-
-                if (sbufGetLength(buf) > 0)
-                {
-                    if ((keypair != NULL) && wireguarddeviceGetPlaintextPacketMetadata(buf, &source, &packet_len) &&
-                        wireguarddeviceCheckPeerAllowedIp(peer, &source))
-                    {
-                        wgd_tstate_t *ts = (wgd_tstate_t *) device;
-                        line_t *line = tunnelchainGetWorkerPacketLine(ts->tunnel->chain, getCurrentEventWorkerWID());
-
-                        sbufSetLength(buf, packet_len);
-                        wireguarddeviceStateUnlock(ts);
-                        wireguarddeviceForwardInnerPacket(ts, line, buf);
-                        wireguarddeviceStateLock(ts);
-
-                        // buf is owned by previous packet layer now
-                        buf = NULL;
-                    }
-                }
-                else
-                {
-                    // This was a keep-alive packet
-                    reuseBuffer(buf);
-                    buf = NULL;
-                }
-            }
-            else
-            {
-                reuseBuffer(buf);
+                // buf is owned by previous packet layer now
                 buf = NULL;
             }
         }
-    }
-    else
-    {
-        // Could not locate valid keypair for remote index
+        else
+        {
+            // This was a keep-alive packet
+            reuseBuffer(buf);
+            buf = NULL;
+        }
     }
 finish:
     if (buf != NULL)
@@ -409,7 +415,7 @@ static void wireguardifNetworkRx(wireguard_device_t *device, sbuf_t *p, const ip
     // We have received a packet from the base_netif to our UDP port - process this as a possible Wireguard packet
     wireguard_peer_t *peer;
     uint8_t          *data = sbufGetMutablePtr(p);
-    size_t            len  = sbufGetLength(p); // This buf, not chained ones
+    uint32_t          len  = sbufGetLength(p); // This buf, not chained ones
 
     message_handshake_initiation_t *msg_initiation;
     message_handshake_response_t   *msg_response;
@@ -490,8 +496,8 @@ static void wireguardifNetworkRx(wireguard_device_t *device, sbuf_t *p, const ip
         peer     = peerLookupByReceiver(device, msg_data->receiver);
         if (peer)
         {
-            // header is 16 bytes long so take that off the length
-            wireguardifProcessDataMessage(device, peer, msg_data, len - 16, addr, port);
+            wireguardifProcessDataMessage(
+                device, peer, msg_data, len - (uint32_t) sizeof(message_transport_data_t), addr, port);
         }
         break;
 

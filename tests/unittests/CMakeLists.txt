@@ -1392,6 +1392,22 @@ if(TARGET WireGuardDevice)
     wireguarddevice_layer_resolution_test
     "unit;tunnels;wireguard;layer;topology"
   )
+
+  add_executable(wireguarddevice_transport_buffer_test
+    wireguarddevice_transport_buffer_test.c
+  )
+  target_include_directories(wireguarddevice_transport_buffer_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/tunnels/WireGuardDevice/include/WireGuardDevice
+    ${CMAKE_SOURCE_DIR}/tunnels/WireGuardDevice
+  )
+  target_link_libraries(wireguarddevice_transport_buffer_test PRIVATE WireGuardDevice ww)
+  add_dependencies(waterwall_unit_tests wireguarddevice_transport_buffer_test)
+
+  add_waterwall_unit_test(
+    waterwall.wireguarddevice_transport_buffer_unit
+    wireguarddevice_transport_buffer_test
+    "unit;tunnels;wireguard;transport;buffer;security"
+  )
 endif()
 
 if(LINUX AND TARGET WireGuardDevice)

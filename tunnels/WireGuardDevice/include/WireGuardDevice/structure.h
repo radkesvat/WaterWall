@@ -78,6 +78,9 @@ void              wireguarddeviceHandleInnerPayload(tunnel_t *t, line_t *l, sbuf
 void              wireguarddeviceHandleTransportPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 wireguard_peer_t *wireguarddevicePeerLookupByAllowedIp(wireguard_device_t *device, const ip_addr_t *ipaddr);
 bool              wireguarddeviceCheckPeerAllowedIp(const wireguard_peer_t *peer, const ip_addr_t *ipaddr);
+/* Arguments are required internal invariants. Returns NULL only for malformed or unauthenticated ciphertext. */
+sbuf_t *wireguarddeviceDecryptTransportPayload(buffer_pool_t *pool, const uint8_t *ciphertext, uint32_t ciphertext_len,
+                                               uint64_t nonce, wireguard_keypair_t *keypair);
 
 bool wireguarddeviceInnerPacketTargetWID(const uint8_t *packet, uint32_t length, wid_t current_wid, wid_t *target_wid);
 
