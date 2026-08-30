@@ -219,12 +219,15 @@ static void envSetup(test_env_t *env)
     GSTATE.mtu_size                      = 1500;
     testWorkerBindWID(0);
 
-    /* Bounded flow tables refuse to run without a secure hash seed. */
     require(globalstateInitializeSecureRandom(), "the operating system random source is unavailable");
+    require(frandGlobalInit(), "fast random initialization failed");
+    frandInit();
 }
 
 static void envTeardown(test_env_t *env)
 {
+    frandThreadCleanup();
+    frandGlobalCleanup();
     globalstateDestroySecureRandom();
     testWorkerBindWID(0);
     workerMessagesDestroy(&env->workers[0]);

@@ -145,6 +145,7 @@ static void tcpipInitDone(void *arg)
     GSTATE.lwip_process_v4_hook  = wwDefaultInternalLwipIpv4Hook;
     GSTATE.lwip_wid              = getTotalWorkersCount() - 1;
     workerBindCurrentThread(getWorker(GSTATE.lwip_wid));
+    frandInit();
 }
 
 // --- Public API functions ---
@@ -264,7 +265,7 @@ void globalstateStopSystemLoadSampler(void)
 }
 
 static void globalstateRollbackConstruction(wid_t constructed_workers, bool ares_initialized, bool crypto_initialized,
-                                            bool worker_bound)
+                                            bool frand_initialized, bool worker_bound)
 {
     if (GSTATE.system_load != NULL)
     {
@@ -329,6 +330,11 @@ static void globalstateRollbackConstruction(wid_t constructed_workers, bool ares
     {
         wCryptoGlobalCleanup();
     }
+    if (frand_initialized)
+    {
+        frandThreadCleanup();
+        frandGlobalCleanup();
+    }
     globalstateDestroySecureRandom();
     GSTATE = (ww_global_state_t) {0};
 }
@@ -387,6 +393,7 @@ ww_startup_result_t createGlobalState(const ww_construction_data_t init_data)
 
     bool  crypto_initialized  = false;
     bool  ares_initialized    = false;
+    bool  frand_initialized   = false;
     bool  worker_bound        = false;
     wid_t constructed_workers = 0;
 
@@ -408,6 +415,15 @@ ww_startup_result_t createGlobalState(const ww_construction_data_t init_data)
         startupFailureRecord(1);
         goto rollback;
     }
+
+    if (UNLIKELY(! frandGlobalInit()))
+    {
+        printError("Failed to initialize process fast-random state\n");
+        startupFailureRecord(1);
+        goto rollback;
+    }
+    frand_initialized = true;
+    frandInit();
 
     /* Initialize cryptography before any other process-wide subsystem.  If a
      * backend cannot start, there are no workers, managers, loggers, or c-ares
@@ -631,7 +647,8 @@ ww_startup_result_t createGlobalState(const ww_construction_data_t init_data)
     return wwStartupContextEnd(&startup);
 
 rollback:
-    globalstateRollbackConstruction(constructed_workers, ares_initialized, crypto_initialized, worker_bound);
+    globalstateRollbackConstruction(
+        constructed_workers, ares_initialized, crypto_initialized, frand_initialized, worker_bound);
     return wwStartupContextEnd(&startup);
 }
 
@@ -853,6 +870,8 @@ WW_EXPORT void destroyGlobalState(void)
 
     ares_library_cleanup();
 
+    frandThreadCleanup();
+    frandGlobalCleanup();
     globalstateDestroySecureRandom();
     if (GSTATE.system_load != NULL)
     {

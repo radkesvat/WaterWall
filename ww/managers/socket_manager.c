@@ -818,19 +818,14 @@ static bool isSafeIptablesToken(const char *s)
     return true;
 }
 
-static bool generateIptablesOwnerToken(void)
+static void generateIptablesOwnerToken(void)
 {
-    uint64_t token = 0;
-    if (! secureRandomBytes(&token, sizeof(token)))
-    {
-        return false;
-    }
+    uint64_t token                             = fastRand64();
     socketmanager_gstate->iptables_owner_token = token;
     socketManagerIptablesFormatChainName(
         token, 4, socketmanager_gstate->iptables_v4_chain.name, sizeof(socketmanager_gstate->iptables_v4_chain.name));
     socketManagerIptablesFormatChainName(
         token, 6, socketmanager_gstate->iptables_v6_chain.name, sizeof(socketmanager_gstate->iptables_v6_chain.name));
-    return true;
 }
 
 static bool acquireIptablesOwnerLease(void)
@@ -842,11 +837,7 @@ static bool acquireIptablesOwnerLease(void)
 
     for (int attempt = 0; attempt < 16; ++attempt)
     {
-        if (! generateIptablesOwnerToken())
-        {
-            LOGE("SocketManager: failed to generate iptables owner token");
-            return false;
-        }
+        generateIptablesOwnerToken();
 
         int                                          fd = -1;
         socket_manager_iptables_lease_probe_result_t lease =

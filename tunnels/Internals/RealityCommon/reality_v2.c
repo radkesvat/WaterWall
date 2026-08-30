@@ -770,10 +770,11 @@ bool realityV2ParseControl(uint8_t expected_record_kind, const uint8_t *data, ui
            data[1] == expected_record_kind;
 }
 
-static bool realityV2SecureRandomAdapter(void *context, void *bytes, size_t size)
+static bool realityV2RandomAdapter(void *context, void *bytes, size_t size)
 {
     discard context;
-    return secureRandomBytes(bytes, size);
+    getRandomBytes(bytes, size);
+    return true;
 }
 
 static bool realityV2SelectControlPaddingLength(reality_v2_random_bytes_fn random_bytes, void *random_context,
@@ -853,7 +854,7 @@ bool realityV2BuildControlPayloadWithRandom(uint8_t record_kind, reality_v2_rand
 bool realityV2BuildControlPayload(uint8_t record_kind, uint8_t *out, uint32_t out_capacity, uint32_t *out_len)
 {
     return realityV2BuildControlPayloadWithRandom(
-        record_kind, realityV2SecureRandomAdapter, NULL, out, out_capacity, out_len);
+        record_kind, realityV2RandomAdapter, NULL, out, out_capacity, out_len);
 }
 
 bool realityV2TryDecryptExpectedRecord(const reality_v2_record_descriptor_t *descriptor, uint8_t direction,

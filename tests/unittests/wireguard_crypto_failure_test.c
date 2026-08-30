@@ -322,8 +322,10 @@ static void testDeviceDestroyErasesSecrets(void)
 
 int main(void)
 {
-    require(wCryptoGlobalInit() == kWCryptoOk, "crypto global initialization failed");
     require(globalstateInitializeSecureRandom(), "secure random initialization failed");
+    require(frandGlobalInit(), "fast random initialization failed");
+    frandInit();
+    require(wCryptoGlobalInit() == kWCryptoOk, "crypto global initialization failed");
 
     testConstructionHashFailure();
     testSessionKdfFailureInvalidatesHandshake();
@@ -334,7 +336,9 @@ int main(void)
     testClearHandshakeStateErasesActiveAndPendingState();
     testDeviceDestroyErasesSecrets();
 
-    globalstateDestroySecureRandom();
     wCryptoGlobalCleanup();
+    frandThreadCleanup();
+    frandGlobalCleanup();
+    globalstateDestroySecureRandom();
     return 0;
 }

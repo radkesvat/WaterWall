@@ -148,11 +148,7 @@ static bool realityserverEncryptFrame(realityserver_tstate_t *ts, realityserver_
         }
         else if (ls->server_gcm_nonce_policy == kRealityServerGcmNoncePolicyRandom)
         {
-            if (UNLIKELY(! secureRandomBytes(visible_prefix, kRealityV2Tls12GcmPrefixSize)))
-            {
-                bufferpoolReuseBuffer(pool, out);
-                return false;
-            }
+            getRandomBytes(visible_prefix, kRealityV2Tls12GcmPrefixSize);
         }
         else
         {
@@ -160,11 +156,9 @@ static bool realityserverEncryptFrame(realityserver_tstate_t *ts, realityserver_
             return false;
         }
     }
-    else if (descriptor.visible_prefix_len != 0 &&
-             UNLIKELY(! secureRandomBytes(visible_prefix, descriptor.visible_prefix_len)))
+    else if (descriptor.visible_prefix_len != 0)
     {
-        bufferpoolReuseBuffer(pool, out);
-        return false;
+        getRandomBytes(visible_prefix, descriptor.visible_prefix_len);
     }
 
     uint8_t *ciphertext = visible_prefix + descriptor.visible_prefix_len;

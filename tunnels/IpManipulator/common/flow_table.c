@@ -199,16 +199,7 @@ bool ipmanipulatorFlowTableInit(ipmanipulator_flow_table_t *table, const char *n
         return false;
     }
 
-    uint64_t seed = 0;
-    if (! secureRandomBytes(&seed, sizeof(seed)))
-    {
-        /*
-         * A predictable hash lets an attacker pick tuples that all land in one
-         * bucket, so refuse to run rather than fall back to a fixed seed.
-         */
-        LOGF("IpManipulator: %s flow table could not obtain a secure hash seed", name != NULL ? name : "flow-table");
-        return false;
-    }
+    uint64_t seed = fastRand64();
 
     uint32_t shard_count = flowtableRoundUpPowerOfTwo(worker_count == 0 ? 1U : worker_count);
 

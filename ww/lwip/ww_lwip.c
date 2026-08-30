@@ -3,6 +3,7 @@
 #include "loggers/network_logger.h"
 #include "lwip/memp.h"
 #include "lwip/priv/tcp_priv.h"
+#include "wfrand.h"
 
 /*
  * The pooled heap's hot class must actually be able to hold a full-MSS segment
@@ -72,7 +73,8 @@ static void wwLwipReleaseProtocolState(void *userdata)
         assert(close_result == ERR_OK);
         if (close_result != ERR_OK)
         {
-            LOGF("wwLwipReleaseProtocolState: failed to close listen PCB (close_result != ERR_OK, result=%d)", (int) close_result);
+            LOGF("wwLwipReleaseProtocolState: failed to close listen PCB (close_result != ERR_OK, result=%d)",
+                 (int) close_result);
             abortProgramNow(1);
         }
     }
@@ -84,6 +86,7 @@ static void wwLwipReleaseProtocolState(void *userdata)
     {
         netif_remove(netif_list);
     }
+    frandThreadCleanup();
 }
 
 bool wwLwipShutdown(void)

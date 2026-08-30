@@ -473,12 +473,16 @@ int main(void)
     initWLibc();
     checkSumInit();
     twfRequire(globalstateInitializeSecureRandom(), "secure-random initialization failed");
+    twfRequire(frandGlobalInit(), "fast-random global initialization failed");
+    frandInit();
     twfRequire(wCryptoGlobalInit() == kWCryptoOk, "crypto initialization failed");
 
     runEndpointCases(false);
     runEndpointCases(true);
 
     wCryptoGlobalCleanup();
+    frandThreadCleanup();
+    frandGlobalCleanup();
     globalstateDestroySecureRandom();
     puts("ping_flow_test: all cases passed");
     return 0;

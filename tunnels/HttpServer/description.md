@@ -289,7 +289,7 @@ With `http1-mode = "split"`, `HttpServer` treats incoming HTTP/1.1 connections a
 - upload request: its request body is decoded and forwarded upstream
 - download request: it receives the response body as a chunked HTTP/1.1 response
 
-The server pairs both halves by the configured identifier and direction metadata, then creates one normal Waterwall line toward the next node. The download response headers may be sent before the upload half arrives, which keeps CDN/proxy download requests visibly active.
+The server pairs both halves by the configured identifier and direction metadata, then creates one normal Waterwall line toward the next node. `HttpClient` supplies a fresh 128-bit CSPRNG pairing ID made from two `fastRand64()` values (16 bytes from the thread's ChaCha20 stream) and formatted as 32 lowercase hexadecimal characters. The ID is ordinary routing metadata used to match the two transport halves. If the deployment needs protected transport, add TLS or another security node such as `TlsServer` or `EncryptionServer`. The download response headers may be sent before the upload half arrives, which keeps CDN/proxy download requests visibly active.
 
 When the separate upload body ends, split mode propagates upstream `Finish` on the logical main line. This is the only HTTP body-end that is used as a Waterwall lifecycle signal.
 

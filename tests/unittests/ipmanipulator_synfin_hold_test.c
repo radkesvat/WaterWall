@@ -582,6 +582,8 @@ int main(void)
 {
     checkSumInit();
     require(globalstateInitializeSecureRandom(), "the operating system random source is unavailable");
+    require(frandGlobalInit(), "fast random initialization failed");
+    frandInit();
 
     testCompleteAndNonTlsPayloadsPassImmediately();
     testFragmentedHoldCancelsOnSecondSegment();
@@ -591,6 +593,8 @@ int main(void)
     testStaleGenerationAndCleanup();
     testDroppedScheduleReleasesHold();
 
+    frandThreadCleanup();
+    frandGlobalCleanup();
     globalstateDestroySecureRandom();
     printf("ALL unit tests passed!\n");
     return 0;

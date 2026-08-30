@@ -35,6 +35,7 @@
 // Adapted from https://cr.yp.to/streamciphers/timings/estreambench/submissions/salsa20/chacha8/ref/chacha.c by D. J.
 // Bernstein (Public Domain) HChaCha20 is described here: https://tools.ietf.org/id/draft-arciszewski-xchacha-02.html
 
+#include "private/chacha20_stream.h"
 #include "private/defs.h"
 
 // 2.3.  The ChaCha20 Block Function
@@ -122,6 +123,12 @@ static void chacha20_block(struct chacha20_ctx *ctx, uint8_t *stream)
     wCryptoZero(working_state, sizeof(working_state));
 }
 
+void chacha20_keystream_block(struct chacha20_ctx *ctx, uint8_t out[CHACHA20_BLOCK_SIZE])
+{
+    chacha20_block(ctx, out);
+    ctx->state[12] = PLUSONE(ctx->state[12]);
+}
+
 void chacha20(struct chacha20_ctx *ctx, uint8_t *out, const uint8_t *in, size_t len)
 {
     uint8_t output[CHACHA20_BLOCK_SIZE];
@@ -131,9 +138,7 @@ void chacha20(struct chacha20_ctx *ctx, uint8_t *out, const uint8_t *in, size_t 
     {
         for (;;)
         {
-            chacha20_block(ctx, output);
-            // Word 12 is a block counter
-            ctx->state[12] = PLUSONE(ctx->state[12]);
+            chacha20_keystream_block(ctx, output);
             if (len <= 64)
             {
                 for (i = 0; i < len; ++i)

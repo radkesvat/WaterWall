@@ -468,6 +468,8 @@ static void testKind(ipmanipulator_delay_barrier_kind_e kind)
 int main(void)
 {
     require(globalstateInitializeSecureRandom(), "the operating system random source is unavailable");
+    require(frandGlobalInit(), "fast random initialization failed");
+    frandInit();
 
     GSTATE.workers_count = 2; // one ordinary event worker plus the lwIP slot
     testWorkerRegistryInstall(&g_test_worker_registry);
@@ -481,6 +483,8 @@ int main(void)
     testWorkerRegistryRestore(&g_test_worker_registry);
     GSTATE.workers_count = 0;
 
+    frandThreadCleanup();
+    frandGlobalCleanup();
     globalstateDestroySecureRandom();
     return 0;
 }

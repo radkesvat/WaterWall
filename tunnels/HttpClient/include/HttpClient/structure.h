@@ -110,7 +110,6 @@ typedef struct httpclient_tstate_s
     httpclient_split_placement_t   split_id_placement;
     httpclient_split_placement_t   split_direction_placement;
     httpclient_split_placement_t   split_token_placement;
-    atomic_ullong                  split_identifier;
     bool                           enable_upgrade;
     bool                           websocket_enabled;
     bool                           split_cache_bypass;
@@ -183,7 +182,10 @@ enum
     kHttpClientMaxHeaderBytes   = 64 * 1024,
     kHttpClientHttp2FrameBytes  = 32 * 1024,
     kHttpClientDefaultHttp1Port = 80,
-    kHttpClientDefaultHttpsPort = 443
+    kHttpClientDefaultHttpsPort = 443,
+
+    kHttpClientSplitIdHexChars = 32,
+    kHttpClientSplitIdCapacity = 33
 };
 
 WW_EXPORT void         httpclientTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context);
@@ -239,6 +241,7 @@ void httpclientTransportCloseBothDirections(tunnel_t *t, line_t *l, httpclient_l
 void httpclientTransportCloseNextDirection(tunnel_t *t, line_t *l, httpclient_lstate_t *ls);
 
 bool httpclientSplitIsEnabled(tunnel_t *t);
+bool httpclientSplitGenerateId(char *out, size_t out_capacity);
 void httpclientSplitUpStreamInit(tunnel_t *t, line_t *l);
 void httpclientSplitUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void httpclientSplitUpStreamFinish(tunnel_t *t, line_t *l);

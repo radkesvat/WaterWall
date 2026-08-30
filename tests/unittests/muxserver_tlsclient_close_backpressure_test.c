@@ -109,8 +109,14 @@ static void runMuxServerTlsClientCase(mxb_terminal_cause_t cause)
 
 int main(void)
 {
+    mxbRequire(globalstateInitializeSecureRandom(), "secure random provider initialization failed");
+    mxbRequire(frandGlobalInit(), "fast random global initialization failed");
+    frandInit();
     runMuxServerTlsClientCase(kMxbTerminalPeerClose);
     runMuxServerTlsClientCase(kMxbTerminalParentLoss);
+    frandThreadCleanup();
+    frandGlobalCleanup();
+    globalstateDestroySecureRandom();
     printf("muxserver_tlsclient_close_backpressure_test: all cases passed\n");
     return 0;
 }

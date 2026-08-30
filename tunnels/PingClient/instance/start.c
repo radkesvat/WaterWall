@@ -6,11 +6,7 @@ static bool pingclientChooseRandomIdentifier(uint16_t *identifier)
 {
     for (uint32_t attempt = 0; attempt < 8; ++attempt)
     {
-        if (! secureRandomBytes(identifier, sizeof(*identifier)))
-        {
-            return false;
-        }
-        const uint16_t candidate = *identifier;
+        const uint16_t candidate = (uint16_t) fastRand32();
         if (pingwireSelectIdentifier(true, 0, candidate, identifier))
         {
             return true;
@@ -22,14 +18,21 @@ static bool pingclientChooseRandomIdentifier(uint16_t *identifier)
 void pingclientOnStart(tunnel_t *t)
 {
     pingclient_tstate_t *state = tunnelGetState(t);
-    uint32_t             reply_seed;
 
-    if (state->tracker == NULL || ! secureRandomBytes(state->digest_key, sizeof(state->digest_key)) ||
-        ! secureRandomBytes(&reply_seed, sizeof(reply_seed)) ||
-        (state->identifier_is_random && ! pingclientChooseRandomIdentifier(&state->wire.identifier)))
+    if (state->tracker == NULL)
+    {
+        LOGF("PingClient: correlation tracker is unavailable; refusing to start Ping wire v2");
+        startupFailureRecord(1);
+        return;
+    }
+
+    getRandomBytes(state->digest_key, sizeof(state->digest_key));
+    uint32_t reply_seed = fastRand32();
+    if (state->identifier_is_random && ! pingclientChooseRandomIdentifier(&state->wire.identifier))
     {
         memorySecureZero(state->digest_key, sizeof(state->digest_key));
-        LOGF("PingClient: secure randomness is unavailable; refusing to start Ping wire v2");
+        memorySecureZero(&reply_seed, sizeof(reply_seed));
+        LOGF("PingClient: could not choose a nonzero random identifier");
         startupFailureRecord(1);
         return;
     }

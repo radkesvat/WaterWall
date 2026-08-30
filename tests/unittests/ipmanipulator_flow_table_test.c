@@ -511,6 +511,8 @@ static void testInitRejectsOutOfRangeLimits(void)
 int main(void)
 {
     require(globalstateInitializeSecureRandom(), "the operating system random source is unavailable");
+    require(frandGlobalInit(), "fast random initialization failed");
+    frandInit();
 
     testForwardAndReverseResolveOneRecord();
     testDuplicateCanonicalReservationIsRejected();
@@ -523,6 +525,8 @@ int main(void)
     testProductionSeedingStaysRandom();
     testInitRejectsOutOfRangeLimits();
 
+    frandThreadCleanup();
+    frandGlobalCleanup();
     globalstateDestroySecureRandom();
     printf("ALL unit tests passed!\n");
     return 0;

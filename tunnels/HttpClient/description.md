@@ -314,7 +314,9 @@ With `http1-mode = "split"`, `HttpClient` creates two upstream transport lines f
 - upload line: sends request body chunks to the server
 - download line: sends a bodyless request and receives response body chunks
 
-The two HTTP requests carry the same generated identifier plus a direction marker. By default these are query parameters, for example:
+For each main line, `HttpClient` generates a fresh 128-bit CSPRNG pairing identifier from two `fastRand64()` values (16 bytes from the thread's ChaCha20 stream), formatted as exactly 32 lowercase hexadecimal characters.
+
+The two HTTP requests carry the same generated identifier plus a direction marker. The identifier is ordinary routing metadata used to match the two transport halves at the server. If the deployment needs protected transport, add TLS or another security node such as `TlsClient` or `EncryptionClient`. By default these are query parameters, for example:
 
 ```json
 {

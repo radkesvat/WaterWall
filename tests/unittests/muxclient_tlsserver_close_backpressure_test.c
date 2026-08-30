@@ -110,10 +110,16 @@ static void runMuxClientTlsServerCase(mxb_terminal_cause_t cause)
 
 int main(void)
 {
+    mxbRequire(globalstateInitializeSecureRandom(), "secure random provider initialization failed");
+    mxbRequire(frandGlobalInit(), "fast random global initialization failed");
+    frandInit();
     mxbRequire(wCryptoGlobalInit() == kWCryptoOk, "OpenSSL global initialization failed");
     runMuxClientTlsServerCase(kMxbTerminalPeerClose);
     runMuxClientTlsServerCase(kMxbTerminalParentLoss);
     wCryptoGlobalCleanup();
+    frandThreadCleanup();
+    frandGlobalCleanup();
+    globalstateDestroySecureRandom();
     printf("muxclient_tlsserver_close_backpressure_test: all cases passed\n");
     return 0;
 }

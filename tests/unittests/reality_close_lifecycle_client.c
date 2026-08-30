@@ -942,22 +942,29 @@ static void testClientTerminalReentry(void)
     clientFixtureDestroy(&fixture);
 }
 
-static void testClientSecureRandomFailure(void)
+static void testClientFastRandomIsIndependentOfOsProvider(void)
 {
     const reality_v2_record_profile_t profile = {kRealityV2RecordProfileTls12Cbc, kRealityV2Tls12CbcPrefixSize, 16, 20};
     client_lifecycle_fixture_t        fixture;
     clientFixtureInitialize(&fixture);
     configureClientProfile(&fixture, kRealityV2Tls12, &profile);
+    reality_v2_record_descriptor_t descriptor;
+    reality_v2_record_layout_t     layout;
+    requireClient(realityV2BuildRecordDescriptor(kRealityV2Tls12, &profile, kRealityV2RecordKindAlert, &descriptor) &&
+                      realityV2CalculateDescriptorLayout(&descriptor, kRealityV2AlertMessageSize, &layout),
+                  "failed to calculate client alert shape");
+    fixture.context.expected_alert_type     = descriptor.outer_content_type;
+    fixture.context.expected_alert_body_len = (uint16_t) layout.wire_body_len;
 
     const bool random_was_initialized = GSTATE.secure_random.initialized;
     GSTATE.secure_random.initialized  = false;
     realityclientFailAuthenticated(fixture.reality, fixture.line);
     GSTATE.secure_random.initialized = random_was_initialized;
 
-    requireClient(strcmp(fixture.context.events, "UD") == 0,
-                  "client random failure did not close without emitting a partial alert");
-    requireClient(fixture.context.observed_alert == kRealityV2AlertInvalid,
-                  "client random failure exposed an alert frame");
+    requireClient(strcmp(fixture.context.events, "PUD") == 0,
+                  "client runtime random generation depended on the OS provider");
+    requireClient(fixture.context.observed_alert == kRealityV2AlertBadRecordMac,
+                  "client did not emit the authenticated alert while the OS provider was unavailable");
     clientFixtureDestroy(&fixture);
 }
 
@@ -1359,7 +1366,7 @@ void realityTestClientCloseLifecycle(void)
         testClientCoalescedRecords(versions[i], &profiles[i], true);
     }
     testClientTerminalReentry();
-    testClientSecureRandomFailure();
+    testClientFastRandomIsIndependentOfOsProvider();
     testClientHandoffRequestAndQueue();
     testClientNestedAckIsDeferredDuringCoverConsume();
     testClientFailedAckDelegatesOriginalCoverRecord();

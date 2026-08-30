@@ -7,6 +7,7 @@
 #include "managers/socket_manager.h"
 #include "tunnel.h"
 #include "wevent.h"
+#include "wfrand.h"
 #include "wloop.h"
 #include "worker_messages.h"
 #include "wthread.h"
@@ -575,6 +576,7 @@ void workerRun(worker_t *worker)
     workerPerformTeardown(worker);
 
     LOGD("Worker %d exited", wid);
+    frandThreadCleanup();
     workerUnbindCurrentThread();
 }
 

@@ -6,7 +6,6 @@
 void initWLibc(void)
 {
     memorymanagerInit();
-    frandInit();
     checkSumInit();
 }
 

@@ -242,10 +242,16 @@ static void testTls12RemainsUnshaped(void)
 
 int main(void)
 {
+    require(globalstateInitializeSecureRandom(), "secure random provider initialization failed");
+    require(frandGlobalInit(), "fast random global initialization failed");
+    frandInit();
     require(wCryptoGlobalInit() == kWCryptoOk, "OpenSSL global initialization failed");
     testTls13PaddingScopeAndAlerts();
     testTls13FullRecordStillGetsDelayMetadata();
     testTls12RemainsUnshaped();
     wCryptoGlobalCleanup();
+    frandThreadCleanup();
+    frandGlobalCleanup();
+    globalstateDestroySecureRandom();
     return 0;
 }

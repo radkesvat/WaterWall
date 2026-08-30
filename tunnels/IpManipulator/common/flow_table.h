@@ -122,8 +122,8 @@ static inline void *ipmanipulatorFlowEntryRecord(ipmanipulator_flow_entry_t *ent
 /*
  * Create the bounded structures. limit must be within
  * [kIpManipulatorFlowLimitMin, kIpManipulatorFlowLimitMax]; worker_count only
- * selects the shard count. Returns false without leaking on any allocation,
- * argument or secure-seed failure, leaving the table safe to destroy.
+ * selects the shard count. Returns false without leaking on any allocation or
+ * argument failure, leaving the table safe to destroy.
  */
 bool ipmanipulatorFlowTableInit(ipmanipulator_flow_table_t *table, const char *name, uint32_t limit,
                                 uint32_t worker_count, size_t record_size,

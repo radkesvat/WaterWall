@@ -557,7 +557,8 @@ static void testNodeLayerMetadata(void)
     require(node.layer_group == kNodeLayer3, "IpManipulator does not advertise layer 3");
     require(node.layer_group_prev_node == kNodeLayerAnything && node.layer_group_next_node == kNodeLayerAnything,
             "IpManipulator unexpectedly restricts its neighboring layer groups");
-    require(t_ipm != NULL && t_head != NULL && t_tail != NULL, "failed to build the IpManipulator chain classification fixture");
+    require(t_ipm != NULL && t_head != NULL && t_tail != NULL,
+            "failed to build the IpManipulator chain classification fixture");
 
     t_head->next = t_ipm;
     t_ipm->prev  = t_head;
@@ -590,8 +591,9 @@ int main(void)
     GSTATE.workers_count = 2;
     testWorkerRegistryInstall(&g_test_worker_registry);
 
-    /* Creating a tunnel now builds bounded flow tables, which need a secure seed. */
     require(globalstateInitializeSecureRandom(), "the operating system random source is unavailable");
+    require(frandGlobalInit(), "fast random initialization failed");
+    frandInit();
 
     testStatefulSniRejectsUpstreamActions(false);
     testStatefulSniRejectsUpstreamActions(true);
@@ -609,6 +611,8 @@ int main(void)
     testOverlapSniStandaloneConfiguration();
     testNodeLayerMetadata();
 
+    frandThreadCleanup();
+    frandGlobalCleanup();
     globalstateDestroySecureRandom();
     GSTATE.workers_count = saved_workers_count;
     testWorkerRegistryRestore(&g_test_worker_registry);

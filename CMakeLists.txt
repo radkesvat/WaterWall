@@ -83,11 +83,14 @@ option(WW_BUILD_UNIT_TESTS "Register compiled native unit-test targets" OFF)
 option(WW_NATIVE_UNIT_TEST_EXECUTABLE_RUNNABLE
   "The selected native unit-test binaries are runnable on this CI host" OFF)
 
-# Native-unit fault injection is intentionally uniform across the complete
-# target graph so reused precompiled headers see one macro set. Production
-# configure presets leave WW_BUILD_UNIT_TESTS disabled and omit the seam.
+# Native-unit test seams are intentionally uniform across the complete target
+# graph so reused precompiled headers see one macro set. Production configure
+# presets leave WW_BUILD_UNIT_TESTS disabled and omit the seams.
 if(WW_BUILD_UNIT_TESTS)
-  add_compile_definitions(WW_EVENT_MEMORY_TEST_SEAM=1)
+  add_compile_definitions(
+    WW_EVENT_MEMORY_TEST_SEAM=1
+    WFRAND_TEST_SEAM=1
+  )
 endif()
 
 if(WW_BUILD_UNIT_TESTS AND NOT BUILD_TESTING)

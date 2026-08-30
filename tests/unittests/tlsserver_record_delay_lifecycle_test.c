@@ -781,6 +781,9 @@ static void testServerKeyUpdateFlushSurvivesReentrantCloseNotify(void)
 
 int main(void)
 {
+    requireServer(globalstateInitializeSecureRandom(), "secure random provider initialization failed");
+    requireServer(frandGlobalInit(), "fast random global initialization failed");
+    frandInit();
     requireServer(wCryptoGlobalInit() == kWCryptoOk, "OpenSSL global initialization failed");
     testServerImmediateRetirementAndDirectOutput();
     testServerFullRecordFallbackRetires();
@@ -795,6 +798,9 @@ int main(void)
     testServerReentrantCloseNotifySuppressesDecryptedPayload();
     testServerKeyUpdateFlushSurvivesReentrantCloseNotify();
     wCryptoGlobalCleanup();
+    frandThreadCleanup();
+    frandGlobalCleanup();
+    globalstateDestroySecureRandom();
     printf("tlsserver_record_delay_lifecycle_test: all cases passed\n");
     return 0;
 }

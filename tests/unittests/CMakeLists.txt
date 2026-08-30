@@ -2260,6 +2260,19 @@ if(TARGET HttpClient)
     httpclient_reentrant_finish_test
     "unit;tunnels;httpclient;reentrant;finish;line"
   )
+
+  add_executable(httpclient_split_id_test
+    httpclient_split_id_test.c
+  )
+  target_link_libraries(httpclient_split_id_test PRIVATE HttpClient ww)
+  add_dependencies(waterwall_unit_tests httpclient_split_id_test)
+
+  add_waterwall_unit_test(
+    waterwall.httpclient_split_id_unit
+    httpclient_split_id_test
+    "unit;tunnels;httpclient;split;id;random"
+  )
+  set_tests_properties(waterwall.httpclient_split_id_unit PROPERTIES TIMEOUT 30)
 endif()
 
 if(TARGET HttpServer)

@@ -2267,9 +2267,8 @@ re-affinitizing each decoded packet from its inner tuple before forwarding it.
   it exactly
 - lookup is average O(1) through hash buckets and idle expiry pops a per-shard
   deadline heap, so no packet callback scans the whole table
-- the per-tunnel hash seed comes from `secureRandomBytes()`; tunnel creation
-  fails when no secure seed is available, because a predictable hash would let
-  an attacker pick tuples that all land in one bucket
+- each table uses a CSPRNG-generated per-tunnel hash seed, keeping bucket
+  selection unpredictable from observed tuples
 - a record pointer is only valid while its shard mutex is held, so timers and
   cross-worker messages carry the normalized tuple plus a flow generation
 - record destructors run under the shard mutex and only dispose of owned

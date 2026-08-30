@@ -1064,7 +1064,7 @@ static void testServerSensitiveModesDoNotFlushPendingBytes(void)
     serverFixtureDestroy(&fixture);
 }
 
-static void testServerSecureRandomFailure(void)
+static void testServerFastRandomIsIndependentOfOsProvider(void)
 {
     const reality_v2_record_profile_t profiles[] = {
         {kRealityV2RecordProfileTls12Gcm, kRealityV2Tls12GcmPrefixSize, 0, 0},
@@ -1078,16 +1078,24 @@ static void testServerSecureRandomFailure(void)
         ls->tls_capture.binding.tls_version = kRealityV2Tls12;
         ls->record_profile                  = profiles[i];
         ls->server_gcm_nonce_policy         = kRealityServerGcmNoncePolicyRandom;
+        reality_v2_record_descriptor_t descriptor;
+        reality_v2_record_layout_t     layout;
+        requireServer(
+            realityV2BuildRecordDescriptor(kRealityV2Tls12, &profiles[i], kRealityV2RecordKindAlert, &descriptor) &&
+                realityV2CalculateDescriptorLayout(&descriptor, kRealityV2AlertMessageSize, &layout),
+            "failed to calculate server alert shape");
+        fixture.context.expected_alert_type     = descriptor.outer_content_type;
+        fixture.context.expected_alert_body_len = (uint16_t) layout.wire_body_len;
 
         const bool random_was_initialized = GSTATE.secure_random.initialized;
         GSTATE.secure_random.initialized  = false;
         realityserverHandleDownstreamFinish(fixture.reality, fixture.line);
         GSTATE.secure_random.initialized = random_was_initialized;
 
-        requireServer(strcmp(fixture.context.events, "D") == 0,
-                      "server random failure did not close without emitting a partial alert");
-        requireServer(fixture.context.observed_alert == kRealityV2AlertInvalid,
-                      "server random failure exposed an alert frame");
+        requireServer(strcmp(fixture.context.events, "PD") == 0,
+                      "server runtime random generation depended on the OS provider");
+        requireServer(fixture.context.observed_alert == kRealityV2AlertCloseNotify,
+                      "server did not emit the authenticated alert while the OS provider was unavailable");
         serverFixtureDestroy(&fixture);
     }
 }
@@ -2088,7 +2096,7 @@ void realityTestServerCloseLifecycle(void)
     testServerPendingPrefixFlushesBeforeFinish();
     testServerPendingFinishReentryAndOwnership();
     testServerSensitiveModesDoNotFlushPendingBytes();
-    testServerSecureRandomFailure();
+    testServerFastRandomIsIndependentOfOsProvider();
     testServerTlsRecordBoundaryTracker();
     testServerTls13MinimumSniffingAllowsRealFinished();
     testServerTls13CandidateAllowanceIsSingleUse();

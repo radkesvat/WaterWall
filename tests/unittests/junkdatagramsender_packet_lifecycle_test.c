@@ -162,8 +162,16 @@ static void casePacketFinishSuppressesDelayedJunk(void)
 
 int main(void)
 {
+    twfRequire(globalstateInitializeSecureRandom(), "secure random provider initialization failed");
+    twfRequire(frandGlobalInit(), "fast random global initialization failed");
+    frandInit();
+
     caseReentrantPacketFinishStopsImmediateProgress();
     casePacketFinishSuppressesDelayedJunk();
+
+    frandThreadCleanup();
+    frandGlobalCleanup();
+    globalstateDestroySecureRandom();
     puts("junkdatagramsender_packet_lifecycle_test: all cases passed");
     return 0;
 }

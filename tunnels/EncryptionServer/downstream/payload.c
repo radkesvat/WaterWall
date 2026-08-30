@@ -48,10 +48,7 @@ static bool encryptionserverEncryptFrame(encryptionserver_tstate_t *ts, sbuf_t *
     frame[4]       = (uint8_t) body_len;
 
     uint8_t *nonce = frame + kEncryptionTlsHeaderSize;
-    if (UNLIKELY(! secureRandomBytes(nonce, kEncryptionNonceSize)))
-    {
-        return false;
-    }
+    getRandomBytes(nonce, kEncryptionNonceSize);
 
     uint8_t *ciphertext = frame + kEncryptionFramePrefixSize;
 

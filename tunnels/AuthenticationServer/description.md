@@ -409,9 +409,8 @@ the authoritative merge still happens in one place.
 
 ### Session And Token Behavior
 
-The `Authenticate` response returns response type `4` and exactly 64 bytes of token data. The server generates 32 random
-bytes with Linux `getrandom()` and encodes them as 64 lowercase hexadecimal bytes. Token generation fails closed if
-secure random bytes are unavailable.
+The `Authenticate` response returns response type `4` and exactly 64 bytes of token data. The server obtains 32 random
+bytes directly from the operating-system secure random provider and encodes them as 64 lowercase hexadecimal bytes.
 
 After authentication, the token must be sent in the outer request envelope of every request. `Authenticate` is the only
 public request type; every other module requires a valid token. This includes `ping`, user pull requests, user write

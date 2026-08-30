@@ -286,7 +286,6 @@ static bool parseHttp1SplitSettings(httpclient_tstate_t *ts, const cJSON *settin
         ts->split_download_headers = cJSON_GetObjectItemCaseSensitive(download, "headers");
     }
 
-    ts->split_identifier = fastRand64() % 10000000;
     return true;
 }
 

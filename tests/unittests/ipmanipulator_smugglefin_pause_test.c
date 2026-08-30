@@ -270,8 +270,9 @@ static void envSetup(test_env_t *env)
     testWorkerRegistryInstall(&g_test_worker_registry);
     testWorkerBindWID(0);
 
-    /* Bounded flow tables refuse to run without a secure hash seed. */
     require(globalstateInitializeSecureRandom(), "the operating system random source is unavailable");
+    require(frandGlobalInit(), "fast random initialization failed");
+    frandInit();
 }
 
 static void envTeardown(test_env_t *env)
@@ -279,6 +280,8 @@ static void envTeardown(test_env_t *env)
     GSTATE.shortcut_buffer_pools         = NULL;
     GSTATE.masterpool_buffer_pools_large = NULL;
     GSTATE.masterpool_buffer_pools_small = NULL;
+    frandThreadCleanup();
+    frandGlobalCleanup();
     globalstateDestroySecureRandom();
     GSTATE.workers_count = 0;
     testWorkerRegistryRestore(&g_test_worker_registry);

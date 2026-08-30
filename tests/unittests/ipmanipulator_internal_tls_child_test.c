@@ -80,8 +80,9 @@ int main(void)
     GSTATE.workers_count = 2;
     testWorkerRegistryInstall(&g_test_worker_registry);
 
-    /* Creating a tunnel builds bounded flow tables, which need a secure seed. */
     require(globalstateInitializeSecureRandom(), "the operating system random source is unavailable");
+    require(frandGlobalInit(), "fast random initialization failed");
+    frandInit();
 
     tunnel_t               *first_t      = createManipulator(&first, "ipm-first", special_sni);
     tunnel_t               *second_t     = createManipulator(&second, "ipm-second", special_sni);
@@ -95,6 +96,8 @@ int main(void)
 
     destroyManipulator(&first);
     destroyManipulator(&second);
+    frandThreadCleanup();
+    frandGlobalCleanup();
     globalstateDestroySecureRandom();
     GSTATE.workers_count = saved_workers_count;
     testWorkerRegistryRestore(&g_test_worker_registry);

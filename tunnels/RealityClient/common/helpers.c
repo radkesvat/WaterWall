@@ -72,11 +72,9 @@ static bool realityclientEncryptFrame(realityclient_tstate_t *ts, realityclient_
         }
         realityV2WriteBe64(visible_prefix, tls_sequence);
     }
-    else if (descriptor.visible_prefix_len != 0 &&
-             UNLIKELY(! secureRandomBytes(visible_prefix, descriptor.visible_prefix_len)))
+    else if (descriptor.visible_prefix_len != 0)
     {
-        bufferpoolReuseBuffer(pool, out);
-        return false;
+        getRandomBytes(visible_prefix, descriptor.visible_prefix_len);
     }
 
     uint8_t *ciphertext = visible_prefix + descriptor.visible_prefix_len;

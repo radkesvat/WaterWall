@@ -554,6 +554,10 @@ static void caseDestroyRejectsUndrainedFinalizedPacketState(void)
 
 int main(void)
 {
+    twfRequire(globalstateInitializeSecureRandom(), "secure random provider initialization failed");
+    twfRequire(frandGlobalInit(), "fast random global initialization failed");
+    frandInit();
+
     caseUpstreamFinishSuppressesScheduledDelayedPayload();
     caseDownstreamFinishSettlesHeldPayload();
     caseUpstreamFinishSuppressesQueuedDownstreamReflection();
@@ -564,6 +568,9 @@ int main(void)
     caseFinalizedPacketGeometryAborts();
     caseDestroyRejectsUndrainedFinalizedPacketState();
 
+    frandThreadCleanup();
+    frandGlobalCleanup();
+    globalstateDestroySecureRandom();
     puts("disturber_packet_lifecycle_test: all cases passed");
     return 0;
 }

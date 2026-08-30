@@ -8,12 +8,31 @@ bool httpclientSplitIsEnabled(tunnel_t *t)
     return ts->h1_transport_mode == kHttpClientH1TransportSplit;
 }
 
-static void httpclientSplitGenerateId(tunnel_t *t, char out[48])
+bool httpclientSplitGenerateId(char *out, size_t out_capacity)
 {
-    httpclient_tstate_t *ts  = tunnelGetState(t);
-    uint64_t             seq = atomicIncU64Relaxed(&ts->split_identifier);
-    uint64_t             rnd = fastRand64();
-    snprintf(out, 48, "%016" PRIx64 "%016" PRIx64, seq, rnd);
+    if (out != NULL && out_capacity > 0)
+    {
+        out[0] = '\0';
+    }
+
+    if (out == NULL || out_capacity < kHttpClientSplitIdCapacity)
+    {
+        return false;
+    }
+
+    static const char hex[] = "0123456789abcdef";
+    const uint64_t    high  = fastRand64();
+    const uint64_t    low   = fastRand64();
+
+    for (size_t i = 0; i < 16U; ++i)
+    {
+        const unsigned int shift = (unsigned int) ((15U - i) * 4U);
+        out[i]                   = hex[(high >> shift) & 0x0FU];
+        out[i + 16U]             = hex[(low >> shift) & 0x0FU];
+    }
+    out[kHttpClientSplitIdHexChars] = '\0';
+
+    return true;
 }
 
 static void httpclientSplitInitTransportState(tunnel_t *t, line_t *transport, line_t *main_line, line_t *upload_line,
@@ -193,7 +212,14 @@ void httpclientSplitUpStreamInit(tunnel_t *t, line_t *l)
     ls->runtime_proto   = kHttpClientRuntimeHttp1;
     ls->split_role      = kHttpClientSplitRoleMain;
     ls->split_main_line = l;
-    httpclientSplitGenerateId(t, ls->split_id);
+
+    const bool id_generated = httpclientSplitGenerateId(ls->split_id, sizeof(ls->split_id));
+    assert(id_generated);
+    if (UNLIKELY(! id_generated))
+    {
+        LOGF("HttpClient: split-ID destination does not satisfy its fixed-size contract");
+        abortProgramNow(1);
+    }
 
     if (ts->verbose)
     {

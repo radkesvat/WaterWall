@@ -2380,15 +2380,7 @@ capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_
         return NULL;
     }
 
-    uint64_t rule_token = 0;
-    if (! secureRandomBytes(&rule_token, sizeof(rule_token)))
-    {
-        LOGE("CaptureDevice: unable to generate a unique NFQUEUE rule token");
-        close(socket_netfilter);
-        capturedeviceFreeCidrs(capture_cidrs, capture_range_count);
-        bufferpoolDestroy(reader_bpool);
-        return NULL;
-    }
+    uint64_t rule_token = fastRand64();
 
     size_t rule_states_size;
     if (! memoryTryComputeArraySize(capture_range_count, sizeof(capture_rule_state_t), &rule_states_size))

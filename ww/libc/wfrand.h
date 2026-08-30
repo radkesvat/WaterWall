@@ -6,64 +6,56 @@
 #endif
 
 /*
-    Generic random implementations, to be faster or provide other features...
-*/
-
-// access to correctly aligned variables are atomic
-extern thread_local uint32_t frand_seed32;
-extern thread_local uint64_t frand_seed64;
-
-/*
-    Fill a buffer with cryptographically secure random bytes supplied by the
-    operating system.
+    Fill a buffer directly from the operating system's secure random provider.
 
     The provider is initialized and probed by createGlobalState() before
     workers or tunnels start. Returns true only when the entire buffer was
     filled. A zero-sized request succeeds even when bytes is NULL. No insecure
-    fallback is used, and the buffer contents are unspecified on failure.
+    fallback is used, and the buffer contents are unspecified on failure. Use
+    this interface when an independent OS draw and recoverable failure result
+    are required; ordinary runtime random generation uses the fast family below.
 */
 WW_EXPORT bool secureRandomBytes(void *bytes, size_t size);
 
 /*
+    Fast cryptographically secure pseudorandom generator family backed by
+    per-thread ChaCha20 streams seeded from the operating-system provider.
 
-    Compute a pseudorandom integer.
-    Output value in range [0, 32767]
+    The integer and byte interfaces consume one continuous stream. They are the
+    normal choice for runtime nonces, IVs, salts, unpredictable identifiers,
+    local hash seeds, randomized protocol fields, and padding. Select enough
+    output for the purpose: the fixed-width functions provide 15, 32, or 64
+    random bits, while getRandomBytes() provides any requested byte length.
 
-    about 2 times faster than default rand()
-    not a secure random!
-
+    Process-wide state is initialized by frandGlobalInit() immediately after
+    secure-random provider initialization. Each thread lazily or eagerly
+    initializes its thread-local ChaCha20 stream with frandInit() and frees
+    its local state with frandThreadCleanup(). Calling random functions before
+    global initialization or after frandGlobalCleanup() is fatal.
 */
-static inline uint32_t fastRand(void)
-{
-    frand_seed32 = (214013 * frand_seed32 + 2531011);
-    return (frand_seed32 >> 16) & 0x7FFF;
-}
 
 /*
-    Compute a pseudorandom integer.
-    Output value in range of 32 bits
+    Compute a cryptographically unpredictable 15-bit integer in [0, 32767].
 */
-static inline uint32_t fastRand32(void)
-{
-
-    frand_seed64        = frand_seed64 * 6364136223846793005ULL + 13971ULL;
-    uint32_t xorshifted = (uint32_t) (((frand_seed64 >> 18U) ^ frand_seed64) >> 27U);
-    uint32_t rot        = (uint32_t) (frand_seed64 >> 59U);
-    return (xorshifted >> rot) | (xorshifted << ((-rot) & 31));
-}
+WW_EXPORT uint32_t fastRand(void);
 
 /*
-    Compute a pseudorandom integer.
-    Output value in range of 64 bits
+    Compute a cryptographically unpredictable 32-bit integer.
 */
-static inline uint64_t fastRand64(void)
-{
-    // Generate two 32-bit values using the PCG algorithm
-    uint32_t high = fastRand32();
-    uint32_t low = fastRand32();
-    return ((uint64_t)high << 32) | low;
-}
+WW_EXPORT uint32_t fastRand32(void);
 
+/*
+    Compute a cryptographically unpredictable 64-bit integer.
+*/
+WW_EXPORT uint64_t fastRand64(void);
+
+/*
+    Fill a buffer with cryptographically unpredictable bytes from the thread's
+    continuous ChaCha20 stream.
+*/
+WW_EXPORT void getRandomBytes(void *bytes, size_t size);
+
+/* Convenience range mapping; modulo reduction is not exact-uniform for every span. */
 static inline uint32_t fastRandRange32(uint32_t min_value, uint32_t max_value)
 {
     if (max_value <= min_value)
@@ -75,6 +67,7 @@ static inline uint32_t fastRandRange32(uint32_t min_value, uint32_t max_value)
     return min_value + (uint32_t) (fastRand64() % span);
 }
 
+/* Convenience jitter mapping; modulo reduction is not exact-uniform for every span. */
 static inline uint32_t fastRandJittered32(uint32_t center, uint32_t jitter)
 {
     if (center == 0 || jitter == 0)
@@ -89,70 +82,28 @@ static inline uint32_t fastRandJittered32(uint32_t center, uint32_t jitter)
     return lower + (uint32_t) (fastRand64() % span);
 }
 
-/* Fill a buffer using the fast, non-secure pseudorandom generator above. */
-static void getRandomBytes(void *bytes, size_t size)
-{
-    uint8_t *b = (uint8_t *) bytes;
-    size_t i = 0;
-    
-    // Fill 8 bytes at a time when properly aligned
-    while (i + 8 <= size && ((uintptr_t)(b + i) % 8 == 0))
-    {
-        *((uint64_t *)(b + i)) = fastRand64();
-        i += 8;
-    }
-    
-    // Fill 4 bytes at a time when properly aligned
-    while (i + 4 <= size && ((uintptr_t)(b + i) % 4 == 0))
-    {
-        *((uint32_t *)(b + i)) = fastRand32();
-        i += 4;
-    }
-    
-    // Fill remaining bytes one by one
-    uint32_t rand_val = 0;
-    int rand_bytes_left = 0;
-    
-    while (i < size)
-    {
-        if (rand_bytes_left == 0)
-        {
-            rand_val = fastRand32();
-            rand_bytes_left = 4;
-        }
-        b[i++] = (uint8_t)(rand_val & 0xFF);
-        rand_val >>= 8;
-        rand_bytes_left--;
-    }
-}
-
-// every thread should call this once
-// this will not initalize for dynamic loaded libs as far as i know
-// but it is ok , it is not a secure random anyway
-static inline void frandInit(void)
-{
-    // Use more entropy sources for better initialization
-    uint64_t t = (uint64_t) time(NULL);
-    uint64_t p = (uint64_t) (uintptr_t) &t; // stack address for some randomness
-    
-    frand_seed32 = (uint32_t) (t ^ (p >> 32));
-    frand_seed64 = t ^ (p << 1) ^ 0x123456789ABCDEFULL;
-    
-    // Warm up the generators
-    for (int i = 0; i < 10; i++)
-    {
-        fastRand();
-        fastRand32();
-        fastRand64();
-    }
-}
-
-
-
+/* Convenience percentage roll; this is not an exact-uniform cryptographic sampler. */
 static inline bool roll100(int chance_percent)
 {
-    if (chance_percent <= 0) return false;
-    if (chance_percent >= 100) return true;
+    if (chance_percent <= 0)
+        return false;
+    if (chance_percent >= 100)
+        return true;
     uint32_t r = fastRand() % 100;
     return r < (uint32_t) chance_percent;
 }
+
+/*
+    Global and thread lifecycle operations for process fast-random state.
+*/
+WW_MUST_USE WW_EXPORT bool frandGlobalInit(void);
+WW_EXPORT void             frandGlobalCleanup(void);
+WW_EXPORT void             frandInit(void);
+WW_EXPORT void             frandThreadCleanup(void);
+
+#if defined(WFRAND_TEST_SEAM)
+WW_EXPORT void     wfrandTestReset(const uint8_t key[32], uint64_t next_stream_id);
+WW_EXPORT uint64_t wfrandTestGetCurrentStreamId(void);
+WW_EXPORT void     wfrandTestSetMaxBlocksPerStream(uint64_t max_blocks);
+WW_EXPORT bool     wfrandTestIsThreadInitialized(void);
+#endif

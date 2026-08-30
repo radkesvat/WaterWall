@@ -563,7 +563,6 @@ static uint32_t wireguardGenerateUniqueIndex(wireguard_device_t *device)
 {
     // We need a random 32-bit number but make sure it's not already been used in the context of this device
     uint32_t          result = 0;
-    uint8_t           buf[4];
     int               x;
     wireguard_peer_t *peer;
     bool              existing;
@@ -571,12 +570,7 @@ static uint32_t wireguardGenerateUniqueIndex(wireguard_device_t *device)
     {
         do
         {
-            if (UNLIKELY(! secureRandomBytes(buf, sizeof(buf))))
-            {
-                wCryptoZero(buf, sizeof(buf));
-                return 0;
-            }
-            result = U8TO32_LITTLE(buf);
+            result = fastRand32();
         } while ((result == 0) || (result == 0xFFFFFFFF)); // Don't allow 0 or 0xFFFFFFFF as valid values
 
         existing = false;
@@ -592,7 +586,6 @@ static uint32_t wireguardGenerateUniqueIndex(wireguard_device_t *device)
         }
     } while (existing);
 
-    wCryptoZero(buf, sizeof(buf));
     return result;
 }
 
@@ -1293,13 +1286,13 @@ bool wireguardCreateCookieReply(wireguard_device_t *device, message_cookie_reply
     uint8_t cookie[WIREGUARD_COOKIE_LEN];
     wCryptoZero(dst, sizeof(message_cookie_reply_t));
 
-    if (UNLIKELY(! generatePeerCookie(device, cookie, source_addr_port, source_length)) ||
-        UNLIKELY(! secureRandomBytes(dst->nonce, COOKIE_NONCE_LEN)))
+    if (UNLIKELY(! generatePeerCookie(device, cookie, source_addr_port, source_length)))
     {
         wCryptoZero(cookie, sizeof(cookie));
         wCryptoZero(dst, sizeof(message_cookie_reply_t));
         return false;
     }
+    getRandomBytes(dst->nonce, COOKIE_NONCE_LEN);
 
     dst->type      = MESSAGE_COOKIE_REPLY;
     dst->receiver  = index;
