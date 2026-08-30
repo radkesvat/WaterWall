@@ -1506,6 +1506,7 @@ static void testCase30_WorkerQuiesceStopCleanup(void)
 
     tunnel_t              *c  = tunnelCreate(NULL, sizeof(udpconnector_tstate_t), sizeof(udpconnector_lstate_t));
     udpconnector_tstate_t *ts = tunnelGetState(c);
+    ts->fwmark                = -1;
     ts->worker_pools          = memoryAllocateZero(sizeof(*ts->worker_pools) * getWorkersCount());
     for (wid_t wid = 0; wid < getWorkersCount(); ++wid)
     {
