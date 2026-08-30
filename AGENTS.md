@@ -41,6 +41,11 @@ Never record speculation, pending ideas, review history, artifacts, or one-off
 details as contracts, or promote patterns without confirming intent. Report
 conflicting or unclear evidence.
 
+Do not add version labels (`v2`, `v3`, and similar), migration notes, or backward-
+compatibility commentary to code or documentation merely because a project
+structure, node, or wire format changes. Add them only when a maintainer explicitly
+requests them.
+
 Read-only tasks only propose doc edits. Implementation may sync related guide text;
 report unrelated findings. Change `AGENTS.md` only if authorized work changes
 always-on policy, a catastrophic guardrail, or routing, using a short rule/link;
