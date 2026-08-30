@@ -488,9 +488,7 @@ if(TARGET ww)
   add_waterwall_unit_test(waterwall.address_context_unit address_context_test "unit;net;address-context")
 
   add_executable(wchecksum_test wchecksum_test.c)
-  # ww_lwip calls the platform assert hook defined by ww. Repeat ww after the
-  # lwIP archive so a one-pass static linker can resolve that reverse edge.
-  target_link_libraries(wchecksum_test PRIVATE ww ww_lwip ww)
+  target_link_libraries(wchecksum_test PRIVATE ww)
   add_dependencies(waterwall_unit_tests wchecksum_test)
 
   add_waterwall_unit_test(waterwall.wchecksum_unit wchecksum_test "unit;net;checksum")

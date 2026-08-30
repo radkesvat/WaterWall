@@ -3,9 +3,10 @@
 #include "ww_lwip.h"
 #include "wwapi.h"
 
-/* Direct tcpip_init() fixtures own the same random/crypto lifecycle that
- * production establishes before lwIP starts. The tcpip init callback still
- * initializes that thread's fast-RNG TLS, and wwLwipShutdown() clears it. */
+/* Fixtures that initialize lwIP directly own the same random/crypto lifecycle
+ * that production establishes first. A tcpip_init() callback initializes that
+ * thread's fast-RNG TLS and wwLwipShutdown() clears it. A raw lwip_init()
+ * fixture uses the caller's TLS and erases the test ISN secret before cleanup. */
 static inline bool lwipTestRuntimeInitialize(void)
 {
     if (! globalstateInitializeSecureRandom())

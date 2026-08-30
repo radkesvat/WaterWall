@@ -1,6 +1,7 @@
 #include "wwapi.h"
 
 #include "ConnectionToPackets/structure.h"
+#include "lwip_test_runtime.h"
 
 #include "lwip/init.h"
 #include "lwip/ip4_frag.h"
@@ -132,9 +133,12 @@ static void testFragmentOutputFailureStopsAndPropagates(void)
 
 int main(void)
 {
+    require(lwipTestRuntimeInitialize(), "failed to initialize the lwIP random runtime");
     lwip_init();
     testProductionSettingsReachProductionNetif();
     testFragmentOutputFailureStopsAndPropagates();
+    wwLwipTestEraseTcpIsnSecret();
+    lwipTestRuntimeCleanup();
     puts("ConnectionToPackets netif contract tests passed");
     return 0;
 }
