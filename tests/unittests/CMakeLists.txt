@@ -160,6 +160,16 @@ if(TARGET ww)
       "unit;net;lwip;lifetime;shutdown"
     )
 
+    add_executable(lwip_random_isn_test lwip_random_isn_test.c)
+    target_link_libraries(lwip_random_isn_test PRIVATE ww)
+    add_dependencies(waterwall_unit_tests lwip_random_isn_test)
+
+    add_waterwall_unit_test(
+      waterwall.lwip_random_isn_unit
+      lwip_random_isn_test
+      "unit;net;lwip;random;tcp;isn;security"
+    )
+
     add_executable(device_reader_session_test
       device_reader_session_test.c
       ${CMAKE_SOURCE_DIR}/ww/devices/device_reader_session.c

@@ -141,9 +141,8 @@ static bool initializeShortCuts(void)
 static void tcpipInitDone(void *arg)
 {
     discard arg;
-    GSTATE.flag_lwip_initialized = 1;
-    GSTATE.lwip_process_v4_hook  = wwDefaultInternalLwipIpv4Hook;
-    GSTATE.lwip_wid              = getTotalWorkersCount() - 1;
+    GSTATE.lwip_process_v4_hook = wwDefaultInternalLwipIpv4Hook;
+    GSTATE.lwip_wid             = getTotalWorkersCount() - 1;
     workerBindCurrentThread(getWorker(GSTATE.lwip_wid));
     frandInit();
 }
@@ -825,6 +824,7 @@ void initTcpIpStack(void)
     {
         return;
     }
+    wwLwipInitializeProtocolState();
     GSTATE.flag_lwip_initialized = 1;
     tcpipInit(tcpipInitDone, NULL);
 }

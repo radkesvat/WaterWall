@@ -5,7 +5,6 @@
 #include "wexport.h"
 #include "wplatform.h"
 
-
 #include "lwip/autoip.h"
 #include "lwip/inet_chksum.h"
 #include "lwip/init.h"
@@ -43,6 +42,12 @@ typedef struct
     ip_addr_t ip;
     ip_addr_t mask;
 } ipmask_t;
+
+enum
+{
+    kWwLwipTcpIsnSecretSize = 32,
+    kWwLwipTcpIsnTupleSize  = 37
+};
 
 #ifndef NETIF_FLAG_PRETEND
 #define NETIF_FLAG_PRETEND     0x80U
@@ -98,6 +103,25 @@ typedef struct
  * state are destroyed.
  */
 bool wwLwipShutdown(void);
+
+/* Prepare the immutable process-lifetime TCP ISN secret before tcpip_init(). */
+void wwLwipInitializeProtocolState(void);
+
+/* Platform-neutral LWIP_RAND() implementation backed by the fast CSPRNG. */
+unsigned int lwip_port_rand(void);
+
+/* RFC 6528-style clock plus keyed canonical-tuple TCP ISN construction. */
+u32_t wwLwipTcpIsn(const ip_addr_t *local_ip, u16_t local_port, const ip_addr_t *remote_ip, u16_t remote_port);
+
+#if defined(WW_LWIP_TEST_SEAM)
+void     wwLwipTestSetTcpIsnSecret(const uint8_t secret[kWwLwipTcpIsnSecretSize]);
+void     wwLwipTestEraseTcpIsnSecret(void);
+bool     wwLwipTestTcpIsnSecretIsInitialized(void);
+uint32_t wwLwipTestTcpIsnAt(const ip_addr_t *local_ip, uint16_t local_port, const ip_addr_t *remote_ip,
+                            uint16_t remote_port, uint32_t now_ms);
+void     wwLwipTestSerializeTcpIsnTuple(uint8_t output[kWwLwipTcpIsnTupleSize], const ip_addr_t *local_ip,
+                                        uint16_t local_port, const ip_addr_t *remote_ip, uint16_t remote_port);
+#endif
 
 // ------------------------------------------------------------------------
 // Packet Buffer Function Macros

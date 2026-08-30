@@ -39,7 +39,6 @@
 #pragma warning (push, 3)
 #endif
 #include <windows.h>
-#include <wincrypt.h>
 #ifdef _MSC_VER
 #pragma warning (pop)
 #endif
@@ -77,40 +76,6 @@ static LARGE_INTEGER freq, sys_start_time;
 #define SYS_INITIALIZED() (freq.QuadPart != 0)
 
 static DWORD netconn_sem_tls_index;
-
-static HCRYPTPROV hcrypt;
-
-static void
-sys_win_rand_init(void)
-{
-  if (!CryptAcquireContext(&hcrypt, NULL, NULL, PROV_RSA_FULL, 0)) {
-    DWORD err = GetLastError();
-    LWIP_PLATFORM_DIAG(("CryptAcquireContext failed with error %d, trying to create NEWKEYSET", (int)err));
-    if(!CryptAcquireContext(&hcrypt, NULL, NULL, PROV_RSA_FULL, CRYPT_NEWKEYSET)) {
-      char errbuf[128];
-      err = GetLastError();
-      snprintf(errbuf, sizeof(errbuf), "CryptAcquireContext failed with error %d", (int)err);
-      LWIP_UNUSED_ARG(err);
-      LWIP_ASSERT(errbuf, 0);
-    }
-  }
-}
-
-unsigned int
-lwip_port_rand(void)
-{
-  u32_t ret;
-  if (CryptGenRandom(hcrypt, sizeof(ret), (BYTE*)&ret)) {
-    return ret;
-  }
-  /* maybe CryptAcquireContext has not been called... */
-  sys_win_rand_init();
-  if (CryptGenRandom(hcrypt, sizeof(ret), (BYTE*)&ret)) {
-    return ret;
-  }
-  LWIP_ASSERT("CryptGenRandom failed", 0);
-  return 0;
-}
 
 static void
 sys_init_timing(void)
@@ -214,7 +179,6 @@ sys_arch_check_not_protected(void)
 static void
 msvc_sys_init(void)
 {
-  sys_win_rand_init();
   sys_init_timing();
   InitSysArchProtect();
   netconn_sem_tls_index = TlsAlloc();

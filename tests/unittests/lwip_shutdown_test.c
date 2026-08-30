@@ -1,6 +1,8 @@
 #include "ww_lwip.h"
 #include "wwapi.h"
 
+#include "lwip_test_runtime.h"
+
 #include "lwip/memp.h"
 #include "lwip/priv/tcp_priv.h"
 
@@ -46,6 +48,7 @@ static void requireManagedSignalsMasked(const sigset_t *mask, bool expected_bloc
 static void initDone(void *arg)
 {
     discard arg;
+    frandInit();
     tcpip_thread_mask_known = pthread_sigmask(SIG_BLOCK, NULL, &tcpip_thread_mask) == 0;
     atomicStoreExplicit(&initialized, true, memory_order_release);
 }
@@ -83,6 +86,8 @@ int main(void)
     sigset_t        managed_signals;
     sigset_t        original_mask;
 
+    require(lwipTestRuntimeInitialize(), "failed to initialize the lwIP random runtime");
+
     buildThreadBlockedStopSignalSet(&managed_signals);
     require(pthread_sigmask(SIG_UNBLOCK, &managed_signals, &original_mask) == 0,
             "failed to unblock managed signals before lwIP thread creation");
@@ -116,6 +121,8 @@ int main(void)
      * must therefore be harmless and must not attempt to join a stale handle.
      */
     require(tcpip_shutdown(NULL, NULL) == ERR_OK, "repeated tcpip shutdown was not idempotent");
+
+    lwipTestRuntimeCleanup();
 
     puts("lwIP shutdown tests passed");
     return 0;

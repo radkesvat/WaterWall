@@ -1,6 +1,8 @@
 #include "ww_lwip.h"
 #include "wwapi.h"
 
+#include "lwip_test_runtime.h"
+
 typedef struct input_pbuf_s
 {
     struct pbuf_custom custom;
@@ -62,6 +64,7 @@ static bool fixtureExpect(udp_dispatch_fixture_t *fixture, bool condition, const
 static void tcpipInitialized(void *argument)
 {
     discard argument;
+    frandInit();
     atomicStoreExplicit(&tcpip_initialized, true, memory_order_release);
 }
 
@@ -398,6 +401,7 @@ int main(void)
 {
     udp_dispatch_fixture_t fixture = {0};
 
+    require(lwipTestRuntimeInitialize(), "failed to initialize the lwIP random runtime");
     atomic_init(&tcpip_initialized, false);
     atomic_init(&fixture.completed, false);
     tcpip_init(tcpipInitialized, NULL);
@@ -414,6 +418,7 @@ int main(void)
 
     require(wwLwipShutdown(), "failed to shut down the lwIP thread");
     require(fixture.failure == NULL, fixture.failure != NULL ? fixture.failure : "fixture failed without a diagnostic");
+    lwipTestRuntimeCleanup();
     puts("lwIP pretend UDP dispatch tests passed");
     return 0;
 }

@@ -78,12 +78,6 @@ static pthread_key_t sys_thread_sem_key;
 /* Return code for an interrupted timed wait */
 #define SYS_ARCH_INTR 0xfffffffeUL
 
-u32_t
-lwip_port_rand(void)
-{
-  return (u32_t)rand();
-}
-
 static void
 get_monotonic_time(struct timespec *ts)
 {

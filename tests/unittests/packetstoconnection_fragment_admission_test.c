@@ -1,6 +1,7 @@
 #include "PacketsToConnection/structure.h"
 
 #include "devices/device_reader_session.h"
+#include "lwip_test_runtime.h"
 #include "worker_registry_fixture.h"
 
 #include "lwip/tcpip.h"
@@ -510,11 +511,13 @@ static atomic_bool lwip_initialized;
 static void lwipInitialized(void *argument)
 {
     discard argument;
+    frandInit();
     atomicStoreExplicit(&lwip_initialized, true, memory_order_release);
 }
 
 int main(void)
 {
+    require(lwipTestRuntimeInitialize(), "failed to initialize the lwIP random runtime");
     atomic_init(&lwip_initialized, false);
     tcpip_init(lwipInitialized, NULL);
     while (! atomicLoadExplicit(&lwip_initialized, memory_order_acquire))
@@ -532,7 +535,8 @@ int main(void)
     testSuccessfulAdmissionHoldsGateThroughResidueQuery(&env);
     envTeardown(&env);
 
-    require(tcpip_shutdown(NULL, NULL) == ERR_OK, "failed to shut down the fragment-admission lwIP thread");
+    require(wwLwipShutdown(), "failed to shut down the fragment-admission lwIP thread");
+    lwipTestRuntimeCleanup();
     puts("PacketsToConnection fragment-admission tests passed");
     return 0;
 }

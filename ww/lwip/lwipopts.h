@@ -34,6 +34,20 @@
 
 #include <wconfig.h>
 
+#include <stdint.h>
+
+#ifdef __cplusplus
+extern "C"
+{
+#endif
+    struct ip_addr;
+    uint32_t wwLwipTcpIsn(const struct ip_addr *local_ip, uint16_t local_port, const struct ip_addr *remote_ip,
+                          uint16_t remote_port);
+#ifdef __cplusplus
+}
+#endif
+#define LWIP_HOOK_TCP_ISN wwLwipTcpIsn
+
 // remove some duplicate definitions from lwip
 #ifdef TCP_MSS
 #undef TCP_MSS

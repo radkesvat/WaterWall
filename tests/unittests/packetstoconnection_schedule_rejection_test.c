@@ -3,6 +3,7 @@
 
 #include "PacketsToConnection/structure.h"
 
+#include "lwip_test_runtime.h"
 #include "tunnel_orderly_shutdown_harness.h"
 
 #include "lwip/stats.h"
@@ -300,11 +301,13 @@ static atomic_bool g_lwip_initialized;
 static void ptcLwipInitialized(void *argument)
 {
     discard argument;
+    frandInit();
     atomicStoreExplicit(&g_lwip_initialized, true, memory_order_release);
 }
 
 int main(void)
 {
+    twfRequire(lwipTestRuntimeInitialize(), "failed to initialize the lwIP random runtime");
     atomic_init(&g_lwip_initialized, false);
     tcpip_init(ptcLwipInitialized, NULL);
     while (! atomicLoadExplicit(&g_lwip_initialized, memory_order_acquire))
@@ -316,7 +319,8 @@ int main(void)
     caseForeignRetryRefusalPublishesAndDrainsOwnedLine();
     caseCreditedDeliveryRefusalRollsBackCreditAndRetainsPbuf();
 
-    twfRequire(tcpip_shutdown(NULL, NULL) == ERR_OK, "failed to stop the PTC fixture lwIP thread");
+    twfRequire(wwLwipShutdown(), "failed to stop the PTC fixture lwIP thread");
+    lwipTestRuntimeCleanup();
     puts("packetstoconnection_schedule_rejection_test: all cases passed");
     return 0;
 }

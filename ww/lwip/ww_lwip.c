@@ -3,6 +3,7 @@
 #include "loggers/network_logger.h"
 #include "lwip/memp.h"
 #include "lwip/priv/tcp_priv.h"
+#include "wcrypto.h"
 #include "wfrand.h"
 
 /*
@@ -15,6 +16,144 @@
  */
 _Static_assert(WW_LWIP_FULL_MSS_ALLOC <= WW_LWIP_FULL_MSS_BLOCK,
                "the lwIP heap's full-MSS class is smaller than a full-MSS PBUF_RAM allocation");
+
+enum
+{
+    kWwLwipTcpIsnDigestSize       = 4,
+    kWwLwipTcpIsnFamilyV4         = 4,
+    kWwLwipTcpIsnFamilyV6         = 6,
+    kWwLwipTcpIsnAddressSize      = 16,
+    kWwLwipTcpIsnFamilyOffset     = 0,
+    kWwLwipTcpIsnLocalAddrOffset  = 1,
+    kWwLwipTcpIsnRemoteAddrOffset = kWwLwipTcpIsnLocalAddrOffset + kWwLwipTcpIsnAddressSize,
+    kWwLwipTcpIsnLocalPortOffset  = kWwLwipTcpIsnRemoteAddrOffset + kWwLwipTcpIsnAddressSize,
+    kWwLwipTcpIsnRemotePortOffset = kWwLwipTcpIsnLocalPortOffset + sizeof(uint16_t)
+};
+
+_Static_assert(kWwLwipTcpIsnRemotePortOffset + sizeof(uint16_t) == kWwLwipTcpIsnTupleSize,
+               "TCP ISN tuple offsets must cover the canonical encoding exactly");
+
+static uint8_t g_ww_lwip_tcp_isn_secret[kWwLwipTcpIsnSecretSize];
+static bool    g_ww_lwip_tcp_isn_secret_initialized;
+
+unsigned int lwip_port_rand(void)
+{
+    return fastRand32();
+}
+
+static void wwLwipTcpIsnEncodeAddress(uint8_t output[kWwLwipTcpIsnAddressSize], const ip_addr_t *address, bool is_ipv6)
+{
+    if (is_ipv6)
+    {
+        const ip6_addr_t *address_v6 = ip_2_ip6(address);
+        for (size_t word_index = 0; word_index < 4; ++word_index)
+        {
+            PUT_BE32(output + (word_index * sizeof(uint32_t)), lwip_ntohl(address_v6->addr[word_index]));
+        }
+        return;
+    }
+
+    memoryZero(output, 10);
+    output[10] = 0xFF;
+    output[11] = 0xFF;
+    PUT_BE32(output + 12, lwip_ntohl(ip4_addr_get_u32(ip_2_ip4(address))));
+}
+
+static void wwLwipTcpIsnSerializeTuple(uint8_t output[kWwLwipTcpIsnTupleSize], const ip_addr_t *local_ip,
+                                       uint16_t local_port, const ip_addr_t *remote_ip, uint16_t remote_port)
+{
+    assert(local_ip != NULL);
+    assert(remote_ip != NULL);
+    assert(IP_GET_TYPE(local_ip) == IP_GET_TYPE(remote_ip));
+
+    const bool is_ipv6                = IP_IS_V6(local_ip);
+    output[kWwLwipTcpIsnFamilyOffset] = is_ipv6 ? kWwLwipTcpIsnFamilyV6 : kWwLwipTcpIsnFamilyV4;
+    wwLwipTcpIsnEncodeAddress(output + kWwLwipTcpIsnLocalAddrOffset, local_ip, is_ipv6);
+    wwLwipTcpIsnEncodeAddress(output + kWwLwipTcpIsnRemoteAddrOffset, remote_ip, is_ipv6);
+    PUT_BE16(output + kWwLwipTcpIsnLocalPortOffset, local_port);
+    PUT_BE16(output + kWwLwipTcpIsnRemotePortOffset, remote_port);
+}
+
+static uint32_t wwLwipTcpIsnAt(const ip_addr_t *local_ip, uint16_t local_port, const ip_addr_t *remote_ip,
+                               uint16_t remote_port, uint32_t now_ms)
+{
+    if (UNLIKELY(! g_ww_lwip_tcp_isn_secret_initialized))
+    {
+        LOGF("wwLwipTcpIsn: TCP ISN secret is unavailable");
+        abortProgramNow(1);
+    }
+
+    uint8_t tuple[kWwLwipTcpIsnTupleSize];
+    uint8_t digest[kWwLwipTcpIsnDigestSize];
+    wwLwipTcpIsnSerializeTuple(tuple, local_ip, local_port, remote_ip, remote_port);
+
+    const wcrypto_status_t status = wCryptoBlake2s(
+        digest, sizeof(digest), g_ww_lwip_tcp_isn_secret, sizeof(g_ww_lwip_tcp_isn_secret), tuple, sizeof(tuple));
+    if (UNLIKELY(status != kWCryptoOk))
+    {
+        LOGF("wwLwipTcpIsn: keyed BLAKE2s failed: %s", wCryptoStatusString(status));
+        abortProgramNow(1);
+    }
+
+    const uint32_t tuple_value = GET_BE32(digest);
+    memorySecureZero(digest, sizeof(digest));
+    return (now_ms * UINT32_C(250)) + tuple_value;
+}
+
+u32_t wwLwipTcpIsn(const ip_addr_t *local_ip, u16_t local_port, const ip_addr_t *remote_ip, u16_t remote_port)
+{
+    return wwLwipTcpIsnAt(local_ip, local_port, remote_ip, remote_port, sys_now());
+}
+
+void wwLwipInitializeProtocolState(void)
+{
+    if (UNLIKELY(g_ww_lwip_tcp_isn_secret_initialized))
+    {
+        LOGF("wwLwipInitializeProtocolState: TCP ISN secret was initialized twice");
+        abortProgramNow(1);
+    }
+
+    getRandomBytes(g_ww_lwip_tcp_isn_secret, sizeof(g_ww_lwip_tcp_isn_secret));
+    g_ww_lwip_tcp_isn_secret_initialized = true;
+}
+
+static void wwLwipEraseProtocolState(void)
+{
+    memorySecureZero(g_ww_lwip_tcp_isn_secret, sizeof(g_ww_lwip_tcp_isn_secret));
+    g_ww_lwip_tcp_isn_secret_initialized = false;
+}
+
+#if defined(WW_LWIP_TEST_SEAM)
+void wwLwipTestSetTcpIsnSecret(const uint8_t secret[kWwLwipTcpIsnSecretSize])
+{
+    assert(secret != NULL);
+    memoryCopy(g_ww_lwip_tcp_isn_secret, secret, sizeof(g_ww_lwip_tcp_isn_secret));
+    g_ww_lwip_tcp_isn_secret_initialized = true;
+}
+
+void wwLwipTestEraseTcpIsnSecret(void)
+{
+    wwLwipEraseProtocolState();
+}
+
+bool wwLwipTestTcpIsnSecretIsInitialized(void)
+{
+    return g_ww_lwip_tcp_isn_secret_initialized;
+}
+
+uint32_t wwLwipTestTcpIsnAt(const ip_addr_t *local_ip, uint16_t local_port, const ip_addr_t *remote_ip,
+                            uint16_t remote_port, uint32_t now_ms)
+{
+    return wwLwipTcpIsnAt(local_ip, local_port, remote_ip, remote_port, now_ms);
+}
+
+void wwLwipTestSerializeTcpIsnTuple(uint8_t output[kWwLwipTcpIsnTupleSize], const ip_addr_t *local_ip,
+                                    uint16_t local_port, const ip_addr_t *remote_ip, uint16_t remote_port)
+{
+    assert(output != NULL);
+    wwLwipTcpIsnSerializeTuple(output, local_ip, local_port, remote_ip, remote_port);
+}
+#endif
 
 #define IP_PROTO_STR(proto)                                                                                            \
     (((proto) == IP_PROTO_TCP)    ? "TCP"                                                                              \
@@ -96,7 +235,16 @@ bool wwLwipShutdown(void)
      * That closes the last window in which packet input could recreate retained
      * protocol state after it had already been released.
      */
-    return tcpip_shutdown(wwLwipReleaseProtocolState, NULL) == ERR_OK;
+    if (tcpip_shutdown(wwLwipReleaseProtocolState, NULL) != ERR_OK)
+    {
+        return false;
+    }
+
+    /* tcpip_shutdown() has joined the thread here, and the release callback
+     * has already removed every TCP PCB. The process-lifetime ISN key is no
+     * longer reachable by lwIP and can now be erased. */
+    wwLwipEraseProtocolState();
+    return true;
 }
 
 void printIPPacketInfo(const char *prefix, const unsigned char *buffer)
