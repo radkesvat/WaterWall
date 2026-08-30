@@ -208,6 +208,10 @@ CREATION_SITES = [
      "a replacement fixture line used to prove the finished transport allocation remains retained"),
     ("tests/unittests/halfduplexserver_reentrant_init_test.c", "createTransportLine", TEST_ONLY,
      "the borrowed upload and download transport fixture lines"),
+    ("tests/unittests/halfduplexserver_reentrant_init_test.c", "protocolCreateTransport", TEST_ONLY,
+     "the borrowed upload and download lines used by the protocol-framing fixture"),
+    ("tests/unittests/halfduplexclient_framing_random_test.c", "initializePair", TEST_ONLY,
+     "the main, upload, and download lines used by each client-framing fixture pair"),
     ("tests/unittests/line_task_scheduling_test.c", "createLine", TEST_ONLY,
      "the owner-local and cross-worker lines used by the scheduler contract matrix"),
     ("tests/unittests/connectiontopackets_schedule_rejection_test.c", "ctpFixtureSetup", TEST_ONLY,
@@ -224,6 +228,7 @@ CREATION_COUNTS = {
     ("tunnels/HttpClient/common/split.c", "httpclientSplitUpStreamInit"): 2,
     ("tests/unittests/worker_context_helpers_test.c", "exerciseForeignFinalLineReleaseDuringDetach"): 3,
     ("tests/unittests/worker_context_helpers_test.c", "testPipePublicationIsLinearizedWithPreStop"): 6,
+    ("tests/unittests/halfduplexclient_framing_random_test.c", "initializePair"): 3,
     ("tests/unittests/line_task_scheduling_test.c", "createLine"): 2,
 }
 
