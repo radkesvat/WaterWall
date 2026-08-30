@@ -118,6 +118,13 @@ These guardrails do not replace the mandatory guide reading:
     callback is task-XOR-cancel and may run synchronously, on a foreign or teardown
     thread, or with the line logically dead. Treat cancellation as notification only;
     never access owner-only state without an independent context proof.
+13. Avoid speculative sanity checks in every added function,
+    its the caller's responsibility to understand the requirements of the function they call.
+    use assert() for debug-only invariants prerebaly;
+    for Release invariants, use LOGF/LOGE/LOGW based on severity, with `abortProgramNow()` or `requestProgramShutdown()` when appropriate;
+    the meaning of these functions is explained in the Developer's Guide, Part 7;
+    use ordinary checks only for expected or fallible inputs, including valid nullable values;
+    use LIKELY/UNLIKELY only for meaningful branch expectations.
 
 ## 4. Implementation Workflow
 
