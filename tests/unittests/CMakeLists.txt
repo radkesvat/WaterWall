@@ -2,6 +2,11 @@ if(NOT WW_BUILD_UNIT_TESTS)
   message(FATAL_ERROR "tests/unittests requires WW_BUILD_UNIT_TESTS=ON")
 endif()
 
+# The ww target publishes a PCH for production consumers. Unit tests are many
+# independent executables, so inheriting it would create one large PCH per test
+# and configuration. Keep PCH enabled for the runtime and tunnel targets only.
+set(CMAKE_DISABLE_PRECOMPILE_HEADERS ON)
+
 include_directories(
   ${CMAKE_SOURCE_DIR}/ww
   ${CMAKE_SOURCE_DIR}/ww/base

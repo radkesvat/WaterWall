@@ -335,7 +335,6 @@ static inline void addresscontextClearIp(address_context_t *ctx)
 static inline void addresscontextDomainSet(address_context_t *ctx, const char *domain, uint8_t len)
 {
     addresscontextReset(ctx);
-    assert(len <= UINT8_MAX);
 
     ctx->domain = memoryAllocate((size_t) len + 1U);
     memoryCopy(ctx->domain, domain, len);

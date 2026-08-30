@@ -716,7 +716,7 @@ static inline int asciiHexValue(uint8_t c)
 static inline uint8_t asciiHexDigitLower(uint8_t value)
 {
     assert(value < 16U);
-    return (uint8_t) (value < 10U ? '0' + value : 'a' + value - 10U);
+    return (uint8_t) (value < 10 ? '0' + value : 'a' + value - 10);
 }
 
 static inline bool asciiHexDecodeByte(uint8_t hi, uint8_t lo, uint8_t *out)
