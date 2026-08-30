@@ -1,5 +1,5 @@
 <!--
-Documentation version: 158
+Documentation version: 159
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/Socks5Server.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/Socks5Server.mdx, and all files must keep the same documentation version.
 -->
 
@@ -7,11 +7,12 @@ Sync note: Any change to this file must also be applied to WaterWall/WaterWall-D
 
 `Socks5Server` is a server-side SOCKS5 middle tunnel for Waterwall.
 
-It accepts SOCKS5 control traffic from its previous node, performs username/password authentication through an existing
-`AuthenticationClient` node, then either:
+It accepts SOCKS5 control traffic from its previous node, negotiates either
+username/password authentication through an existing `AuthenticationClient` or
+explicit no-auth mode, then either:
 
 - opens a normal Waterwall upstream connection for `CONNECT`, or
-- creates an authenticated UDP association with a dynamic bound UDP endpoint for `UDP ASSOCIATE`
+- creates a UDP relay association tied to the accepted TCP control connection for `UDP ASSOCIATE`
 
 This tunnel is written to fit normal Waterwall chain rules:
 
@@ -30,8 +31,8 @@ This tunnel is written to fit normal Waterwall chain rules:
 - Supports `UDP ASSOCIATE` with dynamic endpoint allocation via `UdpListener` / `TcpUdpListener`.
 - Rejects `BIND`.
 - Holds TCP payload until the SOCKS5 `CONNECT` request is accepted.
-- Authenticates UDP datagrams against a live TCP control connection.
-- Creates internal backend UDP lines per requested remote destination.
+- Accepts UDP datagrams only for a live, accepted TCP control association.
+- Forwards UDP payloads through the configured next node using the requested destination context.
 - Wraps returned UDP payload back into SOCKS5 UDP datagrams.
 
 ## Typical Placement
@@ -61,7 +62,7 @@ Important:
 - Do not manually place a `UserController` directly after an authenticated `Socks5Server`; it is inserted internally.
 - `CONNECT` uses the TCP control line and forwards upstream through the normal next tunnel.
 - `UDP ASSOCIATE` does not create a downstream TCP stream.
-- UDP payload is only accepted when the sender matches an authenticated live TCP control association.
+- UDP payload is only accepted when the sender matches a live, accepted TCP control association.
 
 ## Complete SOCKS5 TCP/UDP Topology Example
 
@@ -73,7 +74,7 @@ Important:
       "name": "socks-entry",
       "type": "TcpUdpListener",
       "settings": {
-        "address": "0.0.0.0",
+        "address": "127.0.0.1",
         "port": 1080,
         "nodelay": true
       },
@@ -86,7 +87,7 @@ Important:
         "no-auth": true,
         "connect": true,
         "udp": true,
-        "ipv4": "203.0.113.10"
+        "ipv4": "127.0.0.1"
       },
       "next": "outbound"
     },
@@ -104,9 +105,10 @@ Important:
 }
 ```
 
-Replace `203.0.113.10` with an IPv4 address that the SOCKS5 clients can actually reach. The example uses `no-auth` only
-to keep the topology visible; an Internet-facing deployment should normally use `auth-client-node-name` and a configured
-`AuthenticationClient`.
+This no-auth example is intentionally bound to loopback. For remote clients,
+configure `auth-client-node-name` with an `AuthenticationClient`, then replace
+both listener and advertised addresses with addresses appropriate for the
+deployment.
 
 The addresses and ports in this topology have different jobs:
 
@@ -192,12 +194,12 @@ In username/password mode, AuthenticationServer users for this tunnel should sto
 object's `password` field using that exact `username:password` form. The user object's `name` is not used for
 Socks5Server authentication and may be kept as operator metadata.
 
-The resulting `user_handle_t` is stored in `Socks5Server` line state and copied into `line_t` through `lineAddUser()`.
-The raw SOCKS username/password are also stored as a line credential marker for downstream `Router` username/password
-rules. In no-auth mode the handle stays empty and `lineAddUser()` stores an empty anonymous handle marker. Multiple
-protocol/authentication servers can add separate auth markers to one line without sharing one mutable global user slot.
-The internal `UserController` reads this handle on upstream `Init` and enforces the user's live connection, IP, traffic,
-expiry, and enabled-state limits before the line reaches the configured next tunnel.
+The resulting user identity is attached to the line together with credential
+metadata used by compatible downstream `Router` rules. The internal
+`UserController` applies the configured user policy before the line reaches the
+configured next tunnel. In no-auth mode no authenticated user identity is
+available for user-specific policy, so deployment-level access controls remain
+important.
 
 For `CONNECT`:
 
@@ -219,8 +221,8 @@ For `UDP ASSOCIATE`:
 At UDP `Init` and again before the first UDP payload, the endpoint metadata must
 name the line's actual owner WID and active association handle. A valid-current-
 worker metadata/WID mismatch is an ordinary fail-closed UDP-only rejection: it
-creates no remote line, sends no reply, and never closes or messages the TCP
-control line. A callback invoked from a different current worker is instead a
+drops the datagram, sends no reply, and leaves the TCP control line unchanged. A
+callback invoked from a different current worker is instead a
 fatal core invariant; it is rejected before line state or worker-local resources
 are accessed.
 
@@ -251,47 +253,30 @@ When the TCP control line closes:
 - the UDP association is removed immediately from the worker-local map
 - later UDP packets from that sender are rejected
 
-Associations are stored in a worker-local hash map on `socks5server_tstate_t` without cross-worker lock contention.
-
-Registry entries store copied metadata only:
-
-- a generation token
-- the owner worker id for diagnostics
-- the dynamic endpoint handle
-- the authenticated `user_handle_t`, or an empty handle in no-auth mode
-- copied raw username/password strings, when authenticated mode is used
-
-They do not store a usable `line_t *`, and UDP lookup never calls `lineRef()` or `lineUnref()` on
-the TCP control line. The complete dynamic endpoint handle (owner WID plus
-generation) is the association identity; there is no network-tuple association
-key. A closing control line removes only the entry whose complete handle still
-matches.
+Association state is worker-local and uses an opaque dynamic-endpoint identity.
+It stores copied metadata rather than a usable pointer to the TCP control line,
+and a closing control line removes only its current matching association.
 
 ### UDP payload behavior
 
-When an authenticated UDP datagram arrives:
+When a UDP datagram from an accepted association arrives:
 
 - the tunnel validates the SOCKS5 UDP header
 - fragmented SOCKS5 UDP packets (`FRAG != 0`) are ignored conservatively
 - the requested destination is parsed from the UDP header
-- a worker-local internal backend UDP line is created or reused for that destination
-- the UDP payload body is sent upstream through that internal line
+- the UDP payload body is forwarded upstream using that destination context
 
 When a reply comes back from the next tunnel:
 
 - the reply payload is wrapped into a SOCKS5 UDP response header
-- the source address in that header is the remote destination represented by the backend UDP line
+- the source address in that header identifies the remote endpoint associated with that reply
 - the wrapped datagram is sent back toward the previous node
 
-### Internal backend UDP lines
+### Outbound UDP processing
 
-For UDP forwarding, `Socks5Server` creates normal Waterwall lines behind the UDP client side.
-
-This is important for composability:
-
-- the UDP listener line remains the client-facing association line
-- per-remote outbound destinations get their own backend lines
-- the packet line model is not abused as if it were a normal closable connection line
+The client-facing association remains separate from outbound processing and
+uses the normal layer-4 callback contract. Association-owned outbound state is
+released when the control line closes.
 
 ### Finish behavior
 
@@ -300,7 +285,7 @@ The implementation follows normal Waterwall finish ordering:
 - control-line teardown marks the line closing before final SOCKS5 bytes, closes the dynamic endpoint, and destroys local state
   before propagating real `Finish` callbacks
 - UDP associations are unregistered before the control line is allowed to die
-- internal UDP remote lines detach from their client line before being finished
+- association-owned outbound state is released before close
 - re-entrant callbacks are protected so the tunnel does not read line state after shutdown paths
 
 ## Notes And Caveats

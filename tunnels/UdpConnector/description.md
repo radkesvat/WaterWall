@@ -1,26 +1,33 @@
 <!--
-Documentation version: 154
+Documentation version: 159
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/UdpConnector.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/UdpConnector.mdx, and all files must keep the same documentation version.
 -->
 
 # UdpConnector Node
 
-`UdpConnector` is an outbound UDP client node. It creates a local UDP socket, chooses a destination address and port, and forwards datagrams between the previous node and the selected remote peer.
+`UdpConnector` is an outbound UDP client node. It manages worker-local UDP sockets, chooses a destination address and port, and forwards datagrams between the previous node and the selected remote peer.
 
 In practice, this node is used at the end of a chain.
 
+`UdpConnector` accepts normal layer-4 lines only. A layer-3 worker packet line
+must cross an explicit bridge such as `PacketsToStream` before reaching this
+node. Use `StreamToPackets` on the receiving side when the remote payload must
+return to a layer-3 packet chain. For direct packet-line UDP endpoint behavior,
+use a packet-capable adapter such as `UdpStatelessSocket` instead.
+
 ## What It Does
 
-- Creates a UDP socket bound to an ephemeral local port.
+- Manages outbound UDP sockets in worker-local state.
 - Chooses a destination address and destination port.
 - Resolves a domain name if needed through an internal `DomainResolver`.
 - Forwards upstream payload from the previous node to the remote UDP peer.
 - Forwards datagrams received from the remote UDP peer back downstream.
-- Drops datagrams that arrive from a peer other than the selected remote endpoint.
+- Routes received datagrams back to the originating line and drops datagrams from unregistered peers.
 - Tracks the UDP line with idle timeouts.
 - Applies optional socket options such as `SO_MARK`, device binding, and source-IP binding when supported by the platform.
 
-This node acts like a chain end. Its downstream entry callbacks are disabled because the socket is created from upstream `init`.
+This node acts like a chain end. It is started by upstream `init` and does not
+need a `next` node.
 
 ## Configuration Example
 
@@ -188,14 +195,11 @@ During upstream `init`, `UdpConnector`:
 - computes the destination address and port for this line
 - maps `domain-strategy` onto the line destination context
 - resolves the domain if needed through its internal `DomainResolver`
-- creates a UDP socket after the destination is an IP address
-- applies the configured send and receive socket buffer sizes
-- applies optional `interface` and `fwmark` socket options
-- applies the automatic `TunDevice` egress pin when loop protection is active and `interface` is omitted
-- binds the socket to `source-ip:0` when `source-ip` is configured, otherwise to the wildcard address for the selected address family
-- starts reading immediately
-- stores line state and idle tracking for the new socket
-- stores the destination as the socket peer address
+- prepares worker-local UDP resources for the resolved destination
+- applies the configured buffers, source IP, interface, `fwmark`, and egress pin
+  to any socket it creates
+- starts receive processing as needed and stores independent line state and idle
+  tracking
 
 Unlike TCP, this tunnel does not perform a connection handshake.
 
@@ -229,36 +233,41 @@ normal later routing decisions.
 
 When `addresses` is used, the same selection rules apply inside each array element.
 In the default `"connection"` balance mode, the connector first picks one destination object by weight, then resolves that chosen object's `address` and `port` for the line.
-In `"packet"` balance mode, the weighted choice happens for every upstream payload packet, but each destination object's resolved context is cached on the WaterWall line after first use.
-
-`"packet"` mode still uses one UDP socket per WaterWall line, so all selected packet destinations must be compatible with that socket's address family. For example, do not mix IPv4-only and IPv6-only targets in one packet-balanced list unless the selected socket family can send to all of them.
+In `"packet"` balance mode, the weighted choice happens for every upstream payload packet. A normal line may use both IPv4 and IPv6 destinations. Socket selection and local source-port selection are managed internally.
 
 ### Domain resolution
 
 If the selected address is a domain name, the internal `DomainResolver` submits asynchronous DNS on the line's worker during upstream `init`. Payloads that arrive before resolution completes are kept in the resolver's bounded pending queue. If resolution fails, the line is finished immediately.
 
-In `"packet"` balance mode, domain names inside packet-balanced destination objects are resolved lazily per destination object on each WaterWall line. The first packet that selects an unresolved domain starts one async DNS request for that destination and packets for that destination wait in a bounded queue. After the destination is resolved, that resolved address context is reused for later packets on the same line; there is no time-based DNS cache and no per-packet DNS request.
+In `"packet"` balance mode, domain names inside packet-balanced destination objects are resolved lazily per destination object on each WaterWall line. The first packet that selects an unresolved domain starts one async DNS request for that destination and packets for that destination wait in a bounded queue. Destination resources are prepared before that queue is flushed; failure drops only the affected destination queue. Static destination contexts are cached, while destinations sourced from mutable line context are rebuilt before use. If mutable context changes while an earlier DNS request for the same destination slot is still pending, the new packet is dropped instead of being queued for the obsolete request. There is no time-based DNS cache and no per-packet DNS request.
 
 ### Establishment semantics
 
 There is no true UDP connect handshake here.
 
-In the current implementation:
+Establishment works as follows:
 
-- upstream `init` creates the socket and configures the peer
-- downstream `est` is emitted after the UDP socket is successfully created and ready to send
+- upstream `init` prepares the local UDP resources
+- downstream `est` is emitted after those resources are ready to send
 - upstream payload can be sent immediately after that
 
-So from the previous node's point of view, this tunnel becomes established when the local UDP socket is ready, not after
-a remote reply.
+So from the previous node's point of view, this tunnel becomes established when
+the local UDP path is ready, not after a remote reply.
+
+### Worker-local socket management
+
+Socket state is worker-local and address-family-aware. Replies are accepted only
+from expected peer endpoints; unknown sources are dropped. Local socket and
+source-port behavior is connector-managed and must not be used as line identity.
+Pause and idle state remain per line.
 
 ### Data flow direction
 
 - Previous node to remote peer: upstream payload -> UDP send
 - Remote peer to previous node: UDP receive -> downstream payload
 
-In `"connection"` balance mode, inbound datagrams are accepted only from the single selected remote peer.
-In `"packet"` balance mode, inbound datagrams are accepted from the connector socket so replies from any target selected by packet balancing can return even if packets are answered out of order.
+In both balance modes, received datagrams are accepted only from registered
+peers and routed to the originating line.
 
 ### Pause behavior
 
@@ -271,14 +280,9 @@ If a datagram arrives while reads are paused:
 
 ### Idle timeout behavior
 
-Each UDP line is tracked in an idle table.
-
-Current timeouts:
-
-- about `30 seconds` after initialization
-- about `300 seconds` after continuing traffic
-
-If the UDP line expires, the socket is closed and downstream `finish` is sent to the previous node.
+Idle UDP lines expire automatically, and continuing traffic extends the idle
+deadline. On expiry, connector state is released and downstream `finish` is sent
+to the previous node.
 
 ### Random destination port selection
 
@@ -291,8 +295,13 @@ With `"packet"` balance mode, a `random(x,y)` port is selected when that destina
 - `fwmark` and device binding are platform-dependent. `fwmark` is not available on Windows.
 - Connection-init DNS resolution is handled by an internal `DomainResolver`; `UdpConnector` keeps its own public `domain-strategy` vocabulary.
 - Paused reads drop inbound datagrams instead of buffering them.
-- Downstream `est` is triggered after the local UDP socket is created and ready.
-- Inbound datagrams from unexpected peers are ignored in `"connection"` mode. In `"packet"` mode, datagrams received on the connector socket are accepted so replies from any packet-balanced target can return.
+- Local source ports are connector-managed and must not be used as line
+  identifiers.
+- `PacketsToStream` currently bridges self-consistent IPv4 packets and does not
+  copy mutable per-packet routing context onto its normal output line. Use
+  `PacketsToConnection` for per-flow IPv4 TCP/UDP conversion, or a packet-capable
+  UDP adapter when direct packet-line routing semantics are required.
+- Downstream `est` is triggered after the local UDP path is ready.
 
 ## Node Metadata
 
@@ -303,7 +312,7 @@ Source-backed metadata:
 | node flags | `kNodeFlagChainEnd` |
 | `can_have_prev` | `true` |
 | `can_have_next` | `false` |
-| `layer_group` | `kNodeLayerAnything` |
-| `layer_group_prev_node` | `kNodeLayerAnything` |
+| `layer_group` | `kNodeLayer4` |
+| `layer_group_prev_node` | `kNodeLayer4` |
 | `layer_group_next_node` | `kNodeLayerNone` |
 | `required_padding_left` | `0` bytes |
