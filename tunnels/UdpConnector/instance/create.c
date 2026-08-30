@@ -548,12 +548,17 @@ tunnel_t *udpconnectorTunnelCreate(node_t *node)
         return NULL;
     }
 
-    state->idle_tables = memoryAllocateZero(sizeof(*state->idle_tables) * getWorkersCount());
-    if (UNLIKELY(state->idle_tables == NULL))
+    state->worker_pools = memoryAllocateZero(sizeof(*state->worker_pools) * getWorkersCount());
+    if (UNLIKELY(state->worker_pools == NULL))
     {
-        LOGF("UdpConnector: failed to allocate worker idle-table slots");
+        LOGF("UdpConnector: failed to allocate worker pool slots");
         udpconnectorTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
+    }
+
+    for (wid_t wid = 0; wid < getWorkersCount(); ++wid)
+    {
+        state->worker_pools[wid].wid = wid;
     }
 
     return t;

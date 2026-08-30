@@ -5,22 +5,18 @@
 local_idle_table_t *udpconnectorGetWorkerIdleTable(udpconnector_tstate_t *ts)
 {
     assert(ts != NULL);
-    assert(ts->idle_tables != NULL);
+    assert(ts->worker_pools != NULL);
 
-    // Worker-local table: one checked identity for both the per-worker array and
-    // the loop it is armed on. A non-event thread fails loudly instead of
-    // silently creating a table on worker 0's loop.
     const wid_t wid = getCurrentEventWorkerWID();
     assert(wid < getWorkersCount());
 
-    local_idle_table_t *table = ts->idle_tables[wid];
-    if (table == NULL)
+    udpconnector_worker_pool_t *pool = &ts->worker_pools[wid];
+    if (pool->idle_table == NULL)
     {
-        table                = localIdleTableCreate(getWorkerLoop(wid));
-        ts->idle_tables[wid] = table;
+        pool->idle_table = localIdleTableCreate(getWorkerLoop(wid));
     }
 
-    return table;
+    return pool->idle_table;
 }
 
 local_idle_table_t *udpconnectorGetLineIdleTable(udpconnector_tstate_t *ts, line_t *l)
@@ -31,112 +27,10 @@ local_idle_table_t *udpconnectorGetLineIdleTable(udpconnector_tstate_t *ts, line
     return udpconnectorGetWorkerIdleTable(ts);
 }
 
-static bool udpconnectorSockAddrEquals(const sockaddr_u *lhs, const sockaddr_u *rhs)
-{
-    if (lhs == NULL || rhs == NULL || lhs->sa.sa_family != rhs->sa.sa_family)
-    {
-        return false;
-    }
-
-    switch (lhs->sa.sa_family)
-    {
-    case AF_INET:
-        return lhs->sin.sin_port == rhs->sin.sin_port && lhs->sin.sin_addr.s_addr == rhs->sin.sin_addr.s_addr;
-    case AF_INET6:
-        return lhs->sin6.sin6_port == rhs->sin6.sin6_port && memoryCompare(lhs->sin6.sin6_addr.s6_addr,
-                                                                           rhs->sin6.sin6_addr.s6_addr,
-                                                                           sizeof(lhs->sin6.sin6_addr.s6_addr)) == 0;
-    default:
-        return false;
-    }
-}
-
-void udpconnectorOnRecvFrom(wio_t *io, sbuf_t *buf)
-{
-    udpconnector_lstate_t *ls = (udpconnector_lstate_t *) (weventGetUserdata(io));
-
-    if (ls == NULL || ls->read_paused)
-    {
-        bufferpoolReuseBuffer(wloopGetBufferPool(weventGetLoop(io)), buf);
-        return;
-    }
-    // LOGD("reading %d bytes", sbufGetLength(buf));
-
-    tunnel_t              *t       = ls->tunnel;
-    line_t                *l       = ls->line;
-    sbuf_t                *payload = buf;
-    udpconnector_tstate_t *ts      = tunnelGetState(t);
-
-    if (ts->balance_mode == kUdpConnectorBalanceModeConnection &&
-        ! udpconnectorSockAddrEquals(wioGetPeerAddrU(io), &ls->peer_addr))
-    {
-        if (loggerCheckWriteLevel(getNetworkLogger(), LOG_LEVEL_DEBUG))
-        {
-            char expected_peeraddrstr[SOCKADDR_STRLEN] = {0};
-            char actual_peeraddrstr[SOCKADDR_STRLEN]   = {0};
-
-            LOGD("UdpConnector: dropped %u-byte datagram from unexpected peer [%s], expected [%s]",
-                 sbufGetLength(payload),
-                 SOCKADDR_STR(wioGetPeerAddrU(io), actual_peeraddrstr),
-                 SOCKADDR_STR(&ls->peer_addr, expected_peeraddrstr));
-        }
-
-        bufferpoolReuseBuffer(wloopGetBufferPool(weventGetLoop(io)), payload);
-        return;
-    }
-
-    if (! ls->established)
-    {
-        ls->established = true;
-        if (! lineCallWithRef(l, tunnelPrevDownStreamEst, t))
-        {
-            LOGW("UdpConnector: socket just got closed by upstream before anything happend");
-            bufferpoolReuseBuffer(wloopGetBufferPool(weventGetLoop(io)), payload);
-            return;
-        }
-    }
-
-    localidletableKeepIdleItemForAtleast(udpconnectorGetLineIdleTable(ts, l), ls->idle_handle, kUdpKeepExpireTime);
-
-    tunnelPrevDownStreamPayload(t, l, payload);
-}
-
-void udpconnectorOnClose(wio_t *io)
-{
-    udpconnector_lstate_t *ls = (udpconnector_lstate_t *) (weventGetUserdata(io));
-    if (ls != NULL)
-    {
-        LOGD("UdpConnector: received close for FD:%x ", wioGetFD(io));
-        weventSetUserData(ls->io, NULL);
-
-        line_t   *l = ls->line;
-        tunnel_t *t = ls->tunnel;
-
-        udpconnector_tstate_t *ts = tunnelGetState(ls->tunnel);
-
-        local_idle_item_t *idle_item = ls->idle_handle;
-        ls->idle_handle              = NULL;
-        bool removed                 = localidletableRemoveIdleItem(udpconnectorGetLineIdleTable(ts, l), idle_item);
-        if (! removed)
-        {
-            LOGF("UdpConnector: failed to remove idle item for FD:%x ", wioGetFD(io));
-            abortProgramNow(1);
-        }
-        udpconnectorLinestateDestroy(ls);
-
-        tunnelPrevDownStreamFinish(t, l);
-    }
-    else
-    {
-        LOGD("UdpConnector: sent close for FD:%x ", wioGetFD(io));
-    }
-}
-
 void udpconnectorOnIdleConnectionExpire(local_idle_item_t *idle_udp)
 {
     udpconnector_lstate_t *ls = (udpconnector_lstate_t *) (idle_udp->userdata);
-
-    assert(ls != NULL && ls->tunnel != NULL);
+    assert(ls != NULL && ls->tunnel != NULL && ls->line != NULL);
 
     idle_udp->userdata = NULL;
     ls->idle_handle    = NULL; // mark as removed
@@ -144,11 +38,12 @@ void udpconnectorOnIdleConnectionExpire(local_idle_item_t *idle_udp)
     tunnel_t *t = ls->tunnel;
     line_t   *l = ls->line;
 
-    LOGW("UdpConnector: expired 1 udp connection FD:%x ", wioGetFD(ls->io));
-    weventSetUserData(ls->io, NULL);
-    wioClose(ls->io);
-    udpconnectorLinestateDestroy(ls);
-    tunnelPrevDownStreamFinish(t, l);
+    const bool worker_drain = idle_udp->table == NULL;
+    if (! worker_drain)
+    {
+        LOGW("UdpConnector: expired 1 udp connection");
+    }
+    udpconnectorLineDetach(t, l, ls, worker_drain ? kUdpConnectorDetachWorkerDrain : kUdpConnectorDetachIdleExpire);
 }
 
 size_t udpconnectorQueuedWriteBytes(udpconnector_lstate_t *ls)
@@ -165,19 +60,19 @@ size_t udpconnectorQueuedWriteBytes(udpconnector_lstate_t *ls)
 
 void udpconnectorFlushWriteQueue(udpconnector_lstate_t *ls)
 {
-    assert(ls->io != NULL && ! wioIsClosed(ls->io));
+    udpconnector_binding_t *binding = ls->fixed_binding != NULL ? ls->fixed_binding : ls->last_send_binding;
+    assert(binding != NULL && binding->active);
+    assert(binding->socket != NULL && binding->socket->io != NULL && ! wioIsClosed(binding->socket->io));
 
     while (bufferqueueGetBufCount(&ls->pause_queue) > 0)
     {
         sbuf_t *buf = bufferqueuePopFront(&ls->pause_queue);
-        wioWriteDatagram(ls->io, buf, &ls->peer_addr);
+        wioWriteDatagram(binding->socket->io, buf, &binding->peer_addr);
     }
 }
 
 bool udpconnectorReplayWriteQueue(udpconnector_lstate_t *ls)
 {
-    assert(ls->io != NULL && ! wioIsClosed(ls->io));
-
     tunnel_t *t = ls->tunnel;
     line_t   *l = ls->line;
 

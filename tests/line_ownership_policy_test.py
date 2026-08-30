@@ -178,6 +178,10 @@ CREATION_SITES = [
      "a fixture line re-created in the owning worker's pool"),
     ("tests/unittests/tunnel_line_failure_harness.h", "twfLinePoolCreateLine", TEST_ONLY,
      "the shared pool-backed fixture line the owner-postcondition cases need"),
+    ("tests/unittests/udpconnector_socket_pool_test.c", "createFixtureNormalLine", TEST_ONLY,
+     "the owner-controlled normal lines used by the UdpConnector pool fixture"),
+    ("tests/unittests/udpconnector_socket_pool_test.c", "testCase6_WorkerAndConnectorPoolIsolation", TEST_ONLY,
+     "the explicit worker-owned lines used to prove UdpConnector pool isolation"),
     ("tests/unittests/mux_tls_close_backpressure_fixture.c", "mxbCreateLine", TEST_ONLY,
      "the combined Mux/TLS parent and child lines used by real callback-composition fixtures"),
     ("tests/unittests/muxserver_admission_concurrency_test.c", "WTHREAD_ROUTINE", TEST_ONLY,
@@ -230,6 +234,7 @@ CREATION_COUNTS = {
     ("tests/unittests/worker_context_helpers_test.c", "testPipePublicationIsLinearizedWithPreStop"): 6,
     ("tests/unittests/halfduplexclient_framing_random_test.c", "initializePair"): 3,
     ("tests/unittests/line_task_scheduling_test.c", "createLine"): 2,
+    ("tests/unittests/udpconnector_socket_pool_test.c", "testCase6_WorkerAndConnectorPoolIsolation"): 3,
 }
 
 # ---------------------------------------------------------------------------

@@ -13,6 +13,11 @@
         "duration-ms": 200,
         "packets-per-ip": 8
       },
+      "next": "packets-to-stream"
+    },
+    {
+      "name": "packets-to-stream",
+      "type": "PacketsToStream",
       "next": "udp-connector"
     },
     {
@@ -34,6 +39,11 @@
         ],
         "multiport-backend": "socket"
       },
+      "next": "stream-to-packets"
+    },
+    {
+      "name": "stream-to-packets",
+      "type": "StreamToPackets",
       "next": "packet-receiver"
     },
     {

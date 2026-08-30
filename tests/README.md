@@ -25,11 +25,11 @@ Both modes provide loopback-only isolation without public internet access, enabl
 Tests are organized into distinct execution lanes via `tests/run_test_lane.sh`:
 
 - `support`: Production policy and harness tests (13 tests), run strictly serially.
-- `functional`: Deterministic integration tests (149 tests) run concurrently in isolated network namespaces. Parallelism is calculated adaptively as `min(32, max(4, 4 * CPUs))` (e.g. 16 jobs on a 4-CPU machine). Override with `WATERWALL_INTEGRATION_TEST_JOBS`.
+- `functional`: Deterministic integration tests (152 tests) run concurrently in isolated network namespaces. Parallelism is calculated adaptively as `min(32, max(4, 4 * CPUs))` (e.g. 16 jobs on a 4-CPU machine). Override with `WATERWALL_INTEGRATION_TEST_JOBS`.
 - `external`: Tests requiring live host network connectivity (e.g., `reality_google_roundtrip`). Runs strictly serially on host network.
 - `speed`: Multi-stream speed tests (16 tests). Runs strictly serially (`RUN_SERIAL TRUE`) to avoid CPU and bandwidth contention.
 - `privileged`: Tests requiring root/TUN permissions (`sudo -E`, 6 tests). Runs serially.
-- `all`: Runs preflight, support (serial), functional (parallel), external (serial), and speed (serial) in sequence (179 tests total).
+- `all`: Runs preflight, support (serial), functional (parallel), external (serial), and speed (serial) in sequence (182 tests total).
 - `preflight`: Verifies the namespace capabilities required by the current caller (user + network namespaces for non-root, network namespace only for root).
 
 ### Performance Baseline & Post-Change Timings
@@ -37,11 +37,11 @@ Tests are organized into distinct execution lanes via `tests/run_test_lane.sh`:
 | Test Suite / Lane | Pre-Isolation (Host Serial) | Post-Isolation (Parallel Lanes) |
 |---|---|---|
 | **Support Tests** (13 tests) | ~55s (serial) | **~55s** (serial) |
-| **Deterministic Functional** (149 tests) | ~173s (sequential) | **~22–24s** (16 jobs on 4 CPUs) / **~71s** (1 CPU, 4 jobs) |
+| **Deterministic Functional** (152 tests) | ~173s (sequential) | **~22–24s** (16 jobs on 4 CPUs) / **~71s** (1 CPU, 4 jobs) |
 | **External Network** (1 test) | ~1s | **<1s** (serial) |
 | **Speed Tests** (16 tests) | ~48s (sequential) | **~46–48s** (serial) |
 | **Privileged Integration** (6 tests) | ~15s (sequential) | **~14–15s** (serial) |
-| **Ordinary non-privileged production sequence (`all`)** | ~277s | **~127s (~2m)** (support + functional + external + speed, 179 tests) |
+| **Ordinary non-privileged production sequence (`all`)** | ~277s | **~127s (~2m)** (support + functional + external + speed, 182 tests) |
 
 These are warm-build planning measurements from the 4-CPU reference host, not
 portable performance guarantees. The `all` total includes the production
@@ -386,14 +386,17 @@ There are several valid ways to run tests:
   resolves those targets through the local domain-resolution path, and preserves packet integrity while balancing packets across several UDP loopback
   listener ports.
 - `udp_connector_listener_packet_loss_multiworker`
-  Verifies a real UDP loopback hop across four workers using `PacketSender -> UdpConnector` on the sender side and
-  `UdpListener -> PacketReceiver` on the receiver side, with the packet-analysis report requiring zero loss.
+  Verifies a real UDP loopback hop across four workers using
+  `PacketSender -> PacketsToStream -> UdpConnector` on the sender side and
+  `UdpListener -> StreamToPackets -> PacketReceiver` on the receiver side, with the packet-analysis report requiring
+  zero loss.
 - `udp_listener_connector_packet_loss_multiworker`
-  Verifies a two-hop UDP loopback path across four workers where the middle chain is `UdpListener -> UdpConnector`,
-  exercising listener-created UDP lines that immediately feed another UDP connector, with zero packet loss required.
+  Verifies a two-hop UDP loopback path across four workers with explicit packet/stream bridges at the outer edges and
+  a middle `UdpListener -> UdpConnector` chain, exercising listener-created Layer-4 lines that immediately feed another
+  UDP connector, with zero packet loss required.
 - `udp_listener_multiport_socket_packet_loss_multiworker`
-  Verifies `UdpListener` with the socket multiport backend across four workers while `UdpConnector` sends to an integer
-  destination port inside the listener's port range, with zero packet loss required.
+  Verifies `UdpListener` with the socket multiport backend across four workers while a bridged Layer-4 `UdpConnector`
+  sends to an integer destination port inside the listener's port range, with zero packet loss required.
 - `udp_connector_listener_connection_multiworker_roundtrip`
   Verifies a stream-mode `TesterClient -> UdpConnector` and `UdpListener -> TesterServer` loopback across four workers
   using the full normal TesterClient/TesterServer payload corpus split into UDP-sized payloads by the tester nodes.

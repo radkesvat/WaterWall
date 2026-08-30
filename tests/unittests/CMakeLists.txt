@@ -3203,6 +3203,47 @@ if(TARGET UdpListener)
   )
 endif()
 
+if(TARGET UdpConnector)
+  add_executable(udpconnector_socket_pool_test
+    udpconnector_socket_pool_test.c
+    ${WATERWALL_LINE_FAILURE_WW_SOURCES}
+  )
+  waterwall_line_failure_test_use_tunnel(udpconnector_socket_pool_test UdpConnector)
+  target_compile_definitions(udpconnector_socket_pool_test PRIVATE UDPCONNECTOR_POOL_TEST_HOOKS=1)
+  target_link_options(udpconnector_socket_pool_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS})
+  if(LINUX)
+    target_link_options(udpconnector_socket_pool_test PRIVATE "-Wl,--wrap=wioRead")
+    target_link_options(udpconnector_socket_pool_test PRIVATE "-Wl,--wrap=wioWriteDatagram")
+  endif()
+  target_link_libraries(udpconnector_socket_pool_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests udpconnector_socket_pool_test)
+
+  add_waterwall_unit_test(
+    waterwall.udpconnector_socket_pool_unit
+    udpconnector_socket_pool_test
+    "unit;tunnels;udpconnector;udp;socket;pool;lifecycle;tsan"
+  )
+endif()
+
+if(TARGET UdpConnector AND TARGET PacketsToStream AND TARGET PacketSender)
+  add_executable(udpconnector_layer_metadata_test
+    udpconnector_layer_metadata_test.c
+  )
+  target_link_libraries(udpconnector_layer_metadata_test PRIVATE
+    UdpConnector
+    PacketsToStream
+    PacketSender
+    ww
+  )
+  add_dependencies(waterwall_unit_tests udpconnector_layer_metadata_test)
+
+  add_waterwall_unit_test(
+    waterwall.udpconnector_layer_metadata_unit
+    udpconnector_layer_metadata_test
+    "unit;tunnels;udpconnector;packetstostream;layer;metadata"
+  )
+endif()
+
 add_executable(local_idle_table_indexed_test local_idle_table_indexed_test.c)
 target_link_libraries(local_idle_table_indexed_test PRIVATE ww)
 add_dependencies(waterwall_unit_tests local_idle_table_indexed_test)

@@ -32,20 +32,24 @@ void udpconnectorTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *contex
     discard                context;
     udpconnector_tstate_t *ts = tunnelGetState(t);
 
-    udpconnectorDestroyInternalDomainResolverChain(ts);
-
-    if (ts->idle_tables != NULL)
+    if (ts->worker_pools != NULL)
     {
         for (wid_t wid = 0; wid < getWorkersCount(); ++wid)
         {
-            if (ts->idle_tables[wid] != NULL)
+            udpconnector_worker_pool_t *pool = &ts->worker_pools[wid];
+            if (UNLIKELY(pool->wid != wid || pool->idle_table != NULL || pool->v4_sockets != NULL ||
+                         pool->v6_sockets != NULL || pool->v4_sockets_count != 0 || pool->v6_sockets_count != 0 ||
+                         pool->active_bindings_count != 0))
             {
-                LOGW("UdpConnector: destroying with active worker-local idle table for worker %u", (unsigned int) wid);
+                LOGF("UdpConnector: destroy reached undrained worker resources for worker %u", (unsigned int) wid);
+                abortProgramNow(1);
             }
         }
-        memoryFree(ts->idle_tables);
-        ts->idle_tables = NULL;
+        memoryFree(ts->worker_pools);
+        ts->worker_pools = NULL;
     }
+
+    udpconnectorDestroyInternalDomainResolverChain(ts);
 
     if (ts->destinations != NULL)
     {

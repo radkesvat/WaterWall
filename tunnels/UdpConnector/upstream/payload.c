@@ -10,33 +10,14 @@ typedef enum udpconnector_packet_peer_result_e
     kUdpConnectorPacketPeerConsumed
 } udpconnector_packet_peer_result_e;
 
-static void closeLine(tunnel_t *t, line_t *l, udpconnector_tstate_t *ts, udpconnector_lstate_t *ls)
-{
-    if (ls->io != NULL)
-    {
-        local_idle_item_t *idle_item = ls->idle_handle;
-        ls->idle_handle              = NULL;
-        bool removed                 = localidletableRemoveIdleItem(udpconnectorGetLineIdleTable(ts, l), idle_item);
-        if (! removed)
-        {
-            LOGF("UdpConnector: failed to remove idle item for FD:%x ", wioGetFD(ls->io));
-            abortProgramNow(1);
-        }
-        weventSetUserData(ls->io, NULL);
-        wioClose(ls->io);
-    }
-
-    udpconnectorLinestateDestroy(ls);
-    tunnelPrevDownStreamFinish(t, l);
-}
-
 static void handleQueueOverflow(tunnel_t *t, line_t *l, udpconnector_tstate_t *ts, udpconnector_lstate_t *ls)
 {
+    discard ts;
     LOGE("UdpConnector: upstream write queue overflow, size: %d, limit: %d",
          (int) udpconnectorQueuedWriteBytes(ls),
          (int) kUdpMaxPauseQueueSize);
 
-    closeLine(t, l, ts, ls);
+    udpconnectorLineDetach(t, l, ls, kUdpConnectorDetachQueueOverflow);
 }
 
 static void handleQueuedWrite(tunnel_t *t, line_t *l, udpconnector_tstate_t *ts, udpconnector_lstate_t *ls, sbuf_t *buf)
@@ -62,11 +43,6 @@ static void handleQueuedWrite(tunnel_t *t, line_t *l, udpconnector_tstate_t *ts,
 
 static void udpconnectorPacketDnsRequestDestroy(udpconnector_packet_dns_request_t *request)
 {
-    if (request == NULL)
-    {
-        return;
-    }
-
     memoryFree(request->domain);
     memoryFree(request);
 }
@@ -104,29 +80,43 @@ static void udpconnectorPacketDnsRequestUnlink(udpconnector_lstate_t *ls, udpcon
     request->next = NULL;
 }
 
-static bool udpconnectorPeerMatchesSocketFamily(udpconnector_lstate_t *ls, const sockaddr_u *peer_addr)
+static void udpconnectorWriteUsingBinding(line_t *l, udpconnector_tstate_t *ts, udpconnector_lstate_t *ls,
+                                          udpconnector_binding_t *binding, sbuf_t *buf)
 {
-    return ls->io != NULL && wioGetLocaladdrU(ls->io)->sa.sa_family == peer_addr->sa.sa_family;
+    assert(binding != NULL && binding->active && binding->socket != NULL);
+    assert(binding->socket->io != NULL && ! wioIsClosed(binding->socket->io));
+    assert(ls->idle_handle != NULL);
+
+    localidletableKeepIdleItemForAtleast(udpconnectorGetLineIdleTable(ts, l), ls->idle_handle, kUdpKeepExpireTime);
+    ls->last_send_binding = binding;
+
+    wioWriteDatagram(binding->socket->io, buf, &binding->peer_addr);
+}
+
+static udpconnector_binding_t *udpconnectorSelectSendBinding(tunnel_t *t, line_t *l, udpconnector_tstate_t *ts,
+                                                             udpconnector_lstate_t *ls, const sockaddr_u *peer_addr)
+{
+    if (ts->balance_mode == kUdpConnectorBalanceModeConnection || ls->route_destination_pinned)
+    {
+        udpconnector_binding_t *binding = ls->fixed_binding;
+        assert(binding != NULL && binding->active);
+        return binding;
+    }
+
+    return udpconnectorAcquireBinding(t, l, ls, peer_addr);
 }
 
 static void udpconnectorWriteToPeer(tunnel_t *t, line_t *l, udpconnector_tstate_t *ts, udpconnector_lstate_t *ls,
                                     sbuf_t *buf, const sockaddr_u *peer_addr)
 {
-    discard t;
-
-    if (! udpconnectorPeerMatchesSocketFamily(ls, peer_addr))
+    udpconnector_binding_t *binding = udpconnectorSelectSendBinding(t, l, ts, ls, peer_addr);
+    if (binding == NULL)
     {
-        char peeraddrstr[SOCKADDR_STRLEN] = {0};
-        LOGE("UdpConnector: selected packet destination [%s] is not compatible with this UDP socket family",
-             SOCKADDR_STR(peer_addr, peeraddrstr));
         lineReuseBuffer(l, buf);
         return;
     }
 
-    localidletableKeepIdleItemForAtleast(udpconnectorGetLineIdleTable(ts, l), ls->idle_handle, kUdpKeepExpireTime);
-
-    ls->peer_addr = *peer_addr;
-    wioWriteDatagram(ls->io, buf, peer_addr);
+    udpconnectorWriteUsingBinding(l, ts, ls, binding, buf);
 }
 
 static bool udpconnectorMaybeResumeQueuedSender(tunnel_t *t, line_t *l, udpconnector_lstate_t *ls)
@@ -159,12 +149,18 @@ static bool udpconnectorPacketDestinationFail(tunnel_t *t, line_t *l, udpconnect
 static bool udpconnectorFlushPacketDestinationQueue(tunnel_t *t, line_t *l, udpconnector_tstate_t *ts,
                                                     udpconnector_lstate_t *ls, udpconnector_packet_destination_t *cache)
 {
-    sockaddr_u peer_addr = addresscontextToSockAddr(&cache->dest_ctx);
+    sockaddr_u              peer_addr = addresscontextToSockAddr(&cache->dest_ctx);
+    udpconnector_binding_t *binding   = udpconnectorSelectSendBinding(t, l, ts, ls, &peer_addr);
+    if (binding == NULL)
+    {
+        LOGE("UdpConnector: failed to acquire a UDP binding for resolved packet destination");
+        return udpconnectorPacketDestinationFail(t, l, ls, cache);
+    }
 
     while (bufferqueueGetBufCount(&cache->pending_queue) > 0)
     {
         sbuf_t *buf = bufferqueuePopFront(&cache->pending_queue);
-        udpconnectorWriteToPeer(t, l, ts, ls, buf, &peer_addr);
+        udpconnectorWriteUsingBinding(l, ts, ls, binding, buf);
     }
 
     return udpconnectorMaybeResumeQueuedSender(t, l, ls);
@@ -216,12 +212,8 @@ static void udpconnectorOnPacketDnsResolved(void *userdata, int status, const ch
 
     udpconnectorPacketDnsRequestUnlink(ls, request);
 
-    if (request->destination_index >= ls->packet_destinations_count)
-    {
-        lineUnref(line);
-        udpconnectorPacketDnsRequestDestroy(request);
-        return;
-    }
+    assert(request->destination_index < ls->packet_destinations_count);
+    assert(ls->packet_destinations != NULL);
 
     udpconnector_packet_destination_t *cache = &ls->packet_destinations[request->destination_index];
     cache->resolving                         = false;
@@ -389,12 +381,34 @@ static udpconnector_packet_destination_t *udpconnectorSelectPacketDestination(tu
     udpconnector_tstate_t *ts = tunnelGetState(t);
 
     *destination_index = udpconnectorSelectWeightedDestinationIndex(ts);
-    if (*destination_index >= ls->packet_destinations_count || ls->packet_destinations == NULL)
-    {
-        return NULL;
-    }
+    assert(ls->packet_destinations != NULL);
+    assert(*destination_index < ls->packet_destinations_count);
 
     return &ls->packet_destinations[*destination_index];
+}
+
+static bool udpconnectorPacketContextsSelectSamePeer(const address_context_t *left, const address_context_t *right)
+{
+    if (left->port != right->port)
+    {
+        return false;
+    }
+
+    const bool left_concrete  = addresscontextCanConvertToSockAddr(left);
+    const bool right_concrete = addresscontextCanConvertToSockAddr(right);
+    if (left_concrete && right_concrete)
+    {
+        return ipAddrEqualsExact(&left->ip_address, &right->ip_address);
+    }
+    if (! left_concrete && right_concrete)
+    {
+        return false;
+    }
+    if (left->domain != NULL && left->domain_len > 0 && right->domain != NULL && right->domain_len > 0)
+    {
+        return stringAsciiCaseEquals(left->domain, right->domain);
+    }
+    return false;
 }
 
 static udpconnector_packet_peer_result_e udpconnectorSelectPacketPeer(tunnel_t *t, line_t *l, udpconnector_lstate_t *ls,
@@ -404,13 +418,6 @@ static udpconnector_packet_peer_result_e udpconnectorSelectPacketPeer(tunnel_t *
     uint32_t                           destination_index;
     udpconnector_packet_destination_t *cache = udpconnectorSelectPacketDestination(t, ls, &destination_index);
 
-    if (cache == NULL)
-    {
-        LOGE("UdpConnector: packet destination cache is not initialized");
-        lineReuseBuffer(l, buf);
-        return kUdpConnectorPacketPeerConsumed;
-    }
-
     const udpconnector_destination_t *selected_destination =
         ts->destinations_count > 0 ? &ts->destinations[destination_index] : NULL;
     const dynamic_value_t *dest_addr_selected =
@@ -419,16 +426,45 @@ static udpconnector_packet_peer_result_e udpconnectorSelectPacketPeer(tunnel_t *
         selected_destination != NULL ? &selected_destination->dest_port_selected : &ts->dest_port_selected;
     const bool uses_line_context = udpconnectorDestinationUsesLineContext(dest_addr_selected, dest_port_selected);
 
-    if (uses_line_context && cache->resolving)
+    if (uses_line_context)
     {
-        /* Keep the context that owns the in-flight DNS request. */
-    }
-    else if (! cache->has_context || uses_line_context)
-    {
-        if (cache->has_context)
+        address_context_t current = {0};
+        udpconnectorBuildPacketDestinationContext(t, l, ls, destination_index, &current);
+
+        if (cache->resolving)
         {
-            addresscontextReset(&cache->dest_ctx);
+            const bool same_peer = udpconnectorPacketContextsSelectSamePeer(&cache->dest_ctx, &current);
+            addresscontextReset(&current);
+            if (! same_peer)
+            {
+                /* One destination slot owns one in-flight DNS request. Never
+                 * enqueue bytes for a newer mutable context behind the old
+                 * request, because its completion would send them to the old
+                 * peer. The later datagram is intentionally dropped. */
+                lineReuseBuffer(l, buf);
+                return kUdpConnectorPacketPeerConsumed;
+            }
         }
+        else
+        {
+            if (cache->has_context && udpconnectorPacketContextsSelectSamePeer(&cache->dest_ctx, &current))
+            {
+                addresscontextReset(&current);
+            }
+            else
+            {
+                if (cache->has_context)
+                {
+                    addresscontextReset(&cache->dest_ctx);
+                }
+                addresscontextCopy(&cache->dest_ctx, &current);
+                addresscontextReset(&current);
+                cache->has_context = true;
+            }
+        }
+    }
+    else if (! cache->has_context)
+    {
         udpconnectorBuildPacketDestinationContext(t, l, ls, destination_index, &cache->dest_ctx);
         cache->has_context = true;
     }
@@ -471,19 +507,11 @@ void udpconnectorTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     udpconnector_tstate_t *ts = tunnelGetState(t);
     udpconnector_lstate_t *ls = lineGetState(l, t);
 
-    wio_t *io = ls->io;
-    if (UNLIKELY(io == NULL || wioIsClosed(io)))
-    {
-        LOGF("UdpConnector: upstream payload reached an unavailable UDP socket");
-        abortProgramNow(1);
-    }
-
     if (ls->write_paused)
     {
         handleQueuedWrite(t, l, ts, ls, buf);
         return;
     }
-    // LOGD("writing %d bytes", sbufGetLength(buf));
 
     if (! ls->route_destination_pinned && ts->balance_mode == kUdpConnectorBalanceModePacket)
     {
@@ -500,3 +528,13 @@ void udpconnectorTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     udpconnectorWriteToPeer(t, l, ts, ls, buf, &ls->peer_addr);
 }
+
+#if defined(UDPCONNECTOR_POOL_TEST_HOOKS)
+bool udpconnectorTestFlushPacketDestinationQueue(tunnel_t *t, line_t *l, uint32_t destination_index)
+{
+    udpconnector_lstate_t *ls = lineGetState(l, t);
+    assert(destination_index < ls->packet_destinations_count);
+    return udpconnectorFlushPacketDestinationQueue(
+        t, l, tunnelGetState(t), ls, &ls->packet_destinations[destination_index]);
+}
+#endif

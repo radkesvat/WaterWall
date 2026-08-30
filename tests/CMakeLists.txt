@@ -652,6 +652,21 @@ add_waterwall_probe_integration_test(
   socks5_udp_dynamic_endpoint_isolation_probe
   30
 )
+add_waterwall_probe_integration_test(
+  waterwall.socks5_udp_outbound_pool_probe
+  socks5_udp_outbound_pool_probe
+  30
+)
+add_waterwall_probe_integration_test(
+  waterwall.socks5_udp_packet_pool_probe
+  socks5_udp_packet_pool_probe
+  30
+)
+add_waterwall_probe_integration_test(
+  waterwall.socks5_udp_pool_stale_reply_probe
+  socks5_udp_pool_stale_reply_probe
+  30
+)
 add_waterwall_integration_test(waterwall.socks5_noauth_udp_loopback socks5_noauth_udp_loopback)
 add_waterwall_integration_test(waterwall.socks5_noauth_udp_encryption_loopback socks5_noauth_udp_encryption_loopback)
 add_waterwall_integration_test(waterwall.socks5_noauth_udp_packet_balanced_connector_loopback socks5_noauth_udp_packet_balanced_connector_loopback)

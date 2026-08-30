@@ -22,10 +22,10 @@ void packetsenderTunnelDownStreamFinish(tunnel_t *t, line_t *l)
     }
 
     /*
-     * UdpConnector legitimately finishes its borrowed packet-line side when
-     * its socket expires or closes. Mark this producer stopped before deleting
-     * its timer: Finish permanently closes the upstream direction, including
-     * when it is emitted re-entrantly from a payload send.
+     * A downstream node may legitimately finish its borrowed packet-line side.
+     * Mark this producer stopped before deleting its timer: Finish permanently
+     * closes the upstream direction, including when it is emitted re-entrantly
+     * from a payload send.
      *
      * PacketSender has no prev to notify and does not own the packet line, so
      * the Finish is absorbed after local producer teardown.

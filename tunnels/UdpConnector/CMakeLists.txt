@@ -10,6 +10,7 @@ add_library(UdpConnector STATIC
                     instance/chain.c
                     common/helpers.c
                     common/line_state.c
+                    common/socket_pool.c
                     upstream/init.c
                     upstream/est.c
                     upstream/fin.c

@@ -13,6 +13,11 @@
         "duration-ms": 200,
         "packets-per-ip": 8
       },
+      "next": "packets-to-stream"
+    },
+    {
+      "name": "packets-to-stream",
+      "type": "PacketsToStream",
       "next": "udp-connector"
     },
     {
@@ -30,6 +35,11 @@
         "address": "127.0.0.1",
         "port": 25920
       },
+      "next": "stream-to-packets"
+    },
+    {
+      "name": "stream-to-packets",
+      "type": "StreamToPackets",
       "next": "packet-receiver"
     },
     {

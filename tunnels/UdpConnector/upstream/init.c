@@ -36,109 +36,6 @@ const udpconnector_destination_t *udpconnectorSelectWeightedDestination(const ud
     return &ts->destinations[udpconnectorSelectWeightedDestinationIndex(ts)];
 }
 
-static const char *getSourceBindIp(const udpconnector_tstate_t *ts, char *interface_ip, size_t interface_ip_len)
-{
-    if (ts->source_ip != NULL)
-    {
-        return ts->source_ip;
-    }
-
-    if (ts->interface_name == NULL || socketOptionBindToDeviceSupported())
-    {
-        return NULL;
-    }
-
-    if (! getInterfaceIpString(ts->interface_name, interface_ip, interface_ip_len))
-    {
-        LOGE("UdpConnector: could not get interface \"%s\" ip", ts->interface_name);
-        return NULL;
-    }
-
-    return interface_ip;
-}
-
-static int createAndBindSocket(int family, const udpconnector_tstate_t *ts)
-{
-    sockaddr_u  host_addr                     = {0};
-    char        interface_ip[INET_ADDRSTRLEN] = {0};
-    const char *bind_address                  = getSourceBindIp(ts, interface_ip, sizeof(interface_ip));
-
-    if (family != AF_INET && family != AF_INET6)
-    {
-        LOGE("UdpConnector: unsupported socket family %d", family);
-        return -1;
-    }
-
-    if (bind_address == NULL)
-    {
-        if (ts->source_ip == NULL && ts->interface_name != NULL && ! socketOptionBindToDeviceSupported())
-        {
-            return -1;
-        }
-        bind_address = family == AF_INET6 ? "::" : "0.0.0.0";
-    }
-
-    if (sockaddrSetIpAddressPort(&host_addr, bind_address, 0) != 0)
-    {
-        LOGE("UdpConnector: could not prepare bind address %s", bind_address);
-        return -1;
-    }
-    if (host_addr.sa.sa_family != family)
-    {
-        LOGE("UdpConnector: source-ip address family does not match destination address family");
-        return -1;
-    }
-
-    int sockfd = socketToFd(socket(family, SOCK_DGRAM, 0));
-    if (sockfd < 0)
-    {
-        LOGE("UdpConnector: socket fd < 0");
-        return -1;
-    }
-    if (! socketOptionApplySendBuffer(sockfd, ts->send_buffer_size))
-    {
-        LOGE("UdpConnector: set socket send buffer failed");
-        closesocket(sockfd);
-        return -1;
-    }
-    if (! socketOptionApplyRecvBuffer(sockfd, ts->recv_buffer_size))
-    {
-        LOGE("UdpConnector: set socket recv buffer failed");
-        closesocket(sockfd);
-        return -1;
-    }
-
-    if (socketOptionBindToDevice(sockfd, ts->interface_name) != 0)
-    {
-        LOGE("UdpConnector: setsockopt SO_BINDTODEVICE error");
-        closesocket(sockfd);
-        return -1;
-    }
-
-    if (egressPinApply(sockfd, family, ts->interface_name) != 0)
-    {
-        LOGE("UdpConnector: egress pin failed");
-        closesocket(sockfd);
-        return -1;
-    }
-
-    if (ts->fwmark >= 0 && socketOptionSetFwMark(sockfd, ts->fwmark) != 0)
-    {
-        LOGE("UdpConnector: setsockopt SO_MARK error");
-        closesocket(sockfd);
-        return -1;
-    }
-
-    if (bind(sockfd, &host_addr.sa, sockaddrLen(&host_addr)) < 0)
-    {
-        LOGE("UdpConnector: UDP bind failed;");
-        closesocket(sockfd);
-        return -1;
-    }
-
-    return sockfd;
-}
-
 void udpconnectorSetupDestinationAddress(const dynamic_value_t   *dest_addr_selected,
                                          const address_context_t *constant_dest_addr, address_context_t *dest_ctx,
                                          const address_context_t *original_dest_ctx, address_context_t *src_ctx)
@@ -210,122 +107,6 @@ static void udpconnectorSeedPacketDestinationCache(udpconnector_tstate_t *ts, ud
         addresscontextCopy(&cache->dest_ctx, dest_ctx);
         cache->has_context = true;
     }
-}
-
-static bool udpconnectorBeginSocket(tunnel_t *t, line_t *l, udpconnector_lstate_t *ls)
-{
-    udpconnector_tstate_t *ts       = tunnelGetState(t);
-    address_context_t     *dest_ctx = lineGetDestinationAddressContext(l);
-
-    sockaddr_u addr   = addresscontextToSockAddr(dest_ctx);
-    int        family = addr.sa.sa_family;
-
-    int sockfd = createAndBindSocket(family, ts);
-    if (sockfd < 0)
-    {
-        goto fail;
-    }
-
-    wloop_t *loop = getCurrentEventWorkerLoop();
-    wio_t   *io   = wioGet(loop, sockfd);
-    if (UNLIKELY(io == NULL || wioIsClosed(io)))
-    {
-        if (io == NULL)
-        {
-            // No event io took ownership of the socket, so release the fd here.
-            closesocket(sockfd);
-        }
-        // A closed event io already released the socket.
-        goto fail;
-    }
-
-    ls->io        = io;
-    ls->peer_addr = addr;
-    udpconnectorSeedPacketDestinationCache(ts, ls, dest_ctx);
-    weventSetUserData(io, ls);
-
-    ls->idle_handle = localidletableCreateItem(udpconnectorGetLineIdleTable(ts, l),
-                                               udpconnectorIdleKey(io),
-                                               ls,
-                                               udpconnectorOnIdleConnectionExpire,
-                                               kUdpInitExpireTime);
-    if (UNLIKELY(ls->idle_handle == NULL))
-    {
-        LOGE("UdpConnector: failed to register idle item for io id:%u FD:%x", wioGetID(io), wioGetFD(io));
-        weventSetUserData(io, NULL);
-        ls->io = NULL;
-        wioClose(io);
-        udpconnectorLinestateDestroy(ls);
-        tunnelPrevDownStreamFinish(t, l);
-        return false;
-    }
-
-    wioSetCallBackClose(io, udpconnectorOnClose);
-    wioSetCallBackRead(io, udpconnectorOnRecvFrom);
-    wioSetPeerAddr(ls->io, &addr.sa, sockaddrLen(&addr));
-
-    if (loggerCheckWriteLevel(getNetworkLogger(), LOG_LEVEL_DEBUG))
-    {
-        char localaddrstr[SOCKADDR_STRLEN] = {0};
-        char peeraddrstr[SOCKADDR_STRLEN]  = {0};
-
-        LOGD("UdpConnector: Communication begin FD:%x [%s] => [%s]",
-             wioGetFD(io),
-             SOCKADDR_STR(wioGetLocaladdr(io), localaddrstr),
-             SOCKADDR_STR(wioGetPeerAddr(io), peeraddrstr));
-    }
-
-    if (! ls->read_paused)
-    {
-        if (UNLIKELY(wioRead(io) != 0))
-        {
-            return false;
-        }
-    }
-
-    const bool resume_prev = ls->queue_pause_sent;
-    ls->write_paused       = false;
-
-    lineRef(l);
-    bool alive = true;
-    if (! ls->established)
-    {
-        ls->established = true;
-        tunnelPrevDownStreamEst(t, l);
-        alive = lineIsAlive(l);
-    }
-
-    if (! ls->route_destination_pinned && ts->balance_mode == kUdpConnectorBalanceModePacket)
-    {
-        if (alive)
-        {
-            alive = udpconnectorReplayWriteQueue(ls);
-        }
-    }
-    else if (alive)
-    {
-        udpconnectorFlushWriteQueue(ls);
-    }
-
-    if (alive && resume_prev && udpconnectorQueuedWriteBytes(ls) == 0 && ! ls->write_paused)
-    {
-        ls->queue_pause_sent = false;
-        tunnelPrevDownStreamResume(t, l);
-        alive = lineIsAlive(l);
-    }
-    lineUnref(l);
-
-    if (! alive)
-    {
-        return false;
-    }
-
-    return true;
-
-fail:
-    udpconnectorLinestateDestroy(ls);
-    tunnelPrevDownStreamFinish(t, l);
-    return false;
 }
 
 bool udpconnectorDomainResolverPrepare(tunnel_t *resolver, tunnel_t *connector, line_t *l,
@@ -416,17 +197,22 @@ void udpconnectorDomainResolverUserStateDestroy(tunnel_t *resolver, tunnel_t *co
 
 void udpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
 {
+    if (UNLIKELY(tunnelchainIsWorkerPacketLine(tunnelGetChain(t), l)))
+    {
+        LOGF("UdpConnector: worker packet line reached an L4-only node");
+        abortProgramNow(1);
+    }
+
     udpconnector_tstate_t                 *ts = tunnelGetState(t);
     udpconnector_lstate_t                 *ls = lineGetState(l, t);
     udpconnector_domain_resolver_lstate_t *resolver_ls =
         domainresolverTunnelGetUserLineState(ts->domain_resolver_tunnel, l);
     address_context_t *dest_ctx = lineGetDestinationAddressContext(l);
 
-    if (UNLIKELY(! udpconnectorLinestateInitialize(ls, t, l, NULL)))
+    if (UNLIKELY(! udpconnectorLinestateInitialize(ls, t, l)))
     {
         LOGE("UdpConnector: failed to initialize per-line packet destination state");
-        udpconnectorLinestateDestroy(ls);
-        tunnelPrevDownStreamFinish(t, l);
+        udpconnectorLineDetach(t, l, ls, kUdpConnectorDetachInitRollback);
         return;
     }
     if (UNLIKELY(resolver_ls == NULL))
@@ -449,14 +235,75 @@ void udpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
         goto fail;
     }
 
-    if (! udpconnectorBeginSocket(t, l, ls))
+    sockaddr_u addr = addresscontextToSockAddr(dest_ctx);
+    ls->peer_addr   = addr;
+
+    udpconnector_worker_pool_t *worker_pool = udpconnectorGetLineWorkerPool(ts, l);
+    if (UNLIKELY(worker_pool->quiescing))
     {
+        goto fail;
+    }
+
+    ls->line_idle_id = ++worker_pool->next_line_idle_id;
+    ls->idle_handle  = localidletableCreateItem(udpconnectorGetWorkerIdleTable(ts),
+                                               (hash_t) ls->line_idle_id,
+                                               ls,
+                                               udpconnectorOnIdleConnectionExpire,
+                                               kUdpInitExpireTime);
+    if (UNLIKELY(ls->idle_handle == NULL))
+    {
+        LOGE("UdpConnector: failed to register idle item for line");
+        goto fail;
+    }
+
+    udpconnector_binding_t *binding = udpconnectorAcquireBinding(t, l, ls, &addr);
+
+    if (UNLIKELY(binding == NULL))
+    {
+        LOGE("UdpConnector: failed to acquire UDP socket binding");
+        udpconnectorLineDetach(t, l, ls, kUdpConnectorDetachInitRollback);
         return;
     }
+
+    ls->last_send_binding = binding;
+    udpconnectorSeedPacketDestinationCache(ts, ls, dest_ctx);
+
+    const bool resume_prev = ls->queue_pause_sent;
+    const bool replay_packet_queue =
+        ! ls->route_destination_pinned && ts->balance_mode == kUdpConnectorBalanceModePacket;
+    ls->write_paused = false;
+
+    lineRef(l);
+    bool alive = true;
+    if (! ls->established)
+    {
+        ls->established = true;
+        tunnelPrevDownStreamEst(t, l);
+        alive = lineIsAlive(l);
+    }
+
+    if (alive)
+    {
+        if (replay_packet_queue)
+        {
+            alive = udpconnectorReplayWriteQueue(ls);
+        }
+        else
+        {
+            udpconnectorFlushWriteQueue(ls);
+        }
+    }
+
+    if (alive && resume_prev && udpconnectorQueuedWriteBytes(ls) == 0 && ! ls->write_paused)
+    {
+        ls->queue_pause_sent = false;
+        tunnelPrevDownStreamResume(t, l);
+        alive = lineIsAlive(l);
+    }
+    lineUnref(l);
 
     return;
 
 fail:
-    udpconnectorLinestateDestroy(ls);
-    tunnelPrevDownStreamFinish(t, l);
+    udpconnectorLineDetach(t, l, ls, kUdpConnectorDetachInitRollback);
 }

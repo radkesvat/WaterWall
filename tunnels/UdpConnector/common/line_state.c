@@ -2,12 +2,18 @@
 
 #include "loggers/network_logger.h"
 
-bool udpconnectorLinestateInitialize(udpconnector_lstate_t *ls, tunnel_t *t, line_t *l, wio_t *io)
+bool udpconnectorLinestateInitialize(udpconnector_lstate_t *ls, tunnel_t *t, line_t *l)
 {
     *ls = (udpconnector_lstate_t) {
         .tunnel                           = t,
         .line                             = l,
-        .io                               = io,
+        .idle_handle                      = NULL,
+        .line_idle_id                     = 0,
+        .fixed_binding                    = NULL,
+        .peer_bindings                    = udpconnector_peer_binding_map_init(),
+        .bindings_head                    = NULL,
+        .bindings_count                   = 0,
+        .last_send_binding                = NULL,
         .packet_dns_requests              = NULL,
         .packet_destinations              = NULL,
         .packet_destinations_count        = 0,
@@ -17,6 +23,7 @@ bool udpconnectorLinestateInitialize(udpconnector_lstate_t *ls, tunnel_t *t, lin
         .read_paused                      = false,
         .write_paused                     = false,
         .queue_pause_sent                 = false,
+        .route_destination_pinned         = false,
     };
 
     udpconnector_tstate_t *ts = tunnelGetState(t);
@@ -43,11 +50,6 @@ bool udpconnectorLinestateInitialize(udpconnector_lstate_t *ls, tunnel_t *t, lin
         {
             ls->packet_destinations[i].pending_queue = bufferqueueCreate(kUdpPauseQueueCapacity);
         }
-    }
-
-    if (io != NULL)
-    {
-        weventSetUserData(io, ls);
     }
 
     return true;
@@ -89,13 +91,17 @@ static void udpconnectorPacketDestinationCachesDestroy(udpconnector_lstate_t *ls
 
 void udpconnectorLinestateDestroy(udpconnector_lstate_t *ls)
 {
+    if (UNLIKELY(ls->idle_handle != NULL || ls->fixed_binding != NULL || ls->last_send_binding != NULL ||
+                 ls->bindings_head != NULL || ls->bindings_count != 0 ||
+                 udpconnector_peer_binding_map_size(&ls->peer_bindings) != 0))
+    {
+        LOGF("UdpConnector: line state still owns an idle item or peer binding during destruction");
+        abortProgramNow(1);
+    }
+
     udpconnectorCancelPacketDnsRequests(ls);
     udpconnectorPacketDestinationCachesDestroy(ls);
     bufferqueueDestroy(&ls->pause_queue);
-    if (ls->idle_handle != NULL)
-    {
-        LOGF("UdpConnector: idle item still exists for FD:%x ", ls->io ? wioGetFD(ls->io) : -1);
-        abortProgramNow(1);
-    }
+    udpconnector_peer_binding_map_drop(&ls->peer_bindings);
     memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(udpconnector_lstate_t)));
 }
