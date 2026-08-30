@@ -49,6 +49,10 @@ static void fixtureSetup(disturber_fixture_t *fixture)
     fixture->chain->packet_lines         = fixture->packet_lines;
     fixture->disturber->chain            = fixture->chain;
 
+    disturber_tstate_t *state = tunnelGetState(fixture->disturber);
+    state->disturb_upstream   = true;
+    state->disturb_downstream = true;
+
     for (wid_t wid = 0; wid < kDisturberTestWorkerCount; ++wid)
     {
         line_t *line               = twfLineCreate(fixture->disturber->lstate_size);
@@ -56,13 +60,16 @@ static void fixtureSetup(disturber_fixture_t *fixture)
         fixture->packet_lines[wid] = line;
 
         const wid_t previous_wid = tosSetCurrentWorker(wid);
-        disturberLinestateInitialize(lineGetState(line, fixture->disturber));
+        disturberLinestateInitialize(lineGetState(line, fixture->disturber), state);
         discard tosSetCurrentWorker(previous_wid);
     }
+}
 
-    disturber_tstate_t *state = tunnelGetState(fixture->disturber);
-    state->disturb_upstream   = true;
-    state->disturb_downstream = true;
+static void fixtureReinitializeLineState(disturber_fixture_t *fixture, line_t *line)
+{
+    const wid_t previous_wid = tosSetCurrentWorker(lineGetWID(line));
+    disturberLinestateInitialize(lineGetState(line, fixture->disturber), tunnelGetState(fixture->disturber));
+    discard tosSetCurrentWorker(previous_wid);
 }
 
 static void fixtureTeardown(disturber_fixture_t *fixture)
@@ -127,7 +134,8 @@ static void caseUpstreamFinishSuppressesScheduledDelayedPayload(void)
     state->delay_min_ms         = 1;
     state->delay_max_ms         = 1;
 
-    line_t        *line            = fixture.packet_lines[0];
+    line_t *line = fixture.packet_lines[0];
+    fixtureReinitializeLineState(&fixture, line);
     const uint32_t recycles_before = twfRecycleCount();
 
     sbuf_t *payload = fixturePayload(line, UINT8_C(0xA1));
@@ -175,7 +183,8 @@ static void caseDownstreamFinishSettlesHeldPayload(void)
     disturber_tstate_t *state          = tunnelGetState(fixture.disturber);
     state->chance_payload_out_of_order = 100;
 
-    line_t        *line            = fixture.packet_lines[1];
+    line_t *line = fixture.packet_lines[1];
+    fixtureReinitializeLineState(&fixture, line);
     const wid_t    previous_wid    = tosSetCurrentWorker(1);
     const uint32_t recycles_before = twfRecycleCount();
 
@@ -211,7 +220,8 @@ static void caseUpstreamFinishSuppressesQueuedDownstreamReflection(void)
     state->delay_min_ms         = 1;
     state->delay_max_ms         = 1;
 
-    line_t *line    = fixture.packet_lines[0];
+    line_t *line = fixture.packet_lines[0];
+    fixtureReinitializeLineState(&fixture, line);
     sbuf_t *payload = fixturePayload(line, UINT8_C(0xB3));
     disturberTunnelDownStreamPayload(fixture.disturber, line, payload);
     twfRequireEqualU32(fixture.trace.prev_payload, 0, "the delayed downstream payload ran inline");
@@ -250,7 +260,8 @@ static void caseDownstreamFinishSuppressesQueuedUpstreamReflection(void)
     state->delay_min_ms         = 1;
     state->delay_max_ms         = 1;
 
-    line_t *line    = fixture.packet_lines[0];
+    line_t *line = fixture.packet_lines[0];
+    fixtureReinitializeLineState(&fixture, line);
     sbuf_t *payload = fixturePayload(line, UINT8_C(0xB4));
     disturberTunnelUpStreamPayload(fixture.disturber, line, payload);
     twfRequireEqualU32(fixture.trace.next_payload, 0, "the delayed upstream payload ran inline");
@@ -287,7 +298,8 @@ static void caseWorkerStopSettlesPacketStateOnOwnerWorker(void)
     disturber_tstate_t *state          = tunnelGetState(fixture.disturber);
     state->chance_payload_out_of_order = 100;
 
-    line_t        *line            = fixture.packet_lines[1];
+    line_t *line = fixture.packet_lines[1];
+    fixtureReinitializeLineState(&fixture, line);
     const wid_t    previous_wid    = tosSetCurrentWorker(1);
     const uint32_t recycles_before = twfRecycleCount();
 
@@ -346,7 +358,7 @@ static void caseValidNormalLineInPacketChainKeepsNormalFinishRole(void)
 
     line_t             *normal_line = twfLineCreate(fixture.disturber->lstate_size);
     disturber_lstate_t *ls          = lineGetState(normal_line, fixture.disturber);
-    disturberLinestateInitialize(ls);
+    disturberLinestateInitialize(ls, tunnelGetState(fixture.disturber));
     ls->upstream.held_payload = fixturePayload(normal_line, UINT8_C(0xD1));
 
     const uint32_t recycles_before = twfRecycleCount();
@@ -534,7 +546,8 @@ static void residualPacketStateDestroyBody(void *argument)
     disturber_tstate_t *state          = tunnelGetState(fixture.disturber);
     state->chance_payload_out_of_order = 100;
 
-    line_t     *line         = fixture.packet_lines[1];
+    line_t *line = fixture.packet_lines[1];
+    fixtureReinitializeLineState(&fixture, line);
     const wid_t previous_wid = tosSetCurrentWorker(1);
     disturberTunnelUpStreamPayload(fixture.disturber, line, fixturePayload(line, UINT8_C(0xD4)));
     discard tosSetCurrentWorker(previous_wid);

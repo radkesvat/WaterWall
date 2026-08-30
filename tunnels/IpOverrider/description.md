@@ -152,6 +152,10 @@ per eligible packet, not separately for each source or destination rule:
 - `0` always forwards the packet unchanged.
 - Values from `1` through `99` are percentages.
 
+Each worker and direction has an independent non-cryptographic pseudorandom
+percentage gate. Outcomes may occur in runs and approach the configured
+percentage over time rather than following a fixed every-N-packets schedule.
+
 In this example, both upstream fields are rewritten together for approximately
 25 percent of eligible packets; otherwise neither field is changed:
 

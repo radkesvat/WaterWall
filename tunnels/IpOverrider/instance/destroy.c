@@ -21,5 +21,12 @@ void ipoverriderDestroy(tunnel_t *t, const ww_lifecycle_context_t *context)
         }
     }
 
+    if (state->worker_gates != NULL)
+    {
+        memoryFreeAligned(state->worker_gates);
+        state->worker_gates      = NULL;
+        state->worker_gate_count = 0;
+    }
+
     tunnelDestroy(t);
 }

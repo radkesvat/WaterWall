@@ -81,6 +81,9 @@ All disturbance controls are optional. If omitted, they default to `0` and the t
 ## Optional `settings` Fields
 
 All chance fields are integer percentages interpreted as a probability for that event when the relevant callback runs.
+Every event type has an independent non-cryptographic pseudorandom gate for
+each line and direction, so one disturbance does not advance another
+disturbance's sequence and outcomes may naturally occur in runs.
 
 - `disturb-upstream` `(boolean)`
   Enables disturbance injection on upstream payload and upstream-init close handling.

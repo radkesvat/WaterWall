@@ -40,11 +40,21 @@ typedef struct ipoverrider_rule_s
     bool            support6;
 } ipoverrider_rule_t;
 
+typedef MSVC_ATTR_ALIGNED_LINE_CACHE struct ipoverrider_worker_gates_s
+{
+    noncrypto_percent_gate_t direction[kIpOverriderDirectionCount];
+} GNU_ATTR_ALIGNED_LINE_CACHE ipoverrider_worker_gates_t;
+
+_Static_assert(sizeof(ipoverrider_worker_gates_t) % kCpuLineCacheSize == 0,
+               "IpOverrider worker gates must occupy complete cache lines");
+
 typedef struct ipoverrider_tstate_s
 {
-    ipoverrider_rule_t rules[kIpOverriderDirectionCount][kIpOverriderModeCount];
-    int                chance;
-    bool               only120;
+    ipoverrider_rule_t          rules[kIpOverriderDirectionCount][kIpOverriderModeCount];
+    ipoverrider_worker_gates_t *worker_gates;
+    wid_t                       worker_gate_count;
+    int                         chance;
+    bool                        only120;
 } ipoverrider_tstate_t;
 
 typedef struct ipoverrider_lstate_s

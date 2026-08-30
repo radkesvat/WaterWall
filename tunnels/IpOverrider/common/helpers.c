@@ -2,7 +2,8 @@
 
 #include "loggers/network_logger.h"
 
-static bool ipoverriderShouldApply(const ipoverrider_tstate_t *state, const sbuf_t *buf)
+static bool ipoverriderShouldApply(ipoverrider_tstate_t *state, line_t *line, const sbuf_t *buf,
+                                   enum ipoverrider_direction_index direction)
 {
     if (UNLIKELY(sbufGetLength(buf) < sizeof(struct ip_hdr)))
     {
@@ -15,7 +16,24 @@ static bool ipoverriderShouldApply(const ipoverrider_tstate_t *state, const sbuf
         return false;
     }
 
-    return state->chance >= 100 || (state->chance > 0 && (fastRand32() % 100) < (uint32_t) state->chance);
+    if (state->chance >= 100)
+    {
+        return true;
+    }
+    if (state->chance <= 0)
+    {
+        return false;
+    }
+
+    const wid_t wid = lineGetWID(line);
+    assert(state->worker_gates != NULL && wid < state->worker_gate_count);
+    if (UNLIKELY(state->worker_gates == NULL || wid >= state->worker_gate_count))
+    {
+        LOGF("IpOverrider: percentage gate accessed with invalid worker %d", workerWIDForLog(wid));
+        abortProgramNow(1);
+    }
+
+    return nonCryptoPercentGateStep(&(state->worker_gates[wid].direction[direction]));
 }
 
 static uint32_t ipoverriderSelectIpv4(ipoverrider_rule_t *rule)
@@ -57,7 +75,7 @@ void ipoverriderApplyUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     ipoverrider_tstate_t *state = tunnelGetState(t);
 
-    if (ipoverriderShouldApply(state, buf))
+    if (ipoverriderShouldApply(state, l, buf, kIpOverriderDirectionUp))
     {
         if (ipoverriderApplyRule(
                 &(state->rules[kIpOverriderDirectionUp][kIpOverriderModeSource]), buf, kIpv4ChecksumAddressSource))
@@ -74,7 +92,7 @@ void ipoverriderApplyDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     ipoverrider_tstate_t *state = tunnelGetState(t);
 
-    if (ipoverriderShouldApply(state, buf))
+    if (ipoverriderShouldApply(state, l, buf, kIpOverriderDirectionDown))
     {
         if (ipoverriderApplyRule(
                 &(state->rules[kIpOverriderDirectionDown][kIpOverriderModeSource]), buf, kIpv4ChecksumAddressSource))

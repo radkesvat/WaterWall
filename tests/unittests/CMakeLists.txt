@@ -459,6 +459,16 @@ if(TARGET ww)
 
   add_waterwall_unit_test(waterwall.wfrand_unit wfrand_test "unit;libc;random")
 
+  add_executable(wpercentgate_test wpercentgate_test.c)
+  target_link_libraries(wpercentgate_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests wpercentgate_test)
+
+  add_waterwall_unit_test(
+    waterwall.percent_gate_unit
+    wpercentgate_test
+    "unit;libc;percentage-gate;noncrypto"
+  )
+
   add_executable(line_user_identifier_test line_user_identifier_test.c)
   target_link_libraries(line_user_identifier_test PRIVATE ww)
   add_dependencies(waterwall_unit_tests line_user_identifier_test)

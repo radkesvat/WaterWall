@@ -25,6 +25,15 @@ typedef struct disturber_direction_lstate_s
     bool finished;    // payload publication in this direction is terminal after packet Finish
 
     sbuf_t *held_payload; // store  a payload and wait for next, to be able to send them out of order
+
+    noncrypto_percent_gate_t instant_close_gate;
+    noncrypto_percent_gate_t middle_close_gate;
+    noncrypto_percent_gate_t payload_corruption_gate;
+    noncrypto_percent_gate_t payload_loss_gate;
+    noncrypto_percent_gate_t payload_duplication_gate;
+    noncrypto_percent_gate_t payload_out_of_order_gate;
+    noncrypto_percent_gate_t payload_delay_gate;
+    noncrypto_percent_gate_t connection_deadhang_gate;
 } disturber_direction_lstate_t;
 
 typedef struct disturber_lstate_s
@@ -70,7 +79,7 @@ void disturberTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void disturberTunnelDownStreamPause(tunnel_t *t, line_t *l);
 void disturberTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
-void disturberLinestateInitialize(disturber_lstate_t *ls);
+void disturberLinestateInitialize(disturber_lstate_t *ls, const disturber_tstate_t *ts);
 void disturberLinestateDestroy(line_t *l, disturber_lstate_t *ls);
 void disturberTunnelPayload(tunnel_t *t, line_t *l, sbuf_t *buf, disturber_payload_direction_e direction);
 bool disturberIsWorkerPacketLine(tunnel_t *t, line_t *l);

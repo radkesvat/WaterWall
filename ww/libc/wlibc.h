@@ -16,6 +16,7 @@
 #include "wfrand.h"
 #include "whash.h"
 #include "wmath.h"
+#include "wpercentgate.h"
 #include "wtime.h"
 
 #include "ww_lwip.h"

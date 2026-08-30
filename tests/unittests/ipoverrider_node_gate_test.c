@@ -217,6 +217,63 @@ static void testChanceZeroSkipsEntireNodeAction(void)
     cJSON_Delete(settings);
 }
 
+static void testChanceGateStateIsIndependentPerWorkerAndDirection(void)
+{
+    cJSON    *settings = NULL;
+    tunnel_t *t        = createConfiguredTunnel(50, false, &settings);
+    tunnel_t *prev     = NULL;
+    tunnel_t *next     = NULL;
+    bindRecordingNeighbors(t, &prev, &next);
+
+    ipoverrider_tstate_t *state = tunnelGetState(t);
+    require(state->worker_gate_count == 2, "IpOverrider did not allocate one percentage-gate slot per worker");
+    require(state->worker_gates != NULL, "IpOverrider percentage-gate storage is missing");
+
+    line_t worker_zero_line = {.wid = 0};
+    line_t worker_one_line  = {.wid = 1};
+
+    uint64_t worker_zero_up   = state->worker_gates[0].direction[kIpOverriderDirectionUp].state;
+    uint64_t worker_zero_down = state->worker_gates[0].direction[kIpOverriderDirectionDown].state;
+    uint64_t worker_one_up    = state->worker_gates[1].direction[kIpOverriderDirectionUp].state;
+    uint64_t worker_one_down  = state->worker_gates[1].direction[kIpOverriderDirectionDown].state;
+
+    sbuf_t *buf = createIpv4TcpPacket(60);
+    t->fnPayloadU(t, &worker_zero_line, buf);
+    sbufDestroy(buf);
+
+    require(state->worker_gates[0].direction[kIpOverriderDirectionUp].state != worker_zero_up,
+            "worker 0 upstream chance did not advance its percentage gate");
+    require(state->worker_gates[0].direction[kIpOverriderDirectionDown].state == worker_zero_down,
+            "worker 0 upstream chance advanced the downstream percentage gate");
+    require(state->worker_gates[1].direction[kIpOverriderDirectionUp].state == worker_one_up &&
+                state->worker_gates[1].direction[kIpOverriderDirectionDown].state == worker_one_down,
+            "worker 0 chance advanced worker 1 percentage gates");
+
+    buf = createIpv4UdpPacket(60);
+    t->fnPayloadD(t, &worker_zero_line, buf);
+    sbufDestroy(buf);
+
+    require(state->worker_gates[0].direction[kIpOverriderDirectionDown].state != worker_zero_down,
+            "worker 0 downstream chance did not advance its percentage gate");
+    require(state->worker_gates[1].direction[kIpOverriderDirectionUp].state == worker_one_up &&
+                state->worker_gates[1].direction[kIpOverriderDirectionDown].state == worker_one_down,
+            "worker 0 downstream chance advanced worker 1 percentage gates");
+
+    buf = createIpv4TcpPacket(60);
+    t->fnPayloadU(t, &worker_one_line, buf);
+    sbufDestroy(buf);
+
+    require(state->worker_gates[1].direction[kIpOverriderDirectionUp].state != worker_one_up,
+            "worker 1 upstream chance did not advance its percentage gate");
+    require(state->worker_gates[1].direction[kIpOverriderDirectionDown].state == worker_one_down,
+            "worker 1 upstream chance advanced its downstream percentage gate");
+
+    ipoverriderDestroy(t, wwLifecycleStartupRollback());
+    tunnelDestroy(next);
+    tunnelDestroy(prev);
+    cJSON_Delete(settings);
+}
+
 static void testCleanTcpRewriteComposition(void)
 {
     cJSON    *settings = NULL;
@@ -608,13 +665,26 @@ static void testRejectionAndMalformedPackets(void)
 
 int main(void)
 {
+    const uint32_t saved_workers_count = GSTATE.workers_count;
+    GSTATE.workers_count               = 3;
+
+    require(globalstateInitializeSecureRandom(), "the operating-system random source is unavailable");
+    require(frandGlobalInit(), "fast random initialization failed");
+    frandInit();
+
     checkSumInit();
     testChanceZeroSkipsEntireNodeAction();
+    testChanceGateStateIsIndependentPerWorkerAndDirection();
     testCleanTcpRewriteComposition();
     testCleanUdpRewriteAndZeroChecksum();
     testExistingFullRecalculationRequestPreserved();
     testOnly120GatesEntireNodeAction();
     testUnchangedAddressHandling();
     testRejectionAndMalformedPackets();
+
+    frandThreadCleanup();
+    frandGlobalCleanup();
+    globalstateDestroySecureRandom();
+    GSTATE.workers_count = saved_workers_count;
     return 0;
 }

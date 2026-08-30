@@ -171,7 +171,7 @@ void disturberTunnelPayload(tunnel_t *t, line_t *l, sbuf_t *buf, disturber_paylo
         return;
     }
 
-    if (roll100(ts->chance_middle_close))
+    if (nonCryptoPercentGateStep(&dir_ls->middle_close_gate))
     {
         LOGD("Disturber: Closing %s direction in the middle of transmission", dir_name);
         lineReuseBuffer(l, buf);
@@ -184,7 +184,7 @@ void disturberTunnelPayload(tunnel_t *t, line_t *l, sbuf_t *buf, disturber_paylo
         return;
     }
 
-    if (roll100(ts->chance_payload_loss))
+    if (nonCryptoPercentGateStep(&dir_ls->payload_loss_gate))
     {
         LOGD("Disturber: Dropping %s payload (chance: %d%%)", dir_name, ts->chance_payload_loss);
         lineReuseBuffer(l, buf);
@@ -192,13 +192,13 @@ void disturberTunnelPayload(tunnel_t *t, line_t *l, sbuf_t *buf, disturber_paylo
     }
 
     sbuf_t *dup_buf = NULL;
-    if (roll100(ts->chance_payload_duplication))
+    if (nonCryptoPercentGateStep(&dir_ls->payload_duplication_gate))
     {
         LOGD("Disturber: Duplicating %s payload (chance: %d%%)", dir_name, ts->chance_payload_duplication);
         dup_buf = sbufDuplicate(buf);
     }
 
-    if (roll100(ts->chance_payload_corruption))
+    if (nonCryptoPercentGateStep(&dir_ls->payload_corruption_gate))
     {
         uint8_t *data = sbufGetMutablePtr(buf);
         uint32_t size = sbufGetLength(buf);
@@ -235,7 +235,7 @@ void disturberTunnelPayload(tunnel_t *t, line_t *l, sbuf_t *buf, disturber_paylo
         return;
     }
 
-    if (roll100(ts->chance_payload_out_of_order))
+    if (nonCryptoPercentGateStep(&dir_ls->payload_out_of_order_gate))
     {
         dir_ls->held_payload = buf;
         if (dup_buf != NULL)
@@ -245,7 +245,7 @@ void disturberTunnelPayload(tunnel_t *t, line_t *l, sbuf_t *buf, disturber_paylo
         return;
     }
 
-    if (roll100(ts->chance_payload_delay))
+    if (nonCryptoPercentGateStep(&dir_ls->payload_delay_gate))
     {
         int delay_range = ts->delay_max_ms - ts->delay_min_ms + 1;
         if (delay_range <= 0)
@@ -265,7 +265,7 @@ void disturberTunnelPayload(tunnel_t *t, line_t *l, sbuf_t *buf, disturber_paylo
         return;
     }
 
-    if (roll100(ts->chance_connection_deadhang))
+    if (nonCryptoPercentGateStep(&dir_ls->connection_deadhang_gate))
     {
         LOGD("Disturber: Putting %s direction into deadhang (chance: %d%%)", dir_name, ts->chance_connection_deadhang);
         dir_ls->is_deadhang = true;
