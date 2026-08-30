@@ -1,69 +1,68 @@
 # AGENTS.md — WaterWall
 
-Operating policy for AI coding agents and contributors working on **WaterWall**,
-a modular, chain-based tunneling runtime written in C.
-
-This always-loaded kernel routes detailed contracts and examples from
-`WaterWall-Docs/docs/05-devguides/`. Keep it below 16 KiB.
+Policy for AI agents and contributors to **WaterWall**, a modular chain-based C
+tunneling runtime. Contracts/examples:
+`WaterWall-Docs/docs/05-devguides/`. Keep this kernel below 16 KiB.
 
 ## 1. Task Authority, Scope, And Evidence
 
 ### What a request authorizes
 
-- For requests to **review, diagnose, explain, or plan**, inspect the relevant code,
-  history, tests, and documentation and report the result. Do not modify files unless
-  the request also asks for changes.
-- For requests to **fix, change, build, implement, or review-and-fix**, make the
-  requested in-scope local changes and run relevant non-destructive validation. Do
-  not stop at a plan when a safe, complete in-scope fix is available.
-- Read-only investigation, in-scope edits, builds, tests, and formatting need no
-  further confirmation. Ask only for an unresolved consequential decision or a
-  destructive, external, or materially broader action. An explicit request is
-  maintainer authorization; do not seek duplicate approval.
-- Preserve unrelated work in a dirty worktree. Do not discard, overwrite, or
-  reformat user changes outside the task.
+- For **review, diagnose, explain, or plan** requests, inspect relevant code,
+  history, tests, and documentation and report without changing files unless asked.
+- For **fix, change, build, implement, or review-and-fix** requests, make the
+  requested in-scope changes and run relevant non-destructive validation. Do not
+  stop at a plan when a safe, complete in-scope fix is available.
+- Read-only investigation and in-scope edits/builds/tests/formatting need no
+  confirmation. Ask only about unresolved consequential decisions or destructive,
+  external, or broader actions. Explicit requests carry maintainer authorization;
+  seek no duplicate approval.
+- In plans, interview the developer when vague points have plausible interpretations
+  that materially alter behavior, scope, contracts, or tradeoffs. Ask focused
+  questions; recommendations are advice, not decisions. Assume only low-impact or
+  readily reversible details, and state them.
+- Preserve unrelated dirty-worktree changes; never discard, overwrite, or reformat
+  them.
 
 ### Where the tunnel contracts apply
 
-The domain contracts apply to `ww/net/`, `tunnels/`, and their callers. Unrelated
-documentation, build, packaging, script, or tooling work uses only relevant
-repository-wide rules. Preserve every **applicable** invariant; do not force
-irrelevant tunnel analysis into a task.
+Domain contracts apply to `ww/net/`, `tunnels/`, and their callers. Unrelated docs,
+builds, packaging, scripts, and tooling use only relevant repository-wide rules.
+Preserve every **applicable** invariant without forcing irrelevant tunnel analysis.
 
 ### Durable project knowledge
 
 The Developer Guide is durable project memory, not a task journal. During
 implementation, update its canonical section when in-scope work changes a contract
-or confirms reusable knowledge whose omission would mislead. Documentation is not
-redesign authority.
+or confirms reusable knowledge whose omission would mislead; docs are not redesign
+authority.
 
 Never record speculation, pending ideas, review history, artifacts, or one-off
-details as contracts, or promote patterns without confirming intent. Report
+details as contracts or promote patterns without confirming intent. Report
 conflicting or unclear evidence.
 
-Do not add version labels (`v2`, `v3`, and similar), migration notes, or backward-
-compatibility commentary to code or documentation merely because a project
-structure, node, or wire format changes. Add them only when a maintainer explicitly
-requests them.
+Add version labels (`v2`, `v3`, etc.), migration notes, or backward-compatibility
+commentary only on explicit maintainer request, not merely because a project
+structure, node, or wire format changes.
 
-Read-only tasks only propose doc edits. Implementation may sync related guide text;
-report unrelated findings. Change `AGENTS.md` only if authorized work changes
+Read-only tasks only propose doc edits. Implementation may sync related guide text
+and report unrelated findings. Change `AGENTS.md` only when authorized work changes
 always-on policy, a catastrophic guardrail, or routing, using a short rule/link;
-otherwise the guide is enough. Explicit contract/lifecycle redesign updates affected
-code, callers, guide text, and tests.
+otherwise the guide is enough. Explicit contract/lifecycle redesign updates code,
+callers, guide text, and tests.
 
 ## 2. Repository Map And Mandatory Reading
 
-Core paths: `ww/net/` owns networking mechanics, `ww/bufio/` owns buffers,
-`tunnels/` contains implementations, `tests/` contains native/integration coverage,
-and `CMakePresets.json` plus `ww/cmake/preset/` define supported builds. Developer
-contracts live in `WaterWall-Docs/docs/05-devguides/`; user-facing node settings live
-in `WaterWall-Docs/docs/02-noderefs/`.
+Core paths: `ww/net/` owns networking, `ww/bufio/` buffers, `tunnels/`
+implementations, and `tests/` native/integration coverage. `CMakePresets.json` and
+`ww/cmake/preset/` define supported builds. Developer contracts live in
+`WaterWall-Docs/docs/05-devguides/`; node settings in
+`WaterWall-Docs/docs/02-noderefs/`.
 
-The routing table is mandatory, not advisory. Before substantive work, read every
-row matching the expected or discovered scope. The guide's normative
-`must` and `never` statements then become part of this policy. If investigation
-expands the scope, read the newly applicable material before continuing.
+The routing table is mandatory. Before substantive work, read every row matching
+the expected or discovered scope; the guide's normative `must` and `never`
+statements then join this policy. If scope expands, read newly applicable material
+before continuing.
 
 | Trigger | Required sources |
 | --- | --- |
@@ -76,9 +75,9 @@ expands the scope, read the newly applicable material before continuing.
 | Shutdown, signals, lifecycle-v2, worker messages, quiescence/drain, or external callback roots | [Part 7](WaterWall-Docs/docs/05-devguides/part7-shutdown-and-signals.mdx) and relevant core implementation |
 
 Documentation-only and unrelated tooling work need not load networking contracts
-unless they describe or exercise them. For a new or structurally changed tunnel,
-compare more than one mature implementation when practical; Part 1 lists useful
-references. Existing patterns remain evidence, not proof.
+unless describing or exercising them. For new or structurally changed tunnels,
+compare multiple mature implementations when practical; Part 1 lists examples.
+Existing patterns remain evidence, not proof.
 
 ## 3. Always-On WaterWall Safety Kernel
 
@@ -123,37 +122,35 @@ These guardrails do not replace the mandatory guide reading:
     callback is task-XOR-cancel and may run synchronously, on a foreign or teardown
     thread, or with the line logically dead. Treat cancellation as notification only;
     never access owner-only state without an independent context proof.
-13. Avoid speculative sanity checks in every added function,
-    its the caller's responsibility to understand the requirements of the function they call.
-    use assert() for debug-only invariants prerebaly;
-    for Release invariants, use LOGF/LOGE/LOGW based on severity, with `abortProgramNow()` or `requestProgramShutdown()` when appropriate;
-    the meaning of these functions is explained in the Developer's Guide, Part 7;
-    use ordinary checks only for expected or fallible inputs, including valid nullable values;
-    use LIKELY/UNLIKELY only for meaningful branch expectations.
+13. Avoid speculative sanity checks in added functions; callers own preconditions.
+    Use `assert()` for debug-only invariants. For release invariants, choose
+    `LOGF`/`LOGE`/`LOGW` by severity and use `abortProgramNow()` or
+    `requestProgramShutdown()` when appropriate; see Part 7. Use ordinary checks only for
+    expected or fallible inputs, including valid nulls; reserve `LIKELY`/`UNLIKELY`
+    for meaningful branch expectations.
 
 ## 4. Implementation Workflow
 
-1. Classify the task and load every source required by §2 before substantive work;
-   repeat if the discovered scope expands.
-2. Inspect the requested scope, current worktree, relevant diff/history, and nearby
-   callers/callees. Search with `rg`/`rg --files` first.
-3. Trace concrete behavior and error paths. For tunnel work, draw chain flow, mark
-   callback direction and transformation ownership, and classify each line as
-   **owned normal**, **borrowed normal**, or
-   **packet** by finding its actual `lineCreate()`/`lineCreateForWorker()` site.
-4. Compare relevant mature implementations, but verify them against the
-   contracts and callers. A repeated pattern may contain a repeated bug.
-5. Implement the smallest **complete root-cause fix**. Do not minimize the diff by
-   preserving a known defect, duplicating unsafe logic, or patching only a symptom.
-   Avoid unrelated cleanup and speculative abstractions.
-6. For a reproducible behavior bug, normally add or update a focused regression test
-   that fails before the fix and passes afterward. Skip a new test when existing
-   coverage already proves the behavior, reproduction is impractical, or the test
-   would provide little durable protection; state the reason.
-7. Format every modified C/header file with `clang-format`, then validate in
-   proportion to risk and blast radius.
+1. Before substantive work, classify the task and load every §2 source matching its
+   scope; repeat when scope expands.
+2. Inspect the scope, worktree, relevant diff/history, and nearby callers/callees;
+   search with `rg`/`rg --files` first.
+3. Trace behavior and error paths. For tunnel work, draw chain flow, mark callback
+   direction and transformation ownership, and find the actual `lineCreate()` or
+   `lineCreateForWorker()` site to classify every line as **owned normal**,
+   **borrowed normal**, or **packet**.
+4. Check mature implementations against contracts and callers; repeated patterns
+   may repeat bugs.
+5. Implement the smallest **complete root-cause fix**. Do not preserve known defects,
+   duplicate unsafe logic, or patch symptoms merely to shrink the diff. Avoid
+   unrelated cleanup and speculative abstractions.
+6. For a reproducible bug, normally add or update a focused regression test that
+   fails before the fix and passes after. Skip it when existing coverage proves the
+   behavior, reproduction is impractical, or it adds little protection; say why.
+7. Format every modified C/header with `clang-format`, then validate for its risk and
+   blast radius.
 8. Review the final diff for accidental changes, ownership errors, missing cleanup,
-   and whether the selected validation actually exercises the changed behavior.
+   and whether validation exercises the changed behavior.
 
 ## 5. Code Review Rules
 
