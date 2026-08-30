@@ -12,7 +12,7 @@ In practice, this node is used together with `HalfDuplexClient` on the other sid
 ## What It Does
 
 - Accepts inbound half-connections from the previous node.
-- Reads an internal 8-byte intro to decide whether each connection is an upload or download side.
+- Reads an internal 17-byte intro containing an exact role and a 128-bit pair ID.
 - Matches upload and download connections that belong together.
 - Creates one normal main line toward the next node after both halves are available.
 - Forwards upload-side payload to the next node.
@@ -68,11 +68,11 @@ There are no tunnel-specific optional settings in the current implementation.
 
 Each incoming transport line begins in an unknown state.
 
-`HalfDuplexServer` waits until it has at least 8 bytes, then reads the internal identifier block sent by `HalfDuplexClient`.
+`HalfDuplexServer` waits until it has the complete 17-byte intro, then reads the exact role byte and full 128-bit identifier sent by `HalfDuplexClient`.
 
 From that block it extracts:
 
-- the logical connection hash
+- the logical connection's full 128-bit pair ID
 - whether this line is the upload side or the download side
 
 It then uses two hash maps:
@@ -107,10 +107,13 @@ The download line is where service replies are written back.
 
 The first upload-side payload includes both:
 
-- the 8-byte intro
+- the 17-byte intro
 - the user's first real payload after that intro
 
 When pairing succeeds, `HalfDuplexServer` strips the intro bytes and forwards any remaining upload payload to the newly created main line.
+The pair ID is internal routing metadata. It does not authenticate either half
+or protect the transport; configure security nodes when those properties are
+required.
 
 The download-side intro carries no user payload. It is consumed only for matching.
 
@@ -163,7 +166,7 @@ If the next side closes the reconstructed main line, `HalfDuplexServer` finishes
 
 - `HalfDuplexServer` is intended to be paired with `HalfDuplexClient`.
 - There are no tunnel-specific JSON settings today.
-- The tunnel depends on an internal 8-byte intro shared with `HalfDuplexClient`.
+- The tunnel depends on an internal 17-byte intro shared with `HalfDuplexClient`.
 - Waiting upload halves can buffer data, but waiting download halves are mostly just registered in the map.
 - The current implementation uses a pipe-tunnel wrapper internally for cross-worker pairing.
 - `UpStreamEst` and `DownStreamInit` are disabled in the current implementation.

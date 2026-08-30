@@ -2337,6 +2337,21 @@ if(TARGET HttpServer)
 endif()
 
 if(TARGET HalfDuplexClient)
+  add_executable(halfduplexclient_framing_random_test
+    halfduplexclient_framing_random_test.c
+    ${WATERWALL_LINE_FAILURE_WW_SOURCES}
+  )
+  waterwall_line_failure_test_use_tunnel(halfduplexclient_framing_random_test HalfDuplexClient)
+  target_link_options(halfduplexclient_framing_random_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS})
+  target_link_libraries(halfduplexclient_framing_random_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests halfduplexclient_framing_random_test)
+
+  add_waterwall_unit_test(
+    waterwall.halfduplexclient_framing_random_unit
+    halfduplexclient_framing_random_test
+    "unit;tunnels;halfduplexclient;framing;id;random"
+  )
+
   add_executable(halfduplexclient_reentrant_close_test
     halfduplexclient_reentrant_close_test.c
     ${WATERWALL_LINE_FAILURE_WW_SOURCES}
@@ -2362,9 +2377,13 @@ if(TARGET HalfDuplexServer)
     ${WATERWALL_LINE_FAILURE_WW_SOURCES}
   )
   waterwall_line_failure_test_use_tunnel(halfduplexserver_reentrant_init_test HalfDuplexServer)
+  target_compile_definitions(halfduplexserver_reentrant_init_test PRIVATE
+    WW_HALFDUPLEXSERVER_RENDEZVOUS_TEST_SEAM=1
+  )
   target_link_options(halfduplexserver_reentrant_init_test PRIVATE
     ${WATERWALL_LINE_FAILURE_WRAPS}
     "-Wl,--wrap=lineScheduleTask"
+    "-Wl,--wrap=sbufAppendMerge"
   )
   target_link_libraries(halfduplexserver_reentrant_init_test PRIVATE ww)
   add_dependencies(waterwall_unit_tests halfduplexserver_reentrant_init_test)

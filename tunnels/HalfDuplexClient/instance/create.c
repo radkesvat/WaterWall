@@ -4,7 +4,7 @@
 
 tunnel_t *halfduplexclientTunnelCreate(node_t *node)
 {
-    tunnel_t *t = tunnelCreate(node, sizeof(halfduplexclient_tstate_t), sizeof(halfduplexclient_lstate_t));
+    tunnel_t *t = tunnelCreate(node, kTunnelStateSize, kLineStateSize);
     if (! t)
     {
         return NULL;
@@ -29,7 +29,5 @@ tunnel_t *halfduplexclientTunnelCreate(node_t *node)
     t->onStop    = &halfduplexclientTunnelOnStop;
     t->onDestroy = &halfduplexclientTunnelDestroy;
 
-    halfduplexclient_tstate_t *state = tunnelGetState(t);
-    state->identifier                = fastRand64() % 10000000;
     return t;
 }

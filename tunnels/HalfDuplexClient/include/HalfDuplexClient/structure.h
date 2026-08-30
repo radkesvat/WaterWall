@@ -4,14 +4,13 @@
 
 enum
 {
-    kHLFDCmdUpload   = 127,
-    kHLFDCmdDownload = 128
+    kHLFDCmdUpload     = 127,
+    kHLFDCmdDownload   = 128,
+    kHLFDCommandOffset = 0,
+    kHLFDPairIdOffset  = 1,
+    kHLFDPairIdSize    = 16,
+    kHLFDIntroSize     = kHLFDPairIdOffset + kHLFDPairIdSize
 };
-
-typedef struct halfduplexclient_tstate_s
-{
-    atomic_ullong identifier;
-} halfduplexclient_tstate_t;
 
 typedef struct halfduplexclient_lstate_s
 {
@@ -23,7 +22,7 @@ typedef struct halfduplexclient_lstate_s
 
 enum
 {
-    kTunnelStateSize = sizeof(halfduplexclient_tstate_t),
+    kTunnelStateSize = 0,
     kLineStateSize   = sizeof(halfduplexclient_lstate_t)
 };
 

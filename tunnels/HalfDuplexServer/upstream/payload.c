@@ -10,7 +10,7 @@ static sbuf_t *handleBuffering(line_t *l, halfduplexserver_lstate_t *ls, sbuf_t 
         ls->buffering = NULL;
     }
 
-    if (sbufGetLength(buf) < sizeof(uint64_t))
+    if (sbufGetLength(buf) < kHLFDIntroSize)
     {
         ls->buffering = buf;
         return NULL;
@@ -19,17 +19,19 @@ static sbuf_t *handleBuffering(line_t *l, halfduplexserver_lstate_t *ls, sbuf_t 
     return buf;
 }
 
-static hash_t extractHashAndSetupConnection(line_t *l, halfduplexserver_lstate_t *ls, sbuf_t *buf, bool *is_upload)
+static bool extractPairIdAndSetupConnection(line_t *l, halfduplexserver_lstate_t *ls, const sbuf_t *buf,
+                                            bool *is_upload, halfduplex_pair_id_t *pair_id)
 {
-    *is_upload = (((uint8_t *) sbufGetRawPtr(buf))[0] & kHLFDCmdDownload) == 0x0;
+    const uint8_t *intro   = sbufGetRawPtr(buf);
+    const uint8_t  command = intro[kHLFDCommandOffset];
+    if (command != kHLFDCmdUpload && command != kHLFDCmdDownload)
+    {
+        return false;
+    }
 
-    hash_t hash = 0x0;
-    sbufReadUnAlignedUI64(buf, (uint64_t *) &hash);
-
-    uint8_t *hptr = (uint8_t *) &hash;
-    (hptr)[0]     = ((hptr)[0] & kHLFDCmdUpload);
-
-    ls->hash = hash;
+    *is_upload = command == kHLFDCmdUpload;
+    memoryCopy(pair_id->bytes, intro + kHLFDPairIdOffset, sizeof(pair_id->bytes));
+    ls->pair_id = *pair_id;
 
     if (*is_upload)
     {
@@ -40,8 +42,69 @@ static hash_t extractHashAndSetupConnection(line_t *l, halfduplexserver_lstate_t
         ls->download_line = l;
     }
 
-    return hash;
+    return true;
 }
+
+static halfduplexserver_pending_decision_t pendingClaim(halfduplexserver_tstate_t *ts, halfduplexserver_lstate_t *ls,
+                                                        halfduplex_pair_id_t pair_id, bool is_upload, sbuf_t *buf)
+{
+    hmap_cons_t *const opposite_map = is_upload ? &ts->download_line_map : &ts->upload_line_map;
+    hmap_cons_t *const own_map      = is_upload ? &ts->upload_line_map : &ts->download_line_map;
+    line_t *const      current_line = is_upload ? ls->upload_line : ls->download_line;
+
+    halfduplexserver_pending_decision_t decision = {
+        .result = kHalfDuplexServerPendingDuplicate, .peer = NULL, .target_wid = kInvalidWID};
+
+#ifdef WW_HALFDUPLEXSERVER_RENDEZVOUS_TEST_SEAM
+    halfduplexserverPendingBeforeLockTestSeam(is_upload);
+#endif
+    mutexLock(&ts->pending_line_maps_mutex);
+
+    hmap_cons_t_iter opposite = hmap_cons_t_find(opposite_map, pair_id);
+    if (opposite.ref != hmap_cons_t_end(opposite_map).ref)
+    {
+        halfduplexserver_lstate_t *peer      = opposite.ref->second;
+        line_t *const              peer_line = is_upload ? peer->download_line : peer->upload_line;
+
+        decision.target_wid = lineGetWID(peer_line);
+        if (decision.target_wid == lineGetWID(current_line))
+        {
+            hmap_cons_t_erase_at(opposite_map, opposite);
+            decision.peer   = peer;
+            decision.result = kHalfDuplexServerPendingMatchedLocal;
+        }
+        else
+        {
+            decision.result = kHalfDuplexServerPendingMatchedRemote;
+        }
+        mutexUnlock(&ts->pending_line_maps_mutex);
+        return decision;
+    }
+
+#ifdef WW_HALFDUPLEXSERVER_RENDEZVOUS_TEST_SEAM
+    halfduplexserverPendingMissTestSeam(is_upload);
+#endif
+
+    ls->state = is_upload ? kCsUploadInTable : kCsDownloadInTable;
+    if (is_upload)
+    {
+        ls->buffering = buf;
+    }
+    decision.result = hmap_cons_t_insert(own_map, pair_id, ls).inserted ? kHalfDuplexServerPendingInserted
+                                                                        : kHalfDuplexServerPendingDuplicate;
+    mutexUnlock(&ts->pending_line_maps_mutex);
+    return decision;
+}
+
+#ifdef WW_HALFDUPLEXSERVER_RENDEZVOUS_TEST_SEAM
+halfduplexserver_pending_decision_t halfduplexserverTestPendingClaim(halfduplexserver_tstate_t *ts,
+                                                                     halfduplexserver_lstate_t *ls,
+                                                                     halfduplex_pair_id_t pair_id, bool is_upload,
+                                                                     sbuf_t *buf)
+{
+    return pendingClaim(ts, ls, pair_id, is_upload, buf);
+}
+#endif
 
 static line_t *createAndInitializeMainLine(tunnel_t *t, line_t *upload_line, line_t *download_line,
                                            halfduplexserver_lstate_t *upload_ls, halfduplexserver_lstate_t *download_ls)
@@ -86,23 +149,11 @@ static bool handlePipeToWorker(tunnel_t *t, line_t *l, sbuf_t *buf, wid_t target
     return true;
 }
 
-static bool handleUploadConnectionFound(tunnel_t *t, line_t *l, sbuf_t *buf, halfduplexserver_tstate_t *ts,
-                                        halfduplexserver_lstate_t *ls, hmap_cons_t_iter f_iter)
+static bool handleUploadConnectionFound(tunnel_t *t, line_t *l, sbuf_t *buf, halfduplexserver_lstate_t *ls,
+                                        halfduplexserver_lstate_t *download_line_ls)
 {
-    halfduplexserver_lstate_t *download_line_ls = (halfduplexserver_lstate_t *) ((*f_iter.ref).second);
-
-    wid_t wid_download_line = lineGetWID(download_line_ls->download_line);
-    if (wid_download_line != lineGetWID(l))
-    {
-        mutexUnlock(&(ts->download_line_map_mutex));
-        return handlePipeToWorker(t, l, buf, wid_download_line, ls);
-    }
-
     line_t *download_line = download_line_ls->download_line;
     ls->download_line     = download_line;
-
-    hmap_cons_t_erase_at(&(ts->download_line_map), f_iter);
-    mutexUnlock(&(ts->download_line_map_mutex));
 
     ls->state                     = kCsUploadDirect;
     download_line_ls->state       = kCsDownloadDirect;
@@ -126,7 +177,7 @@ static bool handleUploadConnectionFound(tunnel_t *t, line_t *l, sbuf_t *buf, hal
     lineUnref(download_line);
     lineUnref(l);
 
-    sbufShiftRight(buf, sizeof(uint64_t));
+    sbufShiftRight(buf, kHLFDIntroSize);
     if (sbufGetLength(buf) > 0)
     {
         tunnelNextUpStreamPayload(t, main_line, buf);
@@ -136,43 +187,19 @@ static bool handleUploadConnectionFound(tunnel_t *t, line_t *l, sbuf_t *buf, hal
     return true;
 }
 
-static bool handleUploadConnectionNotFound(tunnel_t *t, line_t *l, sbuf_t *buf, halfduplexserver_tstate_t *ts,
-                                           halfduplexserver_lstate_t *ls, hash_t hash)
+static bool handleDuplicateUploadConnection(tunnel_t *t, line_t *l, halfduplexserver_lstate_t *ls)
 {
-    mutexUnlock(&(ts->download_line_map_mutex));
-    ls->state     = kCsUploadInTable;
-    ls->buffering = buf;
-
-    mutexLock(&(ts->upload_line_map_mutex));
-    bool push_succeed = hmap_cons_t_insert(&(ts->upload_line_map), hash, ls).inserted;
-    mutexUnlock(&(ts->upload_line_map_mutex));
-
-    if (! push_succeed)
-    {
-        LOGW("HalfDuplexServer: duplicate upload connection closed, hash:%lu", hash);
-        lineReuseBuffer(l, ls->buffering);
-        ls->buffering = NULL;
-        halfduplexserverLinestateDestroy(ls);
-        tunnelPrevDownStreamFinish(t, l);
-    }
+    LOGW("HalfDuplexServer: duplicate upload connection closed");
+    lineReuseBuffer(l, ls->buffering);
+    ls->buffering = NULL;
+    halfduplexserverLinestateDestroy(ls);
+    tunnelPrevDownStreamFinish(t, l);
     return true;
 }
 
-static bool handleDownloadConnectionFound(tunnel_t *t, line_t *l, sbuf_t *buf, halfduplexserver_tstate_t *ts,
-                                          halfduplexserver_lstate_t *ls, hmap_cons_t_iter f_iter)
+static bool handleDownloadConnectionFound(tunnel_t *t, line_t *l, sbuf_t *buf, halfduplexserver_lstate_t *ls,
+                                          halfduplexserver_lstate_t *upload_line_ls)
 {
-    halfduplexserver_lstate_t *upload_line_ls = (halfduplexserver_lstate_t *) ((*f_iter.ref).second);
-
-    wid_t wid_upload_line = lineGetWID(upload_line_ls->upload_line);
-    if (wid_upload_line != lineGetWID(l))
-    {
-        mutexUnlock(&(ts->upload_line_map_mutex));
-        return handlePipeToWorker(t, l, buf, wid_upload_line, ls);
-    }
-
-    hmap_cons_t_erase_at(&(ts->upload_line_map), f_iter);
-    mutexUnlock(&(ts->upload_line_map_mutex));
-
     lineReuseBuffer(l, buf);
 
     ls->state                     = kCsDownloadDirect;
@@ -203,9 +230,9 @@ static bool handleDownloadConnectionFound(tunnel_t *t, line_t *l, sbuf_t *buf, h
     lineUnref(l);
     lineUnref(upload_line);
 
+    sbufShiftRight(buf_upline, kHLFDIntroSize);
     if (sbufGetLength(buf_upline) > 0)
     {
-        sbufShiftRight(buf_upline, sizeof(uint64_t));
         tunnelNextUpStreamPayload(t, main_line, buf_upline);
     }
     else
@@ -214,24 +241,12 @@ static bool handleDownloadConnectionFound(tunnel_t *t, line_t *l, sbuf_t *buf, h
     }
     return true;
 }
-static bool handleDownloadConnectionNotFound(tunnel_t *t, line_t *l, sbuf_t *buf, halfduplexserver_tstate_t *ts,
-                                             halfduplexserver_lstate_t *ls, hash_t hash)
+static bool handleDuplicateDownloadConnection(tunnel_t *t, line_t *l, sbuf_t *buf, halfduplexserver_lstate_t *ls)
 {
-    mutexUnlock(&(ts->upload_line_map_mutex));
     lineReuseBuffer(l, buf);
-
-    ls->state = kCsDownloadInTable;
-
-    mutexLock(&(ts->download_line_map_mutex));
-    bool push_succeed = hmap_cons_t_insert(&(ts->download_line_map), hash, ls).inserted;
-    mutexUnlock(&(ts->download_line_map_mutex));
-
-    if (! push_succeed)
-    {
-        LOGW("HalfDuplexServer: duplicate download connection closed");
-        halfduplexserverLinestateDestroy(ls);
-        tunnelPrevDownStreamFinish(t, l);
-    }
+    LOGW("HalfDuplexServer: duplicate download connection closed");
+    halfduplexserverLinestateDestroy(ls);
+    tunnelPrevDownStreamFinish(t, l);
     return true;
 }
 
@@ -244,31 +259,46 @@ static bool handleUnknownState(tunnel_t *t, line_t *l, sbuf_t *buf, halfduplexse
         return true;
     }
 
-    bool   is_upload;
-    hash_t hash = extractHashAndSetupConnection(l, ls, buf, &is_upload);
-
-    if (is_upload)
+    bool                 is_upload;
+    halfduplex_pair_id_t pair_id;
+    if (! extractPairIdAndSetupConnection(l, ls, buf, &is_upload, &pair_id))
     {
-        mutexLock(&(ts->download_line_map_mutex));
-        hmap_cons_t_iter f_iter = hmap_cons_t_find(&(ts->download_line_map), hash);
-        bool             found  = f_iter.ref != hmap_cons_t_end(&(ts->download_line_map)).ref;
+        lineReuseBuffer(l, buf);
+        halfduplexserverLinestateDestroy(ls);
+        tunnelPrevDownStreamFinish(t, l);
+        return true;
+    }
 
-        if (found)
+    const halfduplexserver_pending_decision_t decision = pendingClaim(ts, ls, pair_id, is_upload, buf);
+    switch (decision.result)
+    {
+    case kHalfDuplexServerPendingInserted:
+        if (! is_upload)
         {
-            return handleUploadConnectionFound(t, l, buf, ts, ls, f_iter);
+            lineReuseBuffer(l, buf);
         }
-        return handleUploadConnectionNotFound(t, l, buf, ts, ls, hash);
+        return true;
+
+    case kHalfDuplexServerPendingDuplicate:
+        if (is_upload)
+        {
+            return handleDuplicateUploadConnection(t, l, ls);
+        }
+        return handleDuplicateDownloadConnection(t, l, buf, ls);
+
+    case kHalfDuplexServerPendingMatchedRemote:
+        return handlePipeToWorker(t, l, buf, decision.target_wid, ls);
+
+    case kHalfDuplexServerPendingMatchedLocal:
+        if (is_upload)
+        {
+            return handleUploadConnectionFound(t, l, buf, ls, decision.peer);
+        }
+        return handleDownloadConnectionFound(t, l, buf, ls, decision.peer);
     }
 
-    mutexLock(&(ts->upload_line_map_mutex));
-    hmap_cons_t_iter f_iter = hmap_cons_t_find(&(ts->upload_line_map), hash);
-    bool             found  = f_iter.ref != hmap_cons_t_end(&(ts->upload_line_map)).ref;
-
-    if (found)
-    {
-        return handleDownloadConnectionFound(t, l, buf, ts, ls, f_iter);
-    }
-    return handleDownloadConnectionNotFound(t, l, buf, ts, ls, hash);
+    assert(false);
+    return true;
 }
 
 static void handleUploadInTable(tunnel_t *t, line_t *l, sbuf_t *buf, halfduplexserver_tstate_t *ts,
@@ -285,18 +315,18 @@ static void handleUploadInTable(tunnel_t *t, line_t *l, sbuf_t *buf, halfduplexs
 
     if (sbufGetLength(ls->buffering) >= kMaxBuffering)
     {
-        mutexLock(&(ts->upload_line_map_mutex));
-        hmap_cons_t_iter f_iter = hmap_cons_t_find(&(ts->upload_line_map), ls->hash);
+        mutexLock(&(ts->pending_line_maps_mutex));
+        hmap_cons_t_iter f_iter = hmap_cons_t_find(&(ts->upload_line_map), ls->pair_id);
         bool             found  = f_iter.ref != hmap_cons_t_end(&(ts->upload_line_map)).ref;
 
         if (! found)
         {
-            mutexUnlock(&(ts->upload_line_map_mutex));
+            mutexUnlock(&(ts->pending_line_maps_mutex));
             LOGF("HalfDuplexServer: Thread safety is done incorrectly  [%s:%d]", __FILENAME__, __LINE__);
             abortProgramNow(1);
         }
         hmap_cons_t_erase_at(&(ts->upload_line_map), f_iter);
-        mutexUnlock(&(ts->upload_line_map_mutex));
+        mutexUnlock(&(ts->pending_line_maps_mutex));
 
         lineReuseBuffer(l, ls->buffering);
         ls->buffering = NULL;

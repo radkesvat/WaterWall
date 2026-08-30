@@ -97,9 +97,9 @@ void halfduplexserverTunnelUpStreamFinish(tunnel_t *t, line_t *l)
 
     case kCsUploadInTable: {
 
-        mutexLock(&(ts->upload_line_map_mutex));
+        mutexLock(&(ts->pending_line_maps_mutex));
 
-        hmap_cons_t_iter f_iter = hmap_cons_t_find(&(ts->upload_line_map), ls->hash);
+        hmap_cons_t_iter f_iter = hmap_cons_t_find(&(ts->upload_line_map), ls->pair_id);
         bool             found  = f_iter.ref != hmap_cons_t_end(&(ts->upload_line_map)).ref;
         if (! found)
         {
@@ -108,7 +108,7 @@ void halfduplexserverTunnelUpStreamFinish(tunnel_t *t, line_t *l)
         }
         hmap_cons_t_erase_at(&(ts->upload_line_map), f_iter);
 
-        mutexUnlock(&(ts->upload_line_map_mutex));
+        mutexUnlock(&(ts->pending_line_maps_mutex));
         if (ls->buffering)
         {
             lineReuseBuffer(l, ls->buffering);
@@ -119,9 +119,9 @@ void halfduplexserverTunnelUpStreamFinish(tunnel_t *t, line_t *l)
     break;
 
     case kCsDownloadInTable: {
-        mutexLock(&(ts->download_line_map_mutex));
+        mutexLock(&(ts->pending_line_maps_mutex));
 
-        hmap_cons_t_iter f_iter = hmap_cons_t_find(&(ts->download_line_map), ls->hash);
+        hmap_cons_t_iter f_iter = hmap_cons_t_find(&(ts->download_line_map), ls->pair_id);
         bool             found  = f_iter.ref != hmap_cons_t_end(&(ts->download_line_map)).ref;
         if (! found)
         {
@@ -130,7 +130,7 @@ void halfduplexserverTunnelUpStreamFinish(tunnel_t *t, line_t *l)
         }
         hmap_cons_t_erase_at(&(ts->download_line_map), f_iter);
 
-        mutexUnlock(&(ts->download_line_map_mutex));
+        mutexUnlock(&(ts->pending_line_maps_mutex));
         halfduplexserverLinestateDestroy(ls);
     }
     break;

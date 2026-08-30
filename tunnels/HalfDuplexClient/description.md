@@ -82,15 +82,14 @@ The original local line remains the main line. Its line state keeps references t
 
 ### Pairing handshake
 
-The pair is identified by an internal 64-bit identifier generated from the tunnel's atomic counter.
+Each logical pair receives a fresh 128-bit identifier from the fast CSPRNG.
 
 On the first upstream payload only:
 
-- `HalfDuplexClient` creates an 8-byte identifier block
-- marks one copy as a download-intro command
-- sends that command by itself on the download line
-- marks the other copy as an upload-intro command
-- prefixes it to the user's first real payload on the upload line
+- `HalfDuplexClient` creates a 17-byte intro containing one exact role command
+  followed by the 16-byte pair identifier
+- sends the download-role copy by itself on the download line
+- prefixes the upload-role copy to the user's first real payload on the upload line
 
 After that first payload:
 
@@ -98,6 +97,9 @@ After that first payload:
 - downstream payload is expected to come back through the download line
 
 So the remote `HalfDuplexServer` learns that the two incoming transport lines belong to the same logical connection.
+The identifier is internal routing metadata. It does not authenticate either
+half or protect the transport; configure security nodes when those properties
+are required.
 
 ### Data flow direction
 
@@ -136,6 +138,7 @@ If either transport-side half-connection finishes first, `HalfDuplexClient` also
 - `HalfDuplexClient` is intended to be paired with `HalfDuplexServer`.
 - There are no tunnel-specific JSON settings today.
 - The first upstream payload is special because it carries the pairing intro for the upload side.
+- The intro is exactly 17 bytes: one role byte and one fresh 128-bit pair ID.
 - The download line sends only the intro at startup and is then used mainly for return traffic.
 - `UpStreamEst` and `DownStreamInit` are disabled in the current implementation.
 

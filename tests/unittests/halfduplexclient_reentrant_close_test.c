@@ -58,7 +58,7 @@ static void fixtureSetup(halfduplexclient_fixture_t *fixture)
     twfWorkerEnvSetup(&fixture->env, 4096, 0);
 
     fixture->prev       = twfCreatePrevTunnel(&fixture->trace);
-    fixture->halfduplex = tunnelCreate(NULL, sizeof(halfduplexclient_tstate_t), sizeof(halfduplexclient_lstate_t));
+    fixture->halfduplex = tunnelCreate(NULL, kTunnelStateSize, kLineStateSize);
     fixture->next       = twfCreateNextTunnel(&fixture->trace);
     twfRequire(fixture->halfduplex != NULL, "failed to create HalfDuplexClient fixture tunnel");
     tunnelBind(fixture->prev, fixture->halfduplex);

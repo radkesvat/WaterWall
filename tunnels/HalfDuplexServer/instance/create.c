@@ -34,19 +34,12 @@ tunnel_t *halfduplexserverTunnelCreate(node_t *node)
     ts->upload_line_map   = hmap_cons_t_init();
     ts->download_line_map = hmap_cons_t_init();
 
-    if (UNLIKELY(! mutexTryInit(&ts->upload_line_map_mutex)))
+    if (UNLIKELY(! mutexTryInit(&ts->pending_line_maps_mutex)))
     {
         halfduplexserverTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
-    ts->upload_line_map_mutex_initialized = true;
-
-    if (UNLIKELY(! mutexTryInit(&ts->download_line_map_mutex)))
-    {
-        halfduplexserverTunnelDestroy(t, wwLifecycleStartupRollback());
-        return NULL;
-    }
-    ts->download_line_map_mutex_initialized = true;
+    ts->pending_line_maps_mutex_initialized = true;
 
     if (UNLIKELY(! hmap_cons_t_reserve(&ts->download_line_map, kHmapCap) ||
                  hmap_cons_t_capacity(&ts->download_line_map) < kHmapCap ||
