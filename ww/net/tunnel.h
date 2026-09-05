@@ -87,20 +87,22 @@ typedef splice_retcode_t (*TunnelFlowRoutineSplice)(tunnel_t *, line_t *line, in
 */
 struct tunnel_s
 {
-    tunnel_t *next, *prev;
+    tunnel_t       *next, *prev;
+    tunnel_chain_t *chain;
+    uint32_t        tstate_size;
+    uint32_t        lstate_size;
+    uint32_t        lstate_offset;
+    uint16_t        chain_index;
+    uint16_t        reserved; // historical alignment padding; do not move or remove
 
-    // Handle upstream line initialization toward next; initialize this tunnel's per-line state.
-    TunnelFlowRoutineInit fnInitU;
-    // Handle downstream line initialization toward prev; initialize this tunnel's per-line state.
-    TunnelFlowRoutineInit fnInitD;
     // Take ownership of an upstream payload buffer; onward delivery goes toward next.
     TunnelFlowRoutinePayload fnPayloadU;
     // Take ownership of a downstream payload buffer; onward delivery goes toward prev.
     TunnelFlowRoutinePayload fnPayloadD;
-    // Handle an upstream establishment notification; onward notification goes toward next.
-    TunnelFlowRoutineEst fnEstU;
-    // Handle a downstream establishment notification; onward notification goes toward prev.
-    TunnelFlowRoutineEst fnEstD;
+    // Handle upstream line initialization toward next; initialize this tunnel's per-line state.
+    TunnelFlowRoutineInit fnInitU;
+    // Handle downstream line initialization toward prev; initialize this tunnel's per-line state.
+    TunnelFlowRoutineInit fnInitD;
     // Handle Finish from prev: clean up local line state and never send a callback back toward prev.
     TunnelFlowRoutineFin fnFinU;
     // Handle Finish from next: clean up local line state and never send a callback back toward next.
@@ -113,7 +115,10 @@ struct tunnel_s
     TunnelFlowRoutineResume fnResumeU;
     // Handle next becoming writable again; upstream payload to next may resume.
     TunnelFlowRoutineResume fnResumeD;
-
+    // Handle an upstream establishment notification; onward notification goes toward next.
+    TunnelFlowRoutineEst fnEstU;
+    // Handle a downstream establishment notification; onward notification goes toward prev.
+    TunnelFlowRoutineEst fnEstD;
 
     /*
         These are lifecycle callbacks in correct order, also check onSolvedTopology at the end.
@@ -141,15 +146,6 @@ struct tunnel_s
     // Main thread: free remaining resources and the tunnel instance after callbacks, lines, and references are gone.
     TunnelLifecycleCb onDestroy;
 
-    uint32_t tstate_size;
-    uint32_t lstate_size;
-
-    uint32_t lstate_offset;
-    uint16_t chain_index;
-
-    node_t         *node;
-    tunnel_chain_t *chain;
-
     /*
      * Optional pre-indexing hook for a tunnel whose runtime orientation or
      * private topology depends on solved adjacent layer domains. See the
@@ -163,6 +159,8 @@ struct tunnel_s
     // After each layer solve, before onIndex: inspect the snapshot; return true exactly when topology changes.
     // May run repeatedly; changing topology invalidates the current snapshot immediately.
     TunnelSolvedTopologyFn onSolvedTopology;
+
+    node_t *node;
 
     // tunnel itself will be aligned to cache line when allocating memory
     MSVC_ATTR_ALIGNED_LINE_CACHE uint8_t state[] GNU_ATTR_ALIGNED_LINE_CACHE;
