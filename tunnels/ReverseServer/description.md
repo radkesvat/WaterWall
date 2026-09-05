@@ -23,15 +23,9 @@ This node is neither a pure chain head nor a pure chain end. It sits between two
 
 ## Typical Placement
 
-A common setup is:
+The reverse-link transport/listener feeds `ReverseServer`, whose next node must be the `Bridge` connecting it to the local/user traffic branch: `ReverseServer -> Bridge`. No node may intervene between them. The companion client-side rule is `Bridge -> ReverseClient`, also with no intervening nodes.
 
-- transport/listener side feeding `ReverseServer` from the remote `ReverseClient`
-- a `Bridge` near `ReverseServer` to connect the reverse side to another chain segment
-- `ReverseServer`
-- a paired `Bridge` near `ReverseClient` on the other side of the design
-- some local-facing side on the other direction that represents the real inbound or outbound traffic you want to bridge
-
-The important requirement is conceptual rather than positional: one side must carry `ReverseClient` reverse links, and the other side must carry the real peer traffic that should be attached to those links. In practice, this pairing is commonly attached with a named `Bridge` pair.
+These are chain-design requirements that users must follow; the code does not automatically enforce either adjacency rule. One side carries `ReverseClient` reverse links, while the paired Bridge branch carries the real peer traffic to attach to those links.
 
 ## Configuration Example
 
@@ -43,7 +37,7 @@ The important requirement is conceptual rather than positional: one side must ca
     "reverse-secret-length": 640,
     "reverse-secret": "shared-secret"
   },
-  "next": "next-node-name"
+  "next": "bridge-reverse"
 }
 ```
 
@@ -58,7 +52,7 @@ The important requirement is conceptual rather than positional: one side must ca
   Must be exactly `"ReverseServer"`.
 
 - `next` `(string)`
-  The next node on the side that carries the reverse links coming from `ReverseClient`.
+  The directly adjacent `Bridge` leading to the local/user traffic branch. No intervening node is allowed.
 
 ### `settings`
 

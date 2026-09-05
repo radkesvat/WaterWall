@@ -220,7 +220,9 @@ If there are not enough tokens for that packet or datagram chunk, it drops that 
 
 ### Lifecycle behavior
 
-- per-line state is created during `Init`
+- per-line state is created only during upstream `Init`
+- downstream `Init` is forbidden and terminates the process through `abortProgramNow(1)`; downstream payload remains supported after upstream initialization
+- `SpeedLimit` must not intervene between `Bridge` and `ReverseClient`; those nodes must be directly adjacent when connected in that topology
 - in `pause` mode, drain timers are cancelled during line-state destruction
 - `Finish` clears any queued payload owned by this tunnel before forwarding the Waterwall finish callback
 - `required_padding_left` is `0`, because this tunnel does not prepend protocol bytes

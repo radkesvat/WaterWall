@@ -148,6 +148,10 @@ falls back to IPv6.
 
 ## Behavior
 
+Application lines enter `Socks5Client` through upstream `Init`. Downstream `Init` is disabled for every line role,
+including UDP application, control, and relay lines; receiving it logs a fatal diagnostic and terminates the process
+through `abortProgramNow(1)`. Downstream `Est` and payload callbacks remain supported for proxy replies and relay data.
+
 - target preparation mirrors the configured target into the line destination context before the protocol core starts,
   either by the internal resolver prepare hook or directly during client init when local DNS resolution is disabled.
 - the resolved SOCKS target is kept in `Socks5Client` line state so the proxy transport connector can rewrite

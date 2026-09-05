@@ -24,13 +24,28 @@ This node is a pure relay. It does not create its own transport and it does not 
 
 A common reverse-tunnel layout is:
 
-- one `Bridge` near `ReverseClient`
-- one `Bridge` near `ReverseServer`
+- a `Bridge` directly before `ReverseClient` in the client-side layout
+- a `Bridge` directly after `ReverseServer` in the server-side layout
 - each bridge points at the other by name
 - the reverse half of the chain is connected on one side of the pair
 - the local service half of the chain is connected on the other side
 
 That is why `ReverseClient` and `ReverseServer` are typically described together with `Bridge`: the bridge pair is what makes it easy to attach the reverse tunnel to another chain segment.
+
+## Reverse-node adjacency rules
+
+When using Bridge with reverse nodes, keep these connections directly adjacent:
+
+- `Bridge -> ReverseClient`
+- `ReverseServer -> Bridge`
+
+No node may be inserted in either gap. For example,
+`Bridge -> SpeedLimit -> ReverseClient` and `ReverseServer -> SpeedLimit -> Bridge`
+are forbidden. Place any additional processing outside these gaps.
+
+These are chain-design rules that users must follow; the code does not automatically
+validate these adjacency requirements. They apply to these reverse-node connections
+and do not require every Bridge to have a reverse-node neighbor.
 
 ## Configuration Example
 
@@ -113,8 +128,8 @@ So `Bridge` does not modify the line. It just reroutes the callback flow through
 
 A bridge pair solves that by letting you place:
 
-- one side of the system near the reverse transport
-- another side near the local-facing chain
+- one bridge directly before `ReverseClient` or directly after `ReverseServer`, depending on the layout
+- its paired bridge on the local-facing chain
 
 and then connect those two places logically through the bridge pair.
 

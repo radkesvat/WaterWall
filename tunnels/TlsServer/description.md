@@ -299,6 +299,11 @@ multiplexing fits the deployment.
 
 ### Handshake and data flow
 
+`TlsServer` accepts line initialization only through upstream `Init`. Downstream
+`Init` is a fatal callback misuse in every state, including fallback close drain;
+it logs the violation and terminates the process. Downstream response payloads
+remain supported on lines initialized upstream.
+
 On upstream `Init`, `TlsServer` creates per-line OpenSSL state. Without fallback it forwards upstream `Init` to the next
 node immediately. With fallback configured, it waits until the first bytes show whether the line belongs to the protected
 TLS branch or the fallback branch.

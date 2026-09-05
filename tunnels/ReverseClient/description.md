@@ -20,17 +20,28 @@ In practice, this node is used on the client side of a reverse tunnel setup.
 
 This node is neither a pure chain head nor a pure chain end. It behaves like a local inbound source for the previous node, while it also consumes an outbound path through the next node.
 
+## Required Chain Adjacency
+
+Place `Bridge` immediately before `ReverseClient`: `Bridge -> ReverseClient`.
+Do not put any node between them. On the server side, place `Bridge` immediately
+after `ReverseServer`: `ReverseServer -> Bridge`, also with no intervening nodes.
+
+These are chain-design rules that users must follow. The code does not
+automatically enforce either adjacency requirement. Transport or processing nodes
+must be placed outside these two gaps; the outbound path after `ReverseClient`
+may still contain the transport nodes described below.
+
 ## Typical Placement
 
 A common setup is:
 
 - `ReverseClient` on the machine that cannot accept direct inbound traffic
-- a `Bridge` near `ReverseClient` to attach the reverse side to another local chain segment
+- a `Bridge` immediately before `ReverseClient` to attach the reverse side to another local chain segment
 - some outbound transport after it, such as TCP/TLS/HTTP tunnels, leading to the remote side
 - `ReverseServer` on the reachable side of that transport
-- a paired `Bridge` near `ReverseServer` to attach the reverse side to the service-facing chain
+- a paired `Bridge` immediately after `ReverseServer` to attach the reverse side to the service-facing chain
 
-`ReverseClient` expects the next side of the chain to be able to create and carry outbound connections to the remote `ReverseServer`. In most practical layouts, the local-facing side of the design is connected with a paired `Bridge` node.
+`ReverseClient` expects the next side of the chain to be able to create and carry outbound connections to the remote `ReverseServer`. The local-facing side connects through the directly adjacent `Bridge` and its pair.
 
 ## Configuration Example
 
