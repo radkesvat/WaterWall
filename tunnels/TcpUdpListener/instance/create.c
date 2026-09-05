@@ -4,13 +4,6 @@
 
 static void tcpudplistenerConfigureCallbacks(tunnel_t *t)
 {
-    t->fnInitU    = &tcpudplistenerTunnelUpStreamInit;
-    t->fnEstU     = &tcpudplistenerTunnelUpStreamEst;
-    t->fnFinU     = &tcpudplistenerTunnelUpStreamFinish;
-    t->fnPayloadU = &tcpudplistenerTunnelUpStreamPayload;
-    t->fnPauseU   = &tcpudplistenerTunnelUpStreamPause;
-    t->fnResumeU  = &tcpudplistenerTunnelUpStreamResume;
-
     t->fnInitD    = &tcpudplistenerTunnelDownStreamInit;
     t->fnEstD     = &tcpudplistenerTunnelDownStreamEst;
     t->fnFinD     = &tcpudplistenerTunnelDownStreamFinish;
@@ -19,11 +12,6 @@ static void tcpudplistenerConfigureCallbacks(tunnel_t *t)
     t->fnResumeD  = &tcpudplistenerTunnelDownStreamResume;
 
     t->onChain      = &tcpudplistenerTunnelOnChain;
-    t->onIndex      = &tcpudplistenerTunnelOnIndex;
-    t->onPrepare    = &tcpudplistenerTunnelOnPrepair;
-    t->onStart      = &tcpudplistenerTunnelOnStart;
-    t->onStop       = &tcpudplistenerTunnelOnStop;
-    t->onWorkerStop = &tcpudplistenerTunnelOnWorkerStop;
     t->onDestroy    = &tcpudplistenerTunnelDestroy;
 }
 

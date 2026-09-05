@@ -94,7 +94,6 @@ WW_EXPORT api_result_t testerclientTunnelApi(tunnel_t *instance, sbuf_t *message
 
 void testerclientTunnelOnPrepair(tunnel_t *t);
 void testerclientTunnelOnStart(tunnel_t *t);
-void testerclientTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context);
 void testerclientTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);
 
 void testerclientTunnelUpStreamInit(tunnel_t *t, line_t *l);

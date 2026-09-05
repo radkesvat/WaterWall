@@ -126,8 +126,6 @@ WW_EXPORT tunnel_t    *speedtestserverTunnelCreate(node_t *node);
 WW_EXPORT api_result_t speedtestserverTunnelApi(tunnel_t *instance, sbuf_t *message);
 
 void speedtestserverTunnelOnPrepair(tunnel_t *t);
-void speedtestserverTunnelOnStart(tunnel_t *t);
-void speedtestserverTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context);
 
 void speedtestserverTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void speedtestserverTunnelUpStreamEst(tunnel_t *t, line_t *l);

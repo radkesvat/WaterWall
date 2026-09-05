@@ -26,9 +26,6 @@ tunnel_t *halfduplexserverTunnelCreate(node_t *node)
     t->fnPauseD   = &halfduplexserverTunnelDownStreamPause;
     t->fnResumeD  = &halfduplexserverTunnelDownStreamResume;
 
-    t->onPrepare = &halfduplexserverTunnelOnPrepair;
-    t->onStart   = &halfduplexserverTunnelOnStart;
-    t->onStop    = &halfduplexserverTunnelOnStop;
     t->onDestroy = &halfduplexserverTunnelDestroy;
 
     ts->upload_line_map   = hmap_cons_t_init();

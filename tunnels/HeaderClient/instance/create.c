@@ -14,20 +14,9 @@ tunnel_t *headerclientTunnelCreate(node_t *node)
     t->fnEstU     = &headerclientTunnelUpStreamEst;
     t->fnFinU     = &headerclientTunnelUpStreamFinish;
     t->fnPayloadU = &headerclientTunnelUpStreamPayload;
-    t->fnPauseU   = &headerclientTunnelUpStreamPause;
-    t->fnResumeU  = &headerclientTunnelUpStreamResume;
 
-    t->fnInitD    = &headerclientTunnelDownStreamInit;
-    t->fnEstD     = &headerclientTunnelDownStreamEst;
-    t->fnFinD     = &headerclientTunnelDownStreamFinish;
-    t->fnPayloadD = &headerclientTunnelDownStreamPayload;
-    t->fnPauseD   = &headerclientTunnelDownStreamPause;
-    t->fnResumeD  = &headerclientTunnelDownStreamResume;
-
-    t->onPrepare = &headerclientTunnelOnPrepair;
-    t->onStart   = &headerclientTunnelOnStart;
-    t->onStop    = &headerclientTunnelOnStop;
-    t->onDestroy = &headerclientTunnelDestroy;
+    t->fnInitD = &headerclientTunnelDownStreamInit;
+    t->fnFinD  = &headerclientTunnelDownStreamFinish;
 
     headerclient_tstate_t *ts = tunnelGetState(t);
     if (! headerclientLoadSettings(ts, node->node_settings_json))

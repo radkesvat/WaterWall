@@ -49,7 +49,6 @@ void packetreceiverTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offs
 void packetreceiverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void packetreceiverTunnelOnPrepair(tunnel_t *t);
 void packetreceiverTunnelOnStart(tunnel_t *t);
-void packetreceiverTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context);
 
 void packetreceiverTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void packetreceiverTunnelUpStreamEst(tunnel_t *t, line_t *l);

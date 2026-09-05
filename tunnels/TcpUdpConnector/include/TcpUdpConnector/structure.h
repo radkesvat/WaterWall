@@ -28,12 +28,7 @@ WW_EXPORT void         tcpudpconnectorTunnelDestroy(tunnel_t *t, const ww_lifecy
 WW_EXPORT tunnel_t    *tcpudpconnectorTunnelCreate(node_t *node);
 WW_EXPORT api_result_t tcpudpconnectorTunnelApi(tunnel_t *instance, sbuf_t *message);
 
-void tcpudpconnectorTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offset);
 void tcpudpconnectorTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
-void tcpudpconnectorTunnelOnPrepair(tunnel_t *t);
-void tcpudpconnectorTunnelOnStart(tunnel_t *t);
-void tcpudpconnectorTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context);
-void tcpudpconnectorTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);
 
 void tcpudpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void tcpudpconnectorTunnelUpStreamEst(tunnel_t *t, line_t *l);
@@ -42,12 +37,7 @@ void tcpudpconnectorTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void tcpudpconnectorTunnelUpStreamPause(tunnel_t *t, line_t *l);
 void tcpudpconnectorTunnelUpStreamResume(tunnel_t *t, line_t *l);
 
-void tcpudpconnectorTunnelDownStreamInit(tunnel_t *t, line_t *l);
-void tcpudpconnectorTunnelDownStreamEst(tunnel_t *t, line_t *l);
 void tcpudpconnectorTunnelDownStreamFinish(tunnel_t *t, line_t *l);
-void tcpudpconnectorTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
-void tcpudpconnectorTunnelDownStreamPause(tunnel_t *t, line_t *l);
-void tcpudpconnectorTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
 tunnel_t *tcpudpconnectorSelectUpStreamTunnel(tunnel_t *t, line_t *l);
 tunnel_t *tcpudpconnectorGetSelectedUpStreamTunnel(tunnel_t *t, line_t *l);

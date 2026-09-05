@@ -354,7 +354,7 @@ tunnel_t *packetsenderTunnelCreate(node_t *node)
 
     t->onPrepare       = &packetsenderTunnelOnPrepair;
     t->onStart         = &packetsenderTunnelOnStart;
-    t->onStop          = &packetsenderTunnelOnStop;
+
     t->onWorkerQuiesce = &packetsenderTunnelOnWorkerQuiesce;
     t->onDestroy       = &packetsenderTunnelDestroy;
 

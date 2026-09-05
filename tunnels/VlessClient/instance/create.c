@@ -301,10 +301,7 @@ tunnel_t *vlessclientTunnelCreate(node_t *node)
     t->fnPauseD   = &vlessclientTunnelDownStreamPause;
     t->fnResumeD  = &vlessclientTunnelDownStreamResume;
 
-    t->onPrepare = &vlessclientTunnelOnPrepair;
     t->onChain   = &vlessclientTunnelOnChain;
-    t->onStart   = &vlessclientTunnelOnStart;
-    t->onStop    = &vlessclientTunnelOnStop;
     t->onDestroy = &vlessclientTunnelDestroy;
 
     if (! checkJsonIsObjectAndHasChild(settings))

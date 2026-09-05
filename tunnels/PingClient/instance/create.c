@@ -133,13 +133,12 @@ tunnel_t *pingclientCreate(node_t *node)
         return NULL;
     }
 
-    t->fnInitD    = &pingclientDownStreamInit;
     t->fnPayloadU = &pingclientUpStreamPayload;
     t->fnPayloadD = &pingclientDownStreamPayload;
     t->onPrepare  = &pingclientOnPrepair;
     t->onStart    = &pingclientOnStart;
-    t->onStop     = &pingclientOnStop;
-    t->onDestroy  = &pingclientDestroy;
+
+    t->onDestroy = &pingclientDestroy;
 
     pingclient_tstate_t *state    = tunnelGetState(t);
     const cJSON         *settings = node->node_settings_json;

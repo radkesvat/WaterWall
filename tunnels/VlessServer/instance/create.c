@@ -362,8 +362,6 @@ tunnel_t *vlessserverTunnelCreate(node_t *node)
     t->fnResumeD  = &vlessserverTunnelDownStreamResume;
 
     t->onPrepare = &vlessserverTunnelOnPrepair;
-    t->onStart   = &vlessserverTunnelOnStart;
-    t->onStop    = &vlessserverTunnelOnStop;
     t->onDestroy = &vlessserverTunnelDestroy;
 
     if (! nodeHasNext(node))

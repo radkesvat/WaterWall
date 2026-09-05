@@ -2,12 +2,6 @@
 
 #include "loggers/network_logger.h"
 
-void speedtestclientTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context)
-{
-    discard context;
-    discard t;
-}
-
 void speedtestclientTunnelOnQuiesceRequest(tunnel_t *t, const ww_lifecycle_context_t *context)
 {
     discard                   context;

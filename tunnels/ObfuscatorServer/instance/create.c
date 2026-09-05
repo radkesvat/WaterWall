@@ -10,14 +10,8 @@ tunnel_t *obfuscatorserverTunnelCreate(node_t *node)
         return NULL;
     }
 
-    t->fnInitD    = &obfuscatorserverTunnelDownStreamInit;
     t->fnPayloadU = &obfuscatorserverTunnelUpStreamPayload;
     t->fnPayloadD = &obfuscatorserverTunnelDownStreamPayload;
-
-    t->onPrepare = &obfuscatorserverTunnelOnPrepair;
-    t->onStart   = &obfuscatorserverTunnelOnStart;
-    t->onStop    = &obfuscatorserverTunnelOnStop;
-    t->onDestroy = &obfuscatorserverTunnelDestroy;
 
     obfuscatorserver_tstate_t *ts = tunnelGetState(t);
 

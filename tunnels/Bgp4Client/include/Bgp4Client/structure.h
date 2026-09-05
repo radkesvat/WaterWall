@@ -44,27 +44,17 @@ enum
     kLineStateSize   = sizeof(bgp4client_lstate_t)
 };
 
-WW_EXPORT void         bgp4clientTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context);
 WW_EXPORT tunnel_t    *bgp4clientTunnelCreate(node_t *node);
 WW_EXPORT api_result_t bgp4clientTunnelApi(tunnel_t *instance, sbuf_t *message);
-
-void bgp4clientTunnelOnPrepair(tunnel_t *t);
-void bgp4clientTunnelOnStart(tunnel_t *t);
-void bgp4clientTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context);
 
 void bgp4clientTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void bgp4clientTunnelUpStreamEst(tunnel_t *t, line_t *l);
 void bgp4clientTunnelUpStreamFinish(tunnel_t *t, line_t *l);
 void bgp4clientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
-void bgp4clientTunnelUpStreamPause(tunnel_t *t, line_t *l);
-void bgp4clientTunnelUpStreamResume(tunnel_t *t, line_t *l);
 
 void bgp4clientTunnelDownStreamInit(tunnel_t *t, line_t *l);
-void bgp4clientTunnelDownStreamEst(tunnel_t *t, line_t *l);
 void bgp4clientTunnelDownStreamFinish(tunnel_t *t, line_t *l);
 void bgp4clientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
-void bgp4clientTunnelDownStreamPause(tunnel_t *t, line_t *l);
-void bgp4clientTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
 bool    bgp4clientLoadSettings(bgp4client_tstate_t *ts, const cJSON *settings);
 void    bgp4clientLinestateInitialize(bgp4client_lstate_t *ls, line_t *l);

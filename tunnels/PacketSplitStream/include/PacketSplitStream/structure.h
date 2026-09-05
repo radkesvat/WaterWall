@@ -21,13 +21,11 @@ enum
     kLineStateSize   = sizeof(packetsplitstream_lstate_t)
 };
 
-WW_EXPORT void         packetsplitstreamTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context);
 WW_EXPORT tunnel_t    *packetsplitstreamTunnelCreate(node_t *node);
 WW_EXPORT api_result_t packetsplitstreamTunnelApi(tunnel_t *instance, sbuf_t *message);
 
 void packetsplitstreamTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void packetsplitstreamTunnelOnStart(tunnel_t *t);
-void packetsplitstreamTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context);
 void packetsplitstreamTunnelOnPrepair(tunnel_t *t);
 
 void packetsplitstreamTunnelUpStreamInit(tunnel_t *t, line_t *l);
@@ -40,7 +38,6 @@ void packetsplitstreamTunnelUpStreamResume(tunnel_t *t, line_t *l);
 void packetsplitstreamTunnelDownStreamInit(tunnel_t *t, line_t *l);
 void packetsplitstreamTunnelDownStreamEst(tunnel_t *t, line_t *l);
 void packetsplitstreamTunnelDownStreamFinish(tunnel_t *t, line_t *l);
-void packetsplitstreamTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void packetsplitstreamTunnelDownStreamPause(tunnel_t *t, line_t *l);
 void packetsplitstreamTunnelDownStreamResume(tunnel_t *t, line_t *l);
 

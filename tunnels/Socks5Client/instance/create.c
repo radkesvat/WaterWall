@@ -322,10 +322,8 @@ tunnel_t *socks5clientTunnelCreate(node_t *node)
     t->fnPauseD   = &socks5clientTunnelDownStreamPause;
     t->fnResumeD  = &socks5clientTunnelDownStreamResume;
 
-    t->onPrepare = &socks5clientTunnelOnPrepair;
     t->onChain   = &socks5clientTunnelOnChain;
-    t->onStart   = &socks5clientTunnelOnStart;
-    t->onStop    = &socks5clientTunnelOnStop;
+
     t->onDestroy = &socks5clientTunnelDestroy;
 
     if (! checkJsonIsObjectAndHasChild(settings))

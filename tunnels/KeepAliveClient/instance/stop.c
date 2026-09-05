@@ -14,12 +14,6 @@ static void keepaliveclientDeleteTimer(wtimer_t **timer)
     *timer = NULL;
 }
 
-void keepaliveclientTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context)
-{
-    discard context;
-    discard t;
-}
-
 void keepaliveclientTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context)
 {
     discard context;

@@ -3,9 +3,6 @@ add_library(VlessClient STATIC
                     instance/destroy.c
                     instance/api.c
                     instance/node.c
-                    instance/prepair.c
-                    instance/start.c
-                    instance/stop.c
                     instance/chain.c
                     common/helpers.c
                     common/line_state.c

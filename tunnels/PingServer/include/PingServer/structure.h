@@ -33,21 +33,10 @@ void pingserverOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offset);
 void pingserverOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void pingserverOnPrepair(tunnel_t *t);
 void pingserverOnStart(tunnel_t *t);
-void pingserverOnStop(tunnel_t *t, const ww_lifecycle_context_t *context);
 
-void pingserverUpStreamInit(tunnel_t *t, line_t *l);
-void pingserverUpStreamEst(tunnel_t *t, line_t *l);
-void pingserverUpStreamFinish(tunnel_t *t, line_t *l);
 void pingserverUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
-void pingserverUpStreamPause(tunnel_t *t, line_t *l);
-void pingserverUpStreamResume(tunnel_t *t, line_t *l);
 
-void pingserverDownStreamInit(tunnel_t *t, line_t *l);
-void pingserverDownStreamEst(tunnel_t *t, line_t *l);
-void pingserverDownStreamFinish(tunnel_t *t, line_t *l);
 void pingserverDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
-void pingserverDownStreamPause(tunnel_t *t, line_t *l);
-void pingserverDownStreamResume(tunnel_t *t, line_t *l);
 
 void pingserverHandleUpstreamPacket(tunnel_t *t, line_t *l, sbuf_t *buf);
 void pingserverHandleDownstreamPacket(tunnel_t *t, line_t *l, sbuf_t *buf);

@@ -359,8 +359,6 @@ tunnel_t *trojanserverTunnelCreate(node_t *node)
     t->fnResumeD  = &trojanserverTunnelDownStreamResume;
 
     t->onPrepare = &trojanserverTunnelOnPrepair;
-    t->onStart   = &trojanserverTunnelOnStart;
-    t->onStop    = &trojanserverTunnelOnStop;
     t->onDestroy = &trojanserverTunnelDestroy;
 
     if (! nodeHasNext(node))

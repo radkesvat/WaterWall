@@ -42,9 +42,6 @@ WW_EXPORT api_result_t reverseserverTunnelApi(tunnel_t *instance, sbuf_t *messag
 
 void reverseserverTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offset);
 void reverseserverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
-void reverseserverTunnelOnPrepair(tunnel_t *t);
-void reverseserverTunnelOnStart(tunnel_t *t);
-void reverseserverTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context);
 
 void reverseserverTunnelUpStreamInit(tunnel_t *t, line_t *d);
 void reverseserverTunnelUpStreamEst(tunnel_t *t, line_t *d);

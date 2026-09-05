@@ -74,7 +74,6 @@ tunnel_t *streamtopacketsTunnelCreate(node_t *node)
     t->fnPauseD   = &streamtopacketsTunnelDownStreamPause;
     t->fnResumeD  = &streamtopacketsTunnelDownStreamResume;
 
-    t->onPrepare        = &streamtopacketsTunnelOnPrepair;
     t->onStart          = &streamtopacketsTunnelOnStart;
     t->onQuiesceRequest = &streamtopacketsTunnelOnQuiesceRequest;
     t->onDestroy        = &streamtopacketsTunnelDestroy;

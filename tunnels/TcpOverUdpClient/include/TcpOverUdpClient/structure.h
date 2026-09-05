@@ -100,22 +100,17 @@ static inline int tcpoverudpclientGetKcpSendBufferLimit(const tcpoverudpclient_l
     return (int) (ls->k_handle->snd_wnd + ls->k_handle->rmt_wnd + 10U);
 }
 
-WW_EXPORT void         tcpoverudpclientTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context);
 WW_EXPORT tunnel_t    *tcpoverudpclientTunnelCreate(node_t *node);
 WW_EXPORT api_result_t tcpoverudpclientTunnelApi(tunnel_t *instance, sbuf_t *message);
 
 void tcpoverudpclientTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offset);
 void tcpoverudpclientTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
-void tcpoverudpclientTunnelOnPrepair(tunnel_t *t);
-void tcpoverudpclientTunnelOnStart(tunnel_t *t);
 void tcpoverudpclientTunnelOnQuiesceRequest(tunnel_t *t, const ww_lifecycle_context_t *context);
 
 void tcpoverudpclientTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void tcpoverudpclientTunnelUpStreamEst(tunnel_t *t, line_t *l);
 void tcpoverudpclientTunnelUpStreamFinish(tunnel_t *t, line_t *l);
 void tcpoverudpclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
-void tcpoverudpclientTunnelUpStreamPause(tunnel_t *t, line_t *l);
-void tcpoverudpclientTunnelUpStreamResume(tunnel_t *t, line_t *l);
 
 void tcpoverudpclientTunnelDownStreamInit(tunnel_t *t, line_t *l);
 void tcpoverudpclientTunnelDownStreamEst(tunnel_t *t, line_t *l);

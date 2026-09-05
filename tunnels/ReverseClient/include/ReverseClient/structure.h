@@ -76,7 +76,6 @@ WW_EXPORT api_result_t reverseclientTunnelApi(tunnel_t *instance, sbuf_t *messag
 
 void reverseclientTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offset);
 void reverseclientTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
-void reverseclientTunnelOnPrepair(tunnel_t *t);
 void reverseclientTunnelOnStart(tunnel_t *t);
 void reverseclientTunnelOnQuiesceRequest(tunnel_t *t, const ww_lifecycle_context_t *context);
 void reverseclientTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);

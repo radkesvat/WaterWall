@@ -667,7 +667,7 @@ static void caseWorkerDrainIsLocal(void)
         twfRequireEqualU32(masterpoolGetCheckedOut(lines[wid].master), 0, "worker retained pooled lines");
         twfLinePoolTeardown(&lines[wid]);
     }
-    muxclientTunnelOnStop(mux, wwLifecycleProcessShutdown());
+    mux->onStop(mux, wwLifecycleProcessShutdown());
     memoryFree(ts->worker_states);
     tunnelDestroy(mux);
     tunnelDestroy(next);

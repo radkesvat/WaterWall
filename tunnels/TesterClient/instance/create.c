@@ -330,7 +330,6 @@ tunnel_t *testerclientTunnelCreate(node_t *node)
 
     t->onPrepare    = &testerclientTunnelOnPrepair;
     t->onStart      = &testerclientTunnelOnStart;
-    t->onStop       = &testerclientTunnelOnStop;
     t->onWorkerStop = &testerclientTunnelOnWorkerStop;
     t->onDestroy    = &testerclientTunnelDestroy;
 

@@ -202,8 +202,3 @@ bool wireguarddeviceTunnelOnSolvedTopology(tunnel_t *t, tunnel_chain_t *chain)
     }
     return wireguarddeviceInsertUserControllerPrev(t, chain, index);
 }
-
-void wireguarddeviceTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
-{
-    tunnelDefaultOnChain(t, chain);
-}

@@ -573,7 +573,6 @@ void ipmanipulatorUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void ipmanipulatorUpStreamPause(tunnel_t *t, line_t *l);
 void ipmanipulatorUpStreamResume(tunnel_t *t, line_t *l);
 
-void ipmanipulatorDownStreamInit(tunnel_t *t, line_t *l);
 void ipmanipulatorDownStreamEst(tunnel_t *t, line_t *l);
 void ipmanipulatorDownStreamFinish(tunnel_t *t, line_t *l);
 void ipmanipulatorDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);

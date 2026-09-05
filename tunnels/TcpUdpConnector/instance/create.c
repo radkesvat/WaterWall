@@ -11,19 +11,9 @@ static void tcpudpconnectorConfigureCallbacks(tunnel_t *t)
     t->fnPauseU   = &tcpudpconnectorTunnelUpStreamPause;
     t->fnResumeU  = &tcpudpconnectorTunnelUpStreamResume;
 
-    t->fnInitD    = &tcpudpconnectorTunnelDownStreamInit;
-    t->fnEstD     = &tcpudpconnectorTunnelDownStreamEst;
-    t->fnFinD     = &tcpudpconnectorTunnelDownStreamFinish;
-    t->fnPayloadD = &tcpudpconnectorTunnelDownStreamPayload;
-    t->fnPauseD   = &tcpudpconnectorTunnelDownStreamPause;
-    t->fnResumeD  = &tcpudpconnectorTunnelDownStreamResume;
+    t->fnFinD = &tcpudpconnectorTunnelDownStreamFinish;
 
     t->onChain      = &tcpudpconnectorTunnelOnChain;
-    t->onIndex      = &tcpudpconnectorTunnelOnIndex;
-    t->onPrepare    = &tcpudpconnectorTunnelOnPrepair;
-    t->onStart      = &tcpudpconnectorTunnelOnStart;
-    t->onStop       = &tcpudpconnectorTunnelOnStop;
-    t->onWorkerStop = &tcpudpconnectorTunnelOnWorkerStop;
     t->onDestroy    = &tcpudpconnectorTunnelDestroy;
 }
 

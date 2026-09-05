@@ -205,7 +205,7 @@ tunnel_t *packetreceiverTunnelCreate(node_t *node)
 
     t->onPrepare = &packetreceiverTunnelOnPrepair;
     t->onStart   = &packetreceiverTunnelOnStart;
-    t->onStop    = &packetreceiverTunnelOnStop;
+
     t->onDestroy = &packetreceiverTunnelDestroy;
 
     packetreceiver_tstate_t *state    = tunnelGetState(t);

@@ -10,11 +10,8 @@ extern int tlsclientDecompressBrotliCert(SSL *ssl, CRYPTO_BUFFER **out, size_t u
 static void configureTunnelCallbacks(tunnel_t *t)
 {
     t->fnInitU    = &tlsclientTunnelUpStreamInit;
-    t->fnEstU     = &tlsclientTunnelUpStreamEst;
     t->fnFinU     = &tlsclientTunnelUpStreamFinish;
     t->fnPayloadU = &tlsclientTunnelUpStreamPayload;
-    t->fnPauseU   = &tlsclientTunnelUpStreamPause;
-    t->fnResumeU  = &tlsclientTunnelUpStreamResume;
 
     t->fnInitD    = &tlsclientTunnelDownStreamInit;
     t->fnEstD     = &tlsclientTunnelDownStreamEst;
@@ -23,9 +20,6 @@ static void configureTunnelCallbacks(tunnel_t *t)
     t->fnPauseD   = &tlsclientTunnelDownStreamPause;
     t->fnResumeD  = &tlsclientTunnelDownStreamResume;
 
-    t->onPrepare = &tlsclientTunnelOnPrepair;
-    t->onStart   = &tlsclientTunnelOnStart;
-    t->onStop    = &tlsclientTunnelOnStop;
     t->onDestroy = &tlsclientTunnelDestroy;
 }
 

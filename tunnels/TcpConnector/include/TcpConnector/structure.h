@@ -135,9 +135,7 @@ WW_EXPORT tunnel_t    *tcpconnectorTunnelCreate(node_t *node);
 WW_EXPORT api_result_t tcpconnectorTunnelApi(tunnel_t *instance, sbuf_t *message);
 
 void tcpconnectorTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
-void tcpconnectorTunnelOnPrepair(tunnel_t *t);
 void tcpconnectorTunnelOnStart(tunnel_t *t);
-void tcpconnectorTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context);
 void tcpconnectorTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);
 
 void tcpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l);

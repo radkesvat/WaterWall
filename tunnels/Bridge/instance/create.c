@@ -24,11 +24,6 @@ tunnel_t *bridgeTunnelCreate(node_t *node)
     t->fnPauseD   = &bridgeTunnelDownStreamPause;
     t->fnResumeD  = &bridgeTunnelDownStreamResume;
 
-    t->onPrepare = &bridgeTunnelOnPrepair;
-    t->onStart   = &bridgeTunnelOnStart;
-    t->onStop    = &bridgeTunnelOnStop;
-    t->onDestroy = &bridgeTunnelDestroy;
-
     t->onChain = &bridgeTunnelOnChain;
 
     const cJSON *settings       = node->node_settings_json;

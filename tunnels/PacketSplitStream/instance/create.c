@@ -20,15 +20,13 @@ tunnel_t *packetsplitstreamTunnelCreate(node_t *node)
     t->fnInitD    = &packetsplitstreamTunnelDownStreamInit;
     t->fnEstD     = &packetsplitstreamTunnelDownStreamEst;
     t->fnFinD     = &packetsplitstreamTunnelDownStreamFinish;
-    t->fnPayloadD = &packetsplitstreamTunnelDownStreamPayload;
+
     t->fnPauseD   = &packetsplitstreamTunnelDownStreamPause;
     t->fnResumeD  = &packetsplitstreamTunnelDownStreamResume;
 
-    t->onDestroy = &packetsplitstreamTunnelDestroy;
     t->onChain   = &packetsplitstreamTunnelOnChain;
     t->onPrepare = &packetsplitstreamTunnelOnPrepair;
     t->onStart   = &packetsplitstreamTunnelOnStart;
-    t->onStop    = &packetsplitstreamTunnelOnStop;
 
     if (nodeHasNext(node))
     {

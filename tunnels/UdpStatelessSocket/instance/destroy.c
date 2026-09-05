@@ -7,9 +7,6 @@ void udpstatelesssocketTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *
     discard                      context;
     udpstatelesssocket_tstate_t *state = tunnelGetState(t);
 
-    udpstatelesssocketTunnelOnQuiesceRequest(t, context);
-    udpstatelesssocketTunnelOnQuiesceWait(t, context);
-
     if (state->socket.idle_tables != NULL)
     {
         for (wid_t wid = 0; wid < getWorkersCount(); ++wid)

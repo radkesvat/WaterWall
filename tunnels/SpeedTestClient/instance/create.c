@@ -186,7 +186,7 @@ tunnel_t *speedtestclientTunnelCreate(node_t *node)
     t->onPrepare        = &speedtestclientTunnelOnPrepair;
     t->onStart          = &speedtestclientTunnelOnStart;
     t->onQuiesceRequest = &speedtestclientTunnelOnQuiesceRequest;
-    t->onStop           = &speedtestclientTunnelOnStop;
+
     t->onWorkerStop     = &speedtestclientTunnelOnWorkerStop;
     t->onDestroy        = &speedtestclientTunnelDestroy;
 

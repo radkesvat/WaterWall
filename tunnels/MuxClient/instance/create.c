@@ -87,9 +87,6 @@ tunnel_t *muxclientTunnelCreate(node_t *node)
     t->fnPauseD   = &muxclientTunnelDownStreamPause;
     t->fnResumeD  = &muxclientTunnelDownStreamResume;
 
-    t->onPrepare    = &muxclientTunnelOnPrepair;
-    t->onStart      = &muxclientTunnelOnStart;
-    t->onStop       = &muxclientTunnelOnStop;
     t->onWorkerQuiesce = &muxclientTunnelOnWorkerQuiesce;
     t->onWorkerStop = &muxclientTunnelOnWorkerStop;
     t->onDestroy    = &muxclientTunnelDestroy;

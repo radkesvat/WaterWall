@@ -54,14 +54,11 @@ tunnel_t *blackholeTunnelCreate(node_t *node)
     t->fnPauseU   = &blackholeTunnelUpStreamPause;
     t->fnResumeU  = &blackholeTunnelUpStreamResume;
 
-    t->onStop    = &blackholeTunnelOnStop;
-    t->onDestroy = &blackholeTunnelDestroy;
-
     blackhole_tstate_t *state = tunnelGetState(t);
 
     if (! parseBlackHoleMode(state, node->node_settings_json))
     {
-        blackholeTunnelDestroy(t, wwLifecycleStartupRollback());
+        t->onDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 

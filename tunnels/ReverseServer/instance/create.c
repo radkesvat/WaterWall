@@ -29,9 +29,6 @@ tunnel_t *reverseserverTunnelCreate(node_t *node)
     t->fnPauseD   = &reverseserverTunnelDownStreamPause;
     t->fnResumeD  = &reverseserverTunnelDownStreamResume;
 
-    t->onPrepare = &reverseserverTunnelOnPrepair;
-    t->onStart   = &reverseserverTunnelOnStart;
-    t->onStop    = &reverseserverTunnelOnStop;
     t->onDestroy = &reverseserverTunnelDestroy;
 
     const cJSON *settings = node->node_settings_json;

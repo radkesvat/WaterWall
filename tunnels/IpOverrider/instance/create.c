@@ -280,12 +280,8 @@ tunnel_t *ipoverriderCreate(node_t *node)
         return NULL;
     }
 
-    t->fnInitD    = &ipoverriderDownStreamInit;
     t->fnPayloadU = &ipoverriderUpStreamPayload;
     t->fnPayloadD = &ipoverriderDownStreamPayload;
-    t->onPrepare  = &ipoverriderOnPrepair;
-    t->onStart    = &ipoverriderOnStart;
-    t->onStop     = &ipoverriderOnStop;
     t->onDestroy  = &ipoverriderDestroy;
 
     ipoverrider_tstate_t *state = tunnelGetState(t);

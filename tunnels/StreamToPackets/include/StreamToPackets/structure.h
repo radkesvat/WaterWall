@@ -117,7 +117,6 @@ WW_EXPORT api_result_t streamtopacketsTunnelApi(tunnel_t *instance, sbuf_t *mess
 
 void streamtopacketsTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offset);
 void streamtopacketsTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
-void streamtopacketsTunnelOnPrepair(tunnel_t *t);
 void streamtopacketsTunnelOnStart(tunnel_t *t);
 void streamtopacketsQueueWorkerPacketInit(void *worker, void *arg1, void *arg2, void *arg3);
 void streamtopacketsTunnelOnQuiesceRequest(tunnel_t *t, const ww_lifecycle_context_t *context);

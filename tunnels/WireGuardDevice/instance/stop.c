@@ -2,12 +2,6 @@
 
 #include "loggers/network_logger.h"
 
-void wireguarddeviceTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context)
-{
-    discard context;
-    discard t;
-}
-
 void wireguarddeviceTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context)
 {
     discard context;

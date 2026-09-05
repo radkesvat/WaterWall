@@ -66,23 +66,16 @@ enum speedlimit_work_mode_e
     kSpeedLimitWorkModePause = kDvsSecondOption
 };
 
-WW_EXPORT void         speedlimitTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context);
 WW_EXPORT tunnel_t    *speedlimitTunnelCreate(node_t *node);
 WW_EXPORT api_result_t speedlimitTunnelApi(tunnel_t *instance, sbuf_t *message);
 
-void speedlimitTunnelOnPrepair(tunnel_t *t);
-void speedlimitTunnelOnStart(tunnel_t *t);
-void speedlimitTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context);
-
 void speedlimitTunnelUpStreamInit(tunnel_t *t, line_t *l);
-void speedlimitTunnelUpStreamEst(tunnel_t *t, line_t *l);
 void speedlimitTunnelUpStreamFinish(tunnel_t *t, line_t *l);
 void speedlimitTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void speedlimitTunnelUpStreamPause(tunnel_t *t, line_t *l);
 void speedlimitTunnelUpStreamResume(tunnel_t *t, line_t *l);
 
 void speedlimitTunnelDownStreamInit(tunnel_t *t, line_t *l);
-void speedlimitTunnelDownStreamEst(tunnel_t *t, line_t *l);
 void speedlimitTunnelDownStreamFinish(tunnel_t *t, line_t *l);
 void speedlimitTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void speedlimitTunnelDownStreamPause(tunnel_t *t, line_t *l);

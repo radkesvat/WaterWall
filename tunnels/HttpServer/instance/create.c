@@ -415,16 +415,12 @@ tunnel_t *httpserverTunnelCreate(node_t *node)
     t->fnPauseU   = &httpserverTunnelUpStreamPause;
     t->fnResumeU  = &httpserverTunnelUpStreamResume;
 
-    t->fnInitD    = &httpserverTunnelDownStreamInit;
     t->fnEstD     = &httpserverTunnelDownStreamEst;
     t->fnFinD     = &httpserverTunnelDownStreamFinish;
     t->fnPayloadD = &httpserverTunnelDownStreamPayload;
     t->fnPauseD   = &httpserverTunnelDownStreamPause;
     t->fnResumeD  = &httpserverTunnelDownStreamResume;
 
-    t->onPrepare = &httpserverTunnelOnPrepair;
-    t->onStart   = &httpserverTunnelOnStart;
-    t->onStop    = &httpserverTunnelOnStop;
     t->onDestroy = &httpserverTunnelDestroy;
 
     httpserver_tstate_t *ts       = tunnelGetState(t);

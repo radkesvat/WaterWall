@@ -26,8 +26,7 @@ tunnel_t *speedtestserverTunnelCreate(node_t *node)
     t->fnResumeD  = &speedtestserverTunnelDownStreamResume;
 
     t->onPrepare = &speedtestserverTunnelOnPrepair;
-    t->onStart   = &speedtestserverTunnelOnStart;
-    t->onStop    = &speedtestserverTunnelOnStop;
+
     t->onDestroy = &speedtestserverTunnelDestroy;
 
     speedtestserver_tstate_t *state              = tunnelGetState(t);

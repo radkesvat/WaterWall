@@ -5,7 +5,6 @@ add_library(PingClient STATIC
                     instance/node.c
                     instance/prepair.c
                     instance/start.c
-                    instance/stop.c
                     instance/chain.c
                     instance/index.c
                     common/helpers.c
@@ -15,7 +14,6 @@ add_library(PingClient STATIC
                     upstream/payload.c
                     upstream/pause.c
                     upstream/resume.c
-                    downstream/init.c
                     downstream/est.c
                     downstream/fin.c
                     downstream/payload.c

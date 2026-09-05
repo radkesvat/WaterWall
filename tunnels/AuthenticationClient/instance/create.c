@@ -18,7 +18,6 @@ static void authenticationclientInitializeCallbacks(tunnel_t *t)
     t->fnPauseD   = &authenticationclientTunnelDownStreamPause;
     t->fnResumeD  = &authenticationclientTunnelDownStreamResume;
 
-    t->onPrepare        = &authenticationclientTunnelOnPrepair;
     t->onStart          = &authenticationclientTunnelOnStart;
     t->onQuiesceRequest = &authenticationclientTunnelOnQuiesceRequest;
     t->onWorkerQuiesce  = &authenticationclientTunnelOnWorkerQuiesce;

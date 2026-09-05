@@ -28,7 +28,6 @@ tunnel_t *reverseclientTunnelCreate(node_t *node)
     t->fnPauseD   = &reverseclientTunnelDownStreamPause;
     t->fnResumeD  = &reverseclientTunnelDownStreamResume;
 
-    t->onPrepare        = &reverseclientTunnelOnPrepair;
     t->onStart          = &reverseclientTunnelOnStart;
     t->onQuiesceRequest = &reverseclientTunnelOnQuiesceRequest;
     t->onWorkerStop     = &reverseclientTunnelOnWorkerStop;

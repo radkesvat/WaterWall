@@ -60,24 +60,15 @@ WW_EXPORT api_result_t disturberTunnelApi(tunnel_t *instance, sbuf_t *message);
 
 void disturberTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offset);
 void disturberTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
-void disturberTunnelOnPrepair(tunnel_t *t);
-void disturberTunnelOnStart(tunnel_t *t);
 void disturberTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);
-void disturberTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context);
 
 void disturberTunnelUpStreamInit(tunnel_t *t, line_t *l);
-void disturberTunnelUpStreamEst(tunnel_t *t, line_t *l);
 void disturberTunnelUpStreamFinish(tunnel_t *t, line_t *l);
 void disturberTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
-void disturberTunnelUpStreamPause(tunnel_t *t, line_t *l);
-void disturberTunnelUpStreamResume(tunnel_t *t, line_t *l);
 
 void disturberTunnelDownStreamInit(tunnel_t *t, line_t *l);
-void disturberTunnelDownStreamEst(tunnel_t *t, line_t *l);
 void disturberTunnelDownStreamFinish(tunnel_t *t, line_t *l);
 void disturberTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
-void disturberTunnelDownStreamPause(tunnel_t *t, line_t *l);
-void disturberTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
 void disturberLinestateInitialize(disturber_lstate_t *ls, const disturber_tstate_t *ts);
 void disturberLinestateDestroy(line_t *l, disturber_lstate_t *ls);

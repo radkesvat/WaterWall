@@ -53,9 +53,3 @@ void disturberTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_cont
 
     disturberLinestateDestroy(packet_line, lineGetState(packet_line, t));
 }
-
-void disturberTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context)
-{
-    discard context;
-    discard t;
-}

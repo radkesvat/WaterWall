@@ -46,14 +46,11 @@ tunnel_t *connectionfisherclientTunnelCreate(node_t *node)
     t->fnPauseD   = &connectionfisherclientTunnelDownStreamPause;
     t->fnResumeD  = &connectionfisherclientTunnelDownStreamResume;
 
-    t->onStop    = &connectionfisherclientTunnelOnStop;
-    t->onDestroy = &connectionfisherclientTunnelDestroy;
-
     ts->simultaneous_tries_perline = 2;
 
     if (! connectionfisherclientLoadTries(ts, node->node_settings_json))
     {
-        connectionfisherclientTunnelDestroy(t, wwLifecycleStartupRollback());
+        t->onDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 

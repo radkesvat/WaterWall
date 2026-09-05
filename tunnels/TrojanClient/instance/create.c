@@ -340,10 +340,7 @@ tunnel_t *trojanclientTunnelCreate(node_t *node)
     t->fnPauseD   = &trojanclientTunnelDownStreamPause;
     t->fnResumeD  = &trojanclientTunnelDownStreamResume;
 
-    t->onPrepare = &trojanclientTunnelOnPrepair;
     t->onChain   = &trojanclientTunnelOnChain;
-    t->onStart   = &trojanclientTunnelOnStart;
-    t->onStop    = &trojanclientTunnelOnStop;
     t->onDestroy = &trojanclientTunnelDestroy;
 
     if (! checkJsonIsObjectAndHasChild(settings))

@@ -4,9 +4,6 @@ add_library(HttpClient STATIC
                     instance/destroy.c
                     instance/api.c
                     instance/node.c
-                    instance/prepair.c
-                    instance/start.c
-                    instance/stop.c
                     instance/chain.c
                     instance/index.c
                     common/transport.c
@@ -14,12 +11,10 @@ add_library(HttpClient STATIC
                     common/line_state.c
                     common/helpers.c
                     upstream/init.c
-                    upstream/est.c
                     upstream/fin.c
                     upstream/payload.c
                     upstream/pause.c
                     upstream/resume.c
-                    downstream/init.c
                     downstream/est.c
                     downstream/fin.c
                     downstream/payload.c

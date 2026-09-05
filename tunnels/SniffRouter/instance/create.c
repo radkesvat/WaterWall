@@ -324,18 +324,10 @@ tunnel_t *sniffrouterTunnelCreate(node_t *node)
     t->fnPauseU   = &sniffrouterTunnelUpStreamPause;
     t->fnResumeU  = &sniffrouterTunnelUpStreamResume;
 
-    t->fnInitD    = &sniffrouterTunnelDownStreamInit;
-    t->fnEstD     = &sniffrouterTunnelDownStreamEst;
-    t->fnFinD     = &sniffrouterTunnelDownStreamFinish;
-    t->fnPayloadD = &sniffrouterTunnelDownStreamPayload;
-    t->fnPauseD   = &sniffrouterTunnelDownStreamPause;
-    t->fnResumeD  = &sniffrouterTunnelDownStreamResume;
+    t->fnFinD = &sniffrouterTunnelDownStreamFinish;
 
     t->onChain   = &sniffrouterTunnelOnChain;
-    t->onIndex   = &sniffrouterTunnelOnIndex;
-    t->onPrepare = &sniffrouterTunnelOnPrepair;
-    t->onStart   = &sniffrouterTunnelOnStart;
-    t->onStop    = &sniffrouterTunnelOnStop;
+
     t->onDestroy = &sniffrouterTunnelDestroy;
 
     if (! nodeHasNext(node))

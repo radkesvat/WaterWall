@@ -1,7 +1,5 @@
 add_library(BlackHole STATIC
                     instance/create.c
-                    instance/destroy.c
-                    instance/stop.c
                     instance/api.c
                     instance/node.c
                     common/line_state.c

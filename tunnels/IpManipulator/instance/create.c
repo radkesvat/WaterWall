@@ -303,7 +303,6 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
     }
 
     t->fnInitU          = &ipmanipulatorUpStreamInit;
-    t->fnInitD          = &ipmanipulatorDownStreamInit;
     t->fnPayloadU       = &ipmanipulatorUpStreamPayload;
     t->fnPayloadD       = &ipmanipulatorDownStreamPayload;
     t->onChain          = &ipmanipulatorOnChain;

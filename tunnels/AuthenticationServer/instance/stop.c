@@ -14,17 +14,6 @@ static void authenticationserverDeleteTimer(wtimer_t **timer)
     *timer = NULL;
 }
 
-void authenticationserverTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context)
-{
-    discard                        context;
-    authenticationserver_tstate_t *ts = tunnelGetState(t);
-
-    if (ts->verbose)
-    {
-        LOGD("AuthenticationServer: stop requested");
-    }
-}
-
 void authenticationserverTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context)
 {
     discard context;

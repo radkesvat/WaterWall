@@ -3,11 +3,8 @@ add_library(AuthenticationClient STATIC
                     instance/destroy.c
                     instance/api.c
                     instance/node.c
-                    instance/prepair.c
                     instance/start.c
                     instance/stop.c
-                    instance/chain.c
-                    instance/index.c
                     common/line_state.c
                     common/protocol.c
                     common/users_api.c

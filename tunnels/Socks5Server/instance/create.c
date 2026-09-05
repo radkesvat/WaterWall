@@ -177,8 +177,7 @@ tunnel_t *socks5serverTunnelCreate(node_t *node)
 
     t->onPrepare = &socks5serverTunnelOnPrepair;
     t->onChain   = &socks5serverTunnelOnChain;
-    t->onStart   = &socks5serverTunnelOnStart;
-    t->onStop    = &socks5serverTunnelOnStop;
+
     t->onDestroy = &socks5serverTunnelDestroy;
 
     if (! nodeHasNext(node))

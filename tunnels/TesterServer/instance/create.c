@@ -231,7 +231,6 @@ tunnel_t *testerserverTunnelCreate(node_t *node)
     t->onPrepare    = &testerserverTunnelOnPrepair;
     t->onStart      = &testerserverTunnelOnStart;
     t->onWorkerStop = &testerserverTunnelOnWorkerStop;
-    t->onStop       = &testerserverTunnelOnStop;
     t->onDestroy    = &testerserverTunnelDestroy;
 
     testerserver_tstate_t *ts                     = tunnelGetState(t);

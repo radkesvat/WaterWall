@@ -35,29 +35,15 @@ enum
     kObfuscatorTlsRecordHeaderSize = 5
 };
 
-WW_EXPORT void         obfuscatorserverTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context);
 WW_EXPORT tunnel_t    *obfuscatorserverTunnelCreate(node_t *node);
 WW_EXPORT api_result_t obfuscatorserverTunnelApi(tunnel_t *instance, sbuf_t *message);
 
 void obfuscatorserverTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offset);
 void obfuscatorserverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
-void obfuscatorserverTunnelOnPrepair(tunnel_t *t);
-void obfuscatorserverTunnelOnStart(tunnel_t *t);
-void obfuscatorserverTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context);
 
-void obfuscatorserverTunnelUpStreamInit(tunnel_t *t, line_t *l);
-void obfuscatorserverTunnelUpStreamEst(tunnel_t *t, line_t *l);
-void obfuscatorserverTunnelUpStreamFinish(tunnel_t *t, line_t *l);
 void obfuscatorserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
-void obfuscatorserverTunnelUpStreamPause(tunnel_t *t, line_t *l);
-void obfuscatorserverTunnelUpStreamResume(tunnel_t *t, line_t *l);
 
-void obfuscatorserverTunnelDownStreamInit(tunnel_t *t, line_t *l);
-void obfuscatorserverTunnelDownStreamEst(tunnel_t *t, line_t *l);
-void obfuscatorserverTunnelDownStreamFinish(tunnel_t *t, line_t *l);
 void obfuscatorserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
-void obfuscatorserverTunnelDownStreamPause(tunnel_t *t, line_t *l);
-void obfuscatorserverTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
 void obfuscatorserverLinestateInitialize(obfuscatorserver_lstate_t *ls);
 void obfuscatorserverLinestateDestroy(obfuscatorserver_lstate_t *ls);

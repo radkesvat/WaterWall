@@ -43,13 +43,15 @@ def main() -> int:
         )
 
     stop_source = (TUNNEL / "instance" / "stop.c").read_text(encoding="utf-8")
-    request_body = stop_source.split("void udpstatelesssocketTunnelOnQuiesceRequest", 1)[1].split(
-        "void udpstatelesssocketTunnelOnQuiesceWait", 1
-    )[0]
+    request_match = re.search(
+        r"void udpstatelesssocketTunnelOnQuiesceRequest\b.*?(?=\nvoid |\Z)",
+        stop_source,
+        re.DOTALL,
+    )
     worker_body = stop_source.split("void udpstatelesssocketTunnelOnWorkerQuiesce", 1)[1].split(
         "void udpstatelesssocketTunnelOnWorkerStop", 1
     )[0]
-    if "wioClose" in request_body:
+    if request_match is not None and "wioClose" in request_match.group():
         violations.append("instance/stop.c: main-thread quiesce request closes worker-owned WIO")
     for required in ("currentThreadIsEventWorkerWID(wid)", "wid == state->io_wid", "wioClose(state->socket.io)"):
         if required not in worker_body:

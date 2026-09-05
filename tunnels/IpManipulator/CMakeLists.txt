@@ -19,7 +19,6 @@ add_library(IpManipulator STATIC
                     upstream/pause.c
                     upstream/resume.c
                     upstream/est.c
-                    downstream/init.c
                     downstream/est.c
                     downstream/fin.c
                     downstream/payload.c

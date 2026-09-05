@@ -110,12 +110,10 @@ static tunnel_t *createBaseTunnel(node_t *node)
     t->fnFinD          = &wireguarddeviceTunnelDownStreamFinish;
     t->fnPayloadD      = &wireguarddeviceTunnelDownStreamPayload;
     t->fnPauseD        = &wireguarddeviceTunnelDownStreamPause;
-    t->fnResumeD       = &wireguarddeviceTunnelDownStreamResume;
-    t->onChain         = &wireguarddeviceTunnelOnChain;
+    t->fnResumeD        = &wireguarddeviceTunnelDownStreamResume;
     t->onSolvedTopology = &wireguarddeviceTunnelOnSolvedTopology;
     t->onPrepare       = &wireguarddeviceTunnelOnPrepair;
-    t->onStart         = &wireguarddeviceTunnelOnStart;
-    t->onStop          = &wireguarddeviceTunnelOnStop;
+    t->onStart          = &wireguarddeviceTunnelOnStart;
     t->onWorkerQuiesce = &wireguarddeviceTunnelOnWorkerQuiesce;
     t->onWorkerStop    = &wireguarddeviceTunnelOnWorkerStop;
     t->onDestroy       = &wireguarddeviceTunnelDestroy;

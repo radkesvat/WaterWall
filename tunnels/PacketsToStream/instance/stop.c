@@ -71,12 +71,6 @@ static void packetstostreamCloseWorkerOutputLine(tunnel_t *t, line_t *packet_lin
     lineUnref(stream_line);
 }
 
-void packetstostreamTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context)
-{
-    discard context;
-    discard t;
-}
-
 void packetstostreamTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context)
 {
     discard context;

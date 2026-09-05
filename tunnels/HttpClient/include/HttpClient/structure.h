@@ -194,18 +194,13 @@ WW_EXPORT api_result_t httpclientTunnelApi(tunnel_t *instance, sbuf_t *message);
 
 void httpclientTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offset);
 void httpclientTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
-void httpclientTunnelOnPrepair(tunnel_t *t);
-void httpclientTunnelOnStart(tunnel_t *t);
-void httpclientTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context);
 
 void httpclientTunnelUpStreamInit(tunnel_t *t, line_t *l);
-void httpclientTunnelUpStreamEst(tunnel_t *t, line_t *l);
 void httpclientTunnelUpStreamFinish(tunnel_t *t, line_t *l);
 void httpclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void httpclientTunnelUpStreamPause(tunnel_t *t, line_t *l);
 void httpclientTunnelUpStreamResume(tunnel_t *t, line_t *l);
 
-void httpclientTunnelDownStreamInit(tunnel_t *t, line_t *l);
 void httpclientTunnelDownStreamEst(tunnel_t *t, line_t *l);
 void httpclientTunnelDownStreamFinish(tunnel_t *t, line_t *l);
 void httpclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);

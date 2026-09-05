@@ -19,9 +19,7 @@ static void configureTunnelCallbacks(tunnel_t *t)
     t->fnResumeD  = &realityclientTunnelDownStreamResume;
 
     t->onChain   = &realityclientTunnelOnChain;
-    t->onPrepare = &realityclientTunnelOnPrepair;
-    t->onStart   = &realityclientTunnelOnStart;
-    t->onStop    = &realityclientTunnelOnStop;
+
     t->onDestroy = &realityclientTunnelDestroy;
 }
 

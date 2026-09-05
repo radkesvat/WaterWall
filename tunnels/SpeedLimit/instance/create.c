@@ -191,23 +191,18 @@ tunnel_t *speedlimitTunnelCreate(node_t *node)
     }
 
     t->fnInitU    = &speedlimitTunnelUpStreamInit;
-    t->fnEstU     = &speedlimitTunnelUpStreamEst;
+
     t->fnFinU     = &speedlimitTunnelUpStreamFinish;
     t->fnPayloadU = &speedlimitTunnelUpStreamPayload;
     t->fnPauseU   = &speedlimitTunnelUpStreamPause;
     t->fnResumeU  = &speedlimitTunnelUpStreamResume;
 
     t->fnInitD    = &speedlimitTunnelDownStreamInit;
-    t->fnEstD     = &speedlimitTunnelDownStreamEst;
+
     t->fnFinD     = &speedlimitTunnelDownStreamFinish;
     t->fnPayloadD = &speedlimitTunnelDownStreamPayload;
     t->fnPauseD   = &speedlimitTunnelDownStreamPause;
     t->fnResumeD  = &speedlimitTunnelDownStreamResume;
-
-    t->onPrepare = &speedlimitTunnelOnPrepair;
-    t->onStart   = &speedlimitTunnelOnStart;
-    t->onStop    = &speedlimitTunnelOnStop;
-    t->onDestroy = &speedlimitTunnelDestroy;
 
     const cJSON         *settings = node->node_settings_json;
     speedlimit_tstate_t *state    = tunnelGetState(t);

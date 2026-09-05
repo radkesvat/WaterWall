@@ -99,14 +99,12 @@ static tunnel_t *createSpeedLimitTunnel(void)
     ts->worker_buckets[0].last_refill_ms = 0;
 
     t->fnInitU    = &speedlimitTunnelUpStreamInit;
-    t->fnEstU     = &speedlimitTunnelUpStreamEst;
     t->fnFinU     = &speedlimitTunnelUpStreamFinish;
     t->fnPayloadU = &speedlimitTunnelUpStreamPayload;
     t->fnPauseU   = &speedlimitTunnelUpStreamPause;
     t->fnResumeU  = &speedlimitTunnelUpStreamResume;
 
     t->fnInitD    = &speedlimitTunnelDownStreamInit;
-    t->fnEstD     = &speedlimitTunnelDownStreamEst;
     t->fnFinD     = &speedlimitTunnelDownStreamFinish;
     t->fnPayloadD = &speedlimitTunnelDownStreamPayload;
     t->fnPauseD   = &speedlimitTunnelDownStreamPause;

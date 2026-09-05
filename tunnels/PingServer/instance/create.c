@@ -133,22 +133,14 @@ tunnel_t *pingserverCreate(node_t *node)
         return NULL;
     }
 
-    t->fnInitU    = &pingserverUpStreamInit;
-    t->fnEstU     = &pingserverUpStreamEst;
-    t->fnFinU     = &pingserverUpStreamFinish;
     t->fnPayloadU = &pingserverUpStreamPayload;
-    t->fnPauseU   = &pingserverUpStreamPause;
-    t->fnResumeU  = &pingserverUpStreamResume;
-    t->fnInitD    = &pingserverDownStreamInit;
-    t->fnEstD     = &pingserverDownStreamEst;
-    t->fnFinD     = &pingserverDownStreamFinish;
+
     t->fnPayloadD = &pingserverDownStreamPayload;
-    t->fnPauseD   = &pingserverDownStreamPause;
-    t->fnResumeD  = &pingserverDownStreamResume;
+
     t->onPrepare  = &pingserverOnPrepair;
     t->onStart    = &pingserverOnStart;
-    t->onStop     = &pingserverOnStop;
-    t->onDestroy  = &pingserverDestroy;
+
+    t->onDestroy = &pingserverDestroy;
 
     pingserver_tstate_t *state    = tunnelGetState(t);
     const cJSON         *settings = node->node_settings_json;

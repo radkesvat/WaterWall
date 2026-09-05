@@ -1,11 +1,8 @@
 
 add_library(TcpOverUdpClient STATIC
                     instance/create.c
-                    instance/destroy.c
                     instance/api.c
                     instance/node.c
-                    instance/prepair.c
-                    instance/start.c
                     instance/stop.c
                     instance/chain.c
                     instance/index.c
@@ -15,8 +12,6 @@ add_library(TcpOverUdpClient STATIC
                     upstream/est.c
                     upstream/fin.c
                     upstream/payload.c
-                    upstream/pause.c
-                    upstream/resume.c
                     upstream/est.c
                     downstream/init.c
                     downstream/est.c

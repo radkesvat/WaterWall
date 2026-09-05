@@ -101,7 +101,6 @@ WW_EXPORT api_result_t packetsenderTunnelApi(tunnel_t *instance, sbuf_t *message
 
 void packetsenderTunnelOnPrepair(tunnel_t *t);
 void packetsenderTunnelOnStart(tunnel_t *t);
-void packetsenderTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context);
 
 void packetsenderTunnelDownStreamInit(tunnel_t *t, line_t *l);
 void packetsenderTunnelDownStreamEst(tunnel_t *t, line_t *l);

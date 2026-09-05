@@ -20,21 +20,12 @@ add_library(Router STATIC
     modules/destination_domain/destination_domain.c
     modules/username/username.c
     modules/destination_port/destination_port.c
-    downstream/est.c
     downstream/fin.c
-    downstream/init.c
-    downstream/pause.c
-    downstream/payload.c
-    downstream/resume.c
     instance/api.c
     instance/chain.c
     instance/create.c
     instance/destroy.c
-    instance/index.c
     instance/node.c
-    instance/prepair.c
-    instance/start.c
-    instance/stop.c
     upstream/est.c
     upstream/fin.c
     upstream/init.c

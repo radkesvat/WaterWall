@@ -43,24 +43,16 @@ WW_EXPORT api_result_t keepaliveclientTunnelApi(tunnel_t *instance, sbuf_t *mess
 
 void keepaliveclientTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offset);
 void keepaliveclientTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
-void keepaliveclientTunnelOnPrepair(tunnel_t *t);
 void keepaliveclientTunnelOnStart(tunnel_t *t);
-void keepaliveclientTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context);
 void keepaliveclientTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);
 
 void keepaliveclientTunnelUpStreamInit(tunnel_t *t, line_t *l);
-void keepaliveclientTunnelUpStreamEst(tunnel_t *t, line_t *l);
 void keepaliveclientTunnelUpStreamFinish(tunnel_t *t, line_t *l);
 void keepaliveclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
-void keepaliveclientTunnelUpStreamPause(tunnel_t *t, line_t *l);
-void keepaliveclientTunnelUpStreamResume(tunnel_t *t, line_t *l);
 
 void keepaliveclientTunnelDownStreamInit(tunnel_t *t, line_t *l);
-void keepaliveclientTunnelDownStreamEst(tunnel_t *t, line_t *l);
 void keepaliveclientTunnelDownStreamFinish(tunnel_t *t, line_t *l);
 void keepaliveclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
-void keepaliveclientTunnelDownStreamPause(tunnel_t *t, line_t *l);
-void keepaliveclientTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
 void keepaliveclientLinestateInitialize(keepaliveclient_lstate_t *ls, line_t *l);
 void keepaliveclientLinestateDestroy(keepaliveclient_lstate_t *ls);

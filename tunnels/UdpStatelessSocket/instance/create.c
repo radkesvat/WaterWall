@@ -33,8 +33,6 @@ tunnel_t *udpstatelesssocketTunnelCreate(node_t *node)
 
     t->onPrepare        = &udpstatelesssocketTunnelOnPrepair;
     t->onStart          = &udpstatelesssocketTunnelOnStart;
-    t->onQuiesceRequest = &udpstatelesssocketTunnelOnQuiesceRequest;
-    t->onQuiesceWait    = &udpstatelesssocketTunnelOnQuiesceWait;
     t->onWorkerQuiesce  = &udpstatelesssocketTunnelOnWorkerQuiesce;
     t->onWorkerStop     = &udpstatelesssocketTunnelOnWorkerStop;
     t->onDestroy        = &udpstatelesssocketTunnelDestroy;

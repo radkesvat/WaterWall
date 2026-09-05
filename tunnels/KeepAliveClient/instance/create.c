@@ -32,22 +32,14 @@ tunnel_t *keepaliveclientTunnelCreate(node_t *node)
     keepaliveclient_tstate_t *ts = tunnelGetState(t);
 
     t->fnInitU    = &keepaliveclientTunnelUpStreamInit;
-    t->fnEstU     = &keepaliveclientTunnelUpStreamEst;
     t->fnFinU     = &keepaliveclientTunnelUpStreamFinish;
     t->fnPayloadU = &keepaliveclientTunnelUpStreamPayload;
-    t->fnPauseU   = &keepaliveclientTunnelUpStreamPause;
-    t->fnResumeU  = &keepaliveclientTunnelUpStreamResume;
 
     t->fnInitD    = &keepaliveclientTunnelDownStreamInit;
-    t->fnEstD     = &keepaliveclientTunnelDownStreamEst;
     t->fnFinD     = &keepaliveclientTunnelDownStreamFinish;
     t->fnPayloadD = &keepaliveclientTunnelDownStreamPayload;
-    t->fnPauseD   = &keepaliveclientTunnelDownStreamPause;
-    t->fnResumeD  = &keepaliveclientTunnelDownStreamResume;
 
-    t->onPrepare       = &keepaliveclientTunnelOnPrepair;
     t->onStart         = &keepaliveclientTunnelOnStart;
-    t->onStop          = &keepaliveclientTunnelOnStop;
     t->onWorkerQuiesce = &keepaliveclientTunnelOnWorkerQuiesce;
     t->onDestroy       = &keepaliveclientTunnelDestroy;
 

@@ -41,12 +41,10 @@ WW_EXPORT tunnel_t    *wireguarddeviceTunnelCreate(node_t *node);
 WW_EXPORT api_result_t wireguarddeviceTunnelApi(tunnel_t *instance, sbuf_t *message);
 
 void wireguarddeviceTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offset);
-void wireguarddeviceTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 bool wireguarddeviceTunnelOnSolvedTopology(tunnel_t *t, tunnel_chain_t *chain);
 void wireguarddeviceTunnelOnPrepair(tunnel_t *t);
 void wireguarddeviceTunnelOnStart(tunnel_t *t);
 void wireguarddeviceQueueWorkerPacketInit(void *worker, void *arg1, void *arg2, void *arg3);
-void wireguarddeviceTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context);
 void wireguarddeviceTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);
 void wireguarddeviceTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);
 

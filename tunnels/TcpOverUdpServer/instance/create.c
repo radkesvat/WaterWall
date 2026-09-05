@@ -147,16 +147,10 @@ tunnel_t *tcpoverudpserverTunnelCreate(node_t *node)
     t->fnResumeU  = &tcpoverudpserverTunnelUpStreamResume;
 
     t->fnInitD    = &tcpoverudpserverTunnelDownStreamInit;
-    t->fnEstD     = &tcpoverudpserverTunnelDownStreamEst;
     t->fnFinD     = &tcpoverudpserverTunnelDownStreamFinish;
     t->fnPayloadD = &tcpoverudpserverTunnelDownStreamPayload;
-    t->fnPauseD   = &tcpoverudpserverTunnelDownStreamPause;
-    t->fnResumeD  = &tcpoverudpserverTunnelDownStreamResume;
 
-    t->onPrepare        = &tcpoverudpserverTunnelOnPrepair;
-    t->onStart          = &tcpoverudpserverTunnelOnStart;
     t->onQuiesceRequest = &tcpoverudpserverTunnelOnQuiesceRequest;
-    t->onDestroy        = &tcpoverudpserverTunnelDestroy;
 
     tcpoverudpserver_tstate_t *ts = tunnelGetState(t);
 

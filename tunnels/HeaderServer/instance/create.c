@@ -24,11 +24,6 @@ tunnel_t *headerserverTunnelCreate(node_t *node)
     t->fnPauseD   = &headerserverTunnelDownStreamPause;
     t->fnResumeD  = &headerserverTunnelDownStreamResume;
 
-    t->onPrepare = &headerserverTunnelOnPrepair;
-    t->onStart   = &headerserverTunnelOnStart;
-    t->onStop    = &headerserverTunnelOnStop;
-    t->onDestroy = &headerserverTunnelDestroy;
-
     headerserver_tstate_t *ts = tunnelGetState(t);
     if (! headerserverLoadSettings(ts, node->node_settings_json))
     {

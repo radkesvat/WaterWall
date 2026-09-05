@@ -2,21 +2,12 @@ add_library(SniffRouter STATIC
     common/classifier.c
     common/line_state.c
     common/routes.c
-    downstream/est.c
     downstream/fin.c
-    downstream/init.c
-    downstream/pause.c
-    downstream/payload.c
-    downstream/resume.c
     instance/api.c
     instance/chain.c
     instance/create.c
     instance/destroy.c
-    instance/index.c
     instance/node.c
-    instance/prepair.c
-    instance/start.c
-    instance/stop.c
     upstream/est.c
     upstream/fin.c
     upstream/init.c

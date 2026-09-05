@@ -89,9 +89,6 @@ WW_EXPORT tunnel_t    *vlessclientTunnelCreate(node_t *node);
 WW_EXPORT api_result_t vlessclientTunnelApi(tunnel_t *instance, sbuf_t *message);
 
 void vlessclientTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
-void vlessclientTunnelOnPrepair(tunnel_t *t);
-void vlessclientTunnelOnStart(tunnel_t *t);
-void vlessclientTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context);
 
 void vlessclientTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void vlessclientTunnelUpStreamEst(tunnel_t *t, line_t *l);

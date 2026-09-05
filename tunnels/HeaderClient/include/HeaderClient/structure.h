@@ -41,27 +41,16 @@ enum
     kLineStateSize                              = sizeof(headerclient_lstate_t)
 };
 
-WW_EXPORT void         headerclientTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context);
 WW_EXPORT tunnel_t    *headerclientTunnelCreate(node_t *node);
 WW_EXPORT api_result_t headerclientTunnelApi(tunnel_t *instance, sbuf_t *message);
-
-void headerclientTunnelOnPrepair(tunnel_t *t);
-void headerclientTunnelOnStart(tunnel_t *t);
-void headerclientTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context);
 
 void headerclientTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void headerclientTunnelUpStreamEst(tunnel_t *t, line_t *l);
 void headerclientTunnelUpStreamFinish(tunnel_t *t, line_t *l);
 void headerclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
-void headerclientTunnelUpStreamPause(tunnel_t *t, line_t *l);
-void headerclientTunnelUpStreamResume(tunnel_t *t, line_t *l);
 
 void headerclientTunnelDownStreamInit(tunnel_t *t, line_t *l);
-void headerclientTunnelDownStreamEst(tunnel_t *t, line_t *l);
 void headerclientTunnelDownStreamFinish(tunnel_t *t, line_t *l);
-void headerclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
-void headerclientTunnelDownStreamPause(tunnel_t *t, line_t *l);
-void headerclientTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
 bool headerclientLoadSettings(headerclient_tstate_t *ts, const cJSON *settings);
 void headerclientLinestateInitialize(headerclient_lstate_t *ls);

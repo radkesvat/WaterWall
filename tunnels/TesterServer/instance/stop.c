@@ -55,9 +55,3 @@ void testerserverTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_c
      * has no state left to settle. */
     testerserverLinestateDestroy(lineGetState(packet_line, t));
 }
-
-void testerserverTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context)
-{
-    discard context;
-    discard t;
-}

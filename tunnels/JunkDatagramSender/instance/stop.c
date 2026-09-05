@@ -40,9 +40,3 @@ void junkdatagramsenderTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifec
 
     junkdatagramsenderLinestateDestroy(lineGetState(packet_line, t));
 }
-
-void junkdatagramsenderTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context)
-{
-    discard context;
-    discard t;
-}

@@ -161,8 +161,6 @@ WW_EXPORT api_result_t muxserverTunnelApi(tunnel_t *instance, sbuf_t *message);
 
 void muxserverTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offset);
 void muxserverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
-void muxserverTunnelOnPrepair(tunnel_t *t);
-void muxserverTunnelOnStart(tunnel_t *t);
 void muxserverTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context);
 void muxserverTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);
 void muxserverTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);

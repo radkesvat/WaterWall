@@ -128,9 +128,6 @@ WW_EXPORT api_result_t tlsserverTunnelApi(tunnel_t *instance, sbuf_t *message);
 
 void tlsserverTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offset);
 void tlsserverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
-void tlsserverTunnelOnPrepair(tunnel_t *t);
-void tlsserverTunnelOnStart(tunnel_t *t);
-void tlsserverTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context);
 
 void tlsserverTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void tlsserverTunnelUpStreamEst(tunnel_t *t, line_t *l);

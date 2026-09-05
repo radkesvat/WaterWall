@@ -1,12 +1,10 @@
 
 add_library(PacketSplitStream STATIC
                     instance/create.c
-                    instance/destroy.c
                     instance/api.c
                     instance/node.c
                     instance/prepair.c
                     instance/start.c
-                    instance/stop.c
                     instance/chain.c
                     common/helpers.c
                     common/line_state.c
@@ -14,7 +12,6 @@ add_library(PacketSplitStream STATIC
                     upstream/payload.c
                     upstream/fin.c
                     upstream/noop.c
-                    downstream/payload.c
                     downstream/fin.c
                     downstream/noop.c
 )

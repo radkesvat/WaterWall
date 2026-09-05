@@ -45,23 +45,15 @@ WW_EXPORT api_result_t encryptionserverTunnelApi(tunnel_t *instance, sbuf_t *mes
 
 void encryptionserverTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offset);
 void encryptionserverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
-void encryptionserverTunnelOnPrepair(tunnel_t *t);
-void encryptionserverTunnelOnStart(tunnel_t *t);
-void encryptionserverTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context);
 
 void encryptionserverTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void encryptionserverTunnelUpStreamEst(tunnel_t *t, line_t *l);
 void encryptionserverTunnelUpStreamFinish(tunnel_t *t, line_t *l);
 void encryptionserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
-void encryptionserverTunnelUpStreamPause(tunnel_t *t, line_t *l);
-void encryptionserverTunnelUpStreamResume(tunnel_t *t, line_t *l);
 
 void encryptionserverTunnelDownStreamInit(tunnel_t *t, line_t *l);
-void encryptionserverTunnelDownStreamEst(tunnel_t *t, line_t *l);
 void encryptionserverTunnelDownStreamFinish(tunnel_t *t, line_t *l);
 void encryptionserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
-void encryptionserverTunnelDownStreamPause(tunnel_t *t, line_t *l);
-void encryptionserverTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
 void encryptionserverLinestateInitialize(encryptionserver_lstate_t *ls, buffer_pool_t *pool);
 void encryptionserverLinestateDestroy(encryptionserver_lstate_t *ls);

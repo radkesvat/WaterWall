@@ -147,7 +147,6 @@ WW_EXPORT api_result_t speedtestclientTunnelApi(tunnel_t *instance, sbuf_t *mess
 void speedtestclientTunnelOnPrepair(tunnel_t *t);
 void speedtestclientTunnelOnStart(tunnel_t *t);
 void speedtestclientTunnelOnQuiesceRequest(tunnel_t *t, const ww_lifecycle_context_t *context);
-void speedtestclientTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context);
 void speedtestclientTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);
 
 void speedtestclientTunnelUpStreamInit(tunnel_t *t, line_t *l);

@@ -13,10 +13,7 @@ static void initializeTunnelCallbacks(tunnel_t *t)
     t->fnPauseU   = &udpconnectorTunnelUpStreamPause;
     t->fnResumeU  = &udpconnectorTunnelUpStreamResume;
 
-    t->onPrepare       = &udpconnectorTunnelOnPrepair;
     t->onChain         = &udpconnectorTunnelOnChain;
-    t->onStart         = &udpconnectorTunnelOnStart;
-    t->onStop          = &udpconnectorTunnelOnStop;
     t->onWorkerQuiesce = &udpconnectorTunnelOnWorkerQuiesce;
     t->onWorkerStop    = &udpconnectorTunnelOnWorkerStop;
     t->onDestroy       = &udpconnectorTunnelDestroy;

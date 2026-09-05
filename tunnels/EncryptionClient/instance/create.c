@@ -233,19 +233,11 @@ tunnel_t *encryptionclientTunnelCreate(node_t *node)
     t->fnEstU     = &encryptionclientTunnelUpStreamEst;
     t->fnFinU     = &encryptionclientTunnelUpStreamFinish;
     t->fnPayloadU = &encryptionclientTunnelUpStreamPayload;
-    t->fnPauseU   = &encryptionclientTunnelUpStreamPause;
-    t->fnResumeU  = &encryptionclientTunnelUpStreamResume;
 
     t->fnInitD    = &encryptionclientTunnelDownStreamInit;
-    t->fnEstD     = &encryptionclientTunnelDownStreamEst;
     t->fnFinD     = &encryptionclientTunnelDownStreamFinish;
     t->fnPayloadD = &encryptionclientTunnelDownStreamPayload;
-    t->fnPauseD   = &encryptionclientTunnelDownStreamPause;
-    t->fnResumeD  = &encryptionclientTunnelDownStreamResume;
 
-    t->onPrepare = &encryptionclientTunnelOnPrepair;
-    t->onStart   = &encryptionclientTunnelOnStart;
-    t->onStop    = &encryptionclientTunnelOnStop;
     t->onDestroy = &encryptionclientTunnelDestroy;
 
     encryptionclient_tstate_t *ts       = tunnelGetState(t);

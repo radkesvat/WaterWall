@@ -428,22 +428,17 @@ tunnel_t *httpclientTunnelCreate(node_t *node)
     }
 
     t->fnInitU    = &httpclientTunnelUpStreamInit;
-    t->fnEstU     = &httpclientTunnelUpStreamEst;
     t->fnFinU     = &httpclientTunnelUpStreamFinish;
     t->fnPayloadU = &httpclientTunnelUpStreamPayload;
     t->fnPauseU   = &httpclientTunnelUpStreamPause;
     t->fnResumeU  = &httpclientTunnelUpStreamResume;
 
-    t->fnInitD    = &httpclientTunnelDownStreamInit;
     t->fnEstD     = &httpclientTunnelDownStreamEst;
     t->fnFinD     = &httpclientTunnelDownStreamFinish;
     t->fnPayloadD = &httpclientTunnelDownStreamPayload;
     t->fnPauseD   = &httpclientTunnelDownStreamPause;
     t->fnResumeD  = &httpclientTunnelDownStreamResume;
 
-    t->onPrepare = &httpclientTunnelOnPrepair;
-    t->onStart   = &httpclientTunnelOnStart;
-    t->onStop    = &httpclientTunnelOnStop;
     t->onDestroy = &httpclientTunnelDestroy;
 
     httpclient_tstate_t *ts       = tunnelGetState(t);

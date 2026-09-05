@@ -114,8 +114,6 @@ WW_EXPORT api_result_t trojanserverTunnelApi(tunnel_t *instance, sbuf_t *message
 
 void trojanserverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void trojanserverTunnelOnPrepair(tunnel_t *t);
-void trojanserverTunnelOnStart(tunnel_t *t);
-void trojanserverTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context);
 
 void trojanserverTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void trojanserverTunnelUpStreamEst(tunnel_t *t, line_t *l);

@@ -4,9 +4,6 @@ add_library(HalfDuplexServer STATIC
                     instance/destroy.c
                     instance/api.c
                     instance/node.c
-                    instance/prepair.c
-                    instance/start.c
-                    instance/stop.c
                     instance/chain.c
                     instance/index.c
                     common/helpers.c

@@ -102,8 +102,6 @@ WW_EXPORT api_result_t vlessserverTunnelApi(tunnel_t *instance, sbuf_t *message)
 
 void vlessserverTunnelOnPrepair(tunnel_t *t);
 void vlessserverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
-void vlessserverTunnelOnStart(tunnel_t *t);
-void vlessserverTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context);
 
 void vlessserverTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void vlessserverTunnelUpStreamEst(tunnel_t *t, line_t *l);

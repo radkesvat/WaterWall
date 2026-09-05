@@ -134,11 +134,7 @@ void routerLinestateInitialize(router_lstate_t *ls);
 void routerLinestateDestroy(line_t *l, router_lstate_t *ls);
 
 // --- instance lifecycle ---
-void routerTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offset);
 void routerTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
-void routerTunnelOnPrepair(tunnel_t *t);
-void routerTunnelOnStart(tunnel_t *t);
-void routerTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context);
 
 // --- upstream callbacks ---
 void routerTunnelUpStreamInit(tunnel_t *t, line_t *l);
@@ -149,9 +145,4 @@ void routerTunnelUpStreamPause(tunnel_t *t, line_t *l);
 void routerTunnelUpStreamResume(tunnel_t *t, line_t *l);
 
 // --- downstream callbacks ---
-void routerTunnelDownStreamInit(tunnel_t *t, line_t *l);
-void routerTunnelDownStreamEst(tunnel_t *t, line_t *l);
-void routerTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void routerTunnelDownStreamFinish(tunnel_t *t, line_t *l);
-void routerTunnelDownStreamPause(tunnel_t *t, line_t *l);
-void routerTunnelDownStreamResume(tunnel_t *t, line_t *l);

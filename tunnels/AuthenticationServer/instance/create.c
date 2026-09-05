@@ -152,9 +152,7 @@ static void authenticationserverInitializeCallbacks(tunnel_t *t)
     t->fnPauseD   = &authenticationserverTunnelDownStreamPause;
     t->fnResumeD  = &authenticationserverTunnelDownStreamResume;
 
-    t->onPrepare       = &authenticationserverTunnelOnPrepair;
     t->onStart         = &authenticationserverTunnelOnStart;
-    t->onStop          = &authenticationserverTunnelOnStop;
     t->onWorkerQuiesce = &authenticationserverTunnelOnWorkerQuiesce;
     t->onDestroy       = &authenticationserverTunnelDestroy;
 }

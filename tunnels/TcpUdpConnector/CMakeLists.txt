@@ -4,10 +4,6 @@ add_library(TcpUdpConnector STATIC
     instance/api.c
     instance/node.c
     instance/chain.c
-    instance/index.c
-    instance/prepair.c
-    instance/start.c
-    instance/stop.c
     common/helpers.c
     common/line_state.c
     upstream/init.c
@@ -16,12 +12,7 @@ add_library(TcpUdpConnector STATIC
     upstream/payload.c
     upstream/pause.c
     upstream/resume.c
-    downstream/init.c
-    downstream/est.c
     downstream/fin.c
-    downstream/payload.c
-    downstream/pause.c
-    downstream/resume.c
 )
 
 target_include_directories(TcpUdpConnector PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
