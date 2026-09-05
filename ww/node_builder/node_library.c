@@ -3,6 +3,7 @@
  */
 
 #include "node_library.h"
+#include "config_policy.h"
 
 #include "worker.h"
 
@@ -386,6 +387,11 @@ node_t nodelibraryLoadByTypeHash(hash_t htype)
                 return *(k.ref);
             }
         }
+    }
+    if (configPolicyIsRestricted())
+    {
+        LOGE("NodeLibrary: external nodes are disabled by restricted configuration policy");
+        return (node_t) {0};
     }
     return dynLoadNodeLib(htype);
 }

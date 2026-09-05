@@ -555,6 +555,12 @@ set_tests_properties(
     RESOURCE_LOCK waterwall_reality_configuration
 )
 add_test(
+  NAME waterwall.restricted_config_input
+  COMMAND "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/restricted_config_input_test.py" "$<TARGET_FILE:Waterwall>"
+)
+set_tests_properties(waterwall.restricted_config_input PROPERTIES
+  TIMEOUT 120 LABELS "integration;core;startup;configuration;security")
+add_test(
   NAME waterwall.core_json_input
   COMMAND
     "${PYTHON3_EXECUTABLE}"

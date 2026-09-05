@@ -8,6 +8,7 @@
 #include "line.h"
 #include "loggers/internal_logger.h"
 #include "net/node_layer_solver.h"
+#include "node_builder/config_policy.h"
 #include "utils/json_helpers.h"
 
 enum
@@ -110,7 +111,9 @@ tunnel_t *nodemanagerCreateTunnelInstance(node_t *node)
     const char *missing_callback = findMissingTunnelCallback(tunnel);
     if (missing_callback != NULL)
     {
-        LOGF("NodeManager: node (\"%s\") returned an instance with NULL callback \"%s\"", node->name, missing_callback);
+        LOGF("NodeManager: node (\"%s\") returned an instance with NULL callback \"%s\"",
+             configPolicyDiagnostic(node->name),
+             missing_callback);
         tunnelDestroy(tunnel);
         startupFailureRecord(1);
         return NULL;
@@ -153,7 +156,8 @@ static int createTunnelInstances(node_manager_config_t *cfg, tunnel_t **t_array,
         t_array[index++] = n1->instance = nodemanagerCreateTunnelInstance(n1);
         if (UNLIKELY(startupFailurePending() || n1->instance == NULL))
         {
-            LOGF("NodeManager: node startup failure: node (\"%s\") create() returned NULL handle", n1->name);
+            LOGF("NodeManager: node startup failure: node (\"%s\") create() returned NULL handle",
+                 configPolicyDiagnostic(n1->name));
             startupFailureRecord(1);
             return -1;
         }
@@ -177,7 +181,8 @@ static void assignChainsToTunnels(tunnel_t **t_array, int tunnels_count)
             tunnel_chain_t *tc = tunnelchainCreate(getWorkersCount());
             if (UNLIKELY(tc == NULL))
             {
-                LOGF("NodeManager: failed to allocate tunnel-chain metadata for node \"%s\"", tunnel->node->name);
+                LOGF("NodeManager: failed to allocate tunnel-chain metadata for node \"%s\"",
+                     configPolicyDiagnostic(tunnel->node->name));
                 startupFailureRecord(1);
                 return;
             }
@@ -239,7 +244,7 @@ static void finalizeTunnelChains(node_manager_config_t *cfg, tunnel_t **t_array,
                 if (UNLIKELY(mem_offset != expected_offset))
                 {
                     LOGF("NodeManager: invalid line-state offset after indexing node (\"%s\")",
-                         tunnel_in_chain->node->name);
+                         configPolicyDiagnostic(tunnel_in_chain->node->name));
                     startupFailureRecord(1);
                     return;
                 }
@@ -280,7 +285,8 @@ static void validateTunnelChains(tunnel_t **t_array, int tunnels_count)
 
         if (t->chain == NULL)
         {
-            LOGF("NodeManager: node startup failure: node (\"%s\") is not in an assembled chain", t->node->name);
+            LOGF("NodeManager: node startup failure: node (\"%s\") is not in an assembled chain",
+                 configPolicyDiagnostic(t->node->name));
             startupFailureRecord(1);
             return;
         }
@@ -317,7 +323,7 @@ static void validateTunnelChains(tunnel_t **t_array, int tunnels_count)
             node_layer_solver_status_t status = {0};
             if (! nodeLayerSolveChain(chain, &status))
             {
-                LOGF("NodeManager: node startup failure: %s", status.message);
+                LOGF("NodeManager: node startup failure: %s", configPolicyDiagnostic(status.message));
                 startupFailureRecord(1);
                 return;
             }
@@ -456,7 +462,7 @@ void nodemanagerInitializeLineOnTargetWorker(void *worker, void *_tunnel, void *
          * this runs on a worker but must still hard-abort.
          */
         LOGF("NodeManager: node startup failure: line initialization failed for node (\"%s\") on worker %d",
-             tunnel->node->name,
+             configPolicyDiagnostic(tunnel->node->name),
              workerWIDForLog(getWID()));
         abortProgramNow(1);
         return;
@@ -512,7 +518,7 @@ static bool initializePacketTunnels(node_manager_config_t *cfg)
                              kWorkerMessageSubmitAccepted))
                 {
                     LOGF("NodeManager: failed to admit packet-chain Init for node \"%s\" on worker %d",
-                         head->node->name,
+                         configPolicyDiagnostic(head->node->name),
                          workerWIDForLog(wi));
                     return false;
                 }
@@ -601,11 +607,11 @@ static void validateNodeChainPath(node_t *start_node, node_manager_config_t *cfg
         if (next_node == NULL)
         {
             LOGF("Node Map Failure: Error in config file!  (path: %s)  (name: %s)",
-                 cfg->config_file->file_path,
-                 cfg->config_file->name);
+                 configPolicyDiagnostic(cfg->config_file->file_path),
+                 configPolicyDiagnostic(cfg->config_file->name));
             LOGF("Node Map Failure: node \"%s\" could not find it's next node \"%s\"",
-                 current_node->name,
-                 current_node->next);
+                 configPolicyDiagnostic(current_node->name),
+                 configPolicyDiagnostic(current_node->next));
             startupFailureRecord(1);
             return;
         }
@@ -681,7 +687,7 @@ static void parseNodeJsonFields(cJSON *node_json, node_manager_config_t *cfg, ch
     if (! getStringFromJsonObject(node_name, node_json, "name"))
     {
         LOGF("JSON Error: config file \"%s\" -> nodes[x]->name (string field) was empty or invalid",
-             cfg->config_file->file_path);
+             configPolicyDiagnostic(cfg->config_file->file_path));
         startupFailureRecord(1);
         return;
     }
@@ -689,7 +695,7 @@ static void parseNodeJsonFields(cJSON *node_json, node_manager_config_t *cfg, ch
     if (! getStringFromJsonObject(node_type, node_json, "type"))
     {
         LOGF("JSON Error: config file \"%s\" -> nodes[x]->type (string field) was empty or invalid",
-             cfg->config_file->file_path);
+             configPolicyDiagnostic(cfg->config_file->file_path));
         startupFailureRecord(1);
         return;
     }
@@ -710,7 +716,7 @@ static node_t *createAndLoadNode(const char *node_type, hash_t hash_type)
     node_t *new_node = nodemanagerNewNode();
     if (UNLIKELY(new_node == NULL))
     {
-        LOGF("NodeManager: failed to allocate node metadata for type \"%s\"", node_type);
+        LOGF("NodeManager: failed to allocate node metadata for type \"%s\"", configPolicyDiagnostic(node_type));
         startupFailureRecord(1);
         return NULL;
     }
@@ -719,7 +725,7 @@ static node_t *createAndLoadNode(const char *node_type, hash_t hash_type)
     if (new_node->hash_type != hash_type)
     {
         LOGF("NodeManager: node creation failure: library \"%s\" (hash: %lx) could not be loaded ",
-             node_type,
+             configPolicyDiagnostic(node_type),
              hash_type);
         memoryFree(new_node);
         startupFailureRecord(1);
@@ -782,10 +788,10 @@ static void validateSingletonNodeType(node_t *node, node_manager_config_t *cfg)
 
         LOGF("NodeManager: singleton node type \"%s\" can only appear once per config file \"%s\" "
              "(conflicting nodes: \"%s\" and \"%s\")",
-             node->type,
-             cfg->config_file->file_path,
-             existing_node->name,
-             node->name);
+             configPolicyDiagnostic(node->type),
+             configPolicyDiagnostic(cfg->config_file->file_path),
+             configPolicyDiagnostic(existing_node->name),
+             configPolicyDiagnostic(node->name));
         startupFailureRecord(1);
         return;
     }
@@ -811,14 +817,14 @@ static void registerNodeInMap(node_t *node, node_manager_config_t *cfg)
     {
         LOGF("NodeManager: cannot register node \"%s\" after the config node map was frozen; "
              "internal child nodes must remain private to their parent tunnel",
-             node->name);
+             configPolicyDiagnostic(node->name));
         startupFailureRecord(1);
         return;
     }
 
     if (map_node_t_contains(map, node->hash_name))
     {
-        LOGF("NodeManager: duplicate node \"%s\" (hash: %lx) ", node->name, node->hash_name);
+        LOGF("NodeManager: duplicate node \"%s\" (hash: %lx) ", configPolicyDiagnostic(node->name), node->hash_name);
         startupFailureRecord(1);
         return;
     }
@@ -826,7 +832,7 @@ static void registerNodeInMap(node_t *node, node_manager_config_t *cfg)
     if (map_node_t_size(map) >= kMaxNodesPerConfig)
     {
         LOGF("NodeManager: config file \"%s\" exceeds the maximum of %d nodes",
-             cfg->config_file->file_path,
+             configPolicyDiagnostic(cfg->config_file->file_path),
              kMaxNodesPerConfig);
         startupFailureRecord(1);
         return;
@@ -840,7 +846,7 @@ static void registerNodeInMap(node_t *node, node_manager_config_t *cfg)
 
     if (result.ref == NULL || ! result.inserted)
     {
-        LOGF("NodeManager: failed to register node \"%s\"", node->name);
+        LOGF("NodeManager: failed to register node \"%s\"", configPolicyDiagnostic(node->name));
         startupFailureRecord(1);
     }
 }
@@ -917,7 +923,7 @@ static void createAllNodeInstances(node_manager_config_t *cfg)
     if (nodes_count > kMaxNodesPerConfig)
     {
         LOGF("NodeManager: config file \"%s\" contains %d nodes; the maximum is %d",
-             cfg->config_file->file_path,
+             configPolicyDiagnostic(cfg->config_file->file_path),
              nodes_count,
              kMaxNodesPerConfig);
         startupFailureRecord(1);

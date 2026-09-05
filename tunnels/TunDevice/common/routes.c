@@ -1,3 +1,4 @@
+#include "node_builder/config_policy.h"
 #include "structure.h"
 
 #include "loggers/network_logger.h"
@@ -468,6 +469,12 @@ bool tundeviceLoadRouteSettings(tundevice_tstate_t *state, const cJSON *settings
     getBoolFromJsonObjectOrDefault(
         &state->loop_protection_enabled, settings, "loop-protection", state->system_route_enabled);
 
+    if (configPolicyIsRestricted() && (cJSON_GetObjectItemCaseSensitive(settings, "post-up-script") != NULL ||
+                                       cJSON_GetObjectItemCaseSensitive(settings, "pre-down-script") != NULL))
+    {
+        LOGF("TunDevice: user scripts are disabled by restricted configuration policy");
+        return false;
+    }
     getStringFromJsonObject(&state->post_up_script, settings, "post-up-script");
     getStringFromJsonObject(&state->pre_down_script, settings, "pre-down-script");
 

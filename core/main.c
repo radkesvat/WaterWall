@@ -3,6 +3,7 @@
 
 #include "imported_tunnels.h"
 #include "loggers/core_logger.h"
+#include "node_builder/config_policy.h"
 #include "os_helpers.h"
 #include "startup_options.h"
 
@@ -138,7 +139,7 @@ int waterwallInnerMain(int argc, char **argv)
                 goto startup_failed;
             }
 
-            LOGD("Core: begin parsing config file \"%s\"", *k.ref);
+            LOGD("Core: begin parsing config file \"%s\"", configPolicyDiagnostic(*k.ref));
             config_file_t *cfile = configfileParse(*k.ref);
             if (cfile == NULL)
             {
@@ -162,7 +163,7 @@ int waterwallInnerMain(int argc, char **argv)
                 goto startup_failed;
             }
 
-            LOGI("Core: parsing config file \"%s\" complete", *k.ref);
+            LOGI("Core: parsing config file \"%s\" complete", configPolicyDiagnostic(*k.ref));
             startup_result                          = nodemanagerRunConfigFile(cfile);
             const bool config_install_checkpoint_ok = waterwallStartupCheckpoint();
             if (UNLIKELY(! wwStartupSucceeded(startup_result) || ! config_install_checkpoint_ok))

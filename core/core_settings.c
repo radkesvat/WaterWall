@@ -1,4 +1,5 @@
 #include "core_settings.h"
+#include "node_builder/config_policy.h"
 #include "wplatform.h"
 #include "wwapi.h"
 
@@ -971,13 +972,13 @@ bool parseCoreSettings(const char *data_json)
         initCoreSettings();
     }
 
-    cJSON *json = cJSON_Parse(data_json);
+    cJSON *json = configPolicyIsRestricted() ? configPolicyParse(data_json, strlen(data_json)) : cJSON_Parse(data_json);
     if (json == NULL)
     {
         const char *error_ptr = cJSON_GetErrorPtr();
-        if (error_ptr != NULL)
+        if (error_ptr != NULL && ! configPolicyIsRestricted())
         {
-            printError("JSON Error before: %s\n", error_ptr);
+            printError("JSON Error at byte %zu\n", (size_t) (error_ptr - data_json));
         }
         startupFailureRecord(1);
         return false;

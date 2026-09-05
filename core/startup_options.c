@@ -1,6 +1,11 @@
 #include "startup_options.h"
 
+#include "node_builder/config_policy.h"
 #include "wlibc.h"
+#ifdef OS_WIN
+#include <fcntl.h>
+#include <io.h>
+#endif
 
 #define WATERWALL_CORE_JSON_INPUT_ENV        "WW_CORE_JSON_INPUT"
 #define WATERWALL_DEFAULT_CORE_JSON_INPUT    "core.json"
@@ -37,7 +42,7 @@ static void printUsage(const char *program_name)
 {
     printError("Usage:\n"
                "  %s [-v|--v|-version|--version|version]\n"
-               "  %s [-c:PATH|--c:PATH|-config:PATH|--config:PATH|config:PATH]\n",
+               "  %s [--restricted-config] [-c:PATH|--c:PATH|-config:PATH|--config:PATH|config:PATH]\n",
                program_name,
                program_name);
 }
@@ -54,6 +59,7 @@ waterwall_startup_arguments_result_e waterwallStartupOptionsParse(int argc, char
     const char *program_name     = argv[0];
     const char *cli_core_input   = NULL;
     bool        version_argument = false;
+    bool        restricted_config = false;
 
     for (int i = 1; i < argc; ++i)
     {
@@ -63,6 +69,17 @@ waterwall_startup_arguments_result_e waterwallStartupOptionsParse(int argc, char
             printError("Invalid null command-line argument at position %d\n", i);
             printUsage(program_name);
             return kWaterwallStartupArgumentsExitFailure;
+        }
+
+        if (strcmp(arg, "--restricted-config") == 0)
+        {
+            if (restricted_config)
+            {
+                printError("The restricted configuration option may only be specified once\n");
+                return kWaterwallStartupArgumentsExitFailure;
+            }
+            restricted_config = true;
+            continue;
         }
 
         if (isVersionArgument(arg))
@@ -122,6 +139,10 @@ waterwall_startup_arguments_result_e waterwallStartupOptionsParse(int argc, char
         core_input = WATERWALL_DEFAULT_CORE_JSON_INPUT;
     }
 
+    if (restricted_config)
+    {
+        configPolicyRestrict();
+    }
     options->core_json_input      = core_input;
     options->core_json_from_stdin = stringCompare(core_input, "stdin") == 0;
     return kWaterwallStartupArgumentsRun;
@@ -164,6 +185,26 @@ char *waterwallStartupOptionsReadCoreJson(const waterwall_startup_options_t *opt
             reportOpenFailure(options->core_json_input, open_error);
             return NULL;
         }
+    }
+
+    if (configPolicyIsRestricted())
+    {
+#ifdef OS_WIN
+        if (options->core_json_from_stdin && _setmode(_fileno(input), _O_BINARY) == -1)
+        {
+            printError("Restricted config: could not select binary stdin\n");
+            return NULL;
+        }
+#endif
+        size_t length  = 0;
+        char  *content = configPolicyRead(input, WW_HOST_CORE_JSON_LIMIT, &length);
+        if (! options->core_json_from_stdin && fclose(input) != 0)
+        {
+            printError("Restricted config: input close failure\n");
+            memoryFree(content);
+            return NULL;
+        }
+        return content;
     }
 
     size_t capacity = WATERWALL_CORE_JSON_INITIAL_CAPACITY;
