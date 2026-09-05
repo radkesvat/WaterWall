@@ -6,7 +6,7 @@ void bgp4clientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     bgp4client_lstate_t *ls = lineGetState(l, t);
 
-    bufferstreamPush(&ls->read_stream, buf);
+    bufferstreamPushCoalescing(&ls->read_stream, buf);
 
     while (true)
     {

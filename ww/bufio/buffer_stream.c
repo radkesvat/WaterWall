@@ -9,8 +9,8 @@
 
 enum
 {
-    kBufferStreamQCap    = 16,
-    kConcatMaxThreshould = 4096
+    kBufferStreamQCap                      = 16,
+    kBufferStreamCoalescingMaxIncomingSize = 4096
 };
 
 static inline void bufferstreamCheckSbufByteCount(size_t bytes, const char *operation)
@@ -22,11 +22,36 @@ static inline void bufferstreamCheckSbufByteCount(size_t bytes, const char *oper
     }
 }
 
+static uint32_t bufferstreamValidatePush(buffer_stream_t *self, sbuf_t *buf)
+{
+    assert(self != NULL && buf != NULL);
+
+    const uint32_t buf_len = sbufGetLength(buf);
+    bufferstreamCheckSbufByteCount(buf_len, "push");
+
+    if (UNLIKELY(self->size > (size_t) UINT32_MAX - buf_len))
+    {
+        printError("BufferStream: buffered data exceeds sbuf_t 32-bit limit");
+        abortProgramNow(1);
+    }
+
+    return buf_len;
+}
+
+static void bufferstreamEnqueueValidated(buffer_stream_t *self, sbuf_t *buf, uint32_t buf_len)
+{
+    bs_doublequeue_t_push_back(&self->q, buf);
+    self->size += buf_len;
+}
+
 static sbuf_t *bufferstreamAllocExactReadBuffer(buffer_stream_t *self, uint32_t bytes)
 {
-    sbuf_t *slice;
+    const uint16_t use_left_padding = self->use_left_padding;
+    const uint32_t required_payload = bytes > use_left_padding ? bytes - use_left_padding : 0;
+    sbuf_t        *slice;
 
-    if (bytes <= bufferpoolGetSmallBufferSize(self->pool))
+    if (required_payload <= bufferpoolGetSmallBufferSize(self->pool) &&
+        use_left_padding <= bufferpoolGetSmallBufferPadding(self->pool))
     {
         slice = bufferpoolGetSmallBuffer(self->pool);
     }
@@ -35,9 +60,10 @@ static sbuf_t *bufferstreamAllocExactReadBuffer(buffer_stream_t *self, uint32_t 
         slice = bufferpoolGetLargeBuffer(self->pool);
     }
 
-    if (self->use_left_padding > 0)
+    assert(sbufGetLeftCapacity(slice) >= use_left_padding);
+    if (use_left_padding > 0)
     {
-        sbufShiftLeft(slice, self->use_left_padding);
+        sbufShiftLeft(slice, use_left_padding);
         sbufSetLength(slice, 0);
     }
 
@@ -81,19 +107,39 @@ void bufferstreamDestroy(buffer_stream_t *self)
 
 void bufferstreamPush(buffer_stream_t *self, sbuf_t *buf)
 {
-    assert(self != NULL && buf != NULL);
+    const uint32_t buf_len = bufferstreamValidatePush(self, buf);
+    bufferstreamEnqueueValidated(self, buf, buf_len);
+}
 
-    size_t buf_len = sbufGetLength(buf);
-    bufferstreamCheckSbufByteCount(buf_len, "push");
+void bufferstreamPushCoalescing(buffer_stream_t *self, sbuf_t *buf)
+{
+    const uint32_t incoming_len = bufferstreamValidatePush(self, buf);
 
-    if (UNLIKELY(self->size > (size_t) UINT32_MAX - buf_len))
+    if (! bs_doublequeue_t_is_empty(&self->q) && incoming_len > 0 &&
+        incoming_len <= kBufferStreamCoalescingMaxIncomingSize)
     {
-        printError("BufferStream: buffered data exceeds sbuf_t 32-bit limit");
-        abortProgramNow(1);
+        sbuf_t *tail = *bs_doublequeue_t_back(&self->q);
+
+        if (tail != buf && ! tail->is_temporary && ! buf->is_temporary && sbufGetLifetime(tail) == NULL &&
+            sbufGetLifetime(buf) == NULL)
+        {
+            const uint32_t tail_len              = sbufGetLength(tail);
+            const uint32_t tail_maximum_writable = sbufGetMaximumWriteableSize(tail);
+            assert(tail_len <= tail_maximum_writable);
+            const uint32_t tail_spare = tail_maximum_writable - tail_len;
+
+            if (incoming_len <= tail_spare)
+            {
+                memoryCopy(sbufGetMutablePtr(tail) + tail_len, sbufGetRawPtr(buf), incoming_len);
+                sbufSetLength(tail, tail_len + incoming_len);
+                self->size += incoming_len;
+                bufferpoolReuseBuffer(self->pool, buf);
+                return;
+            }
+        }
     }
 
-    bs_doublequeue_t_push_back(&self->q, buf);
-    self->size += buf_len;
+    bufferstreamEnqueueValidated(self, buf, incoming_len);
 }
 
 sbuf_t *bufferstreamReadExact(buffer_stream_t *self, size_t bytes)

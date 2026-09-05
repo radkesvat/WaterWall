@@ -9,6 +9,15 @@
 # and are intentionally not registered as CTest pass/fail thresholds.
 
 if(TARGET ww AND UNIX)
+  add_executable(bufferstream_optimization_benchmark EXCLUDE_FROM_ALL bufferstream_optimization_benchmark.c)
+  target_link_libraries(bufferstream_optimization_benchmark PRIVATE ww)
+  get_filename_component(WW_BENCHMARK_BUILD_TREE "${CMAKE_BINARY_DIR}" NAME)
+  target_compile_definitions(bufferstream_optimization_benchmark PRIVATE
+    WW_BENCHMARK_COMPILER_ID="${CMAKE_C_COMPILER_ID}"
+    WW_BENCHMARK_COMPILER_VERSION="${CMAKE_C_COMPILER_VERSION}"
+    WW_BENCHMARK_BUILD_TREE="${WW_BENCHMARK_BUILD_TREE}"
+    WW_BENCHMARK_BUILD_CONFIG="$<CONFIG>")
+
   add_executable(device_writer_channel_benchmark EXCLUDE_FROM_ALL device_writer_channel_benchmark.c)
   target_link_libraries(device_writer_channel_benchmark PRIVATE ww)
 

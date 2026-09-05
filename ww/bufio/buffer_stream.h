@@ -28,7 +28,7 @@ struct buffer_stream_s
     buffer_pool_t   *pool;
     bs_doublequeue_t q;
     size_t           size;
-    uint16_t         use_left_padding; // Whether to use left padding for buffers
+    uint16_t         use_left_padding; // Exact left-padding budget consumed by split exact-read allocations
 };
 
 typedef struct buffer_stream_s buffer_stream_t;
@@ -36,7 +36,10 @@ typedef struct buffer_stream_s buffer_stream_t;
 /**
  * Creates a new buffer stream.
  * @param pool The buffer pool.
- * @param use_left_padding Whether to use left padding for buffers.
+ * @param use_left_padding Exact number of left-padding bytes that a split
+ *        exact-read allocation may consume. The caller's chain must guarantee
+ *        this budget on the large tier; the small tier is used only when its
+ *        configured padding also provides the complete budget.
  * @return A new buffer stream instance.
  */
 buffer_stream_t bufferstreamCreate(buffer_pool_t *pool, uint16_t use_left_padding);
@@ -54,11 +57,27 @@ void bufferstreamEmpty(buffer_stream_t *self);
 void bufferstreamDestroy(buffer_stream_t *self);
 
 /**
- * Pushes a buffer into the buffer stream.
+ * Pushes a buffer into the buffer stream as a separate queued chunk.
+ * Ownership of @p buf transfers to the stream on every path.
  * @param self The buffer stream.
- * @param buf The buffer to push.
+ * @param buf The buffer whose ownership transfers to the stream.
  */
 void bufferstreamPush(buffer_stream_t *self, sbuf_t *buf);
+
+/**
+ * Pushes a buffer and may coalesce its complete payload into unused space at
+ * the current queue tail.
+ *
+ * Ownership of @p buf transfers on every path, exactly as for
+ * bufferstreamPush(). An eligible input may be copied into the tail and
+ * recycled before this function returns, so callers must not depend on source
+ * pointer identity or input chunk boundaries afterward. Ineligible inputs use
+ * the exact ordinary enqueue behavior.
+ *
+ * @param self The buffer stream.
+ * @param buf The buffer whose ownership transfers to the stream.
+ */
+void bufferstreamPushCoalescing(buffer_stream_t *self, sbuf_t *buf);
 
 /**
  * Reads an exact number of bytes from the buffer stream.
