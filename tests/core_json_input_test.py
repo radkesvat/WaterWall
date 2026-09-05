@@ -74,7 +74,7 @@ def test_version_arguments(binary, run_dir):
 
 def test_file_selection(binary, run_dir):
     default_file = run_dir / "core.json"
-    relative_file = run_dir / "relative core:input.json"
+    relative_file = run_dir / "relative core input.json"
     absolute_file = run_dir / "absolute-core.json"
     environment_file = run_dir / "environment-core.json"
 
