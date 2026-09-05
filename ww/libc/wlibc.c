@@ -271,17 +271,20 @@ char *readFile(const char *const path)
         return NULL;
     }
 
-    fseek(f, 0, SEEK_END);
+    if (fseek(f, 0, SEEK_END) != 0)
+    {
+        fclose(f);
+        return NULL;
+    }
     long fsize = ftell(f);
-    fseek(f, 0, SEEK_SET); /* same as rewind(f); */
 
-    if (fsize < 0)
+    if (fsize < 0 || (uintmax_t) fsize >= SIZE_MAX || fseek(f, 0, SEEK_SET) != 0)
     {
         fclose(f);
         return NULL;
     }
 
-    char *string = memoryAllocate((size_t) (fsize + 1));
+    char *string = memoryAllocate((size_t) fsize + 1);
     if (string == NULL)
     {
         fclose(f);
