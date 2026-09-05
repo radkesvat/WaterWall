@@ -115,8 +115,6 @@ WW_EXPORT void         muxclientTunnelDestroy(tunnel_t *t, const ww_lifecycle_co
 WW_EXPORT tunnel_t    *muxclientTunnelCreate(node_t *node);
 WW_EXPORT api_result_t muxclientTunnelApi(tunnel_t *instance, sbuf_t *message);
 
-void muxclientTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offset);
-void muxclientTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void muxclientTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);
 
 void muxclientTunnelUpStreamInit(tunnel_t *t, line_t *l);

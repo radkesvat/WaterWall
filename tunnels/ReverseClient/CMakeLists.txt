@@ -6,8 +6,6 @@ add_library(ReverseClient STATIC
                     instance/node.c
                     instance/start.c
                     instance/stop.c
-                    instance/chain.c
-                    instance/index.c
                     common/handshake.c
                     common/helpers.c
                     common/line_state.c

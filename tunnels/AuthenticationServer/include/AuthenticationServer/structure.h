@@ -127,8 +127,6 @@ WW_EXPORT void         authenticationserverTunnelDestroy(tunnel_t *t, const ww_l
 WW_EXPORT tunnel_t    *authenticationserverTunnelCreate(node_t *node);
 WW_EXPORT api_result_t authenticationserverTunnelApi(tunnel_t *instance, sbuf_t *message);
 
-void authenticationserverTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offset);
-void authenticationserverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void authenticationserverTunnelOnStart(tunnel_t *t);
 void authenticationserverTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);
 

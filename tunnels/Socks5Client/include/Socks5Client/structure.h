@@ -83,7 +83,6 @@ WW_EXPORT void         socks5clientTunnelDestroy(tunnel_t *t, const ww_lifecycle
 WW_EXPORT tunnel_t    *socks5clientTunnelCreate(node_t *node);
 WW_EXPORT api_result_t socks5clientTunnelApi(tunnel_t *instance, sbuf_t *message);
 
-void socks5clientTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offset);
 void socks5clientTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 
 void socks5clientTunnelUpStreamInit(tunnel_t *t, line_t *l);

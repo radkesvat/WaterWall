@@ -8,23 +8,12 @@ add_library(IpManipulator STATIC
                     instance/start.c
                     instance/stop.c
                     instance/chain.c
-                    instance/index.c
                     common/flow_table.c
                     common/helpers.c
                     common/line_state.c
                     upstream/init.c
-                    upstream/est.c
-                    upstream/fin.c
                     upstream/payload.c
-                    upstream/pause.c
-                    upstream/resume.c
-                    upstream/est.c
-                    downstream/est.c
-                    downstream/fin.c
                     downstream/payload.c
-                    downstream/pause.c
-                    downstream/resume.c
-                    downstream/est.c
                     common/tricks/protoswap/trick.c
                     common/tricks/firstsni/trick.c
                     common/tricks/overlapsni/trick.c

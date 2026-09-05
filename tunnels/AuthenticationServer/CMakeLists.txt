@@ -5,8 +5,6 @@ add_library(AuthenticationServer STATIC
                     instance/node.c
                     instance/start.c
                     instance/stop.c
-                    instance/chain.c
-                    instance/index.c
                     common/database.c
                     common/line_state.c
                     common/protocol.c

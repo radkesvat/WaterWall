@@ -201,9 +201,6 @@ WW_EXPORT void         httpserverTunnelDestroy(tunnel_t *t, const ww_lifecycle_c
 WW_EXPORT tunnel_t    *httpserverTunnelCreate(node_t *node);
 WW_EXPORT api_result_t httpserverTunnelApi(tunnel_t *instance, sbuf_t *message);
 
-void httpserverTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offset);
-void httpserverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
-
 void httpserverTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void httpserverTunnelUpStreamEst(tunnel_t *t, line_t *l);
 void httpserverTunnelUpStreamFinish(tunnel_t *t, line_t *l);

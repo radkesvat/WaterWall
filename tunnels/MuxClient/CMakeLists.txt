@@ -5,8 +5,6 @@ add_library(MuxClient STATIC
                     instance/api.c
                     instance/node.c
                     instance/stop.c
-                    instance/chain.c
-                    instance/index.c
                     common/helpers.c
                     common/line_state.c
                     upstream/init.c

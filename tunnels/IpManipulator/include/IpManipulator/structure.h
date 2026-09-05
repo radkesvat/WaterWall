@@ -556,7 +556,6 @@ WW_EXPORT void         ipmanipulatorDestroy(tunnel_t *t, const ww_lifecycle_cont
 WW_EXPORT tunnel_t    *ipmanipulatorCreate(node_t *node);
 WW_EXPORT api_result_t ipmanipulatorApi(tunnel_t *instance, sbuf_t *message);
 
-void ipmanipulatorOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offset);
 void ipmanipulatorOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void ipmanipulatorOnPrepair(tunnel_t *t);
 void ipmanipulatorOnStart(tunnel_t *t);
@@ -567,18 +566,10 @@ void ipmanipulatorOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_contex
 void ipmanipulatorOnStop(tunnel_t *t, const ww_lifecycle_context_t *context);
 
 void ipmanipulatorUpStreamInit(tunnel_t *t, line_t *l);
-void ipmanipulatorUpStreamEst(tunnel_t *t, line_t *l);
-void ipmanipulatorUpStreamFinish(tunnel_t *t, line_t *l);
 void ipmanipulatorUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
-void ipmanipulatorUpStreamPause(tunnel_t *t, line_t *l);
-void ipmanipulatorUpStreamResume(tunnel_t *t, line_t *l);
 
-void ipmanipulatorDownStreamEst(tunnel_t *t, line_t *l);
-void ipmanipulatorDownStreamFinish(tunnel_t *t, line_t *l);
 void ipmanipulatorDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void ipmanipulatorDownStreamPayloadAfterSmuggleFin(tunnel_t *t, line_t *l, sbuf_t *buf);
-void ipmanipulatorDownStreamPause(tunnel_t *t, line_t *l);
-void ipmanipulatorDownStreamResume(tunnel_t *t, line_t *l);
 
 void ipmanipulatorLinestateInitialize(ipmanipulator_lstate_t *ls);
 void ipmanipulatorLinestateDestroy(ipmanipulator_lstate_t *ls);

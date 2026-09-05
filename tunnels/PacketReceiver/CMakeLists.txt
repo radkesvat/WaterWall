@@ -4,8 +4,6 @@ add_library(PacketReceiver STATIC
                     instance/node.c
                     instance/prepair.c
                     instance/start.c
-                    instance/chain.c
-                    instance/index.c
                     common/helpers.c
                     upstream/init.c
                     upstream/est.c

@@ -45,8 +45,6 @@ enum
 WW_EXPORT void      packetreceiverTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context);
 WW_EXPORT tunnel_t *packetreceiverTunnelCreate(node_t *node);
 
-void packetreceiverTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offset);
-void packetreceiverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void packetreceiverTunnelOnPrepair(tunnel_t *t);
 void packetreceiverTunnelOnStart(tunnel_t *t);
 

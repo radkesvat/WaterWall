@@ -72,21 +72,9 @@ WW_EXPORT void         ipoverriderDestroy(tunnel_t *t, const ww_lifecycle_contex
 WW_EXPORT tunnel_t    *ipoverriderCreate(node_t *node);
 WW_EXPORT api_result_t ipoverriderApi(tunnel_t *instance, sbuf_t *message);
 
-void ipoverriderOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offset);
-void ipoverriderOnChain(tunnel_t *t, tunnel_chain_t *chain);
-
-void ipoverriderUpStreamInit(tunnel_t *t, line_t *l);
-void ipoverriderUpStreamEst(tunnel_t *t, line_t *l);
-void ipoverriderUpStreamFinish(tunnel_t *t, line_t *l);
 void ipoverriderUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
-void ipoverriderUpStreamPause(tunnel_t *t, line_t *l);
-void ipoverriderUpStreamResume(tunnel_t *t, line_t *l);
 
-void ipoverriderDownStreamEst(tunnel_t *t, line_t *l);
-void ipoverriderDownStreamFinish(tunnel_t *t, line_t *l);
 void ipoverriderDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
-void ipoverriderDownStreamPause(tunnel_t *t, line_t *l);
-void ipoverriderDownStreamResume(tunnel_t *t, line_t *l);
 
 void ipoverriderLinestateInitialize(ipoverrider_lstate_t *ls);
 void ipoverriderLinestateDestroy(ipoverrider_lstate_t *ls);

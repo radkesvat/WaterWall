@@ -58,8 +58,6 @@ WW_EXPORT void         disturberTunnelDestroy(tunnel_t *t, const ww_lifecycle_co
 WW_EXPORT tunnel_t    *disturberTunnelCreate(node_t *node);
 WW_EXPORT api_result_t disturberTunnelApi(tunnel_t *instance, sbuf_t *message);
 
-void disturberTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offset);
-void disturberTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void disturberTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);
 
 void disturberTunnelUpStreamInit(tunnel_t *t, line_t *l);

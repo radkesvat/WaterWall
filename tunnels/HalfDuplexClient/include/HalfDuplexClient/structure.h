@@ -29,9 +29,6 @@ enum
 WW_EXPORT tunnel_t    *halfduplexclientTunnelCreate(node_t *node);
 WW_EXPORT api_result_t halfduplexclientTunnelApi(tunnel_t *instance, sbuf_t *message);
 
-void halfduplexclientTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offset);
-void halfduplexclientTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
-
 void halfduplexclientTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void halfduplexclientTunnelUpStreamEst(tunnel_t *t, line_t *l);
 void halfduplexclientTunnelUpStreamFinish(tunnel_t *t, line_t *l);

@@ -4,8 +4,6 @@ add_library(HttpClient STATIC
                     instance/destroy.c
                     instance/api.c
                     instance/node.c
-                    instance/chain.c
-                    instance/index.c
                     common/transport.c
                     common/split.c
                     common/line_state.c

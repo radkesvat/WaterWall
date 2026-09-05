@@ -3,8 +3,6 @@ add_library(HttpServer STATIC
                     instance/destroy.c
                     instance/api.c
                     instance/node.c
-                    instance/chain.c
-                    instance/index.c
                     common/helpers.c
                     common/http_base64.c
                     common/line_state.c

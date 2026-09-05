@@ -50,8 +50,6 @@ WW_EXPORT void         packetstostreamTunnelDestroy(tunnel_t *t, const ww_lifecy
 WW_EXPORT tunnel_t    *packetstostreamTunnelCreate(node_t *node);
 WW_EXPORT api_result_t packetstostreamTunnelApi(tunnel_t *instance, sbuf_t *message);
 
-void packetstostreamTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offset);
-void packetstostreamTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void packetstostreamTunnelOnStart(tunnel_t *t);
 void packetstostreamTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);
 void packetstostreamTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);

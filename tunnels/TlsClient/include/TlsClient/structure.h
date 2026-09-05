@@ -115,9 +115,6 @@ WW_EXPORT tlsclient_post_handshake_result_t tlsclientTunnelConsumePostHandshakeR
                                                                                       sbuf_t *record);
 WW_EXPORT bool                              tlsclientTunnelCompleteTakeover(tunnel_t *t, line_t *l);
 
-void tlsclientTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offset);
-void tlsclientTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
-
 void tlsclientTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void tlsclientTunnelUpStreamFinish(tunnel_t *t, line_t *l);
 void tlsclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);

@@ -5,7 +5,6 @@ add_library(Socks5Server STATIC
                     instance/node.c
                     instance/prepair.c
                     instance/chain.c
-                    instance/index.c
                     common/helpers.c
                     common/line_state.c
                     upstream/init.c

@@ -35,12 +35,6 @@ if(TARGET ww)
     list(APPEND tunnels_abort_runtime_cases authenticationclient_disabled_downstream_init)
   endif()
 
-  if(TARGET PingClient)
-    list(APPEND tunnels_abort_runtime_libraries PingClient)
-    list(APPEND tunnels_abort_runtime_definitions WATERWALL_ABORT_TEST_HAS_PINGCLIENT=1)
-    list(APPEND tunnels_abort_runtime_cases pingclient_impossible_packet_upstream_init)
-  endif()
-
   if(TARGET TesterClient)
     list(APPEND tunnels_abort_runtime_libraries TesterClient)
     list(APPEND tunnels_abort_runtime_definitions WATERWALL_ABORT_TEST_HAS_TESTERCLIENT=1)

@@ -38,9 +38,6 @@ enum
 WW_EXPORT tunnel_t    *obfuscatorclientTunnelCreate(node_t *node);
 WW_EXPORT api_result_t obfuscatorclientTunnelApi(tunnel_t *instance, sbuf_t *message);
 
-void obfuscatorclientTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offset);
-void obfuscatorclientTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
-
 void obfuscatorclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 
 void obfuscatorclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);

@@ -94,9 +94,6 @@ WW_EXPORT void         halfduplexserverTunnelDestroy(tunnel_t *t, const ww_lifec
 WW_EXPORT tunnel_t    *halfduplexserverTunnelCreate(node_t *node);
 WW_EXPORT api_result_t halfduplexserverTunnelApi(tunnel_t *instance, sbuf_t *message);
 
-void halfduplexserverTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offset);
-void halfduplexserverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
-
 void halfduplexserverTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void halfduplexserverTunnelUpStreamEst(tunnel_t *t, line_t *l);
 void halfduplexserverTunnelUpStreamFinish(tunnel_t *t, line_t *l);

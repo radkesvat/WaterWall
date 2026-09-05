@@ -5,8 +5,6 @@ add_library(PingServer STATIC
                     instance/node.c
                     instance/prepair.c
                     instance/start.c
-                    instance/chain.c
-                    instance/index.c
                     common/helpers.c
                     upstream/payload.c
                     downstream/payload.c

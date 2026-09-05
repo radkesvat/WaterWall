@@ -30,9 +30,6 @@ enum
 WW_EXPORT tunnel_t    *keepaliveserverTunnelCreate(node_t *node);
 WW_EXPORT api_result_t keepaliveserverTunnelApi(tunnel_t *instance, sbuf_t *message);
 
-void keepaliveserverTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offset);
-void keepaliveserverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
-
 void keepaliveserverTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void keepaliveserverTunnelUpStreamFinish(tunnel_t *t, line_t *l);
 void keepaliveserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);

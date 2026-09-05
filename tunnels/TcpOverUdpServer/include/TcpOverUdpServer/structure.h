@@ -104,8 +104,6 @@ static inline int tcpoverudpserverGetKcpSendBufferLimit(const tcpoverudpserver_l
 WW_EXPORT tunnel_t    *tcpoverudpserverTunnelCreate(node_t *node);
 WW_EXPORT api_result_t tcpoverudpserverTunnelApi(tunnel_t *instance, sbuf_t *message);
 
-void tcpoverudpserverTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offset);
-void tcpoverudpserverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void tcpoverudpserverTunnelOnQuiesceRequest(tunnel_t *t, const ww_lifecycle_context_t *context);
 
 void tcpoverudpserverTunnelUpStreamInit(tunnel_t *t, line_t *l);

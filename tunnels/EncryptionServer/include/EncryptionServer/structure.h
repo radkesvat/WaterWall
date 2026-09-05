@@ -43,9 +43,6 @@ WW_EXPORT void         encryptionserverTunnelDestroy(tunnel_t *t, const ww_lifec
 WW_EXPORT tunnel_t    *encryptionserverTunnelCreate(node_t *node);
 WW_EXPORT api_result_t encryptionserverTunnelApi(tunnel_t *instance, sbuf_t *message);
 
-void encryptionserverTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offset);
-void encryptionserverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
-
 void encryptionserverTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void encryptionserverTunnelUpStreamEst(tunnel_t *t, line_t *l);
 void encryptionserverTunnelUpStreamFinish(tunnel_t *t, line_t *l);

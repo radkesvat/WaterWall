@@ -40,9 +40,6 @@ WW_EXPORT void         reverseserverTunnelDestroy(tunnel_t *t, const ww_lifecycl
 WW_EXPORT tunnel_t    *reverseserverTunnelCreate(node_t *node);
 WW_EXPORT api_result_t reverseserverTunnelApi(tunnel_t *instance, sbuf_t *message);
 
-void reverseserverTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offset);
-void reverseserverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
-
 void reverseserverTunnelUpStreamInit(tunnel_t *t, line_t *d);
 void reverseserverTunnelUpStreamEst(tunnel_t *t, line_t *d);
 void reverseserverTunnelUpStreamFinish(tunnel_t *t, line_t *d);

@@ -40,7 +40,6 @@ WW_EXPORT void         wireguarddeviceTunnelDestroy(tunnel_t *t, const ww_lifecy
 WW_EXPORT tunnel_t    *wireguarddeviceTunnelCreate(node_t *node);
 WW_EXPORT api_result_t wireguarddeviceTunnelApi(tunnel_t *instance, sbuf_t *message);
 
-void wireguarddeviceTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offset);
 bool wireguarddeviceTunnelOnSolvedTopology(tunnel_t *t, tunnel_chain_t *chain);
 void wireguarddeviceTunnelOnPrepair(tunnel_t *t);
 void wireguarddeviceTunnelOnStart(tunnel_t *t);

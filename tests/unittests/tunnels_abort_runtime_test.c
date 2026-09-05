@@ -29,9 +29,6 @@ static test_worker_registry_t g_test_worker_registry;
 #if defined(WATERWALL_ABORT_TEST_HAS_AUTHENTICATIONCLIENT)
 void authenticationclientTunnelDownStreamInit(tunnel_t *t, line_t *l);
 #endif
-#if defined(WATERWALL_ABORT_TEST_HAS_PINGCLIENT)
-void pingclientUpStreamInit(tunnel_t *t, line_t *l);
-#endif
 #if defined(WATERWALL_ABORT_TEST_HAS_TESTERCLIENT)
 void testerclientTunnelUpStreamFinish(tunnel_t *t, line_t *l);
 #endif
@@ -82,16 +79,6 @@ static int caseAdapterChainEndPayload(void)
 static int caseAuthenticationClientDisabledDownstreamInit(void)
 {
     authenticationclientTunnelDownStreamInit(NULL, NULL);
-    return 0;
-}
-#endif
-
-#if defined(WATERWALL_ABORT_TEST_HAS_PINGCLIENT)
-// Same contract: the packet-tunnel interface replaced this stream callback and
-// the stub discards its arguments.
-static int casePingClientImpossiblePacketUpstreamInit(void)
-{
-    pingclientUpStreamInit(NULL, NULL);
     return 0;
 }
 #endif
@@ -155,9 +142,6 @@ static const abort_case_t kAbortCases[] = {
     {"adapter_chain_end_payload", caseAdapterChainEndPayload},
 #if defined(WATERWALL_ABORT_TEST_HAS_AUTHENTICATIONCLIENT)
     {"authenticationclient_disabled_downstream_init", caseAuthenticationClientDisabledDownstreamInit},
-#endif
-#if defined(WATERWALL_ABORT_TEST_HAS_PINGCLIENT)
-    {"pingclient_impossible_packet_upstream_init", casePingClientImpossiblePacketUpstreamInit},
 #endif
     {"packet_lifecycle_anchor_upstream_finish", casePacketLifecycleAnchorUpstreamFinish},
     {"packet_lifecycle_anchor_downstream_finish", casePacketLifecycleAnchorDownstreamFinish},

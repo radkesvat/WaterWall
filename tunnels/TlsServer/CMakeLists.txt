@@ -5,7 +5,6 @@ add_library(TlsServer STATIC
                     instance/api.c
                     instance/node.c
                     instance/chain.c
-                    instance/index.c
                     common/helpers.c
                     common/line_state.c
                     upstream/init.c
