@@ -89,29 +89,57 @@ struct tunnel_s
 {
     tunnel_t *next, *prev;
 
-    TunnelFlowRoutineInit    fnInitU;
-    TunnelFlowRoutineInit    fnInitD;
+    // Handle upstream line initialization toward next; initialize this tunnel's per-line state.
+    TunnelFlowRoutineInit fnInitU;
+    // Handle downstream line initialization toward prev; initialize this tunnel's per-line state.
+    TunnelFlowRoutineInit fnInitD;
+    // Take ownership of an upstream payload buffer; onward delivery goes toward next.
     TunnelFlowRoutinePayload fnPayloadU;
+    // Take ownership of a downstream payload buffer; onward delivery goes toward prev.
     TunnelFlowRoutinePayload fnPayloadD;
-    TunnelFlowRoutineEst     fnEstU;
-    TunnelFlowRoutineEst     fnEstD;
-    TunnelFlowRoutineFin     fnFinU;
-    TunnelFlowRoutineFin     fnFinD;
-    TunnelFlowRoutinePause   fnPauseU;
-    TunnelFlowRoutinePause   fnPauseD;
-    TunnelFlowRoutineResume  fnResumeU;
-    TunnelFlowRoutineResume  fnResumeD;
+    // Handle an upstream establishment notification; onward notification goes toward next.
+    TunnelFlowRoutineEst fnEstU;
+    // Handle a downstream establishment notification; onward notification goes toward prev.
+    TunnelFlowRoutineEst fnEstD;
+    // Handle Finish from prev: clean up local line state and never send a callback back toward prev.
+    TunnelFlowRoutineFin fnFinU;
+    // Handle Finish from next: clean up local line state and never send a callback back toward next.
+    TunnelFlowRoutineFin fnFinD;
+    // Handle backpressure from prev: stop downstream payload to prev until upstream Resume.
+    TunnelFlowRoutinePause fnPauseU;
+    // Handle backpressure from next: stop upstream payload to next until downstream Resume.
+    TunnelFlowRoutinePause fnPauseD;
+    // Handle prev becoming writable again; downstream payload to prev may resume.
+    TunnelFlowRoutineResume fnResumeU;
+    // Handle next becoming writable again; upstream payload to next may resume.
+    TunnelFlowRoutineResume fnResumeD;
 
-    TunnelChainFn           onChain;
-    TunnelIndexFn           onIndex;
-    TunnelStatusCb          onPrepare;
-    TunnelStatusCb          onStart;
-    TunnelLifecycleCb       onQuiesceRequest;
+
+    /*
+        These are lifecycle callbacks in correct order, also check onSolvedTopology at the end.
+    */
+
+    // Bind neighbours and insert the tunnel into a chain during topology construction.
+    TunnelChainFn onChain;
+    // Assign the chain index and per-line state offset once topology and layer resolution are final.
+    TunnelIndexFn onIndex;
+    // Prepare chain-dependent resources before onStart begins normal operation.
+    TunnelStatusCb onPrepare;
+    // Start normal operation, such as listening, connecting, or bootstrapping packet lines.
+    TunnelStatusCb onStart;
+    // Main thread: close admission and request producer stop without blocking; preserve resources needed for drain.
+    TunnelLifecycleCb onQuiesceRequest;
+    // Each owner worker: detach its timers, watchers, and callback sources before acknowledging quiescence.
     TunnelWorkerLifecycleCb onWorkerQuiesce;
-    TunnelLifecycleCb       onQuiesceWait;
+    // Main thread, after all workers quiesce: join or detach external producers; preserve resources needed for drain.
+    TunnelLifecycleCb onQuiesceWait;
+    // Each owner worker: drain its source-owned and internally created normal lines while cleanup resources remain
+    // live. Other nodes may not have drained yet; check borrowed registries only at onDestroy.
     TunnelWorkerLifecycleCb onWorkerStop;
-    TunnelLifecycleCb       onStop;
-    TunnelLifecycleCb       onDestroy;
+    // Main thread, after all worker drains: release remaining shared resources; do not touch worker-affine handles.
+    TunnelLifecycleCb onStop;
+    // Main thread: free remaining resources and the tunnel instance after callbacks, lines, and references are gone.
+    TunnelLifecycleCb onDestroy;
 
     uint32_t tstate_size;
     uint32_t lstate_size;
@@ -132,6 +160,8 @@ struct tunnel_s
      * the same cache-line-aligned offset, preserving the external tunnel ABI.
      * Old external nodes leave it NULL, which is the default no-op behavior.
      */
+    // After each layer solve, before onIndex: inspect the snapshot; return true exactly when topology changes.
+    // May run repeatedly; changing topology invalidates the current snapshot immediately.
     TunnelSolvedTopologyFn onSolvedTopology;
 
     // tunnel itself will be aligned to cache line when allocating memory
