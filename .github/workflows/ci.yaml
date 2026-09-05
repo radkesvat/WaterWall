@@ -609,6 +609,15 @@ jobs:
             ninja:p
             python:p
 
+      - name: Clean up MSYS2 before retry
+        if: ${{ !cancelled() && steps.setup_msys2_initial.outcome == 'failure' }}
+        shell: pwsh
+        run: |
+          $msysRoot = Join-Path $env:RUNNER_TEMP 'msys64'
+          if (Test-Path -LiteralPath $msysRoot) {
+            Remove-Item -LiteralPath $msysRoot -Recurse -Force -ErrorAction Stop
+          }
+
       - name: Wait before MSYS2 retry
         if: ${{ !cancelled() && steps.setup_msys2_initial.outcome == 'failure' }}
         shell: pwsh
@@ -630,6 +639,15 @@ jobs:
             nasm:p
             ninja:p
             python:p
+
+      - name: Clean up MSYS2 before final retry
+        if: ${{ !cancelled() && steps.setup_msys2_retry_1.outcome == 'failure' }}
+        shell: pwsh
+        run: |
+          $msysRoot = Join-Path $env:RUNNER_TEMP 'msys64'
+          if (Test-Path -LiteralPath $msysRoot) {
+            Remove-Item -LiteralPath $msysRoot -Recurse -Force -ErrorAction Stop
+          }
 
       - name: Wait before final MSYS2 retry
         if: ${{ !cancelled() && steps.setup_msys2_retry_1.outcome == 'failure' }}
