@@ -660,6 +660,94 @@ static void testTls12MissingFinishedRejectsAuthorization(void)
     destroyAuthorizationState(&ls);
 }
 
+static void testTls12RecordTrackerProfileInstallation(void)
+{
+    uint8_t       stream[128];
+    size_t        plain_len       = buildPlainHandshakeRecord(kHandshakeServerHello, stream);
+    const uint8_t ccs             = 1;
+    size_t        unprotected_len = plain_len + buildRecord(kRecordChangeCipherSpec, &ccs, 1, stream + plain_len);
+    size_t        stream_len      = unprotected_len + buildProtectedGcmRecord(0, stream + unprotected_len);
+    stream_len += buildProtectedGcmRecord(1, stream + stream_len);
+    reality_v2_record_profile_t profile;
+    require(realityV2SelectRecordProfile(kRealityV2Tls12, 0xC02F, &profile), "profile selection failed");
+
+    /* Includes a boundary, every partial header/body, and immediately after CCS. */
+    for (size_t split = 0; split <= unprotected_len; ++split)
+    {
+        realityserver_tls12_record_tracker_t tracker;
+        realityserverTls12RecordTrackerInitialize(&tracker);
+        require(realityserverTls12RecordTrackerFeed(&tracker, stream, split) && ! tracker.failed,
+                "unprofiled TLS 1.2 envelope tracking failed");
+        require(realityserverTls12RecordTrackerSetProfile(&tracker, &profile),
+                "initial profile installation rejected unprotected partial state");
+        require(realityserverTls12RecordTrackerFeed(&tracker, stream + split, stream_len - split),
+                "profile transition failed to complete protected records");
+        require(tracker.protected_epoch && tracker.next_sequence == 2 && tracker.last_record_sequence == 1 &&
+                    tracker.explicit_nonce_sample_count == 2 && tracker.last_explicit_nonce == 1 &&
+                    tracker.sequence_pattern && tracker.counter_pattern,
+                "profile transition changed protected sequence or nonce accounting");
+        realityserverTls12RecordTrackerFreeze(&tracker);
+        require(! realityserverTls12RecordTrackerSetProfile(&tracker, &profile),
+                "frozen tracker accepted profile installation");
+        realityserverTls12RecordTrackerDestroy(&tracker);
+    }
+
+    /* A profile must be present before even the first protected header fragment. */
+    for (size_t extra = 1; extra <= stream_len - unprotected_len; ++extra)
+    {
+        realityserver_tls12_record_tracker_t tracker;
+        realityserverTls12RecordTrackerInitialize(&tracker);
+        require(! realityserverTls12RecordTrackerFeed(&tracker, stream, unprotected_len + extra) && tracker.failed,
+                "protected-before-profile input did not fail sticky");
+        require(! realityserverTls12RecordTrackerSetProfile(&tracker, &profile) &&
+                    ! realityserverTls12RecordTrackerFeed(&tracker, stream, plain_len),
+                "failed tracker allowed later reinterpretation");
+        realityserverTls12RecordTrackerDestroy(&tracker);
+    }
+
+    for (size_t split = 1; split < stream_len; ++split)
+    {
+        realityserver_tls12_record_tracker_t tracker;
+        initializeGcmTracker(&tracker);
+        require(realityserverTls12RecordTrackerFeed(&tracker, stream, split), "profile replacement setup failed");
+        bool at_boundary = tracker.record_header_length == 0 && tracker.record_remaining == 0;
+        require(realityserverTls12RecordTrackerSetProfile(&tracker, &profile) == at_boundary,
+                "profile replacement must remain boundary-only");
+        require(realityserverTls12RecordTrackerFeed(&tracker, stream + split, stream_len - split) &&
+                    tracker.next_sequence == 2,
+                "rejected profile replacement damaged tracker state");
+        realityserverTls12RecordTrackerDestroy(&tracker);
+    }
+
+    const uint8_t invalid_envelopes[][7] = {
+        {0x19, 0x03, 0x03, 0x00, 0x01, 0x00, 0x00}, /* Content type. */
+        {0x16, 0x02, 0x03, 0x00, 0x01, 0x00, 0x00}, /* Version major. */
+        {0x16, 0x03, 0x04, 0x00, 0x01, 0x00, 0x00}, /* TLS 1.2 version minor. */
+        {0x16, 0x03, 0x03, 0xff, 0xff, 0x00, 0x00}, /* Body length. */
+        {0x14, 0x03, 0x03, 0x00, 0x02, 0x01, 0x00}, /* CCS shape. */
+        {0x14, 0x03, 0x03, 0x00, 0x01, 0x00, 0x00}, /* CCS value. */
+    };
+    for (size_t i = 0; i < sizeof(invalid_envelopes) / sizeof(invalid_envelopes[0]); ++i)
+    {
+        realityserver_tls12_record_tracker_t tracker;
+        realityserverTls12RecordTrackerInitialize(&tracker);
+        require(! realityserverTls12RecordTrackerFeed(&tracker, invalid_envelopes[i], sizeof(invalid_envelopes[i])) &&
+                    tracker.failed && ! realityserverTls12RecordTrackerSetProfile(&tracker, &profile),
+                "unprofiled tracking relaxed structural TLS validation");
+        realityserverTls12RecordTrackerDestroy(&tracker);
+    }
+    realityserver_tls12_record_tracker_t tracker;
+    realityserverTls12RecordTrackerInitialize(&tracker);
+    reality_v2_record_profile_t invalid_profile = {0};
+    require(! realityserverTls12RecordTrackerSetProfile(&tracker, &invalid_profile),
+            "unprofiled tracker accepted an invalid profile");
+    const uint8_t alert[] = {0x15, 0x03, 0x03, 0x00, 0x02, 0x01, 0x00};
+    require(realityserverTls12RecordTrackerFeed(&tracker, alert, sizeof(alert)) && ! tracker.failed &&
+                tracker.record_header_length == 0 && ! tracker.protected_epoch,
+            "unprofiled tracker rejected an unprotected alert");
+    realityserverTls12RecordTrackerDestroy(&tracker);
+}
+
 static void testTls12RecordTrackerEveryCallbackSplit(void)
 {
     uint8_t       stream[128];
@@ -831,11 +919,8 @@ static void testLinestateDestroyClearsPartialTlsState(void)
     require(ls != NULL, "failed to allocate aligned RealityServer line state");
     realityserverLinestateInitialize(ls, pool);
 
-    const uint8_t queued_upstream[]   = {0x16, 0x03, 0x03, 0x00, 0x20, 0xaa};
-    const uint8_t queued_downstream[] = {0x16, 0x03, 0x03, 0x00, 0x20, 0xbb};
+    const uint8_t queued_upstream[] = {0x16, 0x03, 0x03, 0x00, 0x20, 0xaa};
     bufferstreamPush(&ls->read_stream, createPooledBuffer(pool, queued_upstream, sizeof(queued_upstream)));
-    bufferstreamPush(&ls->downstream_tls_observe_stream,
-                     createPooledBuffer(pool, queued_downstream, sizeof(queued_downstream)));
 
     uint8_t body[128];
     uint8_t handshake[160];
@@ -869,8 +954,7 @@ static void testLinestateDestroyClearsPartialTlsState(void)
                 realityserverTls12RecordTrackerFeed(&ls->server_record_tracker, record, 2),
             "partial TLS record-header accumulation failed");
     require(ls->client_record_tracker.record_header_length == 3 &&
-                ls->server_record_tracker.record_header_length == 2 && bufferstreamGetBufLen(&ls->read_stream) != 0 &&
-                bufferstreamGetBufLen(&ls->downstream_tls_observe_stream) != 0,
+                ls->server_record_tracker.record_header_length == 2 && bufferstreamGetBufLen(&ls->read_stream) != 0,
             "line state did not retain all intended partial parser/tracker data");
     memorySet(ls->session_id, 0xa7, sizeof(ls->session_id));
     memorySet(ls->c2s_key, 0xb8, sizeof(ls->c2s_key));
@@ -905,6 +989,7 @@ int main(void)
     testTls12PairedEpochActivationAndFullHandshakeOrdering();
     testTls12ResumedHandshakeOrdering();
     testTls12MissingFinishedRejectsAuthorization();
+    testTls12RecordTrackerProfileInstallation();
     testTls12RecordTrackerEveryCallbackSplit();
     testTls12RecordTrackerPatternsAndProfiles();
     testTls12RecordTrackerFailures();

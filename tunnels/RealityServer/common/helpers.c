@@ -513,7 +513,6 @@ static bool realityserverFlushBufferedToDestination(tunnel_t *t, line_t *l, real
 static bool realityserverSwitchToVisitor(tunnel_t *t, line_t *l, realityserver_lstate_t *ls)
 {
     ls->mode = kRealityServerModeVisitor;
-    bufferstreamEmpty(&ls->downstream_tls_observe_stream);
     return realityserverFlushBufferedToDestination(t, l, ls);
 }
 
@@ -879,6 +878,14 @@ bool realityserverProcessUpstream(tunnel_t *t, line_t *l, sbuf_t *buf)
         bufferstreamPush(&ls->read_stream, buf);
     }
 
+    /* A destination callback may have captured ServerHello before ClientHello
+     * completed. Install the profile now; no replay or later callback is needed. */
+    if (ls->mode == kRealityServerModePending && ! ls->session_keys_ready && ls->tls_capture.client_ready &&
+        ls->tls_capture.server_ready && ! realityserverDeriveSessionKeys(ts, ls))
+    {
+        return realityserverSwitchToVisitor(t, l, ls);
+    }
+
     while (true)
     {
         if (ls->mode == kRealityServerModeVisitor)
@@ -1068,21 +1075,10 @@ bool realityserverObserveDownstreamHandshake(tunnel_t *t, line_t *l, const uint8
         return true;
     }
 
-    bool buffered_current = false;
-    if (! ls->session_keys_ready && len > 0)
-    {
-        buffer_pool_t *pool     = lineGetBufferPool(l);
-        sbuf_t        *observed = realityserverAllocFrameBuffer(pool, (uint32_t) len);
-        observed                = sbufReserveSpace(observed, (uint32_t) len);
-        sbufSetLength(observed, (uint32_t) len);
-        memoryCopyLarge(sbufGetMutablePtr(observed), data, len);
-        bufferstreamPush(&ls->downstream_tls_observe_stream, observed);
-        buffered_current = true;
-    }
-
+    /* Parse first so a ServerHello completed here installs the profile before
+     * the tracker sees any protected records later in this same callback. */
     if (! ls->session_keys_ready && ! realityserverTlsParserFeed(&ls->server_hello_parser, data, len, &ls->tls_capture))
     {
-        bufferstreamEmpty(&ls->downstream_tls_observe_stream);
         return realityserverSwitchToVisitor(t, l, ls);
     }
 
@@ -1090,34 +1086,14 @@ bool realityserverObserveDownstreamHandshake(tunnel_t *t, line_t *l, const uint8
     {
         if (! realityserverDeriveSessionKeys(ts, ls))
         {
-            bufferstreamEmpty(&ls->downstream_tls_observe_stream);
             return realityserverSwitchToVisitor(t, l, ls);
         }
     }
 
-    if (! ls->session_keys_ready)
-    {
-        return true;
-    }
-
-    if (ls->tls_capture.binding.tls_version != kRealityV2Tls12)
-    {
-        bufferstreamEmpty(&ls->downstream_tls_observe_stream);
-        return true;
-    }
-
-    if (bufferstreamGetBufLen(&ls->downstream_tls_observe_stream) > 0)
-    {
-        sbuf_t *observed = bufferstreamFullRead(&ls->downstream_tls_observe_stream);
-        bool    ok       = realityserverTls12RecordTrackerFeed(
-            &ls->server_record_tracker, sbufGetRawPtr(observed), sbufGetLength(observed));
-        lineReuseBuffer(l, observed);
-        if (! ok)
-        {
-            return realityserverSwitchToVisitor(t, l, ls);
-        }
-    }
-    else if (! buffered_current && ! realityserverTls12RecordTrackerFeed(&ls->server_record_tracker, data, len))
+    /* Consume each chunk once in fixed-size state. A pre-profile failure is
+     * sticky, but only matters if negotiation selects TLS 1.2, not TLS 1.3. */
+    bool tracked = realityserverTls12RecordTrackerFeed(&ls->server_record_tracker, data, len);
+    if (ls->session_keys_ready && ls->tls_capture.binding.tls_version == kRealityV2Tls12 && ! tracked)
     {
         return realityserverSwitchToVisitor(t, l, ls);
     }

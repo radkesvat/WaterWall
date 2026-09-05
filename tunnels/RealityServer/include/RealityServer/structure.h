@@ -110,7 +110,6 @@ typedef struct realityserver_tls_record_boundary_tracker_s
 typedef struct realityserver_lstate_s
 {
     buffer_stream_t                             read_stream;
-    buffer_stream_t                             downstream_tls_observe_stream;
     realityserver_tls_parser_t                  client_hello_parser;
     realityserver_tls_parser_t                  server_hello_parser;
     realityserver_tls_capture_t                 tls_capture;

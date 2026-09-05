@@ -75,6 +75,40 @@ static const uint8_t *requireCloseFlightShape(const uint8_t *flight, size_t flig
     return last_record;
 }
 
+static void requirePreProfileServerTracking(const reality_tls_handshake_fixture_t      *fixture,
+                                            const reality_v2_record_profile_t          *profile,
+                                            const realityserver_tls12_record_tracker_t *expected)
+{
+    const uint8_t *flight           = fixture->server_flight;
+    size_t         first_record_len = kRealityV2TlsRecordHeaderSize + ((size_t) flight[3] << 8) + flight[4];
+    require(first_record_len > 6 && first_record_len <= fixture->server_flight_len && flight[0] == 0x16,
+            "real server flight must start with an unprotected handshake record");
+    const size_t splits[] = {0, 1, 4, 5, 6, first_record_len / 2, first_record_len};
+    for (size_t i = 0; i < sizeof(splits) / sizeof(splits[0]); ++i)
+    {
+        realityserver_tls12_record_tracker_t tracker;
+        realityserverTls12RecordTrackerInitialize(&tracker);
+        require(realityserverTls12RecordTrackerFeed(&tracker, flight, splits[i]) &&
+                    realityserverTls12RecordTrackerSetProfile(&tracker, profile),
+                "real TLS flight rejected pre-profile partial envelope");
+        for (size_t offset = splits[i]; offset < fixture->server_flight_len; ++offset)
+        {
+            require(realityserverTls12RecordTrackerFeed(&tracker, flight + offset, 1),
+                    "real TLS flight failed after incremental profile installation");
+        }
+        require(tracker.protected_epoch && tracker.saw_protected_record && ! tracker.failed &&
+                    tracker.record_header_length == 0 && tracker.record_remaining == 0 &&
+                    tracker.next_sequence == fixture->accessor_binding.next_read_sequence &&
+                    tracker.last_record_sequence == expected->last_record_sequence &&
+                    tracker.explicit_nonce_sample_count == expected->explicit_nonce_sample_count &&
+                    tracker.last_explicit_nonce == expected->last_explicit_nonce &&
+                    tracker.sequence_pattern == expected->sequence_pattern &&
+                    tracker.counter_pattern == expected->counter_pattern,
+                "pre-profile transition changed real TLS sequence or nonce evidence");
+        realityserverTls12RecordTrackerDestroy(&tracker);
+    }
+}
+
 static void requireParserMatchesAccessor(uint16_t version, const char *cipher, uint8_t expected_profile, bool resumed)
 {
     reality_tls_handshake_fixture_t *fixture = memoryAllocate(sizeof(*fixture));
@@ -145,6 +179,7 @@ static void requireParserMatchesAccessor(uint16_t version, const char *cipher, u
                 "passive client sequence and TlsClient write sequence disagree");
         require(server_tracker.next_sequence == fixture->accessor_binding.next_read_sequence,
                 "passive server sequence and TlsClient read sequence disagree");
+        requirePreProfileServerTracking(fixture, &profile, &server_tracker);
         if (profile.profile_id == kRealityV2RecordProfileTls12Gcm)
         {
             require(client_tracker.sequence_pattern && server_tracker.sequence_pattern,

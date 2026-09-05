@@ -564,9 +564,16 @@ bool realityserverTlsRecordBoundaryTrackerFeed(realityserver_tls_record_boundary
 bool realityserverTls12RecordTrackerSetProfile(realityserver_tls12_record_tracker_t *tracker,
                                                const reality_v2_record_profile_t    *profile)
 {
-    if (tracker == NULL || tracker->failed || tracker->frozen || tracker->record_header_length != 0 ||
-        tracker->record_remaining != 0 || ! realityV2RecordProfileIsValid(profile) ||
+    if (tracker == NULL || tracker->failed || tracker->frozen || ! realityV2RecordProfileIsValid(profile) ||
         profile->profile_id == kRealityV2RecordProfileTls13Aead)
+    {
+        return false;
+    }
+
+    /* The first profile may arrive during an unprotected envelope. Replacing a
+     * profile, or installing one after protected bytes started, is boundary-only. */
+    if ((realityV2RecordProfileIsValid(&tracker->profile) || tracker->protected_epoch) &&
+        (tracker->record_header_length != 0 || tracker->record_remaining != 0))
     {
         return false;
     }
@@ -577,8 +584,7 @@ bool realityserverTls12RecordTrackerSetProfile(realityserver_tls12_record_tracke
 
 bool realityserverTls12RecordTrackerFeed(realityserver_tls12_record_tracker_t *tracker, const uint8_t *data, size_t len)
 {
-    if (tracker == NULL || (data == NULL && len != 0) || tracker->failed ||
-        ! realityV2RecordProfileIsValid(&tracker->profile))
+    if (tracker == NULL || (data == NULL && len != 0) || tracker->failed)
     {
         return false;
     }
@@ -589,6 +595,13 @@ bool realityserverTls12RecordTrackerFeed(realityserver_tls12_record_tracker_t *t
 
     while (len > 0)
     {
+        /* Unprotected envelopes need no cipher profile. Once CCS activates the
+         * epoch, reject even a partial protected header until a profile exists. */
+        if (tracker->protected_epoch && ! realityV2RecordProfileIsValid(&tracker->profile))
+        {
+            return realityserverTls12RecordTrackerFail(tracker);
+        }
+
         if (tracker->record_header_length < kRealityServerTlsHeaderSize)
         {
             if (tracker->record_header_length == 0)

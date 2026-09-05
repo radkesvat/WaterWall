@@ -1,5 +1,5 @@
 <!--
-Documentation version: 152
+Documentation version: 153
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/RealityServer.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/RealityServer.mdx, and all files must keep the same documentation version.
 -->
 
@@ -27,6 +27,8 @@ Typical placement:
 Defaults apply only when an optional key is absent. A present optional key with the wrong JSON type is a startup error. Primary fields win over aliases even when malformed; an invalid `algorithm` is not rescued by `method`, and an invalid `sniffing-attempts` is not rescued by `sniffing-counter`.
 
 ## Behavior
+
+Destination handshake envelopes are tracked incrementally in bounded parser/tracker state; the complete pre-key destination flight is never retained or replayed. Unprotected TLS 1.2 records can be tracked before the cipher profile is known. The selected profile is installed when both hellos are ready, including when ClientHello arrives after an already captured ServerHello. Invalid pre-profile TLS 1.2 tracking falls back to Visitor if TLS 1.2 is selected; it does not reject a TLS 1.3 negotiation.
 
 The server does not terminate TLS. Its bounded streaming parsers observe fragmented TLS records and handshake messages without delaying their normal forwarding, recognize TLS 1.3 HelloRetryRequest, and wait for the final ServerHello. For TLS 1.2 they independently track each direction's ChangeCipherSpec, protected-record sequence, and AES-GCM explicit nonce samples. Malformed or unsupported handshakes switch to ordinary visitor behavior. Before the TLS binding, record profile, and directional session keys are ready, application-data-looking records are visitor traffic and are never tried with the password-derived root key.
 
