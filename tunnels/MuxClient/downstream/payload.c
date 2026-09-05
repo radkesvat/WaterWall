@@ -98,7 +98,13 @@ static void handleOverFlow(tunnel_t *t, line_t *parent_l)
 
 void muxclientTunnelDownStreamPayload(tunnel_t *t, line_t *parent_l, sbuf_t *buf)
 {
-    muxclient_tstate_t *ts        = tunnelGetState(t);
+    muxclient_tstate_t *ts = tunnelGetState(t);
+    // Do not decode a neighbour's final flush into new child or flow-control work.
+    if (ts->worker_states[lineGetWID(parent_l)].quiescing)
+    {
+        lineReuseBuffer(parent_l, buf);
+        return;
+    }
     muxclient_lstate_t *parent_ls = lineGetState(parent_l, t);
 
     if (parent_ls->parent_finishing)

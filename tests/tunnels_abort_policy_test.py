@@ -27,7 +27,7 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 # Total number of audited Category-D conversions. The manifest must account for
 # every one of them.
-EXPECTED_TOTAL_ABORTS = 302
+EXPECTED_TOTAL_ABORTS = 303
 
 
 # ---------------------------------------------------------------------------
@@ -704,8 +704,9 @@ MANIFEST = [
     ("tunnels/IpManipulator/common/tricks/smugglefin/trick.c", "smugglefintrickUpStreamPayload", 1,
      ("IpManipulator: worker packet line died during smuggle-fin send",),
      "helper/line-state invariant: IpManipulator trick packet line died 2"),
-    ("tunnels/MuxClient/common/line_state.c", "muxclientLinestateDestroy", 8,
-     ("MuxClient: Trying to destroy parent line state with %u children still attached",
+    ("tunnels/MuxClient/common/line_state.c", "muxclientLinestateDestroy", 9,
+     ("MuxClient: destroying a published owned parent",
+      "MuxClient: Trying to destroy parent line state with %u children still attached",
       "MuxClient: Trying to destroy parent line state with child links still present",
       "MuxClient: Trying to destroy parent line state with %zu retained child-queue charge",
       "MuxClient: Trying to destroy parent line state with a nonempty or absent CID index",

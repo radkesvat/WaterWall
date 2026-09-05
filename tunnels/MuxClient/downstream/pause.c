@@ -4,6 +4,12 @@
 
 void muxclientTunnelDownStreamPause(tunnel_t *t, line_t *parent_l)
 {
+    muxclient_tstate_t *ts_shutdown = tunnelGetState(t);
+    if (ts_shutdown->worker_states[lineGetWID(parent_l)].quiescing)
+    {
+        return;
+    }
+
     muxclient_lstate_t *parent_ls = lineGetState(parent_l, t);
 
     if (parent_ls->parent_finishing)

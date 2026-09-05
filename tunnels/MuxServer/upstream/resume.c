@@ -4,6 +4,12 @@
 
 void muxserverTunnelUpStreamResume(tunnel_t *t, line_t *parent_l)
 {
+    muxserver_tstate_t *ts_shutdown = tunnelGetState(t);
+    if (ts_shutdown->worker_states[lineGetWID(parent_l)].quiescing)
+    {
+        return;
+    }
+
     muxserver_lstate_t *parent_ls = lineGetState(parent_l, t);
     muxserver_lstate_t *child_ls  = parent_ls->child_next;
 

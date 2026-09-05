@@ -44,6 +44,11 @@ void muxclientLinestateDestroy(muxclient_lstate_t *ls)
     // Check linked list integrity before destroying
     if (! ls->is_child)
     {
+        if (ls->parent_state != NULL && ls->parent_state->owned)
+        {
+            LOGF("MuxClient: destroying a published owned parent");
+            abortProgramNow(1);
+        }
         // If this is a parent, it should not have any children
         if (ls->children_count != 0)
         {

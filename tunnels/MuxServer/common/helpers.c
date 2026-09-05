@@ -163,6 +163,28 @@ static hash_t muxserverChildIdleKey(const line_t *child_l)
     return (hash_t) (uintptr_t) child_l;
 }
 
+static void muxserverCloseShutdownChild(tunnel_t *t, line_t *parent_l, muxserver_lstate_t *parent_ls,
+                                        muxserver_lstate_t *child_ls, bool notify_child_next)
+{
+    line_t *child_l = child_ls->l;
+    lineRef(child_l);
+    if (parent_ls->last_writer == child_l)
+    {
+        parent_ls->last_writer = NULL;
+    }
+    muxserverLeaveConnection(child_ls);
+    discard muxserverReleaseParentInputForChildClose(t, parent_l, parent_ls, child_ls);
+    muxserverLinestateDestroy(t, child_ls);
+    if (notify_child_next)
+    {
+        tunnelNextUpStreamFinish(t, child_l);
+    }
+    if (lineIsAlive(child_l))
+    {
+        lineDestroy(child_l);
+    }
+    lineUnref(child_l);
+}
 
 static void muxserverOnChildIdleExpire(local_idle_item_t *item)
 {
@@ -195,7 +217,7 @@ static void muxserverOnChildIdleExpire(local_idle_item_t *item)
      * Close callback below may immediately recycle this line address and arm a
      * replacement item with the same pointer key. */
 
-    if (atomicLogRateLimiterShouldLog(&ts->idle_expiry_log_limiter, kMuxServerAdmissionLogIntervalMs))
+    if (! drain_expiry && atomicLogRateLimiterShouldLog(&ts->idle_expiry_log_limiter, kMuxServerAdmissionLogIntervalMs))
     {
         LOGW("MuxServer: expiring %s idle child cid %u on worker %u",
              active ? "active" : "initial",
@@ -211,6 +233,11 @@ static void muxserverOnChildIdleExpire(local_idle_item_t *item)
 
     muxserver_lstate_t *parent_ls = child_ls->parent;
     assert(parent_ls != NULL);
+    if (drain_expiry)
+    {
+        muxserverCloseShutdownChild(t, parent_ls->l, parent_ls, child_ls, true);
+        return;
+    }
     muxserverCloseChildKeepParent(t, parent_ls->l, parent_ls, child_ls, true);
 }
 
@@ -369,6 +396,11 @@ static void muxserverCollectParentStats(muxserver_lstate_t *parent_ls, muxserver
 static void muxserverParentStatsLogTask(tunnel_t *t, line_t *parent_l)
 {
     muxserver_tstate_t *ts        = tunnelGetState(t);
+    if (ts->worker_states[lineGetWID(parent_l)].quiescing)
+    {
+        return;
+    }
+
     muxserver_lstate_t *parent_ls = lineGetState(parent_l, t);
 
     if (! ts->log_main_line_stats || parent_ls->is_child)
@@ -402,6 +434,10 @@ static void muxserverParentStatsLogTask(tunnel_t *t, line_t *parent_l)
 void muxserverScheduleParentStatsLog(tunnel_t *t, line_t *parent_l)
 {
     muxserver_tstate_t *ts = tunnelGetState(t);
+    if (ts->worker_states[lineGetWID(parent_l)].quiescing)
+    {
+        return;
+    }
 
     if (! ts->log_main_line_stats)
     {
@@ -417,6 +453,11 @@ void muxserverScheduleParentStatsLog(tunnel_t *t, line_t *parent_l)
 void muxserverCloseChildKeepParent(tunnel_t *t, line_t *parent_l, muxserver_lstate_t *parent_ls,
                                    muxserver_lstate_t *child_ls, bool notify_child_next)
 {
+    if (muxserverGetWorkerState(t, child_ls->l)->quiescing)
+    {
+        muxserverCloseShutdownChild(t, parent_l, parent_ls, child_ls, notify_child_next);
+        return;
+    }
 
     line_t         *child_l     = child_ls->l;
     const mux_cid_t cid         = child_ls->connection_id;
@@ -1034,6 +1075,7 @@ void muxserverFinalizeDetachedChild(tunnel_t *t, line_t *child_l, muxserver_lsta
 
 void muxserverAbortDetachedChild(tunnel_t *t, line_t *child_l, muxserver_lstate_t *child_ls, bool notify_child_next)
 {
+    lineRef(child_l);
     muxserverRemoveDetachedChild(t, child_l, child_ls);
     muxserverLinestateDestroy(t, child_ls);
     if (notify_child_next)
@@ -1044,6 +1086,7 @@ void muxserverAbortDetachedChild(tunnel_t *t, line_t *child_l, muxserver_lstate_
     {
         lineDestroy(child_l);
     }
+    lineUnref(child_l);
 }
 
 bool muxserverFinalizeAttachedPeerClose(tunnel_t *t, line_t *parent_l, muxserver_lstate_t *parent_ls,
@@ -1128,6 +1171,26 @@ void muxserverHandleParentLoss(tunnel_t *t, line_t *parent_l, bool notify_parent
     lineRef(parent_l);
     parent_ls->parent_finishing = true;
 
+    if (muxserverGetWorkerState(t, parent_l)->quiescing)
+    {
+        parent_ls->last_writer = NULL;
+        while (parent_ls->child_next != NULL)
+        {
+            muxserverCloseChildKeepParent(t, parent_l, parent_ls, parent_ls->child_next, true);
+            if (! lineIsAlive(parent_l))
+            {
+                lineUnref(parent_l);
+                return;
+            }
+        }
+        muxserverLinestateDestroy(t, parent_ls);
+        if (notify_parent_prev)
+        {
+            tunnelPrevDownStreamFinish(t, parent_l);
+        }
+        lineUnref(parent_l);
+        return;
+    }
 
     while (parent_ls->child_next != NULL)
     {

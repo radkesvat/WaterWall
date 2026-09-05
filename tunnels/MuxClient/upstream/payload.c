@@ -4,7 +4,13 @@
 
 void muxclientTunnelUpStreamPayload(tunnel_t *t, line_t *child_l, sbuf_t *buf)
 {
-
+    muxclient_tstate_t *ts = tunnelGetState(t);
+    // Neighbours may flush final bytes before Finish, even after MUX worker drain.
+    if (ts->worker_states[lineGetWID(child_l)].quiescing)
+    {
+        lineReuseBuffer(child_l, buf);
+        return;
+    }
     muxclient_lstate_t *child_ls = lineGetState(child_l, t);
 
     assert(child_ls->is_child);

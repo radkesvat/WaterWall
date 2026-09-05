@@ -61,8 +61,9 @@ static void caseUdpSourceDrainsBeforeMuxWorkerStop(uint8_t mode)
     ts->detached_buffer_limit         = kMuxMinimumDetachedBufferLimit;
     ts->detached_child_limit          = kMuxMinimumDetachedChildLimit;
     ts->workers_count                 = 1;
+    ts->worker_states                 = memoryAllocateZero(sizeof(*ts->worker_states));
     ts->detached_child_counts         = memoryAllocateZero(sizeof(*ts->detached_child_counts));
-    ts->detached_queued_charge         = memoryAllocateZero(sizeof(*ts->detached_queued_charge));
+    ts->detached_queued_charge        = memoryAllocateZero(sizeof(*ts->detached_queued_charge));
     twfRequire(ts->detached_child_counts != NULL && ts->detached_queued_charge != NULL,
                "failed to allocate detached MuxClient accounting");
 
@@ -70,6 +71,7 @@ static void caseUdpSourceDrainsBeforeMuxWorkerStop(uint8_t mode)
     lineRef(parent);
     muxclient_lstate_t *parent_ls = lineGetState(parent, mux);
     muxclientLinestateInitialize(parent_ls, parent, false, 0);
+    muxclientRegisterParent(ts, parent_ls);
 
     if (mode == kConcurrencyModeFixedConnectionsCount)
     {
@@ -98,6 +100,7 @@ static void caseUdpSourceDrainsBeforeMuxWorkerStop(uint8_t mode)
     tunnelNextUpStreamInit(udp, child);
     twfRequire(parent_ls->children_count == 1, "the real Mux Init did not attach the UdpListener-owned child");
 
+    muxclientTunnelOnWorkerQuiesce(mux, 0, wwLifecycleProcessShutdown());
     socketmanagerDrainUdpSocketForWorker(&socket, 0);
     twfRequire(socket.idle_tables[0] == NULL, "SocketManager retained the drained UdpListener inventory");
     twfRequire(! lineIsAlive(child), "UdpListener source drain left its owned child alive");
@@ -123,6 +126,7 @@ static void caseUdpSourceDrainsBeforeMuxWorkerStop(uint8_t mode)
 
     memoryFree(ts->fixed_parent_lines);
     memoryFree(ts->fixed_next_parent_indexes);
+    memoryFree(ts->worker_states);
     memoryFree(ts->detached_child_counts);
     memoryFree(ts->detached_queued_charge);
     tunnelDestroy(next);

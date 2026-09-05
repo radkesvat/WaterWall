@@ -53,10 +53,12 @@ tunnel_t *muxclientTunnelCreate(node_t *node)
 {
     int wc = getWorkersCount();
 
+    size_t worker_bytes;
     size_t selection_bytes;
     size_t detached_count_bytes;
     size_t detached_charge_bytes;
-    if (wc <= 0 || ! memoryTryComputeArraySize((size_t) wc, sizeof(line_t *), &selection_bytes) ||
+    if (wc <= 0 || ! memoryTryComputeArraySize((size_t) wc, sizeof(muxclient_worker_state_t), &worker_bytes) ||
+        ! memoryTryComputeArraySize((size_t) wc, sizeof(line_t *), &selection_bytes) ||
         ! memoryTryComputeArraySize((size_t) wc, sizeof(uint32_t), &detached_count_bytes) ||
         ! memoryTryComputeArraySize((size_t) wc, sizeof(size_t), &detached_charge_bytes) ||
         selection_bytes > SIZE_MAX - sizeof(muxclient_tstate_t))
@@ -88,6 +90,7 @@ tunnel_t *muxclientTunnelCreate(node_t *node)
     t->onPrepare    = &muxclientTunnelOnPrepair;
     t->onStart      = &muxclientTunnelOnStart;
     t->onStop       = &muxclientTunnelOnStop;
+    t->onWorkerQuiesce = &muxclientTunnelOnWorkerQuiesce;
     t->onWorkerStop = &muxclientTunnelOnWorkerStop;
     t->onDestroy    = &muxclientTunnelDestroy;
 
@@ -251,13 +254,15 @@ tunnel_t *muxclientTunnelCreate(node_t *node)
         staged_fixed_connections = (uint32_t) fixed_connections_count;
     }
 
-    line_t  **staged_fixed_parent_lines   = NULL;
-    uint32_t *staged_fixed_parent_indexes = NULL;
-    uint32_t *staged_detached_counts      = memoryAllocateZero(detached_count_bytes);
-    size_t   *staged_detached_charge       = memoryAllocateZero(detached_charge_bytes);
+    muxclient_worker_state_t *staged_workers              = memoryAllocateZero(worker_bytes);
+    line_t                  **staged_fixed_parent_lines   = NULL;
+    uint32_t                 *staged_fixed_parent_indexes = NULL;
+    uint32_t                 *staged_detached_counts      = memoryAllocateZero(detached_count_bytes);
+    size_t                   *staged_detached_charge      = memoryAllocateZero(detached_charge_bytes);
 
-    if (staged_detached_counts == NULL || staged_detached_charge == NULL)
+    if (staged_workers == NULL || staged_detached_counts == NULL || staged_detached_charge == NULL)
     {
+        memoryFree(staged_workers);
         memoryFree(staged_detached_counts);
         memoryFree(staged_detached_charge);
         tunnelDestroy(t);
@@ -272,6 +277,7 @@ tunnel_t *muxclientTunnelCreate(node_t *node)
                 (size_t) wc, staged_fixed_connections, &fixed_parent_bytes, &fixed_index_bytes))
         {
             LOGF("MuxClient: \"per-worker-connections-count\" is too large: %u", staged_fixed_connections);
+            memoryFree(staged_workers);
             memoryFree(staged_detached_counts);
             memoryFree(staged_detached_charge);
             tunnelDestroy(t);
@@ -288,17 +294,19 @@ tunnel_t *muxclientTunnelCreate(node_t *node)
     {
         memoryFree(staged_fixed_parent_lines);
         memoryFree(staged_fixed_parent_indexes);
+        memoryFree(staged_workers);
         memoryFree(staged_detached_counts);
         memoryFree(staged_detached_charge);
         tunnelDestroy(t);
         return NULL;
     }
 
+    ts->worker_states             = staged_workers;
     ts->fixed_connections_count   = staged_fixed_connections;
     ts->fixed_parent_lines        = staged_fixed_parent_lines;
     ts->fixed_next_parent_indexes = staged_fixed_parent_indexes;
     ts->detached_child_counts     = staged_detached_counts;
-    ts->detached_queued_charge     = staged_detached_charge;
+    ts->detached_queued_charge    = staged_detached_charge;
 
     return t;
 }

@@ -54,6 +54,7 @@ typedef struct muxserver_worker_state_s
 {
     muxserver_detached_registry_t detached_registry;
     local_idle_table_t           *child_idle_table;
+    bool                          quiescing;
 } muxserver_worker_state_t;
 
 typedef struct muxserver_tstate_s

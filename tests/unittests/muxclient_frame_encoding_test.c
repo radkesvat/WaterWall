@@ -134,6 +134,7 @@ static void fixtureSetup(muxclient_fixture_t *fixture, uint32_t capture_capacity
     ts->detached_buffer_limit         = kMuxMinimumDetachedBufferLimit;
     ts->detached_child_limit          = kMuxMinimumDetachedChildLimit;
     ts->workers_count                 = 1;
+    ts->worker_states                 = memoryAllocateZero(sizeof(*ts->worker_states));
     ts->detached_child_counts         = memoryAllocateZero(sizeof(*ts->detached_child_counts));
     ts->detached_queued_charge        = memoryAllocateZero(sizeof(*ts->detached_queued_charge));
     twfRequire(ts->detached_child_counts != NULL && ts->detached_queued_charge != NULL,
@@ -147,6 +148,7 @@ static void fixtureSetup(muxclient_fixture_t *fixture, uint32_t capture_capacity
     muxclient_lstate_t *child_ls  = lineGetState(fixture->child_l, fixture->mux);
 
     muxclientLinestateInitialize(parent_ls, fixture->parent_l, false, 0);
+    muxclientRegisterParent(tunnelGetState(fixture->mux), parent_ls);
     muxclientLinestateInitialize(child_ls, fixture->child_l, true, kTestChildCid);
     muxclientJoinConnection(parent_ls, child_ls);
 }
@@ -167,6 +169,7 @@ static void fixtureTeardown(muxclient_fixture_t *fixture)
     }
     if (parent_ls != NULL && parent_ls->l != NULL)
     {
+        muxclientUnregisterParent(tunnelGetState(fixture->mux), parent_ls);
         muxclientLinestateDestroy(parent_ls);
     }
 
@@ -181,6 +184,7 @@ static void fixtureTeardown(muxclient_fixture_t *fixture)
         lineDestroy(fixture->parent_l);
     }
     muxclient_tstate_t *ts = tunnelGetState(fixture->mux);
+    memoryFree(ts->worker_states);
     memoryFree(ts->detached_child_counts);
     memoryFree(ts->detached_queued_charge);
     memoryFree(fixture->capture);
@@ -1084,6 +1088,7 @@ static line_t *createClientParent(muxclient_fixture_t *fixture)
 {
     line_t *parent_l = twfLinePoolCreateLine(&fixture->lines);
     muxclientLinestateInitialize(lineGetState(parent_l, fixture->mux), parent_l, false, 0);
+    muxclientRegisterParent(tunnelGetState(fixture->mux), lineGetState(parent_l, fixture->mux));
     return parent_l;
 }
 
@@ -1278,10 +1283,89 @@ static void runMuxclientReentrantPauseCase(bool parent_loss)
     fixtureTeardown(&fixture);
 }
 
+static void caseQuiescenceDropsPayload(bool parent_input, bool paused)
+{
+    twfSetCase("MuxClient discards final neighbour payload after worker quiescence");
+    muxclient_fixture_t fixture;
+    fixtureSetup(&fixture, 128);
+    muxclient_lstate_t *child_ls  = lineGetState(fixture.child_l, fixture.mux);
+    muxclient_lstate_t *parent_ls = lineGetState(fixture.parent_l, fixture.mux);
+    child_ls->paused              = paused;
+    muxclientTunnelOnWorkerQuiesce(fixture.mux, 0, wwLifecycleProcessShutdown());
 
+    // A neighbour can synchronously flush final bytes before propagating Finish.
+    if (parent_input)
+    {
+        sendParsedTinyClientData(&fixture, 0);
+        sendParsedTinyClientData(&fixture, 1);
+        muxclientTunnelDownStreamPayload(
+            fixture.mux, fixture.parent_l, makeControlFrame(&fixture, kMuxFlagFlowPause, kTestChildCid));
+        muxclientTunnelDownStreamPayload(
+            fixture.mux, fixture.parent_l, makeControlFrame(&fixture, kMuxFlagFlowResume, kTestChildCid));
+        muxclientTunnelDownStreamPayload(
+            fixture.mux, fixture.parent_l, makeControlFrame(&fixture, kMuxFlagClose, kTestChildCid));
+    }
+    else
+    {
+        muxclientTunnelUpStreamPayload(fixture.mux, fixture.child_l, makePatternPayload(&fixture, 1));
+    }
+
+    twfRequireEqualU32(fixture.trace.len, 0, "quiesced payload emitted MUX callbacks");
+    twfRequire(child_ls->l == fixture.child_l && child_ls->parent == parent_ls,
+               "quiesced payload changed child membership before Finish");
+    twfRequire(! child_ls->open_frame_sent && ! child_ls->peer_flow_paused && child_ls->paused == paused,
+               "quiesced payload changed wire or flow-control state");
+    requireEqualCharge(child_ls->pending_child_queue_charge, 0, "quiesced payload retained child charge");
+    requireEqualCharge(parent_ls->pending_child_queue_charge, 0, "quiesced payload retained parent charge");
+    twfRequire(bufferstreamGetBufLen(&parent_ls->read_stream) == 0 &&
+                   bufferqueueGetBufCount(&child_ls->pending_child_data) == 0,
+               "quiesced payload retained input buffers");
+    twfRequireNoLeakedBuffers();
+    fixtureTeardown(&fixture);
+}
+
+static void caseDetachedBorrowedChildSurvivesWorkerStop(bool empty)
+{
+    twfSetCase("MuxClient worker stop preserves detached borrowed state for later owner Finish");
+    muxclient_fixture_t fixture;
+    fixtureSetup(&fixture, 64);
+    muxclient_lstate_t *child_ls = lineGetState(fixture.child_l, fixture.mux);
+    muxclient_tstate_t *ts       = tunnelGetState(fixture.mux);
+    child_ls->paused             = true;
+    if (! empty)
+    {
+        sbuf_t *buf = bufferpoolGetLargeBuffer(fixture.env.pool);
+        sbufSetLength(buf, 1);
+        twfRequire(muxclientQueueChildPayload(fixture.mux, fixture.parent_l, ts, child_ls->parent, child_ls, buf),
+                   "failed to queue detached test data");
+    }
+    muxclientTunnelDownStreamFinish(fixture.mux, fixture.parent_l);
+    fixture.parent_l = NULL;
+    size_t charge    = ts->detached_queued_charge[0];
+    twfRequireEqualU32(ts->detached_child_counts[0], 1, "parent loss did not register detached child");
+    memoryZero(&fixture.trace, sizeof(fixture.trace));
+    muxclientTunnelOnWorkerQuiesce(fixture.mux, 0, wwLifecycleProcessShutdown());
+    muxclientTunnelOnWorkerStop(fixture.mux, 0, wwLifecycleProcessShutdown());
+    muxclientTunnelOnWorkerStop(fixture.mux, 0, wwLifecycleProcessShutdown());
+    twfRequire(lineIsAlive(fixture.child_l), "MUX destroyed a detached borrowed line");
+    twfRequireEqualU32(ts->detached_child_counts[0], 1, "worker stop lost borrowed accounting");
+    requireEqualCharge(ts->detached_queued_charge[0], charge, "worker stop changed detached charge");
+    muxclientTunnelUpStreamResume(fixture.mux, fixture.child_l);
+    muxclientTunnelUpStreamFinish(fixture.mux, fixture.child_l);
+    twfRequireEqualU32(fixture.trace.len, 0, "shutdown detached cleanup emitted a callback");
+    twfRequireEqualU32(ts->detached_child_counts[0], 0, "source Finish retained detached count");
+    requireEqualCharge(ts->detached_queued_charge[0], 0, "source Finish retained charge");
+    twfRequireLineStateZeroed(fixture.child_l, fixture.mux, "source Finish retained MUX state");
+    fixtureTeardown(&fixture);
+}
 
 int main(void)
 {
+    caseQuiescenceDropsPayload(false, false);
+    caseQuiescenceDropsPayload(true, false);
+    caseQuiescenceDropsPayload(true, true);
+    caseDetachedBorrowedChildSurvivesWorkerStop(false);
+    caseDetachedBorrowedChildSurvivesWorkerStop(true);
     caseUpstreamFraming(kMuxMaxDataFrameLength, 1, "a payload exactly at the per-frame limit stays one frame");
     caseUpstreamFraming(kMuxMaxDataFrameLength + 1U, 2, "a payload one byte over the limit becomes two frames");
     caseUpstreamFraming((3U * kMuxMaxDataFrameLength) - 5U, 3, "a payload spanning three frames is fragmented");

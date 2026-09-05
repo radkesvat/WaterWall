@@ -1,5 +1,5 @@
 <!--
-Documentation version: 156
+Documentation version: 157
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/MuxClient.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/MuxClient.mdx, and all files must keep the same documentation version.
 -->
 
@@ -321,7 +321,7 @@ A peer `Close` is ordered after earlier `Data` for the same `cid`. If the local 
 Finish only after the queue is empty and writable. Later frames for that closed `cid` are discarded while unrelated
 children on the parent continue normally.
 
-If the parent transport is lost, the parent line still closes immediately. Already accepted child-destined queues
+During normal operation, if the parent transport is lost, the parent line still closes immediately. Already accepted child-destined queues
 become child-only detached drains: writable children complete immediately, while paused children continue on later
 Resume without retaining or dereferencing the dead parent. New outbound child data is rejected in this state.
 `detached-buffer-limit` bounds the aggregate retained allocation charge and `detached-child-limit` bounds the retained
@@ -349,6 +349,16 @@ the same detached drain behavior to already parsed child queues.
 - A local child Finish or orderly process shutdown may release a residual detached queue instead of forwarding it.
 - The detached drain changes no MUX wire bytes or peer capability requirements.
 - `UpStreamEst` and `DownStreamInit` are disabled in the current implementation, so this node is not meant to be used as a generic chain endpoint.
+
+## Worker shutdown
+
+During worker quiescence, `MuxClient` switches terminal cleanup to discard retained MUX queues without sending
+payload, Open/Close frames, or flow-control work. Each worker inventories every parent it creates independently
+of selection, including connecting, idle, active, and retired parents. Worker stop closes that inventory and
+finishes attached children toward their source owners, which destroy the borrowed child lines. Previously detached
+borrowed children may outlive the MUX worker hook; their state and exact queue accounting remain available until
+their source owners send Finish. Final instance destruction requires both ownership and detached accounting to be
+empty. Ordinary connection loss and ordered peer Close retain their normal backpressure-driven drain behavior.
 
 ## Node Metadata
 

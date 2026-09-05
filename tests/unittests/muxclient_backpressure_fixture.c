@@ -51,6 +51,7 @@ void mxbMuxClientCreate(mxb_fixture_t *fixture)
     ts->detached_buffer_limit         = kMxbRetainedChargeLimit;
     ts->detached_child_limit          = kMuxMinimumDetachedChildLimit;
     ts->workers_count                 = 1;
+    ts->worker_states                 = memoryAllocateZero(sizeof(*ts->worker_states));
     ts->detached_child_counts         = memoryAllocateZero(sizeof(*ts->detached_child_counts));
     ts->detached_queued_charge        = memoryAllocateZero(sizeof(*ts->detached_queued_charge));
     mxbRequire(ts->detached_child_counts != NULL && ts->detached_queued_charge != NULL,
@@ -62,6 +63,7 @@ void mxbMuxClientInitializeLines(mxb_fixture_t *fixture)
     muxclient_lstate_t *parent_ls = lineGetState(fixture->parent, fixture->mux);
     muxclient_lstate_t *child_ls  = lineGetState(fixture->child, fixture->mux);
     muxclientLinestateInitialize(parent_ls, fixture->parent, false, 0);
+    muxclientRegisterParent(tunnelGetState(fixture->mux), parent_ls);
     muxclientLinestateInitialize(child_ls, fixture->child, true, kMxbClientCid);
     child_ls->open_frame_sent = true;
     muxclientJoinConnection(parent_ls, child_ls);
@@ -141,12 +143,14 @@ void mxbMuxClientDestroy(mxb_fixture_t *fixture)
         if (parent_ls->l != NULL)
         {
             mxbRequire(parent_ls->children_count == 0, "MuxClient composition parent retained a child at teardown");
+            muxclientUnregisterParent(tunnelGetState(fixture->mux), parent_ls);
             muxclientLinestateDestroy(parent_ls);
         }
         lineDestroy(fixture->parent);
         fixture->parent = NULL;
     }
 
+    memoryFree(ts->worker_states);
     memoryFree(ts->detached_child_counts);
     memoryFree(ts->detached_queued_charge);
     tunnelDestroy(fixture->parent_peer);

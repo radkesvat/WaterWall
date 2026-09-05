@@ -184,6 +184,10 @@ CREATION_SITES = [
      "the explicit worker-owned lines used to prove UdpConnector pool isolation"),
     ("tests/unittests/mux_tls_close_backpressure_fixture.c", "mxbCreateLine", TEST_ONLY,
      "the combined Mux/TLS parent and child lines used by real callback-composition fixtures"),
+    ("tests/unittests/muxclient_capacity_dispatch_test.c", "caseWorkerDrainIsLocal", TEST_ONLY,
+     "one inventoried MuxClient parent per exact worker for owner-drain isolation"),
+    ("tests/unittests/muxserver_idle_lifecycle_test.c", "caseWorkerDrainIsLocal", TEST_ONLY,
+     "one borrowed parent and one inventoried owned child per exact worker"),
     ("tests/unittests/muxserver_admission_concurrency_test.c", "WTHREAD_ROUTINE", TEST_ONLY,
      "one borrowed MuxServer parent fixture line created on each exact registered owner worker"),
     ("tests/unittests/speedtestclient_orderly_shutdown_test.c", "publishLine", TEST_ONLY,
@@ -227,6 +231,7 @@ CREATION_SITES = [
 # How many lines a site creates, where that is not one. Losing one of a pair is a
 # real ownership change, so the count is pinned rather than inferred.
 CREATION_COUNTS = {
+    ("tests/unittests/muxserver_idle_lifecycle_test.c", "caseWorkerDrainIsLocal"): 2,
     ("tunnels/HalfDuplexClient/upstream/init.c", "halfduplexclientTunnelUpStreamInit"): 2,
     ("tunnels/ReverseClient/common/helpers.c", "reverseclientBeginConnectMessageReceived"): 2,
     ("tunnels/HttpClient/common/split.c", "httpclientSplitUpStreamInit"): 2,
@@ -269,7 +274,9 @@ OWNER_CLOSE_SITES = [
     ("tunnels/MuxClient/common/helpers.c", "muxclientCloseIdleExhaustedParentLine",
      "an empty exhausted or worker-drained mux parent line"),
     ("tunnels/MuxClient/common/helpers.c", "muxclientHandleParentLoss",
-     "the mux parent line after every child queue has transferred away from its state"),
+     "the mux parent after child queues transfer during ordinary loss or are released during shutdown"),
+    ("tunnels/MuxServer/common/helpers.c", "muxserverCloseShutdownChild",
+     "an attached owned child closed silently during worker drain or shutdown-time Finish"),
     ("tunnels/MuxServer/common/helpers.c", "muxserverCloseChildKeepParent",
      "an attached mux child closed locally while its borrowed parent remains live"),
     ("tunnels/MuxServer/common/helpers.c", "muxserverFinalizeAttachedPeerClose",
@@ -311,6 +318,7 @@ OWNER_CLOSE_SITES = [
 OWNER_DESTROY_COUNTS = {
     ("tunnels/UdpListener/downstream/fin.c", "udplistenerTunnelDownStreamFinish"): 2,
     ("tunnels/PacketsToStream/downstream/fin.c", "packetstostreamTunnelDownStreamFinish"): 2,
+    ("tunnels/MuxClient/common/helpers.c", "muxclientHandleParentLoss"): 2,
     ("tunnels/MuxServer/common/helpers.c", "muxserverCloseChildKeepParent"): 2,
     ("tunnels/ReverseClient/common/helpers.c", "reverseclientClosePair"): 2,
 }

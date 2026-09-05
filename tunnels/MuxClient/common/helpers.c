@@ -200,6 +200,11 @@ static void muxclientCollectParentStats(muxclient_lstate_t *parent_ls, muxclient
 static void muxclientParentStatsLogTask(tunnel_t *t, line_t *parent_l)
 {
     muxclient_tstate_t *ts        = tunnelGetState(t);
+    if (ts->worker_states[lineGetWID(parent_l)].quiescing)
+    {
+        return;
+    }
+
     muxclient_lstate_t *parent_ls = lineGetState(parent_l, t);
 
     if (! ts->log_main_line_stats || parent_ls->is_child)
@@ -233,6 +238,10 @@ static void muxclientParentStatsLogTask(tunnel_t *t, line_t *parent_l)
 void muxclientScheduleParentStatsLog(tunnel_t *t, line_t *parent_l)
 {
     muxclient_tstate_t *ts = tunnelGetState(t);
+    if (ts->worker_states[lineGetWID(parent_l)].quiescing)
+    {
+        return;
+    }
 
     if (! ts->log_main_line_stats)
     {
@@ -245,7 +254,42 @@ void muxclientScheduleParentStatsLog(tunnel_t *t, line_t *parent_l)
     discard result;
 }
 
+void muxclientRegisterParent(muxclient_tstate_t *ts, muxclient_lstate_t *ls)
+{
+    muxclient_worker_state_t *worker = &ts->worker_states[lineGetWID(ls->l)];
+    muxclient_parent_state_t *state  = ls->parent_state;
+    assert(! state->owned);
+    state->owner_next = worker->owned_parents;
+    if (state->owner_next != NULL)
+    {
+        state->owner_next->parent_state->owner_prev = ls;
+    }
+    worker->owned_parents = ls;
+    state->owned          = true;
+}
 
+void muxclientUnregisterParent(muxclient_tstate_t *ts, muxclient_lstate_t *ls)
+{
+    muxclient_worker_state_t *worker = &ts->worker_states[lineGetWID(ls->l)];
+    muxclient_parent_state_t *state  = ls->parent_state;
+    assert(state->owned);
+    if (state->owner_prev != NULL)
+    {
+        state->owner_prev->parent_state->owner_next = state->owner_next;
+    }
+    else
+    {
+        assert(worker->owned_parents == ls);
+        worker->owned_parents = state->owner_next;
+    }
+    if (state->owner_next != NULL)
+    {
+        state->owner_next->parent_state->owner_prev = state->owner_prev;
+    }
+    state->owner_prev = NULL;
+    state->owner_next = NULL;
+    state->owned      = false;
+}
 
 static bool muxclientCreateParentLine(tunnel_t *t, wid_t wid, line_t **selection_slot)
 {
@@ -253,6 +297,7 @@ static bool muxclientCreateParentLine(tunnel_t *t, wid_t wid, line_t **selection
     muxclient_lstate_t *parent_ls = lineGetState(parent_l, t);
 
     muxclientLinestateInitialize(parent_ls, parent_l, false, 0);
+    muxclientRegisterParent(tunnelGetState(t), parent_ls);
     assert(*selection_slot == NULL);
     *selection_slot = parent_l;
 
@@ -271,7 +316,9 @@ void muxclientCloseIdleExhaustedParentLine(tunnel_t *t, muxclient_tstate_t *ts, 
     assert(parent_ls->is_child == false);
     assert(parent_ls->children_count == 0);
 
+    lineRef(parent_l);
     muxclientForgetParentSelection(ts, wid, parent_l);
+    muxclientUnregisterParent(ts, parent_ls);
     muxclientLinestateDestroy(parent_ls);
     tunnelNextUpStreamFinish(t, parent_l);
 
@@ -279,6 +326,7 @@ void muxclientCloseIdleExhaustedParentLine(tunnel_t *t, muxclient_tstate_t *ts, 
     {
         lineDestroy(parent_l);
     }
+    lineUnref(parent_l);
 }
 
 static line_t *muxclientGetFixedParentLineForNewChild(tunnel_t *t, muxclient_tstate_t *ts, wid_t wid)
@@ -377,6 +425,22 @@ line_t *muxclientGetParentLineForNewChild(tunnel_t *t, line_t *child_l)
 void muxclientCloseChildKeepParent(tunnel_t *t, muxclient_tstate_t *ts, line_t *parent_l, muxclient_lstate_t *parent_ls,
                                    muxclient_lstate_t *child_ls, bool notify_child_prev)
 {
+    if (ts->worker_states[lineGetWID(parent_l)].quiescing)
+    {
+        line_t *child_l = child_ls->l;
+        if (parent_ls->last_writer == child_l)
+        {
+            parent_ls->last_writer = NULL;
+        }
+        muxclientLeaveConnection(child_ls);
+        discard muxclientReleaseParentInputForChildClose(t, parent_l, parent_ls, child_ls);
+        muxclientLinestateDestroy(child_ls);
+        if (notify_child_prev)
+        {
+            tunnelPrevDownStreamFinish(t, child_l);
+        }
+        return;
+    }
 
     line_t         *child_l     = child_ls->l;
     const mux_cid_t cid         = child_ls->connection_id;
@@ -1072,10 +1136,38 @@ void muxclientHandleParentLoss(tunnel_t *t, line_t *parent_l, bool notify_parent
 
     assert(lineIsOnCurrentEventWorker(parent_l));
     muxclientForgetParentSelection(ts, wid, parent_l);
+    if (parent_ls->parent_state->owned)
+    {
+        muxclientUnregisterParent(ts, parent_ls);
+    }
 
     lineRef(parent_l);
     parent_ls->parent_finishing = true;
 
+    if (ts->worker_states[wid].quiescing)
+    {
+        parent_ls->last_writer = NULL;
+        while (parent_ls->child_next != NULL)
+        {
+            muxclientCloseChildKeepParent(t, ts, parent_l, parent_ls, parent_ls->child_next, true);
+            if (! lineIsAlive(parent_l))
+            {
+                lineUnref(parent_l);
+                return;
+            }
+        }
+        muxclientLinestateDestroy(parent_ls);
+        if (notify_parent_next)
+        {
+            tunnelNextUpStreamFinish(t, parent_l);
+        }
+        if (lineIsAlive(parent_l))
+        {
+            lineDestroy(parent_l);
+        }
+        lineUnref(parent_l);
+        return;
+    }
 
     while (parent_ls->child_next != NULL)
     {

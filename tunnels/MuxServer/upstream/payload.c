@@ -184,7 +184,13 @@ static void handleOverFlow(tunnel_t *t, line_t *parent_l)
 
 void muxserverTunnelUpStreamPayload(tunnel_t *t, line_t *parent_l, sbuf_t *buf)
 {
-    muxserver_tstate_t *ts        = tunnelGetState(t);
+    muxserver_tstate_t *ts = tunnelGetState(t);
+    // A borrowed parent can flush after worker stop; never reopen the drained child inventory.
+    if (ts->worker_states[lineGetWID(parent_l)].quiescing)
+    {
+        lineReuseBuffer(parent_l, buf);
+        return;
+    }
     muxserver_lstate_t *parent_ls = lineGetState(parent_l, t);
 
     if (parent_ls->parent_finishing)

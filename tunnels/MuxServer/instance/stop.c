@@ -25,6 +25,7 @@ void muxserverTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_c
         LOGF("MuxServer: invalid worker %d during child idle-table quiescence", (int) wid);
         abortProgramNow(1);
     }
+    ts->worker_states[wid].quiescing = true;
     local_idle_table_t *table = ts->worker_states[wid].child_idle_table;
     if (table != NULL)
     {
@@ -34,45 +35,20 @@ void muxserverTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_c
 
 void muxserverTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context)
 {
-    discard context;
-    assert(currentThreadIsEventWorkerWID(wid));
-
+    muxserverTunnelOnWorkerQuiesce(t, wid, context);
     muxserver_tstate_t *ts = tunnelGetState(t);
-    if (UNLIKELY(wid >= ts->workers_count))
-    {
-        LOGF("MuxServer: invalid worker %d during detached child drain", (int) wid);
-        abortProgramNow(1);
-    }
 
     muxserver_worker_state_t      *worker_state = &ts->worker_states[wid];
     muxserver_detached_registry_t *registry     = &worker_state->detached_registry;
-    if (registry->head != NULL && registry->queued_charge != 0)
+    if (worker_state->child_idle_table != NULL)
     {
-        LOGW("MuxServer: worker stop is discarding %zu byte(s) from %u detached child line(s) on worker %d",
-             registry->queued_charge,
-             registry->count,
-             (int) wid);
+        localidletableDrainItems(worker_state->child_idle_table);
     }
 
-    while (registry->head != NULL)
+    if (UNLIKELY(registry->head != NULL || registry->count != 0 || registry->queued_charge != 0))
     {
-        muxserver_lstate_t *child_ls = registry->head;
-        line_t             *child_l  = child_ls->l;
-        if (UNLIKELY(lineGetWID(child_l) != wid))
-        {
-            LOGF("MuxServer: detached registry contains a child from worker %d in worker %d",
-                 (int) lineGetWID(child_l),
-                 (int) wid);
-            abortProgramNow(1);
-        }
-
-        // Shutdown never creates more child Payload work; retained Mux buffers are released by state destruction.
-        muxserverAbortDetachedChild(t, child_l, child_ls, true);
-    }
-
-    if (UNLIKELY(registry->count != 0 || registry->queued_charge != 0))
-    {
-        LOGF("MuxServer: worker %d detached registry accounting remained after drain (count=%u, bytes=%zu)",
+        LOGF("MuxServer: worker %d detached registry accounting remained after drain "
+             "(count=%u retained-charge=%zu)",
              (int) wid,
              (unsigned int) registry->count,
              registry->queued_charge);

@@ -1157,10 +1157,10 @@ void nodemanagerQuiesceWorker(wid_t wid, const ww_lifecycle_context_t *context)
 void nodemanagerStopWorkerResources(wid_t wid, const ww_lifecycle_context_t *context)
 {
     /*
-     * The worker has already closed producer/message admission and drained
-     * autonomous source-owner inventories (notably SocketManager's UdpListener
-     * flows). Consequently these chain hooks may tear down internal owned lines
-     * and require borrowed child sets to be empty. The event loop, tail adapters,
+     * The worker has closed producer/message admission and SocketManager has
+     * drained its UDP sources. Other source owners may still await their hook:
+     * chain storage order does not guarantee callback topology order. Each hook
+     * drains its own lines without requiring borrowed sets to be empty. The event loop, tail adapters,
      * tunnel state, and line/buffer pools are still alive throughout this pass.
      */
     if (nodemanager_gstate == NULL)

@@ -17,7 +17,16 @@ typedef struct muxclient_lstate_s muxclient_lstate_t;
 typedef struct muxclient_parent_state_s
 {
     muxclient_child_map_t child_map;
+    muxclient_lstate_t   *owner_prev;
+    muxclient_lstate_t   *owner_next;
+    bool                  owned;
 } muxclient_parent_state_t;
+
+typedef struct muxclient_worker_state_s
+{
+    muxclient_lstate_t *owned_parents;
+    bool                quiescing;
+} muxclient_worker_state_t;
 
 typedef struct muxclient_tstate_s
 {
@@ -35,10 +44,11 @@ typedef struct muxclient_tstate_s
     uint32_t workers_count;
     bool     log_main_line_stats;
 
-    line_t  **fixed_parent_lines;
-    uint32_t *fixed_next_parent_indexes;
-    uint32_t *detached_child_counts;
-    size_t   *detached_queued_charge;
+    muxclient_worker_state_t *worker_states;
+    line_t                  **fixed_parent_lines;
+    uint32_t                 *fixed_next_parent_indexes;
+    uint32_t                 *detached_child_counts;
+    size_t                   *detached_queued_charge;
 
     line_t *unsatisfied_lines[]; // lines (per worker) that still want child connections
 } muxclient_tstate_t;
@@ -181,3 +191,7 @@ bool muxclientFinalizeAttachedPeerClose(tunnel_t *t, line_t *parent_l, muxclient
 void muxclientFinalizeDetachedChild(tunnel_t *t, line_t *child_l, muxclient_lstate_t *child_ls);
 void muxclientAbortDetachedChild(tunnel_t *t, line_t *child_l, muxclient_lstate_t *child_ls, bool notify_child_prev);
 void muxclientHandleParentLoss(tunnel_t *t, line_t *parent_l, bool notify_parent_next);
+
+void muxclientRegisterParent(muxclient_tstate_t *ts, muxclient_lstate_t *ls);
+void muxclientUnregisterParent(muxclient_tstate_t *ts, muxclient_lstate_t *ls);
+void muxclientTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);

@@ -12,6 +12,7 @@ enum
 typedef struct muxclient_capacity_fixture_s
 {
     twf_worker_env_t env;
+    twf_line_pool_t  child_lines;
     twf_trace_t      trace;
     tunnel_chain_t  *chain;
     tunnel_t        *prev;
@@ -57,6 +58,7 @@ static void fixtureTrackChild(muxclient_capacity_fixture_t *fixture, line_t *chi
         fixture->children       = new_children;
         fixture->child_capacity = new_capacity;
     }
+    lineRef(child_l);
     fixture->children[fixture->child_count++] = child_l;
 }
 
@@ -85,8 +87,9 @@ static void fixtureSetup(muxclient_capacity_fixture_t *fixture, uint8_t mode, ui
     ts->detached_child_limit          = kMuxMinimumDetachedChildLimit;
     ts->max_children                  = 16;
     ts->workers_count                 = 1;
+    ts->worker_states                 = memoryAllocateZero(sizeof(*ts->worker_states));
     ts->detached_child_counts         = memoryAllocateZero(sizeof(*ts->detached_child_counts));
-    ts->detached_queued_charge         = memoryAllocateZero(sizeof(*ts->detached_queued_charge));
+    ts->detached_queued_charge        = memoryAllocateZero(sizeof(*ts->detached_queued_charge));
     twfRequire(ts->detached_child_counts != NULL && ts->detached_queued_charge != NULL,
                "failed to allocate MuxClient detached accounting");
 
@@ -102,12 +105,13 @@ static void fixtureSetup(muxclient_capacity_fixture_t *fixture, uint8_t mode, ui
     fixture->chain->sum_line_state_size = fixture->mux->lstate_size;
     tunnelchainFinalize(fixture->chain);
     fixture->mux->chain = fixture->chain;
+    twfLinePoolSetup(&fixture->child_lines, fixture->mux->lstate_size, kClientDispatchChildren * 2U);
     g_client_fixture    = fixture;
 }
 
 static line_t *fixtureOpenChild(muxclient_capacity_fixture_t *fixture)
 {
-    line_t *child_l = twfLineCreate(fixture->mux->lstate_size);
+    line_t *child_l = twfLinePoolCreateLine(&fixture->child_lines);
     fixtureTrackChild(fixture, child_l);
     muxclientTunnelUpStreamInit(fixture->mux, child_l);
     return child_l;
@@ -116,7 +120,7 @@ static line_t *fixtureOpenChild(muxclient_capacity_fixture_t *fixture)
 static void fixtureFinishChild(muxclient_capacity_fixture_t *fixture, line_t *child_l)
 {
     muxclient_lstate_t *child_ls = lineGetState(child_l, fixture->mux);
-    if (child_ls->l != NULL)
+    if (lineIsAlive(child_l) && child_ls->l != NULL)
     {
         muxclientTunnelUpStreamFinish(fixture->mux, child_l);
     }
@@ -129,7 +133,11 @@ static void fixtureTeardown(muxclient_capacity_fixture_t *fixture)
         line_t *child_l = fixture->children[i];
         fixtureFinishChild(fixture, child_l);
         twfRequireLineStateZeroed(child_l, fixture->mux, "MuxClient teardown retained borrowed-child state");
-        twfLineDestroy(child_l);
+        if (lineIsAlive(child_l))
+        {
+            lineDestroy(child_l);
+        }
+        lineUnref(child_l);
     }
 
     muxclient_tstate_t *ts = tunnelGetState(fixture->mux);
@@ -141,9 +149,11 @@ static void fixtureTeardown(muxclient_capacity_fixture_t *fixture)
     tunnelchainDestroy(fixture->chain);
     memoryFree(ts->fixed_parent_lines);
     memoryFree(ts->fixed_next_parent_indexes);
+    memoryFree(ts->worker_states);
     memoryFree(ts->detached_child_counts);
     memoryFree(ts->detached_queued_charge);
     memoryFree(fixture->children);
+    twfLinePoolTeardown(&fixture->child_lines);
     tunnelDestroy(fixture->prev);
     tunnelDestroy(fixture->mux);
     tunnelDestroy(fixture->next);
@@ -448,7 +458,7 @@ static void caseProductionHashDispatchAtScale(void)
     for (uint32_t i = 0; i < kClientDispatchChildren; ++i)
     {
         const mux_cid_t cid = (i * 104729U) + 17U;
-        children[i]         = twfLineCreate(fixture.mux->lstate_size);
+        children[i]         = twfLinePoolCreateLine(&fixture.child_lines);
         fixtureTrackChild(&fixture, children[i]);
         muxclient_lstate_t *child_ls = lineGetState(children[i], fixture.mux);
         muxclientLinestateInitialize(child_ls, children[i], true, cid);
@@ -496,8 +506,191 @@ static void caseProductionHashDispatchAtScale(void)
     fixtureTeardown(&fixture);
 }
 
+static line_t *g_shutdown_other_parent;
+
+static void shutdownSourceFinish(tunnel_t *t, line_t *child_l)
+{
+    twfPrevFinish(t, child_l);
+    twfRequireLineStateZeroed(child_l, g_client_fixture->mux, "source Finish observed live MUX state");
+    lineDestroy(child_l);
+    if (g_shutdown_other_parent != NULL)
+    {
+        line_t *other           = g_shutdown_other_parent;
+        g_shutdown_other_parent = NULL;
+        muxclientTunnelDownStreamFinish(g_client_fixture->mux, other);
+    }
+}
+
+static void shutdownInitFinish(tunnel_t *t, line_t *parent_l)
+{
+    discard t;
+    muxclientTunnelDownStreamFinish(g_client_fixture->mux, parent_l);
+}
+
+static void caseShutdownInventory(uint8_t mode, unsigned order, unsigned reentrant)
+{
+    twfSetCase("MuxClient drains real parents independently of selection and source order");
+    muxclient_capacity_fixture_t fixture;
+    fixtureSetup(&fixture, mode, mode == kConcurrencyModeFixedConnectionsCount ? 3 : 0);
+    fixture.prev->fnFinD         = shutdownSourceFinish;
+    muxclient_tstate_t *ts       = tunnelGetState(fixture.mux);
+    ts->concurrency_capacity     = 1;
+    line_t             *first    = fixtureOpenChild(&fixture);
+    muxclient_lstate_t *first_ls = lineGetState(first, fixture.mux);
+    line_t             *parent_a = first_ls->parent->l;
+    lineRef(parent_a);
+    if (mode == kConcurrencyModeTimer)
+    {
+        first_ls->parent->creation_epoch = 0;
+        ts->concurrency_duration         = 1;
+    }
+    line_t             *second    = fixtureOpenChild(&fixture);
+    muxclient_lstate_t *second_ls = lineGetState(second, fixture.mux);
+    line_t             *parent_b  = second_ls->parent->l;
+    lineRef(parent_b);
+    twfRequire(parent_a != parent_b, "shutdown fixture did not create distinct parents");
+    if (mode != kConcurrencyModeFixedConnectionsCount)
+    {
+        twfRequire(first_ls->parent->selection_retired, "old parent was not retired");
+        twfRequire(first_ls->parent->parent_state->owned, "retirement removed parent ownership");
+    }
+    first_ls->paused  = true;
+    second_ls->paused = true;
+    sendParentFrame(&fixture, parent_a, first_ls->connection_id, kMuxFlagData, 7);
+    sendParentFrame(&fixture, parent_b, second_ls->connection_id, kMuxFlagData, 9);
+    memoryZero(&fixture.trace, sizeof(fixture.trace));
+    muxclientTunnelOnWorkerQuiesce(fixture.mux, 0, wwLifecycleProcessShutdown());
+    if (order == 1)
+    {
+        fixtureFinishChild(&fixture, first);
+        lineDestroy(first);
+        fixtureFinishChild(&fixture, second);
+        lineDestroy(second);
+    }
+    else if (order == 2)
+    {
+        muxclientTunnelDownStreamFinish(fixture.mux, parent_a);
+    }
+    if (reentrant)
+    {
+        g_shutdown_other_parent = reentrant == 2 ? parent_b : parent_a;
+    }
+    muxclientTunnelOnWorkerStop(fixture.mux, 0, wwLifecycleProcessShutdown());
+    twfRequire(! lineIsAlive(parent_a) && ! lineIsAlive(parent_b), "owner drain left a parent alive");
+    twfRequire(! lineIsAlive(first) && ! lineIsAlive(second), "source Finish left borrowed children alive");
+    twfRequire(ts->worker_states[0].owned_parents == NULL, "owner inventory survived drain");
+    twfRequire(ts->unsatisfied_lines[0] == NULL, "selected parent survived drain");
+    twfRequireEqualU32(fixture.trace.prev_finish, order == 1 ? 0 : 2, "source Finish reflected or repeated");
+    twfRequireEqualU32(fixture.trace.next_finish,
+                       (mode == kConcurrencyModeFixedConnectionsCount ? 3U : 2U) - (order == 2 ? 1U : 0U) -
+                           (reentrant ? 1U : 0U),
+                       "parent Finish reflected or repeated");
+    twfRequireEqualU32(fixture.trace.next_payload + fixture.trace.prev_payload, 0, "shutdown emitted Payload");
+    for (uint32_t i = 0; i < fixture.trace.len; ++i)
+    {
+        twfRequire(fixture.trace.seq[i] == 'f' || fixture.trace.seq[i] == 'F', "shutdown emitted non-Finish work");
+    }
+    muxclientTunnelOnWorkerStop(fixture.mux, 0, wwLifecycleProcessShutdown());
+    lineUnref(parent_a);
+    lineUnref(parent_b);
+    fixtureTeardown(&fixture);
+}
+
+static void caseInitClosesInventoriedParent(void)
+{
+    twfSetCase("MuxClient re-entrant Init failure removes selection and ownership");
+    muxclient_capacity_fixture_t fixture;
+    fixtureSetup(&fixture, kConcurrencyModeCounter, 0);
+    fixture.next->fnInitU     = shutdownInitFinish;
+    fixture.prev->fnFinD      = shutdownSourceFinish;
+    line_t             *child = fixtureOpenChild(&fixture);
+    muxclient_tstate_t *ts    = tunnelGetState(fixture.mux);
+    twfRequire(ts->worker_states[0].owned_parents == NULL && ts->unsatisfied_lines[0] == NULL,
+               "Init failure retained parent publication");
+    twfRequire(! lineIsAlive(child), "failed Init did not finish source child");
+    fixtureTeardown(&fixture);
+}
+
+static void caseWorkerDrainIsLocal(void)
+{
+    twfSetCase("MuxClient drains only the supplied worker without touching another worker inventory");
+    twf_worker_env_t env;
+    twfWorkerEnvSetup(&env, kClientTestBufferSize, kMuxFrameLength * 2U);
+    master_pool_t *large       = masterpoolCreateWithCapacity(8);
+    master_pool_t *small       = masterpoolCreateWithCapacity(8);
+    buffer_pool_t *second_pool = bufferpoolCreate(large, small, 4, kClientTestBufferSize, 1024);
+    bufferpoolUpdateAllocationPaddings(second_pool, kMuxFrameLength * 2U, kMuxFrameLength * 2U);
+    wloop_t       *second_loop   = wloopCreate(WLOOP_FLAG_AUTO_FREE, second_pool, 1);
+    buffer_pool_t *pools[2]      = {env.pool, second_pool};
+    wloop_t       *loops[2]      = {env.loop, second_loop};
+    worker_t       workers[2]    = {env.worker,
+                                    {.wid = 1, .buffer_pool = second_pool, .loop = second_loop, .has_event_loop = true}};
+    GSTATE.workers_count         = 3;
+    GSTATE.workers               = workers;
+    GSTATE.shortcut_buffer_pools = pools;
+    GSTATE.shortcut_loops        = loops;
+    twf_trace_t trace            = {0};
+    tunnel_t   *mux = tunnelCreate(NULL, sizeof(muxclient_tstate_t) + 2 * sizeof(line_t *), sizeof(muxclient_lstate_t));
+    tunnel_t   *next = twfCreateNextTunnel(&trace);
+    tunnelBind(mux, next);
+    muxclient_tstate_t *ts = tunnelGetState(mux);
+    ts->workers_count      = 2;
+    ts->worker_states      = memoryAllocateZero(2 * sizeof(*ts->worker_states));
+    ts->concurrency_mode   = kConcurrencyModeCounter;
+    twf_line_pool_t lines[2];
+    twfLinePoolSetup(&lines[0], mux->lstate_size, 8);
+    twfLinePoolSetup(&lines[1], mux->lstate_size, 8);
+    generic_pool_t *line_pools[2] = {lines[0].pools[0], lines[1].pools[0]};
+    line_t         *parents[2];
+    for (wid_t wid = 0; wid < 2; ++wid)
+    {
+        testWorkerBindWID(wid);
+        parents[wid] = lineCreateForWorker(wid, line_pools, wid);
+        lineRef(parents[wid]);
+        muxclient_lstate_t *parent = lineGetState(parents[wid], mux);
+        muxclientLinestateInitialize(parent, parents[wid], false, 0);
+        muxclientRegisterParent(ts, parent);
+        ts->unsatisfied_lines[wid] = parents[wid];
+    }
+    testWorkerBindWID(0);
+    muxclientTunnelOnWorkerStop(mux, 0, wwLifecycleProcessShutdown());
+    twfRequire(! lineIsAlive(parents[0]) && lineIsAlive(parents[1]), "worker 0 drained another worker's child");
+    twfRequire(ts->worker_states[1].owned_parents != NULL && ! ts->worker_states[1].quiescing,
+               "worker 0 changed worker 1 state");
+    muxclientTunnelOnWorkerStop(mux, 0, wwLifecycleProcessShutdown());
+    for (wid_t wid = 0; wid < 2; ++wid)
+    {
+        testWorkerBindWID(wid);
+        muxclientTunnelOnWorkerStop(mux, wid, wwLifecycleProcessShutdown());
+        twfRequire(! lineIsAlive(parents[wid]), "worker drain retained a child");
+        lineUnref(parents[wid]);
+        twfRequireEqualU32(masterpoolGetCheckedOut(lines[wid].master), 0, "worker retained pooled lines");
+        twfLinePoolTeardown(&lines[wid]);
+    }
+    muxclientTunnelOnStop(mux, wwLifecycleProcessShutdown());
+    memoryFree(ts->worker_states);
+    tunnelDestroy(mux);
+    tunnelDestroy(next);
+    wloopDestroy(&second_loop);
+    bufferpoolDestroy(second_pool);
+    masterpoolDestroy(large);
+    masterpoolDestroy(small);
+    GSTATE.workers_count         = 2;
+    GSTATE.workers               = &env.worker;
+    GSTATE.shortcut_buffer_pools = env.pool_shortcut;
+    GSTATE.shortcut_loops        = env.loop_shortcut;
+    testWorkerBindWID(0);
+    twfWorkerEnvTeardown(&env);
+}
+
 int main(void)
 {
+    caseWorkerDrainIsLocal();
+    caseShutdownInventory(kConcurrencyModeCounter, 0, 1);
+    caseShutdownInventory(kConcurrencyModeCounter, 0, 2);
+    caseShutdownInventory(kConcurrencyModeTimer, 1, false);
+    caseShutdownInventory(kConcurrencyModeFixedConnectionsCount, 2, false);
+    caseInitClosesInventoriedParent();
     caseCounterParentRetiresOnlyOnNextSelection();
     caseTimerParentRetiresOnlyOnNextSelection();
     caseHardCapIndependentOfMode(kConcurrencyModeCounter,

@@ -217,6 +217,7 @@ static void caseDrainCallbackSkipsSecondRemoval(void)
     muxserver_tstate_t *ts    = tunnelGetState(fixture.mux);
     local_idle_table_t *table = ts->worker_states[0].child_idle_table;
     localidletableDrainItems(table);
+    twfRequireEqualU32(fixture.trace.prev_payload, 0, "idle drain manufactured a Close frame");
     muxserver_lstate_t *parent_ls = lineGetState(fixture.parent_l, fixture.mux);
     twfRequireEqualU32(parent_ls->children_count, 0, "idle drain retained its child");
     twfRequireEqualU32((uint32_t) localidletableGetItemCount(table), 0, "idle drain retained its item");
@@ -337,8 +338,277 @@ static void caseDetachedActualIdleExpirySendsNoParentClose(void)
     idleFixtureTeardown(&fixture);
 }
 
+static void casePayloadAfterWorkerStopCannotReopenInventory(void)
+{
+    twfSetCase("MuxServer final borrowed-parent payload cannot recreate a drained child inventory");
+    muxserver_idle_fixture_t fixture;
+    idleFixtureSetup(&fixture);
+    sendFrame(&fixture, 600, kMuxFlagOpen, 0, 0);
+    twfRequire(wloopCloseNormalAdmission(fixture.env.loop), "failed to close loop admission");
+    muxserverTunnelOnWorkerQuiesce(fixture.mux, 0, wwLifecycleProcessShutdown());
+    wloopQuiesceNormalWork(fixture.env.loop);
+    muxserverTunnelOnWorkerStop(fixture.mux, 0, wwLifecycleProcessShutdown());
+    memoryZero(&fixture.trace, sizeof(fixture.trace));
+
+    // A source-side protocol may still flush its final batch before parent Finish.
+    sendFrame(&fixture, 601, kMuxFlagOpen, 0, 0);
+    sendFrame(&fixture, 601, kMuxFlagData, 1, 0x71);
+    muxserver_tstate_t *ts     = tunnelGetState(fixture.mux);
+    muxserver_lstate_t *parent = lineGetState(fixture.parent_l, fixture.mux);
+    twfRequireEqualU32(fixture.trace.len, 0, "post-stop payload started new MUX work");
+    twfRequire(ts->worker_states[0].child_idle_table == NULL, "post-stop Open recreated the idle table");
+    twfRequireEqualU32(
+        (uint32_t) atomicLoadRelaxed(&ts->live_children_count), 0, "post-stop Open reserved another child");
+    twfRequire(parent->children_count == 0 && bufferstreamGetBufLen(&parent->read_stream) == 0,
+               "post-stop payload retained a child or input bytes");
+    twfRequire(lineIsAlive(fixture.parent_l), "MUX destroyed the borrowed parent");
+    twfRequireNoLeakedBuffers();
+    idleFixtureTeardown(&fixture);
+}
+
+static void caseQuiescenceDropsPayload(bool parent_input, bool paused)
+{
+    twfSetCase("MuxServer discards final neighbour payload after worker quiescence");
+    muxserver_idle_fixture_t fixture;
+    idleFixtureSetup(&fixture);
+    sendFrame(&fixture, 610, kMuxFlagOpen, 0, 0);
+    muxserver_lstate_t *child = findChild(&fixture, 610);
+    child->paused             = paused;
+    memoryZero(&fixture.trace, sizeof(fixture.trace));
+    muxserverTunnelOnWorkerQuiesce(fixture.mux, 0, wwLifecycleProcessShutdown());
+
+    if (parent_input)
+    {
+        sendFrame(&fixture, 610, kMuxFlagData, 0, 0);
+        sendFrame(&fixture, 610, kMuxFlagData, 1, 0x71);
+        sendFrame(&fixture, 610, kMuxFlagFlowPause, 0, 0);
+        sendFrame(&fixture, 610, kMuxFlagFlowResume, 0, 0);
+        sendFrame(&fixture, 611, kMuxFlagOpen, 0, 0);
+    }
+    else
+    {
+        sbuf_t *buf = bufferpoolGetLargeBuffer(fixture.env.pool);
+        sbufSetLength(buf, 1);
+        sbufWriteUI8(buf, 0x71);
+        muxserverTunnelDownStreamPayload(fixture.mux, child->l, buf);
+    }
+
+    twfRequireEqualU32(fixture.trace.len, 0, "quiesced payload emitted MUX callbacks");
+    twfRequire(! child->child_has_payload_activity && ! child->peer_flow_paused && child->paused == paused,
+               "quiesced payload refreshed idle or flow-control state");
+    twfRequire(child->pending_child_queue_charge == 0 && child->parent->pending_child_queue_charge == 0 &&
+                   bufferqueueGetBufCount(&child->pending_child_data) == 0,
+               "quiesced payload retained child buffers or charge");
+    twfRequire(child->parent->children_count == 1 && bufferstreamGetBufLen(&child->parent->read_stream) == 0,
+               "quiesced payload admitted another child or retained input bytes");
+    twfRequireNoLeakedBuffers();
+    idleFixtureTeardown(&fixture);
+}
+
+static line_t *g_shutdown_sibling;
+static bool    g_shutdown_parent;
+
+static void shutdownChildFinish(tunnel_t *t, line_t *child_l)
+{
+    twfNextFinish(t, child_l);
+    twfRequireLineStateZeroed(child_l, g_idle_fixture->mux, "child Finish observed live MUX state");
+    if (g_shutdown_parent)
+    {
+        g_shutdown_parent = false;
+        line_t *parent    = g_idle_fixture->parent_l;
+        muxserverTunnelUpStreamFinish(g_idle_fixture->mux, parent);
+        lineDestroy(parent);
+        g_idle_fixture->parent_l = NULL;
+    }
+
+    if (g_shutdown_sibling != NULL)
+    {
+        line_t *sibling    = g_shutdown_sibling;
+        g_shutdown_sibling = NULL;
+        if (sibling != child_l && lineIsAlive(sibling))
+        {
+            muxserverTunnelDownStreamFinish(g_idle_fixture->mux, sibling);
+        }
+    }
+}
+
+static void caseShutdownFullInventory(unsigned order, unsigned reentrant)
+{
+    twfSetCase("MuxServer shutdown drains parsed-Open children in either owner order");
+    muxserver_idle_fixture_t fixture;
+    idleFixtureSetup(&fixture);
+    line_t             *children[4];
+    muxserver_tstate_t *ts = tunnelGetState(fixture.mux);
+    for (unsigned i = 0; i < 4; ++i)
+    {
+        sendFrame(&fixture, 700 + i, kMuxFlagOpen, 0, 0);
+        muxserver_lstate_t *child = findChild(&fixture, 700 + i);
+        children[i]               = child->l;
+        lineRef(children[i]);
+        child->paused = true;
+        if (i != 1)
+        {
+            sendFrame(&fixture, 700 + i, kMuxFlagData, i == 2 ? 0 : 1, 0x71);
+        }
+        if (i == 0)
+        {
+            muxserverHandleParentLoss(fixture.mux, fixture.parent_l, false);
+            lineDestroy(fixture.parent_l);
+            fixture.parent_l = twfLinePoolCreateLine(&fixture.parent_lines);
+            muxserverTunnelUpStreamInit(fixture.mux, fixture.parent_l);
+        }
+    }
+    twfRequireEqualU32(ts->worker_states[0].detached_registry.count, 1, "mixed fixture lost detached child");
+    for (unsigned i = 0; i < 4; ++i)
+    {
+        muxserver_lstate_t *child = lineGetState(children[i], fixture.mux);
+        if (i == 0 || i == 3)
+        {
+            child->paused = false; // writable retained queues still must be discarded
+        }
+    }
+    memoryZero(&fixture.trace, sizeof(fixture.trace));
+    fixture.next->fnFinU = shutdownChildFinish;
+    muxserverTunnelOnWorkerQuiesce(fixture.mux, 0, wwLifecycleProcessShutdown());
+    if (order == 1)
+    {
+        muxserverTunnelUpStreamFinish(fixture.mux, fixture.parent_l);
+        lineDestroy(fixture.parent_l);
+        fixture.parent_l = NULL;
+    }
+    if (order == 2)
+    {
+        muxserverTunnelDownStreamFinish(fixture.mux, children[2]);
+    }
+    if (reentrant == 1)
+    {
+        g_shutdown_sibling = children[3];
+    }
+    g_shutdown_parent = reentrant == 2;
+    muxserverTunnelOnWorkerStop(fixture.mux, 0, wwLifecycleProcessShutdown());
+    for (unsigned i = 0; i < 4; ++i)
+    {
+        twfRequire(! lineIsAlive(children[i]), "worker drain retained an owned child");
+        twfRequireLineStateZeroed(children[i], fixture.mux, "worker drain retained child state");
+        lineUnref(children[i]);
+    }
+    twfRequireEqualU32((uint32_t) atomicLoadRelaxed(&ts->live_children_count), 0, "worker drain retained slots");
+    twfRequire(ts->worker_states[0].child_idle_table == NULL, "worker drain retained idle table");
+    twfRequire(ts->worker_states[0].detached_registry.head == NULL &&
+                   ts->worker_states[0].detached_registry.queued_charge == 0,
+               "worker drain retained detached accounting");
+    if (fixture.parent_l != NULL)
+    {
+        muxserver_lstate_t *parent = lineGetState(fixture.parent_l, fixture.mux);
+        twfRequire(lineIsAlive(fixture.parent_l) && parent->l == fixture.parent_l,
+                   "MUX destroyed borrowed parent or its state before owner Finish");
+        twfRequire(parent->children_count == 0 && parent->pending_child_queue_charge == 0 &&
+                       muxserver_child_map_t_size(&parent->parent_state->child_map) == 0,
+                   "worker drain retained parent membership or charge");
+    }
+    twfRequireEqualU32(fixture.trace.next_finish,
+                       (order == 2 || reentrant == 1) ? 3 : 4,
+                       "shutdown reflected or repeated child Finish");
+    for (uint32_t i = 0; i < fixture.trace.len; ++i)
+    {
+        twfRequire(fixture.trace.seq[i] == 'F', "shutdown emitted payload/control/flow or reflected parent Finish");
+    }
+    muxserverTunnelOnWorkerQuiesce(fixture.mux, 0, wwLifecycleProcessShutdown());
+    muxserverTunnelOnWorkerStop(fixture.mux, 0, wwLifecycleProcessShutdown());
+    idleFixtureTeardown(&fixture);
+}
+
+static void caseWorkerDrainIsLocal(void)
+{
+    twfSetCase("MuxServer drains only the supplied worker before checking aggregate slots");
+    twf_worker_env_t env;
+    twfWorkerEnvSetup(&env, kIdleBufferSize, kMuxFrameLength * 2U);
+    master_pool_t *large       = masterpoolCreateWithCapacity(8);
+    master_pool_t *small       = masterpoolCreateWithCapacity(8);
+    buffer_pool_t *second_pool = bufferpoolCreate(large, small, 4, kIdleBufferSize, 1024);
+    bufferpoolUpdateAllocationPaddings(second_pool, kMuxFrameLength * 2U, kMuxFrameLength * 2U);
+    wloop_t       *second_loop   = wloopCreate(WLOOP_FLAG_AUTO_FREE, second_pool, 1);
+    buffer_pool_t *pools[2]      = {env.pool, second_pool};
+    wloop_t       *loops[2]      = {env.loop, second_loop};
+    worker_t       workers[2]    = {env.worker,
+                                    {.wid = 1, .buffer_pool = second_pool, .loop = second_loop, .has_event_loop = true}};
+    GSTATE.workers_count         = 3;
+    GSTATE.workers               = workers;
+    GSTATE.shortcut_buffer_pools = pools;
+    GSTATE.shortcut_loops        = loops;
+    twf_trace_t trace            = {0};
+    tunnel_t   *mux              = tunnelCreate(
+        NULL, sizeof(muxserver_tstate_t) + 2 * sizeof(muxserver_worker_state_t), sizeof(muxserver_lstate_t));
+    tunnel_t *next = twfCreateNextTunnel(&trace);
+    tunnelBind(mux, next);
+    muxserver_tstate_t *ts            = tunnelGetState(mux);
+    ts->workers_count                 = 2;
+    ts->max_live_children             = 2;
+    ts->initial_child_idle_timeout_ms = 60000;
+    twf_line_pool_t lines[2];
+    twfLinePoolSetup(&lines[0], mux->lstate_size, 8);
+    twfLinePoolSetup(&lines[1], mux->lstate_size, 8);
+    generic_pool_t *line_pools[2] = {lines[0].pools[0], lines[1].pools[0]};
+    line_t         *parents[2];
+    line_t         *children[2];
+    for (wid_t wid = 0; wid < 2; ++wid)
+    {
+        testWorkerBindWID(wid);
+        parents[wid]  = lineCreateForWorker(wid, line_pools, wid);
+        children[wid] = lineCreateForWorker(wid, line_pools, wid);
+        lineRef(children[wid]);
+        muxserver_lstate_t *parent = lineGetState(parents[wid], mux);
+        muxserver_lstate_t *child  = lineGetState(children[wid], mux);
+        muxserverLinestateInitialize(mux, parent, parents[wid], false, 0);
+        muxserverLinestateInitialize(mux, child, children[wid], true, 1);
+        twfRequire(muxserverTryReserveLiveChildSlot(ts, 2), "failed to reserve multi-worker child");
+        child->child_slot_reserved = true;
+        muxserverArmChildIdle(mux, child);
+        muxserverJoinConnection(parent, child);
+    }
+    testWorkerBindWID(0);
+    muxserverTunnelOnWorkerStop(mux, 0, wwLifecycleProcessShutdown());
+    twfRequire(! lineIsAlive(children[0]) && lineIsAlive(children[1]), "worker 0 drained another worker's child");
+    twfRequireEqualU32(
+        (uint32_t) atomicLoadRelaxed(&ts->live_children_count), 1, "worker 0 changed worker 1's reservation");
+    muxserverTunnelOnWorkerStop(mux, 0, wwLifecycleProcessShutdown());
+    for (wid_t wid = 0; wid < 2; ++wid)
+    {
+        testWorkerBindWID(wid);
+        muxserverTunnelOnWorkerStop(mux, wid, wwLifecycleProcessShutdown());
+        twfRequire(! lineIsAlive(children[wid]), "worker drain retained a child");
+        lineUnref(children[wid]);
+        muxserverTunnelUpStreamFinish(mux, parents[wid]);
+        lineDestroy(parents[wid]);
+        twfRequireEqualU32(masterpoolGetCheckedOut(lines[wid].master), 0, "worker retained pooled lines");
+        twfLinePoolTeardown(&lines[wid]);
+    }
+    muxserverTunnelOnStop(mux, wwLifecycleProcessShutdown());
+    tunnelDestroy(mux);
+    tunnelDestroy(next);
+    wloopDestroy(&second_loop);
+    bufferpoolDestroy(second_pool);
+    masterpoolDestroy(large);
+    masterpoolDestroy(small);
+    GSTATE.workers_count         = 2;
+    GSTATE.workers               = &env.worker;
+    GSTATE.shortcut_buffer_pools = env.pool_shortcut;
+    GSTATE.shortcut_loops        = env.loop_shortcut;
+    testWorkerBindWID(0);
+    twfWorkerEnvTeardown(&env);
+}
+
 int main(void)
 {
+    casePayloadAfterWorkerStopCannotReopenInventory();
+    caseQuiescenceDropsPayload(false, false);
+    caseQuiescenceDropsPayload(true, false);
+    caseQuiescenceDropsPayload(true, true);
+    caseWorkerDrainIsLocal();
+    caseShutdownFullInventory(0, 1);
+    caseShutdownFullInventory(0, 2);
+    caseShutdownFullInventory(1, false);
+    caseShutdownFullInventory(2, false);
     caseNaturalExpiryDetachesBeforeAddressReuse();
     caseDrainCallbackSkipsSecondRemoval();
     caseIdleActivityAndSiblingIsolation();

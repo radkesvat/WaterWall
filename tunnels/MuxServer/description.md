@@ -1,5 +1,5 @@
 <!--
-Documentation version: 156
+Documentation version: 157
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/MuxServer.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/MuxServer.mdx, and all files must keep the same documentation version.
 -->
 
@@ -304,6 +304,16 @@ previous side, and applies the same detached drain behavior to already parsed ch
 - A service-side Finish or orderly worker shutdown may discard residual detached data. Worker shutdown forwards no
   queued Payload, even for a writable child, before closing every remaining owned child.
 - The detached drain changes no MUX wire bytes or peer capability requirements.
+
+## Worker shutdown
+
+During worker quiescence, `MuxServer` detaches its idle timer and switches terminal cleanup to discard retained
+MUX queues without sending payload, Close frames, or flow-control work. Its worker-local child idle table
+inventories every owned child, attached or detached. Worker stop drains the complete table, releases each child’s
+queue charge and live reservation exactly once, finishes toward the child destination, and destroys the child.
+A borrowed parent can remain alive with valid empty MUX state until its actual owner sends Finish later. The idle
+table is destroyed on its worker after drain; aggregate live-child checks run after all workers have stopped.
+Ordinary connection loss, idle expiry, and ordered peer Close keep their normal runtime behavior.
 
 ## Node Metadata
 
