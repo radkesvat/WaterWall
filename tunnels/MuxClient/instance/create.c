@@ -55,10 +55,10 @@ tunnel_t *muxclientTunnelCreate(node_t *node)
 
     size_t selection_bytes;
     size_t detached_count_bytes;
-    size_t detached_byte_bytes;
+    size_t detached_charge_bytes;
     if (wc <= 0 || ! memoryTryComputeArraySize((size_t) wc, sizeof(line_t *), &selection_bytes) ||
         ! memoryTryComputeArraySize((size_t) wc, sizeof(uint32_t), &detached_count_bytes) ||
-        ! memoryTryComputeArraySize((size_t) wc, sizeof(size_t), &detached_byte_bytes) ||
+        ! memoryTryComputeArraySize((size_t) wc, sizeof(size_t), &detached_charge_bytes) ||
         selection_bytes > SIZE_MAX - sizeof(muxclient_tstate_t))
     {
         LOGF("MuxClient: worker selection geometry is not representable");
@@ -254,12 +254,12 @@ tunnel_t *muxclientTunnelCreate(node_t *node)
     line_t  **staged_fixed_parent_lines   = NULL;
     uint32_t *staged_fixed_parent_indexes = NULL;
     uint32_t *staged_detached_counts      = memoryAllocateZero(detached_count_bytes);
-    size_t   *staged_detached_bytes       = memoryAllocateZero(detached_byte_bytes);
+    size_t   *staged_detached_charge       = memoryAllocateZero(detached_charge_bytes);
 
-    if (staged_detached_counts == NULL || staged_detached_bytes == NULL)
+    if (staged_detached_counts == NULL || staged_detached_charge == NULL)
     {
         memoryFree(staged_detached_counts);
-        memoryFree(staged_detached_bytes);
+        memoryFree(staged_detached_charge);
         tunnelDestroy(t);
         return NULL;
     }
@@ -273,7 +273,7 @@ tunnel_t *muxclientTunnelCreate(node_t *node)
         {
             LOGF("MuxClient: \"per-worker-connections-count\" is too large: %u", staged_fixed_connections);
             memoryFree(staged_detached_counts);
-            memoryFree(staged_detached_bytes);
+            memoryFree(staged_detached_charge);
             tunnelDestroy(t);
             return NULL;
         }
@@ -289,7 +289,7 @@ tunnel_t *muxclientTunnelCreate(node_t *node)
         memoryFree(staged_fixed_parent_lines);
         memoryFree(staged_fixed_parent_indexes);
         memoryFree(staged_detached_counts);
-        memoryFree(staged_detached_bytes);
+        memoryFree(staged_detached_charge);
         tunnelDestroy(t);
         return NULL;
     }
@@ -298,7 +298,7 @@ tunnel_t *muxclientTunnelCreate(node_t *node)
     ts->fixed_parent_lines        = staged_fixed_parent_lines;
     ts->fixed_next_parent_indexes = staged_fixed_parent_indexes;
     ts->detached_child_counts     = staged_detached_counts;
-    ts->detached_queued_bytes     = staged_detached_bytes;
+    ts->detached_queued_charge     = staged_detached_charge;
 
     return t;
 }

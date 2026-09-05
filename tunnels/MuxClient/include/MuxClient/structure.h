@@ -38,7 +38,7 @@ typedef struct muxclient_tstate_s
     line_t  **fixed_parent_lines;
     uint32_t *fixed_next_parent_indexes;
     uint32_t *detached_child_counts;
-    size_t   *detached_queued_bytes;
+    size_t   *detached_queued_charge;
 
     line_t *unsatisfied_lines[]; // lines (per worker) that still want child connections
 } muxclient_tstate_t;
@@ -63,15 +63,15 @@ struct muxclient_lstate_s
     line_t *l;           // the line this state is associated with
     line_t *last_writer; // used when parent, to track the last writer line
 
-    struct muxclient_lstate_s    *parent;             // the parent  f is_child is true
-    struct muxclient_lstate_s    *child_prev;         // previous child in the parent connection
-    struct muxclient_lstate_s    *child_next;         // next child in the parent connection
-    buffer_stream_t               read_stream;        // stream for reading data from the parent connection
-    buffer_queue_t                pending_child_data; // child-destined data queued while the child write side is paused
-    size_t                        pending_child_data_len; // parent: total queued child-destined bytes
-    uint64_t                      creation_epoch; // epoch of the connection creation, used for concurrency mode timer
-    mux_cid_t                     connection_id;  // unique connection id, used for multiplexing
-    muxclient_child_close_state_t close_state;    // child: monotonic ordered-close/drain state
+    struct muxclient_lstate_s *parent;             // the parent  f is_child is true
+    struct muxclient_lstate_s *child_prev;         // previous child in the parent connection
+    struct muxclient_lstate_s *child_next;         // next child in the parent connection
+    buffer_stream_t            read_stream;        // stream for reading data from the parent connection
+    buffer_queue_t             pending_child_data; // child-destined data queued while the child write side is paused
+    size_t    pending_child_queue_charge; // child: own retained allocation charge; parent: attached-child aggregate
+    uint64_t  creation_epoch;             // epoch of the connection creation, used for concurrency mode timer
+    mux_cid_t connection_id;              // unique connection id, used for multiplexing
+    muxclient_child_close_state_t close_state; // child: monotonic ordered-close/drain state
     uint32_t children_count; // number of children in the parent connection, used for concurrency mode counter
     muxclient_parent_state_t *parent_state;         // parent-only CID index
     bool                      is_child : 1;         // immutable line role: this line is a Mux child

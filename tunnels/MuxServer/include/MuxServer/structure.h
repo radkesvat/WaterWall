@@ -35,7 +35,7 @@ typedef struct muxserver_detached_registry_s
 {
     muxserver_lstate_t *head;
     uint32_t            count;
-    size_t              queued_bytes;
+    size_t              queued_charge;
 } muxserver_detached_registry_t;
 
 typedef struct muxserver_rejection_bucket_s
@@ -91,16 +91,16 @@ struct muxserver_lstate_s
     line_t   *l;           // the line this state is associated with
     line_t   *last_writer; // used when parent, to track the last writer line
 
-    struct muxserver_lstate_s    *parent;             // the parent  f is_child is true
-    struct muxserver_lstate_s    *child_prev;         // previous child in the parent connection
-    struct muxserver_lstate_s    *child_next;         // next child in the parent connection
-    struct muxserver_lstate_s    *detached_prev;      // child-only detached owner registry link
-    struct muxserver_lstate_s    *detached_next;      // child-only detached owner registry link
-    buffer_stream_t               read_stream;        // stream for reading data from the parent connection
-    buffer_queue_t                pending_child_data; // child-destined data queued while the child write side is paused
-    size_t                        pending_child_data_len; // parent: total queued child-destined bytes
-    mux_cid_t                     connection_id;          // unique connection id, used for multiplexing
-    muxserver_child_close_state_t close_state;            // child: monotonic ordered-close/drain state
+    struct muxserver_lstate_s *parent;             // the parent  f is_child is true
+    struct muxserver_lstate_s *child_prev;         // previous child in the parent connection
+    struct muxserver_lstate_s *child_next;         // next child in the parent connection
+    struct muxserver_lstate_s *detached_prev;      // child-only detached owner registry link
+    struct muxserver_lstate_s *detached_next;      // child-only detached owner registry link
+    buffer_stream_t            read_stream;        // stream for reading data from the parent connection
+    buffer_queue_t             pending_child_data; // child-destined data queued while the child write side is paused
+    size_t    pending_child_queue_charge; // child: own retained allocation charge; parent: attached-child aggregate
+    mux_cid_t connection_id;              // unique connection id, used for multiplexing
+    muxserver_child_close_state_t close_state; // child: monotonic ordered-close/drain state
     uint32_t children_count; // number of children in the parent connection, used for concurrency mode counter
     muxserver_parent_state_t *parent_state;         // parent-only CID index and rejection bucket
     local_idle_item_t        *child_idle_item;      // child-only two-phase idle entry

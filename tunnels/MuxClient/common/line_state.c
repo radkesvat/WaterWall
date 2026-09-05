@@ -16,27 +16,27 @@ void muxclientLinestateInitialize(muxclient_lstate_t *ls, line_t *l, bool is_chi
         }
         parent_state->child_map = muxclient_child_map_t_init();
     }
-    *ls = (muxclient_lstate_t) {.l                      = l,
-                                .last_writer            = NULL,
-                                .parent                 = NULL,
-                                .child_prev             = NULL,
-                                .child_next             = NULL,
-                                .read_stream            = bufferstreamCreate(getWorkerBufferPool(wid), kMuxFrameLength),
-                                .pending_child_data     = bufferqueueCreate(kMuxChildBufferQueueCap),
-                                .pending_child_data_len = 0,
-                                .creation_epoch         = is_child ? 0 : wloopNowMS(getWorkerLoop(wid)),
-                                .connection_id          = connection_id,
-                                .close_state            = kMuxClientChildCloseOpen,
-                                .children_count         = 0,
-                                .parent_state           = parent_state,
-                                .is_child               = is_child,
-                                .paused                 = false,
-                                .flow_paused_sent       = false,
-                                .peer_flow_paused       = false,
-                                .parent_write_paused    = false,
-                                .parent_finishing       = false,
-                                .open_frame_sent        = ! is_child,
-                                .selection_retired      = false};
+    *ls = (muxclient_lstate_t) {.l                  = l,
+                                .last_writer        = NULL,
+                                .parent             = NULL,
+                                .child_prev         = NULL,
+                                .child_next         = NULL,
+                                .read_stream        = bufferstreamCreate(getWorkerBufferPool(wid), kMuxFrameLength),
+                                .pending_child_data = bufferqueueCreate(kMuxChildBufferQueueCap),
+                                .pending_child_queue_charge = 0,
+                                .creation_epoch             = is_child ? 0 : wloopNowMS(getWorkerLoop(wid)),
+                                .connection_id              = connection_id,
+                                .close_state                = kMuxClientChildCloseOpen,
+                                .children_count             = 0,
+                                .parent_state               = parent_state,
+                                .is_child                   = is_child,
+                                .paused                     = false,
+                                .flow_paused_sent           = false,
+                                .peer_flow_paused           = false,
+                                .parent_write_paused        = false,
+                                .parent_finishing           = false,
+                                .open_frame_sent            = ! is_child,
+                                .selection_retired          = false};
 }
 
 void muxclientLinestateDestroy(muxclient_lstate_t *ls)
@@ -55,10 +55,10 @@ void muxclientLinestateDestroy(muxclient_lstate_t *ls)
             LOGF("MuxClient: Trying to destroy parent line state with child links still present");
             abortProgramNow(1);
         }
-        if (ls->pending_child_data_len != 0)
+        if (ls->pending_child_queue_charge != 0)
         {
-            LOGF("MuxClient: Trying to destroy parent line state with %zu queued child byte(s)",
-                 ls->pending_child_data_len);
+            LOGF("MuxClient: Trying to destroy parent line state with %zu retained child-queue charge",
+                 ls->pending_child_queue_charge);
             abortProgramNow(1);
         }
         if (ls->parent_state == NULL || muxclient_child_map_t_size(&ls->parent_state->child_map) != 0)
@@ -84,6 +84,12 @@ void muxclientLinestateDestroy(muxclient_lstate_t *ls)
         if (ls->parent_state != NULL)
         {
             LOGF("MuxClient: child line state unexpectedly owns parent-only state");
+            abortProgramNow(1);
+        }
+        if (ls->pending_child_queue_charge != 0)
+        {
+            LOGF("MuxClient: Trying to destroy child line state with %zu retained queue charge",
+                 ls->pending_child_queue_charge);
             abortProgramNow(1);
         }
     }

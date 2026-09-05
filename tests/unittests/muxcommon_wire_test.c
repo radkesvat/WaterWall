@@ -1,3 +1,4 @@
+#include "MuxCommon/mux_limits.h"
 #include "MuxCommon/mux_wire.h"
 #include "wwapi.h"
 
@@ -247,6 +248,50 @@ static void testEncodedLengthBoundaries(void)
     require(! muxTryComputeEncodedLength(1, false, NULL), "NULL encoded-length destination was accepted");
 }
 
+static void testQueuedSbufCharge(buffer_pool_t *pool)
+{
+    sbuf_t *empty_small = bufferpoolGetSmallBuffer(pool);
+    sbuf_t *one_small   = bufferpoolGetSmallBuffer(pool);
+    sbufSetLength(one_small, 1);
+
+    const size_t empty_charge = muxQueuedSbufCharge(empty_small);
+    const size_t one_charge   = muxQueuedSbufCharge(one_small);
+    require(empty_charge > 0, "an empty queued sbuf has no retained allocation charge");
+    require(empty_charge == one_charge, "payload length changed an otherwise identical sbuf allocation charge");
+    require(empty_charge ==
+                sizeof(sbuf_t) + (size_t) sbufGetTotalCapacity(empty_small) + (size_t) kSbufAllocationAlignment,
+            "small-buffer charge omitted real allocation bytes");
+
+    sbuf_t *large = bufferpoolGetLargeBuffer(pool);
+    require(muxQueuedSbufCharge(large) ==
+                sizeof(sbuf_t) + (size_t) sbufGetTotalCapacity(large) + (size_t) kSbufAllocationAlignment,
+            "large-buffer charge omitted real allocation bytes");
+    require(muxQueuedSbufCharge(large) != empty_charge, "queued sbuf charge used one fixed pool-tier constant");
+
+    sbuf_t *unpadded = sbufCreateWithPadding(77, 0);
+    sbuf_t *padded   = sbufCreateWithPadding(77, 33);
+    require(muxQueuedSbufCharge(unpadded) ==
+                sizeof(sbuf_t) + (size_t) sbufGetTotalCapacity(unpadded) + (size_t) kSbufAllocationAlignment,
+            "dedicated-buffer charge omitted real allocation bytes");
+    require(muxQueuedSbufCharge(padded) ==
+                sizeof(sbuf_t) + (size_t) sbufGetTotalCapacity(padded) + (size_t) kSbufAllocationAlignment,
+            "padded-buffer charge omitted real allocation bytes");
+    require(muxQueuedSbufCharge(padded) > muxQueuedSbufCharge(unpadded),
+            "queued sbuf charge excluded retained left padding");
+
+    require(! muxQueueChargeWouldReachLimit(10, 9, 20), "below-limit projected charge was rejected");
+    require(muxQueueChargeWouldReachLimit(10, 10, 20), "limit equality was not rejected");
+    require(muxQueueChargeWouldReachLimit(SIZE_MAX - 4U, 8, SIZE_MAX), "overflowing projected charge was not rejected");
+    require(muxQueueChargeWouldReachLimit(0, SIZE_MAX, SIZE_MAX),
+            "maximum candidate charge did not reach an equal limit");
+
+    sbufDestroy(padded);
+    sbufDestroy(unpadded);
+    bufferpoolReuseBuffer(pool, large);
+    bufferpoolReuseBuffer(pool, one_small);
+    bufferpoolReuseBuffer(pool, empty_small);
+}
+
 static void testEncodeCase(buffer_pool_t *pool, uint32_t payload_length, bool prepend_open, uint32_t data_frames)
 {
     sbuf_t             *input   = makePayload(pool, payload_length);
@@ -314,6 +359,7 @@ int main(void)
     testControlAndClientSequences(test_pool.pool);
     testCompleteFrameParsing(test_pool.pool);
     testEncodedLengthBoundaries();
+    testQueuedSbufCharge(test_pool.pool);
     testEncodingAndOwnership(test_pool.pool);
 
     testPoolDestroy(&test_pool);

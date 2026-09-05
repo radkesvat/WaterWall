@@ -86,8 +86,8 @@ static void fixtureSetup(muxclient_capacity_fixture_t *fixture, uint8_t mode, ui
     ts->max_children                  = 16;
     ts->workers_count                 = 1;
     ts->detached_child_counts         = memoryAllocateZero(sizeof(*ts->detached_child_counts));
-    ts->detached_queued_bytes         = memoryAllocateZero(sizeof(*ts->detached_queued_bytes));
-    twfRequire(ts->detached_child_counts != NULL && ts->detached_queued_bytes != NULL,
+    ts->detached_queued_charge         = memoryAllocateZero(sizeof(*ts->detached_queued_charge));
+    twfRequire(ts->detached_child_counts != NULL && ts->detached_queued_charge != NULL,
                "failed to allocate MuxClient detached accounting");
 
     if (mode == kConcurrencyModeFixedConnectionsCount)
@@ -134,7 +134,7 @@ static void fixtureTeardown(muxclient_capacity_fixture_t *fixture)
 
     muxclient_tstate_t *ts = tunnelGetState(fixture->mux);
     twfRequireEqualU32(ts->detached_child_counts[0], 0, "MuxClient fixture retained detached children");
-    twfRequire(ts->detached_queued_bytes[0] == 0, "MuxClient fixture retained detached bytes");
+    twfRequire(ts->detached_queued_charge[0] == 0, "MuxClient fixture retained detached bytes");
     muxclientTunnelOnWorkerStop(fixture->mux, 0, wwLifecycleProcessShutdown());
 
     twfRequireNoLeakedBuffers();
@@ -142,7 +142,7 @@ static void fixtureTeardown(muxclient_capacity_fixture_t *fixture)
     memoryFree(ts->fixed_parent_lines);
     memoryFree(ts->fixed_next_parent_indexes);
     memoryFree(ts->detached_child_counts);
-    memoryFree(ts->detached_queued_bytes);
+    memoryFree(ts->detached_queued_charge);
     memoryFree(fixture->children);
     tunnelDestroy(fixture->prev);
     tunnelDestroy(fixture->mux);

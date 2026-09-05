@@ -145,7 +145,7 @@ static void mxbTlsClientWireFinish(tunnel_t *wire, line_t *line)
     fixture->decrypted_at_finish = fixture->decrypted_length;
     mxbRequire(mxbLineStateIsZero(line, fixture->mux), "MuxServer state survived before wire Finish");
     mxbRequire(mxbLineStateIsZero(line, fixture->tls), "TlsClient state survived before wire Finish");
-    mxbRequire(mxbMuxServerDetachedChildren(fixture) == 0 && mxbMuxServerDetachedBytes(fixture) == 0,
+    mxbRequire(mxbMuxServerDetachedChildren(fixture) == 0 && mxbMuxServerDetachedCharge(fixture) == 0,
                "MuxServer did not unregister its owned child before nested Finish");
     mxbRequire(lineIsAlive(line), "MuxServer destroyed its owned child before the nested TlsClient Finish returned");
 }

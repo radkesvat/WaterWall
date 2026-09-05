@@ -12,6 +12,7 @@ enum
     kMxbMuxFlagData          = 4,
     kMxbMuxDataLength        = 60 * 1024,
     kMxbPlaintextLength      = (9 * 1024 * 1024) + 123,
+    kMxbRetainedChargeLimit  = 128 * 1024 * 1024,
     kMxbMaximumDriveAttempts = 16,
 };
 
@@ -89,9 +90,10 @@ bool     mxbMuxClientChildIsPeerDraining(const mxb_fixture_t *fixture);
 bool     mxbMuxClientChildIsParentGoneDraining(const mxb_fixture_t *fixture);
 bool     mxbMuxClientChildHasNoParent(const mxb_fixture_t *fixture);
 size_t   mxbMuxClientChildQueuedBytes(const mxb_fixture_t *fixture);
-size_t   mxbMuxClientParentQueuedBytes(const mxb_fixture_t *fixture);
+size_t   mxbMuxClientChildQueueCharge(const mxb_fixture_t *fixture);
+size_t   mxbMuxClientParentQueueCharge(const mxb_fixture_t *fixture);
 uint32_t mxbMuxClientDetachedChildren(const mxb_fixture_t *fixture);
-size_t   mxbMuxClientDetachedBytes(const mxb_fixture_t *fixture);
+size_t   mxbMuxClientDetachedCharge(const mxb_fixture_t *fixture);
 void     mxbMuxClientDestroy(mxb_fixture_t *fixture);
 
 void     mxbMuxServerCreate(mxb_fixture_t *fixture);
@@ -103,9 +105,10 @@ bool     mxbMuxServerChildIsPeerDraining(const mxb_fixture_t *fixture);
 bool     mxbMuxServerChildIsParentGoneDraining(const mxb_fixture_t *fixture);
 bool     mxbMuxServerChildHasNoParent(const mxb_fixture_t *fixture);
 size_t   mxbMuxServerChildQueuedBytes(const mxb_fixture_t *fixture);
-size_t   mxbMuxServerParentQueuedBytes(const mxb_fixture_t *fixture);
+size_t   mxbMuxServerChildQueueCharge(const mxb_fixture_t *fixture);
+size_t   mxbMuxServerParentQueueCharge(const mxb_fixture_t *fixture);
 uint32_t mxbMuxServerDetachedChildren(const mxb_fixture_t *fixture);
-size_t   mxbMuxServerDetachedBytes(const mxb_fixture_t *fixture);
+size_t   mxbMuxServerDetachedCharge(const mxb_fixture_t *fixture);
 bool     mxbMuxServerDetachedHeadIsChild(const mxb_fixture_t *fixture);
 void     mxbMuxServerDestroy(mxb_fixture_t *fixture);
 

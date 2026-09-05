@@ -1,5 +1,5 @@
 <!--
-Documentation version: 155
+Documentation version: 156
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/MuxClient.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/MuxClient.mdx, and all files must keep the same documentation version.
 -->
 
@@ -129,12 +129,14 @@ Fixed connection count mode:
   `connection-capacity`.
 
 - `child-buffer-limit` `(integer, bytes, optional)`
-  Maximum queued data per paused child line before `MuxClient` closes that child stream.
+  Maximum retained `sbuf_t` allocation charge per paused child line before `MuxClient` closes that child stream.
+  Each queued entry is charged by its actual capacity (including left padding), buffer header, and aligned-allocation
+  overhead, rather than only by its application payload length.
 
   Default: `25165824` (`24 MB`).
 
 - `child-buffer-pause-tolerance` `(integer, bytes, optional)`
-  Queued-data backstop for sending a `FlowPause` frame for a paused child.
+  Logical queued-payload backstop for sending a `FlowPause` frame for a paused child.
 
   `FlowPause` is normally sent as soon as the child's local write side pauses, before data is queued. This threshold
   covers the ordering edge case where a child paused before its `Open` frame reached the peer. Raising it does not
@@ -143,26 +145,30 @@ Fixed connection count mode:
   Default: `524288` (`512 KB`). Values above `child-buffer-limit` are capped to `child-buffer-limit`.
 
 - `child-buffer-resume-threshold` `(integer, bytes, optional)`
-  Low-water mark for sending `FlowResume` after the local child becomes writable. The frame is sent once the retained
-  child queue falls below this value, allowing the peer to restart before the queue is completely empty. It must be
-  greater than `0`; values above `child-buffer-limit` are capped to `child-buffer-limit`.
+  Logical queued-payload low-water mark for sending `FlowResume` after the local child becomes writable. The frame is
+  sent once the sum of queued application payload bytes falls below this value, allowing the peer to restart before
+  the queue is completely empty. It must be greater than `0`; its configured numeric value is capped to
+  `child-buffer-limit`.
 
   Default: `262144` (`256 KiB`). Raising it resumes the peer earlier and may reduce high-RTT throughput gaps, at the
   cost of weaker hysteresis and potentially more pause/resume cycling.
 
+  Both pause tolerance and resume threshold intentionally use logical payload bytes. Allocation charge is used only
+  by the three memory-sensitive hard byte budgets.
+
 - `parent-buffer-limit` `(integer, bytes, optional)`
-  Per-parent budget for child-destined data queued across all children. When a newly queued payload makes the total
-  reach the budget, `MuxClient` closes the child with the largest queue. Equal-sized queues prefer the
+  Per-parent retained-allocation-charge budget for child-destined queues across all children. When a newly queued
+  buffer makes the total reach the budget, `MuxClient` closes the child with the largest retained charge. Equal-sized queues prefer the
   oldest attached child. This releases the pressure without pausing unrelated streams on the shared parent.
 
   Default: `33554432` (`32 MB`). Set to `0` to disable the aggregate budget; `child-buffer-limit` still bounds each
   individual child. The value may intentionally be lower than `child-buffer-limit`.
 
-  The limit applies to each parent independently. Approximate worst-case queued memory is therefore
+  The limit applies to each parent independently. Approximate worst-case live-queue charge is therefore
   `parent-buffer-limit` multiplied by the number of live parent lines (one per configured MuxClient pool slot).
 
 - `detached-buffer-limit` `(integer, bytes, optional)`
-  Per-worker byte limit for child queues retained after their parent transport has closed. The default depends on
+  Per-worker retained-allocation-charge limit for child queues kept after their parent transport has closed. The default depends on
   the global `misc.ram-profile`, as shown below. Reaching the limit aborts only the newly detached blocked child. Set
   to `0` to disable this aggregate bound.
 
@@ -171,7 +177,7 @@ Fixed connection count mode:
   `misc.ram-profile`, as shown below. Reaching the limit aborts only the newly detached blocked child. Set to `0` to
   disable this aggregate bound.
 
-  | RAM profile | Default detached bytes | Default detached children |
+  | RAM profile | Default detached charge | Default detached children |
   | --- | ---: | ---: |
   | S1 (`minimal` / `ultralow`) | `33554432` (`32 MiB`) | `4096` |
   | S2 | `80740352` (`77 MiB`) | `5677` |
@@ -180,7 +186,7 @@ Fixed connection count mode:
   | L1 | `221249536` (`211 MiB`) | `10419` |
   | L2 (`server`, the global default) | `268435456` (`256 MiB`) | `12000` |
 
-  Defaults are linearly interpolated over the six ordered RAM-profile tiers, with the byte limit rounded to the
+  Defaults are linearly interpolated over the six ordered RAM-profile tiers, with the charge limit rounded to the
   nearest whole MiB. An explicit setting overrides the profile-derived value independently for that limit.
 
 - `log-main-line-stats` `(boolean, optional)`
@@ -188,7 +194,8 @@ Fixed connection count mode:
   death suppresses normal stats execution; when the queued or timed runner is reached, the task settles as `LineDead`.
   Worker quiescence actively cancels pending queued or timed stats work. Neither path rearms it.
 
-  The log keeps `parent-line-read-paused=no` for compatibility and also reports `parent-queued-bytes` and
+  The log keeps `parent-line-read-paused=no` for compatibility. Its `parent-queued-bytes` value is the same retained
+  allocation charge enforced by `parent-buffer-limit`, not logical application payload bytes. It also reports
   `children-close-pending`, along with `wid`, parent-line write pause state, child count, child read-pause count, and
   child write-pause count.
   Default: `false`.
@@ -295,10 +302,17 @@ Queue pressure does not pause reads on the parent transport. A parent is shared 
 taken for one indefinitely blocked destination also prevents unrelated child frames from being demultiplexed. That is
 global head-of-line blocking even though the other streams and the parent transport are healthy.
 
-Pressure is bounded by closing a child instead. If one child's queue reaches `child-buffer-limit`, that child is closed.
-If the total queued data reaches `parent-buffer-limit`, the actual largest queued child is closed; equal-size ties prefer
-the oldest attached child. The total was below the budget before the newest payload, and the largest queue is at
-least as large as that payload, so one close returns the parent below budget in the normal accounting path.
+Pressure is bounded by closing a child instead. If one child's retained queue charge reaches `child-buffer-limit`, that child is closed.
+If the total retained charge reaches `parent-buffer-limit`, the child retaining the largest charged allocation is closed; equal-size ties prefer
+the oldest attached child. The total was below the budget before the newest buffer, and the largest queue charge is
+at least that buffer's charge, so one close returns the parent below budget in the normal accounting path.
+
+Logical queue length remains the sum of application payload bytes and continues to drive `FlowPause`/`FlowResume`.
+Zero-length `Data` is valid wire input: it adds no logical payload activity, but a retained zero-length frame has a
+positive allocation charge and therefore advances every applicable hard memory budget.
+
+The charge approximates memory retained by live Mux queues, not whole-process RSS. Allocator caches, queue-ring
+storage, and the buffer pools' fixed baseline may remain allocated outside a particular live queue's charge.
 
 When the remote side pauses the shared parent line, `MuxClient` tries to pause the child that most recently wrote to that parent. If no recent writer is known, it pauses all attached children. Resume only clears parent-write pressure; a child that is still under peer `FlowPause` remains paused.
 
@@ -310,7 +324,8 @@ children on the parent continue normally.
 If the parent transport is lost, the parent line still closes immediately. Already accepted child-destined queues
 become child-only detached drains: writable children complete immediately, while paused children continue on later
 Resume without retaining or dereferencing the dead parent. New outbound child data is rejected in this state.
-`detached-buffer-limit` and `detached-child-limit` bound the aggregate retained backlog per worker. `MuxClient` borrows
+`detached-buffer-limit` bounds the aggregate retained allocation charge and `detached-child-limit` bounds the retained
+child count per worker. `MuxClient` borrows
 child lines, so their true source owners remain responsible for enumerating and finishing them during shutdown.
 
 ### Buffering and overflow handling

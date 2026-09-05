@@ -19,29 +19,29 @@ void muxserverLinestateInitialize(tunnel_t *t, muxserver_lstate_t *ls, line_t *l
         parent_state->rejection_bucket.tokens = kMuxServerRejectedOpenBurst;
     }
 
-    *ls = (muxserver_lstate_t) {.t                      = t,
-                                .l                      = l,
-                                .parent                 = NULL,
-                                .child_prev             = NULL,
-                                .child_next             = NULL,
-                                .detached_prev          = NULL,
-                                .detached_next          = NULL,
-                                .read_stream            = bufferstreamCreate(getWorkerBufferPool(wid), kMuxFrameLength),
-                                .pending_child_data     = bufferqueueCreate(kMuxChildBufferQueueCap),
-                                .pending_child_data_len = 0,
-                                .connection_id          = connection_id,
-                                .close_state            = kMuxServerChildCloseOpen,
-                                .children_count         = 0,
-                                .parent_state           = parent_state,
-                                .child_idle_item        = NULL,
-                                .is_child               = is_child,
-                                .paused                 = false,
-                                .flow_paused_sent       = false,
-                                .peer_flow_paused       = false,
-                                .parent_write_paused    = false,
-                                .parent_finishing       = false,
-                                .detached_registered    = false,
-                                .child_slot_reserved    = false,
+    *ls = (muxserver_lstate_t) {.t                  = t,
+                                .l                  = l,
+                                .parent             = NULL,
+                                .child_prev         = NULL,
+                                .child_next         = NULL,
+                                .detached_prev      = NULL,
+                                .detached_next      = NULL,
+                                .read_stream        = bufferstreamCreate(getWorkerBufferPool(wid), kMuxFrameLength),
+                                .pending_child_data = bufferqueueCreate(kMuxChildBufferQueueCap),
+                                .pending_child_queue_charge = 0,
+                                .connection_id              = connection_id,
+                                .close_state                = kMuxServerChildCloseOpen,
+                                .children_count             = 0,
+                                .parent_state               = parent_state,
+                                .child_idle_item            = NULL,
+                                .is_child                   = is_child,
+                                .paused                     = false,
+                                .flow_paused_sent           = false,
+                                .peer_flow_paused           = false,
+                                .parent_write_paused        = false,
+                                .parent_finishing           = false,
+                                .detached_registered        = false,
+                                .child_slot_reserved        = false,
                                 .child_has_payload_activity = false};
 }
 
@@ -61,10 +61,10 @@ void muxserverLinestateDestroy(tunnel_t *t, muxserver_lstate_t *ls)
             LOGF("MuxServer: Trying to destroy parent line state with child links still present");
             abortProgramNow(1);
         }
-        if (ls->pending_child_data_len != 0)
+        if (ls->pending_child_queue_charge != 0)
         {
-            LOGF("MuxServer: Trying to destroy parent line state with %zu queued child byte(s)",
-                 ls->pending_child_data_len);
+            LOGF("MuxServer: Trying to destroy parent line state with %zu retained child-queue charge",
+                 ls->pending_child_queue_charge);
             abortProgramNow(1);
         }
         if (ls->parent_state == NULL || muxserver_child_map_t_size(&ls->parent_state->child_map) != 0)
@@ -95,6 +95,12 @@ void muxserverLinestateDestroy(tunnel_t *t, muxserver_lstate_t *ls)
         if (ls->parent_state != NULL)
         {
             LOGF("MuxServer: child line state unexpectedly owns parent-only state");
+            abortProgramNow(1);
+        }
+        if (ls->pending_child_queue_charge != 0)
+        {
+            LOGF("MuxServer: Trying to destroy child line state with %zu retained queue charge",
+                 ls->pending_child_queue_charge);
             abortProgramNow(1);
         }
         if (ls->child_idle_item != NULL)

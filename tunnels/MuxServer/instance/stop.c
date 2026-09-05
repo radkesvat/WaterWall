@@ -46,10 +46,10 @@ void muxserverTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_cont
 
     muxserver_worker_state_t      *worker_state = &ts->worker_states[wid];
     muxserver_detached_registry_t *registry     = &worker_state->detached_registry;
-    if (registry->head != NULL && registry->queued_bytes != 0)
+    if (registry->head != NULL && registry->queued_charge != 0)
     {
         LOGW("MuxServer: worker stop is discarding %zu byte(s) from %u detached child line(s) on worker %d",
-             registry->queued_bytes,
+             registry->queued_charge,
              registry->count,
              (int) wid);
     }
@@ -70,12 +70,12 @@ void muxserverTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_cont
         muxserverAbortDetachedChild(t, child_l, child_ls, true);
     }
 
-    if (UNLIKELY(registry->count != 0 || registry->queued_bytes != 0))
+    if (UNLIKELY(registry->count != 0 || registry->queued_charge != 0))
     {
         LOGF("MuxServer: worker %d detached registry accounting remained after drain (count=%u, bytes=%zu)",
              (int) wid,
              (unsigned int) registry->count,
-             registry->queued_bytes);
+             registry->queued_charge);
         abortProgramNow(1);
     }
 

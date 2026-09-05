@@ -16,6 +16,21 @@ enum
     kTestMaxFrames       = 64
 };
 
+static bool g_reject_next_queue_reallocation = false;
+
+void *__real_memoryReAllocate(void *ptr, size_t size);
+void *__wrap_memoryReAllocate(void *ptr, size_t size);
+
+void *__wrap_memoryReAllocate(void *ptr, size_t size)
+{
+    if (g_reject_next_queue_reallocation)
+    {
+        g_reject_next_queue_reallocation = false;
+        return NULL;
+    }
+    return __real_memoryReAllocate(ptr, size);
+}
+
 // ---------------------------------------------------------------------------
 // wire helpers
 // ---------------------------------------------------------------------------
@@ -155,9 +170,10 @@ static void fixtureTeardown(muxserver_fixture_t *fixture)
     }
     twfLinePoolTeardown(&fixture->lines);
     memoryFree(fixture->capture);
-    memoryFree(fixture->prev);
-    memoryFree(fixture->mux);
-    memoryFree(fixture->next);
+    tunnelDestroy(fixture->prev);
+    tunnelDestroy(fixture->mux);
+    tunnelDestroy(fixture->next);
+    twfWorkerEnvTeardown(&fixture->env);
 }
 
 static sbuf_t *makePatternPayload(muxserver_fixture_t *fixture, uint32_t length)
@@ -172,6 +188,24 @@ static sbuf_t *makePatternPayload(muxserver_fixture_t *fixture, uint32_t length)
         raw[i] = patternByte(i);
     }
     return buf;
+}
+
+static size_t pooledBufferCharge(buffer_pool_t *pool, bool small)
+{
+    sbuf_t      *buf    = small ? bufferpoolGetSmallBuffer(pool) : bufferpoolGetLargeBuffer(pool);
+    const size_t charge = muxQueuedSbufCharge(buf);
+    bufferpoolReuseBuffer(pool, buf);
+    return charge;
+}
+
+static void requireEqualCharge(size_t actual, size_t expected, const char *message)
+{
+    if (actual != expected)
+    {
+        fprintf(stderr, "FAIL [%s]: %s (expected %zu, got %zu)\n", g_twf_case, message, expected, actual);
+        fflush(stderr);
+        _Exit(1);
+    }
 }
 
 static void requireReassembledPattern(const frame_view_t *frames, uint32_t frame_count, uint32_t expected_length)
@@ -307,6 +341,149 @@ static void destroyServerSibling(muxserver_fixture_t *fixture, line_t *child_l)
     discard muxserverReleaseParentInputForChildClose(fixture->mux, fixture->parent_l, parent_ls, child_ls);
     muxserverLinestateDestroy(fixture->mux, child_ls);
     lineDestroy(child_l);
+}
+
+static void sendParsedTinyServerData(muxserver_fixture_t *fixture, uint32_t payload_length)
+{
+    const uint32_t batch_length = (2U * kMuxFrameLength) + payload_length + 1U;
+    sbuf_t        *batch        = bufferpoolGetLargeBuffer(fixture->env.pool);
+    batch                       = sbufReserveSpace(batch, batch_length);
+    sbufSetLength(batch, batch_length);
+
+    uint8_t *raw    = sbufGetMutablePtr(batch);
+    uint32_t offset = appendInputFrame(raw, 0, kTestChildCid, kMuxFlagData, payload_length, 0x41);
+    offset          = appendInputFrame(raw, offset, kTestChildCid + 1000U, kMuxFlagData, 1, 0x52);
+    twfRequireEqualU32(offset, batch_length, "the tiny-frame parser batch has the wrong size");
+    muxserverTunnelUpStreamPayload(fixture->mux, fixture->parent_l, batch);
+}
+
+static void caseParsedTinyFrameUsesAllocationCharge(uint32_t payload_length, const char *case_name)
+{
+    twfSetCase(case_name);
+
+    muxserver_fixture_t fixture;
+    fixtureSetup(&fixture, 64);
+
+    muxserver_tstate_t *ts        = tunnelGetState(fixture.mux);
+    muxserver_lstate_t *parent_ls = lineGetState(fixture.parent_l, fixture.mux);
+    muxserver_lstate_t *child_ls  = lineGetState(fixture.child_l, fixture.mux);
+    const size_t        charge    = pooledBufferCharge(fixture.env.pool, true);
+    twfRequire(charge <= UINT32_MAX / 2U, "tiny-frame child charge limit is not representable");
+
+    ts->child_buffer_limit  = (uint32_t) (2U * charge);
+    ts->parent_buffer_limit = kMuxParentBufferLimitUnlimited;
+    child_ls->paused        = true;
+    line_t *sibling_l       = createServerSibling(&fixture, parent_ls, kTestChildCid + 1U);
+
+    sendParsedTinyServerData(&fixture, payload_length);
+
+    twfRequireEqualU32((uint32_t) bufferqueueGetBufCount(&child_ls->pending_child_data),
+                       1,
+                       "the first tiny Data frame was not retained exactly once");
+    twfRequireEqualU32((uint32_t) bufferqueueGetBufLen(&child_ls->pending_child_data),
+                       payload_length,
+                       "tiny Data changed logical queue length semantics");
+    const sbuf_t *retained = bufferqueueFront(&child_ls->pending_child_data);
+    twfRequire(retained != NULL, "the first tiny Data frame has no retained sbuf");
+    requireEqualCharge(muxQueuedSbufCharge(retained), charge, "the parser retained an unexpected buffer geometry");
+    requireEqualCharge(
+        child_ls->pending_child_queue_charge, charge, "the first tiny Data frame did not charge its child queue");
+    requireEqualCharge(
+        parent_ls->pending_child_queue_charge, charge, "the first tiny Data frame did not charge its parent aggregate");
+
+    lineRef(fixture.child_l);
+    sendParsedTinyServerData(&fixture, payload_length);
+
+    twfRequire(lineIsAlive(fixture.parent_l), "a tiny-frame child limit closed the borrowed parent");
+    twfRequire(! lineIsAlive(fixture.child_l), "MuxServer left its owned offending child alive");
+    twfRequireLineStateZeroed(fixture.child_l, fixture.mux, "the tiny-frame limit retained offending child state");
+    twfRequire(lineIsAlive(sibling_l), "the tiny-frame child limit closed a sibling");
+    muxserver_lstate_t *sibling_ls = lineGetState(sibling_l, fixture.mux);
+    twfRequire(sibling_ls->parent == parent_ls, "the tiny-frame child limit detached a sibling");
+    requireEqualCharge(
+        parent_ls->pending_child_queue_charge, 0, "the tiny-frame child close retained parent allocation charge");
+    twfRequireEqualU32(fixture.trace.prev_payload, 1, "the tiny-frame limit did not send exactly one Close frame");
+    twfRequireEqualU32(fixture.trace.next_finish, 1, "the tiny-frame limit did not finish the owned child once");
+    twfRequireOwnedLineReclaimed(fixture.child_l, "MuxServer tiny-frame limit child cleanup");
+    fixture.child_l = NULL;
+
+    destroyServerSibling(&fixture, sibling_l);
+    fixtureTeardown(&fixture);
+}
+
+static void caseParsedTinyFrameTransfersToDetachedAccounting(void)
+{
+    twfSetCase("MuxServer transfers a parsed empty Data allocation through detached drain");
+
+    muxserver_fixture_t fixture;
+    fixtureSetup(&fixture, 32);
+
+    muxserver_tstate_t *ts        = tunnelGetState(fixture.mux);
+    muxserver_lstate_t *parent_ls = lineGetState(fixture.parent_l, fixture.mux);
+    muxserver_lstate_t *child_ls  = lineGetState(fixture.child_l, fixture.mux);
+    const size_t        charge    = pooledBufferCharge(fixture.env.pool, true);
+    child_ls->paused              = true;
+
+    sendParsedTinyServerData(&fixture, 0);
+    requireEqualCharge(
+        child_ls->pending_child_queue_charge, charge, "the parsed empty Data frame did not charge its child queue");
+    requireEqualCharge(
+        parent_ls->pending_child_queue_charge, charge, "the parsed empty Data frame did not charge its parent queue");
+
+    muxserverTunnelUpStreamFinish(fixture.mux, fixture.parent_l);
+    twfRequire(lineIsAlive(fixture.parent_l), "MuxServer destroyed its borrowed parent after tiny-frame loss");
+    twfRequireLineStateZeroed(fixture.parent_l, fixture.mux, "tiny-frame parent loss retained parent state");
+    muxserver_detached_registry_t *registry = &ts->worker_states[0].detached_registry;
+    requireEqualCharge(
+        child_ls->pending_child_queue_charge, charge, "tiny-frame parent loss changed the child allocation charge");
+    requireEqualCharge(
+        registry->queued_charge, charge, "tiny-frame parent loss did not transfer the exact detached charge");
+    twfRequireEqualU32(registry->count, 1, "tiny-frame parent loss lost detached child accounting");
+
+    lineRef(fixture.child_l);
+    muxserverTunnelDownStreamResume(fixture.mux, fixture.child_l);
+    twfRequire(! lineIsAlive(fixture.child_l), "tiny-frame detached drain left the owned child alive");
+    requireEqualCharge(registry->queued_charge, 0, "tiny-frame detached drain retained aggregate charge");
+    twfRequireEqualU32(registry->count, 0, "tiny-frame detached drain retained child accounting");
+    twfRequireLineStateZeroed(fixture.child_l, fixture.mux, "tiny-frame detached drain retained child state");
+    twfRequireOwnedLineReclaimed(fixture.child_l, "MuxServer tiny-frame detached drain cleanup");
+    fixture.child_l = NULL;
+
+    fixtureTeardown(&fixture);
+}
+
+static void caseQueueReservationFailureClosesOnlyServerChild(void)
+{
+    twfSetCase("MuxServer queue reservation failure closes only the affected owned child");
+
+    muxserver_fixture_t fixture;
+    fixtureSetup(&fixture, 32);
+
+    muxserver_tstate_t *ts        = tunnelGetState(fixture.mux);
+    muxserver_lstate_t *parent_ls = lineGetState(fixture.parent_l, fixture.mux);
+    muxserver_lstate_t *child_ls  = lineGetState(fixture.child_l, fixture.mux);
+    child_ls->paused              = true;
+
+    bufferqueueDestroy(&child_ls->pending_child_data);
+    bufferqueueInitEmpty(&child_ls->pending_child_data);
+    lineRef(fixture.child_l);
+    g_reject_next_queue_reallocation = true;
+    twfRequire(muxserverQueueChildPayload(
+                   fixture.mux, fixture.parent_l, ts, parent_ls, child_ls, makePatternPayload(&fixture, 1)),
+               "queue reservation failure tore down the server parent");
+    twfRequire(! g_reject_next_queue_reallocation, "queue reservation failure seam was not exercised");
+
+    twfRequire(lineIsAlive(fixture.parent_l), "queue reservation failure closed the server parent");
+    twfRequire(! lineIsAlive(fixture.child_l), "queue reservation failure left the owned child alive");
+    twfRequireLineStateZeroed(fixture.child_l, fixture.mux, "queue reservation failure retained child state");
+    requireEqualCharge(
+        parent_ls->pending_child_queue_charge, 0, "queue reservation failure mutated parent charge accounting");
+    twfRequireEqualU32(fixture.trace.prev_payload, 1, "queue reservation failure did not send one Close frame");
+    twfRequireEqualU32(fixture.trace.next_finish, 1, "queue reservation failure did not finish the child once");
+    twfRequireOwnedLineReclaimed(fixture.child_l, "MuxServer queue reservation failure child cleanup");
+    fixture.child_l = NULL;
+
+    fixtureTeardown(&fixture);
 }
 
 static void caseConfiguredResumeThresholdControlsFlowResume(void)
@@ -508,8 +685,14 @@ static void casePeerCloseDropsLateFramesAndKeepsSiblingProgress(void)
     twfRequireEqualU32((uint32_t) bufferqueueGetBufLen(&child_ls->pending_child_data),
                        kFirst,
                        "late server Data changed the terminal child's retained FIFO");
-    twfRequireEqualU32(
-        (uint32_t) parent_ls->pending_child_data_len, kFirst, "late server Data changed parent queued-byte accounting");
+    const sbuf_t *retained = bufferqueueFront(&child_ls->pending_child_data);
+    twfRequire(retained != NULL, "the pre-Close server payload queue has no retained buffer");
+    requireEqualCharge(child_ls->pending_child_queue_charge,
+                       muxQueuedSbufCharge(retained),
+                       "late server Data changed child retained-charge accounting");
+    requireEqualCharge(parent_ls->pending_child_queue_charge,
+                       child_ls->pending_child_queue_charge,
+                       "late server Data changed parent retained-charge accounting");
     twfRequireEqualU32(parent_ls->children_count, 2, "late control frames changed the owned child inventory");
     twfRequireEqualU32(fixture.trace.next_init, 0, "late control frames initialized a replacement owned child");
     twfRequireEqualU32(
@@ -673,6 +856,10 @@ int main(void)
     caseDownstreamFraming((3U * kMuxMaxDataFrameLength) - 5U, 3, "a payload spanning three frames is fragmented");
 
     caseLargeCompleteBatchIsDrained();
+    caseParsedTinyFrameUsesAllocationCharge(0, "MuxServer charges parsed empty Data and closes at the charge limit");
+    caseParsedTinyFrameUsesAllocationCharge(1, "MuxServer charges parsed one-byte Data and closes at the charge limit");
+    caseParsedTinyFrameTransfersToDetachedAccounting();
+    caseQueueReservationFailureClosesOnlyServerChild();
     caseConfiguredResumeThresholdControlsFlowResume();
     casePerParentAdmissionRejectsWithClose();
     caseDuplicateOpenClosesParent();

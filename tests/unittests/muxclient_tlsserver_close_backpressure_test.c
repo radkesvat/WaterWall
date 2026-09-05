@@ -38,6 +38,9 @@ static void runMuxClientTlsServerCase(mxb_terminal_cause_t cause)
     mxbRequire(lineIsAlive(fixture.child), "MuxClient completed the child while the TLS wire was paused");
     mxbRequire(mxbMuxClientChildQueuedBytes(&fixture) == kMxbPlaintextLength,
                "MuxClient did not retain every paused child byte");
+    const size_t retained_charge = mxbMuxClientChildQueueCharge(&fixture);
+    mxbRequire(retained_charge > kMxbPlaintextLength,
+               "MuxClient retained payload without charging its backing allocations");
     mxbRequire(fixture.tls_plaintext_calls == 0 && fixture.tls_plaintext_bytes == 0,
                "MuxClient sent retained plaintext into TlsServer before wire Resume");
     mxbRequire(mxbTlsServerShapedBytes(&fixture) == 0 && fixture.wire_payload_calls == 0,
@@ -49,15 +52,15 @@ static void runMuxClientTlsServerCase(mxb_terminal_cause_t cause)
     {
         mxbRequire(mxbMuxClientChildIsPeerDraining(&fixture),
                    "MuxClient peer Close did not publish PeerDraining before TLS callbacks");
-        mxbRequire(mxbMuxClientParentQueuedBytes(&fixture) == kMxbPlaintextLength,
-                   "MuxClient peer Close lost parent queued-byte accounting");
+        mxbRequire(mxbMuxClientParentQueueCharge(&fixture) == retained_charge,
+                   "MuxClient peer Close lost exact parent queue-charge accounting");
     }
     else
     {
         mxbRequire(mxbMuxClientChildIsParentGoneDraining(&fixture) && mxbMuxClientChildHasNoParent(&fixture),
                    "MuxClient parent loss did not publish a pointer-free detached drain");
         mxbRequire(mxbMuxClientDetachedChildren(&fixture) == 1 &&
-                       mxbMuxClientDetachedBytes(&fixture) == kMxbPlaintextLength,
+                       mxbMuxClientDetachedCharge(&fixture) == retained_charge,
                    "MuxClient parent loss published incorrect detached accounting");
     }
 
@@ -69,6 +72,16 @@ static void runMuxClientTlsServerCase(mxb_terminal_cause_t cause)
     mxbRequire(mxbTlsServerProducerPaused(&fixture) && mxbMuxClientChildIsPaused(&fixture),
                "TlsServer high-water Pause was not retained by MuxClient");
     mxbRequire(mxbMuxClientChildQueuedBytes(&fixture) > 0, "MuxClient popped a second tranche after nested TLS Pause");
+    if (cause == kMxbTerminalPeerClose)
+    {
+        mxbRequire(mxbMuxClientParentQueueCharge(&fixture) == mxbMuxClientChildQueueCharge(&fixture),
+                   "MuxClient attached partial drain unbalanced child and parent charge");
+    }
+    else
+    {
+        mxbRequire(mxbMuxClientDetachedCharge(&fixture) == mxbMuxClientChildQueueCharge(&fixture),
+                   "MuxClient detached partial drain unbalanced child and worker charge");
+    }
     mxbRequire(fixture.wire_payload_calls == 0,
                "delayed TlsServer shaping output reached the peer before explicit ready-output driving");
 
@@ -91,12 +104,12 @@ static void runMuxClientTlsServerCase(mxb_terminal_cause_t cause)
                "MuxClient borrowed-child completion changed the outer reference count incorrectly");
     if (cause == kMxbTerminalPeerClose)
     {
-        mxbRequire(mxbMuxClientParentQueuedBytes(&fixture) == 0,
-                   "MuxClient peer-close completion retained parent queued bytes");
+        mxbRequire(mxbMuxClientParentQueueCharge(&fixture) == 0,
+                   "MuxClient peer-close completion retained parent queue charge");
     }
     else
     {
-        mxbRequire(mxbMuxClientDetachedChildren(&fixture) == 0 && mxbMuxClientDetachedBytes(&fixture) == 0,
+        mxbRequire(mxbMuxClientDetachedChildren(&fixture) == 0 && mxbMuxClientDetachedCharge(&fixture) == 0,
                    "MuxClient detached accounting survived terminal completion");
     }
     mxbRequirePlaintext(&fixture);

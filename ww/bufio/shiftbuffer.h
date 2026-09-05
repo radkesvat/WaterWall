@@ -291,7 +291,7 @@ bool sbufDuplicateTo(const sbuf_t *b, sbuf_t *dest);
 /**
  * Gets total capacity of the buffer. (Total capacity is a constant value that will not change)
  */
-static inline uint32_t sbufGetTotalCapacity(sbuf_t *const b)
+static inline uint32_t sbufGetTotalCapacity(const sbuf_t *const b)
 {
     return b->capacity;
 }

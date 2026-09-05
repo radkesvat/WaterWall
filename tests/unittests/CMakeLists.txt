@@ -2733,7 +2733,10 @@ foreach(mux_side Client Server)
       ${CMAKE_SOURCE_DIR}/tunnels/Internals/MuxCommon/src/mux_wire.c
     )
     waterwall_line_failure_test_use_tunnel(${mux_test} ${mux_target})
-    target_link_options(${mux_test} PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS})
+    target_link_options(${mux_test} PRIVATE
+      ${WATERWALL_LINE_FAILURE_WRAPS}
+      "-Wl,--wrap=memoryReAllocate"
+    )
     target_link_libraries(${mux_test} PRIVATE ww)
     add_dependencies(waterwall_unit_tests ${mux_test})
 
