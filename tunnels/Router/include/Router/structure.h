@@ -138,7 +138,6 @@ void routerTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 
 // --- upstream callbacks ---
 void routerTunnelUpStreamInit(tunnel_t *t, line_t *l);
-void routerTunnelUpStreamEst(tunnel_t *t, line_t *l);
 void routerTunnelUpStreamFinish(tunnel_t *t, line_t *l);
 void routerTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void routerTunnelUpStreamPause(tunnel_t *t, line_t *l);

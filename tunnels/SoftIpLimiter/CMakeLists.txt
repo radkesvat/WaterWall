@@ -11,7 +11,6 @@ add_library(SoftIpLimiter STATIC
     upstream/payload.c
     upstream/pause.c
     upstream/resume.c
-    downstream/init.c
     downstream/est.c
     downstream/fin.c
     downstream/payload.c

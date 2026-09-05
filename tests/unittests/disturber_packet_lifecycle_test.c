@@ -565,12 +565,30 @@ static void caseDestroyRejectsUndrainedFinalizedPacketState(void)
     tosResetProcessApi(true);
 }
 
+static void caseConstructorPreservesUpstreamEst(void)
+{
+    disturber_fixture_t fixture;
+    fixtureSetup(&fixture);
+    cJSON *settings = cJSON_CreateObject();
+    twfRequire(settings != NULL, "failed to allocate constructor settings");
+    node_t    node = {.node_settings_json = settings};
+    tunnel_t *t    = disturberTunnelCreate(&node);
+    twfRequire(t != NULL, "failed to create the production tunnel");
+    t->next = fixture.next;
+    t->fnEstU(t, fixture.packet_lines[0]);
+    twfRequireEqualU32(fixture.trace.next_est, 1, "production tunnel lost upstream Est forwarding");
+    tunnelDestroy(t);
+    cJSON_Delete(settings);
+    fixtureTeardown(&fixture);
+}
+
 int main(void)
 {
     twfRequire(globalstateInitializeSecureRandom(), "secure random provider initialization failed");
     twfRequire(frandGlobalInit(), "fast random global initialization failed");
     frandInit();
 
+    caseConstructorPreservesUpstreamEst();
     caseUpstreamFinishSuppressesScheduledDelayedPayload();
     caseDownstreamFinishSettlesHeldPayload();
     caseUpstreamFinishSuppressesQueuedDownstreamReflection();

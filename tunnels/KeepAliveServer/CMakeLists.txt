@@ -8,7 +8,6 @@ add_library(KeepAliveServer STATIC
                     upstream/init.c
                     upstream/fin.c
                     upstream/payload.c
-                    downstream/init.c
                     downstream/fin.c
                     downstream/payload.c
   

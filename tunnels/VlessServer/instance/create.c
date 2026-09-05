@@ -348,13 +348,10 @@ tunnel_t *vlessserverTunnelCreate(node_t *node)
     const cJSON          *settings = node->node_settings_json;
 
     t->fnInitU    = &vlessserverTunnelUpStreamInit;
-    t->fnEstU     = &vlessserverTunnelUpStreamEst;
     t->fnFinU     = &vlessserverTunnelUpStreamFinish;
     t->fnPayloadU = &vlessserverTunnelUpStreamPayload;
     t->fnPauseU   = &vlessserverTunnelUpStreamPause;
     t->fnResumeU  = &vlessserverTunnelUpStreamResume;
-
-    t->fnInitD    = &vlessserverTunnelDownStreamInit;
     t->fnEstD     = &vlessserverTunnelDownStreamEst;
     t->fnFinD     = &vlessserverTunnelDownStreamFinish;
     t->fnPayloadD = &vlessserverTunnelDownStreamPayload;

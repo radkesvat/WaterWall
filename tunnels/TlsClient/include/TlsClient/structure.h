@@ -119,7 +119,6 @@ void tlsclientTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void tlsclientTunnelUpStreamFinish(tunnel_t *t, line_t *l);
 void tlsclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 
-void tlsclientTunnelDownStreamInit(tunnel_t *t, line_t *l);
 void tlsclientTunnelDownStreamEst(tunnel_t *t, line_t *l);
 void tlsclientTunnelDownStreamFinish(tunnel_t *t, line_t *l);
 void tlsclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);

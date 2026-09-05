@@ -45,13 +45,11 @@ WW_EXPORT tunnel_t    *headerserverTunnelCreate(node_t *node);
 WW_EXPORT api_result_t headerserverTunnelApi(tunnel_t *instance, sbuf_t *message);
 
 void headerserverTunnelUpStreamInit(tunnel_t *t, line_t *l);
-void headerserverTunnelUpStreamEst(tunnel_t *t, line_t *l);
 void headerserverTunnelUpStreamFinish(tunnel_t *t, line_t *l);
 void headerserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void headerserverTunnelUpStreamPause(tunnel_t *t, line_t *l);
 void headerserverTunnelUpStreamResume(tunnel_t *t, line_t *l);
 
-void headerserverTunnelDownStreamInit(tunnel_t *t, line_t *l);
 void headerserverTunnelDownStreamEst(tunnel_t *t, line_t *l);
 void headerserverTunnelDownStreamFinish(tunnel_t *t, line_t *l);
 void headerserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);

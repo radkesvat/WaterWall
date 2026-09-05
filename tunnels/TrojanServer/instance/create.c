@@ -345,13 +345,10 @@ tunnel_t *trojanserverTunnelCreate(node_t *node)
     const cJSON           *settings = node->node_settings_json;
 
     t->fnInitU    = &trojanserverTunnelUpStreamInit;
-    t->fnEstU     = &trojanserverTunnelUpStreamEst;
     t->fnFinU     = &trojanserverTunnelUpStreamFinish;
     t->fnPayloadU = &trojanserverTunnelUpStreamPayload;
     t->fnPauseU   = &trojanserverTunnelUpStreamPause;
     t->fnResumeU  = &trojanserverTunnelUpStreamResume;
-
-    t->fnInitD    = &trojanserverTunnelDownStreamInit;
     t->fnEstD     = &trojanserverTunnelDownStreamEst;
     t->fnFinD     = &trojanserverTunnelDownStreamFinish;
     t->fnPayloadD = &trojanserverTunnelDownStreamPayload;

@@ -9,7 +9,6 @@ add_library(TesterServer STATIC
                     common/helpers.c
                     common/line_state.c
                     upstream/init.c
-                    upstream/est.c
                     upstream/fin.c
                     upstream/payload.c
                     upstream/pause.c

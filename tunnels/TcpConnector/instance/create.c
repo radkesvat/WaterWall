@@ -7,7 +7,6 @@
 static void initializeTunnelCallbacks(tunnel_t *t)
 {
     t->fnInitU    = &tcpconnectorTunnelUpStreamInit;
-    t->fnEstU     = &tcpconnectorTunnelUpStreamEst;
     t->fnFinU     = &tcpconnectorTunnelUpStreamFinish;
     t->fnPayloadU = &tcpconnectorTunnelUpStreamPayload;
     t->fnPauseU   = &tcpconnectorTunnelUpStreamPause;

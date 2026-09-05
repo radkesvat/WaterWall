@@ -13,13 +13,10 @@ tunnel_t *halfduplexserverTunnelCreate(node_t *node)
     halfduplexserver_tstate_t *ts = tunnelGetState(t);
 
     t->fnInitU    = &halfduplexserverTunnelUpStreamInit;
-    t->fnEstU     = &halfduplexserverTunnelUpStreamEst;
     t->fnFinU     = &halfduplexserverTunnelUpStreamFinish;
     t->fnPayloadU = &halfduplexserverTunnelUpStreamPayload;
     t->fnPauseU   = &halfduplexserverTunnelUpStreamPause;
     t->fnResumeU  = &halfduplexserverTunnelUpStreamResume;
-
-    t->fnInitD    = &halfduplexserverTunnelDownStreamInit;
     t->fnEstD     = &halfduplexserverTunnelDownStreamEst;
     t->fnFinD     = &halfduplexserverTunnelDownStreamFinish;
     t->fnPayloadD = &halfduplexserverTunnelDownStreamPayload;

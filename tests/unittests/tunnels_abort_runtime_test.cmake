@@ -21,6 +21,8 @@ if(TARGET ww)
   set(tunnels_abort_runtime_includes "")
   set(tunnels_abort_runtime_definitions "")
   set(tunnels_abort_runtime_cases
+    normal_default_upstream_est
+    normal_default_downstream_init
     adapter_chain_head_finish
     adapter_chain_head_payload
     adapter_chain_end_finish
@@ -29,16 +31,77 @@ if(TARGET ww)
     packet_lifecycle_anchor_downstream_finish
   )
 
-  if(TARGET AuthenticationClient)
-    list(APPEND tunnels_abort_runtime_libraries AuthenticationClient)
-    list(APPEND tunnels_abort_runtime_definitions WATERWALL_ABORT_TEST_HAS_AUTHENTICATIONCLIENT=1)
-    list(APPEND tunnels_abort_runtime_cases authenticationclient_disabled_downstream_init)
+  if(TARGET TlsServer)
+    list(APPEND tunnels_abort_runtime_cases tlsserver_disabled_upstream_est)
+    list(APPEND tunnels_abort_runtime_sources "${WATERWALL_ABORT_RUNTIME_DIR}/tunnels_abort_tlsserver_case.c")
+    list(APPEND tunnels_abort_runtime_libraries TlsServer)
+    list(APPEND tunnels_abort_runtime_definitions WATERWALL_ABORT_TEST_HAS_TLSSERVER=1)
+    list(APPEND tunnels_abort_runtime_cases tlsserver_draining_downstream_init)
+  endif()
+
+  if(TARGET Socks5Client)
+    list(APPEND tunnels_abort_runtime_sources "${WATERWALL_ABORT_RUNTIME_DIR}/tunnels_abort_socks5client_case.c")
+    list(APPEND tunnels_abort_runtime_libraries Socks5Client)
+    list(APPEND tunnels_abort_runtime_definitions WATERWALL_ABORT_TEST_HAS_SOCKS5CLIENT=1)
+    list(APPEND tunnels_abort_runtime_cases
+      socks5client_udp_app_downstream_init
+      socks5client_udp_control_downstream_init
+      socks5client_udp_relay_downstream_init
+    )
+  endif()
+
+  if(TARGET TrojanClient)
+    list(APPEND tunnels_abort_runtime_sources "${WATERWALL_ABORT_RUNTIME_DIR}/tunnels_abort_trojanclient_case.c")
+    list(APPEND tunnels_abort_runtime_libraries TrojanClient)
+    list(APPEND tunnels_abort_runtime_definitions WATERWALL_ABORT_TEST_HAS_TROJANCLIENT=1)
+    list(APPEND tunnels_abort_runtime_cases trojanclient_disabled_downstream_init)
+  endif()
+
+  if(TARGET TrojanServer)
+    list(APPEND tunnels_abort_runtime_sources "${WATERWALL_ABORT_RUNTIME_DIR}/tunnels_abort_trojanserver_case.c")
+    list(APPEND tunnels_abort_runtime_libraries TrojanServer)
+    list(APPEND tunnels_abort_runtime_definitions WATERWALL_ABORT_TEST_HAS_TROJANSERVER=1)
+    list(APPEND tunnels_abort_runtime_cases trojanserver_disabled_downstream_init)
+  endif()
+
+  if(TARGET VlessClient)
+    list(APPEND tunnels_abort_runtime_sources "${WATERWALL_ABORT_RUNTIME_DIR}/tunnels_abort_vlessclient_case.c")
+    list(APPEND tunnels_abort_runtime_libraries VlessClient)
+    list(APPEND tunnels_abort_runtime_definitions WATERWALL_ABORT_TEST_HAS_VLESSCLIENT=1)
+    list(APPEND tunnels_abort_runtime_cases vlessclient_disabled_downstream_init)
+  endif()
+
+  if(TARGET VlessServer)
+    list(APPEND tunnels_abort_runtime_sources "${WATERWALL_ABORT_RUNTIME_DIR}/tunnels_abort_vlessserver_case.c")
+    list(APPEND tunnels_abort_runtime_libraries VlessServer)
+    list(APPEND tunnels_abort_runtime_definitions WATERWALL_ABORT_TEST_HAS_VLESSSERVER=1)
+    list(APPEND tunnels_abort_runtime_cases vlessserver_disabled_downstream_init)
+  endif()
+
+  if(TARGET RealityServer)
+    list(APPEND tunnels_abort_runtime_sources "${WATERWALL_ABORT_RUNTIME_DIR}/tunnels_abort_realityserver_case.c")
+    list(APPEND tunnels_abort_runtime_libraries RealityServer RealityCommon)
+    list(APPEND tunnels_abort_runtime_definitions WATERWALL_ABORT_TEST_HAS_REALITYSERVER=1)
+    list(APPEND tunnels_abort_runtime_cases realityserver_disabled_upstream_est)
+  endif()
+
+  if(TARGET HttpClient)
+    list(APPEND tunnels_abort_runtime_sources "${WATERWALL_ABORT_RUNTIME_DIR}/tunnels_abort_httpclient_case.c")
+    list(APPEND tunnels_abort_runtime_libraries HttpClient)
+    list(APPEND tunnels_abort_runtime_definitions WATERWALL_ABORT_TEST_HAS_HTTPCLIENT=1)
+    list(APPEND tunnels_abort_runtime_cases httpclient_disabled_upstream_est httpclient_disabled_downstream_init)
   endif()
 
   if(TARGET TesterClient)
     list(APPEND tunnels_abort_runtime_libraries TesterClient)
     list(APPEND tunnels_abort_runtime_definitions WATERWALL_ABORT_TEST_HAS_TESTERCLIENT=1)
     list(APPEND tunnels_abort_runtime_cases testerclient_disabled_upstream_finish)
+  endif()
+
+  if(TARGET SpeedLimit)
+    list(APPEND tunnels_abort_runtime_libraries SpeedLimit)
+    list(APPEND tunnels_abort_runtime_definitions WATERWALL_ABORT_TEST_HAS_SPEEDLIMIT=1)
+    list(APPEND tunnels_abort_runtime_cases speedlimit_disabled_downstream_init)
   endif()
 
   if(TARGET UdpStatelessSocket)
@@ -81,6 +144,7 @@ if(TARGET ww)
   endif()
 
   if(TARGET Router)
+    list(APPEND tunnels_abort_runtime_cases router_disabled_upstream_est)
     list(APPEND tunnels_abort_runtime_sources
       "${WATERWALL_ABORT_RUNTIME_DIR}/tunnels_abort_router_case.c"
     )

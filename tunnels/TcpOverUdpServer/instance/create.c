@@ -140,13 +140,10 @@ tunnel_t *tcpoverudpserverTunnelCreate(node_t *node)
     }
 
     t->fnInitU    = &tcpoverudpserverTunnelUpStreamInit;
-    t->fnEstU     = &tcpoverudpserverTunnelUpStreamEst;
     t->fnFinU     = &tcpoverudpserverTunnelUpStreamFinish;
     t->fnPayloadU = &tcpoverudpserverTunnelUpStreamPayload;
     t->fnPauseU   = &tcpoverudpserverTunnelUpStreamPause;
     t->fnResumeU  = &tcpoverudpserverTunnelUpStreamResume;
-
-    t->fnInitD    = &tcpoverudpserverTunnelDownStreamInit;
     t->fnFinD     = &tcpoverudpserverTunnelDownStreamFinish;
     t->fnPayloadD = &tcpoverudpserverTunnelDownStreamPayload;
 

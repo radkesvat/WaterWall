@@ -10,7 +10,6 @@ add_library(UdpConnector STATIC
                     common/line_state.c
                     common/socket_pool.c
                     upstream/init.c
-                    upstream/est.c
                     upstream/fin.c
                     upstream/payload.c
                     upstream/pause.c

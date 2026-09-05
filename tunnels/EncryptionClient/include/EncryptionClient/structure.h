@@ -44,11 +44,9 @@ WW_EXPORT tunnel_t    *encryptionclientTunnelCreate(node_t *node);
 WW_EXPORT api_result_t encryptionclientTunnelApi(tunnel_t *instance, sbuf_t *message);
 
 void encryptionclientTunnelUpStreamInit(tunnel_t *t, line_t *l);
-void encryptionclientTunnelUpStreamEst(tunnel_t *t, line_t *l);
 void encryptionclientTunnelUpStreamFinish(tunnel_t *t, line_t *l);
 void encryptionclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 
-void encryptionclientTunnelDownStreamInit(tunnel_t *t, line_t *l);
 void encryptionclientTunnelDownStreamFinish(tunnel_t *t, line_t *l);
 void encryptionclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 

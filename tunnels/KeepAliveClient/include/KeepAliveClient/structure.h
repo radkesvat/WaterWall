@@ -48,7 +48,6 @@ void keepaliveclientTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void keepaliveclientTunnelUpStreamFinish(tunnel_t *t, line_t *l);
 void keepaliveclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 
-void keepaliveclientTunnelDownStreamInit(tunnel_t *t, line_t *l);
 void keepaliveclientTunnelDownStreamFinish(tunnel_t *t, line_t *l);
 void keepaliveclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 

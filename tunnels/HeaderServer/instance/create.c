@@ -11,13 +11,10 @@ tunnel_t *headerserverTunnelCreate(node_t *node)
     }
 
     t->fnInitU    = &headerserverTunnelUpStreamInit;
-    t->fnEstU     = &headerserverTunnelUpStreamEst;
     t->fnFinU     = &headerserverTunnelUpStreamFinish;
     t->fnPayloadU = &headerserverTunnelUpStreamPayload;
     t->fnPauseU   = &headerserverTunnelUpStreamPause;
     t->fnResumeU  = &headerserverTunnelUpStreamResume;
-
-    t->fnInitD    = &headerserverTunnelDownStreamInit;
     t->fnEstD     = &headerserverTunnelDownStreamEst;
     t->fnFinD     = &headerserverTunnelDownStreamFinish;
     t->fnPayloadD = &headerserverTunnelDownStreamPayload;

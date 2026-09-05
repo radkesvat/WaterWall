@@ -11,7 +11,6 @@ add_library(TcpConnector STATIC
                     common/line_state.c
                     common/freebind.c
                     upstream/init.c
-                    upstream/est.c
                     upstream/fin.c
                     upstream/payload.c
                     upstream/pause.c

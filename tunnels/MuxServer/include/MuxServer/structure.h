@@ -164,13 +164,11 @@ void muxserverTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_c
 void muxserverTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);
 
 void muxserverTunnelUpStreamInit(tunnel_t *t, line_t *l);
-void muxserverTunnelUpStreamEst(tunnel_t *t, line_t *l);
 void muxserverTunnelUpStreamFinish(tunnel_t *t, line_t *l);
 void muxserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void muxserverTunnelUpStreamPause(tunnel_t *t, line_t *l);
 void muxserverTunnelUpStreamResume(tunnel_t *t, line_t *l);
 
-void muxserverTunnelDownStreamInit(tunnel_t *t, line_t *l);
 void muxserverTunnelDownStreamEst(tunnel_t *t, line_t *l);
 void muxserverTunnelDownStreamFinish(tunnel_t *t, line_t *l);
 void muxserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);

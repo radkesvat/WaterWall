@@ -11,11 +11,8 @@ tunnel_t *bgp4clientTunnelCreate(node_t *node)
     }
 
     t->fnInitU    = &bgp4clientTunnelUpStreamInit;
-    t->fnEstU     = &bgp4clientTunnelUpStreamEst;
     t->fnFinU     = &bgp4clientTunnelUpStreamFinish;
     t->fnPayloadU = &bgp4clientTunnelUpStreamPayload;
-
-    t->fnInitD    = &bgp4clientTunnelDownStreamInit;
     t->fnFinD     = &bgp4clientTunnelDownStreamFinish;
     t->fnPayloadD = &bgp4clientTunnelDownStreamPayload;
 

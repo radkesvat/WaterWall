@@ -432,7 +432,6 @@ tunnel_t *httpclientTunnelCreate(node_t *node)
     t->fnPayloadU = &httpclientTunnelUpStreamPayload;
     t->fnPauseU   = &httpclientTunnelUpStreamPause;
     t->fnResumeU  = &httpclientTunnelUpStreamResume;
-
     t->fnEstD     = &httpclientTunnelDownStreamEst;
     t->fnFinD     = &httpclientTunnelDownStreamFinish;
     t->fnPayloadD = &httpclientTunnelDownStreamPayload;

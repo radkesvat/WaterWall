@@ -2,6 +2,11 @@
 
 #include "loggers/network_logger.h"
 
+static void disturberForwardUpStreamEst(tunnel_t *t, line_t *l)
+{
+    tunnelNextUpStreamEst(t, l);
+}
+
 tunnel_t *disturberTunnelCreate(node_t *node)
 {
     tunnel_t *t = tunnelCreate(node, sizeof(disturber_tstate_t), sizeof(disturber_lstate_t));
@@ -11,6 +16,7 @@ tunnel_t *disturberTunnelCreate(node_t *node)
     }
 
     t->fnInitU    = &disturberTunnelUpStreamInit;
+    t->fnEstU     = &disturberForwardUpStreamEst;
     t->fnFinU     = &disturberTunnelUpStreamFinish;
     t->fnPayloadU = &disturberTunnelUpStreamPayload;
 

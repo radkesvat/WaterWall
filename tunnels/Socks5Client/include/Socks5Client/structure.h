@@ -86,13 +86,11 @@ WW_EXPORT api_result_t socks5clientTunnelApi(tunnel_t *instance, sbuf_t *message
 void socks5clientTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 
 void socks5clientTunnelUpStreamInit(tunnel_t *t, line_t *l);
-void socks5clientTunnelUpStreamEst(tunnel_t *t, line_t *l);
 void socks5clientTunnelUpStreamFinish(tunnel_t *t, line_t *l);
 void socks5clientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void socks5clientTunnelUpStreamPause(tunnel_t *t, line_t *l);
 void socks5clientTunnelUpStreamResume(tunnel_t *t, line_t *l);
 
-void socks5clientTunnelDownStreamInit(tunnel_t *t, line_t *l);
 void socks5clientTunnelDownStreamEst(tunnel_t *t, line_t *l);
 void socks5clientTunnelDownStreamFinish(tunnel_t *t, line_t *l);
 void socks5clientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);

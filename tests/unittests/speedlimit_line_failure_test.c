@@ -104,7 +104,6 @@ static tunnel_t *createSpeedLimitTunnel(void)
     t->fnPauseU   = &speedlimitTunnelUpStreamPause;
     t->fnResumeU  = &speedlimitTunnelUpStreamResume;
 
-    t->fnInitD    = &speedlimitTunnelDownStreamInit;
     t->fnFinD     = &speedlimitTunnelDownStreamFinish;
     t->fnPayloadD = &speedlimitTunnelDownStreamPayload;
     t->fnPauseD   = &speedlimitTunnelDownStreamPause;

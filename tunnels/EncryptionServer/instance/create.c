@@ -230,11 +230,8 @@ tunnel_t *encryptionserverTunnelCreate(node_t *node)
     }
 
     t->fnInitU    = &encryptionserverTunnelUpStreamInit;
-    t->fnEstU     = &encryptionserverTunnelUpStreamEst;
     t->fnFinU     = &encryptionserverTunnelUpStreamFinish;
     t->fnPayloadU = &encryptionserverTunnelUpStreamPayload;
-
-    t->fnInitD    = &encryptionserverTunnelDownStreamInit;
     t->fnFinD     = &encryptionserverTunnelDownStreamFinish;
     t->fnPayloadD = &encryptionserverTunnelDownStreamPayload;
 

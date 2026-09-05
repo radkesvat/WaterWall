@@ -312,7 +312,6 @@ void udpconnectorTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void udpconnectorTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);
 
 void udpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l);
-void udpconnectorTunnelUpStreamEst(tunnel_t *t, line_t *l);
 void udpconnectorTunnelUpStreamFinish(tunnel_t *t, line_t *l);
 void udpconnectorTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void udpconnectorTunnelUpStreamPause(tunnel_t *t, line_t *l);

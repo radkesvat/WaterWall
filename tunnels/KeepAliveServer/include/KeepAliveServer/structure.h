@@ -34,7 +34,6 @@ void keepaliveserverTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void keepaliveserverTunnelUpStreamFinish(tunnel_t *t, line_t *l);
 void keepaliveserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 
-void keepaliveserverTunnelDownStreamInit(tunnel_t *t, line_t *l);
 void keepaliveserverTunnelDownStreamFinish(tunnel_t *t, line_t *l);
 void keepaliveserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 

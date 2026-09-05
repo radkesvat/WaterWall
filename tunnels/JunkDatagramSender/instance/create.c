@@ -2,6 +2,11 @@
 
 #include "loggers/network_logger.h"
 
+static void junkdatagramsenderForwardUpStreamEst(tunnel_t *t, line_t *l)
+{
+    tunnelNextUpStreamEst(t, l);
+}
+
 tunnel_t *junkdatagramsenderTunnelCreate(node_t *node)
 {
     tunnel_t *t = tunnelCreate(node, sizeof(junkdatagramsender_tstate_t), kLineStateSize);
@@ -11,6 +16,7 @@ tunnel_t *junkdatagramsenderTunnelCreate(node_t *node)
     }
 
     t->fnInitU    = &junkdatagramsenderTunnelUpStreamInit;
+    t->fnEstU     = &junkdatagramsenderForwardUpStreamEst;
     t->fnFinU     = &junkdatagramsenderTunnelUpStreamFinish;
     t->fnPayloadU = &junkdatagramsenderTunnelUpStreamPayload;
 

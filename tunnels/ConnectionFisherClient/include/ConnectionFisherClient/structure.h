@@ -44,13 +44,11 @@ WW_EXPORT tunnel_t    *connectionfisherclientTunnelCreate(node_t *node);
 WW_EXPORT api_result_t connectionfisherclientTunnelApi(tunnel_t *instance, sbuf_t *message);
 
 void connectionfisherclientTunnelUpStreamInit(tunnel_t *t, line_t *l);
-void connectionfisherclientTunnelUpStreamEst(tunnel_t *t, line_t *l);
 void connectionfisherclientTunnelUpStreamFinish(tunnel_t *t, line_t *l);
 void connectionfisherclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void connectionfisherclientTunnelUpStreamPause(tunnel_t *t, line_t *l);
 void connectionfisherclientTunnelUpStreamResume(tunnel_t *t, line_t *l);
 
-void connectionfisherclientTunnelDownStreamInit(tunnel_t *t, line_t *l);
 void connectionfisherclientTunnelDownStreamEst(tunnel_t *t, line_t *l);
 void connectionfisherclientTunnelDownStreamFinish(tunnel_t *t, line_t *l);
 void connectionfisherclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);

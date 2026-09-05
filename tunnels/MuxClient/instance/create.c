@@ -74,13 +74,10 @@ tunnel_t *muxclientTunnelCreate(node_t *node)
     }
 
     t->fnInitU    = &muxclientTunnelUpStreamInit;
-    t->fnEstU     = &muxclientTunnelUpStreamEst;
     t->fnFinU     = &muxclientTunnelUpStreamFinish;
     t->fnPayloadU = &muxclientTunnelUpStreamPayload;
     t->fnPauseU   = &muxclientTunnelUpStreamPause;
     t->fnResumeU  = &muxclientTunnelUpStreamResume;
-
-    t->fnInitD    = &muxclientTunnelDownStreamInit;
     t->fnEstD     = &muxclientTunnelDownStreamEst;
     t->fnFinD     = &muxclientTunnelDownStreamFinish;
     t->fnPayloadD = &muxclientTunnelDownStreamPayload;

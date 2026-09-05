@@ -26,7 +26,6 @@ add_library(Router STATIC
     instance/create.c
     instance/destroy.c
     instance/node.c
-    upstream/est.c
     upstream/fin.c
     upstream/init.c
     upstream/pause.c

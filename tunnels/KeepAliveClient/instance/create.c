@@ -34,8 +34,6 @@ tunnel_t *keepaliveclientTunnelCreate(node_t *node)
     t->fnInitU    = &keepaliveclientTunnelUpStreamInit;
     t->fnFinU     = &keepaliveclientTunnelUpStreamFinish;
     t->fnPayloadU = &keepaliveclientTunnelUpStreamPayload;
-
-    t->fnInitD    = &keepaliveclientTunnelDownStreamInit;
     t->fnFinD     = &keepaliveclientTunnelDownStreamFinish;
     t->fnPayloadD = &keepaliveclientTunnelDownStreamPayload;
 

@@ -67,12 +67,10 @@ tunnel_t *routerTunnelCreate(node_t *node)
     }
 
     t->fnInitU    = &routerTunnelUpStreamInit;
-    t->fnEstU     = &routerTunnelUpStreamEst;
     t->fnFinU     = &routerTunnelUpStreamFinish;
     t->fnPayloadU = &routerTunnelUpStreamPayload;
     t->fnPauseU   = &routerTunnelUpStreamPause;
     t->fnResumeU  = &routerTunnelUpStreamResume;
-
     t->fnFinD = &routerTunnelDownStreamFinish;
 
     t->onChain   = &routerTunnelOnChain;

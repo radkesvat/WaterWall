@@ -29,7 +29,6 @@ static void injectTrojanNonterminal(fallback_finish_fixture_t *fallback, line_t 
     tunnel_t *node = fallback->node;
 
     trojanserverTunnelDownStreamPayload(node, line, fallbackFinishMakePayload(lineGetBufferPool(line), "reply"));
-    trojanserverTunnelDownStreamInit(node, line);
     trojanserverTunnelDownStreamEst(node, line);
     trojanserverTunnelDownStreamPause(node, line);
     trojanserverTunnelDownStreamResume(node, line);

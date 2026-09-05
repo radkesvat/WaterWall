@@ -190,7 +190,6 @@ WW_EXPORT api_result_t realityserverTunnelApi(tunnel_t *instance, sbuf_t *messag
 void realityserverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 
 void realityserverTunnelUpStreamInit(tunnel_t *t, line_t *l);
-void realityserverTunnelUpStreamEst(tunnel_t *t, line_t *l);
 void realityserverTunnelUpStreamFinish(tunnel_t *t, line_t *l);
 void realityserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void realityserverTunnelUpStreamPause(tunnel_t *t, line_t *l);

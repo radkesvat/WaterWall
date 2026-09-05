@@ -5,10 +5,8 @@ add_library(Bgp4Client STATIC
                     common/helpers.c
                     common/line_state.c
                     upstream/init.c
-                    upstream/est.c
                     upstream/fin.c
                     upstream/payload.c
-                    downstream/init.c
                     downstream/fin.c
                     downstream/payload.c
 )

@@ -43,11 +43,9 @@ WW_EXPORT tunnel_t    *bgp4serverTunnelCreate(node_t *node);
 WW_EXPORT api_result_t bgp4serverTunnelApi(tunnel_t *instance, sbuf_t *message);
 
 void bgp4serverTunnelUpStreamInit(tunnel_t *t, line_t *l);
-void bgp4serverTunnelUpStreamEst(tunnel_t *t, line_t *l);
 void bgp4serverTunnelUpStreamFinish(tunnel_t *t, line_t *l);
 void bgp4serverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 
-void bgp4serverTunnelDownStreamInit(tunnel_t *t, line_t *l);
 void bgp4serverTunnelDownStreamFinish(tunnel_t *t, line_t *l);
 void bgp4serverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 

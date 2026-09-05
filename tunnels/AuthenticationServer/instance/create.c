@@ -139,13 +139,10 @@ static bool authenticationserverParseNormalBackups(authenticationserver_tstate_t
 static void authenticationserverInitializeCallbacks(tunnel_t *t)
 {
     t->fnInitU    = &authenticationserverTunnelUpStreamInit;
-    t->fnEstU     = &authenticationserverTunnelUpStreamEst;
     t->fnFinU     = &authenticationserverTunnelUpStreamFinish;
     t->fnPayloadU = &authenticationserverTunnelUpStreamPayload;
     t->fnPauseU   = &authenticationserverTunnelUpStreamPause;
     t->fnResumeU  = &authenticationserverTunnelUpStreamResume;
-
-    t->fnInitD    = &authenticationserverTunnelDownStreamInit;
     t->fnEstD     = &authenticationserverTunnelDownStreamEst;
     t->fnFinD     = &authenticationserverTunnelDownStreamFinish;
     t->fnPayloadD = &authenticationserverTunnelDownStreamPayload;

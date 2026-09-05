@@ -53,13 +53,12 @@ tunnel_t *ptcTunnelCreate(node_t *node)
     t->fnPayloadU = &ptcTunnelUpStreamPayload;
     // The packet adapter on the prev side only sends upstream Init/Payload on the packet
     // line; Est/Finish/Pause/Resume are never expected there, so wire them as guards.
-    t->fnEstU     = &ptcTunnelUpStreamEst;
+
     t->fnFinU     = &ptcTunnelUpStreamFinish;
     t->fnPauseU   = &ptcTunnelUpStreamPause;
     t->fnResumeU  = &ptcTunnelUpStreamResume;
     t->fnPayloadD = &ptcTunnelDownStreamPayload;
     t->fnFinD     = &ptcTunnelDownStreamFinish;
-    t->fnInitD    = &ptcTunnelDownStreamInit;
     t->fnEstD     = &ptcTunnelDownStreamEst;
     t->fnPauseD   = &ptcTunnelDownStreamPause;
     t->fnResumeD  = &ptcTunnelDownStreamResume;

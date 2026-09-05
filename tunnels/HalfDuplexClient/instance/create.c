@@ -11,13 +11,10 @@ tunnel_t *halfduplexclientTunnelCreate(node_t *node)
     }
 
     t->fnInitU    = &halfduplexclientTunnelUpStreamInit;
-    t->fnEstU     = &halfduplexclientTunnelUpStreamEst;
     t->fnFinU     = &halfduplexclientTunnelUpStreamFinish;
     t->fnPayloadU = &halfduplexclientTunnelUpStreamPayload;
     t->fnPauseU   = &halfduplexclientTunnelUpStreamPause;
     t->fnResumeU  = &halfduplexclientTunnelUpStreamResume;
-
-    t->fnInitD    = &halfduplexclientTunnelDownStreamInit;
     t->fnEstD     = &halfduplexclientTunnelDownStreamEst;
     t->fnFinD     = &halfduplexclientTunnelDownStreamFinish;
     t->fnPayloadD = &halfduplexclientTunnelDownStreamPayload;

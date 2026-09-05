@@ -97,7 +97,6 @@ void testerclientTunnelOnStart(tunnel_t *t);
 void testerclientTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);
 
 void testerclientTunnelUpStreamInit(tunnel_t *t, line_t *l);
-void testerclientTunnelUpStreamEst(tunnel_t *t, line_t *l);
 void testerclientTunnelUpStreamFinish(tunnel_t *t, line_t *l);
 void testerclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void testerclientTunnelUpStreamPause(tunnel_t *t, line_t *l);

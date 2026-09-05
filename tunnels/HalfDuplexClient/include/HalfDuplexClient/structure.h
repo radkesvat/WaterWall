@@ -30,13 +30,11 @@ WW_EXPORT tunnel_t    *halfduplexclientTunnelCreate(node_t *node);
 WW_EXPORT api_result_t halfduplexclientTunnelApi(tunnel_t *instance, sbuf_t *message);
 
 void halfduplexclientTunnelUpStreamInit(tunnel_t *t, line_t *l);
-void halfduplexclientTunnelUpStreamEst(tunnel_t *t, line_t *l);
 void halfduplexclientTunnelUpStreamFinish(tunnel_t *t, line_t *l);
 void halfduplexclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void halfduplexclientTunnelUpStreamPause(tunnel_t *t, line_t *l);
 void halfduplexclientTunnelUpStreamResume(tunnel_t *t, line_t *l);
 
-void halfduplexclientTunnelDownStreamInit(tunnel_t *t, line_t *l);
 void halfduplexclientTunnelDownStreamEst(tunnel_t *t, line_t *l);
 void halfduplexclientTunnelDownStreamFinish(tunnel_t *t, line_t *l);
 void halfduplexclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);

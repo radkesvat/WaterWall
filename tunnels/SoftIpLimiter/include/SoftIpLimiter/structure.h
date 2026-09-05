@@ -129,7 +129,6 @@ void softiplimiterTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void softiplimiterTunnelUpStreamPause(tunnel_t *t, line_t *l);
 void softiplimiterTunnelUpStreamResume(tunnel_t *t, line_t *l);
 
-void softiplimiterTunnelDownStreamInit(tunnel_t *t, line_t *l);
 void softiplimiterTunnelDownStreamEst(tunnel_t *t, line_t *l);
 void softiplimiterTunnelDownStreamFinish(tunnel_t *t, line_t *l);
 void softiplimiterTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);

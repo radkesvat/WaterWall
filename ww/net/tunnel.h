@@ -169,7 +169,7 @@ struct tunnel_s
 };
 
 /**
- * @brief Creates a new tunnel instance.
+ * @brief Creates a tunnel whose upstream Est and downstream Init defaults terminate; other flow defaults forward.
  *
  * @param node Pointer to the node.
  * @param tstate_size Size of the tunnel state.
@@ -253,7 +253,7 @@ tunnel_t *tunnelGetBranchEntry(tunnel_t *owner, tunnel_t *target);
 void tunnelDefaultUpStreamInit(tunnel_t *self, line_t *line);
 
 /**
- * @brief Default upstream establishment function.
+ * @brief Reject upstream establishment by default with fatal termination.
  *
  * @param self Pointer to the tunnel.
  * @param line Pointer to the line.
@@ -294,7 +294,7 @@ void tunnelDefaultUpStreamPause(tunnel_t *self, line_t *line);
 void tunnelDefaultUpStreamResume(tunnel_t *self, line_t *line);
 
 /**
- * @brief Default downstream initialization function.
+ * @brief Reject downstream initialization by default with fatal termination.
  *
  * @param self Pointer to the tunnel.
  * @param line Pointer to the line.

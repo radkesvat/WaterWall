@@ -31,3 +31,17 @@ int tunnelsAbortUdpStatelessSocketDestroyCase(void);
 int tunnelsAbortTcpOverUdpClientMtuCase(void);
 int tunnelsAbortTcpOverUdpServerMtuCase(void);
 int tunnelsAbortRouterGeoipUnopenedDatabaseCase(void);
+
+int tunnelsAbortTlsServerDrainingInitCase(void);
+int tunnelsAbortSocks5ClientUdpAppInitCase(void);
+int tunnelsAbortSocks5ClientUdpControlInitCase(void);
+int tunnelsAbortSocks5ClientUdpRelayInitCase(void);
+int tunnelsAbortTrojanClientUdpInitCase(void);
+int tunnelsAbortTrojanServerClosingInitCase(void);
+int tunnelsAbortVlessClientUdpInitCase(void);
+int tunnelsAbortVlessServerClosingInitCase(void);
+int tunnelsAbortRealityServerClosingEstCase(void);
+int tunnelsAbortTlsServerClosingEstCase(void);
+int tunnelsAbortRouterTargetEstCase(void);
+int tunnelsAbortHttpClientUpstreamEstCase(void);
+int tunnelsAbortHttpClientDownstreamInitCase(void);

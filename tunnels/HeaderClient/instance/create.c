@@ -11,11 +11,8 @@ tunnel_t *headerclientTunnelCreate(node_t *node)
     }
 
     t->fnInitU    = &headerclientTunnelUpStreamInit;
-    t->fnEstU     = &headerclientTunnelUpStreamEst;
     t->fnFinU     = &headerclientTunnelUpStreamFinish;
     t->fnPayloadU = &headerclientTunnelUpStreamPayload;
-
-    t->fnInitD = &headerclientTunnelDownStreamInit;
     t->fnFinD  = &headerclientTunnelDownStreamFinish;
 
     headerclient_tstate_t *ts = tunnelGetState(t);

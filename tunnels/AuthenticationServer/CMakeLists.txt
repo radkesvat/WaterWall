@@ -26,12 +26,10 @@ add_library(AuthenticationServer STATIC
                     modules/get_user_by_sha256_hex/get_user_by_sha256_hex.c
                     modules/ping/ping.c
                     upstream/init.c
-                    upstream/est.c
                     upstream/fin.c
                     upstream/payload.c
                     upstream/pause.c
                     upstream/resume.c
-                    downstream/init.c
                     downstream/est.c
                     downstream/fin.c
                     downstream/payload.c

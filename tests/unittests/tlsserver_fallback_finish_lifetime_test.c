@@ -32,7 +32,6 @@ static void injectTlsNonterminal(fallback_finish_fixture_t *fallback, line_t *li
     tunnel_t *node = fallback->node;
 
     tlsserverTunnelDownStreamPayload(node, line, fallbackFinishMakePayload(lineGetBufferPool(line), "reply"));
-    tlsserverTunnelDownStreamInit(node, line);
     tlsserverTunnelDownStreamEst(node, line);
     tlsserverTunnelDownStreamPause(node, line);
     tlsserverTunnelDownStreamResume(node, line);

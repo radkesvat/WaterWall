@@ -29,7 +29,6 @@ static void injectVlessNonterminal(fallback_finish_fixture_t *fallback, line_t *
     tunnel_t *node = fallback->node;
 
     vlessserverTunnelDownStreamPayload(node, line, fallbackFinishMakePayload(lineGetBufferPool(line), "reply"));
-    vlessserverTunnelDownStreamInit(node, line);
     vlessserverTunnelDownStreamEst(node, line);
     vlessserverTunnelDownStreamPause(node, line);
     vlessserverTunnelDownStreamResume(node, line);

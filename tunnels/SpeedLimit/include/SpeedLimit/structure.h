@@ -75,7 +75,6 @@ void speedlimitTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void speedlimitTunnelUpStreamPause(tunnel_t *t, line_t *l);
 void speedlimitTunnelUpStreamResume(tunnel_t *t, line_t *l);
 
-void speedlimitTunnelDownStreamInit(tunnel_t *t, line_t *l);
 void speedlimitTunnelDownStreamFinish(tunnel_t *t, line_t *l);
 void speedlimitTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void speedlimitTunnelDownStreamPause(tunnel_t *t, line_t *l);

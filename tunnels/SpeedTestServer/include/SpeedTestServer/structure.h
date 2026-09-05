@@ -128,13 +128,11 @@ WW_EXPORT api_result_t speedtestserverTunnelApi(tunnel_t *instance, sbuf_t *mess
 void speedtestserverTunnelOnPrepair(tunnel_t *t);
 
 void speedtestserverTunnelUpStreamInit(tunnel_t *t, line_t *l);
-void speedtestserverTunnelUpStreamEst(tunnel_t *t, line_t *l);
 void speedtestserverTunnelUpStreamFinish(tunnel_t *t, line_t *l);
 void speedtestserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void speedtestserverTunnelUpStreamPause(tunnel_t *t, line_t *l);
 void speedtestserverTunnelUpStreamResume(tunnel_t *t, line_t *l);
 
-void speedtestserverTunnelDownStreamInit(tunnel_t *t, line_t *l);
 void speedtestserverTunnelDownStreamEst(tunnel_t *t, line_t *l);
 void speedtestserverTunnelDownStreamFinish(tunnel_t *t, line_t *l);
 void speedtestserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);

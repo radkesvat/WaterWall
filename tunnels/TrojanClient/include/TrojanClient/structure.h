@@ -90,13 +90,11 @@ WW_EXPORT api_result_t trojanclientTunnelApi(tunnel_t *instance, sbuf_t *message
 void trojanclientTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 
 void trojanclientTunnelUpStreamInit(tunnel_t *t, line_t *l);
-void trojanclientTunnelUpStreamEst(tunnel_t *t, line_t *l);
 void trojanclientTunnelUpStreamFinish(tunnel_t *t, line_t *l);
 void trojanclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void trojanclientTunnelUpStreamPause(tunnel_t *t, line_t *l);
 void trojanclientTunnelUpStreamResume(tunnel_t *t, line_t *l);
 
-void trojanclientTunnelDownStreamInit(tunnel_t *t, line_t *l);
 void trojanclientTunnelDownStreamEst(tunnel_t *t, line_t *l);
 void trojanclientTunnelDownStreamFinish(tunnel_t *t, line_t *l);
 void trojanclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);

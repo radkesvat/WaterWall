@@ -5,13 +5,10 @@
 static void authenticationclientInitializeCallbacks(tunnel_t *t)
 {
     t->fnInitU    = &authenticationclientTunnelUpStreamInit;
-    t->fnEstU     = &authenticationclientTunnelUpStreamEst;
     t->fnFinU     = &authenticationclientTunnelUpStreamFinish;
     t->fnPayloadU = &authenticationclientTunnelUpStreamPayload;
     t->fnPauseU   = &authenticationclientTunnelUpStreamPause;
     t->fnResumeU  = &authenticationclientTunnelUpStreamResume;
-
-    t->fnInitD    = &authenticationclientTunnelDownStreamInit;
     t->fnEstD     = &authenticationclientTunnelDownStreamEst;
     t->fnFinD     = &authenticationclientTunnelDownStreamFinish;
     t->fnPayloadD = &authenticationclientTunnelDownStreamPayload;

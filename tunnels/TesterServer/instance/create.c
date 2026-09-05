@@ -215,12 +215,10 @@ tunnel_t *testerserverTunnelCreate(node_t *node)
     }
 
     t->fnInitU    = &testerserverTunnelUpStreamInit;
-    t->fnEstU     = &testerserverTunnelUpStreamEst;
     t->fnFinU     = &testerserverTunnelUpStreamFinish;
     t->fnPayloadU = &testerserverTunnelUpStreamPayload;
     t->fnPauseU   = &testerserverTunnelUpStreamPause;
     t->fnResumeU  = &testerserverTunnelUpStreamResume;
-
     t->fnInitD    = &testerserverTunnelDownStreamInit;
     t->fnEstD     = &testerserverTunnelDownStreamEst;
     t->fnFinD     = &testerserverTunnelDownStreamFinish;

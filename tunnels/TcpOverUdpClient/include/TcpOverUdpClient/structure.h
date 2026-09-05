@@ -106,11 +106,9 @@ WW_EXPORT api_result_t tcpoverudpclientTunnelApi(tunnel_t *instance, sbuf_t *mes
 void tcpoverudpclientTunnelOnQuiesceRequest(tunnel_t *t, const ww_lifecycle_context_t *context);
 
 void tcpoverudpclientTunnelUpStreamInit(tunnel_t *t, line_t *l);
-void tcpoverudpclientTunnelUpStreamEst(tunnel_t *t, line_t *l);
 void tcpoverudpclientTunnelUpStreamFinish(tunnel_t *t, line_t *l);
 void tcpoverudpclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 
-void tcpoverudpclientTunnelDownStreamInit(tunnel_t *t, line_t *l);
 void tcpoverudpclientTunnelDownStreamEst(tunnel_t *t, line_t *l);
 void tcpoverudpclientTunnelDownStreamFinish(tunnel_t *t, line_t *l);
 void tcpoverudpclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);

@@ -57,11 +57,13 @@ void tunnelDefaultUpStreamInit(tunnel_t *self, line_t *line)
     self->next->fnInitU(self->next, line);
 }
 
-// Default upstream establishment function
+// Reject upstream establishment unless the node explicitly supports it.
 void tunnelDefaultUpStreamEst(tunnel_t *self, line_t *line)
 {
-    assert(self->next != NULL);
-    self->next->fnEstU(self->next, line);
+    discard self;
+    discard line;
+    LOGF("Tunnel: UpStreamEst is disabled by default");
+    abortProgramNow(1);
 }
 
 // Default upstream finalization function
@@ -92,11 +94,13 @@ void tunnelDefaultUpStreamResume(tunnel_t *self, line_t *line)
     self->next->fnResumeU(self->next, line);
 }
 
-// Default downstream initialization function
+// Reject downstream initialization unless the node explicitly supports it.
 void tunnelDefaultDownStreamInit(tunnel_t *self, line_t *line)
 {
-    assert(self->prev != NULL);
-    self->prev->fnInitD(self->prev, line);
+    discard self;
+    discard line;
+    LOGF("Tunnel: DownStreamInit is disabled by default");
+    abortProgramNow(1);
 }
 
 // Default downstream establishment function

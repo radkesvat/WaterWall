@@ -8,7 +8,6 @@ add_library(RealityServer STATIC
     common/line_state.c
     common/tls_binding.c
     upstream/init.c
-    upstream/est.c
     upstream/fin.c
     upstream/payload.c
     upstream/pause.c

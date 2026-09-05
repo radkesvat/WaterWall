@@ -5,12 +5,10 @@
 static void configureTunnelCallbacks(tunnel_t *t)
 {
     t->fnInitU    = &realityserverTunnelUpStreamInit;
-    t->fnEstU     = &realityserverTunnelUpStreamEst;
     t->fnFinU     = &realityserverTunnelUpStreamFinish;
     t->fnPayloadU = &realityserverTunnelUpStreamPayload;
     t->fnPauseU   = &realityserverTunnelUpStreamPause;
     t->fnResumeU  = &realityserverTunnelUpStreamResume;
-
     t->fnInitD    = &realityserverTunnelDownStreamInit;
     t->fnEstD     = &realityserverTunnelDownStreamEst;
     t->fnFinD     = &realityserverTunnelDownStreamFinish;

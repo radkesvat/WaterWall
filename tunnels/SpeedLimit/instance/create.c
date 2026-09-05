@@ -191,14 +191,10 @@ tunnel_t *speedlimitTunnelCreate(node_t *node)
     }
 
     t->fnInitU    = &speedlimitTunnelUpStreamInit;
-
     t->fnFinU     = &speedlimitTunnelUpStreamFinish;
     t->fnPayloadU = &speedlimitTunnelUpStreamPayload;
     t->fnPauseU   = &speedlimitTunnelUpStreamPause;
     t->fnResumeU  = &speedlimitTunnelUpStreamResume;
-
-    t->fnInitD    = &speedlimitTunnelDownStreamInit;
-
     t->fnFinD     = &speedlimitTunnelDownStreamFinish;
     t->fnPayloadD = &speedlimitTunnelDownStreamPayload;
     t->fnPauseD   = &speedlimitTunnelDownStreamPause;

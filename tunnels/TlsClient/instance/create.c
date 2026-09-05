@@ -12,8 +12,6 @@ static void configureTunnelCallbacks(tunnel_t *t)
     t->fnInitU    = &tlsclientTunnelUpStreamInit;
     t->fnFinU     = &tlsclientTunnelUpStreamFinish;
     t->fnPayloadU = &tlsclientTunnelUpStreamPayload;
-
-    t->fnInitD    = &tlsclientTunnelDownStreamInit;
     t->fnEstD     = &tlsclientTunnelDownStreamEst;
     t->fnFinD     = &tlsclientTunnelDownStreamFinish;
     t->fnPayloadD = &tlsclientTunnelDownStreamPayload;

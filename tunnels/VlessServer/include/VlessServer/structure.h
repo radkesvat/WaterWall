@@ -104,13 +104,11 @@ void vlessserverTunnelOnPrepair(tunnel_t *t);
 void vlessserverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 
 void vlessserverTunnelUpStreamInit(tunnel_t *t, line_t *l);
-void vlessserverTunnelUpStreamEst(tunnel_t *t, line_t *l);
 void vlessserverTunnelUpStreamFinish(tunnel_t *t, line_t *l);
 void vlessserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void vlessserverTunnelUpStreamPause(tunnel_t *t, line_t *l);
 void vlessserverTunnelUpStreamResume(tunnel_t *t, line_t *l);
 
-void vlessserverTunnelDownStreamInit(tunnel_t *t, line_t *l);
 void vlessserverTunnelDownStreamEst(tunnel_t *t, line_t *l);
 void vlessserverTunnelDownStreamFinish(tunnel_t *t, line_t *l);
 void vlessserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);

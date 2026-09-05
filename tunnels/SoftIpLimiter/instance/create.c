@@ -120,8 +120,6 @@ tunnel_t *softiplimiterTunnelCreate(node_t *node)
     t->fnPayloadU = &softiplimiterTunnelUpStreamPayload;
     t->fnPauseU   = &softiplimiterTunnelUpStreamPause;
     t->fnResumeU  = &softiplimiterTunnelUpStreamResume;
-
-    t->fnInitD    = &softiplimiterTunnelDownStreamInit;
     t->fnEstD     = &softiplimiterTunnelDownStreamEst;
     t->fnFinD     = &softiplimiterTunnelDownStreamFinish;
     t->fnPayloadD = &softiplimiterTunnelDownStreamPayload;

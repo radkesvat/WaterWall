@@ -11,11 +11,8 @@ tunnel_t *udpovertcpclientTunnelCreate(node_t *node)
     }
 
     t->fnInitU    = &udpovertcpclientTunnelUpStreamInit;
-    t->fnEstU     = &udpovertcpclientTunnelUpStreamEst;
     t->fnFinU     = &udpovertcpclientTunnelUpStreamFinish;
     t->fnPayloadU = &udpovertcpclientTunnelUpStreamPayload;
-
-    t->fnInitD    = &udpovertcpclientTunnelDownStreamInit;
     t->fnFinD     = &udpovertcpclientTunnelDownStreamFinish;
     t->fnPayloadD = &udpovertcpclientTunnelDownStreamPayload;
 

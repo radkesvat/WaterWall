@@ -9,12 +9,10 @@ add_library(AuthenticationClient STATIC
                     common/protocol.c
                     common/users_api.c
                     upstream/init.c
-                    upstream/est.c
                     upstream/fin.c
                     upstream/payload.c
                     upstream/pause.c
                     upstream/resume.c
-                    downstream/init.c
                     downstream/est.c
                     downstream/fin.c
                     downstream/payload.c

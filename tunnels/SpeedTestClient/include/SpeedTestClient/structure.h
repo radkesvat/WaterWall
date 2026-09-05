@@ -150,13 +150,11 @@ void speedtestclientTunnelOnQuiesceRequest(tunnel_t *t, const ww_lifecycle_conte
 void speedtestclientTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);
 
 void speedtestclientTunnelUpStreamInit(tunnel_t *t, line_t *l);
-void speedtestclientTunnelUpStreamEst(tunnel_t *t, line_t *l);
 void speedtestclientTunnelUpStreamFinish(tunnel_t *t, line_t *l);
 void speedtestclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void speedtestclientTunnelUpStreamPause(tunnel_t *t, line_t *l);
 void speedtestclientTunnelUpStreamResume(tunnel_t *t, line_t *l);
 
-void speedtestclientTunnelDownStreamInit(tunnel_t *t, line_t *l);
 void speedtestclientTunnelDownStreamEst(tunnel_t *t, line_t *l);
 void speedtestclientTunnelDownStreamFinish(tunnel_t *t, line_t *l);
 void speedtestclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);

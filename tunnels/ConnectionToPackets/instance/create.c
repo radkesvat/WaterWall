@@ -7,13 +7,10 @@
 static void initializeTunnelCallbacks(tunnel_t *t)
 {
     t->fnInitU    = &ctpTunnelUpStreamInit;
-    t->fnEstU     = &ctpTunnelUpStreamEst;
     t->fnFinU     = &ctpTunnelUpStreamFinish;
     t->fnPayloadU = &ctpTunnelUpStreamPayload;
     t->fnPauseU   = &ctpTunnelUpStreamPause;
     t->fnResumeU  = &ctpTunnelUpStreamResume;
-
-    t->fnInitD    = &ctpTunnelDownStreamInit;
     t->fnEstD     = &ctpTunnelDownStreamEst;
     t->fnFinD     = &ctpTunnelDownStreamFinish;
     t->fnPayloadD = &ctpTunnelDownStreamPayload;

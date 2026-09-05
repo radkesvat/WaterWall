@@ -9,6 +9,18 @@
 #include "loggers/internal_logger.h"
 #include "wchecksum.h"
 
+static void packettunnelDefaultUpStreamEst(tunnel_t *self, line_t *line)
+{
+    assert(self->next != NULL);
+    tunnelNextUpStreamEst(self, line);
+}
+
+static void packettunnelDefaultDownStreamInit(tunnel_t *self, line_t *line)
+{
+    assert(self->prev != NULL);
+    tunnelPrevDownStreamInit(self, line);
+}
+
 // Default upstream payload function
 static void packettunnelDefaultUpStreamPayload(tunnel_t *self, line_t *line, sbuf_t *payload)
 {
@@ -71,8 +83,10 @@ tunnel_t *packettunnelCreate(node_t *node, size_t tstate_size, size_t lstate_siz
         return NULL;
     }
 
-    // Packet tunnels use the standard lifecycle pass-through callbacks inherited from tunnelCreate(). Payload
-    // handling remains mandatory in both directions and fails loudly until the packet tunnel overrides it.
+    // Packet lifecycle callbacks pass through in both directions, including the two that normal tunnels reject.
+    // Payload handling remains mandatory in both directions and fails loudly until overridden.
+    t->fnEstU     = packettunnelDefaultUpStreamEst;
+    t->fnInitD    = packettunnelDefaultDownStreamInit;
     t->fnPayloadU = packettunnelDefaultUpStreamPayload;
     t->fnPayloadD = packettunnelDefaultDownStreamPayload;
 

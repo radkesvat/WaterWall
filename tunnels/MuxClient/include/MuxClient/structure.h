@@ -118,13 +118,11 @@ WW_EXPORT api_result_t muxclientTunnelApi(tunnel_t *instance, sbuf_t *message);
 void muxclientTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);
 
 void muxclientTunnelUpStreamInit(tunnel_t *t, line_t *l);
-void muxclientTunnelUpStreamEst(tunnel_t *t, line_t *l);
 void muxclientTunnelUpStreamFinish(tunnel_t *t, line_t *l);
 void muxclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void muxclientTunnelUpStreamPause(tunnel_t *t, line_t *l);
 void muxclientTunnelUpStreamResume(tunnel_t *t, line_t *l);
 
-void muxclientTunnelDownStreamInit(tunnel_t *t, line_t *l);
 void muxclientTunnelDownStreamEst(tunnel_t *t, line_t *l);
 void muxclientTunnelDownStreamFinish(tunnel_t *t, line_t *l);
 void muxclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);

@@ -9,7 +9,6 @@ add_library(SpeedLimit STATIC
                     upstream/payload.c
                     upstream/pause.c
                     upstream/resume.c
-                    downstream/init.c
                     downstream/fin.c
                     downstream/payload.c
                     downstream/pause.c

@@ -26,11 +26,9 @@ WW_EXPORT tunnel_t    *udpovertcpclientTunnelCreate(node_t *node);
 WW_EXPORT api_result_t udpovertcpclientTunnelApi(tunnel_t *instance, sbuf_t *message);
 
 void udpovertcpclientTunnelUpStreamInit(tunnel_t *t, line_t *l);
-void udpovertcpclientTunnelUpStreamEst(tunnel_t *t, line_t *l);
 void udpovertcpclientTunnelUpStreamFinish(tunnel_t *t, line_t *l);
 void udpovertcpclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 
-void udpovertcpclientTunnelDownStreamInit(tunnel_t *t, line_t *l);
 void udpovertcpclientTunnelDownStreamFinish(tunnel_t *t, line_t *l);
 void udpovertcpclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 

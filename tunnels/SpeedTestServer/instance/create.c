@@ -12,13 +12,10 @@ tunnel_t *speedtestserverTunnelCreate(node_t *node)
     }
 
     t->fnInitU    = &speedtestserverTunnelUpStreamInit;
-    t->fnEstU     = &speedtestserverTunnelUpStreamEst;
     t->fnFinU     = &speedtestserverTunnelUpStreamFinish;
     t->fnPayloadU = &speedtestserverTunnelUpStreamPayload;
     t->fnPauseU   = &speedtestserverTunnelUpStreamPause;
     t->fnResumeU  = &speedtestserverTunnelUpStreamResume;
-
-    t->fnInitD    = &speedtestserverTunnelDownStreamInit;
     t->fnEstD     = &speedtestserverTunnelDownStreamEst;
     t->fnFinD     = &speedtestserverTunnelDownStreamFinish;
     t->fnPayloadD = &speedtestserverTunnelDownStreamPayload;

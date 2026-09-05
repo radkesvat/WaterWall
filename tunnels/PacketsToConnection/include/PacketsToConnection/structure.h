@@ -292,13 +292,11 @@ void ptcTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context);
 void ptcTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);
 
 void ptcTunnelUpStreamInit(tunnel_t *t, line_t *l);
-void ptcTunnelUpStreamEst(tunnel_t *t, line_t *l);
 void ptcTunnelUpStreamFinish(tunnel_t *t, line_t *l);
 void ptcTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void ptcTunnelUpStreamPause(tunnel_t *t, line_t *l);
 void ptcTunnelUpStreamResume(tunnel_t *t, line_t *l);
 
-void ptcTunnelDownStreamInit(tunnel_t *t, line_t *l);
 void ptcTunnelDownStreamEst(tunnel_t *t, line_t *l);
 void ptcTunnelDownStreamFinish(tunnel_t *t, line_t *l);
 void ptcTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);

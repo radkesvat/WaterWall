@@ -7,7 +7,6 @@
 static void initializeTunnelCallbacks(tunnel_t *t)
 {
     t->fnInitU    = &udpconnectorTunnelUpStreamInit;
-    t->fnEstU     = &udpconnectorTunnelUpStreamEst;
     t->fnFinU     = &udpconnectorTunnelUpStreamFinish;
     t->fnPayloadU = &udpconnectorTunnelUpStreamPayload;
     t->fnPauseU   = &udpconnectorTunnelUpStreamPause;

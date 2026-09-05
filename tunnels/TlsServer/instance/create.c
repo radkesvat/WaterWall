@@ -65,13 +65,10 @@ static void tlsserverInfoCallback(const SSL *ssl, int where, int ret)
 static void configureTunnelCallbacks(tunnel_t *t)
 {
     t->fnInitU    = &tlsserverTunnelUpStreamInit;
-    t->fnEstU     = &tlsserverTunnelUpStreamEst;
     t->fnFinU     = &tlsserverTunnelUpStreamFinish;
     t->fnPayloadU = &tlsserverTunnelUpStreamPayload;
     t->fnPauseU   = &tlsserverTunnelUpStreamPause;
     t->fnResumeU  = &tlsserverTunnelUpStreamResume;
-
-    t->fnInitD    = &tlsserverTunnelDownStreamInit;
     t->fnEstD     = &tlsserverTunnelDownStreamEst;
     t->fnFinD     = &tlsserverTunnelDownStreamFinish;
     t->fnPayloadD = &tlsserverTunnelDownStreamPayload;

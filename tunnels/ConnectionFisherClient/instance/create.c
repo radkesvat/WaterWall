@@ -33,13 +33,10 @@ tunnel_t *connectionfisherclientTunnelCreate(node_t *node)
     connectionfisherclient_tstate_t *ts = tunnelGetState(t);
 
     t->fnInitU    = &connectionfisherclientTunnelUpStreamInit;
-    t->fnEstU     = &connectionfisherclientTunnelUpStreamEst;
     t->fnFinU     = &connectionfisherclientTunnelUpStreamFinish;
     t->fnPayloadU = &connectionfisherclientTunnelUpStreamPayload;
     t->fnPauseU   = &connectionfisherclientTunnelUpStreamPause;
     t->fnResumeU  = &connectionfisherclientTunnelUpStreamResume;
-
-    t->fnInitD    = &connectionfisherclientTunnelDownStreamInit;
     t->fnEstD     = &connectionfisherclientTunnelDownStreamEst;
     t->fnFinD     = &connectionfisherclientTunnelDownStreamFinish;
     t->fnPayloadD = &connectionfisherclientTunnelDownStreamPayload;

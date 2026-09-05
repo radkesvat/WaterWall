@@ -657,13 +657,11 @@ void ctpTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t 
 bool ctpLoadSettings(ctp_tstate_t *ts, const cJSON *settings);
 
 void ctpTunnelUpStreamInit(tunnel_t *t, line_t *l);
-void ctpTunnelUpStreamEst(tunnel_t *t, line_t *l);
 void ctpTunnelUpStreamFinish(tunnel_t *t, line_t *l);
 void ctpTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void ctpTunnelUpStreamPause(tunnel_t *t, line_t *l);
 void ctpTunnelUpStreamResume(tunnel_t *t, line_t *l);
 
-void ctpTunnelDownStreamInit(tunnel_t *t, line_t *l);
 void ctpTunnelDownStreamEst(tunnel_t *t, line_t *l);
 void ctpTunnelDownStreamFinish(tunnel_t *t, line_t *l);
 void ctpTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);

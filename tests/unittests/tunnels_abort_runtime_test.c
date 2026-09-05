@@ -26,11 +26,11 @@ static test_worker_registry_t g_test_worker_registry;
 // Category-D callbacks under test. They are declared here rather than pulled in
 // through their owning tunnel's structure.h so this translation unit stays free
 // of per-tunnel state-size enumerators.
-#if defined(WATERWALL_ABORT_TEST_HAS_AUTHENTICATIONCLIENT)
-void authenticationclientTunnelDownStreamInit(tunnel_t *t, line_t *l);
-#endif
 #if defined(WATERWALL_ABORT_TEST_HAS_TESTERCLIENT)
 void testerclientTunnelUpStreamFinish(tunnel_t *t, line_t *l);
+#endif
+#if defined(WATERWALL_ABORT_TEST_HAS_SPEEDLIMIT)
+tunnel_t *speedlimitTunnelCreate(node_t *node);
 #endif
 
 static tunnel_t *createGuardedAdapter(node_t *node, adapter_edge_t edge)
@@ -74,14 +74,43 @@ static int caseAdapterChainEndPayload(void)
     return 0;
 }
 
-#if defined(WATERWALL_ABORT_TEST_HAS_AUTHENTICATIONCLIENT)
-// The callback discards both arguments before aborting, so NULL is intentional.
-static int caseAuthenticationClientDisabledDownstreamInit(void)
+static void acceptFormerDefault(tunnel_t *t, line_t *l)
 {
-    authenticationclientTunnelDownStreamInit(NULL, NULL);
+    discard t;
+    discard l;
+}
+
+static int caseNormalDefaultReject(bool upstream)
+{
+    tunnel_t *t = tunnelCreate(NULL, 0, 0);
+    if (t == NULL)
+    {
+        return kAbortCaseAllocationFailed;
+    }
+    tunnel_t neighbor = {.fnEstU = acceptFormerDefault, .fnInitD = acceptFormerDefault};
+    t->next           = &neighbor;
+    t->prev           = &neighbor;
+    if (upstream)
+    {
+        t->fnEstU(t, NULL);
+    }
+    else
+    {
+        t->fnInitD(t, NULL);
+    }
+    tunnelDestroy(t);
     return 0;
 }
-#endif
+
+static int caseNormalDefaultUpstreamEst(void)
+{
+    return caseNormalDefaultReject(true);
+}
+
+static int caseNormalDefaultDownstreamInit(void)
+{
+    return caseNormalDefaultReject(false);
+}
 
 static int casePacketLifecycleAnchorFinish(bool upstream)
 {
@@ -128,6 +157,31 @@ static int caseTesterClientDisabledUpstreamFinish(void)
 }
 #endif
 
+#if defined(WATERWALL_ABORT_TEST_HAS_SPEEDLIMIT)
+static int caseSpeedLimitDisabledDownstreamInit(void)
+{
+    cJSON *settings = cJSON_Parse("{\"bytes-per-sec\":1024,\"limit-mode\":\"per-line\",\"work-mode\":\"pause\"}");
+    if (settings == NULL)
+    {
+        return kAbortCaseAllocationFailed;
+    }
+    node_t    node = {.node_settings_json = settings};
+    tunnel_t *t    = speedlimitTunnelCreate(&node);
+    if (t == NULL)
+    {
+        cJSON_Delete(settings);
+        return kAbortCaseAllocationFailed;
+    }
+
+    // The registered guard must reject the callback before inspecting line state.
+    t->fnInitD(t, NULL);
+
+    tunnelDestroy(t);
+    cJSON_Delete(settings);
+    return 0;
+}
+#endif
+
 typedef struct abort_case_s
 {
     const char *name;
@@ -136,13 +190,48 @@ typedef struct abort_case_s
 } abort_case_t;
 
 static const abort_case_t kAbortCases[] = {
+    {"normal_default_upstream_est", caseNormalDefaultUpstreamEst},
+    {"normal_default_downstream_init", caseNormalDefaultDownstreamInit},
+#if defined(WATERWALL_ABORT_TEST_HAS_HTTPCLIENT)
+    {"httpclient_disabled_upstream_est", tunnelsAbortHttpClientUpstreamEstCase},
+    {"httpclient_disabled_downstream_init", tunnelsAbortHttpClientDownstreamInitCase},
+#endif
+#if defined(WATERWALL_ABORT_TEST_HAS_ROUTER)
+    {"router_disabled_upstream_est", tunnelsAbortRouterTargetEstCase},
+#endif
+#if defined(WATERWALL_ABORT_TEST_HAS_TLSSERVER)
+    {"tlsserver_disabled_upstream_est", tunnelsAbortTlsServerClosingEstCase},
+#endif
+#if defined(WATERWALL_ABORT_TEST_HAS_REALITYSERVER)
+    {"realityserver_disabled_upstream_est", tunnelsAbortRealityServerClosingEstCase},
+#endif
+#if defined(WATERWALL_ABORT_TEST_HAS_VLESSSERVER)
+    {"vlessserver_disabled_downstream_init", tunnelsAbortVlessServerClosingInitCase},
+#endif
+#if defined(WATERWALL_ABORT_TEST_HAS_VLESSCLIENT)
+    {"vlessclient_disabled_downstream_init", tunnelsAbortVlessClientUdpInitCase},
+#endif
+#if defined(WATERWALL_ABORT_TEST_HAS_TROJANSERVER)
+    {"trojanserver_disabled_downstream_init", tunnelsAbortTrojanServerClosingInitCase},
+#endif
+#if defined(WATERWALL_ABORT_TEST_HAS_TROJANCLIENT)
+    {"trojanclient_disabled_downstream_init", tunnelsAbortTrojanClientUdpInitCase},
+#endif
+#if defined(WATERWALL_ABORT_TEST_HAS_TLSSERVER)
+    {"tlsserver_draining_downstream_init", tunnelsAbortTlsServerDrainingInitCase},
+#endif
+#if defined(WATERWALL_ABORT_TEST_HAS_SOCKS5CLIENT)
+    {"socks5client_udp_app_downstream_init", tunnelsAbortSocks5ClientUdpAppInitCase},
+    {"socks5client_udp_control_downstream_init", tunnelsAbortSocks5ClientUdpControlInitCase},
+    {"socks5client_udp_relay_downstream_init", tunnelsAbortSocks5ClientUdpRelayInitCase},
+#endif
+#if defined(WATERWALL_ABORT_TEST_HAS_SPEEDLIMIT)
+    {"speedlimit_disabled_downstream_init", caseSpeedLimitDisabledDownstreamInit},
+#endif
     {"adapter_chain_head_finish", caseAdapterChainHeadFinish},
     {"adapter_chain_head_payload", caseAdapterChainHeadPayload},
     {"adapter_chain_end_finish", caseAdapterChainEndFinish},
     {"adapter_chain_end_payload", caseAdapterChainEndPayload},
-#if defined(WATERWALL_ABORT_TEST_HAS_AUTHENTICATIONCLIENT)
-    {"authenticationclient_disabled_downstream_init", caseAuthenticationClientDisabledDownstreamInit},
-#endif
     {"packet_lifecycle_anchor_upstream_finish", casePacketLifecycleAnchorUpstreamFinish},
     {"packet_lifecycle_anchor_downstream_finish", casePacketLifecycleAnchorDownstreamFinish},
 #if defined(WATERWALL_ABORT_TEST_HAS_TESTERCLIENT)

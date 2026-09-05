@@ -96,7 +96,6 @@ add_library(TlsClient STATIC
     upstream/init.c
     upstream/fin.c
     upstream/payload.c
-    downstream/init.c
     downstream/est.c
     downstream/fin.c
     downstream/payload.c

@@ -127,13 +127,11 @@ void authenticationclientTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_
 void authenticationclientTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);
 
 void authenticationclientTunnelUpStreamInit(tunnel_t *t, line_t *l);
-void authenticationclientTunnelUpStreamEst(tunnel_t *t, line_t *l);
 void authenticationclientTunnelUpStreamFinish(tunnel_t *t, line_t *l);
 void authenticationclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void authenticationclientTunnelUpStreamPause(tunnel_t *t, line_t *l);
 void authenticationclientTunnelUpStreamResume(tunnel_t *t, line_t *l);
 
-void authenticationclientTunnelDownStreamInit(tunnel_t *t, line_t *l);
 void authenticationclientTunnelDownStreamEst(tunnel_t *t, line_t *l);
 void authenticationclientTunnelDownStreamFinish(tunnel_t *t, line_t *l);
 void authenticationclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);

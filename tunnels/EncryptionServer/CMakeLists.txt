@@ -7,11 +7,8 @@ add_library(EncryptionServer STATIC
                     common/helpers.c
                     common/line_state.c
                     upstream/init.c
-                    upstream/est.c
                     upstream/fin.c
                     upstream/payload.c
-                    upstream/est.c
-                    downstream/init.c
                     downstream/fin.c
                     downstream/payload.c
   

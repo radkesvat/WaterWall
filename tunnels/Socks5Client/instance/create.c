@@ -309,13 +309,10 @@ tunnel_t *socks5clientTunnelCreate(node_t *node)
     const cJSON           *settings = node->node_settings_json;
 
     t->fnInitU    = &socks5clientTunnelUpStreamInit;
-    t->fnEstU     = &socks5clientTunnelUpStreamEst;
     t->fnFinU     = &socks5clientTunnelUpStreamFinish;
     t->fnPayloadU = &socks5clientTunnelUpStreamPayload;
     t->fnPauseU   = &socks5clientTunnelUpStreamPause;
     t->fnResumeU  = &socks5clientTunnelUpStreamResume;
-
-    t->fnInitD    = &socks5clientTunnelDownStreamInit;
     t->fnEstD     = &socks5clientTunnelDownStreamEst;
     t->fnFinD     = &socks5clientTunnelDownStreamFinish;
     t->fnPayloadD = &socks5clientTunnelDownStreamPayload;
