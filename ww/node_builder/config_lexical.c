@@ -8,7 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-static bool rejectInput(const char *category, size_t offset)
+static bool configLexicalRejectInput(const char *category, size_t offset)
 {
     fprintf(stderr, "Restricted config: %s at byte %zu\n", category, offset);
     return false;
@@ -21,7 +21,7 @@ bool configLexicalCheckEncoding(const char *input, size_t length)
         unsigned char c = (unsigned char) input[i];
         if (c == 0)
         {
-            return rejectInput("NUL", i);
+            return configLexicalRejectInput("NUL", i);
         }
         if (c < 0x80)
         {
@@ -50,24 +50,24 @@ bool configLexicalCheckEncoding(const char *input, size_t length)
         }
         else
         {
-            return rejectInput("UTF-8", i);
+            return configLexicalRejectInput("UTF-8", i);
         }
         if (count >= length - i)
         {
-            return rejectInput("UTF-8", i);
+            return configLexicalRejectInput("UTF-8", i);
         }
         for (unsigned int j = 0; j < count; ++j)
         {
             c = (unsigned char) input[++i];
             if ((c & 0xc0) != 0x80)
             {
-                return rejectInput("UTF-8", i);
+                return configLexicalRejectInput("UTF-8", i);
             }
             value = (value << 6) | (c & 0x3f);
         }
         if (value < minimum || value > 0x10ffff || (value >= 0xd800 && value <= 0xdfff))
         {
-            return rejectInput("UTF-8", i);
+            return configLexicalRejectInput("UTF-8", i);
         }
     }
     return true;
@@ -84,30 +84,30 @@ bool configLexicalCheckTokens(const char *input, size_t length, size_t max_depth
         {
             if (c < 0x20)
             {
-                return rejectInput("string control character", i);
+                return configLexicalRejectInput("string control character", i);
             }
             if (c == '\\')
             {
                 if (++i == length)
                 {
-                    return rejectInput("string escape", i);
+                    return configLexicalRejectInput("string escape", i);
                 }
                 if (input[i] == 'u')
                 {
                     if (length - i < 5)
                     {
-                        return rejectInput("Unicode escape", i - 1);
+                        return configLexicalRejectInput("Unicode escape", i - 1);
                     }
                     for (size_t j = 1; j <= 4; ++j)
                     {
                         if (! isxdigit((unsigned char) input[i + j]))
                         {
-                            return rejectInput("Unicode escape", i - 1);
+                            return configLexicalRejectInput("Unicode escape", i - 1);
                         }
                     }
                     if (memcmp(input + i + 1, "0000", 4) == 0)
                     {
-                        return rejectInput("decoded NUL", i - 1);
+                        return configLexicalRejectInput("decoded NUL", i - 1);
                     }
                 }
             }
@@ -125,20 +125,20 @@ bool configLexicalCheckTokens(const char *input, size_t length, size_t max_depth
         {
             if (++depth > max_depth)
             {
-                return rejectInput("depth limit", i);
+                return configLexicalRejectInput("depth limit", i);
             }
         }
         else if (c == '}' || c == ']')
         {
             if (depth == 0)
             {
-                return rejectInput("unmatched container", i);
+                return configLexicalRejectInput("unmatched container", i);
             }
             --depth;
         }
         else if (c <= 0x20 && c != ' ' && c != '\t' && c != '\r' && c != '\n')
         {
-            return rejectInput("whitespace", i);
+            return configLexicalRejectInput("whitespace", i);
         }
         else if (c == '-' || (c >= '0' && c <= '9'))
         {
@@ -146,7 +146,7 @@ bool configLexicalCheckTokens(const char *input, size_t length, size_t max_depth
             if (input[end] == '-')
                 ++end;
             if (end == length || input[end] < '0' || input[end] > '9')
-                return rejectInput("number", i);
+                return configLexicalRejectInput("number", i);
             if (input[end++] != '0')
                 while (end < length && input[end] >= '0' && input[end] <= '9')
                     ++end;
@@ -156,7 +156,7 @@ bool configLexicalCheckTokens(const char *input, size_t length, size_t max_depth
                 while (end < length && input[end] >= '0' && input[end] <= '9')
                     ++end;
                 if (first == end)
-                    return rejectInput("number", i);
+                    return configLexicalRejectInput("number", i);
             }
             if (end < length && (input[end] == 'e' || input[end] == 'E'))
             {
@@ -167,10 +167,10 @@ bool configLexicalCheckTokens(const char *input, size_t length, size_t max_depth
                 while (end < length && input[end] >= '0' && input[end] <= '9')
                     ++end;
                 if (first == end)
-                    return rejectInput("number", i);
+                    return configLexicalRejectInput("number", i);
             }
             if (end < length && strchr(" \t\r\n,]}", input[end]) == NULL)
-                return rejectInput("number", i);
+                return configLexicalRejectInput("number", i);
             i = end - 1;
         }
     }
@@ -221,7 +221,7 @@ cJSON *configLexicalParse(const char *input, size_t length, size_t max_depth)
 {
     if (length >= 3 && memcmp(input, "\xef\xbb\xbf", 3) == 0)
     {
-        rejectInput("unexpected BOM", 0);
+        configLexicalRejectInput("unexpected BOM", 0);
         return NULL;
     }
     if (! configLexicalCheckEncoding(input, length) || ! configLexicalCheckTokens(input, length, max_depth))
@@ -230,20 +230,20 @@ cJSON *configLexicalParse(const char *input, size_t length, size_t max_depth)
     cJSON      *json = cJSON_ParseWithLengthOpts(input, length, &end, false);
     if (json == NULL)
     {
-        rejectInput("JSON syntax", (size_t) (end - input));
+        configLexicalRejectInput("JSON syntax", (size_t) (end - input));
         return NULL;
     }
     while ((size_t) (end - input) < length && strchr(" \t\r\n", *end) != NULL)
         ++end;
     if ((size_t) (end - input) != length)
     {
-        rejectInput("trailing input", (size_t) (end - input));
+        configLexicalRejectInput("trailing input", (size_t) (end - input));
         cJSON_Delete(json);
         return NULL;
     }
     if (! configLexicalCheckKeys(json))
     {
-        rejectInput("duplicate key, number range or allocation failure (document end)", length);
+        configLexicalRejectInput("duplicate key, number range or allocation failure (document end)", length);
         cJSON_Delete(json);
         return NULL;
     }
