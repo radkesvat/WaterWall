@@ -274,6 +274,11 @@ check_function("setproctitle" "unistd.h")
 ################################################################################
 # Advanced CPU Instructions Configuration
 ################################################################################
+# CPU selection is independent of runtime headers, libraries and relocation
+# policy. The root build also applies it to the standalone decoder targets.
+add_library(waterwall_cpu_options INTERFACE)
+target_link_libraries(ww PUBLIC waterwall_cpu_options)
+
 option(WW_DISABLE_ADVANCED_CPU_INSTRUCTIONS "Disable all architecture-specific CPU instruction paths" OFF)
 option(WW_DISABLE_AVX "Disable all AVX instruction paths (AVX/AVX2/AVX512) while keeping SSE3 available" OFF)
 option(WW_DISABLE_AVX2 "Disable AVX2-specific instruction paths while keeping lower x86 features available" OFF)
@@ -318,13 +323,13 @@ if(WW_ENABLE_AVX_512 AND WW_AVX2_DISABLED)
     message(FATAL_ERROR "WW_ENABLE_AVX_512 requires AVX2 (and therefore AVX) to remain enabled")
 endif()
 
-function(ww_add_cpu_compile_option target msvc_option non_msvc_option)
+function(ww_add_cpu_compile_option msvc_option non_msvc_option)
     if(MSVC)
         if(NOT "${msvc_option}" STREQUAL "")
-            target_compile_options(${target} PUBLIC "${msvc_option}")
+            target_compile_options(waterwall_cpu_options INTERFACE "${msvc_option}")
         endif()
     elseif(NOT "${non_msvc_option}" STREQUAL "")
-        target_compile_options(${target} PUBLIC "${non_msvc_option}")
+        target_compile_options(waterwall_cpu_options INTERFACE "${non_msvc_option}")
     endif()
 endfunction()
 
@@ -343,23 +348,19 @@ if(WW_TARGET_X86_64 AND WW_HAS_X86_INTRINSICS AND NOT WW_DISABLE_ADVANCED_CPU_IN
     message(STATUS "Using advanced CPU instructions")
     set(WW_HAVE_ADVANCED_CPU_INSTRUCTIONS 1)
 
-    if(MSVC)
-        # MSVC dosent have a specific flag for haswell, but we can enable AVX2 which includes all the instructions we need,
-        # and MSVC will automatically enable the necessary instruction sets for AVX2
-        # target_compile_options(ww PUBLIC /arch:AVX2)
-    else()
+    if(NOT MSVC)
         if(NOT WW_ADVANCED_CPU_BASELINE STREQUAL "")
-            target_compile_options(ww PUBLIC "-march=${WW_ADVANCED_CPU_BASELINE}")
+            target_compile_options(waterwall_cpu_options INTERFACE "-march=${WW_ADVANCED_CPU_BASELINE}")
         endif()
         if(NOT WW_ADVANCED_CPU_EXTRA_FLAGS STREQUAL "")
             separate_arguments(WW_ADVANCED_CPU_EXTRA_FLAGS_LIST NATIVE_COMMAND "${WW_ADVANCED_CPU_EXTRA_FLAGS}")
-            target_compile_options(ww PUBLIC ${WW_ADVANCED_CPU_EXTRA_FLAGS_LIST})
+            target_compile_options(waterwall_cpu_options INTERFACE ${WW_ADVANCED_CPU_EXTRA_FLAGS_LIST})
         endif()
         if(WW_AVX_DISABLED)
-            target_compile_options(ww PUBLIC -mno-avx)
+            target_compile_options(waterwall_cpu_options INTERFACE -mno-avx)
         endif()
         if(WW_AVX2_DISABLED)
-            target_compile_options(ww PUBLIC -mno-avx2)
+            target_compile_options(waterwall_cpu_options INTERFACE -mno-avx2)
         endif()
     endif()
     
@@ -381,7 +382,7 @@ if(WW_TARGET_X86_64 AND WW_HAS_X86_INTRINSICS AND NOT WW_DISABLE_ADVANCED_CPU_IN
     # SSE3 Configuration
     if(COMPILER_SUPPORTS_SSE3)
         message(STATUS "Using SSE3")
-        ww_add_cpu_compile_option(ww "/arch:SSE2" "-msse3")
+        ww_add_cpu_compile_option("/arch:SSE2" "-msse3")
         set(WW_HAVE_SSE3 1)
         set(WW_CHECKSUM_SSE3 1)
         target_sources(ww PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/net/wchecksum_sse3.c")
@@ -395,7 +396,7 @@ if(WW_TARGET_X86_64 AND WW_HAS_X86_INTRINSICS AND NOT WW_DISABLE_ADVANCED_CPU_IN
     if(COMPILER_SUPPORTS_AVX)
         if(NOT WW_AVX_DISABLED)
             message(STATUS "Using AVX")
-            ww_add_cpu_compile_option(ww "/arch:AVX" "-mavx")
+            ww_add_cpu_compile_option("/arch:AVX" "-mavx")
             set(WW_HAVE_AVX 1)
         else()
             message(STATUS "AVX is disabled by configuration")
@@ -409,7 +410,7 @@ if(WW_TARGET_X86_64 AND WW_HAS_X86_INTRINSICS AND NOT WW_DISABLE_ADVANCED_CPU_IN
     if(COMPILER_SUPPORTS_AVX2)
         if(NOT WW_AVX2_DISABLED)
             message(STATUS "Using AVX2")
-            ww_add_cpu_compile_option(ww "/arch:AVX2" "-mavx2")
+            ww_add_cpu_compile_option("/arch:AVX2" "-mavx2")
             set(WW_HAVE_AVX2 1)
             set(WW_SUPPORTED_MEMCOPY_AVX2 1)
             set(WW_CHECKSUM_AVX2 1)
@@ -431,7 +432,7 @@ if(WW_TARGET_X86_64 AND WW_HAS_X86_INTRINSICS AND NOT WW_DISABLE_ADVANCED_CPU_IN
     if(COMPILER_SUPPORTS_AVX512F)
         if(WW_ENABLE_AVX_512)
             message(STATUS "Using AVX512F")
-            ww_add_cpu_compile_option(ww "/arch:AVX512" "-mavx512f")
+            ww_add_cpu_compile_option("/arch:AVX512" "-mavx512f")
             set(WW_HAVE_AVX512F 1)
             set(WW_SUPPORTED_MEMCOPY_AVX512F 1)
         else()

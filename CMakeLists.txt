@@ -517,6 +517,14 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/ww/compression)
 target_link_libraries(${WATERWALL_APPLICATION_TARGET} XZEmbedded::XZEmbedded WaterWall::XZDecoder)
 
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/ww)
+# Share only the selected CPU instruction flags with decoder code. PRIVATE keeps
+# these options out of the launcher and its conservative startup guard; neither
+# ww's runtime dependencies nor its non-PIE policy cross this boundary.
+foreach(decoder_target xz_embedded ww_xz_decoder ww_launcher_xz_decoder)
+  if(TARGET ${decoder_target})
+    target_link_libraries(${decoder_target} PRIVATE waterwall_cpu_options)
+  endif()
+endforeach()
 target_link_directories(${WATERWALL_APPLICATION_TARGET} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/ww)
 target_include_directories(${WATERWALL_APPLICATION_TARGET} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/ww)
 target_link_libraries(${WATERWALL_APPLICATION_TARGET} ww)
