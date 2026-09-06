@@ -41,7 +41,9 @@ with tempfile.TemporaryDirectory(prefix='Waterwall fixture spaces ') as temporar
     extraction = root / 'extraction'
     extraction.mkdir()
     def windows_path(path):
-        return 'Z:' + str(path).replace('/', '\\') if args.wine else str(path)
+        # MSYS2 Python renders native paths with '/', unlike GetModuleFileNameW.
+        native = str(path).replace('/', '\\')
+        return 'Z:' + native if args.wine else native
     env['TEMP'] = env['TMP'] = windows_path(extraction)
     env['WW_FIXTURE_ORIGINAL'] = windows_path(launcher)
 

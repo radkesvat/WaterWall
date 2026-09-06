@@ -31,7 +31,13 @@ int main(int argc, char **argv)
     {
         const char *expected_exe = getenv("WW_FIXTURE_ORIGINAL");
         if (expected_exe != NULL && strcmp(expected_exe, handoff.orig_exe) != 0)
+        {
+            fprintf(stderr,
+                    "Original executable mismatch: expected \"%s\", received \"%s\"\n",
+                    expected_exe,
+                    handoff.orig_exe);
             return 84;
+        }
         if (getenv("WW_FIXTURE_REMOVE_SOURCE") != NULL && remove(handoff.source_name) != 0)
             return 85;
         if (waterwallStartupHandoffReceive(&handoff, options.restricted_config, &content, &length))
