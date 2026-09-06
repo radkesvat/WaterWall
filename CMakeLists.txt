@@ -296,11 +296,24 @@ endif()
 #--------------------------------------------------------------------------------
 # Main Executable and Sources
 #--------------------------------------------------------------------------------
-option(WW_PACK_RUNTIME "Package the ordinary executable in a Linux C launcher" OFF)
+option(WW_PACK_RUNTIME "Package the ordinary executable in a platform C launcher" OFF)
 if(WW_PACK_RUNTIME)
-  if(CMAKE_CROSSCOMPILING OR NOT CMAKE_SYSTEM_NAME STREQUAL "Linux" OR
-      NOT CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64)$" OR NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
-    message(FATAL_ERROR "WW_PACK_RUNTIME is currently supported only on Linux x86-64")
+  if(WIN32 AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(AMD64|amd64|x86_64|i[3-6]86|x86)$")
+    if(MSVC AND NOT CMAKE_C_COMPILER_ARCHITECTURE_ID MATCHES "^(X86|x64)$")
+      message(FATAL_ERROR "Packed Windows requires an x86 or x64 compiler target")
+    endif()
+    if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+      set(WW_PACKED_TARGET windows-x86_64)
+    elseif(CMAKE_SIZEOF_VOID_P EQUAL 4)
+      set(WW_PACKED_TARGET windows-x86)
+    else()
+      message(FATAL_ERROR "Unsupported Windows packed pointer size")
+    endif()
+  elseif(NOT CMAKE_CROSSCOMPILING AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
+         CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64)$" AND CMAKE_SIZEOF_VOID_P EQUAL 8)
+    set(WW_PACKED_TARGET linux-x86_64)
+  else()
+    message(FATAL_ERROR "WW_PACK_RUNTIME supports native Linux x86-64 and Windows x86/x64 only")
   endif()
 
   set(WATERWALL_APPLICATION_TARGET WaterwallApplication)
@@ -1276,6 +1289,18 @@ target_compile_definitions(${WATERWALL_APPLICATION_TARGET} PUBLIC WATERWALL_VERS
 
 if(WW_PACK_RUNTIME)
   add_subdirectory(core/launcher)
+  # CMAKE_CROSSCOMPILING is also true for native Windows presets which set
+  # CMAKE_SYSTEM_NAME. x86 runs on both x86 and x64 hosts; x64 needs an x64 host.
+  if(BUILD_TESTING AND WIN32 AND CMAKE_HOST_WIN32 AND
+      (CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "^(AMD64|amd64|x86_64)$" OR
+       (CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "^(i[3-6]86|x86)$" AND CMAKE_SIZEOF_VOID_P EQUAL 4)))
+    find_program(WW_WINDOWS_TEST_PYTHON NAMES python3 python REQUIRED)
+    add_test(NAME waterwall.windows_packed_application
+      COMMAND "${WW_WINDOWS_TEST_PYTHON}" "${PROJECT_SOURCE_DIR}/tests/windows_packed_application_test.py"
+        --launcher "$<TARGET_FILE:Waterwall>" --application "$<TARGET_FILE:WaterwallApplication>")
+    set_tests_properties(waterwall.windows_packed_application PROPERTIES
+      TIMEOUT 240 LABELS "integration;core;launcher;windows;tls")
+  endif()
 endif()
 
 if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING)
@@ -1335,6 +1360,8 @@ endif()
 # Windows does not add the tests/ subtree, so register the focused interface-name
 # test here as well. The test remains build-on-demand through its CTest runner.
 if(BUILD_TESTING AND WW_BUILD_UNIT_TESTS AND WIN32)
+  set(WATERWALL_SOURCE_DIR "${PROJECT_SOURCE_DIR}")
+  include("${PROJECT_SOURCE_DIR}/tests/unittests/windows_packed_startup.cmake")
   target_compile_definitions(ww PUBLIC SIGNAL_MANAGER_TEST_HOOKS=1)
   add_executable(windows_console_shutdown_test EXCLUDE_FROM_ALL
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests/windows_console_shutdown_test.c)

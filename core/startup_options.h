@@ -2,6 +2,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C"
@@ -26,6 +27,7 @@ extern "C"
     {
         bool        has_handoff;
         int         fd;
+        uintptr_t   mapping; /* Windows snapshot handle; never a CRT descriptor. */
         size_t      length;
         const char *source_name;
         const char *orig_exe;
@@ -75,18 +77,19 @@ extern "C"
     /**
      * @brief Extract reserved internal handoff arguments from argv.
      *
-     * Scans argv for --ww-internal-fd, --ww-internal-len, --ww-internal-src, and --ww-internal-exe.
-     * If found, validates them, strips them from argv, updates *argc, and populates handoff. Path strings borrow argv
-     * storage. Returns 1 if valid handoff was found, 0 if no handoff arguments were present, or -1 if handoff arguments
-     * were incomplete, duplicate, or malformed.
+     * Scans argv for --ww-internal-fd (Windows: --ww-internal-map), --ww-internal-len, --ww-internal-src, and
+     * --ww-internal-exe. If found, validates them, strips them from argv, updates *argc, and populates handoff. Path
+     * strings borrow argv storage. Returns 1 if valid handoff was found, 0 if no handoff arguments were present, or -1
+     * if handoff arguments were incomplete, duplicate, or malformed.
      */
     int waterwallStartupHandoffExtract(int *argc, char **argv, waterwall_handoff_t *handoff);
 
     /**
-     * @brief Read configuration snapshot from the handoff descriptor.
+     * @brief Read configuration snapshot from the platform handoff.
      *
      * Validates descriptor range/accessibility, sets FD_CLOEXEC, reads exact length,
-     * and closes the descriptor.
+     * and closes the descriptor. Windows validates a read-only mapping and its
+     * transport header, copies exact bytes, and closes the handle.
      * Returns 0 on success, -1 on failure.
      */
     int waterwallStartupHandoffReceive(waterwall_handoff_t *handoff, bool restricted, char **out_content,

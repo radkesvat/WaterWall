@@ -11,6 +11,7 @@
 #include <sys/stat.h>
 
 #ifdef _WIN32
+#include "startup_windows.h"
 #include <io.h>
 #else
 #include <unistd.h>
@@ -390,11 +391,16 @@ int waterwallStartupHandoffExtract(int *argc, char **argv, waterwall_handoff_t *
         if (arg == NULL)
             continue;
 
-        if (strncmp(arg, "--ww-internal-fd=", sizeof("--ww-internal-fd=") - 1) == 0)
+#ifdef _WIN32
+#define WW_HANDOFF_HANDLE_ARG "--ww-internal-map="
+#else
+#define WW_HANDOFF_HANDLE_ARG "--ww-internal-fd="
+#endif
+        if (strncmp(arg, WW_HANDOFF_HANDLE_ARG, sizeof(WW_HANDOFF_HANDLE_ARG) - 1) == 0)
         {
             if (fd_str != NULL)
                 return -1;
-            fd_str = arg + sizeof("--ww-internal-fd=") - 1;
+            fd_str = arg + sizeof(WW_HANDOFF_HANDLE_ARG) - 1;
             ++matched;
         }
         else if (strncmp(arg, "--ww-internal-len=", sizeof("--ww-internal-len=") - 1) == 0)
@@ -434,14 +440,20 @@ int waterwallStartupHandoffExtract(int *argc, char **argv, waterwall_handoff_t *
         return -1;
     }
 
-#ifndef __linux__
-    fprintf(stderr, "Internal input handoff is supported only on Linux\n");
+#if ! defined(__linux__) && ! defined(_WIN32)
+    fprintf(stderr, "Internal input handoff is unsupported on this platform\n");
     return -1;
 #endif
     char *endptr = NULL;
     errno        = 0;
-    long fd_val  = strtol(fd_str, &endptr, 10);
+#ifdef _WIN32
+    unsigned long long fd_val = strtoull(fd_str, &endptr, 10);
+    if (fd_str[0] < '0' || fd_str[0] > '9' || errno == ERANGE || *endptr != '\0' || fd_val == 0 ||
+        fd_val >= UINTPTR_MAX - 16)
+#else
+    long fd_val = strtol(fd_str, &endptr, 10);
     if (fd_str[0] < '0' || fd_str[0] > '9' || errno == ERANGE || *endptr != '\0' || fd_val <= 2 || fd_val > INT_MAX)
+#endif
     {
         fprintf(stderr, "Packed runtime: invalid handoff descriptor\n");
         return -1;
@@ -456,14 +468,26 @@ int waterwallStartupHandoffExtract(int *argc, char **argv, waterwall_handoff_t *
         return -1;
     }
 
-    if (src_str[0] == '\0' || exe_str[0] != '/')
+#ifdef _WIN32
+    bool absolute = (strlen(exe_str) >= 3 &&
+                     ((exe_str[0] >= 'A' && exe_str[0] <= 'Z') || (exe_str[0] >= 'a' && exe_str[0] <= 'z')) &&
+                     exe_str[1] == ':' && (exe_str[2] == '\\' || exe_str[2] == '/')) ||
+                    (exe_str[0] == '\\' && exe_str[1] == '\\');
+#else
+    bool absolute = exe_str[0] == '/';
+#endif
+    if (src_str[0] == '\0' || ! absolute)
     {
         fprintf(stderr, "Packed runtime: invalid handoff paths\n");
         return -1;
     }
 
     handoff->has_handoff = true;
-    handoff->fd          = (int) fd_val;
+#ifdef _WIN32
+    handoff->mapping = (uintptr_t) fd_val;
+#else
+    handoff->fd = (int) fd_val;
+#endif
     handoff->length      = (size_t) len_val;
     handoff->source_name = src_str;
     handoff->orig_exe    = exe_str;
@@ -482,15 +506,40 @@ int waterwallStartupHandoffExtract(int *argc, char **argv, waterwall_handoff_t *
     return 1;
 }
 
+#ifdef _WIN32
+/* MapViewOfFile can succeed for SEC_RESERVE sections whose pages are not
+ * committed. Check the entire read-only view before dereferencing untrusted
+ * handoff storage, including a separately mapped transport header. */
+static bool windowsSnapshotReadable(const void *view, size_t length)
+{
+    const unsigned char *cursor = view;
+    while (length != 0)
+    {
+        MEMORY_BASIC_INFORMATION region;
+        if (VirtualQuery(cursor, &region, sizeof(region)) == 0 || region.State != MEM_COMMIT ||
+            region.Type != MEM_MAPPED || region.Protect != PAGE_READONLY)
+            return false;
+        size_t available = region.RegionSize - (size_t) (cursor - (const unsigned char *) region.BaseAddress);
+        if (available >= length)
+            return true;
+        cursor += available;
+        length -= available;
+    }
+    return true;
+}
+#endif
+
 int waterwallStartupHandoffReceive(waterwall_handoff_t *handoff, bool restricted, char **out_content,
                                    size_t *out_length)
 {
-    if (handoff == NULL || ! handoff->has_handoff || handoff->fd <= 2 || out_content == NULL)
+    if (handoff == NULL || ! handoff->has_handoff || out_content == NULL)
     {
         return -1;
     }
 
 #ifdef __linux__
+    if (handoff->fd <= 2)
+        return -1;
     const int fd = handoff->fd;
     /* Take ownership immediately: every return below closes the descriptor. */
     handoff->fd = -1;
@@ -573,6 +622,51 @@ int waterwallStartupHandoffReceive(waterwall_handoff_t *handoff, bool restricted
         *out_length = total;
     }
     return 0;
+#elif defined(_WIN32)
+    HANDLE mapping   = (HANDLE) handoff->mapping;
+    handoff->mapping = 0;
+    void *view       = NULL;
+    char *buffer     = NULL;
+    int   result     = -1;
+    if (mapping == NULL || mapping == INVALID_HANDLE_VALUE)
+        return -1;
+    if (! SetHandleInformation(mapping, HANDLE_FLAG_INHERIT, 0) ||
+        handoff->length > SIZE_MAX - sizeof(waterwall_snapshot_header_t) ||
+        (restricted && handoff->length > WW_HOST_CORE_JSON_LIMIT))
+        goto windows_done;
+    /* An internal caller cannot smuggle a writable snapshot into the receiver. */
+    view = MapViewOfFile(mapping, FILE_MAP_WRITE, 0, 0, sizeof(waterwall_snapshot_header_t));
+    if (view != NULL)
+        goto windows_done;
+    view = MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, sizeof(waterwall_snapshot_header_t));
+    if (view == NULL || ! windowsSnapshotReadable(view, sizeof(waterwall_snapshot_header_t)))
+        goto windows_done;
+    waterwall_snapshot_header_t header;
+    memcpy(&header, view, sizeof(header));
+    UnmapViewOfFile(view);
+    view = NULL;
+    if (header.magic != WW_SNAPSHOT_MAGIC || header.length != handoff->length ||
+        header.length_inverse != ~header.length)
+        goto windows_done;
+    view = MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, sizeof(header) + handoff->length);
+    if (view == NULL || ! windowsSnapshotReadable(view, sizeof(header) + handoff->length))
+        goto windows_done;
+    buffer = malloc(handoff->length + 1);
+    if (buffer == NULL)
+        goto windows_done;
+    memcpy(buffer, (const char *) view + sizeof(header), handoff->length);
+    buffer[handoff->length] = '\0';
+    *out_content            = buffer;
+    if (out_length != NULL)
+        *out_length = handoff->length;
+    result = 0;
+windows_done:
+    if (view != NULL)
+        UnmapViewOfFile(view);
+    CloseHandle(mapping);
+    if (result != 0)
+        fprintf(stderr, "Packed runtime: invalid or inaccessible input mapping\n");
+    return result;
 #else
     (void) restricted;
     (void) out_length;
@@ -584,6 +678,13 @@ void waterwallStartupHandoffCleanup(waterwall_handoff_t *handoff)
 {
     if (handoff == NULL)
         return;
+#ifdef _WIN32
+    if (handoff->has_handoff && handoff->mapping != 0)
+    {
+        CloseHandle((HANDLE) handoff->mapping);
+        handoff->mapping = 0;
+    }
+#endif
     if (handoff->has_handoff && handoff->fd > 2)
     {
 #ifdef __linux__

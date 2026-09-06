@@ -24,8 +24,13 @@ The host project is configured separately from Waterwall. Do not pass a target
 cross-compilation toolchain or target `CC`/`CFLAGS` environment to this configure.
 It rejects configurations that CMake identifies as cross-compiling. Its executable
 and liblzma stay entirely outside the production target graph and are not
-installed or packaged by Waterwall. No startup, loader, or packaging step is
-connected here.
+installed or packaged by Waterwall. Packed builds invoke the native project via
+`core/build_host_encoder.py`, whose host-specific file lock covers configure and
+build. Compiler/generator-specific caches keep incompatible host configurations
+separate. Target compiler environment flags are removed while Windows MSVC
+`PATH`, `INCLUDE`, `LIB`, and `LIBPATH` survive. The owning application runtime
+interface is attached to the decoder only when that target exists; standalone
+encoder/decoder tests have no application link dependency.
 
 ## Fixed payload format
 

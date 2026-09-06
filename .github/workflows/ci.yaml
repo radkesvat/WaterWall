@@ -53,6 +53,40 @@ jobs:
           TSAN_OPTIONS: halt_on_error=1
         run: ctest --preset linux-tsan-unit --output-on-failure
 
+  windows-packed-bootstrap:
+    name: windows-packed-bootstrap-${{ matrix.arch }}
+    runs-on: windows-2025-vs2026
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64, x86]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.arch }}
+      - name: Install native build tools
+        run: choco install -y ninja
+      - name: Configure packed bootstrap fixture
+        working-directory: core/tools/windows_launcher
+        run: cmake --preset native
+      - name: Check Debug bootstrap
+        working-directory: core/tools/windows_launcher
+        run: |
+          cmake --build --preset native-debug --parallel 8
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ctest --preset native-debug --no-tests=error --output-on-failure
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python ../../../tests/packed_build_target_test.py --build-dir ../../../build/windows-launcher-native --config Debug --windows
+      - name: Check Release bootstrap
+        working-directory: core/tools/windows_launcher
+        run: |
+          cmake --build --preset native-release --parallel 8
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ctest --preset native-release --no-tests=error --output-on-failure
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python ../../../tests/packed_build_target_test.py --build-dir ../../../build/windows-launcher-native --config Release --windows
+
   windows-shutdown:
     name: windows-shutdown
     runs-on: windows-2025-vs2026
@@ -690,6 +724,24 @@ jobs:
       - name: Build
         run: cmake --build --preset ${{ matrix.preset }}
 
+      # Bootstrap acceptance only: existing downloadable Windows artifacts stay ordinary.
+      - name: Check native packed bootstrap in Debug and Release
+        working-directory: core/tools/windows_launcher
+        run: |
+          cmake --preset native
+          cmake --build --preset native-debug --parallel 8
+          ctest --preset native-debug --no-tests=error --output-on-failure
+          cmake --build --preset native-release --parallel 8
+          ctest --preset native-release --no-tests=error --output-on-failure
+          python ../../../tests/packed_build_target_test.py --build-dir ../../../build/windows-launcher-native --config Debug --windows
+          python ../../../tests/packed_build_target_test.py --build-dir ../../../build/windows-launcher-native --config Release --windows
+
+      - name: Validate packed application without changing the download
+        run: |
+          cmake --preset ${{ matrix.preset }} -B build/windows-packed-acceptance -DWW_PACK_RUNTIME=ON -DBUILD_TESTING=ON -DDISABLE_PRECOMPILED_HEADERS=ON -DCPM_SOURCE_CACHE="${{ env.cpm-path }}"
+          cmake --build build/windows-packed-acceptance --config Release --target Waterwall --parallel 8
+          ctest --test-dir build/windows-packed-acceptance -C Release --no-tests=error --output-on-failure -R '^waterwall.windows_packed_application$'
+
       - name: Upload artifact
         uses: actions/upload-artifact@v6
         with:
@@ -739,6 +791,15 @@ jobs:
 
       - name: Build
         run: cmake --build --preset ${{ matrix.preset }} --parallel
+
+      - name: Validate packed application without changing the download
+        if: matrix.preset != 'windows-arm64'
+        run: |
+          cmake --preset ${{ matrix.preset }} -B build/windows-packed-acceptance -DWW_PACK_RUNTIME=ON -DBUILD_TESTING=ON -DCPM_SOURCE_CACHE="${{ env.cpm-path }}"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --build build/windows-packed-acceptance --config Release --target Waterwall --parallel 8
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ctest --test-dir build/windows-packed-acceptance -C Release --no-tests=error --output-on-failure -R '^waterwall.windows_packed_application$'
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6

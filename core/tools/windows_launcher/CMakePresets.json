@@ -1,0 +1,91 @@
+{
+  "version": 4,
+  "configurePresets": [
+    {
+      "name": "mingw-x64",
+      "generator": "Ninja Multi-Config",
+      "binaryDir": "${sourceDir}/../../../build/windows-launcher-mingw-x64",
+      "toolchainFile": "${sourceDir}/mingw-x64.cmake",
+      "cacheVariables": {
+        "WW_FIXTURE_RUNNER_ARGS": "--wine;wine"
+      }
+    },
+    {
+      "name": "native",
+      "generator": "Ninja Multi-Config",
+      "binaryDir": "${sourceDir}/../../../build/windows-launcher-native"
+    },
+    {
+      "name": "mingw-x86",
+      "generator": "Ninja Multi-Config",
+      "binaryDir": "${sourceDir}/../../../build/windows-launcher-mingw-x86",
+      "toolchainFile": "${sourceDir}/mingw-x86.cmake"
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "mingw-release",
+      "configurePreset": "mingw-x64",
+      "configuration": "Release"
+    },
+    {
+      "name": "mingw-debug",
+      "configurePreset": "mingw-x64",
+      "configuration": "Debug"
+    },
+    {
+      "name": "native-release",
+      "configurePreset": "native",
+      "configuration": "Release"
+    },
+    {
+      "name": "native-debug",
+      "configurePreset": "native",
+      "configuration": "Debug"
+    },
+    {
+      "name": "mingw-x86-release",
+      "configurePreset": "mingw-x86",
+      "configuration": "Release"
+    },
+    {
+      "name": "mingw-x86-debug",
+      "configurePreset": "mingw-x86",
+      "configuration": "Debug"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "mingw-release",
+      "configurePreset": "mingw-x64",
+      "configuration": "Release",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "mingw-debug",
+      "configurePreset": "mingw-x64",
+      "configuration": "Debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "native-release",
+      "configurePreset": "native",
+      "configuration": "Release",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "native-debug",
+      "configurePreset": "native",
+      "configuration": "Debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    }
+  ]
+}

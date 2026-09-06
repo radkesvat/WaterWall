@@ -135,7 +135,6 @@
                 "default"
             ]
         },
-
         {
             "name": "windows-mingw",
             "inherits": [
@@ -147,8 +146,21 @@
                 "unity",
                 "default"
             ]
+        },
+        {
+            "name": "windows-cross-mingw-x64",
+            "inherits": [
+                "host-linux",
+                "ninja",
+                "default"
+            ],
+            "toolchainFile": "${sourceDir}/core/tools/windows_launcher/mingw-x64.cmake",
+            "cacheVariables": {
+                "WW_PACK_RUNTIME": true,
+                "BUILD_TESTING": false,
+                "MAKE": "/usr/bin/make"
+            }
         }
-       
     ],
     "buildPresets": [
         {
@@ -357,8 +369,12 @@
             "inherits": [
                 "host-windows"
             ]
+        },
+        {
+            "name": "windows-cross-mingw-x64",
+            "configurePreset": "windows-cross-mingw-x64",
+            "configuration": "Release"
         }
-        
     ],
     "testPresets": [
         {
