@@ -976,6 +976,8 @@ WW_EXPORT bool   isFile(const char *path);
 WW_EXPORT bool   isLink(const char *path);
 WW_EXPORT size_t getFileSize(const char *filepath);
 
+/* Startup only; borrows path storage that survives until process exit. */
+WW_EXPORT void  setOriginalExecutablePath(const char *path);
 WW_EXPORT char *getExecuteablePath(char *buf, int size);
 WW_EXPORT char *getExecuteableDir(char *buf, int size);
 WW_EXPORT char *getExecuteableFile(char *buf, int size);

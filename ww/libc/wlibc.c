@@ -498,11 +498,29 @@ size_t getFileSize(const char *filepath)
 int _NSGetExecutablePath(char *buf, uint32_t *bufsize);
 #endif
 
+/* Startup supplies argv-backed storage, which remains valid for process life. */
+static const char *s_original_executable_path;
+
+void setOriginalExecutablePath(const char *path)
+{
+    s_original_executable_path = path;
+}
+
 char *getExecuteablePath(char *buf, int size)
 {
     if (buf == NULL || size <= 0)
     {
         return NULL;
+    }
+
+    if (s_original_executable_path != NULL)
+    {
+        if ((size_t) size <= strlen(s_original_executable_path))
+        {
+            return NULL;
+        }
+        strcpy(buf, s_original_executable_path);
+        return buf;
     }
 
 #ifdef OS_WIN

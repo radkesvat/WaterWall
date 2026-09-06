@@ -29,43 +29,74 @@ int waterwallInnerMain(int argc, char **argv);
  */
 int waterwallInnerMain(int argc, char **argv)
 {
+    waterwall_handoff_t handoff     = {.fd = -1};
+    const int           handoff_res = waterwallStartupHandoffExtract(&argc, argv, &handoff);
+    if (handoff_res < 0)
+    {
+        waterwallStartupHandoffCleanup(&handoff);
+        return 1;
+    }
+
     waterwall_startup_options_t                startup_options = {0};
     const waterwall_startup_arguments_result_e arguments_result =
         waterwallStartupOptionsParse(argc, argv, &startup_options);
     if (arguments_result != kWaterwallStartupArgumentsRun)
     {
+        waterwallStartupHandoffCleanup(&handoff);
         return arguments_result == kWaterwallStartupArgumentsExitSuccess ? 0 : 1;
     }
 
-    // #ifdef COMPILER_MSVC
-    //     _CrtSetDbgFlag(_CRTDBG_ALLOC_MEM_DF | _CRTDBG_LEAK_CHECK_DF);
-    // #endif
+    if (startup_options.restricted_config)
+    {
+        configPolicyRestrict();
+    }
 
-    // check address sanitizer works properly
-    // int test[3] = {0};
-    // printf(" salamati Ali agha Mufasa %d", test[3]);
+    char  *core_file_content = NULL;
+    size_t core_file_len     = 0;
+    if (handoff.has_handoff)
+    {
+        if (handoff.orig_exe != NULL)
+        {
+            setOriginalExecutablePath(handoff.orig_exe);
+        }
+        if (handoff.source_name != NULL)
+        {
+            startup_options.core_json_input      = handoff.source_name;
+            startup_options.core_json_from_stdin = (strcmp(handoff.source_name, "stdin") == 0);
+        }
+        if (waterwallStartupHandoffReceive(
+                &handoff, startup_options.restricted_config, &core_file_content, &core_file_len) != 0)
+        {
+            waterwallStartupHandoffCleanup(&handoff);
+            return 1;
+        }
+    }
+    else
+    {
+        core_file_content = waterwallStartupOptionsReadCoreJson(&startup_options, &core_file_len);
+        if (core_file_content == NULL)
+        {
+            waterwallStartupHandoffCleanup(&handoff);
+            return 1;
+        }
+    }
 
     initWLibc();
 
-    ww_startup_result_t startup_result = wwStartupSuccess();
-
-    char *core_file_content = waterwallStartupOptionsReadCoreJson(&startup_options);
-
-    if (core_file_content == NULL)
-    {
-        return 1;
-    }
+    ww_startup_result_t  startup_result      = wwStartupSuccess();
     ww_startup_context_t core_settings_scope = {0};
     wwStartupContextBegin(&core_settings_scope);
-    const bool core_settings_parsed = parseCoreSettings(core_file_content);
+    const bool core_settings_parsed = parseCoreSettings(core_file_content, core_file_len);
     startup_result                  = wwStartupContextEnd(&core_settings_scope);
-    memoryFree(core_file_content);
+    waterwallStartupOptionsFreeCoreJson(core_file_content);
     if (! core_settings_parsed)
     {
         waterwallStartupOptionsReportCoreJsonParseFailure(&startup_options);
         destroyCoreSettings();
-        return startup_result.exit_code;
+        waterwallStartupHandoffCleanup(&handoff);
+        return startup_result.exit_code != 0 ? startup_result.exit_code : 1;
     }
+    waterwallStartupHandoffCleanup(&handoff);
 
     //  [Runtime setup]
     createDirIfNotExists(getCoreSettings()->log_path);

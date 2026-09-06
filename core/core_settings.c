@@ -965,14 +965,14 @@ static void parseMiscPartOfJson(cJSON *misc_obj)
     }
 }
 
-bool parseCoreSettings(const char *data_json)
+bool parseCoreSettings(const char *data_json, size_t length)
 {
     if (settings == NULL)
     {
         initCoreSettings();
     }
 
-    cJSON *json = configPolicyIsRestricted() ? configPolicyParse(data_json, strlen(data_json)) : cJSON_Parse(data_json);
+    cJSON *json = configPolicyIsRestricted() ? configPolicyParse(data_json, length) : cJSON_Parse(data_json);
     if (json == NULL)
     {
         const char *error_ptr = cJSON_GetErrorPtr();

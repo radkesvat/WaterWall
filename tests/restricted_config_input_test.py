@@ -46,6 +46,12 @@ def main():
         # Ordinary malformed JSON no longer dumps credentials either.
         run(binary, root, b'{"x":' + SECRET.encode(), "JSON Error at byte", restricted=False)
 
+        run(binary, root, b'{}' + b' ' * (2 * 1024 * 1024 - 2), "configs")
+        # The ordinary parser historically accepts BOM, trailing bytes, raw NUL
+        # termination, and leading-zero numeric spellings. Packing must agree.
+        for data in (b'\xef\xbb\xbf{}', b'{}trailing', b'{}\0ignored', b'{"x":01}'):
+            run(binary, root, data, "configs", restricted=False)
+
         node_cases = [
             ('{"variables":{"x":' + SECRET + '}}', "JSON syntax"),
             ('{"name":"x","nodes":[$' + SECRET + '$]}', "undefined variable"),

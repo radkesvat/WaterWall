@@ -3284,6 +3284,22 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   )
 endif()
 
+add_executable(core_configuration_test
+  core_configuration_test.c
+  ${CMAKE_SOURCE_DIR}/core/core_settings.c
+  ${CMAKE_SOURCE_DIR}/core/imported_tunnels.c
+  ${CMAKE_SOURCE_DIR}/core/os_helpers.c
+  ${CMAKE_SOURCE_DIR}/core/startup_options.c
+)
+target_include_directories(core_configuration_test PRIVATE ${CMAKE_SOURCE_DIR}/core)
+target_link_libraries(core_configuration_test PRIVATE ww)
+add_dependencies(waterwall_unit_tests core_configuration_test)
+add_waterwall_unit_test(
+  waterwall.core_configuration_unit
+  core_configuration_test
+  "unit;core;configuration"
+)
+
 # Tunnel hard-abort runtime cases. The registration is shared with the native
 # Windows/macOS test configurations, which do not add the tests/ subtree.
 include("${CMAKE_CURRENT_SOURCE_DIR}/tunnels_abort_runtime_test.cmake")

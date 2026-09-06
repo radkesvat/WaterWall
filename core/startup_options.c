@@ -1,11 +1,27 @@
 #include "startup_options.h"
 
-#include "node_builder/config_policy.h"
-#include "wlibc.h"
-#ifdef OS_WIN
+#include "config_lexical.h"
+#include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+
+#ifdef _WIN32
 #include <io.h>
+#else
+#include <unistd.h>
 #endif
+
+#ifndef WATERWALL_VERSION
+#define WATERWALL_VERSION 1.46.9
+#endif
+
+#define WW_STR_INNER(x) #x
+#define WW_STR(x)       WW_STR_INNER(x)
 
 #define WATERWALL_CORE_JSON_INPUT_ENV        "WW_CORE_JSON_INPUT"
 #define WATERWALL_DEFAULT_CORE_JSON_INPUT    "core.json"
@@ -13,8 +29,8 @@
 
 static bool isVersionArgument(const char *arg)
 {
-    return stringCompare(arg, "-v") == 0 || stringCompare(arg, "-version") == 0 ||
-           stringCompare(arg, "--version") == 0 || stringCompare(arg, "--v") == 0 || stringCompare(arg, "version") == 0;
+    return strcmp(arg, "-v") == 0 || strcmp(arg, "-version") == 0 || strcmp(arg, "--version") == 0 ||
+           strcmp(arg, "--v") == 0 || strcmp(arg, "version") == 0;
 }
 
 static const char *configArgumentValue(const char *arg)
@@ -29,7 +45,7 @@ static const char *configArgumentValue(const char *arg)
 
     for (size_t i = 0; i < sizeof(prefixes) / sizeof(prefixes[0]); ++i)
     {
-        const size_t prefix_length = stringLength(prefixes[i]);
+        const size_t prefix_length = strlen(prefixes[i]);
         if (strncmp(arg, prefixes[i], prefix_length) == 0)
         {
             return arg + prefix_length;
@@ -40,11 +56,12 @@ static const char *configArgumentValue(const char *arg)
 
 static void printUsage(const char *program_name)
 {
-    printError("Usage:\n"
-               "  %s [-v|--v|-version|--version|version]\n"
-               "  %s [--restricted-config] [-c:PATH|--c:PATH|-config:PATH|--config:PATH|config:PATH]\n",
-               program_name,
-               program_name);
+    fprintf(stderr,
+            "Usage:\n"
+            "  %s [-v|--v|-version|--version|version]\n"
+            "  %s [--restricted-config] [-c:PATH|--c:PATH|-config:PATH|--config:PATH|config:PATH]\n",
+            program_name,
+            program_name);
 }
 
 waterwall_startup_arguments_result_e waterwallStartupOptionsParse(int argc, char *const argv[],
@@ -52,13 +69,13 @@ waterwall_startup_arguments_result_e waterwallStartupOptionsParse(int argc, char
 {
     if (argc < 1 || argv == NULL || argv[0] == NULL || options == NULL)
     {
-        printError("Invalid process arguments supplied to Waterwall\n");
+        fprintf(stderr, "Invalid process arguments supplied to Waterwall\n");
         return kWaterwallStartupArgumentsExitFailure;
     }
 
-    const char *program_name     = argv[0];
-    const char *cli_core_input   = NULL;
-    bool        version_argument = false;
+    const char *program_name      = argv[0];
+    const char *cli_core_input    = NULL;
+    bool        version_argument  = false;
     bool        restricted_config = false;
 
     for (int i = 1; i < argc; ++i)
@@ -66,7 +83,7 @@ waterwall_startup_arguments_result_e waterwallStartupOptionsParse(int argc, char
         const char *arg = argv[i];
         if (arg == NULL)
         {
-            printError("Invalid null command-line argument at position %d\n", i);
+            fprintf(stderr, "Invalid null command-line argument at position %d\n", i);
             printUsage(program_name);
             return kWaterwallStartupArgumentsExitFailure;
         }
@@ -75,7 +92,7 @@ waterwall_startup_arguments_result_e waterwallStartupOptionsParse(int argc, char
         {
             if (restricted_config)
             {
-                printError("The restricted configuration option may only be specified once\n");
+                fprintf(stderr, "The restricted configuration option may only be specified once\n");
                 return kWaterwallStartupArgumentsExitFailure;
             }
             restricted_config = true;
@@ -91,19 +108,19 @@ waterwall_startup_arguments_result_e waterwallStartupOptionsParse(int argc, char
         const char *config_value = configArgumentValue(arg);
         if (config_value == NULL)
         {
-            printError("Invalid command-line argument \"%s\"\n", arg);
+            fprintf(stderr, "Invalid command-line argument \"%s\"\n", arg);
             printUsage(program_name);
             return kWaterwallStartupArgumentsExitFailure;
         }
         if (config_value[0] == '\0')
         {
-            printError("The core JSON input option \"%s\" requires a non-empty value after ':'\n", arg);
+            fprintf(stderr, "The core JSON input option \"%s\" requires a non-empty value after ':'\n", arg);
             printUsage(program_name);
             return kWaterwallStartupArgumentsExitFailure;
         }
         if (cli_core_input != NULL)
         {
-            printError("The core JSON input option may only be specified once\n");
+            fprintf(stderr, "The core JSON input option may only be specified once\n");
             printUsage(program_name);
             return kWaterwallStartupArgumentsExitFailure;
         }
@@ -114,12 +131,12 @@ waterwall_startup_arguments_result_e waterwallStartupOptionsParse(int argc, char
     {
         if (argc != 2)
         {
-            printError("A version argument cannot be combined with other command-line arguments\n");
+            fprintf(stderr, "A version argument cannot be combined with other command-line arguments\n");
             printUsage(program_name);
             return kWaterwallStartupArgumentsExitFailure;
         }
 
-        printDebug("Waterwall version %s\n", TOSTRING(WATERWALL_VERSION));
+        printf("Waterwall version %s\n", WW_STR(WATERWALL_VERSION));
         return kWaterwallStartupArgumentsExitSuccess;
     }
 
@@ -129,8 +146,9 @@ waterwall_startup_arguments_result_e waterwallStartupOptionsParse(int argc, char
         core_input = getenv(WATERWALL_CORE_JSON_INPUT_ENV);
         if (core_input != NULL && core_input[0] == '\0')
         {
-            printError("%s is set but does not contain a core JSON input path or 'stdin'\n",
-                       WATERWALL_CORE_JSON_INPUT_ENV);
+            fprintf(stderr,
+                    "%s is set but does not contain a core JSON input path or 'stdin'\n",
+                    WATERWALL_CORE_JSON_INPUT_ENV);
             return kWaterwallStartupArgumentsExitFailure;
         }
     }
@@ -139,38 +157,35 @@ waterwall_startup_arguments_result_e waterwallStartupOptionsParse(int argc, char
         core_input = WATERWALL_DEFAULT_CORE_JSON_INPUT;
     }
 
-    if (restricted_config)
-    {
-        configPolicyRestrict();
-    }
+    options->restricted_config    = restricted_config;
     options->core_json_input      = core_input;
-    options->core_json_from_stdin = stringCompare(core_input, "stdin") == 0;
+    options->core_json_from_stdin = (strcmp(core_input, "stdin") == 0);
     return kWaterwallStartupArgumentsRun;
 }
 
 static void reportOpenFailure(const char *path, int error_number)
 {
     const char *reason = error_number != 0 ? strerror(error_number) : "input/output error";
-    printError("Could not open core settings file \"%s\": %s\n", path, reason);
+    fprintf(stderr, "Could not open core settings file \"%s\": %s\n", path, reason);
 }
 
 static void reportReadFailure(const waterwall_startup_options_t *options, const char *reason)
 {
     if (options->core_json_from_stdin)
     {
-        printError("Could not read core settings JSON from standard input: %s\n", reason);
+        fprintf(stderr, "Could not read core settings JSON from standard input: %s\n", reason);
     }
     else
     {
-        printError("Could not read core settings file \"%s\": %s\n", options->core_json_input, reason);
+        fprintf(stderr, "Could not read core settings file \"%s\": %s\n", options->core_json_input, reason);
     }
 }
 
-char *waterwallStartupOptionsReadCoreJson(const waterwall_startup_options_t *options)
+char *waterwallStartupOptionsReadCoreJson(const waterwall_startup_options_t *options, size_t *out_length)
 {
     if (options == NULL || options->core_json_input == NULL)
     {
-        printError("Could not read core settings: no input source was selected\n");
+        fprintf(stderr, "Could not read core settings: no input source was selected\n");
         return NULL;
     }
 
@@ -186,30 +201,21 @@ char *waterwallStartupOptionsReadCoreJson(const waterwall_startup_options_t *opt
             return NULL;
         }
     }
-
-    if (configPolicyIsRestricted())
+#ifdef _WIN32
+    else
     {
-#ifdef OS_WIN
-        if (options->core_json_from_stdin && _setmode(_fileno(input), _O_BINARY) == -1)
+        if (options->restricted_config && _setmode(_fileno(input), _O_BINARY) == -1)
         {
-            printError("Restricted config: could not select binary stdin\n");
+            fprintf(stderr, "Restricted config: could not select binary stdin\n");
             return NULL;
         }
-#endif
-        size_t length  = 0;
-        char  *content = configPolicyRead(input, WW_HOST_CORE_JSON_LIMIT, &length);
-        if (! options->core_json_from_stdin && fclose(input) != 0)
-        {
-            printError("Restricted config: input close failure\n");
-            memoryFree(content);
-            return NULL;
-        }
-        return content;
     }
+#endif
 
-    size_t capacity = WATERWALL_CORE_JSON_INITIAL_CAPACITY;
-    size_t length   = 0;
-    char  *content  = memoryAllocate(capacity);
+    const size_t limit    = options->restricted_config ? WW_HOST_CORE_JSON_LIMIT : SIZE_MAX - 1;
+    size_t       capacity = WATERWALL_CORE_JSON_INITIAL_CAPACITY;
+    size_t       length   = 0;
+    char        *content  = malloc(capacity);
     if (content == NULL)
     {
         reportReadFailure(options, "out of memory");
@@ -222,25 +228,40 @@ char *waterwallStartupOptionsReadCoreJson(const waterwall_startup_options_t *opt
 
     while (true)
     {
-        if (length == capacity - 1)
+        if (length == limit)
         {
-            if (capacity > SIZE_MAX / 2)
+            if (fgetc(input) == EOF && ! ferror(input))
+            {
+                break;
+            }
+            if (options->restricted_config)
+            {
+                fprintf(stderr, "Restricted config: input limit or read failure at byte %zu\n", length);
+            }
+            else
             {
                 reportReadFailure(options, "input is too large");
-                memoryFree(content);
-                if (! options->core_json_from_stdin)
-                {
-                    (void) fclose(input);
-                }
-                return NULL;
             }
+            free(content);
+            if (! options->core_json_from_stdin)
+            {
+                (void) fclose(input);
+            }
+            return NULL;
+        }
 
-            const size_t new_capacity = capacity * 2;
-            char        *grown        = memoryReAllocate(content, new_capacity);
+        if (length == capacity - 1)
+        {
+            size_t new_capacity = capacity > SIZE_MAX / 2 ? SIZE_MAX : capacity * 2;
+            if (new_capacity > limit + 1)
+            {
+                new_capacity = limit + 1;
+            }
+            char *grown = realloc(content, new_capacity);
             if (grown == NULL)
             {
                 reportReadFailure(options, "out of memory");
-                memoryFree(content);
+                free(content);
                 if (! options->core_json_from_stdin)
                 {
                     (void) fclose(input);
@@ -251,8 +272,14 @@ char *waterwallStartupOptionsReadCoreJson(const waterwall_startup_options_t *opt
             capacity = new_capacity;
         }
 
+        size_t max_read = capacity - length - 1;
+        if (max_read > limit - length)
+        {
+            max_read = limit - length;
+        }
+
         errno                   = 0;
-        const size_t bytes_read = fread(content + length, 1, capacity - length - 1, input);
+        const size_t bytes_read = fread(content + length, 1, max_read, input);
         const int    read_errno = errno;
         length += bytes_read;
         if (bytes_read != 0)
@@ -262,8 +289,15 @@ char *waterwallStartupOptionsReadCoreJson(const waterwall_startup_options_t *opt
         if (ferror(input))
         {
             const char *reason = read_errno != 0 ? strerror(read_errno) : "input/output error";
-            reportReadFailure(options, reason);
-            memoryFree(content);
+            if (options->restricted_config)
+            {
+                fprintf(stderr, "Restricted config: read failure at byte %zu\n", length);
+            }
+            else
+            {
+                reportReadFailure(options, reason);
+            }
+            free(content);
             if (! options->core_json_from_stdin)
             {
                 (void) fclose(input);
@@ -279,8 +313,15 @@ char *waterwallStartupOptionsReadCoreJson(const waterwall_startup_options_t *opt
         if (fclose(input) != 0)
         {
             const int close_error = errno;
-            reportReadFailure(options, close_error != 0 ? strerror(close_error) : "input/output error");
-            memoryFree(content);
+            if (options->restricted_config)
+            {
+                fprintf(stderr, "Restricted config: input close failure\n");
+            }
+            else
+            {
+                reportReadFailure(options, close_error != 0 ? strerror(close_error) : "input/output error");
+            }
+            free(content);
             return NULL;
         }
     }
@@ -288,22 +329,273 @@ char *waterwallStartupOptionsReadCoreJson(const waterwall_startup_options_t *opt
     if (options->core_json_from_stdin && length == 0)
     {
         reportReadFailure(options, "standard input ended before any JSON was received");
-        memoryFree(content);
+        free(content);
         return NULL;
     }
 
     content[length] = '\0';
+
+    if (options->restricted_config)
+    {
+        if (! configLexicalCheckEncoding(content, length))
+        {
+            free(content);
+            return NULL;
+        }
+    }
+
+    if (out_length != NULL)
+    {
+        *out_length = length;
+    }
     return content;
+}
+
+void waterwallStartupOptionsFreeCoreJson(char *content)
+{
+    free(content);
 }
 
 void waterwallStartupOptionsReportCoreJsonParseFailure(const waterwall_startup_options_t *options)
 {
     if (options->core_json_from_stdin)
     {
-        printError("Could not parse core settings JSON from standard input\n");
+        fprintf(stderr, "Could not parse core settings JSON from standard input\n");
     }
     else
     {
-        printError("Could not parse core settings JSON from file \"%s\"\n", options->core_json_input);
+        fprintf(stderr, "Could not parse core settings JSON from file \"%s\"\n", options->core_json_input);
     }
+}
+
+int waterwallStartupHandoffExtract(int *argc, char **argv, waterwall_handoff_t *handoff)
+{
+    if (argc == NULL || *argc <= 1 || argv == NULL || handoff == NULL)
+    {
+        return 0;
+    }
+
+    handoff->fd         = -1;
+    const char *fd_str  = NULL;
+    const char *len_str = NULL;
+    const char *src_str = NULL;
+    const char *exe_str = NULL;
+    int         matched = 0;
+
+    for (int i = 1; i < *argc; ++i)
+    {
+        const char *arg = argv[i];
+        if (arg == NULL)
+            continue;
+
+        if (strncmp(arg, "--ww-internal-fd=", sizeof("--ww-internal-fd=") - 1) == 0)
+        {
+            if (fd_str != NULL)
+                return -1;
+            fd_str = arg + sizeof("--ww-internal-fd=") - 1;
+            ++matched;
+        }
+        else if (strncmp(arg, "--ww-internal-len=", sizeof("--ww-internal-len=") - 1) == 0)
+        {
+            if (len_str != NULL)
+                return -1;
+            len_str = arg + sizeof("--ww-internal-len=") - 1;
+            ++matched;
+        }
+        else if (strncmp(arg, "--ww-internal-src=", sizeof("--ww-internal-src=") - 1) == 0)
+        {
+            if (src_str != NULL)
+                return -1;
+            src_str = arg + sizeof("--ww-internal-src=") - 1;
+            ++matched;
+        }
+        else if (strncmp(arg, "--ww-internal-exe=", sizeof("--ww-internal-exe=") - 1) == 0)
+        {
+            if (exe_str != NULL)
+                return -1;
+            exe_str = arg + sizeof("--ww-internal-exe=") - 1;
+            ++matched;
+        }
+        else if (strncmp(arg, "--ww-internal-", 14) == 0)
+        {
+            return -1;
+        }
+    }
+
+    if (matched == 0)
+    {
+        return 0;
+    }
+    if (matched != 4 || fd_str == NULL || len_str == NULL || src_str == NULL || exe_str == NULL)
+    {
+        fprintf(stderr, "Packed runtime: incomplete internal handoff metadata\n");
+        return -1;
+    }
+
+#ifndef __linux__
+    fprintf(stderr, "Internal input handoff is supported only on Linux\n");
+    return -1;
+#endif
+    char *endptr = NULL;
+    errno        = 0;
+    long fd_val  = strtol(fd_str, &endptr, 10);
+    if (fd_str[0] < '0' || fd_str[0] > '9' || errno == ERANGE || *endptr != '\0' || fd_val <= 2 || fd_val > INT_MAX)
+    {
+        fprintf(stderr, "Packed runtime: invalid handoff descriptor\n");
+        return -1;
+    }
+
+    errno                      = 0;
+    unsigned long long len_val = strtoull(len_str, &endptr, 10);
+    if (len_str[0] < '0' || len_str[0] > '9' || errno == ERANGE || *endptr != '\0' || len_val == 0 ||
+        len_val > SIZE_MAX - 1 || len_val > INT64_MAX)
+    {
+        fprintf(stderr, "Packed runtime: invalid handoff length\n");
+        return -1;
+    }
+
+    if (src_str[0] == '\0' || exe_str[0] != '/')
+    {
+        fprintf(stderr, "Packed runtime: invalid handoff paths\n");
+        return -1;
+    }
+
+    handoff->has_handoff = true;
+    handoff->fd          = (int) fd_val;
+    handoff->length      = (size_t) len_val;
+    handoff->source_name = src_str;
+    handoff->orig_exe    = exe_str;
+
+    /* Strip internal arguments in-place */
+    int new_argc = 1;
+    for (int i = 1; i < *argc; ++i)
+    {
+        if (strncmp(argv[i], "--ww-internal-", 14) != 0)
+        {
+            argv[new_argc++] = argv[i];
+        }
+    }
+    argv[new_argc] = NULL;
+    *argc          = new_argc;
+    return 1;
+}
+
+int waterwallStartupHandoffReceive(waterwall_handoff_t *handoff, bool restricted, char **out_content,
+                                   size_t *out_length)
+{
+    if (handoff == NULL || ! handoff->has_handoff || handoff->fd <= 2 || out_content == NULL)
+    {
+        return -1;
+    }
+
+#ifdef __linux__
+    const int fd = handoff->fd;
+    /* Take ownership immediately: every return below closes the descriptor. */
+    handoff->fd = -1;
+    if (handoff->length > SIZE_MAX - 1 || handoff->length > INT64_MAX ||
+        (restricted && handoff->length > WW_HOST_CORE_JSON_LIMIT))
+    {
+        fprintf(stderr, "Input snapshot exceeds the core input limit\n");
+        close(fd);
+        return -1;
+    }
+    int flags = fcntl(fd, F_GETFD);
+    if (flags < 0 || fcntl(fd, F_SETFD, flags | FD_CLOEXEC) != 0)
+    {
+        fprintf(stderr, "Packed runtime: handoff descriptor %d inaccessible: %s\n", fd, strerror(errno));
+        close(fd);
+        return -1;
+    }
+
+    struct stat st;
+    if (fstat(fd, &st) != 0)
+    {
+        fprintf(stderr, "Packed runtime: handoff fstat failed: %s\n", strerror(errno));
+        close(fd);
+        handoff->fd = -1;
+        return -1;
+    }
+    if (! S_ISREG(st.st_mode) || st.st_size < 0 || (uint64_t) st.st_size != handoff->length)
+    {
+        fprintf(stderr,
+                "Packed runtime: snapshot must be a regular file of exactly %zu bytes (got %zu)\n",
+                handoff->length,
+                (size_t) st.st_size);
+        close(fd);
+        handoff->fd = -1;
+        return -1;
+    }
+
+    char *buffer = malloc(handoff->length + 1);
+    if (buffer == NULL)
+    {
+        fprintf(stderr, "Packed runtime: out of memory allocating input snapshot\n");
+        close(fd);
+        handoff->fd = -1;
+        return -1;
+    }
+
+    size_t total = 0;
+    while (total < handoff->length)
+    {
+        ssize_t n = pread(fd, buffer + total, handoff->length - total, (off_t) total);
+        if (n < 0)
+        {
+            if (errno == EINTR)
+                continue;
+            fprintf(stderr, "Packed runtime: reading input snapshot failed: %s\n", strerror(errno));
+            free(buffer);
+            close(fd);
+            handoff->fd = -1;
+            return -1;
+        }
+        if (n == 0)
+            break;
+        total += (size_t) n;
+    }
+
+    close(fd);
+    handoff->fd = -1;
+
+    if (total != handoff->length)
+    {
+        fprintf(stderr, "Packed runtime: snapshot read truncated\n");
+        free(buffer);
+        return -1;
+    }
+
+    buffer[total] = '\0';
+    *out_content  = buffer;
+    if (out_length != NULL)
+    {
+        *out_length = total;
+    }
+    return 0;
+#else
+    (void) restricted;
+    (void) out_length;
+    return -1;
+#endif
+}
+
+void waterwallStartupHandoffCleanup(waterwall_handoff_t *handoff)
+{
+    if (handoff == NULL)
+        return;
+    if (handoff->has_handoff && handoff->fd > 2)
+    {
+#ifdef __linux__
+        close(handoff->fd);
+#endif
+        handoff->fd = -1;
+    }
+    if (handoff->source_name != NULL)
+    {
+        handoff->source_name = NULL;
+    }
+    if (handoff->orig_exe != NULL)
+    {
+        handoff->orig_exe = NULL;
+    }
+    handoff->has_handoff = false;
 }
