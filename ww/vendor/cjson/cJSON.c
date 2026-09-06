@@ -61,7 +61,11 @@
 #endif
 
 #include "cJSON.h"
+#if defined(WW_CJSON_CRT_ALLOCATOR)
+#include <stdlib.h>
+#else
 #include "wmem.h"
+#endif
 
 /* define our own boolean type */
 #ifdef true
@@ -174,17 +178,29 @@ typedef struct internal_hooks
 
 static void * CJSON_CDECL internal_malloc(size_t size)
 {
+#if defined(WW_CJSON_CRT_ALLOCATOR)
+    return malloc(size);
+#else
     return memoryAllocate(size);
+#endif
 }
 
 static void CJSON_CDECL internal_free(void *pointer)
 {
+#if defined(WW_CJSON_CRT_ALLOCATOR)
+    free(pointer);
+#else
     memoryFree(pointer);
+#endif
 }
 
 static void * CJSON_CDECL internal_realloc(void *pointer, size_t size)
 {
+#if defined(WW_CJSON_CRT_ALLOCATOR)
+    return realloc(pointer, size);
+#else
     return memoryReAllocate(pointer, size);
+#endif
 }
 
 /* strlen of character literals resolved at compile time */

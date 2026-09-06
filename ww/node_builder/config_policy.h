@@ -1,11 +1,7 @@
 #pragma once
 
-#include "cJSON.h"
+#include "config_lexical.h"
 #include "wlibc.h"
-
-#define WW_HOST_CORE_JSON_LIMIT  (2U * 1024U * 1024U)
-#define WW_HOST_NODE_JSON_LIMIT  (8U * 1024U * 1024U)
-#define WW_HOST_JSON_DEPTH_LIMIT 128U
 
 /* Main startup owner selects this once, before parsing or creating threads.
  * There is deliberately no JSON/environment setting or runtime reset. */

@@ -154,6 +154,7 @@ add_library(ww STATIC
     # Node builder
     node_builder/config_file.c
     node_builder/config_policy.c
+    node_builder/config_lexical.c
     node_builder/node_library.c
     
     # Managers
