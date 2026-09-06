@@ -686,11 +686,11 @@ jobs:
           cmake --preset ${{ matrix.preset }}
           -DCPM_SOURCE_CACHE="${{ env.cpm-path }}"
           -DDISABLE_PRECOMPILED_HEADERS=ON
+          -DWW_PACK_RUNTIME=ON -DBUILD_TESTING=ON
 
       - name: Build
         run: cmake --build --preset ${{ matrix.preset }}
 
-      # Bootstrap acceptance only: existing downloadable Windows artifacts stay ordinary.
       - name: Check native packed bootstrap in Debug and Release
         working-directory: core/tools/windows_launcher
         run: |
@@ -702,17 +702,17 @@ jobs:
           python ../../../tests/packed_build_target_test.py --build-dir ../../../build/windows-launcher-native --config Debug --windows
           python ../../../tests/packed_build_target_test.py --build-dir ../../../build/windows-launcher-native --config Release --windows
 
-      - name: Validate packed application without changing the download
-        run: |
-          cmake --preset ${{ matrix.preset }} -B build/windows-packed-acceptance -DWW_PACK_RUNTIME=ON -DBUILD_TESTING=ON -DDISABLE_PRECOMPILED_HEADERS=ON -DCPM_SOURCE_CACHE="${{ env.cpm-path }}"
-          cmake --build build/windows-packed-acceptance --config Release --target Waterwall --parallel 8
-          ctest --test-dir build/windows-packed-acceptance -C Release --no-tests=error --output-on-failure -R '^waterwall.windows_packed_application$'
+      - name: Validate packed application
+        run: >
+          ctest --test-dir build/${{ matrix.preset }} -C Release --no-tests=error --output-on-failure
+          -R '^waterwall.windows_packed_application$'
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6
         with:
           name: Waterwall-${{ matrix.name }}
-          path: ${{ github.workspace }}/build/${{ matrix.preset }}/Release/
+          path: ${{ github.workspace }}/build/${{ matrix.preset }}/Release/Waterwall.exe
+          if-no-files-found: error
 
       - name: Show ccache statistics
         run: ccache -sv
@@ -723,10 +723,13 @@ jobs:
       matrix:
         include:
           - preset: windows-arm64
+            pack_runtime: "OFF"
           - preset: windows-x86
             bootstrap_arch: x86
+            pack_runtime: "ON"
           - preset: windows-x86-64
             bootstrap_arch: x64
+            pack_runtime: "ON"
     name: ${{ matrix.preset }}
     runs-on: windows-2025-vs2026
     steps:
@@ -754,20 +757,18 @@ jobs:
       - name: Configure CMake
         run: >
           cmake --preset ${{ matrix.preset }}
+          -DWW_PACK_RUNTIME=${{ matrix.pack_runtime }} -DBUILD_TESTING=ON
           -DCPM_SOURCE_CACHE="${{ env.cpm-path }}"
         # -DOPENSSL_CONFIGURE_OPTIONS=no-asm
 
       - name: Build
         run: cmake --build --preset ${{ matrix.preset }} --parallel
 
-      - name: Validate packed application without changing the download
-        if: matrix.preset != 'windows-arm64'
-        run: |
-          cmake --preset ${{ matrix.preset }} -B build/windows-packed-acceptance -DWW_PACK_RUNTIME=ON -DBUILD_TESTING=ON -DCPM_SOURCE_CACHE="${{ env.cpm-path }}"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cmake --build build/windows-packed-acceptance --config Release --target Waterwall --parallel 8
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          ctest --test-dir build/windows-packed-acceptance -C Release --no-tests=error --output-on-failure -R '^waterwall.windows_packed_application$'
+      - name: Validate packed application
+        if: matrix.pack_runtime == 'ON'
+        run: >
+          ctest --test-dir build/${{ matrix.preset }} -C Release --no-tests=error --output-on-failure
+          -R '^waterwall.windows_packed_application$'
 
       - name: Configure MSVC for packed bootstrap
         if: matrix.preset != 'windows-arm64'
@@ -804,7 +805,8 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: Waterwall-${{ matrix.preset }}
-          path: ${{ github.workspace }}/build/${{ matrix.preset }}/Release/
+          path: ${{ github.workspace }}/build/${{ matrix.preset }}/Release/${{ matrix.pack_runtime == 'ON' && 'Waterwall.exe' || '' }}
+          if-no-files-found: error
 
       - name: Show ccache statistics
         run: ccache -sv

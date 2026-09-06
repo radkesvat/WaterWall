@@ -49,8 +49,10 @@ idle configured tree, adding `--runner wine` when needed. The fixture is too sma
 to establish the full application's size reduction: compare the final launcher
 against its matched finalized embedded application instead.
 
-Windows release downloads remain ordinary until native application and manual
-acceptance are recorded. The launcher uses temporary extraction and a separate
-child process. Read Developer Guide Parts 6 and 7 for deployment and lifetime
-limitations, including local ACL-capable temporary storage, incompatible jobs,
+Windows x86/x64 CI uploads the packed `Waterwall.exe` under the existing artifact
+names after the bootstrap checks and full application comparison pass. ARM64
+remains ordinary; development presets retain their defaults. The launcher uses
+temporary extraction and a separate child process. Read Developer Guide Parts 6
+and 7 for deployment and lifetime limitations, including local ACL-capable
+temporary storage, incompatible jobs,
 forced termination, and path-based firewall rules.
