@@ -174,6 +174,10 @@ CREATION_SITES = [
     # ------------------------------------------------------------------
     # Test fixtures
     # ------------------------------------------------------------------
+    ("tests/unittests/line_state_index_test.c", "testDenseSlots", TEST_ONLY,
+     "fixture-owned normal lines used to check dense state boundaries and pool recycling"),
+    ("tests/unittests/domainresolver_line_layout_test.c", "main", TEST_ONLY,
+     "the fixture-owned normal line containing embedded resolver state and neighboring sentinels"),
     ("tests/unittests/reality_close_lifecycle_server.c", "serverFixtureMoveLineToOwnerPool", TEST_ONLY,
      "a fixture line re-created in the owning worker's pool"),
     ("tests/unittests/tunnel_line_failure_harness.h", "twfLinePoolCreateLine", TEST_ONLY,

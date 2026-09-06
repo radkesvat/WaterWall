@@ -45,6 +45,12 @@ typedef struct line_s         line_t;
 typedef struct tunnel_chain_s tunnel_chain_t;
 typedef struct tunnel_array_s tunnel_array_t;
 
+enum
+{
+    // Worker-owned line states share cache lines; aligned zeroing requires 32 bytes.
+    kTunnelLineStateAlignment = 32
+};
+
 typedef void (*TunnelStatusCb)(tunnel_t *);
 typedef void (*TunnelLifecycleCb)(tunnel_t *, const ww_lifecycle_context_t *context);
 typedef void (*TunnelWorkerLifecycleCb)(tunnel_t *, wid_t wid, const ww_lifecycle_context_t *context);
@@ -474,6 +480,19 @@ static inline bool tunnelTryAlignStateSize(size_t size, uint32_t *aligned_size)
     return true;
 }
 
+/** Round a per-line state reservation without overflowing its 32-bit size. */
+static inline bool tunnelTryAlignLineStateSize(size_t size, uint32_t *aligned_size)
+{
+    const size_t mask = (size_t) kTunnelLineStateAlignment - 1U;
+    if (size > (size_t) UINT32_MAX - mask || aligned_size == NULL)
+    {
+        return false;
+    }
+
+    *aligned_size = (uint32_t) ((size + mask) & ~mask);
+    return true;
+}
+
 static bool tunnelStateSizeOverflows(uint32_t size)
 {
     uint32_t aligned_size;
@@ -511,7 +530,7 @@ static uint32_t tunnelGetCorrectAlignedStateSize(uint32_t size)
 static uint32_t tunnelGetCorrectAlignedLineStateSize(uint32_t size)
 {
     uint32_t   aligned_size = 0;
-    const bool valid        = tunnelTryAlignStateSize((size_t) size, &aligned_size);
+    const bool valid        = tunnelTryAlignLineStateSize((size_t) size, &aligned_size);
     assert(valid);
     if (UNLIKELY(! valid))
     {

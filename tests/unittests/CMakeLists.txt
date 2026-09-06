@@ -495,6 +495,14 @@ if(TARGET ww)
 
   add_waterwall_unit_test(waterwall.line_state_index_unit line_state_index_test "unit;net;line;chain")
 
+  if(TARGET DomainResolver)
+    add_executable(domainresolver_line_layout_test domainresolver_line_layout_test.c)
+    target_link_libraries(domainresolver_line_layout_test PRIVATE DomainResolver ww)
+    add_dependencies(waterwall_unit_tests domainresolver_line_layout_test)
+    add_waterwall_unit_test(waterwall.domainresolver_line_layout_unit domainresolver_line_layout_test
+      "unit;net;line;chain;domainresolver")
+  endif()
+
   add_executable(address_context_test address_context_test.c)
   target_link_libraries(address_context_test PRIVATE ww)
   add_dependencies(waterwall_unit_tests address_context_test)

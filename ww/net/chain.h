@@ -105,11 +105,12 @@ static inline bool tunnelchainTryAddPadding(uint16_t current, uint16_t additiona
 }
 
 /**
- * Compute the complete generic-pool item size for one line without narrowing.
+ * Compute the complete cache-line-rounded generic-pool item size for one line.
  *
- * Line-state offsets and generic-pool item sizes are intentionally 32-bit. A
- * state aggregate that leaves no room for line_t must be rejected before a
- * chain publishes it.
+ * Line-state offsets and generic-pool item sizes are intentionally 32-bit.
+ * Round only the complete allocation so neighboring lines cannot share a cache
+ * line. Reject aggregates that leave no room for line_t, final rounding, or the
+ * aligned allocator's overhead before a chain publishes them.
  */
 bool tunnelchainTryComputeLineItemSize(uint32_t aggregate_lstate_size, uint32_t *item_size);
 

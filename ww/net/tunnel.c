@@ -283,16 +283,14 @@ void tunnelOwnedChildDestroy(tunnel_t *child)
 tunnel_t *tunnelCreate(node_t *node, size_t tstate_size, size_t lstate_size)
 {
     /*
-     * Before alignment, not after: rounding up to a cache line is 32-bit
-     * arithmetic, so a size near UINT32_MAX wrapped to zero and produced a
-     * perfectly valid-looking tunnel with no state at all. The contract says
-     * NULL on a size overflow, and a constructor that gets a tunnel back is
-     * entitled to assume its state fields are the ones it asked for.
+     * Both state sizes must remain representable after their respective
+     * alignment. Tunnel-wide state retains cache alignment; worker-owned
+     * per-line slots need only the alignment required by their zeroing helper.
      */
     uint32_t aligned_tstate_size;
     uint32_t aligned_lstate_size;
     if (UNLIKELY(! tunnelTryAlignStateSize(tstate_size, &aligned_tstate_size) ||
-                 ! tunnelTryAlignStateSize(lstate_size, &aligned_lstate_size)))
+                 ! tunnelTryAlignLineStateSize(lstate_size, &aligned_lstate_size)))
     {
         return NULL;
     }

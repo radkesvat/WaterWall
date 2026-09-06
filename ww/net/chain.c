@@ -16,7 +16,8 @@ static bool tunnelchainNodeIsMuxTunnel(const node_t *node)
 }
 bool tunnelchainTryComputeLineItemSize(uint32_t aggregate_lstate_size, uint32_t *item_size)
 {
-    const uint64_t total = (uint64_t) sizeof(line_t) + (uint64_t) aggregate_lstate_size;
+    const uint64_t mask  = (uint64_t) kCpuLineCacheSize - 1U;
+    const uint64_t total = ((uint64_t) sizeof(line_t) + aggregate_lstate_size + mask) & ~mask;
     if (item_size == NULL || total > UINT32_MAX ||
         ! memoryAlignedAllocationSizeIsRepresentable((size_t) total, kCpuLineCacheSize))
     {
