@@ -70,4 +70,6 @@ target_include_directories(Waterwall PRIVATE
 )
 
 target_link_libraries(Waterwall PRIVATE WaterWall::XZDecoder m)
+# The packed target is the shipped artifact in every configuration.
+target_link_options(Waterwall PRIVATE "LINKER:--strip-all")
 add_dependencies(Waterwall ${WATERWALL_APPLICATION_TARGET})

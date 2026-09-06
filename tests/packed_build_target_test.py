@@ -6,6 +6,7 @@ launcher and touches the private executable. User sources are never modified.
 """
 import argparse
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 
@@ -16,6 +17,7 @@ def main():
     parser.add_argument('--config', choices=('Debug', 'Release'), required=True)
     parser.add_argument('--jobs', type=int, default=8)
     parser.add_argument('--cmake', default='cmake')
+    parser.add_argument('--readelf', default='readelf')
     args = parser.parse_args()
     build_dir = args.build_dir.resolve()
     cache = (build_dir / 'CMakeCache.txt').read_text()
@@ -29,9 +31,16 @@ def main():
         subprocess.run([args.cmake, '--build', str(build_dir), '--config', args.config,
                         '--target', 'Waterwall', '-j', str(args.jobs)], check=True)
 
+    def check_stripped():
+        sections = subprocess.check_output(
+            [args.readelf, '--wide', '--sections', str(launcher)], text=True)
+        if 'SYMTAB' in sections or re.search(r'\s\.(?:z?debug|stab)', sections):
+            raise AssertionError('packed launcher still contains static symbols or debug information')
+
     build()
     if not all(path.is_file() for path in (launcher, application, payload)):
         raise AssertionError('public target did not produce the complete packed executable')
+    check_stripped()
     with tempfile.TemporaryDirectory(prefix='public-target-', dir=build_dir) as temporary:
         saved = Path(temporary) / 'Waterwall'
         launcher.rename(saved)
@@ -40,6 +49,7 @@ def main():
             build()
             if not launcher.is_file():
                 raise AssertionError('public target did not recreate the missing launcher')
+            check_stripped()
             recreated = True
         finally:
             # Preserve the previous deliverable if rebuilding fails or is interrupted.
@@ -54,6 +64,7 @@ def main():
         raise AssertionError('updating the application did not regenerate its payload')
     if launcher.stat().st_mtime_ns <= previous_launcher:
         raise AssertionError('updating the application did not relink the launcher')
+    check_stripped()
     settled = payload.stat().st_mtime_ns
     build()
     if payload.stat().st_mtime_ns != settled:
