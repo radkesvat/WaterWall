@@ -374,6 +374,31 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT ANDROID AND NOT ENABLE_TSAN)
     "$<$<COMPILE_LANGUAGE:C,CXX>:-fno-pic;-fno-pie>"
   )
   target_link_options(waterwall_runtime_options INTERFACE -no-pie)
+elseif(WIN32)
+  # Windows ARM requires ASLR. On x86/x64, fix the executable image at its
+  # preferred address; do not apply fixed-base linking to dependency DLLs.
+  if(MSVC AND CMAKE_C_COMPILER_ARCHITECTURE_ID MATCHES "^(X86|x64)$")
+    target_link_options(waterwall_runtime_options INTERFACE
+      "$<$<STREQUAL:$<TARGET_PROPERTY:TYPE>,EXECUTABLE>:/DYNAMICBASE:NO;/FIXED;/INCREMENTAL:NO>"
+    )
+    if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+      target_link_options(waterwall_runtime_options INTERFACE
+        "$<$<STREQUAL:$<TARGET_PROPERTY:TYPE>,EXECUTABLE>:/HIGHENTROPYVA:NO>"
+      )
+    endif()
+  elseif(MINGW AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(AMD64|amd64|x86_64|i[3-6]86|x86)$")
+    target_compile_options(waterwall_runtime_options INTERFACE
+      "$<$<COMPILE_LANGUAGE:C,CXX>:-fno-pic;-fno-pie>"
+    )
+    target_link_options(waterwall_runtime_options INTERFACE
+      "$<$<STREQUAL:$<TARGET_PROPERTY:TYPE>,EXECUTABLE>:LINKER:--disable-dynamicbase;LINKER:--disable-reloc-section>"
+    )
+    if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+      target_link_options(waterwall_runtime_options INTERFACE
+        "$<$<STREQUAL:$<TARGET_PROPERTY:TYPE>,EXECUTABLE>:LINKER:--disable-high-entropy-va>"
+      )
+    endif()
+  endif()
 endif()
 
 if(WW_USE_STARTUP_GUARD)
