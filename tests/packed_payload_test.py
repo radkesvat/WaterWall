@@ -9,6 +9,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+from packed_build_target_test import check_windows_launcher
+
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location('payload', ROOT / 'core/generate_packed_payload.py')
 payload = importlib.util.module_from_spec(spec)
@@ -29,6 +31,70 @@ def pe_image(x64=True):
     struct.pack_into('<IIII', data, section+8, 512, 4096, 512, 512)
     struct.pack_into('<I', data, section+36, 0x60000020)
     return data
+
+
+def launcher_image(x64, debug_types=()):
+    data = pe_image(x64)
+    directories = 88 + (112 if x64 else 96)
+    struct.pack_into('<H', data, 88+70, 0x140)  # ASLR and DEP.
+    struct.pack_into('<II', data, directories+5*8, 4096+400, 12)
+    if debug_types:
+        # The table is inside a section: its RVA is not its file offset.
+        struct.pack_into('<II', data, directories+6*8, 4096, len(debug_types)*28)
+        for index, kind in enumerate(debug_types):
+            struct.pack_into('<IIHHIIII', data, 512+index*28, 0, 0, 0, 0,
+                             kind, 4, 4096+256, 512+256)
+    return data
+
+
+class PackedLauncherTest(unittest.TestCase):
+    def test_non_symbol_metadata(self):
+        for x64 in (False, True):
+            for records in ((), (12,), (13,), (14,), (16,), (20,), (12, 13, 14, 16, 20)):
+                with self.subTest(x64=x64, records=records):
+                    data = launcher_image(x64, records)
+                    original = bytes(data)
+                    check_windows_launcher(data)
+                    self.assertEqual(data, original)
+            # A REPRO marker is allowed to have no associated data.
+            data = launcher_image(x64, (16,))
+            struct.pack_into('<III', data, 512+16, 0, 0, 0)
+            check_windows_launcher(data)
+
+    def test_symbol_records_are_rejected(self):
+        for x64 in (False, True):
+            for kind in (1, 2, 4, 17, 19, 99):
+                with self.subTest(x64=x64, kind=kind):
+                    with self.assertRaisesRegex(AssertionError, f'record type {kind}'):
+                        check_windows_launcher(launcher_image(x64, (13, kind)))
+
+    def test_invalid_debug_directory_is_rejected(self):
+        for x64 in (False, True):
+            directories = 88 + (112 if x64 else 96)
+            for rva, size in ((0, 28), (4096, 0), (4096, 27), (4096+512, 28),
+                              (4096, 28*100)):
+                with self.subTest(x64=x64, rva=rva, size=size):
+                    data = launcher_image(x64, (13,))
+                    struct.pack_into('<II', data, directories+6*8, rva, size)
+                    with self.assertRaises(AssertionError):
+                        check_windows_launcher(data)
+            data = launcher_image(x64, (13,))
+            struct.pack_into('<I', data, 512+24, len(data)-1)
+            with self.assertRaises(AssertionError):
+                check_windows_launcher(data)
+
+    def test_other_stripping_and_image_checks_remain(self):
+        for x64 in (False, True):
+            directories = 88 + (112 if x64 else 96)
+            sections = 88 + (240 if x64 else 224)
+            for offset, replacement in ((88+70, b'\0\0'), (directories+5*8, b'\0'*8),
+                                        (64+16, struct.pack('<I', 1)),
+                                        (sections, b'.debug\0\0')):
+                with self.subTest(x64=x64, offset=offset):
+                    data = launcher_image(x64)
+                    data[offset:offset+len(replacement)] = replacement
+                    with self.assertRaises(AssertionError):
+                        check_windows_launcher(data)
 
 
 class PayloadTest(unittest.TestCase):
