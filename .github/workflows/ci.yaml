@@ -299,11 +299,17 @@ jobs:
       matrix:
         include:
           - preset: linux-gcc-x64
+            pack_runtime: "ON"
           - preset: linux-clang-x64
+            pack_runtime: "ON"
           - preset: linux-gcc-x64-old-cpu
+            pack_runtime: "ON"
           - preset: linux-gcc-arm64
+            pack_runtime: "OFF"
           - preset: linux-gcc-arm64-old-cpu
+            pack_runtime: "OFF"
           - preset: linux-clang-avx512f-x64
+            pack_runtime: "ON"
 
           
     name: ${{ matrix.preset }}
@@ -338,6 +344,7 @@ jobs:
       - name: Configure CMake
         run: >
           cmake --preset ${{ matrix.preset }}
+          -DWW_PACK_RUNTIME=${{ matrix.pack_runtime }}
           -DCPM_SOURCE_CACHE="${{ env.cpm-path }}"
       - name: Build
         run: cmake --build --preset ${{ matrix.preset }}
@@ -366,7 +373,8 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: Waterwall-${{ matrix.preset }}
-          path: ${{ github.workspace }}/build/${{ matrix.preset }}/Release/
+          path: ${{ github.workspace }}/build/${{ matrix.preset }}/Release/${{ matrix.pack_runtime == 'ON' && 'Waterwall' || '' }}
+          if-no-files-found: error
       - name: Show ccache statistics
         run: ccache -sv
 
