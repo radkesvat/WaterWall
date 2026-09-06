@@ -31,6 +31,14 @@ foreach(INPUT IN ITEMS "${MODULE}" "${TEST_DIR}/empty" "${TEST_DIR}/large")
   if(NOT FIRST STREQUAL AFTER)
     message(FATAL_ERROR "Failed invocation changed existing output")
   endif()
+  # Opening input and output as the same file must not truncate the source.
+  file(SHA256 "${INPUT}" INPUT_BEFORE)
+  execute_process(COMMAND "${ENCODER}" "${INPUT}" "${INPUT}"
+    RESULT_VARIABLE RESULT OUTPUT_QUIET ERROR_QUIET)
+  file(SHA256 "${INPUT}" INPUT_AFTER)
+  if(RESULT EQUAL 0 OR NOT INPUT_BEFORE STREQUAL INPUT_AFTER)
+    message(FATAL_ERROR "Same-path encoding did not preserve its input")
+  endif()
 endforeach()
 execute_process(COMMAND "${ENCODER}" "${TEST_DIR}/missing-input" "${TEST_DIR}/missing-output.xz"
   RESULT_VARIABLE RESULT OUTPUT_QUIET ERROR_QUIET)
