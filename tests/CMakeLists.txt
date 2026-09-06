@@ -1,6 +1,8 @@
 find_program(BASH_EXECUTABLE bash REQUIRED)
 find_program(PYTHON3_EXECUTABLE python3 REQUIRED)
 
+set(WATERWALL_TEST_TARGET "Waterwall")
+
 option(
   WATERWALL_ENABLE_PRIVILEGED_INTEGRATION_TESTS
   "Enable integration tests that require root/CAP_NET_ADMIN and TUN device support"
@@ -134,7 +136,7 @@ function(add_waterwall_integration_test_with_timeout test_name case_name timeout
     ${test_name}
     "${BASH_EXECUTABLE}"
     "${CMAKE_CURRENT_SOURCE_DIR}/run_waterwall_case.sh"
-    "$<TARGET_FILE:Waterwall>"
+    "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>"
     "${case_dir}"
     "${timeout_seconds}"
   )
@@ -160,7 +162,7 @@ function(add_waterwall_external_integration_test_with_timeout test_name case_nam
     COMMAND
       "${BASH_EXECUTABLE}"
       "${CMAKE_CURRENT_SOURCE_DIR}/run_waterwall_case.sh"
-      "$<TARGET_FILE:Waterwall>"
+      "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>"
       "${case_dir}"
       "${timeout_seconds}"
   )
@@ -187,7 +189,7 @@ function(add_waterwall_wireguard_cookie_test test_name case_name)
     "${BASH_EXECUTABLE}"
     "${CMAKE_CURRENT_SOURCE_DIR}/run_wireguard_cookie_case.sh"
     "${CMAKE_CURRENT_SOURCE_DIR}/run_waterwall_case.sh"
-    "$<TARGET_FILE:Waterwall>"
+    "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>"
     "${case_dir}"
     "30"
     "${PYTHON3_EXECUTABLE}"
@@ -236,7 +238,7 @@ function(add_waterwall_expected_failure_integration_test test_name case_name exp
     "${BASH_EXECUTABLE}"
     "${CMAKE_CURRENT_SOURCE_DIR}/run_waterwall_expected_failure_case.sh"
     "${CMAKE_CURRENT_SOURCE_DIR}/run_waterwall_case.sh"
-    "$<TARGET_FILE:Waterwall>"
+    "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>"
     "${case_dir}"
     "10"
     "${expected_output}"
@@ -337,7 +339,7 @@ function(add_waterwall_probe_integration_test test_name case_name timeout_second
     ${test_name}
     "${BASH_EXECUTABLE}"
     "${CMAKE_CURRENT_SOURCE_DIR}/run_waterwall_probe_case.sh"
-    "$<TARGET_FILE:Waterwall>"
+    "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>"
     "${case_dir}"
     "${timeout_seconds}"
     "${PYTHON3_EXECUTABLE}"
@@ -360,7 +362,7 @@ function(add_waterwall_privileged_probe_integration_test test_name case_name tim
       ${test_name}
       "${BASH_EXECUTABLE}"
       "${CMAKE_CURRENT_SOURCE_DIR}/run_waterwall_privileged_probe_case.sh"
-      "$<TARGET_FILE:Waterwall>"
+      "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>"
       "${case_dir}"
       "${timeout_seconds}"
       "${PYTHON3_EXECUTABLE}"
@@ -390,7 +392,7 @@ function(add_waterwall_iptables_recovery_integration_test test_name)
       COMMAND
         "${BASH_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/run_iptables_crash_recovery_test.sh"
-        "$<TARGET_FILE:Waterwall>"
+        "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>"
         "${PYTHON3_EXECUTABLE}"
     )
     set_tests_properties(
@@ -417,7 +419,7 @@ function(add_waterwall_packet_analysis_test test_name case_name)
     ${test_name}
     "${BASH_EXECUTABLE}"
     "${CMAKE_CURRENT_SOURCE_DIR}/run_packet_analysis_case.sh"
-    "$<TARGET_FILE:Waterwall>"
+    "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>"
     "${case_dir}"
     "30"
   )
@@ -438,7 +440,7 @@ function(add_waterwall_speedtest test_name speedtest_name)
     ${test_name}
     "${BASH_EXECUTABLE}"
     "${CMAKE_CURRENT_SOURCE_DIR}/run_waterwall_speedtest.sh"
-    "$<TARGET_FILE:Waterwall>"
+    "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>"
     "${speedtest_dir}"
     "45"
   )
@@ -461,7 +463,7 @@ function(add_waterwall_external_speedtest test_name speedtest_name)
     COMMAND
       "${BASH_EXECUTABLE}"
       "${CMAKE_CURRENT_SOURCE_DIR}/run_waterwall_speedtest.sh"
-      "$<TARGET_FILE:Waterwall>"
+      "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>"
       "${speedtest_dir}"
       "45"
   )
@@ -545,7 +547,7 @@ add_test(
   COMMAND
     "${PYTHON3_EXECUTABLE}"
     "${CMAKE_CURRENT_SOURCE_DIR}/reality_config_validation_test.py"
-    "$<TARGET_FILE:Waterwall>"
+    "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>"
 )
 set_tests_properties(
   waterwall.reality_config_startup
@@ -556,7 +558,7 @@ set_tests_properties(
 )
 add_test(
   NAME waterwall.restricted_config_input
-  COMMAND "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/restricted_config_input_test.py" "$<TARGET_FILE:Waterwall>"
+  COMMAND "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/restricted_config_input_test.py" "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>"
 )
 set_tests_properties(waterwall.restricted_config_input PROPERTIES
   TIMEOUT 120 LABELS "integration;core;startup;configuration;security")
@@ -565,7 +567,7 @@ add_test(
   COMMAND
     "${PYTHON3_EXECUTABLE}"
     "${CMAKE_CURRENT_SOURCE_DIR}/core_json_input_test.py"
-    "$<TARGET_FILE:Waterwall>"
+    "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>"
 )
 set_tests_properties(
   waterwall.core_json_input
@@ -878,7 +880,7 @@ add_custom_target(check_waterwall_integration_tests
     functional
     "${CMAKE_BINARY_DIR}"
     "$<CONFIG>"
-  DEPENDS Waterwall
+  DEPENDS ${WATERWALL_TEST_TARGET}
   USES_TERMINAL
 )
 
@@ -889,7 +891,7 @@ add_custom_target(check_waterwall_external_integration_tests
     external
     "${CMAKE_BINARY_DIR}"
     "$<CONFIG>"
-  DEPENDS Waterwall
+  DEPENDS ${WATERWALL_TEST_TARGET}
   USES_TERMINAL
 )
 
@@ -900,7 +902,7 @@ add_custom_target(check_waterwall_speedtests
     speed
     "${CMAKE_BINARY_DIR}"
     "$<CONFIG>"
-  DEPENDS Waterwall
+  DEPENDS ${WATERWALL_TEST_TARGET}
   USES_TERMINAL
 )
 add_custom_target(check_waterwall_support_tests
@@ -910,7 +912,7 @@ add_custom_target(check_waterwall_support_tests
     support
     "${CMAKE_BINARY_DIR}"
     "$<CONFIG>"
-  DEPENDS Waterwall
+  DEPENDS ${WATERWALL_TEST_TARGET}
   USES_TERMINAL
 )
 
@@ -921,6 +923,6 @@ add_custom_target(check_waterwall_tests
     all
     "${CMAKE_BINARY_DIR}"
     "$<CONFIG>"
-  DEPENDS Waterwall
+  DEPENDS ${WATERWALL_TEST_TARGET}
   USES_TERMINAL
 )

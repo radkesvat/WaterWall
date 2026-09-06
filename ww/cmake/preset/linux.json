@@ -5,6 +5,16 @@
     ],
     "configurePresets": [
         {
+            "name": "linux-packed",
+            "inherits": [
+                "linux"
+            ],
+            "binaryDir": "${sourceDir}/build/linux-packed",
+            "cacheVariables": {
+                "WW_PACK_RUNTIME": "ON"
+            }
+        },
+        {
             "name": "linux",
             "inherits": [
                 "host-linux",
@@ -212,6 +222,13 @@
         }
     ],
     "buildPresets": [
+        {
+            "name": "linux-packed",
+            "configurePreset": "linux-packed",
+            "inherits": [
+                "host-linux"
+            ]
+        },
         {
             "name": "linux",
             "configurePreset": "linux",
@@ -515,6 +532,14 @@
         }
     ],
     "testPresets": [
+        {
+            "name": "linux-packed",
+            "configurePreset": "linux-packed",
+            "inherits": [
+                "host-linux",
+                "options"
+            ]
+        },
         {
             "name": "linux",
             "configurePreset": "linux",
