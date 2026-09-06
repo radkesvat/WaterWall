@@ -371,7 +371,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT ANDROID AND NOT ENABLE_TSAN)
     POSITION_INDEPENDENT_CODE OFF
   )
   target_compile_options(waterwall_runtime_options INTERFACE
-    "$<$<COMPILE_LANGUAGE:C,CXX>:-fno-pic;-fno-pie>"
+    "$<$<COMPILE_LANGUAGE:C,CXX,ASM>:-fno-pic;-fno-pie>"
   )
   target_link_options(waterwall_runtime_options INTERFACE -no-pie)
 elseif(WIN32)
@@ -388,7 +388,7 @@ elseif(WIN32)
     endif()
   elseif(MINGW AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(AMD64|amd64|x86_64|i[3-6]86|x86)$")
     target_compile_options(waterwall_runtime_options INTERFACE
-      "$<$<COMPILE_LANGUAGE:C,CXX>:-fno-pic;-fno-pie>"
+      "$<$<COMPILE_LANGUAGE:C,CXX,ASM>:-fno-pic;-fno-pie>"
     )
     target_link_options(waterwall_runtime_options INTERFACE
       "$<$<STREQUAL:$<TARGET_PROPERTY:TYPE>,EXECUTABLE>:LINKER:--disable-dynamicbase;LINKER:--disable-reloc-section>"
@@ -400,6 +400,20 @@ elseif(WIN32)
     endif()
   endif()
 endif()
+
+function(waterwall_configure_runtime_dependency dependency)
+  # Copy usage requirements without mixing upstream plain/keyword link signatures.
+  # Static-library consumers still need the matching executable link policy.
+  get_target_property(runtime_compile_options waterwall_runtime_options INTERFACE_COMPILE_OPTIONS)
+  if(runtime_compile_options)
+    target_compile_options(${dependency} PRIVATE ${runtime_compile_options})
+    set_target_properties(${dependency} PROPERTIES POSITION_INDEPENDENT_CODE OFF)
+  endif()
+  get_target_property(runtime_link_options waterwall_runtime_options INTERFACE_LINK_OPTIONS)
+  if(runtime_link_options)
+    target_link_options(${dependency} INTERFACE ${runtime_link_options})
+  endif()
+endfunction()
 
 if(WW_USE_STARTUP_GUARD)
   target_link_libraries(WaterwallStartupGuard PRIVATE waterwall_runtime_options)

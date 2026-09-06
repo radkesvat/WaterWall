@@ -128,6 +128,12 @@ set(WW_BORINGSSL_PREFIX_INCLUDE_DIR ${CMAKE_CURRENT_BINARY_DIR}/boringssl/symbol
 
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/boringssl boringssl)
 
+foreach(runtime_dependency IN ITEMS BrotliDec fipsmodule crypto ssl decrepit pki)
+    if(TARGET ${runtime_dependency})
+        waterwall_configure_runtime_dependency(${runtime_dependency})
+    endif()
+endforeach()
+
 target_include_directories(DecompressBrotli PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/boringssl/include
     ${WW_BORINGSSL_PREFIX_INCLUDE_DIR}

@@ -1488,6 +1488,11 @@ target_link_libraries(ww PUBLIC ${LIBS})
 # code generation. Auxiliary archives do not otherwise inherit ww's includes or
 # compile options, so attach only the small build-policy interface to them.
 target_link_libraries(ww PUBLIC waterwall_runtime_options)
+foreach(runtime_dependency IN ITEMS mimalloc-static maxminddb c-ares c-ares_static sodium nghttp2_static)
+    if(TARGET ${runtime_dependency})
+        waterwall_configure_runtime_dependency(${runtime_dependency})
+    endif()
+endforeach()
 foreach(runtime_component IN ITEMS ww_lwip libuuid FREERS_EH)
     if(TARGET ${runtime_component})
         target_link_libraries(${runtime_component} PRIVATE waterwall_runtime_options)
