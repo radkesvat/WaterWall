@@ -1,0 +1,22 @@
+{
+  "version": 4,
+  "configurePresets": [
+    {
+      "name": "host",
+      "generator": "Ninja Multi-Config",
+      "binaryDir": "${sourceDir}/../../../build/xz-encoder-host",
+      "cacheVariables": {
+        "CPM_SOURCE_CACHE": "${sourceDir}/../../../build/.cache",
+        "BUILD_TESTING": true
+      }
+    }
+  ],
+  "buildPresets": [
+    {"name": "host-release", "configurePreset": "host", "configuration": "Release"},
+    {"name": "host-debug", "configurePreset": "host", "configuration": "Debug"}
+  ],
+  "testPresets": [
+    {"name": "host-release", "configurePreset": "host", "configuration": "Release", "output": {"outputOnFailure": true}},
+    {"name": "host-debug", "configurePreset": "host", "configuration": "Debug", "output": {"outputOnFailure": true}}
+  ]
+}
