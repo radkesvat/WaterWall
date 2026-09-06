@@ -1,5 +1,5 @@
 <!--
-Documentation version: 158
+Documentation version: 159
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/MuxServer.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/MuxServer.mdx, and all files must keep the same documentation version.
 -->
 
@@ -96,7 +96,7 @@ There are no required tunnel-specific settings in the current implementation.
   buffer makes the total reach the budget, `MuxServer` closes the child with the largest retained charge. Equal-sized queues prefer the
   oldest attached child. This releases the pressure without pausing unrelated streams on the shared parent.
 
-  Default: `33554432` (`32 MB`). Set to `0` to disable the aggregate budget; `child-buffer-limit` still bounds each
+  Default: `50331648` (`48 MiB`). Set to `0` to disable the aggregate budget; `child-buffer-limit` still bounds each
   individual child. The value may intentionally be lower than `child-buffer-limit`.
 
   The limit applies to each parent independently. Approximate worst-case live-queue charge is therefore

@@ -105,7 +105,7 @@ enum
     kMuxDefaultChildBufferLimit           = 24 * 1024 * 1024,
     kMuxDefaultChildBufferPauseTolerance  = 512 * 1024,
     kMuxDefaultChildBufferResumeThreshold = 256 * 1024,
-    kMuxDefaultParentBufferLimit          = 32 * 1024 * 1024,
+    kMuxDefaultParentBufferLimit          = 48 * 1024 * 1024,
     kMuxParentBufferLimitUnlimited        = 0,
     kMuxChildBufferQueueCap               = 8,
     kMuxMainLineStatsLogIntervalMs        = 5000,
