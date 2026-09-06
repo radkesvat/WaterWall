@@ -20,3 +20,6 @@ ww/vendor/** linguist-vendored
 # Generated files
 tunnels/Router/geosite_ww_style_generator/*.py linguist-generated=true
 tunnels/Router/geosite_ww_style_generator/geosite_generated.json linguist-generated=true
+
+# Packer / Unpacker scripts
+core/*.py
