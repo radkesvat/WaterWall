@@ -1,9 +1,13 @@
-# Build-time XZ encoder
+# Build-time payload tools
 
 This standalone native project builds `waterwall_xz_encoder` against upstream
 liblzma via CPM, pinned to XZ v5.8.3 commit
 `4b73f2ec19a99ef465282fbce633e8deb33691b3`.
 Upstream: https://github.com/tukaani-project/xz/tree/4b73f2ec19a99ef465282fbce633e8deb33691b3
+
+The same project builds the CRT-only `waterwall_payload_tool` for ELF/PE
+identification and embedding compressed bytes and size/target metadata in C.
+Neither tool is linked into the launcher or the application.
 
 From this directory, using a native compiler and Ninja:
 
@@ -25,12 +29,35 @@ cross-compilation toolchain or target `CC`/`CFLAGS` environment to this configur
 It rejects configurations that CMake identifies as cross-compiling. Its executable
 and liblzma stay entirely outside the production target graph and are not
 installed or packaged by Waterwall. Packed builds invoke the native project via
-`core/build_host_encoder.py`, whose host-specific file lock covers configure and
+`core/build_host_encoder.cmake`, whose CMake file lock covers configure and
 build. Compiler/generator-specific caches keep incompatible host configurations
 separate. Target compiler environment flags are removed while Windows MSVC
 `PATH`, `INCLUDE`, `LIB`, and `LIBPATH` survive. The owning application runtime
 interface is attached to the decoder only when that target exists; standalone
 encoder/decoder tests have no application link dependency.
+
+Automatic host builds set `BUILD_TESTING=OFF` and need no Python. The manual
+`host` preset enables tests, which use Python to exercise the native tools and
+the CMake packaging script. The Windows launcher smoke runner also remains Python.
+
+`core/generate_packed_payload.cmake` owns staging, platform-specific stripping,
+tool invocation and atomic publication. It validates the executable before and
+after finalization, preserving the original application and any previously
+published source on failure. A per-output lock protects the adjacent staging
+directory across concurrent invocations; each configuration has its own output.
+Only a completed `payload.c` is renamed into place. Both native tools create
+output exclusively and remove incomplete output on write/close failure.
+
+The payload helper can also be invoked directly:
+
+```sh
+waterwall_payload_tool validate TARGET EXECUTABLE
+waterwall_payload_tool embed TARGET EXECUTABLE PAYLOAD.xz OUTPUT.c
+```
+
+`TARGET` is `linux-x86_64`, `windows-x86_64`, or `windows-x86`. The embedding
+command expects the XZ bytes generated from that finalized executable by the
+encoder. It does not strip, compress, execute, or publish files itself.
 
 ## Fixed payload format
 

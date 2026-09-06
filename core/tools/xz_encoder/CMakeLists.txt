@@ -35,11 +35,19 @@ target_link_libraries(waterwall_xz_encoder PRIVATE liblzma)
 # Upstream publishes API includes for installation, not its build-tree target.
 target_include_directories(waterwall_xz_encoder PRIVATE "${waterwall_host_xz_SOURCE_DIR}/src/liblzma/api")
 
+add_executable(waterwall_payload_tool payload_tool.c)
+set_target_properties(waterwall_payload_tool PROPERTIES
+  RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>")
+if(NOT WIN32)
+  target_compile_definitions(waterwall_payload_tool PRIVATE _FILE_OFFSET_BITS=64 _POSIX_C_SOURCE=200809L)
+endif()
+
 if(BUILD_TESTING)
   find_program(PYTHON_EXECUTABLE NAMES python3 python REQUIRED)
   add_test(NAME waterwall.packed_payload_generation
     COMMAND "${PYTHON_EXECUTABLE}" "${WATERWALL_SOURCE_DIR}/tests/packed_payload_test.py"
-      --encoder "$<TARGET_FILE:waterwall_xz_encoder>")
+      --cmake "${CMAKE_COMMAND}" --encoder "$<TARGET_FILE:waterwall_xz_encoder>"
+      --payload-tool "$<TARGET_FILE:waterwall_payload_tool>")
   add_subdirectory("${WATERWALL_SOURCE_DIR}/ww/vendor/xz-embedded" xz-embedded)
   add_subdirectory("${WATERWALL_SOURCE_DIR}/ww/compression" decoder)
   add_library(xz_runtime_fixture MODULE runtime_fixture.c)

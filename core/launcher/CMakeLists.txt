@@ -5,7 +5,6 @@ set_target_properties(${WATERWALL_APPLICATION_TARGET} PROPERTIES
   OUTPUT_NAME "waterwall_application"
 )
 
-find_program(PYTHON3_EXECUTABLE NAMES python3 python REQUIRED)
 if(NOT MSVC AND NOT CMAKE_STRIP)
   find_program(CMAKE_STRIP NAMES strip REQUIRED)
 endif()
@@ -39,20 +38,29 @@ if(CMAKE_HOST_WIN32)
   set(host_suffix ".exe")
 endif()
 set(WW_HOST_ENCODER_EXE "${WW_HOST_ENCODER_BUILD}/Release/waterwall_xz_encoder${host_suffix}")
+set(WW_HOST_PAYLOAD_TOOL "${WW_HOST_ENCODER_BUILD}/Release/waterwall_payload_tool${host_suffix}")
+set(host_platform x64)
+if(CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "^(ARM64|arm64|aarch64)$")
+  set(host_platform ARM64)
+endif()
 if(MSVC)
-  set(finalization_args --finalization msvc)
+  set(finalization msvc)
   set(finalization_dependencies "")
 else()
-  set(finalization_args --finalization gnu --strip "${CMAKE_STRIP}")
+  set(finalization gnu)
   set(finalization_dependencies "${CMAKE_STRIP}")
 endif()
 # Let the independent native build check its own dependency graph on each build.
 # Its driver serializes producers sharing the documented host cache.
 add_custom_target(waterwall_host_encoder_target
-  COMMAND "${PYTHON3_EXECUTABLE}" "${WATERWALL_SOURCE_DIR}/core/build_host_encoder.py" "${CMAKE_COMMAND}"
-    --build-dir "${WW_HOST_ENCODER_BUILD}" --compiler "${WW_HOST_C_COMPILER}"
-    --generator "${WW_HOST_ENCODER_GENERATOR}"
-  BYPRODUCTS "${WW_HOST_ENCODER_EXE}"
+  COMMAND "${CMAKE_COMMAND}"
+    "-DWATERWALL_SOURCE_DIR=${WATERWALL_SOURCE_DIR}"
+    "-DWW_HOST_ENCODER_BUILD=${WW_HOST_ENCODER_BUILD}"
+    "-DWW_HOST_C_COMPILER=${WW_HOST_C_COMPILER}"
+    "-DWW_HOST_ENCODER_GENERATOR=${WW_HOST_ENCODER_GENERATOR}"
+    "-DWW_HOST_ENCODER_PLATFORM=${host_platform}"
+    -P "${WATERWALL_SOURCE_DIR}/core/build_host_encoder.cmake"
+  BYPRODUCTS "${WW_HOST_ENCODER_EXE}" "${WW_HOST_PAYLOAD_TOOL}"
   WORKING_DIRECTORY "${WATERWALL_SOURCE_DIR}"
   COMMENT "Checking host XZ encoder"
   VERBATIM
@@ -61,14 +69,16 @@ add_custom_target(waterwall_host_encoder_target
 set(WW_PACKED_PAYLOAD_C "${PROJECT_BINARY_DIR}/packed/$<CONFIG>/payload.c")
 add_custom_command(
   OUTPUT "${WW_PACKED_PAYLOAD_C}"
-  COMMAND "${PYTHON3_EXECUTABLE}" "${WATERWALL_SOURCE_DIR}/core/generate_packed_payload.py"
-    --executable "$<TARGET_FILE:${WATERWALL_APPLICATION_TARGET}>"
-    --encoder "${WW_HOST_ENCODER_EXE}"
-    ${finalization_args} --target "${WW_PACKED_TARGET}"
-    --output "${WW_PACKED_PAYLOAD_C}"
+  COMMAND "${CMAKE_COMMAND}"
+    "-DWW_EXECUTABLE=$<TARGET_FILE:${WATERWALL_APPLICATION_TARGET}>"
+    "-DWW_ENCODER=${WW_HOST_ENCODER_EXE}" "-DWW_PAYLOAD_TOOL=${WW_HOST_PAYLOAD_TOOL}"
+    "-DWW_FINALIZATION=${finalization}" "-DWW_STRIP=${CMAKE_STRIP}"
+    "-DWW_PACKED_TARGET=${WW_PACKED_TARGET}" "-DWW_OUTPUT=${WW_PACKED_PAYLOAD_C}"
+    -P "${WATERWALL_SOURCE_DIR}/core/generate_packed_payload.cmake"
   DEPENDS ${WATERWALL_APPLICATION_TARGET} waterwall_host_encoder_target "${WW_HOST_ENCODER_EXE}"
-    ${finalization_dependencies} "${WATERWALL_SOURCE_DIR}/core/generate_packed_payload.py"
-    "${WATERWALL_SOURCE_DIR}/core/build_host_encoder.py" "${CMAKE_CURRENT_LIST_FILE}"
+    "${WW_HOST_PAYLOAD_TOOL}"
+    ${finalization_dependencies} "${WATERWALL_SOURCE_DIR}/core/generate_packed_payload.cmake"
+    "${WATERWALL_SOURCE_DIR}/core/build_host_encoder.cmake" "${CMAKE_CURRENT_LIST_FILE}"
   COMMENT "Generating packed Waterwall payload"
   VERBATIM
 )

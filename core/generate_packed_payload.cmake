@@ -1,0 +1,51 @@
+cmake_minimum_required(VERSION 3.25)
+
+if(NOT WW_FINALIZATION MATCHES "^(gnu|msvc)$")
+  message(FATAL_ERROR "Unknown executable finalization: ${WW_FINALIZATION}")
+endif()
+if(WW_FINALIZATION STREQUAL "gnu" AND NOT WW_STRIP)
+  message(FATAL_ERROR "GNU finalization requires a strip tool")
+endif()
+if(WW_FINALIZATION STREQUAL "msvc" AND NOT WW_PACKED_TARGET MATCHES "^windows-")
+  message(FATAL_ERROR "MSVC finalization requires a Windows target")
+endif()
+
+# Serialize writers of this output. The adjacent staging directory stays on the
+# same filesystem, so only a complete source replaces the previous publication.
+get_filename_component(output_dir "${WW_OUTPUT}" DIRECTORY)
+file(MAKE_DIRECTORY "${output_dir}")
+file(LOCK "${WW_OUTPUT}.lock" GUARD PROCESS)
+set(stage "${WW_OUTPUT}.stage")
+file(REMOVE_RECURSE "${stage}")
+file(MAKE_DIRECTORY "${stage}")
+
+function(run_stage)
+  execute_process(COMMAND ${ARGV} RESULT_VARIABLE result)
+  if(NOT result STREQUAL "0")
+    file(REMOVE_RECURSE "${stage}")
+    message(FATAL_ERROR "Payload command failed (${result}): ${ARGV}")
+  endif()
+endfunction()
+
+set(executable "${stage}/waterwall_executable")
+file(COPY_FILE "${WW_EXECUTABLE}" "${executable}" RESULT result)
+if(NOT result STREQUAL "0")
+  file(REMOVE_RECURSE "${stage}")
+  message(FATAL_ERROR "Cannot stage executable: ${result}")
+endif()
+file(CHMOD "${executable}" PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE
+  GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
+run_stage("${WW_PAYLOAD_TOOL}" validate "${WW_PACKED_TARGET}" "${executable}")
+if(WW_FINALIZATION STREQUAL "gnu")
+  run_stage("${WW_STRIP}" --strip-unneeded "${executable}")
+endif()
+# Preserve MSVC's PE loader directories and separate PDB policy.
+run_stage("${WW_PAYLOAD_TOOL}" validate "${WW_PACKED_TARGET}" "${executable}")
+run_stage("${WW_ENCODER}" "${executable}" "${stage}/payload.xz")
+run_stage("${WW_PAYLOAD_TOOL}" embed "${WW_PACKED_TARGET}" "${executable}"
+  "${stage}/payload.xz" "${stage}/payload.c")
+file(RENAME "${stage}/payload.c" "${WW_OUTPUT}" RESULT result)
+file(REMOVE_RECURSE "${stage}")
+if(NOT result STREQUAL "0")
+  message(FATAL_ERROR "Cannot publish payload: ${result}")
+endif()
