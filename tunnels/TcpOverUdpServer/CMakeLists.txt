@@ -23,6 +23,7 @@ add_library(tcp_over_udp_server_kcp OBJECT
     ${TCP_OVER_UDP_KCP_DIR}/ikcp.c
 )
 target_include_directories(tcp_over_udp_server_kcp PUBLIC ${TCP_OVER_UDP_KCP_DIR})
+target_link_libraries(tcp_over_udp_server_kcp PRIVATE waterwall_runtime_options)
 
 if(NOT TARGET tcp_over_udp_fec)
     add_library(tcp_over_udp_fec OBJECT
@@ -35,6 +36,7 @@ if(NOT TARGET tcp_over_udp_fec)
         ${TCP_OVER_UDP_FEC_DIR}/inversion_tree.cc
     )
     target_compile_features(tcp_over_udp_fec PRIVATE cxx_std_17)
+    target_link_libraries(tcp_over_udp_fec PRIVATE waterwall_runtime_options)
     target_include_directories(tcp_over_udp_fec PUBLIC ${TCP_OVER_UDP_FEC_DIR})
     # Release IPO is controlled by CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE.
     # set_property(TARGET tcp_over_udp_fec PROPERTY INTERPROCEDURAL_OPTIMIZATION FALSE)

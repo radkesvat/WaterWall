@@ -77,6 +77,7 @@ add_library(DecompressBrotli OBJECT
 )
 
 target_compile_features(DecompressBrotli PRIVATE cxx_std_17)
+target_link_libraries(DecompressBrotli PRIVATE waterwall_runtime_options)
 target_include_directories(DecompressBrotli PRIVATE 
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/brotli/include

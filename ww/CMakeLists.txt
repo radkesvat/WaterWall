@@ -1484,6 +1484,16 @@ endif()
 
 target_link_libraries(ww PUBLIC ${LIBS})
 
+# All runtime consumers (including tunnels and their reused PCH) must agree on
+# code generation. Auxiliary archives do not otherwise inherit ww's includes or
+# compile options, so attach only the small build-policy interface to them.
+target_link_libraries(ww PUBLIC waterwall_runtime_options)
+foreach(runtime_component IN ITEMS ww_lwip libuuid FREERS_EH)
+    if(TARGET ${runtime_component})
+        target_link_libraries(${runtime_component} PRIVATE waterwall_runtime_options)
+    endif()
+endforeach()
+
 # ww calls into lwIP, while lwIP calls the WaterWall assert, random, and TCP
 # ISN hooks. Declare that reverse edge so CMake repeats the two static archives
 # for consumers whose first ww scan does not pull in the hook implementations.

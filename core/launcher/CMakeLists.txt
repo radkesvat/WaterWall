@@ -33,7 +33,7 @@ add_custom_command(
 )
 
 add_executable(Waterwall
-  ${WATERWALL_STARTUP_GUARD_OBJECTS}
+  $<TARGET_OBJECTS:WaterwallLauncherStartupGuard>
   main.c
   launcher_linux.c
   ${PROJECT_SOURCE_DIR}/core/startup_options.c
@@ -69,7 +69,7 @@ target_include_directories(Waterwall PRIVATE
   "${PROJECT_BINARY_DIR}/ww"
 )
 
-target_link_libraries(Waterwall PRIVATE WaterWall::XZDecoder m)
+target_link_libraries(Waterwall PRIVATE ww_launcher_xz_decoder m)
 # The packed target is the shipped artifact in every configuration.
 target_link_options(Waterwall PRIVATE "LINKER:--strip-all")
 add_dependencies(Waterwall ${WATERWALL_APPLICATION_TARGET})

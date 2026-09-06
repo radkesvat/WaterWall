@@ -322,23 +322,29 @@ endif()
 
 set(WATERWALL_STARTUP_GUARD_OBJECTS "")
 if(WW_USE_STARTUP_GUARD)
-  add_library(WaterwallStartupGuard OBJECT
-    ${WATERWALL_STARTUP_GUARD_SOURCE}
-  )
+  set(startup_guard_targets WaterwallStartupGuard)
+  if(WW_PACK_RUNTIME)
+    list(APPEND startup_guard_targets WaterwallLauncherStartupGuard)
+  endif()
+  foreach(startup_guard_target IN LISTS startup_guard_targets)
+    add_library(${startup_guard_target} OBJECT
+      ${WATERWALL_STARTUP_GUARD_SOURCE}
+    )
 
-  target_include_directories(WaterwallStartupGuard PRIVATE
-    ${CMAKE_CURRENT_BINARY_DIR}/ww
-    ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}/ww
-  )
-  target_compile_definitions(WaterwallStartupGuard PRIVATE WATERWALL_VERSION=${Waterwall_VERSION})
-  set_target_properties(WaterwallStartupGuard PROPERTIES
-    UNITY_BUILD OFF
-    INTERPROCEDURAL_OPTIMIZATION OFF
-    INTERPROCEDURAL_OPTIMIZATION_RELEASE OFF
-    INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO OFF
-    INTERPROCEDURAL_OPTIMIZATION_MINSIZEREL OFF
-  )
+    target_include_directories(${startup_guard_target} PRIVATE
+      ${CMAKE_CURRENT_BINARY_DIR}/ww
+      ${CMAKE_CURRENT_SOURCE_DIR}
+      ${CMAKE_CURRENT_SOURCE_DIR}/ww
+    )
+    target_compile_definitions(${startup_guard_target} PRIVATE WATERWALL_VERSION=${Waterwall_VERSION})
+    set_target_properties(${startup_guard_target} PROPERTIES
+      UNITY_BUILD OFF
+      INTERPROCEDURAL_OPTIMIZATION OFF
+      INTERPROCEDURAL_OPTIMIZATION_RELEASE OFF
+      INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO OFF
+      INTERPROCEDURAL_OPTIMIZATION_MINSIZEREL OFF
+    )
+  endforeach()
   set(WATERWALL_STARTUP_GUARD_OBJECTS $<TARGET_OBJECTS:WaterwallStartupGuard>)
 endif()
 
@@ -352,7 +358,26 @@ add_executable(${WATERWALL_APPLICATION_TARGET}
   # core/tests/bench_memcpy.c
 )
 
+# Runtime consumers share code-generation and link flags through ww. Keep this
+# separate from directory flags so the launcher and host tools do not inherit it.
+add_library(waterwall_runtime_options INTERFACE)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT ANDROID AND NOT ENABLE_TSAN)
+  include(CheckPIESupported)
+  check_pie_supported(LANGUAGES C CXX)
+  if(NOT CMAKE_C_LINK_NO_PIE_SUPPORTED OR NOT CMAKE_CXX_LINK_NO_PIE_SUPPORTED)
+    message(FATAL_ERROR "The Linux Waterwall application requires non-PIE linker support")
+  endif()
+  set_target_properties(${WATERWALL_APPLICATION_TARGET} PROPERTIES
+    POSITION_INDEPENDENT_CODE OFF
+  )
+  target_compile_options(waterwall_runtime_options INTERFACE
+    "$<$<COMPILE_LANGUAGE:C,CXX>:-fno-pic;-fno-pie>"
+  )
+  target_link_options(waterwall_runtime_options INTERFACE -no-pie)
+endif()
+
 if(WW_USE_STARTUP_GUARD)
+  target_link_libraries(WaterwallStartupGuard PRIVATE waterwall_runtime_options)
   # main.c suppresses its own main(); startup_guard.c provides the entry point.
   target_compile_definitions(${WATERWALL_APPLICATION_TARGET} PRIVATE WATERWALL_HAS_STARTUP_GUARD=1)
 
