@@ -1,0 +1,48 @@
+{
+  "name": "tlsserver-sni-fallback-probe",
+  "nodes": [
+    {
+      "name": "tcp-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 23770,
+        "nodelay": true,
+        "initial-idle-timeout-ms": 5000,
+        "active-idle-timeout-ms": 5000
+      },
+      "next": "protected-tls-server"
+    },
+    {
+      "name": "protected-tls-server",
+      "type": "TlsServer",
+      "settings": {
+        "cert-file": "server.crt",
+        "key-file": "server.key",
+        "sni": "protected.integration.test",
+        "fallback-node-name": "cover-connector"
+      },
+      "next": "protected-connector"
+    },
+    {
+      "name": "protected-connector",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 23771,
+        "nodelay": true,
+        "fastopen": false
+      }
+    },
+    {
+      "name": "cover-connector",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 23772,
+        "nodelay": true,
+        "fastopen": false
+      }
+    }
+  ]
+}

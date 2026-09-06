@@ -121,6 +121,11 @@ static int tlsserverPerformHandshake(tunnel_t *t, line_t *l, tlsserver_lstate_t 
              (unsigned int) lineGetWID(l), n, sslerr, SSL_state_string_long(ls->ssl));
     }
 
+    if (ls->sni_fallback_requested)
+    {
+        return kTlsServerHandshakeFallback;
+    }
+
     if (! ls->tls_committed && tlsserverPendingOutputStartsServerHello(ls))
     {
         ls->tls_committed = true;
@@ -324,16 +329,9 @@ void tlsserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
         if (probe_result == kTlsServerProbePlaintext)
         {
-            bool alive = tlsserverStartFallback(t, l, ls);
-            if (! alive)
-            {
-                lineReuseBuffer(l, buf);
-                lineUnref(l);
-                return;
-            }
-
-            ls = lineGetState(l, t);
-            discard tlsserverSendFallbackPayload(t, l, ls, buf);
+            /* Include the triggering input before Init can re-enter with later bytes. */
+            bufferstreamPush(&ls->fallback_probe, buf);
+            discard tlsserverStartFallback(t, l, ls);
             lineUnref(l);
             return;
         }
@@ -341,12 +339,30 @@ void tlsserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         if (probe_result == kTlsServerProbeTlsLike)
         {
             ls->fallback_probe_tls_like = true;
-            bufferstreamEmpty(&ls->fallback_probe);
+            if (ts->expected_sni == NULL)
+            {
+                bufferstreamEmpty(&ls->fallback_probe);
+            }
         }
-        else
+        if (probe_result == kTlsServerProbeNeedMore || ts->expected_sni != NULL)
         {
-            sbuf_t *probe = sbufDuplicateByPool(lineGetBufferPool(l), buf);
-            bufferstreamPush(&ls->fallback_probe, probe);
+            /* Bound the original wire transcript, including record headers and coalesced trailing bytes. */
+            if (sbufGetLength(buf) > kTlsServerMaxFallbackPendingBytes - bufferstreamGetBufLen(&ls->fallback_probe))
+            {
+                LOGW("TlsServer: pre-routing ClientHello buffer limit exceeded");
+                lineReuseBuffer(l, buf);
+                tlsserverCloseLineFatal(t, l);
+                lineUnref(l);
+                return;
+            }
+            /* Keep wire bytes, not the receive allocation or its lifetime attachment. Small
+             * fragments share compact chunks; large fragments get only their actual size. */
+            const uint32_t length = sbufGetLength(buf);
+            sbuf_t        *probe =
+                sbufCreateWithPadding(max(length, 4096U), bufferpoolGetLargeBufferPadding(lineGetBufferPool(l)));
+            sbufSetLength(probe, length);
+            sbufWrite(probe, sbufGetRawPtr(buf), length);
+            bufferstreamPushCoalescing(&ls->fallback_probe, probe);
         }
     }
 

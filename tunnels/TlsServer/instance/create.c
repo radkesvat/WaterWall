@@ -114,26 +114,6 @@ static bool parseFallbackNode(tlsserver_tstate_t *ts, tunnel_t *t, node_t *node,
     return true;
 }
 
-static bool validateFallbackCompatibility(tlsserver_tstate_t *ts, tunnel_t *t)
-{
-    if (ts->fallback_node == NULL)
-    {
-        return true;
-    }
-
-    if (ts->expected_sni != NULL)
-    {
-        LOGF(
-            "TlsServer: fallback-node-name/fallback-node/fallback cannot be combined with sni because mismatched valid "
-            "ClientHellos would be routed to fallback as plaintext. For SNI-based routing, place SniffRouter before "
-            "TlsServer and use its default next branch for the TLS fallback.");
-        tlsserverTunnelDestroy(t, wwLifecycleStartupRollback());
-        return false;
-    }
-
-    return true;
-}
-
 static bool parseRequiredString(char **dest, const cJSON *settings, const char *key, tunnel_t *t)
 {
     if (! getStringFromJsonObject(dest, settings, key) || stringLength(*dest) == 0)
@@ -594,6 +574,10 @@ static SSL_CTX *createServerSslContext(tlsserver_tstate_t *ts)
         }
         SSL_CTX_set_tlsext_servername_callback(ctx, tlsserverOnServername);
         SSL_CTX_set_tlsext_servername_arg(ctx, ts);
+        if (ts->fallback_node != NULL)
+        {
+            SSL_CTX_set_client_hello_cb(ctx, tlsserverOnClientHello, ts);
+        }
     }
 
     if (ts->alpns_length > 0 || ts->select_alpns_length > 0)
@@ -642,8 +626,7 @@ tunnel_t *tlsserverTunnelCreate(node_t *node)
     if (! parseRequiredString(&ts->cert_file, settings, "cert-file", t) ||
         ! parseRequiredString(&ts->key_file, settings, "key-file", t) ||
         ! parseOptionalString(&ts->expected_sni, settings, "sni", t) || ! parseTlsDefaults(ts, settings, t) ||
-        ! parseAlpns(ts, settings, t) || ! parseFallbackNode(ts, t, node, settings) ||
-        ! validateFallbackCompatibility(ts, t))
+        ! parseAlpns(ts, settings, t) || ! parseFallbackNode(ts, t, node, settings))
     {
         return NULL;
     }

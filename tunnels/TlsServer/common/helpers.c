@@ -2,6 +2,45 @@
 
 #include "loggers/network_logger.h"
 
+/* OpenSSL has reassembled the ClientHello, but has not negotiated or emitted TLS yet. */
+int tlsserverOnClientHello(SSL *ssl, int *ad, void *arg)
+{
+    tlsserver_tstate_t  *ts        = arg;
+    tlsserver_lstate_t  *ls        = SSL_get_app_data(ssl);
+    const unsigned char *extension = NULL;
+    size_t               length    = 0;
+    bool                 matches   = false;
+
+    /* A second ClientHello after HelloRetryRequest must stay on the TLS branch. */
+    if (ls->tls_committed)
+    {
+        return SSL_CLIENT_HELLO_SUCCESS;
+    }
+
+    if (SSL_client_hello_get0_ext(ssl, TLSEXT_TYPE_server_name, &extension, &length))
+    {
+        /* Match OpenSSL's accepted server_name shape: one nonempty host_name, no NUL. */
+        if (length < 5 || (((size_t) extension[0] << 8) | extension[1]) != length - 2 ||
+            extension[2] != TLSEXT_NAMETYPE_host_name || (((size_t) extension[3] << 8) | extension[4]) != length - 5 ||
+            length == 5 || length - 5 > TLSEXT_MAXLEN_host_name || memchr(extension + 5, 0, length - 5) != NULL)
+        {
+            *ad = SSL_AD_DECODE_ERROR;
+            return SSL_CLIENT_HELLO_ERROR;
+        }
+        matches = stringLength(ts->expected_sni) == length - 5 &&
+                  strnicmp((const char *) extension + 5, ts->expected_sni, length - 5) == 0;
+    }
+
+    if (matches)
+    {
+        return SSL_CLIENT_HELLO_SUCCESS;
+    }
+
+    /* Suspend without an alert. The payload driver releases SSL and replays the saved wire bytes. */
+    ls->sni_fallback_requested = true;
+    return SSL_CLIENT_HELLO_RETRY;
+}
+
 int tlsserverOnServername(SSL *ssl, int *ad, void *arg)
 {
     tlsserver_tstate_t *ts = arg;
@@ -849,8 +888,8 @@ static void tlsserverDelayedFallbackPayloadTask(tunnel_t *t, line_t *l);
 
 bool tlsserverScheduleFallbackPayloadDrain(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls)
 {
-    if (! ls->fallback_mode || ls->fallback_close_draining || ls->fallback_payload_paused ||
-        tlsserverFallbackPendingCount(ls) == 0 || ls->fallback_delay_scheduled)
+    if (! ls->fallback_mode || ls->fallback_initializing || ls->fallback_close_draining ||
+        ls->fallback_payload_paused || tlsserverFallbackPendingCount(ls) == 0 || ls->fallback_delay_scheduled)
     {
         return true;
     }
@@ -881,7 +920,7 @@ static void tlsserverDelayedFallbackPayloadTask(tunnel_t *t, line_t *l)
 
     ls->fallback_delay_scheduled = false;
 
-    if (! ls->fallback_mode || ls->fallback_close_draining || ls->fallback_payload_paused)
+    if (! ls->fallback_mode || ls->fallback_initializing || ls->fallback_close_draining || ls->fallback_payload_paused)
     {
         return;
     }
@@ -913,7 +952,7 @@ static void tlsserverDelayedFallbackPayloadTask(tunnel_t *t, line_t *l)
     }
 
     ls = lineGetState(l, t);
-    if (! ls->fallback_mode || ls->fallback_close_draining || ls->fallback_payload_paused)
+    if (! ls->fallback_mode || ls->fallback_initializing || ls->fallback_close_draining || ls->fallback_payload_paused)
     {
         return;
     }
@@ -934,7 +973,7 @@ bool tlsserverSendFallbackPayload(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls
         return false;
     }
 
-    if (ts->fallback_intentional_delay_ms == 0 && ! ls->fallback_payload_paused &&
+    if (ts->fallback_intentional_delay_ms == 0 && ! ls->fallback_initializing && ! ls->fallback_payload_paused &&
         tlsserverFallbackPendingCount(ls) == 0 && ! ls->fallback_delay_scheduled)
     {
         return lineCallWithRefWithBuf(l, tunnelUpStreamPayload, fallback, buf);
@@ -1039,9 +1078,18 @@ bool tlsserverStartFallback(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls)
 
     lineRef(l);
 
-    ls->fallback_mode = true;
+    ls->fallback_mode         = true;
+    ls->fallback_initializing = true;
     tlsserverDisarmHandshakeDeadline(ls);
     tlsserverLinestateRelease(ls);
+
+    /* Publish the oldest bytes before Init can synchronously produce newer input.
+     * The initializing gate blocks inline sends, scheduled drains, and Resume. */
+    if (first != NULL && ! tlsserverSendFallbackPayload(t, l, ls, first))
+    {
+        lineUnref(l);
+        return false;
+    }
 
     if (! ls->fallback_init_sent)
     {
@@ -1049,15 +1097,18 @@ bool tlsserverStartFallback(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls)
         tunnelUpStreamInit(ts->fallback_tunnel, l);
     }
 
-    if (lineIsAlive(l) && first != NULL && ls->fallback_mode)
+    if (lineIsAlive(l) && ls->fallback_mode)
     {
-        discard tlsserverSendFallbackPayload(t, l, ls, first);
-        first = NULL;
-    }
-
-    if (first != NULL)
-    {
-        lineReuseBuffer(l, first);
+        ls->fallback_initializing = false;
+        if (ts->fallback_intentional_delay_ms == 0)
+        {
+            /* Preserve the zero-delay inline path, now with transcript-first FIFO. */
+            tlsserverDelayedFallbackPayloadTask(t, l);
+        }
+        else if (! tlsserverScheduleFallbackPayloadDrain(t, l, ls))
+        {
+            tlsserverCloseLineFatal(t, l);
+        }
     }
 
     bool alive = lineIsAlive(l);
@@ -1090,7 +1141,7 @@ void tlsserverCloseFallbackFromUpstream(tunnel_t *t, line_t *l, tlsserver_lstate
     ls->fallback_close_draining               = true;
     ls->fallback_branch_finished_during_drain = false;
 
-    if (ls->fallback_payload_paused)
+    if (ls->fallback_payload_paused || ls->fallback_initializing)
     {
         tlsserverDiscardFallbackPendingPayload(ls, pool);
     }

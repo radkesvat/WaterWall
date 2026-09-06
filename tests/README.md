@@ -139,8 +139,8 @@ There are several valid ways to run tests:
   being routed to fallback.
 - `tls_tlslike_oversized_probe_does_not_fallback`
   Uses a raw TCP probe and fallback sentinel to verify oversized TLS-looking first bytes do not cross the fallback branch.
-- `tls_fallback_rejects_sni_gate`
-  Negative case: verifies `TlsServer` rejects a config that combines fallback with an exact SNI gate.
+- `tlsserver_sni_fallback_probe`
+  Verifies direct TlsServer SNI routing without SniffRouter: matching SNI reaches the protected backend; mismatched SNI, absent SNI, and plaintext reach the cover listener.
 - `reality_google_roundtrip`
   Verifies `TesterClient -> RealityClient -> TcpConnector` and `TcpListener -> RealityServer -> TesterServer` across a
   real TCP loopback hop while the Reality visitor branch handshakes with `google.com:443`.

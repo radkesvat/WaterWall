@@ -2585,6 +2585,26 @@ if(LINUX AND TARGET TrojanServer)
 endif()
 
 if(LINUX AND TARGET TlsServer)
+  add_executable(tlsserver_sni_fallback_test
+    tlsserver_sni_fallback_test.c
+    ${WATERWALL_LINE_FAILURE_WW_SOURCES}
+  )
+  waterwall_line_failure_test_use_tunnel(tlsserver_sni_fallback_test TlsServer)
+  target_compile_definitions(tlsserver_sni_fallback_test PRIVATE
+    TLSSERVER_TEST_CERT_FILE="${CMAKE_SOURCE_DIR}/tests/cases/tls_roundtrip/server.crt"
+    TLSSERVER_TEST_KEY_FILE="${CMAKE_SOURCE_DIR}/tests/cases/tls_roundtrip/server.key"
+  )
+  target_link_options(tlsserver_sni_fallback_test PRIVATE
+    ${WATERWALL_LINE_FAILURE_WRAPS}
+    "-Wl,--wrap=lineScheduleDelayedTask"
+  )
+  target_link_libraries(tlsserver_sni_fallback_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests tlsserver_sni_fallback_test)
+  add_waterwall_unit_test(waterwall.tlsserver_sni_fallback_unit tlsserver_sni_fallback_test
+    "unit;tunnels;tlsserver;fallback;ownership")
+endif()
+
+if(LINUX AND TARGET TlsServer)
   add_executable(tlsserver_fallback_finish_lifetime_test
     tlsserver_fallback_finish_lifetime_test.c
     ${WATERWALL_LINE_FAILURE_WW_SOURCES}

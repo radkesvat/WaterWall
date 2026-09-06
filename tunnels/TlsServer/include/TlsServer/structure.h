@@ -61,9 +61,11 @@ typedef struct tlsserver_lstate_s
     bool handshake_deadline_armed;
     bool tls_committed;
     bool fallback_probe_tls_like;
+    bool sni_fallback_requested;
     bool protected_init_sent;
     bool fallback_mode;
     bool fallback_init_sent;
+    bool fallback_initializing; /* Payload admission barrier until fallback Init returns. */
     bool fallback_close_draining;
     bool fallback_branch_finished_during_drain;
     bool fallback_payload_paused;
@@ -147,6 +149,7 @@ void tlsserverLinestateRelease(tlsserver_lstate_t *ls);
 
 void tlsserverTunnelstateDestroy(tlsserver_tstate_t *ts);
 
+int    tlsserverOnClientHello(SSL *ssl, int *ad, void *arg);
 int    tlsserverOnServername(SSL *ssl, int *ad, void *arg);
 int    tlsserverOnAlpnSelect(SSL *ssl, const unsigned char **out, unsigned char *outlen, const unsigned char *in,
                              unsigned int inlen, void *arg);
