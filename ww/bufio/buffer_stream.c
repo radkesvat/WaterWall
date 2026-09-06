@@ -107,12 +107,6 @@ void bufferstreamDestroy(buffer_stream_t *self)
 
 void bufferstreamPush(buffer_stream_t *self, sbuf_t *buf)
 {
-    const uint32_t buf_len = bufferstreamValidatePush(self, buf);
-    bufferstreamEnqueueValidated(self, buf, buf_len);
-}
-
-void bufferstreamPushCoalescing(buffer_stream_t *self, sbuf_t *buf)
-{
     const uint32_t incoming_len = bufferstreamValidatePush(self, buf);
 
     if (! bs_doublequeue_t_is_empty(&self->q) && incoming_len > 0 &&

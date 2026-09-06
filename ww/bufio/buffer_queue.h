@@ -14,7 +14,9 @@
  *
  * This queue is designed to store sbuf_t pointers, providing a mechanism
  * for managing and accessing these buffers in a FIFO (First-In-First-Out) manner.
- * It's a simple queue implementation tailored for use with sbuf_t structures.
+ * Separate entries and their chunk boundaries are preserved. Original allocation
+ * identity is not guaranteed: Debug insertion may replace the input allocation;
+ * insertion returns the exact retained buffer.
  */
 
 typedef struct buffer_queue_s buffer_queue_t;

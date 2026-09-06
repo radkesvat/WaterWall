@@ -206,7 +206,8 @@ static inline void contextReusePayload(context_t *const c)
 }
 
 /**
- * @brief Push context payload into a buffer stream and clear payload pointer.
+ * @brief Transfer context payload to the stream and drop context payload ownership.
+ * The payload may be recycled during push; only context bookkeeping follows.
  *
  * @param self Destination buffer stream.
  * @param c Context that owns the payload.

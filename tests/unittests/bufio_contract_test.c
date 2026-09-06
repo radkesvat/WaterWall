@@ -289,12 +289,17 @@ static void testViewByteAcrossQueuedBuffers(buffer_pool_t *pool)
     sbuf_t         *first  = bufferpoolGetSmallBuffer(pool);
     sbuf_t         *second = bufferpoolGetSmallBuffer(pool);
 
+    const uint32_t offset = sbufGetMaximumWriteableSize(first) - sizeof(first_bytes);
+    sbufSetLength(first, offset);
+    sbufShiftRight(first, offset);
     sbufSetLength(first, sizeof(first_bytes));
     sbufWrite(first, first_bytes, sizeof(first_bytes));
     sbufSetLength(second, sizeof(second_bytes));
     sbufWrite(second, second_bytes, sizeof(second_bytes));
     bufferstreamPush(&stream, first);
     bufferstreamPush(&stream, second);
+
+    require(streamQueueCount(&stream) == 2, "byte-view fixture must retain separate entries");
 
     require(bufferstreamViewByteAt(&stream, 0) == 0x00, "byte view changed a zero byte");
     require(bufferstreamViewByteAt(&stream, 1) == 0xFF, "byte view cannot represent a 0xFF data byte");
@@ -305,7 +310,7 @@ static void testViewByteAcrossQueuedBuffers(buffer_pool_t *pool)
     bufferstreamDestroy(&stream);
 }
 
-static void testOrdinaryPushCompatibility(void)
+static void testUnifiedPush(void)
 {
     pool_fixture_t  fixture = poolFixtureCreate(kTestLargeBufferSize, kTestSmallBufferSize, 64, 64);
     buffer_stream_t stream  = bufferstreamCreate(fixture.pool, 0);
@@ -314,17 +319,15 @@ static void testOrdinaryPushCompatibility(void)
 
     bufferstreamPush(&stream, first);
     bufferstreamPush(&stream, second);
-    require(streamQueueCount(&stream) == 2, "ordinary push coalesced two fitting chunks");
-    require(bufferstreamGetBufLen(&stream) == 5, "ordinary push changed logical stream size");
+    require(streamQueueCount(&stream) == 1, "unified push did not coalesce fitting input");
+    require(bufferstreamGetBufLen(&stream) == 5, "unified push changed logical stream size");
 
     sbuf_t *read = bufferstreamIdealRead(&stream);
-    require(read == first, "ordinary push changed first-chunk identity");
-    requirePatternRange(read, 0, 3, 0x10, "ordinary push changed first-chunk data");
+    require(sbufGetLength(read) == 5, "unified push lost bytes");
+    requirePatternRange(read, 0, 3, 0x10, "unified push changed first input data");
+    requirePatternRange(read, 3, 2, 0x20, "unified push changed second input data");
     bufferpoolReuseBuffer(fixture.pool, read);
-    read = bufferstreamIdealRead(&stream);
-    require(read == second, "ordinary push changed second-chunk identity");
-    requirePatternRange(read, 0, 2, 0x20, "ordinary push changed second-chunk data");
-    bufferpoolReuseBuffer(fixture.pool, read);
+    require(bufferstreamIsEmpty(&stream) && streamQueueCount(&stream) == 0, "unified push did not drain");
     bufferstreamDestroy(&stream);
 
     stream           = bufferstreamCreate(fixture.pool, 0);
@@ -332,22 +335,20 @@ static void testOrdinaryPushCompatibility(void)
     sbuf_t *nonempty = makePooledBuffer(fixture.pool, false, 2, 0, 0x30);
     bufferstreamPush(&stream, empty);
     bufferstreamPush(&stream, nonempty);
-    require(streamQueueCount(&stream) == 2, "ordinary push dropped a zero-length chunk");
+    require(streamQueueCount(&stream) == 1, "eligible empty tail did not absorb input");
     require(bufferstreamGetBufLen(&stream) == 2, "zero-length push changed logical size");
     read = bufferstreamIdealRead(&stream);
-    require(read == empty && sbufGetLength(read) == 0, "ordinary push changed queued zero-length behavior");
-    require(bufferstreamGetBufLen(&stream) == 2, "reading a zero-length chunk consumed logical bytes");
+    require(sbufGetLength(read) == 2, "empty tail lost following bytes");
+    requirePatternRange(read, 0, 2, 0x30, "empty tail changed following data");
     bufferpoolReuseBuffer(fixture.pool, read);
-    read = bufferstreamIdealRead(&stream);
-    require(read == nonempty, "zero-length chunk changed following chunk identity");
-    bufferpoolReuseBuffer(fixture.pool, read);
+    require(bufferstreamIsEmpty(&stream) && streamQueueCount(&stream) == 0, "empty tail did not drain");
     bufferstreamDestroy(&stream);
 
     stream = bufferstreamCreate(fixture.pool, 0);
     empty  = makePooledBuffer(fixture.pool, false, 0, 0, 0);
     bufferstreamPush(&stream, empty);
-    require(bufferstreamIsEmpty(&stream), "zero-only ordinary stream is not logically empty");
-    require(streamQueueCount(&stream) == 1, "zero-only ordinary push did not preserve its chunk");
+    require(bufferstreamIsEmpty(&stream), "zero-only unified stream is not logically empty");
+    require(streamQueueCount(&stream) == 1, "zero-only unified push did not preserve its chunk");
     bufferstreamDestroy(&stream);
     poolFixtureDestroy(&fixture);
 }
@@ -364,7 +365,7 @@ static void testCoalescingOneByteFragmentsAndDequeBack(void)
     for (uint32_t i = 0; i < total; ++i)
     {
         expected[i] = (uint8_t) i;
-        bufferstreamPushCoalescing(&stream, makePooledBuffer(fixture.pool, false, 1, 0, (uint8_t) i));
+        bufferstreamPush(&stream, makePooledBuffer(fixture.pool, false, 1, 0, (uint8_t) i));
     }
     require(bufferstreamGetBufLen(&stream) == total, "one-byte coalescing changed stream size");
     require(streamQueueCount(&stream) == (total + small_size - 1U) / small_size,
@@ -380,10 +381,10 @@ static void testCoalescingOneByteFragmentsAndDequeBack(void)
     stream         = bufferstreamCreate(fixture.pool, 0);
     sbuf_t *full   = makePooledBuffer(fixture.pool, false, small_size, 0, 0x10);
     sbuf_t *second = makePooledBuffer(fixture.pool, false, 1, 0, 0xA0);
-    bufferstreamPushCoalescing(&stream, full);
-    bufferstreamPushCoalescing(&stream, second);
+    bufferstreamPush(&stream, full);
+    bufferstreamPush(&stream, second);
     require(streamQueueCount(&stream) == 2, "full tail did not force a second queue entry");
-    bufferstreamPushCoalescing(&stream, makePooledBuffer(fixture.pool, false, 2, 0, 0xB0));
+    bufferstreamPush(&stream, makePooledBuffer(fixture.pool, false, 2, 0, 0xB0));
     require(streamQueueCount(&stream) == 2, "coalescing did not use the actual deque back");
     require(*bs_doublequeue_t_back(&stream.q) == second, "coalescing removed or replaced the deque back");
     require(sbufGetLength(second) == 3, "coalescing did not extend the second tail");
@@ -397,9 +398,9 @@ static void testCoalescingOneByteFragmentsAndDequeBack(void)
     sbuf_t *older_spare = makePooledBuffer(fixture.pool, false, 1, 0, 0x31);
     full                = makePooledBuffer(fixture.pool, false, small_size, 0, 0x41);
     sbuf_t *new_source  = makePooledBuffer(fixture.pool, false, 2, 0, 0x51);
-    bufferstreamPushCoalescing(&stream, older_spare);
-    bufferstreamPushCoalescing(&stream, full);
-    bufferstreamPushCoalescing(&stream, new_source);
+    bufferstreamPush(&stream, older_spare);
+    bufferstreamPush(&stream, full);
+    bufferstreamPush(&stream, new_source);
     require(streamQueueCount(&stream) == 3, "coalescing searched an older queue entry for spare capacity");
     require(*bs_doublequeue_t_front(&stream.q) == older_spare && *bs_doublequeue_t_back(&stream.q) == new_source,
             "older-entry exclusion changed ordinary queue order or identity");
@@ -430,8 +431,8 @@ static void testCoalescingCopyAndInputBoundaries(void)
         const uint32_t saved_left   = sbufGetLeftCapacity(tail);
         const uint16_t saved_lpad   = sbufGetLeftPadding(tail);
 
-        bufferstreamPushCoalescing(&stream, tail);
-        bufferstreamPushCoalescing(&stream, source);
+        bufferstreamPush(&stream, tail);
+        bufferstreamPush(&stream, source);
         require(streamQueueCount(&stream) == 1, "eligible copy-boundary input did not coalesce");
         require(bufferstreamGetBufLen(&stream) == 7U + sizes[i], "copy-boundary coalescing changed stream size");
 
@@ -450,8 +451,8 @@ static void testCoalescingCopyAndInputBoundaries(void)
     buffer_stream_t stream = bufferstreamCreate(fixture.pool, 0);
     sbuf_t         *tail   = makePooledBuffer(fixture.pool, true, 7, 1, 0x11);
     sbuf_t         *over   = makePooledBuffer(fixture.pool, true, kCoalescingMaximumInputSize + 1U, 15, 0x72);
-    bufferstreamPushCoalescing(&stream, tail);
-    bufferstreamPushCoalescing(&stream, over);
+    bufferstreamPush(&stream, tail);
+    bufferstreamPush(&stream, over);
     require(streamQueueCount(&stream) == 2, "4097-byte input crossed the 4096-byte coalescing cap");
     require(bufferstreamGetBufLen(&stream) == 7U + kCoalescingMaximumInputSize + 1U,
             "over-cap fallback changed aggregate stream size");
@@ -474,8 +475,8 @@ static void testCoalescingConsumedTailAndFitPolicy(void)
     const uint32_t  saved_curpos = tail->curpos;
     const uint32_t  saved_left   = sbufGetLeftCapacity(tail);
     const uint16_t  saved_lpad   = sbufGetLeftPadding(tail);
-    bufferstreamPushCoalescing(&stream, tail);
-    bufferstreamPushCoalescing(&stream, source);
+    bufferstreamPush(&stream, tail);
+    bufferstreamPush(&stream, source);
     require(streamQueueCount(&stream) == 1, "partially consumed tail was not coalesced");
     sbuf_t *combined = bufferstreamIdealRead(&stream);
     require(combined == tail && tail->curpos == saved_curpos && sbufGetLeftCapacity(tail) == saved_left &&
@@ -493,8 +494,8 @@ static void testCoalescingConsumedTailAndFitPolicy(void)
     sbufSetLength(tail, maximum - incoming);
     fillPattern(tail, 0x33);
     source = makePooledBuffer(fixture.pool, true, incoming, 15, 0xB0);
-    bufferstreamPushCoalescing(&stream, tail);
-    bufferstreamPushCoalescing(&stream, source);
+    bufferstreamPush(&stream, tail);
+    bufferstreamPush(&stream, source);
     require(streamQueueCount(&stream) == 1, "exact tail fit did not coalesce");
     combined = bufferstreamIdealRead(&stream);
     require(sbufGetLength(combined) == maximum, "exact tail fit did not fill writable capacity");
@@ -515,8 +516,8 @@ static void testCoalescingConsumedTailAndFitPolicy(void)
     require(tail_copy != NULL && source_copy != NULL, "failed to allocate no-fit snapshots");
     memoryCopy(tail_copy, sbufGetRawPtr(tail), tail_len);
     memoryCopy(source_copy, sbufGetRawPtr(source), incoming);
-    bufferstreamPushCoalescing(&stream, tail);
-    bufferstreamPushCoalescing(&stream, source);
+    bufferstreamPush(&stream, tail);
+    bufferstreamPush(&stream, source);
     require(streamQueueCount(&stream) == 2, "one-byte-too-large source was partially coalesced");
     require(bufferstreamGetBufLen(&stream) == (size_t) tail_len + incoming,
             "no-fit fallback changed aggregate stream size");
@@ -544,7 +545,7 @@ static uint32_t populateCoalescedReadStream(buffer_pool_t *pool, buffer_stream_t
     uint32_t              offset      = 0;
     for (size_t i = 0; i < ARRAY_SIZE(fragments); ++i)
     {
-        bufferstreamPushCoalescing(stream, makePooledBuffer(pool, false, fragments[i], 0, (uint8_t) offset));
+        bufferstreamPush(stream, makePooledBuffer(pool, false, fragments[i], 0, (uint8_t) offset));
         offset += fragments[i];
     }
     require(streamQueueCount(stream) == 3, "read-API fixture did not create the intended coalesced queue geometry");
@@ -621,8 +622,8 @@ static void testCoalescingImmediatePoolSettlement(void)
     bufferpoolCachedTierCountsForTest(fixture.pool, &large_count, &small_count);
     require(small_count + 2U == small_baseline, "settlement fixture did not check out exactly two small buffers");
 
-    bufferstreamPushCoalescing(&stream, tail);
-    bufferstreamPushCoalescing(&stream, source);
+    bufferstreamPush(&stream, tail);
+    bufferstreamPush(&stream, source);
     bufferpoolCachedTierCountsForTest(fixture.pool, &large_count, &small_count);
     require(streamQueueCount(&stream) == 1, "eligible settlement source did not coalesce");
     require(small_count + 1U == small_baseline, "eligible source was not returned immediately and exactly once");
@@ -647,8 +648,8 @@ static void testCoalescingLifetimeExclusions(void)
     sbuf_t             *tail            = makePooledBuffer(fixture.pool, false, 4, 0, 0x10);
     sbuf_t             *source          = makePooledBuffer(fixture.pool, false, 3, 0, 0x20);
     sbufAttachLifetime(source, &source_lifetime.lifetime);
-    bufferstreamPushCoalescing(&stream, tail);
-    bufferstreamPushCoalescing(&stream, source);
+    bufferstreamPush(&stream, tail);
+    bufferstreamPush(&stream, source);
     require(streamQueueCount(&stream) == 2, "lifetime-bearing source was coalesced");
     require(bufferstreamGetBufLen(&stream) == 7 && *bs_doublequeue_t_front(&stream.q) == tail &&
                 *bs_doublequeue_t_back(&stream.q) == source,
@@ -679,8 +680,8 @@ static void testCoalescingLifetimeExclusions(void)
     tail                              = makePooledBuffer(fixture.pool, false, 4, 0, 0x30);
     source                            = makePooledBuffer(fixture.pool, false, 3, 0, 0x40);
     sbufAttachLifetime(tail, &tail_lifetime.lifetime);
-    bufferstreamPushCoalescing(&stream, tail);
-    bufferstreamPushCoalescing(&stream, source);
+    bufferstreamPush(&stream, tail);
+    bufferstreamPush(&stream, source);
     require(streamQueueCount(&stream) == 2, "lifetime-bearing tail accepted unrelated source bytes");
     require(bufferstreamGetBufLen(&stream) == 7 && *bs_doublequeue_t_front(&stream.q) == tail &&
                 *bs_doublequeue_t_back(&stream.q) == source,
@@ -730,8 +731,8 @@ static void testCoalescingTemporaryAndZeroExclusions(void)
     buffer_stream_t stream = bufferstreamCreate(fixture.pool, 0);
     sbuf_t         *tail   = makePooledBuffer(fixture.pool, false, 4, 0, 0x10);
     sbuf_t         *source = createTemporaryBuffer(3, 0x20);
-    bufferstreamPushCoalescing(&stream, tail);
-    bufferstreamPushCoalescing(&stream, source);
+    bufferstreamPush(&stream, tail);
+    bufferstreamPush(&stream, source);
     require(streamQueueCount(&stream) == 2, "temporary source was coalesced or recycled immediately");
     require(bufferstreamGetBufLen(&stream) == 7 && *bs_doublequeue_t_front(&stream.q) == tail &&
                 *bs_doublequeue_t_back(&stream.q) == source,
@@ -753,8 +754,8 @@ static void testCoalescingTemporaryAndZeroExclusions(void)
     stream = bufferstreamCreate(fixture.pool, 0);
     tail   = createTemporaryBuffer(4, 0x30);
     source = makePooledBuffer(fixture.pool, false, 3, 0, 0x40);
-    bufferstreamPushCoalescing(&stream, tail);
-    bufferstreamPushCoalescing(&stream, source);
+    bufferstreamPush(&stream, tail);
+    bufferstreamPush(&stream, source);
     require(streamQueueCount(&stream) == 2, "temporary tail accepted coalesced source bytes");
     require(bufferstreamGetBufLen(&stream) == 7 && *bs_doublequeue_t_front(&stream.q) == tail &&
                 *bs_doublequeue_t_back(&stream.q) == source,
@@ -776,8 +777,8 @@ static void testCoalescingTemporaryAndZeroExclusions(void)
     stream        = bufferstreamCreate(fixture.pool, 0);
     tail          = makePooledBuffer(fixture.pool, false, 4, 0, 0x50);
     sbuf_t *empty = makePooledBuffer(fixture.pool, false, 0, 0, 0);
-    bufferstreamPushCoalescing(&stream, tail);
-    bufferstreamPushCoalescing(&stream, empty);
+    bufferstreamPush(&stream, tail);
+    bufferstreamPush(&stream, empty);
     require(streamQueueCount(&stream) == 2, "zero-length coalescing input was merged or dropped");
     require(*bs_doublequeue_t_back(&stream.q) == empty, "zero-length coalescing input lost enqueue identity");
     recycleIdealRead(&stream);
@@ -924,7 +925,7 @@ static sbuf_t *mapSharedTestBuffer(uint32_t payload_capacity, uint16_t left_padd
     return buffer;
 }
 
-static void runPushOverflowInvariant(bool coalescing)
+static void runPushOverflowInvariant(bool merge_eligible)
 {
     pool_fixture_t fixture          = poolFixtureCreate(kTestLargeBufferSize, kTestSmallBufferSize, 64, 64);
     const uint32_t payload_capacity = bufferpoolGetSmallBufferSize(fixture.pool);
@@ -934,13 +935,21 @@ static void runPushOverflowInvariant(bool coalescing)
     overflow_shared_state_t *state  = mapSharedTestMemory(sizeof(*state));
     sbuf_t                  *tail   = mapSharedTestBuffer(payload_capacity, left_padding, 0x11);
     sbuf_t                  *source = mapSharedTestBuffer(payload_capacity, left_padding, 0x22);
-    state->entries[0]               = tail;
-    state->stream.pool              = fixture.pool;
-    state->stream.q                 = (bs_doublequeue_t) {
-                        .cbuf    = state->entries,
-                        .start   = 0,
-                        .end     = 1,
-                        .capmask = ARRAY_SIZE(state->entries) - 1U,
+    if (! merge_eligible)
+    {
+        /* Leave one payload byte and no spare capacity to force enqueue fallback. */
+        sbufSetLength(tail, payload_capacity - 1U);
+        sbufShiftRight(tail, payload_capacity - 1U);
+        sbufSetLength(tail, 1);
+        *sbufGetMutablePtr(tail) = 0x11;
+    }
+    state->entries[0]  = tail;
+    state->stream.pool = fixture.pool;
+    state->stream.q    = (bs_doublequeue_t) {
+           .cbuf    = state->entries,
+           .start   = 0,
+           .end     = 1,
+           .capmask = ARRAY_SIZE(state->entries) - 1U,
     };
     state->stream.size             = UINT32_MAX;
     state->stream.use_left_padding = 0;
@@ -950,14 +959,7 @@ static void runPushOverflowInvariant(bool coalescing)
     if (child == 0)
     {
         state->reached_push = 1;
-        if (coalescing)
-        {
-            bufferstreamPushCoalescing(&state->stream, source);
-        }
-        else
-        {
-            bufferstreamPush(&state->stream, source);
-        }
+        bufferstreamPush(&state->stream, source);
         _Exit(kChildReturned);
     }
 
@@ -970,7 +972,7 @@ static void runPushOverflowInvariant(bool coalescing)
                 state->entries[0] == tail && state->entries[1] == NULL,
             "push overflow mutated queue or aggregate size before aborting");
     require(sbufGetLength(tail) == 1 && *(const uint8_t *) sbufGetRawPtr(tail) == 0x11 &&
-                ((const uint8_t *) sbufGetRawPtr(tail))[1] == 0 && sbufGetLength(source) == 1 &&
+                (! merge_eligible || ((const uint8_t *) sbufGetRawPtr(tail))[1] == 0) && sbufGetLength(source) == 1 &&
                 *(const uint8_t *) sbufGetRawPtr(source) == 0x22,
             "push overflow mutated source or tail before aborting");
 
@@ -1054,7 +1056,7 @@ int main(void)
     testViewByteAcrossQueuedBuffers(pool);
     testInvalidViewsAbort(pool);
 
-    testOrdinaryPushCompatibility();
+    testUnifiedPush();
     testCoalescingOneByteFragmentsAndDequeBack();
     testCoalescingCopyAndInputBoundaries();
     testCoalescingConsumedTailAndFitPolicy();

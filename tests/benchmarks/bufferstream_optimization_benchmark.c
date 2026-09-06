@@ -1,4 +1,6 @@
-/* Frozen, non-gating BufferStream benchmark; rebuild to compare C1/C2 or P0/P1. */
+/* Frozen, non-gating BufferStream benchmark; rebuild to compare C1/C2 or P0/P1.
+ * Variant A uses the benchmark-local unmerged baseline; C1/C2 uses public push.
+ */
 
 #include "wwapi.h"
 
@@ -134,17 +136,32 @@ static sbuf_t *makeBuffer(buffer_pool_t *pool, const uint8_t *bytes, uint32_t le
     return buffer;
 }
 
+/* Frozen baseline: retain each input as a separate entry, only in this benchmark. */
+static void pushUnmergedBaseline(buffer_stream_t *stream, sbuf_t *buffer)
+{
+    const uint32_t length = sbufGetLength(buffer);
+    if (stream->size > UINT32_MAX || length > UINT32_MAX - stream->size)
+    {
+        fatal("baseline stream size overflow");
+    }
+    if (bs_doublequeue_t_push_back(&stream->q, buffer) == NULL)
+    {
+        fatal("baseline deque insertion failed");
+    }
+    stream->size += length;
+}
+
 static void pushBuffer(buffer_stream_t *stream, sbuf_t *buffer, bool coalescing, result_t *result)
 {
     const uint32_t length   = sbufGetLength(buffer);
     const uint32_t capacity = sbufGetTotalCapacity(buffer);
     if (coalescing)
     {
-        bufferstreamPushCoalescing(stream, buffer);
+        bufferstreamPush(stream, buffer);
     }
     else
     {
-        bufferstreamPush(stream, buffer);
+        pushUnmergedBaseline(stream, buffer);
     }
 
     const size_t entries = bs_doublequeue_t_size(&stream->q);

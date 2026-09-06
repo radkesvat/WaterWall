@@ -362,7 +362,7 @@ void tlsserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
                 sbufCreateWithPadding(max(length, 4096U), bufferpoolGetLargeBufferPadding(lineGetBufferPool(l)));
             sbufSetLength(probe, length);
             sbufWrite(probe, sbufGetRawPtr(buf), length);
-            bufferstreamPushCoalescing(&ls->fallback_probe, probe);
+            bufferstreamPush(&ls->fallback_probe, probe);
         }
     }
 

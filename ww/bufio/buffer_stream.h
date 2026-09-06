@@ -57,30 +57,27 @@ void bufferstreamEmpty(buffer_stream_t *self);
 void bufferstreamDestroy(buffer_stream_t *self);
 
 /**
- * Pushes a buffer into the buffer stream as a separate queued chunk.
- * Ownership of @p buf transfers to the stream on every path.
+ * Pushes ordered bytes, possibly coalescing the complete input into the current tail.
+ * Ownership transfers on every path; an eligible input may be recycled before
+ * return. Never access the source or pointers into it after transfer, or rely on
+ * allocation identity or one retained chunk per push. Payload contents and FIFO
+ * byte order are preserved; coalescing is permitted, not guaranteed.
+ * The current policy copies only positive inputs of at most 4096 bytes that fit
+ * wholly in the tail's actual spare capacity, excluding temporary buffers and
+ * lifetime metadata on either allocation. It never grows or compacts the tail,
+ * searches older entries, partially merges, or consumes left padding. The tail
+ * can exceed 4096 bytes. Empty inputs are enqueued; an eligible empty tail can
+ * absorb later input. Coalescing does not replace byte limits or backpressure.
  * @param self The buffer stream.
  * @param buf The buffer whose ownership transfers to the stream.
  */
 void bufferstreamPush(buffer_stream_t *self, sbuf_t *buf);
 
 /**
- * Pushes a buffer and may coalesce its complete payload into unused space at
- * the current queue tail.
- *
- * Ownership of @p buf transfers on every path, exactly as for
- * bufferstreamPush(). An eligible input may be copied into the tail and
- * recycled before this function returns, so callers must not depend on source
- * pointer identity or input chunk boundaries afterward. Ineligible inputs use
- * the exact ordinary enqueue behavior.
- *
- * @param self The buffer stream.
- * @param buf The buffer whose ownership transfers to the stream.
- */
-void bufferstreamPushCoalescing(buffer_stream_t *self, sbuf_t *buf);
-
-/**
- * Reads an exact number of bytes from the buffer stream.
+ * Reads exactly the next bytes, combining or splitting storage as needed.
+ * Requires 0 < bytes <= buffered length. Neither allocation identity nor original
+ * push boundaries are guaranteed. Split allocations use the configured
+ * use_left_padding budget and a pool tier providing that complete budget.
  * @param self The buffer stream.
  * @param bytes The number of bytes to read.
  * @return A pointer to the buffer containing the read data.
@@ -88,7 +85,9 @@ void bufferstreamPushCoalescing(buffer_stream_t *self, sbuf_t *buf);
 sbuf_t *bufferstreamReadExact(buffer_stream_t *self, size_t bytes);
 
 /**
- * Reads at least a specified number of bytes from the buffer stream.
+ * Reads at least the next bytes, possibly more according to internal chunking.
+ * Requires 0 < bytes <= buffered length; original push boundaries do not define
+ * the returned size.
  * @param self The buffer stream.
  * @param bytes The minimum number of bytes to read.
  * @return A pointer to the buffer containing the read data.
@@ -96,14 +95,16 @@ sbuf_t *bufferstreamReadExact(buffer_stream_t *self, size_t bytes);
 sbuf_t *bufferstreamReadAtLeast(buffer_stream_t *self, size_t bytes);
 
 /**
- * Reads the ideal amount of data from the buffer stream.
+ * Transfers a queued internal storage chunk efficiently, not a pushed chunk or
+ * protocol record. Requires positive buffered byte length; a retained empty
+ * entry can still produce a zero-length result.
  * @param self The buffer stream.
  * @return A pointer to the buffer containing the read data.
  */
 sbuf_t *bufferstreamIdealRead(buffer_stream_t *self);
 
 /**
- * Views a byte at a valid position in the buffer stream.
+ * Views a byte at a valid position, independent of internal byte partitioning.
  *
  * The caller must provide a non-NULL stream and guarantee
  * `at < bufferstreamGetBufLen(self)`. Violating this precondition, or detecting
@@ -116,7 +117,7 @@ sbuf_t *bufferstreamIdealRead(buffer_stream_t *self);
 uint8_t bufferstreamViewByteAt(buffer_stream_t *self, size_t at);
 
 /**
- * Views a sequence of bytes at a specific position in the buffer stream.
+ * Views ordered bytes at a position, independent of internal byte partitioning.
  * @param self The buffer stream.
  * @param at The position to start viewing the bytes.
  * @param buf The buffer to store the viewed bytes.
@@ -136,7 +137,7 @@ static inline size_t bufferstreamGetBufLen(buffer_stream_t *self)
 }
 
 /**
- * Reads the full length of the buffer stream.
+ * Reads all buffered bytes, or returns NULL for zero logical bytes. This is not a record parser.
  * @param self The buffer stream.
  * @return A pointer to the buffer containing the read data.
  */
@@ -152,7 +153,7 @@ static inline sbuf_t *bufferstreamFullRead(buffer_stream_t *self)
 }
 
 /**
- * Checks if the buffer stream is empty.
+ * Checks logical byte emptiness. Retained empty entries still require cleanup.
  * @param self The buffer stream.
  * @return true if empty, false otherwise.
  */
@@ -162,6 +163,7 @@ static inline bool bufferstreamIsEmpty(buffer_stream_t *self)
     return self->size == 0;
 }
 
+/* Delimiter searches observe ordered bytes independently of internal chunk boundaries. */
 static inline bool bufferstreamFindCRLF(buffer_stream_t *stream, size_t *line_end)
 {
     if (bufferstreamGetBufLen(stream) < 2)

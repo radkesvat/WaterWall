@@ -12,7 +12,8 @@
 
 #include "PacketsToStream/structure.h"
 
-static int g_failures = 0;
+static int  g_failures         = 0;
+static bool g_separate_entries = false;
 
 static void require(bool cond, const char *msg)
 {
@@ -44,10 +45,12 @@ static uint32_t buildIpv4(uint8_t *dst, uint16_t total_len, uint8_t proto, uint8
 }
 
 // Pushes raw bytes into the stream, fragmenting them across pooled buffers of at most chunk bytes so
-// the parser is exercised against arbitrary stream fragmentation.
+// the parser is exercised with both merge-eligible and capacity-limited separate entries.
 static void pushBytes(buffer_stream_t *bs, buffer_pool_t *pool, const uint8_t *data, uint32_t len, uint32_t chunk)
 {
-    uint32_t off = 0;
+    uint32_t     off              = 0;
+    const size_t previous_entries = (size_t) bs_doublequeue_t_size(&bs->q);
+    size_t       pushed           = 0;
     if (chunk == 0)
     {
         chunk = len;
@@ -65,10 +68,24 @@ static void pushBytes(buffer_stream_t *bs, buffer_pool_t *pool, const uint8_t *d
         {
             n = cap;
         }
+        if (g_separate_entries)
+        {
+            sbufSetLength(b, cap - n);
+            sbufShiftRight(b, cap - n);
+            require(sbufGetMaximumWriteableSize(b) == n, "fragment fixture retained spare capacity");
+        }
         sbufSetLength(b, n);
         memoryCopy(sbufGetMutablePtr(b), data + off, n);
         bufferstreamPush(bs, b);
         off += n;
+        ++pushed;
+    }
+    /* Reads may combine storage and leave a residual tail with spare capacity.
+     * Starting empty proves the separate-entry geometry without constraining reads. */
+    if (g_separate_entries && previous_entries == 0)
+    {
+        require((size_t) bs_doublequeue_t_size(&bs->q) == previous_entries + pushed,
+                "fragment fixture did not retain each separate entry");
     }
 }
 
@@ -345,13 +362,18 @@ int main(void)
 
     buffer_stream_t bs = bufferstreamCreate(pool, 0);
 
-    testSinglePacket(&bs, pool);
-    testTwoConcatenated(&bs, pool);
-    testSplitPacket(&bs, pool);
-    testGarbagePrefixRecovers(&bs, pool);
-    testAdversarialNoCrash(&bs, pool);
-    testLooksValidWorstCase(&bs, pool);
-    testFuzzRecovers(&bs, pool);
+    for (unsigned layout = 0; layout < 2; ++layout)
+    {
+        g_separate_entries = layout != 0;
+        testSinglePacket(&bs, pool);
+        testTwoConcatenated(&bs, pool);
+        testSplitPacket(&bs, pool);
+        testGarbagePrefixRecovers(&bs, pool);
+        testAdversarialNoCrash(&bs, pool);
+        testLooksValidWorstCase(&bs, pool);
+        testFuzzRecovers(&bs, pool);
+        bufferstreamEmpty(&bs);
+    }
     testIsForwardable(pool);
 
     bufferstreamDestroy(&bs);

@@ -261,9 +261,38 @@ static void testOutputFramingAndDeadlines(void)
     require(first != NULL && second != NULL && sbufGetLength(first) == first_length &&
                 sbufGetLength(second) == second_length,
             "equalized FIFO deadlines did not drain both ready records in order");
+    require(memoryEqual(sbufGetRawPtr(first), wire, first_length) &&
+                memoryEqual(sbufGetRawPtr(second), wire + first_length, second_length),
+            "FIFO output records changed ciphertext bytes");
     bufferpoolReuseBuffer(pool.pool, first);
     bufferpoolReuseBuffer(pool.pool, second);
     require(tlsrecordshapingOutputQueueIsEmpty(&queue), "drained output queue did not become empty");
+
+    require(tlsrecordshapingOutputQueuePushMetadata(&queue, 20) && tlsrecordshapingOutputQueuePushMetadata(&queue, 40),
+            "failed to enqueue distinct deadlines");
+    require(tlsrecordshapingOutputQueueFeed(&queue, makeBuffer(pool.pool, wire, 3), 200, error), error);
+    require(tlsrecordshapingOutputQueueCount(&queue) == 0, "partial feed emitted a record");
+    require(tlsrecordshapingOutputQueueFeed(&queue, makeBuffer(pool.pool, wire + 3, total_length - 3), 200, error),
+            error);
+    require(tlsrecordshapingOutputQueueFinishFeed(&queue, error), error);
+    require(tlsrecordshapingOutputQueueCount(&queue) == 2, "distinct deadlines lost a record");
+    require(tlsrecordshapingOutputQueuePopReady(&queue, 219, false) == NULL, "early first deadline release");
+    first = tlsrecordshapingOutputQueuePopReady(&queue, 220, false);
+    require(first != NULL && sbufGetLength(first) == first_length &&
+                memoryEqual(sbufGetRawPtr(first), wire, first_length),
+            "first deadline changed ciphertext");
+    bufferpoolReuseBuffer(pool.pool, first);
+    require(tlsrecordshapingOutputQueuePopReady(&queue, 220, false) == NULL &&
+                tlsrecordshapingOutputQueuePopReady(&queue, 239, false) == NULL &&
+                tlsrecordshapingOutputQueueCount(&queue) == 1 &&
+                tlsrecordshapingOutputQueueBytes(&queue) == second_length,
+            "second record did not remain pending until its own deadline");
+    second = tlsrecordshapingOutputQueuePopReady(&queue, 240, false);
+    require(second != NULL && sbufGetLength(second) == second_length &&
+                memoryEqual(sbufGetRawPtr(second), wire + first_length, second_length),
+            "second deadline changed ciphertext");
+    bufferpoolReuseBuffer(pool.pool, second);
+    require(tlsrecordshapingOutputQueueIsEmpty(&queue), "distinct deadlines did not drain");
 
     tlsrecordshapingOutputQueueDestroy(&queue);
     destroyPool(&pool);
