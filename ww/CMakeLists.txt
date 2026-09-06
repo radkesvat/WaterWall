@@ -821,6 +821,18 @@ endif()
 if(PROJECT_REQUIRES_OPENSSL)
     if(NOT TARGET OpenSSL::SSL OR NOT TARGET OpenSSL::Crypto)
         set(WW_OPENSSL_CONFIGURE_OPTIONS ${OPENSSL_CONFIGURE_OPTIONS})
+        # OpenSSL compiles outside CMake's target graph. Configure its own
+        # static-library and assembly policy instead of flagging imported targets.
+        if((CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT ANDROID AND NOT ENABLE_TSAN)
+           OR (WIN32 AND MSVC AND CMAKE_C_COMPILER_ARCHITECTURE_ID MATCHES "^(X86|x64)$")
+           OR (WIN32 AND MINGW AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(AMD64|amd64|x86_64|i[3-6]86|x86)$"))
+            list(APPEND WW_OPENSSL_CONFIGURE_OPTIONS no-pic no-pie)
+            if(NOT MSVC)
+                # no-pic removes OpenSSL's PIC flags; also override toolchains
+                # that default to PIE code generation without explicit flags.
+                list(APPEND WW_OPENSSL_CONFIGURE_OPTIONS -fno-pic -fno-pie)
+            endif()
+        endif()
         if(WW_OPENSSL_CONFIGURE_OPTIONS)
             list(REMOVE_DUPLICATES WW_OPENSSL_CONFIGURE_OPTIONS)
         endif()
