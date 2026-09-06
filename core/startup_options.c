@@ -494,7 +494,7 @@ int waterwallStartupHandoffReceive(waterwall_handoff_t *handoff, bool restricted
     const int fd = handoff->fd;
     /* Take ownership immediately: every return below closes the descriptor. */
     handoff->fd = -1;
-    if (handoff->length > SIZE_MAX - 1 || handoff->length > INT64_MAX ||
+    if (handoff->length > SIZE_MAX - 1 || (uint64_t) handoff->length > INT64_MAX ||
         (restricted && handoff->length > WW_HOST_CORE_JSON_LIMIT))
     {
         fprintf(stderr, "Input snapshot exceeds the core input limit\n");
