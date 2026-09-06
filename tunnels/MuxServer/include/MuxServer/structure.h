@@ -97,8 +97,8 @@ struct muxserver_lstate_s
     struct muxserver_lstate_s *child_next;         // next child in the parent connection
     struct muxserver_lstate_s *detached_prev;      // child-only detached owner registry link
     struct muxserver_lstate_s *detached_next;      // child-only detached owner registry link
-    buffer_stream_t            read_stream;        // stream for reading data from the parent connection
-    buffer_queue_t             pending_child_data; // child-destined data queued while the child write side is paused
+    buffer_stream_t            read_stream;        // encoded parent bytes; parse exact MUX frames after coalescing
+    buffer_queue_t             pending_child_data; // decoded frames kept separate, including empty Data, while paused
     size_t    pending_child_queue_charge; // child: own retained allocation charge; parent: attached-child aggregate
     mux_cid_t connection_id;              // unique connection id, used for multiplexing
     muxserver_child_close_state_t close_state; // child: monotonic ordered-close/drain state

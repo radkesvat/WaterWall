@@ -343,6 +343,98 @@ static void destroyServerSibling(muxserver_fixture_t *fixture, line_t *child_l)
     lineDestroy(child_l);
 }
 
+static const uint32_t kBoundaryPayloadLengths[] = {0, 3, 0, 5, 0};
+static line_t        *g_boundary_child;
+static bool           g_boundary_empty_only;
+
+static void captureSeparateDataFrame(tunnel_t *t, line_t *l, sbuf_t *buf)
+{
+    twf_trace_t   *trace = twfTrace(t);
+    const uint32_t index = trace->next_payload;
+    twfRequire(l == g_boundary_child, "decoded Data reached the wrong child");
+    twfRequire(index < ARRAY_SIZE(kBoundaryPayloadLengths), "decoded an extra Data payload");
+    const uint32_t expected_length = g_boundary_empty_only ? 0 : kBoundaryPayloadLengths[index];
+    twfRequireEqualU32(sbufGetLength(buf), expected_length, "coalescing changed a decoded Data boundary");
+    for (uint32_t i = 0; i < expected_length; ++i)
+    {
+        twfRequire(sbufGetMutablePtr(buf)[i] == (uint8_t) (0xA0U + index), "decoded Data bytes changed");
+    }
+    twfNextPayload(t, l, buf);
+}
+
+static void caseCoalescedDataBoundaries(bool paused, bool empty_only)
+{
+    twfSetCase(empty_only ? "only empty Data survives a paused child queue"
+               : paused   ? "coalesced Data keeps boundaries through Pause and Resume"
+                          : "coalesced Data keeps boundaries on immediate delivery");
+
+    muxserver_fixture_t fixture;
+    fixtureSetup(&fixture, 128);
+    muxserver_lstate_t *parent_ls = lineGetState(fixture.parent_l, fixture.mux);
+    muxserver_lstate_t *child_ls  = lineGetState(fixture.child_l, fixture.mux);
+    child_ls->paused              = paused;
+    fixture.next->fnPayloadU      = captureSeparateDataFrame;
+    g_boundary_child              = fixture.child_l;
+    g_boundary_empty_only         = empty_only;
+
+    uint8_t  wire[128];
+    uint32_t wire_length   = 0;
+    uint32_t payload_bytes = 0;
+    for (uint32_t i = 0; i < ARRAY_SIZE(kBoundaryPayloadLengths); ++i)
+    {
+        const uint32_t length = empty_only ? 0 : kBoundaryPayloadLengths[i];
+        wire_length = appendInputFrame(wire, wire_length, kTestChildCid, kMuxFlagData, length, (uint8_t) (0xA0U + i));
+        payload_bytes += length;
+    }
+
+    const uint32_t fragments[] = {3, 1, wire_length - 4U};
+    uint32_t       offset      = 0;
+    for (uint32_t i = 0; i < ARRAY_SIZE(fragments); ++i)
+    {
+        sbuf_t *input = bufferpoolGetSmallBuffer(fixture.env.pool);
+        sbufSetLength(input, fragments[i]);
+        sbufWrite(input, wire + offset, fragments[i]);
+        offset += fragments[i];
+        muxserverTunnelUpStreamPayload(fixture.mux, fixture.parent_l, input);
+        if (i < 2)
+        {
+            twfRequireEqualU32(fixture.trace.next_payload, 0, "partial frame escaped the parent accumulator");
+        }
+        if (i == 1)
+        {
+            twfRequireEqualU32((uint32_t) bs_doublequeue_t_size(&parent_ls->read_stream.q),
+                               1,
+                               "the receive fixture did not exercise tail coalescing");
+        }
+    }
+    twfRequire(bufferstreamIsEmpty(&parent_ls->read_stream), "complete frames left undecoded parent bytes");
+
+    if (paused)
+    {
+        twfRequireEqualU32(fixture.trace.next_payload, 0, "Data was delivered through Pause");
+        twfRequireEqualU32((uint32_t) bufferqueueGetBufCount(&child_ls->pending_child_data),
+                           ARRAY_SIZE(kBoundaryPayloadLengths),
+                           "paused queue merged or dropped a Data frame");
+        twfRequireEqualU32((uint32_t) bufferqueueGetBufLen(&child_ls->pending_child_data),
+                           payload_bytes,
+                           "paused queue changed logical payload length");
+        twfRequire(child_ls->pending_child_queue_charge > 0, "empty Data escaped retained-allocation charging");
+        muxserverTunnelDownStreamResume(fixture.mux, fixture.child_l);
+    }
+
+    twfRequireEqualU32(fixture.trace.next_payload,
+                       ARRAY_SIZE(kBoundaryPayloadLengths),
+                       "not every Data frame was delivered separately");
+    twfRequireEqualU32(fixture.trace.next_payload_bytes, payload_bytes, "Data delivery changed the byte count");
+    twfRequireEqualU32(
+        (uint32_t) bufferqueueGetBufCount(&child_ls->pending_child_data), 0, "Resume did not drain empty Data entries");
+    requireEqualCharge(child_ls->pending_child_queue_charge, 0, "drain retained a child allocation charge");
+    requireEqualCharge(parent_ls->pending_child_queue_charge, 0, "drain retained a parent allocation charge");
+
+    g_boundary_child = NULL;
+    fixtureTeardown(&fixture);
+}
+
 static void sendParsedTinyServerData(muxserver_fixture_t *fixture, uint32_t payload_length)
 {
     const uint32_t batch_length = (2U * kMuxFrameLength) + payload_length + 1U;
@@ -855,6 +947,10 @@ int main(void)
     caseDownstreamFraming(kMuxMaxDataFrameLength + 1U, 2, "a payload one byte over the limit becomes two frames");
     caseDownstreamFraming((3U * kMuxMaxDataFrameLength) - 5U, 3, "a payload spanning three frames is fragmented");
 
+    caseCoalescedDataBoundaries(false, false);
+    caseCoalescedDataBoundaries(true, false);
+    caseCoalescedDataBoundaries(true, true);
+    caseDownstreamFraming(0, 1, "an empty child payload produces one Data frame");
     caseLargeCompleteBatchIsDrained();
     caseParsedTinyFrameUsesAllocationCharge(0, "MuxServer charges parsed empty Data and closes at the charge limit");
     caseParsedTinyFrameUsesAllocationCharge(1, "MuxServer charges parsed one-byte Data and closes at the charge limit");

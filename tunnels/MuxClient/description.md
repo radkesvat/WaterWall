@@ -1,5 +1,5 @@
 <!--
-Documentation version: 157
+Documentation version: 158
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/MuxClient.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/MuxClient.mdx, and all files must keep the same documentation version.
 -->
 
@@ -359,6 +359,40 @@ finishes attached children toward their source owners, which destroy the borrowe
 borrowed children may outlive the MUX worker hook; their state and exact queue accounting remain available until
 their source owners send Finish. Final instance destruction requires both ownership and detached accounting to be
 empty. Ordinary connection loss and ordered peer Close retain their normal backpressure-driven drain behavior.
+
+## Frame boundaries and UDP
+
+The parent receive accumulator is a byte stream and may coalesce transport
+buffers. The decoder reads exactly one MUX header and its declared payload at a
+time. For an open child, each decoded `Data` frame is delivered as one child
+`Payload` callback. Paused-child queues keep those decoded frames as separate
+buffer entries and drain them in FIFO order on Resume.
+
+Zero-length child payloads are valid: the encoder emits a `Data` frame with an
+eight-byte header and no body. The decoder delivers an empty payload; this is
+neither EOF nor `Close`. Empty frames remain separate through paused-child
+queues even when their total logical byte count is zero. They still incur the
+existing retained-allocation charge and do not count as nonempty idle activity.
+
+MUX preserves its wire-frame boundaries, not every original callback or UDP
+datagram boundary. Both encoders put a payload of at most `65,527` bytes in one
+`Data` frame and split larger payloads into several frames. The receiver does
+not reassemble the original callback boundary. A transform on the child side
+can also change payload boundaries before framing or after decoding.
+
+For UDP traffic, use explicit `UdpOverTcpClient`/`UdpOverTcpServer` framing
+around the byte-stream portion of the chain rather than relying on an unusual
+direct UDP/MUX arrangement:
+
+```text
+client: UdpListener -> UdpOverTcpClient -> MuxClient -> TcpConnector
+server: TcpListener -> MuxServer -> UdpOverTcpServer -> UdpConnector
+```
+
+Direct UDP adapters next to MUX can retain datagrams that arrive intact and fit
+one `Data` frame, but this is not general boundary protection across arbitrary
+chains. The UDP framing pair has its own limits: currently it requires nonempty
+datagrams. Its restriction does not change MUX's support for empty `Data`.
 
 ## Node Metadata
 

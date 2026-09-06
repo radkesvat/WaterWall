@@ -1,0 +1,39 @@
+{
+  "name": "mux-udp-boundaries-probe",
+  "nodes": [
+    {
+      "name": "udp-ingress",
+      "type": "UdpListener",
+      "settings": {"address": "127.0.0.1", "port": 26790},
+      "next": "mux-client"
+    },
+    {
+      "name": "mux-client",
+      "type": "MuxClient",
+      "settings": {"mode": "fixed-connections-count", "per-worker-connections-count": 1},
+      "next": "tcp-out"
+    },
+    {
+      "name": "tcp-out",
+      "type": "TcpConnector",
+      "settings": {"address": "127.0.0.1", "port": 26791, "nodelay": true, "fastopen": false}
+    },
+    {
+      "name": "tcp-in",
+      "type": "TcpListener",
+      "settings": {"address": "127.0.0.1", "port": 26791, "nodelay": true},
+      "next": "mux-server"
+    },
+    {
+      "name": "mux-server",
+      "type": "MuxServer",
+      "settings": {"memory-high-watermark-percent": 99, "memory-low-watermark-percent": 98, "memory-reserve": 0},
+      "next": "udp-egress"
+    },
+    {
+      "name": "udp-egress",
+      "type": "UdpConnector",
+      "settings": {"address": "127.0.0.1", "port": 26792}
+    }
+  ]
+}

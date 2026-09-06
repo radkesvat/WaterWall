@@ -76,8 +76,8 @@ struct muxclient_lstate_s
     struct muxclient_lstate_s *parent;             // the parent  f is_child is true
     struct muxclient_lstate_s *child_prev;         // previous child in the parent connection
     struct muxclient_lstate_s *child_next;         // next child in the parent connection
-    buffer_stream_t            read_stream;        // stream for reading data from the parent connection
-    buffer_queue_t             pending_child_data; // child-destined data queued while the child write side is paused
+    buffer_stream_t            read_stream;        // encoded parent bytes; parse exact MUX frames after coalescing
+    buffer_queue_t             pending_child_data; // decoded frames kept separate, including empty Data, while paused
     size_t    pending_child_queue_charge; // child: own retained allocation charge; parent: attached-child aggregate
     uint64_t  creation_epoch;             // epoch of the connection creation, used for concurrency mode timer
     mux_cid_t connection_id;              // unique connection id, used for multiplexing

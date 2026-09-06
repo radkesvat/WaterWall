@@ -67,6 +67,8 @@ WW_EXPORT bool muxTryComputeEncodedLength(uint32_t payload_length, bool prepend_
 
 /**
  * Read and decode one complete frame without consuming an incomplete frame.
+ * Parent stream chunks may split or combine frames. Extraction uses the wire
+ * length, including the eight-byte header when a Data payload is empty.
  *
  * @return a pooled buffer containing the complete wire frame, or NULL when the
  *         stream does not yet hold the complete header and payload.
@@ -75,6 +77,9 @@ WW_EXPORT sbuf_t *muxReadCompleteFrame(buffer_stream_t *stream, mux_frame_t *fra
 
 /**
  * Consume one child payload and encode it as one or more MUX DATA frames.
+ * An empty payload produces one zero-length DATA frame. Payloads larger than
+ * kMuxMaxDataFrameLength are split; decoding does not restore their original
+ * callback boundary. MUX framing is not a general datagram-framing contract.
  *
  * The input buffer is consumed on every result. On in-place success,
  * @p encoded_out receives @p input. On expanded success it receives a new

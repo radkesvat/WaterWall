@@ -1,5 +1,5 @@
 <!--
-Documentation version: 157
+Documentation version: 158
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/MuxServer.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/MuxServer.mdx, and all files must keep the same documentation version.
 -->
 
@@ -233,6 +233,12 @@ Frame flags:
 - `3`: `FlowResume`
 - `4`: `Data`
 
+One MUX `Data` frame carries at most `65,527` payload bytes. The shared encoder
+splits a larger downstream child payload into consecutive `Data` frames in byte
+order. The complete encoding, including all headers, must fit in `uint32_t`;
+an unrepresentable encoding recycles the input and closes only that child.
+The receiver does not restore the original callback boundary after this split.
+
 ### Data flow direction
 
 - Parent transport to child: previous node -> `MuxServer` -> next node
@@ -314,6 +320,40 @@ queue charge and live reservation exactly once, finishes toward the child destin
 A borrowed parent can remain alive with valid empty MUX state until its actual owner sends Finish later. The idle
 table is destroyed on its worker after drain; aggregate live-child checks run after all workers have stopped.
 Ordinary connection loss, idle expiry, and ordered peer Close keep their normal runtime behavior.
+
+## Frame boundaries and UDP
+
+The parent receive accumulator is a byte stream and may coalesce transport
+buffers. The decoder reads exactly one MUX header and its declared payload at a
+time. For an open child, each decoded `Data` frame is delivered as one child
+`Payload` callback. Paused-child queues keep those decoded frames as separate
+buffer entries and drain them in FIFO order on Resume.
+
+Zero-length child payloads are valid: the encoder emits a `Data` frame with an
+eight-byte header and no body. The decoder delivers an empty payload; this is
+neither EOF nor `Close`. Empty frames remain separate through paused-child
+queues even when their total logical byte count is zero. They still incur the
+existing retained-allocation charge and do not count as nonempty idle activity.
+
+MUX preserves its wire-frame boundaries, not every original callback or UDP
+datagram boundary. Both encoders put a payload of at most `65,527` bytes in one
+`Data` frame and split larger payloads into several frames. The receiver does
+not reassemble the original callback boundary. A transform on the child side
+can also change payload boundaries before framing or after decoding.
+
+For UDP traffic, use explicit `UdpOverTcpClient`/`UdpOverTcpServer` framing
+around the byte-stream portion of the chain rather than relying on an unusual
+direct UDP/MUX arrangement:
+
+```text
+client: UdpListener -> UdpOverTcpClient -> MuxClient -> TcpConnector
+server: TcpListener -> MuxServer -> UdpOverTcpServer -> UdpConnector
+```
+
+Direct UDP adapters next to MUX can retain datagrams that arrive intact and fit
+one `Data` frame, but this is not general boundary protection across arbitrary
+chains. The UDP framing pair has its own limits: currently it requires nonempty
+datagrams. Its restriction does not change MUX's support for empty `Data`.
 
 ## Node Metadata
 

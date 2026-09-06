@@ -344,6 +344,8 @@ static void testEncodingAndOwnership(buffer_pool_t *pool)
     require(reacquired == original_input, "failed encode did not recycle its input exactly once");
     bufferpoolReuseBuffer(pool, reacquired);
 
+    testEncodeCase(pool, 0, false, 1);
+    testEncodeCase(pool, 0, true, 1);
     testEncodeCase(pool, kMuxMaxDataFrameLength - 1U, false, 1);
     testEncodeCase(pool, kMuxMaxDataFrameLength, true, 1);
     testEncodeCase(pool, kMuxMaxDataFrameLength + 1U, false, 2);

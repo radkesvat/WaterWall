@@ -199,6 +199,7 @@ void muxserverTunnelUpStreamPayload(tunnel_t *t, line_t *parent_l, sbuf_t *buf)
         return;
     }
 
+    // Parent storage may coalesce; exact frame reads below restore the wire boundaries, including empty Data.
     bufferstreamPush(&(parent_ls->read_stream), buf);
 
     while (true)
