@@ -72,6 +72,33 @@ def test_version_arguments(binary, run_dir):
         require("Waterwall version " in result.stdout, f"version alias {argument!r} produced no version\n{result.stdout}")
 
 
+def test_input_error_versions(binary, run_dir):
+    version_line = run_waterwall(binary, run_dir, ["--version"]).stdout.strip()
+    missing_path = run_dir / "missing core.json"
+    for restricted in (False, True):
+        arguments = ["--restricted-config"] if restricted else []
+        cases = (
+            ("missing default input", arguments, UNSET, "Could not open core settings file"),
+            ("missing CLI input", [*arguments, f"--config:{missing_path}"], UNSET,
+             "Could not open core settings file"),
+            ("missing environment input", arguments, str(missing_path), "Could not open core settings file"),
+            ("empty stdin", [*arguments, "--config:stdin"], UNSET, "Could not read core settings JSON"),
+        )
+        for name, args, environment_input, error in cases:
+            result = run_waterwall(binary, run_dir, args, environment_input=environment_input)
+            case_name = f"{name}, restricted={restricted}"
+            expect_error(result, error, case_name)
+            require(result.stdout.splitlines()[0] == version_line,
+                    f"{case_name}: version must precede the input error\n{result.stdout}")
+            require(result.stdout.splitlines().count(version_line) == 1,
+                    f"{case_name}: version must appear exactly once\n{result.stdout}")
+
+    result = run_waterwall(binary, run_dir, [f"--config:{run_dir}"])
+    expect_error(result, "Could not read core settings file", "directory input")
+    require(result.stdout.splitlines()[0] == version_line,
+            f"directory input: version must precede the read error\n{result.stdout}")
+
+
 def test_file_selection(binary, run_dir):
     default_file = run_dir / "core.json"
     relative_file = run_dir / "relative core input.json"
@@ -184,6 +211,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix="waterwall-core-input-") as temp_dir:
         run_dir = Path(temp_dir)
         test_version_arguments(binary, run_dir)
+        test_input_error_versions(binary, run_dir)
         test_file_selection(binary, run_dir)
         test_stdin_selection(binary, run_dir)
         test_invalid_inputs(binary, run_dir)

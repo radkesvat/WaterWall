@@ -166,11 +166,13 @@ waterwall_startup_arguments_result_e waterwallStartupOptionsParse(int argc, char
 static void reportOpenFailure(const char *path, int error_number)
 {
     const char *reason = error_number != 0 ? strerror(error_number) : "input/output error";
+    fprintf(stderr, "Waterwall version %s\n", WW_STR(WATERWALL_VERSION));
     fprintf(stderr, "Could not open core settings file \"%s\": %s\n", path, reason);
 }
 
 static void reportReadFailure(const waterwall_startup_options_t *options, const char *reason)
 {
+    fprintf(stderr, "Waterwall version %s\n", WW_STR(WATERWALL_VERSION));
     if (options->core_json_from_stdin)
     {
         fprintf(stderr, "Could not read core settings JSON from standard input: %s\n", reason);
