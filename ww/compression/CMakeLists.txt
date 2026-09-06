@@ -1,0 +1,5 @@
+add_library(ww_xz_decoder STATIC xz_decoder.c)
+add_library(WaterWall::XZDecoder ALIAS ww_xz_decoder)
+target_include_directories(ww_xz_decoder PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
+target_link_libraries(ww_xz_decoder PRIVATE XZEmbedded::XZEmbedded)
+target_compile_features(ww_xz_decoder PUBLIC c_std_99)

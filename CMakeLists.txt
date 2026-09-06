@@ -422,6 +422,11 @@ target_include_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/ww)
 #--------------------------------------------------------------------------------
 # WW Library
 #--------------------------------------------------------------------------------
+# Independent vendored library: consumers link it directly, not through ww.
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/ww/vendor/xz-embedded)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/ww/compression)
+target_link_libraries(Waterwall XZEmbedded::XZEmbedded WaterWall::XZDecoder)
+
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/ww)
 target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/ww)
 target_include_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/ww)
@@ -1230,6 +1235,21 @@ endif()
 if(BUILD_TESTING AND WW_BUILD_UNIT_TESTS AND
    NOT (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING))
   include("${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests/portable_contract_tests.cmake")
+endif()
+
+# A direct consumer verifies that XZ needs neither ww nor its public headers.
+if(BUILD_TESTING AND WW_BUILD_UNIT_TESTS)
+  add_executable(xz_embedded_test tests/unittests/xz_embedded_test.c)
+  target_link_libraries(xz_embedded_test PRIVATE XZEmbedded::XZEmbedded)
+  set_target_properties(xz_embedded_test PROPERTIES DISABLE_PRECOMPILE_HEADERS ON)
+  add_test(NAME waterwall.xz_embedded_unit COMMAND xz_embedded_test)
+  set_tests_properties(waterwall.xz_embedded_unit PROPERTIES
+    TIMEOUT 30 LABELS "unit;vendor;xz;portable")
+  if(TARGET waterwall_unit_tests)
+    add_dependencies(waterwall_unit_tests xz_embedded_test)
+  elseif(TARGET waterwall_platform_unit_tests)
+    add_dependencies(waterwall_platform_unit_tests xz_embedded_test)
+  endif()
 endif()
 
 # Windows does not add the tests/ subtree, so register the focused interface-name

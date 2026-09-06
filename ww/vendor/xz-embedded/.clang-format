@@ -1,0 +1,3 @@
+BasedOnStyle: InheritParentConfig
+# Upstream private headers depend on their original include order.
+SortIncludes: Never
