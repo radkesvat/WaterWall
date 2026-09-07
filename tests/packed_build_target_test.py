@@ -12,6 +12,15 @@ import subprocess
 import tempfile
 
 
+def check_windows_exports(data, name):
+    pe = struct.unpack_from('<I', data, 60)[0]
+    optional = pe + 24
+    magic = struct.unpack_from('<H', data, optional)[0]
+    directories = optional + (112 if magic == 0x20b else 96)
+    if any(struct.unpack_from('<II', data, directories)):
+        raise AssertionError(f'{name} must not export symbols (including cJSON)')
+
+
 def check_windows_launcher(data):
     pe = struct.unpack_from('<I', data, 60)[0]
     if data[:2] != b'MZ' or data[pe:pe+4] != b'PE\0\0':
@@ -19,6 +28,7 @@ def check_windows_launcher(data):
     optional = pe + 24
     magic = struct.unpack_from('<H', data, optional)[0]
     directories = optional + (112 if magic == 0x20b else 96)
+    check_windows_exports(data, 'launcher')
     flags = struct.unpack_from('<H', data, optional+70)[0]
     if flags & 0x140 != 0x140:
         raise AssertionError('launcher must retain ASLR and DEP')
@@ -93,6 +103,7 @@ def main():
         if args.windows:
             check_windows_launcher(launcher.read_bytes())
             inner = application.read_bytes()
+            check_windows_exports(inner, 'application')
             inner_pe = struct.unpack_from('<I', inner, 60)[0]
             if struct.unpack_from('<H', inner, inner_pe+24+70)[0] & 0x60:
                 raise AssertionError('application lost its non-ASLR policy')
@@ -101,6 +112,11 @@ def main():
             [args.readelf, '--wide', '--sections', str(launcher)], text=True)
         if 'SYMTAB' in sections or re.search(r'\s\.(?:z?debug|stab)', sections):
             raise AssertionError('packed launcher still contains static symbols or debug information')
+        for executable in (launcher, application):
+            symbols = subprocess.check_output(
+                [args.readelf, '--wide', '--dyn-syms', str(executable)], text=True)
+            if re.search(r'\bcJSON_\w+', symbols):
+                raise AssertionError(f'{executable.name} exposes cJSON dynamic symbols')
 
     build()
     if not all(path.is_file() for path in (launcher, application, payload)):

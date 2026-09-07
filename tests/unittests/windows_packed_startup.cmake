@@ -4,7 +4,7 @@ add_executable(windows_packed_startup_test
   "${WATERWALL_SOURCE_DIR}/core/startup_options.c"
   "${WATERWALL_SOURCE_DIR}/ww/node_builder/config_lexical.c"
   "${WATERWALL_SOURCE_DIR}/ww/vendor/cjson/cJSON.c")
-target_compile_definitions(windows_packed_startup_test PRIVATE _WIN32_WINNT=0x0600 WW_CJSON_CRT_ALLOCATOR=1)
+target_compile_definitions(windows_packed_startup_test PRIVATE _WIN32_WINNT=0x0600 WW_CJSON_CRT_ALLOCATOR=1 CJSON_HIDE_SYMBOLS)
 target_include_directories(windows_packed_startup_test PRIVATE
   "${WATERWALL_SOURCE_DIR}/core" "${WATERWALL_SOURCE_DIR}/ww/node_builder"
   "${WATERWALL_SOURCE_DIR}/ww/vendor/cjson")
