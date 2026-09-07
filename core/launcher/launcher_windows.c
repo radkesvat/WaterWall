@@ -2,14 +2,299 @@
 #define _WIN32_WINNT 0x0600
 #endif
 #include "launcher.h"
+#include "lazy_names.h"
 #include "packed_payload.h"
 #include "startup_windows.h"
 #include "ww_xz_decoder.h"
 
 #include <sddl.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <wchar.h>
+
+#ifndef LOAD_LIBRARY_SEARCH_SYSTEM32
+#define LOAD_LIBRARY_SEARCH_SYSTEM32 0x00000800
+#endif
+
+static inline uint8_t reverse_bits(uint8_t x)
+{
+    x = (uint8_t) (((x & 0xF0) >> 4) | ((x & 0x0F) << 4));
+    x = (uint8_t) (((x & 0xCC) >> 2) | ((x & 0x33) << 2));
+    x = (uint8_t) (((x & 0xAA) >> 1) | ((x & 0x55) << 1));
+
+    return x;
+}
+
+static inline void transform(uint8_t *data, size_t length)
+{
+    const uint8_t key = 0xA5; /* 10100101 */
+
+    for (size_t i = 0; i < length; i++)
+    {
+        data[i] = reverse_bits(data[i]) ^ key;
+    }
+}
+
+/* Lazy loading subsystem conceptually modeled on Go's internal Windows syscall
+ * lazy-load architecture (LazyDLL / LazyProc), resolving system libraries from
+ * System32 and procedures on first demand. Names are stored transformed and
+ * decrypted lazily in local stack buffers at resolution time. */
+typedef struct lazy_dll_s
+{
+    const uint8_t   *transf_name;
+    size_t           len;
+    volatile HMODULE handle;
+} lazy_dll_t;
+
+typedef struct lazy_proc_s
+{
+    lazy_dll_t    *dll;
+    const uint8_t *transf_name;
+    size_t         len;
+    void *volatile address;
+} lazy_proc_t;
+
+static void *lazyProcAddress(lazy_proc_t *proc)
+{
+    void *addr = proc->address;
+    if (addr != NULL)
+        return addr;
+
+    HMODULE module = proc->dll->handle;
+    if (module == NULL)
+    {
+        char    dll_abuf[64];
+        wchar_t dll_wbuf[64];
+        if (proc->dll->len == 0 || proc->dll->len >= sizeof(dll_abuf))
+            return NULL;
+
+        memcpy(dll_abuf, proc->dll->transf_name, proc->dll->len);
+        transform((uint8_t *) dll_abuf, proc->dll->len);
+        dll_abuf[proc->dll->len] = '\0';
+
+        for (size_t i = 0; i <= proc->dll->len; i++)
+            dll_wbuf[i] = (wchar_t) (unsigned char) dll_abuf[i];
+
+        module = GetModuleHandleW(dll_wbuf);
+        if (module == NULL)
+            module = LoadLibraryExW(dll_wbuf, NULL, LOAD_LIBRARY_SEARCH_SYSTEM32);
+        if (module == NULL)
+            module = LoadLibraryW(dll_wbuf);
+
+        SecureZeroMemory(dll_abuf, sizeof(dll_abuf));
+        SecureZeroMemory(dll_wbuf, sizeof(dll_wbuf));
+
+        if (module == NULL)
+            return NULL;
+
+        HMODULE existing =
+            (HMODULE) InterlockedCompareExchangePointer((void *volatile *) &proc->dll->handle, module, NULL);
+        if (existing != NULL && existing != module)
+        {
+            FreeLibrary(module);
+            module = existing;
+        }
+    }
+
+    char proc_abuf[128];
+    if (proc->len == 0 || proc->len >= sizeof(proc_abuf))
+        return NULL;
+
+    memcpy(proc_abuf, proc->transf_name, proc->len);
+    transform((uint8_t *) proc_abuf, proc->len);
+    proc_abuf[proc->len] = '\0';
+
+    FARPROC proc_address = GetProcAddress(module, proc_abuf);
+    SecureZeroMemory(proc_abuf, sizeof(proc_abuf));
+
+    if (proc_address == NULL)
+        return NULL;
+
+    InterlockedCompareExchangePointer(&proc->address, (void *) (uintptr_t) proc_address, NULL);
+    return (void *) (uintptr_t) proc_address;
+}
+
+static lazy_dll_t lazy_kernel32 = {transf_kernel32, sizeof(transf_kernel32), NULL};
+static lazy_dll_t lazy_advapi32 = {transf_advapi32, sizeof(transf_advapi32), NULL};
+
+#define LAZY_WRAPPER(ret_type, default_ret, dll, name, params, args)                                                   \
+    static lazy_proc_t lazy_proc_##name = {&dll, transf_##name, sizeof(transf_##name), NULL};                          \
+    typedef ret_type(WINAPI *lazy_pfn_##name) params;                                                                  \
+    static inline ret_type lazy_##name params                                                                          \
+    {                                                                                                                  \
+        lazy_pfn_##name fn = (lazy_pfn_##name) lazyProcAddress(&lazy_proc_##name);                                     \
+        if (fn == NULL)                                                                                                \
+        {                                                                                                              \
+            SetLastError(ERROR_PROC_NOT_FOUND);                                                                        \
+            return default_ret;                                                                                        \
+        }                                                                                                              \
+        return fn args;                                                                                                \
+    }
+
+#define LAZY_WRAPPER_VOID(dll, name, params, args)                                                                     \
+    static lazy_proc_t lazy_proc_##name = {&dll, transf_##name, sizeof(transf_##name), NULL};                          \
+    typedef void(WINAPI * lazy_pfn_##name) params;                                                                     \
+    static inline void lazy_##name params                                                                              \
+    {                                                                                                                  \
+        lazy_pfn_##name fn = (lazy_pfn_##name) lazyProcAddress(&lazy_proc_##name);                                     \
+        if (fn != NULL)                                                                                                \
+            fn args;                                                                                                   \
+    }
+
+LAZY_WRAPPER(BOOL, FALSE, lazy_kernel32, SetConsoleCtrlHandler, (PHANDLER_ROUTINE HandlerRoutine, BOOL Add),
+             (HandlerRoutine, Add))
+LAZY_WRAPPER_VOID(lazy_kernel32, Sleep, (DWORD dwMilliseconds), (dwMilliseconds))
+LAZY_WRAPPER(DWORD, 0, lazy_kernel32, GetModuleFileNameW, (HMODULE hModule, LPWSTR lpFilename, DWORD nSize),
+             (hModule, lpFilename, nSize))
+LAZY_WRAPPER(HANDLE, NULL, lazy_kernel32, CreateFileMappingW,
+             (HANDLE hFile, LPSECURITY_ATTRIBUTES lpFileMappingAttributes, DWORD flProtect, DWORD dwMaximumSizeHigh,
+              DWORD dwMaximumSizeLow, LPCWSTR lpName),
+             (hFile, lpFileMappingAttributes, flProtect, dwMaximumSizeHigh, dwMaximumSizeLow, lpName))
+LAZY_WRAPPER(LPVOID, NULL, lazy_kernel32, MapViewOfFile,
+             (HANDLE hFileMappingObject, DWORD dwDesiredAccess, DWORD dwFileOffsetHigh, DWORD dwFileOffsetLow,
+              SIZE_T dwNumberOfBytesToMap),
+             (hFileMappingObject, dwDesiredAccess, dwFileOffsetHigh, dwFileOffsetLow, dwNumberOfBytesToMap))
+LAZY_WRAPPER(BOOL, FALSE, lazy_kernel32, UnmapViewOfFile, (LPCVOID lpBaseAddress), (lpBaseAddress))
+LAZY_WRAPPER(BOOL, FALSE, lazy_kernel32, DuplicateHandle,
+             (HANDLE hSourceProcessHandle, HANDLE hSourceHandle, HANDLE hTargetProcessHandle, LPHANDLE lpTargetHandle,
+              DWORD dwDesiredAccess, BOOL bInheritHandle, DWORD dwOptions),
+             (hSourceProcessHandle, hSourceHandle, hTargetProcessHandle, lpTargetHandle, dwDesiredAccess,
+              bInheritHandle, dwOptions))
+LAZY_WRAPPER(BOOL, FALSE, lazy_kernel32, CloseHandle, (HANDLE hObject), (hObject))
+LAZY_WRAPPER(HLOCAL, (HLOCAL) hMem, lazy_kernel32, LocalFree, (HLOCAL hMem), (hMem))
+LAZY_WRAPPER(HANDLE, INVALID_HANDLE_VALUE, lazy_kernel32, CreateFileW,
+             (LPCWSTR lpFileName, DWORD dwDesiredAccess, DWORD dwShareMode, LPSECURITY_ATTRIBUTES lpSecurityAttributes,
+              DWORD dwCreationDisposition, DWORD dwFlagsAndAttributes, HANDLE hTemplateFile),
+             (lpFileName, dwDesiredAccess, dwShareMode, lpSecurityAttributes, dwCreationDisposition,
+              dwFlagsAndAttributes, hTemplateFile))
+LAZY_WRAPPER(DWORD, 0, lazy_kernel32, GetFinalPathNameByHandleW,
+             (HANDLE hFile, LPWSTR lpszFilePath, DWORD cchFilePath, DWORD dwFlags),
+             (hFile, lpszFilePath, cchFilePath, dwFlags))
+LAZY_WRAPPER(BOOL, FALSE, lazy_kernel32, GetVolumeInformationW,
+             (LPCWSTR lpRootPathName, LPWSTR lpVolumeNameBuffer, DWORD nVolumeNameSize, LPDWORD lpVolumeSerialNumber,
+              LPDWORD lpMaximumComponentLength, LPDWORD lpFileSystemFlags, LPWSTR lpFileSystemNameBuffer,
+              DWORD nFileSystemNameSize),
+             (lpRootPathName, lpVolumeNameBuffer, nVolumeNameSize, lpVolumeSerialNumber, lpMaximumComponentLength,
+              lpFileSystemFlags, lpFileSystemNameBuffer, nFileSystemNameSize))
+LAZY_WRAPPER(BOOL, FALSE, lazy_kernel32, GetFileInformationByHandle,
+             (HANDLE hFile, LPBY_HANDLE_FILE_INFORMATION lpFileInformation), (hFile, lpFileInformation))
+LAZY_WRAPPER(int, 0, lazy_kernel32, WideCharToMultiByte,
+             (UINT CodePage, DWORD dwFlags, LPCWCH lpWideCharStr, int cchWideChar, LPSTR lpMultiByteStr,
+              int cbMultiByte, LPCCH lpDefaultChar, LPBOOL lpUsedDefaultChar),
+             (CodePage, dwFlags, lpWideCharStr, cchWideChar, lpMultiByteStr, cbMultiByte, lpDefaultChar,
+              lpUsedDefaultChar))
+LAZY_WRAPPER(BOOL, FALSE, lazy_kernel32, RemoveDirectoryW, (LPCWSTR lpPathName), (lpPathName))
+LAZY_WRAPPER(BOOL, FALSE, lazy_kernel32, DeleteFileW, (LPCWSTR lpFileName), (lpFileName))
+LAZY_WRAPPER(HANDLE, INVALID_HANDLE_VALUE, lazy_kernel32, FindFirstFileW,
+             (LPCWSTR lpFileName, LPWIN32_FIND_DATAW lpFindFileData), (lpFileName, lpFindFileData))
+LAZY_WRAPPER(BOOL, FALSE, lazy_kernel32, FindNextFileW, (HANDLE hFindFile, LPWIN32_FIND_DATAW lpFindFileData),
+             (hFindFile, lpFindFileData))
+LAZY_WRAPPER(BOOL, FALSE, lazy_kernel32, FindClose, (HANDLE hFindFile), (hFindFile))
+LAZY_WRAPPER(BOOL, FALSE, lazy_kernel32, ReadFile,
+             (HANDLE hFile, LPVOID lpBuffer, DWORD nNumberOfBytesToRead, LPDWORD lpNumberOfBytesRead,
+              LPOVERLAPPED lpOverlapped),
+             (hFile, lpBuffer, nNumberOfBytesToRead, lpNumberOfBytesRead, lpOverlapped))
+LAZY_WRAPPER(BOOL, FALSE, lazy_kernel32, WriteFile,
+             (HANDLE hFile, LPCVOID lpBuffer, DWORD nNumberOfBytesToWrite, LPDWORD lpNumberOfBytesWritten,
+              LPOVERLAPPED lpOverlapped),
+             (hFile, lpBuffer, nNumberOfBytesToWrite, lpNumberOfBytesWritten, lpOverlapped))
+LAZY_WRAPPER(BOOL, FALSE, lazy_kernel32, FlushFileBuffers, (HANDLE hFile), (hFile))
+LAZY_WRAPPER(DWORD, 0, lazy_kernel32, GetTempPathW, (DWORD nBufferLength, LPWSTR lpBuffer), (nBufferLength, lpBuffer))
+LAZY_WRAPPER(BOOL, FALSE, lazy_kernel32, QueryPerformanceCounter, (LARGE_INTEGER * lpPerformanceCount),
+             (lpPerformanceCount))
+LAZY_WRAPPER(DWORD, 0, lazy_kernel32, GetCurrentProcessId, (VOID), ())
+LAZY_WRAPPER(BOOL, FALSE, lazy_kernel32, CreateDirectoryW,
+             (LPCWSTR lpPathName, LPSECURITY_ATTRIBUTES lpSecurityAttributes), (lpPathName, lpSecurityAttributes))
+LAZY_WRAPPER(HANDLE, INVALID_HANDLE_VALUE, lazy_kernel32, GetStdHandle, (DWORD nStdHandle), (nStdHandle))
+LAZY_WRAPPER(BOOL, FALSE, lazy_kernel32, InitializeProcThreadAttributeList,
+             (LPPROC_THREAD_ATTRIBUTE_LIST lpAttributeList, DWORD dwAttributeCount, DWORD dwFlags, PSIZE_T lpSize),
+             (lpAttributeList, dwAttributeCount, dwFlags, lpSize))
+LAZY_WRAPPER(BOOL, FALSE, lazy_kernel32, UpdateProcThreadAttribute,
+             (LPPROC_THREAD_ATTRIBUTE_LIST lpAttributeList, DWORD dwFlags, DWORD_PTR Attribute, PVOID lpValue,
+              SIZE_T cbSize, PVOID lpPreviousValue, PSIZE_T lpReturnSize),
+             (lpAttributeList, dwFlags, Attribute, lpValue, cbSize, lpPreviousValue, lpReturnSize))
+LAZY_WRAPPER_VOID(lazy_kernel32, DeleteProcThreadAttributeList, (LPPROC_THREAD_ATTRIBUTE_LIST lpAttributeList),
+                  (lpAttributeList))
+LAZY_WRAPPER(HANDLE, NULL, lazy_kernel32, CreateJobObjectW, (LPSECURITY_ATTRIBUTES lpJobAttributes, LPCWSTR lpName),
+             (lpJobAttributes, lpName))
+LAZY_WRAPPER(BOOL, FALSE, lazy_kernel32, SetInformationJobObject,
+             (HANDLE hJob, JOBOBJECTINFOCLASS JobObjectInformationClass, LPVOID lpJobObjectInformation,
+              DWORD cbJobObjectInformationLength),
+             (hJob, JobObjectInformationClass, lpJobObjectInformation, cbJobObjectInformationLength))
+LAZY_WRAPPER(BOOL, FALSE, lazy_kernel32, CreateProcessW,
+             (LPCWSTR lpApplicationName, LPWSTR lpCommandLine, LPSECURITY_ATTRIBUTES lpProcessAttributes,
+              LPSECURITY_ATTRIBUTES lpThreadAttributes, BOOL bInheritHandles, DWORD dwCreationFlags,
+              LPVOID lpEnvironment, LPCWSTR lpCurrentDirectory, LPSTARTUPINFOW lpStartupInfo,
+              LPPROCESS_INFORMATION lpProcessInformation),
+             (lpApplicationName, lpCommandLine, lpProcessAttributes, lpThreadAttributes, bInheritHandles,
+              dwCreationFlags, lpEnvironment, lpCurrentDirectory, lpStartupInfo, lpProcessInformation))
+LAZY_WRAPPER(BOOL, FALSE, lazy_kernel32, AssignProcessToJobObject, (HANDLE hJob, HANDLE hProcess), (hJob, hProcess))
+LAZY_WRAPPER(DWORD, (DWORD) -1, lazy_kernel32, ResumeThread, (HANDLE hThread), (hThread))
+LAZY_WRAPPER(DWORD, WAIT_FAILED, lazy_kernel32, WaitForSingleObject, (HANDLE hHandle, DWORD dwMilliseconds),
+             (hHandle, dwMilliseconds))
+LAZY_WRAPPER(BOOL, FALSE, lazy_kernel32, GetExitCodeProcess, (HANDLE hProcess, LPDWORD lpExitCode),
+             (hProcess, lpExitCode))
+LAZY_WRAPPER(BOOL, FALSE, lazy_kernel32, TerminateProcess, (HANDLE hProcess, UINT uExitCode), (hProcess, uExitCode))
+LAZY_WRAPPER_VOID(lazy_kernel32, ExitProcess, (UINT uExitCode), (uExitCode))
+
+LAZY_WRAPPER(BOOL, FALSE, lazy_advapi32, OpenProcessToken,
+             (HANDLE ProcessHandle, DWORD DesiredAccess, PHANDLE TokenHandle),
+             (ProcessHandle, DesiredAccess, TokenHandle))
+LAZY_WRAPPER(BOOL, FALSE, lazy_advapi32, GetTokenInformation,
+             (HANDLE TokenHandle, TOKEN_INFORMATION_CLASS TokenInformationClass, LPVOID TokenInformation,
+              DWORD TokenInformationLength, PDWORD ReturnLength),
+             (TokenHandle, TokenInformationClass, TokenInformation, TokenInformationLength, ReturnLength))
+LAZY_WRAPPER(BOOL, FALSE, lazy_advapi32, ConvertSidToStringSidW, (PSID Sid, LPWSTR *StringSid), (Sid, StringSid))
+LAZY_WRAPPER(BOOL, FALSE, lazy_advapi32, ConvertStringSecurityDescriptorToSecurityDescriptorW,
+             (LPCWSTR StringSecurityDescriptor, DWORD StringSDRevision, PSECURITY_DESCRIPTOR *SecurityDescriptor,
+              PULONG SecurityDescriptorSize),
+             (StringSecurityDescriptor, StringSDRevision, SecurityDescriptor, SecurityDescriptorSize))
+
+#define SetConsoleCtrlHandler             lazy_SetConsoleCtrlHandler
+#define Sleep                             lazy_Sleep
+#define GetModuleFileNameW                lazy_GetModuleFileNameW
+#define CreateFileMappingW                lazy_CreateFileMappingW
+#define MapViewOfFile                     lazy_MapViewOfFile
+#define UnmapViewOfFile                   lazy_UnmapViewOfFile
+#define DuplicateHandle                   lazy_DuplicateHandle
+#define CloseHandle                       lazy_CloseHandle
+#define LocalFree                         lazy_LocalFree
+#define CreateFileW                       lazy_CreateFileW
+#define GetFinalPathNameByHandleW         lazy_GetFinalPathNameByHandleW
+#define GetVolumeInformationW             lazy_GetVolumeInformationW
+#define GetFileInformationByHandle        lazy_GetFileInformationByHandle
+#define WideCharToMultiByte               lazy_WideCharToMultiByte
+#define RemoveDirectoryW                  lazy_RemoveDirectoryW
+#define DeleteFileW                       lazy_DeleteFileW
+#define FindFirstFileW                    lazy_FindFirstFileW
+#define FindNextFileW                     lazy_FindNextFileW
+#define FindClose                         lazy_FindClose
+#define ReadFile                          lazy_ReadFile
+#define WriteFile                         lazy_WriteFile
+#define FlushFileBuffers                  lazy_FlushFileBuffers
+#define GetTempPathW                      lazy_GetTempPathW
+#define QueryPerformanceCounter           lazy_QueryPerformanceCounter
+#define GetCurrentProcessId               lazy_GetCurrentProcessId
+#define CreateDirectoryW                  lazy_CreateDirectoryW
+#define GetStdHandle                      lazy_GetStdHandle
+#define InitializeProcThreadAttributeList lazy_InitializeProcThreadAttributeList
+#define UpdateProcThreadAttribute         lazy_UpdateProcThreadAttribute
+#define DeleteProcThreadAttributeList     lazy_DeleteProcThreadAttributeList
+#define CreateJobObjectW                  lazy_CreateJobObjectW
+#define SetInformationJobObject           lazy_SetInformationJobObject
+#define CreateProcessW                    lazy_CreateProcessW
+#define AssignProcessToJobObject          lazy_AssignProcessToJobObject
+#define ResumeThread                      lazy_ResumeThread
+#define WaitForSingleObject               lazy_WaitForSingleObject
+#define GetExitCodeProcess                lazy_GetExitCodeProcess
+#define TerminateProcess                  lazy_TerminateProcess
+#define ExitProcess                       lazy_ExitProcess
+
+#define OpenProcessToken                                     lazy_OpenProcessToken
+#define GetTokenInformation                                  lazy_GetTokenInformation
+#define ConvertSidToStringSidW                               lazy_ConvertSidToStringSidW
+#define ConvertStringSecurityDescriptorToSecurityDescriptorW lazy_ConvertStringSecurityDescriptorToSecurityDescriptorW
 
 /* Process-lifetime storage: the handler never borrows cleanup-owned handles.
  * 0 = bootstrap, 1 = child running, 2 = exiting. */

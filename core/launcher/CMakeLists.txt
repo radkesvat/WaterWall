@@ -132,7 +132,6 @@ target_include_directories(Waterwall PRIVATE
 target_link_libraries(Waterwall PRIVATE ww_launcher_xz_decoder)
 if(WIN32)
   target_compile_definitions(Waterwall PRIVATE _WIN32_WINNT=0x0600)
-  target_link_libraries(Waterwall PRIVATE advapi32)
   if(MSVC)
     target_link_options(Waterwall PRIVATE /DYNAMICBASE /FIXED:NO /NXCOMPAT /INCREMENTAL:NO /DEBUG:NONE
       "/MANIFESTUAC:level='requireAdministrator' uiAccess='false'")
