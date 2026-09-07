@@ -71,7 +71,17 @@ int main(int argc, char **argv)
     }
     wwXzDecoderInit();
     memset(output, 0xa5, raw_size + 16);
+    if (packed_size < 24 || memcmp(packed, "MUFASA", 6) != 0 || memcmp(packed + packed_size - 2, "gg", 2) != 0 ||
+        packed[6] != 0 || packed[7] != 0xff || packed[packed_size - 4] != 0 || packed[packed_size - 3] != 0xff)
+    {
+        fputs("Unexpected Waterwall stream identifiers\n", stderr);
+        free(raw);
+        free(packed);
+        free(output);
+        return 1;
+    }
     int failed = expect("roundtrip", wwXzDecode(packed, packed_size, output, raw_size, raw_size), WW_XZ_OK);
+    failed |= packed[7] != 0xff || packed[packed_size - 3] != 0xff; /* Input stays read-only. */
     failed |= memcmp(raw, output, raw_size) != 0;
     for (size_t i = raw_size; i < raw_size + 16; ++i)
         failed |= output[i] != 0xa5;
@@ -117,19 +127,78 @@ int main(int argc, char **argv)
         failed = 1;
     if (packed_size >= 12)
     {
+        /* Standard XZ and mixed identifiers must not pass the private decoder. */
+        memcpy(packed, "\3757zXZ", 6);
+        failed |=
+            expect("standard header", wwXzDecode(packed, packed_size, output, raw_size, raw_size), WW_XZ_INVALID_DATA);
+        memcpy(packed + packed_size - 2, "YZ", 2);
+        failed |=
+            expect("standard magic", wwXzDecode(packed, packed_size, output, raw_size, raw_size), WW_XZ_INVALID_DATA);
+        memcpy(packed, "MUFASA", 6);
+        failed |=
+            expect("standard footer", wwXzDecode(packed, packed_size, output, raw_size, raw_size), WW_XZ_INVALID_DATA);
+        memcpy(packed + packed_size - 2, "gg", 2);
         packed[packed_size - 1] ^= 1;
         failed |=
             expect("corrupt footer", wwXzDecode(packed, packed_size, output, raw_size, raw_size), WW_XZ_INVALID_DATA);
         packed[packed_size - 1] ^= 1;
+        const unsigned char bad_checks[] = {0, 1, 4, 10, 0x80, 0xfe};
+        for (size_t i = 0; i < sizeof(bad_checks); ++i)
+        {
+            packed[7] = bad_checks[i];
+            failed |= expect("invalid header check marker",
+                             wwXzDecode(packed, packed_size, output, raw_size, raw_size),
+                             WW_XZ_UNSUPPORTED);
+            packed[7]               = 0xff;
+            packed[packed_size - 3] = bad_checks[i];
+            failed |= expect("invalid footer check marker",
+                             wwXzDecode(packed, packed_size, output, raw_size, raw_size),
+                             WW_XZ_INVALID_DATA);
+            packed[packed_size - 3] = 0xff;
+        }
+        /* CRCs must still be verified over the normalized flags, not 00 FF. */
+        const size_t crc_offsets[] = {8, packed_size - 12};
+        const size_t crc_inputs[]  = {6, packed_size - 8};
+        const size_t crc_lengths[] = {2, 6};
+        for (size_t i = 0; i < 2; ++i)
+        {
+            unsigned char saved[4];
+            memcpy(saved, packed + crc_offsets[i], sizeof(saved));
+            packed[crc_offsets[i]] ^= 1;
+            failed |= expect(
+                "corrupt stream CRC", wwXzDecode(packed, packed_size, output, raw_size, raw_size), WW_XZ_INVALID_DATA);
+            put_crc(packed + crc_offsets[i], packed + crc_inputs[i], crc_lengths[i]);
+            failed |= expect("CRC over unnormalized flags",
+                             wwXzDecode(packed, packed_size, output, raw_size, raw_size),
+                             WW_XZ_INVALID_DATA);
+            memcpy(packed + crc_offsets[i], saved, sizeof(saved));
+        }
         packed[7] = 4;
         put_crc(packed + 8, packed + 6, 2);
         failed |=
             expect("CRC64 forbidden", wwXzDecode(packed, packed_size, output, raw_size, raw_size), WW_XZ_UNSUPPORTED);
         packed[7] = 1;
         put_crc(packed + 8, packed + 6, 2);
+        packed[7] = 0xff;
     }
     if (raw_size != 0)
     {
+        /* The last block's CRC32 immediately precedes the stream index. */
+        uint64_t index_size = 0;
+        for (unsigned int i = 0; i < 4; ++i)
+            index_size |= (uint64_t) packed[packed_size - 8 + i] << (8 * i);
+        index_size = (index_size + 1) * 4;
+        if (index_size > packed_size - 16)
+            failed = 1;
+        else
+        {
+            size_t check_offset = packed_size - 12 - (size_t) index_size - 4;
+            packed[check_offset] ^= 1;
+            failed |= expect("corrupt payload CRC32",
+                             wwXzDecode(packed, packed_size, output, raw_size, raw_size),
+                             WW_XZ_INVALID_DATA);
+            packed[check_offset] ^= 1;
+        }
         /* Assert actual encoder settings, then exercise the upstream filter
          * rejection with a valid block-header CRC. Empty XZ has no blocks. */
         if (packed_size < 24 || packed[12] != 2 || packed[13] != 1 || packed[14] != 4 || packed[15] != 0 ||

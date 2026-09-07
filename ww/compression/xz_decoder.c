@@ -1,4 +1,5 @@
 #include "ww_xz_decoder.h"
+#include "ww_xz_format.h"
 #include <xz.h>
 
 void wwXzDecoderInit(void)
@@ -14,10 +15,10 @@ ww_xz_result_t wwXzDecode(const void *input, size_t input_size, void *output, si
     if (input_size < 12)
         return WW_XZ_INVALID_DATA;
 
-    /* The payload format requires CRC32, even if raw XZ Embedded was built with
-     * additional check types. The upstream decoder validates the header CRC. */
+    /* Require the private CRC32 selector. The decoder normalizes its own stream
+     * header/footer buffers before CRC validation; caller input stays read-only. */
     const unsigned char *bytes = input;
-    if (bytes[6] != 0 || bytes[7] != 1)
+    if (bytes[6] != 0 || bytes[7] != WW_XZ_CRC32_MARKER)
         return WW_XZ_UNSUPPORTED;
 
     struct xz_dec *decoder = xz_dec_init(XZ_SINGLE, 0);

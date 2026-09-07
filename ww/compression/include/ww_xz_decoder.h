@@ -23,8 +23,9 @@ extern "C"
      * upstream CRC32 table and must not race with any XZ Embedded CRC32 use. */
     void wwXzDecoderInit(void);
 
-    /* Decode one CRC32 XZ stream into caller-owned memory using XZ_SINGLE.
+    /* Decode one Waterwall stream with private magic and CRC32 selector using XZ_SINGLE.
      * input/output must be non-null, non-overlapping buffers of the supplied sizes.
+     * Input is never modified, including during stream-flag normalization.
      * expected_size is trusted caller metadata and may be zero. Success requires
      * exactly expected_size output bytes and complete input consumption. No stream
      * padding or concatenation is accepted. Output is unspecified on failure.

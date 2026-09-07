@@ -33,12 +33,14 @@ set_target_properties(waterwall_xz_encoder PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>")
 target_link_libraries(waterwall_xz_encoder PRIVATE liblzma)
 # Upstream publishes API includes for installation, not its build-tree target.
-target_include_directories(waterwall_xz_encoder PRIVATE "${waterwall_host_xz_SOURCE_DIR}/src/liblzma/api")
+target_include_directories(waterwall_xz_encoder PRIVATE "${waterwall_host_xz_SOURCE_DIR}/src/liblzma/api"
+  "${WATERWALL_SOURCE_DIR}/ww/vendor/xz-embedded/include")
 
 add_executable(waterwall_payload_tool payload_tool.c)
 set_target_properties(waterwall_payload_tool PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>")
 if(NOT WIN32)
+  target_compile_definitions(waterwall_xz_encoder PRIVATE _FILE_OFFSET_BITS=64 _POSIX_C_SOURCE=200809L)
   target_compile_definitions(waterwall_payload_tool PRIVATE _FILE_OFFSET_BITS=64 _POSIX_C_SOURCE=200809L)
 endif()
 

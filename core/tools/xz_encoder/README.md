@@ -61,17 +61,31 @@ encoder. It does not strip, compress, execute, or publish files itself.
 
 ## Fixed payload format
 
-- One XZ stream, with no trailing padding or concatenated streams.
+- One stream with the XZ container layout, using `MUFASA` as its six-byte
+  header identifier and `gg` as its two-byte footer identifier; neither includes
+  a terminating NUL. No trailing padding or concatenated streams.
 - x86 BCJ followed by LZMA2; BCJ start offset zero.
-- CRC32 integrity check.
+- CRC32 integrity check, represented by `FF` in both copies of the stream
+  flags. Their reserved byte stays zero; stored header/footer CRCs cover `00 01`.
 - 8 MiB LZMA2 dictionary; `lc=3`, `lp=0`, `pb=2`.
 - Normal mode, BT4 match finder, nice length 64, search depth 64.
 - Single-threaded encoding, with no environment-derived encoder options.
 
-The raw output is an `.xz` file. Packaging must separately retain its compressed
-size and trusted expected uncompressed size. The tool accepts any input file;
-it does not create or load a runtime module. Parameters live in `encoder.c` and
-are not configurable on the command line.
+The intermediate files keep the `.xz` suffix but use Waterwall identifiers, so
+standard XZ tools cannot decode them directly. Shared constants live in
+`ww/vendor/xz-embedded/include/ww_xz_format.h`. liblzma first encodes a standard
+XZ stream; the tool replaces its six header-magic bytes, two footer-magic bytes,
+and the CRC32 selectors at offset 7 and three bytes before the stream end.
+Selectors become `FF` while stored CRCs remain those of the original flags.
+The decoder maps `FF` back to `01` in its private header/footer buffers before
+validating those CRCs. No checksum, index, compressed data or size changes are
+needed. Output remains exclusive and a failed seek/write/close removes the
+incomplete file.
+
+Packaging separately retains the compressed size and trusted expected uncompressed
+size. The tool accepts any input file; it does not create or load a runtime module.
+Compression parameters live in `encoder.c` and are not configurable on the command
+line.
 
 ## Portable decoder boundary
 
@@ -82,8 +96,9 @@ then `wwXzDecode(input, input_size, output, output_capacity, expected_size)`.
 
 The caller supplies valid non-overlapping buffers and the expected output size.
 The wrapper uses `XZ_SINGLE`, so the output buffer doubles as the dictionary;
-only decoder state is allocated. It accepts CRC32 XZ with the built-in decoder's
-LZMA2/x86 BCJ support, rejects other integrity checks, and requires
+only decoder state is allocated. It requires the private CRC32 marker in both
+header and footer, preserves caller input, and uses the decoder's LZMA2/x86 BCJ
+support. It rejects other integrity checks and requires
 `XZ_STREAM_END`, exact output size, and complete input consumption. Raw
 XZ Embedded also supports LZMA2 without BCJ. The encoder always selects x86 BCJ.
 A typed status distinguishes unsupported data, malformed data, allocation failure,
@@ -96,4 +111,8 @@ encoder, and decodes it with the same wrapper and XZ Embedded sources used by
 Waterwall. It also covers empty input, input spanning multiple encoder buffers,
 repeatability, truncation, corruption, CRC64 rejection, unsupported BCJ filters
 and offsets, concatenation/padding, output bounds, wrong expected sizes, existing
-output preservation, and missing input. No module is loaded or executed.
+output preservation, missing input, and rejection of standard/mixed magic. The
+Python test verifies that restoring magic alone is insufficient, then restores
+both check selectors and uses an independent XZ decoder to verify the stream
+and CRCs. Native tests reject mixed/unknown selectors, corrupted header/footer
+CRCs, CRCs calculated over unnormalized flags, and corrupted payload CRC32. No module is loaded or executed.

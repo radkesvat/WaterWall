@@ -427,6 +427,13 @@ static enum xz_ret dec_stream_header(struct xz_dec *s)
     if (! memeq(s->temp.buf, HEADER_MAGIC, HEADER_MAGIC_SIZE))
         return XZ_FORMAT_ERROR;
 
+    /* Waterwall stores CRC32's selector as FF but retains the CRC of 00 01.
+     * Normalize only this recognized marker in the decoder-owned buffer. */
+    if (s->temp.buf[HEADER_MAGIC_SIZE + 1] == WW_XZ_CRC32_MARKER)
+        s->temp.buf[HEADER_MAGIC_SIZE + 1] = XZ_CHECK_CRC32;
+    else if (s->temp.buf[HEADER_MAGIC_SIZE + 1] == XZ_CHECK_CRC32)
+        return XZ_OPTIONS_ERROR;
+
     if (xz_crc32(s->temp.buf + HEADER_MAGIC_SIZE, 2, 0) != get_le32(s->temp.buf + HEADER_MAGIC_SIZE + 2))
         return XZ_DATA_ERROR;
 
@@ -462,6 +469,13 @@ static enum xz_ret dec_stream_footer(struct xz_dec *s)
 {
     if (! memeq(s->temp.buf + 10, FOOTER_MAGIC, FOOTER_MAGIC_SIZE))
         return XZ_DATA_ERROR;
+
+    if (s->check_type == XZ_CHECK_CRC32)
+    {
+        if (s->temp.buf[9] != WW_XZ_CRC32_MARKER)
+            return XZ_DATA_ERROR;
+        s->temp.buf[9] = XZ_CHECK_CRC32;
+    }
 
     if (xz_crc32(s->temp.buf + 4, 6, 0) != get_le32(s->temp.buf))
         return XZ_DATA_ERROR;

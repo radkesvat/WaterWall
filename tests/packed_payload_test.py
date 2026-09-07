@@ -173,9 +173,24 @@ class PayloadTest(unittest.TestCase):
             text = out.read_text()
             encoded = bytes(int(item) for item in text.split('{', 1)[1].split('}', 1)[0].replace('\n', '').split(',') if item)
             self.assertGreater(len(encoded), 65536)
-            self.assertEqual(lzma.decompress(encoded), original)
+            self.assertEqual(encoded[:6], b'MUFASA')
+            self.assertEqual(encoded[-2:], b'gg')
+            self.assertEqual(encoded[6:8], b'\0\xff')
+            self.assertEqual(encoded[-4:-2], b'\0\xff')
+            with self.assertRaises(lzma.LZMAError):
+                lzma.decompress(encoded)
+            # Restoring magic alone is insufficient. Both check markers must
+            # be normalized without changing any stored checksum or size.
+            standard_xz = bytearray(b'\xfd7zXZ\0' + encoded[6:-2] + b'YZ')
+            with self.assertRaises(lzma.LZMAError):
+                lzma.decompress(standard_xz)
+            standard_xz[7] = 1
+            with self.assertRaises(lzma.LZMAError):
+                lzma.decompress(standard_xz)
+            standard_xz[-3] = 1
+            self.assertEqual(lzma.decompress(standard_xz), original)
             decoder = lzma.LZMADecompressor()
-            decoder.decompress(encoded)
+            decoder.decompress(standard_xz)
             self.assertEqual(decoder.check, lzma.CHECK_CRC32)
             self.assertTrue(decoder.eof)
             self.assertEqual(decoder.unused_data, b'')

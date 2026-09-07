@@ -14,8 +14,14 @@ This is the userspace decoder subset described by the upstream `README`:
 
 Local changes are C/header formatting with the repository's `clang-format` style
 (preserving upstream include order), plus the added CMake integration, formatter
-configuration, and this file. To refresh, check out the desired
-upstream commit, copy the files above, format the C/headers, and update the pin.
+configuration, and this file. The stream-header/footer identifiers are also
+customized: `src/xz_stream.h` uses the shared local `include/ww_xz_format.h`
+constants (`MUFASA`, `gg`, and the CRC32 selector `FF`). The host encoder
+includes that same header. `src/xz_dec_stream.c` normalizes the CRC32 selector
+to `01` in its own header/footer buffers before CRC validation; standard `01`
+selectors are rejected for CRC32 streams. To refresh, copy the pinned upstream
+sources, retain the identifier and selector integration, format the C/headers,
+and update the pin.
 No download or system liblzma lookup occurs during builds.
 
 `XZEmbedded::XZEmbedded` (`xz_embedded`) is always a static library, built and
@@ -24,7 +30,8 @@ linked directly by `Waterwall` on every platform. Other targets use
 `#include <xz.h>`. The `ww` target does not export this dependency. Normal static
 linker elimination of unused code still applies.
 
-The compiled decoder supports XZ + LZMA2 + x86 BCJ with CRC32 integrity checks
+The compiled decoder supports the XZ container layout with Waterwall identifiers,
+LZMA2 + x86 BCJ, and CRC32 integrity checks
 and only the `XZ_SINGLE` allocation mode. CRC64, SHA-256, other BCJ filters,
 multi-call allocation modes, and concatenated-stream support are disabled.
 The pinned CRC64 and SHA-256 sources remain in the vendor copy but are not built.
@@ -33,3 +40,12 @@ This library only decompresses; it does not provide compression or liblzma's API
 Call `xz_crc32_init()` once before concurrent decoder use; its table initialization
 is not thread-safe. Use `xz_dec_init(XZ_SINGLE, 0)` with enough output space for the
 complete payload. See `include/xz.h` for the single-call decoder lifecycle.
+
+Standard `.xz` streams are rejected by this decoder. Standard XZ tools reject
+Waterwall streams unless the magic and both CRC32 selectors are restored. The
+header selector is at offset 7; the footer selector is three bytes before the
+end of the stream. Both store `FF` instead of `01`. Reserved flag bytes stay zero.
+The decoder does not modify caller input or bypass checks: stream CRCs still cover
+the original `00 01` flags, and block data CRC32 verification remains intact.
+Compressed bytes, field widths, indexes and stored checksum values are unchanged.
+The magic fields themselves are not covered by XZ header/footer CRCs.

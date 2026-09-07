@@ -9,6 +9,8 @@
 #ifndef XZ_STREAM_H
 #define XZ_STREAM_H
 
+#include "ww_xz_format.h"
+
 #if defined(__KERNEL__) && ! XZ_INTERNAL_CRC32
 #include <linux/crc32.h>
 #undef crc32
@@ -23,11 +25,11 @@
 
 #define STREAM_HEADER_SIZE 12
 
-#define HEADER_MAGIC      "\3757zXZ"
-#define HEADER_MAGIC_SIZE 6
+#define HEADER_MAGIC      WW_XZ_HEADER_MAGIC
+#define HEADER_MAGIC_SIZE WW_XZ_HEADER_MAGIC_SIZE
 
-#define FOOTER_MAGIC      "YZ"
-#define FOOTER_MAGIC_SIZE 2
+#define FOOTER_MAGIC      WW_XZ_FOOTER_MAGIC
+#define FOOTER_MAGIC_SIZE WW_XZ_FOOTER_MAGIC_SIZE
 
 /*
  * Variable-length integer can hold a 63-bit unsigned integer or a special

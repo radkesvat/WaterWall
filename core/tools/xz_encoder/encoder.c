@@ -1,4 +1,5 @@
 #include "host_io.h"
+#include "ww_xz_format.h"
 #include <lzma.h>
 #include <stdlib.h>
 
@@ -65,6 +66,26 @@ static int encode(FILE *input, FILE *output)
     return failed;
 }
 
+static int writeStreamIdentifiers(FILE *output)
+{
+    /* liblzma emits standard CRC32 XZ. Replace the magic and encode its CRC32
+     * selector as FF in both copies of the stream flags. The decoder restores
+     * 00 01 in its private buffers before checking the unchanged stream CRCs. */
+    const unsigned char flags[2] = {0, WW_XZ_CRC32_MARKER};
+    if (fseek(output, 0, SEEK_SET) != 0 ||
+        fwrite(WW_XZ_HEADER_MAGIC, 1, WW_XZ_HEADER_MAGIC_SIZE, output) != WW_XZ_HEADER_MAGIC_SIZE ||
+        fwrite(flags, 1, sizeof(flags), output) != sizeof(flags))
+        return 1;
+#ifdef _WIN32
+    if (_fseeki64(output, -WW_XZ_FOOTER_MAGIC_SIZE - 2, SEEK_END) != 0)
+#else
+    if (fseeko(output, -WW_XZ_FOOTER_MAGIC_SIZE - 2, SEEK_END) != 0)
+#endif
+        return 1;
+    return fwrite(flags, 1, sizeof(flags), output) != sizeof(flags) ||
+           fwrite(WW_XZ_FOOTER_MAGIC, 1, WW_XZ_FOOTER_MAGIC_SIZE, output) != WW_XZ_FOOTER_MAGIC_SIZE;
+}
+
 int main(int argc, char **argv)
 {
     if (argc != 3)
@@ -87,6 +108,8 @@ int main(int argc, char **argv)
         return EXIT_FAILURE;
     }
     int failed = encode(input, output);
+    if (! failed)
+        failed = writeStreamIdentifiers(output);
     if (fclose(input) != 0)
         failed = 1;
     if (fclose(output) != 0)
