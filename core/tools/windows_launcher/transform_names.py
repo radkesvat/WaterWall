@@ -84,6 +84,31 @@ PROC_NAMES = [
     "ConvertStringSecurityDescriptorToSecurityDescriptorW",
 ]
 
+# Log format and operation strings used in core/launcher/launcher_windows.c
+LOG_STRINGS = [
+    ("log_failed", "Packed runtime: failed %s (Windows error %lu)\n"),
+    ("log_remove_owned", "Packed runtime: could not remove owned %s %s (error %lu)\n"),
+    ("path_conversion_failed", "<path conversion failed>"),
+    ("directory", "directory"),
+    ("file", "file"),
+    ("op_installing_console_handler", "installing console handler"),
+    ("op_capturing_executable_path_and_input", "capturing executable path and input"),
+    ("op_decoding_executable", "decoding executable"),
+    ("op_creating_private_extraction_directory", "creating private extraction directory"),
+    ("op_pinning_temporary_root", "pinning a local ACL-capable temporary root"),
+    ("op_writing_restored_executable", "writing restored executable"),
+    ("op_preparing_child_arguments", "preparing child arguments"),
+    ("op_preparing_inherited_handles", "preparing inherited handles"),
+    ("op_creating_child_job", "creating child job"),
+    ("op_restoring_companion_dlls", "restoring adjacent companion DLLs"),
+    ("op_starting_native_child", "starting native child"),
+    (
+        "op_assigning_child_job",
+        "assigning child job (an incompatible enclosing job may reject admission)",
+    ),
+    ("op_waiting_for_child_exit", "waiting for child exit"),
+]
+
 
 def format_c_array(var_name: str, original_str: str) -> str:
     """Format a transformed string as a C static const uint8_t array."""
@@ -115,6 +140,12 @@ def generate_header_content() -> str:
         lines.append(format_c_array(proc_name, proc_name))
 
     lines.append("")
+    lines.append("/* Transformed log and operation strings */")
+
+    for var_name, original_str in LOG_STRINGS:
+        lines.append(format_c_array(var_name, original_str))
+
+    lines.append("")
     lines.append("#endif /* WW_LAZY_NAMES_H */")
     lines.append("")
     return "\n".join(lines)
@@ -135,6 +166,13 @@ def verify_names() -> bool:
         dec = transform(enc).decode("ascii")
         if dec != original:
             print(f"FAIL: Proc {original} != {dec}", file=sys.stderr)
+            all_ok = False
+
+    for _, original in LOG_STRINGS:
+        enc = transform(original.encode("ascii"))
+        dec = transform(enc).decode("ascii")
+        if dec != original:
+            print(f"FAIL: Log string {original!r} != {dec!r}", file=sys.stderr)
             all_ok = False
 
     return all_ok
@@ -170,7 +208,9 @@ def main():
 
     if args.verify:
         if verify_names():
-            print(f"All {len(DLL_NAMES) + len(PROC_NAMES)} names verified successfully.")
+            print(
+                f"All {len(DLL_NAMES) + len(PROC_NAMES) + len(LOG_STRINGS)} names and strings verified successfully."
+            )
             return 0
         return 1
 

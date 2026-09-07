@@ -26,13 +26,20 @@ static inline uint8_t reverse_bits(uint8_t x)
     return x;
 }
 
-static inline void transform(uint8_t *data, size_t length)
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((noinline))
+#elif defined(_MSC_VER)
+__declspec(noinline)
+#endif
+static void
+transform(uint8_t *data, size_t length)
 {
-    const uint8_t key = 0xA5; /* 10100101 */
+    volatile uint8_t *d   = (volatile uint8_t *) data;
+    const uint8_t     key = 0xA5; /* 10100101 */
 
     for (size_t i = 0; i < length; i++)
     {
-        data[i] = reverse_bits(data[i]) ^ key;
+        d[i] = reverse_bits(d[i]) ^ key;
     }
 }
 
@@ -117,6 +124,39 @@ static void *lazyProcAddress(lazy_proc_t *proc)
 
 static lazy_dll_t lazy_kernel32 = {transf_kernel32, sizeof(transf_kernel32), NULL};
 static lazy_dll_t lazy_advapi32 = {transf_advapi32, sizeof(transf_advapi32), NULL};
+
+typedef struct lazy_str_s
+{
+    const uint8_t *transf_data;
+    size_t         len;
+} lazy_str_t;
+
+#define LAZY_STR(name) {transf_##name, sizeof(transf_##name)}
+
+static inline const char *lazyLoadString(const uint8_t *transf_data, size_t len, char *buf, size_t buf_size)
+{
+    if (transf_data == NULL || len == 0 || len >= buf_size)
+    {
+        if (buf_size > 0)
+            buf[0] = '\0';
+        return "";
+    }
+    memcpy(buf, transf_data, len);
+    transform((uint8_t *) buf, len);
+    buf[len] = '\0';
+    return buf;
+}
+
+static inline const char *lazyStr(const lazy_str_t *str, char *buf, size_t buf_size)
+{
+    if (str == NULL)
+    {
+        if (buf_size > 0)
+            buf[0] = '\0';
+        return "";
+    }
+    return lazyLoadString(str->transf_data, str->len, buf, buf_size);
+}
 
 #define LAZY_WRAPPER(ret_type, default_ret, dll, name, params, args)                                                   \
     static lazy_proc_t lazy_proc_##name = {&dll, transf_##name, sizeof(transf_##name), NULL};                          \
@@ -584,18 +624,28 @@ static int pinTemporaryRoot(HANDLE root_handle, wchar_t *root, HANDLE **locks, s
     return 1;
 }
 
-static void reportOwnedPath(const char *kind, const wchar_t *path, DWORD error)
+static void reportOwnedPath(const lazy_str_t *kind, const wchar_t *path, DWORD error)
 {
     /* stderr is byte-oriented. Emit UTF-8 rather than mixing fwprintf with it. */
     char utf8[32768 * 4];
     if (WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, path, -1, utf8, sizeof(utf8), NULL, NULL) == 0)
-        strcpy(utf8, "<path conversion failed>");
-    fprintf(stderr, "Packed runtime: could not remove owned %s %s (error %lu)\n", kind, utf8, error);
+    {
+        lazyLoadString(transf_path_conversion_failed, sizeof(transf_path_conversion_failed), utf8, sizeof(utf8));
+    }
+    char kind_buf[32];
+    char fmt_buf[128];
+    lazyStr(kind, kind_buf, sizeof(kind_buf));
+    lazyLoadString(transf_log_remove_owned, sizeof(transf_log_remove_owned), fmt_buf, sizeof(fmt_buf));
+    fprintf(stderr, fmt_buf, kind_buf, utf8, error);
+    SecureZeroMemory(kind_buf, sizeof(kind_buf));
+    SecureZeroMemory(fmt_buf, sizeof(fmt_buf));
 }
 
 static void removeOwnedPath(const wchar_t *path, int directory)
 {
-    DWORD error = ERROR_SUCCESS;
+    static const lazy_str_t str_dir  = LAZY_STR(directory);
+    static const lazy_str_t str_file = LAZY_STR(file);
+    DWORD                   error    = ERROR_SUCCESS;
     for (unsigned retry = 0; retry < 10; ++retry)
     {
         if (directory ? RemoveDirectoryW(path) : DeleteFileW(path))
@@ -606,7 +656,7 @@ static void removeOwnedPath(const wchar_t *path, int directory)
         if (retry != 9)
             Sleep(50);
     }
-    reportOwnedPath(directory ? "directory" : "file", path, error);
+    reportOwnedPath(directory ? &str_dir : &str_file, path, error);
 }
 
 typedef struct companion_file_s
@@ -771,10 +821,10 @@ int launcherExecute(char *input, size_t length, const char *source, int argc, ch
     HANDLE              *ancestor_locks = NULL;
     size_t               ancestor_count = 0;
     companion_file_t    *companions     = NULL;
-    const char          *operation      = "installing console handler";
+    lazy_str_t           operation      = LAZY_STR(op_installing_console_handler);
     if (! SetConsoleCtrlHandler(launcherConsoleHandler, TRUE))
         goto done;
-    operation = "capturing executable path and input";
+    operation = (lazy_str_t) LAZY_STR(op_capturing_executable_path_and_input);
     original  = modulePath();
     snapshot  = inputSnapshot(input, length);
     free(input);
@@ -784,7 +834,7 @@ int launcherExecute(char *input, size_t length, const char *source, int argc, ch
     original_narrow = waterwallWindowsNarrow(original);
     if (original_narrow == NULL)
         goto done;
-    operation = "decoding executable";
+    operation = (lazy_str_t) LAZY_STR(op_decoding_executable);
     if (waterwallRuntimeLength == 0 || waterwallRuntimeLength > SIZE_MAX || waterwallPackedLength == 0)
         goto done;
     decoded = malloc((size_t) waterwallRuntimeLength);
@@ -798,7 +848,7 @@ int launcherExecute(char *input, size_t length, const char *source, int argc, ch
                    (size_t) waterwallRuntimeLength) != WW_XZ_OK ||
         ! validImage(decoded, (size_t) waterwallRuntimeLength))
         goto done;
-    operation         = "creating private extraction directory";
+    operation         = (lazy_str_t) LAZY_STR(op_creating_private_extraction_directory);
     DWORD root_length = GetTempPathW(32768, root);
     if (root_length == 0 || root_length >= 32700)
         goto done;
@@ -807,7 +857,7 @@ int launcherExecute(char *input, size_t length, const char *source, int argc, ch
     if (root_lock == INVALID_HANDLE_VALUE || ! GetFileInformationByHandle(root_lock, &info) ||
         (info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT))
         goto done;
-    operation = "pinning a local ACL-capable temporary root";
+    operation = (lazy_str_t) LAZY_STR(op_pinning_temporary_root);
     if (! pinTemporaryRoot(root_lock, root, &ancestor_locks, &ancestor_count))
         goto done;
     security = privateSecurity();
@@ -842,7 +892,7 @@ int launcherExecute(char *input, size_t length, const char *source, int argc, ch
         goto done;
     if (swprintf(executable, 32768, L"%ls\\waterwall_application.exe", directory) < 0)
         goto done;
-    operation = "writing restored executable";
+    operation = (lazy_str_t) LAZY_STR(op_writing_restored_executable);
     file      = CreateFileW(executable, GENERIC_WRITE, 0, &sa, CREATE_NEW, FILE_ATTRIBUTE_TEMPORARY, NULL);
     if (file == INVALID_HANDLE_VALUE)
         goto done;
@@ -874,7 +924,7 @@ int launcherExecute(char *input, size_t length, const char *source, int argc, ch
         info.dwVolumeSerialNumber != written_info.dwVolumeSerialNumber ||
         info.nFileIndexHigh != written_info.nFileIndexHigh || info.nFileIndexLow != written_info.nFileIndexLow)
         goto done;
-    operation    = "preparing child arguments";
+    operation    = (lazy_str_t) LAZY_STR(op_preparing_child_arguments);
     command      = calloc(32768, sizeof(wchar_t));
     exe_argument = malloc(strlen(original_narrow) + sizeof("--ww-internal-exe="));
     src_argument = malloc(strlen(source) + sizeof("--ww-internal-src="));
@@ -893,7 +943,7 @@ int launcherExecute(char *input, size_t length, const char *source, int argc, ch
     for (int i = 1; i < argc; ++i)
         if (! appendNarrow(command, &used, argv[i]))
             goto done;
-    operation                    = "preparing inherited handles";
+    operation                    = (lazy_str_t) LAZY_STR(op_preparing_inherited_handles);
     inherited[inherited_count++] = snapshot;
     const DWORD standard_ids[3]  = {STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE};
     HANDLE      standard[3]      = {0};
@@ -931,13 +981,13 @@ int launcherExecute(char *input, size_t length, const char *source, int argc, ch
     startup.StartupInfo.hStdInput               = standard[0];
     startup.StartupInfo.hStdOutput              = standard[1];
     startup.StartupInfo.hStdError               = standard[2];
-    operation                                   = "creating child job";
+    operation                                   = (lazy_str_t) LAZY_STR(op_creating_child_job);
     job                                         = CreateJobObjectW(NULL, NULL);
     JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits = {0};
     limits.BasicLimitInformation.LimitFlags     = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
     if (job == NULL || ! SetInformationJobObject(job, JobObjectExtendedLimitInformation, &limits, sizeof(limits)))
         goto done;
-    operation          = "restoring adjacent companion DLLs";
+    operation          = (lazy_str_t) LAZY_STR(op_restoring_companion_dlls);
     wchar_t *separator = wcsrchr(original, L'\\');
     if (separator == NULL)
         goto done;
@@ -947,7 +997,7 @@ int launcherExecute(char *input, size_t length, const char *source, int argc, ch
         *separator = 0;
     if (! copyCompanions(original, directory, &sa, &companions))
         goto done;
-    operation = "starting native child";
+    operation = (lazy_str_t) LAZY_STR(op_starting_native_child);
     if (InterlockedCompareExchange(&console_cancel, 0, 0))
         goto done;
     fflush(stdout);
@@ -963,7 +1013,7 @@ int launcherExecute(char *input, size_t length, const char *source, int argc, ch
                          &startup.StartupInfo,
                          &process))
         goto done;
-    operation = "assigning child job (an incompatible enclosing job may reject admission)";
+    operation = (lazy_str_t) LAZY_STR(op_assigning_child_job);
     if (! AssignProcessToJobObject(job, process.hProcess))
         goto done;
     if (InterlockedCompareExchange(&console_cancel, 0, 0))
@@ -972,7 +1022,7 @@ int launcherExecute(char *input, size_t length, const char *source, int argc, ch
     if (ResumeThread(process.hThread) == (DWORD) -1)
         goto done;
     started   = 1;
-    operation = "waiting for child exit";
+    operation = (lazy_str_t) LAZY_STR(op_waiting_for_child_exit);
     if (WaitForSingleObject(process.hProcess, INFINITE) != WAIT_OBJECT_0 ||
         ! GetExitCodeProcess(process.hProcess, &status))
     {
@@ -981,7 +1031,15 @@ int launcherExecute(char *input, size_t length, const char *source, int argc, ch
     }
 done:
     if (! started)
-        fprintf(stderr, "Packed runtime: failed %s (Windows error %lu)\n", operation, GetLastError());
+    {
+        char op_buf[128];
+        char fmt_buf[128];
+        lazyStr(&operation, op_buf, sizeof(op_buf));
+        lazyLoadString(transf_log_failed, sizeof(transf_log_failed), fmt_buf, sizeof(fmt_buf));
+        fprintf(stderr, fmt_buf, op_buf, GetLastError());
+        SecureZeroMemory(op_buf, sizeof(op_buf));
+        SecureZeroMemory(fmt_buf, sizeof(fmt_buf));
+    }
     if (process.hProcess != NULL && ! started)
     {
         TerminateProcess(process.hProcess, 1);
