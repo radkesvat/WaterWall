@@ -707,6 +707,17 @@ jobs:
           ctest --test-dir build/${{ matrix.preset }} -C Release --no-tests=error --output-on-failure
           -R '^waterwall.windows_packed_application$'
 
+      - name: Upload packed application failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: Waterwall-${{ matrix.name }}-failure-diagnostics
+          path: |
+            build/${{ matrix.preset }}/Release/Waterwall.exe
+            build/${{ matrix.preset }}/Release/waterwall_application.exe
+            build/${{ matrix.preset }}/Testing/Temporary/LastTest.log
+          if-no-files-found: warn
+
       - name: Upload artifact
         uses: actions/upload-artifact@v6
         with:
