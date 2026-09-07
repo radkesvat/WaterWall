@@ -106,13 +106,35 @@ insufficient output space, size mismatch, and trailing data. Discard output afte
 any failure. There are no filesystem, Linux, mapping, or loader dependencies in
 the wrapper.
 
+`WW_PACKED_PAYLOAD_CRC32` is a CMake option, disabled by default, for the packed
+launcher only. To include CRC32 calculation over the decompressed executable:
+
+```bash
+cmake --preset linux-packed -DWW_PACKED_PAYLOAD_CRC32=ON
+cmake --build --preset linux-packed -j8
+```
+
+The same option applies to packed Windows builds. Stream header/footer, block
+header, and index CRCs remain mandatory, as do format, size, and bounds checks.
+The encoder still writes the payload CRC32; the launcher consumes its four bytes
+without verifying them. Damage confined to payload data may therefore go
+undetected. `WaterWall::XZDecoder` and `XZEmbedded::XZEmbedded` remain fully
+checking. Only an opted-out launcher links a separate build of the same decoder
+sources through `XZEmbedded::Launcher`; checked launchers reuse the ordinary
+engine. Set the option back to `ON` to restore payload verification.
+
 The native test builds a small module as an opaque input file, runs the actual
-encoder, and decodes it with the same wrapper and XZ Embedded sources used by
-Waterwall. It also covers empty input, input spanning multiple encoder buffers,
+encoder, and decodes it with both the ordinary and launcher wrappers and XZ
+Embedded sources used by Waterwall. Configure the `host` preset with
+`-DWW_PACKED_PAYLOAD_CRC32=OFF` and `ON` to exercise both launcher policies in
+Debug and Release. It also covers empty input, input spanning multiple encoder buffers,
 repeatability, truncation, corruption, CRC64 rejection, unsupported BCJ filters
 and offsets, concatenation/padding, output bounds, wrong expected sizes, existing
 output preservation, missing input, and rejection of standard/mixed magic. The
 Python test verifies that restoring magic alone is insufficient, then restores
 both check selectors and uses an independent XZ decoder to verify the stream
-and CRCs. Native tests reject mixed/unknown selectors, corrupted header/footer
-CRCs, CRCs calculated over unnormalized flags, and corrupted payload CRC32. No module is loaded or executed.
+and CRCs. Native tests reject mixed/unknown selectors, corrupted stream header/footer,
+block-header and index CRCs, and CRCs calculated over unnormalized flags.
+Corrupted payload CRC32 is accepted only by a launcher configured to skip it;
+the decoded bytes must still match the input fixture. Truncated checks and invalid
+LZMA2 control bytes are rejected with either policy. No module is loaded or executed.

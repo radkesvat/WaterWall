@@ -50,18 +50,31 @@ if(BUILD_TESTING)
     COMMAND "${PYTHON_EXECUTABLE}" "${WATERWALL_SOURCE_DIR}/tests/packed_payload_test.py"
       --cmake "${CMAKE_COMMAND}" --encoder "$<TARGET_FILE:waterwall_xz_encoder>"
       --payload-tool "$<TARGET_FILE:waterwall_payload_tool>")
+  # Exercise the ordinary and launcher decoder policies without building a launcher.
+  set(WW_PACK_RUNTIME ON)
   add_subdirectory("${WATERWALL_SOURCE_DIR}/ww/vendor/xz-embedded" xz-embedded)
   add_subdirectory("${WATERWALL_SOURCE_DIR}/ww/compression" decoder)
   add_library(xz_runtime_fixture MODULE runtime_fixture.c)
   set_target_properties(xz_runtime_fixture PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
-  add_executable(xz_payload_test payload_test.c)
-  target_link_libraries(xz_payload_test PRIVATE WaterWall::XZDecoder XZEmbedded::XZEmbedded)
-  add_test(NAME waterwall.xz_payload_roundtrip
-    COMMAND "${CMAKE_COMMAND}"
-      "-DENCODER=$<TARGET_FILE:waterwall_xz_encoder>"
-      "-DDECODER_TEST=$<TARGET_FILE:xz_payload_test>"
-      "-DMODULE=$<TARGET_FILE:xz_runtime_fixture>"
-      "-DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/roundtrip-$<CONFIG>"
-      -P "${CMAKE_CURRENT_SOURCE_DIR}/roundtrip.cmake")
-  set_tests_properties(waterwall.xz_payload_roundtrip PROPERTIES TIMEOUT 120)
+  foreach(decoder_policy xz xz_launcher)
+    add_executable(${decoder_policy}_payload_test payload_test.c)
+    target_include_directories(${decoder_policy}_payload_test PRIVATE
+      "${WATERWALL_SOURCE_DIR}/ww/vendor/xz-embedded/include")
+    if(decoder_policy STREQUAL "xz_launcher")
+      target_link_libraries(${decoder_policy}_payload_test PRIVATE ww_launcher_xz_decoder)
+      if(NOT WW_PACKED_PAYLOAD_CRC32)
+        target_compile_definitions(${decoder_policy}_payload_test PRIVATE WW_TEST_SKIP_PAYLOAD_CRC32)
+      endif()
+    else()
+      target_link_libraries(${decoder_policy}_payload_test PRIVATE WaterWall::XZDecoder)
+    endif()
+    add_test(NAME waterwall.${decoder_policy}_payload_roundtrip
+      COMMAND "${CMAKE_COMMAND}"
+        "-DENCODER=$<TARGET_FILE:waterwall_xz_encoder>"
+        "-DDECODER_TEST=$<TARGET_FILE:${decoder_policy}_payload_test>"
+        "-DMODULE=$<TARGET_FILE:xz_runtime_fixture>"
+        "-DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/${decoder_policy}-roundtrip-$<CONFIG>"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/roundtrip.cmake")
+    set_tests_properties(waterwall.${decoder_policy}_payload_roundtrip PROPERTIES TIMEOUT 120)
+  endforeach()
 endif()

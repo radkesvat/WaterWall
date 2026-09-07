@@ -19,16 +19,24 @@ customized: `src/xz_stream.h` uses the shared local `include/ww_xz_format.h`
 constants (`MUFASA`, `gg`, and the CRC32 selector `FF`). The host encoder
 includes that same header. `src/xz_dec_stream.c` normalizes the CRC32 selector
 to `01` in its own header/footer buffers before CRC validation; standard `01`
-selectors are rejected for CRC32 streams. To refresh, copy the pinned upstream
-sources, retain the identifier and selector integration, format the C/headers,
-and update the pin.
+selectors are rejected for CRC32 streams. The local `WW_XZ_SKIP_BLOCK_CRC32`
+define omits only Block data CRC32 calculation and comparison, consuming the
+stored check through the existing bounded skip helper. To refresh, copy the
+pinned upstream sources, retain the identifier, selector and optional Block
+CRC32 integration, format the C/headers, and update the pin.
 No download or system liblzma lookup occurs during builds.
 
 `XZEmbedded::XZEmbedded` (`xz_embedded`) is always a static library, built and
-linked directly by `Waterwall` on every platform. Other targets use
+linked directly by the ordinary application on every platform. Other targets use
 `target_link_libraries(my_target PRIVATE XZEmbedded::XZEmbedded)` and
 `#include <xz.h>`. The `ww` target does not export this dependency. Normal static
 linker elimination of unused code still applies.
+
+`WW_PACKED_PAYLOAD_CRC32` defaults to `OFF`. With `WW_PACK_RUNTIME=OFF` and this option `ON`, CMake builds `ww_launcher_xz_embedded` from the same sources with
+`WW_XZ_SKIP_BLOCK_CRC32` defined privately. `XZEmbedded::Launcher` selects that
+engine for the launcher wrapper; otherwise it aliases the fully checking engine.
+Ordinary decoder consumers keep all CRC checks. Both engines retain the selected
+CPU compiler options and their existing relocation policy.
 
 The compiled decoder supports the XZ container layout with Waterwall identifiers,
 LZMA2 + x86 BCJ, and CRC32 integrity checks
@@ -45,7 +53,9 @@ Standard `.xz` streams are rejected by this decoder. Standard XZ tools reject
 Waterwall streams unless the magic and both CRC32 selectors are restored. The
 header selector is at offset 7; the footer selector is three bytes before the
 end of the stream. Both store `FF` instead of `01`. Reserved flag bytes stay zero.
-The decoder does not modify caller input or bypass checks: stream CRCs still cover
-the original `00 01` flags, and block data CRC32 verification remains intact.
+The decoder does not modify caller input. Stream CRCs still cover the original
+`00 01` flags. Stream header/footer, Block Header and Index CRCs are always
+verified; only a launcher explicitly built with `WW_PACKED_PAYLOAD_CRC32=OFF`
+skips Block data CRC32 verification.
 Compressed bytes, field widths, indexes and stored checksum values are unchanged.
 The magic fields themselves are not covered by XZ header/footer CRCs.

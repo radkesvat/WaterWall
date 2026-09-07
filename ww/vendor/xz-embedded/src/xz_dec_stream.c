@@ -175,7 +175,7 @@ struct xz_dec
 #endif
 };
 
-#if defined(XZ_DEC_ANY_CHECK) || defined(XZ_USE_SHA256)
+#if defined(XZ_DEC_ANY_CHECK) || defined(XZ_USE_SHA256) || defined(WW_XZ_SKIP_BLOCK_CRC32)
 /* Sizes of the Check field with different Check IDs */
 static const uint8_t check_sizes[16] = {0, 4, 4, 4, 8, 8, 8, 16, 16, 16, 32, 32, 32, 64, 64, 64};
 #endif
@@ -273,7 +273,11 @@ static enum xz_ret dec_block(struct xz_dec *s, struct xz_buf *b)
         return XZ_DATA_ERROR;
 
     if (s->check_type == XZ_CHECK_CRC32)
+    {
+#ifndef WW_XZ_SKIP_BLOCK_CRC32
         s->crc = xz_crc32(b->out + s->out_start, b->out_pos - s->out_start, s->crc);
+#endif
+    }
 #ifdef XZ_USE_CRC64
     else if (s->check_type == XZ_CHECK_CRC64)
         s->crc = xz_crc64(b->out + s->out_start, b->out_pos - s->out_start, s->crc);
@@ -399,9 +403,9 @@ static enum xz_ret crc_validate(struct xz_dec *s, struct xz_buf *b, uint32_t bit
     return XZ_STREAM_END;
 }
 
-#ifdef XZ_DEC_ANY_CHECK
+#if defined(XZ_DEC_ANY_CHECK) || defined(WW_XZ_SKIP_BLOCK_CRC32)
 /*
- * Skip over the Check field when the Check ID is not supported.
+ * Skip over a Block Check field when its verification is disabled or unsupported.
  * Returns true once the whole Check field has been skipped over.
  */
 static bool check_skip(struct xz_dec *s, struct xz_buf *b)
@@ -721,9 +725,16 @@ static enum xz_ret dec_main(struct xz_dec *s, struct xz_buf *b)
         case SEQ_BLOCK_CHECK:
             if (s->check_type == XZ_CHECK_CRC32)
             {
+#ifdef WW_XZ_SKIP_BLOCK_CRC32
+                /* Consume the stored payload check without hashing the output.
+                 * Stream, Block Header, and Index CRCs remain mandatory. */
+                if (! check_skip(s, b))
+                    return XZ_OK;
+#else
                 ret = crc_validate(s, b, 32);
                 if (ret != XZ_STREAM_END)
                     return ret;
+#endif
             }
             else if (IS_CRC64(s->check_type))
             {

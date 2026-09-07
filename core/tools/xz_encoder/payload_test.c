@@ -181,6 +181,10 @@ int main(int argc, char **argv)
         put_crc(packed + 8, packed + 6, 2);
         packed[7] = 0xff;
     }
+    packed[packed_size - 16] ^= 1;
+    failed |=
+        expect("corrupt index CRC32", wwXzDecode(packed, packed_size, output, raw_size, raw_size), WW_XZ_INVALID_DATA);
+    packed[packed_size - 16] ^= 1;
     if (raw_size != 0)
     {
         /* The last block's CRC32 immediately precedes the stream index. */
@@ -193,11 +197,22 @@ int main(int argc, char **argv)
         else
         {
             size_t check_offset = packed_size - 12 - (size_t) index_size - 4;
-            packed[check_offset] ^= 1;
-            failed |= expect("corrupt payload CRC32",
-                             wwXzDecode(packed, packed_size, output, raw_size, raw_size),
-                             WW_XZ_INVALID_DATA);
-            packed[check_offset] ^= 1;
+            for (size_t i = 0; i < 4; ++i)
+            {
+                packed[check_offset + i] ^= 1;
+#ifdef WW_TEST_SKIP_PAYLOAD_CRC32
+                failed |= expect(
+                    "ignored payload CRC32", wwXzDecode(packed, packed_size, output, raw_size, raw_size), WW_XZ_OK);
+                failed |= memcmp(raw, output, raw_size) != 0;
+#else
+                failed |= expect("corrupt payload CRC32",
+                                 wwXzDecode(packed, packed_size, output, raw_size, raw_size),
+                                 WW_XZ_INVALID_DATA);
+#endif
+                packed[check_offset + i] ^= 1;
+                /* Skipping verification must still require all four stored bytes. */
+                failed |= wwXzDecode(packed, check_offset + i, output, raw_size, raw_size) == WW_XZ_OK;
+            }
         }
         /* Assert actual encoder settings, then exercise the upstream filter
          * rejection with a valid block-header CRC. Empty XZ has no blocks. */
@@ -209,14 +224,22 @@ int main(int argc, char **argv)
         }
         else
         {
+            packed[20] ^= 1;
+            failed |= expect("corrupt block-header CRC32",
+                             wwXzDecode(packed, packed_size, output, raw_size, raw_size),
+                             WW_XZ_INVALID_DATA);
+            packed[20] ^= 1;
             packed[14] = 7; /* ARM BCJ is unsupported by the shipped decoder. */
             put_crc(packed + 20, packed + 12, 8);
             failed |= expect("ARM BCJ", wwXzDecode(packed, packed_size, output, raw_size, raw_size), WW_XZ_UNSUPPORTED);
             packed[14] = 4;
             put_crc(packed + 20, packed + 12, 8);
-            packed[packed_size / 2] ^= 0x40;
-            failed |= wwXzDecode(packed, packed_size, output, raw_size, raw_size) == WW_XZ_OK;
-            packed[packed_size / 2] ^= 0x40;
+            unsigned char control = packed[24];
+            packed[24]            = 3; /* Reserved LZMA2 control byte: invalid even without a data CRC. */
+            failed |= expect("invalid LZMA2 control",
+                             wwXzDecode(packed, packed_size, output, raw_size, raw_size),
+                             WW_XZ_INVALID_DATA);
+            packed[24] = control;
             /* A nondefault x86 BCJ start offset with a valid block header. */
             memmove(packed + 28, packed + 24, packed_size - 24);
             packed[12] = 3;

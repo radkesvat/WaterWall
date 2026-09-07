@@ -26,6 +26,8 @@ extern "C"
     /* Decode one Waterwall stream with private magic and CRC32 selector using XZ_SINGLE.
      * input/output must be non-null, non-overlapping buffers of the supplied sizes.
      * Input is never modified, including during stream-flag normalization.
+     * The ordinary decoder verifies every CRC. Launcher builds may omit only
+     * block data CRC32 verification via WW_PACKED_PAYLOAD_CRC32=OFF.
      * expected_size is trusted caller metadata and may be zero. Success requires
      * exactly expected_size output bytes and complete input consumption. No stream
      * padding or concatenation is accepted. Output is unspecified on failure.
