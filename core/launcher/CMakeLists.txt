@@ -141,6 +141,9 @@ if(WIN32)
     endif()
   else()
     target_sources(Waterwall PRIVATE $<TARGET_OBJECTS:waterwall_resources>)
+    # Match the application's static compiler-library policy. The toolchain's
+    # Windows CRT and system API import libraries still resolve to OS DLLs.
+    target_link_options(Waterwall PRIVATE -static)
     target_link_options(Waterwall PRIVATE "LINKER:--dynamicbase" "LINKER:--enable-reloc-section"
       "LINKER:--nxcompat" "LINKER:--strip-all")
   endif()
