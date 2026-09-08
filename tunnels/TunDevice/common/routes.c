@@ -239,7 +239,9 @@ static bool routeListParseAndAppend(route_list_t *list, const char *cidr, const 
     route_cidr_t parsed;
     if (! parseRouteCidr(cidr, &parsed))
     {
-        LOGF("JSON Error: %s contains invalid CIDR entry: %s", json_path, cidr != NULL ? cidr : "<null>");
+        LOGF("JSON Error: %s contains invalid CIDR entry: %s",
+             json_path,
+             configPolicyDiagnostic(cidr != NULL ? cidr : "<null>"));
         return false;
     }
 
@@ -565,15 +567,24 @@ void tundeviceCleanupSystemRoutes(tundevice_tstate_t *state)
         return;
     }
 
-    while (state->system_routes_installed > 0)
+    size_t       remaining = 0;
+    const size_t installed = state->system_routes_installed;
+    for (size_t i = 0; i < installed; ++i)
     {
-        state->system_routes_installed--;
-        const char *cidr = state->system_routes[state->system_routes_installed];
+        const char *cidr = state->system_routes[i];
         if (! tundeviceRemoveRoute(state->tdev, cidr, state->route_table))
         {
             LOGW("TunDevice: failed to remove system route %s", cidr);
+            state->policy_cleanup_failed = true;
+            /* Keep unresolved entries in the installed prefix. Successful
+             * entries remain in the
+             * allocation inventory for final freeing. */
+            char *removed                     = state->system_routes[remaining];
+            state->system_routes[remaining++] = state->system_routes[i];
+            state->system_routes[i]           = removed;
         }
     }
+    state->system_routes_installed = remaining;
 }
 
 void tundeviceFreeRouteSettings(tundevice_tstate_t *state)
@@ -599,5 +610,6 @@ void tundeviceFreeRouteSettings(tundevice_tstate_t *state)
     state->route_table             = NULL;
     state->post_up_script          = NULL;
     state->pre_down_script         = NULL;
+    state->pre_down_pending        = false;
     state->system_route_enabled    = false;
 }

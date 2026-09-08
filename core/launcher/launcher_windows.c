@@ -262,6 +262,12 @@ LAZY_WRAPPER(BOOL, FALSE, lazy_kernel32, SetInformationJobObject,
              (HANDLE hJob, JOBOBJECTINFOCLASS JobObjectInformationClass, LPVOID lpJobObjectInformation,
               DWORD cbJobObjectInformationLength),
              (hJob, JobObjectInformationClass, lpJobObjectInformation, cbJobObjectInformationLength))
+LAZY_WRAPPER(BOOL, FALSE, lazy_kernel32, IsProcessInJob, (HANDLE ProcessHandle, HANDLE JobHandle, PBOOL Result),
+             (ProcessHandle, JobHandle, Result))
+LAZY_WRAPPER(BOOL, FALSE, lazy_kernel32, QueryInformationJobObject,
+             (HANDLE hJob, JOBOBJECTINFOCLASS JobObjectInformationClass, LPVOID lpJobObjectInformation,
+              DWORD cbJobObjectInformationLength, LPDWORD lpReturnLength),
+             (hJob, JobObjectInformationClass, lpJobObjectInformation, cbJobObjectInformationLength, lpReturnLength))
 LAZY_WRAPPER(BOOL, FALSE, lazy_kernel32, CreateProcessW,
              (LPCWSTR lpApplicationName, LPWSTR lpCommandLine, LPSECURITY_ATTRIBUTES lpProcessAttributes,
               LPSECURITY_ATTRIBUTES lpThreadAttributes, BOOL bInheritHandles, DWORD dwCreationFlags,
@@ -323,6 +329,8 @@ LAZY_WRAPPER(BOOL, FALSE, lazy_advapi32, ConvertStringSecurityDescriptorToSecuri
 #define DeleteProcThreadAttributeList     lazy_DeleteProcThreadAttributeList
 #define CreateJobObjectW                  lazy_CreateJobObjectW
 #define SetInformationJobObject           lazy_SetInformationJobObject
+#define IsProcessInJob                    lazy_IsProcessInJob
+#define QueryInformationJobObject         lazy_QueryInformationJobObject
 #define CreateProcessW                    lazy_CreateProcessW
 #define AssignProcessToJobObject          lazy_AssignProcessToJobObject
 #define ResumeThread                      lazy_ResumeThread
@@ -340,6 +348,54 @@ LAZY_WRAPPER(BOOL, FALSE, lazy_advapi32, ConvertStringSecurityDescriptorToSecuri
  * 0 = bootstrap, 1 = child running, 2 = exiting. */
 static volatile LONG console_phase;
 static volatile LONG console_cancel;
+
+/* The host owns the only Job handle. A NULL query inspects our enclosing Job
+ * without keeping kill-on-close alive after the host exits. */
+static int hostedJobValid(void)
+{
+    BOOL in_job = FALSE;
+    if (! IsProcessInJob(GetCurrentProcess(), NULL, &in_job))
+        return 0;
+    if (! in_job)
+    {
+        SetLastError(ERROR_ACCESS_DENIED);
+        return 0;
+    }
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits = {0};
+    if (! QueryInformationJobObject(NULL, JobObjectExtendedLimitInformation, &limits, sizeof(limits), NULL))
+        return 0;
+    DWORD flags = limits.BasicLimitInformation.LimitFlags;
+    if (! (flags & JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE) ||
+        (flags & (JOB_OBJECT_LIMIT_BREAKAWAY_OK | JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK)))
+    {
+        SetLastError(ERROR_ACCESS_DENIED);
+        return 0;
+    }
+    return 1;
+}
+
+/* Hosted stop events are manual-reset capabilities. Never reset cancellation;
+ * the runtime checks this same event before committing startup. */
+static int bootstrapContinue(HANDLE stop)
+{
+    if (InterlockedCompareExchange(&console_cancel, 0, 0))
+    {
+        SetLastError(ERROR_CANCELLED);
+        return 0;
+    }
+    if (stop != NULL)
+    {
+        DWORD result = WaitForSingleObject(stop, 0);
+        if (result == WAIT_OBJECT_0)
+        {
+            SetLastError(ERROR_CANCELLED);
+            return 0;
+        }
+        if (result != WAIT_TIMEOUT)
+            return 0;
+    }
+    return 1;
+}
 
 static BOOL WINAPI launcherConsoleHandler(DWORD event)
 {
@@ -690,7 +746,7 @@ static wchar_t *companionPath(const wchar_t *directory, const wchar_t *name)
  * Create fresh files with our ACL: CopyFileW can copy the source security policy.
  * Keep only exact owned paths, never recurse into the deployment directory. */
 static int copyCompanions(const wchar_t *deployment, const wchar_t *directory, SECURITY_ATTRIBUTES *security,
-                          companion_file_t **owned)
+                          companion_file_t **owned, HANDLE stop)
 {
     wchar_t *pattern = companionPath(deployment, L"*.dll");
     if (pattern == NULL)
@@ -708,6 +764,8 @@ static int copyCompanions(const wchar_t *deployment, const wchar_t *directory, S
     int    result = 0;
     do
     {
+        if (! bootstrapContinue(stop))
+            goto done;
         if (entry.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
             continue;
         wchar_t *source_path = companionPath(deployment, entry.cFileName);
@@ -744,6 +802,8 @@ static int copyCompanions(const wchar_t *deployment, const wchar_t *directory, S
         DWORD         count;
         for (;;)
         {
+            if (! bootstrapContinue(stop))
+                goto done;
             if (! ReadFile(source, bytes, sizeof(bytes), &count, NULL))
                 goto done;
             if (count == 0)
@@ -801,13 +861,18 @@ done:
     return result;
 }
 
-int launcherExecute(char *input, size_t length, const char *source, int argc, char *const argv[])
+int launcherExecute(char *input, size_t length, const char *source, int argc, char *const argv[],
+                    const waterwall_startup_options_t *options)
 {
     DWORD                status   = 1;
     int                  started  = 0;
     HANDLE               snapshot = NULL, root_lock = INVALID_HANDLE_VALUE, directory_lock = INVALID_HANDLE_VALUE;
     HANDLE               file = INVALID_HANDLE_VALUE, image_lock = INVALID_HANDLE_VALUE, job = NULL;
-    HANDLE               inherited[4]     = {0};
+    HANDLE               inherited[6] = {0};
+    HANDLE               standard[3]  = {0};
+    HANDLE               stop = NULL, ready = NULL;
+    HANDLE               original_stop    = (HANDLE) options->host_stop_event;
+    HANDLE               original_ready   = (HANDLE) options->host_ready_event;
     size_t               inherited_count  = 0;
     PROCESS_INFORMATION  process          = {0};
     STARTUPINFOEXW       startup          = {0};
@@ -824,6 +889,25 @@ int launcherExecute(char *input, size_t length, const char *source, int argc, ch
     lazy_str_t           operation      = LAZY_STR(op_installing_console_handler);
     if (! SetConsoleCtrlHandler(launcherConsoleHandler, TRUE))
         goto done;
+    if (options->hosted)
+    {
+        operation = (lazy_str_t) LAZY_STR(op_validating_host_containment);
+        if (! hostedJobValid())
+            goto done;
+        operation = (lazy_str_t) LAZY_STR(op_preparing_inherited_handles);
+        if (! DuplicateHandle(GetCurrentProcess(), original_stop, GetCurrentProcess(), &stop, SYNCHRONIZE, TRUE, 0) ||
+            (original_ready != NULL &&
+             ! DuplicateHandle(
+                 GetCurrentProcess(), original_ready, GetCurrentProcess(), &ready, EVENT_MODIFY_STATE, TRUE, 0)))
+            goto done;
+        CloseHandle(original_stop);
+        original_stop = NULL;
+        if (original_ready != NULL)
+            CloseHandle(original_ready);
+        original_ready = NULL;
+    }
+    if (! bootstrapContinue(stop))
+        goto done;
     operation = (lazy_str_t) LAZY_STR(op_capturing_executable_path_and_input);
     original  = modulePath();
     snapshot  = inputSnapshot(input, length);
@@ -833,6 +917,8 @@ int launcherExecute(char *input, size_t length, const char *source, int argc, ch
         goto done;
     original_narrow = waterwallWindowsNarrow(original);
     if (original_narrow == NULL)
+        goto done;
+    if (! bootstrapContinue(stop))
         goto done;
     operation = (lazy_str_t) LAZY_STR(op_decoding_executable);
     if (waterwallRuntimeLength == 0 || waterwallRuntimeLength > SIZE_MAX || waterwallPackedLength == 0)
@@ -848,6 +934,8 @@ int launcherExecute(char *input, size_t length, const char *source, int argc, ch
                    (size_t) waterwallRuntimeLength) != WW_XZ_OK ||
         ! validImage(decoded, (size_t) waterwallRuntimeLength))
         goto done;
+    if (! bootstrapContinue(stop))
+        goto done;
     operation         = (lazy_str_t) LAZY_STR(op_creating_private_extraction_directory);
     DWORD root_length = GetTempPathW(32768, root);
     if (root_length == 0 || root_length >= 32700)
@@ -860,12 +948,16 @@ int launcherExecute(char *input, size_t length, const char *source, int argc, ch
     operation = (lazy_str_t) LAZY_STR(op_pinning_temporary_root);
     if (! pinTemporaryRoot(root_lock, root, &ancestor_locks, &ancestor_count))
         goto done;
+    if (! bootstrapContinue(stop))
+        goto done;
     security = privateSecurity();
     if (security == NULL)
         goto done;
     SECURITY_ATTRIBUTES sa = {sizeof(sa), security, FALSE};
     for (unsigned attempt = 0; attempt < 32; ++attempt)
     {
+        if (! bootstrapContinue(stop))
+            goto done;
         LARGE_INTEGER counter;
         QueryPerformanceCounter(&counter);
         if (swprintf(directory,
@@ -899,6 +991,8 @@ int launcherExecute(char *input, size_t length, const char *source, int argc, ch
     owns_file = 1;
     for (size_t written = 0; written < (size_t) waterwallRuntimeLength;)
     {
+        if (! bootstrapContinue(stop))
+            goto done;
         size_t remaining = (size_t) waterwallRuntimeLength - written;
         DWORD  chunk     = remaining > 1024 * 1024 ? 1024 * 1024 : (DWORD) remaining;
         DWORD  count     = 0;
@@ -941,12 +1035,33 @@ int launcherExecute(char *input, size_t length, const char *source, int argc, ch
         ! appendNarrow(command, &used, exe_argument))
         goto done;
     for (int i = 1; i < argc; ++i)
+    {
+        if (options->hosted &&
+            (strncmp(argv[i], "--host-stop-event:", 18) == 0 || strncmp(argv[i], "--host-ready-event:", 19) == 0))
+            continue;
         if (! appendNarrow(command, &used, argv[i]))
             goto done;
+    }
+    if (options->hosted)
+    {
+        char event_argument[80];
+        snprintf(
+            event_argument, sizeof(event_argument), "--host-stop-event:%llu", (unsigned long long) (uintptr_t) stop);
+        if (! appendNarrow(command, &used, event_argument))
+            goto done;
+        if (ready != NULL)
+        {
+            snprintf(event_argument,
+                     sizeof(event_argument),
+                     "--host-ready-event:%llu",
+                     (unsigned long long) (uintptr_t) ready);
+            if (! appendNarrow(command, &used, event_argument))
+                goto done;
+        }
+    }
     operation                    = (lazy_str_t) LAZY_STR(op_preparing_inherited_handles);
     inherited[inherited_count++] = snapshot;
     const DWORD standard_ids[3]  = {STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE};
-    HANDLE      standard[3]      = {0};
     for (unsigned i = 0; i < 3; ++i)
     {
         HANDLE handle = GetStdHandle(standard_ids[i]);
@@ -961,6 +1076,10 @@ int launcherExecute(char *input, size_t length, const char *source, int argc, ch
         }
         inherited[inherited_count++] = standard[i];
     }
+    if (stop != NULL)
+        inherited[inherited_count++] = stop;
+    if (ready != NULL)
+        inherited[inherited_count++] = ready;
     SIZE_T attribute_size = 0;
     InitializeProcThreadAttributeList(NULL, 1, 0, &attribute_size);
     startup.lpAttributeList = malloc(attribute_size);
@@ -981,12 +1100,15 @@ int launcherExecute(char *input, size_t length, const char *source, int argc, ch
     startup.StartupInfo.hStdInput               = standard[0];
     startup.StartupInfo.hStdOutput              = standard[1];
     startup.StartupInfo.hStdError               = standard[2];
-    operation                                   = (lazy_str_t) LAZY_STR(op_creating_child_job);
-    job                                         = CreateJobObjectW(NULL, NULL);
-    JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits = {0};
-    limits.BasicLimitInformation.LimitFlags     = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-    if (job == NULL || ! SetInformationJobObject(job, JobObjectExtendedLimitInformation, &limits, sizeof(limits)))
-        goto done;
+    if (! options->hosted)
+    {
+        operation                                   = (lazy_str_t) LAZY_STR(op_creating_child_job);
+        job                                         = CreateJobObjectW(NULL, NULL);
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits = {0};
+        limits.BasicLimitInformation.LimitFlags     = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        if (job == NULL || ! SetInformationJobObject(job, JobObjectExtendedLimitInformation, &limits, sizeof(limits)))
+            goto done;
+    }
     operation          = (lazy_str_t) LAZY_STR(op_restoring_companion_dlls);
     wchar_t *separator = wcsrchr(original, L'\\');
     if (separator == NULL)
@@ -995,10 +1117,10 @@ int launcherExecute(char *input, size_t length, const char *source, int argc, ch
         separator[1] = 0;
     else
         *separator = 0;
-    if (! copyCompanions(original, directory, &sa, &companions))
+    if (! copyCompanions(original, directory, &sa, &companions, stop))
         goto done;
     operation = (lazy_str_t) LAZY_STR(op_starting_native_child);
-    if (InterlockedCompareExchange(&console_cancel, 0, 0))
+    if (! bootstrapContinue(stop))
         goto done;
     fflush(stdout);
     fflush(stderr);
@@ -1007,16 +1129,16 @@ int launcherExecute(char *input, size_t length, const char *source, int argc, ch
                          NULL,
                          NULL,
                          TRUE,
-                         EXTENDED_STARTUPINFO_PRESENT | CREATE_SUSPENDED,
+                         EXTENDED_STARTUPINFO_PRESENT | CREATE_SUSPENDED | (options->hosted ? CREATE_NO_WINDOW : 0),
                          NULL,
                          NULL,
                          &startup.StartupInfo,
                          &process))
         goto done;
     operation = (lazy_str_t) LAZY_STR(op_assigning_child_job);
-    if (! AssignProcessToJobObject(job, process.hProcess))
+    if (job != NULL && ! AssignProcessToJobObject(job, process.hProcess))
         goto done;
-    if (InterlockedCompareExchange(&console_cancel, 0, 0))
+    if (! bootstrapContinue(stop))
         goto done;
     InterlockedExchange(&console_phase, 1);
     if (ResumeThread(process.hThread) == (DWORD) -1)
@@ -1054,8 +1176,17 @@ done:
     if (attributes_ready)
         DeleteProcThreadAttributeList(startup.lpAttributeList);
     free(startup.lpAttributeList);
-    for (size_t i = 1; i < inherited_count; ++i)
-        CloseHandle(inherited[i]);
+    for (size_t i = 0; i < 3; ++i)
+        if (standard[i] != NULL)
+            CloseHandle(standard[i]);
+    if (stop != NULL)
+        CloseHandle(stop);
+    if (ready != NULL)
+        CloseHandle(ready);
+    if (original_stop != NULL)
+        CloseHandle(original_stop);
+    if (original_ready != NULL)
+        CloseHandle(original_ready);
     if (snapshot != NULL)
         CloseHandle(snapshot);
     if (file != INVALID_HANDLE_VALUE)

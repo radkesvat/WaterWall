@@ -21,6 +21,9 @@ extern "C"
         const char *core_json_input;
         bool        core_json_from_stdin;
         bool        restricted_config;
+        bool        hosted;
+        uintptr_t   host_stop_event;
+        uintptr_t   host_ready_event;
     } waterwall_startup_options_t;
 
     typedef struct waterwall_handoff_s

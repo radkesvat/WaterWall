@@ -1,0 +1,10 @@
+add_executable(tundevice_policy_cleanup_test EXCLUDE_FROM_ALL
+  "${PROJECT_SOURCE_DIR}/tests/unittests/tundevice_policy_cleanup_test.c")
+target_include_directories(tundevice_policy_cleanup_test PRIVATE
+  "${PROJECT_SOURCE_DIR}/tunnels/TunDevice/include/TunDevice")
+target_link_libraries(tundevice_policy_cleanup_test PRIVATE ww)
+set_target_properties(tundevice_policy_cleanup_test PROPERTIES DISABLE_PRECOMPILE_HEADERS ON UNITY_BUILD OFF)
+add_test(NAME waterwall.tundevice_policy_cleanup_unit COMMAND tundevice_policy_cleanup_test)
+set_tests_properties(waterwall.tundevice_policy_cleanup_unit PROPERTIES TIMEOUT 30 LABELS "unit;tunnels;windows;shutdown")
+waterwall_register_platform_native_unit(waterwall.tundevice_policy_cleanup_unit tundevice_policy_cleanup_test
+  "unit;tunnels;windows;shutdown")

@@ -1,14 +1,16 @@
 #include "structure.h"
 
 #include "loggers/network_logger.h"
+#ifdef OS_WIN
+#include "devices/tun/tun_windows_dns.h"
+#endif
 
 void tundeviceTunnelOnStart(tunnel_t *t)
 {
-    tundevice_tstate_t *state          = tunnelGetState(t);
-    bool                device_up      = false;
-    bool                routes_applied = false;
-    bool                dns_applied    = false;
-    const char         *failure        = NULL;
+    tundevice_tstate_t *state     = tunnelGetState(t);
+    bool                device_up = false;
+    bool                cancelled = false;
+    const char         *failure   = NULL;
 
     if (! packettunnelLifecycleAnchorBind(t))
     {
@@ -57,42 +59,45 @@ void tundeviceTunnelOnStart(tunnel_t *t)
         failure = "TunDevice: could not install system routes";
         goto rollback;
     }
-    routes_applied = true;
-
     if (! tundeviceApplyDnsSettings(state))
     {
+#ifdef OS_WIN
+        cancelled = tundeviceWindowsDnsWasCancelled(state->tdev);
+#endif
         failure = "TunDevice: could not configure DNS servers";
         goto rollback;
     }
-    dns_applied = true;
 
     if (state->post_up_script != NULL && execCmd(state->post_up_script).exit_code != 0)
     {
         failure = "TunDevice: post-up-script failed";
         goto rollback;
     }
+    state->pre_down_pending = state->pre_down_script != NULL;
     return;
 
 rollback:
-    if (dns_applied)
-    {
-        tundeviceCleanupDnsSettings(state);
-    }
-    if (routes_applied)
-    {
-        tundeviceCleanupSystemRoutes(state);
-    }
+    /* Attempt partial installations too. Failed entries stay owned until a
+     * later cleanup succeeds or the
+     * exclusively owned adapter is destroyed. */
+    tundeviceCleanupDnsSettings(state);
+    tundeviceCleanupSystemRoutes(state);
     tundeviceClearEgressPinIfPublished(state);
     if (device_up && ! tundeviceBringDown(state->tdev))
     {
         LOGW("TunDevice: bring-down during startup rollback completed with cleanup errors");
+        state->policy_cleanup_failed = true;
     }
-    if (state->tdev != NULL)
+    /* Keep the device for the normal owner teardown, including another bounded
+     * cleanup pass for unresolved
+     * policy. A stop is not a startup failure. */
+    if (! cancelled || state->policy_cleanup_failed)
     {
-        tundeviceDestroy(state->tdev);
-        state->tdev = NULL;
+        if (! cancelled)
+        {
+            LOGF("%s", failure);
+        }
+        startupFailureRecord(1);
     }
-    LOGF("%s", failure);
-    startupFailureRecord(1);
     return;
 }

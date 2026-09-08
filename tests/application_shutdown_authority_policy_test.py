@@ -2,6 +2,7 @@
 """Keep process-shutdown observation inside the orchestration layer."""
 
 from pathlib import Path
+import re
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -22,7 +23,11 @@ for tree_name in ("core", "ww", "tunnels"):
 
 for tree_name in ("tunnels", "ww/devices", "ww/net"):
     for path in (ROOT / tree_name).rglob("*.[ch]"):
-        if "applicationShutdown" in path.read_text(encoding="utf-8", errors="replace"):
-            raise SystemExit(f"{path.relative_to(ROOT)}: component reads the process shutdown controller")
+        text = path.read_text(encoding="utf-8", errors="replace")
+        for symbol in re.findall(r"\bapplicationShutdown\w*\b", text):
+            # Reporting a cleanup failure publishes an outcome; it does not
+            # grant the component authority to observe or drive controller phases.
+            if symbol != "applicationShutdownRecordFailure":
+                raise SystemExit(f"{path.relative_to(ROOT)}: component reads the process shutdown controller")
 
 print("process-shutdown state is confined to the orchestration layer")

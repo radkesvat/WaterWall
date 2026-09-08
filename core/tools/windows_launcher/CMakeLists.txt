@@ -26,6 +26,7 @@ add_executable(WaterwallApplication fixture.c "${WATERWALL_SOURCE_DIR}/core/star
   "${WATERWALL_SOURCE_DIR}/ww/node_builder/config_lexical.c"
   "${WATERWALL_SOURCE_DIR}/ww/vendor/cjson/cJSON.c")
 target_link_libraries(WaterwallApplication PRIVATE fixture_companion)
+target_link_libraries(WaterwallApplication PRIVATE user32)
 target_compile_definitions(WaterwallApplication PRIVATE _WIN32_WINNT=0x0600 WW_CJSON_CRT_ALLOCATOR=1)
 target_include_directories(WaterwallApplication PRIVATE "${WATERWALL_SOURCE_DIR}/core"
   "${WATERWALL_SOURCE_DIR}/ww/node_builder" "${WATERWALL_SOURCE_DIR}/ww/vendor/cjson")
@@ -53,3 +54,15 @@ add_test(NAME waterwall.windows_packed_fixture
     --launcher "$<TARGET_FILE:Waterwall>" --application "$<TARGET_FILE:WaterwallApplication>"
     ${WW_FIXTURE_RUNNER_ARGS})
 set_tests_properties(waterwall.windows_packed_fixture PROPERTIES TIMEOUT 120)
+add_executable(windows_hosted_launcher_test hosted.c)
+add_dependencies(windows_hosted_launcher_test Waterwall)
+target_include_directories(windows_hosted_launcher_test PRIVATE "${WATERWALL_SOURCE_DIR}/core")
+target_compile_definitions(windows_hosted_launcher_test PRIVATE _WIN32_WINNT=0x0600)
+if(NOT MSVC)
+  target_link_options(windows_hosted_launcher_test PRIVATE -static)
+endif()
+if(CMAKE_HOST_WIN32)
+  add_test(NAME waterwall.windows_hosted_launcher_fixture
+    COMMAND windows_hosted_launcher_test "$<TARGET_FILE:Waterwall>")
+  set_tests_properties(waterwall.windows_hosted_launcher_fixture PROPERTIES TIMEOUT 150)
+endif()

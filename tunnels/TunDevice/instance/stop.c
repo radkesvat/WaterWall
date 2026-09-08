@@ -9,6 +9,7 @@ void tundeviceTunnelOnQuiesceRequest(tunnel_t *t, const ww_lifecycle_context_t *
     if (state->tdev != NULL && ! tundeviceRequestStop(state->tdev))
     {
         LOGW("TunDevice: failed to wake the device reader during quiescence");
+        applicationShutdownRecordFailure(1, kApplicationShutdownReasonSubsystemFailure);
     }
 }
 
@@ -23,9 +24,13 @@ void tundeviceTunnelOnQuiesceWait(tunnel_t *t, const ww_lifecycle_context_t *con
         return;
     }
 
-    if (state->pre_down_script != NULL && execCmd(state->pre_down_script).exit_code != 0)
+    if (state->pre_down_pending)
     {
-        LOGW("TunDevice: pre-down-script failed");
+        state->pre_down_pending = false;
+        if (execCmd(state->pre_down_script).exit_code != 0)
+        {
+            LOGW("TunDevice: pre-down-script failed");
+        }
     }
     tundeviceClearEgressPinIfPublished(state);
     tundeviceCleanupDnsSettings(state);
@@ -33,5 +38,10 @@ void tundeviceTunnelOnQuiesceWait(tunnel_t *t, const ww_lifecycle_context_t *con
     if (! tundeviceBringDown(tdev))
     {
         LOGW("TunDevice: Bring down failed");
+        state->policy_cleanup_failed = true;
+    }
+    if (state->policy_cleanup_failed)
+    {
+        applicationShutdownRecordFailure(1, kApplicationShutdownReasonSubsystemFailure);
     }
 }

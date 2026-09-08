@@ -3,6 +3,7 @@
 #include "buffer_pool.h"
 #include "bufio/buffer_pool.h"
 #include "bufio/master_pool.h"
+#include "global_state_internal.h"
 #include "loggers/core_logger.h"
 #include "loggers/dns_logger.h"
 #include "loggers/internal_logger.h"
@@ -14,6 +15,10 @@
 
 #if defined(OS_WIN)
 #include "devices/tun/tun.h"
+#include "devices/windows_driver_artifacts.h"
+#ifdef WW_HAVE_WINDIVERT
+#include "managers/windivert_manager.h"
+#endif
 #endif
 
 #include <ares.h>
@@ -781,10 +786,14 @@ void globalstateRunShutdownSequence(void)
  * After the main loop finishes, it joins all other worker threads and exits.
  * it also allows other workers begin their loops.
  */
-void runMainThread(void)
+void globalstateRunMainThreadWithStartupHooks(void (*before_commit)(void), void (*after_publication)(void))
 {
     assert(GSTATE.flag_initialized);
 
+    if (before_commit != NULL)
+    {
+        before_commit();
+    }
     signalmanagerConsumePendingShutdownSignal();
     if (! applicationShutdownCommitRuntime())
     {
@@ -795,10 +804,20 @@ void runMainThread(void)
     // Publishes fully initialized global/worker state before spawned loops run.
     atomicStoreExplicit(&GSTATE.workers_run_flag, true, memory_order_release);
 
+    if (after_publication != NULL)
+    {
+        after_publication();
+    }
+
     workerRun(getWorker(0));
     signalmanagerConsumePendingShutdownSignal();
     applicationShutdownCoordinate();
     abortProgramNow(1);
+}
+
+void runMainThread(void)
+{
+    globalstateRunMainThreadWithStartupHooks(NULL, NULL);
 }
 
 /*!
@@ -836,7 +855,11 @@ WW_EXPORT void destroyGlobalState(void)
     socketmanagerDestroy();
     nodemanagerDestroy();
 #if defined(OS_WIN)
+#ifdef WW_HAVE_WINDIVERT
+    windivertManagerShutdown();
+#endif
     tundevicePlatformShutdown();
+    windowsDriverArtifactsShutdown();
 #endif
     wCryptoGlobalCleanup();
 

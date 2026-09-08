@@ -45,7 +45,9 @@ def expect_selected(result, marker, case_name, excluded_markers=()):
 
 def expect_error(result, expected, case_name):
     require(result.returncode != 0, f"{case_name}: invalid startup input unexpectedly succeeded\n{result.stdout}")
-    require(expected in result.stdout, f"{case_name}: missing diagnostic {expected!r}\n{result.stdout}")
+    messages = (expected,) if isinstance(expected, str) else expected
+    require(any(message in result.stdout for message in messages),
+            f"{case_name}: missing diagnostic {expected!r}\n{result.stdout}")
 
 
 def core_json_with_marker(marker):
@@ -94,9 +96,9 @@ def test_input_error_versions(binary, run_dir):
                     f"{case_name}: version must appear exactly once\n{result.stdout}")
 
     result = run_waterwall(binary, run_dir, [f"--config:{run_dir}"])
-    expect_error(result, "Could not read core settings file", "directory input")
+    expect_error(result, ("Could not open core settings file", "Could not read core settings file"), "directory input")
     require(result.stdout.splitlines()[0] == version_line,
-            f"directory input: version must precede the read error\n{result.stdout}")
+            f"directory input: version must precede the input error\n{result.stdout}")
 
 
 def test_file_selection(binary, run_dir):
@@ -176,7 +178,7 @@ def test_invalid_inputs(binary, run_dir):
     expect_error(result, "Could not open core settings file", "missing config path")
 
     result = run_waterwall(binary, run_dir, [f"--config:{run_dir}"])
-    expect_error(result, "Could not read core settings file", "directory config path")
+    expect_error(result, ("Could not open core settings file", "Could not read core settings file"), "directory config path")
 
     result = run_waterwall(binary, run_dir, [f"--config:{invalid_json_path}"])
     expect_error(result, "Could not parse core settings JSON from file", "invalid core JSON file")

@@ -247,8 +247,10 @@ static int launcherLinuxRestoreAndExec(int input_fd, size_t input_len, const cha
     return 1;
 }
 
-int launcherExecute(char *input, size_t length, const char *source, int argc, char *const argv[])
+int launcherExecute(char *input, size_t length, const char *source, int argc, char *const argv[],
+                    const waterwall_startup_options_t *options)
 {
+    (void) options;
     int input_fd = launcherLinuxCreateSealedInputSnapshot(input, length);
     free(input);
     if (input_fd < 0)

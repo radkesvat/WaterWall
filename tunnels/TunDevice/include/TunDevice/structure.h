@@ -37,6 +37,8 @@ typedef struct tundevice_tstate_s
     char  *dns_servers[kTunDeviceMaxDnsServers];
     size_t dns_server_count;
     bool   dns_servers_installed;
+    bool   policy_cleanup_failed; // Sticky even if a later cleanup retry succeeds.
+    bool   pre_down_pending;      // Run once, only after OnStart completed successfully.
 
     bool loop_protection_enabled; // exclude this process's own traffic from the TUN
     bool egress_pin_published;    // this instance contributed a reference to the global egress pin

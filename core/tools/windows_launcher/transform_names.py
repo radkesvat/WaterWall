@@ -70,6 +70,8 @@ PROC_NAMES = [
     "DeleteProcThreadAttributeList",
     "CreateJobObjectW",
     "SetInformationJobObject",
+    "IsProcessInJob",
+    "QueryInformationJobObject",
     "CreateProcessW",
     "AssignProcessToJobObject",
     "ResumeThread",
@@ -100,6 +102,7 @@ LOG_STRINGS = [
     ("op_preparing_child_arguments", "preparing child arguments"),
     ("op_preparing_inherited_handles", "preparing inherited handles"),
     ("op_creating_child_job", "creating child job"),
+    ("op_validating_host_containment", "validating host-owned job containment"),
     ("op_restoring_companion_dlls", "restoring adjacent companion DLLs"),
     ("op_starting_native_child", "starting native child"),
     (

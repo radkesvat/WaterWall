@@ -1,4 +1,8 @@
+#include "node_builder/config_policy.h"
 #include "structure.h"
+#ifdef OS_WIN
+#include "devices/tun/tun_windows_dns.h"
+#endif
 
 #include "loggers/network_logger.h"
 
@@ -45,7 +49,8 @@ bool tundeviceLoadDnsSettings(tundevice_tstate_t *state, const cJSON *settings)
 
         if (! tundeviceDnsServerIsValidIpv4(entry->valuestring))
         {
-            LOGF("JSON Error: TunDevice->settings->dns contains invalid IPv4 address: %s", entry->valuestring);
+            LOGF("JSON Error: TunDevice->settings->dns contains invalid IPv4 address: %s",
+                 configPolicyDiagnostic(entry->valuestring));
             return false;
         }
 
@@ -71,7 +76,14 @@ bool tundeviceApplyDnsSettings(tundevice_tstate_t *state)
         dns_servers[i] = state->dns_servers[i];
     }
 
-    if (! tundeviceSetDnsServers(state->tdev, dns_servers, state->dns_server_count))
+    bool installed = tundeviceSetDnsServers(state->tdev, dns_servers, state->dns_server_count);
+#ifdef OS_WIN
+    /* A started helper can have changed DNS even with a failed/unknown exit.
+     * Pre-launch cancellation owns no DNS
+     * effect and needs no clearing. */
+    state->dns_servers_installed = tundeviceWindowsDnsNeedsCleanup(state->tdev);
+#endif
+    if (! installed)
     {
         return false;
     }
@@ -90,6 +102,8 @@ void tundeviceCleanupDnsSettings(tundevice_tstate_t *state)
     if (! tundeviceClearDnsServers(state->tdev))
     {
         LOGW("TunDevice: failed to clear DNS servers");
+        state->policy_cleanup_failed = true;
+        return;
     }
 
     state->dns_servers_installed = false;
@@ -105,6 +119,5 @@ void tundeviceFreeDnsSettings(tundevice_tstate_t *state)
         state->dns_servers[i] = NULL;
     }
 
-    state->dns_server_count      = 0;
-    state->dns_servers_installed = false;
+    state->dns_server_count = 0;
 }

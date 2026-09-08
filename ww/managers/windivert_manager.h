@@ -168,6 +168,9 @@ typedef struct
  */
 bool windivertManagerEnsureLoaded(void);
 
+/* Serialized global teardown, after every WinDivert device producer and user. */
+void windivertManagerShutdown(void);
+
 /* Thin wrappers over the dynamically resolved WinDivert exports. They must only
  * be used after windivertManagerEnsureLoaded() has returned true. */
 HANDLE windivertOpen(const char *filter, WINDIVERT_LAYER layer, INT16 priority, UINT64 flags);

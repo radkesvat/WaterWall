@@ -1,9 +1,11 @@
 #include "tun.h"
+#include "tun_windows_dns.h"
 #include "tun_windows_lifetime.h"
 #include "tun_windows_receive_policy.h"
 
 #include "buffer_pool.h"
 #include "devices/tun/tun_lifecycle.h"
+#include "devices/windows_driver_artifacts.h"
 #include "global_state.h"
 #include "managers/signal_manager.h"
 #include "master_pool.h"
@@ -48,6 +50,8 @@ struct tun_device_s
     HANDLE                   adapter_handle;
     HANDLE                   session_handle;
     HANDLE                   stop_event;
+    tun_windows_dns_result_e dns_result;
+    bool                     dns_cleanup_needed;
     MIB_UNICASTIPADDRESS_ROW address_row;
 
     void     *userdata;
@@ -101,18 +105,9 @@ typedef struct wintun_api_s
 
 static wintun_api_t wintun_api;
 
-typedef struct tun_windows_pending_cleanup_s
-{
-    HANDLE   file;
-    HMODULE  module;
-    wchar_t *path;
-    wchar_t  inline_path[MAX_PATH];
-} tun_windows_pending_cleanup_t;
-
-// Process-lifecycle ownership for one incomplete loader transaction. Startup is
-// serialized and refuses to create a second transaction until this slot is
-// empty, so cleanup failures cannot grow an unbounded resource list.
-static tun_windows_pending_cleanup_t wintun_pending_cleanup;
+// A failed FreeLibrary keeps its module and immutable artifact alive. Startup
+// is serialized and retries this one pending transaction before loading again.
+static HMODULE wintun_pending_module;
 
 #define WintunCreateAdapter           (wintun_api.create_adapter)
 #define WintunCloseAdapter            (wintun_api.close_adapter)
@@ -256,22 +251,27 @@ static bool routeTableIsMain(const char *route_table)
     return route_table == NULL || stringCompare(route_table, "main") == 0 || stringCompare(route_table, "auto") == 0;
 }
 
-static bool tunWindowsDnsNameIsSafe(const char *arg)
+static bool tunWindowsDnsInterfaceName(tun_device_t *tdev, wchar_t name[11])
 {
-    if (arg == NULL || arg[0] == '\0')
+    uint64_t value;
+    if (! tundeviceGetLuid(tdev, &value))
     {
+        LOGE("TunDevice: DNS requires an owned adapter");
         return false;
     }
-
-    for (const char *p = arg; *p != '\0'; ++p)
+    NET_LUID     luid = {.Value = value};
+    NET_IFINDEX  index;
+    NETIO_STATUS status = ConvertInterfaceLuidToIndex(&luid, &index);
+    if (status != NO_ERROR)
     {
-        if (! (isalnum((unsigned char) *p) || *p == ' ' || *p == '_' || *p == '-' || *p == '.'))
-        {
-            return false;
-        }
+        LOGE("TunDevice: failed to resolve DNS adapter identity, code: %lu", status);
+        return false;
     }
-
-    return true;
+    /* Wintun may assign a different alias on a naming collision. netsh accepts
+     * an interface index, so policy
+     * follows the returned adapter's identity. */
+    int written = swprintf(name, 11, L"%lu", (unsigned long) index);
+    return written > 0 && written < 11;
 }
 
 static bool tunWindowsDnsServerIsSafe(const char *arg)
@@ -290,48 +290,6 @@ static bool tunWindowsDnsServerIsSafe(const char *arg)
     }
 
     return true;
-}
-
-static int tunWindowsRunCommand(const char *command_line)
-{
-    STARTUPINFOA        si;
-    PROCESS_INFORMATION pi;
-
-    memoryZero(&si, sizeof(si));
-    memoryZero(&pi, sizeof(pi));
-    si.cb = sizeof(si);
-
-    char *command = stringDuplicate(command_line);
-    if (command == NULL)
-    {
-        LOGE("TunDevice: failed to allocate command line");
-        return -1;
-    }
-
-    BOOL created = CreateProcessA(NULL, command, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi);
-    if (! created)
-    {
-        DWORD last_error = GetLastError();
-        LOGE("TunDevice: failed to run command, code: %lu", last_error);
-        memoryFree(command);
-        return -1;
-    }
-
-    WaitForSingleObject(pi.hProcess, INFINITE);
-
-    DWORD exit_code = 1;
-    if (! GetExitCodeProcess(pi.hProcess, &exit_code))
-    {
-        DWORD last_error = GetLastError();
-        LOGE("TunDevice: failed to get command exit code, code: %lu", last_error);
-        exit_code = 1;
-    }
-
-    CloseHandle(pi.hThread);
-    CloseHandle(pi.hProcess);
-    memoryFree(command);
-
-    return (int) exit_code;
 }
 
 static bool tunWindowsParseRouteCidr(const char *cidr, SOCKADDR_INET *addr, UINT8 *prefix)
@@ -391,219 +349,18 @@ static bool tunWindowsParseRouteCidr(const char *cidr, SOCKADDR_INET *addr, UINT
     return false;
 }
 
-typedef enum tun_windows_delete_outcome_e
-{
-    kTunWindowsDeleteImmediate = 0,
-    kTunWindowsDeleteDeferred,
-    kTunWindowsDeleteOutstanding,
-} tun_windows_delete_outcome_t;
-
-static bool tunWindowsDeleteErrorMeansAbsent(DWORD error)
-{
-    return error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND;
-}
-
-static tun_windows_delete_outcome_t tunWindowsDeleteOrSchedule(const wchar_t *path, const char *context)
-{
-    if (DeleteFileW(path))
-    {
-        return kTunWindowsDeleteImmediate;
-    }
-    const DWORD delete_error = GetLastError();
-    if (tunWindowsDeleteErrorMeansAbsent(delete_error))
-    {
-        return kTunWindowsDeleteImmediate;
-    }
-    if (MoveFileExW(path, NULL, MOVEFILE_DELAY_UNTIL_REBOOT))
-    {
-        LOGW("TunDevice: failed to delete temporary Wintun DLL %s, code: %lu; deletion is scheduled",
-             context,
-             delete_error);
-        return kTunWindowsDeleteDeferred;
-    }
-
-    const DWORD schedule_error = GetLastError();
-    if (tunWindowsDeleteErrorMeansAbsent(schedule_error))
-    {
-        LOGW("TunDevice: temporary Wintun DLL disappeared while scheduling cleanup %s; original delete code: %lu",
-             context,
-             delete_error);
-        return kTunWindowsDeleteImmediate;
-    }
-    LOGE("TunDevice: temporary Wintun DLL remains owned by the OS %s; delete code: %lu, schedule code: %lu",
-         context,
-         delete_error,
-         schedule_error);
-    return kTunWindowsDeleteOutstanding;
-}
-
-static bool tunWindowsPendingCleanupIsEmpty(void)
-{
-    return wintun_pending_cleanup.file == NULL && wintun_pending_cleanup.module == NULL &&
-           wintun_pending_cleanup.path == NULL && wintun_pending_cleanup.inline_path[0] == L'\0';
-}
-
-static const wchar_t *tunWindowsPendingCleanupPath(void)
-{
-    if (wintun_pending_cleanup.path != NULL)
-    {
-        return wintun_pending_cleanup.path;
-    }
-    return wintun_pending_cleanup.inline_path[0] == L'\0' ? NULL : wintun_pending_cleanup.inline_path;
-}
-
-static void tunWindowsPendingCleanupAdopt(HANDLE file, HMODULE module, wchar_t *owned_path, const wchar_t *inline_path)
-{
-    assert(tunWindowsPendingCleanupIsEmpty());
-    assert(owned_path == NULL || inline_path == NULL);
-
-    wintun_pending_cleanup.file   = file;
-    wintun_pending_cleanup.module = module;
-    wintun_pending_cleanup.path   = owned_path;
-    if (inline_path != NULL)
-    {
-        const size_t length = wcslen(inline_path);
-        assert(length < ARRAY_SIZE(wintun_pending_cleanup.inline_path));
-        memoryCopy(wintun_pending_cleanup.inline_path, inline_path, (length + 1U) * sizeof(*inline_path));
-    }
-}
-
 static bool tunWindowsPendingCleanupTry(const char *context)
 {
-    if (wintun_pending_cleanup.file != NULL)
+    if (wintun_pending_module != NULL)
     {
-        if (! CloseHandle(wintun_pending_cleanup.file))
-        {
-            LOGE("TunDevice: retained temporary Wintun file handle %s after close failed, code: %lu",
-                 context,
-                 GetLastError());
-            return false;
-        }
-        wintun_pending_cleanup.file = NULL;
-    }
-
-    if (wintun_pending_cleanup.module != NULL)
-    {
-        if (! FreeLibrary(wintun_pending_cleanup.module))
+        if (! FreeLibrary(wintun_pending_module))
         {
             LOGE("TunDevice: retained Wintun module %s after unload failed, code: %lu", context, GetLastError());
             return false;
         }
-        wintun_pending_cleanup.module = NULL;
+        wintun_pending_module = NULL;
     }
-
-    const wchar_t *path = tunWindowsPendingCleanupPath();
-    if (path != NULL)
-    {
-        if (tunWindowsDeleteOrSchedule(path, context) == kTunWindowsDeleteOutstanding)
-        {
-            return false;
-        }
-        if (wintun_pending_cleanup.path != NULL)
-        {
-            memoryFree(wintun_pending_cleanup.path);
-            wintun_pending_cleanup.path = NULL;
-        }
-        wintun_pending_cleanup.inline_path[0] = L'\0';
-    }
-
-    return true;
-}
-
-/**
- * Writes the Wintun DLL bytes to a temporary file on disk
- * @param dllBytes Pointer to the DLL binary data
- * @param dllSize Size of the DLL data in bytes
- * @param path_out Receives an owned UTF-16 path on success.
- * @return true on success.
- */
-static bool writeDllToTempFile(const unsigned char *dllBytes, size_t dllSize, wchar_t **path_out)
-{
-    wchar_t  temp_path[MAX_PATH];
-    wchar_t  temp_file_name[MAX_PATH];
-    bool     file_created = false;
-    HANDLE   file         = INVALID_HANDLE_VALUE;
-    wchar_t *owned_path   = NULL;
-    DWORD    error        = ERROR_SUCCESS;
-
-    *path_out = NULL;
-    if (dllSize > UINT32_MAX)
-    {
-        LOGE("TunDevice: embedded Wintun DLL is too large");
-        return false;
-    }
-
-    DWORD temp_path_len = GetTempPathW((DWORD) ARRAY_SIZE(temp_path), temp_path);
-    if (temp_path_len == 0 || temp_path_len >= ARRAY_SIZE(temp_path))
-    {
-        error = temp_path_len == 0 ? GetLastError() : ERROR_INSUFFICIENT_BUFFER;
-        LOGE("TunDevice: failed to get temporary path, code: %lu", error);
-        return false;
-    }
-
-    if (GetTempFileNameW(temp_path, L"dll", 0, temp_file_name) == 0)
-    {
-        error = GetLastError();
-        LOGE("TunDevice: failed to create temporary filename, code: %lu", error);
-        return false;
-    }
-    file_created = true;
-
-    size_t path_bytes;
-    if (! memoryTryComputeArraySize(wcslen(temp_file_name) + 1U, sizeof(*temp_file_name), &path_bytes))
-    {
-        error = ERROR_ARITHMETIC_OVERFLOW;
-        goto fail;
-    }
-
-    owned_path = memoryAllocate(path_bytes);
-    if (owned_path == NULL)
-    {
-        error = ERROR_NOT_ENOUGH_MEMORY;
-        goto fail;
-    }
-    memoryCopy(owned_path, temp_file_name, path_bytes);
-
-    file = CreateFileW(
-        temp_file_name, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_WRITE_THROUGH, NULL);
-    if (file == INVALID_HANDLE_VALUE)
-    {
-        error = GetLastError();
-        goto fail;
-    }
-
-    DWORD bytes_written = 0;
-    if (! WriteFile(file, dllBytes, (DWORD) dllSize, &bytes_written, NULL) || bytes_written != (DWORD) dllSize)
-    {
-        error = GetLastError();
-        if (error == ERROR_SUCCESS)
-        {
-            error = ERROR_WRITE_FAULT;
-        }
-        goto fail;
-    }
-
-    if (! CloseHandle(file))
-    {
-        error = GetLastError();
-        goto fail;
-    }
-    file      = INVALID_HANDLE_VALUE;
-    *path_out = owned_path;
-    return true;
-
-fail:
-    assert(tunWindowsPendingCleanupIsEmpty());
-    tunWindowsPendingCleanupAdopt(file == INVALID_HANDLE_VALUE ? NULL : file,
-                                  NULL,
-                                  owned_path,
-                                  file_created && owned_path == NULL ? temp_file_name : NULL);
-    if (! tunWindowsPendingCleanupTry("after extraction error"))
-    {
-        LOGW("TunDevice: temporary Wintun extraction resources remain pending after cleanup failure");
-    }
-    LOGE("TunDevice: failed to extract Wintun DLL, code: %lu", error);
-    return false;
+    return windowsDriverArtifactRelease(kWindowsDriverWintun);
 }
 
 static bool tunWindowsLoadFunction(HMODULE module, const char *function_name, void *target, size_t target_size,
@@ -622,11 +379,11 @@ static bool tunWindowsLoadFunction(HMODULE module, const char *function_name, vo
 
 static bool tunWindowsStartup(void)
 {
-    wchar_t     *temp_dll_path = NULL;
-    HMODULE      module        = NULL;
-    wintun_api_t api           = {0};
-    DWORD        error         = ERROR_SUCCESS;
-    const char  *operation     = "extract embedded DLL";
+    const wchar_t *temp_dll_path = NULL;
+    HMODULE        module        = NULL;
+    wintun_api_t   api           = {0};
+    DWORD          error         = ERROR_SUCCESS;
+    const char    *operation     = "extract embedded DLL";
 
     if (! tunWindowsPendingCleanupTry("before Wintun startup"))
     {
@@ -634,8 +391,9 @@ static bool tunWindowsStartup(void)
         return false;
     }
 
-    if (! writeDllToTempFile(&wintun_dll[0], wintun_dll_len, &temp_dll_path))
+    if (! windowsDriverArtifactPrepare(kWindowsDriverWintun, wintun_dll, wintun_dll_len, &temp_dll_path))
     {
+        LOGE("TunDevice: failed to prepare protected Wintun artifact, code: %lu", GetLastError());
         return false;
     }
 
@@ -643,7 +401,7 @@ static bool tunWindowsStartup(void)
     if (module == NULL)
     {
         error     = GetLastError();
-        operation = "load extracted DLL";
+        operation = "load protected DLL with constrained dependency search (safe-loader support required)";
         goto fail;
     }
 
@@ -677,14 +435,14 @@ static bool tunWindowsStartup(void)
     /* Publish the module, path and complete API as one serialized commit. */
     wintun_api                             = api;
     GSTATE.wintun_dll_handle               = module;
-    GSTATE.wintun_dll_path                 = temp_dll_path;
+    GSTATE.wintun_dll_path                 = (void *) temp_dll_path;
     GSTATE.flag_tundev_windows_initialized = true;
     LOGD("TunDevice: Wintun DLL loaded successfully");
     return true;
 
 fail:
-    assert(tunWindowsPendingCleanupIsEmpty());
-    tunWindowsPendingCleanupAdopt(NULL, module, temp_dll_path, NULL);
+    assert(wintun_pending_module == NULL);
+    wintun_pending_module = module;
     if (! tunWindowsPendingCleanupTry("after startup error"))
     {
         LOGW("TunDevice: Wintun startup resources remain pending after cleanup failure");
@@ -1521,8 +1279,10 @@ bool tundeviceRemoveRoute(tun_device_t *tdev, const char *cidr, const char *rout
 
 bool tundeviceSetDnsServers(tun_device_t *tdev, const char *const *servers, size_t count)
 {
+    tdev->dns_result = kTunWindowsDnsFailed;
     if (count == 0)
     {
+        tdev->dns_result = kTunWindowsDnsSuccess;
         return true;
     }
 
@@ -1532,9 +1292,9 @@ bool tundeviceSetDnsServers(tun_device_t *tdev, const char *const *servers, size
         return false;
     }
 
-    if (! tunWindowsDnsNameIsSafe(tdev->name))
+    wchar_t interface_name[11];
+    if (! tunWindowsDnsInterfaceName(tdev, interface_name))
     {
-        LOGE("TunDevice: invalid DNS interface argument");
         return false;
     }
 
@@ -1547,55 +1307,54 @@ bool tundeviceSetDnsServers(tun_device_t *tdev, const char *const *servers, size
         }
     }
 
-    char command[512];
-    stringNPrintf(command,
-                  sizeof(command),
-                  "netsh interface ipv4 set dnsservers name=\"%s\" source=static address=%s register=none "
-                  "validate=no",
-                  tdev->name,
-                  servers[0]);
-    if (tunWindowsRunCommand(command) != 0)
+    bool may_have_changed = false;
+    tdev->dns_result      = tunWindowsDnsSet(interface_name, servers, count, tdev->stop_event, &may_have_changed);
+    tdev->dns_cleanup_needed |= may_have_changed;
+    if (tdev->dns_result != kTunWindowsDnsSuccess)
     {
-        LOGE("TunDevice: failed to set primary DNS server on %s", tdev->name);
-        return false;
-    }
-
-    if (count > 1)
-    {
-        stringNPrintf(command,
-                      sizeof(command),
-                      "netsh interface ipv4 add dnsservers name=\"%s\" address=%s index=2 validate=no",
-                      tdev->name,
-                      servers[1]);
-        if (tunWindowsRunCommand(command) != 0)
+        if (tdev->dns_result == kTunWindowsDnsCancelled)
         {
-            LOGE("TunDevice: failed to set secondary DNS server on %s", tdev->name);
-            discard tundeviceClearDnsServers(tdev);
-            return false;
+            LOGI("TunDevice: DNS installation cancelled");
         }
+        else
+        {
+            LOGE("TunDevice: failed to configure DNS servers");
+        }
+        /* The tunnel owner inspects possible partial installation and supplies
+         * a separate bounded
+         * rollback/cleanup operation. */
+        return false;
     }
 
     LOGI("TunDevice: configured %zu DNS server(s) on %s", count, tdev->name);
     return true;
 }
 
+bool tundeviceWindowsDnsWasCancelled(const tun_device_t *tdev)
+{
+    return tdev->dns_result == kTunWindowsDnsCancelled;
+}
+
+bool tundeviceWindowsDnsNeedsCleanup(const tun_device_t *tdev)
+{
+    return tdev->dns_cleanup_needed;
+}
+
 bool tundeviceClearDnsServers(tun_device_t *tdev)
 {
-    if (! tunWindowsDnsNameIsSafe(tdev->name))
+    wchar_t interface_name[11];
+    if (! tunWindowsDnsInterfaceName(tdev, interface_name))
     {
-        LOGE("TunDevice: invalid DNS interface argument");
         return false;
     }
 
-    char command[512];
-    stringNPrintf(
-        command, sizeof(command), "netsh interface ipv4 delete dnsservers name=\"%s\" all validate=no", tdev->name);
-    if (tunWindowsRunCommand(command) != 0)
+    if (! tunWindowsDnsClear(interface_name))
     {
         LOGE("TunDevice: failed to clear DNS servers on %s", tdev->name);
         return false;
     }
 
+    tdev->dns_cleanup_needed = false;
     LOGI("TunDevice: cleared DNS servers on %s", tdev->name);
     return true;
 }
@@ -1904,23 +1663,21 @@ void tundeviceDestroy(tun_device_t *tdev)
 
 void tundevicePlatformShutdown(void)
 {
-    HMODULE  module   = (HMODULE) GSTATE.wintun_dll_handle;
-    wchar_t *dll_path = (wchar_t *) GSTATE.wintun_dll_path;
+    HMODULE module = (HMODULE) GSTATE.wintun_dll_handle;
 
-    /* Stop publication first; global teardown is serialized after all devices. */
+    /* All adapter sessions and device threads have stopped before this hook. */
     GSTATE.flag_tundev_windows_initialized = false;
     GSTATE.wintun_dll_handle               = NULL;
     GSTATE.wintun_dll_path                 = NULL;
     wintun_api                             = (wintun_api_t) {0};
 
-    if (module != NULL || dll_path != NULL)
+    if (module != NULL)
     {
-        assert(tunWindowsPendingCleanupIsEmpty());
-        tunWindowsPendingCleanupAdopt(NULL, module, dll_path, NULL);
+        assert(wintun_pending_module == NULL);
+        wintun_pending_module = module;
     }
-
     if (! tunWindowsPendingCleanupTry("during platform shutdown"))
     {
-        LOGE("TunDevice: Wintun platform cleanup remains pending and will be retried before another startup");
+        LOGE("TunDevice: protected Wintun platform cleanup remains pending");
     }
 }

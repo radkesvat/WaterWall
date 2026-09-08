@@ -7,6 +7,12 @@
 #include "os_helpers.h"
 #include "startup_options.h"
 
+#ifdef OS_WIN
+#include "devices/tun/tun_windows_dns.h"
+#include "global_state_internal.h"
+#include "host_lifecycle_windows.h"
+#endif
+
 // #ifdef COMPILER_MSVC
 // #define _CRTDBG_MAP_ALLOC
 // #pragma warning (disable: 4005)
@@ -15,8 +21,24 @@
 
 static bool waterwallStartupCheckpoint(void)
 {
+#ifdef OS_WIN
+    waterwallHostLifecycleCheckpoint();
+#endif
     signalmanagerConsumePendingShutdownSignal();
     return ! applicationShutdownWasRequested();
+}
+
+static void waterwallApplicationFinalize(void)
+{
+#ifdef OS_WIN
+    if (! tunWindowsDnsShutdown())
+    {
+        applicationShutdownRecordFailure(1, kApplicationShutdownReasonSubsystemFailure);
+    }
+    tunWindowsDnsSetStartupStopEvent(NULL);
+    waterwallHostLifecycleDestroy();
+#endif
+    destroyCoreSettings();
 }
 
 int waterwallInnerMain(int argc, char **argv);
@@ -124,7 +146,7 @@ int waterwallInnerMain(int argc, char **argv)
         .dns_logger_data = (logger_construction_data_t) {.log_file_path = getCoreSettings()->dns_log_file_fullpath,
                                                          .log_level     = getCoreSettings()->dns_log_level,
                                                          .log_console   = getCoreSettings()->dns_log_console},
-        .application_finalizer = destroyCoreSettings,
+        .application_finalizer = waterwallApplicationFinalize,
     };
 
     // core logger is available after ww setup
@@ -138,6 +160,21 @@ int waterwallInnerMain(int argc, char **argv)
         }
         goto startup_failed;
     }
+#ifdef OS_WIN
+    if (startup_options.hosted)
+    {
+        if (! waterwallHostLifecycleStart(startup_options.host_stop_event, startup_options.host_ready_event))
+        {
+            startup_result = wwStartupFailure(1);
+            goto startup_failed;
+        }
+        tunWindowsDnsSetStartupStopEvent((HANDLE) waterwallHostLifecycleStopEvent());
+        if (! waterwallStartupCheckpoint())
+        {
+            goto startup_failed;
+        }
+    }
+#endif
 #if defined(WATERWALL_SYSTEM_LOAD_TEST_HOOKS)
     if (getenv("WATERWALL_TEST_FORCE_SYSTEM_LOAD") != NULL)
     {
@@ -216,7 +253,11 @@ int waterwallInnerMain(int argc, char **argv)
     {
         goto startup_failed;
     }
+#ifdef OS_WIN
+    globalstateRunMainThreadWithStartupHooks(waterwallHostLifecycleCheckpoint, waterwallHostLifecyclePublishReady);
+#else
     runMainThread();
+#endif
     return 0;
 
 startup_failed:

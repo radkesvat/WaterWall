@@ -55,6 +55,36 @@ static const char *configArgumentValue(const char *arg)
     return NULL;
 }
 
+#ifdef _WIN32
+static bool parseHostEvent(const char *value, uintptr_t *event)
+{
+    uintptr_t parsed = 0;
+    if (*value == '\0')
+    {
+        return false;
+    }
+    for (const char *cursor = value; *cursor != '\0'; ++cursor)
+    {
+        if (*cursor < '0' || *cursor > '9')
+        {
+            return false;
+        }
+        const uintptr_t digit = (uintptr_t) (*cursor - '0');
+        if (parsed > (UINTPTR_MAX - digit) / 10U)
+        {
+            return false;
+        }
+        parsed = parsed * 10U + digit;
+    }
+    if (parsed == 0 || parsed == UINTPTR_MAX)
+    {
+        return false;
+    }
+    *event = parsed;
+    return true;
+}
+#endif
+
 static void printUsage(const char *program_name)
 {
     fprintf(stderr,
@@ -63,6 +93,11 @@ static void printUsage(const char *program_name)
             "  %s [--restricted-config] [-c:PATH|--c:PATH|-config:PATH|--config:PATH|config:PATH]\n",
             program_name,
             program_name);
+#ifdef _WIN32
+    fprintf(stderr,
+            "  Hosted Windows startup additionally requires --hosted --host-stop-event:HANDLE; "
+            "--host-ready-event:HANDLE is optional\n");
+#endif
 }
 
 waterwall_startup_arguments_result_e waterwallStartupOptionsParse(int argc, char *const argv[],
@@ -78,6 +113,9 @@ waterwall_startup_arguments_result_e waterwallStartupOptionsParse(int argc, char
     const char *cli_core_input    = NULL;
     bool        version_argument  = false;
     bool        restricted_config = false;
+    bool        hosted            = false;
+    uintptr_t   host_stop_event   = 0;
+    uintptr_t   host_ready_event  = 0;
 
     for (int i = 1; i < argc; ++i)
     {
@@ -98,6 +136,36 @@ waterwall_startup_arguments_result_e waterwallStartupOptionsParse(int argc, char
             }
             restricted_config = true;
             continue;
+        }
+
+        if (strcmp(arg, "--hosted") == 0 || strncmp(arg, "--host-stop-event:", 18U) == 0 ||
+            strncmp(arg, "--host-ready-event:", 19U) == 0)
+        {
+#ifdef _WIN32
+            if (strcmp(arg, "--hosted") == 0)
+            {
+                if (hosted)
+                {
+                    fprintf(stderr, "The hosted option may only be specified once\n");
+                    return kWaterwallStartupArgumentsExitFailure;
+                }
+                hosted = true;
+            }
+            else
+            {
+                const bool is_stop = strncmp(arg, "--host-stop-event:", 18U) == 0;
+                uintptr_t *event   = is_stop ? &host_stop_event : &host_ready_event;
+                if (*event != 0 || ! parseHostEvent(arg + (is_stop ? 18U : 19U), event))
+                {
+                    fprintf(stderr, "Invalid or duplicate hosted event option\n");
+                    return kWaterwallStartupArgumentsExitFailure;
+                }
+            }
+            continue;
+#else
+            fprintf(stderr, "Hosted event options are available only on Windows\n");
+            return kWaterwallStartupArgumentsExitFailure;
+#endif
         }
 
         if (isVersionArgument(arg))
@@ -126,6 +194,13 @@ waterwall_startup_arguments_result_e waterwallStartupOptionsParse(int argc, char
             return kWaterwallStartupArgumentsExitFailure;
         }
         cli_core_input = config_value;
+    }
+
+    if ((hosted && host_stop_event == 0) || (! hosted && (host_stop_event != 0 || host_ready_event != 0)) ||
+        (host_ready_event != 0 && host_ready_event == host_stop_event))
+    {
+        fprintf(stderr, "Hosted mode requires a stop event and an optional distinct readiness event\n");
+        return kWaterwallStartupArgumentsExitFailure;
     }
 
     if (version_argument)
@@ -159,6 +234,9 @@ waterwall_startup_arguments_result_e waterwallStartupOptionsParse(int argc, char
     }
 
     options->restricted_config    = restricted_config;
+    options->hosted               = hosted;
+    options->host_stop_event      = host_stop_event;
+    options->host_ready_event     = host_ready_event;
     options->core_json_input      = core_input;
     options->core_json_from_stdin = (strcmp(core_input, "stdin") == 0);
     return kWaterwallStartupArgumentsRun;

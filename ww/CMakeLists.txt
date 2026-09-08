@@ -582,9 +582,11 @@ elseif(UNIX AND NOT ANDROID)
     endif()
 
 elseif(WIN32)
+    target_sources(ww PRIVATE devices/windows_driver_artifacts.c)
     # WinDivert for x64 systems
     if(CMAKE_SYSTEM_PROCESSOR STREQUAL "AMD64" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
         message(STATUS "Including WinDivert for amd64")
+        target_compile_definitions(ww PUBLIC WW_HAVE_WINDIVERT=1)
         target_sources(ww PRIVATE
             vendor/windivert/x64/windivert.dll.x64.bytes.c
             vendor/windivert/x64/windivert.sys.x64.bytes.c
@@ -617,7 +619,7 @@ elseif(WIN32)
         message(FATAL_ERROR "Cannot bind WinTun - Unknown architecture: ${CMAKE_SYSTEM_PROCESSOR}")
     endif()
     
-    target_sources(ww PRIVATE devices/tun/tun_windows.c)
+    target_sources(ww PRIVATE devices/tun/tun_windows.c devices/tun/tun_windows_dns.c)
 
     # Event backend configuration
     # NOTE: the earlier unconditional `set(WITH_WEPOLL 1)` that forced wepoll on
@@ -1568,6 +1570,7 @@ if(BUILD_TESTING)
         instance/global_state.c
         managers/signal_manager.c
         managers/node_manager.c
+        managers/windivert_manager.c
         managers/socket_manager_iptables_recovery.c
         net/adapter.c
         net/tunnel.c
@@ -1577,6 +1580,8 @@ if(BUILD_TESTING)
         devices/device_reader_session.c
         devices/device_writer_channel.c
         devices/tun/tun_linux.c
+        devices/tun/tun_windows.c
+        devices/windows_driver_artifacts.c
         devices/capture/capture_linux.c
         devices/raw/raw_linux.c
         objects/user.c

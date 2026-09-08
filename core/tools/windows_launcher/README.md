@@ -26,6 +26,41 @@ On Windows, open the chosen native compiler environment, then use `native`,
 administrator manifests. Use an elevated test environment for unattended native
 CTest execution; native interactive UAC still needs manual validation.
 
+The native `waterwall.windows_hosted_launcher_fixture` test uses the same packed
+launcher and PE fixture with `--hosted`, `--host-stop-event:<decimal handle>` and
+optional `--host-ready-event:<decimal handle>`. It checks enclosing Job policy,
+same-Job runtime membership, hidden runtime creation, least event rights,
+optional readiness, pre-signaled stop, full DWORD exit status, last-host-Job-handle
+closure, and launcher failure followed by host settlement of the runtime. It
+retires forced-exit residue only after confirming process death. Missing-Job
+rejection is explicitly reported as unverified if the test runner already belongs
+to a Job. This fixture does not qualify runtime commit, exact cancellation races
+during extraction/admission, OS-version coverage, or a service-specific token.
+
+Hosted mode does not retain a host Job handle or create a second Job. The host
+must assign the suspended launcher to a kill-on-close Job with neither breakaway
+flag, create manual-reset lifecycle events, enforce its startup/stop deadlines,
+and settle the complete Job before retiring session files. Only the runtime
+signals readiness; omitting the readiness event leaves readiness determination
+to the host. Standalone invocation retains its private Job and console behavior.
+Do not assume that the Job contains exactly two processes: Windows console
+infrastructure can also appear as members despite `CREATE_NO_WINDOW`.
+
+Use the same native host against a complete production packed artifact:
+
+```powershell
+build/windows-launcher-native/Debug/windows_hosted_launcher_test.exe --production build/local-vs2022/Debug/Waterwall.exe
+```
+
+Pass an absolute artifact path when running from another directory. Production
+mode supplies an in-process `TesterClient -> BlackHole` configuration with restricted parsing,
+waits for the runtime's real readiness event, requests orderly stop, and verifies
+zero exit status and whole-Job settlement. It also exercises intentional omission
+of readiness and pre-signaled cancellation. The no-readiness case observes
+process survival only; it does not claim a runtime readiness milestone. This
+mode creates no listeners or driver nodes and does not use console diagnostics
+as a readiness protocol.
+
 The separate full application cross-check is `windows-cross-mingw-x64` at the
 repository root. It uses native GNU make and NASM for dependency builds, a native
 host encoder and target MinGW compiler/tools. The ordinary application's runtime

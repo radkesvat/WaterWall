@@ -64,11 +64,35 @@ def main():
             ('{"name":"x","variables":{"script":"' + SECRET + '"},"nodes":['
              '{"name":"x","type":"TunDevice","settings":{"device-name":"wwtest",'
              '"device-ip":"10.0.0.1/24","pre-down-script":$script$}}]}', "user scripts are disabled"),
+            (json.dumps({"name": "x", "nodes": [{"name": "x", "type": "TunDevice", "settings": {
+                "device-name": "wwtest", "device-ip": "10.0.0.1/24", "dns": [SECRET]}}]}),
+             "dns contains invalid IPv4 address: <restricted>"),
             ('{"name":"x","nodes":[],' + '"padding":"' + 'x' * (8 * 1024 * 1024) + '"}', "input limit"),
         ]
         for data, error in node_cases:
             (root / "nodes.json").write_text(data, encoding="utf-8")
             run(binary, root, core, error)
+
+        # Both route lists share the CIDR diagnostic, including after expansion.
+        for key in ("route-cidrs", "route-exclude-cidrs"):
+            settings = {"device-name": "wwtest", "device-ip": "10.0.0.1/24",
+                        "system-route": True, key: [SECRET]}
+            nodes = {"name": "x", "nodes": [{"name": "x", "type": "TunDevice", "settings": settings}]}
+            diagnostic = f"TunDevice->settings->{key} contains invalid CIDR entry: "
+            (root / "nodes.json").write_text(json.dumps(nodes), encoding="utf-8")
+            run(binary, root, core, diagnostic + "<restricted>")
+
+            nodes["variables"] = {"cidr": SECRET}
+            settings[key] = ["$cidr$"]
+            variable_input = json.dumps(nodes).replace('"$cidr$"', '$cidr$')
+            (root / "nodes.json").write_text(variable_input, encoding="utf-8")
+            run(binary, root, core, diagnostic + "<restricted>")
+
+            # Ordinary CLI diagnostics retain the invalid value.
+            del nodes["variables"]
+            settings[key] = ["INVALID_ROUTE_CIDR"]
+            (root / "nodes.json").write_text(json.dumps(nodes), encoding="utf-8")
+            run(binary, root, core, diagnostic + "INVALID_ROUTE_CIDR", restricted=False)
 
         # A resolved 2-to-8 MiB derivative must reach node lookup, not a 2 MiB cap.
         (root / "nodes.json").write_text(json.dumps({"name": "large", "padding": "x" * (3 * 1024 * 1024),

@@ -1,3 +1,4 @@
+#include "node_builder/config_policy.h"
 #include "structure.h"
 
 #include "loggers/network_logger.h"
@@ -122,7 +123,14 @@ tunnel_t *tundeviceTunnelCreate(node_t *node)
 #ifdef OS_WIN
     if (! isAdmin())
     {
-        MessageBox(NULL, fail_msg, "Error", MB_OK | MB_ICONERROR);
+        if (configPolicyIsRestricted())
+        {
+            LOGE("TunDevice: administrative driver capability is unavailable");
+        }
+        else
+        {
+            MessageBox(NULL, fail_msg, "Error", MB_OK | MB_ICONERROR);
+        }
         startupFailureRecord(1);
         return tundeviceTunnelCreateFail(t);
     }

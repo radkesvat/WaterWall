@@ -67,6 +67,32 @@ int main(int argc, char **argv)
     fprintf(stderr, "fixture-stderr\n");
     free(content);
     waterwallStartupHandoffCleanup(&handoff);
+    if (options.hosted)
+    {
+        HANDLE stop  = (HANDLE) options.host_stop_event;
+        HANDLE ready = (HANDLE) options.host_ready_event;
+        /* The native host fixture supplies least-rights capabilities; the
+         * launcher must preserve them across its additional process boundary. */
+        if (GetConsoleWindow() != NULL || SetEvent(stop) || GetLastError() != ERROR_ACCESS_DENIED)
+            return 87;
+        if (ready != NULL && (WaitForSingleObject(ready, 0) != WAIT_FAILED || GetLastError() != ERROR_ACCESS_DENIED))
+            return 88;
+        DWORD stopped = WaitForSingleObject(stop, 0);
+        if (stopped != WAIT_OBJECT_0 && stopped != WAIT_TIMEOUT)
+            return 89;
+        if (stopped == WAIT_TIMEOUT)
+        {
+            if (ready != NULL && ! SetEvent(ready))
+                return 90;
+            printf("hosted-fixture-waiting:%lu\n", GetCurrentProcessId());
+            fflush(NULL);
+            if (WaitForSingleObject(stop, 15000) != WAIT_OBJECT_0)
+                return 91;
+        }
+        CloseHandle(stop);
+        if (ready != NULL)
+            CloseHandle(ready);
+    }
     const char *exit_code = getenv("WW_FIXTURE_EXIT");
     fflush(NULL);
     ExitProcess(exit_code == NULL ? 0 : (DWORD) strtoull(exit_code, NULL, 0));

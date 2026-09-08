@@ -73,7 +73,7 @@ int waterwallInnerMain(int argc, char **argv)
     }
     cJSON_Delete(json);
 
-    return launcherExecute(content, input_len, options.core_json_input, argc, argv);
+    return launcherExecute(content, input_len, options.core_json_input, argc, argv, &options);
 }
 
 #ifndef WATERWALL_HAS_STARTUP_GUARD
