@@ -682,32 +682,74 @@ jobs:
 
       - name: Configure CMake
         shell: msys2 {0}
-        run: >
-          cmake --preset ${{ matrix.preset }}
-          -DCPM_SOURCE_CACHE="${{ env.cpm-path }}"
-          -DDISABLE_PRECOMPILED_HEADERS=ON
-          -DWW_PACK_RUNTIME=ON -DBUILD_TESTING=ON
+        run: |
+          mkdir -p build/ci-diagnostics
+          set -o pipefail
+          cmake --preset ${{ matrix.preset }} \
+            -DCPM_SOURCE_CACHE="${{ env.cpm-path }}" \
+            -DDISABLE_PRECOMPILED_HEADERS=ON \
+            -DWW_PACK_RUNTIME=ON -DBUILD_TESTING=ON \
+            2>&1 | tee build/ci-diagnostics/configure.log
 
       - name: Build
-        run: cmake --build --preset ${{ matrix.preset }}
+        run: |
+          set -o pipefail
+          cmake --build --preset ${{ matrix.preset }} 2>&1 | tee build/ci-diagnostics/build.log
 
       - name: Check native packed bootstrap in Debug and Release
         working-directory: core/tools/windows_launcher
         run: |
-          cmake --preset native
-          cmake --build --preset native-debug --parallel 8
-          ctest --preset native-debug --no-tests=error --output-on-failure
-          cmake --build --preset native-release --parallel 8
-          ctest --preset native-release --no-tests=error --output-on-failure
-          python ../../../tests/packed_build_target_test.py --build-dir ../../../build/windows-launcher-native --config Debug --windows
-          python ../../../tests/packed_build_target_test.py --build-dir ../../../build/windows-launcher-native --config Release --windows
+          set -o pipefail
+          {
+            cmake --preset native &&
+            cmake --build --preset native-debug --parallel 8 &&
+            ctest --preset native-debug --no-tests=error --output-on-failure &&
+            cmake --build --preset native-release --parallel 8 &&
+            ctest --preset native-release --no-tests=error --output-on-failure &&
+            python ../../../tests/packed_build_target_test.py --build-dir ../../../build/windows-launcher-native --config Debug --windows &&
+            python ../../../tests/packed_build_target_test.py --build-dir ../../../build/windows-launcher-native --config Release --windows
+          } 2>&1 | tee ../../../build/ci-diagnostics/bootstrap.log
 
       - name: Validate packed application
         run: >
           ctest --test-dir build/${{ matrix.preset }} -C Release --no-tests=error --output-on-failure
           -R '^waterwall.windows_packed_application$'
 
-      - name: Upload packed application failure diagnostics
+      - name: Collect Windows failure events
+        if: failure()
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          New-Item -ItemType Directory -Force build/ci-diagnostics | Out-Null
+          try {
+            Get-MpComputerStatus -ErrorAction Stop |
+              Select-Object AMEngineVersion, AntivirusSignatureVersion, AntivirusSignatureLastUpdated, RealTimeProtectionEnabled |
+              Format-List | Out-File build/ci-diagnostics/defender-status.log
+          } catch {
+            $_ | Out-String | Out-File build/ci-diagnostics/defender-status.log
+          }
+          try {
+            Get-WinEvent -FilterHashtable @{
+              LogName = 'Microsoft-Windows-Windows Defender/Operational'
+              Id = 1116, 1117, 1118, 1119, 1121, 1122
+              StartTime = (Get-Date).AddHours(-4)
+            } -ErrorAction Stop | Select-Object TimeCreated, Id, Message |
+              Format-List | Out-File -Width 4096 build/ci-diagnostics/defender-events.log
+          } catch {
+            $_ | Out-String | Out-File build/ci-diagnostics/defender-events.log
+          }
+          try {
+            Get-WinEvent -FilterHashtable @{
+              LogName = 'Application'
+              Id = 1000, 1001
+              StartTime = (Get-Date).AddHours(-4)
+            } -ErrorAction Stop | Select-Object TimeCreated, Id, Message |
+              Format-List | Out-File -Width 4096 build/ci-diagnostics/application-events.log
+          } catch {
+            $_ | Out-String | Out-File build/ci-diagnostics/application-events.log
+          }
+
+      - name: Upload Windows failure diagnostics
         if: failure()
         uses: actions/upload-artifact@v6
         with:
@@ -715,7 +757,11 @@ jobs:
           path: |
             build/${{ matrix.preset }}/Release/Waterwall.exe
             build/${{ matrix.preset }}/Release/waterwall_application.exe
-            build/${{ matrix.preset }}/Testing/Temporary/LastTest.log
+            build/${{ matrix.preset }}/Testing/Temporary/
+            build/${{ matrix.preset }}/CMakeFiles/CMakeConfigureLog.yaml
+            build/windows-launcher-native/Testing/Temporary/
+            build/windows-launcher-native/CMakeFiles/CMakeConfigureLog.yaml
+            build/ci-diagnostics/
           if-no-files-found: warn
 
       - name: Upload artifact
