@@ -26,7 +26,7 @@ add_executable(WaterwallApplication fixture.c "${WATERWALL_SOURCE_DIR}/core/star
   "${WATERWALL_SOURCE_DIR}/ww/node_builder/config_lexical.c"
   "${WATERWALL_SOURCE_DIR}/ww/vendor/cjson/cJSON.c")
 target_link_libraries(WaterwallApplication PRIVATE fixture_companion)
-target_compile_definitions(WaterwallApplication PRIVATE _WIN32_WINNT=0x0600 WW_CJSON_CRT_ALLOCATOR=1 CJSON_HIDE_SYMBOLS)
+target_compile_definitions(WaterwallApplication PRIVATE _WIN32_WINNT=0x0600 WW_CJSON_CRT_ALLOCATOR=1)
 target_include_directories(WaterwallApplication PRIVATE "${WATERWALL_SOURCE_DIR}/core"
   "${WATERWALL_SOURCE_DIR}/ww/node_builder" "${WATERWALL_SOURCE_DIR}/ww/vendor/cjson")
 set_target_properties(WaterwallApplication PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/$<CONFIG>")
