@@ -1,5 +1,5 @@
 /* ----------------------------------------------------------------------------
-Copyright (c) 2018-2020, Microsoft Research, Daan Leijen
+Copyright (c) 2018-2026, Microsoft Research, Daan Leijen
 This is free software; you can redistribute it and/or modify it under the
 terms of the MIT license. A copy of the license can be found in the file
 "LICENSE" at the root of this distribution.
@@ -38,6 +38,7 @@ we therefore test the API over various inputs. Please add more tests :-)
 
 #include "testhelper.h"
 
+
 // ---------------------------------------------------------------------------
 // Test functions
 // ---------------------------------------------------------------------------
@@ -53,12 +54,17 @@ bool test_stl_theap_allocator2(void);
 bool test_stl_theap_allocator3(void);
 bool test_stl_theap_allocator4(void);
 
-bool mem_is_zero(uint8_t* p, size_t size) {
+static bool test_zero_aligned_first(void);
+
+static bool mem_has_vals(const uint8_t* p, size_t size, uint8_t val) {
   if (p==NULL) return false;
   for (size_t i = 0; i < size; ++i) {
-    if (p[i] != 0) return false;
+    if (p[i] != val) return false;
   }
   return true;
+}
+static bool mem_is_zero(const void* p, size_t size) {
+  return mem_has_vals((const uint8_t*)p,size,0);
 }
 
 // ---------------------------------------------------------------------------
@@ -67,14 +73,25 @@ bool mem_is_zero(uint8_t* p, size_t size) {
 int main(void) {
   mi_option_disable(mi_option_verbose);
 
-  CHECK_BODY("malloc-aligned9a") { // test large alignments
-    void* p = mi_zalloc_aligned(1024 * 1024, 2);
-    mi_free(p);
-    p = mi_zalloc_aligned(1024 * 1024, 2);
-    mi_free(p);
-    result = true;
-  };
-
+  #if 1
+  #if defined(__cplusplus) && !defined(_MSC_VER)
+  CHECK_BODY("c++ new-handler") {
+    std::set_new_handler([]{ throw std::bad_alloc(); });
+    void* p = mi_new_nothrow(SIZE_MAX/2);
+    result = (p==NULL);
+  }
+  CHECK_BODY("c++ new handler2") {
+    try {
+      void* p = mi_new_n(SIZE_MAX/2, 4);
+      (void)(p);
+      result = false;
+    }
+    catch(std::bad_alloc) {
+      result = true;
+    }
+  }
+  #endif
+  #endif
 
   // ---------------------------------------------------
   // Malloc
@@ -93,23 +110,33 @@ int main(void) {
   };
   #if MI_INTPTR_BITS > 32
   CHECK_BODY("malloc-free-invalid-low") {
-    mi_free((void*)(MI_ZU(0x0000000003990080))); // issue #1087
+    mi_cfree((void*)(MI_ZU(0x0000000003990080))); // issue #1087
   };
   #endif
   CHECK_BODY("calloc-overflow") {
     // use (size_t)&mi_calloc to get some number without triggering compiler warnings
     result = (mi_calloc((size_t)&mi_calloc,SIZE_MAX/1000) == NULL);
   };
-  CHECK_BODY("calloc0") {
-    void* p = mi_calloc(0,1000);
-    result = (mi_usable_size(p) <= 16);
-    mi_free(p);
-  };
   CHECK_BODY("malloc-large") {   // see PR #544.
     void* p = mi_malloc(67108872);
     mi_free(p);
   };
-
+  
+  CHECK_BODY("calloc0") {
+    void* p = mi_calloc(0,1000);
+    const size_t usable = mi_usable_size(p);    
+    result = (usable <= 16);
+    mi_free(p);
+  };
+  
+  CHECK_BODY("mi_urealloc_invalid") {
+    void* p = mi_malloc(64);
+    size_t pre, post;
+    void* q = mi_urealloc((char*)p + 3, 32, &pre, &post);
+    mi_free(p);
+    result = (q==NULL || q==(uint8_t*)p+3);
+  }
+  
   // ---------------------------------------------------
   // Extended
   // ---------------------------------------------------
@@ -207,12 +234,13 @@ int main(void) {
     }
     result = ok;
   };
+  
   CHECK_BODY("malloc-aligned9") { // test large alignments
     bool ok = true;
     void* p[8];
     const int max_align_shift =
       #if SIZE_MAX > UINT32_MAX
-      28
+      28  /* up to 64 MiB alignment */
       #else
       20
       #endif
@@ -230,6 +258,15 @@ int main(void) {
     }
     result = ok;
   };
+  
+  CHECK_BODY("malloc-aligned9a") { // test large alignments
+    void* p = mi_zalloc_aligned(1024 * 1024, 2);
+    mi_free(p);
+    p = mi_zalloc_aligned(1024 * 1024, 2);
+    mi_free(p);
+    result = true;
+  };
+  
   CHECK_BODY("malloc-aligned10") {
     bool ok = true;
     void* p[10+1];
@@ -255,6 +292,7 @@ int main(void) {
     result = (((uintptr_t)p % 0x100) == 0); // #602
     mi_free(p);
   }
+  
   CHECK_BODY("mimalloc-aligned13") {
     bool ok = true;
     for( size_t size = 1; size <= (MI_SMALL_SIZE_MAX * 2) && ok; size++ ) {
@@ -292,6 +330,24 @@ int main(void) {
     }
     result = ok;
   };
+  CHECK_BODY("zalloc-csize-large") {
+    // mi_theap_zalloc_csize must zero its large branch too: it used to
+    // delegate sizes above MI_SMALL_SIZE_MAX to the plain malloc path.
+    mi_theap_t* theap = mi_theap_get_default();
+    size_t size = MI_SMALL_SIZE_MAX + 64;
+    bool ok = true;
+    for (int round = 0; round < 16 && ok; round++) {
+      uint8_t* junk = (uint8_t*)mi_theap_malloc(theap, size);
+      memset(junk, 0xAB, size);
+      mi_free(junk);
+      uint8_t* z = (uint8_t*)mi_theap_zalloc_csize(theap, size);
+      for (size_t i = 0; i < size; i++) {
+        if (z[i] != 0) { ok = false; break; }
+      }
+      mi_free(z);
+    }
+    result = ok;
+  };
   CHECK_BODY("zalloc-aligned-small1") {
     size_t zalloc_size = MI_SMALL_SIZE_MAX / 2;
     uint8_t* p = (uint8_t*)mi_zalloc_aligned(zalloc_size, MI_MAX_ALIGN_SIZE * 2);
@@ -307,6 +363,21 @@ int main(void) {
     result = result && mem_is_zero(p, zalloc_size);
     mi_free(p);
   };
+
+  CHECK_BODY("rezalloc_aligned_zeros") {  // issue #763
+    size_t alignment = 1024;
+    size_t n = 1024 * 6;
+    void* ptr = mi_zalloc_aligned(n, alignment);
+    assert(mem_is_zero(ptr,n));
+    memset(ptr,123,n/2);
+    
+    ptr = mi_rezalloc_aligned(ptr, n/2, alignment);
+    assert(mem_has_vals((uint8_t*)ptr,n/2,123));
+    
+    ptr = mi_rezalloc_aligned(ptr, n, alignment);
+    assert(mem_has_vals((uint8_t*)ptr,n/2,123));
+    result = mem_is_zero((uint8_t*)ptr + n/2, n/2);    
+  }
 
   // ---------------------------------------------------
   // Reallocation
@@ -346,6 +417,45 @@ int main(void) {
   }
 
   // ---------------------------------------------------
+  // Small allocations
+  // ---------------------------------------------------
+  CHECK_BODY("free_small1") {
+    for(size_t n = 1; n < MI_SMALL_SIZE_MAX; n *=2) {
+      const size_t size = n*sizeof(int);
+      int* p = (int*)mi_zalloc(size);
+      p[n-1] = 42;
+      mi_free_size(p,size);
+    }
+  }
+
+  CHECK_BODY("free_small2") {
+    for(size_t n = 1; n < MI_SMALL_SIZE_MAX; n *=2) {
+      const size_t size = n*sizeof(int);
+      int* p = (int*)mi_zalloc(size);
+      p[n-1] = 42;
+      p = (int*)mi_rezalloc(p, size + MI_SMALL_SIZE_MAX);
+      mi_free_size(p,size + MI_SMALL_SIZE_MAX);
+    }
+  }
+  
+  CHECK_BODY("free_small3") {
+    for(size_t n = 1; n < MI_SMALL_SIZE_MAX/sizeof(int); n *=2) {
+      const size_t size = n*sizeof(int);
+      int* p = (int*)mi_zalloc_small(size);
+      p[n-1] = 42;
+      mi_free_small(p);
+    }
+  }
+
+  CHECK_BODY("free_small4") {
+    for(size_t n = 1; n < MI_SMALL_SIZE_MAX/sizeof(int); n *=2) {
+      const size_t size = n*sizeof(int);
+      int* p = (int*)mi_zalloc_small(size);
+      p[n-1] = 42;
+      mi_free(p);
+    }
+  }
+  // ---------------------------------------------------
   // Returned block sizes
   // ---------------------------------------------------
   CHECK_BODY("umalloc1") {
@@ -373,11 +483,69 @@ int main(void) {
   // ---------------------------------------------------
   // Heaps
   // ---------------------------------------------------
+
+  CHECK_BODY("heap-os1") {
+    // @zoxc opus bug #2.
+    mi_heap_t* h = mi_heap_new();
+    void* p = mi_heap_malloc_aligned(h, 1<<20, 2<<20);   // forced OS allocation
+    mi_heap_delete(h);
+    mi_free(p);                                          // SIGSEGV
+  }
+
+  CHECK_BODY("heap-os2") {
+    // @zoxc opus bug #3.
+    mi_collect(true);
+    mi_stats_t_decl(stats0); 
+    mi_stats_get(&stats0);
+
+    mi_heap_t* h = mi_heap_new();
+    long failed = 0;      
+    for(int i = 0; i < 10; i++) {
+      int* p = (int*)mi_heap_malloc_aligned(h, 1<<20, 2<<20);   // forced OS allocation
+      if (p==NULL) {
+        failed++;
+      }
+      else {
+        p[0] = 42;
+      }
+    }
+    mi_heap_destroy(h);
+
+    mi_collect(true);
+    mi_stats_t_decl(stats1); 
+    mi_stats_get(&stats1);    
+    result = (stats0.pages.current == stats1.pages.current);    
+    if (!result) {
+      fprintf(stderr, "heap-os2: pages: %ld != %ld (failed: %ld)\n", (long)stats0.pages.current, (long)stats1.pages.current, failed);
+    }
+  }
+
+  #define NHEAPS (1000)
+  CHECK_BODY("heap-many") {    // check creating many heaps and threadlocals, see issue #1358
+    mi_heap_t* heaps[NHEAPS];
+    for (size_t i = 0; i < NHEAPS; i++) {
+      heaps[i] = mi_heap_new();
+      if (heaps[i] == NULL) { result = false; break; };
+      if (mi_heap_malloc(heaps[i], 32) == NULL) { result = false; break; }
+    }
+    for (size_t i = 0; i < NHEAPS; i++) {
+      mi_heap_destroy(heaps[i]);
+    }  
+  }
+
   //CHECK("theap_destroy", test_theap1());
   //CHECK("theap_delete", test_theap2());
   //CHECK("theap_arena_destroy", test_theap_arena_destroy());
   //CHECK("theap_arena_delete", test_theap_arena_delete());
 
+  
+  // ---------------------------------------------------
+  // Threads
+  // ---------------------------------------------------
+  CHECK_BODY("zero_aligned_first") {
+    result = mi_run_on_thread(&test_zero_aligned_first);
+  }
+  
   //mi_stats_print(NULL);
 
   // ---------------------------------------------------
@@ -539,3 +707,20 @@ bool test_stl_theap_allocator4(void) {
 #endif
 }
 */
+
+// ---------------------------------------------------------------------------
+// Test a zero size aligned allocation as the very first allocation of a fresh thread.
+// ---------------------------------------------------------------------------
+
+static bool test_zero_aligned_first(void) {
+  void* p = mi_malloc_aligned(0, 16);     // must be the first mimalloc call on this thread
+  bool res = (p != NULL && (uintptr_t)(p) % 16 == 0);
+  mi_free(p);
+  p = mi_zalloc_aligned(0, 32);
+  res = res && (p != NULL && (uintptr_t)(p) % 32 == 0);
+  mi_free(p);
+  return res;
+}
+
+
+

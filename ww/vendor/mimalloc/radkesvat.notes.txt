@@ -1,4 +1,6 @@
-v 3.4.3
+v 3.5.1
+Upstream: https://github.com/microsoft/mimalloc/releases/tag/v3.5.1
+Commit: 34fbd7e7cd4627424490afe19b20f8066bfc537d
 
 Applied local compatibility patches
 
