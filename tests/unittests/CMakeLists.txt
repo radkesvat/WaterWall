@@ -1785,6 +1785,10 @@ if(TARGET IpManipulator)
     ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/common
   )
   target_link_libraries(ipmanipulator_egress_test PRIVATE IpManipulator ww)
+  if(TARGET IpOverrider)
+    target_link_libraries(ipmanipulator_egress_test PRIVATE IpOverrider)
+    target_compile_definitions(ipmanipulator_egress_test PRIVATE TEST_PROTOSWAP_IPOVERRIDER=1)
+  endif()
   add_dependencies(waterwall_unit_tests ipmanipulator_egress_test)
 
   add_waterwall_unit_test(

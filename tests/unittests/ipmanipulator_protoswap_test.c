@@ -104,6 +104,16 @@ static sbuf_t *createIpv4UdpPacket(uint16_t total_len)
     return buf;
 }
 
+static void normalizeOracle(sbuf_t *buf)
+{
+    struct ip_hdr *ip  = (struct ip_hdr *) sbufGetMutablePtr(buf);
+    uint32_t       src = ip->src.addr, dst = ip->dest.addr;
+    ip->src.addr = ip->dest.addr = 0;
+    require(calcFullPacketChecksum(sbufGetMutablePtr(buf), sbufGetLength(buf)), "oracle normalization failed");
+    ip->src.addr  = src;
+    ip->dest.addr = dst;
+}
+
 static void testProtocolSwapTcpToCustomAndBack(void)
 {
     tunnel_t               *t     = createTestTunnel();
@@ -118,6 +128,7 @@ static void testProtocolSwapTcpToCustomAndBack(void)
 
     /* Construct oracle for TCP -> 143 */
     struct ip_hdr *oracle_ip = (struct ip_hdr *) sbufGetMutablePtr(oracle);
+    normalizeOracle(oracle);
     IPH_PROTO_SET(oracle_ip, 143);
     require(calcIpv4HeaderChecksum(sbufGetMutablePtr(oracle), len), "oracle IP calc failed");
 
@@ -128,7 +139,7 @@ static void testProtocolSwapTcpToCustomAndBack(void)
     require(! lineGetRecalculateChecksum(&line), "protocol swap modified recalculate_checksum flag");
     require(memoryEqual(sbufGetRawPtr(buf), sbufGetRawPtr(oracle), len), "swap result mismatch with oracle");
 
-    /* Transport bytes must be 100% untouched */
+    /* All bytes match the independently normalized oracle. */
     require(
         memoryEqual((const uint8_t *) sbufGetRawPtr(buf) + 20, (const uint8_t *) sbufGetRawPtr(oracle) + 20, len - 20),
         "transport bytes were modified");
@@ -161,6 +172,7 @@ static void testProtocolSwapUdpToCustomAndBack(void)
     sbuf_t  *oracle = createIpv4UdpPacket(60);
 
     struct ip_hdr *oracle_ip = (struct ip_hdr *) sbufGetMutablePtr(oracle);
+    normalizeOracle(oracle);
     IPH_PROTO_SET(oracle_ip, 144);
     require(calcIpv4HeaderChecksum(sbufGetMutablePtr(oracle), len), "oracle IP calc failed");
 
@@ -171,7 +183,7 @@ static void testProtocolSwapUdpToCustomAndBack(void)
     require(! lineGetRecalculateChecksum(&line), "UDP protocol swap modified recalculate_checksum flag");
     require(memoryEqual(sbufGetRawPtr(buf), sbufGetRawPtr(oracle), len), "UDP swap result mismatch with oracle");
 
-    /* Transport bytes must be 100% untouched */
+    /* All bytes match the independently normalized oracle. */
     require(
         memoryEqual((const uint8_t *) sbufGetRawPtr(buf) + 20, (const uint8_t *) sbufGetRawPtr(oracle) + 20, len - 20),
         "UDP transport bytes were modified");
@@ -205,6 +217,7 @@ static void testProtocolSwapWithIpOptions(void)
     sbuf_t  *oracle = createIpv4TcpPacket(64, 6);
 
     struct ip_hdr *oracle_ip = (struct ip_hdr *) sbufGetMutablePtr(oracle);
+    normalizeOracle(oracle);
     IPH_PROTO_SET(oracle_ip, 143);
     require(calcIpv4HeaderChecksum(sbufGetMutablePtr(oracle), len), "oracle IP calc with options failed");
 
@@ -239,6 +252,7 @@ static void testProtocolSwapFragmentedPacket(void)
 
     sbuf_t        *oracle    = createIpv4TcpPacket(60, 5);
     struct ip_hdr *oracle_ip = (struct ip_hdr *) sbufGetMutablePtr(oracle);
+    normalizeOracle(oracle);
     IPH_OFFSET_SET(oracle_ip, lwip_htons(IP_MF));
     IPH_PROTO_SET(oracle_ip, 143);
     require(calcIpv4HeaderChecksum(sbufGetMutablePtr(oracle), 60), "fragment oracle IP calc failed");
@@ -251,7 +265,7 @@ static void testProtocolSwapFragmentedPacket(void)
 
     sbuf_t        *later    = createIpv4TcpPacket(60, 5);
     struct ip_hdr *later_ip = (struct ip_hdr *) sbufGetMutablePtr(later);
-    IPH_OFFSET_SET(later_ip, lwip_htons(1U));
+    IPH_OFFSET_SET(later_ip, lwip_htons(3U));
     require(calcIpv4HeaderChecksum(sbufGetMutablePtr(later), 60), "later-fragment IP calc failed");
 
     protoswaptrickUpStreamPayload(t, &line, later);
@@ -345,6 +359,7 @@ static void testProtocolSwapTcpToUdpDirect(void)
     sbuf_t  *oracle = createIpv4TcpPacket(60, 5);
 
     struct ip_hdr *oracle_ip = (struct ip_hdr *) sbufGetMutablePtr(oracle);
+    normalizeOracle(oracle);
     IPH_PROTO_SET(oracle_ip, IPPROTO_UDP);
     require(calcIpv4HeaderChecksum(sbufGetMutablePtr(oracle), len), "oracle IP calc failed");
 
@@ -355,7 +370,7 @@ static void testProtocolSwapTcpToUdpDirect(void)
     require(! lineGetRecalculateChecksum(&line), "protocol swap modified recalculate_checksum flag");
     require(memoryEqual(sbufGetRawPtr(buf), sbufGetRawPtr(oracle), len), "TCP->UDP swap result mismatch with oracle");
 
-    /* Original TCP header & checksum inside transport bytes must be unchanged */
+    /* Non-checksum transport fields remain unchanged. */
     struct tcp_hdr *tcph = (struct tcp_hdr *) (sbufGetMutablePtr(buf) + 20);
     require(tcph->dest == lwip_htons(80), "TCP dest port was modified during swap");
 
@@ -376,7 +391,7 @@ static void testProtocolSwapPreExistingFlagPreserved(void)
     sbuf_t *buf = createIpv4TcpPacket(60, 5);
     protoswaptrickUpStreamPayload(t, &line, buf);
 
-    require(lineGetRecalculateChecksum(&line), "pre-existing recalculate_checksum flag was cleared");
+    require(! lineGetRecalculateChecksum(&line), "pre-encode checksum request was not consumed");
     struct ip_hdr *buf_ip = (struct ip_hdr *) sbufGetMutablePtr(buf);
     require(IPH_PROTO(buf_ip) == 143, "protocol was not swapped");
 
@@ -421,6 +436,325 @@ static void testRejectionAndNoMatch(void)
     destroyTestTunnel(t);
 }
 
+/* Independent byte-sum oracle: zero is the canonical verification residual. */
+static uint16_t transportResidual(const sbuf_t *buf, uint8_t protocol, bool mapped)
+{
+    const uint8_t       *bytes     = sbufGetRawPtr(buf);
+    const struct ip_hdr *ip        = (const struct ip_hdr *) bytes;
+    const uint8_t       *transport = bytes + IPH_HL_BYTES(ip);
+    uint32_t             length    = lwip_ntohs(IPH_LEN(ip)) - IPH_HL_BYTES(ip);
+    if (protocol == IPPROTO_UDP)
+    {
+        length = ((uint32_t) transport[4] << 8) | transport[5];
+    }
+    uint32_t sum = protocol + length;
+    if (! mapped)
+    {
+        for (unsigned i = 12; i < 20; i += 2)
+        {
+            sum += ((uint32_t) bytes[i] << 8) | bytes[i + 1];
+        }
+    }
+    for (uint32_t i = 0; i < length; i += 2)
+    {
+        sum += (uint32_t) transport[i] << 8;
+        if (i + 1 < length)
+        {
+            sum += transport[i + 1];
+        }
+    }
+    while (sum >> 16)
+    {
+        sum = (sum & 0xffffU) + (sum >> 16);
+    }
+    return sum == 0xffffU ? 0 : (uint16_t) sum;
+}
+
+static void requireOnlyTransitionBytesChanged(const sbuf_t *before, const sbuf_t *after, uint8_t protocol)
+{
+    const uint8_t *a = sbufGetRawPtr(before), *b = sbufGetRawPtr(after);
+    uint32_t       field = (uint32_t) (a[0] & 15U) * 4U + (protocol == IPPROTO_TCP ? 16U : 6U);
+    require(sbufGetLength(before) == sbufGetLength(after), "transition changed packet length");
+    for (uint32_t i = 0; i < sbufGetLength(before); ++i)
+    {
+        if (i != 9 && i != 10 && i != 11 && i != field && i != field + 1)
+        {
+            require(a[i] == b[i], "transition changed unrelated bytes");
+        }
+    }
+}
+
+static void testAddressResidualMatrix(void)
+{
+    const uint32_t addresses[][2]                   = {{0x0a000001, 0x0a000002},
+                                                       {0xcb00711e, 0x0a000002},
+                                                       {0x0a000001, 0xc000020a},
+                                                       {0xcb00711e, 0xc000020a},
+                                                       {0, 0},
+                                                       {0xffffffff, 0xffffffff},
+                                                       {0x0000ffff, 0xffff0000}};
+    tunnel_t      *t                                = createTestTunnel();
+    testTunnelState(t)->trick_proto_swap_tcp_number = 50;
+    testTunnelState(t)->trick_proto_swap_udp_number = 51;
+    for (unsigned udp = 0; udp < 2; ++udp)
+        for (unsigned direction = 0; direction < 2; ++direction)
+            for (unsigned options = 0; options < 2; ++options)
+                for (unsigned odd = 0; odd < 2; ++odd)
+                    for (unsigned checksum_kind = 0; checksum_kind < 4; ++checksum_kind)
+                        for (unsigned address = 0; address < ARRAY_SIZE(addresses); ++address)
+                        {
+                            const uint8_t  protocol = udp ? IPPROTO_UDP : IPPROTO_TCP;
+                            sbuf_t        *buf      = udp ? createIpv4UdpPacket((uint16_t) (80 + odd))
+                                                          : createIpv4TcpPacket((uint16_t) (80 + odd), options ? 6 : 5);
+                            struct ip_hdr *ip       = (struct ip_hdr *) sbufGetMutablePtr(buf);
+                            if (udp && options)
+                            {
+                                uint8_t *raw = sbufGetMutablePtr(buf);
+                                memmove(raw + 24, raw + 20, sbufGetLength(buf) - 20);
+                                memset(raw + 20, 1, 4);
+                                sbufSetLength(buf, sbufGetLength(buf) + 4);
+                                IPH_VHL_SET(ip, 4, 6);
+                                IPH_LEN_SET(ip, lwip_htons((uint16_t) sbufGetLength(buf)));
+                            }
+                            uint8_t *transport = sbufGetMutablePtr(buf) + IPH_HL_BYTES(ip);
+                            if (! udp && options)
+                            {
+                                transport[12] = 0x60; /* Four bytes of TCP options. */
+                                memset(transport + 20, 1, 4);
+                            }
+                            require(calcFullPacketChecksum(sbufGetMutablePtr(buf), sbufGetLength(buf)),
+                                    "matrix checksum build failed");
+                            uint8_t *field = transport + (udp ? 6 : 16);
+                            if (checksum_kind == 1)
+                                field[0] = field[1] = 0;
+                            if (checksum_kind == 2)
+                                field[0] = field[1] = 0xff;
+                            if (checksum_kind == 3)
+                                field[0] ^= 0x42;
+                            const bool disabled = udp && field[0] == 0 && field[1] == 0;
+                            uint16_t   residual = transportResidual(buf, protocol, false);
+                            line_t     line     = {0};
+                            sbuf_t    *before   = sbufDuplicate(buf);
+                            if (direction)
+                                protoswaptrickDownStreamPayload(t, &line, buf);
+                            else
+                                protoswaptrickUpStreamPayload(t, &line, buf);
+                            requireOnlyTransitionBytesChanged(before, buf, protocol);
+                            sbufDestroy(before);
+                            require(IPH_PROTO(ip) == (udp ? 51 : 50), "matrix encoding failed");
+                            require(! lineGetRecalculateChecksum(&line), "delta invented a checksum request");
+                            if (! disabled)
+                                require(transportResidual(buf, protocol, true) == residual, "mapped residual changed");
+                            else
+                                require(field[0] == 0 && field[1] == 0, "disabled UDP changed on encode");
+                            ip->src.addr  = lwip_htonl(addresses[address][0]);
+                            ip->dest.addr = lwip_htonl(addresses[address][1]);
+                            if (direction)
+                                protoswaptrickUpStreamPayload(t, &line, buf);
+                            else
+                                protoswaptrickDownStreamPayload(t, &line, buf);
+                            require(IPH_PROTO(ip) == protocol, "matrix decoding failed");
+                            if (! disabled)
+                            {
+                                require(transportResidual(buf, protocol, false) == residual,
+                                        "decoded residual changed");
+                                if (udp)
+                                    require(field[0] != 0 || field[1] != 0, "enabled UDP became disabled");
+                            }
+                            else
+                                require(field[0] == 0 && field[1] == 0, "disabled UDP changed on decode");
+                            /* Rewrite back to the original addresses through another mapped interval. */
+                            require(protoswapApply(t, &line, buf), "second encode failed");
+                            ip->src.addr  = PP_HTONL(0x0a000001);
+                            ip->dest.addr = PP_HTONL(0x0a000002);
+                            require(protoswapApply(t, &line, buf), "second decode failed");
+                            if (! disabled)
+                                require(transportResidual(buf, protocol, false) == residual,
+                                        "rewrite-back residual changed");
+                            sbufDestroy(buf);
+                        }
+    destroyTestTunnel(t);
+}
+
+static void testCorruptionAndPendingRequests(void)
+{
+    tunnel_t *t                                     = createTestTunnel();
+    testTunnelState(t)->trick_proto_swap_tcp_number = 1;
+    testTunnelState(t)->trick_proto_swap_udp_number = 51;
+    for (unsigned udp = 0; udp < 2; ++udp)
+    {
+        const uint8_t protocol = udp ? IPPROTO_UDP : IPPROTO_TCP;
+        line_t        line     = {0};
+        sbuf_t       *buf      = udp ? createIpv4UdpPacket(61) : createIpv4TcpPacket(61, 5);
+        uint8_t      *raw      = sbufGetMutablePtr(buf);
+        raw[60] ^= 1;
+        lineSetRecalculateChecksum(&line, true);
+        protoswaptrickDownStreamPayload(t, &line, buf);
+        require(! lineGetRecalculateChecksum(&line), "downstream encode left request pending");
+        require(transportResidual(buf, protocol, true) == 0, "pending work ran in mapped representation");
+        raw[60] ^= 2;
+        require(protoswapApply(t, &line, buf), "corrupt packet failed structural preflight");
+        require(transportResidual(buf, protocol, false) != 0, "wire corruption was repaired");
+        require(protoswapApply(t, &line, buf), "corrupt native packet could not encode");
+        lineSetRecalculateChecksum(&line, true);
+        protoswaptrickDownStreamPayload(t, &line, buf);
+        require(lineGetRecalculateChecksum(&line), "decode consumed downstream handoff request");
+        require(packettunnelConsumeChecksumRequest(&line, buf), "native writer checksum repair failed");
+        require(transportResidual(buf, protocol, false) == 0, "requested decode repair failed");
+        require(! lineGetRecalculateChecksum(&line), "writer leaked request");
+        sbufDestroy(buf);
+    }
+    destroyTestTunnel(t);
+}
+
+static sbuf_t *fragmentPacket(const sbuf_t *whole, uint32_t start, uint32_t count, bool more)
+{
+    const struct ip_hdr *original = sbufGetRawPtr(whole);
+    uint16_t             header   = IPH_HL_BYTES(original);
+    sbuf_t              *fragment = sbufCreate(header + count);
+    sbufSetLength(fragment, header + count);
+    uint8_t *raw = sbufGetMutablePtr(fragment);
+    memcpy(raw, original, header);
+    memcpy(raw + header, (const uint8_t *) original + header + start, count);
+    struct ip_hdr *ip = (struct ip_hdr *) raw;
+    IPH_LEN_SET(ip, lwip_htons((uint16_t) (header + count)));
+    IPH_OFFSET_SET(ip, lwip_htons((uint16_t) (start / 8U | (more ? IP_MF : 0))));
+    require(calcIpv4HeaderChecksum(raw, sbufGetLength(fragment)), "fragment header failed");
+    return fragment;
+}
+
+static void testFragmentAddressNormalization(void)
+{
+    tunnel_t *t                                     = createTestTunnel();
+    testTunnelState(t)->trick_proto_swap_tcp_number = 50;
+    testTunnelState(t)->trick_proto_swap_udp_number = 51;
+    for (unsigned udp = 0; udp < 2; ++udp)
+        for (unsigned encoded_first = 0; encoded_first < 2; ++encoded_first)
+            for (unsigned first_size = 8; first_size <= 24; first_size += 8)
+                for (unsigned requested = 0; requested < 2; ++requested)
+                {
+                    uint8_t protocol    = udp ? IPPROTO_UDP : IPPROTO_TCP;
+                    sbuf_t *whole       = udp ? createIpv4UdpPacket(84) : createIpv4TcpPacket(88, 6);
+                    sbuf_t *reassembled = sbufDuplicate(whole);
+                    line_t  sender = {0}, receiver = {0};
+                    if (encoded_first)
+                        require(protoswapApply(t, &sender, whole), "whole encode failed");
+                    sbuf_t *fragments[3] = {fragmentPacket(whole, 0, first_size, true),
+                                            fragmentPacket(whole, first_size, 24, true),
+                                            fragmentPacket(whole, first_size + 24, 64 - first_size - 24, false)};
+                    /* Reverse arrival order; no metadata is transferred between endpoints. */
+                    for (int i = 2; i >= 0; --i)
+                    {
+                        sbuf_t *fragment = fragments[i];
+                        if (! encoded_first)
+                        {
+                            lineSetRecalculateChecksum(&sender, requested != 0);
+                            require(protoswapApply(t, &sender, fragment), "fragment encode failed");
+                            require(! lineGetRecalculateChecksum(&sender), "fragment encode request not consumed");
+                        }
+                        struct ip_hdr *ip = (struct ip_hdr *) sbufGetMutablePtr(fragment);
+                        require(IPH_PROTO(ip) == (udp ? 51 : 50), "fragment has wrong mapped protocol");
+                        ip->src.addr  = PP_HTONL(0xcb00711e);
+                        ip->dest.addr = PP_HTONL(0xc000020a);
+                        require(protoswapApply(t, &receiver, fragment), "fragment decode failed");
+                        require(IPH_PROTO(ip) == protocol, "fragment has wrong native protocol");
+                        require(inet_chksum(ip, IPH_HL_BYTES(ip)) == 0, "fragment IPv4 checksum invalid");
+                        uint32_t start = (lwip_ntohs(IPH_OFFSET(ip)) & IP_OFFMASK) * 8U;
+                        memcpy(sbufGetMutablePtr(reassembled) + IPH_HL_BYTES(ip) + start,
+                               sbufGetMutablePtr(fragment) + IPH_HL_BYTES(ip),
+                               sbufGetLength(fragment) - IPH_HL_BYTES(ip));
+                        sbufDestroy(fragment);
+                    }
+                    struct ip_hdr *ip = (struct ip_hdr *) sbufGetMutablePtr(reassembled);
+                    ip->src.addr      = PP_HTONL(0xcb00711e);
+                    ip->dest.addr     = PP_HTONL(0xc000020a);
+                    require(transportResidual(reassembled, protocol, false) == 0,
+                            "reassembled transport checksum invalid");
+                    sbufDestroy(whole);
+                    sbufDestroy(reassembled);
+                }
+    destroyTestTunnel(t);
+}
+
+static void testAtomicPreflightAndTrailingBytes(void)
+{
+    tunnel_t *t                                     = createTestTunnel();
+    testTunnelState(t)->trick_proto_swap_tcp_number = 50;
+    testTunnelState(t)->trick_proto_swap_udp_number = 51;
+    for (unsigned kind = 0; kind < 11; ++kind)
+        for (unsigned pending = 0; pending < 2; ++pending)
+            for (unsigned mapped = 0; mapped < 2; ++mapped)
+            {
+                sbuf_t        *buf = kind == 4 || kind == 5 ? createIpv4UdpPacket(60) : createIpv4TcpPacket(60, 5);
+                struct ip_hdr *ip  = (struct ip_hdr *) sbufGetMutablePtr(buf);
+                if (mapped)
+                    require(protoswapApply(t, &(line_t) {0}, buf), "malformed fixture encode failed");
+                uint8_t *raw = sbufGetMutablePtr(buf);
+                switch (kind)
+                {
+                case 0:
+                    IPH_LEN_SET(ip, lwip_htons(37));
+                    break; /* partial TCP checksum */
+                case 1:
+                    raw[32] = 0x40;
+                    break;
+                case 2:
+                    raw[32] = 0xf0;
+                    break;
+                case 3:
+                    IPH_OFFSET_SET(ip, lwip_htons(IP_MF));
+                    IPH_LEN_SET(ip, lwip_htons(59));
+                    break;
+                case 4:
+                    raw[24] = raw[25] = 0;
+                    break;
+                case 5:
+                    raw[24] = 1;
+                    break;
+                case 6:
+                    IPH_OFFSET_SET(ip, lwip_htons(IP_OFFMASK));
+                    break;
+                case 7:
+                    IPH_OFFSET_SET(ip, lwip_htons(IP_DF | IP_MF));
+                    break;
+                case 8:
+                    IPH_OFFSET_SET(ip, lwip_htons(2));
+                    IPH_LEN_SET(ip, lwip_htons(21));
+                    break;
+                case 10:
+                    IPH_OFFSET_SET(ip, lwip_htons(2));
+                    IPH_LEN_SET(ip, lwip_htons(22));
+                    break;
+                case 9:
+                    IPH_OFFSET_SET(ip, lwip_htons(IP_MF));
+                    IPH_LEN_SET(ip, lwip_htons(20));
+                    break;
+                }
+                sbuf_t *before = sbufDuplicate(buf);
+                line_t  line   = {0};
+                lineSetRecalculateChecksum(&line, pending != 0);
+                require(! protoswapApply(t, &line, buf), "malformed transition succeeded");
+                require(memoryEqual(sbufGetRawPtr(before), sbufGetRawPtr(buf), sbufGetLength(buf)),
+                        "preflight mutated bytes");
+                require(lineGetRecalculateChecksum(&line) == (pending != 0), "preflight changed request");
+                sbufDestroy(before);
+                sbufDestroy(buf);
+            }
+    sbuf_t  *buf = createIpv4TcpPacket(60, 5);
+    uint8_t *raw = sbufGetMutablePtr(buf);
+    memset(raw + 60, 0xa5, 7);
+    sbufSetLength(buf, 67);
+    sbuf_t *before = sbufDuplicate(buf);
+    line_t  line   = {0};
+    require(protoswapApply(t, &line, buf), "bounded trailing-byte transition failed");
+    requireOnlyTransitionBytesChanged(before, buf, IPPROTO_TCP);
+    require(transportResidual(buf, IPPROTO_TCP, true) == 0, "trailing bytes entered checksum");
+    require(! packettunnelConsumeChecksumRequest(&line, buf), "writer accepted trailing bytes");
+    sbufDestroy(before);
+    sbufDestroy(buf);
+    destroyTestTunnel(t);
+}
+
 int main(void)
 {
     checkSumInit();
@@ -432,5 +766,9 @@ int main(void)
     testProtocolSwapTcpToUdpDirect();
     testProtocolSwapPreExistingFlagPreserved();
     testRejectionAndNoMatch();
+    testAddressResidualMatrix();
+    testCorruptionAndPendingRequests();
+    testFragmentAddressNormalization();
+    testAtomicPreflightAndTrailingBytes();
     return 0;
 }

@@ -257,12 +257,160 @@ static void requireTcpChecksumMatchesRealProtocol(const sbuf_t *buf)
     sbuf_t *copy = sbufDuplicate((sbuf_t *) buf);
     require(copy != NULL, "failed to duplicate packet for TCP checksum verification");
     struct ip_hdr *copy_ip = (struct ip_hdr *) sbufGetMutablePtr(copy);
+    if (IPH_PROTO(copy_ip) != IPPROTO_TCP)
+    {
+        copy_ip->src.addr = copy_ip->dest.addr = 0;
+    }
     IPH_PROTO_SET(copy_ip, IPPROTO_TCP);
     require(calcFullPacketChecksum(sbufGetMutablePtr(copy), sbufGetLength(copy)),
             "failed to calculate real-protocol TCP checksum");
     struct tcp_hdr *copy_tcp = (struct tcp_hdr *) (sbufGetMutablePtr(copy) + IPH_HL_BYTES(copy_ip));
     require(actual == copy_tcp->chksum, "TCP checksum was not calculated under the real protocol");
     sbufDestroy(copy);
+}
+
+static void finalizeAndCapture(tunnel_t *t, line_t *l, sbuf_t *buf)
+{
+    require(packettunnelConsumeChecksumRequest(l, buf), "packet writer rejected fixture");
+    capturePacket(t, l, buf);
+}
+
+#ifdef TEST_PROTOSWAP_IPOVERRIDER
+/* Use the public node interface without importing another tunnel's structure.h. */
+node_t nodeIpOverriderGet(void);
+
+static void testAddressTranslationAcrossEndpoints(test_env_t *env)
+{
+    tunnel_t                output  = {.fnPayloadU = finalizeAndCapture};
+    tunnel_t               *encoder = createTestTunnel();
+    tunnel_t               *decoder = createTestTunnel();
+    ipmanipulator_tstate_t *enc     = tunnelGetState(encoder);
+    ipmanipulator_tstate_t *dec     = tunnelGetState(decoder);
+    enc->trick_proto_swap = dec->trick_proto_swap = true;
+    enc->trick_proto_swap_tcp_number = dec->trick_proto_swap_tcp_number = 50;
+    decoder->fnPayloadU                                                 = ipmanipulatorUpStreamPayload;
+    decoder->next                                                       = &output;
+
+    node_t first              = nodeIpOverriderGet();
+    node_t second             = nodeIpOverriderGet();
+    first.node_settings_json  = cJSON_Parse("{\"up\":{\"source-ip\":{\"ipv4\":\"192.0.2.10\"},"
+                                            "\"dest-ip\":{\"ipv4\":\"198.51.100.20\"}}}");
+    second.node_settings_json = cJSON_Parse("{\"up\":{\"source-ip\":{\"ipv4\":\"203.0.113.30\"},"
+                                            "\"dest-ip\":{\"ipv4\":\"192.0.2.10\"}}}");
+    tunnel_t *rewrite1        = first.createHandle(&first);
+    tunnel_t *rewrite2        = second.createHandle(&second);
+    require(rewrite1 != NULL && rewrite2 != NULL, "failed to create address rewriters");
+    encoder->next  = rewrite1;
+    rewrite1->next = &output;
+    rewrite2->next = decoder;
+
+    line_t receiver = {.alive = true, .wid = 0, .refc = 1};
+    lineSetRecalculateChecksum(env->line, false);
+    ipmanipulatorUpStreamPayload(encoder, env->line, makeTcpPacket(env, 97));
+    require(captured_count == 1, "encoder did not emit one packet");
+    const struct ip_hdr *wire_ip = sbufGetRawPtr(captured[0]);
+    require(IPH_PROTO(wire_ip) == 50 && wire_ip->src.addr == PP_HTONL(0xc000020a) &&
+                wire_ip->dest.addr == PP_HTONL(0xc6336414),
+            "first endpoint wire fields differ");
+    /* Only bytes cross the wire; receiver metadata starts independently empty. */
+    sbuf_t *wire = sbufDuplicate(captured[0]);
+    recycleCaptured(env);
+    rewrite2->fnPayloadU(rewrite2, &receiver, wire);
+    require(captured_count == 1, "decoder did not emit one packet");
+    const struct ip_hdr *native = sbufGetRawPtr(captured[0]);
+    require(IPH_PROTO(native) == IPPROTO_TCP && native->src.addr == PP_HTONL(0xcb00711e) &&
+                native->dest.addr == PP_HTONL(0xc000020a),
+            "second endpoint native fields differ");
+    requireTcpChecksumMatchesRealProtocol(captured[0]);
+    require(! lineGetRecalculateChecksum(&receiver), "receiver leaked checksum metadata");
+    recycleCaptured(env);
+    rewrite1->onDestroy(rewrite1, wwLifecycleStartupRollback());
+    rewrite2->onDestroy(rewrite2, wwLifecycleStartupRollback());
+    cJSON_Delete(first.node_settings_json);
+    cJSON_Delete(second.node_settings_json);
+    memoryFree(first.type);
+    memoryFree(second.type);
+    destroyTestTunnel(encoder);
+    destroyTestTunnel(decoder);
+}
+
+#endif
+
+static void testPendingRequestsAndDuplicateDirections(test_env_t *env)
+{
+    tunnel_t  output = {.fnPayloadU = finalizeAndCapture, .fnPayloadD = finalizeAndCapture};
+    tunnel_t *t      = createTestTunnel();
+    t->next = t->prev                   = &output;
+    ipmanipulator_tstate_t *state       = tunnelGetState(t);
+    state->trick_proto_swap             = true;
+    state->trick_packet_duplicate       = true;
+    state->trick_packet_duplicate_count = 1;
+    for (unsigned udp = 0; udp < 2; ++udp)
+        for (unsigned down = 0; down < 2; ++down)
+            for (unsigned mapped = 0; mapped < 2; ++mapped)
+                for (unsigned pending = 0; pending < 2; ++pending)
+                {
+                    state->trick_proto_swap_tcp_number = udp ? -1 : 1;
+                    state->trick_proto_swap_udp_number = udp ? 1 : -1;
+                    sbuf_t *buf                        = udp ? makeUdpPacket(env, 97) : makeTcpPacket(env, 97);
+                    lineSetRecalculateChecksum(env->line, false);
+                    if (mapped)
+                        require(protoswapApply(t, env->line, buf), "mapped egress fixture failed");
+                    if (pending)
+                        sbufGetMutablePtr(buf)[96] ^= 1;
+                    lineSetRecalculateChecksum(env->line, pending != 0);
+                    if (down)
+                        ipmanipulatorDownStreamPayload(t, env->line, buf);
+                    else
+                        ipmanipulatorUpStreamPayload(t, env->line, buf);
+                    require(captured_count == 2, "egress duplication lost a packet");
+                    require(! lineGetRecalculateChecksum(env->line), "egress leaked consumed request");
+                    require(memoryEqual(sbufGetRawPtr(captured[0]), sbufGetRawPtr(captured[1]), 97),
+                            "duplicate restored stale request under mapped ICMP protocol");
+                    for (unsigned i = 0; i < captured_count; ++i)
+                    {
+                        const struct ip_hdr *ip = sbufGetRawPtr(captured[i]);
+                        require(IPH_PROTO(ip) == (mapped ? (udp ? IPPROTO_UDP : IPPROTO_TCP) : 1),
+                                "egress did not transition exactly once");
+                        sbuf_t        *oracle    = sbufDuplicate(captured[i]);
+                        struct ip_hdr *oracle_ip = (struct ip_hdr *) sbufGetMutablePtr(oracle);
+                        IPH_PROTO_SET(oracle_ip, udp ? IPPROTO_UDP : IPPROTO_TCP);
+                        if (! mapped)
+                            oracle_ip->src.addr = oracle_ip->dest.addr = 0;
+                        require(calcFullPacketChecksum(sbufGetMutablePtr(oracle), sbufGetLength(oracle)),
+                                "egress oracle failed");
+                        uint32_t field = 20 + (udp ? 6 : 16);
+                        require(
+                            memoryEqual(sbufGetMutablePtr(oracle) + field, sbufGetMutablePtr(captured[i]) + field, 2),
+                            "egress checksum used incorrect representation");
+                        sbufDestroy(oracle);
+                    }
+                    recycleCaptured(env);
+                    sbuf_t        *unrelated = makeTcpPacket(env, 61);
+                    struct ip_hdr *ip        = (struct ip_hdr *) sbufGetMutablePtr(unrelated);
+                    IPH_PROTO_SET(ip, 99);
+                    require(calcIpv4HeaderChecksum(sbufGetMutablePtr(unrelated), sbufGetLength(unrelated)),
+                            "unrelated header failed");
+                    ipmanipulatorUpStreamPayload(t, env->line, unrelated);
+                    require(captured_count == 2 && ! lineGetRecalculateChecksum(env->line),
+                            "request leaked into unrelated packet");
+                    recycleCaptured(env);
+                }
+    /* Oversized downstream native TCP is shaped before encoding, then duplicated. */
+    state->trick_proto_swap_tcp_number = 1;
+    state->trick_proto_swap_udp_number = -1;
+    uint16_t saved_mtu                 = GLOBAL_MTU_SIZE;
+    GLOBAL_MTU_SIZE                    = 80;
+    ipmanipulatorDownStreamPayload(t, env->line, makeTcpPacket(env, 137));
+    require(captured_count == 6, "downstream encoding skipped segmentation or duplication");
+    for (unsigned i = 0; i < captured_count; ++i)
+    {
+        requireTcpChecksumMatchesRealProtocol(captured[i]);
+        require(sbufGetLength(captured[i]) <= GLOBAL_MTU_SIZE, "encoded downstream segment exceeded MTU");
+    }
+    recycleCaptured(env);
+    GLOBAL_MTU_SIZE = saved_mtu;
+    destroyTestTunnel(t);
 }
 
 static void testEgressOrderAndDownstreamRoundTrip(test_env_t *env)
@@ -849,6 +997,7 @@ static void testSniBlenderBoundsAndProtocolSwap(test_env_t *env)
     require(sniblendertrickUpStreamPayload(t, env->line, buf), "oversized SNI Blender packet was not handled");
     require(captured_count == 2, "SNI Blender emitted the wrong fragment count");
 
+    sbuf_t *reassembled              = makeTcpPacket(env, 800);
     bool saw_heap_backed_fragment = false;
     for (uint32_t i = 0; i < captured_count; ++i)
     {
@@ -857,8 +1006,21 @@ static void testSniBlenderBoundsAndProtocolSwap(test_env_t *env)
         require(IPH_PROTO(ip) == 143, "SNI Blender fragment bypassed the egress protocol swap");
         requireValidIpv4HeaderChecksum(captured[i]);
         saw_heap_backed_fragment |= sbufGetTotalCapacityNoPadding(captured[i]) > kTestLargeBuffer;
+        uint32_t       start      = (lwip_ntohs(IPH_OFFSET(ip)) & IP_OFFMASK) * 8U;
+        struct ip_hdr *mutable_ip = (struct ip_hdr *) sbufGetMutablePtr(captured[i]);
+        mutable_ip->src.addr      = PP_HTONL(0xcb00711e);
+        mutable_ip->dest.addr     = PP_HTONL(0xc000020a);
+        require(protoswapApply(t, env->line, captured[i]), "SNI Blender fragment decode failed");
+        memcpy(sbufGetMutablePtr(reassembled) + IPH_HL_BYTES(ip) + start,
+               sbufGetMutablePtr(captured[i]) + IPH_HL_BYTES(ip),
+               sbufGetLength(captured[i]) - IPH_HL_BYTES(ip));
     }
     require(saw_heap_backed_fragment, "oversized SNI Blender fragment did not use a heap-backed buffer");
+    struct ip_hdr *reassembled_ip = (struct ip_hdr *) sbufGetMutablePtr(reassembled);
+    reassembled_ip->src.addr      = PP_HTONL(0xcb00711e);
+    reassembled_ip->dest.addr     = PP_HTONL(0xc000020a);
+    requireTcpChecksumMatchesRealProtocol(reassembled);
+    lineReuseBuffer(env->line, reassembled);
 
     recycleCaptured(env);
     destroyTestTunnel(t);
@@ -964,11 +1126,18 @@ static void testProtocolSwapConfigurationValidation(void)
 
 int main(void)
 {
+    require(globalstateInitializeSecureRandom(), "secure random initialization failed");
+    require(frandGlobalInit(), "random initialization failed");
+    frandInit();
     checkSumInit();
     testProtocolSwapConfigurationValidation();
 
     test_env_t env;
     envSetup(&env);
+#ifdef TEST_PROTOSWAP_IPOVERRIDER
+    testAddressTranslationAcrossEndpoints(&env);
+#endif
+    testPendingRequestsAndDuplicateDirections(&env);
     testEgressOrderAndDownstreamRoundTrip(&env);
     testDownstreamResumeAfterSmuggleFinDoesNotRepeatRestoration(&env);
     testAlreadyMappedEgressUnwraps(&env);
@@ -982,5 +1151,8 @@ int main(void)
     testSniBlenderBoundsAndProtocolSwap(&env);
     testHelperInitDeduplication(&env);
     envTeardown(&env);
+    frandThreadCleanup();
+    frandGlobalCleanup();
+    globalstateDestroySecureRandom();
     return 0;
 }

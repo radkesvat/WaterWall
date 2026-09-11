@@ -1258,28 +1258,11 @@ static bool ipmanipulatorPrepareSingleEgressPacket(tunnel_t *t, line_t *l, sbuf_
 
     if (upstream && state->trick_proto_swap)
     {
-        /*
-         * Chained transport pair: a packet already carrying one of our mapped
-         * values was wrapped by an earlier IpManipulator, and this node is the
-         * unwrapping half. Restore the real protocol, checksum under it, and
-         * forward unmapped. Do NOT re-map -- an operator who wants the packet
-         * to stay wrapped past this node simply does not enable protoswap here.
-         */
-        if (ipmanipulatorPacketUsesMappedProtocol(state, buf))
+        const bool decoding = ipmanipulatorPacketUsesMappedProtocol(state, buf);
+        if (protoswapApply(t, l, buf) && decoding && lineGetRecalculateChecksum(l) &&
+            calcFullPacketChecksum(sbufGetMutablePtr(buf), sbufGetLength(buf)))
         {
-            protoswaptrickUpStreamPayload(t, l, buf);
-            if (recalculate_checksum && calcFullPacketChecksum(sbufGetMutablePtr(buf), sbufGetLength(buf)))
-            {
-                lineSetRecalculateChecksum(l, false);
-            }
-        }
-        else
-        {
-            if (recalculate_checksum && calcFullPacketChecksum(sbufGetMutablePtr(buf), sbufGetLength(buf)))
-            {
-                lineSetRecalculateChecksum(l, false);
-            }
-            protoswaptrickUpStreamPayload(t, l, buf);
+            lineSetRecalculateChecksum(l, false);
         }
     }
 
@@ -1355,11 +1338,6 @@ static bool ipmanipulatorSendEgressMaybeSegmented(tunnel_t *t, line_t *l, sbuf_t
     uint32_t prospective_len = (uint32_t) ip_total_len + portghost_tail_len;
     if (prospective_len <= GLOBAL_MTU_SIZE)
     {
-        /* Protocol swap historically accepts opaque packet-mode fixtures that
-         * identify the IPv4 protocol as TCP without carrying a TCP header.
-         * Transport parsing is needed only when final MTU shaping is actually
-         * required; the individual trailer helpers still validate packets
-         * before mutating an in-MTU packet. */
         return ipmanipulatorForwardSingleEgressPacket(t, l, buf, forward, upstream, apply_portghost);
     }
 
@@ -2953,4 +2931,17 @@ void ipmanipulatorSendUpstreamFinal(tunnel_t *t, line_t *l, sbuf_t *buf)
 void ipmanipulatorSendDownstreamFinal(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     discard ipmanipulatorSendEgressMaybeSegmented(t, l, buf, ipmanipulatorSendDownstreamDuplicates, false, false);
+}
+
+static void ipmanipulatorEncodeAndSendDownstreamDuplicates(tunnel_t *t, line_t *l, sbuf_t *buf)
+{
+    discard protoswapApply(t, l, buf);
+    ipmanipulatorSendDownstreamDuplicates(t, l, buf);
+}
+
+void ipmanipulatorSendDownstreamEncoded(tunnel_t *t, line_t *l, sbuf_t *buf)
+{
+    /* Native shaping and its checksum request must precede normalization. */
+    discard ipmanipulatorSendEgressMaybeSegmented(
+        t, l, buf, ipmanipulatorEncodeAndSendDownstreamDuplicates, false, false);
 }

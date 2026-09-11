@@ -1,5 +1,5 @@
 <!--
-Documentation version: 152
+Documentation version: 153
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/IpManipulator.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/IpManipulator.mdx, and all files must keep the same documentation version.
 -->
 
@@ -756,7 +756,7 @@ Behavior:
 - configured TCP and UDP replacement values must remain distinct
 - an upstream packet already carrying this node's configured replacement is
   treated as wrapped by an earlier `IpManipulator`; this node restores the real
-  protocol, completes checksum work, and forwards it unmapped
+  protocol, completes any requested checksum work, and forwards it unmapped
 - to keep a packet wrapped past a later node, do not enable the same protocol
   swap on that node
 
@@ -765,11 +765,38 @@ first and later fragments of one IPv4 datagram receive the same mapped protocol
 number. The removed `protoswap-tcp-2` key is rejected with a migration error;
 replace it with `protoswap-tcp`.
 
-Upstream tricks run while the packet still carries its real protocol number.
-Immediately before normal egress, `IpManipulator` applies port ghost, completes
-the IPv4 and transport checksums using that real protocol, swaps the protocol
-number, and repairs the IPv4 header checksum. Downstream restores the protocol
-before port-ghost restoration or any TCP/TLS trick parses the packet.
+ProtoSwap normalizes the TCP/UDP checksum's source and destination address
+contributions to zero before mapping, then restores the current addresses'
+contributions when decoding. The actual IP addresses stay intact. The mapped
+checksum still uses the native TCP (`6`) or UDP (`17`) pseudo-header protocol,
+not the mapped number. Address rewrites between endpoints therefore preserve
+valid checksums after decoding, without payload scans, packet expansion, or
+per-flow state. Both endpoints must use this checksum convention.
+
+Without an existing recalculation request, the incremental adjustment preserves
+invalid checksum residuals and detection of payload corruption. Disabled IPv4
+UDP checksum zero stays zero; enabled UDP arithmetic zero is transmitted as
+`0xffff`. TCP zero is an ordinary checksum value.
+
+Every fragment receives the protocol mapping. Only the fragment containing both
+transport checksum bytes receives the address adjustment, including a later TCP
+fragment after an 8- or 16-byte first fragment. Fragmentation may occur before
+encoding or between endpoints; no reassembly or ordering state is needed.
+Fragments of one datagram must receive consistent final addresses. Malformed
+IPv4/transport lengths, partial checksum fields and invalid local fragment
+geometry pass through unchanged, with their pending request preserved. Trailing
+buffer bytes are excluded from the transform; final writers still validate the
+packet length.
+
+Native shaping and port ghost run before upstream normalization. An existing
+checksum request is completed under the native protocol and actual addresses
+before encoding, in either callback direction; a failed request prevents mapping.
+For fragments, that request repairs only the IPv4 header. Decoding restores the
+address contribution and native protocol before downstream port restoration or
+TCP/TLS parsing. Existing downstream checksum requests are handed onward;
+upstream decoding can complete them immediately. ProtoSwap creates no new
+recalculation request. Arbitrary payload edits while mapped require a transform
+that understands this checksum convention.
 
 ### SNI blender
 

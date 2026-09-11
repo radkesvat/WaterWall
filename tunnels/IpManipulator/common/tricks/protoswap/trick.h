@@ -44,3 +44,6 @@
 
 void protoswaptrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void protoswaptrickDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
+
+/* Returns true only when a complete transition was applied. Failure preserves bytes and request. */
+bool protoswapApply(tunnel_t *t, line_t *l, sbuf_t *buf);

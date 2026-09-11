@@ -575,6 +575,7 @@ void ipmanipulatorLinestateInitialize(ipmanipulator_lstate_t *ls);
 void ipmanipulatorLinestateDestroy(ipmanipulator_lstate_t *ls);
 
 void ipmanipulatorSendUpstreamFinal(tunnel_t *t, line_t *l, sbuf_t *buf);
+void ipmanipulatorSendDownstreamEncoded(tunnel_t *t, line_t *l, sbuf_t *buf);
 void ipmanipulatorSendDownstreamFinal(tunnel_t *t, line_t *l, sbuf_t *buf);
 void ipmanipulatorEmitUpstream(tunnel_t *t, line_t *l, sbuf_t *buf, LineTaskFnWithBuf forward);
 void ipmanipulatorEmitUpstreamPreservingTuple(tunnel_t *t, line_t *l, sbuf_t *buf, LineTaskFnWithBuf forward);

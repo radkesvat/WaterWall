@@ -19,6 +19,26 @@ void ipmanipulatorDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     if (state->trick_proto_swap)
     {
+        if (sbufGetLength(buf) >= sizeof(struct ip_hdr))
+        {
+            const struct ip_hdr *ip = sbufGetRawPtr(buf);
+            if (IPH_V(ip) == 4 && ((IPH_PROTO(ip) == IPPROTO_TCP && state->trick_proto_swap_tcp_number != -1) ||
+                                   (IPH_PROTO(ip) == IPPROTO_UDP && state->trick_proto_swap_udp_number != -1)))
+            {
+                /* Port restoration supports either protocol representation. Keep it
+                 * before normalization so any requested repair still sees native bytes. */
+                if (state->trick_source_port_ghost || state->trick_dest_port_ghost)
+                {
+                    discard portghosttrickRestore(t, l, &buf);
+                    if (buf == NULL)
+                    {
+                        return;
+                    }
+                }
+                ipmanipulatorSendDownstreamEncoded(t, l, buf);
+                return;
+            }
+        }
         protoswaptrickDownStreamPayload(t, l, buf);
     }
 

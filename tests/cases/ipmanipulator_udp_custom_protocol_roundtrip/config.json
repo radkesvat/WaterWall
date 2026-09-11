@@ -6,32 +6,26 @@
       "type": "TesterClient",
       "settings": {
         "packet-mode": true,
-        "packet-start-immediately": true,
-        "max-payload-size": 24,
+        "chunk-count": 6,
         "packet-ipv4": {
           "source-ip": "10.84.0.1",
           "dest-ip": "10.84.0.2",
-          "protocol": 17,
+          "transport": "udp",
           "ttl": 64
         }
       },
-      "next": "packet-anchor"
+      "next": "udp-to-custom"
     },
     {
-      "name": "packet-anchor",
-      "type": "IpOverrider",
+      "name": "udp-to-custom",
+      "type": "IpManipulator",
       "settings": {
-        "chance": 0,
-        "up": {
-          "source-ip": {
-            "ipv4": "10.84.0.1"
-          }
-        }
+        "protoswap-udp": 144
       },
-      "next": "ip-manipulator"
+      "next": "custom-to-udp"
     },
     {
-      "name": "ip-manipulator",
+      "name": "custom-to-udp",
       "type": "IpManipulator",
       "settings": {
         "protoswap-udp": 144
@@ -43,12 +37,11 @@
       "type": "TesterServer",
       "settings": {
         "packet-mode": true,
-        "packet-init-on-start": true,
-        "max-payload-size": 24,
+        "chunk-count": 6,
         "packet-ipv4": {
           "source-ip": "10.84.0.1",
           "dest-ip": "10.84.0.2",
-          "protocol": 144,
+          "transport": "udp",
           "ttl": 64
         }
       }
