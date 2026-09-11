@@ -759,9 +759,48 @@ static void testArithmeticEdgeCoverage(void)
             "consecutive incremental updates mismatch with oracle");
 }
 
+static void testTransportAddressDeltaBoundaries(void)
+{
+    for (unsigned udp = 0; udp < 2; ++udp)
+    {
+        uint8_t       protocol = udp ? IPPROTO_UDP : IPPROTO_TCP;
+        test_packet_t packet;
+        initializeIpv4Packet(&packet, 60, 50); /* Effective protocol differs from the IP byte. */
+        packet.bytes[32] = 0x50;
+        if (udp)
+            packet.bytes[25] = 40;
+        uint8_t *field       = packet.bytes + IP_HLEN + (udp ? 6 : 16);
+        field[0]             = 0xff;
+        field[1]             = 0xfe;
+        test_packet_t before = packet;
+        require(updateIpv4TransportChecksumAddresses(packet.bytes, 60, protocol, lwip_htonl(1), 0, 0, 0),
+                "address delta boundary encode failed");
+        require(field[0] == (udp ? 0xff : 0) && field[1] == (udp ? 0xff : 0),
+                "computed zero has wrong transport representation");
+        packet = before;
+        require(updateIpv4TransportChecksumAddresses(packet.bytes, 60, protocol, lwip_htonl(1), lwip_htonl(1), 0, 0),
+                "intermediate zero adjustment failed");
+        require(field[0] == 0 && field[1] == 1, "intermediate arithmetic zero disabled checksum processing");
+        require(updateIpv4TransportChecksumAddresses(packet.bytes, 60, protocol, 0, 0, lwip_htonl(1), 0),
+                "address delta boundary decode failed");
+        require(field[0] == (udp ? 0xff : 0) && field[1] == (udp ? 0xff : 0),
+                "decoded computed zero has wrong representation");
+        packet = before;
+        require(updateIpv4TransportChecksumAddresses(packet.bytes, 60, protocol, 0, 0, 0, 0), "preflight failed");
+        require(memoryEqual(packet.bytes, before.bytes, sizeof(packet.bytes)), "preflight changed checksum");
+        require(! updateIpv4TransportChecksumAddresses(packet.bytes, 60, IPPROTO_ICMP, 0, 0, 1, 2),
+                "unsupported effective protocol accepted");
+        require(memoryEqual(packet.bytes, before.bytes, sizeof(packet.bytes)), "failed delta changed bytes");
+        require(! updateIpv4TransportChecksumAddresses(packet.bytes, 59, protocol, 0, 0, 1, 2),
+                "delta accepted truncated packet");
+        require(memoryEqual(packet.bytes, before.bytes, sizeof(packet.bytes)), "truncated delta changed bytes");
+    }
+}
+
 int main(void)
 {
     checkSumInit();
+    testTransportAddressDeltaBoundaries();
     testRejectsTruncatedIpv4Headers();
     testRejectsMalformedIpv4Lengths();
     testRejectsMalformedTransportLengths();

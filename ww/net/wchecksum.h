@@ -74,6 +74,22 @@ bool updateIpv4TransportChecksum16(uint8_t *buf, size_t available_len, uint16_t 
                                    uint16_t new_word_network);
 
 /**
+ * Replace the address contributions to an IPv4 TCP/UDP checksum using RFC 1624.
+ * effective_protocol is the underlying TCP/UDP protocol, independently of the
+ * actual IP protocol byte. All four addresses are in network byte order.
+ * Neither the actual addresses nor the IP/protocol checksum are changed.
+ * Invalid checksum residuals are preserved; this never repairs or requests work.
+ * Disabled UDP zero stays zero; enabled UDP arithmetic zero is stored as 0xffff.
+ * Valid fragments without the checksum field succeed without writing transport
+ * bytes; partial fields, invalid local geometry and malformed transport shapes
+ * fail without mutation. Access is bounded by IPv4 total length.
+ * Equal old/new address pairs provide a non-mutating preflight of the same range.
+ */
+bool updateIpv4TransportChecksumAddresses(uint8_t *buf, size_t available_len, uint8_t effective_protocol,
+                                          uint32_t old_source_network, uint32_t old_destination_network,
+                                          uint32_t new_source_network, uint32_t new_destination_network);
+
+/**
  * @brief Compute a generic one's-complement checksum with an initial seed.
  *
  * @param data Input buffer.

@@ -177,6 +177,86 @@ static inline uint16_t checksumUpdateWord32(uint16_t checksum_network, uint32_t 
     return checksumUpdateWord16(step1, old_low, new_low);
 }
 
+bool updateIpv4TransportChecksumAddresses(uint8_t *buf, size_t available_len, uint8_t effective_protocol,
+                                          uint32_t old_source_network, uint32_t old_destination_network,
+                                          uint32_t new_source_network, uint32_t new_destination_network)
+{
+    ipv4_packet_view_t packet = {0};
+    if ((effective_protocol != IPPROTO_TCP && effective_protocol != IPPROTO_UDP) ||
+        ! ipv4packetviewParse(buf, available_len, &packet))
+    {
+        return false;
+    }
+
+    const uint32_t start           = (uint32_t) packet.fragment_offset * 8U;
+    const uint32_t end             = start + packet.transport_length;
+    const uint32_t checksum_offset = effective_protocol == IPPROTO_TCP ? 16U : 6U;
+    const uint8_t *payload         = buf + packet.transport_offset;
+    if (packet.fragmented &&
+        (packet.transport_length == 0 || (packet.more_fragments && packet.transport_length % 8U != 0) ||
+         end > UINT16_MAX - IP_HLEN || (packet.fragment_state & IP_DF) != 0))
+    {
+        return false;
+    }
+
+    /* Validate whichever structural fields are locally present, even under a mapped protocol. */
+    if (effective_protocol == IPPROTO_TCP)
+    {
+        if (! packet.more_fragments && end < TCP_HLEN)
+        {
+            return false;
+        }
+        if (start <= 12U && end > 12U)
+        {
+            uint32_t header_length = (uint32_t) (payload[12U - start] >> 4) * 4U;
+            if (header_length < TCP_HLEN || (! packet.more_fragments && header_length > end))
+            {
+                return false;
+            }
+        }
+    }
+    else
+    {
+        if (! packet.more_fragments && end < UDP_HLEN)
+        {
+            return false;
+        }
+        if (start == 0 && end >= 6U)
+        {
+            uint16_t udp_length = (uint16_t) (((uint16_t) payload[4] << 8) | payload[5]);
+            if (udp_length < UDP_HLEN || (! packet.fragmented && udp_length > end))
+            {
+                return false;
+            }
+        }
+    }
+
+    if (end <= checksum_offset || start >= checksum_offset + 2U)
+    {
+        return packet.fragmented;
+    }
+    if (start > checksum_offset || end < checksum_offset + 2U)
+    {
+        return false;
+    }
+
+    uint8_t *field = buf + packet.transport_offset + checksum_offset - start;
+    uint16_t value;
+    memcpy(&value, field, sizeof(value));
+    if (effective_protocol == IPPROTO_UDP && value == 0)
+    {
+        return true;
+    }
+    value = checksumUpdateWord32(value, old_source_network, new_source_network);
+    value = checksumUpdateWord32(value, old_destination_network, new_destination_network);
+    if (effective_protocol == IPPROTO_UDP && value == 0)
+    {
+        value = 0xffff;
+    }
+    memcpy(field, &value, sizeof(value));
+    return true;
+}
+
 bool calcIpv4HeaderChecksum(uint8_t *buf, size_t available_len)
 {
     ipv4_packet_view_t packet = {0};
