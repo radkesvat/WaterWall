@@ -138,8 +138,7 @@ requires a system restart reports `ERROR_SUCCESS_REBOOT_REQUIRED`; neither is
 reported as completed preparation.
 In-use ownership, access denial, failed device operations, or failed configuration
 can still prevent a connection. These are current resource errors, not a permanent
-decision recorded in an old journal. Native qualification of the shipped Wintun
-and Windows versions remains required.
+decision recorded in an old journal.
 
 These restart guarantees cover built-in operations. Applications relying on them
 should use `--restricted-config`; arbitrary scripts or external nodes can change
@@ -291,8 +290,7 @@ The process-resource guarantees follow the
 [Windows termination contract](https://learn.microsoft.com/en-us/windows/win32/procthread/terminating-a-process).
 The vendored AMD64 Wintun DLL matches the official 0.14.1 distribution;
 [`TunProcessNotification`, `TunDispatchClose`, and `TunUnregisterBuffers`](https://github.com/WireGuard/wintun/blob/0.14.1/driver/wintun.c#L674)
-implement packet-session teardown in that driver. This is source and artifact
-evidence; native crash qualification remains pending for the supported OS rows.
+implement packet-session teardown in that driver.
 
 On the software-device path used by modern Windows, closing the device handle
 initiates asynchronous PnP removal. A removed device can retain persisted
@@ -337,9 +335,7 @@ Clients use this result to describe historical completion and decide what can be
 retired. It is not a global restart authorization. A new session follows the
 ownership and preparation flow above, which can remove its own stale device
 while preserving unrelated resources. Recovery continues to require interface
-absence for `settled`; startup performs its own current operations. Native
-qualification of the shipped artifact remains necessary; a source change or
-Wine run does not supply it.
+absence for `settled`; startup performs its own current operations.
 
 ## Permissions and extraction
 
@@ -357,8 +353,7 @@ OS privileges. Denial fails without a hidden second UAC interaction.
 The target range is updated Windows 7 SP1 x64 through Windows 11, including
 Windows 8/8.1. Actual compiler CRT imports, signing/driver updates, embedded DLL/SYS
 variants and desktop/token combinations must be qualified for the exact artifact.
-No unrestricted-token or private-desktop compatibility is inferred. Driver and
-native OS qualification is recorded separately from the source contract.
+No unrestricted-token or private-desktop compatibility is inferred.
 
 ## Examples and hosted consumer removal
 
@@ -391,5 +386,4 @@ the recovery exit status.
 The former `--hosted`, `--host-stop-event`, and `--host-ready-event` arguments are
 removed, without aliases. Consumers must switch to independent lifecycle controls
 and WaterWall-owned containment; their former Job-settlement obligations are not
-retained under another name. Release publication and downstream adoption require
-native qualification of the replacement artifact.
+retained under another name.

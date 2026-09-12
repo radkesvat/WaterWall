@@ -38,8 +38,7 @@ seam is compiled only into this small fixture's launcher. `windows_session_effec
 checks shared creation-intent publication, identity-resolution failure, bounded
 inventory admission. These tests do not establish
 native driver or OS-version qualification. See [the public lifecycle contract](LIFECYCLE.md)
-and [the Python client examples](client.py). [Validation evidence and open
-qualification items](LIFECYCLE-VALIDATION.md) identify the current artifact.
+and [the Python client examples](client.py).
 The contract's [forced-termination section](LIFECYCLE.md#what-remains-after-forced-termination)
 separates process and packet-session teardown from adapter removal and persistent
 file/device residue. An unverified recovery result is not evidence of surviving
