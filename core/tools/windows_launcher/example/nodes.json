@@ -1,0 +1,7 @@
+{
+  "name": "lifecycle-example",
+  "nodes": [
+    {"name": "source", "type": "TesterClient", "settings": {"chunk-count": 1}, "next": "sink"},
+    {"name": "sink", "type": "BlackHole", "settings": {"mode": "passive"}}
+  ]
+}

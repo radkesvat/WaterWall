@@ -1,4 +1,5 @@
 #include "startup_options.h"
+#include "windows_session_effects.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -11,6 +12,13 @@ static __thread int tls_value = 42;
 #endif
 
 __declspec(dllimport) int fixtureCompanion(void);
+
+static HANDLE completion_event;
+static void   complete(void)
+{
+    if (completion_event != NULL)
+        SetEvent(completion_event);
+}
 
 int main(int argc, char **argv)
 {
@@ -25,6 +33,8 @@ int main(int argc, char **argv)
         waterwallStartupHandoffCleanup(&handoff);
         return result == kWaterwallStartupArgumentsExitSuccess ? 0 : 1;
     }
+    completion_event = (HANDLE) handoff.completion_event;
+    atexit(complete);
     char  *content = NULL;
     size_t length  = 0;
     if (received)
@@ -47,6 +57,31 @@ int main(int argc, char **argv)
         content = waterwallStartupOptionsReadCoreJson(&options, &length);
     if (content == NULL)
         return 83;
+    const char *adapter_state = getenv("WW_FIXTURE_ADAPTER_STATE");
+    if (adapter_state != NULL || getenv("WW_FIXTURE_DRIVER_RESIDUE") != NULL)
+    {
+        windows_session_effects_t *effects =
+            MapViewOfFile((HANDLE) handoff.effects_mapping, FILE_MAP_WRITE, 0, 0, sizeof(*effects));
+        if (effects == NULL)
+            return 92;
+        GUID guid = {0xd52902a1, 0x5cbb, 0x4e21, {0x9e, 0x21, 0x40, 0x57, 0xd4, 0xb7, 0x04, 0x26}};
+        if (adapter_state != NULL && strcmp(adapter_state, "present") == 0)
+        {
+            MIB_IF_TABLE2 *interfaces = NULL;
+            if (GetIfTable2(&interfaces) != NO_ERROR || interfaces->NumEntries == 0)
+                return 92;
+            guid = interfaces->Table[0].InterfaceGuid;
+            FreeMibTable(interfaces);
+        }
+        if (adapter_state != NULL)
+        {
+            effects->adapters[0].guid = guid;
+            InterlockedExchange(&effects->adapters[0].state, strcmp(adapter_state, "pending") == 0 ? 1 : 2);
+        }
+        if (getenv("WW_FIXTURE_DRIVER_RESIDUE") != NULL)
+            InterlockedExchange(&effects->driver_residue, 1);
+        UnmapViewOfFile(effects);
+    }
     const char *image_report = getenv("WW_FIXTURE_IMAGE_REPORT");
     if (image_report != NULL)
     {
@@ -67,13 +102,15 @@ int main(int argc, char **argv)
     fprintf(stderr, "fixture-stderr\n");
     free(content);
     waterwallStartupHandoffCleanup(&handoff);
-    if (options.hosted)
+    if (options.stop_event != 0 && getenv("WW_FIXTURE_LIFECYCLE") != NULL)
     {
-        HANDLE stop  = (HANDLE) options.host_stop_event;
-        HANDLE ready = (HANDLE) options.host_ready_event;
-        /* The native host fixture supplies least-rights capabilities; the
+        HANDLE stop  = (HANDLE) options.stop_event;
+        HANDLE ready = (HANDLE) options.ready_event;
+        if ((GetConsoleWindow() != NULL) != (getenv("WW_FIXTURE_VISIBLE") != NULL))
+            return 87;
+        /* The native client fixture supplies least-rights capabilities; the
          * launcher must preserve them across its additional process boundary. */
-        if (GetConsoleWindow() != NULL || SetEvent(stop) || GetLastError() != ERROR_ACCESS_DENIED)
+        if (SetEvent(stop) || GetLastError() != ERROR_ACCESS_DENIED)
             return 87;
         if (ready != NULL && (WaitForSingleObject(ready, 0) != WAIT_FAILED || GetLastError() != ERROR_ACCESS_DENIED))
             return 88;
@@ -84,10 +121,21 @@ int main(int argc, char **argv)
         {
             if (ready != NULL && ! SetEvent(ready))
                 return 90;
-            printf("hosted-fixture-waiting:%lu\n", GetCurrentProcessId());
+            printf("lifecycle-fixture-waiting:%lu\n", GetCurrentProcessId());
             fflush(NULL);
             if (WaitForSingleObject(stop, 15000) != WAIT_OBJECT_0)
                 return 91;
+        }
+        wchar_t stopped_name[128];
+        if (GetEnvironmentVariableW(L"WW_FIXTURE_STOP_OBSERVED", stopped_name, 128) != 0)
+        {
+            /* The client kills the public launcher only after recovery has
+             * opened its Job and requested stop. No timing-based injection. */
+            HANDLE observed = OpenEventW(EVENT_MODIFY_STATE, FALSE, stopped_name);
+            if (observed == NULL || ! SetEvent(observed))
+                return 93;
+            CloseHandle(observed);
+            Sleep(INFINITE);
         }
         CloseHandle(stop);
         if (ready != NULL)
@@ -95,6 +143,9 @@ int main(int argc, char **argv)
     }
     const char *exit_code = getenv("WW_FIXTURE_EXIT");
     fflush(NULL);
+    if (getenv("WW_FIXTURE_ABRUPT") != NULL)
+        TerminateProcess(GetCurrentProcess(), 0xc0000005U);
+    complete();
     ExitProcess(exit_code == NULL ? 0 : (DWORD) strtoull(exit_code, NULL, 0));
     return 0;
 }

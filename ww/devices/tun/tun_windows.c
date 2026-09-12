@@ -1,3 +1,4 @@
+#include "devices/windows_session_effects.h"
 #include "tun.h"
 #include "tun_windows_dns.h"
 #include "tun_windows_lifetime.h"
@@ -1590,6 +1591,13 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void
         return NULL;
     }
 
+    unsigned session_slot;
+    if (! windowsSessionAdapterBegin(&session_slot))
+    {
+        LOGE("TunDevice: session adapter inventory is full");
+        tundeviceDestroy(tdev);
+        return NULL;
+    }
     WINTUN_ADAPTER_HANDLE adapter = WintunCreateAdapter(tdev->name_w, L"Waterwall Adapter", NULL);
     if (! adapter)
     {
@@ -1599,6 +1607,14 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void
         return NULL;
     }
     tdev->adapter_handle = adapter;
+    NET_LUID session_luid;
+    WintunGetAdapterLUID(adapter, &session_luid);
+    if (! windowsSessionAdapterConfirm(session_slot, &session_luid))
+    {
+        LOGE("TunDevice: could not record the owned adapter identity");
+        tundeviceDestroy(tdev);
+        return NULL;
+    }
 
     return tdev;
 }

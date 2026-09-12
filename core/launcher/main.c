@@ -2,6 +2,9 @@
 #include "config_lexical.h"
 #include "launcher.h"
 #include "startup_options.h"
+#ifdef _WIN32
+#include "session_windows.h"
+#endif
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -27,6 +30,16 @@ int waterwallInnerMain(int argc, char **argv)
     {
         return result == kWaterwallStartupArgumentsExitSuccess ? 0 : 1;
     }
+
+#ifdef _WIN32
+    if (options.recover_file != NULL)
+        return launcherSessionRecover(options.recover_file);
+    if (! launcherSessionStart(&options))
+    {
+        fprintf(stderr, "Could not initialize Waterwall session (Windows error %lu)\n", GetLastError());
+        return 1;
+    }
+#endif
 
     size_t input_len = 0;
     char  *content   = waterwallStartupOptionsReadCoreJson(&options, &input_len);

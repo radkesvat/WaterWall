@@ -56,7 +56,7 @@ static const char *configArgumentValue(const char *arg)
 }
 
 #ifdef _WIN32
-static bool parseHostEvent(const char *value, uintptr_t *event)
+static bool parseLifecycleHandle(const char *value, uintptr_t *event)
 {
     uintptr_t parsed = 0;
     if (*value == '\0')
@@ -95,8 +95,10 @@ static void printUsage(const char *program_name)
             program_name);
 #ifdef _WIN32
     fprintf(stderr,
-            "  Hosted Windows startup additionally requires --hosted --host-stop-event:HANDLE; "
-            "--host-ready-event:HANDLE is optional\n");
+            "  Windows lifecycle capabilities: [--stop-event:HANDLE] [--ready-event:HANDLE] "
+            "[--controller-process:HANDLE]\n"
+            "  [--console:hidden|--console:visible] [--session-file:NEW_PATH]\n"
+            "  Recovery: --recover:PATH (used alone)\n");
 #endif
 }
 
@@ -113,9 +115,12 @@ waterwall_startup_arguments_result_e waterwallStartupOptionsParse(int argc, char
     const char *cli_core_input    = NULL;
     bool        version_argument  = false;
     bool        restricted_config = false;
-    bool        hosted            = false;
-    uintptr_t   host_stop_event   = 0;
-    uintptr_t   host_ready_event  = 0;
+    uintptr_t   stop_event         = 0;
+    uintptr_t   ready_event        = 0;
+    uintptr_t   controller_process = 0;
+
+    const char *session_file = NULL, *recover_file = NULL;
+    unsigned    console_mode = 0;
 
     for (int i = 1; i < argc; ++i)
     {
@@ -138,35 +143,54 @@ waterwall_startup_arguments_result_e waterwallStartupOptionsParse(int argc, char
             continue;
         }
 
-        if (strcmp(arg, "--hosted") == 0 || strncmp(arg, "--host-stop-event:", 18U) == 0 ||
-            strncmp(arg, "--host-ready-event:", 19U) == 0)
+        if (strncmp(arg, "--session-file:", 15) == 0 || strncmp(arg, "--recover:", 10) == 0 ||
+            strncmp(arg, "--console:", 10) == 0)
         {
 #ifdef _WIN32
-            if (strcmp(arg, "--hosted") == 0)
+            if (strncmp(arg, "--console:", 10) == 0)
             {
-                if (hosted)
-                {
-                    fprintf(stderr, "The hosted option may only be specified once\n");
+                if (console_mode != 0 || (strcmp(arg + 10, "hidden") != 0 && strcmp(arg + 10, "visible") != 0))
                     return kWaterwallStartupArgumentsExitFailure;
-                }
-                hosted = true;
+                console_mode = strcmp(arg + 10, "hidden") == 0 ? 1 : 2;
             }
             else
             {
-                const bool is_stop = strncmp(arg, "--host-stop-event:", 18U) == 0;
-                uintptr_t *event   = is_stop ? &host_stop_event : &host_ready_event;
-                if (*event != 0 || ! parseHostEvent(arg + (is_stop ? 18U : 19U), event))
-                {
-                    fprintf(stderr, "Invalid or duplicate hosted event option\n");
+                bool         recovery = strncmp(arg, "--recover:", 10) == 0;
+                const char **value    = recovery ? &recover_file : &session_file;
+                if (*value != NULL || arg[recovery ? 10 : 15] == '\0')
                     return kWaterwallStartupArgumentsExitFailure;
-                }
+                *value = arg + (recovery ? 10 : 15);
             }
             continue;
 #else
-            fprintf(stderr, "Hosted event options are available only on Windows\n");
+            fprintf(stderr, "Session options are available only on Windows\n");
             return kWaterwallStartupArgumentsExitFailure;
 #endif
         }
+
+        const char *capability_names[] = {"--stop-event:", "--ready-event:", "--controller-process:"};
+        uintptr_t  *capabilities[]     = {&stop_event, &ready_event, &controller_process};
+        bool        capability         = false;
+        for (size_t c = 0; c < 3; ++c)
+        {
+            size_t prefix = strlen(capability_names[c]);
+            if (strncmp(arg, capability_names[c], prefix) != 0)
+                continue;
+#ifdef _WIN32
+            if (*capabilities[c] != 0 || ! parseLifecycleHandle(arg + prefix, capabilities[c]))
+            {
+                fprintf(stderr, "Invalid or duplicate lifecycle capability\n");
+                return kWaterwallStartupArgumentsExitFailure;
+            }
+            capability = true;
+#else
+            (void) capabilities;
+            fprintf(stderr, "Lifecycle capabilities are available only on Windows\n");
+            return kWaterwallStartupArgumentsExitFailure;
+#endif
+        }
+        if (capability)
+            continue;
 
         if (isVersionArgument(arg))
         {
@@ -196,10 +220,10 @@ waterwall_startup_arguments_result_e waterwallStartupOptionsParse(int argc, char
         cli_core_input = config_value;
     }
 
-    if ((hosted && host_stop_event == 0) || (! hosted && (host_stop_event != 0 || host_ready_event != 0)) ||
-        (host_ready_event != 0 && host_ready_event == host_stop_event))
+    if ((stop_event != 0 && stop_event == ready_event) ||
+        (controller_process != 0 && (controller_process == stop_event || controller_process == ready_event)))
     {
-        fprintf(stderr, "Hosted mode requires a stop event and an optional distinct readiness event\n");
+        fprintf(stderr, "Lifecycle capabilities must use distinct handles\n");
         return kWaterwallStartupArgumentsExitFailure;
     }
 
@@ -211,10 +235,24 @@ waterwall_startup_arguments_result_e waterwallStartupOptionsParse(int argc, char
             printUsage(program_name);
             return kWaterwallStartupArgumentsExitFailure;
         }
-
         printf("Waterwall version %s\n", WW_STR(WATERWALL_VERSION));
         return kWaterwallStartupArgumentsExitSuccess;
     }
+
+    if (recover_file != NULL && argc != 2)
+    {
+        fprintf(stderr, "Recovery cannot be combined with launch arguments\n");
+        return kWaterwallStartupArgumentsExitFailure;
+    }
+    if (recover_file != NULL)
+    {
+        *options = (waterwall_startup_options_t) {.recover_file = recover_file};
+        return kWaterwallStartupArgumentsRun;
+    }
+
+    options->session_file = session_file;
+    options->recover_file = recover_file;
+    options->console_mode = console_mode;
 
     const char *core_input = cli_core_input;
     if (core_input == NULL)
@@ -234,9 +272,9 @@ waterwall_startup_arguments_result_e waterwallStartupOptionsParse(int argc, char
     }
 
     options->restricted_config    = restricted_config;
-    options->hosted               = hosted;
-    options->host_stop_event      = host_stop_event;
-    options->host_ready_event     = host_ready_event;
+    options->stop_event           = stop_event;
+    options->ready_event          = ready_event;
+    options->controller_process   = controller_process;
     options->core_json_input      = core_input;
     options->core_json_from_stdin = (strcmp(core_input, "stdin") == 0);
     return kWaterwallStartupArgumentsRun;
@@ -462,6 +500,7 @@ int waterwallStartupHandoffExtract(int *argc, char **argv, waterwall_handoff_t *
     const char *src_str = NULL;
     const char *exe_str = NULL;
     int         matched = 0;
+    uintptr_t   completion_event = 0, effects_mapping = 0;
 
     for (int i = 1; i < *argc; ++i)
     {
@@ -502,6 +541,18 @@ int waterwallStartupHandoffExtract(int *argc, char **argv, waterwall_handoff_t *
             exe_str = arg + sizeof("--ww-internal-exe=") - 1;
             ++matched;
         }
+#ifdef _WIN32
+        else if (strncmp(arg, "--ww-internal-effects=", 22) == 0)
+        {
+            if (effects_mapping != 0 || ! parseLifecycleHandle(arg + 22, &effects_mapping))
+                return -1;
+        }
+        else if (strncmp(arg, "--ww-internal-complete=", 23) == 0)
+        {
+            if (completion_event != 0 || ! parseLifecycleHandle(arg + 23, &completion_event))
+                return -1;
+        }
+#endif
         else if (strncmp(arg, "--ww-internal-", 14) == 0)
         {
             return -1;
@@ -510,7 +561,7 @@ int waterwallStartupHandoffExtract(int *argc, char **argv, waterwall_handoff_t *
 
     if (matched == 0)
     {
-        return 0;
+        return completion_event == 0 && effects_mapping == 0 ? 0 : -1;
     }
     if (matched != 4 || fd_str == NULL || len_str == NULL || src_str == NULL || exe_str == NULL)
     {
@@ -561,6 +612,8 @@ int waterwallStartupHandoffExtract(int *argc, char **argv, waterwall_handoff_t *
     }
 
     handoff->has_handoff = true;
+    handoff->completion_event = completion_event;
+    handoff->effects_mapping  = effects_mapping;
 #ifdef _WIN32
     handoff->mapping = (uintptr_t) fd_val;
 #else

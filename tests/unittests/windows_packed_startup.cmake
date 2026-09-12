@@ -16,10 +16,12 @@ if(TARGET waterwall_platform_unit_tests)
 endif()
 
 add_executable(windows_launcher_arguments_test
-  "${WATERWALL_SOURCE_DIR}/tests/unittests/windows_launcher_arguments_test.c")
+  "${WATERWALL_SOURCE_DIR}/tests/unittests/windows_launcher_arguments_test.c"
+  "${WATERWALL_SOURCE_DIR}/core/launcher/session_windows.c"
+  "${WATERWALL_SOURCE_DIR}/core/lifecycle_capabilities_windows.c")
 target_compile_definitions(windows_launcher_arguments_test PRIVATE _WIN32_WINNT=0x0600)
 target_include_directories(windows_launcher_arguments_test PRIVATE "${WATERWALL_SOURCE_DIR}/core")
-target_link_libraries(windows_launcher_arguments_test PRIVATE WaterWall::XZDecoder shell32)
+target_link_libraries(windows_launcher_arguments_test PRIVATE WaterWall::XZDecoder shell32 iphlpapi)
 set_target_properties(windows_launcher_arguments_test PROPERTIES DISABLE_PRECOMPILE_HEADERS ON UNITY_BUILD OFF)
 add_test(NAME waterwall.windows_launcher_arguments_unit COMMAND windows_launcher_arguments_test)
 set_tests_properties(waterwall.windows_launcher_arguments_unit PROPERTIES TIMEOUT 30 LABELS "unit;core;launcher;windows")

@@ -21,15 +21,21 @@ extern "C"
         const char *core_json_input;
         bool        core_json_from_stdin;
         bool        restricted_config;
-        bool        hosted;
-        uintptr_t   host_stop_event;
-        uintptr_t   host_ready_event;
+        uintptr_t   stop_event;
+        uintptr_t   ready_event;
+        uintptr_t   controller_process;
+        const char *session_file;
+        const char *recover_file;
+        /* 0 inherits launch presentation, 1 hidden, 2 visible. */
+        unsigned console_mode;
     } waterwall_startup_options_t;
 
     typedef struct waterwall_handoff_s
     {
         bool        has_handoff;
         int         fd;
+        uintptr_t   completion_event;
+        uintptr_t   effects_mapping;
         uintptr_t   mapping; /* Windows snapshot handle; never a CRT descriptor. */
         size_t      length;
         const char *source_name;

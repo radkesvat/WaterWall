@@ -88,7 +88,7 @@ if(WW_USE_STARTUP_GUARD)
   set(launcher_guard_objects $<TARGET_OBJECTS:WaterwallLauncherStartupGuard>)
 endif()
 if(WIN32)
-  set(launcher_backend launcher_windows.c)
+  set(launcher_backend launcher_windows.c session_windows.c ${WATERWALL_SOURCE_DIR}/core/lifecycle_capabilities_windows.c)
 else()
   set(launcher_backend launcher_linux.c)
 endif()
@@ -131,6 +131,7 @@ target_include_directories(Waterwall PRIVATE
 
 target_link_libraries(Waterwall PRIVATE ww_launcher_xz_decoder)
 if(WIN32)
+  target_link_libraries(Waterwall PRIVATE advapi32 iphlpapi)
   target_compile_definitions(Waterwall PRIVATE _WIN32_WINNT=0x0600)
   if(MSVC)
     target_link_options(Waterwall PRIVATE /DYNAMICBASE /FIXED:NO /NXCOMPAT /INCREMENTAL:NO /DEBUG:NONE

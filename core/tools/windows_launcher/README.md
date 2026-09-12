@@ -26,40 +26,24 @@ On Windows, open the chosen native compiler environment, then use `native`,
 administrator manifests. Use an elevated test environment for unattended native
 CTest execution; native interactive UAC still needs manual validation.
 
-The native `waterwall.windows_hosted_launcher_fixture` test uses the same packed
-launcher and PE fixture with `--hosted`, `--host-stop-event:<decimal handle>` and
-optional `--host-ready-event:<decimal handle>`. It checks enclosing Job policy,
-same-Job runtime membership, hidden runtime creation, least event rights,
-optional readiness, pre-signaled stop, full DWORD exit status, last-host-Job-handle
-closure, and launcher failure followed by host settlement of the runtime. It
-retires forced-exit residue only after confirming process death. Missing-Job
-rejection is explicitly reported as unverified if the test runner already belongs
-to a Job. This fixture does not qualify runtime commit, exact cancellation races
-during extraction/admission, OS-version coverage, or a service-specific token.
-
-Hosted mode does not retain a host Job handle or create a second Job. The host
-must assign the suspended launcher to a kill-on-close Job with neither breakaway
-flag, create manual-reset lifecycle events, enforce its startup/stop deadlines,
-and settle the complete Job before retiring session files. Only the runtime
-signals readiness; omitting the readiness event leaves readiness determination
-to the host. Standalone invocation retains its private Job and console behavior.
-Do not assume that the Job contains exactly two processes: Windows console
-infrastructure can also appear as members despite `CREATE_NO_WINDOW`.
-
-Use the same native host against a complete production packed artifact:
-
-```powershell
-build/windows-launcher-native/Debug/windows_hosted_launcher_test.exe --production build/local-vs2022/Debug/Waterwall.exe
-```
-
-Pass an absolute artifact path when running from another directory. Production
-mode supplies an in-process `TesterClient -> BlackHole` configuration with restricted parsing,
-waits for the runtime's real readiness event, requests orderly stop, and verifies
-zero exit status and whole-Job settlement. It also exercises intentional omission
-of readiness and pre-signaled cancellation. The no-readiness case observes
-process survival only; it does not claim a runtime readiness milestone. This
-mode creates no listeners or driver nodes and does not use console diagnostics
-as a readiness protocol.
+The native `waterwall.windows_lifecycle_launcher_fixture` exercises the public
+interface without a client Job: graceful stop, forced launcher exit, controller
+loss, already-dead controller rejection, and recovery. It also checks visible
+startup with absent output streams and redirected configuration stdin, creation
+failure before resume, and recovery's distinction between an orderly return and
+abrupt runtime termination with the same full DWORD status. Recovery cases also
+cover settled abrupt exit, retained driver-file residue, incomplete adapter
+identity, and forced launcher death after recovery opens containment. The creation-failure
+seam is compiled only into this small fixture's launcher. `windows_session_effects_test`
+checks shared creation-intent publication, identity-resolution failure, bounded
+inventory admission. These tests do not establish
+native driver or OS-version qualification. See [the public lifecycle contract](LIFECYCLE.md)
+and [the Python client examples](client.py). [Validation evidence and open
+qualification items](LIFECYCLE-VALIDATION.md) identify the current artifact.
+The contract's [forced-termination section](LIFECYCLE.md#what-remains-after-forced-termination)
+separates process and packet-session teardown from adapter removal and persistent
+file/device residue. An unverified recovery result is not evidence of surviving
+traffic or physical-adapter DNS changes.
 
 The separate full application cross-check is `windows-cross-mingw-x64` at the
 repository root. It uses native GNU make and NASM for dependency builds, a native
@@ -91,3 +75,22 @@ temporary extraction and a separate child process. Read Developer Guide Parts 6
 and 7 for deployment and lifetime limitations, including local ACL-capable
 temporary storage, incompatible jobs,
 forced termination, and path-based firewall rules.
+
+For the isolated full-runtime lifecycle unit on Linux/MinGW (no LTO), use the root
+`windows-cross-mingw-x64-unit` configure preset and
+`windows-lifecycle-unit-debug` / `windows-lifecycle-unit-release` build presets.
+Run `windows_lifecycle_test.exe` from that tree explicitly with Wine. This is a
+diagnostic cross-check, not native Windows qualification; ordinary Windows unit
+presets remain the native test path.
+
+The same native client can exercise a complete packed artifact with a supplied
+configuration:
+
+```powershell
+windows_lifecycle_launcher_test.exe --production C:\path\Waterwall.exe C:\private\core.json
+```
+
+Use absolute node paths in that configuration. This mode verifies real readiness,
+graceful stop, controller loss, and pre-signaled controller rejection; it leaves
+caller-owned config/log files intact. The ordinary fixture owns forced-crash cases
+with its known small runtime. Full driver crash tests remain native qualification.

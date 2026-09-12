@@ -26,7 +26,8 @@ add_executable(WaterwallApplication fixture.c "${WATERWALL_SOURCE_DIR}/core/star
   "${WATERWALL_SOURCE_DIR}/ww/node_builder/config_lexical.c"
   "${WATERWALL_SOURCE_DIR}/ww/vendor/cjson/cJSON.c")
 target_link_libraries(WaterwallApplication PRIVATE fixture_companion)
-target_link_libraries(WaterwallApplication PRIVATE user32)
+target_link_libraries(WaterwallApplication PRIVATE user32 iphlpapi)
+target_include_directories(WaterwallApplication PRIVATE "${WATERWALL_SOURCE_DIR}/ww/devices")
 target_compile_definitions(WaterwallApplication PRIVATE _WIN32_WINNT=0x0600 WW_CJSON_CRT_ALLOCATOR=1)
 target_include_directories(WaterwallApplication PRIVATE "${WATERWALL_SOURCE_DIR}/core"
   "${WATERWALL_SOURCE_DIR}/ww/node_builder" "${WATERWALL_SOURCE_DIR}/ww/vendor/cjson")
@@ -48,21 +49,29 @@ else()
   target_sources(WaterwallApplication PRIVATE $<TARGET_OBJECTS:waterwall_resources>)
 endif()
 add_subdirectory("${WATERWALL_SOURCE_DIR}/core/launcher" launcher)
+target_compile_definitions(Waterwall PRIVATE WATERWALL_LAUNCHER_TEST_HOOKS=1)
 find_program(PYTHON_EXECUTABLE NAMES python3 python REQUIRED)
 add_test(NAME waterwall.windows_packed_fixture
   COMMAND "${PYTHON_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/smoke.py"
     --launcher "$<TARGET_FILE:Waterwall>" --application "$<TARGET_FILE:WaterwallApplication>"
     ${WW_FIXTURE_RUNNER_ARGS})
 set_tests_properties(waterwall.windows_packed_fixture PROPERTIES TIMEOUT 120)
-add_executable(windows_hosted_launcher_test hosted.c)
-add_dependencies(windows_hosted_launcher_test Waterwall)
-target_include_directories(windows_hosted_launcher_test PRIVATE "${WATERWALL_SOURCE_DIR}/core")
-target_compile_definitions(windows_hosted_launcher_test PRIVATE _WIN32_WINNT=0x0600)
+add_executable(windows_lifecycle_launcher_test lifecycle.c)
+add_dependencies(windows_lifecycle_launcher_test Waterwall)
+target_include_directories(windows_lifecycle_launcher_test PRIVATE "${WATERWALL_SOURCE_DIR}/core")
+target_compile_definitions(windows_lifecycle_launcher_test PRIVATE _WIN32_WINNT=0x0600)
 if(NOT MSVC)
-  target_link_options(windows_hosted_launcher_test PRIVATE -static)
+  target_link_options(windows_lifecycle_launcher_test PRIVATE -static)
 endif()
 if(CMAKE_HOST_WIN32)
-  add_test(NAME waterwall.windows_hosted_launcher_fixture
-    COMMAND windows_hosted_launcher_test "$<TARGET_FILE:Waterwall>")
-  set_tests_properties(waterwall.windows_hosted_launcher_fixture PROPERTIES TIMEOUT 150)
+  add_test(NAME waterwall.windows_lifecycle_launcher_fixture
+    COMMAND windows_lifecycle_launcher_test "$<TARGET_FILE:Waterwall>")
+  set_tests_properties(waterwall.windows_lifecycle_launcher_fixture PROPERTIES TIMEOUT 150)
 endif()
+
+add_executable(windows_session_effects_test effects.c "${WATERWALL_SOURCE_DIR}/ww/devices/windows_session_effects.c")
+target_include_directories(windows_session_effects_test PRIVATE "${WATERWALL_SOURCE_DIR}/ww/devices")
+target_compile_definitions(windows_session_effects_test PRIVATE _WIN32_WINNT=0x0600)
+target_link_libraries(windows_session_effects_test PRIVATE iphlpapi)
+add_test(NAME waterwall.windows_session_effects_unit COMMAND windows_session_effects_test)
+set_tests_properties(waterwall.windows_session_effects_unit PROPERTIES TIMEOUT 30)

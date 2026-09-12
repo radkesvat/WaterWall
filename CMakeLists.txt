@@ -372,7 +372,7 @@ add_executable(${WATERWALL_APPLICATION_TARGET}
 )
 
 if(WIN32)
-  target_sources(${WATERWALL_APPLICATION_TARGET} PRIVATE core/host_lifecycle_windows.c)
+  target_sources(${WATERWALL_APPLICATION_TARGET} PRIVATE core/lifecycle_windows.c core/lifecycle_capabilities_windows.c)
 endif()
 
 # Runtime consumers share code-generation and link flags through ww. Keep this
@@ -1395,25 +1395,29 @@ if(BUILD_TESTING AND WW_BUILD_UNIT_TESTS AND WIN32)
   if(TARGET waterwall_platform_unit_tests)
     add_dependencies(waterwall_platform_unit_tests tun_windows_dns_identity_test)
   endif()
-  add_executable(windows_host_lifecycle_test EXCLUDE_FROM_ALL
-    tests/unittests/windows_host_lifecycle_test.c
-    core/host_lifecycle_windows.c
+  add_executable(windows_lifecycle_test EXCLUDE_FROM_ALL
+    tests/unittests/windows_lifecycle_test.c
+    core/lifecycle_windows.c
+    core/lifecycle_capabilities_windows.c
     core/startup_options.c)
-  target_include_directories(windows_host_lifecycle_test PRIVATE "${PROJECT_SOURCE_DIR}/core")
-  target_compile_definitions(windows_host_lifecycle_test PRIVATE WATERWALL_HOST_LIFECYCLE_TEST_HOOKS=1)
-  target_link_libraries(windows_host_lifecycle_test PRIVATE ww)
-  set_target_properties(windows_host_lifecycle_test PROPERTIES
+  target_include_directories(windows_lifecycle_test PRIVATE "${PROJECT_SOURCE_DIR}/core")
+  target_compile_definitions(windows_lifecycle_test PRIVATE WATERWALL_LIFECYCLE_TEST_HOOKS=1)
+  target_link_libraries(windows_lifecycle_test PRIVATE ww)
+  if(MINGW)
+    target_link_options(windows_lifecycle_test PRIVATE -static)
+  endif()
+  set_target_properties(windows_lifecycle_test PROPERTIES
     DISABLE_PRECOMPILE_HEADERS ON UNITY_BUILD OFF INTERPROCEDURAL_OPTIMIZATION OFF)
-  add_test(NAME waterwall.windows_host_lifecycle_unit
+  add_test(NAME waterwall.windows_lifecycle_unit
     COMMAND "${CMAKE_COMMAND}"
-      "-DUNIT_TEST_TARGET=windows_host_lifecycle_test"
+      "-DUNIT_TEST_TARGET=windows_lifecycle_test"
       "-DUNIT_TEST_CONFIG=$<CONFIG>"
-      "-DUNIT_TEST_EXECUTABLE=$<TARGET_FILE:windows_host_lifecycle_test>"
+      "-DUNIT_TEST_EXECUTABLE=$<TARGET_FILE:windows_lifecycle_test>"
       "-DUNIT_TEST_BUILD_DIR=${CMAKE_BINARY_DIR}"
       -P "${PROJECT_SOURCE_DIR}/tests/unittests/run_unit_test.cmake")
-  set_tests_properties(waterwall.windows_host_lifecycle_unit PROPERTIES
+  set_tests_properties(waterwall.windows_lifecycle_unit PROPERTIES
     TIMEOUT 120 LABELS "unit;core;host;shutdown;windows" RESOURCE_LOCK waterwall_unit_test_build)
-  waterwall_register_platform_native_unit(waterwall.windows_host_lifecycle_unit windows_host_lifecycle_test
+  waterwall_register_platform_native_unit(waterwall.windows_lifecycle_unit windows_lifecycle_test
     "unit;core;host;shutdown;windows")
   target_compile_definitions(ww PUBLIC SIGNAL_MANAGER_TEST_HOOKS=1)
   add_executable(windows_console_shutdown_test EXCLUDE_FROM_ALL

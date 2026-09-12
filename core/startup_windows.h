@@ -6,7 +6,12 @@
 
 #include <stdint.h>
 #include <stdlib.h>
+
+/* Winsock must precede windows.h for session adapter identity queries. */
+// clang-format off
+#include <winsock2.h>
 #include <windows.h>
+// clang-format on
 
 #define WW_SNAPSHOT_MAGIC UINT64_C(0x5757534e41505348)
 typedef struct waterwall_snapshot_header_s

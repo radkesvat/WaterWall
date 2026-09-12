@@ -580,7 +580,8 @@ elseif(UNIX AND NOT ANDROID)
     endif()
 
 elseif(WIN32)
-    target_sources(ww PRIVATE devices/windows_driver_artifacts.c)
+    target_sources(ww PRIVATE devices/windows_driver_artifacts.c
+        devices/windows_session_effects.c)
     # WinDivert for x64 systems
     if(CMAKE_SYSTEM_PROCESSOR STREQUAL "AMD64" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
         message(STATUS "Including WinDivert for amd64")
@@ -1576,6 +1577,7 @@ if(BUILD_TESTING)
         devices/tun/tun_linux.c
         devices/tun/tun_windows.c
         devices/windows_driver_artifacts.c
+        devices/windows_session_effects.c
         devices/capture/capture_linux.c
         devices/raw/raw_linux.c
         objects/user.c

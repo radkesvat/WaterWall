@@ -1,0 +1,5 @@
+{
+  "configs": ["nodes.json"],
+  "log": {"path": "log/"},
+  "misc": {"workers": 1, "ram-profile": "minimal", "try-enabling-bbr": false}
+}

@@ -1,4 +1,5 @@
 #include "devices/windows_driver_artifacts.h"
+#include "devices/windows_session_effects.h"
 
 #include "loggers/internal_logger.h"
 #include <assert.h>
@@ -409,4 +410,6 @@ void windowsDriverArtifactsShutdown(void)
         if (! artifacts[i].in_use)
             windowsDriverArtifactRelease((windows_driver_artifact_t) i);
     driverDirectoryCleanup();
+    if (directory[0] != 0)
+        windowsSessionDriverUnsettled();
 }

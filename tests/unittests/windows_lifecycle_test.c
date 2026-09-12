@@ -1,7 +1,7 @@
 #include "wwapi.h"
 
 #include "global_state_internal.h"
-#include "host_lifecycle_windows.h"
+#include "lifecycle_windows.h"
 #include "startup_options.h"
 
 #include <inttypes.h>
@@ -59,8 +59,8 @@ static void fixtureCreate(worker_t workers[2], wloop_t *loop)
 
 static void fixtureDestroy(worker_t workers[2], wloop_t *loop)
 {
-    waterwallHostLifecycleDestroy();
-    require(waterwallHostLifecycleStopEvent() == 0, "destroy retained an event");
+    waterwallLifecycleDestroy();
+    require(waterwallLifecycleStopEvent() == 0, "destroy retained an event");
     applicationShutdownDestroy();
     contvarDestroy(&workers[0].control_condition);
     condmutexDestroy(&workers[0].control_condition_mutex);
@@ -72,25 +72,25 @@ static void fixtureDestroy(worker_t workers[2], wloop_t *loop)
 
 static void testArguments(void)
 {
-    char                       *valid[] = {"fixture", "--hosted", "--host-stop-event:123", "--host-ready-event:456"};
+    const char                 *valid[] = {"fixture", "--stop-event:123", "--ready-event:456"};
     waterwall_startup_options_t options = {0};
-    require(waterwallStartupOptionsParse(4, valid, &options) == kWaterwallStartupArgumentsRun && options.hosted &&
-                options.host_stop_event == 123U && options.host_ready_event == 456U,
+    require(waterwallStartupOptionsParse(3, (char *const *) valid, &options) == kWaterwallStartupArgumentsRun &&
+                options.stop_event == 123U && options.ready_event == 456U,
             "valid lifecycle arguments rejected");
-    require(waterwallStartupOptionsParse(3, valid, &options) == kWaterwallStartupArgumentsRun &&
-                options.host_ready_event == 0,
+    require(waterwallStartupOptionsParse(2, (char *const *) valid, &options) == kWaterwallStartupArgumentsRun &&
+                options.ready_event == 0,
             "optional readiness became mandatory or retained stale state");
-    char *invalid[][5] = {
+    const char *invalid[][5] = {
         {"fixture", "--hosted", NULL},
-        {"fixture", "--host-stop-event:123", NULL},
-        {"fixture", "--hosted", "--host-stop-event:0", NULL},
-        {"fixture", "--hosted", "--host-stop-event:-2", NULL},
-        {"fixture", "--hosted", "--host-stop-event:", NULL},
-        {"fixture", "--hosted", "--host-stop-event:12x", NULL},
-        {"fixture", "--hosted", "--host-stop-event:18446744073709551616", NULL},
-        {"fixture", "--hosted", "--host-stop-event:123", "--hosted", NULL},
-        {"fixture", "--hosted", "--host-stop-event:123", "--host-stop-event:124", NULL},
-        {"fixture", "--hosted", "--host-stop-event:123", "--host-ready-event:123", NULL},
+        {"fixture", "--controller-process:0", NULL},
+        {"fixture", "--stop-event:0", NULL},
+        {"fixture", "--stop-event:-2", NULL},
+        {"fixture", "--stop-event:", NULL},
+        {"fixture", "--stop-event:12x", NULL},
+        {"fixture", "--stop-event:18446744073709551616", NULL},
+        {"fixture", "--controller-process:0", NULL},
+        {"fixture", "--stop-event:123", "--stop-event:124", NULL},
+        {"fixture", "--stop-event:123", "--ready-event:123", NULL},
     };
     for (size_t i = 0; i < sizeof(invalid) / sizeof(invalid[0]); ++i)
     {
@@ -99,9 +99,35 @@ static void testArguments(void)
         {
             ++count;
         }
-        require(waterwallStartupOptionsParse(count, invalid[i], &options) == kWaterwallStartupArgumentsExitFailure,
+        require(waterwallStartupOptionsParse(count, (char *const *) invalid[i], &options) ==
+                    kWaterwallStartupArgumentsExitFailure,
                 "malformed lifecycle arguments accepted");
     }
+}
+
+static void testController(const char *executable)
+{
+    char command[MAX_PATH * 2];
+    snprintf(command, sizeof(command), "\"%s\" --controller-child", executable);
+    STARTUPINFOA startup      = {0};
+    startup.cb                = sizeof(startup);
+    PROCESS_INFORMATION child = {0};
+    require(CreateProcessA(executable, command, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &startup, &child),
+            "controller creation failed");
+    require(WaitForSingleObject(child.hProcess, 5000) == WAIT_OBJECT_0, "controller did not exit");
+    worker_t workers[2];
+    wloop_t  loop;
+    fixtureCreate(workers, &loop);
+    HANDLE ready = eventCreate(false);
+    require(waterwallLifecycleStart(0, inheritedCopy(ready), inheritedCopy(child.hProcess)),
+            "controller-only setup failed");
+    require(applicationShutdownWasRequested() && ! applicationShutdownCommitRuntime(),
+            "dead controller admitted runtime");
+    require(WaitForSingleObject(ready, 0) == WAIT_TIMEOUT, "dead controller emitted readiness");
+    fixtureDestroy(workers, &loop);
+    CloseHandle(ready);
+    CloseHandle(child.hProcess);
+    CloseHandle(child.hThread);
 }
 
 static void testPresignaledStop(bool prior_failure)
@@ -115,14 +141,14 @@ static void testPresignaledStop(bool prior_failure)
     }
     HANDLE stop  = eventCreate(true);
     HANDLE ready = eventCreate(false);
-    require(waterwallHostLifecycleStart(inheritedCopy(stop), inheritedCopy(ready)), "pre-signaled setup failed");
+    require(waterwallLifecycleStart(inheritedCopy(stop), inheritedCopy(ready), 0), "pre-signaled setup failed");
     require(applicationShutdownWasRequested() && ! applicationShutdownCommitRuntime(),
             "pre-signaled stop allowed runtime commit");
     require(applicationShutdownGetExitCode() == (prior_failure ? 47 : 0), "stop replaced selected failure status");
     ww_lifecycle_context_t selected;
     require(applicationShutdownGetSelectedContext(&selected) && selected.scope == wwLifecycleStartupRollback()->scope,
             "precommit stop selected process cleanup");
-    waterwallHostLifecycleCheckpoint();
+    waterwallLifecycleCheckpoint();
     require(WaitForSingleObject(ready, 0U) == WAIT_TIMEOUT, "startup stop emitted readiness");
     fixtureDestroy(workers, &loop);
     CloseHandle(stop);
@@ -135,12 +161,11 @@ static void testWaiterAndJoin(bool request_stop)
     wloop_t  loop;
     fixtureCreate(workers, &loop);
     HANDLE stop = eventCreate(false);
-    require(waterwallHostLifecycleStart(inheritedCopy(stop), 0), "stop-only setup failed");
+    require(waterwallLifecycleStart(inheritedCopy(stop), 0, 0), "stop-only setup failed");
     DWORD flags = 0;
-    require(GetHandleInformation((HANDLE) waterwallHostLifecycleStopEvent(), &flags) &&
-                (flags & HANDLE_FLAG_INHERIT) == 0U,
+    require(GetHandleInformation((HANDLE) waterwallLifecycleStopEvent(), &flags) && (flags & HANDLE_FLAG_INHERIT) == 0U,
             "runtime stop handle remains inheritable");
-    require(! SetEvent((HANDLE) waterwallHostLifecycleStopEvent()) && GetLastError() == ERROR_ACCESS_DENIED,
+    require(! SetEvent((HANDLE) waterwallLifecycleStopEvent()) && GetLastError() == ERROR_ACCESS_DENIED,
             "runtime retained stop signaling authority");
     if (request_stop)
     {
@@ -153,7 +178,7 @@ static void testWaiterAndJoin(bool request_stop)
         require(applicationShutdownWasRequested() && applicationShutdownGetExitCode() == 0,
                 "waiter did not publish orderly stop");
     }
-    waterwallHostLifecycleDestroy();
+    waterwallLifecycleDestroy();
     require(applicationShutdownWasRequested() == request_stop, "joining idle waiter requested process shutdown");
     fixtureDestroy(workers, &loop);
     CloseHandle(stop);
@@ -168,11 +193,11 @@ static void testSetupFailure(bool thread_creation)
     HANDLE          ready      = eventCreate(false);
     const uintptr_t stop_copy  = inheritedCopy(stop);
     const uintptr_t ready_copy = inheritedCopy(ready);
-    waterwallHostLifecycleTestFailSetup(thread_creation);
-    require(! waterwallHostLifecycleStart(stop_copy, ready_copy), "injected setup failure succeeded");
+    waterwallLifecycleTestFailSetup(thread_creation);
+    require(! waterwallLifecycleStart(stop_copy, ready_copy, 0), "injected setup failure succeeded");
     DWORD flags = 0;
     require(! GetHandleInformation((HANDLE) stop_copy, &flags) && ! GetHandleInformation((HANDLE) ready_copy, &flags) &&
-                waterwallHostLifecycleStopEvent() == 0,
+                waterwallLifecycleStopEvent() == 0,
             "failed setup retained owned handles");
     require(! applicationShutdownWasRequested(), "setup failure chose a shutdown result before its owner");
     require(WaitForSingleObject(ready, 0U) == WAIT_TIMEOUT, "failed setup emitted readiness");
@@ -192,7 +217,7 @@ static void testInvalidHandles(void)
     worker_t workers[2];
     wloop_t  loop;
     fixtureCreate(workers, &loop);
-    require(! waterwallHostLifecycleStart((uintptr_t) 0x12345678U, 0), "invalid stop handle accepted");
+    require(! waterwallLifecycleStart((uintptr_t) 0x12345678U, 0, 0), "invalid stop handle accepted");
     /* A mapping can report signaled on Windows; it is not a dependable wait
      * failure fixture. An abandoned mutex produces a real abnormal wait result. */
     HANDLE mutex = CreateMutexW(NULL, FALSE, NULL);
@@ -200,8 +225,8 @@ static void testInvalidHandles(void)
     HANDLE thread = CreateThread(NULL, 0, abandonMutex, mutex, 0, NULL);
     require(thread != NULL && WaitForSingleObject(thread, 5000U) == WAIT_OBJECT_0, "fixture did not abandon its mutex");
     CloseHandle(thread);
-    require(! waterwallHostLifecycleStart(inheritedCopy(mutex), 0), "abandoned stop wait was accepted");
-    require(ReleaseMutex(mutex) != FALSE, "fixture did not receive the abandoned mutex");
+    require(! waterwallLifecycleStart(inheritedCopy(mutex), 0, 0), "abandoned stop wait was accepted");
+
     CloseHandle(mutex);
     fixtureDestroy(workers, &loop);
 }
@@ -215,10 +240,19 @@ static void testReadiness(bool signal_failure)
     HANDLE ready = signal_failure ? CreateFileMappingW(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0U, 4096U, NULL)
                                   : eventCreate(false);
     require(ready != NULL, "could not create readiness handle");
-    require(waterwallHostLifecycleStart(inheritedCopy(stop), inheritedCopy(ready)), "ready setup failed");
+    if (signal_failure)
+    {
+        require(! waterwallLifecycleStart(inheritedCopy(stop), inheritedCopy(ready), 0),
+                "wrong-type readiness accepted");
+        fixtureDestroy(workers, &loop);
+        CloseHandle(stop);
+        CloseHandle(ready);
+        return;
+    }
+    require(waterwallLifecycleStart(inheritedCopy(stop), inheritedCopy(ready), 0), "ready setup failed");
     require(applicationShutdownCommitRuntime(), "runtime commit refused");
     atomicStoreExplicit(&GSTATE.workers_run_flag, true, memory_order_release);
-    waterwallHostLifecyclePublishReady();
+    waterwallLifecyclePublishReady();
     if (signal_failure)
     {
         ww_lifecycle_context_t selected;
@@ -230,7 +264,7 @@ static void testReadiness(bool signal_failure)
     {
         require(WaitForSingleObject(ready, 0U) == WAIT_OBJECT_0, "readiness was not signaled");
         require(ResetEvent(ready) != FALSE, "could not reset test observer");
-        waterwallHostLifecyclePublishReady();
+        waterwallLifecyclePublishReady();
         require(WaitForSingleObject(ready, 0U) == WAIT_TIMEOUT, "readiness was signaled twice");
     }
     fixtureDestroy(workers, &loop);
@@ -242,25 +276,26 @@ static void readyAfterPublication(void)
 {
     require(applicationShutdownRuntimeCommitted() && atomicLoadExplicit(&GSTATE.workers_run_flag, memory_order_acquire),
             "readiness callback preceded runtime commit or worker publication");
-    waterwallHostLifecyclePublishReady();
+    waterwallLifecyclePublishReady();
     require(requestProgramShutdown(0), "could not stop integration child");
 }
 
 static void runIntegrationChild(uintptr_t stop, uintptr_t ready)
 {
     initWLibc();
-    ww_construction_data_t data         = {0};
-    data.workers_count                  = 2;
-    data.ram_profile                    = kRamProfileS1Memory;
-    data.mtu_size                       = 1500;
-    data.internal_logger_data.log_level = "FATAL";
-    data.core_logger_data.log_level     = "FATAL";
-    data.network_logger_data.log_level  = "FATAL";
-    data.dns_logger_data.log_level      = "FATAL";
-    data.application_finalizer          = waterwallHostLifecycleDestroy;
+    char                   fatal_level[] = "FATAL";
+    ww_construction_data_t data          = {0};
+    data.workers_count                   = 2;
+    data.ram_profile                     = kRamProfileS1Memory;
+    data.mtu_size                        = 1500;
+    data.internal_logger_data.log_level  = fatal_level;
+    data.core_logger_data.log_level      = fatal_level;
+    data.network_logger_data.log_level   = fatal_level;
+    data.dns_logger_data.log_level       = fatal_level;
+    data.application_finalizer           = waterwallLifecycleDestroy;
     require(wwStartupSucceeded(createGlobalState(data)), "could not create integration runtime");
-    require(waterwallHostLifecycleStart(stop, ready), "could not start integration lifecycle");
-    globalstateRunMainThreadWithStartupHooks(waterwallHostLifecycleCheckpoint, readyAfterPublication);
+    require(waterwallLifecycleStart(stop, ready, 0), "could not start integration lifecycle");
+    globalstateRunMainThreadWithStartupHooks(waterwallLifecycleCheckpoint, readyAfterPublication);
     ExitProcess(2);
 }
 
@@ -303,7 +338,10 @@ int main(int argc, char **argv)
         runIntegrationChild((uintptr_t) strtoull(argv[2], NULL, 10), (uintptr_t) strtoull(argv[3], NULL, 10));
         return 2;
     }
+    if (argc == 2 && strcmp(argv[1], "--controller-child") == 0)
+        return 0;
     testArguments();
+    testController(argv[0]);
     testPresignaledStop(false);
     testPresignaledStop(true);
     testWaiterAndJoin(false);

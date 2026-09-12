@@ -4,6 +4,7 @@
 #include "launcher.h"
 #include "lazy_names.h"
 #include "packed_payload.h"
+#include "session_windows.h"
 #include "startup_windows.h"
 #include "ww_xz_decoder.h"
 
@@ -349,32 +350,7 @@ LAZY_WRAPPER(BOOL, FALSE, lazy_advapi32, ConvertStringSecurityDescriptorToSecuri
 static volatile LONG console_phase;
 static volatile LONG console_cancel;
 
-/* The host owns the only Job handle. A NULL query inspects our enclosing Job
- * without keeping kill-on-close alive after the host exits. */
-static int hostedJobValid(void)
-{
-    BOOL in_job = FALSE;
-    if (! IsProcessInJob(GetCurrentProcess(), NULL, &in_job))
-        return 0;
-    if (! in_job)
-    {
-        SetLastError(ERROR_ACCESS_DENIED);
-        return 0;
-    }
-    JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits = {0};
-    if (! QueryInformationJobObject(NULL, JobObjectExtendedLimitInformation, &limits, sizeof(limits), NULL))
-        return 0;
-    DWORD flags = limits.BasicLimitInformation.LimitFlags;
-    if (! (flags & JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE) ||
-        (flags & (JOB_OBJECT_LIMIT_BREAKAWAY_OK | JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK)))
-    {
-        SetLastError(ERROR_ACCESS_DENIED);
-        return 0;
-    }
-    return 1;
-}
-
-/* Hosted stop events are manual-reset capabilities. Never reset cancellation;
+/* Lifecycle stop events are manual-reset capabilities. Never reset cancellation;
  * the runtime checks this same event before committing startup. */
 static int bootstrapContinue(HANDLE stop)
 {
@@ -403,6 +379,7 @@ static BOOL WINAPI launcherConsoleHandler(DWORD event)
         event != CTRL_SHUTDOWN_EVENT)
         return FALSE;
     InterlockedExchange(&console_cancel, 1);
+    launcherSessionCancel();
     if (event == CTRL_C_EVENT || event == CTRL_BREAK_EVENT)
         return TRUE; /* The attached child receives the original event directly. */
     /* Windows imposes its own close deadline. Give the main owner bounded time. */
@@ -525,7 +502,7 @@ static HANDLE inputSnapshot(const char *input, size_t length)
 
 /* The protected DACL admits only this token's user and SYSTEM. Preserve the
  * token's integrity label so an elevated extraction is not writable below it. */
-static PSECURITY_DESCRIPTOR privateSecurity(void)
+PSECURITY_DESCRIPTOR waterwallLauncherPrivateSecurity(void)
 {
     HANDLE               token      = NULL;
     void                *user       = NULL;
@@ -697,6 +674,8 @@ static void reportOwnedPath(const lazy_str_t *kind, const wchar_t *path, DWORD e
     SecureZeroMemory(fmt_buf, sizeof(fmt_buf));
 }
 
+static bool cleanup_residue;
+
 static void removeOwnedPath(const wchar_t *path, int directory)
 {
     static const lazy_str_t str_dir  = LAZY_STR(directory);
@@ -712,6 +691,7 @@ static void removeOwnedPath(const wchar_t *path, int directory)
         if (retry != 9)
             Sleep(50);
     }
+    cleanup_residue = true;
     reportOwnedPath(directory ? &str_dir : &str_file, path, error);
 }
 
@@ -866,13 +846,16 @@ int launcherExecute(char *input, size_t length, const char *source, int argc, ch
 {
     DWORD                status   = 1;
     int                  started  = 0;
+    bool                 creation_admitted = false;
+    bool                 runtime_resumed   = false;
+    DWORD                failure_error     = ERROR_SUCCESS;
     HANDLE               snapshot = NULL, root_lock = INVALID_HANDLE_VALUE, directory_lock = INVALID_HANDLE_VALUE;
-    HANDLE               file = INVALID_HANDLE_VALUE, image_lock = INVALID_HANDLE_VALUE, job = NULL;
-    HANDLE               inherited[6] = {0};
+    HANDLE               file = INVALID_HANDLE_VALUE, image_lock = INVALID_HANDLE_VALUE;
+    HANDLE               inherited[9] = {0};
     HANDLE               standard[3]  = {0};
-    HANDLE               stop = NULL, ready = NULL;
-    HANDLE               original_stop    = (HANDLE) options->host_stop_event;
-    HANDLE               original_ready   = (HANDLE) options->host_ready_event;
+    HANDLE               stop = NULL, ready = NULL, complete = NULL, effects = NULL, controller = NULL;
+    HANDLE               original_stop    = (HANDLE) options->stop_event;
+    HANDLE               original_ready   = (HANDLE) options->ready_event;
     size_t               inherited_count  = 0;
     PROCESS_INFORMATION  process          = {0};
     STARTUPINFOEXW       startup          = {0};
@@ -889,23 +872,33 @@ int launcherExecute(char *input, size_t length, const char *source, int argc, ch
     lazy_str_t           operation      = LAZY_STR(op_installing_console_handler);
     if (! SetConsoleCtrlHandler(launcherConsoleHandler, TRUE))
         goto done;
-    if (options->hosted)
-    {
-        operation = (lazy_str_t) LAZY_STR(op_validating_host_containment);
-        if (! hostedJobValid())
-            goto done;
-        operation = (lazy_str_t) LAZY_STR(op_preparing_inherited_handles);
-        if (! DuplicateHandle(GetCurrentProcess(), original_stop, GetCurrentProcess(), &stop, SYNCHRONIZE, TRUE, 0) ||
-            (original_ready != NULL &&
-             ! DuplicateHandle(
-                 GetCurrentProcess(), original_ready, GetCurrentProcess(), &ready, EVENT_MODIFY_STATE, TRUE, 0)))
-            goto done;
-        CloseHandle(original_stop);
-        original_stop = NULL;
-        if (original_ready != NULL)
-            CloseHandle(original_ready);
-        original_ready = NULL;
-    }
+    operation = (lazy_str_t) LAZY_STR(op_preparing_inherited_handles);
+    if (! DuplicateHandle(GetCurrentProcess(), original_stop, GetCurrentProcess(), &stop, SYNCHRONIZE, TRUE, 0) ||
+        ! DuplicateHandle(
+            GetCurrentProcess(), original_ready, GetCurrentProcess(), &ready, EVENT_MODIFY_STATE, TRUE, 0) ||
+        ! DuplicateHandle(GetCurrentProcess(),
+                          launcherSessionCompletionEvent(),
+                          GetCurrentProcess(),
+                          &complete,
+                          EVENT_MODIFY_STATE,
+                          TRUE,
+                          0) ||
+        ! DuplicateHandle(GetCurrentProcess(),
+                          launcherSessionEffectsMapping(),
+                          GetCurrentProcess(),
+                          &effects,
+                          FILE_MAP_WRITE,
+                          TRUE,
+                          0))
+        goto done;
+    if (options->controller_process != 0 && ! DuplicateHandle(GetCurrentProcess(),
+                                                              (HANDLE) options->controller_process,
+                                                              GetCurrentProcess(),
+                                                              &controller,
+                                                              SYNCHRONIZE,
+                                                              TRUE,
+                                                              0))
+        goto done;
     if (! bootstrapContinue(stop))
         goto done;
     operation = (lazy_str_t) LAZY_STR(op_capturing_executable_path_and_input);
@@ -950,7 +943,7 @@ int launcherExecute(char *input, size_t length, const char *source, int argc, ch
         goto done;
     if (! bootstrapContinue(stop))
         goto done;
-    security = privateSecurity();
+    security = waterwallLauncherPrivateSecurity();
     if (security == NULL)
         goto done;
     SECURITY_ATTRIBUTES sa = {sizeof(sa), security, FALSE};
@@ -1036,28 +1029,47 @@ int launcherExecute(char *input, size_t length, const char *source, int argc, ch
         goto done;
     for (int i = 1; i < argc; ++i)
     {
-        if (options->hosted &&
-            (strncmp(argv[i], "--host-stop-event:", 18) == 0 || strncmp(argv[i], "--host-ready-event:", 19) == 0))
+        if (strncmp(argv[i], "--stop-event:", 13) == 0 || strncmp(argv[i], "--ready-event:", 14) == 0 ||
+            strncmp(argv[i], "--controller-process:", 21) == 0 || strncmp(argv[i], "--session-file:", 15) == 0 ||
+            strncmp(argv[i], "--console:", 10) == 0)
             continue;
         if (! appendNarrow(command, &used, argv[i]))
             goto done;
     }
-    if (options->hosted)
     {
         char event_argument[80];
-        snprintf(
-            event_argument, sizeof(event_argument), "--host-stop-event:%llu", (unsigned long long) (uintptr_t) stop);
+        snprintf(event_argument, sizeof(event_argument), "--stop-event:%llu", (unsigned long long) (uintptr_t) stop);
         if (! appendNarrow(command, &used, event_argument))
             goto done;
         if (ready != NULL)
         {
-            snprintf(event_argument,
-                     sizeof(event_argument),
-                     "--host-ready-event:%llu",
-                     (unsigned long long) (uintptr_t) ready);
+            snprintf(
+                event_argument, sizeof(event_argument), "--ready-event:%llu", (unsigned long long) (uintptr_t) ready);
             if (! appendNarrow(command, &used, event_argument))
                 goto done;
         }
+    }
+    char complete_argument[80];
+    snprintf(complete_argument,
+             sizeof(complete_argument),
+             "--ww-internal-complete=%llu",
+             (unsigned long long) (uintptr_t) complete);
+    if (! appendNarrow(command, &used, complete_argument))
+        goto done;
+    snprintf(complete_argument,
+             sizeof(complete_argument),
+             "--ww-internal-effects=%llu",
+             (unsigned long long) (uintptr_t) effects);
+    if (! appendNarrow(command, &used, complete_argument))
+        goto done;
+    if (controller != NULL)
+    {
+        snprintf(complete_argument,
+                 sizeof(complete_argument),
+                 "--controller-process:%llu",
+                 (unsigned long long) (uintptr_t) controller);
+        if (! appendNarrow(command, &used, complete_argument))
+            goto done;
     }
     operation                    = (lazy_str_t) LAZY_STR(op_preparing_inherited_handles);
     inherited[inherited_count++] = snapshot;
@@ -1080,6 +1092,10 @@ int launcherExecute(char *input, size_t length, const char *source, int argc, ch
         inherited[inherited_count++] = stop;
     if (ready != NULL)
         inherited[inherited_count++] = ready;
+    inherited[inherited_count++] = complete;
+    inherited[inherited_count++] = effects;
+    if (controller != NULL)
+        inherited[inherited_count++] = controller;
     SIZE_T attribute_size = 0;
     InitializeProcThreadAttributeList(NULL, 1, 0, &attribute_size);
     startup.lpAttributeList = malloc(attribute_size);
@@ -1100,15 +1116,6 @@ int launcherExecute(char *input, size_t length, const char *source, int argc, ch
     startup.StartupInfo.hStdInput               = standard[0];
     startup.StartupInfo.hStdOutput              = standard[1];
     startup.StartupInfo.hStdError               = standard[2];
-    if (! options->hosted)
-    {
-        operation                                   = (lazy_str_t) LAZY_STR(op_creating_child_job);
-        job                                         = CreateJobObjectW(NULL, NULL);
-        JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits = {0};
-        limits.BasicLimitInformation.LimitFlags     = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-        if (job == NULL || ! SetInformationJobObject(job, JobObjectExtendedLimitInformation, &limits, sizeof(limits)))
-            goto done;
-    }
     operation          = (lazy_str_t) LAZY_STR(op_restoring_companion_dlls);
     wchar_t *separator = wcsrchr(original, L'\\');
     if (separator == NULL)
@@ -1124,25 +1131,33 @@ int launcherExecute(char *input, size_t length, const char *source, int argc, ch
         goto done;
     fflush(stdout);
     fflush(stderr);
+    launcherSessionChildStarted();
+    creation_admitted = true;
+#ifdef WATERWALL_LAUNCHER_TEST_HOOKS
+    if (getenv("WW_FIXTURE_CREATE_FAILURE") != NULL)
+    {
+        SetLastError(ERROR_ACCESS_DENIED);
+        goto done;
+    }
+#endif
     if (! CreateProcessW(executable,
                          command,
                          NULL,
                          NULL,
                          TRUE,
-                         EXTENDED_STARTUPINFO_PRESENT | CREATE_SUSPENDED | (options->hosted ? CREATE_NO_WINDOW : 0),
+                         EXTENDED_STARTUPINFO_PRESENT | CREATE_SUSPENDED |
+                             (GetConsoleWindow() == NULL ? CREATE_NO_WINDOW : 0),
                          NULL,
                          NULL,
                          &startup.StartupInfo,
                          &process))
-        goto done;
-    operation = (lazy_str_t) LAZY_STR(op_assigning_child_job);
-    if (job != NULL && ! AssignProcessToJobObject(job, process.hProcess))
         goto done;
     if (! bootstrapContinue(stop))
         goto done;
     InterlockedExchange(&console_phase, 1);
     if (ResumeThread(process.hThread) == (DWORD) -1)
         goto done;
+    runtime_resumed = true;
     started   = 1;
     operation = (lazy_str_t) LAZY_STR(op_waiting_for_child_exit);
     if (WaitForSingleObject(process.hProcess, INFINITE) != WAIT_OBJECT_0 ||
@@ -1152,27 +1167,31 @@ int launcherExecute(char *input, size_t length, const char *source, int argc, ch
         goto done;
     }
 done:
+    failure_error = GetLastError();
+    launcherSessionChildExited(started ? status : 1, started != 0);
     if (! started)
     {
         char op_buf[128];
         char fmt_buf[128];
         lazyStr(&operation, op_buf, sizeof(op_buf));
         lazyLoadString(transf_log_failed, sizeof(transf_log_failed), fmt_buf, sizeof(fmt_buf));
-        fprintf(stderr, fmt_buf, op_buf, GetLastError());
+        fprintf(stderr, fmt_buf, op_buf, failure_error);
         SecureZeroMemory(op_buf, sizeof(op_buf));
         SecureZeroMemory(fmt_buf, sizeof(fmt_buf));
     }
     if (process.hProcess != NULL && ! started)
     {
         TerminateProcess(process.hProcess, 1);
-        WaitForSingleObject(process.hProcess, INFINITE);
+        if (WaitForSingleObject(process.hProcess, INFINITE) != WAIT_OBJECT_0)
+            ExitProcess(0xe0570001U);
     }
+    if (creation_admitted && ! runtime_resumed)
+        launcherSessionChildAborted();
     if (process.hThread != NULL)
         CloseHandle(process.hThread);
     if (process.hProcess != NULL)
         CloseHandle(process.hProcess);
-    if (job != NULL)
-        CloseHandle(job);
+
     if (attributes_ready)
         DeleteProcThreadAttributeList(startup.lpAttributeList);
     free(startup.lpAttributeList);
@@ -1183,10 +1202,12 @@ done:
         CloseHandle(stop);
     if (ready != NULL)
         CloseHandle(ready);
-    if (original_stop != NULL)
-        CloseHandle(original_stop);
-    if (original_ready != NULL)
-        CloseHandle(original_ready);
+    if (complete != NULL)
+        CloseHandle(complete);
+    if (effects != NULL)
+        CloseHandle(effects);
+    if (controller != NULL)
+        CloseHandle(controller);
     if (snapshot != NULL)
         CloseHandle(snapshot);
     if (file != INVALID_HANDLE_VALUE)
@@ -1222,8 +1243,9 @@ done:
     free(command);
     free(exe_argument);
     free(src_argument);
-    InterlockedExchange(&console_phase, 2);
     /* Preserve all 32 bits, including exception statuses. */
+    launcherSessionFinish(started ? status : 1, cleanup_residue);
+    InterlockedExchange(&console_phase, 2);
     ExitProcess(started ? status : 1);
     return 1;
 }

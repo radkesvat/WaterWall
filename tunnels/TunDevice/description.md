@@ -258,6 +258,14 @@ c-ares DNS resolver sockets are not pinned by this feature. The default
 interface is detected once at startup; if the physical default route changes,
 restart WaterWall or configure explicit interfaces/routes.
 
+On Windows, automatic loop prevention only selects the interface for participating
+sockets; it does not add physical-interface host routes. The built-in TUN IP,
+route, and DNS settings target the owned adapter. Process termination,
+packet-session teardown, adapter removal, and retained files/device properties
+have separate completion boundaries. See the
+[Windows recovery contract](../../core/tools/windows_launcher/LIFECYCLE.md#what-remains-after-forced-termination)
+for what is released automatically and what may remain after a forced exit.
+
 ### Callback behavior
 
 Payload is the meaningful callback path. Ordinary connection lifecycle

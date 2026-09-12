@@ -148,6 +148,14 @@
             ]
         },
         {
+            "name": "windows-cross-mingw-x64-unit",
+            "inherits": ["native-unit-tests", "windows-cross-mingw-x64"],
+            "cacheVariables": {
+                "WW_PACK_RUNTIME": false,
+                "WW_NATIVE_UNIT_TEST_EXECUTABLE_RUNNABLE": false
+            }
+        },
+        {
             "name": "windows-cross-mingw-x64",
             "inherits": [
                 "host-linux",
@@ -163,6 +171,18 @@
         }
     ],
     "buildPresets": [
+        {
+            "name": "windows-lifecycle-unit-debug",
+            "configurePreset": "windows-cross-mingw-x64-unit",
+            "configuration": "Debug",
+            "targets": ["windows_lifecycle_test"]
+        },
+        {
+            "name": "windows-lifecycle-unit-release",
+            "configurePreset": "windows-cross-mingw-x64-unit",
+            "configuration": "Release",
+            "targets": ["windows_lifecycle_test"]
+        },
         {
             "name": "windows-ninja",
             "configurePreset": "windows-ninja",

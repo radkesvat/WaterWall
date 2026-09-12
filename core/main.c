@@ -9,8 +9,10 @@
 
 #ifdef OS_WIN
 #include "devices/tun/tun_windows_dns.h"
+#include "devices/windows_session_effects.h"
 #include "global_state_internal.h"
-#include "host_lifecycle_windows.h"
+#include "lifecycle_capabilities_windows.h"
+#include "lifecycle_windows.h"
 #endif
 
 // #ifdef COMPILER_MSVC
@@ -19,10 +21,22 @@
 // #include <crtdbg.h>
 // #endif
 
+#ifdef OS_WIN
+static HANDLE completion_event;
+static void   waterwallOrderlyReturn(void)
+{
+    if (completion_event != NULL)
+    {
+        SetEvent(completion_event);
+        CloseHandle(completion_event);
+    }
+}
+#endif
+
 static bool waterwallStartupCheckpoint(void)
 {
 #ifdef OS_WIN
-    waterwallHostLifecycleCheckpoint();
+    waterwallLifecycleCheckpoint();
 #endif
     signalmanagerConsumePendingShutdownSignal();
     return ! applicationShutdownWasRequested();
@@ -36,7 +50,7 @@ static void waterwallApplicationFinalize(void)
         applicationShutdownRecordFailure(1, kApplicationShutdownReasonSubsystemFailure);
     }
     tunWindowsDnsSetStartupStopEvent(NULL);
-    waterwallHostLifecycleDestroy();
+    waterwallLifecycleDestroy();
 #endif
     destroyCoreSettings();
 }
@@ -59,6 +73,18 @@ int waterwallInnerMain(int argc, char **argv)
         return 1;
     }
 
+#ifdef OS_WIN
+    if (! windowsSessionEffectsAttach(handoff.effects_mapping))
+        return 1;
+    if (handoff.completion_event != 0)
+    {
+        completion_event = (HANDLE) handoff.completion_event;
+        if (! waterwallCapabilityValidate(completion_event, L"Event", EVENT_MODIFY_STATE) ||
+            ! SetHandleInformation(completion_event, HANDLE_FLAG_INHERIT, 0) || atexit(waterwallOrderlyReturn) != 0)
+            return 1;
+    }
+#endif
+
     waterwall_startup_options_t                startup_options = {0};
     const waterwall_startup_arguments_result_e arguments_result =
         waterwallStartupOptionsParse(argc, argv, &startup_options);
@@ -67,6 +93,15 @@ int waterwallInnerMain(int argc, char **argv)
         waterwallStartupHandoffCleanup(&handoff);
         return arguments_result == kWaterwallStartupArgumentsExitSuccess ? 0 : 1;
     }
+
+#ifdef OS_WIN
+    if (startup_options.session_file != NULL || startup_options.recover_file != NULL ||
+        startup_options.console_mode != 0)
+    {
+        fprintf(stderr, "Session and console options require the packed public executable\n");
+        return 1;
+    }
+#endif
 
     if (startup_options.restricted_config)
     {
@@ -161,14 +196,15 @@ int waterwallInnerMain(int argc, char **argv)
         goto startup_failed;
     }
 #ifdef OS_WIN
-    if (startup_options.hosted)
+    if (startup_options.stop_event || startup_options.ready_event || startup_options.controller_process)
     {
-        if (! waterwallHostLifecycleStart(startup_options.host_stop_event, startup_options.host_ready_event))
+        if (! waterwallLifecycleStart(
+                startup_options.stop_event, startup_options.ready_event, startup_options.controller_process))
         {
             startup_result = wwStartupFailure(1);
             goto startup_failed;
         }
-        tunWindowsDnsSetStartupStopEvent((HANDLE) waterwallHostLifecycleStopEvent());
+        tunWindowsDnsSetStartupStopEvent((HANDLE) waterwallLifecycleStopEvent());
         if (! waterwallStartupCheckpoint())
         {
             goto startup_failed;
@@ -254,7 +290,7 @@ int waterwallInnerMain(int argc, char **argv)
         goto startup_failed;
     }
 #ifdef OS_WIN
-    globalstateRunMainThreadWithStartupHooks(waterwallHostLifecycleCheckpoint, waterwallHostLifecyclePublishReady);
+    globalstateRunMainThreadWithStartupHooks(waterwallLifecycleCheckpoint, waterwallLifecyclePublishReady);
 #else
     runMainThread();
 #endif
