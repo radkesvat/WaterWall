@@ -302,10 +302,14 @@ bool launcherSessionStart(waterwall_startup_options_t *options)
     }
     else if (options->console_mode == 2)
     {
-        /* Retire old CRT console handles before detach/allocation can recycle
-         * their numeric values for new console or configuration handles. */
-        if (freopen("NUL", "w", stdout) == NULL || freopen("NUL", "w", stderr) == NULL)
-            return false;
+        // Close CRT streams before detaching. Reopening them first can reuse console
+        // handle values that FreeConsole still closes. Preserve redirected stdin.
+        DWORD input_mode;
+        bool  replace_input = input == NULL || input == INVALID_HANDLE_VALUE || GetConsoleMode(input, &input_mode);
+        if (replace_input)
+            fclose(stdin);
+        fclose(stdout);
+        fclose(stderr);
         /* An explicit visible console must not share the controller's console:
          * closing it would otherwise deliver close events to the controller too. */
         if (GetConsoleWindow() != NULL)
@@ -315,8 +319,16 @@ bool launcherSessionStart(waterwall_startup_options_t *options)
             if (count == 0 || (count > 1 && ! FreeConsole()))
                 return false;
         }
-        if (GetConsoleWindow() == NULL && ! AllocConsole())
+        // CREATE_NO_WINDOW can leave a windowless console attached. FreeConsole also
+        // succeeds when the process is already detached.
+        if (GetConsoleWindow() == NULL && (! FreeConsole() || ! AllocConsole()))
             return false;
+        if (replace_input)
+        {
+            if (freopen("NUL", "r", stdin) == NULL)
+                return false;
+            input = (HANDLE) _get_osfhandle(_fileno(stdin));
+        }
         /* A detached MSVC process can have _fileno(stdout/stderr) == -2.
          * Reopen the FILE streams rather than passing those values to _dup2's
          * invalid-parameter handler. Configuration stdin stays redirected. */
@@ -390,8 +402,11 @@ void launcherSessionFinish(DWORD status, bool residue)
     bool orderly = ! readField(&record->started) || WaitForSingleObject(completion_event, 0) == WAIT_OBJECT_0;
     InterlockedExchange(&record->orderly, orderly);
     InterlockedExchange(&record->residue, residue);
-    /* After this boundary no code creates another process. Console infrastructure
-     * may itself be a Job member, so detach before counting the remaining member. */
+    // No more launcher I/O follows. Close streams before detaching so CONOUT$
+    // references cannot keep the console host alive during Job settlement.
+    fclose(stdin);
+    fclose(stdout);
+    fclose(stderr);
     FreeConsole();
     ULONGLONG settlement_deadline = GetTickCount64() + 5000;
     do

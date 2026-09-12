@@ -44,8 +44,13 @@ Configuration EOF is independent of stop. No console input consumes configuratio
 while the inner runtime receives its immutable snapshot.
 
 Without a console argument, preserve launch presentation and standard streams.
-Visible mode uses a console separate from any console shared at launch. Supply
-configuration through a file or redirected stdin in this mode. It deliberately
+Visible mode uses a console separate from any console shared at launch. A
+windowless console created with `CREATE_NO_WINDOW` is detached before
+allocating the visible console; a missing window handle does not prove the
+process is detached. Close the old CRT console streams before detaching and
+reopen them only after allocation, so reused handle values cannot be invalidated
+by console cleanup. Supply configuration through a file or redirected stdin in
+this mode; absent or console-backed stdin is replaced with `NUL`. It deliberately
 sends diagnostics to one WaterWall console instead of
 the client's capture pipes. Hidden clients must continuously drain captured
 output. Internal DNS helpers use no console. Existing generated Internal, Core,
@@ -164,8 +169,10 @@ While it holds an extra Job handle it assumes responsibility for this bounded
 termination. It checks Job active-process accounting, rather than treating a
 successful termination call or wait on a Job as settlement. A missing Job name is not evidence of inactivity: Windows removes a temporary
 object's name at last-handle close even while kernel references can remain.
-Before finalizing a normal receipt, the public process detaches its console and
-records an observed one-member Job barrier. It creates no descendants afterward.
+Before finalizing a normal receipt, the public process closes its standard
+streams, detaches its console, and records an observed one-member Job barrier.
+Open `CONOUT$` streams can otherwise keep the console host alive after detach.
+It creates no descendants afterward.
 Only that barrier plus proof that the exact public process exited can substitute
 for live Job accounting. Otherwise process completion remains unverified. See
 [Microsoft object lifetime](https://learn.microsoft.com/en-us/windows-hardware/drivers/kernel/life-cycle-of-an-object).

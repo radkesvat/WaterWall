@@ -10,7 +10,9 @@ static void require(BOOL value, const char *message)
 {
     if (! value)
     {
-        fprintf(stderr, "%s (Windows error %lu)\n", message, GetLastError());
+        DWORD error = GetLastError();
+        fflush(stdout);
+        fprintf(stderr, "%s (Windows error %lu)\n", message, error);
         ExitProcess(1);
     }
 }
@@ -121,6 +123,8 @@ int main(int argc, char **argv)
         SetEnvironmentVariableW(L"WW_FIXTURE_ABRUPT", mode == 11 || mode == 13 ? L"1" : NULL);
         SetEnvironmentVariableW(L"WW_FIXTURE_DRIVER_RESIDUE", mode == 14 ? L"1" : NULL);
         SetEnvironmentVariableW(L"WW_FIXTURE_CREATE_FAILURE", mode == 10 ? L"1" : NULL);
+        // launch() uses CREATE_NO_WINDOW. Visible startup must replace its
+        // windowless console even though GetConsoleWindow() returns NULL.
         bool visible = mode == 8 || mode == 9;
         SetEnvironmentVariableW(L"WW_FIXTURE_VISIBLE", visible ? L"1" : NULL);
         SetEnvironmentVariableW(L"WW_FIXTURE_ADAPTER_STATE",
@@ -278,17 +282,19 @@ int main(int argc, char **argv)
             require(TerminateProcess(child.hProcess, 93), "public death during recovery");
             CloseHandle(stop_observed);
         }
-        require(await(recovery) ==
-                    (mode == 1 || mode == 6 || mode == 12 || mode == 13 || (mode == 4 && public_status == 0xe0570001U)
-                         ? 2
-                         : 0),
-                "recovery must distinguish verified settlement from unresolved effects");
+        DWORD recovery_status = await(recovery);
         char  receipt[4096];
         DWORD received;
         require(ReadFile(receipt_reader, receipt, sizeof(receipt) - 1, &received, NULL) && received != 0,
                 "recovery receipt missing");
         receipt[received] = 0;
         CloseHandle(receipt_reader);
+        DWORD expected_recovery =
+            mode == 1 || mode == 6 || mode == 12 || mode == 13 || (mode == 4 && public_status == 0xe0570001U) ? 2 : 0;
+        if (recovery_status != expected_recovery)
+            fprintf(stderr, "case %u: recovery status %lu, receipt %s\n", mode, recovery_status, receipt);
+        require(recovery_status == expected_recovery,
+                "recovery must distinguish verified settlement from unresolved effects");
         if (mode == 3 || mode == 10)
             require(strstr(receipt, "\"runtime_status_known\":false") != NULL &&
                         strstr(receipt, "\"cleanup\":\"settled\"") != NULL,
