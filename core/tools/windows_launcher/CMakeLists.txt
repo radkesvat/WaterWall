@@ -75,3 +75,16 @@ target_compile_definitions(windows_session_effects_test PRIVATE _WIN32_WINNT=0x0
 target_link_libraries(windows_session_effects_test PRIVATE iphlpapi)
 add_test(NAME waterwall.windows_session_effects_unit COMMAND windows_session_effects_test)
 set_tests_properties(waterwall.windows_session_effects_unit PROPERTIES TIMEOUT 30)
+
+add_executable(windows_tun_ownership_test ownership.c)
+target_include_directories(windows_tun_ownership_test PRIVATE "${WATERWALL_SOURCE_DIR}/ww/devices/tun")
+target_compile_definitions(windows_tun_ownership_test PRIVATE _WIN32_WINNT=0x0600)
+target_link_libraries(windows_tun_ownership_test PRIVATE advapi32 bcrypt setupapi)
+add_test(NAME waterwall.windows_tun_ownership_unit COMMAND windows_tun_ownership_test)
+set_tests_properties(waterwall.windows_tun_ownership_unit PROPERTIES TIMEOUT 30)
+
+add_executable(windows_tun_dns_test "${WATERWALL_SOURCE_DIR}/tests/unittests/tun_windows_dns_test.c")
+target_include_directories(windows_tun_dns_test PRIVATE "${WATERWALL_SOURCE_DIR}/ww/devices/tun")
+target_compile_definitions(windows_tun_dns_test PRIVATE _WIN32_WINNT=0x0600)
+add_test(NAME waterwall.windows_tun_dns_unit COMMAND windows_tun_dns_test)
+set_tests_properties(waterwall.windows_tun_dns_unit PROPERTIES TIMEOUT 30)

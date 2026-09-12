@@ -45,6 +45,15 @@ separates process and packet-session teardown from adapter removal and persisten
 file/device residue. An unverified recovery result is not evidence of surviving
 traffic or physical-adapter DNS changes.
 
+The [restart contract](LIFECYCLE.md#restart-after-a-crash) separates historical
+cleanup from new startup. `client.py --previous-journal` requests bounded recovery
+and continues even when that diagnostic is unverified. New TUN startup acquires
+kernel ownership, reconciles its tagged stale device, and reports current errors.
+The ownership fixture checks exclusion, helper retention, forced helper exit,
+independent names, and selective/idempotent PnP reconciliation without touching
+host network devices. The DNS fixture exercises the existing bounded helper
+operations with the ownership handoff.
+
 The separate full application cross-check is `windows-cross-mingw-x64` at the
 repository root. It uses native GNU make and NASM for dependency builds, a native
 host encoder and target MinGW compiler/tools. The ordinary application's runtime

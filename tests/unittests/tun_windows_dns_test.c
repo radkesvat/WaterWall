@@ -1,6 +1,8 @@
 /* Exercise the actual synchronous helper with a deterministic Win32 process
  * boundary. No netsh process, adapter, route, or DNS setting is touched. */
 #include "tun_windows_dns.h"
+#include "tun_windows_ownership.h"
+#define OWNERSHIP_HANDLE ((HANDLE) (uintptr_t) 0x54)
 
 #include <stdint.h>
 #include <stdio.h>
@@ -114,10 +116,8 @@ static UINT WINAPI mockGetWindowsDirectoryW(LPWSTR path, UINT capacity)
     return (UINT) wcslen(expected);
 }
 
-static BOOL WINAPI mockCreateProcessW(LPCWSTR executable, LPWSTR command, LPSECURITY_ATTRIBUTES process_attributes,
-                                      LPSECURITY_ATTRIBUTES thread_attributes, BOOL inherit, DWORD flags,
-                                      LPVOID environment, LPCWSTR directory, LPSTARTUPINFOW startup,
-                                      LPPROCESS_INFORMATION child)
+static bool mockStartHelper(HANDLE ownership, const wchar_t *executable, wchar_t *command, void *environment,
+                            const wchar_t *directory, PROCESS_INFORMATION *child)
 {
     require(create_count < sizeof(children) / sizeof(children[0]), "unbounded helper launch count");
     mock_child_t *entry = &children[create_count];
@@ -126,12 +126,7 @@ static BOOL WINAPI mockCreateProcessW(LPCWSTR executable, LPWSTR command, LPSECU
     require(wcsncmp(command, L"\"C:\\Windows\\System32\\netsh.exe\" ", 32U) == 0,
             "command does not quote the explicit executable");
     require(wcscmp(directory, L"C:\\Windows\\System32") == 0, "helper inherits caller CWD");
-    require(! inherit && process_attributes == NULL && thread_attributes == NULL, "helper inherits caller handles");
-    require(flags == (CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT),
-            "helper flags alter containment or show a console");
-    require(startup->dwFlags == STARTF_USESTDHANDLES && startup->hStdInput == NULL && startup->hStdOutput == NULL &&
-                startup->hStdError == NULL,
-            "helper borrows diagnostic or input handles");
+    require(ownership == OWNERSHIP_HANDLE, "helper did not receive adapter ownership");
     require(environment != NULL, "helper inherits caller environment");
     const wchar_t *env = environment;
     require(wcscmp(env, L"SystemRoot=C:\\Windows") == 0, "unexpected helper SystemRoot");
@@ -284,16 +279,16 @@ static BOOL WINAPI mockCloseHandle(HANDLE handle)
     return TRUE;
 }
 
-#define GetTickCount64         mockGetTickCount64
-#define GetLastError           mockGetLastError
-#define GetSystemDirectoryW    mockGetSystemDirectoryW
-#define GetWindowsDirectoryW   mockGetWindowsDirectoryW
-#define CreateProcessW         mockCreateProcessW
-#define WaitForSingleObject    mockWaitForSingleObject
-#define WaitForMultipleObjects mockWaitForMultipleObjects
-#define GetExitCodeProcess     mockGetExitCodeProcess
-#define TerminateProcess       mockTerminateProcess
-#define CloseHandle            mockCloseHandle
+#define GetTickCount64                 mockGetTickCount64
+#define GetLastError                   mockGetLastError
+#define GetSystemDirectoryW            mockGetSystemDirectoryW
+#define GetWindowsDirectoryW           mockGetWindowsDirectoryW
+#define tunWindowsOwnershipStartHelper mockStartHelper
+#define WaitForSingleObject            mockWaitForSingleObject
+#define WaitForMultipleObjects         mockWaitForMultipleObjects
+#define GetExitCodeProcess             mockGetExitCodeProcess
+#define TerminateProcess               mockTerminateProcess
+#define CloseHandle                    mockCloseHandle
 #include "../../ww/devices/tun/tun_windows_dns.c"
 
 static void resetFixture(void)
@@ -326,7 +321,8 @@ static void testSuccessAndSharedBudget(void)
     resetFixture();
     children[0].run_ms = 6000U;
     children[1].run_ms = 2000U;
-    require(tunWindowsDnsSet(L"Waterwall Test", servers, 2U, DEVICE_STOP, &may_have_changed) == kTunWindowsDnsSuccess &&
+    require(tunWindowsDnsSet(L"Waterwall Test", OWNERSHIP_HANDLE, servers, 2U, DEVICE_STOP, &may_have_changed) ==
+                    kTunWindowsDnsSuccess &&
                 may_have_changed,
             "valid two-server install failed");
     require(create_count == 2U && children[0].wait_budget == 9000U && children[1].wait_budget == 3000U &&
@@ -342,7 +338,8 @@ static void testSuccessAndSharedBudget(void)
     children[0].run_ms  = 6000U;
     children[1].wait    = kMockTimeout;
     children[1].reap_ms = 500U;
-    require(tunWindowsDnsSet(L"Waterwall Test", servers, 2U, DEVICE_STOP, &may_have_changed) == kTunWindowsDnsFailed &&
+    require(tunWindowsDnsSet(L"Waterwall Test", OWNERSHIP_HANDLE, servers, 2U, DEVICE_STOP, &may_have_changed) ==
+                    kTunWindowsDnsFailed &&
                 may_have_changed && children[1].wait_budget == 3000U && terminate_count == 1U && now_ms <= 10100U,
             "second-command timeout exceeded the one installation deadline");
 }
@@ -351,17 +348,17 @@ static void testCancellationAndCleanup(void)
 {
     resetFixture();
     host_wait = WAIT_OBJECT_0;
-    require(tunWindowsDnsSet(L"Waterwall Test", servers, 2U, DEVICE_STOP, &may_have_changed) ==
+    require(tunWindowsDnsSet(L"Waterwall Test", OWNERSHIP_HANDLE, servers, 2U, DEVICE_STOP, &may_have_changed) ==
                     kTunWindowsDnsCancelled &&
                 create_count == 0 && ! may_have_changed,
             "pre-signaled stop started a DNS helper or claimed DNS changes");
-    require(tunWindowsDnsClear(L"Waterwall Test") && create_count == 1U && children[0].wait_count == 1U &&
-                children[0].wait_budget == 4000U,
+    require(tunWindowsDnsClear(L"Waterwall Test", OWNERSHIP_HANDLE) && create_count == 1U &&
+                children[0].wait_count == 1U && children[0].wait_budget == 4000U,
             "cleanup reused installation cancellation or lacked its own budget");
 
     resetFixture();
     children[0].signal_after_exit = true;
-    require(tunWindowsDnsSet(L"Waterwall Test", servers, 2U, DEVICE_STOP, &may_have_changed) ==
+    require(tunWindowsDnsSet(L"Waterwall Test", OWNERSHIP_HANDLE, servers, 2U, DEVICE_STOP, &may_have_changed) ==
                     kTunWindowsDnsCancelled &&
                 create_count == 1U && may_have_changed,
             "stop between commands allowed secondary installation or lost partial ownership");
@@ -371,13 +368,14 @@ static void testCancellationAndCleanup(void)
         resetFixture();
         children[0].wait   = device ? kMockDeviceStop : kMockHostStop;
         children[0].run_ms = 50U;
-        require(tunWindowsDnsSet(L"Waterwall Test", servers, 2U, DEVICE_STOP, &may_have_changed) ==
+        require(tunWindowsDnsSet(L"Waterwall Test", OWNERSHIP_HANDLE, servers, 2U, DEVICE_STOP, &may_have_changed) ==
                         kTunWindowsDnsCancelled &&
                     may_have_changed && create_count == 1U && terminate_count == 1U && children[0].process_closed,
                 "stop during wait did not terminate and reap its helper");
     }
     resetFixture();
-    require(tunWindowsDnsSet(L"Waterwall Test", servers, 1U, HOST_STOP, &may_have_changed) == kTunWindowsDnsSuccess &&
+    require(tunWindowsDnsSet(L"Waterwall Test", OWNERSHIP_HANDLE, servers, 1U, HOST_STOP, &may_have_changed) ==
+                    kTunWindowsDnsSuccess &&
                 children[0].wait_count == 2U,
             "identical explicit stop handles were duplicated in the wait");
 }
@@ -386,39 +384,46 @@ static void testFailureBoundaries(void)
 {
     resetFixture();
     children[0].create_error = ERROR_FILE_NOT_FOUND;
-    require(tunWindowsDnsSet(L"Waterwall Test", servers, 2U, DEVICE_STOP, &may_have_changed) == kTunWindowsDnsFailed &&
+    require(tunWindowsDnsSet(L"Waterwall Test", OWNERSHIP_HANDLE, servers, 2U, DEVICE_STOP, &may_have_changed) ==
+                    kTunWindowsDnsFailed &&
                 create_count == 1U && ! may_have_changed,
             "missing System32 helper did not fail without claiming DNS changes");
     resetFixture();
     children[1].exit_code = 5U;
-    require(tunWindowsDnsSet(L"Waterwall Test", servers, 2U, DEVICE_STOP, &may_have_changed) == kTunWindowsDnsFailed &&
+    require(tunWindowsDnsSet(L"Waterwall Test", OWNERSHIP_HANDLE, servers, 2U, DEVICE_STOP, &may_have_changed) ==
+                    kTunWindowsDnsFailed &&
                 create_count == 2U && may_have_changed,
             "failed second command was reported successful or lost partial ownership");
-    require(tunWindowsDnsClear(L"Waterwall Test") && create_count == 3U,
+    require(tunWindowsDnsClear(L"Waterwall Test", OWNERSHIP_HANDLE) && create_count == 3U,
             "partial installation could not be independently cleared");
     resetFixture();
     children[0].query_failure = true;
-    require(tunWindowsDnsSet(L"Waterwall Test", servers, 1U, DEVICE_STOP, &may_have_changed) == kTunWindowsDnsFailed &&
+    require(tunWindowsDnsSet(L"Waterwall Test", OWNERSHIP_HANDLE, servers, 1U, DEVICE_STOP, &may_have_changed) ==
+                    kTunWindowsDnsFailed &&
                 may_have_changed,
             "exit-query failure was accepted");
     resetFixture();
     children[0].wait = kMockWaitFailure;
-    require(tunWindowsDnsSet(L"Waterwall Test", servers, 1U, DEVICE_STOP, &may_have_changed) == kTunWindowsDnsFailed &&
+    require(tunWindowsDnsSet(L"Waterwall Test", OWNERSHIP_HANDLE, servers, 1U, DEVICE_STOP, &may_have_changed) ==
+                    kTunWindowsDnsFailed &&
                 terminate_count == 1U && may_have_changed,
             "native wait failure did not fail and reap");
     resetFixture();
     host_wait = WAIT_FAILED;
-    require(tunWindowsDnsSet(L"Waterwall Test", servers, 1U, DEVICE_STOP, &may_have_changed) == kTunWindowsDnsFailed &&
+    require(tunWindowsDnsSet(L"Waterwall Test", OWNERSHIP_HANDLE, servers, 1U, DEVICE_STOP, &may_have_changed) ==
+                    kTunWindowsDnsFailed &&
                 create_count == 0 && ! may_have_changed,
             "invalid cancellation handle was ignored");
     resetFixture();
     system_path_result = 0U;
-    require(tunWindowsDnsSet(L"Waterwall Test", servers, 1U, DEVICE_STOP, &may_have_changed) == kTunWindowsDnsFailed &&
+    require(tunWindowsDnsSet(L"Waterwall Test", OWNERSHIP_HANDLE, servers, 1U, DEVICE_STOP, &may_have_changed) ==
+                    kTunWindowsDnsFailed &&
                 create_count == 0 && ! may_have_changed,
             "missing System32 path was accepted");
     resetFixture();
     windows_path_result = MAX_PATH;
-    require(tunWindowsDnsSet(L"Waterwall Test", servers, 1U, DEVICE_STOP, &may_have_changed) == kTunWindowsDnsFailed &&
+    require(tunWindowsDnsSet(L"Waterwall Test", OWNERSHIP_HANDLE, servers, 1U, DEVICE_STOP, &may_have_changed) ==
+                    kTunWindowsDnsFailed &&
                 create_count == 0 && ! may_have_changed,
             "truncated Windows environment path was accepted");
     resetFixture();
@@ -426,10 +431,12 @@ static void testFailureBoundaries(void)
     for (size_t i = 0; i + 1U < sizeof(oversized) / sizeof(oversized[0]); ++i)
         oversized[i] = L'A';
     oversized[1099] = L'\0';
-    require(tunWindowsDnsSet(oversized, servers, 1U, DEVICE_STOP, &may_have_changed) == kTunWindowsDnsFailed &&
+    require(tunWindowsDnsSet(oversized, OWNERSHIP_HANDLE, servers, 1U, DEVICE_STOP, &may_have_changed) ==
+                    kTunWindowsDnsFailed &&
                 create_count == 0 && ! may_have_changed,
             "truncated adapter command was launched");
-    require(! tunWindowsDnsClear(oversized) && create_count == 0, "truncated cleanup command was launched");
+    require(! tunWindowsDnsClear(oversized, OWNERSHIP_HANDLE) && create_count == 0,
+            "truncated cleanup command was launched");
 }
 
 static void testPendingOwnership(void)
@@ -437,22 +444,25 @@ static void testPendingOwnership(void)
     resetFixture();
     children[0].wait              = kMockTimeout;
     children[0].terminate_failure = true;
-    require(tunWindowsDnsSet(L"Waterwall Test", servers, 1U, DEVICE_STOP, &may_have_changed) == kTunWindowsDnsFailed &&
+    require(tunWindowsDnsSet(L"Waterwall Test", OWNERSHIP_HANDLE, servers, 1U, DEVICE_STOP, &may_have_changed) ==
+                    kTunWindowsDnsFailed &&
                 may_have_changed && ! children[0].process_closed && children[0].thread_closed && now_ms == 10100U,
             "failed termination lost its sole pending ownership handle");
-    require(tunWindowsDnsSet(L"Waterwall Test", servers, 1U, DEVICE_STOP, &may_have_changed) == kTunWindowsDnsFailed &&
+    require(tunWindowsDnsSet(L"Waterwall Test", OWNERSHIP_HANDLE, servers, 1U, DEVICE_STOP, &may_have_changed) ==
+                    kTunWindowsDnsFailed &&
                 create_count == 1U && ! may_have_changed,
             "unsettled helper allowed another installation or claimed a new DNS change");
     ULONGLONG before = now_ms;
-    require(! tunWindowsDnsClear(L"Waterwall Test") && ! children[0].process_closed && now_ms - before <= 1000U,
+    require(! tunWindowsDnsClear(L"Waterwall Test", OWNERSHIP_HANDLE) && ! children[0].process_closed &&
+                now_ms - before <= 1000U,
             "pending cleanup settlement was unbounded or discarded live ownership");
     children[0].terminate_failure = false;
     children[0].reap_ms           = 700U;
     children[1].wait              = kMockTimeout;
     children[1].reap_ms           = 900U;
     before                        = now_ms;
-    require(! tunWindowsDnsClear(L"Waterwall Test") && children[0].process_closed && children[1].process_closed &&
-                now_ms - before <= 5000U,
+    require(! tunWindowsDnsClear(L"Waterwall Test", OWNERSHIP_HANDLE) && children[0].process_closed &&
+                children[1].process_closed && now_ms - before <= 5000U,
             "pending reap and cleanup command did not share one cleanup budget");
     require(tunWindowsDnsShutdown(), "completed helpers remained pending");
 }
@@ -462,13 +472,14 @@ static void testShutdownClosesAdmission(void)
     resetFixture();
     children[0].wait              = kMockTimeout;
     children[0].terminate_failure = true;
-    require(! tunWindowsDnsClear(L"Waterwall Test") && pending_helper == processHandle(0),
+    require(! tunWindowsDnsClear(L"Waterwall Test", OWNERSHIP_HANDLE) && pending_helper == processHandle(0),
             "failed quiescence cleanup lost its pending helper");
     ULONGLONG before = now_ms;
     require(! tunWindowsDnsShutdown() && pending_helper == processHandle(0) && now_ms - before <= 1000U,
             "failed final settlement lost ownership or exceeded its budget");
-    require(tunWindowsDnsSet(L"Waterwall Test", servers, 1U, DEVICE_STOP, &may_have_changed) == kTunWindowsDnsFailed &&
-                ! may_have_changed && ! tunWindowsDnsClear(L"Waterwall Test") && create_count == 1U,
+    require(tunWindowsDnsSet(L"Waterwall Test", OWNERSHIP_HANDLE, servers, 1U, DEVICE_STOP, &may_have_changed) ==
+                    kTunWindowsDnsFailed &&
+                ! may_have_changed && ! tunWindowsDnsClear(L"Waterwall Test", OWNERSHIP_HANDLE) && create_count == 1U,
             "failed final settlement admitted a new DNS helper");
     children[0].terminate_failure = false;
     children[0].reap_ms           = 700U;
@@ -478,9 +489,10 @@ static void testShutdownClosesAdmission(void)
     /* Node destruction follows finalization and retries retained policy. It
      * must not create another helper after
      * the final settlement boundary. */
-    require(! tunWindowsDnsClear(L"Waterwall Test") && create_count == 1U && pending_helper == NULL,
+    require(! tunWindowsDnsClear(L"Waterwall Test", OWNERSHIP_HANDLE) && create_count == 1U && pending_helper == NULL,
             "DNS cleanup launched a helper after final settlement");
-    require(tunWindowsDnsSet(L"Waterwall Test", servers, 1U, DEVICE_STOP, &may_have_changed) == kTunWindowsDnsFailed &&
+    require(tunWindowsDnsSet(L"Waterwall Test", OWNERSHIP_HANDLE, servers, 1U, DEVICE_STOP, &may_have_changed) ==
+                    kTunWindowsDnsFailed &&
                 ! may_have_changed && create_count == 1U && tunWindowsDnsShutdown(),
             "DNS installation reopened admission after shutdown");
 }

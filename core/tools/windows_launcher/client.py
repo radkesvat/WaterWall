@@ -11,6 +11,20 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
+
+
+def recover(exe, journal):
+    """Historical cleanup is diagnostic; a new launch checks current ownership."""
+    try:
+        result = subprocess.call([exe, "--recover:" + str(journal.resolve())], timeout=30)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        print("Recovery diagnostic unavailable:", error, file=sys.stderr)
+        return 2
+    if result:
+        print("Previous cleanup is unverified; keep its record. New startup will check resource ownership.",
+              file=sys.stderr)
+    return result
 
 
 def main():
@@ -19,6 +33,7 @@ def main():
     parser.add_argument("exe", type=Path)
     parser.add_argument("--config", type=Path)
     parser.add_argument("--journal", type=Path)
+    parser.add_argument("--previous-journal", type=Path, help="request bounded recovery of a previous session before launch")
     parser.add_argument("--console", choices=("hidden", "visible"))
     parser.add_argument("--seconds", type=float, default=5)
     parser.add_argument("--exit-controller", action="store_true", help="exit without signaling stop after readiness")
@@ -29,10 +44,18 @@ def main():
     if args.mode == "recover":
         if args.journal is None:
             parser.error("recovery needs --journal")
-        return subprocess.call([exe, "--recover:" + str(args.journal.resolve())])
+        return recover(exe, args.journal)
     if args.config is None:
         parser.error("launch needs --config")
     args.console = args.console or ("visible" if args.mode == "independent" else "hidden")
+    if args.previous_journal is not None:
+        recover(exe, args.previous_journal)
+    if args.journal is not None:
+        # Every launch owns a new record. Never overwrite a crashed session's
+        # evidence or make an existing path a permanent launch failure.
+        if args.journal.exists():
+            args.journal = args.journal.with_name(args.journal.name + "." + uuid.uuid4().hex)
+        print("Session record:", args.journal.resolve(), flush=True)
     if args.mode == "independent":
         if args.console == "hidden" and args.journal is None:
             parser.error("hidden independent launch needs --journal for later stop/recovery")
@@ -65,7 +88,6 @@ def main():
     copies = []
     child = None
     failure = False
-    recovery_status = 2
     discarded = [0, 0]
     readers = []
     try:
@@ -136,13 +158,13 @@ def main():
         if child is not None:
             # Recover even when readiness, transfer, or graceful waiting failed.
             # The public boundary owns escalation and reports what it can prove.
-            recovery_status = subprocess.call([exe, "--recover:" + str(args.journal.resolve())])
+            recover(exe, args.journal)
             for thread in readers:
                 thread.join(timeout=1)
             public_status = child.poll()
-            failure = failure or public_status not in (None, 0)
+            failure = failure or public_status != 0
             print("Public exit:", public_status, "discarded stdout/stderr bytes:", *discarded)
-    return recovery_status or int(failure)
+    return int(failure)
 
 
 if __name__ == "__main__":

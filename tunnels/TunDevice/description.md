@@ -266,6 +266,16 @@ have separate completion boundaries. See the
 [Windows recovery contract](../../core/tools/windows_launcher/LIFECYCLE.md#what-remains-after-forced-termination)
 for what is released automatically and what may remain after a forced exit.
 
+Windows startup reserves the case-insensitive `device-name` before choosing the
+outbound interface. The runtime and built-in DNS helpers retain kernel ownership;
+Windows releases it when the last handle closes, including after a crash. Startup
+can then remove its own precisely tagged stale Wintun device and initialize the
+new tunnel. Different names remain independent. An unverified old recovery record
+does not prevent another launch; a current owner, occupied interface name, access
+denial, or failed Windows operation can still stop initialization. Untagged and
+foreign adapters are not reclaimed. Use a device name reserved for this application.
+See the [restart flow](../../core/tools/windows_launcher/LIFECYCLE.md#restart-after-a-crash).
+
 ### Callback behavior
 
 Payload is the meaningful callback path. Ordinary connection lifecycle

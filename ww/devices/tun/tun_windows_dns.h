@@ -18,9 +18,9 @@ void tunWindowsDnsSetStartupStopEvent(HANDLE stop_event);
 /* Only typed IPv4 DNS operations on a newly created, exclusively owned adapter.
  * may_have_changed reports a started helper, even on failure. The owner retains
  * those effects until Clear succeeds. Clear has a separate, uncancelled budget. */
-tun_windows_dns_result_e tunWindowsDnsSet(const wchar_t *adapter, const char *const *servers, size_t count,
-                                          HANDLE device_stop, bool *may_have_changed);
-bool                     tunWindowsDnsClear(const wchar_t *adapter);
+tun_windows_dns_result_e tunWindowsDnsSet(const wchar_t *adapter, HANDLE ownership, const char *const *servers,
+                                          size_t count, HANDLE device_stop, bool *may_have_changed);
+bool                     tunWindowsDnsClear(const wchar_t *adapter, HANDLE ownership);
 /* Permanently closes Set/Clear helper admission before final bounded settlement.
  * Repeated shutdown may settle an existing pending helper, but never starts one. */
 bool tunWindowsDnsShutdown(void);

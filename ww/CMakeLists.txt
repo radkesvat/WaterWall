@@ -614,7 +614,8 @@ elseif(WIN32)
         message(FATAL_ERROR "Cannot bind WinTun - Unknown architecture: ${CMAKE_SYSTEM_PROCESSOR}")
     endif()
     
-    target_sources(ww PRIVATE devices/tun/tun_windows.c devices/tun/tun_windows_dns.c)
+    target_sources(ww PRIVATE devices/tun/tun_windows.c devices/tun/tun_windows_dns.c devices/tun/tun_windows_ownership.c)
+    target_link_libraries(ww PUBLIC bcrypt setupapi)
 
     # Event backend configuration
     # NOTE: the earlier unconditional `set(WITH_WEPOLL 1)` that forced wepoll on

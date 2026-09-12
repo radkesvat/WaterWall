@@ -2,6 +2,7 @@
 #include "tun.h"
 #include "tun_windows_dns.h"
 #include "tun_windows_lifetime.h"
+#include "tun_windows_ownership.h"
 #include "tun_windows_receive_policy.h"
 
 #include "buffer_pool.h"
@@ -49,6 +50,7 @@ struct tun_device_s
     char                    *name;
     wchar_t                 *name_w;
     HANDLE                   adapter_handle;
+    HANDLE                   ownership;
     HANDLE                   session_handle;
     HANDLE                   stop_event;
     tun_windows_dns_result_e dns_result;
@@ -1309,7 +1311,8 @@ bool tundeviceSetDnsServers(tun_device_t *tdev, const char *const *servers, size
     }
 
     bool may_have_changed = false;
-    tdev->dns_result      = tunWindowsDnsSet(interface_name, servers, count, tdev->stop_event, &may_have_changed);
+    tdev->dns_result =
+        tunWindowsDnsSet(interface_name, tdev->ownership, servers, count, tdev->stop_event, &may_have_changed);
     tdev->dns_cleanup_needed |= may_have_changed;
     if (tdev->dns_result != kTunWindowsDnsSuccess)
     {
@@ -1349,7 +1352,7 @@ bool tundeviceClearDnsServers(tun_device_t *tdev)
         return false;
     }
 
-    if (! tunWindowsDnsClear(interface_name))
+    if (! tunWindowsDnsClear(interface_name, tdev->ownership))
     {
         LOGE("TunDevice: failed to clear DNS servers on %s", tdev->name);
         return false;
@@ -1440,6 +1443,12 @@ bool tundeviceWrite(tun_device_t *tdev, sbuf_t *buf)
 // }
 
 tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void *userdata, TunReadEventHandle cb)
+{
+    return tundeviceCreateOwned(name, offload, mtu, userdata, cb, NULL);
+}
+
+tun_device_t *tundeviceCreateOwned(const char *name, bool offload, uint16_t mtu, void *userdata, TunReadEventHandle cb,
+                                   tun_windows_ownership_t *ownership)
 {
     discard offload;
     if (mtu <= 16)
@@ -1591,6 +1600,48 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void
         return NULL;
     }
 
+    tun_windows_ownership_t local_ownership = {0};
+    if (ownership == NULL)
+    {
+        ownership = &local_ownership;
+        if (! tunWindowsOwnershipPrepare(name, ownership))
+        {
+            LOGE("TunDevice: could not acquire or prepare adapter ownership, code: %lu", GetLastError());
+            tundeviceDestroy(tdev);
+            return NULL;
+        }
+    }
+    assert(ownership->lease != NULL);
+    tdev->ownership  = ownership->lease;
+    ownership->lease = NULL;
+
+    /* Wintun's alias-collision handling can rename an existing interface. A
+     * current name conflict is a startup error; never use it as recovery. */
+    MIB_IF_TABLE2 *interfaces = NULL;
+    LastError                 = GetIfTable2(&interfaces);
+    if (LastError != NO_ERROR)
+    {
+        LOGE("TunDevice: could not query current interface names, code: %lu", LastError);
+        tundeviceDestroy(tdev);
+        return NULL;
+    }
+    bool name_in_use = false;
+    for (ULONG i = 0; i < interfaces->NumEntries; ++i)
+    {
+        if (CompareStringOrdinal(interfaces->Table[i].Alias, -1, tdev->name_w, -1, TRUE) == CSTR_EQUAL)
+        {
+            name_in_use = true;
+            break;
+        }
+    }
+    FreeMibTable(interfaces);
+    if (name_in_use)
+    {
+        LOGE("TunDevice: requested device-name is still in use by a current interface");
+        tundeviceDestroy(tdev);
+        return NULL;
+    }
+
     unsigned session_slot;
     if (! windowsSessionAdapterBegin(&session_slot))
     {
@@ -1598,7 +1649,19 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void
         tundeviceDestroy(tdev);
         return NULL;
     }
-    WINTUN_ADAPTER_HANDLE adapter = WintunCreateAdapter(tdev->name_w, L"Waterwall Adapter", NULL);
+    WINTUN_ADAPTER_HANDLE adapter = NULL;
+    for (unsigned attempt = 0; attempt < 3; ++attempt)
+    {
+        adapter = WintunCreateAdapter(tdev->name_w, ownership->tag, NULL);
+        if (adapter != NULL)
+            break;
+        LastError = GetLastError();
+        if (attempt == 2 || (LastError != ERROR_BUSY && LastError != ERROR_ALREADY_EXISTS &&
+                             LastError != ERROR_SHARING_VIOLATION && LastError != ERROR_DEVICE_NOT_AVAILABLE))
+            break;
+        Sleep(100);
+        SetLastError(LastError);
+    }
     if (! adapter)
     {
         LastError = GetLastError();
@@ -1665,6 +1728,12 @@ void tundeviceDestroy(tun_device_t *tdev)
     {
         CloseHandle(tdev->stop_event);
         tdev->stop_event = NULL;
+    }
+
+    if (tdev->ownership != NULL)
+    {
+        CloseHandle(tdev->ownership);
+        tdev->ownership = NULL;
     }
 
     memoryFree(tdev->name);

@@ -51,6 +51,9 @@ tunnel_t *tundeviceTunnelCreate(node_t *node)
     }
 
     tundevice_tstate_t *state = tunnelGetState(t);
+#ifdef OS_WIN
+    state->windows_ownership = (tun_windows_ownership_t) {0};
+#endif
 
     const cJSON *settings = node->node_settings_json;
 
@@ -140,6 +143,15 @@ tunnel_t *tundeviceTunnelCreate(node_t *node)
 
     // Publish before any tunnel OnPrepare creates sockets. Route installation
     // still happens in OnStart, so this snapshots the pre-TUN default interface.
+#ifdef OS_WIN
+    if (! tunWindowsOwnershipPrepare(state->name, &state->windows_ownership))
+    {
+        LOGE("TunDevice: adapter is in use, inaccessible, or could not be prepared (Windows error %lu)",
+             GetLastError());
+        startupFailureRecord(1);
+        return tundeviceTunnelCreateFail(t);
+    }
+#endif
     tundevicePublishEgressPinIfNeeded(state);
 
     return t;

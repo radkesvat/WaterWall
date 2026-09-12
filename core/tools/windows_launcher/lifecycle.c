@@ -317,6 +317,30 @@ int main(int argc, char **argv)
                         strstr(receipt, mode == 7 ? "\"termination\":\"orderly\"" : "\"termination\":\"abrupt\"") !=
                             NULL,
                     "recovery lost full runtime status or confused orderly and abrupt exit");
+        if (mode == 1)
+        {
+            /* Retain the unverified old journal while a fresh public instance
+             * starts. Historical cleanup is not a global restart permission. */
+            wchar_t replacement_journal[MAX_PATH];
+            require(GetTempFileNameW(temporary, L"wwr", 0, replacement_journal) && DeleteFileW(replacement_journal),
+                    "replacement journal path");
+            ResetEvent(stop);
+            ResetEvent(ready);
+            swprintf(command,
+                     32768,
+                     L"\"%ls\" --restricted-config \"-c:%ls\" --stop-event:%llu --ready-event:%llu "
+                     L"--console:hidden \"--session-file:%ls\"",
+                     launcher,
+                     config,
+                     (unsigned long long) (uintptr_t) capabilities[0],
+                     (unsigned long long) (uintptr_t) capabilities[1],
+                     replacement_journal);
+            PROCESS_INFORMATION replacement = launch(command, capabilities, 3);
+            require(WaitForSingleObject(ready, 15000) == WAIT_OBJECT_0 && SetEvent(stop) && await(replacement) == 0,
+                    "unverified historical cleanup prevented a new session");
+            require(GetFileAttributesW(journal) != INVALID_FILE_ATTRIBUTES, "restart discarded old crash evidence");
+            require(DeleteFileW(replacement_journal), "replacement journal retirement");
+        }
         require(DeleteFileW(journal), "journal retirement");
     }
     for (unsigned i = 0; i < 3; ++i)

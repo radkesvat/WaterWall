@@ -44,6 +44,9 @@ typedef struct tundevice_tstate_s
     bool egress_pin_published;    // this instance contributed a reference to the global egress pin
 
     tun_device_t *tdev;
+#ifdef OS_WIN
+    tun_windows_ownership_t windows_ownership;
+#endif
 
 } tundevice_tstate_t;
 

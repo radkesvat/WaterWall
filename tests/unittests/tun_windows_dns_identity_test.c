@@ -37,20 +37,22 @@ static NETIO_STATUS WINAPI fixtureIndex(const NET_LUID *luid, PNET_IFINDEX index
     return mapping_result;
 }
 
-static tun_windows_dns_result_e fixtureSet(const wchar_t *target, const char *const *servers, size_t count, HANDLE stop,
-                                           bool *may_have_changed)
+static tun_windows_dns_result_e fixtureSet(const wchar_t *target, HANDLE ownership, const char *const *servers,
+                                           size_t count, HANDLE stop, bool *may_have_changed)
 {
     require(wcslen(target) <= 10 && count == 1 && strcmp(servers[0], "192.0.2.1") == 0 && stop == NULL,
             "DNS target or arguments changed");
+    require(ownership == (HANDLE) (uintptr_t) 456, "DNS lost device ownership");
     ++set_calls;
     *may_have_changed = true;
     wcscpy(set_target, target);
     return kTunWindowsDnsSuccess;
 }
 
-static bool fixtureClear(const wchar_t *target)
+static bool fixtureClear(const wchar_t *target, HANDLE ownership)
 {
     require(wcslen(target) <= 10, "cleanup target exceeded index capacity");
+    require(ownership == (HANDLE) (uintptr_t) 456, "DNS cleanup lost device ownership");
     ++clear_calls;
     wcscpy(clear_target, target);
     return true;
@@ -67,8 +69,13 @@ int main(void)
     wintun_api.get_adapter_luid = fixtureLuid;
     /* A requested numeric alias can identify an unrelated existing interface.
      * Neither install nor removal may use it after Wintun returns our adapter. */
-    tun_device_t device    = {.name = "7", .name_w = L"7", .adapter_handle = (HANDLE) (uintptr_t) 123};
-    const char  *servers[] = {"192.0.2.1"};
+    char         name[]      = "7";
+    wchar_t      wide_name[] = L"7";
+    tun_device_t device      = {.name           = name,
+                                .name_w         = wide_name,
+                                .adapter_handle = (HANDLE) (uintptr_t) 123,
+                                .ownership      = (HANDLE) (uintptr_t) 456};
+    const char  *servers[]   = {"192.0.2.1"};
     require(tundeviceSetDnsServers(&device, servers, 1) && tundeviceWindowsDnsNeedsCleanup(&device) &&
                 tundeviceClearDnsServers(&device) && ! tundeviceWindowsDnsNeedsCleanup(&device) &&
                 wcscmp(set_target, L"37") == 0 && wcscmp(clear_target, L"37") == 0 && mapping_calls == 2,

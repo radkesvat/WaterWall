@@ -16,6 +16,10 @@ static bool         dns_cancelled;
 static bool         bring_down_ok;
 static bool         partial_dns;
 static bool         dns_helper_started;
+static char         route_values[][16] = {"1.0.0.0/8", "2.0.0.0/8", "3.0.0.0/8"};
+static char         dns_values[][8]    = {"1.1.1.1", "2.2.2.2"};
+static char         inert_script[]     = "inert fixture script";
+static char         startup_script[]   = "must not execute after failed startup";
 
 static void require(bool condition, const char *message)
 {
@@ -130,19 +134,20 @@ void tundeviceOnIPPacketReceived(tun_device_t *device, void *userdata, sbuf_t *b
     (void) wid;
 }
 
-#define tundeviceRemoveRoute             fakeRemoveRoute
-#define tundeviceSetDnsServers           fakeSetDns
-#define tundeviceClearDnsServers         fakeClearDns
-#define tundeviceWindowsDnsWasCancelled  fakeDnsCancelled
-#define tundeviceWindowsDnsNeedsCleanup  fakeDnsNeedsCleanup
-#define tundeviceBringDown               fakeBringDown
-#define applicationShutdownRecordFailure fakeRecordFailure
-#define tundeviceCreate                  fakeCreate
-#define tundeviceAssignIP                fakeAssignIp
-#define tundeviceBringUp                 fakeDeviceSuccess
-#define tundeviceRequestStop             fakeDeviceSuccess
-#define packettunnelLifecycleAnchorBind  fakeBind
-#define execCmd                          fakeExec
+#define tundeviceRemoveRoute                                              fakeRemoveRoute
+#define tundeviceSetDnsServers                                            fakeSetDns
+#define tundeviceClearDnsServers                                          fakeClearDns
+#define tundeviceWindowsDnsWasCancelled                                   fakeDnsCancelled
+#define tundeviceWindowsDnsNeedsCleanup                                   fakeDnsNeedsCleanup
+#define tundeviceBringDown                                                fakeBringDown
+#define applicationShutdownRecordFailure                                  fakeRecordFailure
+#define tundeviceCreate                                                   fakeCreate
+#define tundeviceCreateOwned(name, offload, mtu, userdata, cb, ownership) fakeCreate(name, offload, mtu, userdata, cb)
+#define tundeviceAssignIP                                                 fakeAssignIp
+#define tundeviceBringUp                                                  fakeDeviceSuccess
+#define tundeviceRequestStop                                              fakeDeviceSuccess
+#define packettunnelLifecycleAnchorBind                                   fakeBind
+#define execCmd                                                           fakeExec
 #include "../../tunnels/TunDevice/common/dns.c"
 #include "../../tunnels/TunDevice/common/routes.c"
 #include "../../tunnels/TunDevice/instance/start.c"
@@ -160,7 +165,7 @@ static void resetProbe(void)
 static void testRouteInventory(void)
 {
     resetProbe();
-    char              *routes[] = {"1.0.0.0/8", "2.0.0.0/8", "3.0.0.0/8"};
+    char              *routes[] = {route_values[0], route_values[1], route_values[2]};
     tundevice_tstate_t state    = {.tdev                    = (tun_device_t *) (uintptr_t) 1,
                                    .system_route_enabled    = true,
                                    .system_routes           = routes,
@@ -183,7 +188,7 @@ static void testDnsInventory(void)
 {
     resetProbe();
     tundevice_tstate_t state = {
-        .tdev = (tun_device_t *) (uintptr_t) 1, .dns_servers = {"1.1.1.1", "2.2.2.2"}, .dns_server_count = 2};
+        .tdev = (tun_device_t *) (uintptr_t) 1, .dns_servers = {dns_values[0], dns_values[1]}, .dns_server_count = 2};
     dns_set_ok = dns_clear_ok = false;
     require(! tundeviceApplyDnsSettings(&state) && state.dns_servers_installed && partial_dns,
             "failed partial DNS installation not owned");
@@ -201,13 +206,13 @@ static void testOwnerCleanup(void)
     tunnel_t *tunnel = tunnelCreate(NULL, sizeof(tundevice_tstate_t), 0);
     require(tunnel != NULL, "tunnel allocation");
     tundevice_tstate_t *state    = tunnelGetState(tunnel);
-    char               *routes[] = {"1.0.0.0/8", "2.0.0.0/8", "3.0.0.0/8"};
+    char               *routes[] = {route_values[0], route_values[1], route_values[2]};
     state->tdev                  = (tun_device_t *) (uintptr_t) 1;
     state->system_routes         = routes;
     state->system_route_enabled  = true;
     state->system_route_count = state->system_routes_installed = 3;
     state->dns_servers_installed                               = true;
-    state->pre_down_script                                     = "inert fixture script";
+    state->pre_down_script                                     = inert_script;
     state->pre_down_pending                                    = true;
     dns_clear_ok = bring_down_ok = false;
     delete_failures              = 5;
@@ -232,10 +237,10 @@ static void testStartupRollback(bool cancelled, bool cleanup_ok, bool helper_sta
     tunnel_t *tunnel = tunnelCreate(NULL, sizeof(tundevice_tstate_t), 0);
     require(tunnel != NULL, "startup tunnel allocation");
     tundevice_tstate_t *state    = tunnelGetState(tunnel);
-    state->dns_servers[0]        = "1.1.1.1";
-    state->dns_servers[1]        = "2.2.2.2";
+    state->dns_servers[0]        = dns_values[0];
+    state->dns_servers[1]        = dns_values[1];
     state->dns_server_count      = 2;
-    state->pre_down_script       = "must not execute after failed startup";
+    state->pre_down_script       = startup_script;
     dns_set_ok                   = false;
     dns_cancelled                = cancelled;
     dns_helper_started           = helper_started;

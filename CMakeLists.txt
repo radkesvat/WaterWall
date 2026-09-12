@@ -1388,6 +1388,10 @@ if(BUILD_TESTING AND WW_BUILD_UNIT_TESTS AND WIN32)
   target_include_directories(tun_windows_dns_identity_test PRIVATE
     "${PROJECT_SOURCE_DIR}/ww/devices/tun" "${PROJECT_SOURCE_DIR}/ww/vendor/wintun")
   target_link_libraries(tun_windows_dns_identity_test PRIVATE ww)
+  if(MINGW)
+    target_link_options(tun_windows_dns_identity_test PRIVATE -static)
+    target_link_options(tundevice_policy_cleanup_test PRIVATE -static)
+  endif()
   set_target_properties(tun_windows_dns_identity_test PROPERTIES DISABLE_PRECOMPILE_HEADERS ON UNITY_BUILD OFF)
   add_test(NAME waterwall.tun_windows_dns_identity_unit COMMAND tun_windows_dns_identity_test)
   set_tests_properties(waterwall.tun_windows_dns_identity_unit PROPERTIES

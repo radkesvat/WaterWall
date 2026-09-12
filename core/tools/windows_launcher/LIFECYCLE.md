@@ -89,6 +89,58 @@ because a deadline elapsed. The recovery interface returns unverified when it
 cannot establish the facts below. Native scheduling, console-close OS deadlines,
 and driver behavior still require platform qualification.
 
+## Restart after a crash
+
+Starting a new session does not require a successful historical recovery result.
+The launcher never scans old journals or maintains an `unverified` session
+blacklist. Use a new protected `--session-file` path for each launch; retain an
+old record for diagnostics instead of overwriting it. An optional recovery call
+can stop the identified old session, but its exit status is not permission to
+start a replacement. New startup checks current resource ownership and reports
+current failures through normal startup status and diagnostics.
+
+On Windows, each TunDevice reserves its case-insensitive `device-name` before
+egress-interface selection or socket preparation. A SHA-256 digest of the
+invariant-uppercase UTF-16 name identifies a machine-wide named-pipe server
+instance created with `FILE_FLAG_FIRST_PIPE_INSTANCE`. Its protected ACL permits
+administrators and SYSTEM. This is an ownership
+handle, with no pipe traffic or background service. The runtime retains it
+through device teardown. Each built-in DNS helper inherits only a reduced
+duplicate of that handle, so runtime death does not free the device for reuse
+while that helper retains ownership. Closing the last handle releases ownership
+automatically, including after a crash. Different device names remain independent.
+See [Windows pipe creation](https://learn.microsoft.com/en-us/windows/win32/api/namedpipeapi/nf-namedpipeapi-createnamedpipew).
+
+While holding ownership, startup enumerates present network devices and removes
+only the exact WaterWall ownership tag for that name with Wintun hardware
+identity, including the empty/missing hardware identity of its creation stub.
+The tag is supplied as Wintun's tunnel type during creation and becomes the
+device description; it does not depend on a completed journal write or graceful
+return. Untagged devices and devices belonging to other names are not reclaimed.
+Inactive PnP records are not a prerequisite for startup. Normal adapter creation,
+IP assignment, route installation, DNS configuration and readiness follow this
+preparation. An already occupied interface alias fails startup instead of being
+deliberately reused or renamed. Choose a device name reserved for this application.
+
+Ownership acquisition and stale-device removal each have a five-second retry
+budget between OS calls. Creation retries up to three times for selected busy,
+sharing, existing-device, or temporarily unavailable-device errors. An individual
+blocked driver/PnP call remains subject to the public startup/termination deadline.
+Stale-device removal uses the Windows class installer and requires an executable
+matching the OS architecture (for example, x64 on x64 Windows). An unsupported
+WOW64 removal reports `ERROR_IN_WOW64` with that instruction. A removal that
+requires a system restart reports `ERROR_SUCCESS_REBOOT_REQUIRED`; neither is
+reported as completed preparation.
+In-use ownership, access denial, failed device operations, or failed configuration
+can still prevent a connection. These are current resource errors, not a permanent
+decision recorded in an old journal. Native qualification of the shipped Wintun
+and Windows versions remains required.
+
+These restart guarantees cover built-in operations. Applications relying on them
+should use `--restricted-config`; arbitrary scripts or external nodes can change
+resources outside this ownership protocol. Client firewall policy retains its
+own lifetime and must not be cleared merely because another launch is attempted.
+
 ## Completion and recovery
 
 Retain the protected record path, not internal PIDs or executable names. The
@@ -161,8 +213,10 @@ inactivity, resolve every recorded adapter identity, and observe those adapters
 absent from `GetIfTable2`. A driver-file deletion failure is reported as residue
 and does not prevent settlement after these checks succeed.
 
-For configurations limited to built-in behavior, settled completion permits a
-replacement session and retirement of client-owned session inputs. It does not
+For configurations limited to built-in behavior, settled completion permits
+retirement of client-owned session inputs. A new launch can also be attempted
+when historical cleanup is unverified; its resource checks determine whether
+startup succeeds. Settled completion does not
 require deletion of leftover WaterWall extraction directories or shared drivers;
 the OS or other instances may still use driver files. Keep client firewall policy
 under the application's own connection/security policy. Logs never authenticate
@@ -190,19 +244,19 @@ interface checks, even when orderly runtime cleanup did not run.
 
 ### Application flow
 
-1. Keep the protected session record and invoke `--recover:PATH` after stopping
-   the public process or noticing its exit.
-2. On exit 0 with `cleanup: "settled"`, the built-in session has reached the
-   verified completion boundary. The application can start a replacement even
-   if `termination` is `abrupt` or `file_residue` is true. Retain crash diagnostics
-   separately from the decision to reconnect.
-3. On `unverified`, keep the record and report `cleanup_detail`. Allow a bounded
-   retry when process termination or adapter removal may still be progressing.
-   If verification still fails, show an actionable recovery error and retain the
-   application's existing blocking policy; do not loop forever, discard the
-   record, or delete arbitrary adapters/routes/drivers to force a success.
-4. A timeout, unreadable result, or invalid JSON is also unverified. Removing
-   client firewall protection remains a separate application decision.
+1. Keep the previous session identity. If that session may still be running,
+   request stop or invoke `--recover:PATH` with a bounded wait.
+2. Record the recovery diagnostic. `settled` permits retirement of client-owned
+   session inputs; `unverified`, a timeout, or an unreadable result means retaining
+   the old record and uncertain resources. None is a permanent restart veto.
+3. Launch the replacement with a fresh journal and the desired configuration.
+   WaterWall acquires current ownership, prepares its own stale device if needed,
+   and attempts initialization. Wait for readiness or the actual startup failure.
+   Report that failure with its diagnostics; use bounded retries for transient
+   busy conditions. Do not require old recovery to become `settled` first.
+4. Keep crash diagnostics and file cleanup separate from connection state.
+   Removing client firewall protection remains an application policy decision;
+   a successful new launch does not certify every old resource as retired.
 
 Recovery does not write a substitute launcher receipt into the record. Retain
 the successful result with the application's session state until retirement.
@@ -272,18 +326,20 @@ driver file does not veto independently verified process and interface settlemen
 that the Wintun packet session survived, physical DNS was changed, or active
 network damage remains. Recovery requests graceful cleanup if the runtime is
 alive; it does not repair arbitrary device state after that runtime has died.
-Clients must use the reported result rather than assume that an unknown result
-authorizes conflicting work. Accepting a still-present disconnected adapter would
-need corresponding native driver/OS evidence; this implementation continues to
-require absence. Native qualification of the shipped artifact remains necessary;
-a source change or Wine run does not supply it.
+Clients use this result to describe historical completion and decide what can be
+retired. It is not a global restart authorization. A new session follows the
+ownership and preparation flow above, which can remove its own stale device
+while preserving unrelated resources. Recovery continues to require interface
+absence for `settled`; startup performs its own current operations. Native
+qualification of the shipped artifact remains necessary; a source change or
+Wine run does not supply it.
 
 ## Permissions and extraction
 
 Both packed and embedded executables retain the administrator manifests and
 existing toolchain policies. Temporary extraction requires local ACL-capable
 storage, writable by the selected token; canonical ancestors are pinned and
-reparse roots refused. Private object/file ACLs admit the current user and SYSTEM
+reparse roots refused. Private session-object and extraction-file ACLs admit the current user and SYSTEM
 with the token's integrity label. The record parent, inputs, executable bytes,
 CWD, TEMP/TMP, and output directories remain the client's responsibility.
 Restricted tokens whose restricted SID checks cannot access this private ACL are
@@ -315,6 +371,15 @@ An independent hidden launch requires `--journal` so a later `recover` command
 can stop it. The attached example observes early public exit while waiting for
 readiness and invokes recovery after startup/stop errors and interruption as
 well as after an ordinary stop.
+
+For a reconnect, pass `--previous-journal PRIVATE/old-session` with the launch
+command. The example requests bounded public recovery, reports any incomplete
+result as a diagnostic, and continues to new startup. If the requested new
+`--journal` path already exists, it selects a unique sibling and prints the actual
+path; persist that path as the new session identity. It never overwrites the old
+record. Attached-mode success reflects startup/runtime completion rather than
+requiring historical cleanup success. The explicit `recover` mode still returns
+the recovery exit status.
 
 The former `--hosted`, `--host-stop-event`, and `--host-ready-event` arguments are
 removed, without aliases. Consumers must switch to independent lifecycle controls

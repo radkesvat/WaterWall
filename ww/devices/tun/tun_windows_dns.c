@@ -1,4 +1,5 @@
 #include "tun_windows_dns.h"
+#include "tun_windows_ownership.h"
 
 #include <assert.h>
 #include <stdio.h>
@@ -94,8 +95,8 @@ static tun_windows_dns_result_e dnsCancellation(HANDLE device_stop)
     return kTunWindowsDnsSuccess;
 }
 
-static tun_windows_dns_result_e dnsRun(const wchar_t *arguments, ULONGLONG deadline, bool install, HANDLE device_stop,
-                                       bool *may_have_changed)
+static tun_windows_dns_result_e dnsRun(const wchar_t *arguments, HANDLE ownership, ULONGLONG deadline, bool install,
+                                       HANDLE device_stop, bool *may_have_changed)
 {
     assert(pending_helper == NULL);
     if (install)
@@ -155,21 +156,8 @@ static tun_windows_dns_result_e dnsRun(const wchar_t *arguments, ULONGLONG deadl
         return kTunWindowsDnsFailed;
     }
 
-    STARTUPINFOW        startup = {0};
-    PROCESS_INFORMATION child   = {0};
-    startup.cb                  = sizeof(startup);
-    /* In particular, Windows 7 must not borrow the parent's standard handles. */
-    startup.dwFlags = STARTF_USESTDHANDLES;
-    if (! CreateProcessW(executable,
-                         command,
-                         NULL,
-                         NULL,
-                         FALSE,
-                         CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT,
-                         environment,
-                         system_directory,
-                         &startup,
-                         &child))
+    PROCESS_INFORMATION child = {0};
+    if (! tunWindowsOwnershipStartHelper(ownership, executable, command, environment, system_directory, &child))
     {
         dnsError("creation", GetLastError());
         return kTunWindowsDnsFailed;
@@ -224,8 +212,8 @@ static tun_windows_dns_result_e dnsRun(const wchar_t *arguments, ULONGLONG deadl
     return cancelled ? kTunWindowsDnsCancelled : kTunWindowsDnsFailed;
 }
 
-tun_windows_dns_result_e tunWindowsDnsSet(const wchar_t *adapter, const char *const *servers, size_t count,
-                                          HANDLE device_stop, bool *may_have_changed)
+tun_windows_dns_result_e tunWindowsDnsSet(const wchar_t *adapter, HANDLE ownership, const char *const *servers,
+                                          size_t count, HANDLE device_stop, bool *may_have_changed)
 {
     assert(count > 0 && count <= 2);
     *may_have_changed = false;
@@ -272,7 +260,7 @@ tun_windows_dns_result_e tunWindowsDnsSet(const wchar_t *adapter, const char *co
             dnsError("DNS argument construction", ERROR_INSUFFICIENT_BUFFER);
             return kTunWindowsDnsFailed;
         }
-        tun_windows_dns_result_e result = dnsRun(arguments, deadline, true, device_stop, may_have_changed);
+        tun_windows_dns_result_e result = dnsRun(arguments, ownership, deadline, true, device_stop, may_have_changed);
         if (result != kTunWindowsDnsSuccess)
         {
             return result;
@@ -281,7 +269,7 @@ tun_windows_dns_result_e tunWindowsDnsSet(const wchar_t *adapter, const char *co
     return kTunWindowsDnsSuccess;
 }
 
-bool tunWindowsDnsClear(const wchar_t *adapter)
+bool tunWindowsDnsClear(const wchar_t *adapter, HANDLE ownership)
 {
     if (helper_admission_closed)
     {
@@ -310,5 +298,5 @@ bool tunWindowsDnsClear(const wchar_t *adapter)
         dnsError("cleanup argument construction", ERROR_INSUFFICIENT_BUFFER);
         return false;
     }
-    return dnsRun(arguments, deadline, false, NULL, NULL) == kTunWindowsDnsSuccess;
+    return dnsRun(arguments, ownership, deadline, false, NULL, NULL) == kTunWindowsDnsSuccess;
 }

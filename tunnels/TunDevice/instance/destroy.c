@@ -18,6 +18,13 @@ void tundeviceTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context)
         tundeviceDestroy(tdev);
         state->tdev = NULL;
     }
+#ifdef OS_WIN
+    if (state->windows_ownership.lease != NULL)
+    {
+        CloseHandle(state->windows_ownership.lease);
+        state->windows_ownership.lease = NULL;
+    }
+#endif
 
     if (state->name)
     {

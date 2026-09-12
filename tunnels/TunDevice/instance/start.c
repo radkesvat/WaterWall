@@ -19,7 +19,12 @@ void tundeviceTunnelOnStart(tunnel_t *t)
         return;
     }
 
+#ifdef OS_WIN
+    state->tdev =
+        tundeviceCreateOwned(state->name, false, state->mtu, t, tundeviceOnIPPacketReceived, &state->windows_ownership);
+#else
     state->tdev = tundeviceCreate(state->name, false, state->mtu, t, tundeviceOnIPPacketReceived);
+#endif
 
     if (state->tdev == NULL)
     {

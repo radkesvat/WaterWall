@@ -42,6 +42,11 @@ bool          tundeviceDetectDefaultInterface(tun_default_route_t *out);
 bool          tundeviceDisableReversePathFiltering(const char *ifname);
 
 #if defined(OS_WIN)
+#include "tun_windows_ownership.h"
+/* Moves a prepared reservation into the device. On an earlier failure the
+ * caller retains any non-null lease and releases it during constructor rollback. */
+tun_device_t *tundeviceCreateOwned(const char *name, bool offload, uint16_t mtu, void *userdata, TunReadEventHandle cb,
+                                   tun_windows_ownership_t *ownership);
 /* Releases the process-wide Wintun module after every device has stopped. */
 void tundevicePlatformShutdown(void);
 #endif
