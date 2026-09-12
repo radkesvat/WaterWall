@@ -563,7 +563,6 @@ if(APPLE)
     if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
         target_sources(ww PRIVATE
             devices/tun/tun_darwin.c
-            devices/tun/tun_loopguard_stub.c
         )
     else()
         message(STATUS "No Tun device support for this Apple platform")
@@ -572,7 +571,6 @@ if(APPLE)
 elseif(UNIX AND NOT ANDROID)
     target_sources(ww PRIVATE
         devices/tun/tun_linux.c
-        devices/tun/tun_loopguard_stub.c
     )
     if(LINUX)
         target_sources(ww PRIVATE
@@ -593,11 +591,7 @@ elseif(WIN32)
             managers/windivert_manager.c
             devices/raw/raw_windows.c
             devices/capture/capture_windows.c
-            devices/tun/tun_loopguard_windows.c
         )
-    else()
-        # No WinDivert on this Windows arch -> TUN loop-guard is a no-op.
-        target_sources(ww PRIVATE devices/tun/tun_loopguard_stub.c)
     endif()
 
     # WinTun configuration
