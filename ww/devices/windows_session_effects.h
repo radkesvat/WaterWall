@@ -6,7 +6,8 @@
 // clang-format off
 #include <winsock2.h>
 #include <windows.h>
-#include <netioapi.h>
+#include <ws2tcpip.h>
+#include <iphlpapi.h>
 // clang-format on
 
 /* Identifies the adapter/driver inventory layout shared with recovery. */
