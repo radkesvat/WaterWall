@@ -21,6 +21,15 @@ project(Waterwall
   LANGUAGES C CXX
 )
 
+# MSBuild's /m parallelizes projects; MSVC's /MP also compiles translation
+# units within each project in parallel. Ninja schedules those jobs itself.
+if(CMAKE_GENERATOR MATCHES "^Visual Studio")
+  add_compile_options(
+    "$<$<COMPILE_LANG_AND_ID:C,MSVC>:/MP>"
+    "$<$<COMPILE_LANG_AND_ID:CXX,MSVC>:/MP>"
+  )
+endif()
+
 file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/ww/cmake")
 file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/ww/cmake/version.txt" "${PROJECT_VERSION}\n")
 
