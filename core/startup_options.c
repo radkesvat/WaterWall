@@ -500,7 +500,7 @@ int waterwallStartupHandoffExtract(int *argc, char **argv, waterwall_handoff_t *
     const char *src_str = NULL;
     const char *exe_str = NULL;
     int         matched = 0;
-    uintptr_t   completion_event = 0, effects_mapping = 0;
+    uintptr_t   handoff_completion_event = 0, effects_mapping = 0;
 
     for (int i = 1; i < *argc; ++i)
     {
@@ -549,7 +549,7 @@ int waterwallStartupHandoffExtract(int *argc, char **argv, waterwall_handoff_t *
         }
         else if (strncmp(arg, "--ww-internal-complete=", 23) == 0)
         {
-            if (completion_event != 0 || ! parseLifecycleHandle(arg + 23, &completion_event))
+            if (handoff_completion_event != 0 || ! parseLifecycleHandle(arg + 23, &handoff_completion_event))
                 return -1;
         }
 #endif
@@ -561,7 +561,7 @@ int waterwallStartupHandoffExtract(int *argc, char **argv, waterwall_handoff_t *
 
     if (matched == 0)
     {
-        return completion_event == 0 && effects_mapping == 0 ? 0 : -1;
+        return handoff_completion_event == 0 && effects_mapping == 0 ? 0 : -1;
     }
     if (matched != 4 || fd_str == NULL || len_str == NULL || src_str == NULL || exe_str == NULL)
     {
@@ -612,7 +612,7 @@ int waterwallStartupHandoffExtract(int *argc, char **argv, waterwall_handoff_t *
     }
 
     handoff->has_handoff = true;
-    handoff->completion_event = completion_event;
+    handoff->completion_event = handoff_completion_event;
     handoff->effects_mapping  = effects_mapping;
 #ifdef _WIN32
     handoff->mapping = (uintptr_t) fd_val;
