@@ -183,7 +183,7 @@ static void transportOwnerDownstreamFinish(tunnel_t *prev, line_t *line)
     lineDestroy(line);
     twfRequire(! lineIsAlive(line), "the synthetic transport owner did not destroy the download line");
 
-    fixture->replacement_line = lineCreate(tunnelchainGetLinePools(fixture->chain), 0);
+    fixture->replacement_line = lineCreate(tunnelchainGetLinePools(fixture->chain), 0, fixture->chain->tunnels.len);
     twfRequire(fixture->replacement_line != line,
                "the download allocation was released and reused while main Init was still active");
 
@@ -248,7 +248,7 @@ static void fixtureSetup(halfduplexserver_fixture_t *fixture)
 
 static line_t *createTransportLine(halfduplexserver_fixture_t *fixture)
 {
-    line_t *line = lineCreate(tunnelchainGetLinePools(fixture->chain), 0);
+    line_t *line = lineCreate(tunnelchainGetLinePools(fixture->chain), 0, fixture->chain->tunnels.len);
     halfduplexserverTunnelUpStreamInit(fixture->halfduplex, line);
     return line;
 }
@@ -471,7 +471,7 @@ static line_t *protocolCreateTransport(halfduplexserver_protocol_fixture_t *fixt
     {
         if (fixture->transport_lines[index] == NULL)
         {
-            line_t *line                    = lineCreate(tunnelchainGetLinePools(fixture->chain), 0);
+            line_t *line = lineCreate(tunnelchainGetLinePools(fixture->chain), 0, fixture->chain->tunnels.len);
             fixture->transport_lines[index] = line;
             halfduplexserverTunnelUpStreamInit(fixture->halfduplex, line);
             return line;

@@ -87,7 +87,7 @@ static void testDenseSlots(void)
     // This fixture creates and owns normal lines. Exercise recycling as well as first allocation.
     for (unsigned int iteration = 0; iteration < 3; ++iteration)
     {
-        line_t *line = lineCreateForWorker(0, pools, 0);
+        line_t *line = lineCreateForWorker(0, pools, 0, chain->tunnels.len);
         require((uintptr_t) line % kCpuLineCacheSize == 0, "line allocation is not cache aligned");
         uint8_t *states = (uint8_t *) line->tunnels_line_state;
         for (size_t byte = 0; byte < item_size - sizeof(line_t); ++byte)
@@ -157,10 +157,66 @@ static void testSizeLimits(void)
             "single short slot did not preserve the complete line boundary");
 }
 
+static void testSpliceBlockers(void)
+{
+    static const uint16_t counts[] = {0, 1, 2, 31, 32, 33, 63, 64};
+    master_pool_t        *master   = masterpoolCreateWithCapacity(4);
+    require(master != NULL, "failed to create splice-test master pool");
+    generic_pool_t *pools[] = {genericpoolCreateWithDefaultCacheAlignedAllocatorAndCapacity(master, sizeof(line_t), 2)};
+    require(pools[0] != NULL, "failed to create splice-test line pool");
+
+    for (size_t test = 0; test < sizeof(counts) / sizeof(counts[0]); ++test)
+    {
+        const uint16_t count    = counts[test];
+        uint64_t       expected = 0;
+        for (uint16_t i = 0; i < count; ++i)
+        {
+            expected |= UINT64_C(1) << i;
+        }
+
+        // This fixture owns the normal line, including each pooled reuse.
+        for (unsigned int iteration = 0; iteration < 3; ++iteration)
+        {
+            line_t *line = lineCreateForWorker(0, pools, 0, count);
+            require(line->splice_blockers == expected, "new line did not block exactly its chain's tunnels");
+            uint64_t remaining = expected;
+            for (uint16_t i = 0; i < count; ++i)
+            {
+                tunnel_t tunnel = {.chain_index = i};
+                remaining &= ~(UINT64_C(1) << i);
+                lineUnblockSplice(line, &tunnel);
+                require(line->splice_blockers == remaining, "unblocking a tunnel changed another tunnel's bit");
+                lineUnblockSplice(line, &tunnel);
+                require(line->splice_blockers == remaining, "unblocking a tunnel twice toggled its bit");
+                require((line->splice_blockers == 0) == (i + 1U == count),
+                        "splice gate opened before every tunnel agreed");
+            }
+            require(line->splice_blockers == 0, "splice gate remained blocked after every tunnel agreed");
+
+            for (uint16_t i = 0; i < count; ++i)
+            {
+                tunnel_t tunnel = {.chain_index = i};
+                lineBlockSplice(line, &tunnel);
+                require(line->splice_blockers == (UINT64_C(1) << i), "blocking a tunnel changed another tunnel's bit");
+                lineBlockSplice(line, &tunnel);
+                require(line->splice_blockers == (UINT64_C(1) << i), "blocking a tunnel twice toggled its bit");
+                lineUnblockSplice(line, &tunnel);
+            }
+            lineDestroy(line);
+        }
+    }
+
+    require(masterpoolGetCheckedOut(master) == 0, "splice-test line was not returned to its pool");
+    genericpoolDestroy(pools[0]);
+    masterpoolMakeEmpty(master);
+    masterpoolDestroy(master);
+}
+
 int main(void)
 {
     testLargeOffsets();
     testDenseSlots();
     testSizeLimits();
+    testSpliceBlockers();
     return 0;
 }

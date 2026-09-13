@@ -506,6 +506,11 @@ if(TARGET ww)
 
   add_waterwall_unit_test(waterwall.line_state_index_unit line_state_index_test "unit;net;line;chain")
 
+  add_executable(chain_node_limit_test chain_node_limit_test.c)
+  target_link_libraries(chain_node_limit_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests chain_node_limit_test)
+  add_waterwall_unit_test(waterwall.chain_node_limit_unit chain_node_limit_test "unit;net;chain;configuration")
+
   if(TARGET DomainResolver)
     add_executable(domainresolver_line_layout_test domainresolver_line_layout_test.c)
     target_link_libraries(domainresolver_line_layout_test PRIVATE DomainResolver ww)

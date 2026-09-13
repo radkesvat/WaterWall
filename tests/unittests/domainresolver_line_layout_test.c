@@ -41,7 +41,7 @@ int main(void)
     require(master != NULL, "failed to create resolver master pool");
     generic_pool_t *pools[] = {genericpoolCreateWithDefaultCacheAlignedAllocatorAndCapacity(master, item_size, 2)};
     require(pools[0] != NULL, "failed to create resolver line pool");
-    line_t  *line   = lineCreateForWorker(0, pools, 0); // Fixture-owned normal line.
+    line_t  *line   = lineCreateForWorker(0, pools, 0, 3); // Fixture-owned normal line.
     uint8_t *states = (uint8_t *) line->tunnels_line_state;
     memorySet(states, 0xA5, 32);
     memorySet(states + following, 0xA5, 32);

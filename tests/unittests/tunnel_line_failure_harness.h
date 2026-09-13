@@ -616,7 +616,7 @@ static void twfLinePoolSetup(twf_line_pool_t *lp, uint32_t lstate_size, uint32_t
 
 static line_t *twfLinePoolCreateLine(twf_line_pool_t *lp)
 {
-    line_t *l = lineCreateForWorker(0, lp->pools, 0);
+    line_t *l = lineCreateForWorker(0, lp->pools, 0, 0);
     twfRequire(l != NULL, "failed to create a pooled test line");
     return l;
 }

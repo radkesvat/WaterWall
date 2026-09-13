@@ -553,7 +553,7 @@ static realityserver_lstate_t *serverFixtureMoveLineToOwnerPool(server_lifecycle
     fixture->line_pool   = genericpoolCreateWithDefaultCacheAlignedAllocatorAndCapacity(
         fixture->line_master, sizeof(line_t) + fixture->reality->lstate_size, 8);
     fixture->line_pools[0]       = fixture->line_pool;
-    fixture->line                = lineCreateForWorker(0, fixture->line_pools, 0);
+    fixture->line                = lineCreateForWorker(0, fixture->line_pools, 0, 0);
     fixture->line_pool_available = fixture->line_pool->len + 1U;
 
     realityserver_lstate_t *ls = lineGetState(fixture->line, fixture->reality);

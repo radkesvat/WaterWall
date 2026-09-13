@@ -250,7 +250,7 @@ static void teardownFixture(test_fixture_t *fixture)
 
 static line_t *createFixtureNormalLine(test_fixture_t *fixture)
 {
-    line_t *l = lineCreate(tunnelchainGetLinePools(fixture->chain), 0);
+    line_t *l = lineCreate(tunnelchainGetLinePools(fixture->chain), 0, fixture->chain->tunnels.len);
     twfRequire(l != NULL, "failed to create normal fixture line");
     return l;
 }
@@ -545,7 +545,7 @@ static void testCase6_WorkerAndConnectorPoolIsolation(void)
     twfRequire(sockaddrSetIpAddressPort(&peer_a, "127.0.0.1", 20001) == 0, "failed to prepare peer A");
     twfRequire(sockaddrSetIpAddressPort(&peer_b, "127.0.0.1", 20002) == 0, "failed to prepare peer B");
 
-    line_t *c1_w0_line = lineCreateForWorker(0, chain->line_pools, 0);
+    line_t *c1_w0_line = lineCreateForWorker(0, chain->line_pools, 0, chain->tunnels.len);
     twfRequire(c1_w0_line != NULL, "failed to create connector 1 worker 0 line");
     udpconnector_lstate_t *c1_w0_ls = lineGetState(c1_w0_line, c1);
     twfRequire(udpconnectorLinestateInitialize(c1_w0_ls, c1, c1_w0_line),
@@ -554,7 +554,7 @@ static void testCase6_WorkerAndConnectorPoolIsolation(void)
     twfRequire(c1_w0_binding != NULL, "failed to acquire connector 1 worker 0 binding");
     c1_w0_ls->last_send_binding = c1_w0_binding;
 
-    line_t *c2_w0_line = lineCreateForWorker(0, chain->line_pools, 0);
+    line_t *c2_w0_line = lineCreateForWorker(0, chain->line_pools, 0, chain->tunnels.len);
     twfRequire(c2_w0_line != NULL, "failed to create connector 2 worker 0 line");
     udpconnector_lstate_t *c2_w0_ls = lineGetState(c2_w0_line, c2);
     twfRequire(udpconnectorLinestateInitialize(c2_w0_ls, c2, c2_w0_line),
@@ -564,7 +564,7 @@ static void testCase6_WorkerAndConnectorPoolIsolation(void)
     c2_w0_ls->last_send_binding = c2_w0_binding;
 
     discard tosSetCurrentWorker(1);
-    line_t *c1_w1_line = lineCreateForWorker(1, chain->line_pools, 1);
+    line_t *c1_w1_line = lineCreateForWorker(1, chain->line_pools, 1, chain->tunnels.len);
     twfRequire(c1_w1_line != NULL, "failed to create connector 1 worker 1 line");
     udpconnector_lstate_t *c1_w1_ls = lineGetState(c1_w1_line, c1);
     twfRequire(udpconnectorLinestateInitialize(c1_w1_ls, c1, c1_w1_line),

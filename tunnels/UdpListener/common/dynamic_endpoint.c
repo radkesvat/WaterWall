@@ -376,7 +376,8 @@ void udplistenerOnDynamicEndpointRead(wio_t *io, sbuf_t *buf)
     line_t   *line     = ep->line;
     if (line == NULL)
     {
-        line = lineCreate(tunnelchainGetLinePools(tunnelGetChain(listener)), wid);
+        line =
+            lineCreate(tunnelchainGetLinePools(tunnelGetChain(listener)), wid, tunnelGetChain(listener)->tunnels.len);
         if (line == NULL)
         {
             udplistenerRecycleDynamicBuffer(callback_pool, buf);

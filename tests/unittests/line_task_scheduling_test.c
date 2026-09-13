@@ -144,8 +144,8 @@ static void lineTaskEnvTeardown(line_task_test_env_t *env)
 
 static line_t *createLine(const line_task_test_env_t *env, wid_t wid)
 {
-    return wid == 0 ? lineCreate(tunnelchainGetLinePools(env->chain), 0)
-                    : lineCreateForWorker(0, tunnelchainGetLinePools(env->chain), wid);
+    return wid == 0 ? lineCreate(tunnelchainGetLinePools(env->chain), 0, env->chain->tunnels.len)
+                    : lineCreateForWorker(0, tunnelchainGetLinePools(env->chain), wid, env->chain->tunnels.len);
 }
 
 static void probeReset(line_task_probe_t *probe)

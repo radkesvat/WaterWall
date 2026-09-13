@@ -86,7 +86,8 @@ static bool handleOpenFrame(tunnel_t *t, line_t *parent_l, muxserver_lstate_t *p
                                    : "memory-snapshot fallback live-child limit reached");
     }
 
-    line_t             *child_l      = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), lineGetWID(parent_l));
+    line_t *child_l =
+        lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), lineGetWID(parent_l), tunnelGetChain(t)->tunnels.len);
     muxserver_lstate_t *new_child_ls = lineGetState(child_l, t);
     muxserverLinestateInitialize(t, new_child_ls, child_l, true, frame->cid);
     new_child_ls->child_slot_reserved = true;

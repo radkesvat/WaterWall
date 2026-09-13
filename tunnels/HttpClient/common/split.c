@@ -233,7 +233,8 @@ void httpclientSplitUpStreamInit(tunnel_t *t, line_t *l)
 
     lineRef(l);
 
-    line_t *upload_line   = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), lineGetWID(l));
+    line_t *upload_line =
+        lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), lineGetWID(l), tunnelGetChain(t)->tunnels.len);
     ls->split_upload_line = upload_line;
     httpclientSplitInitTransportState(t, upload_line, l, upload_line, NULL, kHttpClientSplitRoleUpload, ls->split_id);
 
@@ -254,7 +255,8 @@ void httpclientSplitUpStreamInit(tunnel_t *t, line_t *l)
         return;
     }
 
-    line_t *download_line   = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), lineGetWID(l));
+    line_t *download_line =
+        lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), lineGetWID(l), tunnelGetChain(t)->tunnels.len);
     ls->split_download_line = download_line;
 
     httpclient_lstate_t *upload_ls = lineGetState(upload_line, t);

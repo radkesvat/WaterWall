@@ -98,7 +98,7 @@ void mxbTeardownEnvironment(mxb_fixture_t *fixture)
 
 line_t *mxbCreateLine(mxb_fixture_t *fixture)
 {
-    line_t *line = lineCreateForWorker(0, fixture->env.line_pools, 0);
+    line_t *line = lineCreateForWorker(0, fixture->env.line_pools, 0, 0);
     mxbRequire(line != NULL, "failed to create a Mux/TLS test line");
     return line;
 }

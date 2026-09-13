@@ -563,7 +563,8 @@ static line_t *vlessserverGetOrCreateUdpRemoteLine(tunnel_t *t, line_t *client_l
         return NULL;
     }
 
-    line_t               *remote_l  = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), lineGetWID(client_l));
+    line_t *remote_l =
+        lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), lineGetWID(client_l), tunnelGetChain(t)->tunnels.len);
     vlessserver_lstate_t *remote_ls = lineGetState(remote_l, t);
 
     vlessserverLinestateInitialize(remote_ls, t, remote_l, kVlessServerLineKindUdpRemote);

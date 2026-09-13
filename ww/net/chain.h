@@ -15,7 +15,7 @@ typedef struct line_s   line_t;
 
 enum
 {
-    kMaxChainLen = (16 * 4)
+    kMaxChainLen = 64
 };
 
 typedef enum

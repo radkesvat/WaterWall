@@ -645,7 +645,7 @@ static void caseWorkerDrainIsLocal(void)
     for (wid_t wid = 0; wid < 2; ++wid)
     {
         testWorkerBindWID(wid);
-        parents[wid] = lineCreateForWorker(wid, line_pools, wid);
+        parents[wid] = lineCreateForWorker(wid, line_pools, wid, 0);
         lineRef(parents[wid]);
         muxclient_lstate_t *parent = lineGetState(parents[wid], mux);
         muxclientLinestateInitialize(parent, parents[wid], false, 0);

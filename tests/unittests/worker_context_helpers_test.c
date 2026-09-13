@@ -1816,7 +1816,7 @@ static void testLineRefcountPublishesTeardownToFinalReleaser(void)
         master, (uint32_t) (sizeof(line_t) + kCpuLineCacheSize), 2);
     require(pool != NULL, "failed to create refcount-publication line pool");
     generic_pool_t *pools[] = {pool};
-    line_t         *line    = lineCreateForWorker(0, pools, 0);
+    line_t         *line    = lineCreateForWorker(0, pools, 0, 0);
     lineRef(line);
 
     line_refcount_publication_t publication = {.line = line};
@@ -1912,15 +1912,15 @@ static void exerciseForeignFinalLineReleaseDuringDetach(void)
     generic_pool_t *pools[] = {pool, other_pool};
 
     /* Control: an ordinary event-worker terminal release stays local. */
-    line_t        *control                         = lineCreateForWorker(0, pools, 0);
+    line_t        *control                         = lineCreateForWorker(0, pools, 0, 0);
     const uint32_t local_len_before_control_return = pool->len;
     require(genericpoolGetInUse(pool) == 1, "line pool did not account for its checked-out control line");
     lineDestroy(control);
     require(genericpoolGetInUse(pool) == 0 && pool->len == local_len_before_control_return + 1,
             "event-worker final release did not return to the local line pool");
 
-    line_t *plain_line = lineCreateForWorker(0, pools, 0);
-    line_t *lwip_line  = lineCreateForWorker(1, pools, 0);
+    line_t *plain_line = lineCreateForWorker(0, pools, 0, 0);
+    line_t *lwip_line  = lineCreateForWorker(1, pools, 0, 0);
     lineAddUser(plain_line, NULL, "plain-user", "plain-password");
     lineAddUser(lwip_line, NULL, "lwip-user", "lwip-password");
     plain_line->routing_context.dest_ctx.domain = stringDuplicate("plain.example");
@@ -2263,7 +2263,7 @@ static void testPipePublicationIsLinearizedWithPreStop(void)
     tunnelchainFinalize(chain);
 
     pipe_tunnel->onStart(pipe_tunnel);
-    line_t *source = lineCreate(tunnelchainGetLinePools(chain), 0);
+    line_t *source = lineCreate(tunnelchainGetLinePools(chain), 0, chain->tunnels.len);
     require(masterpoolGetCheckedOut(chain->masterpool_line_pool) == 1,
             "pipe stop-race fixture began with the wrong line count");
 
@@ -2333,7 +2333,7 @@ static void testPipePublicationIsLinearizedWithPreStop(void)
     atomicStoreRelaxed(&g_pipe_shutdown_requests, 0);
     for (uint32_t failure_index = 0; failure_index < ARRAY_SIZE(pipe_failures); ++failure_index)
     {
-        line_t *refused_source = lineCreate(tunnelchainGetLinePools(chain), 0);
+        line_t *refused_source = lineCreate(tunnelchainGetLinePools(chain), 0, chain->tunnels.len);
         workerMessagesEnqueueTestSetFailure(pipe_failures[failure_index]);
         require(! pipeTo(child, refused_source, 1), "pipe Init queue refusal was reported as admitted");
         requirePipeLineStateZero(pipe_tunnel, refused_source, "pipe Init refusal retained borrowed line state");
@@ -2348,7 +2348,7 @@ static void testPipePublicationIsLinearizedWithPreStop(void)
             "pipe queue refusals did not each request one terminal reconciliation");
 #endif
 
-    source = lineCreate(tunnelchainGetLinePools(chain), 0);
+    source = lineCreate(tunnelchainGetLinePools(chain), 0, chain->tunnels.len);
     require(pipeTo(child, source, 1), "publication-winning pipeTo rejected a valid pair");
     for (uint32_t attempt = 0; attempt < 5000 && atomicLoadRelaxed(&g_pipe_init_count) != 1; ++attempt)
     {
@@ -2385,7 +2385,7 @@ static void testPipePublicationIsLinearizedWithPreStop(void)
             "pipe downstream Payload did not reach the borrowed line exactly once");
     require(atomicLoadRelaxed(&down_lifetime.releases) == 1, "pipe downstream Payload was not released exactly once");
 
-    line_t *upstream_finished_source = lineCreate(tunnelchainGetLinePools(chain), 0);
+    line_t *upstream_finished_source = lineCreate(tunnelchainGetLinePools(chain), 0, chain->tunnels.len);
     require(pipeTo(child, upstream_finished_source, 1), "failed to create the upstream-Finish pipe pair");
     for (uint32_t attempt = 0; attempt < 5000 && atomicLoadRelaxed(&g_pipe_init_count) != 2; ++attempt)
     {
@@ -2406,7 +2406,7 @@ static void testPipePublicationIsLinearizedWithPreStop(void)
         pipe_tunnel, upstream_finished_source, "upstream Finish retained the borrowed line-state attachment");
     lineDestroy(upstream_finished_source);
 
-    line_t *downstream_finished_source = lineCreate(tunnelchainGetLinePools(chain), 0);
+    line_t *downstream_finished_source = lineCreate(tunnelchainGetLinePools(chain), 0, chain->tunnels.len);
     require(pipeTo(child, downstream_finished_source, 1), "failed to create the downstream-Finish pipe pair");
     for (uint32_t attempt = 0; attempt < 5000 && atomicLoadRelaxed(&g_pipe_init_count) != 3; ++attempt)
     {
@@ -2435,7 +2435,7 @@ static void testPipePublicationIsLinearizedWithPreStop(void)
         pipe_tunnel, downstream_finished_source, "downstream Finish retained the borrowed line-state attachment");
     lineDestroy(downstream_finished_source);
 
-    line_t *worker_stop_source = lineCreate(tunnelchainGetLinePools(chain), 0);
+    line_t *worker_stop_source = lineCreate(tunnelchainGetLinePools(chain), 0, chain->tunnels.len);
     require(pipeTo(child, worker_stop_source, 1), "failed to create the worker-stop pipe pair");
     for (uint32_t attempt = 0; attempt < 5000 && atomicLoadRelaxed(&g_pipe_init_count) != 4; ++attempt)
     {
@@ -2528,7 +2528,7 @@ static void pipeMessageCaseSetup(pipe_message_case_fixture_t *fixture)
     tunnelchainFinalize(fixture->chain);
     fixture->wrapper->onStart(fixture->wrapper);
 
-    fixture->borrowed = lineCreate(tunnelchainGetLinePools(fixture->chain), 0);
+    fixture->borrowed = lineCreate(tunnelchainGetLinePools(fixture->chain), 0, fixture->chain->tunnels.len);
     require(fixture->borrowed != NULL && pipeTo(fixture->child, fixture->borrowed, 1),
             "failed to publish the pipe message pair");
     for (uint32_t attempt = 0; attempt < 5000 && atomicLoadRelaxed(&g_pipe_init_count) != 1; ++attempt)

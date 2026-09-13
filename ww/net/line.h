@@ -79,10 +79,17 @@ typedef struct line_s
     routing_context_t routing_context;
 
     generic_pool_t **pools;
+    uint64_t         splice_blockers;
 
     MSVC_ATTR_ALIGNED_LINE_CACHE uintptr_t *tunnels_line_state[] GNU_ATTR_ALIGNED_LINE_CACHE;
 
 } line_t;
+
+static_assert(kMaxChainLen <= 64, "splice_blockers must hold one bit per tunnel");
+static_assert(offsetof(line_t, tunnels_line_state) ==
+                  ((offsetof(line_t, pools) + sizeof(generic_pool_t **) + kCpuLineCacheSize - 1U) &
+                   ~((size_t) kCpuLineCacheSize - 1U)),
+              "splice_blockers must fit within the line header's existing alignment padding");
 
 /**
  * @brief Clears all authenticated user markers on the line.
@@ -97,11 +104,12 @@ void lineClearUsers(line_t *const line);
  * @param current Worker whose pool is used for allocation.
  * @param pools Per-worker line pools.
  * @param wid Owner worker id written into the line.
+ * @param tunnel_count Number of tunnels in the line's chain.
  * @return line_t* Initialized line.
  */
-static inline line_t *lineCreateForWorker(wid_t current, generic_pool_t **pools, wid_t wid)
+static inline line_t *lineCreateForWorker(wid_t current, generic_pool_t **pools, wid_t wid, uint16_t tunnel_count)
 {
-
+    assert(tunnel_count <= kMaxChainLen);
     line_t *l = genericpoolGetItem(pools[current]);
 
     *l = (line_t) {.refc                 = 1,
@@ -110,6 +118,7 @@ static inline line_t *lineCreateForWorker(wid_t current, generic_pool_t **pools,
                    .wid                  = wid,
                    .alive                = true,
                    .pools                = pools,
+                   .splice_blockers      = tunnel_count == 64 ? UINT64_MAX : (UINT64_C(1) << tunnel_count) - 1U,
                    .established          = false,
                    .recalculate_checksum = false,
                    // to set a port we need to know the AF family, default v4
@@ -127,13 +136,29 @@ static inline line_t *lineCreateForWorker(wid_t current, generic_pool_t **pools,
  * @brief Creates a new line instance.
  *
  * @param pools Pointer to the array of generic pools. (per WID)
+ * @param wid Owner worker id.
+ * @param tunnel_count Number of tunnels in the line's chain.
  * @return line_t* Pointer to the created line.
  */
-static inline line_t *lineCreate(generic_pool_t **pools, wid_t wid)
+static inline line_t *lineCreate(generic_pool_t **pools, wid_t wid, uint16_t tunnel_count)
 {
     assert(currentThreadIsEventWorkerWID(wid));
 
-    return lineCreateForWorker(wid, pools, wid);
+    return lineCreateForWorker(wid, pools, wid, tunnel_count);
+}
+
+/** Set this tunnel's bit to block splicing on the line. */
+static inline void lineBlockSplice(line_t *line, const tunnel_t *tunnel)
+{
+    assert(tunnel->chain_index < kMaxChainLen);
+    line->splice_blockers |= UINT64_C(1) << tunnel->chain_index;
+}
+
+/** Clear this tunnel's bit; a zero mask means every tunnel has unblocked splicing. */
+static inline void lineUnblockSplice(line_t *line, const tunnel_t *tunnel)
+{
+    assert(tunnel->chain_index < kMaxChainLen);
+    line->splice_blockers &= ~(UINT64_C(1) << tunnel->chain_index);
 }
 
 /**

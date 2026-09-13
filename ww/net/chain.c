@@ -32,7 +32,7 @@ void tunnelarrayInsert(tunnel_array_t *tc, tunnel_t *t)
 {
     if (tc->len >= kMaxChainLen)
     {
-        LOGF("tunnelarrayInsert overflow!");
+        LOGF("Tunnel chain exceeds the maximum of %d nodes per chain. Reduce the number of nodes.", kMaxChainLen);
         startupFailureRecord(1);
         return;
     }
@@ -42,9 +42,15 @@ void tunnelarrayInsert(tunnel_array_t *tc, tunnel_t *t)
 
 void tunnelchainInsertAt(tunnel_chain_t *tci, tunnel_t *t, uint16_t index)
 {
-    if (UNLIKELY(index > tci->tunnels.len || tci->tunnels.len >= kMaxChainLen))
+    if (tci->tunnels.len >= kMaxChainLen)
     {
-        LOGF("tunnelchainInsertAt: invalid insertion index or full chain");
+        LOGF("Tunnel chain exceeds the maximum of %d nodes per chain. Reduce the number of nodes.", kMaxChainLen);
+        startupFailureRecord(1);
+        return;
+    }
+    if (UNLIKELY(index > tci->tunnels.len))
+    {
+        LOGF("tunnelchainInsertAt: invalid insertion index");
         startupFailureRecord(1);
         return;
     }
@@ -168,7 +174,7 @@ void tunnelchainFinalize(tunnel_chain_t *tc)
     {
         if (tc->contains_packet_node)
         {
-            packet_lines[i] = lineCreateForWorker(0, tc->line_pools, i);
+            packet_lines[i] = lineCreateForWorker(0, tc->line_pools, i, tc->tunnels.len);
         }
         else
         {
@@ -328,10 +334,11 @@ void tunnelchainCombine(tunnel_chain_t *destination, tunnel_chain_t *source)
     // Check if combining would exceed maximum chain length
     if (destination->tunnels.len + source->tunnels.len > kMaxChainLen)
     {
-        LOGF("tunnelchainCombine: Combined chain would exceed maximum length (%d + %d > %d)",
+        LOGF("Combining chains would exceed the maximum of %d nodes per chain (%d + %d nodes). "
+             "Reduce the number of nodes.",
+             kMaxChainLen,
              destination->tunnels.len,
-             source->tunnels.len,
-             kMaxChainLen);
+             source->tunnels.len);
         startupFailureRecord(1);
         return;
     }

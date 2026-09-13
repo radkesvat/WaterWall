@@ -656,7 +656,8 @@ static bool splitPair(tunnel_t *t, line_t *upload_line, line_t *download_line)
     httpserver_lstate_t *uls = lineGetState(upload_line, t);
     httpserver_lstate_t *dls = lineGetState(download_line, t);
 
-    line_t              *main_line = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), lineGetWID(upload_line));
+    line_t *main_line =
+        lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), lineGetWID(upload_line), tunnelGetChain(t)->tunnels.len);
     httpserver_lstate_t *mls       = lineGetState(main_line, t);
     httpserverLinestateInitialize(mls, t, main_line);
 

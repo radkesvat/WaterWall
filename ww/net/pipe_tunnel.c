@@ -998,7 +998,8 @@ bool pipeTo(tunnel_t *t, line_t *line, wid_t wid_to)
         return false;
     }
 
-    line_t *owned = lineCreateForWorker(wid, tunnelchainGetLinePools(tunnelGetChain(t)), wid_to);
+    line_t *owned =
+        lineCreateForWorker(wid, tunnelchainGetLinePools(tunnelGetChain(t)), wid_to, tunnelGetChain(t)->tunnels.len);
     lineCopyUsers(owned, line);
 
     /* Stage all metadata without publishing either line state. */

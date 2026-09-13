@@ -404,7 +404,8 @@ static line_t *trojanserverGetOrCreateUdpRemoteLine(tunnel_t *t, line_t *client_
         return it.ref->second;
     }
 
-    line_t                *remote_l  = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), lineGetWID(client_l));
+    line_t *remote_l =
+        lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), lineGetWID(client_l), tunnelGetChain(t)->tunnels.len);
     trojanserver_lstate_t *remote_ls = lineGetState(remote_l, t);
 
     trojanserverLinestateInitialize(remote_ls, t, remote_l, kTrojanServerLineKindUdpRemote);

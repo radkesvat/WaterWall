@@ -28,7 +28,8 @@ void connectionfisherclientTunnelUpStreamInit(tunnel_t *t, line_t *main_l)
 
     for (uint32_t i = 0; i < ts->simultaneous_tries_perline; ++i)
     {
-        line_t *child_l = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), lineGetWID(main_l));
+        line_t *child_l =
+            lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), lineGetWID(main_l), tunnelGetChain(t)->tunnels.len);
         connectionfisherclient_lstate_t *child_ls = lineGetState(child_l, t);
 
         connectionfisherclientLinestateInitializeChild(child_ls, child_l, main_l, i);

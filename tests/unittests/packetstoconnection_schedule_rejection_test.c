@@ -145,7 +145,7 @@ static void ptcFixtureSetup(ptc_fixture_t *fixture)
     twfRequire(quiescenceGateOpen(&state->output_gate), "failed to open the PTC output gate");
     twfRequire(quiescenceGateOpen(&state->next_gate), "failed to open the PTC next-callback gate");
 
-    fixture->line = lineCreate(tunnelchainGetLinePools(fixture->chain), 0);
+    fixture->line = lineCreate(tunnelchainGetLinePools(fixture->chain), 0, fixture->chain->tunnels.len);
 
     g_fixture            = fixture;
     g_submit_expectation = kPtcSubmitNone;

@@ -138,7 +138,7 @@ static line_t *publishLine(speedtestclient_fixture_t *fixture, uint32_t stream_i
 {
     const wid_t wid      = (wid_t) (stream_id % kTestWorkers);
     const wid_t previous = tosSetCurrentWorker(wid);
-    line_t     *line     = lineCreateForWorker(wid, fixture->chain->line_pools, wid);
+    line_t     *line     = lineCreateForWorker(wid, fixture->chain->line_pools, wid, fixture->chain->tunnels.len);
     discard     tosSetCurrentWorker(previous);
     twfRequire(line != NULL, "failed to create SpeedTestClient owned line");
 

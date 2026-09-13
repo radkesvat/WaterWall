@@ -148,7 +148,7 @@ static void fixtureSetup(wireguarddevice_fixture_t *fixture)
     // packet line, which is what makes the role check in its Finish handler
     // load-bearing.
     fixture->chain->contains_packet_node = true;
-    fixture->packet_line_slots[0]        = lineCreateForWorker(0, fixture->chain->line_pools, 0);
+    fixture->packet_line_slots[0] = lineCreateForWorker(0, fixture->chain->line_pools, 0, fixture->chain->tunnels.len);
     fixture->chain->packet_lines         = fixture->packet_line_slots;
 
     wgd_tstate_t *state           = tunnelGetState(fixture->wgd);

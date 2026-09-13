@@ -183,7 +183,7 @@ static WTHREAD_ROUTINE(admissionRaceMain)
     admission_race_fixture_t *fixture = task->fixture;
     const wid_t               wid     = task->wid;
     testWorkerBindWID(wid);
-    fixture->parents[wid] = lineCreate(fixture->parent_pools, wid);
+    fixture->parents[wid] = lineCreate(fixture->parent_pools, wid, 0);
     muxserverTunnelUpStreamInit(fixture->mux, fixture->parents[wid]);
     atomicIncExplicit(&fixture->ready, memory_order_release);
 
