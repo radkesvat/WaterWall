@@ -48,6 +48,8 @@ typedef struct sbuf_s sbuf_t;
 #define SIZEOF_STRUCT_SBUF (sizeof(struct sbuf_s))
 
 static_assert(SIZEOF_STRUCT_SBUF == 32, "sbuf_s size should be 32 bytes, buf array is flexible");
+static_assert(_Alignof(sbuf_t) == 32, "sbuf_s alignment should be 32 bytes");
+static_assert(offsetof(sbuf_t, buf) == 32, "sbuf_s buf array should start at offset 32");
 
 enum
 {
