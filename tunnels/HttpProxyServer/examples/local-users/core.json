@@ -1,0 +1,14 @@
+{
+  "log": {
+    "path": "log/"
+  },
+  "configs": [
+    "config.json"
+  ],
+  "misc": {
+    "workers": 2,
+    "ram-profile": "client",
+    "mtu": 1500,
+    "try-enabling-bbr": false
+  }
+}

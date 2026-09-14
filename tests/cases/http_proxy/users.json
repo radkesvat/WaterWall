@@ -1,0 +1,36 @@
+{
+  "users": [
+    {
+      "id": 1004,
+      "name": "quota",
+      "password": "quota:pass",
+      "enabled": true,
+      "limit": { "traffic": { "total": 1 } }
+    },
+    {
+      "id": 1005,
+      "name": "single",
+      "password": "single:pass",
+      "enabled": true,
+      "limit": { "connections-out": 1 }
+    },
+    {
+      "id": 1001,
+      "name": "first",
+      "password": "user:pass",
+      "enabled": true
+    },
+    {
+      "id": 1002,
+      "name": "second",
+      "password": "other:pass",
+      "enabled": true
+    },
+    {
+      "id": 1003,
+      "name": "disabled",
+      "password": "disabled:pass",
+      "enabled": false
+    }
+  ]
+}

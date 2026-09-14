@@ -1,0 +1,66 @@
+{
+  "name": "authenticated-http-proxy",
+  "nodes": [
+    {
+      "name": "auth-client",
+      "type": "AuthenticationClient",
+      "settings": {
+        "name": "edge-1",
+        "secret": "example-auth-secret",
+        "ping-interval-ms": 10000,
+        "pull-interval-ms": 10000,
+        "push-interval-ms": 10000,
+        "reconnect-interval-ms": 1000,
+        "request-timeout-ms": 5000,
+        "max-pending-requests": 16
+      },
+      "next": "auth-db"
+    },
+    {
+      "name": "auth-db",
+      "type": "AuthenticationServer",
+      "settings": {
+        "db-path": "users.json",
+        "file-save-rate-ms": 60000,
+        "session-idle-timeout-ms": 600000,
+        "auth-clients": [
+          {
+            "name": "edge-1",
+            "secret": "example-auth-secret",
+            "allow-user-pull": true,
+            "allow-stats-push": true,
+            "allow-user-write": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "http-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 8080,
+        "nodelay": true
+      },
+      "next": "http-proxy"
+    },
+    {
+      "name": "http-proxy",
+      "type": "HttpProxyServer",
+      "settings": {
+        "auth-client-node-name": "auth-client"
+      },
+      "next": "http-outbound"
+    },
+    {
+      "name": "http-outbound",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "dest_context->address",
+        "port": "dest_context->port",
+        "nodelay": true,
+        "fastopen": false
+      }
+    }
+  ]
+}

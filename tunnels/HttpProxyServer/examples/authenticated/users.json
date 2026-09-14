@@ -1,0 +1,10 @@
+{
+  "users": [
+    {
+      "id": 1001,
+      "name": "Example account",
+      "password": "user:pass",
+      "enabled": true
+    }
+  ]
+}

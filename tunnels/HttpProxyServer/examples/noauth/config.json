@@ -1,0 +1,63 @@
+{
+  "name": "local-proxies",
+  "nodes": [
+    {
+      "name": "socks-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 1080,
+        "nodelay": true
+      },
+      "next": "socks-server"
+    },
+    {
+      "name": "socks-server",
+      "type": "Socks5Server",
+      "settings": {
+        "no-auth": true,
+        "connect": true,
+        "udp": false
+      },
+      "next": "socks-outbound"
+    },
+    {
+      "name": "socks-outbound",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "dest_context->address",
+        "port": "dest_context->port",
+        "nodelay": true,
+        "fastopen": false
+      }
+    },
+    {
+      "name": "http-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 8080,
+        "nodelay": true
+      },
+      "next": "http-proxy"
+    },
+    {
+      "name": "http-proxy",
+      "type": "HttpProxyServer",
+      "settings": {
+        "no-auth": true
+      },
+      "next": "http-outbound"
+    },
+    {
+      "name": "http-outbound",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "dest_context->address",
+        "port": "dest_context->port",
+        "nodelay": true,
+        "fastopen": false
+      }
+    }
+  ]
+}

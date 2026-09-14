@@ -248,6 +248,7 @@ option(INCLUDE_TROJAN_SERVER            "link TrojanServer staticly to the core"
 option(INCLUDE_VLESS_CLIENT             "link VlessClient staticly to the core"                                     TRUE)
 option(INCLUDE_VLESS_SERVER             "link VlessServer staticly to the core"                                     TRUE)
 option(INCLUDE_HTTP_SERVER              "link HttpServer staticly to the core"                                      TRUE)
+option(INCLUDE_HTTP_PROXY_SERVER        "link HttpProxyServer statically to the core"                                TRUE)
 option(INCLUDE_HTTP_CLIENT              "link HttpClient staticly to the core"                                      TRUE)
 option(INCLUDE_SOCKS5_CLIENT            "link Socks5Client staticly to the core"                                    TRUE)
 option(INCLUDE_PROTOBUF_SERVER          "link ProtoBufServer staticly to the core"                                  FALSE)
@@ -934,6 +935,12 @@ if(INCLUDE_ROUTER)
 endif()
 
 #http server
+if(INCLUDE_HTTP_PROXY_SERVER)
+  target_compile_definitions(${WATERWALL_APPLICATION_TARGET} PUBLIC INCLUDE_HTTP_PROXY_SERVER=1)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/HttpProxyServer)
+  target_link_libraries(${WATERWALL_APPLICATION_TARGET} HttpProxyServer)
+endif()
+
 if(INCLUDE_HTTP_SERVER)
   target_compile_definitions(${WATERWALL_APPLICATION_TARGET} PUBLIC INCLUDE_HTTP_SERVER=1)
   add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/HttpServer)

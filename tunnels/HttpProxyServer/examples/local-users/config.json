@@ -1,0 +1,42 @@
+{
+  "name": "local-http-users",
+  "nodes": [
+    {
+      "name": "http-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 8080,
+        "nodelay": true
+      },
+      "next": "http-proxy"
+    },
+    {
+      "name": "http-proxy",
+      "type": "HttpProxyServer",
+      "settings": {
+        "users": [
+          {
+            "username": "alice",
+            "password": "replace-alice-password"
+          },
+          {
+            "username": "bob",
+            "password": "replace-bob-password"
+          }
+        ]
+      },
+      "next": "http-outbound"
+    },
+    {
+      "name": "http-outbound",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "dest_context->address",
+        "port": "dest_context->port",
+        "nodelay": true,
+        "fastopen": false
+      }
+    }
+  ]
+}

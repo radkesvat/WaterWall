@@ -917,6 +917,10 @@ add_custom_target(check_waterwall_support_tests
   USES_TERMINAL
 )
 
+if(TARGET HttpProxyServer AND TARGET AuthenticationServer AND TARGET Router AND TARGET Socks5Server)
+  add_waterwall_probe_integration_test(waterwall.http_proxy_acceptance http_proxy 60)
+endif()
+
 add_custom_target(check_waterwall_tests
   COMMAND
     "${BASH_EXECUTABLE}"

@@ -1,0 +1,269 @@
+{
+  "name": "http-proxy",
+  "nodes": [
+    {
+      "name": "auth-client",
+      "type": "AuthenticationClient",
+      "settings": {
+        "name": "edge-1",
+        "secret": "proxy-test-secret",
+        "ping-interval-ms": 0,
+        "pull-interval-ms": 0,
+        "push-interval-ms": 0,
+        "reconnect-interval-ms": 1000,
+        "request-timeout-ms": 5000,
+        "max-pending-requests": 16
+      },
+      "next": "auth-db"
+    },
+    {
+      "name": "auth-db",
+      "type": "AuthenticationServer",
+      "settings": {
+        "db-path": "users.json",
+        "file-save-rate-ms": 60000,
+        "session-idle-timeout-ms": 600000,
+        "auth-clients": [
+          {
+            "name": "edge-1",
+            "secret": "proxy-test-secret",
+            "allow-user-pull": true,
+            "allow-stats-push": true,
+            "allow-user-write": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "http-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 29080,
+        "nodelay": true
+      },
+      "next": "http-proxy"
+    },
+    {
+      "name": "http-proxy",
+      "type": "HttpProxyServer",
+      "settings": {
+        "no-auth": true,
+        "header-timeout-ms": 500,
+        "idle-timeout-ms": 5000,
+        "connect-timeout-ms": 1000,
+        "max-pending-bytes": 65536
+      },
+      "next": "http-out"
+    },
+    {
+      "name": "http-out",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "dest_context->address",
+        "port": "dest_context->port",
+        "nodelay": true,
+        "fastopen": false
+      }
+    },
+    {
+      "name": "authenticated-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 29081,
+        "nodelay": true
+      },
+      "next": "authenticated-proxy"
+    },
+    {
+      "name": "authenticated-proxy",
+      "type": "HttpProxyServer",
+      "settings": {
+        "auth-client-node-name": "auth-client",
+        "header-timeout-ms": 5000,
+        "idle-timeout-ms": 5000,
+        "connect-timeout-ms": 1000,
+        "max-pending-bytes": 65536
+      },
+      "next": "authenticated-out"
+    },
+    {
+      "name": "authenticated-out",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "dest_context->address",
+        "port": "dest_context->port",
+        "nodelay": true,
+        "fastopen": false
+      }
+    },
+    {
+      "name": "route-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 29082,
+        "nodelay": true
+      },
+      "next": "route-proxy"
+    },
+    {
+      "name": "route-proxy",
+      "type": "HttpProxyServer",
+      "settings": {
+        "no-auth": true,
+        "header-timeout-ms": 500,
+        "idle-timeout-ms": 5000,
+        "connect-timeout-ms": 1000,
+        "max-pending-bytes": 65536
+      },
+      "next": "route-selector"
+    },
+    {
+      "name": "route-selector",
+      "type": "Router",
+      "settings": {
+        "resolve-domains": false,
+        "rules": [
+          {
+            "source-port": 29082,
+            "target": "route-out"
+          }
+        ]
+      },
+      "next": "route-failure"
+    },
+    {
+      "name": "route-out",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 29083,
+        "nodelay": true,
+        "fastopen": false
+      }
+    },
+    {
+      "name": "route-failure",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 9,
+        "nodelay": true,
+        "fastopen": false
+      }
+    },
+    {
+      "name": "socks-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 29084,
+        "nodelay": true
+      },
+      "next": "socks-server"
+    },
+    {
+      "name": "socks-server",
+      "type": "Socks5Server",
+      "settings": {
+        "no-auth": true,
+        "connect": true,
+        "udp": false
+      },
+      "next": "socks-out"
+    },
+    {
+      "name": "socks-out",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "dest_context->address",
+        "port": "dest_context->port",
+        "nodelay": true,
+        "fastopen": false
+      }
+    },
+    {
+      "name": "local-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 29085,
+        "nodelay": true
+      },
+      "next": "local-proxy"
+    },
+    {
+      "name": "local-proxy",
+      "type": "HttpProxyServer",
+      "settings": {
+        "users": [
+          {
+            "username": "alice",
+            "password": "one"
+          },
+          {
+            "username": "bob",
+            "password": "two"
+          },
+          {
+            "username": "alice",
+            "password": "other"
+          },
+          {
+            "username": "carol",
+            "password": "two"
+          },
+          {
+            "username": "caf\u00e9",
+            "password": "cl\u00e9:secret"
+          },
+          {
+            "username": "route",
+            "password": "route:pass"
+          }
+        ],
+        "max-pending-bytes": 65536,
+        "header-timeout-ms": 5000,
+        "idle-timeout-ms": 5000
+      },
+      "next": "local-router"
+    },
+    {
+      "name": "local-router",
+      "type": "Router",
+      "settings": {
+        "resolve-domains": false,
+        "rules": [
+          {
+            "username": "route",
+            "password": "route:pass",
+            "target": "local-route-out"
+          }
+        ]
+      },
+      "next": "local-out"
+    },
+    {
+      "name": "local-route-out",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 29083,
+        "nodelay": true,
+        "fastopen": false
+      }
+    },
+    {
+      "name": "local-out",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "dest_context->address",
+        "port": "dest_context->port",
+        "nodelay": true,
+        "fastopen": false
+      }
+    }
+  ]
+}

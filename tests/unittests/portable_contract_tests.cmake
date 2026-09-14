@@ -35,6 +35,16 @@ function(_waterwall_register_portable_contract test_name target_name labels)
   endif()
 endfunction()
 
+if(TARGET HttpProxyServer AND NOT TARGET http_proxy_server_parser_test)
+  foreach(kind IN ITEMS parser lifecycle)
+    add_executable(http_proxy_server_${kind}_test EXCLUDE_FROM_ALL
+      "${_waterwall_portable_unit_dir}/http_proxy_server_${kind}_test.c")
+    target_link_libraries(http_proxy_server_${kind}_test PRIVATE HttpProxyServer AuthenticationClient ww)
+    _waterwall_register_portable_contract(
+      waterwall.http_proxy_server_${kind}_unit http_proxy_server_${kind}_test "unit;http;proxy;portable")
+  endforeach()
+endif()
+
 add_executable(idle_table_contract_test EXCLUDE_FROM_ALL
   "${_waterwall_portable_unit_dir}/idle_table_contract_test.c")
 target_link_libraries(idle_table_contract_test PRIVATE ww)
