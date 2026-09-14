@@ -85,8 +85,9 @@ int main(void)
 
     master_pool_t             *large_master = masterpoolCreateWithCapacity(8);
     master_pool_t             *small_master = masterpoolCreateWithCapacity(8);
+    master_pool_t             *micro_master = masterpoolCreateWithCapacity(8);
     master_pool_t             *wio_master   = masterpoolCreateWithCapacity(8);
-    buffer_pool_t             *buffer_pool  = bufferpoolCreate(large_master, small_master, 8, 8192, 1024);
+    buffer_pool_t             *buffer_pool  = bufferpoolCreate(large_master, small_master, micro_master, 8, 8192, 1024);
     threadsafe_generic_pool_t *wio_pool =
         threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(wio_master, sizeof(wio_t), 8);
     threadsafe_generic_pool_t *wio_pools[] = {wio_pool};
@@ -172,8 +173,10 @@ int main(void)
     masterpoolMakeEmpty(wio_master);
     masterpoolMakeEmpty(large_master);
     masterpoolMakeEmpty(small_master);
+    masterpoolMakeEmpty(micro_master);
     masterpoolDestroy(wio_master);
     masterpoolDestroy(large_master);
     masterpoolDestroy(small_master);
+    masterpoolDestroy(micro_master);
     return 0;
 }

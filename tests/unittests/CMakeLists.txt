@@ -501,6 +501,10 @@ if(TARGET ww)
   add_waterwall_unit_test(waterwall.line_user_identifier_unit line_user_identifier_test "unit;net;line")
 
   add_executable(line_state_index_test line_state_index_test.c)
+  target_link_options(line_state_index_test PRIVATE
+    "-Wl,--wrap=memoryAllocateZero"
+    "-Wl,--wrap=splicecontextDestroy"
+  )
   target_link_libraries(line_state_index_test PRIVATE ww)
   add_dependencies(waterwall_unit_tests line_state_index_test)
 
@@ -548,6 +552,15 @@ if(TARGET ww)
   add_dependencies(waterwall_unit_tests buffer_pool_best_fit_test)
 
   add_waterwall_unit_test(waterwall.buffer_pool_best_fit_unit buffer_pool_best_fit_test "unit;bufio;buffer-pool")
+
+  add_executable(buffer_pool_micro_test buffer_pool_micro_test.c)
+  target_link_libraries(buffer_pool_micro_test PRIVATE ww)
+  if(LINUX)
+    target_compile_definitions(buffer_pool_micro_test PRIVATE WW_MICRO_POOL_FAILURE_TEST=1)
+    target_link_options(buffer_pool_micro_test PRIVATE "-Wl,--wrap=memoryAllocate")
+  endif()
+  add_dependencies(waterwall_unit_tests buffer_pool_micro_test)
+  add_waterwall_unit_test(waterwall.buffer_pool_micro_unit buffer_pool_micro_test "unit;bufio;buffer-pool;micro")
 
   add_executable(packet_tunnel_test packet_tunnel_test.c)
   target_link_libraries(packet_tunnel_test PRIVATE ww)

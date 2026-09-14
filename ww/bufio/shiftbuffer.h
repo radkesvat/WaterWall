@@ -26,6 +26,38 @@ struct sbuf_lifetime_s
     void (*release)(sbuf_lifetime_t *lifetime);
 };
 
+enum
+{
+    /**
+     * Represent pipe-backed payload with a small sbuf wrapper from a dedicated
+     * splice pool. Its actual buf storage is typically 64 bytes or less. The
+     * first four bytes at the original payload start (buf + l_pad) hold the
+     * pipe file descriptor; the preceding bytes remain reserved left padding.
+     * Length and capacity account for that logical payload, not the wrapper's
+     * physical storage, and must not be used as bounds for accessing buf bytes.
+     *
+     * Once every tunnel has unblocked the line's splice context, the splice
+     * path may supply these wrappers to ordinary Payload callbacks. Event-loop
+     * I/O and splice-aware adapters (initially TcpListener and TcpConnector)
+     * interpret the descriptor. Tunnels that forward buffers opaquely and use
+     * only size-based accounting can usually keep their Payload code unchanged.
+     * Participating tunnels trust the sizes without inspecting or modifying
+     * the pipe-backed body or its descriptor.
+     *
+     * Reserved left padding remains real, writable storage. A tunnel may use
+     * sbufShiftLeft() and write its prefix within the available, advertised
+     * headroom; the prefix precedes the pipe-backed body and the descriptor
+     * stays at its original offset. This permission does not extend to the
+     * descriptor or to the body represented by it.
+     *
+     * Accessors such as sbufGetMutablePtr() deliberately perform no splice-flag
+     * checks or assertions. A returned pointer is not evidence that the logical
+     * body is resident in memory. Violating this contract can corrupt the pipe
+     * descriptor, break I/O, or crash the process; a crash is not guaranteed.
+     */
+    kSbufFlagSplice = 1U << 0
+};
+
 struct sbuf_s
 {
     uint32_t curpos;
@@ -34,9 +66,7 @@ struct sbuf_s
     uint16_t l_pad; // constant when created, indicates how much bytes are available for switching left at the beginning
                     // something like leave-room in lwip pbuf
 
-    bool is_temporary; // if true, this buffer will not be freed or reused in pools (like stack buffer)
-
-    uint8_t _padding1; // padding to align to 8 bytes
+    uint16_t flags;
 
     sbuf_lifetime_t *lifetime;
 
@@ -53,7 +83,7 @@ static_assert(offsetof(sbuf_t, buf) == 32, "sbuf_s buf array should start at off
 
 enum
 {
-    // Alignment sbufCreateWithPadding() requests so AVX copies can use aligned
+    // Alignment sbuf allocation requests so AVX copies can use aligned
     // loads and stores. memoryAllocateAligned() over-allocates by exactly this
     // much to place the aligned pointer and its back-pointer, so it is part of
     // the real allocation size and must be accounted for in the limit checks.
@@ -197,7 +227,7 @@ static inline void sbufByteCopy(void *restrict dst, const void *restrict src, co
 uint16_t sbufAlignLeftPadding(uint16_t pad_left);
 
 /**
- * @brief Destroy a non-temporary buffer and free its allocation.
+ * @brief Destroy a buffer and free its allocation.
  *
  * @param b Buffer to destroy.
  */
@@ -218,8 +248,8 @@ void             sbufReleaseLifetime(sbuf_t *b);
  */
 static inline void sbufReset(sbuf_t *b)
 {
-    assert(! b->is_temporary);
     sbufReleaseLifetime(b);
+    b->flags  = 0;
     b->len    = 0;
     b->curpos = b->l_pad;
 }
@@ -240,6 +270,14 @@ sbuf_t *sbufCreateWithPadding(uint32_t minimum_capacity, uint16_t pad_left);
  * @return sbuf_t* Newly allocated buffer.
  */
 sbuf_t *sbufCreate(uint32_t minimum_capacity);
+
+/**
+ * @brief Create an empty buffer with exactly 32 bytes of payload capacity plus left padding.
+ *
+ * @param pad_left Requested left padding in bytes, rounded up to a 32-byte boundary.
+ * @return sbuf_t* Newly allocated buffer with zero flags and length.
+ */
+sbuf_t *sbufCreateMicro(uint16_t pad_left);
 
 /**
  * @brief Append one buffer's payload to another.
@@ -291,7 +329,8 @@ sbuf_t *sbufDuplicate(sbuf_t *b);
 bool sbufDuplicateTo(const sbuf_t *b, sbuf_t *dest);
 
 /**
- * Gets total capacity of the buffer. (Total capacity is a constant value that will not change)
+ * Gets the buffer's capacity metadata. For ordinary buffers, this is a constant
+ * allocation capacity; kSbufFlagSplice instead gives it a logical meaning.
  */
 static inline uint32_t sbufGetTotalCapacity(const sbuf_t *const b)
 {
@@ -328,6 +367,8 @@ static inline uint32_t sbufGetLeftCapacityNoPadding(const sbuf_t *const b)
  * Important: this is not the spare growth available beyond the current payload length.
  * If you want to append `extra` bytes without moving `curpos`, compare against
  * `sbufGetLength(b) + extra` (or subtract the current length first).
+ * These writable-storage guarantees apply to ordinary buffers. With
+ * kSbufFlagSplice, the result is logical and does not describe physical storage.
  */
 static inline uint32_t sbufGetMaximumWriteableSize(const sbuf_t *const b)
 {
@@ -397,7 +438,9 @@ static inline const void *sbufGetRawPtr(const sbuf_t *const b)
 }
 
 /**
- * Gets mutable pointer to buffer data.
+ * Gets mutable pointer to buffer data without splice-specific validation.
+ * With kSbufFlagSplice, only a prefix exposed within reserved left padding may
+ * be written by a forwarding tunnel; see the flag's representation contract.
  */
 static inline unsigned char *sbufGetMutablePtr(const sbuf_t *const b)
 {
@@ -592,28 +635,6 @@ static inline void sbufWriteUI16(sbuf_t *const b, const uint16_t data)
 {
     *(uint16_t *) sbufGetMutablePtr(b) = data;
 }
-
-/**
- * Creates a temporary buffer from a pbuf, don't call sbufDestroy on this buffer.
- */
-// static sbuf_t *sbufCreateViewFromPbuf(struct pbuf *p)
-// {
-//     if ((p->type_internal & PBUF_TYPE_FLAG_STRUCT_DATA_CONTIGUOUS) != PBUF_TYPE_FLAG_STRUCT_DATA_CONTIGUOUS)
-//     {
-//         return NULL;
-//     }
-//     // sbuf_t *temp_buf       = (sbuf_t *) (((uint8_t *) p->payload) - SIZEOF_STRUCT_SBUF);
-//     sbuf_t *temp_buf       = (sbuf_t *) (&p->custom_data[0]);
-//     temp_buf->is_temporary = true;
-//     temp_buf->l_pad        = 0;
-//     temp_buf->curpos       = ((uintptr_t) p->payload) - ((uintptr_t) temp_buf->buf);
-//     temp_buf->len          = p->len;
-//     temp_buf->capacity     = p->len;
-//     if(p->len > 256){
-//        printError("123132");
-//     }
-//     return temp_buf;
-// }
 
 #ifdef DEBUG
 

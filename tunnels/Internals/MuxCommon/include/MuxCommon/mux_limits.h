@@ -27,7 +27,6 @@ typedef struct mux_admission_defaults_s
  */
 static inline size_t muxQueuedSbufCharge(const sbuf_t *buf)
 {
-    assert(! buf->is_temporary);
     return sizeof(sbuf_t) + (size_t) sbufGetTotalCapacity(buf) + (size_t) kSbufAllocationAlignment;
 }
 

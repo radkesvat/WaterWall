@@ -28,15 +28,16 @@ void mxbSetupEnvironment(mxb_fixture_t *fixture, uint32_t combined_lstate_size)
 
     env->large_master = masterpoolCreateWithCapacity(2048);
     env->small_master = masterpoolCreateWithCapacity(64);
+    env->micro_master = masterpoolCreateWithCapacity(64);
     env->wios_master  = masterpoolCreateWithCapacity(32);
     env->line_master  = masterpoolCreateWithCapacity(32);
     mxbRequire(env->large_master != NULL && env->small_master != NULL && env->wios_master != NULL &&
                    env->line_master != NULL,
                "failed to create Mux/TLS test master pools");
 
-    env->pool = bufferpoolCreate(env->large_master, env->small_master, 32, 512 * 1024, 2048);
+    env->pool = bufferpoolCreate(env->large_master, env->small_master, env->micro_master, 32, 512 * 1024, 2048);
     mxbRequire(env->pool != NULL, "failed to create Mux/TLS test buffer pool");
-    bufferpoolUpdateAllocationPaddings(env->pool, 64, 64);
+    bufferpoolUpdateAllocationPaddings(env->pool, 64, 64, 64);
 
     env->wios_pool = threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(env->wios_master, sizeof(wio_t), 16);
     mxbRequire(env->wios_pool != NULL, "failed to create Mux/TLS test wio pool");
@@ -81,9 +82,11 @@ void mxbTeardownEnvironment(mxb_fixture_t *fixture)
     bufferpoolDestroy(env->pool);
     masterpoolMakeEmpty(env->large_master);
     masterpoolMakeEmpty(env->small_master);
+    masterpoolMakeEmpty(env->micro_master);
     masterpoolMakeEmpty(env->wios_master);
     masterpoolDestroy(env->large_master);
     masterpoolDestroy(env->small_master);
+    masterpoolDestroy(env->micro_master);
     masterpoolDestroy(env->wios_master);
     masterpoolDestroy(env->line_master);
 

@@ -24,6 +24,8 @@ typedef struct wtimeout_s wtimeout_t;
 typedef struct wperiod_s  wperiod_t;
 typedef struct wio_s      wio_t;
 
+typedef struct splice_context_s splice_context_t;
+
 typedef void (*wevent_cb)(wevent_t *ev);
 typedef void (*widle_cb)(widle_t *idle);
 typedef void (*wtimer_cb)(wtimer_t *timer);
@@ -345,6 +347,11 @@ WW_EXPORT void            *wioGetContext(wio_t *io);
 WW_EXPORT bool             wioIsOpened(wio_t *io);
 WW_EXPORT bool             wioIsConnected(wio_t *io);
 WW_EXPORT bool             wioIsClosed(wio_t *io);
+
+// Borrow a line's context on the owning worker; NULL detaches it. Attachment does not activate splicing.
+// Detach or close the WIO before releasing the line. Close clears the pointer before callbacks or deferred drain.
+WW_EXPORT void              wioSetSpliceContext(wio_t *io, splice_context_t *context);
+WW_EXPORT splice_context_t *wioGetSpliceContext(const wio_t *io);
 
 // iobuf
 // #include "hbuf.h"

@@ -12,14 +12,14 @@ enum
     kCoalescingMaximumInputSize = 4096,
     kTestLargeBufferSize        = 32768,
     kTestSmallBufferSize        = 4096,
-    kTestPoolWidth              = 16,
-    kTemporaryBufferCapacity    = 64
+    kTestPoolWidth              = 16
 };
 
 typedef struct pool_fixture_s
 {
     master_pool_t *large_master;
     master_pool_t *small_master;
+    master_pool_t *micro_master;
     buffer_pool_t *pool;
 } pool_fixture_t;
 
@@ -67,13 +67,15 @@ static pool_fixture_t poolFixtureCreate(uint32_t large_size, uint32_t small_size
     pool_fixture_t fixture = {
         .large_master = masterpoolCreateWithCapacity(kTestPoolWidth * 2U),
         .small_master = masterpoolCreateWithCapacity(kTestPoolWidth * 2U),
+        .micro_master = masterpoolCreateWithCapacity(kTestPoolWidth * 2U),
         .pool         = NULL,
     };
 
     require(fixture.large_master != NULL && fixture.small_master != NULL, "failed to create BufferStream master pools");
-    fixture.pool = bufferpoolCreate(fixture.large_master, fixture.small_master, kTestPoolWidth, large_size, small_size);
+    fixture.pool = bufferpoolCreate(
+        fixture.large_master, fixture.small_master, fixture.micro_master, kTestPoolWidth, large_size, small_size);
     require(fixture.pool != NULL, "failed to create BufferStream test pool");
-    bufferpoolUpdateAllocationPaddings(fixture.pool, large_padding, small_padding);
+    bufferpoolUpdateAllocationPaddings(fixture.pool, large_padding, small_padding, small_padding);
     return fixture;
 }
 
@@ -82,8 +84,10 @@ static void poolFixtureDestroy(pool_fixture_t *fixture)
     bufferpoolDestroy(fixture->pool);
     masterpoolMakeEmpty(fixture->large_master);
     masterpoolMakeEmpty(fixture->small_master);
+    masterpoolMakeEmpty(fixture->micro_master);
     masterpoolDestroy(fixture->large_master);
     masterpoolDestroy(fixture->small_master);
+    masterpoolDestroy(fixture->micro_master);
     memoryZero(fixture, sizeof(*fixture));
 }
 
@@ -189,6 +193,21 @@ static void requireSentinelDestinationUnchanged(const sbuf_t *dest, const char *
     require(dest->curpos == 0, message);
     require(sbufGetLength(dest) == sizeof(sentinel), message);
     require(memoryEqual(sbufGetRawPtr(dest), sentinel, sizeof(sentinel)), message);
+}
+
+static void testFlagsInitializationAndReuse(buffer_pool_t *pool)
+{
+    sbuf_t *buffer = sbufCreate(64);
+    require(buffer->flags == 0, "new buffer has stale flags");
+    sbufDestroy(buffer);
+
+    buffer = bufferpoolGetSmallBuffer(pool);
+    require(buffer->flags == 0, "pooled buffer has stale flags");
+    buffer->flags |= kSbufFlagSplice;
+    bufferpoolReuseBuffer(pool, buffer);
+    buffer = bufferpoolGetSmallBuffer(pool);
+    require(buffer->flags == 0, "pool reuse retained the previous buffer flags");
+    bufferpoolReuseBuffer(pool, buffer);
 }
 
 static void testDuplicateToCopiesCompleteSource(void)
@@ -611,7 +630,7 @@ static void testCoalescingImmediatePoolSettlement(void)
 
     uint32_t large_baseline = 0;
     uint32_t small_baseline = 0;
-    bufferpoolCachedTierCountsForTest(fixture.pool, &large_baseline, &small_baseline);
+    bufferpoolCachedTierCountsForTest(fixture.pool, &large_baseline, &small_baseline, NULL);
     require(small_baseline >= 2, "small-tier cache did not warm for settlement test");
 
     buffer_stream_t stream      = bufferstreamCreate(fixture.pool, 0);
@@ -619,21 +638,21 @@ static void testCoalescingImmediatePoolSettlement(void)
     sbuf_t         *source      = makePooledBuffer(fixture.pool, false, 3, 0, 0x20);
     uint32_t        large_count = 0;
     uint32_t        small_count = 0;
-    bufferpoolCachedTierCountsForTest(fixture.pool, &large_count, &small_count);
+    bufferpoolCachedTierCountsForTest(fixture.pool, &large_count, &small_count, NULL);
     require(small_count + 2U == small_baseline, "settlement fixture did not check out exactly two small buffers");
 
     bufferstreamPush(&stream, tail);
     bufferstreamPush(&stream, source);
-    bufferpoolCachedTierCountsForTest(fixture.pool, &large_count, &small_count);
+    bufferpoolCachedTierCountsForTest(fixture.pool, &large_count, &small_count, NULL);
     require(streamQueueCount(&stream) == 1, "eligible settlement source did not coalesce");
     require(small_count + 1U == small_baseline, "eligible source was not returned immediately and exactly once");
 
     sbuf_t *read = bufferstreamIdealRead(&stream);
     require(read == tail, "settlement test lost the retained tail");
-    bufferpoolCachedTierCountsForTest(fixture.pool, &large_count, &small_count);
+    bufferpoolCachedTierCountsForTest(fixture.pool, &large_count, &small_count, NULL);
     require(small_count + 1U == small_baseline, "reading the tail recycled it before ownership was returned");
     bufferpoolReuseBuffer(fixture.pool, read);
-    bufferpoolCachedTierCountsForTest(fixture.pool, &large_count, &small_count);
+    bufferpoolCachedTierCountsForTest(fixture.pool, &large_count, &small_count, NULL);
     require(small_count == small_baseline, "retained tail did not settle exactly once");
     bufferstreamDestroy(&stream);
     poolFixtureDestroy(&fixture);
@@ -707,76 +726,12 @@ static void testCoalescingLifetimeExclusions(void)
     poolFixtureDestroy(&fixture);
 }
 
-static sbuf_t *createTemporaryBuffer(uint32_t length, uint8_t seed)
+static void testCoalescingZeroExclusion(void)
 {
-    require(length <= kTemporaryBufferCapacity, "temporary test payload exceeds its allocation");
-    sbuf_t *buffer = memoryAllocateAligned(sizeof(sbuf_t) + kTemporaryBufferCapacity, kSbufAllocationAlignment);
-    require(buffer != NULL, "failed to allocate temporary test buffer storage");
-    *buffer = (sbuf_t) {
-        .curpos       = 0,
-        .len          = length,
-        .capacity     = kTemporaryBufferCapacity,
-        .l_pad        = 0,
-        .is_temporary = true,
-        .lifetime     = NULL,
-    };
-    fillPattern(buffer, seed);
-    return buffer;
-}
-
-static void testCoalescingTemporaryAndZeroExclusions(void)
-{
-    pool_fixture_t fixture = poolFixtureCreate(kTestLargeBufferSize, kTestSmallBufferSize, 64, 64);
-
-    buffer_stream_t stream = bufferstreamCreate(fixture.pool, 0);
-    sbuf_t         *tail   = makePooledBuffer(fixture.pool, false, 4, 0, 0x10);
-    sbuf_t         *source = createTemporaryBuffer(3, 0x20);
-    bufferstreamPush(&stream, tail);
-    bufferstreamPush(&stream, source);
-    require(streamQueueCount(&stream) == 2, "temporary source was coalesced or recycled immediately");
-    require(bufferstreamGetBufLen(&stream) == 7 && *bs_doublequeue_t_front(&stream.q) == tail &&
-                *bs_doublequeue_t_back(&stream.q) == source,
-            "temporary source changed ordinary queue size, order, or identity");
-    require(! tail->is_temporary && source->is_temporary && sbufGetLength(tail) == 4 && sbufGetLength(source) == 3,
-            "temporary source exclusion changed flags or lengths");
-    requirePatternRange(tail, 0, 4, 0x10, "temporary source exclusion changed tail data");
-    requirePatternRange(source, 0, 3, 0x20, "temporary source exclusion changed source data");
-    sbuf_t *read = bufferstreamIdealRead(&stream);
-    require(read == tail, "temporary source exclusion changed FIFO order");
-    bufferpoolReuseBuffer(fixture.pool, read);
-    read = bufferstreamIdealRead(&stream);
-    require(read == source && read->is_temporary, "temporary source identity or ownership flag changed before read");
-    require(bufferstreamIsEmpty(&stream) && streamQueueCount(&stream) == 0,
-            "temporary source exclusion did not drain cleanly");
-    memoryFreeAligned(source);
-    bufferstreamDestroy(&stream);
-
-    stream = bufferstreamCreate(fixture.pool, 0);
-    tail   = createTemporaryBuffer(4, 0x30);
-    source = makePooledBuffer(fixture.pool, false, 3, 0, 0x40);
-    bufferstreamPush(&stream, tail);
-    bufferstreamPush(&stream, source);
-    require(streamQueueCount(&stream) == 2, "temporary tail accepted coalesced source bytes");
-    require(bufferstreamGetBufLen(&stream) == 7 && *bs_doublequeue_t_front(&stream.q) == tail &&
-                *bs_doublequeue_t_back(&stream.q) == source,
-            "temporary tail changed ordinary queue size, order, or identity");
-    require(tail->is_temporary && ! source->is_temporary && sbufGetLength(tail) == 4 && sbufGetLength(source) == 3,
-            "temporary tail exclusion changed flags or lengths");
-    requirePatternRange(tail, 0, 4, 0x30, "temporary tail exclusion changed tail data");
-    requirePatternRange(source, 0, 3, 0x40, "temporary tail exclusion changed source data");
-    read = bufferstreamIdealRead(&stream);
-    require(read == tail && read->is_temporary, "temporary tail identity or ownership flag changed before read");
-    read = bufferstreamIdealRead(&stream);
-    require(read == source, "temporary tail exclusion changed following source FIFO order");
-    bufferpoolReuseBuffer(fixture.pool, read);
-    require(bufferstreamIsEmpty(&stream) && streamQueueCount(&stream) == 0,
-            "temporary tail exclusion did not drain cleanly");
-    memoryFreeAligned(tail);
-    bufferstreamDestroy(&stream);
-
-    stream        = bufferstreamCreate(fixture.pool, 0);
-    tail          = makePooledBuffer(fixture.pool, false, 4, 0, 0x50);
-    sbuf_t *empty = makePooledBuffer(fixture.pool, false, 0, 0, 0);
+    pool_fixture_t  fixture = poolFixtureCreate(kTestLargeBufferSize, kTestSmallBufferSize, 64, 64);
+    buffer_stream_t stream  = bufferstreamCreate(fixture.pool, 0);
+    sbuf_t         *tail    = makePooledBuffer(fixture.pool, false, 4, 0, 0x50);
+    sbuf_t         *empty   = makePooledBuffer(fixture.pool, false, 0, 0, 0);
     bufferstreamPush(&stream, tail);
     bufferstreamPush(&stream, empty);
     require(streamQueueCount(&stream) == 2, "zero-length coalescing input was merged or dropped");
@@ -919,7 +874,7 @@ static sbuf_t *mapSharedTestBuffer(uint32_t payload_capacity, uint16_t left_padd
     buffer->len                = 1;
     buffer->capacity           = capacity;
     buffer->l_pad              = left_padding;
-    buffer->is_temporary       = false;
+    buffer->flags              = 0;
     buffer->lifetime           = NULL;
     *sbufGetMutablePtr(buffer) = value;
     return buffer;
@@ -1044,9 +999,11 @@ int main(void)
 {
     master_pool_t *large_master = masterpoolCreateWithCapacity(16);
     master_pool_t *small_master = masterpoolCreateWithCapacity(16);
-    buffer_pool_t *pool         = bufferpoolCreate(large_master, small_master, 8, 256, 64);
-    bufferpoolUpdateAllocationPaddings(pool, 64, 64);
+    master_pool_t *micro_master = masterpoolCreateWithCapacity(16);
+    buffer_pool_t *pool         = bufferpoolCreate(large_master, small_master, micro_master, 8, 256, 64);
+    bufferpoolUpdateAllocationPaddings(pool, 64, 64, 64);
 
+    testFlagsInitializationAndReuse(pool);
     testDuplicateToCopiesCompleteSource();
     testDuplicateToRejectsCursorPastCapacity();
     testDuplicateToRejectsIncompletePayload();
@@ -1063,15 +1020,17 @@ int main(void)
     testCoalescingReadApisAndViews();
     testCoalescingImmediatePoolSettlement();
     testCoalescingLifetimeExclusions();
-    testCoalescingTemporaryAndZeroExclusions();
+    testCoalescingZeroExclusion();
     testPaddingAwareExactReadAllocation();
     testCoalescingOverflowAbortsBeforeSuccess();
 
     bufferpoolDestroy(pool);
     masterpoolMakeEmpty(large_master);
     masterpoolMakeEmpty(small_master);
+    masterpoolMakeEmpty(micro_master);
     masterpoolDestroy(large_master);
     masterpoolDestroy(small_master);
+    masterpoolDestroy(micro_master);
 
     puts("bufio contract tests passed");
     return 0;

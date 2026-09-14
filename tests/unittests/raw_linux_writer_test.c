@@ -23,6 +23,7 @@ typedef struct test_env_s
 {
     master_pool_t *large_master;
     master_pool_t *small_master;
+    master_pool_t *micro_master;
     buffer_pool_t *worker_buffer_pool;
     buffer_pool_t *buffer_pools[1];
 } test_env_t;
@@ -247,7 +248,8 @@ static void envSetup(test_env_t *env)
 {
     env->large_master       = masterpoolCreateWithCapacity(16);
     env->small_master       = masterpoolCreateWithCapacity(16);
-    env->worker_buffer_pool = bufferpoolCreate(env->large_master, env->small_master, 16, 8192, 4096);
+    env->micro_master       = masterpoolCreateWithCapacity(16);
+    env->worker_buffer_pool = bufferpoolCreate(env->large_master, env->small_master, env->micro_master, 16, 8192, 4096);
     env->buffer_pools[0]    = env->worker_buffer_pool;
 
     GSTATE.flag_initialized = true;
@@ -268,8 +270,10 @@ static void envTeardown(test_env_t *env)
     bufferpoolDestroy(env->worker_buffer_pool);
     masterpoolMakeEmpty(env->large_master);
     masterpoolMakeEmpty(env->small_master);
+    masterpoolMakeEmpty(env->micro_master);
     masterpoolDestroy(env->large_master);
     masterpoolDestroy(env->small_master);
+    masterpoolDestroy(env->micro_master);
 }
 
 static WTHREAD_ROUTINE(testWriterRoutine)
@@ -364,7 +368,7 @@ static void testRawBringDownQuiescesConcurrentWriters(test_env_t *env)
         .buffer_capacity = ARRAY_SIZE(consumed_buffers),
     };
     rdev.name               = stringDuplicate("raw-writer-test");
-    rdev.writer_buffer_pool = bufferpoolCreate(env->large_master, env->small_master, 16, 8192, 4096);
+    rdev.writer_buffer_pool = bufferpoolCreate(env->large_master, env->small_master, env->micro_master, 16, 8192, 4096);
     rdev.routine_writer     = testWriterRoutine;
     rdev.userdata           = &consumer;
     atomic_init(&rdev.lifecycle, kRawLifecycleDown);
@@ -445,7 +449,7 @@ static void testRawJoinFailureRetainsOwnership(test_env_t *env)
         .buffer_capacity = ARRAY_SIZE(consumed_buffers),
     };
     rdev.name               = stringDuplicate("raw-join-retry-test");
-    rdev.writer_buffer_pool = bufferpoolCreate(env->large_master, env->small_master, 16, 8192, 4096);
+    rdev.writer_buffer_pool = bufferpoolCreate(env->large_master, env->small_master, env->micro_master, 16, 8192, 4096);
     rdev.routine_writer     = testWriterRoutine;
     rdev.userdata           = &consumer;
     atomic_init(&rdev.lifecycle, kRawLifecycleDown);
@@ -479,7 +483,7 @@ static void testRawRestartTransfersWriterPoolOwnership(test_env_t *env)
     memoryZero(&rdev, sizeof(rdev));
 
     rdev.name               = stringDuplicate("raw-pool-restart-test");
-    rdev.writer_buffer_pool = bufferpoolCreate(env->large_master, env->small_master, 16, 8192, 4096);
+    rdev.writer_buffer_pool = bufferpoolCreate(env->large_master, env->small_master, env->micro_master, 16, 8192, 4096);
     rdev.routine_writer     = recyclingWriterRoutine;
     rdev.userdata           = &probe;
     atomic_init(&rdev.lifecycle, kRawLifecycleDown);
@@ -517,7 +521,8 @@ static void productionWriterDeviceInit(raw_device_t *rdev, test_env_t *env, cons
     rdev->name               = stringDuplicate(name);
     rdev->socket             = kInjectedRawSocketFd;
     rdev->routine_writer     = rawLinuxWriteRoutine;
-    rdev->writer_buffer_pool = bufferpoolCreate(env->large_master, env->small_master, 16, 8192, 4096);
+    rdev->writer_buffer_pool =
+        bufferpoolCreate(env->large_master, env->small_master, env->micro_master, 16, 8192, 4096);
     atomic_init(&rdev->lifecycle, kRawLifecycleDown);
     deviceWriterChannelInit(&rdev->writer_channel);
 }

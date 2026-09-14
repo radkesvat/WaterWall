@@ -151,8 +151,10 @@ static void fixtureSetup(flow_fixture_t *fixture, bool server)
     tosWorkerEnvSetup(&fixture->env, kFlowWorkers, 8192, kMaxAllowedPacketLength);
     for (wid_t wid = 0; wid < kFlowWorkers; ++wid)
     {
-        bufferpoolUpdateAllocationPaddings(
-            fixture->env.pools[wid], kPingWireEncapsulationOverhead, kPingWireEncapsulationOverhead);
+        bufferpoolUpdateAllocationPaddings(fixture->env.pools[wid],
+                                           kPingWireEncapsulationOverhead,
+                                           kPingWireEncapsulationOverhead,
+                                           kPingWireEncapsulationOverhead);
     }
 
     const char *json  = server ? "{\"local-ipv4\":\"198.51.100.10\",\"peer-ipv4\":\"192.0.2.10\","

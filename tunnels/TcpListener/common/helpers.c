@@ -115,6 +115,7 @@ void tcplistenerOnInboundConnected(wevent_t *ev)
     l->routing_context.local_listener_port = data->real_localport;
 
     weventSetUserData(io, ls);
+    wioSetSpliceContext(io, l->splice_context);
 
     if (loggerCheckWriteLevel(getNetworkLogger(), LOG_LEVEL_DEBUG))
     {

@@ -3,6 +3,7 @@
 
 static master_pool_t *g_large_master;
 static master_pool_t *g_small_master;
+static master_pool_t *g_micro_master;
 static buffer_pool_t *g_pool;
 
 static void require(bool condition, const char *message)
@@ -169,9 +170,10 @@ int main(void)
 {
     g_large_master = masterpoolCreateWithCapacity(16);
     g_small_master = masterpoolCreateWithCapacity(16);
+    g_micro_master = masterpoolCreateWithCapacity(16);
     require(g_large_master != NULL && g_small_master != NULL, "failed to create master pools");
 
-    g_pool = bufferpoolCreate(g_large_master, g_small_master, 8, 512, 256);
+    g_pool = bufferpoolCreate(g_large_master, g_small_master, g_micro_master, 8, 512, 256);
     require(g_pool != NULL, "failed to create the buffer pool");
 
     testNonFragmentBypassesTableAndZerosResult();
@@ -181,8 +183,10 @@ int main(void)
     bufferpoolDestroy(g_pool);
     masterpoolMakeEmpty(g_large_master);
     masterpoolMakeEmpty(g_small_master);
+    masterpoolMakeEmpty(g_micro_master);
     masterpoolDestroy(g_large_master);
     masterpoolDestroy(g_small_master);
+    masterpoolDestroy(g_micro_master);
     puts("Device fragment affinity tests passed");
     return 0;
 }

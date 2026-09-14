@@ -127,6 +127,10 @@ static void testAccessorsOnOwningWorker(void)
     require(tryGetCurrentEventWorker() == getWorker(0), "tryGetCurrentEventWorker() did not return worker 0");
     require(getCurrentEventWorkerWID() == 0, "getCurrentEventWorkerWID() did not return 0");
     require(getCurrentEventWorkerBufferPool() == getWorkerBufferPool(0), "current buffer pool is not worker 0's");
+    sbuf_t *micro = bufferpoolGetMicroBuffer(getCurrentEventWorkerBufferPool());
+    require(sbufGetTotalCapacityNoPadding(micro) == MICRO_BUFFER_SIZE,
+            "current worker micro buffer has wrong capacity");
+    reuseBuffer(micro);
     require(getCurrentEventWorkerContextPool() == getWorkerContextPool(0), "current context pool is not worker 0's");
     require(getCurrentEventWorkerLoop() == getWorkerLoop(0), "current loop is not worker 0's");
     require(getLoopEventWorkerWID(getWorkerLoop(0)) == 0, "getLoopEventWorkerWID() did not resolve worker 0");

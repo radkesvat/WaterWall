@@ -137,6 +137,7 @@ void wioReady(wio_t *io)
     io->recvfrom = io->sendto = 0;
     io->close                 = 0;
     io->release_no_close      = 0;
+    io->splice_context        = NULL;
     // public:
     io->id      = wioSetNextID();
     io->io_type = WIO_TYPE_UNKNOWN;
@@ -208,6 +209,7 @@ void wioReady(wio_t *io)
 
 void wioDone(wio_t *io)
 {
+    io->splice_context = NULL;
     if (! io->ready)
         return;
     io->ready = 0;
@@ -319,6 +321,16 @@ bool wioIsClosed(wio_t *io)
     if (io == NULL)
         return true;
     return io->ready == 0 && io->closed == 1;
+}
+
+void wioSetSpliceContext(wio_t *io, splice_context_t *context)
+{
+    io->splice_context = context;
+}
+
+splice_context_t *wioGetSpliceContext(const wio_t *io)
+{
+    return io->splice_context;
 }
 
 uint32_t wioGetID(wio_t *io)

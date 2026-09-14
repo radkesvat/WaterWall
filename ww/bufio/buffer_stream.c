@@ -114,8 +114,7 @@ void bufferstreamPush(buffer_stream_t *self, sbuf_t *buf)
     {
         sbuf_t *tail = *bs_doublequeue_t_back(&self->q);
 
-        if (tail != buf && ! tail->is_temporary && ! buf->is_temporary && sbufGetLifetime(tail) == NULL &&
-            sbufGetLifetime(buf) == NULL)
+        if (tail != buf && sbufGetLifetime(tail) == NULL && sbufGetLifetime(buf) == NULL)
         {
             const uint32_t tail_len              = sbufGetLength(tail);
             const uint32_t tail_maximum_writable = sbufGetMaximumWriteableSize(tail);

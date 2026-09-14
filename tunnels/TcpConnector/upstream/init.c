@@ -256,6 +256,7 @@ static bool tcpconnectorBeginConnect(tunnel_t *t, line_t *l, tcpconnector_lstate
     wioSetPeerAddr(io, (struct sockaddr *) &(addr), (int) sockaddrLen(&(addr)));
     ls->io = io;
     weventSetUserData(io, ls);
+    wioSetSpliceContext(io, l->splice_context);
 
     ls->idle_handle = localidletableCreateItem(tcpconnectorGetLineIdleTable(ts, l),
                                                tcpconnectorIdleKey(io),

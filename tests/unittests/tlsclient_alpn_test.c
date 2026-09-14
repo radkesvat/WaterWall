@@ -25,6 +25,7 @@ typedef struct tlsclient_test_worker_env_s
     wid_t           saved_wid;
     master_pool_t  *large_master;
     master_pool_t  *small_master;
+    master_pool_t  *micro_master;
     buffer_pool_t  *pool;
     buffer_pool_t  *buffer_pools[1];
 } tlsclient_test_worker_env_t;
@@ -74,11 +75,14 @@ static void workerEnvSetup(tlsclient_test_worker_env_t *env)
 
     env->large_master = masterpoolCreateWithCapacity(8);
     env->small_master = masterpoolCreateWithCapacity(8);
+    env->micro_master = masterpoolCreateWithCapacity(8);
     require(env->large_master != NULL && env->small_master != NULL, "failed to create ClientHello test master pools");
 
-    env->pool = bufferpoolCreate(env->large_master, env->small_master, 4, kTestLargeBufferSize, kTestSmallBufferSize);
+    env->pool = bufferpoolCreate(
+        env->large_master, env->small_master, env->micro_master, 4, kTestLargeBufferSize, kTestSmallBufferSize);
     require(env->pool != NULL, "failed to create ClientHello test buffer pool");
-    bufferpoolUpdateAllocationPaddings(env->pool, kTestBufferLeftPadding, kTestBufferLeftPadding);
+    bufferpoolUpdateAllocationPaddings(
+        env->pool, kTestBufferLeftPadding, kTestBufferLeftPadding, kTestBufferLeftPadding);
 
     env->buffer_pools[0]         = env->pool;
     GSTATE.shortcut_buffer_pools = env->buffer_pools;
@@ -97,8 +101,10 @@ static void workerEnvTeardown(tlsclient_test_worker_env_t *env)
     bufferpoolDestroy(env->pool);
     masterpoolMakeEmpty(env->large_master);
     masterpoolMakeEmpty(env->small_master);
+    masterpoolMakeEmpty(env->micro_master);
     masterpoolDestroy(env->large_master);
     masterpoolDestroy(env->small_master);
+    masterpoolDestroy(env->micro_master);
 }
 
 static void requireWire(const tlsclient_tstate_t *ts, const uint8_t *expected, size_t expected_len, const char *message)

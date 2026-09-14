@@ -63,8 +63,8 @@ void bufferstreamDestroy(buffer_stream_t *self);
  * allocation identity or one retained chunk per push. Payload contents and FIFO
  * byte order are preserved; coalescing is permitted, not guaranteed.
  * The current policy copies only positive inputs of at most 4096 bytes that fit
- * wholly in the tail's actual spare capacity, excluding temporary buffers and
- * lifetime metadata on either allocation. It never grows or compacts the tail,
+ * wholly in the tail's actual spare capacity, excluding lifetime metadata on
+ * either allocation. It never grows or compacts the tail,
  * searches older entries, partially merges, or consumes left padding. The tail
  * can exceed 4096 bytes. Empty inputs are enqueued; an eligible empty tail can
  * absorb later input. Coalescing does not replace byte limits or backpressure.

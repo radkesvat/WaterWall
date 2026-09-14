@@ -13,6 +13,7 @@ typedef struct test_env_s
 {
     master_pool_t         *large_master;
     master_pool_t         *small_master;
+    master_pool_t         *micro_master;
     buffer_pool_t         *worker_pool;
     buffer_pool_t         *buffer_pools[1];
     wloop_t               *loops[1];
@@ -115,7 +116,8 @@ static void envSetup(test_env_t *env)
     memoryZero(env, sizeof(*env));
     env->large_master = masterpoolCreateWithCapacity(8);
     env->small_master = masterpoolCreateWithCapacity(8);
-    env->worker_pool  = bufferpoolCreate(env->large_master, env->small_master, 8, 1024, 256);
+    env->micro_master = masterpoolCreateWithCapacity(8);
+    env->worker_pool  = bufferpoolCreate(env->large_master, env->small_master, env->micro_master, 8, 1024, 256);
     require(env->large_master != NULL && env->small_master != NULL && env->worker_pool != NULL,
             "failed to create test pools");
 
@@ -126,6 +128,7 @@ static void envSetup(test_env_t *env)
     GSTATE.shortcut_loops                = env->loops;
     GSTATE.masterpool_buffer_pools_large = env->large_master;
     GSTATE.masterpool_buffer_pools_small = env->small_master;
+    GSTATE.masterpool_buffer_pools_micro = env->micro_master;
     testWorkerRegistryInstall(&env->worker_registry);
     testWorkerBindWID(0);
 }
@@ -137,14 +140,17 @@ static void envTeardown(test_env_t *env)
     GSTATE.shortcut_loops                = NULL;
     GSTATE.masterpool_buffer_pools_large = NULL;
     GSTATE.masterpool_buffer_pools_small = NULL;
+    GSTATE.masterpool_buffer_pools_micro = NULL;
     GSTATE.workers_count                 = 0;
     testWorkerRegistryRestore(&env->worker_registry);
 
     bufferpoolDestroy(env->worker_pool);
     masterpoolMakeEmpty(env->large_master);
     masterpoolMakeEmpty(env->small_master);
+    masterpoolMakeEmpty(env->micro_master);
     masterpoolDestroy(env->large_master);
     masterpoolDestroy(env->small_master);
+    masterpoolDestroy(env->micro_master);
 }
 
 int main(void)

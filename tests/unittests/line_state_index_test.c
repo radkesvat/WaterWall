@@ -1,10 +1,43 @@
 #include "wwapi.h"
 
+#include <sys/wait.h>
+#include <unistd.h>
+
 enum
 {
     kTunnelCount   = 19,
     kLineStateSize = 3712
 };
+
+static bool              fail_context_allocation;
+static size_t            context_allocation_size;
+static splice_context_t *watched_context;
+static unsigned int      context_destroy_count;
+
+void *__real_memoryAllocateZero(size_t size);
+void *__wrap_memoryAllocateZero(size_t size);
+void  __real_splicecontextDestroy(splice_context_t *context);
+void  __wrap_splicecontextDestroy(splice_context_t *context);
+
+void *__wrap_memoryAllocateZero(size_t size)
+{
+    context_allocation_size = size;
+    if (fail_context_allocation)
+    {
+        fail_context_allocation = false;
+        return NULL;
+    }
+    return __real_memoryAllocateZero(size);
+}
+
+void __wrap_splicecontextDestroy(splice_context_t *context)
+{
+    if (context != NULL && context == watched_context)
+    {
+        ++context_destroy_count;
+    }
+    __real_splicecontextDestroy(context);
+}
 
 static void require(bool condition, const char *message)
 {
@@ -157,6 +190,38 @@ static void testSizeLimits(void)
             "single short slot did not preserve the complete line boundary");
 }
 
+static void requireSpliceReblockAbort(line_t *line, uint16_t index)
+{
+    int output_pipe[2];
+    require(pipe(output_pipe) == 0, "failed to create splice-abort diagnostic pipe");
+    const pid_t child = fork();
+    require(child >= 0, "failed to fork splice-abort test");
+    if (child == 0)
+    {
+        close(output_pipe[0]);
+        require(dup2(output_pipe[1], STDERR_FILENO) == STDERR_FILENO, "failed to capture splice-abort diagnostic");
+        close(output_pipe[1]);
+        tunnel_t tunnel = {.chain_index = index};
+        lineBlockSplice(line, &tunnel);
+        _Exit(0);
+    }
+
+    close(output_pipe[1]);
+    FILE *output = fdopen(output_pipe[0], "r");
+    require(output != NULL, "failed to open splice-abort diagnostic stream");
+    char         message[256];
+    const size_t length = fread(message, 1, sizeof(message) - 1U, output);
+    message[length]     = '\0';
+    require(! ferror(output), "failed to read splice-abort diagnostic");
+    fclose(output);
+
+    int status;
+    require(waitpid(child, &status, 0) == child, "failed to wait for splice-abort test");
+    require(WIFEXITED(status) && WEXITSTATUS(status) == 1, "fully unblocked line could be blocked again");
+    require(strstr(message, "cannot block splicing after all tunnels have unblocked it") != NULL,
+            "splice reblocking abort omitted its diagnostic");
+}
+
 static void testSpliceBlockers(void)
 {
     static const uint16_t counts[] = {0, 1, 2, 31, 32, 33, 63, 64};
@@ -177,32 +242,70 @@ static void testSpliceBlockers(void)
         // This fixture owns the normal line, including each pooled reuse.
         for (unsigned int iteration = 0; iteration < 3; ++iteration)
         {
-            line_t *line = lineCreateForWorker(0, pools, 0, count);
-            require(line->splice_blockers == expected, "new line did not block exactly its chain's tunnels");
+            line_t           *line    = lineCreateForWorker(0, pools, 0, count);
+            splice_context_t *context = line->splice_context;
+            require(context != NULL, "new line has no splice context");
+            require(splicecontextGetTunnelCount(context) == count && lineGetSpliceTunnelCount(line) == count,
+                    "splice context did not retain its constructor tunnel count");
+            require(splicecontextIsBlocked(context) == (count != 0) && lineIsSpliceBlocked(line) == (count != 0),
+                    "new context reported the wrong splice-blocked state");
+            require(context_allocation_size == sizeof(splice_context_t),
+                    "splice context allocation has the wrong size");
+            watched_context       = context;
+            context_destroy_count = 0;
+            require(line->splice_context->splice_blockers == expected,
+                    "new line did not block exactly its chain's tunnels");
+            for (uint16_t i = 0; i < count; ++i)
+            {
+                tunnel_t tunnel = {.chain_index = i};
+                lineBlockSplice(line, &tunnel);
+                require(line->splice_context->splice_blockers == expected,
+                        "blocking an already blocked tunnel changed the mask");
+                if (count > 1)
+                {
+                    lineUnblockSplice(line, &tunnel);
+                    require(line->splice_context->splice_blockers == (expected & ~(UINT64_C(1) << i)),
+                            "unblocking a tunnel changed another tunnel's bit");
+                    lineBlockSplice(line, &tunnel);
+                    require(line->splice_context->splice_blockers == expected,
+                            "reblocking with other blockers changed another bit");
+                }
+            }
+
             uint64_t remaining = expected;
             for (uint16_t i = 0; i < count; ++i)
             {
                 tunnel_t tunnel = {.chain_index = i};
                 remaining &= ~(UINT64_C(1) << i);
                 lineUnblockSplice(line, &tunnel);
-                require(line->splice_blockers == remaining, "unblocking a tunnel changed another tunnel's bit");
+                require(line->splice_context->splice_blockers == remaining,
+                        "unblocking a tunnel changed another tunnel's bit");
                 lineUnblockSplice(line, &tunnel);
-                require(line->splice_blockers == remaining, "unblocking a tunnel twice toggled its bit");
-                require((line->splice_blockers == 0) == (i + 1U == count),
+                require(line->splice_context->splice_blockers == remaining,
+                        "unblocking a tunnel twice toggled its bit");
+                require((line->splice_context->splice_blockers == 0) == (i + 1U == count),
                         "splice gate opened before every tunnel agreed");
+                require(lineIsSpliceBlocked(line) == (i + 1U != count),
+                        "splice-blocked query did not track the remaining blockers");
             }
-            require(line->splice_blockers == 0, "splice gate remained blocked after every tunnel agreed");
+            require(line->splice_context->splice_blockers == 0,
+                    "splice gate remained blocked after every tunnel agreed");
+            require(! splicecontextIsBlocked(context) && ! lineIsSpliceBlocked(line),
+                    "splice-blocked query remained true after every tunnel agreed");
+            require(splicecontextGetTunnelCount(context) == count, "splice operations changed the tunnel count");
 
-            for (uint16_t i = 0; i < count; ++i)
+            if (iteration == 0 && (count == 1 || count == 64))
             {
-                tunnel_t tunnel = {.chain_index = i};
-                lineBlockSplice(line, &tunnel);
-                require(line->splice_blockers == (UINT64_C(1) << i), "blocking a tunnel changed another tunnel's bit");
-                lineBlockSplice(line, &tunnel);
-                require(line->splice_blockers == (UINT64_C(1) << i), "blocking a tunnel twice toggled its bit");
-                lineUnblockSplice(line, &tunnel);
+                requireSpliceReblockAbort(line, (uint16_t) (count - 1U));
             }
+            lineRef(line);
             lineDestroy(line);
+            require(! lineIsAlive(line), "retained line was not logically destroyed");
+            require(context_destroy_count == 0 && line->splice_context == context,
+                    "splice context was freed before the final line reference");
+            lineUnref(line);
+            require(context_destroy_count == 1, "final line release did not destroy its splice context exactly once");
+            watched_context = NULL;
         }
     }
 
@@ -212,11 +315,28 @@ static void testSpliceBlockers(void)
     masterpoolDestroy(master);
 }
 
+static void testSpliceContextAllocationFailure(void)
+{
+    const pid_t child = fork();
+    require(child >= 0, "failed to fork splice-context allocation failure test");
+    if (child == 0)
+    {
+        fail_context_allocation   = true;
+        splice_context_t *context = splicecontextCreate(64);
+        splicecontextDestroy(context);
+        _Exit(0);
+    }
+    int status;
+    require(waitpid(child, &status, 0) == child, "failed to wait for splice-context allocation failure test");
+    require(WIFEXITED(status) && WEXITSTATUS(status) == 1, "splice-context allocation failure did not abort cleanly");
+}
+
 int main(void)
 {
     testLargeOffsets();
     testDenseSlots();
     testSizeLimits();
     testSpliceBlockers();
+    testSpliceContextAllocationFailure();
     return 0;
 }

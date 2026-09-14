@@ -106,7 +106,8 @@ int main(void)
 
     master_pool_t  *large_master    = masterpoolCreateWithCapacity(8);
     master_pool_t  *small_master    = masterpoolCreateWithCapacity(8);
-    buffer_pool_t  *pool            = bufferpoolCreate(large_master, small_master, 8, 65536, 1024);
+    master_pool_t  *micro_master    = masterpoolCreateWithCapacity(8);
+    buffer_pool_t  *pool            = bufferpoolCreate(large_master, small_master, micro_master, 8, 65536, 1024);
     buffer_pool_t **saved_shortcuts = GSTATE.shortcut_buffer_pools;
     buffer_pool_t  *shortcuts[1]    = {pool};
     GSTATE.flag_initialized         = true;
@@ -180,8 +181,10 @@ int main(void)
     bufferpoolDestroy(pool);
     masterpoolMakeEmpty(large_master);
     masterpoolMakeEmpty(small_master);
+    masterpoolMakeEmpty(micro_master);
     masterpoolDestroy(large_master);
     masterpoolDestroy(small_master);
+    masterpoolDestroy(micro_master);
     wCryptoGlobalCleanup();
     return 0;
 }

@@ -4,5 +4,6 @@
 
 typedef struct buffer_pool_s buffer_pool_t;
 
-/* Test-only observation of the private tier caches; it does not mutate ownership. */
-void bufferpoolCachedTierCountsForTest(const buffer_pool_t *pool, uint32_t *large_count, uint32_t *small_count);
+/* Test-only observation of the private tier caches; micro_count may be NULL. It does not mutate ownership. */
+void bufferpoolCachedTierCountsForTest(const buffer_pool_t *pool, uint32_t *large_count, uint32_t *small_count,
+                                       uint32_t *micro_count);

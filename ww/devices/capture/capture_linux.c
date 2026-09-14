@@ -1952,7 +1952,8 @@ static bool capturedeviceStartReader(capture_device_t *cdev)
 
     bufferpoolUpdateAllocationPaddings(cdev->reader_buffer_pool,
                                        bufferpoolGetLargeBufferPadding(worker_pool),
-                                       bufferpoolGetSmallBufferPadding(worker_pool));
+                                       bufferpoolGetSmallBufferPadding(worker_pool),
+                                       bufferpoolGetMicroBufferPadding(worker_pool));
 
     capturedeviceDeactivate(cdev);
     pthread_mutex_lock(&cdev->reader_state_mutex);
@@ -2357,6 +2358,7 @@ capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_
 
     buffer_pool_t *reader_bpool = bufferpoolCreate(GSTATE.masterpool_buffer_pools_large,
                                                    GSTATE.masterpool_buffer_pools_small,
+                                                   GSTATE.masterpool_buffer_pools_micro,
                                                    RAM_PROFILE,
                                                    bufferpoolGetLargeBufferSize(worker_pool),
                                                    bufferpoolGetSmallBufferSize(worker_pool)

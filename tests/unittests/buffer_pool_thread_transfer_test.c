@@ -29,6 +29,9 @@ static void *accessPool(void *userdata)
 
     sbuf_t *buf = bufferpoolGetSmallBuffer(probe->pool);
     bufferpoolReuseBuffer(probe->pool, buf);
+    buf = bufferpoolGetMicroBuffer(probe->pool);
+    require(sbufGetTotalCapacityNoPadding(buf) == 32, "worker transfer changed micro capacity");
+    bufferpoolReuseBuffer(probe->pool, buf);
     atomicAddExplicit(&probe->accesses, 1, memory_order_relaxed);
     return NULL;
 }
@@ -43,7 +46,8 @@ int main(void)
 {
     master_pool_t      *large_master = masterpoolCreateWithCapacity(8);
     master_pool_t      *small_master = masterpoolCreateWithCapacity(8);
-    buffer_pool_t      *pool         = bufferpoolCreate(large_master, small_master, 8, 8192, 4096);
+    master_pool_t      *micro_master = masterpoolCreateWithCapacity(8);
+    buffer_pool_t      *pool         = bufferpoolCreate(large_master, small_master, micro_master, 8, 8192, 4096);
     pool_thread_probe_t first        = {
                .pool       = pool,
                .may_access = true,
@@ -70,8 +74,10 @@ int main(void)
     bufferpoolDestroy(pool);
     masterpoolMakeEmpty(large_master);
     masterpoolMakeEmpty(small_master);
+    masterpoolMakeEmpty(micro_master);
     masterpoolDestroy(large_master);
     masterpoolDestroy(small_master);
+    masterpoolDestroy(micro_master);
     puts("buffer pool thread transfer tests passed");
     return 0;
 }

@@ -111,6 +111,7 @@ typedef struct client_lifecycle_fixture_s
 {
     master_pool_t             *large_master;
     master_pool_t             *small_master;
+    master_pool_t             *micro_master;
     buffer_pool_t             *pool;
     buffer_pool_t             *shortcut[1];
     buffer_pool_t            **saved_shortcuts;
@@ -366,9 +367,13 @@ static void clientFixtureInitialize(client_lifecycle_fixture_t *fixture)
     GSTATE.workers_count    = 2;
     fixture->large_master   = masterpoolCreateWithCapacity(8);
     fixture->small_master   = masterpoolCreateWithCapacity(8);
-    fixture->pool           = bufferpoolCreate(fixture->large_master, fixture->small_master, 8, 8192, 1024);
-    bufferpoolUpdateAllocationPaddings(
-        fixture->pool, kRealityClientMaxFramePrefixSize, kRealityClientMaxFramePrefixSize);
+    fixture->micro_master   = masterpoolCreateWithCapacity(8);
+    fixture->pool =
+        bufferpoolCreate(fixture->large_master, fixture->small_master, fixture->micro_master, 8, 8192, 1024);
+    bufferpoolUpdateAllocationPaddings(fixture->pool,
+                                       kRealityClientMaxFramePrefixSize,
+                                       kRealityClientMaxFramePrefixSize,
+                                       kRealityClientMaxFramePrefixSize);
     fixture->saved_shortcuts     = GSTATE.shortcut_buffer_pools;
     fixture->shortcut[0]         = fixture->pool;
     GSTATE.shortcut_buffer_pools = fixture->shortcut;
@@ -490,8 +495,10 @@ static void clientFixtureDestroy(client_lifecycle_fixture_t *fixture)
     bufferpoolDestroy(fixture->pool);
     masterpoolMakeEmpty(fixture->large_master);
     masterpoolMakeEmpty(fixture->small_master);
+    masterpoolMakeEmpty(fixture->micro_master);
     masterpoolDestroy(fixture->large_master);
     masterpoolDestroy(fixture->small_master);
+    masterpoolDestroy(fixture->micro_master);
 }
 
 static void runClientScenario(void (*action)(tunnel_t *, line_t *), const char *expected, bool kill_on_payload,
@@ -1465,8 +1472,10 @@ static void runClientSizingCase(uint16_t tls_version, const reality_v2_record_pr
 {
     master_pool_t *large_master = masterpoolCreateWithCapacity(8);
     master_pool_t *small_master = masterpoolCreateWithCapacity(8);
-    buffer_pool_t *pool         = bufferpoolCreate(large_master, small_master, 8, 65536, 1024);
-    bufferpoolUpdateAllocationPaddings(pool, kRealityClientMaxFramePrefixSize, kRealityClientMaxFramePrefixSize);
+    master_pool_t *micro_master = masterpoolCreateWithCapacity(8);
+    buffer_pool_t *pool         = bufferpoolCreate(large_master, small_master, micro_master, 8, 65536, 1024);
+    bufferpoolUpdateAllocationPaddings(
+        pool, kRealityClientMaxFramePrefixSize, kRealityClientMaxFramePrefixSize, kRealityClientMaxFramePrefixSize);
     buffer_pool_t  *shortcut[1]         = {pool};
     buffer_pool_t **saved_shortcuts     = GSTATE.shortcut_buffer_pools;
     const bool      saved_initialized   = GSTATE.flag_initialized;
@@ -1557,8 +1566,10 @@ static void runClientSizingCase(uint16_t tls_version, const reality_v2_record_pr
     bufferpoolDestroy(pool);
     masterpoolMakeEmpty(large_master);
     masterpoolMakeEmpty(small_master);
+    masterpoolMakeEmpty(micro_master);
     masterpoolDestroy(large_master);
     masterpoolDestroy(small_master);
+    masterpoolDestroy(micro_master);
 }
 
 void realityTestClientRecordSizing(void)

@@ -62,6 +62,7 @@ typedef struct test_env_s
 {
     master_pool_t             *large_master;
     master_pool_t             *small_master;
+    master_pool_t             *micro_master;
     master_pool_t             *messages_master;
     master_pool_t             *wios_master;
     buffer_pool_t             *buffer_pools[2];
@@ -177,13 +178,15 @@ static void envSetup(test_env_t *env)
     memoryZero(env, sizeof(*env));
     env->large_master    = masterpoolCreateWithCapacity(128);
     env->small_master    = masterpoolCreateWithCapacity(128);
+    env->micro_master    = masterpoolCreateWithCapacity(128);
     env->messages_master = masterpoolCreateWithCapacity(128);
     env->wios_master     = masterpoolCreateWithCapacity(128);
     workerMessagesInstallMasterPoolCallbacks(env->messages_master);
 
     for (wid_t wid = 0; wid < 2; ++wid)
     {
-        env->buffer_pools[wid] = bufferpoolCreate(env->large_master, env->small_master, 64, 8192, 4096);
+        env->buffer_pools[wid] =
+            bufferpoolCreate(env->large_master, env->small_master, env->micro_master, 64, 8192, 4096);
         env->wios_pools[wid] =
             threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(env->wios_master, sizeof(wio_t), 64);
         env->loops[wid]         = wloopCreate(0, env->buffer_pools[wid], wid);
@@ -215,6 +218,7 @@ static void envSetup(test_env_t *env)
     GSTATE.shortcut_wios_pools           = env->wios_pools;
     GSTATE.masterpool_buffer_pools_large = env->large_master;
     GSTATE.masterpool_buffer_pools_small = env->small_master;
+    GSTATE.masterpool_buffer_pools_micro = env->micro_master;
     GSTATE.masterpool_messages           = env->messages_master;
     GSTATE.mtu_size                      = 1500;
     testWorkerBindWID(0);
@@ -244,6 +248,7 @@ static void envTeardown(test_env_t *env)
     GSTATE.shortcut_wios_pools           = NULL;
     GSTATE.masterpool_buffer_pools_large = NULL;
     GSTATE.masterpool_buffer_pools_small = NULL;
+    GSTATE.masterpool_buffer_pools_micro = NULL;
     GSTATE.masterpool_messages           = NULL;
     GSTATE.mtu_size                      = 0;
 
@@ -255,10 +260,12 @@ static void envTeardown(test_env_t *env)
     threadsafegenericpoolDestroy(env->wios_pools[1]);
     masterpoolMakeEmpty(env->large_master);
     masterpoolMakeEmpty(env->small_master);
+    masterpoolMakeEmpty(env->micro_master);
     masterpoolMakeEmpty(env->messages_master);
     masterpoolMakeEmpty(env->wios_master);
     masterpoolDestroy(env->large_master);
     masterpoolDestroy(env->small_master);
+    masterpoolDestroy(env->micro_master);
     masterpoolDestroy(env->messages_master);
     masterpoolDestroy(env->wios_master);
 }

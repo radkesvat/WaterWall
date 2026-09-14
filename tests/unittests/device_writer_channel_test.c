@@ -8,6 +8,7 @@ typedef struct test_env_s
 {
     master_pool_t *large_master;
     master_pool_t *small_master;
+    master_pool_t *micro_master;
     buffer_pool_t *buffer_pool;
 } test_env_t;
 
@@ -53,7 +54,8 @@ static void envSetup(test_env_t *env)
 {
     env->large_master = masterpoolCreateWithCapacity(16);
     env->small_master = masterpoolCreateWithCapacity(16);
-    env->buffer_pool  = bufferpoolCreate(env->large_master, env->small_master, 16, 8192, 4096);
+    env->micro_master = masterpoolCreateWithCapacity(16);
+    env->buffer_pool  = bufferpoolCreate(env->large_master, env->small_master, env->micro_master, 16, 8192, 4096);
 }
 
 static void envTeardown(test_env_t *env)
@@ -61,8 +63,10 @@ static void envTeardown(test_env_t *env)
     bufferpoolDestroy(env->buffer_pool);
     masterpoolMakeEmpty(env->large_master);
     masterpoolMakeEmpty(env->small_master);
+    masterpoolMakeEmpty(env->micro_master);
     masterpoolDestroy(env->large_master);
     masterpoolDestroy(env->small_master);
+    masterpoolDestroy(env->micro_master);
 }
 
 static void closeSelectedGenerationHook(device_writer_channel_t *writer_channel, device_writer_generation_t *generation,

@@ -33,6 +33,7 @@ typedef struct mxb_environment_s
 
     master_pool_t             *large_master;
     master_pool_t             *small_master;
+    master_pool_t             *micro_master;
     master_pool_t             *wios_master;
     master_pool_t             *line_master;
     buffer_pool_t             *pool;

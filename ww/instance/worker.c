@@ -430,6 +430,7 @@ bool workerTryCreateBufferPool(worker_t *worker)
 
     buffer_pool_t *pool = bufferpoolCreate(GSTATE.masterpool_buffer_pools_large,
                                            GSTATE.masterpool_buffer_pools_small,
+                                           GSTATE.masterpool_buffer_pools_micro,
                                            RAM_PROFILE,
                                            PROPER_LARGE_BUFFER_SIZE(RAM_PROFILE),
                                            SMALL_BUFFER_SIZE);

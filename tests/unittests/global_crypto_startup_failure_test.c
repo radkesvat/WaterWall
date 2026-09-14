@@ -94,14 +94,14 @@ static void auditFailedStartup(void)
     }
 #endif
 
-    const uint8_t clean = injection_clean && ! wCryptoIsInitialized() && ! GSTATE.flag_initialized &&
-                          ! GSTATE.secure_random.initialized && ! GSTATE.flag_openssl_initialized &&
-                          ! GSTATE.flag_libsodium_initialized && GSTATE.workers == NULL && GSTATE.workers_count == 0 &&
-                          GSTATE.signal_manager == NULL && GSTATE.socekt_manager == NULL &&
-                          GSTATE.node_manager == NULL && GSTATE.openssl_dedicated_memory == NULL &&
-                          GSTATE.masterpool_buffer_pools_large == NULL &&
-                          GSTATE.masterpool_buffer_pools_small == NULL && GSTATE.masterpool_wios == NULL &&
-                          GSTATE.masterpool_context_pools == NULL && GSTATE.masterpool_messages == NULL;
+    const uint8_t clean =
+        injection_clean && ! wCryptoIsInitialized() && ! GSTATE.flag_initialized &&
+        ! GSTATE.secure_random.initialized && ! GSTATE.flag_openssl_initialized &&
+        ! GSTATE.flag_libsodium_initialized && GSTATE.workers == NULL && GSTATE.workers_count == 0 &&
+        GSTATE.signal_manager == NULL && GSTATE.socekt_manager == NULL && GSTATE.node_manager == NULL &&
+        GSTATE.openssl_dedicated_memory == NULL && GSTATE.masterpool_buffer_pools_large == NULL &&
+        GSTATE.masterpool_buffer_pools_small == NULL && GSTATE.masterpool_buffer_pools_micro == NULL &&
+        GSTATE.masterpool_wios == NULL && GSTATE.masterpool_context_pools == NULL && GSTATE.masterpool_messages == NULL;
     if (! clean)
     {
         fprintf(stderr,

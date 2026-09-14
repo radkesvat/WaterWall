@@ -442,6 +442,7 @@ typedef struct twf_worker_env_s
 {
     master_pool_t             *large_master;
     master_pool_t             *small_master;
+    master_pool_t             *micro_master;
     master_pool_t             *wios_master;
     buffer_pool_t             *pool;
     buffer_pool_t             *pool_shortcut[1];
@@ -478,15 +479,17 @@ static void twfWorkerEnvSetupWithSmallBuffers(twf_worker_env_t *env, uint32_t la
 
     env->large_master = masterpoolCreateWithCapacity(8);
     env->small_master = masterpoolCreateWithCapacity(8);
+    env->micro_master = masterpoolCreateWithCapacity(8);
     env->wios_master  = masterpoolCreateWithCapacity(8);
     twfRequire(env->large_master != NULL && env->small_master != NULL && env->wios_master != NULL,
                "failed to create the test master pools");
 
-    env->pool = bufferpoolCreate(env->large_master, env->small_master, 4, large_buffer_size, small_buffer_size);
+    env->pool = bufferpoolCreate(
+        env->large_master, env->small_master, env->micro_master, 4, large_buffer_size, small_buffer_size);
     twfRequire(env->pool != NULL, "failed to create the test buffer pool");
 
     // Must happen before any buffer leaves the pool, exactly like the runtime does it during chain finalization.
-    bufferpoolUpdateAllocationPaddings(env->pool, left_padding, left_padding);
+    bufferpoolUpdateAllocationPaddings(env->pool, left_padding, left_padding, left_padding);
 
     env->pool_shortcut[0]        = env->pool;
     GSTATE.shortcut_buffer_pools = env->pool_shortcut;
@@ -531,9 +534,11 @@ static void twfWorkerEnvTeardown(twf_worker_env_t *env)
     bufferpoolDestroy(env->pool);
     masterpoolMakeEmpty(env->large_master);
     masterpoolMakeEmpty(env->small_master);
+    masterpoolMakeEmpty(env->micro_master);
     masterpoolMakeEmpty(env->wios_master);
     masterpoolDestroy(env->large_master);
     masterpoolDestroy(env->small_master);
+    masterpoolDestroy(env->micro_master);
     masterpoolDestroy(env->wios_master);
 }
 

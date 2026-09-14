@@ -197,6 +197,9 @@ void lineUnRefInternal(line_t *l)
 
     lineClearUsers(l);
 
+    splicecontextDestroy(l->splice_context);
+    l->splice_context = NULL;
+
     worker_t *current = tryGetCurrentEventWorker();
     if (current != NULL && current->wid == l->wid)
     {

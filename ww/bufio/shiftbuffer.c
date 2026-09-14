@@ -20,11 +20,6 @@ uint16_t sbufAlignLeftPadding(uint16_t pad_left)
 
 void sbufDestroy(sbuf_t *b)
 {
-    if (UNLIKELY(b->is_temporary))
-    {
-        return;
-    }
-
     sbufReleaseLifetime(b);
     memoryFreeAligned(b);
 }
@@ -82,6 +77,30 @@ void sbufReleaseLifetime(sbuf_t *b)
     }
 }
 
+static sbuf_t *sbufAllocate(uint32_t capacity, uint16_t pad_left)
+{
+    size_t  total_size = sizeof(sbuf_t) + (size_t) capacity;
+    sbuf_t *b          = memoryAllocateAligned(total_size, kSbufAllocationAlignment);
+    if (b == NULL)
+    {
+        printError("sbuf: allocation failed");
+        exit(1);
+    }
+
+#ifdef DEBUG
+    memorySet(b->buf, 0x55, capacity);
+#endif
+
+    b->flags    = 0;
+    b->len      = 0;
+    b->curpos   = pad_left;
+    b->capacity = capacity;
+    b->l_pad    = pad_left;
+    b->lifetime = NULL;
+
+    return b;
+}
+
 sbuf_t *sbufCreateWithPadding(uint32_t minimum_capacity, uint16_t pad_left)
 {
     pad_left = sbufAlignLeftPadding(pad_left);
@@ -108,31 +127,18 @@ sbuf_t *sbufCreateWithPadding(uint32_t minimum_capacity, uint16_t pad_left)
     // Cannot wrap, and memoryAllocateAligned() cannot reject this for size: the
     // helper above accounted for the header and the alignment over-allocation,
     // which are the binding limits on 32-bit targets.
-    size_t  total_size = sizeof(sbuf_t) + (size_t) real_cap;
-    sbuf_t *b          = memoryAllocateAligned(total_size, kSbufAllocationAlignment);
-    if (b == NULL)
-    {
-        printError("sbuf: allocation failed");
-        exit(1);
-    }
-
-#ifdef DEBUG
-    memorySet(b->buf, 0x55, real_cap);
-#endif
-
-    b->is_temporary = false;
-    b->len          = 0;
-    b->curpos       = pad_left;
-    b->capacity     = real_cap;
-    b->l_pad        = pad_left;
-    b->lifetime     = NULL;
-
-    return b;
+    return sbufAllocate(real_cap, pad_left);
 }
 
 sbuf_t *sbufCreate(uint32_t minimum_capacity)
 {
     return sbufCreateWithPadding(minimum_capacity, 0);
+}
+
+sbuf_t *sbufCreateMicro(uint16_t pad_left)
+{
+    pad_left = sbufAlignLeftPadding(pad_left);
+    return sbufAllocate(MICRO_BUFFER_SIZE + (uint32_t) pad_left, pad_left);
 }
 
 bool sbufDuplicateTo(const sbuf_t *b, sbuf_t *dest)

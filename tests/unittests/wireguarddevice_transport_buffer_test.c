@@ -123,12 +123,13 @@ int main(void)
 
     master_pool_t *large_master = masterpoolCreateWithCapacity(8);
     master_pool_t *small_master = masterpoolCreateWithCapacity(8);
+    master_pool_t *micro_master = masterpoolCreateWithCapacity(8);
     require(large_master != NULL && small_master != NULL, "failed to create master pools");
 
     // Standard small buffer: 4096, large buffer: 32768
-    buffer_pool_t *pool = bufferpoolCreate(large_master, small_master, 8, 32768, 4096);
+    buffer_pool_t *pool = bufferpoolCreate(large_master, small_master, micro_master, 8, 32768, 4096);
     require(pool != NULL, "failed to create buffer pool");
-    bufferpoolUpdateAllocationPaddings(pool, 64, 64);
+    bufferpoolUpdateAllocationPaddings(pool, 64, 64, 64);
 
     wireguard_keypair_t keypair;
     initTestKeypair(&keypair);
@@ -157,8 +158,10 @@ int main(void)
     bufferpoolDestroy(pool);
     masterpoolMakeEmpty(large_master);
     masterpoolMakeEmpty(small_master);
+    masterpoolMakeEmpty(micro_master);
     masterpoolDestroy(large_master);
     masterpoolDestroy(small_master);
+    masterpoolDestroy(micro_master);
 
     wCryptoGlobalCleanup();
     return 0;

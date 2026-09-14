@@ -1787,6 +1787,9 @@ static void __close_timeout_cb(wtimer_t *timer)
 
 int wioClose(wio_t *io)
 {
+    // The line may be released before queued writes drain or by the close callback.
+    io->splice_context = NULL;
+
     if (io->closed)
     {
         // wioFree may begin deferred finalization after an earlier close.

@@ -165,7 +165,7 @@ static void resetClient(tunnel_chain_t *chain)
     refuse                                  = false;
     automatic_response                      = true;
     child                                   = NULL;
-    client                                  = lineCreateForWorker(0, chain->line_pools, 0);
+    client                                  = lineCreateForWorker(0, chain->line_pools, 0, chain->tunnels.len);
     lineRef(client); /* test observation reference */
     lineGetRoutingContext(client)->local_listener_port = 8080;
     lineGetRoutingContext(client)->peer_source_port    = 54321;
@@ -428,9 +428,10 @@ int main(void)
     GSTATE.flag_initialized = true;
     GSTATE.workers_count    = 2;
     master_pool_t *large = masterpoolCreateWithCapacity(8), *small = masterpoolCreateWithCapacity(8);
+    master_pool_t *micro = masterpoolCreateWithCapacity(8);
     master_pool_t *ios  = masterpoolCreateWithCapacity(8);
-    buffer_pool_t *pool = bufferpoolCreate(large, small, 4, 16384, 1024);
-    bufferpoolUpdateAllocationPaddings(pool, 64, 64);
+    buffer_pool_t *pool  = bufferpoolCreate(large, small, micro, 4, 16384, 1024);
+    bufferpoolUpdateAllocationPaddings(pool, 64, 64, 64);
     threadsafe_generic_pool_t *io_pool =
         threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(ios, sizeof(wio_t), 8);
     GSTATE.shortcut_buffer_pools = &pool;
@@ -674,9 +675,11 @@ int main(void)
     bufferpoolDestroy(pool);
     masterpoolMakeEmpty(large);
     masterpoolMakeEmpty(small);
+    masterpoolMakeEmpty(micro);
     masterpoolMakeEmpty(ios);
     masterpoolDestroy(large);
     masterpoolDestroy(small);
+    masterpoolDestroy(micro);
     masterpoolDestroy(ios);
     puts("http_proxy_server_lifecycle: passed");
     return 0;

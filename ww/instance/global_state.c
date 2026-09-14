@@ -41,18 +41,21 @@ static void globalstateDestroyMasterPools(void)
 {
     masterpoolMakeEmpty(GSTATE.masterpool_buffer_pools_large);
     masterpoolMakeEmpty(GSTATE.masterpool_buffer_pools_small);
+    masterpoolMakeEmpty(GSTATE.masterpool_buffer_pools_micro);
     masterpoolMakeEmpty(GSTATE.masterpool_wios);
     masterpoolMakeEmpty(GSTATE.masterpool_context_pools);
     masterpoolMakeEmpty(GSTATE.masterpool_messages);
 
     masterpoolDestroy(GSTATE.masterpool_buffer_pools_large);
     masterpoolDestroy(GSTATE.masterpool_buffer_pools_small);
+    masterpoolDestroy(GSTATE.masterpool_buffer_pools_micro);
     masterpoolDestroy(GSTATE.masterpool_wios);
     masterpoolDestroy(GSTATE.masterpool_context_pools);
     masterpoolDestroy(GSTATE.masterpool_messages);
 
     GSTATE.masterpool_buffer_pools_large = NULL;
     GSTATE.masterpool_buffer_pools_small = NULL;
+    GSTATE.masterpool_buffer_pools_micro = NULL;
     GSTATE.masterpool_wios               = NULL;
     GSTATE.masterpool_context_pools      = NULL;
     GSTATE.masterpool_messages           = NULL;
@@ -69,14 +72,17 @@ static bool initializeMasterPools(void)
 {
     master_pool_t *large    = masterpoolCreateWithCapacity(2 * RAM_PROFILE);
     master_pool_t *small    = masterpoolCreateWithCapacity(2 * RAM_PROFILE);
+    master_pool_t *micro    = masterpoolCreateWithCapacity(2 * RAM_PROFILE);
     master_pool_t *wios     = masterpoolCreateWithCapacity(2 * RAM_PROFILE);
     master_pool_t *contexts = masterpoolCreateWithCapacity(2 * RAM_PROFILE);
     master_pool_t *messages = masterpoolCreateWithCapacity(2 * RAM_PROFILE);
 
-    if (UNLIKELY(large == NULL || small == NULL || wios == NULL || contexts == NULL || messages == NULL))
+    if (UNLIKELY(large == NULL || small == NULL || micro == NULL || wios == NULL || contexts == NULL ||
+                 messages == NULL))
     {
         masterpoolDestroy(large);
         masterpoolDestroy(small);
+        masterpoolDestroy(micro);
         masterpoolDestroy(wios);
         masterpoolDestroy(contexts);
         masterpoolDestroy(messages);
@@ -86,6 +92,7 @@ static bool initializeMasterPools(void)
 
     GSTATE.masterpool_buffer_pools_large = large;
     GSTATE.masterpool_buffer_pools_small = small;
+    GSTATE.masterpool_buffer_pools_micro = micro;
     GSTATE.masterpool_wios               = wios;
     GSTATE.masterpool_context_pools      = contexts;
     GSTATE.masterpool_messages           = messages;
@@ -378,7 +385,7 @@ void globalstateUpdateAllocationPadding(uint16_t padding)
 {
     for (wid_t wi = 0; wi < getTotalWorkersCount(); wi++)
     {
-        bufferpoolUpdateAllocationPaddings(getWorkerBufferPool(wi), padding, padding);
+        bufferpoolUpdateAllocationPaddings(getWorkerBufferPool(wi), padding, padding, padding);
     }
 }
 

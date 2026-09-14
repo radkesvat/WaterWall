@@ -101,6 +101,7 @@ add_library(ww STATIC
     utils/cacert.c
     utils/md5.c
     utils/sha1.c
+    utils/objects/splice_context.c
     objects/user_handle.c
     objects/user.c
     objects/users.c
@@ -270,6 +271,23 @@ check_function("pipe" "unistd.h")
 check_function("socketpair" "sys/socket.h")
 check_function("eventfd" "sys/eventfd.h")
 check_function("setproctitle" "unistd.h")
+
+# Linux splice availability is independent of the selected event watcher.
+set(WW_HAVE_SPLICE 0)
+if((CMAKE_SYSTEM_NAME STREQUAL "Linux" OR ANDROID) AND HAVE_PIPE)
+    check_c_source_compiles([=[
+        #define _GNU_SOURCE
+        #include <fcntl.h>
+        #include <unistd.h>
+        int main(void)
+        {
+            return splice(-1, NULL, -1, NULL, 0, SPLICE_F_NONBLOCK) == -1;
+        }
+    ]=] WW_SPLICE_AVAILABLE)
+    if(WW_SPLICE_AVAILABLE)
+        set(WW_HAVE_SPLICE 1)
+    endif()
+endif()
 
 ################################################################################
 # Advanced CPU Instructions Configuration

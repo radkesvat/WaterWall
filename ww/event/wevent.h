@@ -12,6 +12,7 @@
 #include "heap.h"
 #include "list.h"
 #include "queue.h"
+#include "utils/objects/splice_context.h"
 
 // #define WLOOP_READ_BUFSIZE          (1U << 15)  // 32K
 #define READ_BUFSIZE_HIGH_WATER  (1U << 20) // 1M
@@ -138,7 +139,6 @@ struct wperiod_s
 
 QUEUE_DECL(sbuf_t *, write_queue)
 
-// sizeof(struct wio_s)=416 on linux-x64
 struct wio_s
 {
     WEVENT_FIELDS
@@ -245,6 +245,7 @@ struct wio_s
     unsigned  iocp_close_in_progress : 1; // wioClose still owns a stack reference
     unsigned  iocp_associated : 1;        // socket handle is already bound to this loop's IOCP
 #endif
+    splice_context_t *splice_context; // Borrowed from the line; NULL when unattached or closing.
 };
 /*
  * wio lifeline:

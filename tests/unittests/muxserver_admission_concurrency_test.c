@@ -35,6 +35,7 @@ struct admission_race_fixture_s
 {
     master_pool_t             *large_masters[kRaceWorkers];
     master_pool_t             *small_masters[kRaceWorkers];
+    master_pool_t             *micro_masters[kRaceWorkers];
     master_pool_t             *wios_master;
     master_pool_t             *parent_master;
     buffer_pool_t             *pools[kRaceWorkers];
@@ -268,14 +269,20 @@ static void raceFixtureSetup(admission_race_fixture_t *fixture)
     {
         fixture->large_masters[wid] = masterpoolCreateWithCapacity(16);
         fixture->small_masters[wid] = masterpoolCreateWithCapacity(16);
+        fixture->micro_masters[wid] = masterpoolCreateWithCapacity(16);
         require(fixture->large_masters[wid] != NULL && fixture->small_masters[wid] != NULL,
                 "failed to create race buffer masters");
-        fixture->pools[wid] = bufferpoolCreate(
-            fixture->large_masters[wid], fixture->small_masters[wid], 8, kRaceBufferSize, kRaceBufferSize);
+        fixture->pools[wid] = bufferpoolCreate(fixture->large_masters[wid],
+                                               fixture->small_masters[wid],
+                                               fixture->micro_masters[wid],
+                                               8,
+                                               kRaceBufferSize,
+                                               kRaceBufferSize);
         fixture->wios_pools[wid] =
             threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(fixture->wios_master, sizeof(wio_t), 8);
         require(fixture->pools[wid] != NULL && fixture->wios_pools[wid] != NULL, "failed to create race worker pools");
-        bufferpoolUpdateAllocationPaddings(fixture->pools[wid], kMuxFrameLength * 2U, kMuxFrameLength * 2U);
+        bufferpoolUpdateAllocationPaddings(
+            fixture->pools[wid], kMuxFrameLength * 2U, kMuxFrameLength * 2U, kMuxFrameLength * 2U);
         testWorkerBindWID(wid);
         fixture->loops[wid] = wloopCreate(WLOOP_FLAG_AUTO_FREE, fixture->pools[wid], wid);
         require(fixture->loops[wid] != NULL, "failed to create race worker loop");
@@ -409,8 +416,10 @@ static void raceFixtureTeardown(admission_race_fixture_t *fixture)
         bufferpoolDestroy(fixture->pools[wid]);
         masterpoolMakeEmpty(fixture->large_masters[wid]);
         masterpoolMakeEmpty(fixture->small_masters[wid]);
+        masterpoolMakeEmpty(fixture->micro_masters[wid]);
         masterpoolDestroy(fixture->large_masters[wid]);
         masterpoolDestroy(fixture->small_masters[wid]);
+        masterpoolDestroy(fixture->micro_masters[wid]);
     }
     masterpoolDestroy(fixture->parent_master);
     masterpoolMakeEmpty(fixture->wios_master);

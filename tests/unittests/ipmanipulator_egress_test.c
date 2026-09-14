@@ -25,6 +25,7 @@ typedef struct test_env_s
 {
     master_pool_t *large_master;
     master_pool_t *small_master;
+    master_pool_t *micro_master;
     buffer_pool_t *buffer_pool;
     buffer_pool_t *buffer_pools[1];
     line_t        *line;
@@ -81,12 +82,15 @@ static void envSetup(test_env_t *env)
     memoryZero(env, sizeof(*env));
     env->large_master = masterpoolCreateWithCapacity(64);
     env->small_master = masterpoolCreateWithCapacity(64);
-    env->buffer_pool  = bufferpoolCreate(env->large_master, env->small_master, 64, kTestLargeBuffer, kTestSmallBuffer);
+    env->micro_master = masterpoolCreateWithCapacity(64);
+    env->buffer_pool  = bufferpoolCreate(
+        env->large_master, env->small_master, env->micro_master, 64, kTestLargeBuffer, kTestSmallBuffer);
     env->buffer_pools[0] = env->buffer_pool;
 
     GSTATE.shortcut_buffer_pools         = env->buffer_pools;
     GSTATE.masterpool_buffer_pools_large = env->large_master;
     GSTATE.masterpool_buffer_pools_small = env->small_master;
+    GSTATE.masterpool_buffer_pools_micro = env->micro_master;
     GSTATE.workers_count                 = 2;
     testWorkerRegistryInstall(&g_test_worker_registry);
     env->original_mtu = GLOBAL_MTU_SIZE;
@@ -120,6 +124,7 @@ static void envTeardown(test_env_t *env)
     GSTATE.shortcut_buffer_pools         = NULL;
     GSTATE.masterpool_buffer_pools_large = NULL;
     GSTATE.masterpool_buffer_pools_small = NULL;
+    GSTATE.masterpool_buffer_pools_micro = NULL;
     GSTATE.workers_count                 = 0;
     testWorkerRegistryRestore(&g_test_worker_registry);
     GLOBAL_MTU_SIZE = env->original_mtu;
@@ -128,8 +133,10 @@ static void envTeardown(test_env_t *env)
     bufferpoolDestroy(env->buffer_pool);
     masterpoolMakeEmpty(env->large_master);
     masterpoolMakeEmpty(env->small_master);
+    masterpoolMakeEmpty(env->micro_master);
     masterpoolDestroy(env->large_master);
     masterpoolDestroy(env->small_master);
+    masterpoolDestroy(env->micro_master);
 }
 
 static void capturePacket(tunnel_t *t, line_t *l, sbuf_t *buf)

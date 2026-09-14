@@ -1364,6 +1364,8 @@ static void testPacketLineInitAndPayloadExecution(void)
 
     line_t *pkt_line = tunnelchainGetWorkerPacketLine(chain, 0);
     require(pkt_line != NULL, "Worker 0 packet line is NULL");
+    require(pkt_line->splice_context != NULL && pkt_line->splice_context->splice_blockers == UINT64_C(7),
+            "Packet line did not initialize all three splice blockers");
 
     // 1. Initial line state before Init is zeroed
     test_packet_lstate_t *ls = lineGetState(pkt_line, &t_mid);

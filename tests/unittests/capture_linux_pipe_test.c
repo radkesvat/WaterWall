@@ -632,6 +632,7 @@ typedef struct test_env_s
 {
     master_pool_t *large_master;
     master_pool_t *small_master;
+    master_pool_t *micro_master;
     buffer_pool_t *buffer_pool;
     buffer_pool_t *buffer_pools[1];
 } test_env_t;
@@ -640,7 +641,8 @@ static void envSetup(test_env_t *env)
 {
     env->large_master    = masterpoolCreateWithCapacity(16);
     env->small_master    = masterpoolCreateWithCapacity(16);
-    env->buffer_pool     = bufferpoolCreate(env->large_master, env->small_master, 16, 8192, 4096);
+    env->micro_master    = masterpoolCreateWithCapacity(16);
+    env->buffer_pool     = bufferpoolCreate(env->large_master, env->small_master, env->micro_master, 16, 8192, 4096);
     env->buffer_pools[0] = env->buffer_pool;
 
     GSTATE.flag_initialized = true;
@@ -661,8 +663,10 @@ static void envTeardown(test_env_t *env)
     bufferpoolDestroy(env->buffer_pool);
     masterpoolMakeEmpty(env->large_master);
     masterpoolMakeEmpty(env->small_master);
+    masterpoolMakeEmpty(env->micro_master);
     masterpoolDestroy(env->large_master);
     masterpoolDestroy(env->small_master);
+    masterpoolDestroy(env->micro_master);
 }
 
 // Build only the fields BringUp/BringDown touch. caputredeviceCreate() itself
@@ -690,7 +694,8 @@ static void deviceSetup(capture_device_t *cdev, test_env_t *env, reader_probe_t 
     cdev->rule_states        = memoryAllocateZero(kTestCaptureRangeCount * sizeof(*cdev->rule_states));
     cdev->rule_token         = UINT64_C(0x1122334455667788);
     cdev->queue_restartable  = true;
-    cdev->reader_buffer_pool = bufferpoolCreate(env->large_master, env->small_master, 16, 8192, 4096);
+    cdev->reader_buffer_pool =
+        bufferpoolCreate(env->large_master, env->small_master, env->micro_master, 16, 8192, 4096);
     cdev->routine_reader     = probeReader;
     cdev->userdata           = probe;
     cdev->running            = false;

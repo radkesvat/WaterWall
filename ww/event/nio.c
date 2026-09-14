@@ -848,6 +848,9 @@ disconnect:
 // This must only be called from the same thread that created the loop
 int wioClose(wio_t *io)
 {
+    // The line may be released before queued writes drain or by the close callback.
+    io->splice_context = NULL;
+
     // if (io->destroy == 0 && getTID() != io->loop->tid) {
     //     return wioCloseAsync(io); /*  tid lost its meaning, its now ww tid */
     // }

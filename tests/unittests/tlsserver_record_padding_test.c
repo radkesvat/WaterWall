@@ -4,6 +4,7 @@ typedef struct tlsserver_padding_fixture_s
 {
     master_pool_t      *large_master;
     master_pool_t      *small_master;
+    master_pool_t      *micro_master;
     buffer_pool_t      *pool;
     tunnel_t           *tunnel;
     SSL_CTX            *client_context;
@@ -106,10 +107,11 @@ static tlsserver_padding_fixture_t createFixture(uint16_t version)
     tlsserver_padding_fixture_t fixture = {0};
     fixture.large_master                = masterpoolCreateWithCapacity(8);
     fixture.small_master                = masterpoolCreateWithCapacity(8);
-    fixture.pool                        = bufferpoolCreate(fixture.large_master, fixture.small_master, 4, 32768, 1024);
+    fixture.micro_master                = masterpoolCreateWithCapacity(8);
+    fixture.pool = bufferpoolCreate(fixture.large_master, fixture.small_master, fixture.micro_master, 4, 32768, 1024);
     require(fixture.large_master != NULL && fixture.small_master != NULL && fixture.pool != NULL,
             "failed to create the TlsServer padding buffer pool");
-    bufferpoolUpdateAllocationPaddings(fixture.pool, 64, 64);
+    bufferpoolUpdateAllocationPaddings(fixture.pool, 64, 64, 64);
 
     fixture.tunnel = tunnelCreate(NULL, sizeof(tlsserver_tstate_t), sizeof(tlsserver_lstate_t));
     require(fixture.tunnel != NULL, "failed to create the TlsServer padding tunnel");
@@ -165,8 +167,10 @@ static void destroyFixture(tlsserver_padding_fixture_t *fixture)
     bufferpoolDestroy(fixture->pool);
     masterpoolMakeEmpty(fixture->large_master);
     masterpoolMakeEmpty(fixture->small_master);
+    masterpoolMakeEmpty(fixture->micro_master);
     masterpoolDestroy(fixture->large_master);
     masterpoolDestroy(fixture->small_master);
+    masterpoolDestroy(fixture->micro_master);
 }
 
 static size_t writeAndDecrypt(tlsserver_padding_fixture_t *fixture, const uint8_t *plaintext, size_t plaintext_len)
