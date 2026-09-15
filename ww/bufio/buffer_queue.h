@@ -17,6 +17,8 @@
  * Separate entries and their chunk boundaries are preserved. Original allocation
  * identity is not guaranteed: Debug insertion may replace the input allocation;
  * insertion returns the exact retained buffer.
+ * Splice buffers currently abort on insertion in every build until splice-aware
+ * storage is implemented; convert them to ordinary buffers before queueing.
  */
 
 typedef struct buffer_queue_s buffer_queue_t;

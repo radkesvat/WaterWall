@@ -317,11 +317,15 @@ WW_EXPORT uint32_t wioGetIocpLiveRecords(wio_t *io);
 // the fd (e.g. it cannot be switched to nonblocking), the returned io is already
 // closed and its fd released. Callers must handle both cases before treating the
 // io as usable. wioCreateSocket*() returns NULL in either case.
+// Reusing a descriptor number gets a fresh WIO if the closed predecessor is still
+// pending; that predecessor remains owned by its original loop until dispatch ends.
 WW_EXPORT wio_t *wioGet(wloop_t *loop, int fd);
 WW_EXPORT int    wioAdd(wio_t *io, wio_cb cb, int events DEFAULT(WW_READ));
 WW_EXPORT int    wioDel(wio_t *io, int events DEFAULT(WW_RDWR));
 
-// NOTE: io detach from old loop and attach to new loop.
+// Detach on the original owner thread, then attach on the destination owner thread.
+// Read/write interest must be stopped and pending dispatch must have finished.
+// Attempting to detach/attach a pending WIO logs with LOGF and aborts in every build.
 WW_EXPORT void wioDetach(/*wloop_t* loop,*/ wio_t *io);
 WW_EXPORT void wioAttach(wloop_t *loop, wio_t *io);
 // Release a Waterwall watcher for an fd owned by another subsystem.
@@ -341,6 +345,9 @@ WW_EXPORT int              wioInitPipe(wio_t *io);
 // Enabling requires an open WIO whose read interest has never been registered;
 // stopping reads does not reset this precondition. Checked by debug assertions.
 // Initializes the pipe before enabling; returns 0 on success or -1 with errno set.
+// Supported NIO TCP reads emit FD-backed splice buffers for positive FIONREAD
+// counts. Every reserved socket byte must be consumed through the splice helpers
+// before the read callback returns; otherwise dispatch logs with LOGF and aborts.
 WW_EXPORT int  wioEnableSplice(wio_t *io);
 WW_EXPORT void wioDisableSplice(wio_t *io);
 WW_EXPORT bool wioIsSpliceEnabled(const wio_t *io);
@@ -381,6 +388,24 @@ WW_EXPORT ssize_t          wioMoveSpliceBuferToPipe(sbuf_t *buf);
  * Unsupported builds log with LOGF and abort.
  */
 WW_EXPORT sbuf_t          *wioTransformSpliceBufferToRealBuffer(sbuf_t *buf, sbuf_t *dest, buffer_pool_t *pool);
+/**
+ * Append exactly bytes from the front of a splice buffer to dest and return dest.
+ * Requires Splice and exactly one of SpliceFD/SplicePiped on buf, an ordinary dest,
+ * and no source lifetime metadata (debug assert). Zero bytes is a validated no-op.
+ * Copies real prefix bytes first in payload order, reading the requested remainder
+ * from handle->fd or handle->pipefd[0]. Requires exclusive descriptor access.
+ * Invalid flags, cursor/length bounds, insufficient source bytes or destination
+ * append space, an uninitialized selected pipe, insufficient FD reservation, short
+ * reads, and every read error (including EINTR) use LOGF and abort in every build.
+ * Only actual source-FD reads reduce reserved; prefix copies and pipe reads do not.
+ * Source length decreases by bytes. Its cursor advances only across consumed
+ * prefix bytes; logical capacity decreases by the body bytes read, keeping the
+ * descriptor pointer at buf + l_pad. Location flags remain valid for the remainder.
+ * Destination cursor, padding, flags, and lifetime metadata stay unchanged.
+ * Both buffers remain caller-owned. The caller must recycle buf with its worker
+ * buffer pool when empty; this helper never frees it. Unsupported builds abort.
+ */
+WW_EXPORT sbuf_t          *wioPartialReadSpliceBuffer(sbuf_t *buf, sbuf_t *dest, uint32_t bytes);
 WW_EXPORT int              wioGetError(wio_t *io);
 WW_EXPORT int              wioGetEvents(wio_t *io);
 WW_EXPORT int              wioGetREvents(wio_t *io);

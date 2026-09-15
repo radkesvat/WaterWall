@@ -347,6 +347,12 @@ static void wloopReleasePending(wevent_t *event, bool callback_suppressed)
             wioIocpFinalizeDeferred((wio_t *) event);
             return;
         }
+#else
+        if (event->event_type == WEVENT_TYPE_IO)
+        {
+            wioFinalizeNow((wio_t *) event);
+            return;
+        }
 #endif
         EVENT_DEL(event);
     }
@@ -1043,7 +1049,8 @@ static bool wloopCleanup(wloop_t *loop)
          * Pending membership is a lifetime reference. Shutdown suppresses these
          * callbacks, but a due one-shot timer has already left its heap and must
          * be moved onto the quiesced reclamation list before the pending array is
-         * discarded. Non-timer cleanup remains owned by the collections below.
+         * discarded. Destroyed NIOs detached from ios are reclaimed here; live
+         * non-timer cleanup remains owned by the collections below.
          */
         wevent_t *cur = loop->pendings[i];
         while (cur != NULL)
@@ -1055,6 +1062,12 @@ static bool wloopCleanup(wloop_t *loop)
                 {
                     wloopReleasePending(cur, true);
                 }
+#ifndef EVENT_IOCP
+                else if (cur->event_type == WEVENT_TYPE_IO)
+                {
+                    wloopReleasePending(cur, true);
+                }
+#endif
 #ifdef EVENT_IOCP
                 else
                 {
@@ -1879,12 +1892,16 @@ wio_t *wioGet(wloop_t *loop, int fd)
     }
 #ifdef EVENT_IOCP
     if (io != NULL && io->closed)
+#else
+    if (io != NULL && io->closed && io->pending)
+#endif
     {
         /*
-         * Never reinitialize a closed native-IOCP object in place. It may still
-         * be linked from the pending list even with zero live operation records.
-         * wioFree detaches it and defers pool reuse until every lifetime reference
-         * is gone; the reused numeric descriptor receives a fresh object.
+         * A pending node belongs to the old descriptor and loop. Reinitializing
+         * it here would carry stale pending membership into a new connection,
+         * which SocketManager may immediately hand to another worker.
+         * Retire that allocation on its original loop and give the reused fd a
+         * fresh WIO. IOCP also retires closed objects with native operation roots.
          */
         wio_t *closed_io = io;
         wioFree(closed_io);
@@ -1894,7 +1911,6 @@ wio_t *wioGet(wloop_t *loop, int fd)
         }
         io = NULL;
     }
-#endif
     if (io == NULL)
     {
         io = threadsafegenericpoolGetItem(getWorkerWiosPool(loop->wid));
@@ -1924,6 +1940,11 @@ void wioDetach(wio_t *io)
     assert(wioGetFD(io) >= 0);
     assert((io->events & WW_READ) != WW_READ);
     assert((io->events & WW_WRITE) != WW_WRITE);
+    if (UNLIKELY(io->pending))
+    {
+        LOGF("wioDetach: cannot transfer a WIO until its original loop has released pending dispatch");
+        abortProgramNow(1);
+    }
 
     wloop_t *loop = io->loop;
     int      fd   = wioGetFD(io);
@@ -1935,6 +1956,11 @@ void wioAttach(wloop_t *loop, wio_t *io)
 {
     assert((io->events & WW_READ) != WW_READ);
     assert((io->events & WW_WRITE) != WW_WRITE);
+    if (UNLIKELY(io->pending))
+    {
+        LOGF("wioAttach: cannot attach a WIO still owned by pending dispatch on its original loop");
+        abortProgramNow(1);
+    }
     if (! currentThreadIsEventWorkerWID((wid_t) loop->wid))
     {
         printError("wioAttach: loop wid %ld is not owned by the current worker (wid %d)",
@@ -2087,8 +2113,8 @@ void wioReleaseNoClose(wio_t *io)
     if (was_pending)
     {
         /*
-         * EVENT_UNPENDING makes the loop skip callbacks it has not entered yet,
-         * but wloopProcessPendings() may already hold this wio_t in a local
+         * Removing read/write interest makes the loop skip callbacks it has not
+         * entered yet, but wloopProcessPendings() may still hold this wio_t in a local
          * cur/next pointer. Defer returning the object to the pool until a later
          * worker message; worker-message cleanup releases it if shutdown drops
          * the deferred message before it runs.
@@ -2243,9 +2269,7 @@ int wioDel(wio_t *io, int events)
         io->loop->nios--;
         // NOTE: not EVENT_DEL, avoid free
         EVENT_INACTIVE(io);
-#ifndef EVENT_IOCP
-        EVENT_UNPENDING(io);
-#endif
+        // Pending-list membership keeps the WIO alive until dispatch releases it.
 #ifdef EVENT_IOCP
         /*
          * A matching completion may already have been dequeued before read/write

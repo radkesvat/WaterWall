@@ -310,6 +310,117 @@ sbuf_t *wioTransformSpliceBufferToRealBuffer(sbuf_t *buf, sbuf_t *dest, buffer_p
 #endif
 }
 
+sbuf_t *wioPartialReadSpliceBuffer(sbuf_t *buf, sbuf_t *dest, uint32_t bytes)
+{
+    if (UNLIKELY(buf == NULL || (buf->flags & kSbufFlagSplice) == 0))
+    {
+        LOGF("wioPartialReadSpliceBuffer: requires kSbufFlagSplice");
+        abortProgramNow(1);
+    }
+    assert(sbufGetLifetime(buf) == NULL && "Splice buffers must not carry lifetime metadata");
+    const uint16_t location = buf->flags & (kSbufFlagSpliceFD | kSbufFlagSplicePiped);
+    if (UNLIKELY(location != kSbufFlagSpliceFD && location != kSbufFlagSplicePiped))
+    {
+        LOGF("wioPartialReadSpliceBuffer: requires exactly one of SpliceFD and SplicePiped");
+        abortProgramNow(1);
+    }
+    if (UNLIKELY(dest == NULL || (dest->flags & (kSbufFlagSplice | kSbufFlagSpliceFD | kSbufFlagSplicePiped)) != 0))
+    {
+        LOGF("wioPartialReadSpliceBuffer: destination must be an ordinary buffer");
+        abortProgramNow(1);
+    }
+#if WW_HAVE_SPLICE
+    const uint32_t source_length = sbufGetLength(buf);
+    if (UNLIKELY(buf->curpos > sbufGetLeftPadding(buf) || buf->curpos > sbufGetTotalCapacity(buf) ||
+                 source_length > sbufGetMaximumWriteableSize(buf)))
+    {
+        LOGF("wioPartialReadSpliceBuffer: invalid source cursor or logical capacity");
+        abortProgramNow(1);
+    }
+    const uint32_t prefix_bytes = (uint32_t) sbufGetLeftPadding(buf) - buf->curpos;
+    if (UNLIKELY(source_length < prefix_bytes || bytes > source_length))
+    {
+        LOGF("wioPartialReadSpliceBuffer: requested bytes or prefix exceed source length "
+             "(requested=%u, prefix=%u, length=%u)",
+             (unsigned int) bytes,
+             (unsigned int) prefix_bytes,
+             (unsigned int) source_length);
+        abortProgramNow(1);
+    }
+
+    const uint32_t dest_length = sbufGetLength(dest);
+    if (UNLIKELY(dest->curpos > sbufGetTotalCapacity(dest) || dest_length > sbufGetMaximumWriteableSize(dest) ||
+                 bytes > sbufGetMaximumWriteableSize(dest) - dest_length))
+    {
+        LOGF("wioPartialReadSpliceBuffer: destination has insufficient append space "
+             "(requested=%u, length=%u, cursor=%u, capacity=%u)",
+             (unsigned int) bytes,
+             (unsigned int) dest_length,
+             (unsigned int) dest->curpos,
+             (unsigned int) sbufGetTotalCapacity(dest));
+        abortProgramNow(1);
+    }
+    if (UNLIKELY(bytes == 0))
+    {
+        return dest;
+    }
+
+    const uint32_t copied_prefix = min(bytes, prefix_bytes);
+    const uint32_t body_bytes    = bytes - copied_prefix;
+    uint8_t       *target        = sbufGetMutablePtr(dest) + dest_length;
+    if (body_bytes != 0)
+    {
+        wio_fd_t *handle;
+        static_assert(sizeof(handle) <= SPLICE_BUFFER_STORAGE_SIZE,
+                      "WIO descriptor pointer must fit in a splice buffer");
+        sbufByteCopy(&handle, buf->buf + sbufGetLeftPadding(buf), sizeof(handle));
+        assert(handle != NULL);
+        const bool from_pipe = location == kSbufFlagSplicePiped;
+        if (UNLIKELY(from_pipe && handle->pipefd[0] == 0 && handle->pipefd[1] == 0))
+        {
+            LOGF("wioPartialReadSpliceBuffer: descriptor pipe must already be initialized");
+            abortProgramNow(1);
+        }
+        if (UNLIKELY(! from_pipe && body_bytes > handle->reserved))
+        {
+            LOGF("wioPartialReadSpliceBuffer: source reservation is too small (requested=%u, reserved=%u)",
+                 (unsigned int) body_bytes,
+                 (unsigned int) handle->reserved);
+            abortProgramNow(1);
+        }
+
+        const int     fd       = from_pipe ? handle->pipefd[0] : handle->fd;
+        const ssize_t consumed = read(fd, target + copied_prefix, body_bytes);
+        if (! from_pipe && consumed > 0)
+        {
+            handle->reserved -= (uint32_t) consumed;
+        }
+        if (UNLIKELY(consumed < 0 || (uint32_t) consumed != body_bytes))
+        {
+            const int read_error = consumed < 0 ? errno : 0;
+            LOGF("wioPartialReadSpliceBuffer: incomplete read from %s (requested=%u, result=%lld, errno=%d)",
+                 from_pipe ? "pipe" : "source fd",
+                 (unsigned int) body_bytes,
+                 (long long) consumed,
+                 read_error);
+            abortProgramNow(1);
+        }
+    }
+    sbufByteCopy(target, sbufGetRawPtr(buf), copied_prefix);
+    sbufSetLength(dest, dest_length + bytes);
+
+    // Only real prefix consumption advances the cursor; the descriptor stays at buf + l_pad.
+    sbufShiftRight(buf, copied_prefix);
+    sbufConsume(buf, body_bytes);
+    buf->capacity -= body_bytes;
+    return dest;
+#else
+    discard bytes;
+    LOGF("wioPartialReadSpliceBuffer: splice is unsupported on this build");
+    abortProgramNow(1);
+#endif
+}
+
 // todo (invesitage) how a dynamic node can have these?
 uint64_t wloopGetNextEventID(void)
 {
@@ -433,6 +544,7 @@ void wioReady(wio_t *io)
 {
     if (io->ready)
         return;
+    assert(! io->pending && "A pending WIO cannot be reinitialized for another descriptor");
     // flags
     io->ready     = 1;
     io->connected = 0;
@@ -621,6 +733,11 @@ void wioFinalizeNow(wio_t *io)
         io->loop->ios.ptr[io->io_slot] == io)
     {
         io->loop->ios.ptr[io->io_slot] = NULL;
+    }
+    if (io->pending)
+    {
+        // The pending list and current dispatcher still own this allocation.
+        return;
     }
     EVENTLOOP_FREE(io->localaddr);
     EVENTLOOP_FREE(io->peeraddr);

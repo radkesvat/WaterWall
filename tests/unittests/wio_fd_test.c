@@ -1,3 +1,5 @@
+#include "buffer_queue.h"
+#include "loggers/internal_logger.h"
 #include "threadsafe_generic_pool.h"
 #include "wio_fd_pool_fixture.h"
 #include "worker_registry_fixture.h"
@@ -50,7 +52,7 @@ static void requireClosed(int fd)
     require(fcntl(fd, F_GETFD) == -1 && errno == EBADF, "descriptor survived the final release");
 }
 
-static void setup(test_env_t *env)
+static void setupWithBufferSize(test_env_t *env, uint32_t large_size)
 {
     memoryZero(env, sizeof(*env));
     GSTATE.workers_count = 2;
@@ -63,13 +65,18 @@ static void setup(test_env_t *env)
         env->masters[i] = masterpoolCreateWithCapacity(8);
         require(env->masters[i] != NULL, "failed to create test master pool");
     }
-    env->buffers = bufferpoolCreate(env->masters[0], env->masters[1], env->masters[2], 4, 4096, 1024);
+    env->buffers = bufferpoolCreate(env->masters[0], env->masters[1], env->masters[2], 4, large_size, 1024);
     env->wios    = threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(env->masters[3], sizeof(wio_t), 4);
     require(env->buffers != NULL && env->wios != NULL, "failed to create test pools");
     env->wio_pools[0]          = env->wios;
     GSTATE.shortcut_wios_pools = env->wio_pools;
     env->loop                  = wloopCreate(WLOOP_FLAG_RUN_ONCE, env->buffers, 0);
     require(env->loop != NULL, "failed to create test loop");
+}
+
+static void setup(test_env_t *env)
+{
+    setupWithBufferSize(env, 4096);
 }
 
 static void teardown(test_env_t *env)
@@ -256,6 +263,99 @@ static void testCloseCallback(test_env_t *env)
     close(other[1]);
 }
 
+typedef struct pending_reuse_probe_s
+{
+    test_env_t  *env;
+    unsigned int reads;
+} pending_reuse_probe_t;
+
+static void unexpectedPendingRead(wio_t *io)
+{
+    discard io;
+    require(false, "a closed descriptor's stale event reached its callback");
+}
+
+static void readReusedDescriptor(wio_t *io, sbuf_t *buf)
+{
+    pending_reuse_probe_t *probe = weventGetUserdata(io);
+    require(sbufGetLength(buf) == 1 && sbufReadUI8(buf) == 'r', "reused descriptor delivered the wrong payload");
+    ++probe->reads;
+    bufferpoolReuseBuffer(probe->env->buffers, buf);
+
+    const size_t checked_out = masterpoolGetCheckedOut(probe->env->masters[3]);
+    wioFree(io);
+    require(io->destroy && io->pending && io->fd_handle == NULL,
+            "free from a read callback lost its pending allocation protection");
+    require(masterpoolGetCheckedOut(probe->env->masters[3]) == checked_out,
+            "read callback returned its WIO to the pool before dispatch finished");
+}
+
+static void testPendingDescriptorReuse(void)
+{
+    test_env_t env;
+    setup(&env);
+    // Drive two loops on one test thread to force destination dispatch before
+    // the source loop finishes its stale pending entry, without a timing race.
+    wloop_t *destination = wloopCreate(WLOOP_FLAG_RUN_ONCE, env.buffers, 0);
+    require(destination != NULL, "failed to create the destination loop");
+    const size_t baseline = masterpoolGetCheckedOut(env.masters[3]);
+    int          sockets[2], replacement[2];
+    wio_t       *old = socketIO(&env, sockets);
+    require(socketpair(AF_UNIX, SOCK_STREAM, 0, replacement) == 0, "failed to prepare the replacement connection");
+    require(wioAdd(old, unexpectedPendingRead, WW_READ) == 0, "failed to register the original descriptor");
+    old->revents = WW_READ;
+    EVENT_PENDING(old);
+    require(wioClose(old) == 0 && old->pending, "closing a pending WIO lost its pending membership");
+    require(dup2(replacement[0], sockets[0]) == sockets[0], "failed to force descriptor-number reuse");
+    close(replacement[0]);
+
+    wio_t *fresh = wioGet(env.loop, sockets[0]);
+    require(fresh != NULL && wioIsOpened(fresh) && fresh != old && ! fresh->pending,
+            "descriptor reuse inherited the old WIO's pending entry");
+    require(old->destroy && old->pending && old->loop == env.loop && old->fd_handle == NULL,
+            "retired WIO did not remain owned by its original pending list");
+    wioDetach(fresh);
+    wioAttach(destination, fresh);
+    pending_reuse_probe_t probe = {.env = &env};
+    weventSetUserData(fresh, &probe);
+    wioSetCallBackRead(fresh, readReusedDescriptor);
+    require(wioRead(fresh) == 0 && send(replacement[1], "r", 1, 0) == 1,
+            "failed to make the transferred connection readable");
+    require(wloopProcessEvents(destination, 0) >= 0 && probe.reads == 1 && destination->npendings == 0,
+            "the transferred connection was stranded by stale pending membership");
+    require(! wioExists(destination, sockets[0]), "callback-freed WIO remained in the destination table");
+    require(old->pending && old->loop == env.loop, "destination dispatch altered the source's pending entry");
+    require(wloopProcessEvents(env.loop, 0) >= 0 && env.loop->npendings == 0,
+            "source loop did not settle the old pending entry");
+    require(masterpoolGetCheckedOut(env.masters[3]) == baseline, "pending dispatch leaked or recycled a WIO twice");
+
+    close(sockets[1]);
+    close(replacement[1]);
+    wloopDestroy(&destination);
+    teardown(&env);
+}
+
+static void testPendingDetachRejected(void)
+{
+    pid_t child = fork();
+    require(child >= 0, "failed to fork pending-detach test");
+    if (child == 0)
+    {
+        test_env_t env;
+        setup(&env);
+        int    sockets[2];
+        wio_t *io = socketIO(&env, sockets);
+        require(wioAdd(io, unexpectedPendingRead, WW_READ) == 0, "failed to register pending-detach descriptor");
+        EVENT_PENDING(io);
+        require(wioReadStop(io) == 0, "failed to stop pending-detach read interest");
+        wioDetach(io);
+        _Exit(0);
+    }
+    int status;
+    require(waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 1,
+            "pending detach was not rejected before handoff");
+}
+
 static void testOutliveLocalPool(test_env_t *env)
 {
     int       sockets[2];
@@ -303,9 +403,377 @@ static void testPipeDescriptorZero(void)
 #endif
 }
 
+#if WW_HAVE_SPLICE
+typedef enum splice_case_e
+{
+    kSpliceConvertFD,
+    kSpliceConvertPipe,
+    kSplicePartialFD,
+    kSplicePartialPipe,
+    kSpliceRetainPipe,
+    kSpliceDisabled,
+    kSpliceHeldReservation,
+    kSpliceDroppedReservation,
+    kSpliceClosedReservation,
+    kSplicePartialReservation,
+    kSpliceSmallDestination,
+    kSplicePartialRange,
+    kSplicePartialCapacity,
+    kSpliceShortFD,
+    kSpliceShortPipe,
+    kSpliceShortPartial,
+    kSpliceFailedRead,
+    kSpliceInvalidFlags,
+    kSpliceMissingPipe,
+    kSpliceMissingReservation,
+    kSpliceMoveTwice,
+    kSpliceWriteGuard,
+    kSpliceQueueGuard
+} splice_case_t;
+
+typedef struct splice_probe_s
+{
+    test_env_t   *env;
+    splice_case_t kind;
+    uint8_t       data[LARGE_BUFFER_SIZE_RAM_HIGH + 17];
+    uint32_t      length;
+    uint32_t      received;
+    unsigned int  calls;
+    unsigned int  closes;
+    sbuf_t       *held;
+    wio_fd_t     *retained;
+} splice_probe_t;
+
+static void spliceClosed(wio_t *io)
+{
+    splice_probe_t *probe = weventGetUserdata(io);
+    ++probe->closes;
+}
+
+static void requireSplicePayload(splice_probe_t *probe, sbuf_t *buf, uint32_t body_bytes, bool appended)
+{
+    const uint32_t prefix = appended ? 6 : 4;
+    require(sbufGetLength(buf) == body_bytes + prefix && buf->flags == 0,
+            "splice conversion returned invalid length or flags");
+    require(memoryEqual(sbufGetRawPtr(buf), appended ? ">>HEAD" : "HEAD", prefix) &&
+                memoryEqual(sbufGetMutablePtr(buf) + prefix, probe->data + probe->received, body_bytes),
+            "splice conversion lost prefix bytes or changed payload order");
+    require(buf->curpos == (appended ? 64 : 60) && sbufGetLeftPadding(buf) == 64,
+            "splice conversion changed the expected padding layout");
+}
+
+static void spliceRead(wio_t *io, sbuf_t *buf)
+{
+    splice_probe_t *probe = weventGetUserdata(io);
+    buffer_pool_t  *pool  = probe->env->buffers;
+    const uint32_t  count = sbufGetLength(buf);
+    ++probe->calls;
+    if (probe->kind == kSpliceDisabled)
+    {
+        require(buf->flags == 0 && count <= probe->length - probe->received &&
+                    memoryEqual(sbufGetRawPtr(buf), probe->data + probe->received, count),
+                "disabled splice mode did not deliver ordinary bytes");
+        probe->received += count;
+        bufferpoolReuseBuffer(pool, buf);
+        return;
+    }
+
+    const uint32_t limit = min(bufferpoolGetLargeBufferSize(pool), (uint32_t) LARGE_BUFFER_SIZE_RAM_HIGH);
+    require(count == min(probe->length - probe->received, limit) && count > 0,
+            "splice dispatch used the wrong availability count or cap");
+    require(buf->flags == (kSbufFlagSplice | kSbufFlagSpliceFD) && buf->curpos == 64 && buf->capacity == 64 + count &&
+                sbufGetLifetime(buf) == NULL,
+            "splice dispatch supplied an invalid wrapper");
+    wio_fd_t *handle;
+    sbufByteCopy(&handle, buf->buf + sbufGetLeftPadding(buf), sizeof(handle));
+    require(handle == wioGetFDHandle(io) && handle->reserved == count && wiofdGetRefCount(handle) == 2,
+            "splice callback did not receive a reserved, retained descriptor");
+
+    switch (probe->kind)
+    {
+    case kSpliceHeldReservation:
+        probe->held = buf;
+        return;
+    case kSpliceDroppedReservation:
+        bufferpoolReuseBuffer(pool, buf);
+        return;
+    case kSpliceClosedReservation:
+        bufferpoolReuseBuffer(pool, buf);
+        wioFree(io);
+        return;
+    case kSplicePartialReservation: {
+        sbuf_t *dest = bufferpoolGetLargeBuffer(pool);
+        wioPartialReadSpliceBuffer(buf, dest, 1);
+        bufferpoolReuseBuffer(pool, dest);
+        bufferpoolReuseBuffer(pool, buf);
+        return;
+    }
+    case kSpliceSmallDestination:
+        wioTransformSpliceBufferToRealBuffer(buf, sbufCreateWithPadding(0, 64), pool);
+        break;
+    case kSplicePartialRange:
+        wioPartialReadSpliceBuffer(buf, bufferpoolGetLargeBuffer(pool), count + 1);
+        break;
+    case kSplicePartialCapacity: {
+        sbuf_t *dest = bufferpoolGetLargeBuffer(pool);
+        sbufSetLength(dest, sbufGetMaximumWriteableSize(dest));
+        wioPartialReadSpliceBuffer(buf, dest, 1);
+        break;
+    }
+    case kSpliceShortFD:
+    case kSpliceShortPipe:
+    case kSpliceShortPartial:
+        if (probe->kind == kSpliceShortPipe)
+        {
+            wioMoveSpliceBuferToPipe(buf);
+        }
+        else
+        {
+            ++handle->reserved;
+        }
+        ++buf->capacity;
+        sbufSetLength(buf, count + 1);
+        if (probe->kind == kSpliceShortPartial)
+        {
+            wioPartialReadSpliceBuffer(buf, bufferpoolGetLargeBuffer(pool), count + 1);
+        }
+        else
+        {
+            wioTransformSpliceBufferToRealBuffer(buf, bufferpoolGetLargeBuffer(pool), pool);
+        }
+        break;
+    case kSpliceFailedRead: {
+        uint8_t drained[32];
+        require(count <= sizeof(drained) && recv(handle->fd, drained, count, 0) == (ssize_t) count,
+                "failed to drain socket for EAGAIN fixture");
+        wioTransformSpliceBufferToRealBuffer(buf, bufferpoolGetLargeBuffer(pool), pool);
+        break;
+    }
+    case kSpliceInvalidFlags:
+        buf->flags |= kSbufFlagSplicePiped;
+        wioPartialReadSpliceBuffer(buf, bufferpoolGetLargeBuffer(pool), 1);
+        break;
+    case kSpliceMissingPipe:
+        close(handle->pipefd[0]);
+        close(handle->pipefd[1]);
+        handle->pipefd[0] = handle->pipefd[1] = 0;
+        wioMoveSpliceBuferToPipe(buf);
+        break;
+    case kSpliceMissingReservation:
+        --handle->reserved;
+        wioPartialReadSpliceBuffer(buf, bufferpoolGetLargeBuffer(pool), count);
+        break;
+    case kSpliceMoveTwice:
+        wioMoveSpliceBuferToPipe(buf);
+        wioMoveSpliceBuferToPipe(buf);
+        break;
+    case kSpliceWriteGuard:
+        wioWrite(io, buf);
+        break;
+    case kSpliceQueueGuard: {
+        buffer_queue_t queue = bufferqueueCreate(1);
+        bufferqueuePushBack(&queue, buf);
+        break;
+    }
+    default:
+        break;
+    }
+    require(probe->kind <= kSpliceDisabled, "a splice failure case returned instead of aborting");
+
+    sbufShiftLeft(buf, 4);
+    sbufWrite(buf, "HEAD", 4);
+    const bool piped =
+        probe->kind == kSpliceConvertPipe || probe->kind == kSplicePartialPipe || probe->kind == kSpliceRetainPipe;
+    if (piped)
+    {
+        require(wioMoveSpliceBuferToPipe(buf) == (ssize_t) count && handle->reserved == 0 &&
+                    buf->flags == (kSbufFlagSplice | kSbufFlagSplicePiped),
+                "moving to the pipe changed the wrong flags or reservation");
+    }
+    if (probe->kind == kSpliceRetainPipe)
+    {
+        wiofdRef(handle);
+        probe->retained = handle;
+        probe->held     = buf;
+        probe->received += count;
+        wioFree(io);
+        return;
+    }
+
+    const bool partial = probe->kind == kSplicePartialFD || probe->kind == kSplicePartialPipe;
+    sbuf_t    *dest    = bufferpoolGetLargeBuffer(pool);
+    if (partial)
+    {
+        sbufSetLength(dest, 2);
+        sbufWrite(dest, ">>", 2);
+        require(wioPartialReadSpliceBuffer(buf, dest, 0) == dest && sbufGetLength(dest) == 2 &&
+                    sbufGetLength(buf) == count + 4,
+                "zero-byte partial read changed either buffer");
+        wioPartialReadSpliceBuffer(buf, dest, 2);
+        require(buf->curpos == 62 && handle->reserved == (piped ? 0 : count), "prefix-only read consumed socket bytes");
+        wioPartialReadSpliceBuffer(buf, dest, 4);
+        require(buf->curpos == 64 && buf->capacity == 64 + count - 2 && sbufGetLength(buf) == count - 2 &&
+                    handle->reserved == (piped ? 0 : count - 2),
+                "mixed prefix/body read left incorrect source accounting");
+        wioPartialReadSpliceBuffer(buf, dest, sbufGetLength(buf));
+        require(sbufGetLength(buf) == 0 && buf->curpos == 64 && buf->capacity == 64 &&
+                    buf->flags == (kSbufFlagSplice | (piped ? kSbufFlagSplicePiped : kSbufFlagSpliceFD)),
+                "full partial-read consumption did not leave a reusable empty wrapper");
+        bufferpoolReuseBuffer(pool, buf);
+    }
+    else
+    {
+        require(wioTransformSpliceBufferToRealBuffer(buf, dest, pool) == dest,
+                "full conversion did not return caller-supplied storage");
+    }
+    require(handle->reserved == 0, "splice consumption did not settle its reservation");
+    requireSplicePayload(probe, dest, count, partial);
+    probe->received += count;
+    bufferpoolReuseBuffer(pool, dest);
+}
+
+static void runSpliceCase(splice_case_t kind, uint32_t large_size, uint32_t length)
+{
+    test_env_t env;
+    setupWithBufferSize(&env, large_size);
+    bufferpoolUpdateAllocationPaddings(env.buffers, 64, 64, 64);
+    int            sockets[2];
+    wio_t         *io    = socketIO(&env, sockets);
+    splice_probe_t probe = {.env = &env, .kind = kind, .length = length};
+    require(length <= sizeof(probe.data), "splice fixture payload is too large");
+    for (uint32_t i = 0; i < length; ++i)
+    {
+        probe.data[i] = (uint8_t) (i * 17U + 3U);
+    }
+    weventSetUserData(io, &probe);
+    wioSetCallBackRead(io, spliceRead);
+    wioSetCallBackClose(io, spliceClosed);
+    if (kind != kSpliceDisabled)
+    {
+        require(wioEnableSplice(io) == 0, "failed to enable splice in fixture");
+    }
+    require(wioRead(io) == 0, "failed to start splice fixture reads");
+    // No data and no EOF: zero availability must not fabricate a splice wrapper.
+    io->revents = WW_READ;
+    EVENT_PENDING(io);
+    require(wloopProcessEvents(env.loop, 0) >= 0 && probe.calls == 0 && ! io->closed,
+            "spurious readiness fabricated payload or closed a live socket");
+    require(send(sockets[1], probe.data, length, 0) == (ssize_t) length, "failed to queue splice fixture bytes");
+    for (unsigned int attempt = 0; attempt < 8 && probe.received < length; ++attempt)
+    {
+        require(wloopProcessEvents(env.loop, 0) >= 0, "splice fixture dispatch failed");
+    }
+    require(probe.received == length, "splice dispatch did not consume all queued bytes");
+    if (kind == kSpliceRetainPipe)
+    {
+        require(probe.closes == 1 && probe.held != NULL && wiofdGetRefCount(probe.retained) == 1,
+                "pipe-backed wrapper did not outlive WIO close with its caller-owned reference");
+        sbuf_t *dest = bufferpoolGetLargeBuffer(env.buffers);
+        wioTransformSpliceBufferToRealBuffer(probe.held, dest, env.buffers);
+        probe.received = 0;
+        requireSplicePayload(&probe, dest, length, false);
+        bufferpoolReuseBuffer(env.buffers, dest);
+        wiofdUnref(probe.retained);
+        requireClosed(sockets[0]);
+        close(sockets[1]);
+    }
+    else
+    {
+        close(sockets[1]);
+        require(wloopProcessEvents(env.loop, 0) >= 0 && probe.closes == 1 && wioIsClosed(io),
+                "zero availability at EOF failed to close the connection");
+    }
+    teardown(&env);
+}
+
+static void testSpliceReads(void)
+{
+    runSpliceCase(kSpliceConvertFD, 4096, 4097);
+    runSpliceCase(kSpliceConvertFD, 65536, LARGE_BUFFER_SIZE_RAM_HIGH + 17);
+    runSpliceCase(kSpliceConvertPipe, 4096, 9);
+    runSpliceCase(kSplicePartialFD, 4096, 9);
+    runSpliceCase(kSplicePartialPipe, 4096, 9);
+    runSpliceCase(kSpliceRetainPipe, 4096, 9);
+    runSpliceCase(kSpliceDisabled, 4096, 9);
+
+    const struct
+    {
+        splice_case_t kind;
+        const char   *diagnostic;
+    } failures[] = {
+        {kSpliceHeldReservation, "splice callback returned with unconsumed socket bytes"},
+        {kSpliceDroppedReservation, "splice callback returned with unconsumed socket bytes"},
+        {kSpliceClosedReservation, "splice callback returned with unconsumed socket bytes"},
+        {kSplicePartialReservation, "splice callback returned with unconsumed socket bytes"},
+        {kSpliceSmallDestination, "destination too small"},
+        {kSplicePartialRange, "requested bytes or prefix exceed source length"},
+        {kSplicePartialCapacity, "destination has insufficient append space"},
+        {kSpliceShortFD, "incomplete read from source fd (requested=10, result=9"},
+        {kSpliceShortPipe, "incomplete read from pipe (requested=10, result=9"},
+        {kSpliceShortPartial, "incomplete read from source fd (requested=10, result=9"},
+        {kSpliceFailedRead, "incomplete read from source fd (requested=9, result=-1"},
+        {kSpliceInvalidFlags, "requires exactly one of SpliceFD and SplicePiped"},
+        {kSpliceMissingPipe, "descriptor pipe must already be initialized"},
+        {kSpliceMissingReservation, "source reservation is too small"},
+        {kSpliceMoveTwice, "with kSbufFlagSplicePiped clear"},
+        {kSpliceWriteGuard, "splice buffer sending is not implemented"},
+        {kSpliceQueueGuard, "splice buffer storage is not implemented"},
+    };
+    for (size_t i = 0; i < ARRAY_SIZE(failures); ++i)
+    {
+        int output[2];
+        require(pipe(output) == 0, "failed to create fatal-diagnostic pipe");
+        pid_t child = fork();
+        require(child >= 0, "failed to fork splice fatal-path test");
+        if (child == 0)
+        {
+            close(output[0]);
+            require(dup2(output[1], STDERR_FILENO) == STDERR_FILENO, "failed to redirect fatal diagnostic");
+            close(output[1]);
+            require(createInternalLogger(NULL, true) != NULL, "failed to create fatal-path logger");
+            runSpliceCase(failures[i].kind, 4096, 9);
+            _Exit(66);
+        }
+        close(output[1]);
+        char    diagnostic[4096];
+        size_t  used = 0;
+        ssize_t count;
+        while (used < sizeof(diagnostic) - 1 &&
+               (count = read(output[0], diagnostic + used, sizeof(diagnostic) - 1 - used)) != 0)
+        {
+            if (count < 0 && errno == EINTR)
+            {
+                continue;
+            }
+            require(count > 0, "failed to read fatal diagnostic");
+            used += (size_t) count;
+        }
+        diagnostic[used] = '\0';
+        close(output[0]);
+        int status;
+        require(waitpid(child, &status, 0) == child, "failed to join splice fatal-path child");
+        if (! WIFEXITED(status) || WEXITSTATUS(status) != 1 || strstr(diagnostic, failures[i].diagnostic) == NULL)
+        {
+            fprintf(stderr,
+                    "splice fatal case %d: expected '%s', status=%d, got: %s\n",
+                    (int) failures[i].kind,
+                    failures[i].diagnostic,
+                    status,
+                    diagnostic);
+            exit(1);
+        }
+    }
+}
+#endif
+
 int main(void)
 {
     testPipeDescriptorZero();
+    testPendingDescriptorReuse();
+    testPendingDetachRejected();
+#if WW_HAVE_SPLICE
+    testSpliceReads();
+#endif
     test_env_t env;
     setup(&env);
     testRetainedDescriptors(&env);

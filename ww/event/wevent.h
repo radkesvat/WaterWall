@@ -144,7 +144,7 @@ struct wio_fd_s
     int          fd;
     int          pipefd[2]; // {0, 0} until initialized; a created pipe may include descriptor zero.
     atomic_u32_t refc;
-    uint32_t     reserved; // Reserved byte count.
+    uint32_t     reserved; // Socket bytes reserved by the active splice read callback.
     bool         is_socket;
 };
 

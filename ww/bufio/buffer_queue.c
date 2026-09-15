@@ -5,6 +5,7 @@
 
 #include "buffer_queue.h"
 #include "buffer_pool.h"
+#include "loggers/internal_logger.h"
 #include "stc/common.h"
 #include "tunnel.h"
 
@@ -96,8 +97,19 @@ static void bufferqueueInsertReserved(sbuf_t *slot, const char *where)
     }
 }
 
+static void bufferqueueRejectSpliceBuffer(const sbuf_t *buf)
+{
+    if (UNLIKELY(buf->flags & kSbufFlagSplice))
+    {
+        // Temporary guard: Debug insertion duplicates ordinary payload bytes.
+        LOGF("buffer queue: splice buffer storage is not implemented; convert to an ordinary buffer before queueing");
+        abortProgramNow(1);
+    }
+}
+
 bool bufferqueueTryPushBack(buffer_queue_t *self, sbuf_t **b)
 {
+    bufferqueueRejectSpliceBuffer(*b);
     if (UNLIKELY(! bufferqueueReserveExtra(self, 1)))
     {
         return false;
@@ -115,6 +127,7 @@ bool bufferqueueTryPushBack(buffer_queue_t *self, sbuf_t **b)
 
 bool bufferqueueTryPushFront(buffer_queue_t *self, sbuf_t **b)
 {
+    bufferqueueRejectSpliceBuffer(*b);
     if (UNLIKELY(! bufferqueueReserveExtra(self, 1)))
     {
         return false;

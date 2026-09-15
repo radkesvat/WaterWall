@@ -46,11 +46,13 @@ enum
      * Participating tunnels trust the sizes without inspecting or modifying
      * the kernel-backed body or its descriptor pointer.
      *
-     * A splice-bearing splice buffer must not be retained for deferred use or
-     * queued to another worker, the main thread, or a later callback on the
-     * same thread. Before deferring, use the dedicated splice helpers to
-     * consume all represented bytes via read() or splice(). Tunnel code must
-     * not bypass the helpers with raw I/O or queue an unconsumed wrapper.
+     * Socket-backed bytes must be consumed with the dedicated helpers before
+     * the read callback returns. Before deferring to another worker, the main
+     * thread, or a later callback, convert to ordinary storage or move the body
+     * into the pipe. A retained pipe-backed wrapper needs splice-aware storage
+     * and a live descriptor reference; the buffer does not own that reference.
+     * The read dispatcher holds a descriptor reference only across the callback.
+     * Tunnel code must not bypass helper reservation accounting with raw I/O.
      *
      * Reserved left padding remains real, writable storage. A tunnel may use
      * sbufShiftLeft() and write its prefix within the available, advertised
