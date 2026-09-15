@@ -77,7 +77,8 @@ if(TARGET ww)
   if(LINUX)
     add_executable(wio_fd_test wio_fd_test.c)
     target_link_libraries(wio_fd_test PRIVATE ww)
-    target_link_options(wio_fd_test PRIVATE "-Wl,--wrap=pipe2" "-Wl,--wrap=read" "-Wl,--wrap=send" "-Wl,--wrap=splice")
+    target_link_options(wio_fd_test PRIVATE "-Wl,--wrap=pipe2" "-Wl,--wrap=read" "-Wl,--wrap=send" "-Wl,--wrap=splice"
+        "-Wl,--wrap=memoryReAllocate")
     add_dependencies(waterwall_unit_tests wio_fd_test)
     add_waterwall_unit_test(waterwall.wio_fd_unit wio_fd_test "unit;event;fd;pipe;lifetime")
 
@@ -2734,6 +2735,30 @@ if(TARGET TlsClient)
     tlsclient_line_failure_test
     "unit;tunnels;tlsclient;failure;line"
   )
+endif()
+
+if(LINUX)
+  foreach(tcp_side Listener Connector)
+    if(TARGET Tcp${tcp_side})
+      string(TOLOWER "${tcp_side}" tcp_side_lower)
+      set(tcp_pause_target "tcp${tcp_side_lower}_pause_close_test")
+      add_executable(${tcp_pause_target}
+        tcp_adapter_pause_close_test.c
+        ${CMAKE_SOURCE_DIR}/ww/bufio/buffer_queue.c
+      )
+      if(tcp_side STREQUAL "Listener")
+        target_compile_definitions(${tcp_pause_target} PRIVATE TCP_PAUSE_TEST_LISTENER=1)
+      endif()
+      target_link_options(${tcp_pause_target} PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS})
+      target_link_libraries(${tcp_pause_target} PRIVATE Tcp${tcp_side} ww)
+      add_dependencies(waterwall_unit_tests ${tcp_pause_target})
+      add_waterwall_unit_test(
+        waterwall.tcp${tcp_side_lower}_pause_close_unit
+        ${tcp_pause_target}
+        "unit;tunnels;tcp;pause;splice;lifetime"
+      )
+    endif()
+  endforeach()
 endif()
 
 if(TARGET TcpUdpConnector AND TARGET TcpConnector AND TARGET UdpConnector)

@@ -449,10 +449,14 @@ void bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *b)
     bufferpoolDebugCheckThreadAccess(pool);
 
     const bool is_splice = (b->flags & kSbufFlagSplice) != 0;
-    if (is_splice && ! sbufSpliceIsReusable(b))
+    if (is_splice)
     {
-        LOGF("bufferpoolReuseBuffer: splice payload and pipe must be empty");
-        abortProgramNow(1);
+        sbufSpliceDiscard(b);
+        if (UNLIKELY(! sbufSpliceIsReusable(b)))
+        {
+            LOGF("bufferpoolReuseBuffer: splice payload and pipe must be empty after discard");
+            abortProgramNow(1);
+        }
     }
 
 #if BYPASS_BUFFERPOOL == 1

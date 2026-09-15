@@ -15,10 +15,13 @@
  * This queue is designed to store sbuf_t pointers, providing a mechanism
  * for managing and accessing these buffers in a FIFO (First-In-First-Out) manner.
  * Separate entries and their chunk boundaries are preserved. Original allocation
- * identity is not guaranteed: Debug insertion may replace the input allocation;
- * insertion returns the exact retained buffer.
- * Splice buffers currently abort on insertion in every build until splice-aware
- * storage is implemented; convert them to ordinary buffers before queueing.
+ * identity is not guaranteed for ordinary buffers: Debug insertion may replace
+ * the input allocation; insertion returns the exact retained buffer.
+ * Splice wrappers retain their allocation and exclusively owned private pipes
+ * in every build. Nonempty splice entries require kSbufFlagSplicePiped and must
+ * not carry lifetime metadata. Mixed ordinary/splice entries preserve FIFO order.
+ * While queued, neither payload nor length may be changed through a retained alias;
+ * pop first before consuming or modifying an entry.
  */
 
 typedef struct buffer_queue_s buffer_queue_t;
@@ -92,9 +95,10 @@ bool bufferqueueReserveExtra(buffer_queue_t *self, size_t extra);
  * buffer, or nothing at all happened: the queue, its total length, `*b` and the
  * buffer's lifetime are untouched and the caller still owns the buffer.
  *
- * Ordering matters here. Debug builds replace the allocation to expose stale
+ * Ordering matters here. Debug builds replace ordinary allocations to expose stale
  * aliases, which destroys the caller's original; that replacement must therefore
- * happen only once the insertion is known to succeed.
+ * happen only once the insertion is known to succeed. Splice wrappers are retained
+ * directly without copying or consuming their private bodies.
  *
  * @param self A pointer to the buffer queue.
  * @param b In/out pointer to the buffer; updated only on success.
@@ -113,6 +117,9 @@ bool bufferqueueTryPushFront(buffer_queue_t *self, sbuf_t **b);
  * @brief Destroys a buffer queue and releases its resources.
  *
  * This function reuses all buffers in the queue before freeing the queue itself.
+ * It discards queued splice payloads by draining their private pipes, closing a
+ * pair on drain failure. Healthy empty pipes survive pool reuse. Nonempty queues
+ * must be destroyed on their owning event worker; empty queues need no worker.
  *
  * @param self A pointer to the buffer queue to be destroyed.
  */
@@ -128,8 +135,8 @@ void bufferqueueDestroy(buffer_queue_t *self);
  *
  * @param self A pointer to the buffer queue.
  * @param b A pointer to the sbuf_t to be added to the queue.
- * @return The exact buffer retained by the queue. Debug builds replace the
- *         input allocation to expose stale aliases.
+ * @return The exact buffer retained by the queue. Debug builds replace ordinary
+ *         input allocations to expose stale aliases; splice wrappers stay intact.
  */
 sbuf_t *bufferqueuePushBack(buffer_queue_t *self, sbuf_t *b);
 
@@ -140,8 +147,8 @@ sbuf_t *bufferqueuePushBack(buffer_queue_t *self, sbuf_t *b);
  *
  * @param self A pointer to the buffer queue.
  * @param b A pointer to the sbuf_t to be added to the front of the queue.
- * @return The exact buffer retained by the queue. Debug builds replace the
- *         input allocation to expose stale aliases.
+ * @return The exact buffer retained by the queue. Debug builds replace ordinary
+ *         input allocations to expose stale aliases; splice wrappers stay intact.
  */
 sbuf_t *bufferqueuePushFront(buffer_queue_t *self, sbuf_t *b);
 

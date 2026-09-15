@@ -97,28 +97,34 @@ static void bufferqueueInsertReserved(sbuf_t *slot, const char *where)
     }
 }
 
-static void bufferqueueRejectSpliceBuffer(const sbuf_t *buf)
+static sbuf_t *bufferqueueTakeBuffer(sbuf_t *buf)
 {
-    if (UNLIKELY(buf->flags & kSbufFlagSplice))
+    if (buf->flags & kSbufFlagSplice)
     {
-        // Temporary guard: Debug insertion duplicates ordinary payload bytes.
-        LOGF("buffer queue: splice buffer storage is not implemented; convert to an ordinary buffer before queueing");
-        abortProgramNow(1);
+        assert(sbufGetLifetime(buf) == NULL);
+        if (UNLIKELY(sbufGetLength(buf) != 0 && (buf->flags & kSbufFlagSplicePiped) == 0))
+        {
+            LOGF("buffer queue: nonempty splice payload requires kSbufFlagSplicePiped");
+            abortProgramNow(1);
+        }
+        // Its private pipe already owns the body; ordinary duplication would copy metadata as payload.
     }
+    else
+    {
+        BUFFER_WONT_BE_REUSED(buf);
+    }
+    return buf;
 }
 
 bool bufferqueueTryPushBack(buffer_queue_t *self, sbuf_t **b)
 {
-    bufferqueueRejectSpliceBuffer(*b);
     if (UNLIKELY(! bufferqueueReserveExtra(self, 1)))
     {
         return false;
     }
 
-    sbuf_t *entry = *b;
-
-    // Only now: this destroys the caller's allocation in Debug builds.
-    BUFFER_WONT_BE_REUSED(entry);
+    // Only after reservation: ordinary Debug buffers may be replaced, splice wrappers retain their identity.
+    sbuf_t *entry = bufferqueueTakeBuffer(*b);
     bufferqueueInsertReserved((sbuf_t *) ww_sbuffer_queue_t_push_back(&self->q, entry), "push back");
     self->total_len += sbufGetLength(entry);
     *b = entry;
@@ -127,15 +133,12 @@ bool bufferqueueTryPushBack(buffer_queue_t *self, sbuf_t **b)
 
 bool bufferqueueTryPushFront(buffer_queue_t *self, sbuf_t **b)
 {
-    bufferqueueRejectSpliceBuffer(*b);
     if (UNLIKELY(! bufferqueueReserveExtra(self, 1)))
     {
         return false;
     }
 
-    sbuf_t *entry = *b;
-
-    BUFFER_WONT_BE_REUSED(entry);
+    sbuf_t *entry = bufferqueueTakeBuffer(*b);
     bufferqueueInsertReserved((sbuf_t *) ww_sbuffer_queue_t_push_front(&self->q, entry), "push front");
     self->total_len += sbufGetLength(entry);
     *b = entry;

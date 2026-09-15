@@ -3,6 +3,7 @@
  */
 
 #include "shiftbuffer.h"
+#include "loggers/internal_logger.h"
 #include "splice_buffer.h"
 #if WW_HAVE_SPLICE
 #include <fcntl.h>
@@ -273,6 +274,42 @@ void sbufSpliceClosePipe(sbuf_t *buf)
 #endif
     metadata.pipefd[0] = metadata.pipefd[1] = -1;
     sbufSpliceSetMetadata(buf, metadata);
+}
+
+void sbufSpliceDiscard(sbuf_t *buf)
+{
+    assert(buf->flags & kSbufFlagSplice);
+    assert(sbufGetLifetime(buf) == NULL);
+    if (buf->len == 0)
+    {
+        return;
+    }
+    if ((buf->flags & kSbufFlagSplicePiped) == 0)
+    {
+        LOGF("sbufSpliceDiscard: nonempty splice payload must have kSbufFlagSplicePiped set");
+        abortProgramNow(1);
+    }
+#if WW_HAVE_SPLICE
+    splice_buffer_metadata_t metadata = sbufSpliceMetadata(buf);
+    if (metadata.pipefd[0] >= 0)
+    {
+        uint8_t scratch[1024];
+        for (;;)
+        {
+            ssize_t consumed = read(metadata.pipefd[0], scratch, sizeof(scratch));
+            if (consumed > 0)
+                continue;
+            if (consumed < 0 && errno == EINTR)
+                continue;
+            if (consumed < 0 && errno == EAGAIN)
+                break;
+            sbufSpliceClosePipe(buf);
+            break;
+        }
+    }
+#endif
+    buf->len    = 0;
+    buf->curpos = buf->l_pad;
 }
 
 bool sbufSpliceIsReusable(const sbuf_t *buf)

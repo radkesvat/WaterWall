@@ -287,8 +287,6 @@ uint32_t wioSetNextID(void);
 void wioFinalizeNow(wio_t *io);
 // Drop WIO ownership; keep_fd returns the primary descriptor to its external owner.
 void wioReleaseFDHandle(wio_t *io, bool keep_fd);
-// Settle a WIO-owned buffer, draining private pipes on cancellation.
-void wioReleaseBuffer(sbuf_t *buf, buffer_pool_t *pool);
 
 void wioAcceptCallBack(wio_t *io);
 void wioConnectCallBack(wio_t *io);

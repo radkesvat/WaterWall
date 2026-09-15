@@ -124,67 +124,6 @@ void wiofdUnref(wio_fd_t *handle)
     }
 }
 
-void wioRecycleSpliceBuffer(sbuf_t *buf, buffer_pool_t *pool)
-{
-    assert(pool != NULL);
-    if (UNLIKELY(buf == NULL || (buf->flags & kSbufFlagSplice) == 0))
-    {
-        LOGF("wioRecycleSpliceBuffer: requires kSbufFlagSplice");
-        abortProgramNow(1);
-    }
-    assert(sbufGetLifetime(buf) == NULL && "Splice buffers must not carry lifetime metadata");
-    if (UNLIKELY(sbufGetLength(buf) != 0))
-    {
-        LOGF("wioRecycleSpliceBuffer: splice buffer must be fully consumed before recycling");
-        abortProgramNow(1);
-    }
-
-    bufferpoolReuseBuffer(pool, buf);
-}
-
-void wioReleaseBuffer(sbuf_t *buf, buffer_pool_t *pool)
-{
-    if (buf->flags & kSbufFlagSplice)
-    {
-        if (buf->len == 0)
-        {
-            wioRecycleSpliceBuffer(buf, pool);
-            return;
-        }
-        if ((buf->flags & kSbufFlagSplicePiped) == 0)
-        {
-            LOGF("WIO: nonempty splice payload must have kSbufFlagSplicePiped set");
-            abortProgramNow(1);
-        }
-#if WW_HAVE_SPLICE
-        splice_buffer_metadata_t metadata = sbufSpliceMetadata(buf);
-        if (metadata.pipefd[0] >= 0)
-        {
-            uint8_t scratch[1024];
-            for (;;)
-            {
-                ssize_t consumed = read(metadata.pipefd[0], scratch, sizeof(scratch));
-                if (consumed > 0)
-                    continue;
-                if (consumed < 0 && errno == EINTR)
-                    continue;
-                if (consumed < 0 && errno == EAGAIN)
-                    break;
-                sbufSpliceClosePipe(buf);
-                break;
-            }
-        }
-#endif
-        buf->len    = 0;
-        buf->curpos = buf->l_pad;
-        wioRecycleSpliceBuffer(buf, pool);
-    }
-    else
-    {
-        bufferpoolReuseBuffer(pool, buf);
-    }
-}
-
 #if WW_HAVE_SPLICE
 static void wioReadSplicePipe(int fd, uint8_t *dest, uint32_t bytes, const char *caller)
 {
@@ -272,7 +211,7 @@ sbuf_t *wioTransformSpliceBufferToRealBuffer(sbuf_t *buf, sbuf_t *dest, buffer_p
     sbufSetLength(dest, buf->len);
     dest->flags = buf->flags & (uint16_t) ~(kSbufFlagSplice | kSbufFlagSplicePiped);
     sbufSetLength(buf, 0);
-    wioRecycleSpliceBuffer(buf, pool);
+    bufferpoolReuseBuffer(pool, buf);
     return dest;
 #else
     discard dest;
@@ -586,7 +525,7 @@ void wioDone(wio_t *io)
     while (! write_queue_empty(&io->write_queue))
     {
         buf = *write_queue_front(&io->write_queue);
-        wioReleaseBuffer(buf, io->loop->bufpool);
+        bufferpoolReuseBuffer(io->loop->bufpool, buf);
         write_queue_pop_front(&io->write_queue);
     }
     write_queue_cleanup(&io->write_queue);
@@ -909,7 +848,7 @@ void wioReadCallBack(wio_t *io, sbuf_t *buf)
     }
     else
     {
-        wioReleaseBuffer(buf, io->loop->bufpool);
+        bufferpoolReuseBuffer(io->loop->bufpool, buf);
     }
 }
 

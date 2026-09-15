@@ -165,8 +165,48 @@ static void testPipeDestruction(void)
 #endif
 }
 
+static void testDiscardOnPoolReturn(void)
+{
+#if WW_HAVE_SPLICE
+    master_pool_t *masters[3];
+    for (unsigned int i = 0; i < 3; ++i)
+        masters[i] = masterpoolCreateWithCapacity(2);
+    buffer_pool_t *pool = bufferpoolCreate(masters[0], masters[1], masters[2], 1, 256, 64);
+    bufferpoolUpdateAllocationPaddings(pool, 64, 64, 64);
+    sbuf_t *buf = bufferpoolGetSpliceBuffer(pool);
+    require(sbufSpliceInitPipe(buf) == 0, "discard fixture pipe initialization failed");
+    const splice_buffer_metadata_t metadata = sbufSpliceMetadata(buf);
+    require(write(metadata.pipefd[1], "BODY", 4) == 4, "discard fixture pipe write failed");
+    buf->flags |= kSbufFlagSplicePiped;
+    buf->capacity = (uint32_t) buf->l_pad + 4;
+    sbufSetLength(buf, 4);
+    sbufShiftLeft(buf, 4);
+    sbufWrite(buf, "HEAD", 4);
+    bufferpoolReuseBuffer(pool, buf);
+#ifdef WW_SPLICE_POOL_BYPASS_TEST
+    require(fcntl(metadata.pipefd[0], F_GETFD) == -1 && fcntl(metadata.pipefd[1], F_GETFD) == -1,
+            "nonempty bypass return leaked its pipe");
+#else
+    sbuf_t *reused = bufferpoolGetSpliceBuffer(pool);
+    checkSplice(reused, 64);
+    require(reused == buf && sbufSpliceIsReusable(reused) &&
+                sbufSpliceMetadata(reused).pipefd[0] == metadata.pipefd[0] &&
+                sbufSpliceMetadata(reused).pipefd[1] == metadata.pipefd[1],
+            "pool return lost the wrapper or retained undiscarded pipe data");
+    bufferpoolReuseBuffer(pool, reused);
+#endif
+    bufferpoolDestroy(pool);
+    for (unsigned int i = 0; i < 3; ++i)
+    {
+        masterpoolMakeEmpty(masters[i]);
+        masterpoolDestroy(masters[i]);
+    }
+#endif
+}
+
 int main(void)
 {
+    testDiscardOnPoolReturn();
 #ifdef WW_SPLICE_POOL_BYPASS_TEST
     master_pool_t *masters[3];
     for (unsigned int i = 0; i < 3; ++i)

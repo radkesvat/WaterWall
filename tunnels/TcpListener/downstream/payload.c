@@ -27,7 +27,12 @@ static void handlePausedWrite(tunnel_t *t, line_t *l, tcplistener_tstate_t *ts, 
 {
     if (bufferqueueGetBufLen(&ls->pause_queue) > kMinPauseQueueSize)
     {
-        tunnelNextUpStreamPause(t, l);
+        buffer_pool_t *pool = lineGetBufferPool(l);
+        if (! lineCallWithRef(l, tunnelNextUpStreamPause, t))
+        {
+            bufferpoolReuseBuffer(pool, buf);
+            return;
+        }
     }
 
     bufferqueuePushBack(&ls->pause_queue, buf);

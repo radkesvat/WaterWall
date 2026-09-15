@@ -17,12 +17,27 @@ typedef struct test_env_s
     test_wio_fd_pool_t         descriptors;
     master_pool_t             *masters[4];
     buffer_pool_t             *buffers;
+    buffer_pool_t             *buffer_pools[1];
     threadsafe_generic_pool_t *wios;
     threadsafe_generic_pool_t *wio_pools[1];
     wloop_t                   *loop;
 } test_env_t;
 
 #if WW_HAVE_SPLICE
+static bool fail_queue_allocation;
+void       *__real_memoryReAllocate(void *ptr, size_t size);
+void       *__wrap_memoryReAllocate(void *ptr, size_t size);
+
+void *__wrap_memoryReAllocate(void *ptr, size_t size)
+{
+    if (fail_queue_allocation)
+    {
+        fail_queue_allocation = false;
+        return NULL;
+    }
+    return __real_memoryReAllocate(ptr, size);
+}
+
 static bool fail_pipe;
 static unsigned int pipe_calls;
 static int          read_test_fd      = -1, splice_read_error;
@@ -157,6 +172,8 @@ static void setupWithBufferSize(test_env_t *env, uint32_t large_size)
     env->buffers = bufferpoolCreate(env->masters[0], env->masters[1], env->masters[2], 4, large_size, 1024);
     env->wios    = threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(env->masters[3], sizeof(wio_t), 4);
     require(env->buffers != NULL && env->wios != NULL, "failed to create test pools");
+    env->buffer_pools[0]         = env->buffers;
+    GSTATE.shortcut_buffer_pools = env->buffer_pools;
     env->wio_pools[0]          = env->wios;
     GSTATE.shortcut_wios_pools = env->wio_pools;
     env->loop                  = wloopCreate(WLOOP_FLAG_RUN_ONCE, env->buffers, 0);
@@ -177,6 +194,7 @@ static void teardown(test_env_t *env)
     GSTATE.shortcut_wios_pools = NULL;
     threadsafegenericpoolDestroy(env->wios);
     bufferpoolDestroy(env->buffers);
+    GSTATE.shortcut_buffer_pools = NULL;
     for (size_t i = 0; i < ARRAY_SIZE(env->masters); ++i)
     {
         masterpoolMakeEmpty(env->masters[i]);
@@ -511,9 +529,7 @@ typedef enum splice_case_e
     kSplicePipeFallback,
     kSpliceDroppedPayload,
     kSpliceDirectRecycleEmpty,
-    kSpliceRecycleNonempty,
     kSpliceRecycleUnused,
-    kSpliceRecycleOrdinary,
     kSpliceSmallDestination,
     kSplicePartialRange,
     kSplicePartialCapacity,
@@ -529,7 +545,7 @@ typedef enum splice_case_e
     kSpliceWriteError,
     kSpliceWriteCloseQueue,
     kSpliceWriteClosed,
-    kSpliceQueueGuard
+    kSpliceQueueInvalidFlags
 } splice_case_t;
 
 typedef struct splice_probe_s
@@ -594,11 +610,19 @@ static void spliceRead(wio_t *io, sbuf_t *buf)
 
     switch (probe->kind)
     {
-    case kSpliceDroppedPayload:
+    case kSpliceDroppedPayload: {
         sbufShiftLeft(buf, 4);
         sbufWrite(buf, "HEAD", 4);
         bufferpoolReuseBuffer(pool, buf);
+        sbuf_t *reused = bufferpoolGetSpliceBuffer(pool);
+        require(reused == buf && sbufSpliceIsReusable(reused) &&
+                    sbufSpliceMetadata(reused).pipefd[0] == metadata.pipefd[0] &&
+                    sbufSpliceMetadata(reused).pipefd[1] == metadata.pipefd[1],
+                "direct pool return did not discard and retain its private pipe");
+        bufferpoolReuseBuffer(pool, reused);
+        probe->received += count;
         return;
+    }
     case kSpliceDirectRecycleEmpty: {
         sbuf_t *dest = bufferpoolGetLargeBuffer(pool);
         wioPartialReadSpliceBuffer(buf, dest, count);
@@ -607,17 +631,11 @@ static void spliceRead(wio_t *io, sbuf_t *buf)
         probe->received += count;
         return;
     }
-    case kSpliceRecycleNonempty:
-        wioRecycleSpliceBuffer(buf, pool);
-        break;
     case kSpliceRecycleUnused:
-        wioRecycleSpliceBuffer(bufferpoolGetSpliceBuffer(pool), pool);
+        bufferpoolReuseBuffer(pool, bufferpoolGetSpliceBuffer(pool));
         bufferpoolReuseBuffer(pool, wioTransformSpliceBufferToRealBuffer(buf, bufferpoolGetLargeBuffer(pool), pool));
         probe->received += count;
         return;
-    case kSpliceRecycleOrdinary:
-        wioRecycleSpliceBuffer(bufferpoolGetLargeBuffer(pool), pool);
-        break;
     case kSpliceSmallDestination:
         wioTransformSpliceBufferToRealBuffer(buf, sbufCreateWithPadding(0, 64), pool);
         break;
@@ -632,7 +650,7 @@ static void spliceRead(wio_t *io, sbuf_t *buf)
     }
     case kSpliceResidualPipe:
         buf->len = 0;
-        wioRecycleSpliceBuffer(buf, pool);
+        bufferpoolReuseBuffer(pool, buf);
         break;
     case kSpliceShortPipe:
     case kSpliceShortPartial:
@@ -693,8 +711,9 @@ static void spliceRead(wio_t *io, sbuf_t *buf)
         wioWrite(io, buf);
         probe->received += count;
         return;
-    case kSpliceQueueGuard: {
+    case kSpliceQueueInvalidFlags: {
         buffer_queue_t queue = bufferqueueCreate(1);
+        buf->flags &= (uint16_t) ~kSbufFlagSplicePiped;
         bufferqueuePushBack(&queue, buf);
         break;
     }
@@ -749,7 +768,7 @@ static void spliceRead(wio_t *io, sbuf_t *buf)
         wioPartialReadSpliceBuffer(buf, dest, sbufGetLength(buf));
         require(sbufGetLength(buf) == 0 && buf->curpos == 64 && buf->capacity == 64,
                 "full partial consumption did not leave an empty wrapper");
-        wioRecycleSpliceBuffer(buf, pool);
+        bufferpoolReuseBuffer(pool, buf);
     }
     else
     {
@@ -1018,6 +1037,140 @@ static sbuf_t *makeSpliceWriteBuffer(test_env_t *env, wio_t *source, int peer, c
     return buf;
 }
 
+static void testSpliceBufferQueue(void)
+{
+    test_env_t env;
+    setup(&env);
+    bufferpoolUpdateAllocationPaddings(env.buffers, 64, 64, 64);
+    int            sockets[2];
+    wio_t         *source   = socketIO(&env, sockets);
+    buffer_queue_t queue    = bufferqueueCreate(1);
+    sbuf_t        *a        = makeSpliceWriteBuffer(&env, source, sockets[1], "AAA", "a:");
+    sbuf_t        *b        = makeSpliceWriteBuffer(&env, source, sockets[1], "BBB", "b:");
+    sbuf_t        *empty    = bufferpoolGetSpliceBuffer(env.buffers);
+    sbuf_t        *ordinary = bufferpoolGetSmallBuffer(env.buffers);
+    sbufSetLength(ordinary, 6);
+    sbufWrite(ordinary, "NORMAL", 6);
+    ordinary = bufferqueuePushBack(&queue, ordinary);
+    require(bufferqueuePushFront(&queue, a) == a && bufferqueuePushBack(&queue, empty) == empty &&
+                bufferqueueTryPushBack(&queue, &b),
+            "mixed queue insertion failed or replaced a splice wrapper");
+    require(bufferqueueGetBufCount(&queue) == 4 && bufferqueueGetBufLen(&queue) == 16 && bufferqueueFront(&queue) == a,
+            "mixed queue lost entries, order, or logical byte accounting");
+
+    require(bufferqueuePopFront(&queue) == a && bufferqueueGetBufLen(&queue) == 11,
+            "splice pop changed identity or queue accounting");
+    sbuf_t *dest = bufferpoolGetLargeBuffer(env.buffers);
+    wioPartialReadSpliceBuffer(a, dest, 3);
+    require(sbufGetLength(dest) == 3 && memoryEqual(sbufGetRawPtr(dest), "a:A", 3),
+            "queued splice lost its real prefix or body");
+    sbuf_t *remainder = a;
+    require(bufferqueueTryPushFront(&queue, &remainder) && remainder == a && bufferqueueGetBufLen(&queue) == 13 &&
+                bufferqueueGetBufCount(&queue) == 4,
+            "partial splice reinsertion changed ownership or byte accounting");
+    wioClose(source);
+    requireClosed(sockets[0]);
+    close(sockets[1]);
+
+    wioTransformSpliceBufferToRealBuffer(bufferqueuePopFront(&queue), dest, env.buffers);
+    require(sbufGetLength(dest) == 2 && memoryEqual(sbufGetRawPtr(dest), "AA", 2),
+            "queued remainder depended on the source or read another pipe's bytes");
+    require(bufferqueuePopFront(&queue) == ordinary && ordinary->flags == 0 && sbufGetLength(ordinary) == 6 &&
+                memoryEqual(sbufGetRawPtr(ordinary), "NORMAL", 6),
+            "mixed queue changed ordinary payload or entry order");
+    bufferpoolReuseBuffer(env.buffers, ordinary);
+    require(bufferqueuePopFront(&queue) == empty, "zero-length splice entry was dropped");
+    bufferpoolReuseBuffer(env.buffers, empty);
+    require(bufferqueuePopFront(&queue) == b, "queue replaced the second private body");
+    wioTransformSpliceBufferToRealBuffer(b, dest, env.buffers);
+    require(sbufGetLength(dest) == 5 && memoryEqual(sbufGetRawPtr(dest), "b:BBB", 5),
+            "queue mixed independent private bodies");
+    bufferpoolReuseBuffer(env.buffers, dest);
+    require(bufferqueueGetBufCount(&queue) == 0 && bufferqueueGetBufLen(&queue) == 0 &&
+                bufferqueueFront(&queue) == NULL && bufferqueuePopFront(&queue) == NULL,
+            "drained mixed queue retained entries or bytes");
+    testWorkerUnbindWID();
+    bufferqueueDestroy(&queue);
+    testWorkerBindWID(0);
+    teardown(&env);
+}
+
+static void testSpliceQueueCleanupAndRefusal(void)
+{
+    test_env_t env;
+    setup(&env);
+    bufferpoolUpdateAllocationPaddings(env.buffers, 64, 64, 64);
+    int    sockets[2];
+    wio_t *source = socketIO(&env, sockets);
+    for (unsigned int mode = 0; mode < 3; ++mode)
+    {
+        buffer_queue_t queue    = bufferqueueCreate(1);
+        sbuf_t        *ordinary = bufferpoolGetSmallBuffer(env.buffers);
+        sbufSetLength(ordinary, 1);
+        sbufWrite(ordinary, "X", 1);
+        ordinary                                = bufferqueuePushBack(&queue, ordinary);
+        sbuf_t                        *buf      = makeSpliceWriteBuffer(&env, source, sockets[1], "OLD", "prefix:");
+        const splice_buffer_metadata_t metadata = sbufSpliceMetadata(buf);
+        const uint32_t                 length = buf->len, cursor = buf->curpos, capacity = buf->capacity;
+        if (mode == 0)
+        {
+            // Refused growth in either direction must leave ownership and the private body untouched.
+            for (unsigned int front = 0; front < 2; ++front)
+            {
+                sbuf_t *input         = buf;
+                fail_queue_allocation = true;
+                const bool accepted =
+                    front ? bufferqueueTryPushFront(&queue, &input) : bufferqueueTryPushBack(&queue, &input);
+                int available = -1;
+                require(! accepted && ! fail_queue_allocation && input == buf && buf->len == length &&
+                            buf->curpos == cursor && buf->capacity == capacity &&
+                            sbufSpliceMetadata(buf).pipefd[0] == metadata.pipefd[0] &&
+                            sbufSpliceMetadata(buf).pipefd[1] == metadata.pipefd[1] &&
+                            ioctl(metadata.pipefd[0], FIONREAD, &available) == 0 && available == 3 &&
+                            memoryEqual(sbufGetRawPtr(buf), "prefix:", 7) && bufferqueueGetBufCount(&queue) == 1 &&
+                            bufferqueueGetBufLen(&queue) == 1 && bufferqueueFront(&queue) == ordinary,
+                        "refused splice insertion consumed ownership, data, or queue state");
+            }
+        }
+        bufferqueuePushBack(&queue, bufferpoolGetSpliceBuffer(env.buffers));
+        bufferqueuePushBack(&queue, makeSpliceWriteBuffer(&env, source, sockets[1], "", "header"));
+        require(bufferqueuePushBack(&queue, buf) == buf, "queue replaced a splice allocation");
+        pipe_read_fd                    = metadata.pipefd[0];
+        pipe_read_error                 = mode == 1 ? EINTR : mode == 2 ? EIO : 0;
+        const unsigned int pipes_before = pipe_calls;
+        bufferqueueDestroy(&queue);
+        require(pipe_read_error == 0 && pipe_calls == pipes_before,
+                "queue cleanup skipped its drain or created a pipe");
+        pipe_read_fd   = -1;
+        sbuf_t *reused = bufferpoolGetSpliceBuffer(env.buffers);
+        require(reused == buf && sbufSpliceIsReusable(reused), "queue destruction leaked its last splice wrapper");
+        if (mode == 2)
+        {
+            requireClosed(metadata.pipefd[0]);
+            requireClosed(metadata.pipefd[1]);
+            require(sbufSpliceMetadata(reused).pipefd[0] == -1 && sbufSpliceMetadata(reused).pipefd[1] == -1,
+                    "failed drain cached an unusable pipe");
+        }
+        else
+        {
+            require(sbufSpliceMetadata(reused).pipefd[0] == metadata.pipefd[0] &&
+                        sbufSpliceMetadata(reused).pipefd[1] == metadata.pipefd[1] &&
+                        fcntl(metadata.pipefd[0], F_GETFD) >= 0 && fcntl(metadata.pipefd[1], F_GETFD) >= 0,
+                    "queue destruction discarded a healthy reusable pipe");
+        }
+        bufferpoolReuseBuffer(env.buffers, reused);
+        sbuf_t *fresh = makeSpliceWriteBuffer(&env, source, sockets[1], "NEW", "");
+        sbuf_t *dest  = bufferpoolGetLargeBuffer(env.buffers);
+        wioTransformSpliceBufferToRealBuffer(fresh, dest, env.buffers);
+        require(sbufGetLength(dest) == 3 && memoryEqual(sbufGetRawPtr(dest), "NEW", 3),
+                "queue cleanup left stale body bytes in a reused pipe");
+        bufferpoolReuseBuffer(env.buffers, dest);
+    }
+    wioClose(source);
+    close(sockets[1]);
+    teardown(&env);
+}
+
 static void testSpliceMaterializationRetries(void)
 {
     test_env_t env;
@@ -1115,7 +1268,7 @@ static void testPrivateBodies(void)
     wioPartialReadSpliceBuffer(b, dest, 2);
     require(sbufGetLength(dest) == 5 && memoryEqual(sbufGetRawPtr(dest), "b:BBB", 5),
             "reverse partial read mixed bodies");
-    wioRecycleSpliceBuffer(b, env.buffers);
+    bufferpoolReuseBuffer(env.buffers, b);
     wioTransformSpliceBufferToRealBuffer(a, dest, env.buffers);
     require(memoryEqual(sbufGetRawPtr(dest), "a:AAA", 5), "reverse consumption damaged A");
     before = pipe_calls;
@@ -1124,7 +1277,7 @@ static void testPrivateBodies(void)
     require(pipe_calls == before, "empty pool reuse recreated a pipe");
     pipe_read_fd    = ma.pipefd[0];
     pipe_read_error = EINTR;
-    wioReleaseBuffer(a, env.buffers);
+    bufferpoolReuseBuffer(env.buffers, a);
     require(pipe_read_error == 0, "discard did not retry EINTR");
     pipe_read_fd = -1;
     a        = makeSpliceWriteBuffer(&env, source, sockets[1], "NEW", "");
@@ -1135,12 +1288,12 @@ static void testPrivateBodies(void)
     ma          = sbufSpliceMetadata(a);
     pipe_read_fd    = ma.pipefd[0];
     pipe_read_error = EIO;
-    wioReleaseBuffer(a, env.buffers);
+    bufferpoolReuseBuffer(env.buffers, a);
     requireClosed(ma.pipefd[0]);
     requireClosed(ma.pipefd[1]);
     a = bufferpoolGetSpliceBuffer(env.buffers);
     require(sbufSpliceMetadata(a).pipefd[0] == -1 && sbufSpliceIsReusable(a), "failed drain pair was cached");
-    wioRecycleSpliceBuffer(a, env.buffers);
+    bufferpoolReuseBuffer(env.buffers, a);
     pipe_read_fd = -1;
     bufferpoolReuseBuffer(env.buffers, dest);
     wioClose(source);
@@ -1376,6 +1529,7 @@ static void testSpliceReads(void)
     runSpliceCase(kSpliceCloseAfterRecycle, 4096, 9);
     runSpliceCase(kSpliceForwardWrite, 4096, 9);
     runSpliceCase(kSpliceDisabled, 4096, 9);
+    runSpliceCase(kSpliceDroppedPayload, 4096, 9);
     runSpliceCase(kSpliceDirectRecycleEmpty, 4096, 9);
     runSpliceCase(kSpliceRecycleUnused, 4096, 9);
     runSpliceCase(kSpliceWriteError, 4096, 9);
@@ -1387,9 +1541,6 @@ static void testSpliceReads(void)
         splice_case_t kind;
         const char   *diagnostic;
     } failures[] = {
-        {kSpliceDroppedPayload, "splice payload and pipe must be empty"},
-        {kSpliceRecycleNonempty, "splice buffer must be fully consumed before recycling"},
-        {kSpliceRecycleOrdinary, "wioRecycleSpliceBuffer: requires kSbufFlagSplice"},
         {kSpliceSmallDestination, "destination too small"},
         {kSplicePartialRange, "requested bytes or prefix exceed source length"},
         {kSplicePartialCapacity, "destination has insufficient append space"},
@@ -1402,7 +1553,7 @@ static void testSpliceReads(void)
         {kSpliceFailedPartial, "incomplete read from pipe (requested=9, consumed=2, result=-1"},
         {kSpliceInvalidFlags, "requires kSbufFlagSplicePiped"},
         {kSpliceWriteNonTCP, "splice buffers require a TCP destination"},
-        {kSpliceQueueGuard, "splice buffer storage is not implemented"},
+        {kSpliceQueueInvalidFlags, "nonempty splice payload requires kSbufFlagSplicePiped"},
     };
     for (size_t i = 0; i < ARRAY_SIZE(failures); ++i)
     {
@@ -1457,6 +1608,8 @@ int main(void)
     testPendingDescriptorReuse();
     testPendingDetachRejected();
 #if WW_HAVE_SPLICE
+    testSpliceBufferQueue();
+    testSpliceQueueCleanupAndRefusal();
     testSplicePipeFallback();
     testSpliceMaterializationRetries();
     testPrivateBodies();

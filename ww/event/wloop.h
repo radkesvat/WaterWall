@@ -350,15 +350,6 @@ WW_EXPORT int  wioEnableSplice(wio_t *io);
 WW_EXPORT void wioDisableSplice(wio_t *io);
 WW_EXPORT bool wioIsSpliceEnabled(const wio_t *io);
 /**
- * Recycle a fully consumed splice wrapper using the supplied worker buffer pool.
- * Requires zero logical length and an empty private pipe.
- * The pool checks kernel emptiness and retains healthy pairs across reuse.
- * Violations log with LOGF and abort, including in Release and bypass builds.
- * The caller owns the pool's worker context. No lifetime metadata is allowed.
- * This helper does not discard bytes. Unused empty wrappers are also valid.
- */
-WW_EXPORT void wioRecycleSpliceBuffer(sbuf_t *buf, buffer_pool_t *pool);
-/**
  * Consume a splice wrapper into caller-supplied ordinary storage and return dest.
  * Requires Splice and SplicePiped. Reads the body from the private pipe read end,
  * copying any real prefix before it. Preserves
@@ -371,7 +362,7 @@ WW_EXPORT void wioRecycleSpliceBuffer(sbuf_t *buf, buffer_pool_t *pool);
  * Requires exclusive ownership of the wrapper and its private pipe.
  * Requires no lifetime metadata on buf, checked by a debug assertion. Destination
  * lifetime metadata remains caller-managed; this helper leaves it untouched.
- * Clears splice flags on dest and releases buf through wioRecycleSpliceBuffer(),
+ * Clears splice flags on dest and releases buf through bufferpoolReuseBuffer(),
  * retaining its empty private pipe for reuse. The caller must
  * own this pool's thread context and must not use buf after this call.
  * Unsupported builds log with LOGF and abort.
@@ -391,8 +382,9 @@ WW_EXPORT sbuf_t          *wioTransformSpliceBufferToRealBuffer(sbuf_t *buf, sbu
  * prefix bytes; logical capacity decreases by the body bytes read, keeping the
  * pipe metadata at buf + l_pad. Flags remain valid for the remainder.
  * Destination cursor, padding, flags, and lifetime metadata stay unchanged.
- * Both buffers remain caller-owned. The caller must use wioRecycleSpliceBuffer()
- * with its worker buffer pool when buf is empty; this helper never frees it.
+ * Both buffers remain caller-owned. The caller returns buf through bufferpoolReuseBuffer()
+ * with its worker buffer pool when finished; recycling discards any remainder.
+ * This helper never frees either buffer.
  * Unsupported builds abort.
  */
 WW_EXPORT sbuf_t          *wioPartialReadSpliceBuffer(sbuf_t *buf, sbuf_t *dest, uint32_t bytes);
@@ -494,7 +486,7 @@ WW_EXPORT int wioReadRemain(wio_t *io);
 // On supported NIO builds, TCP splice wrappers arrive with their bodies already
 // in private pipes. Real prefixes use send; bodies use splice. Short writes retain
 // the remainder in the same FIFO queue as ordinary buffers, including the wrapper's
-// private pipe. Completion recycles it through wioRecycleSpliceBuffer().
+// private pipe. Completion returns the empty wrapper to bufferpoolReuseBuffer().
 // Callers preserve final stream delivery order; different private bodies are independent.
 // Cancellation drains the private pipe, closing the pair on unexpected drain failure.
 WW_EXPORT int wioWrite(wio_t *io, sbuf_t *buf);

@@ -22,6 +22,10 @@ static inline void sbufSpliceSetMetadata(sbuf_t *buf, splice_buffer_metadata_t m
 }
 int  sbufSpliceInitPipe(sbuf_t *buf);
 void sbufSpliceClosePipe(sbuf_t *buf);
+/* Discard an exclusively owned splice payload before recycling. Drains the private
+ * pipe, or closes it on error; clears length/cursor without freeing the wrapper.
+ * Empty unused wrappers are valid. No lifetime metadata is allowed. */
+void sbufSpliceDiscard(sbuf_t *buf);
 /* Checks kernel emptiness as well as logical settlement; reset never drains. */
 bool sbufSpliceIsReusable(const sbuf_t *buf);
 /* Type-specific destruction also accepts cached wrappers with reset flags. */

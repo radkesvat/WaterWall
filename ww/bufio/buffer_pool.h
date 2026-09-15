@@ -88,8 +88,10 @@ sbuf_t *bufferpoolGetBestFit(buffer_pool_t *pool, uint32_t minimum_payload, uint
 
 /**
  * Reuses a buffer by returning it to the buffer pool.
- * Splice wrappers require zero length and an empty private pipe.
- * These release checks also apply when pooling is bypassed. Empty pairs survive reuse.
+ * Takes ownership and discards remaining payload, including a splice wrapper's
+ * real prefix and private-pipe body. Splice discard and kernel-emptiness validation
+ * run before reset and also when pooling is bypassed. Healthy empty pairs survive
+ * reuse; a drain failure closes the pair. Callers must exclusively own the buffer.
  * @param pool The buffer pool.
  * @param b The buffer to reuse.
  */

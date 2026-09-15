@@ -428,7 +428,7 @@ static void nio_read(wio_t *io)
             buf->flags |= kSbufFlagSplicePiped;
             if (! wloopNormalDispatchAllowed(io->loop))
             {
-                wioReleaseBuffer(buf, pool);
+                bufferpoolReuseBuffer(pool, buf);
                 return;
             }
             __read_cb(io, buf);
@@ -562,7 +562,7 @@ write:
     {
         // NOTE: after write_cb, pbuf maybe invalid.
         // EVENTLOOP_FREE(pbuf->base);
-        wioReleaseBuffer(buf, io->loop->bufpool);
+        bufferpoolReuseBuffer(io->loop->bufpool, buf);
         write_queue_pop_front(&io->write_queue);
         if (! wloopNormalDispatchAllowed(io->loop))
         {
@@ -838,7 +838,7 @@ int wioWrite(wio_t *io, sbuf_t *buf)
     if (io->closed)
     {
         wloge("wioWrite called but fd[%d] already closed!", wioGetFD(io));
-        wioReleaseBuffer(buf, io->loop->bufpool);
+        bufferpoolReuseBuffer(io->loop->bufpool, buf);
         return -1;
     }
     if ((io->io_type & WIO_TYPE_SOCK_DGRAM) || (io->io_type & WIO_TYPE_SOCK_RAW))
@@ -853,7 +853,7 @@ int wioWrite(wio_t *io, sbuf_t *buf)
     const bool nested_callback = wloopCurrentThreadInNormalCallback(io->loop);
     if (! nested_callback && ! wloopNormalAdmissionBegin(io->loop))
     {
-        wioReleaseBuffer(buf, io->loop->bufpool);
+        bufferpoolReuseBuffer(io->loop->bufpool, buf);
         return -1;
     }
 
@@ -933,7 +933,7 @@ write_done:
     {
         if (nwrite == len)
         {
-            wioReleaseBuffer(buf, io->loop->bufpool);
+            bufferpoolReuseBuffer(io->loop->bufpool, buf);
         }
         if (! nested_callback)
         {
@@ -958,7 +958,7 @@ disconnect:
      * if wio_close_sync, we have to be very careful to avoid using freed resources.
      * But if wioCloseAsync, we do not have to worry about this.
      */
-    wioReleaseBuffer(buf, io->loop->bufpool);
+    bufferpoolReuseBuffer(io->loop->bufpool, buf);
     if (! nested_callback)
     {
         wloopNormalAdmissionEnd(io->loop);
