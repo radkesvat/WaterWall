@@ -1,6 +1,16 @@
+#include "splice_buffer.h"
+#if WW_HAVE_SPLICE
+#include <fcntl.h>
+#include <unistd.h>
+#endif
 #include "wwapi.h"
 
 #include "buffer_pool_internal.h"
+#ifdef WW_SPLICE_POOL_BYPASS_TEST
+#undef BYPASS_BUFFERPOOL
+#define BYPASS_BUFFERPOOL 1
+#include "../../ww/bufio/buffer_pool.c"
+#endif
 
 #ifdef WW_SPLICE_POOL_FAILURE_TEST
 static unsigned int fail_allocation;
@@ -83,6 +93,7 @@ static void testRechargeBatches(void)
             }
             for (uint32_t i = 0; i < batch * 2U; ++i)
             {
+                buffers[i]->len = 0;
                 bufferpoolReuseBuffer(pool, buffers[i]);
             }
         }
@@ -95,9 +106,88 @@ static void testRechargeBatches(void)
     }
 }
 
+static void testPipeDestruction(void)
+{
+#if WW_HAVE_SPLICE
+    master_pool_t *masters[3];
+    for (unsigned int i = 0; i < 3; ++i)
+        masters[i] = masterpoolCreateWithCapacity(2);
+    buffer_pool_t *pool = bufferpoolCreate(masters[0], masters[1], masters[2], 1, 256, 64);
+    sbuf_t        *buffers[12];
+    int            descriptors[24];
+    for (unsigned int i = 0; i < 12; ++i)
+    {
+        buffers[i] = bufferpoolGetSpliceBuffer(pool);
+        require(sbufSpliceInitPipe(buffers[i]) == 0, "private pipe creation failed");
+        splice_buffer_metadata_t metadata = sbufSpliceMetadata(buffers[i]);
+        descriptors[2 * i]                = metadata.pipefd[0];
+        descriptors[2 * i + 1]            = metadata.pipefd[1];
+    }
+    // More pairs than the bounded local and master caches: overflow destroys pairs.
+    for (unsigned int i = 0; i < 12; ++i)
+        bufferpoolReuseBuffer(pool, buffers[i]);
+    unsigned int closed = 0;
+    for (unsigned int i = 0; i < 24; ++i)
+        closed += fcntl(descriptors[i], F_GETFD) < 0;
+    require(closed > 0, "master overflow did not close private pipes");
+    bufferpoolDestroy(pool);
+    masterpoolMakeEmpty(masters[2]);
+    for (unsigned int i = 0; i < 24; ++i)
+        require(fcntl(descriptors[i], F_GETFD) == -1 && errno == EBADF, "pool teardown leaked a pipe");
+    pool        = bufferpoolCreate(masters[0], masters[1], masters[2], 1, 256, 64);
+    sbuf_t *buf = bufferpoolGetSpliceBuffer(pool);
+    require(sbufSpliceInitPipe(buf) == 0, "geometry pipe creation failed");
+    splice_buffer_metadata_t metadata = sbufSpliceMetadata(buf);
+    buffer_pool_t           *other    = bufferpoolCreate(masters[0], masters[1], masters[2], 1, 256, 64);
+    bufferpoolUpdateAllocationPaddings(other, 0, 0, 64);
+    bufferpoolReuseBuffer(other, buf);
+    require(fcntl(metadata.pipefd[0], F_GETFD) == -1 && fcntl(metadata.pipefd[1], F_GETFD) == -1,
+            "incompatible pool return leaked its private pipe");
+    // Install an empty reset splice wrapper in the master, then demand new geometry.
+    buf = sbufCreateSplice(0);
+    require(sbufSpliceInitPipe(buf) == 0, "master geometry pipe creation failed");
+    metadata = sbufSpliceMetadata(buf);
+    sbufReset(buf);
+    master_pool_item_t *item = buf;
+    masterpoolReuseItems(masters[2], &item, 1);
+    buf = bufferpoolGetSpliceBuffer(other);
+    require(sbufGetLeftPadding(buf) == 64 && fcntl(metadata.pipefd[0], F_GETFD) == -1 &&
+                fcntl(metadata.pipefd[1], F_GETFD) == -1,
+            "master geometry replacement leaked private pipes");
+    bufferpoolReuseBuffer(other, buf);
+    bufferpoolDestroy(other);
+    bufferpoolDestroy(pool);
+    for (unsigned int i = 0; i < 3; ++i)
+    {
+        masterpoolMakeEmpty(masters[i]);
+        masterpoolDestroy(masters[i]);
+    }
+#endif
+}
+
 int main(void)
 {
+#ifdef WW_SPLICE_POOL_BYPASS_TEST
+    master_pool_t *masters[3];
+    for (unsigned int i = 0; i < 3; ++i)
+        masters[i] = masterpoolCreateWithCapacity(2);
+    buffer_pool_t *pool = bufferpoolCreate(masters[0], masters[1], masters[2], 1, 256, 64);
+    sbuf_t        *buf  = bufferpoolGetSpliceBuffer(pool);
+    require(sbufSpliceInitPipe(buf) == 0, "bypass pipe initialization failed");
+    splice_buffer_metadata_t metadata = sbufSpliceMetadata(buf);
+    bufferpoolReuseBuffer(pool, buf);
+    require(fcntl(metadata.pipefd[0], F_GETFD) == -1 && fcntl(metadata.pipefd[1], F_GETFD) == -1,
+            "bypass return leaked its private pipe");
+    bufferpoolDestroy(pool);
+    for (unsigned int i = 0; i < 3; ++i)
+    {
+        masterpoolMakeEmpty(masters[i]);
+        masterpoolDestroy(masters[i]);
+    }
+    return 0;
+#else
     testRechargeBatches();
+    testPipeDestruction();
     master_pool_t *large = masterpoolCreateWithCapacity(16);
     master_pool_t *small = masterpoolCreateWithCapacity(16);
     master_pool_t *splice = masterpoolCreateWithCapacity(16);
@@ -133,7 +223,7 @@ int main(void)
         buffers[i] = bufferpoolGetSpliceBuffer(pool);
         checkSplice(buffers[i], 64);
     }
-    buffers[0]->flags    = kSbufFlagSplice | kSbufFlagSpliceFD;
+    buffers[0]->flags    = kSbufFlagSplice | kSbufFlagSplicePiped;
     buffers[0]->capacity = 64 + 8192;
     buffers[0]->len      = 8192;
     sbufShiftLeft(buffers[0], 4);
@@ -142,6 +232,7 @@ int main(void)
     buffers[1]->len      = 16384;
     for (size_t i = 0; i < ARRAY_SIZE(buffers); ++i)
     {
+        buffers[i]->len = 0;
         bufferpoolReuseBuffer(pool, buffers[i]);
     }
     require(cachedSpliceCount(pool) <= 4 && atomicLoadRelaxed(&splice->len) > 0,
@@ -155,6 +246,7 @@ int main(void)
     }
     for (size_t i = 0; i < ARRAY_SIZE(buffers); ++i)
     {
+        buffers[i]->len = 0;
         bufferpoolReuseBuffer(pool, buffers[i]);
     }
 
@@ -175,4 +267,5 @@ int main(void)
     masterpoolDestroy(small);
     masterpoolDestroy(splice);
     return 0;
+#endif
 }

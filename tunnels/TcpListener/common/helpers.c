@@ -105,7 +105,7 @@ void tcplistenerOnInboundConnected(wevent_t *ev)
     {
         if (UNLIKELY(wioEnableSplice(io) != 0))
         {
-            LOGE("TcpListener: failed to initialize splice pipe for FD:%x (errno:%d)", wioGetFD(io), errno);
+            LOGE("TcpListener: failed to enable splice for FD:%x (errno:%d)", wioGetFD(io), errno);
             wioFree(io);
             socketacceptresultDestroy(data);
             return;

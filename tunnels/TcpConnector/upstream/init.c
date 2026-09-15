@@ -255,7 +255,7 @@ static bool tcpconnectorBeginConnect(tunnel_t *t, line_t *l, tcpconnector_lstate
     {
         if (UNLIKELY(wioEnableSplice(io) != 0))
         {
-            LOGE("TcpConnector: failed to initialize splice pipe for FD:%x (errno:%d)", wioGetFD(io), errno);
+            LOGE("TcpConnector: failed to enable splice for FD:%x (errno:%d)", wioGetFD(io), errno);
             wioClose(io);
             goto fail;
         }

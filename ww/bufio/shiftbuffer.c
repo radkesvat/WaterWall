@@ -3,6 +3,12 @@
  */
 
 #include "shiftbuffer.h"
+#include "splice_buffer.h"
+#if WW_HAVE_SPLICE
+#include <fcntl.h>
+#include <sys/ioctl.h>
+#include <unistd.h>
+#endif
 #include "wlibc.h"
 
 uint16_t sbufAlignLeftPadding(uint16_t pad_left)
@@ -20,6 +26,11 @@ uint16_t sbufAlignLeftPadding(uint16_t pad_left)
 
 void sbufDestroy(sbuf_t *b)
 {
+    if (b->flags & kSbufFlagSplice)
+    {
+        sbufDestroySplice(b);
+        return;
+    }
     sbufReleaseLifetime(b);
     memoryFreeAligned(b);
 }
@@ -27,6 +38,7 @@ void sbufDestroy(sbuf_t *b)
 void sbufAttachLifetime(sbuf_t *b, sbuf_lifetime_t *lifetime)
 {
     assert(b != NULL);
+    assert((b->flags & kSbufFlagSplice) == 0);
     assert(b->lifetime == NULL);
     b->lifetime = lifetime;
 }
@@ -140,6 +152,7 @@ sbuf_t *sbufCreateSplice(uint16_t pad_left)
     pad_left = sbufAlignLeftPadding(pad_left);
     sbuf_t *buf = sbufAllocate(SPLICE_BUFFER_STORAGE_SIZE + (uint32_t) pad_left, pad_left);
     buf->flags  = kSbufFlagSplice;
+    sbufSpliceSetMetadata(buf, (splice_buffer_metadata_t) {.pipefd = {-1, -1}});
     return buf;
 }
 
@@ -222,4 +235,64 @@ sbuf_t *sbufSlice(sbuf_t *const b, const uint32_t bytes)
     sbufMoveTo(newbuf, b, bytes);
     sbufCloneLifetime(b, newbuf);
     return newbuf;
+}
+
+int sbufSpliceInitPipe(sbuf_t *buf)
+{
+#if WW_HAVE_SPLICE
+    splice_buffer_metadata_t metadata = sbufSpliceMetadata(buf);
+    if (metadata.pipefd[0] >= 0)
+    {
+        assert(metadata.pipefd[1] >= 0);
+        return 0;
+    }
+    int pair[2];
+    if (pipe2(pair, O_NONBLOCK | O_CLOEXEC) != 0)
+    {
+        return -1;
+    }
+    metadata.pipefd[0] = pair[0];
+    metadata.pipefd[1] = pair[1];
+    sbufSpliceSetMetadata(buf, metadata);
+    return 0;
+#else
+    discard buf;
+    errno = ENOSYS;
+    return -1;
+#endif
+}
+
+void sbufSpliceClosePipe(sbuf_t *buf)
+{
+    splice_buffer_metadata_t metadata = sbufSpliceMetadata(buf);
+#if WW_HAVE_SPLICE
+    if (metadata.pipefd[0] >= 0)
+        close(metadata.pipefd[0]);
+    if (metadata.pipefd[1] >= 0)
+        close(metadata.pipefd[1]);
+#endif
+    metadata.pipefd[0] = metadata.pipefd[1] = -1;
+    sbufSpliceSetMetadata(buf, metadata);
+}
+
+bool sbufSpliceIsReusable(const sbuf_t *buf)
+{
+    splice_buffer_metadata_t metadata = sbufSpliceMetadata(buf);
+    if (buf->len != 0)
+        return false;
+    if (metadata.pipefd[0] < 0)
+        return metadata.pipefd[1] < 0;
+#if WW_HAVE_SPLICE
+    int bytes;
+    return metadata.pipefd[1] >= 0 && ioctl(metadata.pipefd[0], FIONREAD, &bytes) == 0 && bytes == 0;
+#else
+    return false;
+#endif
+}
+
+void sbufDestroySplice(sbuf_t *buf)
+{
+    assert(buf->lifetime == NULL);
+    sbufSpliceClosePipe(buf);
+    memoryFreeAligned(buf);
 }

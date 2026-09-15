@@ -339,71 +339,61 @@ WW_EXPORT uint32_t         wioGetID(wio_t *io);
 WW_EXPORT int              wioGetFD(const wio_t *io);
 // Borrow the shared descriptor object; retain with wiofdRef() before keeping it beyond WIO close.
 WW_EXPORT wio_fd_t *wioGetFDHandle(const wio_t *io);
-// Initialize the shared pipe on the WIO owner thread; returns 0 or -1 with errno set.
-WW_EXPORT int              wioInitPipe(wio_t *io);
 // Owner-thread mode selection, initially disabled for each newly adopted descriptor.
 // Enabling requires an open WIO whose read interest has never been registered;
 // stopping reads does not reset this precondition. Checked by debug assertions.
-// Initializes the pipe before enabling; returns 0 on success or -1 with errno set.
-// Supported NIO TCP reads emit FD-backed splice buffers for positive FIONREAD
-// counts. Every reserved socket byte must be consumed through the splice helpers
-// before the read callback returns; otherwise dispatch logs with LOGF and aborts.
+// Creates no pipe; returns 0 when supported or -1 with ENOSYS otherwise.
+// Supported NIO TCP reads fill a private pipe before delivery. Buffer length is
+// the actual splice result; delivered wrappers have no dependency on the source WIO.
+// Pipe creation failure falls back to an ordinary read for that delivery, leaving splice enabled.
 WW_EXPORT int  wioEnableSplice(wio_t *io);
 WW_EXPORT void wioDisableSplice(wio_t *io);
 WW_EXPORT bool wioIsSpliceEnabled(const wio_t *io);
 /**
- * Move the socket-backed body of a splice buffer into its descriptor's pipe.
- * Requires Splice and SpliceFD set and SplicePiped clear; violations use LOGF
- * and abort the program in every build.
- * Requires no buffer-lifetime metadata, checked by a debug assertion.
- * The wio_fd_t pointer is stored at buf + l_pad; curpos may expose a left prefix.
- * Requires a nonblocking source socket, exclusive descriptor access, and a
- * reservation covering the body. An uninitialized pipe logs with LOGF and
- * aborts the program in every build; this helper never creates the pipe.
- * Retries EINTR and reduces reserved by the actual transferred count. Full
- * completion clears SpliceFD, sets SplicePiped, and returns the count; an empty
- * body also completes. Temporarily, incomplete transfers (including EOF and
- * splice errors) log with LOGF and abort, leaving flags unchanged. Short
- * splices remain valid syscall outcomes and must not be assumed impossible.
- * Unsupported builds return -1 with ENOSYS. Length, capacity, cursor, prefix
- * bytes, and ownership remain unchanged.
+ * Recycle a fully consumed splice wrapper using the supplied worker buffer pool.
+ * Requires zero logical length and an empty private pipe.
+ * The pool checks kernel emptiness and retains healthy pairs across reuse.
+ * Violations log with LOGF and abort, including in Release and bypass builds.
+ * The caller owns the pool's worker context. No lifetime metadata is allowed.
+ * This helper does not discard bytes. Unused empty wrappers are also valid.
  */
-WW_EXPORT ssize_t          wioMoveSpliceBuferToPipe(sbuf_t *buf);
+WW_EXPORT void wioRecycleSpliceBuffer(sbuf_t *buf, buffer_pool_t *pool);
 /**
  * Consume a splice wrapper into caller-supplied ordinary storage and return dest.
- * Requires Splice and exactly one of SpliceFD/SplicePiped. Reads the body from
- * handle->fd or handle->pipefd[0], copying any real prefix before it. Preserves
+ * Requires Splice and SplicePiped. Reads the body from the private pipe read end,
+ * copying any real prefix before it. Preserves
  * the source cursor/remaining left headroom and total length; dest's allocation
  * capacity and original l_pad stay unchanged. Replaces dest's previous payload.
  * Insufficient storage for that cursor and complete payload, invalid flags, an
- * uninitialized selected pipe, short reads, and all read errors (including EINTR)
- * log with LOGF and abort in every build. An empty body needs no read syscall.
- * Requires exclusive descriptor access and a reservation covering an FD-backed
- * body; only source-FD reads reduce reserved, by the actual count read.
+ * uninitialized selected pipe, EOF, or a read error other than EINTR before all
+ * claimed bytes are read log with LOGF and abort in every build. Positive short
+ * reads accumulate and EINTR retries. An empty body needs no read syscall.
+ * Requires exclusive ownership of the wrapper and its private pipe.
  * Requires no lifetime metadata on buf, checked by a debug assertion. Destination
  * lifetime metadata remains caller-managed; this helper leaves it untouched.
- * Clears splice flags on dest and returns buf to the supplied worker buffer
- * pool's splice tier. The caller must
+ * Clears splice flags on dest and releases buf through wioRecycleSpliceBuffer(),
+ * retaining its empty private pipe for reuse. The caller must
  * own this pool's thread context and must not use buf after this call.
  * Unsupported builds log with LOGF and abort.
  */
 WW_EXPORT sbuf_t          *wioTransformSpliceBufferToRealBuffer(sbuf_t *buf, sbuf_t *dest, buffer_pool_t *pool);
 /**
  * Append exactly bytes from the front of a splice buffer to dest and return dest.
- * Requires Splice and exactly one of SpliceFD/SplicePiped on buf, an ordinary dest,
+ * Requires Splice and SplicePiped on buf, an ordinary dest,
  * and no source lifetime metadata (debug assert). Zero bytes is a validated no-op.
  * Copies real prefix bytes first in payload order, reading the requested remainder
- * from handle->fd or handle->pipefd[0]. Requires exclusive descriptor access.
+ * from the private pipe read end. Requires exclusive ownership of the wrapper.
  * Invalid flags, cursor/length bounds, insufficient source bytes or destination
- * append space, an uninitialized selected pipe, insufficient FD reservation, short
- * reads, and every read error (including EINTR) use LOGF and abort in every build.
- * Only actual source-FD reads reduce reserved; prefix copies and pipe reads do not.
+ * append space, an uninitialized selected pipe, EOF, or a read error other than
+ * EINTR before the requested bytes are read use LOGF and abort in every build.
+ * Positive short reads accumulate and EINTR retries.
  * Source length decreases by bytes. Its cursor advances only across consumed
  * prefix bytes; logical capacity decreases by the body bytes read, keeping the
- * descriptor pointer at buf + l_pad. Location flags remain valid for the remainder.
+ * pipe metadata at buf + l_pad. Flags remain valid for the remainder.
  * Destination cursor, padding, flags, and lifetime metadata stay unchanged.
- * Both buffers remain caller-owned. The caller must recycle buf with its worker
- * buffer pool when empty; this helper never frees it. Unsupported builds abort.
+ * Both buffers remain caller-owned. The caller must use wioRecycleSpliceBuffer()
+ * with its worker buffer pool when buf is empty; this helper never frees it.
+ * Unsupported builds abort.
  */
 WW_EXPORT sbuf_t          *wioPartialReadSpliceBuffer(sbuf_t *buf, sbuf_t *dest, uint32_t bytes);
 WW_EXPORT int              wioGetError(wio_t *io);
@@ -501,6 +491,12 @@ WW_EXPORT int wioReadRemain(wio_t *io);
 // NOTE: The internal retry queue is a stream (TCP) behavior only. For UDP/raw io,
 // wioWrite snapshots the current default peer address and delegates to
 // wioWriteDatagram; datagrams are never queued for retry.
+// On supported NIO builds, TCP splice wrappers arrive with their bodies already
+// in private pipes. Real prefixes use send; bodies use splice. Short writes retain
+// the remainder in the same FIFO queue as ordinary buffers, including the wrapper's
+// private pipe. Completion recycles it through wioRecycleSpliceBuffer().
+// Callers preserve final stream delivery order; different private bodies are independent.
+// Cancellation drains the private pipe, closing the pair on unexpected drain failure.
 WW_EXPORT int wioWrite(wio_t *io, sbuf_t *buf);
 
 // Send one datagram to an explicit destination, without touching io->peeraddr.

@@ -6,6 +6,7 @@
 #include "buffer_pool_internal.h"
 #include "loggers/internal_logger.h"
 #include "shiftbuffer.h"
+#include "splice_buffer.h"
 #include "wmath.h"
 
 enum
@@ -136,7 +137,7 @@ static master_pool_item_t *createSpliceBufHandle(void *userdata)
 
 static void destroySpliceBufHandle(master_pool_item_t *item)
 {
-    sbufDestroy(item);
+    sbufDestroySplice(item);
 }
 
 /**
@@ -181,7 +182,10 @@ static sbuf_t *requireExactMasterBuffer(buffer_pool_t *pool, master_pool_t *mast
         return buf;
     }
 
-    sbufDestroy(buf);
+    if (create_handle == createSpliceBufHandle)
+        sbufDestroySplice(buf);
+    else
+        sbufDestroy(buf);
     return (sbuf_t *) masterpoolRequireCreatedItem(master, create_handle(pool), pool);
 }
 
@@ -444,6 +448,13 @@ void bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *b)
     assert(pool != NULL && b != NULL);
     bufferpoolDebugCheckThreadAccess(pool);
 
+    const bool is_splice = (b->flags & kSbufFlagSplice) != 0;
+    if (is_splice && ! sbufSpliceIsReusable(b))
+    {
+        LOGF("bufferpoolReuseBuffer: splice payload and pipe must be empty");
+        abortProgramNow(1);
+    }
+
 #if BYPASS_BUFFERPOOL == 1
     sbufDestroy(b);
     return;
@@ -461,7 +472,11 @@ void bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *b)
     // we dont compare total capacity because another buffer can have 0 padding and more capacity but still
     // the sumation of capaicity and padding is the same, so we compare the capacity without padding and the padding
     // itself
-    if (bufferMatchesGeometry(b, SPLICE_BUFFER_STORAGE_SIZE, pool->splice_buffer_left_padding))
+    if (is_splice && ! bufferMatchesGeometry(b, SPLICE_BUFFER_STORAGE_SIZE, pool->splice_buffer_left_padding))
+    {
+        sbufDestroySplice(b);
+    }
+    else if (is_splice)
     {
         if (UNLIKELY(pool->splice_buffers_container_len > pool->free_threshold))
         {
@@ -752,7 +767,7 @@ void bufferpoolDestroy(buffer_pool_t *pool)
     }
     for (uint32_t m_i = 0; m_i < pool->splice_buffers_container_len; m_i++)
     {
-        sbufDestroy(pool->splice_buffers[m_i]);
+        sbufDestroySplice(pool->splice_buffers[m_i]);
     }
     memoryFree((void *) pool->large_buffers);
     memoryFree((void *) pool->small_buffers);

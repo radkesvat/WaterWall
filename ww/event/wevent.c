@@ -1,6 +1,7 @@
 #include "wevent.h"
 #include "global_state.h"
 #include "loggers/internal_logger.h"
+#include "splice_buffer.h"
 #include "watomic.h"
 #include "werr.h"
 #include "wsocket.h"
@@ -57,7 +58,7 @@ wio_fd_t *wiofdCreate(int fd)
         masterpoolRecordCheckout(master);
         masterpoolGetItems(master, (master_pool_item_t **) &handle, 1, NULL);
     }
-    *handle = (wio_fd_t) {.fd = fd, .pipefd = {0, 0}, .refc = 1, .reserved = 0, .is_socket = true};
+    *handle = (wio_fd_t) {.fd = fd, .refc = 1, .is_socket = true};
     return handle;
 }
 
@@ -105,14 +106,6 @@ void wiofdUnref(wio_fd_t *handle)
 #endif
         handle->fd = -1;
     }
-#if WW_HAVE_SPLICE
-    if (handle->pipefd[0] != 0 || handle->pipefd[1] != 0)
-    {
-        close(handle->pipefd[0]);
-        close(handle->pipefd[1]);
-        handle->pipefd[0] = handle->pipefd[1] = 0;
-    }
-#endif
 
     master_pool_t  *master = GSTATE.masterpool_wio_fds;
     worker_t       *worker = tryGetCurrentEventWorker();
@@ -131,91 +124,95 @@ void wiofdUnref(wio_fd_t *handle)
     }
 }
 
-int wiofdInitPipe(wio_fd_t *handle)
+void wioRecycleSpliceBuffer(sbuf_t *buf, buffer_pool_t *pool)
 {
-#if WW_HAVE_SPLICE
-    if (handle->pipefd[0] != 0 || handle->pipefd[1] != 0)
+    assert(pool != NULL);
+    if (UNLIKELY(buf == NULL || (buf->flags & kSbufFlagSplice) == 0))
     {
-        return 0;
-    }
-    int pipefd[2];
-    if (pipe2(pipefd, O_NONBLOCK | O_CLOEXEC) != 0)
-    {
-        return -1;
-    }
-    handle->pipefd[0] = pipefd[0];
-    handle->pipefd[1] = pipefd[1];
-    return 0;
-#else
-    discard handle;
-    errno = ENOSYS;
-    return -1;
-#endif
-}
-
-ssize_t wioMoveSpliceBuferToPipe(sbuf_t *buf)
-{
-    // kSbufFlagSplice identifies the splice representation; capacity is logical.
-    if (UNLIKELY(buf == NULL || (buf->flags & kSbufFlagSplice) == 0 || (buf->flags & kSbufFlagSplicePiped) != 0 ||
-                 (buf->flags & kSbufFlagSpliceFD) == 0))
-    {
-        LOGF("wioMoveSpliceBuferToPipe: requires kSbufFlagSplice and kSbufFlagSpliceFD, "
-             "with kSbufFlagSplicePiped clear");
+        LOGF("wioRecycleSpliceBuffer: requires kSbufFlagSplice");
         abortProgramNow(1);
     }
     assert(sbufGetLifetime(buf) == NULL && "Splice buffers must not carry lifetime metadata");
-#if WW_HAVE_SPLICE
-    assert(buf->curpos <= buf->l_pad);
-    const uint32_t prefix_bytes = (uint32_t) buf->l_pad - buf->curpos;
-    assert(buf->len >= prefix_bytes);
-    const uint32_t socket_bytes = buf->len - prefix_bytes;
-
-    wio_fd_t *handle;
-    static_assert(sizeof(handle) <= SPLICE_BUFFER_STORAGE_SIZE, "WIO descriptor pointer must fit in a splice buffer");
-    sbufByteCopy(&handle, buf->buf + buf->l_pad, sizeof(handle));
-    assert(handle != NULL && handle->reserved >= socket_bytes);
-    if (UNLIKELY(handle->pipefd[0] == 0 && handle->pipefd[1] == 0))
+    if (UNLIKELY(sbufGetLength(buf) != 0))
     {
-        LOGF("wioMoveSpliceBuferToPipe: descriptor pipe must already be initialized");
+        LOGF("wioRecycleSpliceBuffer: splice buffer must be fully consumed before recycling");
         abortProgramNow(1);
     }
 
-    ssize_t consumed = 0;
-    if (socket_bytes != 0)
-    {
-        do
-        {
-            consumed = splice(handle->fd, NULL, handle->pipefd[1], NULL, socket_bytes, SPLICE_F_NONBLOCK);
-        } while (consumed < 0 && errno == EINTR);
-    }
+    bufferpoolReuseBuffer(pool, buf);
+}
 
-    if (consumed > 0)
+void wioReleaseBuffer(sbuf_t *buf, buffer_pool_t *pool)
+{
+    if (buf->flags & kSbufFlagSplice)
     {
-        handle->reserved -= (uint32_t) consumed;
-    }
-    if (consumed >= 0 && (uint32_t) consumed == socket_bytes)
-    {
-        buf->flags &= (uint16_t) ~kSbufFlagSpliceFD;
-        buf->flags |= kSbufFlagSplicePiped;
+        if (buf->len == 0)
+        {
+            wioRecycleSpliceBuffer(buf, pool);
+            return;
+        }
+        if ((buf->flags & kSbufFlagSplicePiped) == 0)
+        {
+            LOGF("WIO: nonempty splice payload must have kSbufFlagSplicePiped set");
+            abortProgramNow(1);
+        }
+#if WW_HAVE_SPLICE
+        splice_buffer_metadata_t metadata = sbufSpliceMetadata(buf);
+        if (metadata.pipefd[0] >= 0)
+        {
+            uint8_t scratch[1024];
+            for (;;)
+            {
+                ssize_t consumed = read(metadata.pipefd[0], scratch, sizeof(scratch));
+                if (consumed > 0)
+                    continue;
+                if (consumed < 0 && errno == EINTR)
+                    continue;
+                if (consumed < 0 && errno == EAGAIN)
+                    break;
+                sbufSpliceClosePipe(buf);
+                break;
+            }
+        }
+#endif
+        buf->len    = 0;
+        buf->curpos = buf->l_pad;
+        wioRecycleSpliceBuffer(buf, pool);
     }
     else
     {
-        // TODO: Replace this temporary fatal policy with partial-transfer/error handling.
-        // Short splices are valid; reservation accounting must keep using the actual result.
-        const int splice_error = consumed < 0 ? errno : 0;
-        LOGF("wioMoveSpliceBuferToPipe: incomplete splice (requested=%u, result=%lld, errno=%d)",
-             (unsigned int) socket_bytes,
-             (long long) consumed,
-             splice_error);
+        bufferpoolReuseBuffer(pool, buf);
+    }
+}
+
+#if WW_HAVE_SPLICE
+static void wioReadSplicePipe(int fd, uint8_t *dest, uint32_t bytes, const char *caller)
+{
+    uint32_t consumed = 0;
+    while (consumed < bytes)
+    {
+        const ssize_t result = read(fd, dest + consumed, bytes - consumed);
+        if (result > 0)
+        {
+            consumed += (uint32_t) result;
+            continue;
+        }
+        const int read_error = result < 0 ? errno : 0;
+        if (result < 0 && read_error == EINTR)
+        {
+            continue;
+        }
+        // The private pipe must already contain every claimed byte; waiting cannot repair a shortage.
+        LOGF("%s: incomplete read from pipe (requested=%u, consumed=%u, result=%lld, errno=%d)",
+             caller,
+             (unsigned int) bytes,
+             (unsigned int) consumed,
+             (long long) result,
+             read_error);
         abortProgramNow(1);
     }
-    return consumed;
-#else
-    discard buf;
-    errno = ENOSYS;
-    return -1;
-#endif
 }
+#endif
 
 sbuf_t *wioTransformSpliceBufferToRealBuffer(sbuf_t *buf, sbuf_t *dest, buffer_pool_t *pool)
 {
@@ -225,14 +222,13 @@ sbuf_t *wioTransformSpliceBufferToRealBuffer(sbuf_t *buf, sbuf_t *dest, buffer_p
         abortProgramNow(1);
     }
     assert(sbufGetLifetime(buf) == NULL && "Splice buffers must not carry lifetime metadata");
-    const uint16_t location = buf->flags & (kSbufFlagSpliceFD | kSbufFlagSplicePiped);
-    if (UNLIKELY(location != kSbufFlagSpliceFD && location != kSbufFlagSplicePiped))
+    if (UNLIKELY((buf->flags & kSbufFlagSplicePiped) == 0))
     {
-        LOGF("wioTransformSpliceBufferToRealBuffer: requires exactly one of SpliceFD and SplicePiped");
+        LOGF("wioTransformSpliceBufferToRealBuffer: requires kSbufFlagSplicePiped");
         abortProgramNow(1);
     }
     assert(dest != NULL && pool != NULL);
-    if (UNLIKELY((dest->flags & (kSbufFlagSplice | kSbufFlagSpliceFD | kSbufFlagSplicePiped)) != 0))
+    if (UNLIKELY((dest->flags & (kSbufFlagSplice | kSbufFlagSplicePiped)) != 0))
     {
         LOGF("wioTransformSpliceBufferToRealBuffer: destination must be an ordinary buffer");
         abortProgramNow(1);
@@ -263,44 +259,20 @@ sbuf_t *wioTransformSpliceBufferToRealBuffer(sbuf_t *buf, sbuf_t *dest, buffer_p
         abortProgramNow(1);
     }
 
-    wio_fd_t *handle;
-    static_assert(sizeof(handle) <= SPLICE_BUFFER_STORAGE_SIZE, "WIO descriptor pointer must fit in a splice buffer");
-    sbufByteCopy(&handle, buf->buf + buf->l_pad, sizeof(handle));
-    assert(handle != NULL);
-    const bool from_pipe = location == kSbufFlagSplicePiped;
-    if (UNLIKELY(from_pipe && handle->pipefd[0] == 0 && handle->pipefd[1] == 0))
+    splice_buffer_metadata_t metadata = sbufSpliceMetadata(buf);
+    if (UNLIKELY(body_bytes != 0 && metadata.pipefd[0] < 0))
     {
         LOGF("wioTransformSpliceBufferToRealBuffer: descriptor pipe must already be initialized");
         abortProgramNow(1);
     }
-    assert(from_pipe || handle->reserved >= body_bytes);
 
     sbufByteCopy(dest->buf + buf->curpos, sbufGetRawPtr(buf), prefix_bytes);
-    ssize_t consumed = 0;
-    if (body_bytes != 0)
-    {
-        const int fd = from_pipe ? handle->pipefd[0] : handle->fd;
-        consumed     = read(fd, dest->buf + buf->l_pad, body_bytes);
-    }
-    if (! from_pipe && consumed > 0)
-    {
-        handle->reserved -= (uint32_t) consumed;
-    }
-    if (UNLIKELY(consumed < 0 || (uint32_t) consumed != body_bytes))
-    {
-        const int read_error = consumed < 0 ? errno : 0;
-        LOGF("wioTransformSpliceBufferToRealBuffer: incomplete read from %s "
-             "(requested=%u, result=%lld, errno=%d)",
-             from_pipe ? "pipe" : "source fd",
-             (unsigned int) body_bytes,
-             (long long) consumed,
-             read_error);
-        abortProgramNow(1);
-    }
+    wioReadSplicePipe(metadata.pipefd[0], dest->buf + buf->l_pad, body_bytes, __func__);
 
     sbufSetLength(dest, buf->len);
-    dest->flags = buf->flags & (uint16_t) ~(kSbufFlagSplice | kSbufFlagSpliceFD | kSbufFlagSplicePiped);
-    bufferpoolReuseBuffer(pool, buf);
+    dest->flags = buf->flags & (uint16_t) ~(kSbufFlagSplice | kSbufFlagSplicePiped);
+    sbufSetLength(buf, 0);
+    wioRecycleSpliceBuffer(buf, pool);
     return dest;
 #else
     discard dest;
@@ -318,13 +290,12 @@ sbuf_t *wioPartialReadSpliceBuffer(sbuf_t *buf, sbuf_t *dest, uint32_t bytes)
         abortProgramNow(1);
     }
     assert(sbufGetLifetime(buf) == NULL && "Splice buffers must not carry lifetime metadata");
-    const uint16_t location = buf->flags & (kSbufFlagSpliceFD | kSbufFlagSplicePiped);
-    if (UNLIKELY(location != kSbufFlagSpliceFD && location != kSbufFlagSplicePiped))
+    if (UNLIKELY((buf->flags & kSbufFlagSplicePiped) == 0))
     {
-        LOGF("wioPartialReadSpliceBuffer: requires exactly one of SpliceFD and SplicePiped");
+        LOGF("wioPartialReadSpliceBuffer: requires kSbufFlagSplicePiped");
         abortProgramNow(1);
     }
-    if (UNLIKELY(dest == NULL || (dest->flags & (kSbufFlagSplice | kSbufFlagSpliceFD | kSbufFlagSplicePiped)) != 0))
+    if (UNLIKELY(dest == NULL || (dest->flags & (kSbufFlagSplice | kSbufFlagSplicePiped)) != 0))
     {
         LOGF("wioPartialReadSpliceBuffer: destination must be an ordinary buffer");
         abortProgramNow(1);
@@ -370,41 +341,13 @@ sbuf_t *wioPartialReadSpliceBuffer(sbuf_t *buf, sbuf_t *dest, uint32_t bytes)
     uint8_t       *target        = sbufGetMutablePtr(dest) + dest_length;
     if (body_bytes != 0)
     {
-        wio_fd_t *handle;
-        static_assert(sizeof(handle) <= SPLICE_BUFFER_STORAGE_SIZE,
-                      "WIO descriptor pointer must fit in a splice buffer");
-        sbufByteCopy(&handle, buf->buf + sbufGetLeftPadding(buf), sizeof(handle));
-        assert(handle != NULL);
-        const bool from_pipe = location == kSbufFlagSplicePiped;
-        if (UNLIKELY(from_pipe && handle->pipefd[0] == 0 && handle->pipefd[1] == 0))
+        splice_buffer_metadata_t metadata = sbufSpliceMetadata(buf);
+        if (UNLIKELY(metadata.pipefd[0] < 0))
         {
             LOGF("wioPartialReadSpliceBuffer: descriptor pipe must already be initialized");
             abortProgramNow(1);
         }
-        if (UNLIKELY(! from_pipe && body_bytes > handle->reserved))
-        {
-            LOGF("wioPartialReadSpliceBuffer: source reservation is too small (requested=%u, reserved=%u)",
-                 (unsigned int) body_bytes,
-                 (unsigned int) handle->reserved);
-            abortProgramNow(1);
-        }
-
-        const int     fd       = from_pipe ? handle->pipefd[0] : handle->fd;
-        const ssize_t consumed = read(fd, target + copied_prefix, body_bytes);
-        if (! from_pipe && consumed > 0)
-        {
-            handle->reserved -= (uint32_t) consumed;
-        }
-        if (UNLIKELY(consumed < 0 || (uint32_t) consumed != body_bytes))
-        {
-            const int read_error = consumed < 0 ? errno : 0;
-            LOGF("wioPartialReadSpliceBuffer: incomplete read from %s (requested=%u, result=%lld, errno=%d)",
-                 from_pipe ? "pipe" : "source fd",
-                 (unsigned int) body_bytes,
-                 (long long) consumed,
-                 read_error);
-            abortProgramNow(1);
-        }
+        wioReadSplicePipe(metadata.pipefd[0], target + copied_prefix, body_bytes, __func__);
     }
     sbufByteCopy(target, sbufGetRawPtr(buf), copied_prefix);
     sbufSetLength(dest, dest_length + bytes);
@@ -643,7 +586,7 @@ void wioDone(wio_t *io)
     while (! write_queue_empty(&io->write_queue))
     {
         buf = *write_queue_front(&io->write_queue);
-        bufferpoolReuseBuffer(io->loop->bufpool, buf);
+        wioReleaseBuffer(buf, io->loop->bufpool);
         write_queue_pop_front(&io->write_queue);
     }
     write_queue_cleanup(&io->write_queue);
@@ -781,22 +724,18 @@ wio_fd_t *wioGetFDHandle(const wio_t *io)
     return io->fd_handle;
 }
 
-int wioInitPipe(wio_t *io)
-{
-    assert(io->fd_handle != NULL);
-    return wiofdInitPipe(io->fd_handle);
-}
-
 int wioEnableSplice(wio_t *io)
 {
     assert(io->ready && ! io->closed);
     assert(! io->read_started && "Splice must be enabled before starting WIO reads");
-    if (wioInitPipe(io) != 0)
-    {
-        return -1;
-    }
+#if WW_HAVE_SPLICE
     io->splice_enabled = 1;
     return 0;
+#else
+    discard io;
+    errno = ENOSYS;
+    return -1;
+#endif
 }
 
 void wioDisableSplice(wio_t *io)
@@ -967,6 +906,10 @@ void wioReadCallBack(wio_t *io, sbuf_t *buf)
         // printd("read_cb------\n");
         io->read_cb(io, buf);
         // printd("read_cb======\n");
+    }
+    else
+    {
+        wioReleaseBuffer(buf, io->loop->bufpool);
     }
 }
 

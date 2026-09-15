@@ -203,10 +203,13 @@ static void testFlagsInitializationAndReuse(buffer_pool_t *pool)
 
     buffer = bufferpoolGetSmallBuffer(pool);
     require(buffer->flags == 0, "pooled buffer has stale flags");
-    buffer->flags |= kSbufFlagSplice;
     bufferpoolReuseBuffer(pool, buffer);
-    buffer = bufferpoolGetSmallBuffer(pool);
-    require(buffer->flags == 0, "pool reuse retained the previous buffer flags");
+
+    buffer = bufferpoolGetSpliceBuffer(pool);
+    buffer->flags |= kSbufFlagSplicePiped;
+    bufferpoolReuseBuffer(pool, buffer);
+    buffer = bufferpoolGetSpliceBuffer(pool);
+    require(buffer->flags == kSbufFlagSplice, "pool reuse retained the previous splice location flags");
     bufferpoolReuseBuffer(pool, buffer);
 }
 

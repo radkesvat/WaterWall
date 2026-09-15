@@ -142,9 +142,7 @@ QUEUE_DECL(sbuf_t *, write_queue)
 struct wio_fd_s
 {
     int          fd;
-    int          pipefd[2]; // {0, 0} until initialized; a created pipe may include descriptor zero.
     atomic_u32_t refc;
-    uint32_t     reserved; // Socket bytes reserved by the active splice read callback.
     bool         is_socket;
 };
 
@@ -154,12 +152,10 @@ generic_pool_t *wiofdCreatePool(master_pool_t *master, uint32_t capacity);
 wio_fd_t *wiofdCreate(int fd);
 /** Retain a live descriptor object. A held reference is required during publication. */
 void wiofdRef(wio_fd_t *handle);
-/** Release one reference; the last release closes all owned descriptors and recycles the object. */
+/** Release one reference; the last release closes the primary descriptor and recycles the object. */
 void wiofdUnref(wio_fd_t *handle);
 /** Observe the 32-bit reference count without acquiring another reference. */
 uint32_t wiofdGetRefCount(const wio_fd_t *handle);
-/** Lazily create a nonblocking, close-on-exec pipe; initialization requires exclusive access. */
-int wiofdInitPipe(wio_fd_t *handle);
 
 struct wio_s
 {
@@ -291,6 +287,8 @@ uint32_t wioSetNextID(void);
 void wioFinalizeNow(wio_t *io);
 // Drop WIO ownership; keep_fd returns the primary descriptor to its external owner.
 void wioReleaseFDHandle(wio_t *io, bool keep_fd);
+// Settle a WIO-owned buffer, draining private pipes on cancellation.
+void wioReleaseBuffer(sbuf_t *buf, buffer_pool_t *pool);
 
 void wioAcceptCallBack(wio_t *io);
 void wioConnectCallBack(wio_t *io);

@@ -1,0 +1,28 @@
+#pragma once
+#include "shiftbuffer.h"
+
+/* Metadata is private to one splice allocation, including while its flags are reset
+ * in a pool. Delivered payload is already in this allocation's pipe. */
+typedef struct splice_buffer_metadata_s
+{
+    int pipefd[2];
+} splice_buffer_metadata_t;
+static_assert(sizeof(splice_buffer_metadata_t) <= SPLICE_BUFFER_STORAGE_SIZE,
+              "splice metadata must fit control storage");
+
+static inline splice_buffer_metadata_t sbufSpliceMetadata(const sbuf_t *buf)
+{
+    splice_buffer_metadata_t metadata;
+    sbufByteCopy(&metadata, buf->buf + buf->l_pad, sizeof(metadata));
+    return metadata;
+}
+static inline void sbufSpliceSetMetadata(sbuf_t *buf, splice_buffer_metadata_t metadata)
+{
+    sbufByteCopy(buf->buf + buf->l_pad, &metadata, sizeof(metadata));
+}
+int  sbufSpliceInitPipe(sbuf_t *buf);
+void sbufSpliceClosePipe(sbuf_t *buf);
+/* Checks kernel emptiness as well as logical settlement; reset never drains. */
+bool sbufSpliceIsReusable(const sbuf_t *buf);
+/* Type-specific destruction also accepts cached wrappers with reset flags. */
+void sbufDestroySplice(sbuf_t *buf);

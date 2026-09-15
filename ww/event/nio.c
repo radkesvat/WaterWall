@@ -1,4 +1,5 @@
 #include "iowatcher.h"
+#include "splice_buffer.h"
 #include "wloop_internal.h"
 #include "worker.h"
 #ifndef EVENT_IOCP
@@ -289,6 +290,76 @@ static int __nio_write(wio_t *io, const void *buf, int len)
     return nwrite;
 }
 
+// Return actual progress even when the body write fails after sending a prefix.
+static int nioWriteBuffer(wio_t *io, sbuf_t *buf, int *error)
+{
+    *error = 0;
+#if WW_HAVE_SPLICE
+    if (buf->flags & kSbufFlagSplice)
+    {
+        assert(buf->flags & kSbufFlagSplicePiped);
+        assert(sbufGetLifetime(buf) == NULL);
+        assert(buf->curpos <= sbufGetLeftPadding(buf));
+        const uint32_t prefix = (uint32_t) sbufGetLeftPadding(buf) - buf->curpos;
+        assert(prefix <= sbufGetLength(buf));
+        const uint32_t body    = sbufGetLength(buf) - prefix;
+        int            written = 0;
+        if (prefix != 0)
+        {
+            written = __nio_write(io, sbufGetRawPtr(buf), (int) prefix);
+            if (written < 0)
+            {
+                *error = socketERRNO();
+                return written;
+            }
+            if ((uint32_t) written < prefix)
+            {
+                return written;
+            }
+        }
+        if (body != 0)
+        {
+            splice_buffer_metadata_t metadata = sbufSpliceMetadata(buf);
+            if (UNLIKELY(metadata.pipefd[0] < 0))
+            {
+                LOGF("nioWriteBuffer: splice descriptor pipe must already be initialized");
+                abortProgramNow(1);
+            }
+            const ssize_t moved = splice(metadata.pipefd[0], NULL, wioGetFD(io), NULL, body, SPLICE_F_NONBLOCK);
+            if (moved <= 0)
+            {
+                *error = moved < 0 ? errno : EPIPE;
+                return written != 0 ? written : -1;
+            }
+            written += (int) moved;
+        }
+        return written;
+    }
+#endif
+    const int written = __nio_write(io, sbufGetRawPtr(buf), (int) sbufGetLength(buf));
+    if (written < 0)
+    {
+        *error = socketERRNO();
+    }
+    return written;
+}
+
+static void nioConsumeWrittenBuffer(sbuf_t *buf, uint32_t bytes)
+{
+    if (buf->flags & kSbufFlagSplice)
+    {
+        assert(buf->curpos <= sbufGetLeftPadding(buf));
+        const uint32_t prefix = min(bytes, (uint32_t) sbufGetLeftPadding(buf) - buf->curpos);
+        sbufShiftRight(buf, prefix);
+        sbufConsume(buf, bytes - prefix);
+        buf->capacity -= bytes - prefix;
+    }
+    else
+    {
+        sbufShiftRight(buf, bytes);
+    }
+}
+
 static void nio_read(wio_t *io)
 {
     // printd("nio_read fd=%d\n", wioGetFD(io));
@@ -301,25 +372,15 @@ static void nio_read(wio_t *io)
 #if WW_HAVE_SPLICE
     if (io->io_type == WIO_TYPE_TCP && wioIsSpliceEnabled(io))
     {
-        wio_fd_t *handle = wioGetFDHandle(io);
-        assert(handle != NULL);
-        if (UNLIKELY(handle->reserved != 0))
-        {
-            LOGF("nio_read: splice read started with outstanding reserved bytes (fd=%d, reserved=%u)",
-                 handle->fd,
-                 (unsigned int) handle->reserved);
-            abortProgramNow(1);
-        }
-
         int queued_bytes = 0;
-        if (UNLIKELY(ioctl(handle->fd, FIONREAD, &queued_bytes) != 0))
+        if (UNLIKELY(ioctl(wioGetFD(io), FIONREAD, &queued_bytes) != 0))
         {
             err = socketERRNO();
             if (err == EAGAIN || err == EINTR)
             {
                 return;
             }
-            LOGE("read fd=%d FIONREAD error: %s:%d", handle->fd, socketStrError(err), err);
+            LOGE("read fd=%d FIONREAD error: %s:%d", wioGetFD(io), socketStrError(err), err);
             io->error = err;
             goto read_error;
         }
@@ -327,39 +388,56 @@ static void nio_read(wio_t *io)
         {
             buffer_pool_t *pool       = io->loop->bufpool;
             const uint32_t read_limit = min(bufferpoolGetLargeBufferSize(pool), (uint32_t) LARGE_BUFFER_SIZE_RAM_HIGH);
-            const uint32_t reserved   = min((uint32_t) queued_bytes, read_limit);
-            assert(reserved > 0);
+            const uint32_t requested  = min((uint32_t) queued_bytes, read_limit);
+            assert(requested > 0);
             buf = bufferpoolGetSpliceBuffer(pool);
             assert(sbufGetLifetime(buf) == NULL);
-            buf->capacity = (uint32_t) sbufGetLeftPadding(buf) + reserved;
-            sbufSetLength(buf, reserved);
-            buf->flags |= kSbufFlagSpliceFD;
-            static_assert(sizeof(handle) <= SPLICE_BUFFER_STORAGE_SIZE,
-                          "WIO descriptor pointer must fit in a splice buffer");
-            sbufByteCopy(buf->buf + sbufGetLeftPadding(buf), &handle, sizeof(handle));
             if (! wloopNormalDispatchAllowed(io->loop))
             {
                 bufferpoolReuseBuffer(pool, buf);
                 return;
             }
-
-            // The callback owns buf and may close/recycle io. Inspect only the retained handle afterward.
-            wiofdRef(handle);
-            handle->reserved = reserved;
-            __read_cb(io, buf);
-            if (UNLIKELY(handle->reserved != 0))
+            if (UNLIKELY(sbufSpliceInitPipe(buf) != 0))
             {
-                LOGF("nio_read: splice callback returned with unconsumed socket bytes "
-                     "(fd=%d, reserved=%u); consume the payload with the splice helpers before deferring it",
-                     handle->fd,
-                     (unsigned int) handle->reserved);
-                abortProgramNow(1);
+                // No socket bytes were consumed; use ordinary storage for this delivery.
+                bufferpoolReuseBuffer(pool, buf);
+                goto read_ordinary;
             }
-            wiofdUnref(handle);
+            const splice_buffer_metadata_t metadata = sbufSpliceMetadata(buf);
+            ssize_t                        moved;
+            do
+            {
+                moved = splice(wioGetFD(io), NULL, metadata.pipefd[1], NULL, requested, SPLICE_F_NONBLOCK);
+            } while (moved < 0 && errno == EINTR);
+            if (moved <= 0)
+            {
+                err = moved < 0 ? socketERRNO() : 0;
+                bufferpoolReuseBuffer(pool, buf);
+                if (moved == 0)
+                    goto disconnect;
+                if (err == EAGAIN)
+                    return;
+                LOGE("read fd=%d splice error: %s:%d", wioGetFD(io), socketStrError(err), err);
+                io->error = err;
+                goto read_error;
+            }
+
+            // Only bytes already held in this private pipe become visible to the callback.
+            buf->capacity = (uint32_t) sbufGetLeftPadding(buf) + (uint32_t) moved;
+            sbufSetLength(buf, (uint32_t) moved);
+            buf->flags |= kSbufFlagSplicePiped;
+            if (! wloopNormalDispatchAllowed(io->loop))
+            {
+                wioReleaseBuffer(buf, pool);
+                return;
+            }
+            __read_cb(io, buf);
+            // Ownership transferred; the callback may free both buf and io.
             return;
         }
         // FIONREAD == 0 is not EOF proof. The ordinary nonblocking read handles EOF and transient readiness.
     }
+read_ordinary:
 #endif
 
     switch (io->io_type)
@@ -453,15 +531,21 @@ write:
     sbuf_t *buf = *write_queue_front(&io->write_queue);
     int     len = (int) sbufGetLength(buf);
     // char* base = pbuf->base;
-    nwrite = __nio_write(io, sbufGetMutablePtr(buf), len);
-    // printd("write retval=%d\n", nwrite);
-    if (nwrite < 0)
+    nwrite = nioWriteBuffer(io, buf, &err);
+    if (nwrite > 0)
     {
-        err = socketERRNO();
+        nioConsumeWrittenBuffer(buf, (uint32_t) nwrite);
+        io->write_bufsize -= (uint32_t) nwrite;
+    }
+    // printd("write retval=%d\n", nwrite);
+    if (err != 0)
+    {
         if (err == EAGAIN || err == EINTR)
         {
-
-            return;
+            if (nwrite <= 0)
+            {
+                return;
+            }
         }
         else
         {
@@ -474,13 +558,11 @@ write:
     {
         goto disconnect;
     }
-    sbufShiftRight(buf, (uint32_t) nwrite);
-    io->write_bufsize -= (uint32_t) nwrite;
     if (nwrite == len)
     {
         // NOTE: after write_cb, pbuf maybe invalid.
         // EVENTLOOP_FREE(pbuf->base);
-        bufferpoolReuseBuffer(io->loop->bufpool, buf);
+        wioReleaseBuffer(buf, io->loop->bufpool);
         write_queue_pop_front(&io->write_queue);
         if (! wloopNormalDispatchAllowed(io->loop))
         {
@@ -733,16 +815,30 @@ int wioWriteDatagram(wio_t *io, sbuf_t *buf, const sockaddr_u *peer_addr)
 
 int wioWrite(wio_t *io, sbuf_t *buf)
 {
-    if (UNLIKELY(buf->flags & kSbufFlagSplice))
+    const bool splice_buffer = (buf->flags & kSbufFlagSplice) != 0;
+    if (splice_buffer)
     {
-        // Temporary guard until the send path understands descriptor-backed payloads.
-        LOGF("wioWrite: splice buffer sending is not implemented; convert to an ordinary buffer before writing");
+#if WW_HAVE_SPLICE
+        if (UNLIKELY(io->io_type != WIO_TYPE_TCP))
+        {
+            LOGF("wioWrite: splice buffers require a TCP destination");
+            abortProgramNow(1);
+        }
+        assert(sbufGetLifetime(buf) == NULL && "Splice buffers must not carry lifetime metadata");
+        if (UNLIKELY((buf->flags & kSbufFlagSplicePiped) == 0))
+        {
+            LOGF("wioWrite: requires kSbufFlagSplicePiped");
+            abortProgramNow(1);
+        }
+#else
+        LOGF("wioWrite: splice is unsupported on this build");
         abortProgramNow(1);
+#endif
     }
     if (io->closed)
     {
         wloge("wioWrite called but fd[%d] already closed!", wioGetFD(io));
-        bufferpoolReuseBuffer(io->loop->bufpool, buf);
+        wioReleaseBuffer(buf, io->loop->bufpool);
         return -1;
     }
     if ((io->io_type & WIO_TYPE_SOCK_DGRAM) || (io->io_type & WIO_TYPE_SOCK_RAW))
@@ -757,21 +853,28 @@ int wioWrite(wio_t *io, sbuf_t *buf)
     const bool nested_callback = wloopCurrentThreadInNormalCallback(io->loop);
     if (! nested_callback && ! wloopNormalAdmissionBegin(io->loop))
     {
-        bufferpoolReuseBuffer(io->loop->bufpool, buf);
+        wioReleaseBuffer(buf, io->loop->bufpool);
         return -1;
     }
 
+    if (splice_buffer && len == 0)
+    {
+        goto write_done;
+    }
     if (write_queue_empty(&io->write_queue))
     {
         //    try_write:
-        nwrite = __nio_write(io, sbufGetMutablePtr(buf), len);
-        // printd("write retval=%d\n", nwrite);
-        if (nwrite < 0)
+        nwrite = nioWriteBuffer(io, buf, &err);
+        if (nwrite > 0)
         {
-            err = socketERRNO();
+            nioConsumeWrittenBuffer(buf, (uint32_t) nwrite);
+        }
+        // printd("write retval=%d\n", nwrite);
+        if (err != 0)
+        {
             if (err == EAGAIN || err == EINTR)
             {
-                nwrite = 0;
+                nwrite = max(nwrite, 0);
                 wlogd("try_write failed, enqueue!");
                 goto enqueue;
             }
@@ -808,8 +911,6 @@ int wioWrite(wio_t *io, sbuf_t *buf)
             io->error = WERR_OVER_LIMIT;
             goto write_error;
         }
-        sbufShiftRight(buf, (uint32_t) nwrite);
-
         if (io->write_queue.maxsize == 0)
         {
             write_queue_init(&io->write_queue, 4);
@@ -828,11 +929,11 @@ int wioWrite(wio_t *io, sbuf_t *buf)
 
 write_done:
 
-    if (nwrite > 0)
+    if (nwrite > 0 || (splice_buffer && len == 0))
     {
         if (nwrite == len)
         {
-            bufferpoolReuseBuffer(io->loop->bufpool, buf);
+            wioReleaseBuffer(buf, io->loop->bufpool);
         }
         if (! nested_callback)
         {
@@ -857,7 +958,7 @@ disconnect:
      * if wio_close_sync, we have to be very careful to avoid using freed resources.
      * But if wioCloseAsync, we do not have to worry about this.
      */
-    bufferpoolReuseBuffer(io->loop->bufpool, buf);
+    wioReleaseBuffer(buf, io->loop->bufpool);
     if (! nested_callback)
     {
         wloopNormalAdmissionEnd(io->loop);

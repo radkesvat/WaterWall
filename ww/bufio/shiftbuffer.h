@@ -30,9 +30,9 @@ enum
 {
     /**
      * Represent kernel-backed payload with a splice sbuf wrapper whose actual
-     * payload storage is 32 bytes. A wio_fd_t pointer at the original payload
-     * start (buf + l_pad) identifies the source socket and its lazy pipe;
-     * the preceding bytes remain reserved left padding. The pointer stays
+     * payload storage is 32 bytes. Private metadata at the original payload
+     * start (buf + l_pad) holds an owned lazy pipe;
+     * the preceding bytes remain reserved left padding. The metadata stays
      * at that fixed offset when a tunnel prepends bytes by shifting left.
      * Length and capacity account for that logical payload, not the wrapper's
      * physical storage, and must not be used as bounds for accessing buf bytes.
@@ -44,19 +44,18 @@ enum
      * and opaquely, using only size-based accounting, can usually keep their
      * Payload code unchanged.
      * Participating tunnels trust the sizes without inspecting or modifying
-     * the kernel-backed body or its descriptor pointer.
+     * the kernel-backed body or its pipe descriptors.
      *
-     * Socket-backed bytes must be consumed with the dedicated helpers before
-     * the read callback returns. Before deferring to another worker, the main
-     * thread, or a later callback, convert to ordinary storage or move the body
-     * into the pipe. A retained pipe-backed wrapper needs splice-aware storage
-     * and a live descriptor reference; the buffer does not own that reference.
-     * The read dispatcher holds a descriptor reference only across the callback.
-     * Tunnel code must not bypass helper reservation accounting with raw I/O.
+     * NIO fills the private pipe before invoking the read callback and reports
+     * the actual transferred length. Delivered wrappers contain no source socket
+     * pointer or reservation and survive source reclamation. Splice-aware code
+     * may defer them immediately, retaining exclusive ownership and stream order.
+     * Consume bodies through the dedicated pipe helpers. Recycling preserves an
+     * empty private pair; physical destruction closes it. See splice_buffer.h.
      *
      * Reserved left padding remains real, writable storage. A tunnel may use
      * sbufShiftLeft() and write its prefix within the available, advertised
-     * headroom; the prefix precedes the kernel-backed body and the pointer
+     * headroom; the prefix precedes the kernel-backed body and the metadata
      * stays at its original offset. This permission does not extend to the
      * descriptor or to the body represented by it.
      *
@@ -67,9 +66,7 @@ enum
      */
     kSbufFlagSplice = 1U << 0,
     /** The body has been spliced into the pipe; meaningful only with kSbufFlagSplice. */
-    kSbufFlagSplicePiped = 1U << 1,
-    /** The body remains in the source file descriptor; meaningful only with kSbufFlagSplice. */
-    kSbufFlagSpliceFD = 1U << 2
+    kSbufFlagSplicePiped = 1U << 1
 };
 
 struct sbuf_s
@@ -289,8 +286,8 @@ sbuf_t *sbufCreate(uint32_t minimum_capacity);
  * @brief Create an empty splice wrapper with 32 bytes of control storage plus left padding.
  *
  * @param pad_left Requested left padding in bytes, rounded up to a 32-byte boundary.
- * @return sbuf_t* Empty wrapper with only kSbufFlagSplice set. The caller must
- * initialize its descriptor pointer, location flags, and logical payload size before use.
+ * @return sbuf_t* Empty wrapper with only kSbufFlagSplice set and an uninitialized private pipe pair.
+ * Populate the pipe before publishing its actual logical payload size and kSbufFlagSplicePiped.
  */
 sbuf_t *sbufCreateSplice(uint16_t pad_left);
 

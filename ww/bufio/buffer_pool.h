@@ -69,7 +69,8 @@ sbuf_t *bufferpoolGetLargeBuffer(buffer_pool_t *pool);
 sbuf_t *bufferpoolGetSmallBuffer(buffer_pool_t *pool);
 
 /** Retrieve an empty splice wrapper with kSbufFlagSplice set, 32 bytes of control storage, and reserved left padding.
- * The caller initializes its descriptor pointer, location flags, and logical size before use. */
+ * Its private pipe is uninitialized or empty. Populate the pipe before publishing its actual logical size
+ * and kSbufFlagSplicePiped. */
 sbuf_t *bufferpoolGetSpliceBuffer(buffer_pool_t *pool);
 
 /**
@@ -87,6 +88,8 @@ sbuf_t *bufferpoolGetBestFit(buffer_pool_t *pool, uint32_t minimum_payload, uint
 
 /**
  * Reuses a buffer by returning it to the buffer pool.
+ * Splice wrappers require zero length and an empty private pipe.
+ * These release checks also apply when pooling is bypassed. Empty pairs survive reuse.
  * @param pool The buffer pool.
  * @param b The buffer to reuse.
  */
