@@ -102,6 +102,8 @@ typedef struct ww_global_state_s
     uint32_t    tun_egress_ifindex_v6;
     uint32_t    tun_egress_pin_refs;
 
+    bool splice_disabled; // Startup policy; prevents chains from enabling splice.
+
 } ww_global_state_t;
 
 typedef struct
@@ -116,6 +118,8 @@ typedef struct
     logger_construction_data_t network_logger_data;
     logger_construction_data_t dns_logger_data;
     void (*application_finalizer)(void);
+
+    bool splice_disabled; // Opt-out: zero-initialized construction settings permit splice.
 
 } ww_construction_data_t;
 

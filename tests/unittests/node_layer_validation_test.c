@@ -1506,8 +1506,10 @@ static void testSolvedTopologyExpansionIsRevalidated(bool helper_supports_splice
     wwStartupContextBegin(&startup);
     finalizeTunnelChains(&cfg, t_array, 2);
     require(wwStartupSucceeded(wwStartupContextEnd(&startup)), "expanded chain failed to finalize");
-    require(chain->finalized && chain->supports_splice == (WW_HAVE_SPLICE && ! packet_chain && helper_supports_splice),
-            "final splice support ignored platform support, packet classification, or the inserted helper");
+    require(
+        chain->finalized && chain->supports_splice == (WW_HAVE_SPLICE && ! GSTATE.splice_disabled && ! packet_chain &&
+                                                       helper_supports_splice),
+        "final splice support ignored runtime policy, platform support, packet classification, or the inserted helper");
     require(t_inserted.chain_index == 1, "inserted helper was omitted from final indexing");
     vec_chains_t_drop(&cfg.chains);
     tunnelchainDestroy(chain);
@@ -1534,8 +1536,9 @@ static void testChainSpliceCapability(void)
         }
         require(! chain->supports_splice, "chain advertised splice support during assembly");
         tunnelchainFinalize(chain);
-        require(chain->finalized && chain->supports_splice == (WW_HAVE_SPLICE && unsupported_indices[test] < 0),
-                "splice capability did not require every node in the full chain");
+        require(chain->finalized && chain->supports_splice ==
+                                        (WW_HAVE_SPLICE && ! GSTATE.splice_disabled && unsupported_indices[test] < 0),
+                "splice capability ignored runtime policy or a node in the full chain");
         tunnelchainDestroy(chain);
         for (uint16_t i = 0; i < kMaxChainLen; ++i)
         {
@@ -1620,11 +1623,17 @@ int main(void)
     testRejectOppositeMissingSide();
     testMalformedMetadataMatrix();
     testPacketLineInitAndPayloadExecution();
-    testSolvedTopologyExpansionIsRevalidated(false, false);
-    testSolvedTopologyExpansionIsRevalidated(true, false);
-    testSolvedTopologyExpansionIsRevalidated(false, true);
-    testSolvedTopologyExpansionIsRevalidated(true, true);
-    testChainSpliceCapability();
+    const bool saved_splice_disabled = GSTATE.splice_disabled;
+    for (unsigned int disabled = 0; disabled < 2; ++disabled)
+    {
+        GSTATE.splice_disabled = disabled != 0;
+        testSolvedTopologyExpansionIsRevalidated(false, false);
+        testSolvedTopologyExpansionIsRevalidated(true, false);
+        testSolvedTopologyExpansionIsRevalidated(false, true);
+        testSolvedTopologyExpansionIsRevalidated(true, true);
+        testChainSpliceCapability();
+    }
+    GSTATE.splice_disabled = saved_splice_disabled;
     testNodeManagerPreFinalizationChainCleanup();
 
     printf("ALL node_layer_validation unit tests passed successfully!\n");

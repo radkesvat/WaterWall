@@ -40,6 +40,7 @@ struct core_settings_s
     char        *libs_path;
 
     bool     try_enabling_bbr;
+    bool              splice_enabled;
     uint16_t mtu_size;
     vec_config_path_t config_paths;
 };

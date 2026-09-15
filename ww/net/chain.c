@@ -185,7 +185,8 @@ void tunnelchainFinalize(tunnel_chain_t *tc)
     globalstateUpdateAllocationPadding(tc->sum_padding_left);
 
     // Topology expansion is complete, including helpers added by onSolvedTopology.
-    tc->supports_splice = WW_HAVE_SPLICE && ! tc->contains_packet_node && tc->tunnels.len != 0;
+    tc->supports_splice =
+        WW_HAVE_SPLICE && ! GSTATE.splice_disabled && ! tc->contains_packet_node && tc->tunnels.len != 0;
     for (uint16_t i = 0; tc->supports_splice && i < tc->tunnels.len; ++i)
     {
         if ((tunnelGetNode(tc->tunnels.tuns[i])->flags & kNodeFlagSupportsSplice) == 0)

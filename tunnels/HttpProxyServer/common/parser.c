@@ -266,8 +266,8 @@ unsigned hpsParseHeader(char *block, size_t len, bool response, bool response_to
         h->options = ! stringCompare(h->method, "OPTIONS");
         if (! stringCompare(h->method, "TRACE"))
             return 405;
-        for (p = h->target; *p; ++p)
-            if ((unsigned char) *p <= 32 || (unsigned char) *p >= 127 || *p == '#' || *p == '\\')
+        for (const char *target = h->target; *target; ++target)
+            if ((unsigned char) *target <= 32 || (unsigned char) *target >= 127 || *target == '#' || *target == '\\')
                 return 400;
         if (h->connect)
         {
@@ -285,12 +285,12 @@ unsigned hpsParseHeader(char *block, size_t len, bool response, bool response_to
             scheme[7] = 0;
             if (! equal(scheme, "http://"))
                 return 501;
-            char *authority = h->target + 7;
-            p               = authority + strcspn(authority, "/?");
-            if (! hpsAuthority(authority, (size_t) (p - authority), false, &h->authority))
+            const char *authority = h->target + 7;
+            const char *path      = authority + strcspn(authority, "/?");
+            if (! hpsAuthority(authority, (size_t) (path - authority), false, &h->authority))
                 return 400;
-            h->target = p;
-            if (h->options && ! *p)
+            h->target = path;
+            if (h->options && ! *path)
                 h->target = "*";
             for (const char *escaped = h->target; *escaped; ++escaped)
             {

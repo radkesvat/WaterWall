@@ -45,13 +45,14 @@ typedef struct hps_field_s
     char *value;
 } hps_field_t;
 
-/* Pointers borrow the caller's complete, NUL-terminated header block. */
+/* Pointers borrow the caller's complete, NUL-terminated header block;
+ * a normalized request target may also refer to a string literal. */
 typedef struct hps_header_s
 {
     hps_field_t     fields[kHpsFieldLimit];
     unsigned        count;
     char           *method;
-    char           *target;
+    const char     *target;
     char           *reason;
     char           *credentials;
     hps_authority_t authority;

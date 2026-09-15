@@ -17,6 +17,7 @@
 #define DEFAULT_DNS_LOG_FILE            "dns.log"
 #define DEFAULT_DNS_ENABLE_CONSOLE      true
 #define DEFAULT_RAM_PROFILE             kRamProfileServer
+#define DEFAULT_SPLICE                  true
 
 #if defined(OS_LINUX) && ! defined(OS_ANDROID) && ! defined(OS_CYGWIN)
 #define DEFAULT_TRY_ENABLING_BBR true
@@ -926,6 +927,15 @@ static void parseMiscPartOfJson(cJSON *misc_obj)
         startupFailureRecord(1);
         return;
     }
+
+    const cJSON *json_splice = cJSON_GetObjectItemCaseSensitive(misc_obj, "splice");
+    if (json_splice != NULL && ! cJSON_IsBool(json_splice))
+    {
+        printError("CoreSettings: \"misc.splice\" must be true or false\n");
+        startupFailureRecord(1);
+        return;
+    }
+    getBoolFromJsonObjectOrDefault(&settings->splice_enabled, misc_obj, "splice", DEFAULT_SPLICE);
 
     if (cJSON_IsObject(misc_obj) && (misc_obj->child != NULL))
     {

@@ -162,6 +162,7 @@ int waterwallInnerMain(int argc, char **argv)
         .workers_count   = getCoreSettings()->workers_count,
         .ram_profile     = getCoreSettings()->ram_profile,
         .mtu_size        = getCoreSettings()->mtu_size,
+        .splice_disabled = ! getCoreSettings()->splice_enabled,
         .dns_options     = getCoreSettings()->dns_options,
         .domain_strategy = getCoreSettings()->domain_strategy,
         .internal_logger_data =
