@@ -80,7 +80,7 @@ void ptcUdpReceived(void *arg, struct udp_pcb *upcb, struct pbuf *p, const ip_ad
 
     if (line == NULL)
     {
-        line = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), owner_wid, tunnelGetChain(t)->tunnels.len);
+        line = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), owner_wid);
 
         ptc_lstate_t *ls = lineGetState(line, t);
         ip_addr_t     local_ip;

@@ -525,8 +525,8 @@ static void caseWorkerDrainIsLocal(void)
     twfWorkerEnvSetup(&env, kIdleBufferSize, kMuxFrameLength * 2U);
     master_pool_t *large       = masterpoolCreateWithCapacity(8);
     master_pool_t *small       = masterpoolCreateWithCapacity(8);
-    master_pool_t *micro       = masterpoolCreateWithCapacity(8);
-    buffer_pool_t *second_pool = bufferpoolCreate(large, small, micro, 4, kIdleBufferSize, 1024);
+    master_pool_t *splice      = masterpoolCreateWithCapacity(8);
+    buffer_pool_t *second_pool = bufferpoolCreate(large, small, splice, 4, kIdleBufferSize, 1024);
     bufferpoolUpdateAllocationPaddings(second_pool, kMuxFrameLength * 2U, kMuxFrameLength * 2U, kMuxFrameLength * 2U);
     wloop_t       *second_loop   = wloopCreate(WLOOP_FLAG_AUTO_FREE, second_pool, 1);
     buffer_pool_t *pools[2]      = {env.pool, second_pool};
@@ -555,8 +555,8 @@ static void caseWorkerDrainIsLocal(void)
     for (wid_t wid = 0; wid < 2; ++wid)
     {
         testWorkerBindWID(wid);
-        parents[wid]  = lineCreateForWorker(wid, line_pools, wid, 0);
-        children[wid] = lineCreateForWorker(wid, line_pools, wid, 0);
+        parents[wid]  = lineCreateForWorker(wid, line_pools, wid);
+        children[wid] = lineCreateForWorker(wid, line_pools, wid);
         lineRef(children[wid]);
         muxserver_lstate_t *parent = lineGetState(parents[wid], mux);
         muxserver_lstate_t *child  = lineGetState(children[wid], mux);
@@ -591,7 +591,7 @@ static void caseWorkerDrainIsLocal(void)
     bufferpoolDestroy(second_pool);
     masterpoolDestroy(large);
     masterpoolDestroy(small);
-    masterpoolDestroy(micro);
+    masterpoolDestroy(splice);
     GSTATE.workers_count         = 2;
     GSTATE.workers               = &env.worker;
     GSTATE.shortcut_buffer_pools = env.pool_shortcut;

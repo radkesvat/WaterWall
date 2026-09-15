@@ -13,6 +13,7 @@
 // (ld --wrap), so the transient errors are injected instead of relying on the
 // host UDP send buffer to fill at a predictable point.
 
+#include "wio_fd_pool_fixture.h"
 #include "wwapi.h"
 
 #include "threadsafe_generic_pool.h"
@@ -31,7 +32,6 @@ static test_worker_registry_t g_test_worker_registry;
 
 static int force_sendto_errno = 0;
 static int force_send_errno   = 0;
-
 extern ssize_t __real_sendto(int fd, const void *buf, size_t len, int flags, const struct sockaddr *addr,
                              socklen_t addrlen);
 extern ssize_t __real_send(int fd, const void *buf, size_t len, int flags);
@@ -303,77 +303,13 @@ static void runTcpChecks(wloop_t *loop, buffer_pool_t *pool, const sockaddr_u *u
     closesocket(listener);
 }
 
-static void onSpliceContextClose(wio_t *io)
-{
-    unsigned int *close_count = weventGetUserdata(io);
-    require(wioGetSpliceContext(io) == NULL, "close callback retained the borrowed splice context");
-    ++*close_count;
-}
-
-static void runSpliceContextChecks(wloop_t *loop, buffer_pool_t *pool)
-{
-    int sockets[2];
-    require(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) == 0, "failed to create splice-context socket pair");
-    require(nonBlocking(sockets[1]) == 0, "failed to set splice-context peer nonblocking");
-    wio_t *io = wioGet(loop, sockets[0]);
-    require(io != NULL && wioIsOpened(io), "failed to create splice-context WIO");
-    require(wioGetSpliceContext(io) == NULL, "new WIO has a splice context");
-
-    splice_context_t *context = splicecontextCreate(2);
-    wioSetSpliceContext(io, context);
-    require(wioGetSpliceContext(io) == context, "WIO did not borrow the supplied context");
-    require(context->splice_blockers == 3, "attaching a context changed its blockers");
-    wioSetSpliceContext(io, NULL);
-    require(wioGetSpliceContext(io) == NULL, "explicit context detachment failed");
-    wioSetSpliceContext(io, context);
-    require(wioGet(loop, sockets[0]) == io && wioGetSpliceContext(io) == context,
-            "looking up an active WIO lost its context");
-
-    unsigned int close_count = 0;
-    weventSetUserData(io, &close_count);
-    wioSetCallBackClose(io, onSpliceContextClose);
-    force_send_errno = EAGAIN;
-    require(wioWrite(io, makePayload(pool, "drain")) == 0, "failed to queue splice-context drain payload");
-    require(wioClose(io) == 0, "splice-context graceful close failed");
-    require(io->close && ! io->closed && close_count == 0, "close did not defer until its queued write drained");
-    require(wioGetWriteBufSize(io) == 5, "deferred close discarded its queued payload");
-    require(wioGetSpliceContext(io) == NULL, "deferred close retained the borrowed context");
-    require(splicecontextGetTunnelCount(context) == 2, "closing WIO altered its borrowed context");
-    splicecontextDestroy(context); // The owner can reclaim its context while the WIO is still draining.
-
-    require(wloopRun(loop) == 0, "splice-context deferred drain failed");
-    require(wioIsClosed(io) && close_count == 1, "deferred close did not complete exactly once");
-    char received[5];
-    require(recv(sockets[1], received, sizeof(received), 0) == (ssize_t) sizeof(received) &&
-                memcmp(received, "drain", sizeof(received)) == 0,
-            "reclaiming the context disrupted the queued payload");
-
-    // Reuse the exact descriptor so wioReady must reset the existing WIO.
-    require(dup2(sockets[1], sockets[0]) == sockets[0], "failed to reuse the closed descriptor");
-    wio_t *reused = wioGet(loop, sockets[0]);
-    require(reused == io && wioIsOpened(reused), "closed WIO was not reinitialized");
-    require(wioGetSpliceContext(reused) == NULL, "reused WIO retained its old context");
-    context = splicecontextCreate(1);
-    wioSetSpliceContext(reused, context);
-    wioDone(reused); // Also used by watcher release without closing the external descriptor.
-    require(wioGetSpliceContext(reused) == NULL, "WIO cleanup retained its context");
-    require(wioGet(loop, sockets[0]) == reused, "cleaned WIO was not reusable");
-    wioSetSpliceContext(reused, context);
-    weventSetUserData(reused, &close_count);
-    wioSetCallBackClose(reused, onSpliceContextClose);
-    require(wioClose(reused) == 0 && close_count == 2, "immediate close did not complete exactly once");
-    require(wioGetSpliceContext(reused) == NULL, "immediate close retained its context");
-    splicecontextDestroy(context);
-    closesocket(sockets[1]);
-}
-
 int main(void)
 {
     master_pool_t             *large_master = masterpoolCreateWithCapacity(16);
     master_pool_t             *small_master = masterpoolCreateWithCapacity(16);
-    master_pool_t             *micro_master = masterpoolCreateWithCapacity(16);
+    master_pool_t             *splice_master = masterpoolCreateWithCapacity(16);
     master_pool_t             *wio_master   = masterpoolCreateWithCapacity(16);
-    buffer_pool_t             *buffer_pool = bufferpoolCreate(large_master, small_master, micro_master, 16, 8192, 1024);
+    buffer_pool_t *buffer_pool = bufferpoolCreate(large_master, small_master, splice_master, 16, 8192, 1024);
     threadsafe_generic_pool_t *wio_pool =
         threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(wio_master, sizeof(wio_t), 16);
     threadsafe_generic_pool_t *wio_pools[] = {wio_pool};
@@ -381,6 +317,8 @@ int main(void)
     GSTATE.flag_initialized = true;
     GSTATE.workers_count    = 2;
     testWorkerRegistryInstall(&g_test_worker_registry);
+    test_wio_fd_pool_t fd_handles = {0};
+    testWioFdPoolSetup(&fd_handles);
     GSTATE.shortcut_wios_pools = wio_pools;
     testWorkerBindWID(0);
 
@@ -397,7 +335,6 @@ int main(void)
 
     runUdpChecks(loop, buffer_pool, io_udp);
     runTcpChecks(loop, buffer_pool, &udp_addr);
-    runSpliceContextChecks(loop, buffer_pool);
 
     // A socket that cannot be switched to nonblocking must be rejected: the
     // io comes back closed instead of staying blocking on the event loop.
@@ -408,6 +345,7 @@ int main(void)
     require(rejected != NULL && wioIsClosed(rejected), "failed socket init did not reject the io");
 
     wloopDestroy(&loop);
+    testWioFdPoolTeardown(&fd_handles);
     GSTATE.shortcut_wios_pools = NULL;
 
     threadsafegenericpoolDestroy(wio_pool);
@@ -416,10 +354,10 @@ int main(void)
     masterpoolMakeEmpty(wio_master);
     masterpoolMakeEmpty(large_master);
     masterpoolMakeEmpty(small_master);
-    masterpoolMakeEmpty(micro_master);
+    masterpoolMakeEmpty(splice_master);
     masterpoolDestroy(wio_master);
     masterpoolDestroy(large_master);
     masterpoolDestroy(small_master);
-    masterpoolDestroy(micro_master);
+    masterpoolDestroy(splice_master);
     return 0;
 }

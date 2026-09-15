@@ -315,7 +315,7 @@ static int post_recv(wio_t *io, woverlapped_t *record)
     record->bytes         = 0;
     record->cancel_reason = WOVERLAPPED_NOT_CANCELED;
     record->completed     = false;
-    record->fd            = io->fd;
+    record->fd            = wioGetFD(io);
 
     if (record->sbuf != NULL)
     {
@@ -355,7 +355,7 @@ static int post_recv(wio_t *io, woverlapped_t *record)
     recordMarkPosted(record);
     if (io->io_type == WIO_TYPE_TCP)
     {
-        ret = WSARecv(io->fd, &record->buf, 1, &dwbytes, &flags, &record->ovlp, NULL);
+        ret = WSARecv(wioGetFD(io), &record->buf, 1, &dwbytes, &flags, &record->ovlp, NULL);
     }
     else if (io->io_type == WIO_TYPE_UDP || io->io_type == WIO_TYPE_IP)
     {
@@ -366,8 +366,8 @@ static int post_recv(wio_t *io, woverlapped_t *record)
         // WSARecvFrom overwrites addrlen with the completed peer length. Restore
         // the full capacity before every receive (dual-stack IPv4-then-IPv6).
         record->addrlen = sizeof(struct sockaddr_in6);
-        ret =
-            WSARecvFrom(io->fd, &record->buf, 1, &dwbytes, &flags, record->addr, &record->addrlen, &record->ovlp, NULL);
+        ret             = WSARecvFrom(
+            wioGetFD(io), &record->buf, 1, &dwbytes, &flags, record->addr, &record->addrlen, &record->ovlp, NULL);
     }
     else
     {
@@ -446,7 +446,7 @@ static int post_acceptex(wio_t *listenio, woverlapped_t *record)
         sockaddr_u local;
         socklen_t  local_len = sizeof(local);
         memoryZero(&local, sizeof(local));
-        if (getsockname(listenio->fd, &local.sa, &local_len) == 0)
+        if (getsockname(wioGetFD(listenio), &local.sa, &local_len) == 0)
         {
             family = local.sa.sa_family;
         }
@@ -468,7 +468,7 @@ static int post_acceptex(wio_t *listenio, woverlapped_t *record)
     }
     DWORD out_buf_len = addr_region * 2;
 
-    if (WSAIoctl(listenio->fd,
+    if (WSAIoctl(wioGetFD(listenio),
                  SIO_GET_EXTENSION_FUNCTION_POINTER,
                  &guidAcceptEx,
                  sizeof(guidAcceptEx),
@@ -537,7 +537,7 @@ static int post_acceptex(wio_t *listenio, woverlapped_t *record)
         return forced_error;
     }
 #endif
-    const BOOL accepted_posted = AcceptEx(listenio->fd,
+    const BOOL accepted_posted = AcceptEx(wioGetFD(listenio),
                                           connfd,
                                           record->buf.buf,
                                           0,
@@ -741,7 +741,7 @@ static int post_send(wio_t *io, woverlapped_t *record, bool already_admitted)
         return WSA_OPERATION_ABORTED;
     }
     recordMarkPosted(record);
-    int ret = WSASend(io->fd, &record->buf, 1, &dwbytes, 0, &record->ovlp, NULL);
+    int ret = WSASend(wioGetFD(io), &record->buf, 1, &dwbytes, 0, &record->ovlp, NULL);
     if (! already_admitted)
     {
         wloopNormalAdmissionEnd(io->loop);
@@ -772,7 +772,7 @@ static int start_next_send(wio_t *io, bool already_admitted)
     woverlapped_t *record = NULL;
     EVENTLOOP_ALLOC_SIZEOF(record);
     recordAttach(io, record, WOVERLAPPED_SEND);
-    record->fd      = io->fd;
+    record->fd      = wioGetFD(io);
     record->buf.len = sbufGetLength(buf);
     EVENTLOOP_ALLOC(record->send_buffer, record->buf.len);
     memoryCopy(record->send_buffer, sbufGetRawPtr(buf), record->buf.len);
@@ -995,11 +995,11 @@ static void dispatch_connect(wio_t *io, woverlapped_t *record)
     }
 
     // Apply the connect context and resolve addresses before user code.
-    setsockopt(io->fd, SOL_SOCKET, SO_UPDATE_CONNECT_CONTEXT, NULL, 0);
+    setsockopt(wioGetFD(io), SOL_SOCKET, SO_UPDATE_CONNECT_CONTEXT, NULL, 0);
     socklen_t addrlen = sizeof(sockaddr_u);
-    getsockname(io->fd, io->localaddr, &addrlen);
+    getsockname(wioGetFD(io), io->localaddr, &addrlen);
     addrlen = sizeof(sockaddr_u);
-    getpeername(io->fd, io->peeraddr, &addrlen);
+    getpeername(wioGetFD(io), io->peeraddr, &addrlen);
 
     wioDelConnectTimer(io);
     io->connected = 1;
@@ -1035,8 +1035,8 @@ static void dispatch_accept(wio_t *io, woverlapped_t *record)
 
     // SO_UPDATE_ACCEPT_CONTEXT takes a SOCKET, which is 8 bytes on Win64. Keeping
     // this as int would pass sizeof(int) == 4 as the option length. Widening here
-    // (rather than at wio_t.fd) keeps the change local.
-    const SOCKET              listenfd             = (SOCKET) io->fd;
+    // (rather than at wio_fd_t.fd) keeps the change local.
+    const SOCKET              listenfd             = (SOCKET) wioGetFD(io);
     const int                 connfd               = record->fd;
     LPFN_GETACCEPTEXSOCKADDRS GetAcceptExSockaddrs = NULL;
     GUID                      guid                 = WSAID_GETACCEPTEXSOCKADDRS;
@@ -1243,7 +1243,7 @@ void wioIocpCancel(wio_t *io, int event_mask, woverlapped_cancel_reason_e reason
         {
             // Cancel exactly this operation so unrelated read/write/accept/connect
             // work on the same handle is not disturbed.
-            CancelIoEx((HANDLE) (uintptr_t) io->fd, &record->ovlp);
+            CancelIoEx((HANDLE) (uintptr_t) wioGetFD(io), &record->ovlp);
         }
     }
 
@@ -1261,7 +1261,7 @@ void wioIocpCancel(wio_t *io, int event_mask, woverlapped_cancel_reason_e reason
     if (cancel_all && io->iocp_posted_head != NULL)
     {
         // Close/shutdown: cancel everything outstanding on the handle at once.
-        CancelIoEx((HANDLE) (uintptr_t) io->fd, NULL);
+        CancelIoEx((HANDLE) (uintptr_t) wioGetFD(io), NULL);
     }
 }
 
@@ -1364,7 +1364,7 @@ int wioConnect(wio_t *io)
     // WSAEINVAL. That existing bind already satisfies the prerequisite.
     sockaddr_u bound;
     socklen_t  bound_len = sizeof(bound);
-    if (getsockname(io->fd, &bound.sa, &bound_len) != 0)
+    if (getsockname(wioGetFD(io), &bound.sa, &bound_len) != 0)
     {
         // Not bound yet. A zeroed sockaddr already encodes the wildcard address
         // (INADDR_ANY / in6addr_any are all-zero) and port 0, so only the family
@@ -1382,7 +1382,7 @@ int wioConnect(wio_t *io)
             local.sin6.sin6_family = AF_INET6;
             local_len              = sizeof(struct sockaddr_in6);
         }
-        if (bind(io->fd, &local.sa, local_len) < 0)
+        if (bind(wioGetFD(io), &local.sa, local_len) < 0)
         {
             int bind_error = socketERRNO();
             // WSAEINVAL here means the socket was already bound after all;
@@ -1399,7 +1399,7 @@ int wioConnect(wio_t *io)
     LPFN_CONNECTEX ConnectEx     = NULL;
     GUID           guidConnectEx = WSAID_CONNECTEX;
     DWORD          dwbytes       = 0;
-    if (WSAIoctl(io->fd,
+    if (WSAIoctl(wioGetFD(io),
                  SIO_GET_EXTENSION_FUNCTION_POINTER,
                  &guidConnectEx,
                  sizeof(guidConnectEx),
@@ -1423,7 +1423,7 @@ int wioConnect(wio_t *io)
     woverlapped_t *record = NULL;
     EVENTLOOP_ALLOC_SIZEOF(record);
     recordAttach(io, record, WOVERLAPPED_CONNECT);
-    record->fd = io->fd;
+    record->fd = wioGetFD(io);
 
     if (! wloopNormalAdmissionBegin(io->loop))
     {
@@ -1433,7 +1433,7 @@ int wioConnect(wio_t *io)
     }
     recordMarkPosted(record);
     const BOOL connect_posted =
-        ConnectEx(io->fd, io->peeraddr, (int) SOCKADDR_LEN(io->peeraddr), NULL, 0, &dwbytes, &record->ovlp);
+        ConnectEx(wioGetFD(io), io->peeraddr, (int) SOCKADDR_LEN(io->peeraddr), NULL, 0, &dwbytes, &record->ovlp);
     wloopNormalAdmissionEnd(io->loop);
     if (connect_posted != TRUE)
     {
@@ -1534,7 +1534,8 @@ int wioWriteDatagram(wio_t *io, sbuf_t *buf, const sockaddr_u *peer_addr)
     }
 
     int len    = (int) sbufGetLength(buf);
-    int nwrite = sendto(io->fd, (const char *) sbufGetRawPtr(buf), len, 0, &peer_addr->sa, SOCKADDR_LEN(peer_addr));
+    int nwrite =
+        sendto(wioGetFD(io), (const char *) sbufGetRawPtr(buf), len, 0, &peer_addr->sa, SOCKADDR_LEN(peer_addr));
     bufferpoolReuseBuffer(io->loop->bufpool, buf);
     if (! nested_callback)
     {
@@ -1657,7 +1658,7 @@ int wioWrite(wio_t *io, sbuf_t *buf)
     }
 
     bool send_blocked = false;
-    int  nwrite       = send(io->fd, sbufGetRawPtr(buf), len, 0);
+    int  nwrite       = send(wioGetFD(io), sbufGetRawPtr(buf), len, 0);
     if (nwrite < 0)
     {
         int err = socketERRNO();
@@ -1787,9 +1788,6 @@ static void __close_timeout_cb(wtimer_t *timer)
 
 int wioClose(wio_t *io)
 {
-    // The line may be released before queued writes drain or by the close callback.
-    io->splice_context = NULL;
-
     if (io->closed)
     {
         // wioFree may begin deferred finalization after an earlier close.
@@ -1854,12 +1852,8 @@ int wioClose(wio_t *io)
     wioDelHeartBeatTimer(io);
     wioCloseCallBack(io);
 
-    if (io->io_type & WIO_TYPE_SOCKET)
-    {
-        // Closing the handle also forces cancellation of anything still posted; the
-        // aborted completions are dequeued and retired later.
-        closesocket(io->fd);
-    }
+    // Other holders may keep the descriptor alive; outstanding I/O was cancelled above.
+    wioReleaseFDHandle(io, false);
 
     /*
      * Release the close-stack lifetime reference last. Finalization may return io

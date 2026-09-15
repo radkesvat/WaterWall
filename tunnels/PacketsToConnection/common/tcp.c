@@ -189,7 +189,7 @@ err_t lwipThreadPtcTcpAccptCallback(void *arg, struct tcp_pcb *newpcb, err_t err
     }
 
     tunnel_t     *t  = route_ctx->tunnel;
-    line_t       *l = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), owner_wid, tunnelGetChain(t)->tunnels.len);
+    line_t       *l  = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), owner_wid);
     ptc_lstate_t *ls = lineGetState(l, t);
 
     if (UNLIKELY(! ptcLinestateInitialize(ls, t, l, kPtcLineKindTcp, newpcb)))

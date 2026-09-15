@@ -2,6 +2,7 @@
 #include "TlsClient/interface.h"
 #include "iowatcher.h"
 #include "tricks/synfinsni/trick.h"
+#include "wio_fd_pool_fixture.h"
 #include "worker_registry_fixture.h"
 
 static test_worker_registry_t g_test_worker_registry;
@@ -40,9 +41,10 @@ typedef struct captured_packet_s
 
 typedef struct test_env_s
 {
+    test_wio_fd_pool_t         fd_handles;
     master_pool_t             *large_master;
     master_pool_t             *small_master;
-    master_pool_t             *micro_master;
+    master_pool_t             *splice_master;
     master_pool_t             *messages_master;
     master_pool_t             *wios_master;
     buffer_pool_t             *buffer_pools[2];
@@ -283,7 +285,7 @@ static void setupEnv(test_env_t *env)
 
     env->large_master    = masterpoolCreateWithCapacity(64);
     env->small_master    = masterpoolCreateWithCapacity(64);
-    env->micro_master    = masterpoolCreateWithCapacity(64);
+    env->splice_master   = masterpoolCreateWithCapacity(64);
     env->messages_master = masterpoolCreateWithCapacity(64);
     env->wios_master     = masterpoolCreateWithCapacity(64);
     workerMessagesInstallMasterPoolCallbacks(env->messages_master);
@@ -291,7 +293,7 @@ static void setupEnv(test_env_t *env)
     for (wid_t wid = 0; wid < 2; ++wid)
     {
         env->buffer_pools[wid] =
-            bufferpoolCreate(env->large_master, env->small_master, env->micro_master, 64, 4096, 512);
+            bufferpoolCreate(env->large_master, env->small_master, env->splice_master, 64, 4096, 512);
         env->wios_pools[wid] =
             threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(env->wios_master, sizeof(wio_t), 64);
         env->loops[wid]         = wloopCreate(0, env->buffer_pools[wid], wid);
@@ -309,7 +311,7 @@ static void setupEnv(test_env_t *env)
 
         env->lines[wid] = memoryAllocateZero(sizeof(*env->lines[wid]));
         require(env->lines[wid] != NULL, "failed to allocate a synfin-sni test line");
-        atomicStoreRelaxed(&env->lines[wid]->refc, 1);
+        atomicStoreU32Relaxed(&env->lines[wid]->refc, 1);
         env->lines[wid]->alive = true;
         env->lines[wid]->wid   = wid;
     }
@@ -319,10 +321,11 @@ static void setupEnv(test_env_t *env)
     GSTATE.workers_count                 = 3;
     GSTATE.shortcut_buffer_pools         = env->buffer_pools;
     GSTATE.shortcut_loops                = env->loops;
+    testWioFdPoolSetup(&env->fd_handles);
     GSTATE.shortcut_wios_pools           = env->wios_pools;
     GSTATE.masterpool_buffer_pools_large = env->large_master;
     GSTATE.masterpool_buffer_pools_small = env->small_master;
-    GSTATE.masterpool_buffer_pools_micro = env->micro_master;
+    GSTATE.masterpool_buffer_pools_splice = env->splice_master;
     GSTATE.masterpool_messages           = env->messages_master;
     testWorkerRegistryInstallTable(&g_test_worker_registry, env->workers);
     testWorkerBindWID(0);
@@ -356,7 +359,7 @@ static void destroyEnv(test_env_t *env)
     }
 
     synfinsnitrickDestroyState(env->t);
-    require(atomicLoadRelaxed(&env->lines[0]->refc) == 1 && atomicLoadRelaxed(&env->lines[1]->refc) == 1,
+    require(atomicLoadU32Relaxed(&env->lines[0]->refc) == 1 && atomicLoadU32Relaxed(&env->lines[1]->refc) == 1,
             "synfin-sni leaked a line reference");
     tunnelDestroy(env->sink);
     tunnelDestroy(env->t);
@@ -374,10 +377,11 @@ static void destroyEnv(test_env_t *env)
     GSTATE.workers_count                 = 0;
     GSTATE.shortcut_buffer_pools         = NULL;
     GSTATE.shortcut_loops                = NULL;
+    testWioFdPoolTeardown(&env->fd_handles);
     GSTATE.shortcut_wios_pools           = NULL;
     GSTATE.masterpool_buffer_pools_large = NULL;
     GSTATE.masterpool_buffer_pools_small = NULL;
-    GSTATE.masterpool_buffer_pools_micro = NULL;
+    GSTATE.masterpool_buffer_pools_splice = NULL;
     GSTATE.masterpool_messages           = NULL;
     bufferpoolDestroy(env->buffer_pools[0]);
     bufferpoolDestroy(env->buffer_pools[1]);
@@ -385,12 +389,12 @@ static void destroyEnv(test_env_t *env)
     threadsafegenericpoolDestroy(env->wios_pools[1]);
     masterpoolMakeEmpty(env->large_master);
     masterpoolMakeEmpty(env->small_master);
-    masterpoolMakeEmpty(env->micro_master);
+    masterpoolMakeEmpty(env->splice_master);
     masterpoolMakeEmpty(env->messages_master);
     masterpoolMakeEmpty(env->wios_master);
     masterpoolDestroy(env->large_master);
     masterpoolDestroy(env->small_master);
-    masterpoolDestroy(env->micro_master);
+    masterpoolDestroy(env->splice_master);
     masterpoolDestroy(env->messages_master);
     masterpoolDestroy(env->wios_master);
 }
@@ -527,7 +531,7 @@ static void testDeadLineTimeoutRecycles(void)
     require(captured_packet_count == 2, "dead-line hold timeout forwarded a packet");
     require(snapshotFlow(&env).phase == kIpManipulatorSynfinFlowPhasePassthrough,
             "dead-line hold timeout did not clear the hold");
-    require(atomicLoadRelaxed(&env.line->refc) == 1, "dead-line hold timeout leaked a line reference");
+    require(atomicLoadU32Relaxed(&env.line->refc) == 1, "dead-line hold timeout leaked a line reference");
     destroyEnv(&env);
 }
 
@@ -556,9 +560,9 @@ static void testStaleGenerationAndCleanup(void)
                 after_stale.phase == kIpManipulatorSynfinFlowPhaseHoldThird && after_stale.has_held_packet,
             "old-generation timer altered the replacement hold");
 
-    require(atomicLoadRelaxed(&env.line->refc) == 3, "replacement hold and timer references are unbalanced");
+    require(atomicLoadU32Relaxed(&env.line->refc) == 3, "replacement hold and timer references are unbalanced");
     cleanupTimedMessage(1);
-    require(atomicLoadRelaxed(&env.line->refc) == 1, "timer cleanup leaked the record's retained reference");
+    require(atomicLoadU32Relaxed(&env.line->refc) == 1, "timer cleanup leaked the record's retained reference");
     require(snapshotFlow(&env).phase == kIpManipulatorSynfinFlowPhasePassthrough,
             "target-worker timer cleanup did not fail open");
     require(captured_packet_count == before_stale + 1U, "target-worker timer cleanup did not release the held segment");
@@ -581,7 +585,7 @@ static void testDroppedScheduleReleasesHold(void)
     require(captured_packet_count == 3, "a rejected synfin hold schedule did not release the segment");
     require(flow.phase == kIpManipulatorSynfinFlowPhasePassthrough && ! flow.timer_armed && ! flow.has_held_packet,
             "a rejected synfin hold schedule left the flow held");
-    require(atomicLoadRelaxed(&env.line->refc) == 1, "rejected synfin hold scheduling leaked a line reference");
+    require(atomicLoadU32Relaxed(&env.line->refc) == 1, "rejected synfin hold scheduling leaked a line reference");
     destroyEnv(&env);
 }
 

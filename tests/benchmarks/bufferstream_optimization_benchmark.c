@@ -37,7 +37,7 @@ typedef struct pool_fixture_s
 {
     master_pool_t *large;
     master_pool_t *small;
-    master_pool_t *micro;
+    master_pool_t *splice_buffer_pool;
     buffer_pool_t *pool;
 } pool_fixture_t;
 
@@ -100,16 +100,16 @@ static void fillBytes(uint8_t *bytes, size_t length, uint32_t seed)
 static pool_fixture_t makePool(const geometry_t *geometry, uint32_t width)
 {
     pool_fixture_t fixture = {
-        .large = masterpoolCreateWithCapacity(width),
-        .small = masterpoolCreateWithCapacity(width),
-        .micro = masterpoolCreateWithCapacity(width),
+        .large              = masterpoolCreateWithCapacity(width),
+        .small              = masterpoolCreateWithCapacity(width),
+        .splice_buffer_pool = masterpoolCreateWithCapacity(width),
     };
-    if (fixture.large == NULL || fixture.small == NULL || fixture.micro == NULL)
+    if (fixture.large == NULL || fixture.small == NULL || fixture.splice_buffer_pool == NULL)
     {
         fatal("master-pool allocation failed");
     }
-    fixture.pool =
-        bufferpoolCreate(fixture.large, fixture.small, fixture.micro, width, geometry->large, geometry->small);
+    fixture.pool = bufferpoolCreate(
+        fixture.large, fixture.small, fixture.splice_buffer_pool, width, geometry->large, geometry->small);
     if (fixture.pool == NULL)
     {
         fatal("buffer-pool allocation failed");
@@ -123,10 +123,10 @@ static void freePool(pool_fixture_t *fixture)
     bufferpoolDestroy(fixture->pool);
     masterpoolMakeEmpty(fixture->large);
     masterpoolMakeEmpty(fixture->small);
-    masterpoolMakeEmpty(fixture->micro);
+    masterpoolMakeEmpty(fixture->splice_buffer_pool);
     masterpoolDestroy(fixture->large);
     masterpoolDestroy(fixture->small);
-    masterpoolDestroy(fixture->micro);
+    masterpoolDestroy(fixture->splice_buffer_pool);
 }
 
 static sbuf_t *makeBuffer(buffer_pool_t *pool, const uint8_t *bytes, uint32_t length, bool best_fit)

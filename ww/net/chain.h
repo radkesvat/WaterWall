@@ -75,6 +75,7 @@ typedef struct tunnel_chain_s
     bool                                 layer_solution_ready : 1;
     bool                                 finalized : 1;
     bool                                 started : 1;
+    bool                                 supports_splice : 1; // Finalized splice eligibility.
     uint16_t                             layer_relations_count;
     tunnel_layer_relation_registration_t layer_relations[kMaxLayerRelations];
     uint8_t                              resolved_prev_layer[kMaxChainLen];
@@ -123,7 +124,11 @@ bool tunnelchainTryComputeLineItemSize(uint32_t aggregate_lstate_size, uint32_t 
 tunnel_chain_t *tunnelchainCreate(wid_t workers_count);
 
 /**
- * @brief Finalize chain memory layout and create worker line pools.
+ * @brief Finalize chain memory layout, create worker line pools, and determine splice support.
+ *
+ * Call after all onChain and onSolvedTopology expansion has finished. Splice
+ * support includes every inserted helper and every tunnel from merged chains.
+ * Packet chains and builds without WW_HAVE_SPLICE always leave it disabled.
  *
  * @param tc Chain instance.
  */

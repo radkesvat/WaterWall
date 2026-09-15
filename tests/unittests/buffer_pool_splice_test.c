@@ -2,7 +2,7 @@
 
 #include "buffer_pool_internal.h"
 
-#ifdef WW_MICRO_POOL_FAILURE_TEST
+#ifdef WW_SPLICE_POOL_FAILURE_TEST
 static unsigned int fail_allocation;
 void               *__real_memoryAllocate(size_t size);
 void               *__wrap_memoryAllocate(size_t size);
@@ -26,29 +26,29 @@ static void require(bool condition, const char *message)
     }
 }
 
-static uint32_t cachedMicroCount(buffer_pool_t *pool)
+static uint32_t cachedSpliceCount(buffer_pool_t *pool)
 {
-    uint32_t large, small, micro;
-    bufferpoolCachedTierCountsForTest(pool, &large, &small, &micro);
-    require(large == 0 && small == 0, "micro operations touched the large/small caches");
-    return micro;
+    uint32_t large, small, splice;
+    bufferpoolCachedTierCountsForTest(pool, &large, &small, &splice);
+    require(large == 0 && small == 0, "splice operations touched the large/small caches");
+    return splice;
 }
 
-static void checkMicro(sbuf_t *buffer, uint16_t padding)
+static void checkSplice(sbuf_t *buffer, uint16_t padding)
 {
-    require(sbufGetTotalCapacityNoPadding(buffer) == MICRO_BUFFER_SIZE,
-            "micro buffer lost its physical payload capacity");
+    require(sbufGetTotalCapacityNoPadding(buffer) == SPLICE_BUFFER_STORAGE_SIZE,
+            "splice buffer lost its physical control-storage capacity");
     require(sbufGetLeftPadding(buffer) == padding && sbufGetLeftCapacity(buffer) == padding,
-            "micro buffer has incorrect padding or cursor");
-    require(sbufGetLength(buffer) == 0 && buffer->flags == 0 && sbufGetLifetime(buffer) == NULL,
-            "micro checkout retained payload metadata");
+            "splice buffer has incorrect padding or cursor");
+    require(sbufGetLength(buffer) == 0 && buffer->flags == kSbufFlagSplice && sbufGetLifetime(buffer) == NULL,
+            "splice checkout retained payload metadata");
 }
 
 static void testRechargeBatches(void)
 {
     static const uint32_t widths[]              = {1, 2, 3, 4, 8, 256};
     sbuf_t *(*const getters[])(buffer_pool_t *) = {
-        bufferpoolGetLargeBuffer, bufferpoolGetSmallBuffer, bufferpoolGetMicroBuffer};
+        bufferpoolGetLargeBuffer, bufferpoolGetSmallBuffer, bufferpoolGetSpliceBuffer};
 
     for (size_t w = 0; w < ARRAY_SIZE(widths); ++w)
     {
@@ -100,55 +100,58 @@ int main(void)
     testRechargeBatches();
     master_pool_t *large = masterpoolCreateWithCapacity(16);
     master_pool_t *small = masterpoolCreateWithCapacity(16);
-    master_pool_t *micro = masterpoolCreateWithCapacity(16);
-    require(large != NULL && small != NULL && micro != NULL, "failed to create test master pools");
-    require(bufferpoolCreate(large, small, NULL, 2, 4096, 512) == NULL, "missing micro master was accepted");
+    master_pool_t *splice = masterpoolCreateWithCapacity(16);
+    require(large != NULL && small != NULL && splice != NULL, "failed to create test master pools");
+    require(bufferpoolCreate(large, small, NULL, 2, 4096, 512) == NULL, "missing splice master was accepted");
 
-#ifdef WW_MICRO_POOL_FAILURE_TEST
+#ifdef WW_SPLICE_POOL_FAILURE_TEST
     const MasterPoolItemCreateHandle original_large = large->create_item_handle;
     const MasterPoolItemCreateHandle original_small = small->create_item_handle;
-    const MasterPoolItemCreateHandle original_micro = micro->create_item_handle;
+    const MasterPoolItemCreateHandle original_splice = splice->create_item_handle;
     for (unsigned int allocation = 1; allocation <= 4; ++allocation)
     {
         fail_allocation = allocation;
-        require(bufferpoolCreate(large, small, micro, 2, 4096, 512) == NULL,
+        require(bufferpoolCreate(large, small, splice, 2, 4096, 512) == NULL,
                 "buffer pool metadata allocation failure was not returned");
         require(fail_allocation == 0, "metadata allocation failure was not exercised");
         require(large->create_item_handle == original_large && small->create_item_handle == original_small &&
-                    micro->create_item_handle == original_micro,
+                    splice->create_item_handle == original_splice,
                 "failed construction published master callbacks");
     }
 #endif
 
-    buffer_pool_t *pool = bufferpoolCreate(large, small, micro, 2, 4096, 512);
-    require(pool != NULL, "failed to create micro test pool");
+    buffer_pool_t *pool = bufferpoolCreate(large, small, splice, 2, 4096, 512);
+    require(pool != NULL, "failed to create splice test pool");
     bufferpoolUpdateAllocationPaddings(pool, 64, 64, 33);
-    require(bufferpoolGetMicroBufferSize(pool) == 32 && bufferpoolGetMicroBufferPadding(pool) == 64,
-            "micro tier getters reported incorrect geometry");
-    require(cachedMicroCount(pool) == 0, "micro cache was eagerly populated");
+    require(bufferpoolGetSpliceBufferStorageSize(pool) == 32 && bufferpoolGetSpliceBufferPadding(pool) == 64,
+            "splice tier getters reported incorrect geometry");
+    require(cachedSpliceCount(pool) == 0, "splice cache was eagerly populated");
 
     sbuf_t *buffers[10];
     for (size_t i = 0; i < ARRAY_SIZE(buffers); ++i)
     {
-        buffers[i] = bufferpoolGetMicroBuffer(pool);
-        checkMicro(buffers[i], 64);
+        buffers[i] = bufferpoolGetSpliceBuffer(pool);
+        checkSplice(buffers[i], 64);
     }
-    buffers[0]->flags    = kSbufFlagSplice;
+    buffers[0]->flags    = kSbufFlagSplice | kSbufFlagSpliceFD;
     buffers[0]->capacity = 64 + 8192;
     buffers[0]->len      = 8192;
     sbufShiftLeft(buffers[0], 4);
+    buffers[1]->flags    = kSbufFlagSplice | kSbufFlagSplicePiped;
+    buffers[1]->capacity = 64 + 16384;
+    buffers[1]->len      = 16384;
     for (size_t i = 0; i < ARRAY_SIZE(buffers); ++i)
     {
         bufferpoolReuseBuffer(pool, buffers[i]);
     }
-    require(cachedMicroCount(pool) <= 4 && atomicLoadRelaxed(&micro->len) > 0,
-            "micro cache did not shrink to its shared master");
-    require(cachedMicroCount(pool) + atomicLoadRelaxed(&micro->len) == ARRAY_SIZE(buffers),
-            "recycling lost a micro buffer with virtual splice capacity");
+    require(cachedSpliceCount(pool) <= 4 && atomicLoadRelaxed(&splice->len) > 0,
+            "splice cache did not shrink to its shared master");
+    require(cachedSpliceCount(pool) + atomicLoadRelaxed(&splice->len) == ARRAY_SIZE(buffers),
+            "recycling lost a splice buffer with virtual splice capacity");
     for (size_t i = 0; i < ARRAY_SIZE(buffers); ++i)
     {
-        buffers[i] = bufferpoolGetMicroBuffer(pool);
-        checkMicro(buffers[i], 64);
+        buffers[i] = bufferpoolGetSpliceBuffer(pool);
+        checkSplice(buffers[i], 64);
     }
     for (size_t i = 0; i < ARRAY_SIZE(buffers); ++i)
     {
@@ -156,27 +159,20 @@ int main(void)
     }
 
     // A second pool can draw from the shared master while requiring different headroom.
-    buffer_pool_t *other = bufferpoolCreate(large, small, micro, 1, 4096, 512);
-    require(other != NULL, "failed to create the second micro pool");
+    buffer_pool_t *other = bufferpoolCreate(large, small, splice, 1, 4096, 512);
+    require(other != NULL, "failed to create the second splice pool");
     bufferpoolUpdateAllocationPaddings(other, 64, 64, 96);
-    sbuf_t *buffer = bufferpoolGetMicroBuffer(other);
-    checkMicro(buffer, 96);
-    sbufSetLength(buffer, 32);
-    memorySet(sbufGetMutablePtr(buffer), 0xA5, 32);
-    sbuf_t *duplicate = sbufDuplicateByPool(other, buffer);
-    require(sbufGetTotalCapacityNoPadding(duplicate) == 32 && sbufGetLeftPadding(duplicate) == 96 &&
-                sbufGetLength(duplicate) == 32 && memoryEqual(sbufGetRawPtr(buffer), sbufGetRawPtr(duplicate), 32),
-            "ordinary micro duplication changed payload or tier");
-    bufferpoolReuseBuffer(other, duplicate);
+    sbuf_t *buffer = bufferpoolGetSpliceBuffer(other);
+    checkSplice(buffer, 96);
     bufferpoolReuseBuffer(other, buffer);
 
     bufferpoolDestroy(other);
     bufferpoolDestroy(pool);
     masterpoolMakeEmpty(large);
     masterpoolMakeEmpty(small);
-    masterpoolMakeEmpty(micro);
+    masterpoolMakeEmpty(splice);
     masterpoolDestroy(large);
     masterpoolDestroy(small);
-    masterpoolDestroy(micro);
+    masterpoolDestroy(splice);
     return 0;
 }

@@ -106,7 +106,9 @@ enum node_flags
     // this node dose not need to be in a chain to work (maybe a database node for user auth?)
     kNodeFlagNoChain = (1 << 3),
     // this node should only have one instance in the whole chain config (singleton pattern)
-    kNodeFlagSingleton = (1 << 4)
+    kNodeFlagSingleton = (1 << 4),
+    // this node supports splice payloads
+    kNodeFlagSupportsSplice = (1 << 5)
 };
 
 enum node_layer_group

@@ -11,6 +11,7 @@
 #include "IpManipulator/structure.h"
 #include "iowatcher.h"
 #include "tricks/echsnitrick/trick.h"
+#include "wio_fd_pool_fixture.h"
 #include "worker_registry_fixture.h"
 
 /*
@@ -60,9 +61,10 @@ typedef struct forwarded_packet_s
 
 typedef struct test_env_s
 {
+    test_wio_fd_pool_t         fd_handles;
     master_pool_t             *large_master;
     master_pool_t             *small_master;
-    master_pool_t             *micro_master;
+    master_pool_t             *splice_master;
     master_pool_t             *messages_master;
     master_pool_t             *wios_master;
     buffer_pool_t             *buffer_pools[2];
@@ -178,7 +180,7 @@ static void envSetup(test_env_t *env)
     memoryZero(env, sizeof(*env));
     env->large_master    = masterpoolCreateWithCapacity(128);
     env->small_master    = masterpoolCreateWithCapacity(128);
-    env->micro_master    = masterpoolCreateWithCapacity(128);
+    env->splice_master   = masterpoolCreateWithCapacity(128);
     env->messages_master = masterpoolCreateWithCapacity(128);
     env->wios_master     = masterpoolCreateWithCapacity(128);
     workerMessagesInstallMasterPoolCallbacks(env->messages_master);
@@ -186,7 +188,7 @@ static void envSetup(test_env_t *env)
     for (wid_t wid = 0; wid < 2; ++wid)
     {
         env->buffer_pools[wid] =
-            bufferpoolCreate(env->large_master, env->small_master, env->micro_master, 64, 8192, 4096);
+            bufferpoolCreate(env->large_master, env->small_master, env->splice_master, 64, 8192, 4096);
         env->wios_pools[wid] =
             threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(env->wios_master, sizeof(wio_t), 64);
         env->loops[wid]         = wloopCreate(0, env->buffer_pools[wid], wid);
@@ -204,7 +206,7 @@ static void envSetup(test_env_t *env)
 
         env->lines[wid] = memoryAllocateZero(sizeof(*env->lines[wid]));
         require(env->lines[wid] != NULL, "failed to allocate a packet line");
-        atomicStoreRelaxed(&env->lines[wid]->refc, 1);
+        atomicStoreU32Relaxed(&env->lines[wid]->refc, 1);
         env->lines[wid]->alive = true;
         env->lines[wid]->wid   = wid;
     }
@@ -215,10 +217,11 @@ static void envSetup(test_env_t *env)
     GSTATE.workers_count                 = 3;
     GSTATE.shortcut_buffer_pools         = env->buffer_pools;
     GSTATE.shortcut_loops                = env->loops;
+    testWioFdPoolSetup(&env->fd_handles);
     GSTATE.shortcut_wios_pools           = env->wios_pools;
     GSTATE.masterpool_buffer_pools_large = env->large_master;
     GSTATE.masterpool_buffer_pools_small = env->small_master;
-    GSTATE.masterpool_buffer_pools_micro = env->micro_master;
+    GSTATE.masterpool_buffer_pools_splice = env->splice_master;
     GSTATE.masterpool_messages           = env->messages_master;
     GSTATE.mtu_size                      = 1500;
     testWorkerBindWID(0);
@@ -245,10 +248,11 @@ static void envTeardown(test_env_t *env)
     GSTATE.workers_count                 = 0;
     GSTATE.shortcut_buffer_pools         = NULL;
     GSTATE.shortcut_loops                = NULL;
+    testWioFdPoolTeardown(&env->fd_handles);
     GSTATE.shortcut_wios_pools           = NULL;
     GSTATE.masterpool_buffer_pools_large = NULL;
     GSTATE.masterpool_buffer_pools_small = NULL;
-    GSTATE.masterpool_buffer_pools_micro = NULL;
+    GSTATE.masterpool_buffer_pools_splice = NULL;
     GSTATE.masterpool_messages           = NULL;
     GSTATE.mtu_size                      = 0;
 
@@ -260,12 +264,12 @@ static void envTeardown(test_env_t *env)
     threadsafegenericpoolDestroy(env->wios_pools[1]);
     masterpoolMakeEmpty(env->large_master);
     masterpoolMakeEmpty(env->small_master);
-    masterpoolMakeEmpty(env->micro_master);
+    masterpoolMakeEmpty(env->splice_master);
     masterpoolMakeEmpty(env->messages_master);
     masterpoolMakeEmpty(env->wios_master);
     masterpoolDestroy(env->large_master);
     masterpoolDestroy(env->small_master);
-    masterpoolDestroy(env->micro_master);
+    masterpoolDestroy(env->splice_master);
     masterpoolDestroy(env->messages_master);
     masterpoolDestroy(env->wios_master);
 }
@@ -1871,10 +1875,10 @@ static void testTimerCleanupDrainsPendingOriginals(test_env_t *env)
     startSuccessfulDelay(&fixture, hello, &hello_len);
     discard hello_len;
 
-    line_refc_t refc = fixture.line->refc;
+    uint32_t refc = atomicLoadU32Relaxed(&fixture.line->refc);
 
     cleanupTimedMessage(0);
-    require(fixture.line->refc == refc, "timer cleanup changed the packet-line reference count");
+    require(atomicLoadU32Relaxed(&fixture.line->refc) == refc, "timer cleanup changed the packet-line reference count");
 
     ipmanipulator_echsni_flow_t flow = {0};
     require(findClientFlow(&fixture, &flow), "timer cleanup removed the flow");

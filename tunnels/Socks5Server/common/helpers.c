@@ -770,8 +770,7 @@ static line_t *socks5serverGetOrCreateUdpRemoteLine(tunnel_t *t, line_t *client_
         return it.ref->second;
     }
 
-    line_t *remote_l =
-        lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), lineGetWID(client_l), tunnelGetChain(t)->tunnels.len);
+    line_t                *remote_l  = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), lineGetWID(client_l));
     socks5server_lstate_t *remote_ls = lineGetState(remote_l, t);
 
     socks5serverLinestateInitialize(remote_ls, t, remote_l, kSocks5ServerLineKindUdpRemote);

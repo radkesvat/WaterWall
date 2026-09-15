@@ -337,7 +337,7 @@ static void caseDroppedCrossWorkerMessageReleasesItsBuffer(void)
 
     twfRequireEqualU32(g_prev_payload_count, 0, "a dropped message must not be delivered");
     twfRequireNoLeakedBuffers();
-    twfRequireEqualU32((uint32_t) atomicLoadRelaxed(&g_fixture.packet_lines[3]->refc),
+    twfRequireEqualU32((uint32_t) atomicLoadU32Relaxed(&g_fixture.packet_lines[3]->refc),
                        1,
                        "a dropped message leaked its packet-line reference");
 

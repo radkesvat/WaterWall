@@ -263,8 +263,7 @@ static void setLineProtocol(line_t *l, uint8_t protocol)
 
 static line_t *createInternalLine(tunnel_t *t, line_t *app_l, trojanclient_line_kind_t kind)
 {
-    line_t *inner_l =
-        lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), lineGetWID(app_l), tunnelGetChain(t)->tunnels.len);
+    line_t *inner_l = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), lineGetWID(app_l));
 
     trojanclient_lstate_t *inner_ls = lineGetState(inner_l, t);
     trojanclientLinestateInitialize(inner_ls, t, inner_l);

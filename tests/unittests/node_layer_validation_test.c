@@ -1364,8 +1364,6 @@ static void testPacketLineInitAndPayloadExecution(void)
 
     line_t *pkt_line = tunnelchainGetWorkerPacketLine(chain, 0);
     require(pkt_line != NULL, "Worker 0 packet line is NULL");
-    require(pkt_line->splice_context != NULL && pkt_line->splice_context->splice_blockers == UINT64_C(7),
-            "Packet line did not initialize all three splice blockers");
 
     // 1. Initial line state before Init is zeroed
     test_packet_lstate_t *ls = lineGetState(pkt_line, &t_mid);
@@ -1437,14 +1435,14 @@ static bool insertTransparentTunnelAfterSolvedLayers(tunnel_t *owner, tunnel_cha
     return true;
 }
 
-static void testSolvedTopologyExpansionIsRevalidated(void)
+static void testSolvedTopologyExpansionIsRevalidated(bool helper_supports_splice, bool packet_chain)
 {
     node_t n_head = {
         .name                  = (char *) "head",
-        .type                  = (char *) "PacketHead",
-        .flags                 = kNodeFlagChainHead,
-        .layer_group           = kNodeLayer3,
-        .layer_group_next_node = kNodeLayer3,
+        .type                  = (char *) "TestHead",
+        .flags                 = kNodeFlagChainHead | kNodeFlagSupportsSplice,
+        .layer_group           = packet_chain ? kNodeLayer3 : kNodeLayer4,
+        .layer_group_next_node = packet_chain ? kNodeLayer3 : kNodeLayer4,
         .layer_group_prev_node = kNodeLayerNone,
         .can_have_next         = true,
         .can_have_prev         = false,
@@ -1452,7 +1450,7 @@ static void testSolvedTopologyExpansionIsRevalidated(void)
     node_t n_inserted = {
         .name                  = (char *) "inserted",
         .type                  = (char *) "Transparent",
-        .flags                 = kNodeFlagNone,
+        .flags                 = helper_supports_splice ? kNodeFlagSupportsSplice : kNodeFlagNone,
         .layer_group           = kNodeLayerAnything,
         .layer_group_next_node = kNodeLayerSameAsPrev,
         .layer_group_prev_node = kNodeLayerSameAsNext,
@@ -1461,44 +1459,95 @@ static void testSolvedTopologyExpansionIsRevalidated(void)
     };
     node_t n_tail = {
         .name                  = (char *) "tail",
-        .type                  = (char *) "PacketTail",
-        .flags                 = kNodeFlagChainEnd,
-        .layer_group           = kNodeLayer3,
+        .type                  = (char *) "TestTail",
+        .flags                 = kNodeFlagChainEnd | kNodeFlagSupportsSplice,
+        .layer_group           = packet_chain ? kNodeLayer3 : kNodeLayer4,
         .layer_group_next_node = kNodeLayerNone,
-        .layer_group_prev_node = kNodeLayer3,
+        .layer_group_prev_node = packet_chain ? kNodeLayer3 : kNodeLayer4,
         .can_have_next         = false,
         .can_have_prev         = true,
     };
 
-    tunnel_t t_head     = {.node = &n_head, .onSolvedTopology = insertTransparentTunnelAfterSolvedLayers};
-    tunnel_t t_inserted = {.node = &n_inserted};
-    tunnel_t t_tail     = {.node = &n_tail};
+    tunnel_t t_head = {
+        .node = &n_head, .onIndex = tunnelDefaultOnIndex, .onSolvedTopology = insertTransparentTunnelAfterSolvedLayers};
+    tunnel_t t_inserted = {.node = &n_inserted, .onIndex = tunnelDefaultOnIndex};
+    tunnel_t t_tail     = {.node = &n_tail, .onIndex = tunnelDefaultOnIndex};
     bindTunnels(&t_head, &t_tail);
 
-    tunnel_chain_t chain = {0};
-    tunnelarrayInsert(&chain.tunnels, &t_head);
-    tunnelarrayInsert(&chain.tunnels, &t_tail);
-    t_head.chain = &chain;
-    t_tail.chain = &chain;
+    ww_startup_context_t startup = {0};
+    wwStartupContextBegin(&startup);
+    tunnel_chain_t *chain       = tunnelchainCreate(0);
+    tunnel_chain_t *other_chain = tunnelchainCreate(0);
+    require(chain != NULL && other_chain != NULL, "failed to create topology-expansion chains");
+    tunnelchainInsert(chain, &t_head);
+    tunnelchainInsert(other_chain, &t_tail);
+    tunnelchainCombine(chain, other_chain);
+    require(! chain->supports_splice, "mutable merged chain advertised splice support before finalization");
 
     g_layer_expansion_tunnel = &t_inserted;
     g_solved_topology_calls  = 0;
     tunnel_t *t_array[2]     = {&t_head, &t_tail};
 
-    ww_startup_context_t startup = {0};
-    wwStartupContextBegin(&startup);
     validateTunnelChains(t_array, 2);
     const ww_startup_result_t result = wwStartupContextEnd(&startup);
 
     require(wwStartupSucceeded(result), "valid layer-dependent topology expansion failed");
-    require(g_solved_topology_calls == 2,
-            "solved-topology callback was not rerun against the final solved topology");
-    require(chain.tunnels.len == 3 && chain.tunnels.tuns[1] == &t_inserted,
+    require(g_solved_topology_calls == 2, "solved-topology callback was not rerun against the final solved topology");
+    require(chain->tunnels.len == 3 && chain->tunnels.tuns[1] == &t_inserted,
             "layer-dependent tunnel was not inserted in topological order");
-    require(chain.layer_solution_ready, "expanded chain did not retain its final layer solution");
-    require(chain.resolved_prev_layer[1] == kLayerDomainL3 &&
-                chain.resolved_next_layer[1] == kLayerDomainL3,
-            "expanded transparent tunnel did not resolve to L3");
+    require(chain->layer_solution_ready, "expanded chain did not retain its final layer solution");
+    const uint8_t expected_layer = packet_chain ? kLayerDomainL3 : kLayerDomainL4;
+    require(chain->resolved_prev_layer[1] == expected_layer && chain->resolved_next_layer[1] == expected_layer,
+            "expanded transparent tunnel resolved to the wrong layer");
+    require(chain->contains_packet_node == packet_chain, "expanded chain has the wrong packet classification");
+    require(! chain->supports_splice, "solved but unfinalized chain advertised splice support");
+
+    node_manager_config_t cfg = {.chains = vec_chains_t_init()};
+    wwStartupContextBegin(&startup);
+    finalizeTunnelChains(&cfg, t_array, 2);
+    require(wwStartupSucceeded(wwStartupContextEnd(&startup)), "expanded chain failed to finalize");
+    require(chain->finalized && chain->supports_splice == (WW_HAVE_SPLICE && ! packet_chain && helper_supports_splice),
+            "final splice support ignored platform support, packet classification, or the inserted helper");
+    require(t_inserted.chain_index == 1, "inserted helper was omitted from final indexing");
+    vec_chains_t_drop(&cfg.chains);
+    tunnelchainDestroy(chain);
+}
+
+static void testChainSpliceCapability(void)
+{
+    // Cover empty/full chains and missing support at the head, middle, and tail.
+    const int unsupported_indices[] = {-1, 0, 32, 63};
+    for (size_t test = 0; test < ARRAY_SIZE(unsupported_indices); ++test)
+    {
+        node_t          nodes[kMaxChainLen]   = {0};
+        tunnel_t       *tunnels[kMaxChainLen] = {0};
+        tunnel_chain_t *chain                 = tunnelchainCreate(0);
+        require(chain != NULL, "failed to create splice-capability chain");
+        require(! chain->supports_splice, "new chain advertised splice support");
+        for (uint16_t i = 0; i < kMaxChainLen; ++i)
+        {
+            nodes[i].type  = (char *) "SpliceTest";
+            nodes[i].flags = i == unsupported_indices[test] ? kNodeFlagNone : kNodeFlagNone | kNodeFlagSupportsSplice;
+            tunnels[i]     = tunnelCreate(&nodes[i], 0, 0);
+            require(tunnels[i] != NULL, "failed to create splice-capability tunnel");
+            tunnelchainInsert(chain, tunnels[i]);
+        }
+        require(! chain->supports_splice, "chain advertised splice support during assembly");
+        tunnelchainFinalize(chain);
+        require(chain->finalized && chain->supports_splice == (WW_HAVE_SPLICE && unsupported_indices[test] < 0),
+                "splice capability did not require every node in the full chain");
+        tunnelchainDestroy(chain);
+        for (uint16_t i = 0; i < kMaxChainLen; ++i)
+        {
+            tunnelDestroy(tunnels[i]);
+        }
+    }
+
+    tunnel_chain_t *empty = tunnelchainCreate(0);
+    require(empty != NULL, "failed to create empty splice-capability chain");
+    tunnelchainFinalize(empty);
+    require(empty->finalized && ! empty->supports_splice, "empty chain advertised splice support");
+    tunnelchainDestroy(empty);
 }
 
 static void testNodeManagerPreFinalizationChainCleanup(void)
@@ -1571,7 +1620,11 @@ int main(void)
     testRejectOppositeMissingSide();
     testMalformedMetadataMatrix();
     testPacketLineInitAndPayloadExecution();
-    testSolvedTopologyExpansionIsRevalidated();
+    testSolvedTopologyExpansionIsRevalidated(false, false);
+    testSolvedTopologyExpansionIsRevalidated(true, false);
+    testSolvedTopologyExpansionIsRevalidated(false, true);
+    testSolvedTopologyExpansionIsRevalidated(true, true);
+    testChainSpliceCapability();
     testNodeManagerPreFinalizationChainCleanup();
 
     printf("ALL node_layer_validation unit tests passed successfully!\n");

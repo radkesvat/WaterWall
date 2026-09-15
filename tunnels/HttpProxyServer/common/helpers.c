@@ -397,8 +397,7 @@ static bool rewrite(hps_session_t *s, const hps_header_t *h, unsigned d)
 
 static void createChild(hps_session_t *s, const char *username, const char *password)
 {
-    line_t *l = lineCreate(
-        tunnelchainGetLinePools(tunnelGetChain(s->t)), lineGetWID(s->client), tunnelGetChain(s->t)->tunnels.len);
+    line_t       *l  = lineCreate(tunnelchainGetLinePools(tunnelGetChain(s->t)), lineGetWID(s->client));
     hps_lstate_t *ls = lineGetState(l, s->t);
     *ls              = (hps_lstate_t) {.session = s, .line = l, .child = true};
     hps_worker_t *w  = &settings(s)->workers[lineGetWID(l)];

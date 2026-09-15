@@ -12,11 +12,10 @@
 #include "global_state.h"
 #include "objects/user_handle.h"
 #include "tunnel.h"
-#include "utils/objects/splice_context.h"
 #include "worker.h"
 
-typedef atomic_uint line_refc_t;
-#define LINE_REFC_MAX 0xFFFFFFFFU
+typedef atomic_u32_t line_refc_t;
+#define LINE_REFC_MAX UINT32_MAX
 
 enum
 {
@@ -79,19 +78,11 @@ typedef struct line_s
     uint8_t           recalculate_checksum : 1; // used for packet tunnels
     routing_context_t routing_context;
 
-    generic_pool_t  **pools;
-    splice_context_t *splice_context;
+    generic_pool_t **pools;
 
     MSVC_ATTR_ALIGNED_LINE_CACHE uintptr_t *tunnels_line_state[] GNU_ATTR_ALIGNED_LINE_CACHE;
 
 } line_t;
-
-static_assert((unsigned int) kMaxChainLen <= (unsigned int) kSpliceContextMaxTunnels,
-              "splice context must hold one bit per tunnel");
-static_assert(offsetof(line_t, tunnels_line_state) ==
-                  ((offsetof(line_t, pools) + sizeof(generic_pool_t **) + kCpuLineCacheSize - 1U) &
-                   ~((size_t) kCpuLineCacheSize - 1U)),
-              "splice context pointer must fit within the line header's existing alignment padding");
 
 /**
  * @brief Clears all authenticated user markers on the line.
@@ -106,14 +97,11 @@ void lineClearUsers(line_t *const line);
  * @param current Worker whose pool is used for allocation.
  * @param pools Per-worker line pools.
  * @param wid Owner worker id written into the line.
- * @param tunnel_count Number of tunnels in the line's chain.
  * @return line_t* Initialized line.
  */
-static inline line_t *lineCreateForWorker(wid_t current, generic_pool_t **pools, wid_t wid, uint16_t tunnel_count)
+static inline line_t *lineCreateForWorker(wid_t current, generic_pool_t **pools, wid_t wid)
 {
-    assert(tunnel_count <= kMaxChainLen);
-    splice_context_t *splice_context = splicecontextCreate(tunnel_count);
-    line_t           *l              = genericpoolGetItem(pools[current]);
+    line_t *l = genericpoolGetItem(pools[current]);
 
     *l = (line_t) {.refc                 = 1,
                    .user_auths           = {0},
@@ -121,7 +109,6 @@ static inline line_t *lineCreateForWorker(wid_t current, generic_pool_t **pools,
                    .wid                  = wid,
                    .alive                = true,
                    .pools                = pools,
-                   .splice_context       = splice_context,
                    .established          = false,
                    .recalculate_checksum = false,
                    // to set a port we need to know the AF family, default v4
@@ -140,38 +127,13 @@ static inline line_t *lineCreateForWorker(wid_t current, generic_pool_t **pools,
  *
  * @param pools Pointer to the array of generic pools. (per WID)
  * @param wid Owner worker id.
- * @param tunnel_count Number of tunnels in the line's chain.
  * @return line_t* Pointer to the created line.
  */
-static inline line_t *lineCreate(generic_pool_t **pools, wid_t wid, uint16_t tunnel_count)
+static inline line_t *lineCreate(generic_pool_t **pools, wid_t wid)
 {
     assert(currentThreadIsEventWorkerWID(wid));
 
-    return lineCreateForWorker(wid, pools, wid, tunnel_count);
-}
-
-/** Set this tunnel's bit to block splicing; a fully unblocked line cannot be blocked again. */
-static inline void lineBlockSplice(line_t *line, const tunnel_t *tunnel)
-{
-    splicecontextBlock(line->splice_context, tunnel->chain_index);
-}
-
-/** Clear this tunnel's bit; a zero mask means every tunnel has unblocked splicing. */
-static inline void lineUnblockSplice(line_t *line, const tunnel_t *tunnel)
-{
-    splicecontextUnblock(line->splice_context, tunnel->chain_index);
-}
-
-/** Return the tunnel count represented by this line's splice context. */
-static inline uint16_t lineGetSpliceTunnelCount(const line_t *line)
-{
-    return splicecontextGetTunnelCount(line->splice_context);
-}
-
-/** Return whether at least one tunnel still blocks splicing on this line. */
-static inline bool lineIsSpliceBlocked(const line_t *line)
-{
-    return splicecontextIsBlocked(line->splice_context);
+    return lineCreateForWorker(wid, pools, wid);
 }
 
 /**
@@ -209,9 +171,14 @@ void lineUnRefInternal(line_t *l);
 static inline void lineRef(line_t *const line)
 {
     assert(line->alive);
-    assert(line->refc < LINE_REFC_MAX);
+    if (UNLIKELY(! line->alive))
+    {
+        printError("lineRef: attempted to reference a dead line");
+        abortProgramNow(1);
+    }
 
-    if (UNLIKELY(! line->alive) || UNLIKELY(0 == atomicIncRelaxed(&line->refc)))
+    const uint32_t previous = atomicIncU32Relaxed(&line->refc);
+    if (UNLIKELY(previous == 0 || previous == LINE_REFC_MAX))
     {
         printError("lineRef: attempted to reference a dead line or line reference count overflow");
         abortProgramNow(1);

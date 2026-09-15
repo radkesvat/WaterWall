@@ -31,6 +31,7 @@
 
 #define TWF_CUSTOM_PROCESS_API_WRAPS 1
 #include "tunnel_line_failure_harness.h"
+#include "wio_fd_pool_fixture.h"
 
 #include <sys/wait.h>
 #include <unistd.h>
@@ -162,9 +163,10 @@ enum
 // to publish N + 1.
 typedef struct tos_worker_env_s
 {
+    test_wio_fd_pool_t         fd_handles;
     master_pool_t             *large_masters[kTosMaxWorkers];
     master_pool_t             *small_masters[kTosMaxWorkers];
-    master_pool_t             *micro_masters[kTosMaxWorkers];
+    master_pool_t             *splice_masters[kTosMaxWorkers];
     master_pool_t             *message_master;
     master_pool_t             *wios_master;
     buffer_pool_t             *pools[kTosMaxWorkers + 1];
@@ -201,19 +203,20 @@ static void tosWorkerEnvSetup(tos_worker_env_t *env, wid_t count, uint32_t large
     GSTATE.workers_count         = (uint32_t) count + 1U;
     GSTATE.shortcut_buffer_pools = env->pools;
     GSTATE.shortcut_loops        = env->loops;
+    testWioFdPoolSetup(&env->fd_handles);
     GSTATE.shortcut_wios_pools   = env->wios_pools;
 
     for (wid_t wi = 0; wi < count; ++wi)
     {
         env->large_masters[wi] = masterpoolCreateWithCapacity(8);
         env->small_masters[wi] = masterpoolCreateWithCapacity(8);
-        env->micro_masters[wi] = masterpoolCreateWithCapacity(8);
+        env->splice_masters[wi] = masterpoolCreateWithCapacity(8);
         twfRequire(env->large_masters[wi] != NULL && env->small_masters[wi] != NULL,
                    "failed to create a test master pool");
 
         env->pools[wi] = bufferpoolCreate(env->large_masters[wi],
                                           env->small_masters[wi],
-                                          env->micro_masters[wi],
+                                          env->splice_masters[wi],
                                           4,
                                           large_buffer_size,
                                           small_buffer_size);
@@ -285,18 +288,22 @@ static void tosPumpWorker(tos_worker_env_t *env, wid_t wid)
 
 static void tosWorkerEnvTeardown(tos_worker_env_t *env)
 {
+    // Retire loop-owned descriptor references before destroying their shared pool.
+    for (wid_t wi = 0; wi < env->count; ++wi)
+    {
+        discard tosSetCurrentWorker(wi);
+        workerMessagesDestroy(&env->workers[wi]);
+        wloopDestroy(&env->loops[wi]);
+        env->workers[wi].loop = NULL;
+        mutexDestroy(&env->workers[wi].control_mutex);
+    }
     testWorkerUnbindWID();
     GSTATE.flag_initialized      = false;
     GSTATE.workers               = NULL;
     GSTATE.shortcut_buffer_pools = NULL;
     GSTATE.shortcut_loops        = NULL;
+    testWioFdPoolTeardown(&env->fd_handles);
     GSTATE.shortcut_wios_pools   = NULL;
-
-    for (wid_t wi = 0; wi < env->count; ++wi)
-    {
-        workerMessagesDestroy(&env->workers[wi]);
-        mutexDestroy(&env->workers[wi].control_mutex);
-    }
 }
 
 // ---------------------------------------------------------------------------

@@ -28,14 +28,14 @@ void mxbSetupEnvironment(mxb_fixture_t *fixture, uint32_t combined_lstate_size)
 
     env->large_master = masterpoolCreateWithCapacity(2048);
     env->small_master = masterpoolCreateWithCapacity(64);
-    env->micro_master = masterpoolCreateWithCapacity(64);
+    env->splice_master = masterpoolCreateWithCapacity(64);
     env->wios_master  = masterpoolCreateWithCapacity(32);
     env->line_master  = masterpoolCreateWithCapacity(32);
     mxbRequire(env->large_master != NULL && env->small_master != NULL && env->wios_master != NULL &&
                    env->line_master != NULL,
                "failed to create Mux/TLS test master pools");
 
-    env->pool = bufferpoolCreate(env->large_master, env->small_master, env->micro_master, 32, 512 * 1024, 2048);
+    env->pool = bufferpoolCreate(env->large_master, env->small_master, env->splice_master, 32, 512 * 1024, 2048);
     mxbRequire(env->pool != NULL, "failed to create Mux/TLS test buffer pool");
     bufferpoolUpdateAllocationPaddings(env->pool, 64, 64, 64);
 
@@ -58,6 +58,7 @@ void mxbSetupEnvironment(mxb_fixture_t *fixture, uint32_t combined_lstate_size)
     GSTATE.workers_count         = 2;
     GSTATE.workers               = &env->worker;
     GSTATE.shortcut_buffer_pools = env->buffer_pools;
+    testWioFdPoolSetup(&env->fd_handles);
     GSTATE.shortcut_wios_pools   = env->wios_pools;
     GSTATE.shortcut_loops        = env->loops;
     testWorkerBindWID(0);
@@ -82,11 +83,11 @@ void mxbTeardownEnvironment(mxb_fixture_t *fixture)
     bufferpoolDestroy(env->pool);
     masterpoolMakeEmpty(env->large_master);
     masterpoolMakeEmpty(env->small_master);
-    masterpoolMakeEmpty(env->micro_master);
+    masterpoolMakeEmpty(env->splice_master);
     masterpoolMakeEmpty(env->wios_master);
     masterpoolDestroy(env->large_master);
     masterpoolDestroy(env->small_master);
-    masterpoolDestroy(env->micro_master);
+    masterpoolDestroy(env->splice_master);
     masterpoolDestroy(env->wios_master);
     masterpoolDestroy(env->line_master);
 
@@ -95,13 +96,14 @@ void mxbTeardownEnvironment(mxb_fixture_t *fixture)
     GSTATE.workers_count         = env->saved_workers_count;
     GSTATE.workers               = env->saved_workers;
     GSTATE.shortcut_buffer_pools = env->saved_buffer_pools;
+    testWioFdPoolTeardown(&env->fd_handles);
     GSTATE.shortcut_wios_pools   = env->saved_wios_pools;
     GSTATE.shortcut_loops        = env->saved_loops;
 }
 
 line_t *mxbCreateLine(mxb_fixture_t *fixture)
 {
-    line_t *line = lineCreateForWorker(0, fixture->env.line_pools, 0, 0);
+    line_t *line = lineCreateForWorker(0, fixture->env.line_pools, 0);
     mxbRequire(line != NULL, "failed to create a Mux/TLS test line");
     return line;
 }

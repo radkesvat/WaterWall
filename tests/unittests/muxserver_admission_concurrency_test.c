@@ -1,4 +1,5 @@
 #include "MuxServer/structure.h"
+#include "wio_fd_pool_fixture.h"
 
 #include "wthread.h"
 
@@ -33,9 +34,10 @@ typedef struct race_memory_provider_s
 
 struct admission_race_fixture_s
 {
+    test_wio_fd_pool_t         fd_handles;
     master_pool_t             *large_masters[kRaceWorkers];
     master_pool_t             *small_masters[kRaceWorkers];
-    master_pool_t             *micro_masters[kRaceWorkers];
+    master_pool_t             *splice_masters[kRaceWorkers];
     master_pool_t             *wios_master;
     master_pool_t             *parent_master;
     buffer_pool_t             *pools[kRaceWorkers];
@@ -184,7 +186,7 @@ static WTHREAD_ROUTINE(admissionRaceMain)
     admission_race_fixture_t *fixture = task->fixture;
     const wid_t               wid     = task->wid;
     testWorkerBindWID(wid);
-    fixture->parents[wid] = lineCreate(fixture->parent_pools, wid, 0);
+    fixture->parents[wid] = lineCreate(fixture->parent_pools, wid);
     muxserverTunnelUpStreamInit(fixture->mux, fixture->parents[wid]);
     atomicIncExplicit(&fixture->ready, memory_order_release);
 
@@ -262,6 +264,7 @@ static void raceFixtureSetup(admission_race_fixture_t *fixture)
     GSTATE.workers               = fixture->workers;
     GSTATE.workers_count         = kRaceWorkers;
     GSTATE.shortcut_buffer_pools = fixture->pools;
+    testWioFdPoolSetup(&fixture->fd_handles);
     GSTATE.shortcut_wios_pools   = fixture->wios_pools;
     GSTATE.shortcut_loops        = fixture->loops;
 
@@ -269,12 +272,12 @@ static void raceFixtureSetup(admission_race_fixture_t *fixture)
     {
         fixture->large_masters[wid] = masterpoolCreateWithCapacity(16);
         fixture->small_masters[wid] = masterpoolCreateWithCapacity(16);
-        fixture->micro_masters[wid] = masterpoolCreateWithCapacity(16);
+        fixture->splice_masters[wid] = masterpoolCreateWithCapacity(16);
         require(fixture->large_masters[wid] != NULL && fixture->small_masters[wid] != NULL,
                 "failed to create race buffer masters");
         fixture->pools[wid] = bufferpoolCreate(fixture->large_masters[wid],
                                                fixture->small_masters[wid],
-                                               fixture->micro_masters[wid],
+                                               fixture->splice_masters[wid],
                                                8,
                                                kRaceBufferSize,
                                                kRaceBufferSize);
@@ -416,10 +419,10 @@ static void raceFixtureTeardown(admission_race_fixture_t *fixture)
         bufferpoolDestroy(fixture->pools[wid]);
         masterpoolMakeEmpty(fixture->large_masters[wid]);
         masterpoolMakeEmpty(fixture->small_masters[wid]);
-        masterpoolMakeEmpty(fixture->micro_masters[wid]);
+        masterpoolMakeEmpty(fixture->splice_masters[wid]);
         masterpoolDestroy(fixture->large_masters[wid]);
         masterpoolDestroy(fixture->small_masters[wid]);
-        masterpoolDestroy(fixture->micro_masters[wid]);
+        masterpoolDestroy(fixture->splice_masters[wid]);
     }
     masterpoolDestroy(fixture->parent_master);
     masterpoolMakeEmpty(fixture->wios_master);
@@ -431,6 +434,7 @@ static void raceFixtureTeardown(admission_race_fixture_t *fixture)
     GSTATE.workers               = NULL;
     GSTATE.workers_count         = 0;
     GSTATE.shortcut_buffer_pools = NULL;
+    testWioFdPoolTeardown(&fixture->fd_handles);
     GSTATE.shortcut_wios_pools   = NULL;
     GSTATE.shortcut_loops        = NULL;
     g_race_fixture               = NULL;

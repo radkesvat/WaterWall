@@ -101,7 +101,6 @@ add_library(ww STATIC
     utils/cacert.c
     utils/md5.c
     utils/sha1.c
-    utils/objects/splice_context.c
     objects/user_handle.c
     objects/user.c
     objects/users.c

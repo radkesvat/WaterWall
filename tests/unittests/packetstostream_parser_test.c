@@ -358,8 +358,8 @@ int main(void)
 {
     master_pool_t *mp_large = masterpoolCreateWithCapacity(64);
     master_pool_t *mp_small = masterpoolCreateWithCapacity(64);
-    master_pool_t *mp_micro = masterpoolCreateWithCapacity(64);
-    buffer_pool_t *pool     = bufferpoolCreate(mp_large, mp_small, mp_micro, 64, 8192, SMALL_BUFFER_SIZE);
+    master_pool_t *mp_splice = masterpoolCreateWithCapacity(64);
+    buffer_pool_t *pool      = bufferpoolCreate(mp_large, mp_small, mp_splice, 64, 8192, SMALL_BUFFER_SIZE);
 
     buffer_stream_t bs = bufferstreamCreate(pool, 0);
 

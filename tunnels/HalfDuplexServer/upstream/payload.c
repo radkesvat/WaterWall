@@ -109,8 +109,7 @@ halfduplexserver_pending_decision_t halfduplexserverTestPendingClaim(halfduplexs
 static line_t *createAndInitializeMainLine(tunnel_t *t, line_t *upload_line, line_t *download_line,
                                            halfduplexserver_lstate_t *upload_ls, halfduplexserver_lstate_t *download_ls)
 {
-    line_t *main_line =
-        lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), lineGetWID(upload_line), tunnelGetChain(t)->tunnels.len);
+    line_t *main_line = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), lineGetWID(upload_line));
 
     upload_ls->main_line   = main_line;
     download_ls->main_line = main_line;

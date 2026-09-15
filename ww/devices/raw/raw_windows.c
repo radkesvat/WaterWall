@@ -247,7 +247,7 @@ bool rawdeviceBringUp(raw_device_t *rdev)
     bufferpoolUpdateAllocationPaddings(rdev->writer_buffer_pool,
                                        bufferpoolGetLargeBufferPadding(worker_pool),
                                        bufferpoolGetSmallBufferPadding(worker_pool),
-                                       bufferpoolGetMicroBufferPadding(worker_pool));
+                                       bufferpoolGetSpliceBufferPadding(worker_pool));
 
     if (! deviceWriterChannelOpen(&rdev->writer_channel, kRawWriteChannelQueueMax))
     {
@@ -378,7 +378,7 @@ raw_device_t *rawdeviceCreate(const char *name, uint32_t mark, void *userdata)
 
     buffer_pool_t *writer_bpool = bufferpoolCreate(GSTATE.masterpool_buffer_pools_large,
                                                    GSTATE.masterpool_buffer_pools_small,
-                                                   GSTATE.masterpool_buffer_pools_micro,
+                                                   GSTATE.masterpool_buffer_pools_splice,
                                                    RAM_PROFILE,
                                                    bufferpoolGetLargeBufferSize(worker_pool),
                                                    bufferpoolGetSmallBufferSize(worker_pool)

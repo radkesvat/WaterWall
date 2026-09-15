@@ -543,7 +543,7 @@ static void caseSuccessfulDownstreamFinishClosesBeforeSweep(void)
         twfRequire(chain->line_pools[wi] != NULL, "failed to create a worker line pool");
 
         const wid_t previous_wid = tosSetCurrentWorker(wi);
-        lines[wi]                = lineCreateForWorker(wi, chain->line_pools, wi, chain->tunnels.len);
+        lines[wi]                = lineCreateForWorker(wi, chain->line_pools, wi);
         discard tosSetCurrentWorker(previous_wid);
 
         testerclient_lstate_t *ls = lineGetState(lines[wi], tester);

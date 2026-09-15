@@ -19,6 +19,7 @@
 // (windows-iocp preset). Under any other backend it is an empty success so the
 // same CMake wiring is harmless.
 
+#include "wio_fd_pool_fixture.h"
 #include "wlibc.h"
 
 #if ! defined(EVENT_IOCP)
@@ -58,9 +59,10 @@ static void require(bool condition, const char *message)
 
 typedef struct env_s
 {
+    test_wio_fd_pool_t         fd_handles;
     master_pool_t             *large_master;
     master_pool_t             *small_master;
-    master_pool_t             *micro_master;
+    master_pool_t             *splice_master;
     master_pool_t             *wio_master;
     buffer_pool_t             *buffer_pool;
     threadsafe_generic_pool_t *wio_pool;
@@ -73,9 +75,9 @@ static void envSetup(env_t *env)
 {
     env->large_master = masterpoolCreateWithCapacity(64);
     env->small_master = masterpoolCreateWithCapacity(64);
-    env->micro_master = masterpoolCreateWithCapacity(64);
+    env->splice_master = masterpoolCreateWithCapacity(64);
     env->wio_master   = masterpoolCreateWithCapacity(64);
-    env->buffer_pool  = bufferpoolCreate(env->large_master, env->small_master, env->micro_master, 64, 8192, 1024);
+    env->buffer_pool   = bufferpoolCreate(env->large_master, env->small_master, env->splice_master, 64, 8192, 1024);
     env->wio_pool     = threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(env->wio_master, sizeof(wio_t), 64);
     env->wio_pools[0] = env->wio_pool;
     env->wio_pools[1] = env->wio_pool;
@@ -83,6 +85,7 @@ static void envSetup(env_t *env)
     env->saved_workers_count = GSTATE.workers_count;
     GSTATE.workers_count     = 3; // two event workers plus the lwIP-style pseudo-worker
     testWorkerRegistryInstall(&env->worker_registry);
+    testWioFdPoolSetup(&env->fd_handles);
     GSTATE.shortcut_wios_pools = env->wio_pools;
     testWorkerBindWID(0);
 }
@@ -90,6 +93,7 @@ static void envSetup(env_t *env)
 static void envTeardown(env_t *env)
 {
     testWorkerUnbindWID();
+    testWioFdPoolTeardown(&env->fd_handles);
     GSTATE.shortcut_wios_pools = NULL;
     testWorkerRegistryRestore(&env->worker_registry);
     GSTATE.workers_count = env->saved_workers_count;
@@ -98,11 +102,11 @@ static void envTeardown(env_t *env)
     masterpoolMakeEmpty(env->wio_master);
     masterpoolMakeEmpty(env->large_master);
     masterpoolMakeEmpty(env->small_master);
-    masterpoolMakeEmpty(env->micro_master);
+    masterpoolMakeEmpty(env->splice_master);
     masterpoolDestroy(env->wio_master);
     masterpoolDestroy(env->large_master);
     masterpoolDestroy(env->small_master);
-    masterpoolDestroy(env->micro_master);
+    masterpoolDestroy(env->splice_master);
 }
 
 // Drive the loop until loop-wide live operations settle to `target` (or give up).

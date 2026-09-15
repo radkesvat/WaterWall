@@ -20,6 +20,7 @@
  *   -Wl,--wrap=bufferpoolGetLargeBuffer -Wl,--wrap=bufferpoolGetSmallBuffer -Wl,--wrap=bufferpoolReuseBuffer
  */
 
+#include "wio_fd_pool_fixture.h"
 #include "wwapi.h"
 
 // ---------------------------------------------------------------------------
@@ -440,9 +441,10 @@ static tunnel_t *twfCreateNextTunnel(twf_trace_t *trace)
 
 typedef struct twf_worker_env_s
 {
+    test_wio_fd_pool_t         fd_handles;
     master_pool_t             *large_master;
     master_pool_t             *small_master;
-    master_pool_t             *micro_master;
+    master_pool_t             *splice_master;
     master_pool_t             *wios_master;
     buffer_pool_t             *pool;
     buffer_pool_t             *pool_shortcut[1];
@@ -479,13 +481,13 @@ static void twfWorkerEnvSetupWithSmallBuffers(twf_worker_env_t *env, uint32_t la
 
     env->large_master = masterpoolCreateWithCapacity(8);
     env->small_master = masterpoolCreateWithCapacity(8);
-    env->micro_master = masterpoolCreateWithCapacity(8);
+    env->splice_master = masterpoolCreateWithCapacity(8);
     env->wios_master  = masterpoolCreateWithCapacity(8);
     twfRequire(env->large_master != NULL && env->small_master != NULL && env->wios_master != NULL,
                "failed to create the test master pools");
 
     env->pool = bufferpoolCreate(
-        env->large_master, env->small_master, env->micro_master, 4, large_buffer_size, small_buffer_size);
+        env->large_master, env->small_master, env->splice_master, 4, large_buffer_size, small_buffer_size);
     twfRequire(env->pool != NULL, "failed to create the test buffer pool");
 
     // Must happen before any buffer leaves the pool, exactly like the runtime does it during chain finalization.
@@ -497,6 +499,7 @@ static void twfWorkerEnvSetupWithSmallBuffers(twf_worker_env_t *env, uint32_t la
     env->wios_pool = threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(env->wios_master, sizeof(wio_t), 8);
     twfRequire(env->wios_pool != NULL, "failed to create the test wios pool");
     env->wios_shortcut[0]      = env->wios_pool;
+    testWioFdPoolSetup(&env->fd_handles);
     GSTATE.shortcut_wios_pools = env->wios_shortcut;
 
     env->loop = wloopCreate(WLOOP_FLAG_AUTO_FREE, env->pool, 0);
@@ -527,6 +530,7 @@ static void twfWorkerEnvTeardown(twf_worker_env_t *env)
     GSTATE.flag_initialized      = false;
     GSTATE.workers               = NULL;
     GSTATE.shortcut_buffer_pools = NULL;
+    testWioFdPoolTeardown(&env->fd_handles);
     GSTATE.shortcut_wios_pools   = NULL;
     GSTATE.shortcut_loops        = NULL;
 
@@ -534,11 +538,11 @@ static void twfWorkerEnvTeardown(twf_worker_env_t *env)
     bufferpoolDestroy(env->pool);
     masterpoolMakeEmpty(env->large_master);
     masterpoolMakeEmpty(env->small_master);
-    masterpoolMakeEmpty(env->micro_master);
+    masterpoolMakeEmpty(env->splice_master);
     masterpoolMakeEmpty(env->wios_master);
     masterpoolDestroy(env->large_master);
     masterpoolDestroy(env->small_master);
-    masterpoolDestroy(env->micro_master);
+    masterpoolDestroy(env->splice_master);
     masterpoolDestroy(env->wios_master);
 }
 
@@ -562,7 +566,7 @@ static line_t *twfLineCreate(uint32_t lstate_size)
 
 static uint32_t twfLineRefCount(const line_t *l)
 {
-    return (uint32_t) atomicLoadRelaxed(&((line_t *) (uintptr_t) l)->refc);
+    return (uint32_t) atomicLoadU32Relaxed(&((line_t *) (uintptr_t) l)->refc);
 }
 
 static void twfLineDestroy(line_t *l)
@@ -621,7 +625,7 @@ static void twfLinePoolSetup(twf_line_pool_t *lp, uint32_t lstate_size, uint32_t
 
 static line_t *twfLinePoolCreateLine(twf_line_pool_t *lp)
 {
-    line_t *l = lineCreateForWorker(0, lp->pools, 0, 0);
+    line_t *l = lineCreateForWorker(0, lp->pools, 0);
     twfRequire(l != NULL, "failed to create a pooled test line");
     return l;
 }

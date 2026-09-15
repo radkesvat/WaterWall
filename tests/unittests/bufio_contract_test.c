@@ -19,7 +19,7 @@ typedef struct pool_fixture_s
 {
     master_pool_t *large_master;
     master_pool_t *small_master;
-    master_pool_t *micro_master;
+    master_pool_t *splice_master;
     buffer_pool_t *pool;
 } pool_fixture_t;
 
@@ -65,15 +65,15 @@ static pool_fixture_t poolFixtureCreate(uint32_t large_size, uint32_t small_size
                                         uint16_t small_padding)
 {
     pool_fixture_t fixture = {
-        .large_master = masterpoolCreateWithCapacity(kTestPoolWidth * 2U),
-        .small_master = masterpoolCreateWithCapacity(kTestPoolWidth * 2U),
-        .micro_master = masterpoolCreateWithCapacity(kTestPoolWidth * 2U),
-        .pool         = NULL,
+        .large_master  = masterpoolCreateWithCapacity(kTestPoolWidth * 2U),
+        .small_master  = masterpoolCreateWithCapacity(kTestPoolWidth * 2U),
+        .splice_master = masterpoolCreateWithCapacity(kTestPoolWidth * 2U),
+        .pool          = NULL,
     };
 
     require(fixture.large_master != NULL && fixture.small_master != NULL, "failed to create BufferStream master pools");
     fixture.pool = bufferpoolCreate(
-        fixture.large_master, fixture.small_master, fixture.micro_master, kTestPoolWidth, large_size, small_size);
+        fixture.large_master, fixture.small_master, fixture.splice_master, kTestPoolWidth, large_size, small_size);
     require(fixture.pool != NULL, "failed to create BufferStream test pool");
     bufferpoolUpdateAllocationPaddings(fixture.pool, large_padding, small_padding, small_padding);
     return fixture;
@@ -84,10 +84,10 @@ static void poolFixtureDestroy(pool_fixture_t *fixture)
     bufferpoolDestroy(fixture->pool);
     masterpoolMakeEmpty(fixture->large_master);
     masterpoolMakeEmpty(fixture->small_master);
-    masterpoolMakeEmpty(fixture->micro_master);
+    masterpoolMakeEmpty(fixture->splice_master);
     masterpoolDestroy(fixture->large_master);
     masterpoolDestroy(fixture->small_master);
-    masterpoolDestroy(fixture->micro_master);
+    masterpoolDestroy(fixture->splice_master);
     memoryZero(fixture, sizeof(*fixture));
 }
 
@@ -999,8 +999,8 @@ int main(void)
 {
     master_pool_t *large_master = masterpoolCreateWithCapacity(16);
     master_pool_t *small_master = masterpoolCreateWithCapacity(16);
-    master_pool_t *micro_master = masterpoolCreateWithCapacity(16);
-    buffer_pool_t *pool         = bufferpoolCreate(large_master, small_master, micro_master, 8, 256, 64);
+    master_pool_t *splice_master = masterpoolCreateWithCapacity(16);
+    buffer_pool_t *pool          = bufferpoolCreate(large_master, small_master, splice_master, 8, 256, 64);
     bufferpoolUpdateAllocationPaddings(pool, 64, 64, 64);
 
     testFlagsInitializationAndReuse(pool);
@@ -1027,10 +1027,10 @@ int main(void)
     bufferpoolDestroy(pool);
     masterpoolMakeEmpty(large_master);
     masterpoolMakeEmpty(small_master);
-    masterpoolMakeEmpty(micro_master);
+    masterpoolMakeEmpty(splice_master);
     masterpoolDestroy(large_master);
     masterpoolDestroy(small_master);
-    masterpoolDestroy(micro_master);
+    masterpoolDestroy(splice_master);
 
     puts("bufio contract tests passed");
     return 0;

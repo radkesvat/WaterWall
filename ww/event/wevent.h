@@ -9,10 +9,10 @@
 
 #include "array.h"
 #include "buffer_pool.h"
+#include "generic_pool.h"
 #include "heap.h"
 #include "list.h"
 #include "queue.h"
-#include "utils/objects/splice_context.h"
 
 // #define WLOOP_READ_BUFSIZE          (1U << 15)  // 32K
 #define READ_BUFSIZE_HIGH_WATER  (1U << 20) // 1M
@@ -139,6 +139,28 @@ struct wperiod_s
 
 QUEUE_DECL(sbuf_t *, write_queue)
 
+struct wio_fd_s
+{
+    int          fd;
+    int          pipefd[2]; // {0, 0} until initialized; a created pipe may include descriptor zero.
+    atomic_u32_t refc;
+    uint32_t     reserved; // Reserved byte count.
+    bool         is_socket;
+};
+
+/** Create a worker-local descriptor pool backed by the supplied shared master. */
+generic_pool_t *wiofdCreatePool(master_pool_t *master, uint32_t capacity);
+/** Adopt a socket with one reference; WIO readiness sets the type when wrapping a non-socket descriptor. */
+wio_fd_t *wiofdCreate(int fd);
+/** Retain a live descriptor object. A held reference is required during publication. */
+void wiofdRef(wio_fd_t *handle);
+/** Release one reference; the last release closes all owned descriptors and recycles the object. */
+void wiofdUnref(wio_fd_t *handle);
+/** Observe the 32-bit reference count without acquiring another reference. */
+uint32_t wiofdGetRefCount(const wio_fd_t *handle);
+/** Lazily create a nonblocking, close-on-exec pipe; initialization requires exclusive access. */
+int wiofdInitPipe(wio_fd_t *handle);
+
 struct wio_s
 {
     WEVENT_FIELDS
@@ -155,6 +177,11 @@ struct wio_s
     unsigned sendto : 1;
     unsigned close : 1;
     unsigned release_no_close : 1;
+    unsigned splice_enabled : 1;
+    unsigned read_started : 1; // Sticky until descriptor reuse, including across wioReadStop().
+#ifndef EVENT_IOCP
+    unsigned close_in_progress : 1; // Defer callback-driven wioFree until the close frame returns.
+#endif
     // public:
     wio_type_e io_type;
     uint32_t   id; // fd cannot be used as unique identifier, so we provide an id
@@ -165,11 +192,8 @@ struct wio_s
     // back to SOCKET explicitly at any call taking the handle *by address* --
     // see SO_UPDATE_ACCEPT_CONTEXT in overlapio.c, where the option length is
     // derived from the value's type.
-    int fd;
-    // #if defined(OS_LINUX) && defined(HAVE_PIPE)
-    //     int         pfd_r; // pipe read file descriptor for splice, (empty by default)
-    //     int         pfd_w; // pipe read file descriptor for splice, (empty by default)
-    // #endif
+    wio_fd_t *fd_handle;
+    int       io_slot; // Dense-array membership; retained after releasing the descriptor, never used for I/O.
     int error;
     int events;
     int revents;
@@ -245,7 +269,6 @@ struct wio_s
     unsigned  iocp_close_in_progress : 1; // wioClose still owns a stack reference
     unsigned  iocp_associated : 1;        // socket handle is already bound to this loop's IOCP
 #endif
-    splice_context_t *splice_context; // Borrowed from the line; NULL when unattached or closing.
 };
 /*
  * wio lifeline:
@@ -264,12 +287,10 @@ void     wioReady(wio_t *io);
 void     wioDone(wio_t *io);
 void     wioFree(wio_t *io);
 uint32_t wioSetNextID(void);
-#ifdef EVENT_IOCP
-// Return a deferred-finalized wio_t (closed, detached, all IOCP records retired)
-// to its worker pool. Called from the native IOCP retire path once the last
-// operation record referencing this io has been dequeued and released.
+// Return a closed, detached WIO after all callback/IOCP references have retired.
 void wioFinalizeNow(wio_t *io);
-#endif
+// Drop WIO ownership; keep_fd returns the primary descriptor to its external owner.
+void wioReleaseFDHandle(wio_t *io, bool keep_fd);
 
 void wioAcceptCallBack(wio_t *io);
 void wioConnectCallBack(wio_t *io);

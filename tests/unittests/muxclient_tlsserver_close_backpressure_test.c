@@ -100,7 +100,7 @@ static void runMuxClientTlsServerCase(mxb_terminal_cause_t cause)
                "TlsServer Finish reached the child owner before all plaintext was decrypted");
     mxbRequire(mxbLineStateIsZero(fixture.child, fixture.mux) && mxbLineStateIsZero(fixture.child, fixture.tls),
                "MuxClient/TlsServer child state survived terminal completion");
-    mxbRequire((uint32_t) atomicLoadRelaxed(&fixture.child->refc) == 1,
+    mxbRequire((uint32_t) atomicLoadU32Relaxed(&fixture.child->refc) == 1,
                "MuxClient borrowed-child completion changed the outer reference count incorrectly");
     if (cause == kMxbTerminalPeerClose)
     {

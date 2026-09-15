@@ -4,8 +4,9 @@
 #include "wplatform.h" // for WW_HAVE_C11_ATOMICS
 
 /*
- * This header exposes two atomic APIs and they are not interchangeable:
+ * This header exposes three atomic APIs and they are not interchangeable:
  *
+ *   atomic_u32_t objects  -> the u32 API:      atomicLoadU32, atomicStoreU32, atomicAddU32, ...
  *   atomic_ullong objects -> the u64 API:      atomicLoadU64, atomicStoreU64, atomicAddU64,
  *                                              atomicIncU64, atomicCompareExchangeU64, ...
  *   everything else       -> the generic API:  atomicLoad, atomicStore, atomicAdd,
@@ -25,6 +26,7 @@
 typedef int                w_atomic_int_value_t;
 typedef unsigned int       w_atomic_uint_value_t;
 typedef unsigned long long w_atomic_ullong_value_t;
+typedef _Atomic(uint32_t)  atomic_u32_t;
 #define W_ATOMIC_UINT_VALUE_SIGNED 0
 #define W_ATOMIC_UINT_VALUE_MAX    UINT_MAX
 
@@ -74,6 +76,7 @@ typedef intptr_t atomic_int;
 typedef intptr_t w_atomic_int_value_t;
 typedef intptr_t atomic_uint;
 typedef intptr_t w_atomic_uint_value_t;
+typedef volatile LONG atomic_u32_t;
 #define W_ATOMIC_UINT_VALUE_SIGNED 1
 typedef intptr_t atomic_long;
 typedef intptr_t atomic_ulong;
@@ -148,10 +151,9 @@ typedef intptr_t           atomic_uintmax_t;
  *                store into a 32-bit field on a 64-bit target overwrites
  *                whatever the compiler laid out in the next four bytes.
  *
- * So the fix depends on which way the mismatch goes: 64-bit state belongs to
- * the u64 API below, while a caller whose own variable is narrower than a
- * pointer should hold the value in a w_atomic_int_value_t / w_atomic_uint_value_t
- * and convert at the boundary, the way worker.c and quiescence_gate.h do.
+ * Fixed-width state belongs to the u32 or u64 API below. Generic callers use
+ * w_atomic_int_value_t / w_atomic_uint_value_t and convert at the boundary,
+ * the way worker.c and quiescence_gate.h do.
  */
 #define W_ATOMIC_REQUIRE_PTR_WIDTH(object)                                                                             \
     ((void) sizeof(struct {                                                                                            \
@@ -281,11 +283,86 @@ static inline int w_atomicCompareExchangePtrWidth(intptr_t *object, intptr_t *ex
 #define atomicCompareExchangeExplicit atomic_compare_exchange_strong_explicit
 
 /*
+ * Fixed-width 32-bit atomics. Use only the U32 helpers on atomic_u32_t after
+ * publication: the Windows generic API accesses pointer-sized storage.
+ * Arithmetic returns the previous unsigned value and wraps modulo 2^32.
+ * Plain initialization is safe before the object is published.
+ */
+_Static_assert(sizeof(atomic_u32_t) == sizeof(uint32_t), "atomic_u32_t must use exactly 32-bit storage");
+
+#if WW_HAVE_C11_ATOMICS
+
+static inline uint32_t atomicLoadU32Explicit(const atomic_u32_t *object, memory_order order)
+{
+    return atomic_load_explicit(object, order);
+}
+
+static inline void atomicStoreU32Explicit(atomic_u32_t *object, uint32_t desired, memory_order order)
+{
+    atomic_store_explicit(object, desired, order);
+}
+
+static inline uint32_t atomicAddU32Explicit(atomic_u32_t *object, uint32_t operand, memory_order order)
+{
+    return atomic_fetch_add_explicit(object, operand, order);
+}
+
+static inline uint32_t atomicSubU32Explicit(atomic_u32_t *object, uint32_t operand, memory_order order)
+{
+    return atomic_fetch_sub_explicit(object, operand, order);
+}
+
+#else
+
+_Static_assert(_Alignof(atomic_u32_t) >= 4, "Interlocked operations require 4-byte-aligned storage");
+
+// Interlocked primitives provide a full barrier, including for relaxed callers.
+static inline uint32_t atomicLoadU32Explicit(const atomic_u32_t *object, memory_order order)
+{
+    (void) order;
+    return (uint32_t) InterlockedCompareExchange((volatile LONG *) object, 0, 0);
+}
+
+static inline void atomicStoreU32Explicit(atomic_u32_t *object, uint32_t desired, memory_order order)
+{
+    (void) order;
+    (void) InterlockedExchange(object, (LONG) desired);
+}
+
+static inline uint32_t atomicAddU32Explicit(atomic_u32_t *object, uint32_t operand, memory_order order)
+{
+    (void) order;
+    return (uint32_t) InterlockedExchangeAdd(object, (LONG) operand);
+}
+
+static inline uint32_t atomicSubU32Explicit(atomic_u32_t *object, uint32_t operand, memory_order order)
+{
+    (void) order;
+    return (uint32_t) InterlockedExchangeAdd(object, (LONG) (UINT32_C(0) - operand));
+}
+
+#endif
+
+#define atomicLoadU32(x)     atomicLoadU32Explicit((x), memory_order_seq_cst)
+#define atomicStoreU32(x, y) atomicStoreU32Explicit((x), (y), memory_order_seq_cst)
+#define atomicAddU32(x, y)   atomicAddU32Explicit((x), (y), memory_order_seq_cst)
+#define atomicSubU32(x, y)   atomicSubU32Explicit((x), (y), memory_order_seq_cst)
+#define atomicIncU32(x)      atomicAddU32((x), 1)
+#define atomicDecU32(x)      atomicSubU32((x), 1)
+
+#define atomicIncU32Explicit(x, y)  atomicAddU32Explicit((x), 1, (y))
+#define atomicDecU32Explicit(x, y)  atomicSubU32Explicit((x), 1, (y))
+#define atomicLoadU32Relaxed(x)     atomicLoadU32Explicit((x), memory_order_relaxed)
+#define atomicStoreU32Relaxed(x, y) atomicStoreU32Explicit((x), (y), memory_order_relaxed)
+#define atomicIncU32Relaxed(x)      atomicIncU32Explicit((x), memory_order_relaxed)
+#define atomicDecU32Relaxed(x)      atomicDecU32Explicit((x), memory_order_relaxed)
+
+/*
  * ---------------------------------------------------------------------------
  * 64-bit atomics
  * ---------------------------------------------------------------------------
  *
- * Everything above operates on pointer-width objects. Use it for flags,
+ * The generic API operates on pointer-width objects on the Windows fallback. Use it for flags,
  * counters, indices, enums, sizes and pointers -- anything that fits in an
  * intptr_t. Use the u64 API below, and only the u64 API, on atomic_ullong.
  *

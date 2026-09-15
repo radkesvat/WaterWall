@@ -99,7 +99,7 @@ static void runMuxServerTlsClientCase(mxb_terminal_cause_t cause)
                "TlsClient Finish reached the wire before all plaintext was decrypted");
     mxbRequire(mxbLineStateIsZero(fixture.child, fixture.mux) && mxbLineStateIsZero(fixture.child, fixture.tls),
                "MuxServer/TlsClient child state survived terminal completion");
-    mxbRequire((uint32_t) atomicLoadRelaxed(&fixture.child->refc) == 1,
+    mxbRequire((uint32_t) atomicLoadU32Relaxed(&fixture.child->refc) == 1,
                "MuxServer did not destroy its owned child exactly once");
     if (cause == kMxbTerminalPeerClose)
     {

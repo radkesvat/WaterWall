@@ -3,6 +3,7 @@
 #include "tricks/firstsni/trick.h"
 #include "tricks/overlapsni/trick.h"
 #include "tricks/smugglesni/trick.h"
+#include "wio_fd_pool_fixture.h"
 #include "worker_registry_fixture.h"
 
 /*
@@ -16,9 +17,10 @@ static void require(bool condition, const char *message);
 
 typedef struct test_env_s
 {
+    test_wio_fd_pool_t         fd_handles;
     master_pool_t             *large_master;
     master_pool_t             *small_master;
-    master_pool_t             *micro_master;
+    master_pool_t             *splice_master;
     master_pool_t             *messages_master;
     master_pool_t             *wios_master;
     buffer_pool_t             *buffer_pools[2];
@@ -32,7 +34,7 @@ static void envSetup(test_env_t *env)
     memoryZero(env, sizeof(*env));
     env->large_master    = masterpoolCreateWithCapacity(32);
     env->small_master    = masterpoolCreateWithCapacity(32);
-    env->micro_master    = masterpoolCreateWithCapacity(32);
+    env->splice_master   = masterpoolCreateWithCapacity(32);
     env->messages_master = masterpoolCreateWithCapacity(32);
     env->wios_master     = masterpoolCreateWithCapacity(32);
     workerMessagesInstallMasterPoolCallbacks(env->messages_master);
@@ -40,7 +42,7 @@ static void envSetup(test_env_t *env)
     for (wid_t wid = 0; wid < 2; ++wid)
     {
         env->buffer_pools[wid] =
-            bufferpoolCreate(env->large_master, env->small_master, env->micro_master, 32, 8192, 4096);
+            bufferpoolCreate(env->large_master, env->small_master, env->splice_master, 32, 8192, 4096);
         env->wios_pools[wid] =
             threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(env->wios_master, sizeof(wio_t), 32);
         env->loops[wid]         = wloopCreate(0, env->buffer_pools[wid], wid);
@@ -62,10 +64,11 @@ static void envSetup(test_env_t *env)
     GSTATE.workers_count                 = 3;
     GSTATE.shortcut_buffer_pools         = env->buffer_pools;
     GSTATE.shortcut_loops                = env->loops;
+    testWioFdPoolSetup(&env->fd_handles);
     GSTATE.shortcut_wios_pools           = env->wios_pools;
     GSTATE.masterpool_buffer_pools_large = env->large_master;
     GSTATE.masterpool_buffer_pools_small = env->small_master;
-    GSTATE.masterpool_buffer_pools_micro = env->micro_master;
+    GSTATE.masterpool_buffer_pools_splice = env->splice_master;
     GSTATE.masterpool_messages           = env->messages_master;
     testWorkerBindWID(0);
 
@@ -91,10 +94,11 @@ static void envTeardown(test_env_t *env)
     GSTATE.workers_count                 = 0;
     GSTATE.shortcut_buffer_pools         = NULL;
     GSTATE.shortcut_loops                = NULL;
+    testWioFdPoolTeardown(&env->fd_handles);
     GSTATE.shortcut_wios_pools           = NULL;
     GSTATE.masterpool_buffer_pools_large = NULL;
     GSTATE.masterpool_buffer_pools_small = NULL;
-    GSTATE.masterpool_buffer_pools_micro = NULL;
+    GSTATE.masterpool_buffer_pools_splice = NULL;
     GSTATE.masterpool_messages           = NULL;
 
     bufferpoolDestroy(env->buffer_pools[0]);
@@ -103,12 +107,12 @@ static void envTeardown(test_env_t *env)
     threadsafegenericpoolDestroy(env->wios_pools[1]);
     masterpoolMakeEmpty(env->large_master);
     masterpoolMakeEmpty(env->small_master);
-    masterpoolMakeEmpty(env->micro_master);
+    masterpoolMakeEmpty(env->splice_master);
     masterpoolMakeEmpty(env->messages_master);
     masterpoolMakeEmpty(env->wios_master);
     masterpoolDestroy(env->large_master);
     masterpoolDestroy(env->small_master);
-    masterpoolDestroy(env->micro_master);
+    masterpoolDestroy(env->splice_master);
     masterpoolDestroy(env->messages_master);
     masterpoolDestroy(env->wios_master);
 }
@@ -313,7 +317,7 @@ static void receiveReal(tunnel_t *t, line_t *l, sbuf_t *buf)
 static line_t makeTestLineForWorker(wid_t wid)
 {
     line_t line = {0};
-    atomicStoreRelaxed(&line.refc, 1);
+    atomicStoreU32Relaxed(&line.refc, 1);
     line.alive = true;
     line.wid   = wid;
     return line;
@@ -958,7 +962,7 @@ static void testCrossWorkerCaptureFailsOpenOnOwnerWorkers(void)
     require(flow.phase == kIpManipulatorSmuggleFlowPhasePassthrough,
             "cross-worker smuggle flow did not enter passthrough");
     requireNoActiveTlsSlots(tunnelGetState(t));
-    require(atomicLoadRelaxed(&owner_line.refc) == 1 && atomicLoadRelaxed(&foreign_line.refc) == 1,
+    require(atomicLoadU32Relaxed(&owner_line.refc) == 1 && atomicLoadU32Relaxed(&foreign_line.refc) == 1,
             "cross-worker capture leaked a line reference");
 
     destroyTestTunnel(t);

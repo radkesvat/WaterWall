@@ -144,8 +144,8 @@ static void lineTaskEnvTeardown(line_task_test_env_t *env)
 
 static line_t *createLine(const line_task_test_env_t *env, wid_t wid)
 {
-    return wid == 0 ? lineCreate(tunnelchainGetLinePools(env->chain), 0, env->chain->tunnels.len)
-                    : lineCreateForWorker(0, tunnelchainGetLinePools(env->chain), wid, env->chain->tunnels.len);
+    return wid == 0 ? lineCreate(tunnelchainGetLinePools(env->chain), 0)
+                    : lineCreateForWorker(0, tunnelchainGetLinePools(env->chain), wid);
 }
 
 static void probeReset(line_task_probe_t *probe)
@@ -262,7 +262,7 @@ static void probeCancellation(tunnel_t *t, line_t *line, line_task_cancel_reason
 
     atomicStoreExplicit(&probe->reason, (int) reason, memory_order_relaxed);
     atomicStoreExplicit(&probe->callback_wid, workerWIDForLog(getWID()), memory_order_relaxed);
-    atomicStoreExplicit(&probe->callback_refcount, atomicLoadRelaxed(&line->refc), memory_order_relaxed);
+    atomicStoreExplicit(&probe->callback_refcount, atomicLoadU32Relaxed(&line->refc), memory_order_relaxed);
     atomicStoreExplicit(
         &probe->buffer_was_live_during_cancel, atomicLoadRelaxed(&probe->buffer_releases) == 0, memory_order_relaxed);
     atomicAddExplicit(&probe->cancellations, 1, memory_order_release);

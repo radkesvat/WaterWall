@@ -54,8 +54,9 @@ typedef struct ww_global_state_s
     generic_pool_t               **shortcut_context_pools;
     master_pool_t                 *masterpool_buffer_pools_large;
     master_pool_t                 *masterpool_buffer_pools_small;
-    master_pool_t                 *masterpool_buffer_pools_micro;
+    master_pool_t                 *masterpool_buffer_pools_splice;
     master_pool_t                 *masterpool_wios;
+    master_pool_t                 *masterpool_wio_fds;
     master_pool_t                 *masterpool_context_pools;
     master_pool_t                 *masterpool_messages;
     worker_t                      *workers;
@@ -403,7 +404,7 @@ static inline uint64_t getWorkerNowMS(wid_t wid)
 /*!
  * @brief Cached "now" in microseconds for a worker's event loop.
  *
- * Microsecond-resolution counterpart of getWorkerNowMS(); same caching and
+ * Splicesecond-resolution counterpart of getWorkerNowMS(); same caching and
  * threading constraints apply.
  *
  * @param wid The worker ID.

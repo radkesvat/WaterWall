@@ -165,7 +165,7 @@ void lineUnRefInternal(line_t *l)
      * publishes preceding line writes; the final releaser acquires the release
      * sequence before inspecting any non-atomic line state.
      */
-    const w_atomic_uint_value_t previous = atomicSubExplicit(&l->refc, 1, memory_order_acq_rel);
+    const uint32_t previous = atomicDecU32Explicit(&l->refc, memory_order_acq_rel);
     assert(previous != 0);
     if (UNLIKELY(previous == 0))
     {
@@ -196,9 +196,6 @@ void lineUnRefInternal(line_t *l)
     }
 
     lineClearUsers(l);
-
-    splicecontextDestroy(l->splice_context);
-    l->splice_context = NULL;
 
     worker_t *current = tryGetCurrentEventWorker();
     if (current != NULL && current->wid == l->wid)

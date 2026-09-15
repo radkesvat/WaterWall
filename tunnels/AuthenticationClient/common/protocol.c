@@ -1536,7 +1536,7 @@ void authenticationclientOpenControlLine(tunnel_t *t)
     mutexUnlock(&ts->control_mutex);
     authenticationclientResetFirstUsagePushRuntime(t);
 
-    line_t *line = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), 0, tunnelGetChain(t)->tunnels.len);
+    line_t                        *line = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), 0);
     authenticationclient_lstate_t *ls   = lineGetState(line, t);
     authenticationclientLinestateInitialize(ls, lineGetBufferPool(line));
 

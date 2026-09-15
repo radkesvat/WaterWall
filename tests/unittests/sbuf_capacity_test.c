@@ -87,32 +87,32 @@ static void testPaddingIsAlignedAndAdded(void)
             "padding that overflows uint16_t on alignment was accepted");
 }
 
-static void testMicroCapacityAndPadding(void)
+static void testSpliceCapacityAndPadding(void)
 {
     static const uint16_t requests[] = {0, 1, 31, 32, 33, 65504};
     for (size_t i = 0; i < sizeof(requests) / sizeof(requests[0]); ++i)
     {
         const uint32_t padding = ((uint32_t) requests[i] + 31U) & ~UINT32_C(31);
-        sbuf_t        *buffer  = sbufCreateMicro(requests[i]);
-        require(buffer != NULL, "micro allocation returned NULL");
+        sbuf_t        *buffer  = sbufCreateSplice(requests[i]);
+        require(buffer != NULL, "splice allocation returned NULL");
         require(sbufGetTotalCapacityNoPadding(buffer) == 32 && sbufGetTotalCapacity(buffer) == padding + 32U,
-                "micro payload capacity was rounded up or included its padding");
+                "splice control-storage capacity was rounded up or included its padding");
         require(sbufGetLeftPadding(buffer) == padding && sbufGetLeftCapacity(buffer) == padding,
-                "micro allocation did not reserve aligned left padding");
-        require(sbufGetLength(buffer) == 0 && buffer->flags == 0 && sbufGetLifetime(buffer) == NULL,
-                "micro buffer metadata was not initialized");
+                "splice allocation did not reserve aligned left padding");
+        require(sbufGetLength(buffer) == 0 && buffer->flags == kSbufFlagSplice && sbufGetLifetime(buffer) == NULL,
+                "splice buffer metadata was not initialized");
         uint8_t *payload = sbufGetMutablePtr(buffer);
         require((uintptr_t) buffer % kSbufAllocationAlignment == 0 &&
                     (uintptr_t) payload % kSbufAllocationAlignment == 0,
-                "micro buffer or payload was not aligned");
+                "splice buffer or payload was not aligned");
         sbufSetLength(buffer, 32);
         memorySet(payload, 0xA5, 32);
         sbufShiftLeft(buffer, padding);
         memorySet(sbufGetMutablePtr(buffer), 0x5A, padding);
-        require(sbufGetLength(buffer) == padding + 32U, "micro prepend changed the logical payload length");
+        require(sbufGetLength(buffer) == padding + 32U, "splice prepend changed the logical payload length");
         for (uint32_t j = 0; j < 32; ++j)
         {
-            require(payload[j] == 0xA5, "micro prepend overlapped payload storage");
+            require(payload[j] == 0xA5, "splice prepend overlapped payload storage");
         }
         sbufDestroy(buffer);
     }
@@ -315,11 +315,11 @@ static void requirePoolCreateRejects(uint32_t large_buffer_size, uint32_t small_
 {
     master_pool_t *large_master = masterpoolCreateWithCapacity(64);
     master_pool_t *small_master = masterpoolCreateWithCapacity(64);
-    master_pool_t *micro_master = masterpoolCreateWithCapacity(64);
+    master_pool_t *splice_master = masterpoolCreateWithCapacity(64);
     require(large_master != NULL && small_master != NULL, "failed to create buffer-pool masters");
 
     buffer_pool_t *pool =
-        bufferpoolCreate(large_master, small_master, micro_master, 1, large_buffer_size, small_buffer_size);
+        bufferpoolCreate(large_master, small_master, splice_master, 1, large_buffer_size, small_buffer_size);
     const bool     rejected = pool == NULL;
     if (pool != NULL)
     {
@@ -327,10 +327,10 @@ static void requirePoolCreateRejects(uint32_t large_buffer_size, uint32_t small_
     }
     masterpoolMakeEmpty(large_master);
     masterpoolMakeEmpty(small_master);
-    masterpoolMakeEmpty(micro_master);
+    masterpoolMakeEmpty(splice_master);
     masterpoolDestroy(large_master);
     masterpoolDestroy(small_master);
-    masterpoolDestroy(micro_master);
+    masterpoolDestroy(splice_master);
 
     char message[128];
     snprintf(message, sizeof(message), "bufferpoolCreate() accepted an unrepresentable %s buffer size", which);
@@ -352,9 +352,9 @@ static void testPoolRoundsRepresentableBufferSizes(void)
 {
     master_pool_t *large_master = masterpoolCreateWithCapacity(64);
     master_pool_t *small_master = masterpoolCreateWithCapacity(64);
-    master_pool_t *micro_master = masterpoolCreateWithCapacity(64);
+    master_pool_t *splice_master = masterpoolCreateWithCapacity(64);
 
-    buffer_pool_t *pool = bufferpoolCreate(large_master, small_master, micro_master, 1, (uint32_t) kLine + 1, 1);
+    buffer_pool_t *pool = bufferpoolCreate(large_master, small_master, splice_master, 1, (uint32_t) kLine + 1, 1);
     require(pool != NULL, "bufferpoolCreate() rejected a representable geometry");
 
     require(bufferpoolGetLargeBufferSize(pool) == computeOrFail(kLine + 1, 0, "the helper rejected a pool large size"),
@@ -365,17 +365,17 @@ static void testPoolRoundsRepresentableBufferSizes(void)
     bufferpoolDestroy(pool);
     masterpoolMakeEmpty(large_master);
     masterpoolMakeEmpty(small_master);
-    masterpoolMakeEmpty(micro_master);
+    masterpoolMakeEmpty(splice_master);
     masterpoolDestroy(large_master);
     masterpoolDestroy(small_master);
-    masterpoolDestroy(micro_master);
+    masterpoolDestroy(splice_master);
 }
 
 int main(void)
 {
     testRoundsUpToCacheLines();
     testPaddingIsAlignedAndAdded();
-    testMicroCapacityAndPadding();
+    testSpliceCapacityAndPadding();
     testUnrepresentableRequestsAreRejected();
     testFullAllocationMustFitInSizeT();
     testMuxEncodedLengthBoundary();

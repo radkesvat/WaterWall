@@ -1,3 +1,4 @@
+#include "wio_fd_pool_fixture.h"
 #include "wwapi.h"
 
 #include "threadsafe_generic_pool.h"
@@ -47,9 +48,9 @@ int main(void)
 {
     master_pool_t             *large_master = masterpoolCreateWithCapacity(8);
     master_pool_t             *small_master = masterpoolCreateWithCapacity(8);
-    master_pool_t             *micro_master = masterpoolCreateWithCapacity(8);
+    master_pool_t             *splice_master = masterpoolCreateWithCapacity(8);
     master_pool_t             *wio_master   = masterpoolCreateWithCapacity(8);
-    buffer_pool_t             *buffer_pool  = bufferpoolCreate(large_master, small_master, micro_master, 8, 8192, 1024);
+    buffer_pool_t             *buffer_pool = bufferpoolCreate(large_master, small_master, splice_master, 8, 8192, 1024);
     threadsafe_generic_pool_t *wio_pool =
         threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(wio_master, sizeof(wio_t), 8);
     threadsafe_generic_pool_t *wio_pools[] = {wio_pool};
@@ -57,6 +58,8 @@ int main(void)
     GSTATE.flag_initialized = true;
     GSTATE.workers_count    = 2;
     testWorkerRegistryInstall(&g_test_worker_registry);
+    test_wio_fd_pool_t fd_handles = {0};
+    testWioFdPoolSetup(&fd_handles);
     GSTATE.shortcut_wios_pools = wio_pools;
     testWorkerBindWID(0);
 
@@ -95,6 +98,7 @@ int main(void)
 
     closesocket(sender);
     wloopDestroy(&loop);
+    testWioFdPoolTeardown(&fd_handles);
     GSTATE.shortcut_wios_pools = NULL;
 
     threadsafegenericpoolDestroy(wio_pool);
@@ -103,10 +107,10 @@ int main(void)
     masterpoolMakeEmpty(wio_master);
     masterpoolMakeEmpty(large_master);
     masterpoolMakeEmpty(small_master);
-    masterpoolMakeEmpty(micro_master);
+    masterpoolMakeEmpty(splice_master);
     masterpoolDestroy(wio_master);
     masterpoolDestroy(large_master);
     masterpoolDestroy(small_master);
-    masterpoolDestroy(micro_master);
+    masterpoolDestroy(splice_master);
     return 0;
 }

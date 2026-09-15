@@ -1,5 +1,6 @@
 #include "AuthenticationClient/structure.h"
 #include "HttpProxyServer/structure.h"
+#include "wio_fd_pool_fixture.h"
 
 /* Real pool-backed lines and callbacks, with no sockets or linker wrapping. */
 static tunnel_t *proxy, *prev, *next;
@@ -165,7 +166,7 @@ static void resetClient(tunnel_chain_t *chain)
     refuse                                  = false;
     automatic_response                      = true;
     child                                   = NULL;
-    client                                  = lineCreateForWorker(0, chain->line_pools, 0, chain->tunnels.len);
+    client                                  = lineCreateForWorker(0, chain->line_pools, 0);
     lineRef(client); /* test observation reference */
     lineGetRoutingContext(client)->local_listener_port = 8080;
     lineGetRoutingContext(client)->peer_source_port    = 54321;
@@ -428,13 +429,15 @@ int main(void)
     GSTATE.flag_initialized = true;
     GSTATE.workers_count    = 2;
     master_pool_t *large = masterpoolCreateWithCapacity(8), *small = masterpoolCreateWithCapacity(8);
-    master_pool_t *micro = masterpoolCreateWithCapacity(8);
+    master_pool_t *splice = masterpoolCreateWithCapacity(8);
     master_pool_t *ios  = masterpoolCreateWithCapacity(8);
-    buffer_pool_t *pool  = bufferpoolCreate(large, small, micro, 4, 16384, 1024);
+    buffer_pool_t *pool   = bufferpoolCreate(large, small, splice, 4, 16384, 1024);
     bufferpoolUpdateAllocationPaddings(pool, 64, 64, 64);
     threadsafe_generic_pool_t *io_pool =
         threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(ios, sizeof(wio_t), 8);
     GSTATE.shortcut_buffer_pools = &pool;
+    test_wio_fd_pool_t fd_handles = {0};
+    testWioFdPoolSetup(&fd_handles);
     GSTATE.shortcut_wios_pools   = &io_pool;
     wloop_t *loop                = wloopCreate(WLOOP_FLAG_AUTO_FREE, pool, 0);
     GSTATE.shortcut_loops        = &loop;
@@ -670,16 +673,17 @@ int main(void)
     tunnelchainDestroy(chain);
     cJSON_Delete(node.node_settings_json);
     wloopDestroy(&loop);
+    testWioFdPoolTeardown(&fd_handles);
     testWorkerUnbindWID();
     threadsafegenericpoolDestroy(io_pool);
     bufferpoolDestroy(pool);
     masterpoolMakeEmpty(large);
     masterpoolMakeEmpty(small);
-    masterpoolMakeEmpty(micro);
+    masterpoolMakeEmpty(splice);
     masterpoolMakeEmpty(ios);
     masterpoolDestroy(large);
     masterpoolDestroy(small);
-    masterpoolDestroy(micro);
+    masterpoolDestroy(splice);
     masterpoolDestroy(ios);
     puts("http_proxy_server_lifecycle: passed");
     return 0;

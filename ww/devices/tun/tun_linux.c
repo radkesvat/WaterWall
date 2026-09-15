@@ -1629,12 +1629,12 @@ bool tundeviceBringUp(tun_device_t *tdev)
     bufferpoolUpdateAllocationPaddings(tdev->reader_buffer_pool,
                                        bufferpoolGetLargeBufferPadding(worker_pool),
                                        bufferpoolGetSmallBufferPadding(worker_pool),
-                                       bufferpoolGetMicroBufferPadding(worker_pool));
+                                       bufferpoolGetSpliceBufferPadding(worker_pool));
 
     bufferpoolUpdateAllocationPaddings(tdev->writer_buffer_pool,
                                        bufferpoolGetLargeBufferPadding(worker_pool),
                                        bufferpoolGetSmallBufferPadding(worker_pool),
-                                       bufferpoolGetMicroBufferPadding(worker_pool));
+                                       bufferpoolGetSpliceBufferPadding(worker_pool));
 
     if (! deviceWriterChannelOpen(&tdev->writer_channel, kTunWriteChannelQueueMax))
     {
@@ -1937,7 +1937,7 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void
 
     buffer_pool_t *reader_bpool = bufferpoolCreate(GSTATE.masterpool_buffer_pools_large,
                                                    GSTATE.masterpool_buffer_pools_small,
-                                                   GSTATE.masterpool_buffer_pools_micro,
+                                                   GSTATE.masterpool_buffer_pools_splice,
                                                    RAM_PROFILE,
                                                    worker_large_buffer_size,
                                                    worker_small_buffer_size
@@ -1952,7 +1952,7 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void
 
     buffer_pool_t *writer_bpool = bufferpoolCreate(GSTATE.masterpool_buffer_pools_large,
                                                    GSTATE.masterpool_buffer_pools_small,
-                                                   GSTATE.masterpool_buffer_pools_micro,
+                                                   GSTATE.masterpool_buffer_pools_splice,
                                                    RAM_PROFILE,
                                                    worker_large_buffer_size,
                                                    worker_small_buffer_size

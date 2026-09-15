@@ -377,7 +377,7 @@ static void udpstatelesssocketHandleRecvFrom(tunnel_t *t, wio_t *io, sbuf_t *buf
             return;
         }
 
-        line_t *l = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), wid, tunnelGetChain(t)->tunnels.len);
+        line_t *l = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), wid);
 
         udpstatelesssocket_lstate_t *ls = lineGetState(l, t);
         udpstatelesssocketLinestateInitialize(ls, l, t, idle, &peer_addr, &local_addr);

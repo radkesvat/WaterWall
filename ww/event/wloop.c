@@ -605,7 +605,7 @@ static void eventFDReadCB(wio_t *io, sbuf_t *buf)
 
 bool wloopIOIsControl(const wio_t *io)
 {
-    return io != NULL && io->loop != NULL && io->fd == io->loop->eventfds[EVENTFDS_READ_INDEX] &&
+    return io != NULL && io->loop != NULL && io->io_slot == io->loop->eventfds[EVENTFDS_READ_INDEX] &&
            io->read_cb == eventFDReadCB;
 }
 
@@ -1872,6 +1872,11 @@ wio_t *wioGet(wloop_t *loop, int fd)
         return NULL;
     }
     wio_t *io = __wio_get(loop, fd);
+    if (io != NULL && io->closed && io->fd_handle != NULL)
+    {
+        // The close callback still has access to this descriptor; do not reopen its wrapper mid-close.
+        return NULL;
+    }
 #ifdef EVENT_IOCP
     if (io != NULL && io->closed)
     {
@@ -1897,10 +1902,14 @@ wio_t *wioGet(wloop_t *loop, int fd)
         wioInit(io);
         io->event_type    = WEVENT_TYPE_IO;
         io->loop          = loop;
-        io->fd            = fd;
+        io->io_slot       = fd;
         loop->ios.ptr[fd] = io;
     }
-    io->fd = fd;
+    if (io->fd_handle == NULL)
+    {
+        io->fd_handle = wiofdCreate(fd);
+    }
+    assert(wioGetFD(io) == fd);
 
     if (! io->ready)
     {
@@ -1912,12 +1921,12 @@ wio_t *wioGet(wloop_t *loop, int fd)
 
 void wioDetach(wio_t *io)
 {
-    assert(io->fd >= 0);
+    assert(wioGetFD(io) >= 0);
     assert((io->events & WW_READ) != WW_READ);
     assert((io->events & WW_WRITE) != WW_WRITE);
 
     wloop_t *loop = io->loop;
-    int      fd   = io->fd;
+    int      fd   = wioGetFD(io);
     assert(loop != NULL && fd < (int) loop->ios.maxsize);
     loop->ios.ptr[fd] = NULL;
 }
@@ -1937,7 +1946,7 @@ void wioAttach(wloop_t *loop, wio_t *io)
         abortProgramNow(1);
     }
 
-    int fd = io->fd;
+    int fd = wioGetFD(io);
     if (UNLIKELY(fd < 0 || fd > WIO_MAX_FD))
     {
         wloge("wioAttach rejected fd=%d outside supported range 0..%d", fd, WIO_MAX_FD);
@@ -1955,6 +1964,7 @@ void wioAttach(wloop_t *loop, wio_t *io)
     }
 
     io->loop          = loop;
+    io->io_slot       = fd;
     loop->ios.ptr[fd] = io;
 }
 
@@ -1966,7 +1976,7 @@ static void wioReleaseNoCloseNow(wio_t *io)
     }
 
     wloop_t *loop = io->loop;
-    int      fd   = io->fd;
+    int      fd   = io->io_slot;
 
 #ifdef EVENT_IOCP
     /*
@@ -2004,6 +2014,7 @@ static void wioReleaseNoCloseNow(wio_t *io)
     wioDelKeepaliveTimer(io);
     wioDelHeartBeatTimer(io);
     wioDone(io);
+    wioReleaseFDHandle(io, true);
 
     io->release_no_close = 0;
 #ifdef EVENT_IOCP
@@ -2012,9 +2023,10 @@ static void wioReleaseNoCloseNow(wio_t *io)
     wioIocpFinalizeDeferred(io);
 #else
     io->destroy = 1;
-    EVENTLOOP_FREE(io->localaddr);
-    EVENTLOOP_FREE(io->peeraddr);
-    threadsafegenericpoolReuseItem(getWorkerWiosPool(loop->wid), io);
+    if (! io->close_in_progress)
+    {
+        wioFinalizeNow(io);
+    }
 #endif
 }
 
@@ -2061,7 +2073,7 @@ void wioReleaseNoClose(wio_t *io)
     }
 
     wloop_t *loop        = io->loop;
-    int      fd          = io->fd;
+    int      fd          = io->io_slot;
     bool     was_pending = io->pending;
 
     assert(loop != NULL);
@@ -2122,10 +2134,14 @@ bool wioExists(wloop_t *loop, int fd)
 
 static int wioAddWithNormalAuthority(wio_t *io, wio_cb cb, int events, bool already_admitted)
 {
-    printd("wioAdd fd=%d io->events=%d events=%d\n", io->fd, io->events, events);
+    printd("wioAdd fd=%d io->events=%d events=%d\n", wioGetFD(io), io->events, events);
+    if (io->fd_handle == NULL)
+    {
+        return -1;
+    }
 #ifdef OS_WIN
     // Windows iowatcher not work on stdio
-    if (io->fd < 3)
+    if (wioGetFD(io) < 3)
         return -1;
 #endif
     wloop_t *loop = io->loop;
@@ -2150,8 +2166,8 @@ static int wioAddWithNormalAuthority(wio_t *io, wio_cb cb, int events, bool alre
 
     if (! (io->events & events))
     {
-        // printDebug("wioAdd: fd=%x on loop wid %d, real wid %d\n", io->fd, loop->wid, getWID());
-        int add_error = iowatcherAddEvent(loop, io->fd, events);
+        // printDebug("wioAdd: fd=%x on loop wid %d, real wid %d\n", wioGetFD(io), loop->wid, getWID());
+        int add_error = iowatcherAddEvent(loop, wioGetFD(io), events);
         if (UNLIKELY(add_error != 0))
         {
             io->error = add_error < 0 ? -add_error : add_error;
@@ -2162,6 +2178,11 @@ static int wioAddWithNormalAuthority(wio_t *io, wio_cb cb, int events, bool alre
             return add_error;
         }
         io->events |= events;
+    }
+
+    if (events & WW_READ)
+    {
+        io->read_started = 1;
     }
 
     if (! io->active)
@@ -2193,10 +2214,10 @@ int wioAddAlreadyAdmitted(wio_t *io, wio_cb cb, int events)
 
 int wioDel(wio_t *io, int events)
 {
-    printd("wioDel fd=%d io->events=%d events=%d\n", io->fd, io->events, events);
+    printd("wioDel fd=%d io->events=%d events=%d\n", wioGetFD(io), io->events, events);
 #ifdef OS_WIN
     // Windows iowatcher not work on stdio
-    if (io->fd < 3)
+    if (wioGetFD(io) < 3)
         return -1;
 #endif
     if (! io->active)
@@ -2204,7 +2225,7 @@ int wioDel(wio_t *io, int events)
 
     if (io->events & events)
     {
-        // printDebug("wioDel: fd=%x on loop wid %d, real wid %d\n", io->fd, io->loop->wid, getWID());
+        // printDebug("wioDel: fd=%x on loop wid %d, real wid %d\n", wioGetFD(io), io->loop->wid, getWID());
 #ifdef EVENT_IOCP
         /*
          * wioFree detaches the descriptor-table entry before closing. Native
@@ -2213,7 +2234,7 @@ int wioDel(wio_t *io, int events)
          */
         wioIocpCancel(io, events, WOVERLAPPED_CANCEL_STOP);
 #else
-        iowatcherDelEvent(io->loop, io->fd, events);
+        iowatcherDelEvent(io->loop, wioGetFD(io), events);
 #endif
         io->events &= ~events;
     }

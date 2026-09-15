@@ -100,8 +100,20 @@ void tcplistenerOnInboundConnected(wevent_t *ev)
 
     wioAttach(loop, io);
 
-    line_t *l = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), wid, tunnelGetChain(t)->tunnels.len);
-    tcplistener_lstate_t *ls = lineGetState(l, t);
+    tunnel_chain_t *chain = tunnelGetChain(t);
+    if (chain->supports_splice)
+    {
+        if (UNLIKELY(wioEnableSplice(io) != 0))
+        {
+            LOGE("TcpListener: failed to initialize splice pipe for FD:%x (errno:%d)", wioGetFD(io), errno);
+            wioFree(io);
+            socketacceptresultDestroy(data);
+            return;
+        }
+    }
+
+    line_t               *l     = lineCreate(tunnelchainGetLinePools(chain), wid);
+    tcplistener_lstate_t *ls    = lineGetState(l, t);
 
     tcplistenerLinestateInitialize(ls, io, t, l);
 
@@ -115,7 +127,6 @@ void tcplistenerOnInboundConnected(wevent_t *ev)
     l->routing_context.local_listener_port = data->real_localport;
 
     weventSetUserData(io, ls);
-    wioSetSpliceContext(io, l->splice_context);
 
     if (loggerCheckWriteLevel(getNetworkLogger(), LOG_LEVEL_DEBUG))
     {

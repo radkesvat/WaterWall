@@ -184,7 +184,7 @@ typedef struct shaping_pool_s
 {
     master_pool_t *large_master;
     master_pool_t *small_master;
-    master_pool_t *micro_master;
+    master_pool_t *splice_master;
     buffer_pool_t *pool;
 } shaping_pool_t;
 
@@ -193,8 +193,8 @@ static shaping_pool_t createPool(void)
     shaping_pool_t result = {0};
     result.large_master   = masterpoolCreateWithCapacity(8);
     result.small_master   = masterpoolCreateWithCapacity(8);
-    result.micro_master   = masterpoolCreateWithCapacity(8);
-    result.pool = bufferpoolCreate(result.large_master, result.small_master, result.micro_master, 4, 32768, 1024);
+    result.splice_master  = masterpoolCreateWithCapacity(8);
+    result.pool = bufferpoolCreate(result.large_master, result.small_master, result.splice_master, 4, 32768, 1024);
     require(result.large_master != NULL && result.small_master != NULL && result.pool != NULL,
             "failed to create shaping output test pool");
     bufferpoolUpdateAllocationPaddings(result.pool, 64, 64, 64);
@@ -206,10 +206,10 @@ static void destroyPool(shaping_pool_t *pool)
     bufferpoolDestroy(pool->pool);
     masterpoolMakeEmpty(pool->large_master);
     masterpoolMakeEmpty(pool->small_master);
-    masterpoolMakeEmpty(pool->micro_master);
+    masterpoolMakeEmpty(pool->splice_master);
     masterpoolDestroy(pool->large_master);
     masterpoolDestroy(pool->small_master);
-    masterpoolDestroy(pool->micro_master);
+    masterpoolDestroy(pool->splice_master);
 }
 
 static size_t appendRecord(uint8_t *destination, size_t body_length, uint8_t fill)

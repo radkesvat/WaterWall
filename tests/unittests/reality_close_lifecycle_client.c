@@ -111,7 +111,7 @@ typedef struct client_lifecycle_fixture_s
 {
     master_pool_t             *large_master;
     master_pool_t             *small_master;
-    master_pool_t             *micro_master;
+    master_pool_t             *splice_master;
     buffer_pool_t             *pool;
     buffer_pool_t             *shortcut[1];
     buffer_pool_t            **saved_shortcuts;
@@ -367,9 +367,9 @@ static void clientFixtureInitialize(client_lifecycle_fixture_t *fixture)
     GSTATE.workers_count    = 2;
     fixture->large_master   = masterpoolCreateWithCapacity(8);
     fixture->small_master   = masterpoolCreateWithCapacity(8);
-    fixture->micro_master   = masterpoolCreateWithCapacity(8);
+    fixture->splice_master  = masterpoolCreateWithCapacity(8);
     fixture->pool =
-        bufferpoolCreate(fixture->large_master, fixture->small_master, fixture->micro_master, 8, 8192, 1024);
+        bufferpoolCreate(fixture->large_master, fixture->small_master, fixture->splice_master, 8, 8192, 1024);
     bufferpoolUpdateAllocationPaddings(fixture->pool,
                                        kRealityClientMaxFramePrefixSize,
                                        kRealityClientMaxFramePrefixSize,
@@ -475,7 +475,7 @@ static void clientFixtureDestroy(client_lifecycle_fixture_t *fixture)
         requireClient(tls_state[i] == 0, "client TLS handoff fixture did not zero retained state");
     }
 
-    requireClient(atomic_load(&fixture->line->refc) == 1, "client lifecycle line reference leaked");
+    requireClient(atomicLoadU32(&fixture->line->refc) == 1, "client lifecycle line reference leaked");
     WW_BSSL_SSL_free(fixture->tls_server_ssl);
     WW_BSSL_SSL_CTX_free(fixture->tls_server_ctx);
     WW_BSSL_SSL_CTX_free(fixture->tls_client_ctx);
@@ -495,10 +495,10 @@ static void clientFixtureDestroy(client_lifecycle_fixture_t *fixture)
     bufferpoolDestroy(fixture->pool);
     masterpoolMakeEmpty(fixture->large_master);
     masterpoolMakeEmpty(fixture->small_master);
-    masterpoolMakeEmpty(fixture->micro_master);
+    masterpoolMakeEmpty(fixture->splice_master);
     masterpoolDestroy(fixture->large_master);
     masterpoolDestroy(fixture->small_master);
-    masterpoolDestroy(fixture->micro_master);
+    masterpoolDestroy(fixture->splice_master);
 }
 
 static void runClientScenario(void (*action)(tunnel_t *, line_t *), const char *expected, bool kill_on_payload,
@@ -1472,8 +1472,8 @@ static void runClientSizingCase(uint16_t tls_version, const reality_v2_record_pr
 {
     master_pool_t *large_master = masterpoolCreateWithCapacity(8);
     master_pool_t *small_master = masterpoolCreateWithCapacity(8);
-    master_pool_t *micro_master = masterpoolCreateWithCapacity(8);
-    buffer_pool_t *pool         = bufferpoolCreate(large_master, small_master, micro_master, 8, 65536, 1024);
+    master_pool_t *splice_master = masterpoolCreateWithCapacity(8);
+    buffer_pool_t *pool          = bufferpoolCreate(large_master, small_master, splice_master, 8, 65536, 1024);
     bufferpoolUpdateAllocationPaddings(
         pool, kRealityClientMaxFramePrefixSize, kRealityClientMaxFramePrefixSize, kRealityClientMaxFramePrefixSize);
     buffer_pool_t  *shortcut[1]         = {pool};
@@ -1556,7 +1556,7 @@ static void runClientSizingCase(uint16_t tls_version, const reality_v2_record_pr
 
     realityclientLinestateDestroy(ls);
     memoryFree(expected_bytes);
-    requireClient(atomic_load(&line->refc) == 1, "client sizing line reference leaked");
+    requireClient(atomicLoadU32(&line->refc) == 1, "client sizing line reference leaked");
     memoryFreeAligned(line);
     tunnelDestroy(reality);
     tunnelDestroy(capture);
@@ -1566,10 +1566,10 @@ static void runClientSizingCase(uint16_t tls_version, const reality_v2_record_pr
     bufferpoolDestroy(pool);
     masterpoolMakeEmpty(large_master);
     masterpoolMakeEmpty(small_master);
-    masterpoolMakeEmpty(micro_master);
+    masterpoolMakeEmpty(splice_master);
     masterpoolDestroy(large_master);
     masterpoolDestroy(small_master);
-    masterpoolDestroy(micro_master);
+    masterpoolDestroy(splice_master);
 }
 
 void realityTestClientRecordSizing(void)

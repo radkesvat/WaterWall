@@ -46,7 +46,7 @@ typedef struct test_env_s
 {
     master_pool_t *large_master;
     master_pool_t *small_master;
-    master_pool_t *micro_master;
+    master_pool_t *splice_master;
     buffer_pool_t *buffer_pools[2];
 } test_env_t;
 
@@ -261,14 +261,14 @@ static void envSetup(test_env_t *env)
     memoryZero(env, sizeof(*env));
     env->large_master    = masterpoolCreateWithCapacity(64);
     env->small_master    = masterpoolCreateWithCapacity(64);
-    env->micro_master    = masterpoolCreateWithCapacity(64);
-    env->buffer_pools[0] = bufferpoolCreate(env->large_master, env->small_master, env->micro_master, 64, 8192, 4096);
-    env->buffer_pools[1] = bufferpoolCreate(env->large_master, env->small_master, env->micro_master, 64, 8192, 4096);
+    env->splice_master   = masterpoolCreateWithCapacity(64);
+    env->buffer_pools[0] = bufferpoolCreate(env->large_master, env->small_master, env->splice_master, 64, 8192, 4096);
+    env->buffer_pools[1] = bufferpoolCreate(env->large_master, env->small_master, env->splice_master, 64, 8192, 4096);
 
     GSTATE.shortcut_buffer_pools         = env->buffer_pools;
     GSTATE.masterpool_buffer_pools_large = env->large_master;
     GSTATE.masterpool_buffer_pools_small = env->small_master;
-    GSTATE.masterpool_buffer_pools_micro = env->micro_master;
+    GSTATE.masterpool_buffer_pools_splice = env->splice_master;
     GSTATE.workers_count                 = 3;
     testWorkerRegistryInstall(&g_test_worker_registry);
     testWorkerBindWID(0);
@@ -283,7 +283,7 @@ static void envTeardown(test_env_t *env)
     GSTATE.shortcut_buffer_pools         = NULL;
     GSTATE.masterpool_buffer_pools_large = NULL;
     GSTATE.masterpool_buffer_pools_small = NULL;
-    GSTATE.masterpool_buffer_pools_micro = NULL;
+    GSTATE.masterpool_buffer_pools_splice = NULL;
     frandThreadCleanup();
     frandGlobalCleanup();
     globalstateDestroySecureRandom();
@@ -294,16 +294,16 @@ static void envTeardown(test_env_t *env)
     bufferpoolDestroy(env->buffer_pools[1]);
     masterpoolMakeEmpty(env->large_master);
     masterpoolMakeEmpty(env->small_master);
-    masterpoolMakeEmpty(env->micro_master);
+    masterpoolMakeEmpty(env->splice_master);
     masterpoolDestroy(env->large_master);
     masterpoolDestroy(env->small_master);
-    masterpoolDestroy(env->micro_master);
+    masterpoolDestroy(env->splice_master);
 }
 
 static void initializeLine(line_t *line, wid_t wid)
 {
     memoryZero(line, sizeof(*line));
-    atomicStoreRelaxed(&line->refc, 1);
+    atomicStoreU32Relaxed(&line->refc, 1);
     line->alive = true;
     line->wid   = wid;
 }
@@ -942,14 +942,15 @@ static void testRejectedCrossWorkerHandoffLeavesPacketWithCaller(void)
             "rejected cross-worker handoff consumed the source packet");
     require(lineGetRecalculateChecksum(&foreign_line),
             "rejected cross-worker handoff cleared the source checksum intent");
-    require(atomicLoadRelaxed(&owner_line.refc) == 2, "rejected cross-worker handoff leaked the owner-line reference");
+    require(atomicLoadU32Relaxed(&owner_line.refc) == 2,
+            "rejected cross-worker handoff leaked the owner-line reference");
 
     ipmanipulatorDownStreamPayloadAfterSmuggleFin(t, &foreign_line, reverse);
     require(downstream_after_smuggle_fin_packets == 1 && replayed_downstream_checksum_intents[0],
             "rejected handoff did not fall through with its checksum intent");
 
     runTimedMessage(0);
-    require(atomicLoadRelaxed(&owner_line.refc) == 1, "rejected-handoff timeout leaked the owner-line reference");
+    require(atomicLoadU32Relaxed(&owner_line.refc) == 1, "rejected-handoff timeout leaked the owner-line reference");
     destroyTestTunnel(t);
 }
 
@@ -972,14 +973,14 @@ static void testCancelledCrossWorkerHandoffReleasesOwnerReference(void)
     sbuf_t *reverse = makeTcpPacket(1, 0xC0000201, 443, 0x0A000001, 12345, 200, 110, TCP_ACK | TCP_PSH, 8);
     require(smugglefintrickDownStreamPayload(t, &foreign_line, reverse),
             "cancellation fixture did not schedule a handoff");
-    require(atomicLoadRelaxed(&owner_line.refc) == 3,
+    require(atomicLoadU32Relaxed(&owner_line.refc) == 3,
             "handoff and timeout did not hold their expected owner-line references");
 
     cancelImmediateMessage(0);
-    require(atomicLoadRelaxed(&owner_line.refc) == 2, "handoff cancellation leaked the owner-line reference");
+    require(atomicLoadU32Relaxed(&owner_line.refc) == 2, "handoff cancellation leaked the owner-line reference");
 
     runTimedMessage(0);
-    require(atomicLoadRelaxed(&owner_line.refc) == 1, "timeout completion leaked the owner-line reference");
+    require(atomicLoadU32Relaxed(&owner_line.refc) == 1, "timeout completion leaked the owner-line reference");
     destroyTestTunnel(t);
 }
 
@@ -1111,7 +1112,7 @@ static void testDroppedScheduleReleasesPause(void)
     require(flow != NULL && ! flow->paused && flow->queued_packets_count == 0,
             "a rejected smuggle-fin release schedule left the flow paused");
     require(normal_upstream_packets == 1, "a rejected smuggle-fin release schedule did not replay the queued packet");
-    require(atomicLoadRelaxed(&line.refc) == 1, "rejected smuggle-fin release scheduling leaked a line reference");
+    require(atomicLoadU32Relaxed(&line.refc) == 1, "rejected smuggle-fin release scheduling leaked a line reference");
 
     destroyTestTunnel(t);
 }

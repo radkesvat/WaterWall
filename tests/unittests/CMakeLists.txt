@@ -74,6 +74,20 @@ if(TARGET HttpProxyServer)
 endif()
 
 if(TARGET ww)
+  if(LINUX)
+    add_executable(wio_fd_test wio_fd_test.c)
+    target_link_libraries(wio_fd_test PRIVATE ww)
+    target_link_options(wio_fd_test PRIVATE "-Wl,--wrap=pipe2")
+    add_dependencies(waterwall_unit_tests wio_fd_test)
+    add_waterwall_unit_test(waterwall.wio_fd_unit wio_fd_test "unit;event;fd;pipe;lifetime")
+
+    add_executable(wio_fd_no_splice_test wio_fd_test.c ${CMAKE_SOURCE_DIR}/ww/event/wevent.c)
+    target_compile_definitions(wio_fd_no_splice_test PRIVATE WW_HAVE_SPLICE=0)
+    target_link_libraries(wio_fd_no_splice_test PRIVATE ww)
+    add_dependencies(waterwall_unit_tests wio_fd_no_splice_test)
+    add_waterwall_unit_test(waterwall.wio_fd_no_splice_unit wio_fd_no_splice_test "unit;event;fd;lifetime")
+  endif()
+
   add_executable(restricted_config_test restricted_config_test.c)
   target_link_libraries(restricted_config_test PRIVATE ww)
   if(LINUX)
@@ -501,10 +515,6 @@ if(TARGET ww)
   add_waterwall_unit_test(waterwall.line_user_identifier_unit line_user_identifier_test "unit;net;line")
 
   add_executable(line_state_index_test line_state_index_test.c)
-  target_link_options(line_state_index_test PRIVATE
-    "-Wl,--wrap=memoryAllocateZero"
-    "-Wl,--wrap=splicecontextDestroy"
-  )
   target_link_libraries(line_state_index_test PRIVATE ww)
   add_dependencies(waterwall_unit_tests line_state_index_test)
 
@@ -553,14 +563,14 @@ if(TARGET ww)
 
   add_waterwall_unit_test(waterwall.buffer_pool_best_fit_unit buffer_pool_best_fit_test "unit;bufio;buffer-pool")
 
-  add_executable(buffer_pool_micro_test buffer_pool_micro_test.c)
-  target_link_libraries(buffer_pool_micro_test PRIVATE ww)
+  add_executable(buffer_pool_splice_test buffer_pool_splice_test.c)
+  target_link_libraries(buffer_pool_splice_test PRIVATE ww)
   if(LINUX)
-    target_compile_definitions(buffer_pool_micro_test PRIVATE WW_MICRO_POOL_FAILURE_TEST=1)
-    target_link_options(buffer_pool_micro_test PRIVATE "-Wl,--wrap=memoryAllocate")
+    target_compile_definitions(buffer_pool_splice_test PRIVATE WW_SPLICE_POOL_FAILURE_TEST=1)
+    target_link_options(buffer_pool_splice_test PRIVATE "-Wl,--wrap=memoryAllocate")
   endif()
-  add_dependencies(waterwall_unit_tests buffer_pool_micro_test)
-  add_waterwall_unit_test(waterwall.buffer_pool_micro_unit buffer_pool_micro_test "unit;bufio;buffer-pool;micro")
+  add_dependencies(waterwall_unit_tests buffer_pool_splice_test)
+  add_waterwall_unit_test(waterwall.buffer_pool_splice_unit buffer_pool_splice_test "unit;bufio;buffer-pool;splice")
 
   add_executable(packet_tunnel_test packet_tunnel_test.c)
   target_link_libraries(packet_tunnel_test PRIVATE ww)
@@ -1056,6 +1066,21 @@ if(TARGET ww)
       add_waterwall_unit_test(
         waterwall.node_layer_validation_unit
         node_layer_validation_test
+        "unit;node-manager;validation;layer;capabilities"
+      )
+
+      # Exercise unsupported-platform eligibility using the same production chain implementation.
+      add_executable(node_layer_validation_no_splice_test
+        node_layer_validation_test.c
+        ${CMAKE_SOURCE_DIR}/ww/net/chain.c
+      )
+      target_compile_definitions(node_layer_validation_no_splice_test PRIVATE WW_HAVE_SPLICE=0)
+      target_link_libraries(node_layer_validation_no_splice_test PRIVATE ww)
+      add_dependencies(waterwall_unit_tests node_layer_validation_no_splice_test)
+
+      add_waterwall_unit_test(
+        waterwall.node_layer_validation_no_splice_unit
+        node_layer_validation_no_splice_test
         "unit;node-manager;validation;layer;capabilities"
       )
     endif()

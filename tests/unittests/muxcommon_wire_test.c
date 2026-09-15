@@ -13,7 +13,7 @@ typedef struct test_pool_s
 {
     master_pool_t *large_master;
     master_pool_t *small_master;
-    master_pool_t *micro_master;
+    master_pool_t *splice_master;
     buffer_pool_t *pool;
 } test_pool_t;
 
@@ -37,15 +37,15 @@ static void require(bool condition, const char *message)
 static test_pool_t testPoolCreate(void)
 {
     test_pool_t result = {
-        .large_master = masterpoolCreateWithCapacity(kTestPoolCapacity),
-        .small_master = masterpoolCreateWithCapacity(kTestPoolCapacity),
-        .micro_master = masterpoolCreateWithCapacity(kTestPoolCapacity),
-        .pool         = NULL,
+        .large_master  = masterpoolCreateWithCapacity(kTestPoolCapacity),
+        .small_master  = masterpoolCreateWithCapacity(kTestPoolCapacity),
+        .splice_master = masterpoolCreateWithCapacity(kTestPoolCapacity),
+        .pool          = NULL,
     };
     require(result.large_master != NULL && result.small_master != NULL, "failed to create master pools");
 
     result.pool = bufferpoolCreate(
-        result.large_master, result.small_master, result.micro_master, kTestPoolCapacity, kTestLargeBufferSize, 1024);
+        result.large_master, result.small_master, result.splice_master, kTestPoolCapacity, kTestLargeBufferSize, 1024);
     require(result.pool != NULL, "failed to create buffer pool");
     bufferpoolUpdateAllocationPaddings(result.pool, kMuxFrameLength * 2U, kMuxFrameLength * 2U, kMuxFrameLength * 2U);
     return result;
@@ -56,10 +56,10 @@ static void testPoolDestroy(test_pool_t *test_pool)
     bufferpoolDestroy(test_pool->pool);
     masterpoolMakeEmpty(test_pool->large_master);
     masterpoolMakeEmpty(test_pool->small_master);
-    masterpoolMakeEmpty(test_pool->micro_master);
+    masterpoolMakeEmpty(test_pool->splice_master);
     masterpoolDestroy(test_pool->large_master);
     masterpoolDestroy(test_pool->small_master);
-    masterpoolDestroy(test_pool->micro_master);
+    masterpoolDestroy(test_pool->splice_master);
 }
 
 static uint8_t patternByte(uint32_t index)

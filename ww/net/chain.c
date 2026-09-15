@@ -174,7 +174,7 @@ void tunnelchainFinalize(tunnel_chain_t *tc)
     {
         if (tc->contains_packet_node)
         {
-            packet_lines[i] = lineCreateForWorker(0, tc->line_pools, i, tc->tunnels.len);
+            packet_lines[i] = lineCreateForWorker(0, tc->line_pools, i);
         }
         else
         {
@@ -183,6 +183,17 @@ void tunnelchainFinalize(tunnel_chain_t *tc)
     }
 
     globalstateUpdateAllocationPadding(tc->sum_padding_left);
+
+    // Topology expansion is complete, including helpers added by onSolvedTopology.
+    tc->supports_splice = WW_HAVE_SPLICE && ! tc->contains_packet_node && tc->tunnels.len != 0;
+    for (uint16_t i = 0; tc->supports_splice && i < tc->tunnels.len; ++i)
+    {
+        if ((tunnelGetNode(tc->tunnels.tuns[i])->flags & kNodeFlagSupportsSplice) == 0)
+        {
+            tc->supports_splice = false;
+            break;
+        }
+    }
     tc->finalized = true;
 }
 

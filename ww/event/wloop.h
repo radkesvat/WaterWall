@@ -23,8 +23,7 @@ typedef struct wtimer_s   wtimer_t;
 typedef struct wtimeout_s wtimeout_t;
 typedef struct wperiod_s  wperiod_t;
 typedef struct wio_s      wio_t;
-
-typedef struct splice_context_s splice_context_t;
+typedef struct wio_fd_s   wio_fd_t;
 
 typedef void (*wevent_cb)(wevent_t *ev);
 typedef void (*widle_cb)(widle_t *idle);
@@ -326,14 +325,62 @@ WW_EXPORT int    wioDel(wio_t *io, int events DEFAULT(WW_RDWR));
 WW_EXPORT void wioDetach(/*wloop_t* loop,*/ wio_t *io);
 WW_EXPORT void wioAttach(wloop_t *loop, wio_t *io);
 // Release a Waterwall watcher for an fd owned by another subsystem.
-// This removes loop interest and recycles the wio_t without closing io->fd.
+// This relinquishes the primary descriptor and releases WIO's descriptor-object reference.
 WW_EXPORT void wioReleaseNoClose(wio_t *io);
 WW_EXPORT bool wioExists(wloop_t *loop, int fd);
 
 // wio_t fields
 // NOTE: fd cannot be used as unique identifier, so we provide an id.
 WW_EXPORT uint32_t         wioGetID(wio_t *io);
-WW_EXPORT int              wioGetFD(wio_t *io);
+WW_EXPORT int              wioGetFD(const wio_t *io);
+// Borrow the shared descriptor object; retain with wiofdRef() before keeping it beyond WIO close.
+WW_EXPORT wio_fd_t *wioGetFDHandle(const wio_t *io);
+// Initialize the shared pipe on the WIO owner thread; returns 0 or -1 with errno set.
+WW_EXPORT int              wioInitPipe(wio_t *io);
+// Owner-thread mode selection, initially disabled for each newly adopted descriptor.
+// Enabling requires an open WIO whose read interest has never been registered;
+// stopping reads does not reset this precondition. Checked by debug assertions.
+// Initializes the pipe before enabling; returns 0 on success or -1 with errno set.
+WW_EXPORT int  wioEnableSplice(wio_t *io);
+WW_EXPORT void wioDisableSplice(wio_t *io);
+WW_EXPORT bool wioIsSpliceEnabled(const wio_t *io);
+/**
+ * Move the socket-backed body of a splice buffer into its descriptor's pipe.
+ * Requires Splice and SpliceFD set and SplicePiped clear; violations use LOGF
+ * and abort the program in every build.
+ * Requires no buffer-lifetime metadata, checked by a debug assertion.
+ * The wio_fd_t pointer is stored at buf + l_pad; curpos may expose a left prefix.
+ * Requires a nonblocking source socket, exclusive descriptor access, and a
+ * reservation covering the body. An uninitialized pipe logs with LOGF and
+ * aborts the program in every build; this helper never creates the pipe.
+ * Retries EINTR and reduces reserved by the actual transferred count. Full
+ * completion clears SpliceFD, sets SplicePiped, and returns the count; an empty
+ * body also completes. Temporarily, incomplete transfers (including EOF and
+ * splice errors) log with LOGF and abort, leaving flags unchanged. Short
+ * splices remain valid syscall outcomes and must not be assumed impossible.
+ * Unsupported builds return -1 with ENOSYS. Length, capacity, cursor, prefix
+ * bytes, and ownership remain unchanged.
+ */
+WW_EXPORT ssize_t          wioMoveSpliceBuferToPipe(sbuf_t *buf);
+/**
+ * Consume a splice wrapper into caller-supplied ordinary storage and return dest.
+ * Requires Splice and exactly one of SpliceFD/SplicePiped. Reads the body from
+ * handle->fd or handle->pipefd[0], copying any real prefix before it. Preserves
+ * the source cursor/remaining left headroom and total length; dest's allocation
+ * capacity and original l_pad stay unchanged. Replaces dest's previous payload.
+ * Insufficient storage for that cursor and complete payload, invalid flags, an
+ * uninitialized selected pipe, short reads, and all read errors (including EINTR)
+ * log with LOGF and abort in every build. An empty body needs no read syscall.
+ * Requires exclusive descriptor access and a reservation covering an FD-backed
+ * body; only source-FD reads reduce reserved, by the actual count read.
+ * Requires no lifetime metadata on buf, checked by a debug assertion. Destination
+ * lifetime metadata remains caller-managed; this helper leaves it untouched.
+ * Clears splice flags on dest and returns buf to the supplied worker buffer
+ * pool's splice tier. The caller must
+ * own this pool's thread context and must not use buf after this call.
+ * Unsupported builds log with LOGF and abort.
+ */
+WW_EXPORT sbuf_t          *wioTransformSpliceBufferToRealBuffer(sbuf_t *buf, sbuf_t *dest, buffer_pool_t *pool);
 WW_EXPORT int              wioGetError(wio_t *io);
 WW_EXPORT int              wioGetEvents(wio_t *io);
 WW_EXPORT int              wioGetREvents(wio_t *io);
@@ -347,11 +394,6 @@ WW_EXPORT void            *wioGetContext(wio_t *io);
 WW_EXPORT bool             wioIsOpened(wio_t *io);
 WW_EXPORT bool             wioIsConnected(wio_t *io);
 WW_EXPORT bool             wioIsClosed(wio_t *io);
-
-// Borrow a line's context on the owning worker; NULL detaches it. Attachment does not activate splicing.
-// Detach or close the WIO before releasing the line. Close clears the pointer before callbacks or deferred drain.
-WW_EXPORT void              wioSetSpliceContext(wio_t *io, splice_context_t *context);
-WW_EXPORT splice_context_t *wioGetSpliceContext(const wio_t *io);
 
 // iobuf
 // #include "hbuf.h"

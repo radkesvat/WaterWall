@@ -29,33 +29,45 @@ struct sbuf_lifetime_s
 enum
 {
     /**
-     * Represent pipe-backed payload with a small sbuf wrapper from a dedicated
-     * splice pool. Its actual buf storage is typically 64 bytes or less. The
-     * first four bytes at the original payload start (buf + l_pad) hold the
-     * pipe file descriptor; the preceding bytes remain reserved left padding.
+     * Represent kernel-backed payload with a splice sbuf wrapper whose actual
+     * payload storage is 32 bytes. A wio_fd_t pointer at the original payload
+     * start (buf + l_pad) identifies the source socket and its lazy pipe;
+     * the preceding bytes remain reserved left padding. The pointer stays
+     * at that fixed offset when a tunnel prepends bytes by shifting left.
      * Length and capacity account for that logical payload, not the wrapper's
      * physical storage, and must not be used as bounds for accessing buf bytes.
+     * Splice buffers must not carry sbuf_lifetime_t metadata; lifetime stays NULL.
      *
-     * Once every tunnel has unblocked the line's splice context, the splice
-     * path may supply these wrappers to ordinary Payload callbacks. Event-loop
+     * The splice path may supply these wrappers to ordinary Payload callbacks. Event-loop
      * I/O and splice-aware adapters (initially TcpListener and TcpConnector)
-     * interpret the descriptor. Tunnels that forward buffers opaquely and use
-     * only size-based accounting can usually keep their Payload code unchanged.
+     * interpret the descriptor. Tunnels that forward buffers synchronously
+     * and opaquely, using only size-based accounting, can usually keep their
+     * Payload code unchanged.
      * Participating tunnels trust the sizes without inspecting or modifying
-     * the pipe-backed body or its descriptor.
+     * the kernel-backed body or its descriptor pointer.
+     *
+     * A splice-bearing splice buffer must not be retained for deferred use or
+     * queued to another worker, the main thread, or a later callback on the
+     * same thread. Before deferring, use the dedicated splice helpers to
+     * consume all represented bytes via read() or splice(). Tunnel code must
+     * not bypass the helpers with raw I/O or queue an unconsumed wrapper.
      *
      * Reserved left padding remains real, writable storage. A tunnel may use
      * sbufShiftLeft() and write its prefix within the available, advertised
-     * headroom; the prefix precedes the pipe-backed body and the descriptor
+     * headroom; the prefix precedes the kernel-backed body and the pointer
      * stays at its original offset. This permission does not extend to the
      * descriptor or to the body represented by it.
      *
      * Accessors such as sbufGetMutablePtr() deliberately perform no splice-flag
      * checks or assertions. A returned pointer is not evidence that the logical
-     * body is resident in memory. Violating this contract can corrupt the pipe
-     * descriptor, break I/O, or crash the process; a crash is not guaranteed.
+     * body is resident in memory. Violating this contract can corrupt the
+     * descriptor pointer, break I/O, or crash the process; a crash is not guaranteed.
      */
-    kSbufFlagSplice = 1U << 0
+    kSbufFlagSplice = 1U << 0,
+    /** The body has been spliced into the pipe; meaningful only with kSbufFlagSplice. */
+    kSbufFlagSplicePiped = 1U << 1,
+    /** The body remains in the source file descriptor; meaningful only with kSbufFlagSplice. */
+    kSbufFlagSpliceFD = 1U << 2
 };
 
 struct sbuf_s
@@ -272,12 +284,13 @@ sbuf_t *sbufCreateWithPadding(uint32_t minimum_capacity, uint16_t pad_left);
 sbuf_t *sbufCreate(uint32_t minimum_capacity);
 
 /**
- * @brief Create an empty buffer with exactly 32 bytes of payload capacity plus left padding.
+ * @brief Create an empty splice wrapper with 32 bytes of control storage plus left padding.
  *
  * @param pad_left Requested left padding in bytes, rounded up to a 32-byte boundary.
- * @return sbuf_t* Newly allocated buffer with zero flags and length.
+ * @return sbuf_t* Empty wrapper with only kSbufFlagSplice set. The caller must
+ * initialize its descriptor pointer, location flags, and logical payload size before use.
  */
-sbuf_t *sbufCreateMicro(uint16_t pad_left);
+sbuf_t *sbufCreateSplice(uint16_t pad_left);
 
 /**
  * @brief Append one buffer's payload to another.

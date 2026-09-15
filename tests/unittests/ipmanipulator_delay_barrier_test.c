@@ -181,7 +181,7 @@ static void testKind(ipmanipulator_delay_barrier_kind_e kind)
     t->tstate_size = sizeof(ipmanipulator_tstate_t);
     t->next        = &next;
 
-    atomicStoreRelaxed(&line.refc, 1);
+    atomicStoreU32Relaxed(&line.refc, 1);
     line.alive = true;
     line.wid   = 0;
 
@@ -202,7 +202,7 @@ static void testKind(ipmanipulator_delay_barrier_kind_e kind)
     bool     needs_schedule = false;
 
     line_t foreign_line = {0};
-    atomicStoreRelaxed(&foreign_line.refc, 1);
+    atomicStoreU32Relaxed(&foreign_line.refc, 1);
     foreign_line.alive = true;
     foreign_line.wid   = 1;
 
@@ -251,7 +251,7 @@ static void testKind(ipmanipulator_delay_barrier_kind_e kind)
             "deadline release did not preserve FIFO/terminal order");
     require(ipmanipulatorFlowTableCount(tableForKind(state, kind)) == 0,
             "terminal FIFO release did not remove the flow");
-    require(atomicLoadRelaxed(&line.refc) == 1, "deadline release leaked retained line references");
+    require(atomicLoadU32Relaxed(&line.refc) == 1, "deadline release leaked retained line references");
 
     /* Reusing the exact tuple must allocate a generation no stale timer can match. */
     discard reserveEntry(state, kind, &key);
@@ -262,7 +262,7 @@ static void testKind(ipmanipulator_delay_barrier_kind_e kind)
             "old tuple generation could not retain a packet");
     ipmanipulatorFlowShardUnlock(shard);
     removeEntry(state, kind, &key);
-    require(atomicLoadRelaxed(&line.refc) == 1, "tuple removal leaked its retained line reference");
+    require(atomicLoadU32Relaxed(&line.refc) == 1, "tuple removal leaked its retained line reference");
 
     discard reserveEntry(state, kind, &key);
     barrier = findBarrierLocked(state, kind, &key, &shard);
@@ -305,7 +305,7 @@ static void testKind(ipmanipulator_delay_barrier_kind_e kind)
     ipmanipulatorDelayBarrierTestFire(t, &key, kind, generation);
     require(captured_count == 3 && captured_ids[0] == 30 && captured_ids[1] == 31 && captured_ids[2] == 32,
             "overdue ordered scheduler released the barrier before earlier transcript outputs");
-    require(atomicLoadRelaxed(&line.refc) == 1, "ordered transcript release leaked retained line references");
+    require(atomicLoadU32Relaxed(&line.refc) == 1, "ordered transcript release leaked retained line references");
 
     /* A schedule rejected before acceptance must flush the complete barrier. */
     removeEntry(state, kind, &key);
@@ -333,7 +333,7 @@ static void testKind(ipmanipulator_delay_barrier_kind_e kind)
     ipmanipulatorDelayBarrierTestSetScheduleFailure(false);
     require(captured_count == 3 && captured_ids[0] == 40 && captured_ids[1] == 41 && captured_ids[2] == 42,
             "rejected delay-barrier scheduling did not flush in order");
-    require(atomicLoadRelaxed(&line.refc) == 1, "rejected delay-barrier scheduling leaked line references");
+    require(atomicLoadU32Relaxed(&line.refc) == 1, "rejected delay-barrier scheduling leaked line references");
 
     /* A failed self-reschedule flushes all outputs that are not due yet. */
     removeEntry(state, kind, &key);
@@ -360,7 +360,7 @@ static void testKind(ipmanipulator_delay_barrier_kind_e kind)
     ipmanipulatorDelayBarrierTestSetScheduleFailure(false);
     require(captured_count == 3 && captured_ids[0] == 50 && captured_ids[1] == 51 && captured_ids[2] == 52,
             "failed delay-barrier self-reschedule did not flush the remainder in order");
-    require(atomicLoadRelaxed(&line.refc) == 1, "failed self-reschedule leaked line references");
+    require(atomicLoadU32Relaxed(&line.refc) == 1, "failed self-reschedule leaked line references");
 
     /* Model packet A immediately before the deadline and packet B arriving
      * after it while the timer callback is still pending. The call sites take
@@ -458,9 +458,9 @@ static void testKind(ipmanipulator_delay_barrier_kind_e kind)
     require(ipmanipulatorDelayBarrierTryEnqueue(t, kind, barrier, &line, makePacket(9), false, &needs_schedule),
             "destruction fixture could not retain a packet");
     ipmanipulatorFlowShardUnlock(shard);
-    require(atomicLoadRelaxed(&line.refc) == 2, "armed barrier did not retain its line");
+    require(atomicLoadU32Relaxed(&line.refc) == 2, "armed barrier did not retain its line");
     ipmanipulatorFlowTableDestroy(tableForKind(state, kind));
-    require(atomicLoadRelaxed(&line.refc) == 1, "flow-table destruction leaked an armed barrier reference");
+    require(atomicLoadU32Relaxed(&line.refc) == 1, "flow-table destruction leaked an armed barrier reference");
 
     memoryFreeAligned(t);
 }

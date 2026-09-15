@@ -82,9 +82,9 @@ static void captureFramedPayload(tunnel_t *next, line_t *line, sbuf_t *buf)
 
 static void initializePair(client_framing_fixture_t *fixture, client_pair_t *pair)
 {
-    pair->main_line     = lineCreate(tunnelchainGetLinePools(fixture->chain), 0, fixture->chain->tunnels.len);
-    pair->upload_line   = lineCreate(tunnelchainGetLinePools(fixture->chain), 0, fixture->chain->tunnels.len);
-    pair->download_line = lineCreate(tunnelchainGetLinePools(fixture->chain), 0, fixture->chain->tunnels.len);
+    pair->main_line     = lineCreate(tunnelchainGetLinePools(fixture->chain), 0);
+    pair->upload_line   = lineCreate(tunnelchainGetLinePools(fixture->chain), 0);
+    pair->download_line = lineCreate(tunnelchainGetLinePools(fixture->chain), 0);
 
     halfduplexclient_lstate_t *main_ls     = lineGetState(pair->main_line, fixture->halfduplex);
     halfduplexclient_lstate_t *upload_ls   = lineGetState(pair->upload_line, fixture->halfduplex);

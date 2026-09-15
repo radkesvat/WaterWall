@@ -739,8 +739,7 @@ line_t *packetstostreamEnsureOutputLine(tunnel_t *t, line_t *packet_line, packet
     ls->paused = false;
     bufferstreamEmpty(&ls->read_stream);
 
-    line_t *new_line =
-        lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), lineGetWID(packet_line), tunnelGetChain(t)->tunnels.len);
+    line_t *new_line = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), lineGetWID(packet_line));
     ls->line         = new_line;
 
     if (! lineCallWithRef(new_line, tunnelNextUpStreamInit, t))

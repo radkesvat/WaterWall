@@ -41,22 +41,25 @@ static void globalstateDestroyMasterPools(void)
 {
     masterpoolMakeEmpty(GSTATE.masterpool_buffer_pools_large);
     masterpoolMakeEmpty(GSTATE.masterpool_buffer_pools_small);
-    masterpoolMakeEmpty(GSTATE.masterpool_buffer_pools_micro);
+    masterpoolMakeEmpty(GSTATE.masterpool_buffer_pools_splice);
     masterpoolMakeEmpty(GSTATE.masterpool_wios);
+    masterpoolMakeEmpty(GSTATE.masterpool_wio_fds);
     masterpoolMakeEmpty(GSTATE.masterpool_context_pools);
     masterpoolMakeEmpty(GSTATE.masterpool_messages);
 
     masterpoolDestroy(GSTATE.masterpool_buffer_pools_large);
     masterpoolDestroy(GSTATE.masterpool_buffer_pools_small);
-    masterpoolDestroy(GSTATE.masterpool_buffer_pools_micro);
+    masterpoolDestroy(GSTATE.masterpool_buffer_pools_splice);
     masterpoolDestroy(GSTATE.masterpool_wios);
+    masterpoolDestroy(GSTATE.masterpool_wio_fds);
     masterpoolDestroy(GSTATE.masterpool_context_pools);
     masterpoolDestroy(GSTATE.masterpool_messages);
 
     GSTATE.masterpool_buffer_pools_large = NULL;
     GSTATE.masterpool_buffer_pools_small = NULL;
-    GSTATE.masterpool_buffer_pools_micro = NULL;
+    GSTATE.masterpool_buffer_pools_splice = NULL;
     GSTATE.masterpool_wios               = NULL;
+    GSTATE.masterpool_wio_fds            = NULL;
     GSTATE.masterpool_context_pools      = NULL;
     GSTATE.masterpool_messages           = NULL;
 }
@@ -72,18 +75,20 @@ static bool initializeMasterPools(void)
 {
     master_pool_t *large    = masterpoolCreateWithCapacity(2 * RAM_PROFILE);
     master_pool_t *small    = masterpoolCreateWithCapacity(2 * RAM_PROFILE);
-    master_pool_t *micro    = masterpoolCreateWithCapacity(2 * RAM_PROFILE);
+    master_pool_t *splice   = masterpoolCreateWithCapacity(2 * RAM_PROFILE);
     master_pool_t *wios     = masterpoolCreateWithCapacity(2 * RAM_PROFILE);
+    master_pool_t *wio_fds  = masterpoolCreateWithCapacity(2 * RAM_PROFILE);
     master_pool_t *contexts = masterpoolCreateWithCapacity(2 * RAM_PROFILE);
     master_pool_t *messages = masterpoolCreateWithCapacity(2 * RAM_PROFILE);
 
-    if (UNLIKELY(large == NULL || small == NULL || micro == NULL || wios == NULL || contexts == NULL ||
-                 messages == NULL))
+    if (UNLIKELY(large == NULL || small == NULL || splice == NULL || wios == NULL || wio_fds == NULL ||
+                 contexts == NULL || messages == NULL))
     {
         masterpoolDestroy(large);
         masterpoolDestroy(small);
-        masterpoolDestroy(micro);
+        masterpoolDestroy(splice);
         masterpoolDestroy(wios);
+        masterpoolDestroy(wio_fds);
         masterpoolDestroy(contexts);
         masterpoolDestroy(messages);
         printError("GlobalState: failed to construct master-pool metadata");
@@ -92,8 +97,9 @@ static bool initializeMasterPools(void)
 
     GSTATE.masterpool_buffer_pools_large = large;
     GSTATE.masterpool_buffer_pools_small = small;
-    GSTATE.masterpool_buffer_pools_micro = micro;
+    GSTATE.masterpool_buffer_pools_splice = splice;
     GSTATE.masterpool_wios               = wios;
+    GSTATE.masterpool_wio_fds            = wio_fds;
     GSTATE.masterpool_context_pools      = contexts;
     GSTATE.masterpool_messages           = messages;
 

@@ -173,8 +173,8 @@ static void reverseclientBeginConnectMessageReceived(worker_t *worker, void *arg
         return;
     }
 
-    line_t *ul = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), wid, tunnelGetChain(t)->tunnels.len);
-    line_t *dl = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), wid, tunnelGetChain(t)->tunnels.len);
+    line_t *ul = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), wid);
+    line_t *dl = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), wid);
 
     *pair = (reverseclient_pair_t) {.t = t, .u = ul, .d = dl, .phase = kReverseClientPairConnecting};
     reverseclientLinestateInitialize(lineGetState(ul, t), pair);

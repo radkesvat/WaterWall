@@ -18,8 +18,7 @@ static void speedtestclientStartStream(void *worker, void *arg1, void *arg2, voi
         return;
     }
 
-    line_t *l =
-        lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), real_worker->wid, tunnelGetChain(t)->tunnels.len);
+    line_t                   *l  = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), real_worker->wid);
     speedtestclient_lstate_t *ls = lineGetState(l, t);
 
     speedtestclientLinestateInitialize(ls, t, l, stream_id);

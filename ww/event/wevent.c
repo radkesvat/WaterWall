@@ -4,9 +4,312 @@
 #include "watomic.h"
 #include "werr.h"
 #include "wsocket.h"
+#if WW_HAVE_SPLICE
+#include <fcntl.h>
+#include <unistd.h>
+#endif
 #ifdef EVENT_IOCP
 #include "overlapio.h"
 #endif
+
+static pool_item_t *wiofdAllocateItem(generic_pool_t *pool)
+{
+    discard pool;
+    return memoryAllocateZero(sizeof(wio_fd_t));
+}
+
+static void wiofdFreeItem(pool_item_t *item)
+{
+    memoryFree(item);
+}
+
+static master_pool_item_t *wiofdAllocateSharedItem(void *userdata)
+{
+    discard userdata;
+    return wiofdAllocateItem(NULL);
+}
+
+generic_pool_t *wiofdCreatePool(master_pool_t *master, uint32_t capacity)
+{
+    generic_pool_t *pool = genericpoolCreateWithCapacity(master, capacity, wiofdAllocateItem, wiofdFreeItem);
+    if (pool != NULL)
+    {
+        genericpoolSetItemSize(pool, sizeof(wio_fd_t));
+        masterpoolInstallCallBacks(master, wiofdAllocateSharedItem, wiofdFreeItem);
+    }
+    return pool;
+}
+
+wio_fd_t *wiofdCreate(int fd)
+{
+    master_pool_t *master = GSTATE.masterpool_wio_fds;
+    assert(master != NULL);
+    worker_t       *worker = tryGetCurrentEventWorker();
+    generic_pool_t *pool   = worker != NULL ? worker->wio_fd_pool : NULL;
+    wio_fd_t       *handle;
+    if (pool != NULL)
+    {
+        assert(pool->mp == master);
+        handle = genericpoolGetItem(pool);
+    }
+    else
+    {
+        masterpoolRecordCheckout(master);
+        masterpoolGetItems(master, (master_pool_item_t **) &handle, 1, NULL);
+    }
+    *handle = (wio_fd_t) {.fd = fd, .pipefd = {0, 0}, .refc = 1, .reserved = 0, .is_socket = true};
+    return handle;
+}
+
+uint32_t wiofdGetRefCount(const wio_fd_t *handle)
+{
+    return atomicLoadU32Relaxed(&handle->refc);
+}
+
+void wiofdRef(wio_fd_t *handle)
+{
+    const uint32_t previous = atomicIncU32Relaxed(&handle->refc);
+    if (UNLIKELY(previous == 0 || previous == UINT32_MAX))
+    {
+        LOGF("wiofdRef: invalid descriptor reference count");
+        abortProgramNow(1);
+    }
+}
+
+void wiofdUnref(wio_fd_t *handle)
+{
+    const uint32_t previous = atomicDecU32Explicit(&handle->refc, memory_order_acq_rel);
+    if (UNLIKELY(previous == 0))
+    {
+        LOGF("wiofdUnref: descriptor reference count underflow");
+        abortProgramNow(1);
+    }
+    if (previous != 1)
+    {
+        return;
+    }
+
+    if (handle->fd >= 0)
+    {
+#ifdef OS_WIN
+        if (handle->is_socket)
+        {
+            closesocket(handle->fd);
+        }
+        else
+        {
+            _close(handle->fd);
+        }
+#else
+        close(handle->fd);
+#endif
+        handle->fd = -1;
+    }
+#if WW_HAVE_SPLICE
+    if (handle->pipefd[0] != 0 || handle->pipefd[1] != 0)
+    {
+        close(handle->pipefd[0]);
+        close(handle->pipefd[1]);
+        handle->pipefd[0] = handle->pipefd[1] = 0;
+    }
+#endif
+
+    master_pool_t  *master = GSTATE.masterpool_wio_fds;
+    worker_t       *worker = tryGetCurrentEventWorker();
+    generic_pool_t *pool   = worker != NULL ? worker->wio_fd_pool : NULL;
+    assert(master != NULL);
+    if (pool != NULL)
+    {
+        assert(pool->mp == master);
+        genericpoolReuseItem(pool, handle);
+    }
+    else
+    {
+        master_pool_item_t *item = handle;
+        masterpoolReuseItems(master, &item, 1);
+        masterpoolRecordReturn(master);
+    }
+}
+
+int wiofdInitPipe(wio_fd_t *handle)
+{
+#if WW_HAVE_SPLICE
+    if (handle->pipefd[0] != 0 || handle->pipefd[1] != 0)
+    {
+        return 0;
+    }
+    int pipefd[2];
+    if (pipe2(pipefd, O_NONBLOCK | O_CLOEXEC) != 0)
+    {
+        return -1;
+    }
+    handle->pipefd[0] = pipefd[0];
+    handle->pipefd[1] = pipefd[1];
+    return 0;
+#else
+    discard handle;
+    errno = ENOSYS;
+    return -1;
+#endif
+}
+
+ssize_t wioMoveSpliceBuferToPipe(sbuf_t *buf)
+{
+    // kSbufFlagSplice identifies the splice representation; capacity is logical.
+    if (UNLIKELY(buf == NULL || (buf->flags & kSbufFlagSplice) == 0 || (buf->flags & kSbufFlagSplicePiped) != 0 ||
+                 (buf->flags & kSbufFlagSpliceFD) == 0))
+    {
+        LOGF("wioMoveSpliceBuferToPipe: requires kSbufFlagSplice and kSbufFlagSpliceFD, "
+             "with kSbufFlagSplicePiped clear");
+        abortProgramNow(1);
+    }
+    assert(sbufGetLifetime(buf) == NULL && "Splice buffers must not carry lifetime metadata");
+#if WW_HAVE_SPLICE
+    assert(buf->curpos <= buf->l_pad);
+    const uint32_t prefix_bytes = (uint32_t) buf->l_pad - buf->curpos;
+    assert(buf->len >= prefix_bytes);
+    const uint32_t socket_bytes = buf->len - prefix_bytes;
+
+    wio_fd_t *handle;
+    static_assert(sizeof(handle) <= SPLICE_BUFFER_STORAGE_SIZE, "WIO descriptor pointer must fit in a splice buffer");
+    sbufByteCopy(&handle, buf->buf + buf->l_pad, sizeof(handle));
+    assert(handle != NULL && handle->reserved >= socket_bytes);
+    if (UNLIKELY(handle->pipefd[0] == 0 && handle->pipefd[1] == 0))
+    {
+        LOGF("wioMoveSpliceBuferToPipe: descriptor pipe must already be initialized");
+        abortProgramNow(1);
+    }
+
+    ssize_t consumed = 0;
+    if (socket_bytes != 0)
+    {
+        do
+        {
+            consumed = splice(handle->fd, NULL, handle->pipefd[1], NULL, socket_bytes, SPLICE_F_NONBLOCK);
+        } while (consumed < 0 && errno == EINTR);
+    }
+
+    if (consumed > 0)
+    {
+        handle->reserved -= (uint32_t) consumed;
+    }
+    if (consumed >= 0 && (uint32_t) consumed == socket_bytes)
+    {
+        buf->flags &= (uint16_t) ~kSbufFlagSpliceFD;
+        buf->flags |= kSbufFlagSplicePiped;
+    }
+    else
+    {
+        // TODO: Replace this temporary fatal policy with partial-transfer/error handling.
+        // Short splices are valid; reservation accounting must keep using the actual result.
+        const int splice_error = consumed < 0 ? errno : 0;
+        LOGF("wioMoveSpliceBuferToPipe: incomplete splice (requested=%u, result=%lld, errno=%d)",
+             (unsigned int) socket_bytes,
+             (long long) consumed,
+             splice_error);
+        abortProgramNow(1);
+    }
+    return consumed;
+#else
+    discard buf;
+    errno = ENOSYS;
+    return -1;
+#endif
+}
+
+sbuf_t *wioTransformSpliceBufferToRealBuffer(sbuf_t *buf, sbuf_t *dest, buffer_pool_t *pool)
+{
+    if (UNLIKELY(buf == NULL || (buf->flags & kSbufFlagSplice) == 0))
+    {
+        LOGF("wioTransformSpliceBufferToRealBuffer: requires kSbufFlagSplice");
+        abortProgramNow(1);
+    }
+    assert(sbufGetLifetime(buf) == NULL && "Splice buffers must not carry lifetime metadata");
+    const uint16_t location = buf->flags & (kSbufFlagSpliceFD | kSbufFlagSplicePiped);
+    if (UNLIKELY(location != kSbufFlagSpliceFD && location != kSbufFlagSplicePiped))
+    {
+        LOGF("wioTransformSpliceBufferToRealBuffer: requires exactly one of SpliceFD and SplicePiped");
+        abortProgramNow(1);
+    }
+    assert(dest != NULL && pool != NULL);
+    if (UNLIKELY((dest->flags & (kSbufFlagSplice | kSbufFlagSpliceFD | kSbufFlagSplicePiped)) != 0))
+    {
+        LOGF("wioTransformSpliceBufferToRealBuffer: destination must be an ordinary buffer");
+        abortProgramNow(1);
+    }
+#if WW_HAVE_SPLICE
+    assert(buf->curpos <= buf->l_pad);
+    const uint32_t prefix_bytes = (uint32_t) buf->l_pad - buf->curpos;
+    assert(buf->len >= prefix_bytes);
+    const uint32_t body_bytes = buf->len - prefix_bytes;
+
+    // Preserve the source cursor/headroom without changing the destination's allocation geometry.
+    if (UNLIKELY(buf->curpos > sbufGetTotalCapacity(dest)))
+    {
+        LOGF("wioTransformSpliceBufferToRealBuffer: destination too small for left headroom "
+             "(capacity=%u, left headroom=%u)",
+             (unsigned int) sbufGetTotalCapacity(dest),
+             (unsigned int) buf->curpos);
+        abortProgramNow(1);
+    }
+    dest->curpos = buf->curpos;
+    if (UNLIKELY(sbufGetLength(buf) > sbufGetMaximumWriteableSize(dest)))
+    {
+        LOGF("wioTransformSpliceBufferToRealBuffer: destination too small "
+             "(capacity=%u, left headroom=%u, payload=%u)",
+             (unsigned int) sbufGetTotalCapacity(dest),
+             (unsigned int) buf->curpos,
+             (unsigned int) sbufGetLength(buf));
+        abortProgramNow(1);
+    }
+
+    wio_fd_t *handle;
+    static_assert(sizeof(handle) <= SPLICE_BUFFER_STORAGE_SIZE, "WIO descriptor pointer must fit in a splice buffer");
+    sbufByteCopy(&handle, buf->buf + buf->l_pad, sizeof(handle));
+    assert(handle != NULL);
+    const bool from_pipe = location == kSbufFlagSplicePiped;
+    if (UNLIKELY(from_pipe && handle->pipefd[0] == 0 && handle->pipefd[1] == 0))
+    {
+        LOGF("wioTransformSpliceBufferToRealBuffer: descriptor pipe must already be initialized");
+        abortProgramNow(1);
+    }
+    assert(from_pipe || handle->reserved >= body_bytes);
+
+    sbufByteCopy(dest->buf + buf->curpos, sbufGetRawPtr(buf), prefix_bytes);
+    ssize_t consumed = 0;
+    if (body_bytes != 0)
+    {
+        const int fd = from_pipe ? handle->pipefd[0] : handle->fd;
+        consumed     = read(fd, dest->buf + buf->l_pad, body_bytes);
+    }
+    if (! from_pipe && consumed > 0)
+    {
+        handle->reserved -= (uint32_t) consumed;
+    }
+    if (UNLIKELY(consumed < 0 || (uint32_t) consumed != body_bytes))
+    {
+        const int read_error = consumed < 0 ? errno : 0;
+        LOGF("wioTransformSpliceBufferToRealBuffer: incomplete read from %s "
+             "(requested=%u, result=%lld, errno=%d)",
+             from_pipe ? "pipe" : "source fd",
+             (unsigned int) body_bytes,
+             (long long) consumed,
+             read_error);
+        abortProgramNow(1);
+    }
+
+    sbufSetLength(dest, buf->len);
+    dest->flags = buf->flags & (uint16_t) ~(kSbufFlagSplice | kSbufFlagSpliceFD | kSbufFlagSplicePiped);
+    bufferpoolReuseBuffer(pool, buf);
+    return dest;
+#else
+    discard dest;
+    discard pool;
+    LOGF("wioTransformSpliceBufferToRealBuffer: splice is unsupported on this build");
+    abortProgramNow(1);
+#endif
+}
+
 // todo (invesitage) how a dynamic node can have these?
 uint64_t wloopGetNextEventID(void)
 {
@@ -24,8 +327,8 @@ static void fillIoType(wio_t *io)
 {
     int       type   = 0;
     socklen_t optlen = sizeof(int);
-    int       ret    = getsockopt(io->fd, SOL_SOCKET, SO_TYPE, (char *) &type, &optlen);
-    printd("getsockopt SO_TYPE fd=%d ret=%d type=%d errno=%d\n", io->fd, ret, type, socketERRNO());
+    int       ret    = getsockopt(wioGetFD(io), SOL_SOCKET, SO_TYPE, (char *) &type, &optlen);
+    printd("getsockopt SO_TYPE fd=%d ret=%d type=%d errno=%d\n", wioGetFD(io), ret, type, socketERRNO());
     if (ret == 0)
     {
         switch (type)
@@ -46,7 +349,7 @@ static void fillIoType(wio_t *io)
     }
     else if (socketERRNO() == ENOTSOCK)
     {
-        switch (io->fd)
+        switch (wioGetFD(io))
         {
         case 0:
             io->io_type = WIO_TYPE_STDIN;
@@ -82,26 +385,28 @@ static void wioSocketInit(wio_t *io)
     // NOTE: datagram/raw writes go through wioWriteDatagram with an explicit
     // per-call destination and drop on transient pressure instead of queuing,
     // so every socket type runs nonblocking on the event loop.
-    if (nonBlocking(io->fd) != 0)
+    if (nonBlocking(wioGetFD(io)) != 0)
     {
         io->error = socketERRNO();
-        wloge(
-            "failed to set fd[%d] nonblocking: %s:%d, rejecting socket", io->fd, socketStrError(io->error), io->error);
+        wloge("failed to set fd[%d] nonblocking: %s:%d, rejecting socket",
+              wioGetFD(io),
+              socketStrError(io->error),
+              io->error);
         // A blocking socket must never stay usable on the event loop; the io
         // comes back closed and every read/write path rejects it.
         wioClose(io);
         return;
     }
     socklen_t addrlen = sizeof(sockaddr_u);
-    int       ret     = getsockname(io->fd, io->localaddr, &addrlen);
+    int       ret     = getsockname(wioGetFD(io), io->localaddr, &addrlen);
     discard   ret;
-    printd("getsockname fd=%d ret=%d errno=%d\n", io->fd, ret, socketERRNO());
+    printd("getsockname fd=%d ret=%d errno=%d\n", wioGetFD(io), ret, socketERRNO());
     // NOTE: udp peeraddr set by recvfrom/sendto
     if (io->io_type & WIO_TYPE_SOCK_STREAM)
     {
         addrlen = sizeof(sockaddr_u);
-        ret     = getpeername(io->fd, io->peeraddr, &addrlen);
-        printd("getpeername fd=%d ret=%d errno=%d\n", io->fd, ret, socketERRNO());
+        ret     = getpeername(wioGetFD(io), io->peeraddr, &addrlen);
+        printd("getpeername fd=%d ret=%d errno=%d\n", wioGetFD(io), ret, socketERRNO());
     }
 }
 
@@ -137,7 +442,11 @@ void wioReady(wio_t *io)
     io->recvfrom = io->sendto = 0;
     io->close                 = 0;
     io->release_no_close      = 0;
-    io->splice_context        = NULL;
+    io->splice_enabled        = 0;
+    io->read_started          = 0;
+#ifndef EVENT_IOCP
+    io->close_in_progress = 0;
+#endif
     // public:
     io->id      = wioSetNextID();
     io->io_type = WIO_TYPE_UNKNOWN;
@@ -201,6 +510,7 @@ void wioReady(wio_t *io)
 
     // io_type
     fillIoType(io);
+    io->fd_handle->is_socket = (io->io_type & WIO_TYPE_SOCKET) != 0;
     if (io->io_type & WIO_TYPE_SOCKET)
     {
         wioSocketInit(io);
@@ -209,7 +519,6 @@ void wioReady(wio_t *io)
 
 void wioDone(wio_t *io)
 {
-    io->splice_context = NULL;
     if (! io->ready)
         return;
     io->ready = 0;
@@ -235,6 +544,11 @@ void wioFree(wio_t *io)
     if (io == NULL || io->destroy)
         return;
 #ifdef EVENT_IOCP
+    if (io->loop != NULL && io->io_slot >= 0 && io->io_slot < (int) io->loop->ios.maxsize &&
+        io->loop->ios.ptr[io->io_slot] == io)
+    {
+        io->loop->ios.ptr[io->io_slot] = NULL;
+    }
     /*
      * A pending-list node, a dequeued completion, or wioClose itself may still
      * hold this address even when no operation record is live. Detach first so
@@ -243,18 +557,16 @@ void wioFree(wio_t *io)
      */
     io->destroy                = 1;
     io->iocp_deferred_finalize = 1;
-    if (io->loop != NULL && io->fd >= 0 && io->fd < (int) io->loop->ios.maxsize && io->loop->ios.ptr[io->fd] == io)
-    {
-        io->loop->ios.ptr[io->fd] = NULL;
-    }
     wioClose(io);
     return;
 #else
     io->destroy = 1;
+    if (io->close_in_progress)
+    {
+        return;
+    }
     wioClose(io);
-    EVENTLOOP_FREE(io->localaddr);
-    EVENTLOOP_FREE(io->peeraddr);
-    threadsafegenericpoolReuseItem(getWorkerWiosPool(io->loop->wid), io);
+    wioFinalizeNow(io);
 #endif
 }
 
@@ -277,7 +589,8 @@ void wioFinalizeNow(wio_t *io)
     // stale live-slot count would corrupt the next listener's capacity math.
     assert(io->iocp_accept_retry_timer == NULL);
     assert(io->iocp_accept_records == 0);
-    assert(io->loop == NULL || io->fd < 0 || io->fd >= (int) io->loop->ios.maxsize || io->loop->ios.ptr[io->fd] != io);
+    assert(io->loop == NULL || io->io_slot < 0 || io->io_slot >= (int) io->loop->ios.maxsize ||
+           io->loop->ios.ptr[io->io_slot] != io);
 
     // Last line of defence: a timer surviving into the pool would fire on reused
     // memory. wioClose()/wioReleaseNoCloseNow() must already have removed them.
@@ -296,6 +609,19 @@ void wioFinalizeNow(wio_t *io)
 
     io->iocp_deferred_finalize = 0;
     io->destroy                = 1;
+    EVENTLOOP_FREE(io->localaddr);
+    EVENTLOOP_FREE(io->peeraddr);
+    threadsafegenericpoolReuseItem(getWorkerWiosPool(io->loop->wid), io);
+}
+#else
+void wioFinalizeNow(wio_t *io)
+{
+    assert(io->destroy && ! io->close_in_progress && io->fd_handle == NULL);
+    if (io->loop != NULL && io->io_slot >= 0 && io->io_slot < (int) io->loop->ios.maxsize &&
+        io->loop->ios.ptr[io->io_slot] == io)
+    {
+        io->loop->ios.ptr[io->io_slot] = NULL;
+    }
     EVENTLOOP_FREE(io->localaddr);
     EVENTLOOP_FREE(io->peeraddr);
     threadsafegenericpoolReuseItem(getWorkerWiosPool(io->loop->wid), io);
@@ -323,24 +649,61 @@ bool wioIsClosed(wio_t *io)
     return io->ready == 0 && io->closed == 1;
 }
 
-void wioSetSpliceContext(wio_t *io, splice_context_t *context)
-{
-    io->splice_context = context;
-}
-
-splice_context_t *wioGetSpliceContext(const wio_t *io)
-{
-    return io->splice_context;
-}
-
 uint32_t wioGetID(wio_t *io)
 {
     return io->id;
 }
 
-int wioGetFD(wio_t *io)
+int wioGetFD(const wio_t *io)
 {
-    return io->fd;
+    return io->fd_handle != NULL ? io->fd_handle->fd : -1;
+}
+
+wio_fd_t *wioGetFDHandle(const wio_t *io)
+{
+    return io->fd_handle;
+}
+
+int wioInitPipe(wio_t *io)
+{
+    assert(io->fd_handle != NULL);
+    return wiofdInitPipe(io->fd_handle);
+}
+
+int wioEnableSplice(wio_t *io)
+{
+    assert(io->ready && ! io->closed);
+    assert(! io->read_started && "Splice must be enabled before starting WIO reads");
+    if (wioInitPipe(io) != 0)
+    {
+        return -1;
+    }
+    io->splice_enabled = 1;
+    return 0;
+}
+
+void wioDisableSplice(wio_t *io)
+{
+    io->splice_enabled = 0;
+}
+
+bool wioIsSpliceEnabled(const wio_t *io)
+{
+    return io->splice_enabled;
+}
+
+void wioReleaseFDHandle(wio_t *io, bool keep_fd)
+{
+    wio_fd_t *handle = io->fd_handle;
+    io->fd_handle    = NULL;
+    if (handle != NULL)
+    {
+        if (keep_fd)
+        {
+            handle->fd = -1;
+        }
+        wiofdUnref(handle);
+    }
 }
 
 wio_type_e wioGetType(wio_t *io)
@@ -438,7 +801,7 @@ void wioAcceptCallBack(wio_t *io)
     /*
     char localaddrstr[SOCKADDR_STRLEN] = {0};
     char peeraddrstr[SOCKADDR_STRLEN] = {0};
-    printd("accept connfd=%d [%s] <= [%s]\n", io->fd,
+    printd("accept connfd=%d [%s] <= [%s]\n", wioGetFD(io),
             SOCKADDR_STR(io->localaddr, localaddrstr),
             SOCKADDR_STR(io->peeraddr, peeraddrstr));
     */
@@ -455,7 +818,7 @@ void wioConnectCallBack(wio_t *io)
     /*
     char localaddrstr[SOCKADDR_STRLEN] = {0};
     char peeraddrstr[SOCKADDR_STRLEN] = {0};
-    printd("connect connfd=%d [%s] => [%s]\n", io->fd,
+    printd("connect connfd=%d [%s] => [%s]\n", wioGetFD(io),
             SOCKADDR_STR(io->localaddr, localaddrstr),
             SOCKADDR_STR(io->peeraddr, peeraddrstr));
     */
@@ -845,58 +1208,6 @@ int wioReadOnce(wio_t *io)
 //         }
 //     }
 // }
-// #if defined(OS_LINUX) && defined(HAVE_PIPE)
-
-// void wio_close_upstream(wio_t* io) {
-//     wio_t* upstream_io = io->upstream_io;
-//     if(io->pfd_w != 0x0){
-//         close(io->pfd_w);
-//         close(io->pfd_r);
-//     }
-//     if (upstream_io) {
-//         wioClose(upstream_io);
-//     }
-// }
-
-// static bool wio_setup_pipe(wio_t* io) {
-//     int fds[2];
-//     int r = pipe(fds);
-//     if (r != 0)
-//         return false;
-//     io->pfd_r = fds[0];
-//     io->pfd_w = fds[1];
-//     return true;
-
-// }
-
-// void wio_setup_upstream_splice(wio_t* restrict io1, wio_t* restrict io2) {
-//     io1->upstream_io = io2;
-//     io2->upstream_io = io1;
-//     assert (io1->io_type == WIO_TYPE_TCP && io2->io_type == WIO_TYPE_TCP);
-//     if (!wio_setup_pipe(io1))
-//         return;
-
-//     if (!wio_setup_pipe(io2)){
-//         close(io1->pfd_w);
-//         close(io1->pfd_r);
-//         io1->pfd_w = io1->pfd_r = 0;
-//         return;
-//     }
-//     const int tmp_fd = io1->pfd_w;
-//     io1->pfd_w = io2->pfd_w;
-//     io2->pfd_w = tmp_fd;
-// }
-// #else
-
-// void wio_close_upstream(wio_t* io) {
-//     wio_t* upstream_io = io->upstream_io;
-//     if (upstream_io) {
-//         wioClose(upstream_io);
-//     }
-// }
-
-// #endif
-
 // void wio_setup_upstream(wio_t* restrict io1, wio_t* restrict io2) {
 //     io1->upstream_io = io2;
 //     io2->upstream_io = io1;

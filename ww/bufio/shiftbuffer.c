@@ -135,10 +135,12 @@ sbuf_t *sbufCreate(uint32_t minimum_capacity)
     return sbufCreateWithPadding(minimum_capacity, 0);
 }
 
-sbuf_t *sbufCreateMicro(uint16_t pad_left)
+sbuf_t *sbufCreateSplice(uint16_t pad_left)
 {
     pad_left = sbufAlignLeftPadding(pad_left);
-    return sbufAllocate(MICRO_BUFFER_SIZE + (uint32_t) pad_left, pad_left);
+    sbuf_t *buf = sbufAllocate(SPLICE_BUFFER_STORAGE_SIZE + (uint32_t) pad_left, pad_left);
+    buf->flags  = kSbufFlagSplice;
+    return buf;
 }
 
 bool sbufDuplicateTo(const sbuf_t *b, sbuf_t *dest)

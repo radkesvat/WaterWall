@@ -116,7 +116,7 @@ line_t *wireguarddeviceEnsureTransportLine(wgd_tstate_t *state, wid_t wid)
         return line;
     }
 
-    line                        = lineCreate(tunnelchainGetLinePools(chain), wid, chain->tunnels.len);
+    line                        = lineCreate(tunnelchainGetLinePools(chain), wid);
     state->transport_lines[wid] = line;
 
     lineRef(line);

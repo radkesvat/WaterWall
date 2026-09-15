@@ -35,6 +35,20 @@ function(_waterwall_register_portable_contract test_name target_name labels)
   endif()
 endfunction()
 
+add_executable(atomic_u32_test EXCLUDE_FROM_ALL "${_waterwall_portable_unit_dir}/atomic_u32_test.c")
+target_link_libraries(atomic_u32_test PRIVATE ww)
+set_target_properties(atomic_u32_test PROPERTIES DISABLE_PRECOMPILE_HEADERS ON)
+_waterwall_register_portable_contract(waterwall.atomic_u32_unit atomic_u32_test "unit;atomic;portable")
+
+if(WIN32)
+  add_executable(atomic_u32_fallback_test EXCLUDE_FROM_ALL "${_waterwall_portable_unit_dir}/atomic_u32_test.c")
+  target_compile_definitions(atomic_u32_fallback_test PRIVATE WW_HAVE_C11_ATOMICS=0)
+  target_link_libraries(atomic_u32_fallback_test PRIVATE ww)
+  set_target_properties(atomic_u32_fallback_test PROPERTIES DISABLE_PRECOMPILE_HEADERS ON)
+  _waterwall_register_portable_contract(
+    waterwall.atomic_u32_fallback_unit atomic_u32_fallback_test "unit;atomic;windows")
+endif()
+
 if(TARGET HttpProxyServer AND NOT TARGET http_proxy_server_parser_test)
   foreach(kind IN ITEMS parser lifecycle)
     add_executable(http_proxy_server_${kind}_test EXCLUDE_FROM_ALL

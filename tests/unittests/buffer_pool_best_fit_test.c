@@ -13,13 +13,13 @@ int main(void)
 {
     master_pool_t *large_master = masterpoolCreateWithCapacity(8);
     master_pool_t *small_master = masterpoolCreateWithCapacity(8);
-    master_pool_t *micro_master = masterpoolCreateWithCapacity(8);
-    buffer_pool_t *pool         = bufferpoolCreate(large_master, small_master, micro_master, 8, 8192, 1024);
+    master_pool_t *splice_master = masterpoolCreateWithCapacity(8);
+    buffer_pool_t *pool          = bufferpoolCreate(large_master, small_master, splice_master, 8, 8192, 1024);
     bufferpoolUpdateAllocationPaddings(pool, 64, 32, 32);
 
     sbuf_t *tiny = bufferpoolGetBestFit(pool, 1, 0);
     require(sbufGetTotalCapacityNoPadding(tiny) == bufferpoolGetSmallBufferSize(pool),
-            "best-fit allocation selected the explicit-only micro tier");
+            "best-fit allocation selected the explicit-only splice tier");
     bufferpoolReuseBuffer(pool, tiny);
 
     sbuf_t *small = bufferpoolGetBestFit(pool, 512, 16);
@@ -50,9 +50,9 @@ int main(void)
     bufferpoolDestroy(pool);
     masterpoolMakeEmpty(large_master);
     masterpoolMakeEmpty(small_master);
-    masterpoolMakeEmpty(micro_master);
+    masterpoolMakeEmpty(splice_master);
     masterpoolDestroy(large_master);
     masterpoolDestroy(small_master);
-    masterpoolDestroy(micro_master);
+    masterpoolDestroy(splice_master);
     return 0;
 }

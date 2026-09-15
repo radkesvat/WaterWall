@@ -1,7 +1,7 @@
 #pragma once
 
 /*
- * Growable buffer pool for large, small, and fixed-size micro sbuf_t allocations.
+ * Buffer pool for ordinary large/small buffers and dedicated splice wrappers.
  */
 
 #include "generic_pool.h"
@@ -35,7 +35,7 @@ typedef struct buffer_pool_s buffer_pool_t;
  * Creates a buffer pool with specified parameters.
  * @param mp_large The master pool for large buffers.
  * @param mp_small The master pool for small buffers.
- * @param mp_micro The master pool for micro buffers, with 32 bytes of payload capacity.
+ * @param mp_splice The master pool for splice wrappers, with 32 bytes of control storage.
  * @param bufcount The number of buffers to preallocate.
  * @param large_buffer_size The size of each large buffer.
  * @param small_buffer_size The size of each small buffer.
@@ -44,7 +44,7 @@ typedef struct buffer_pool_s buffer_pool_t;
  *         cannot be satisfied. Nothing is published and no master-pool
  *         callback is installed on failure.
  */
-buffer_pool_t *bufferpoolCreate(master_pool_t *mp_large, master_pool_t *mp_small, master_pool_t *mp_micro,
+buffer_pool_t *bufferpoolCreate(master_pool_t *mp_large, master_pool_t *mp_small, master_pool_t *mp_splice,
                                 uint32_t bufcount, uint32_t large_buffer_size, uint32_t small_buffer_size);
 
 /**
@@ -68,12 +68,13 @@ sbuf_t *bufferpoolGetLargeBuffer(buffer_pool_t *pool);
  */
 sbuf_t *bufferpoolGetSmallBuffer(buffer_pool_t *pool);
 
-/** Retrieve a reset micro buffer with exactly 32 bytes of payload capacity and the pool's micro left padding. */
-sbuf_t *bufferpoolGetMicroBuffer(buffer_pool_t *pool);
+/** Retrieve an empty splice wrapper with kSbufFlagSplice set, 32 bytes of control storage, and reserved left padding.
+ * The caller initializes its descriptor pointer, location flags, and logical size before use. */
+sbuf_t *bufferpoolGetSpliceBuffer(buffer_pool_t *pool);
 
 /**
  * Retrieve the smallest large/small pooled buffer satisfying both payload capacity
- * and left-padding requirements. Micro allocation is explicit. When neither
+ * and left-padding requirements. Splice allocation is explicit. When neither
  * ordinary tier fits, allocate a dedicated
  * padded buffer; bufferpoolReuseBuffer() safely destroys that fallback.
  *
@@ -107,10 +108,10 @@ void bufferpoolResetThreadOwnership(buffer_pool_t *pool);
  * @param pool The buffer pool.
  * @param large_buffer_left_padding The left padding for large buffers.
  * @param small_buffer_left_padding The left padding for small buffers.
- * @param micro_buffer_left_padding The left padding for micro buffers.
+ * @param splice_buffer_left_padding The left padding for splice buffers.
  */
 void bufferpoolUpdateAllocationPaddings(buffer_pool_t *pool, uint16_t large_buffer_left_padding,
-                                        uint16_t small_buffer_left_padding, uint16_t micro_buffer_left_padding);
+                                        uint16_t small_buffer_left_padding, uint16_t splice_buffer_left_padding);
 
 /**
  * Gets the size of large buffers in the buffer pool.
@@ -142,11 +143,11 @@ uint32_t bufferpoolGetSmallBufferSize(buffer_pool_t *pool);
  */
 uint16_t bufferpoolGetSmallBufferPadding(buffer_pool_t *pool);
 
-/** Return the fixed 32-byte micro payload capacity. */
-uint32_t bufferpoolGetMicroBufferSize(buffer_pool_t *pool);
+/** Return the fixed 32-byte control-storage capacity, excluding padding and logical payload size. */
+uint32_t bufferpoolGetSpliceBufferStorageSize(buffer_pool_t *pool);
 
-/** Return the pool's configured micro left padding. */
-uint16_t bufferpoolGetMicroBufferPadding(buffer_pool_t *pool);
+/** Return the pool's configured splice left padding. */
+uint16_t bufferpoolGetSpliceBufferPadding(buffer_pool_t *pool);
 
 /**
  * Checks if a buffer is a large buffer.

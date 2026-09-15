@@ -46,7 +46,7 @@ typedef struct server_lifecycle_fixture_s
 {
     master_pool_t             *large_master;
     master_pool_t             *small_master;
-    master_pool_t             *micro_master;
+    master_pool_t             *splice_master;
     buffer_pool_t             *pool;
     buffer_pool_t             *shortcut[1];
     buffer_pool_t            **saved_shortcuts;
@@ -420,9 +420,9 @@ static void serverFixtureInitialize(server_lifecycle_fixture_t *fixture)
     GSTATE.workers_count    = 2;
     fixture->large_master   = masterpoolCreateWithCapacity(8);
     fixture->small_master   = masterpoolCreateWithCapacity(8);
-    fixture->micro_master   = masterpoolCreateWithCapacity(8);
+    fixture->splice_master  = masterpoolCreateWithCapacity(8);
     fixture->pool =
-        bufferpoolCreate(fixture->large_master, fixture->small_master, fixture->micro_master, 8, 8192, 1024);
+        bufferpoolCreate(fixture->large_master, fixture->small_master, fixture->splice_master, 8, 8192, 1024);
     bufferpoolUpdateAllocationPaddings(fixture->pool,
                                        kRealityServerMaxFramePrefixSize,
                                        kRealityServerMaxFramePrefixSize,
@@ -503,7 +503,7 @@ static void serverFixtureDestroy(server_lifecycle_fixture_t *fixture)
     }
     if (fixture->line_pool == NULL)
     {
-        requireServer(atomic_load(&fixture->line->refc) == 1, "server lifecycle line reference leaked");
+        requireServer(atomicLoadU32(&fixture->line->refc) == 1, "server lifecycle line reference leaked");
         memoryFreeAligned(fixture->line);
     }
     else
@@ -533,10 +533,10 @@ static void serverFixtureDestroy(server_lifecycle_fixture_t *fixture)
     bufferpoolDestroy(fixture->pool);
     masterpoolMakeEmpty(fixture->large_master);
     masterpoolMakeEmpty(fixture->small_master);
-    masterpoolMakeEmpty(fixture->micro_master);
+    masterpoolMakeEmpty(fixture->splice_master);
     masterpoolDestroy(fixture->large_master);
     masterpoolDestroy(fixture->small_master);
-    masterpoolDestroy(fixture->micro_master);
+    masterpoolDestroy(fixture->splice_master);
 }
 
 static realityserver_lstate_t *serverFixturePrepareVisitorPending(server_lifecycle_fixture_t *fixture)
@@ -560,7 +560,7 @@ static realityserver_lstate_t *serverFixtureMoveLineToOwnerPool(server_lifecycle
     fixture->line_pool   = genericpoolCreateWithDefaultCacheAlignedAllocatorAndCapacity(
         fixture->line_master, sizeof(line_t) + fixture->reality->lstate_size, 8);
     fixture->line_pools[0]       = fixture->line_pool;
-    fixture->line                = lineCreateForWorker(0, fixture->line_pools, 0, 0);
+    fixture->line                = lineCreateForWorker(0, fixture->line_pools, 0);
     fixture->line_pool_available = fixture->line_pool->len + 1U;
 
     realityserver_lstate_t *ls = lineGetState(fixture->line, fixture->reality);
@@ -2440,8 +2440,8 @@ static void runServerSizingCase(uint16_t tls_version, const reality_v2_record_pr
 {
     master_pool_t *large_master = masterpoolCreateWithCapacity(8);
     master_pool_t *small_master = masterpoolCreateWithCapacity(8);
-    master_pool_t *micro_master = masterpoolCreateWithCapacity(8);
-    buffer_pool_t *pool         = bufferpoolCreate(large_master, small_master, micro_master, 8, 65536, 1024);
+    master_pool_t *splice_master = masterpoolCreateWithCapacity(8);
+    buffer_pool_t *pool          = bufferpoolCreate(large_master, small_master, splice_master, 8, 65536, 1024);
     bufferpoolUpdateAllocationPaddings(
         pool, kRealityServerMaxFramePrefixSize, kRealityServerMaxFramePrefixSize, kRealityServerMaxFramePrefixSize);
     buffer_pool_t  *shortcut[1]         = {pool};
@@ -2521,7 +2521,7 @@ static void runServerSizingCase(uint16_t tls_version, const reality_v2_record_pr
 
     realityserverLinestateDestroy(ls);
     memoryFree(expected_bytes);
-    requireServer(atomic_load(&line->refc) == 1, "server sizing line reference leaked");
+    requireServer(atomicLoadU32(&line->refc) == 1, "server sizing line reference leaked");
     memoryFreeAligned(line);
     tunnelDestroy(capture);
     tunnelDestroy(reality);
@@ -2531,10 +2531,10 @@ static void runServerSizingCase(uint16_t tls_version, const reality_v2_record_pr
     bufferpoolDestroy(pool);
     masterpoolMakeEmpty(large_master);
     masterpoolMakeEmpty(small_master);
-    masterpoolMakeEmpty(micro_master);
+    masterpoolMakeEmpty(splice_master);
     masterpoolDestroy(large_master);
     masterpoolDestroy(small_master);
-    masterpoolDestroy(micro_master);
+    masterpoolDestroy(splice_master);
 }
 
 void realityTestServerRecordSizing(void)

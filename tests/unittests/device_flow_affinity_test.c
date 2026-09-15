@@ -908,8 +908,8 @@ static void testSameTargetRefusalCleansLaterChunks(void)
 
     master_pool_t *large_master = masterpoolCreateWithCapacity(8);
     master_pool_t *small_master = masterpoolCreateWithCapacity(8);
-    master_pool_t *micro_master = masterpoolCreateWithCapacity(8);
-    buffer_pool_t *pool         = bufferpoolCreate(large_master, small_master, micro_master, 8, 256, 64);
+    master_pool_t *splice_master = masterpoolCreateWithCapacity(8);
+    buffer_pool_t *pool          = bufferpoolCreate(large_master, small_master, splice_master, 8, 256, 64);
     require(large_master != NULL && small_master != NULL && pool != NULL,
             "failed to create the dispatch-refusal buffer pool");
 
@@ -951,10 +951,10 @@ static void testSameTargetRefusalCleansLaterChunks(void)
     bufferpoolDestroy(pool);
     masterpoolMakeEmpty(large_master);
     masterpoolMakeEmpty(small_master);
-    masterpoolMakeEmpty(micro_master);
+    masterpoolMakeEmpty(splice_master);
     masterpoolDestroy(large_master);
     masterpoolDestroy(small_master);
-    masterpoolDestroy(micro_master);
+    masterpoolDestroy(splice_master);
 }
 
 static void settleAndReuseCapturedPosts(device_reader_session_t *session, buffer_pool_t *pool)
@@ -989,8 +989,8 @@ static void testMixedWorkerRefusalCleansTrackedPublications(void)
 
     master_pool_t *large_master = masterpoolCreateWithCapacity(16);
     master_pool_t *small_master = masterpoolCreateWithCapacity(16);
-    master_pool_t *micro_master = masterpoolCreateWithCapacity(16);
-    buffer_pool_t *pool         = bufferpoolCreate(large_master, small_master, micro_master, 16, 256, 128);
+    master_pool_t *splice_master = masterpoolCreateWithCapacity(16);
+    buffer_pool_t *pool          = bufferpoolCreate(large_master, small_master, splice_master, 16, 256, 128);
     require(large_master != NULL && small_master != NULL && pool != NULL,
             "failed to create mixed-worker refusal buffer pool");
     require(getWorkersCount() >= kBucketCount, "mixed-worker refusal fixture needs three worker buckets");
@@ -1066,10 +1066,10 @@ static void testMixedWorkerRefusalCleansTrackedPublications(void)
     bufferpoolDestroy(pool);
     masterpoolMakeEmpty(large_master);
     masterpoolMakeEmpty(small_master);
-    masterpoolMakeEmpty(micro_master);
+    masterpoolMakeEmpty(splice_master);
     masterpoolDestroy(large_master);
     masterpoolDestroy(small_master);
-    masterpoolDestroy(micro_master);
+    masterpoolDestroy(splice_master);
 }
 
 int main(void)

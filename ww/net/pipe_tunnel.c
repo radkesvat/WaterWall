@@ -89,10 +89,10 @@ static tunnel_t *getParentTunnel(tunnel_t *t)
  * the count nonzero; this helper must never resurrect a reclaimed line. */
 static inline void lineRefForce(line_t *const line)
 {
-    assert(line->refc < LINE_REFC_MAX);
-    if (0 == atomicIncRelaxed(&line->refc))
+    const uint32_t previous = atomicIncU32Relaxed(&line->refc);
+    if (UNLIKELY(previous == 0 || previous == LINE_REFC_MAX))
     {
-        LOGF("PipeTunnel: forced physical reference failed due to reference count overflow");
+        LOGF("PipeTunnel: forced physical reference is dead or overflowed");
         abortProgramNow(1);
     }
 }
@@ -998,8 +998,7 @@ bool pipeTo(tunnel_t *t, line_t *line, wid_t wid_to)
         return false;
     }
 
-    line_t *owned =
-        lineCreateForWorker(wid, tunnelchainGetLinePools(tunnelGetChain(t)), wid_to, tunnelGetChain(t)->tunnels.len);
+    line_t *owned = lineCreateForWorker(wid, tunnelchainGetLinePools(tunnelGetChain(t)), wid_to);
     lineCopyUsers(owned, line);
 
     /* Stage all metadata without publishing either line state. */
