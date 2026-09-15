@@ -823,6 +823,11 @@ add_waterwall_expected_failure_integration_test(
   "Bridge: pair configuration for node \"bridge-a\" is not reciprocal"
 )
 add_waterwall_expected_failure_integration_test(
+  waterwall.udpstatelesssocket_tail_rejected
+  udpstatelesssocket_tail_rejected
+  "only chain-head placement is supported"
+)
+add_waterwall_expected_failure_integration_test(
   waterwall.wireguard_transport_direction_removed
   wireguard_transport_direction_removed
   "transport-direction is no longer supported"

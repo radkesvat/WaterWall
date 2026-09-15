@@ -182,7 +182,7 @@ purge has completed. If absence cannot be proved, it conservatively reports `Unk
 | `mtu` | no | core `misc.mtu` | Raw IP MTU of the virtual netifs. Valid range `576` .. `9000`. TCP derives its send MSS from it; UDP fragments above it. An inherited core value outside the range is a configuration error, not something to round into range. Core `misc.mtu` is itself validated as a whole number in `68` .. `65535` before it is stored, so it can no longer wrap into a different MTU or into zero. |
 | `domain-strategy` | no | `only-ipv4` | `only-ipv4` is the only accepted value. Every other strategy can hand this node an address it cannot use: the two IPv6 ones directly, `prefer-ipv4` through its AAAA-only fallback, and `accept-dns-returned-order` by preferring neither family. |
 | `tcp-connect-timeout-ms` | no | `30000` | Deadline for the active TCP open. On expiry the line is closed toward the previous node. |
-| `max-pending-bytes` | no | `262144` | Upper bound on application data retained before the connection is established or while lwIP's send window is full. Valid range `1024` .. `67108864`. Passing it sheds that one flow. |
+| `max-pending-bytes` | no | `262144` | Pending-data budget before connection establishment or while lwIP's send window is full. Valid range `1024` .. `67108864`. Admission also allows one large-buffer-sized delivery of headroom; passing the combined bound sheds that flow. |
 
 Every optional number is validated rather than defaulted on error. A wrong type, a fractional value, and an
 out-of-range value all fail configuration with the field named; only an *absent* field takes the default.
@@ -223,10 +223,17 @@ would need a separate metadata protocol and is not part of this node.
 
 TCP applies real backpressure in both directions:
 
-- application data that lwIP cannot accept yet is queued, bounded by `max-pending-bytes`, and a `Pause` is sent toward
+- application data that lwIP cannot accept yet is queued, bounded by `max-pending-bytes` plus delivery headroom, and a `Pause` is sent toward
   the previous node until the send window drains
 - received data is delivered downstream first; if the previous node pauses re-entrantly, the receive credit is withheld
   instead of being returned to lwIP, which closes the TCP window until it resumes
+
+The total pending-byte bound is `P + L`, where `P = max-pending-bytes` and `L`
+is the line pool's large payload capacity. This finite allowance covers input
+already delivered before Pause can take effect, including a 512 KiB delivery
+with the default 256 KiB budget. It does not raise the entry limit or change
+when Pause/Resume is sent. Admission is checked before queue insertion; excess
+input closes only that flow and is not passed into graceful drain.
 
 In addition to the byte limit, one TCP flow may retain at most 1,024 queued payload entries. This internal
 allocation-safety limit is not JSON-configurable: it bounds per-buffer/deque overhead even when callbacks contain only

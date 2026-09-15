@@ -13,6 +13,7 @@ typedef struct test_pool_s
 {
     master_pool_t *large_master;
     master_pool_t *small_master;
+    master_pool_t *medium_master;
     master_pool_t *splice_master;
     buffer_pool_t *pool;
 } test_pool_t;
@@ -39,15 +40,22 @@ static test_pool_t testPoolCreate(void)
     test_pool_t result = {
         .large_master  = masterpoolCreateWithCapacity(kTestPoolCapacity),
         .small_master  = masterpoolCreateWithCapacity(kTestPoolCapacity),
+        .medium_master = masterpoolCreateWithCapacity(kTestPoolCapacity),
         .splice_master = masterpoolCreateWithCapacity(kTestPoolCapacity),
         .pool          = NULL,
     };
     require(result.large_master != NULL && result.small_master != NULL, "failed to create master pools");
 
-    result.pool = bufferpoolCreate(
-        result.large_master, result.small_master, result.splice_master, kTestPoolCapacity, kTestLargeBufferSize, 1024);
+    result.pool = bufferpoolCreate(result.large_master,
+                                   result.medium_master,
+                                   result.small_master,
+                                   result.splice_master,
+                                   kTestPoolCapacity,
+                                   kTestLargeBufferSize,
+                                   1024);
     require(result.pool != NULL, "failed to create buffer pool");
-    bufferpoolUpdateAllocationPaddings(result.pool, kMuxFrameLength * 2U, kMuxFrameLength * 2U, kMuxFrameLength * 2U);
+    bufferpoolUpdateAllocationPaddings(
+        result.pool, kMuxFrameLength * 2U, kMuxFrameLength * 2U, kMuxFrameLength * 2U, kMuxFrameLength * 2U);
     return result;
 }
 
@@ -56,9 +64,11 @@ static void testPoolDestroy(test_pool_t *test_pool)
     bufferpoolDestroy(test_pool->pool);
     masterpoolMakeEmpty(test_pool->large_master);
     masterpoolMakeEmpty(test_pool->small_master);
+    masterpoolMakeEmpty(test_pool->medium_master);
     masterpoolMakeEmpty(test_pool->splice_master);
     masterpoolDestroy(test_pool->large_master);
     masterpoolDestroy(test_pool->small_master);
+    masterpoolDestroy(test_pool->medium_master);
     masterpoolDestroy(test_pool->splice_master);
 }
 
@@ -357,10 +367,91 @@ static void testEncodingAndOwnership(buffer_pool_t *pool)
     testEncodeCase(pool, 2U * kMuxMaxDataFrameLength + 1U, true, 3);
 }
 
+static unsigned retention_lifetime_releases;
+static void     releaseRetentionLifetime(sbuf_lifetime_t *lifetime)
+{
+    discard lifetime;
+    ++retention_lifetime_releases;
+}
+
+static void testPausedRetentionStorage(buffer_pool_t *pool)
+{
+    const uint32_t lengths[] = {0, 1, 4097, kMuxMaxDataFrameLength, MEDIUM_BUFFER_SIZE + 1};
+    for (size_t i = 0; i < ARRAY_SIZE(lengths); ++i)
+    {
+        sbuf_t         *input             = makePayload(pool, lengths[i]);
+        const uint32_t  original_capacity = sbufGetTotalCapacityNoPadding(input);
+        sbuf_lifetime_t lifetime          = {.release = releaseRetentionLifetime};
+        sbufAttachLifetime(input, &lifetime);
+        retention_lifetime_releases = 0;
+        sbuf_t        *retained     = muxPrepareQueuedPayload(pool, input);
+        const uint32_t expected = lengths[i] <= bufferpoolGetSmallBufferSize(pool) ? bufferpoolGetSmallBufferSize(pool)
+                                  : lengths[i] <= MEDIUM_BUFFER_SIZE               ? MEDIUM_BUFFER_SIZE
+                                                                                   : original_capacity;
+        require(sbufGetTotalCapacityNoPadding(retained) == expected, "paused retention selected the wrong pooled tier");
+        require(sbufGetLength(retained) == lengths[i], "paused retention changed the payload length");
+        require(sbufGetLeftCapacity(retained) >= bufferpoolGetLargeBufferPadding(pool),
+                "paused retention lost onward padding");
+        for (uint32_t j = 0; j < lengths[i]; ++j)
+            require(((const uint8_t *) sbufGetRawPtr(retained))[j] == patternByte(j),
+                    "paused retention changed payload bytes");
+        require(sbufGetLifetime(retained) == &lifetime && retention_lifetime_releases == 0,
+                "paused retention released or lost the payload lifetime");
+        require(muxPrepareQueuedPayload(pool, retained) == retained,
+                "suitably sized retained storage was copied again");
+        bufferpoolReuseBuffer(pool, retained);
+        require(retention_lifetime_releases == 1, "paused retention failed to settle the lifetime exactly once");
+    }
+}
+
+static void testQueuedFrameExtraction(buffer_pool_t *pool)
+{
+    const uint32_t lengths[] = {0, 1, 1024, 4097, kMuxMaxDataFrameLength, UINT16_MAX};
+    for (size_t i = 0; i < ARRAY_SIZE(lengths); ++i)
+    {
+        buffer_stream_t stream = bufferstreamCreate(pool, kMuxFrameLength);
+        const uint32_t  length = lengths[i];
+        sbuf_t         *input  = makePayload(pool, length + kMuxFrameLength);
+        mux_frame_t     wire;
+        muxSetMuxFrameHeader(&wire, (mux_length_t) length, kTestCid, kMuxFlagData);
+        memoryCopy(sbufGetMutablePtr(input), &wire, kMuxFrameLength);
+        bufferstreamPush(&stream, input);
+        mux_frame_t frame;
+        require(muxPeekCompleteFrame(&stream, &frame) && frame.length == length && frame.cid == kTestCid &&
+                    bufferstreamGetBufLen(&stream) == length + kMuxFrameLength,
+                "frame peek consumed bytes or decoded the wrong header");
+        sbuf_t *read = muxReadFrameForQueue(&stream, &frame);
+        require(sbufGetLength(read) == length + kMuxFrameLength && bufferstreamIsEmpty(&stream),
+                "queued frame extraction changed wire length");
+        sbufShiftRight(read, kMuxFrameLength);
+        require(sbufGetLeftCapacity(read) >= bufferpoolGetLargeBufferPadding(pool),
+                "queued frame extraction consumed onward padding");
+        const uint32_t expected =
+            length <= bufferpoolGetSmallBufferSize(pool) ? bufferpoolGetSmallBufferSize(pool) : MEDIUM_BUFFER_SIZE;
+        require(sbufGetTotalCapacityNoPadding(read) == expected, "queued frame did not select final pooled storage");
+        bufferpoolReuseBuffer(pool, read);
+        bufferstreamDestroy(&stream);
+    }
+    buffer_stream_t stream = bufferstreamCreate(pool, kMuxFrameLength);
+    sbuf_t         *input  = bufferpoolGetMediumBuffer(pool);
+    mux_frame_t     frame;
+    muxSetMuxFrameHeader(&frame, 4097, kTestCid, kMuxFlagData);
+    sbufSetLength(input, 4097 + kMuxFrameLength);
+    memoryCopy(sbufGetMutablePtr(input), &frame, kMuxFrameLength);
+    bufferstreamPush(&stream, input);
+    require(muxPeekCompleteFrame(&stream, &frame), "could not peek an already suitable whole frame");
+    sbuf_t *read = muxReadFrameForQueue(&stream, &frame);
+    require(read == input, "queued whole medium frame was unnecessarily copied");
+    bufferpoolReuseBuffer(pool, read);
+    bufferstreamDestroy(&stream);
+}
+
 int main(void)
 {
     test_pool_t test_pool = testPoolCreate();
 
+    testPausedRetentionStorage(test_pool.pool);
+    testQueuedFrameExtraction(test_pool.pool);
     testEveryHeaderFlag();
     testControlAndClientSequences(test_pool.pool);
     testCompleteFrameParsing(test_pool.pool);

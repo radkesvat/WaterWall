@@ -812,6 +812,9 @@ bool muxserverQueueChildPayload(tunnel_t *t, line_t *parent_l, muxserver_tstate_
     assert(child_ls->close_state == kMuxServerChildCloseOpen);
     assert(child_ls->parent == parent_ls);
 
+    if (child_ls->paused)
+        buf = muxPrepareQueuedPayload(lineGetBufferPool(parent_l), buf);
+
     const size_t candidate_charge     = muxQueuedSbufCharge(buf);
     const bool   child_add_overflows  = child_ls->pending_child_queue_charge > SIZE_MAX - candidate_charge;
     const bool   parent_add_overflows = parent_ls->pending_child_queue_charge > SIZE_MAX - candidate_charge;

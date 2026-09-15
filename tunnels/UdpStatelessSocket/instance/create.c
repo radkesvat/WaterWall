@@ -10,19 +10,30 @@ static tunnel_t *udpstatelesssocketTunnelCreateFail(tunnel_t *t)
 
 tunnel_t *udpstatelesssocketTunnelCreate(node_t *node)
 {
-    tunnel_t *t =
-        adapterCreate(node, sizeof(udpstatelesssocket_tstate_t), sizeof(udpstatelesssocket_lstate_t), kAdapterChainEnd);
+    /* Head-only placement is the supported design, not a temporary restriction.
+     * New UDP peer lines always enter the chain through upstream Init. */
+    if (! nodeHasNext(node))
+    {
+        LOGF("UdpStatelessSocket: requires a next node; only chain-head placement is supported");
+        return NULL;
+    }
+
+    tunnel_t *t = adapterCreate(
+        node, sizeof(udpstatelesssocket_tstate_t), sizeof(udpstatelesssocket_lstate_t), kAdapterChainHead);
     if (! t)
     {
         return NULL;
     }
 
-    t->fnInitU    = &udpstatelesssocketTunnelUpStreamInit;
-    t->fnEstU     = &udpstatelesssocketTunnelUpStreamEst;
-    t->fnFinU     = &udpstatelesssocketTunnelUpStreamFinish;
-    t->fnPayloadU = &udpstatelesssocketTunnelUpStreamPayload;
-    t->fnPauseU   = &udpstatelesssocketTunnelUpStreamPause;
-    t->fnResumeU  = &udpstatelesssocketTunnelUpStreamResume;
+    /* Tail callbacks are deliberately disabled by the head-only design decision.
+     * Keep adapterCreate's fatal guards on this side.
+     * t->fnInitU    = &udpstatelesssocketTunnelUpStreamInit;
+     * t->fnEstU     = &udpstatelesssocketTunnelUpStreamEst;
+     * t->fnFinU     = &udpstatelesssocketTunnelUpStreamFinish;
+     * t->fnPayloadU = &udpstatelesssocketTunnelUpStreamPayload;
+     * t->fnPauseU   = &udpstatelesssocketTunnelUpStreamPause;
+     * t->fnResumeU  = &udpstatelesssocketTunnelUpStreamResume;
+     */
 
     t->fnInitD    = &udpstatelesssocketTunnelDownStreamInit;
     t->fnEstD     = &udpstatelesssocketTunnelDownStreamEst;

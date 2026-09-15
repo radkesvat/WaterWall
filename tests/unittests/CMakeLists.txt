@@ -477,6 +477,8 @@ if(TARGET ww)
           "-Wl,--wrap=abortProgramNow"
           "-Wl,--wrap=requestProgramShutdown"
           "-Wl,--wrap=bufferpoolGetLargeBuffer"
+          "-Wl,--wrap=bufferpoolTryGetBestFit"
+          "-Wl,--wrap=bufferpoolGetMediumBuffer"
           "-Wl,--wrap=bufferpoolGetSmallBuffer"
           "-Wl,--wrap=bufferpoolReuseBuffer"
           "-Wl,--wrap=sbufDestroy"
@@ -1729,6 +1731,8 @@ if(UNIX)
     "-Wl,--wrap=abortProgramNow"
     "-Wl,--wrap=requestProgramShutdown"
     "-Wl,--wrap=bufferpoolGetLargeBuffer"
+    "-Wl,--wrap=bufferpoolTryGetBestFit"
+    "-Wl,--wrap=bufferpoolGetMediumBuffer"
     "-Wl,--wrap=bufferpoolGetSmallBuffer"
     "-Wl,--wrap=bufferpoolReuseBuffer"
     "-Wl,--wrap=sbufDestroy"
@@ -2120,6 +2124,8 @@ set(WATERWALL_LINE_FAILURE_WRAPS
   "-Wl,--wrap=abortProgramNow"
   "-Wl,--wrap=requestProgramShutdown"
   "-Wl,--wrap=bufferpoolGetLargeBuffer"
+  "-Wl,--wrap=bufferpoolTryGetBestFit"
+  "-Wl,--wrap=bufferpoolGetMediumBuffer"
   "-Wl,--wrap=bufferpoolGetSmallBuffer"
   "-Wl,--wrap=bufferpoolReuseBuffer"
   "-Wl,--wrap=sbufDestroy"
@@ -2846,6 +2852,46 @@ foreach(tcpoverudp_side Client Server)
     )
   endif()
 endforeach()
+
+foreach(uot_side Client Server)
+  if(TARGET UdpOverTcp${uot_side})
+    string(TOLOWER "${uot_side}" uot_lower)
+    set(uot_test "udpovertcp${uot_lower}_large_payload_test")
+    add_executable(${uot_test} udp_over_tcp_large_payload_test.c ${WATERWALL_LINE_FAILURE_WW_SOURCES})
+    target_link_libraries(${uot_test} PRIVATE UdpOverTcp${uot_side} ww)
+    target_link_options(${uot_test} PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS})
+    if(uot_side STREQUAL "Server")
+      target_compile_definitions(${uot_test} PRIVATE TEST_UOT_SERVER=1)
+    endif()
+    add_dependencies(waterwall_unit_tests ${uot_test})
+    add_waterwall_unit_test(waterwall.udpovertcp${uot_lower}_large_payload_unit ${uot_test} "unit;tunnels;framing;udp;tcp")
+  endif()
+endforeach()
+
+if(TARGET ReverseServer)
+  add_executable(reverseserver_large_wait_test reverseserver_large_wait_test.c)
+  target_link_libraries(reverseserver_large_wait_test PRIVATE ReverseServer ww)
+  target_include_directories(reverseserver_large_wait_test PRIVATE ${CMAKE_SOURCE_DIR}/tunnels/ReverseClient/include)
+  target_link_options(reverseserver_large_wait_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS})
+  add_dependencies(waterwall_unit_tests reverseserver_large_wait_test)
+  add_waterwall_unit_test(waterwall.reverseserver_large_wait_unit reverseserver_large_wait_test "unit;tunnels;reverse;buffering")
+endif()
+
+if(TARGET ObfuscatorClient AND TARGET ObfuscatorServer)
+  add_executable(obfuscator_large_stream_test obfuscator_large_stream_test.c ${WATERWALL_LINE_FAILURE_WW_SOURCES})
+  target_link_libraries(obfuscator_large_stream_test PRIVATE ObfuscatorClient ObfuscatorServer ww)
+  target_link_options(obfuscator_large_stream_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS})
+  add_dependencies(waterwall_unit_tests obfuscator_large_stream_test)
+  add_waterwall_unit_test(waterwall.obfuscator_large_stream_unit obfuscator_large_stream_test "unit;tunnels;obfuscator;framing")
+endif()
+
+if(TARGET Bgp4Client AND TARGET Bgp4Server)
+  add_executable(bgp4_large_stream_test bgp4_large_stream_test.c ${WATERWALL_LINE_FAILURE_WW_SOURCES})
+  target_link_libraries(bgp4_large_stream_test PRIVATE Bgp4Client Bgp4Server ww)
+  target_link_options(bgp4_large_stream_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS})
+  add_dependencies(waterwall_unit_tests bgp4_large_stream_test)
+  add_waterwall_unit_test(waterwall.bgp4_large_stream_unit bgp4_large_stream_test "unit;tunnels;bgp4;framing")
+endif()
 
 foreach(mux_side Client Server)
   string(TOLOWER "${mux_side}" mux_side_lower)

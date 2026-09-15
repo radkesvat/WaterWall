@@ -441,3 +441,5 @@ Source-backed metadata:
 | `layer_group_prev_node` | `kNodeLayer4` |
 | `layer_group_next_node` | `kNodeLayer4` |
 | `required_padding_left` | `16` bytes |
+
+Split waiting uploads close strictly above `131070 * max(1, ceil(L / 32768))` bytes, using the line pool large payload capacity `L`. Header parsing and available pairing run first; coalesced body bytes do not count toward the header limit. `no-split-upload-buffering-limit` remains the explicit bypass. The threshold is 131,070 bytes at 32 KiB and 2,097,120 bytes at 512 KiB.

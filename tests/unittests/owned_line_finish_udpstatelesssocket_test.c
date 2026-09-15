@@ -16,6 +16,18 @@
 #include "tunnel_line_failure_harness.h"
 #include "worker_registry_fixture.h"
 
+extern node_t nodeUdpStatelessSocketGet(void);
+
+static void caseHeadOnlyMetadata(void)
+{
+    node_t node = nodeUdpStatelessSocketGet();
+    twfRequire((node.flags & kNodeFlagChainHead) != 0 && (node.flags & kNodeFlagChainEnd) == 0,
+               "UdpStatelessSocket must advertise only the head role");
+    twfRequire(! node.can_have_prev && node.can_have_next && node.layer_group_prev_node == kNodeLayerNone,
+               "UdpStatelessSocket must reject a previous neighbor");
+    memoryFree(node.type);
+}
+
 /*
  * Fake worker table for the stubbed GSTATE below. Without it the identity
  * predicates correctly report "not an event worker" and the checked
@@ -65,12 +77,10 @@ static void fixtureSetup(udpstateless_fixture_t *fixture, bool attach_idle_item)
     GSTATE.workers_count = 2;
     testWorkerRegistryInstall(&g_test_worker_registry);
 
-    fixture->prev = twfCreatePrevTunnel(&fixture->trace);
     fixture->uss  = tunnelCreate(NULL, sizeof(udpstatelesssocket_tstate_t), sizeof(udpstatelesssocket_lstate_t));
     twfRequire(fixture->uss != NULL, "failed to create the UdpStatelessSocket tunnel");
     fixture->next = twfCreateNextTunnel(&fixture->trace);
 
-    tunnelBind(fixture->prev, fixture->uss);
     tunnelBind(fixture->uss, fixture->next);
 
     fixture->idle_table = localIdleTableCreate(fixture->env.loop);
@@ -78,8 +88,7 @@ static void fixtureSetup(udpstateless_fixture_t *fixture, bool attach_idle_item)
     fixture->idle_table_slots[0] = fixture->idle_table;
 
     udpstatelesssocket_tstate_t *ts = tunnelGetState(fixture->uss);
-    // A middle-of-chain socket: a downstream Finish arrives from next, which is
-    // the role udpstatelesssocketTunnelDownStreamFinish() serves.
+    // The socket owns peer lines at the head; downstream Finish arrives from next.
     ts->is_chain_end       = false;
     ts->socket.idle_tables = fixture->idle_table_slots;
 
@@ -125,7 +134,6 @@ static void fixtureTeardown(udpstateless_fixture_t *fixture)
     twfLinePoolTeardown(&fixture->lines);
     tunnelDestroy(fixture->next);
     tunnelDestroy(fixture->uss);
-    tunnelDestroy(fixture->prev);
 }
 
 // ---------------------------------------------------------------------------
@@ -152,8 +160,7 @@ static void caseEndpointOwnerFinishKillsLine(void)
     twfRequire(localidletableGetIdleItemByHash(fixture.idle_table, kTestPeerHash) == NULL,
                "the owner must detach its idle-table entry before destroying the line");
 
-    // next finished us, so nothing may travel back that way, and a chain-middle
-    // socket does not answer prev either.
+    // next finished us, so nothing may travel back that way. The head has no prev.
     twfRequireEqualU32(fixture.trace.next_finish, 0, "a received downstream Finish must not be reflected upstream");
     twfRequireEqualU32(fixture.trace.next_payload, 0, "a received downstream Finish must not answer upstream");
     twfRequireEqualU32(fixture.trace.prev_finish, 0, "the closing endpoint must not emit a second Finish");
@@ -196,6 +203,7 @@ static void caseBorrowedLineFinishDoesNotDestroy(void)
 
 int main(void)
 {
+    caseHeadOnlyMetadata();
     caseEndpointOwnerFinishKillsLine();
     caseBorrowedLineFinishDoesNotDestroy();
 

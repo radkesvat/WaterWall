@@ -981,11 +981,13 @@ bool tundeviceBringUp(tun_device_t *tdev)
 
     bufferpoolUpdateAllocationPaddings(tdev->reader_buffer_pool,
                                        bufferpoolGetLargeBufferPadding(worker_pool),
+                                       bufferpoolGetMediumBufferPadding(worker_pool),
                                        bufferpoolGetSmallBufferPadding(worker_pool),
                                        bufferpoolGetSpliceBufferPadding(worker_pool));
 
     bufferpoolUpdateAllocationPaddings(tdev->writer_buffer_pool,
                                        bufferpoolGetLargeBufferPadding(worker_pool),
+                                       bufferpoolGetMediumBufferPadding(worker_pool),
                                        bufferpoolGetSmallBufferPadding(worker_pool),
                                        bufferpoolGetSpliceBufferPadding(worker_pool));
 
@@ -1486,14 +1488,12 @@ tun_device_t *tundeviceCreateOwned(const char *name, bool offload, uint16_t mtu,
     worker_small_buffer_size          = max(worker_small_buffer_size, (uint32_t) mtu);
 
     buffer_pool_t *reader_bpool = bufferpoolCreate(GSTATE.masterpool_buffer_pools_large,
+                                                   GSTATE.masterpool_buffer_pools_medium,
                                                    GSTATE.masterpool_buffer_pools_small,
                                                    GSTATE.masterpool_buffer_pools_splice,
                                                    RAM_PROFILE,
-
                                                    worker_large_buffer_size,
-                                                   worker_small_buffer_size
-
-    );
+                                                   worker_small_buffer_size);
     if (UNLIKELY(reader_bpool == NULL))
     {
         LOGE("TunDevice: failed to construct reader buffer pool");
@@ -1501,14 +1501,12 @@ tun_device_t *tundeviceCreateOwned(const char *name, bool offload, uint16_t mtu,
     }
 
     buffer_pool_t *writer_bpool = bufferpoolCreate(GSTATE.masterpool_buffer_pools_large,
+                                                   GSTATE.masterpool_buffer_pools_medium,
                                                    GSTATE.masterpool_buffer_pools_small,
                                                    GSTATE.masterpool_buffer_pools_splice,
                                                    RAM_PROFILE,
-
                                                    worker_large_buffer_size,
-                                                   worker_small_buffer_size
-
-    );
+                                                   worker_small_buffer_size);
     if (UNLIKELY(writer_bpool == NULL))
     {
         LOGE("TunDevice: failed to construct writer buffer pool");

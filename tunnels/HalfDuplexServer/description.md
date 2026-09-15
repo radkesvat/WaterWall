@@ -134,7 +134,7 @@ If an upload half arrives before its matching download half, the server buffers 
 
 Current maximum buffered size for a waiting upload half:
 
-- `65535 * 2` bytes
+- `131070 * max(1, ceil(L / 32768))` bytes, with `L` from the line pool
 
 If that limit is exceeded before the matching download half appears, the waiting upload line is closed.
 
@@ -184,3 +184,5 @@ Source-backed metadata:
 | `layer_group_prev_node` | `kNodeLayer4` |
 | `layer_group_next_node` | `kNodeLayer4` |
 | `required_padding_left` | `0` bytes |
+
+The waiting bound applies at initial publication and on later appends. Close occurs at or above 131,070 bytes at 32 KiB or 2,097,120 bytes at 512 KiB; available peers pair before waiting limits apply.

@@ -437,6 +437,7 @@ bool workerTryCreateBufferPool(worker_t *worker)
     assert(worker->buffer_pool == NULL);
 
     buffer_pool_t *pool = bufferpoolCreate(GSTATE.masterpool_buffer_pools_large,
+                                           GSTATE.masterpool_buffer_pools_medium,
                                            GSTATE.masterpool_buffer_pools_small,
                                            GSTATE.masterpool_buffer_pools_splice,
                                            RAM_PROFILE,

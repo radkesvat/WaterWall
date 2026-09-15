@@ -154,6 +154,7 @@ static void fixtureSetup(flow_fixture_t *fixture, bool server)
         bufferpoolUpdateAllocationPaddings(fixture->env.pools[wid],
                                            kPingWireEncapsulationOverhead,
                                            kPingWireEncapsulationOverhead,
+                                           kPingWireEncapsulationOverhead,
                                            kPingWireEncapsulationOverhead);
     }
 

@@ -9,8 +9,7 @@ void bgp4clientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     bool ok;
     if (! ls->open_sent)
     {
-        ls->open_sent = true;
-        ok            = bgp4clientWrapFirstOpenPayload(t, l, &buf);
+        ok = bgp4clientWrapFirstOpenPayload(t, l, &buf);
     }
     else
     {
@@ -19,8 +18,10 @@ void bgp4clientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     if (! ok)
     {
+        bgp4clientCloseLine(t, l);
         return;
     }
+    ls->open_sent = true;
 
     tunnelNextUpStreamPayload(t, l, buf);
 }

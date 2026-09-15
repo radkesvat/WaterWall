@@ -2577,14 +2577,15 @@ bool httpclientTransportHandleHttp1ResponseHeaderPhase(tunnel_t *t, line_t *l, h
 {
     while (! ls->h1_headers_parsed)
     {
-        if (bufferstreamGetBufLen(&ls->in_stream) > kHttpClientMaxHeaderBytes)
+        size_t     header_end = 0;
+        const bool complete   = bufferstreamFindDoubleCRLF(&ls->in_stream, &header_end);
+        if ((complete ? header_end : bufferstreamGetBufLen(&ls->in_stream)) > kHttpClientMaxHeaderBytes)
         {
             LOGE("HttpClient: response header exceeded maximum size");
             return false;
         }
 
-        size_t header_end = 0;
-        if (! bufferstreamFindDoubleCRLF(&ls->in_stream, &header_end))
+        if (! complete)
         {
             return true;
         }

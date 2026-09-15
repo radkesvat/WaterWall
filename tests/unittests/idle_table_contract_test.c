@@ -16,6 +16,7 @@ typedef struct contract_env_s
     test_wio_fd_pool_t         fd_handles;
     master_pool_t             *large_masters[kContractWorkers];
     master_pool_t             *small_masters[kContractWorkers];
+    master_pool_t             *medium_masters[kContractWorkers];
     master_pool_t             *splice_masters[kContractWorkers];
     master_pool_t             *message_master;
     master_pool_t             *wios_master;
@@ -111,11 +112,13 @@ static void contractEnvSetup(contract_env_t *env)
     {
         env->large_masters[wid] = masterpoolCreateWithCapacity(8);
         env->small_masters[wid] = masterpoolCreateWithCapacity(8);
+        env->medium_masters[wid] = masterpoolCreateWithCapacity(8);
         env->splice_masters[wid] = masterpoolCreateWithCapacity(8);
         require(env->large_masters[wid] != NULL && env->small_masters[wid] != NULL,
                 "failed to create worker buffer masters");
 
         env->pools[wid] = bufferpoolCreate(env->large_masters[wid],
+                                           env->medium_masters[wid],
                                            env->small_masters[wid],
                                            env->splice_masters[wid],
                                            4,
@@ -176,9 +179,11 @@ static void contractEnvTeardown(contract_env_t *env)
         bufferpoolDestroy(env->pools[wid]);
         masterpoolMakeEmpty(env->large_masters[wid]);
         masterpoolMakeEmpty(env->small_masters[wid]);
+        masterpoolMakeEmpty(env->medium_masters[wid]);
         masterpoolMakeEmpty(env->splice_masters[wid]);
         masterpoolDestroy(env->large_masters[wid]);
         masterpoolDestroy(env->small_masters[wid]);
+        masterpoolDestroy(env->medium_masters[wid]);
         masterpoolDestroy(env->splice_masters[wid]);
     }
     masterpoolMakeEmpty(env->wios_master);

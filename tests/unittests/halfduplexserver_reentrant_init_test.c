@@ -391,6 +391,7 @@ typedef struct halfduplexserver_protocol_fixture_s
 } halfduplexserver_protocol_fixture_t;
 
 static halfduplexserver_protocol_fixture_t *g_protocol_fixture;
+static uint32_t                             g_protocol_pool_size = kTestLargeBufferSize;
 
 static void protocolTransportFinish(tunnel_t *prev, line_t *line)
 {
@@ -437,7 +438,7 @@ static void protocolMainPayload(tunnel_t *next, line_t *line, sbuf_t *buf)
 static void protocolFixtureSetup(halfduplexserver_protocol_fixture_t *fixture)
 {
     memoryZero(fixture, sizeof(*fixture));
-    twfWorkerEnvSetup(&fixture->env, kTestLargeBufferSize, 0);
+    twfWorkerEnvSetup(&fixture->env, g_protocol_pool_size, 0);
 
     fixture->prev       = twfCreatePrevTunnel(&fixture->trace);
     fixture->halfduplex = tunnelCreate(NULL, kTunnelStateSize, kLineStateSize);
@@ -485,6 +486,7 @@ static void protocolSendBytes(halfduplexserver_protocol_fixture_t *fixture, line
                               uint32_t length)
 {
     sbuf_t *buf = bufferpoolGetLargeBuffer(fixture->env.pool);
+    buf         = sbufReserveSpace(buf, length);
     sbufSetLength(buf, length);
     sbufWrite(buf, bytes, length);
     halfduplexserverTunnelUpStreamPayload(fixture->halfduplex, line, buf);
@@ -772,8 +774,63 @@ static void caseSimultaneousOppositeRolesCannotBothMiss(void)
     mutexDestroy(&ts.pending_line_maps_mutex);
 }
 
+static uint32_t waiting_expected;
+static void     waitingPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
+{
+    discard t;
+    twfRequire(sbufGetLength(buf) == waiting_expected, "waiting HalfDuplex body length changed");
+    for (uint32_t i = 0; i < waiting_expected; ++i)
+        twfRequire(sbufGetMutablePtr(buf)[i] == 0x71, "waiting HalfDuplex body bytes changed");
+    g_protocol_fixture->forwarded_length = waiting_expected;
+    lineReuseBuffer(l, buf);
+}
+static void caseWaitingBoundary(uint32_t large, uint32_t total, bool append)
+{
+    g_protocol_pool_size = large;
+    halfduplexserver_protocol_fixture_t fixture;
+    protocolFixtureSetup(&fixture);
+    fixture.next->fnPayloadU = waitingPayload;
+    line_t        *upload    = protocolCreateTransport(&fixture);
+    const uint64_t limit     = halfduplexserverWaitingLimit(upload);
+    uint8_t       *data      = memoryAllocate(total);
+    memorySet(data, 0x71, total);
+    uint8_t id[kHLFDPairIdSize] = {7};
+    protocolBuildIntro(data, kHLFDCmdUpload, id);
+    if (append)
+    {
+        protocolSendBytes(&fixture, upload, data, kHLFDIntroSize);
+        protocolSendBytes(&fixture, upload, data + kHLFDIntroSize, total - kHLFDIntroSize);
+    }
+    else
+        protocolSendBytes(&fixture, upload, data, total);
+    if (total >= limit)
+        twfRequire(fixture.transport_finish_count == 1, "HalfDuplex waiting overflow survived");
+    else
+    {
+        twfRequire(fixture.transport_finish_count == 0, "HalfDuplex valid waiting data closed");
+        waiting_expected = total - kHLFDIntroSize;
+        uint8_t intro[kHLFDIntroSize];
+        protocolBuildIntro(intro, kHLFDCmdDownload, id);
+        protocolSendBytes(&fixture, protocolCreateTransport(&fixture), intro, sizeof(intro));
+        twfRequire(fixture.forwarded_length == waiting_expected, "HalfDuplex waiting data did not pair");
+    }
+    memoryFree(data);
+    protocolFixtureTeardown(&fixture);
+    g_protocol_pool_size = kTestLargeBufferSize;
+}
+
 int main(void)
 {
+    const uint32_t sizes[] = {32768, 512 * 1024};
+    for (unsigned i = 0; i < 2; ++i)
+        for (unsigned append = 0; append < 2; ++append)
+        {
+            uint32_t limit = 131070 * (sizes[i] / 32768);
+            caseWaitingBoundary(sizes[i], limit - 1, append);
+            caseWaitingBoundary(sizes[i], limit, append);
+            caseWaitingBoundary(sizes[i], limit + 1, append);
+        }
+    caseWaitingBoundary(512 * 1024, 512 * 1024 + kHLFDIntroSize, false);
     caseSimultaneousOppositeRolesCannotBothMiss();
     runRejectedPairingCase(true, false);
     runRejectedPairingCase(false, false);

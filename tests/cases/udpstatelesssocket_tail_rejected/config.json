@@ -1,0 +1,18 @@
+{
+  "name": "udpstatelesssocket-tail-rejected",
+  "nodes": [
+    {
+      "name": "tester",
+      "type": "TesterClient",
+      "next": "udp"
+    },
+    {
+      "name": "udp",
+      "type": "UdpStatelessSocket",
+      "settings": {
+        "listen-address": "127.0.0.1",
+        "listen-port": 26763
+      }
+    }
+  ]
+}

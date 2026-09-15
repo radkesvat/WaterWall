@@ -19,6 +19,7 @@ typedef struct pool_fixture_s
 {
     master_pool_t *large_master;
     master_pool_t *small_master;
+    master_pool_t *medium_master;
     master_pool_t *splice_master;
     buffer_pool_t *pool;
 } pool_fixture_t;
@@ -67,15 +68,21 @@ static pool_fixture_t poolFixtureCreate(uint32_t large_size, uint32_t small_size
     pool_fixture_t fixture = {
         .large_master  = masterpoolCreateWithCapacity(kTestPoolWidth * 2U),
         .small_master  = masterpoolCreateWithCapacity(kTestPoolWidth * 2U),
+        .medium_master = masterpoolCreateWithCapacity(kTestPoolWidth * 2U),
         .splice_master = masterpoolCreateWithCapacity(kTestPoolWidth * 2U),
         .pool          = NULL,
     };
 
     require(fixture.large_master != NULL && fixture.small_master != NULL, "failed to create BufferStream master pools");
-    fixture.pool = bufferpoolCreate(
-        fixture.large_master, fixture.small_master, fixture.splice_master, kTestPoolWidth, large_size, small_size);
+    fixture.pool = bufferpoolCreate(fixture.large_master,
+                                    fixture.medium_master,
+                                    fixture.small_master,
+                                    fixture.splice_master,
+                                    kTestPoolWidth,
+                                    large_size,
+                                    small_size);
     require(fixture.pool != NULL, "failed to create BufferStream test pool");
-    bufferpoolUpdateAllocationPaddings(fixture.pool, large_padding, small_padding, small_padding);
+    bufferpoolUpdateAllocationPaddings(fixture.pool, large_padding, large_padding, small_padding, small_padding);
     return fixture;
 }
 
@@ -84,9 +91,11 @@ static void poolFixtureDestroy(pool_fixture_t *fixture)
     bufferpoolDestroy(fixture->pool);
     masterpoolMakeEmpty(fixture->large_master);
     masterpoolMakeEmpty(fixture->small_master);
+    masterpoolMakeEmpty(fixture->medium_master);
     masterpoolMakeEmpty(fixture->splice_master);
     masterpoolDestroy(fixture->large_master);
     masterpoolDestroy(fixture->small_master);
+    masterpoolDestroy(fixture->medium_master);
     masterpoolDestroy(fixture->splice_master);
     memoryZero(fixture, sizeof(*fixture));
 }
@@ -633,7 +642,7 @@ static void testCoalescingImmediatePoolSettlement(void)
 
     uint32_t large_baseline = 0;
     uint32_t small_baseline = 0;
-    bufferpoolCachedTierCountsForTest(fixture.pool, &large_baseline, &small_baseline, NULL);
+    bufferpoolCachedTierCountsForTest(fixture.pool, &large_baseline, &small_baseline, NULL, NULL);
     require(small_baseline >= 2, "small-tier cache did not warm for settlement test");
 
     buffer_stream_t stream      = bufferstreamCreate(fixture.pool, 0);
@@ -641,21 +650,21 @@ static void testCoalescingImmediatePoolSettlement(void)
     sbuf_t         *source      = makePooledBuffer(fixture.pool, false, 3, 0, 0x20);
     uint32_t        large_count = 0;
     uint32_t        small_count = 0;
-    bufferpoolCachedTierCountsForTest(fixture.pool, &large_count, &small_count, NULL);
+    bufferpoolCachedTierCountsForTest(fixture.pool, &large_count, &small_count, NULL, NULL);
     require(small_count + 2U == small_baseline, "settlement fixture did not check out exactly two small buffers");
 
     bufferstreamPush(&stream, tail);
     bufferstreamPush(&stream, source);
-    bufferpoolCachedTierCountsForTest(fixture.pool, &large_count, &small_count, NULL);
+    bufferpoolCachedTierCountsForTest(fixture.pool, &large_count, &small_count, NULL, NULL);
     require(streamQueueCount(&stream) == 1, "eligible settlement source did not coalesce");
     require(small_count + 1U == small_baseline, "eligible source was not returned immediately and exactly once");
 
     sbuf_t *read = bufferstreamIdealRead(&stream);
     require(read == tail, "settlement test lost the retained tail");
-    bufferpoolCachedTierCountsForTest(fixture.pool, &large_count, &small_count, NULL);
+    bufferpoolCachedTierCountsForTest(fixture.pool, &large_count, &small_count, NULL, NULL);
     require(small_count + 1U == small_baseline, "reading the tail recycled it before ownership was returned");
     bufferpoolReuseBuffer(fixture.pool, read);
-    bufferpoolCachedTierCountsForTest(fixture.pool, &large_count, &small_count, NULL);
+    bufferpoolCachedTierCountsForTest(fixture.pool, &large_count, &small_count, NULL, NULL);
     require(small_count == small_baseline, "retained tail did not settle exactly once");
     bufferstreamDestroy(&stream);
     poolFixtureDestroy(&fixture);
@@ -773,7 +782,7 @@ static void runExactAllocationCase(pool_fixture_t *fixture, uint16_t use_left_pa
     require(sbufGetLeftPadding(source) == source_lpad, "exact-read allocation changed source l_pad");
     require(bufferstreamViewByteAt(&stream, 0) == (uint8_t) (0x21U + bytes),
             "exact-read allocation changed the queued remainder byte");
-    require(source_lifetime.retains == 0 && source_lifetime.releases == 0,
+    require(source_lifetime.retains == 1 && source_lifetime.releases == 0,
             "exact-read allocation settled the source lifetime too early");
 
     switch (expected_tier)
@@ -796,7 +805,8 @@ static void runExactAllocationCase(pool_fixture_t *fixture, uint16_t use_left_pa
         require(sbufGetTotalCapacityNoPadding(result) > large_size,
                 "oversized exact read did not use the reserve-space fallback");
         require(sbufGetLeftPadding(result) == large_pad, "oversized exact read lost full large-tier l_pad");
-        require(result->curpos == large_pad, "oversized exact-read fallback did not restore full left capacity");
+        require(result->curpos == (uint32_t) large_pad - use_left_padding,
+                "oversized exact-read fallback did not restore full left capacity");
         break;
     }
 
@@ -817,11 +827,30 @@ static void runExactAllocationCase(pool_fixture_t *fixture, uint16_t use_left_pa
     }
 
     bufferpoolReuseBuffer(pool, result);
-    require(source_lifetime.releases == 0, "recycling exact-read result settled the queued source lifetime");
+    require(source_lifetime.releases == 1, "recycling exact-read result settled the queued source lifetime");
     bufferstreamEmpty(&stream);
-    require(source_lifetime.retains == 0 && source_lifetime.releases == 1,
+    require(source_lifetime.retains == 1 && source_lifetime.releases == 2,
             "exact-read source remainder did not settle exactly once");
     bufferstreamDestroy(&stream);
+}
+
+static void testWholeExactReadDoesNotCompact(void)
+{
+    const uint32_t sizes[] = {32768, 512 * 1024};
+    for (size_t geometry = 0; geometry < ARRAY_SIZE(sizes); ++geometry)
+    {
+        pool_fixture_t fixture = poolFixtureCreate(sizes[geometry], 4096, 64, 64);
+        buffer_stream_t stream  = bufferstreamCreate(fixture.pool, 0);
+        sbuf_t         *source  = makePooledBuffer(fixture.pool, true, 4097, 0, 7);
+        bufferstreamPush(&stream, source);
+        sbuf_t *result = bufferstreamReadExact(&stream, 4097);
+        require(result == source, "whole exact read copied its allocation to save memory");
+        require(sbufGetTotalCapacityNoPadding(result) == sizes[geometry], "whole exact read shrank its allocation");
+        requirePatternRange(result, 0, 4097, 7, "whole exact read changed FIFO bytes");
+        bufferpoolReuseBuffer(fixture.pool, result);
+        bufferstreamDestroy(&stream);
+        poolFixtureDestroy(&fixture);
+    }
 }
 
 static void testPaddingAwareExactReadAllocation(void)
@@ -998,13 +1027,172 @@ static void testInvalidViewsAbort(buffer_pool_t *pool)
         pool, viewWithInconsistentSize, "inconsistent byte-view size accounting did not abort with status 1");
 }
 
+static void testMoveExactBytesTo(void)
+{
+    pool_fixture_t  fixture       = poolFixtureCreate(512 * 1024, 4096, 64, 64);
+    buffer_stream_t stream        = bufferstreamCreate(fixture.pool, 8);
+    sbuf_t         *empty         = makePooledBuffer(fixture.pool, false, 0, 0, 0);
+    sbuf_t         *first         = makePooledBuffer(fixture.pool, true, 5000, 5, 0x10);
+    sbuf_t         *second        = makePooledBuffer(fixture.pool, true, 20000, 9, 0x50);
+    const uint32_t  second_cursor = second->curpos;
+    bufferstreamPush(&stream, empty);
+    bufferstreamPush(&stream, first);
+    bufferstreamPush(&stream, second);
+    sbuf_t *destination = bufferpoolGetMediumBuffer(fixture.pool);
+    sbufSetLength(destination, 3);
+    sbufWrite(destination, "old", 3);
+    sbufShiftLeft(destination, 2);
+    sbufWrite(destination, "--", 2);
+    const uint32_t cursor   = destination->curpos;
+    const uint32_t capacity = destination->capacity;
+    bufferstreamMoveExactBytesTo(&stream, destination, 0);
+    require(streamQueueCount(&stream) == 3 && stream.size == 25000 && sbufGetLength(destination) == 5,
+            "zero exact move changed buffers or consumed empty entries");
+    bufferstreamMoveExactBytesTo(&stream, destination, 7000);
+    require(stream.size == 18000 && streamQueueCount(&stream) == 1 && *bs_doublequeue_t_front(&stream.q) == second &&
+                second->curpos == second_cursor + 2000,
+            "exact move merged or replaced the partially consumed source");
+    require(sbufGetLength(destination) == 7005 && memoryEqual(sbufGetRawPtr(destination), "--old", 5),
+            "exact move did not append after the existing prefix");
+    requirePatternRange(destination, 5, 5000, 0x10, "exact move changed first-source bytes");
+    requirePatternRange(destination, 5005, 2000, 0x50, "exact move changed second-source bytes");
+    sbuf_t *recycled = bufferpoolGetLargeBuffer(fixture.pool);
+    require(recycled == first && sbufGetLength(recycled) == 0, "exact move did not recycle its fully consumed source");
+    bufferpoolReuseBuffer(fixture.pool, recycled);
+    bufferstreamMoveExactBytesTo(&stream, destination, 18000);
+    require(stream.size == 0 && streamQueueCount(&stream) == 0 && sbufGetLength(destination) == 25005,
+            "exact move did not drain the remaining bytes");
+    requirePatternRange(destination, 5005, 20000, 0x50, "successive exact moves broke byte order");
+    require(destination->curpos == cursor && destination->capacity == capacity && destination->l_pad == 64,
+            "exact move changed destination geometry or consumed the stream padding budget");
+    bufferpoolReuseBuffer(fixture.pool, destination);
+
+    destination = bufferpoolGetSmallBuffer(fixture.pool);
+    sbufSetLength(destination, sbufGetMaximumWriteableSize(destination) - 8);
+    bufferstreamPush(&stream, makePooledBuffer(fixture.pool, false, 8, 0, 0x70));
+    bufferstreamMoveExactBytesTo(&stream, destination, 8);
+    require(sbufGetLength(destination) == sbufGetMaximumWriteableSize(destination), "exact append fit was rejected");
+    bufferstreamMoveExactBytesTo(&stream, destination, 0);
+    bufferpoolReuseBuffer(fixture.pool, destination);
+    bufferstreamDestroy(&stream);
+    poolFixtureDestroy(&fixture);
+}
+
+static void testMoveExactLifetimes(void)
+{
+    pool_fixture_t fixture = poolFixtureCreate(32768, 4096, 64, 64);
+    for (unsigned mode = 0; mode < 4; ++mode)
+    {
+        buffer_stream_t     stream           = bufferstreamCreate(fixture.pool, 8);
+        counting_lifetime_t source_life      = countingLifetimeCreate();
+        counting_lifetime_t destination_life = countingLifetimeCreate();
+        counting_lifetime_t empty_life       = countingLifetimeCreate();
+        sbuf_t             *empty            = makePooledBuffer(fixture.pool, false, 0, 0, 0);
+        sbufAttachLifetime(empty, &empty_life.lifetime);
+        bufferstreamPush(&stream, empty);
+        sbuf_t *source = makePooledBuffer(fixture.pool, false, 9, 0, 0x80);
+        sbufAttachLifetime(source, &source_life.lifetime);
+        bufferstreamPush(&stream, source);
+        sbuf_t *destination = bufferpoolGetSmallBuffer(fixture.pool);
+        if (mode == 2)
+            sbufAttachLifetime(destination, &destination_life.lifetime);
+        if (mode == 3)
+            sbufSetLength(destination, 1);
+        bufferstreamMoveExactBytesTo(&stream, destination, mode == 1 ? 3 : 9);
+        require(empty_life.releases == 1, "exact move retained metadata from an empty entry");
+        if (mode < 2)
+        {
+            require(sbufGetLifetime(destination) == &source_life.lifetime && source_life.releases == 0,
+                    "exact move lost the first contributing source lifetime");
+            require(source_life.retains == (mode == 1 ? 1U : 0U),
+                    "exact move cloned a full source or stole a partial lifetime");
+        }
+        else
+        {
+            require(source_life.releases == 1 &&
+                        sbufGetLifetime(destination) == (mode == 2 ? &destination_life.lifetime : NULL),
+                    "exact move replaced an existing destination association");
+        }
+        bufferpoolReuseBuffer(fixture.pool, destination);
+        bufferstreamDestroy(&stream);
+        require(source_life.releases == (mode == 1 ? 2U : 1U), "exact move source lifetime was not settled exactly");
+        require(destination_life.releases == (mode == 2 ? 1U : 0U),
+                "exact move destination lifetime was not settled exactly");
+    }
+    buffer_stream_t     stream      = bufferstreamCreate(fixture.pool, 0);
+    counting_lifetime_t first_life  = countingLifetimeCreate();
+    counting_lifetime_t second_life = countingLifetimeCreate();
+    sbuf_t             *first       = makePooledBuffer(fixture.pool, false, 1000, 0, 0);
+    sbuf_t             *second      = makePooledBuffer(fixture.pool, true, 6000, 0, 0);
+    sbufAttachLifetime(first, &first_life.lifetime);
+    sbufAttachLifetime(second, &second_life.lifetime);
+    bufferstreamPush(&stream, first);
+    bufferstreamPush(&stream, second);
+    sbuf_t *destination = bufferpoolGetMediumBuffer(fixture.pool);
+    bufferstreamMoveExactBytesTo(&stream, destination, 2000);
+    require(sbufGetLifetime(destination) == &first_life.lifetime && second_life.releases == 0,
+            "multi-source exact move replaced the first lifetime");
+    bufferstreamMoveExactBytesTo(&stream, destination, 5000);
+    require(second_life.releases == 1 && first_life.releases == 0,
+            "multi-source exact move did not preserve byte-stream merge lifetime semantics");
+    bufferpoolReuseBuffer(fixture.pool, destination);
+    require(first_life.releases == 1, "multi-source destination lifetime leaked");
+    bufferstreamDestroy(&stream);
+    poolFixtureDestroy(&fixture);
+}
+
+static void testMoveExactPreflight(bool short_source)
+{
+    pool_fixture_t           fixture     = poolFixtureCreate(32768, 4096, 64, 64);
+    const size_t             map_size    = sizeof(sbuf_t) + 64;
+    overflow_shared_state_t *state       = mapSharedTestMemory(sizeof(*state));
+    sbuf_t                  *source      = mapSharedTestBuffer(32, 32, 0x11);
+    sbuf_t                  *destination = mapSharedTestBuffer(32, 32, 0x22);
+    source->len                          = 4;
+    if (! short_source)
+        destination->curpos = destination->capacity - 3;
+    *(uint8_t *) sbufGetMutablePtr(destination) = 0x22;
+    uint8_t destination_before[sizeof(sbuf_t) + 64];
+    memoryCopy(destination_before, destination, map_size);
+    const uint32_t cursor = destination->curpos;
+    state->entries[0]     = source;
+    state->stream.pool    = fixture.pool;
+    state->stream.size    = 4;
+    state->stream.q       = (bs_doublequeue_t) {.cbuf = state->entries, .start = 0, .end = 1, .capmask = 3};
+    pid_t child           = fork();
+    require(child >= 0, "could not fork exact-move preflight test");
+    if (child == 0)
+    {
+        bufferstreamMoveExactBytesTo(&state->stream, destination, short_source ? 5 : 4);
+        _Exit(kChildReturned);
+    }
+    int status;
+    require(waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 1,
+            "invalid exact move did not fail with status 1");
+    require(state->stream.size == 4 && state->stream.q.start == 0 && state->stream.q.end == 1 && source->len == 4 &&
+                source->curpos == 32 && destination->curpos == cursor && destination->len == 1 &&
+                *(const uint8_t *) sbufGetRawPtr(source) == 0x11 &&
+                *(const uint8_t *) sbufGetRawPtr(destination) == 0x22,
+            "failed exact move mutated source or destination before rejection");
+    require(memoryEqual(destination, destination_before, map_size),
+            "failed exact move wrote destination storage before rejection");
+    require(munmap(source, map_size) == 0 && munmap(destination, map_size) == 0 && munmap(state, sizeof(*state)) == 0,
+            "could not release exact-move test mappings");
+    poolFixtureDestroy(&fixture);
+}
+
 int main(void)
 {
-    master_pool_t *large_master = masterpoolCreateWithCapacity(16);
-    master_pool_t *small_master = masterpoolCreateWithCapacity(16);
+    testMoveExactBytesTo();
+    testMoveExactLifetimes();
+    testMoveExactPreflight(true);
+    testMoveExactPreflight(false);
+    master_pool_t *large_master  = masterpoolCreateWithCapacity(16);
+    master_pool_t *small_master  = masterpoolCreateWithCapacity(16);
+    master_pool_t *medium_master = masterpoolCreateWithCapacity(16);
     master_pool_t *splice_master = masterpoolCreateWithCapacity(16);
-    buffer_pool_t *pool          = bufferpoolCreate(large_master, small_master, splice_master, 8, 256, 64);
-    bufferpoolUpdateAllocationPaddings(pool, 64, 64, 64);
+    buffer_pool_t *pool = bufferpoolCreate(large_master, medium_master, small_master, splice_master, 8, 256, 64);
+    bufferpoolUpdateAllocationPaddings(pool, 64, 64, 64, 64);
 
     testFlagsInitializationAndReuse(pool);
     testDuplicateToCopiesCompleteSource();
@@ -1025,14 +1213,17 @@ int main(void)
     testCoalescingLifetimeExclusions();
     testCoalescingZeroExclusion();
     testPaddingAwareExactReadAllocation();
+    testWholeExactReadDoesNotCompact();
     testCoalescingOverflowAbortsBeforeSuccess();
 
     bufferpoolDestroy(pool);
     masterpoolMakeEmpty(large_master);
     masterpoolMakeEmpty(small_master);
+    masterpoolMakeEmpty(medium_master);
     masterpoolMakeEmpty(splice_master);
     masterpoolDestroy(large_master);
     masterpoolDestroy(small_master);
+    masterpoolDestroy(medium_master);
     masterpoolDestroy(splice_master);
 
     puts("bufio contract tests passed");

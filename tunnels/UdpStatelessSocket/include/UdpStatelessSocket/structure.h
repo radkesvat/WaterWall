@@ -47,7 +47,7 @@ typedef struct udpstatelesssocket_tstate_s
     bool     verbose;
 
     wid_t io_wid; // the worker id that created the io
-    bool  is_chain_end;
+    bool  is_chain_end; // Always false: tail placement and callbacks are disabled by design.
 
     bool source_ip_configured;
 

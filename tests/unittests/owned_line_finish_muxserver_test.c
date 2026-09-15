@@ -243,9 +243,9 @@ static sbuf_t *makeMuxserverQueuedPayload(muxserver_fixture_t *fixture, uint32_t
     return buf;
 }
 
-static size_t pooledBufferCharge(muxserver_fixture_t *fixture)
+static size_t pooledBufferCharge(muxserver_fixture_t *fixture, bool small)
 {
-    sbuf_t      *buf    = bufferpoolGetLargeBuffer(fixture->env.pool);
+    sbuf_t *buf = small ? bufferpoolGetSmallBuffer(fixture->env.pool) : bufferpoolGetLargeBuffer(fixture->env.pool);
     const size_t charge = muxQueuedSbufCharge(buf);
     bufferpoolReuseBuffer(fixture->env.pool, buf);
     return charge;
@@ -325,8 +325,8 @@ static void destroySurvivingServerChild(muxserver_fixture_t *fixture, line_t *ch
 /*
  * Mirror the client-side skewed-queue regression with real owned child lines.
  * The trigger sits at the list head with one allocation containing 20 KiB,
- * while the actual pressure source is an older child with two one-byte
- * allocations. Charge-based and payload-based selection must choose different
+ * while the actual pressure source is an older child with two 4097-byte
+ * medium allocations. Charge-based and payload-based selection must choose different
  * children.
  */
 static void caseParentBufferLimitClosesActualLargestQueue(void)
@@ -336,7 +336,7 @@ static void caseParentBufferLimitClosesActualLargestQueue(void)
     enum
     {
         kIdleChildren = 3,
-        kLargeEntry   = 1,
+        kLargeEntry   = 4097,
         kTriggerQueue = 20u * 1024u,
     };
 
@@ -347,7 +347,7 @@ static void caseParentBufferLimitClosesActualLargestQueue(void)
     muxserver_lstate_t *parent_ls  = lineGetState(fixture.parent_l, fixture.mux);
     muxserver_lstate_t *trigger_ls = lineGetState(fixture.child_l, fixture.mux);
 
-    const size_t entry_charge = pooledBufferCharge(&fixture);
+    const size_t entry_charge = pooledBufferCharge(&fixture, false);
     twfRequire(entry_charge <= UINT32_MAX / 3U, "test parent charge is not representable by the setting");
     ts->parent_buffer_limit = (uint32_t) (3U * entry_charge);
     trigger_ls->paused      = true;
@@ -441,7 +441,7 @@ static void caseParentBufferLimitCanBeDisabled(void)
     twfRequire(lineIsAlive(fixture.child_l), "an unlimited server parent budget destroyed its child");
     twfRequire(child_ls->parent == parent_ls, "an unlimited server parent budget unlinked its child");
     requireEqualCharge(parent_ls->pending_child_queue_charge,
-                       pooledBufferCharge(&fixture),
+                       pooledBufferCharge(&fixture, false),
                        "the unlimited server budget lost retained-charge accounting");
     twfRequireEqualText(fixture.trace.seq, "", "an unlimited server budget emitted flow or close callbacks");
 
@@ -465,7 +465,7 @@ static void casePeerCloseWaitsForOwnedChildResume(void)
     muxserver_tstate_t *ts           = tunnelGetState(fixture.mux);
     muxserver_lstate_t *parent_ls    = lineGetState(fixture.parent_l, fixture.mux);
     muxserver_lstate_t *child_ls     = lineGetState(fixture.child_l, fixture.mux);
-    const size_t        entry_charge = pooledBufferCharge(&fixture);
+    const size_t        entry_charge = pooledBufferCharge(&fixture, true);
 
     requireEqualCharge(child_ls->pending_child_queue_charge,
                        2U * entry_charge,
@@ -526,7 +526,7 @@ static void caseParentLossRegistersAndDrainsOwnedChild(void)
     twfRequire(child_ls->detached_registered, "detached owned child was not published in the registry");
     twfRequire(registry->head == child_ls, "detached registry head does not own the child");
     twfRequireEqualU32(registry->count, 1, "detached owned child count is wrong");
-    const size_t entry_charge = pooledBufferCharge(&fixture);
+    const size_t entry_charge = pooledBufferCharge(&fixture, true);
     requireEqualCharge(child_ls->pending_child_queue_charge,
                        2U * entry_charge,
                        "detached owned child retained the wrong allocation charge");
@@ -722,7 +722,7 @@ static void casePopulatedDetachedRegistrySupportsEveryRemovalPosition(void)
 
     muxserver_tstate_t            *ts           = tunnelGetState(fixture.mux);
     muxserver_detached_registry_t *registry     = &ts->worker_states[0].detached_registry;
-    const size_t                   entry_charge = pooledBufferCharge(&fixture);
+    const size_t                   entry_charge = pooledBufferCharge(&fixture, true);
     size_t                         total_charge = ARRAY_SIZE(kQueueBytes) * entry_charge;
     requireDetachedRegistryLinks(
         registry, ARRAY_SIZE(children), total_charge, "initial populated registry is inconsistent");
@@ -796,7 +796,7 @@ static void runMuxserverDetachedByteLimitCase(bool unlimited)
     fixtureSetup(&fixture);
 
     muxserver_tstate_t *ts           = tunnelGetState(fixture.mux);
-    const size_t        entry_charge = pooledBufferCharge(&fixture);
+    const size_t        entry_charge = pooledBufferCharge(&fixture, true);
     queuePausedServerPayload(&fixture, fixture.parent_l, fixture.child_l, kOlderBytes);
     muxserverTunnelUpStreamFinish(fixture.mux, fixture.parent_l);
     muxserver_detached_registry_t *registry = &ts->worker_states[0].detached_registry;
@@ -882,7 +882,7 @@ static void caseDetachedDrainStopsOnReentrantPause(void)
     muxserverTunnelUpStreamFinish(fixture.mux, fixture.parent_l);
 
     muxserver_tstate_t *ts           = tunnelGetState(fixture.mux);
-    const size_t        entry_charge = pooledBufferCharge(&fixture);
+    const size_t        entry_charge = pooledBufferCharge(&fixture, true);
     twfRequireEqualU32(fixture.trace.next_payload, 1, "re-entrant Pause did not stop after the first Payload");
     twfRequireEqualU32(fixture.trace.next_finish, 0, "re-entrant Pause allowed early Finish");
     requireEqualCharge(ts->worker_states[0].detached_registry.queued_charge,

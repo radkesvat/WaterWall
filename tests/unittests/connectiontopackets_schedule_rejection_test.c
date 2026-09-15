@@ -28,6 +28,7 @@ typedef struct ctp_fixture_s
     uint32_t         owner_finish_calls;
 } ctp_fixture_t;
 
+static uint32_t                 g_pool_size = 4096;
 static ctp_fixture_t           *g_fixture;
 static ctp_submit_expectation_t g_submit_expectation;
 static uint32_t                 g_schedule_calls;
@@ -128,7 +129,7 @@ static void ctpOwnerFinish(tunnel_t *prev, line_t *line)
 static void ctpFixtureSetup(ctp_fixture_t *fixture)
 {
     memoryZero(fixture, sizeof(*fixture));
-    twfWorkerEnvSetup(&fixture->env, 4096, 0);
+    twfWorkerEnvSetup(&fixture->env, g_pool_size, 0);
 
     fixture->prev = twfCreatePrevTunnel(&fixture->trace);
     fixture->ctp  = tunnelCreate(NULL, sizeof(ctp_tstate_t), sizeof(ctp_lstate_t));
@@ -320,6 +321,37 @@ static void caseCreditedDeliveryRefusalTransfersBufferAndRetainsPbuf(void)
     ctpFixtureTeardown(&fixture);
 }
 
+static void casePendingBudgetAllowsOneReadOfHeadroom(void)
+{
+    twfSetCase("CTP admits a 512 KiB delivery and rejects bytes beyond bounded headroom");
+    g_pool_size = 512 * 1024;
+    ctp_fixture_t fixture;
+    ctpFixtureSetup(&fixture);
+    ctp_tstate_t *ts      = tunnelGetState(fixture.ctp);
+    ctp_lstate_t *ls      = lineGetState(fixture.line, fixture.ctp);
+    ts->max_pending_bytes = 256 * 1024;
+    sbuf_t *buf           = bufferpoolGetLargeBuffer(fixture.env.pool);
+    sbufSetLength(buf, g_pool_size);
+    ctpTunnelUpStreamPayload(fixture.ctp, fixture.line, buf);
+    twfRequire(lineIsAlive(fixture.line) && ls->write_paused, "CTP rejected the delivery before Pause could act");
+    twfRequire(bufferqueueGetBufLen(&ls->pending_queue) == g_pool_size, "CTP lost the delivered payload");
+    buf = bufferpoolGetLargeBuffer(fixture.env.pool);
+    sbufSetLength(buf, ts->max_pending_bytes);
+    ctpTunnelUpStreamPayload(fixture.ctp, fixture.line, buf);
+    twfRequire(bufferqueueGetBufLen(&ls->pending_queue) == (size_t) ts->max_pending_bytes + g_pool_size,
+               "CTP did not admit the exact headroom boundary");
+    buf = bufferpoolGetSmallBuffer(fixture.env.pool);
+    sbufSetLength(buf, 1);
+    lineRef(fixture.line);
+    ctpTunnelUpStreamPayload(fixture.ctp, fixture.line, buf);
+    twfRequire(! lineIsAlive(fixture.line) && fixture.owner_finish_calls == 1,
+               "CTP failed to close the flow exceeding its bounded headroom");
+    lineUnref(fixture.line);
+    fixture.line = NULL;
+    ctpFixtureTeardown(&fixture);
+    g_pool_size = 4096;
+}
+
 static atomic_bool g_lwip_initialized;
 
 static void ctpLwipInitialized(void *argument)
@@ -339,6 +371,7 @@ int main(void)
         YIELD_THREAD();
     }
 
+    casePendingBudgetAllowsOneReadOfHeadroom();
     caseForeignRetryRefusalPublishesAndDrainsTerminalLine();
     caseCreditedDeliveryRefusalTransfersBufferAndRetainsPbuf();
 

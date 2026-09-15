@@ -257,12 +257,10 @@ void ptcAckQueuePopFront(ptc_lstate_t *ls)
 
 bool ptcPendingBytesWouldOverflow(const ptc_tstate_t *ts, const ptc_lstate_t *ls, uint32_t len)
 {
-    if (UNLIKELY(ls->pending_bytes > ts->max_pending_bytes))
-    {
-        assert(false);
-        return true;
-    }
-    return len > ts->max_pending_bytes - ls->pending_bytes;
+    // One read-sized allowance covers bytes delivered before Pause can take effect.
+    const uint64_t maximum =
+        (uint64_t) ts->max_pending_bytes + bufferpoolGetLargeBufferSize(lineGetBufferPool(ls->line));
+    return ls->pending_bytes > maximum || len > maximum - ls->pending_bytes;
 }
 
 bool ptcPendingEntriesExhausted(const ptc_tstate_t *ts, const ptc_lstate_t *ls)
@@ -411,7 +409,8 @@ ptc_flush_result_t ptcFlushWriteQueue(ptc_lstate_t *ls)
         tcp_output(tpcb);
     }
 
-    if (bufferqueueGetBufCount(&ls->pause_queue) == 0)
+    const ptc_tstate_t *state = tunnelGetState(ls->tunnel);
+    if (bufferqueueGetBufCount(&ls->pause_queue) == 0 && ls->pending_bytes <= state->max_pending_bytes)
     {
         ls->write_paused = false;
         if (ls->write_poll_armed)
@@ -422,6 +421,9 @@ ptc_flush_result_t ptcFlushWriteQueue(ptc_lstate_t *ls)
         return kPtcFlushComplete;
     }
 
+    // An empty write queue may still have a large charged ACK record. Keep
+    // production paused until the configured budget can admit the next delivery.
+    ls->write_paused = true;
     if (! ls->write_poll_armed)
     {
         tcp_poll(tpcb, ptcTcpPollCallback, kPtcWritePollInterval);
@@ -816,7 +818,9 @@ void ptcResumeUpstreamTask(tunnel_t *t, line_t *l)
         ptcCloseLineForStop(t, l);
         return;
     }
-    discard lineCallWithRef(l, tunnelNextUpStreamResume, t);
+    const ptc_lstate_t *ls = lineGetState(l, t);
+    if (! ls->write_paused)
+        discard lineCallWithRef(l, tunnelNextUpStreamResume, t);
     ptcNextGateLeave(t);
 }
 

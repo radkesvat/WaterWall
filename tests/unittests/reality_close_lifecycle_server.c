@@ -46,6 +46,7 @@ typedef struct server_lifecycle_fixture_s
 {
     master_pool_t             *large_master;
     master_pool_t             *small_master;
+    master_pool_t             *medium_master;
     master_pool_t             *splice_master;
     buffer_pool_t             *pool;
     buffer_pool_t             *shortcut[1];
@@ -420,10 +421,12 @@ static void serverFixtureInitialize(server_lifecycle_fixture_t *fixture)
     GSTATE.workers_count    = 2;
     fixture->large_master   = masterpoolCreateWithCapacity(8);
     fixture->small_master   = masterpoolCreateWithCapacity(8);
+    fixture->medium_master  = masterpoolCreateWithCapacity(8);
     fixture->splice_master  = masterpoolCreateWithCapacity(8);
-    fixture->pool =
-        bufferpoolCreate(fixture->large_master, fixture->small_master, fixture->splice_master, 8, 8192, 1024);
+    fixture->pool           = bufferpoolCreate(
+        fixture->large_master, fixture->medium_master, fixture->small_master, fixture->splice_master, 8, 8192, 1024);
     bufferpoolUpdateAllocationPaddings(fixture->pool,
+                                       kRealityServerMaxFramePrefixSize,
                                        kRealityServerMaxFramePrefixSize,
                                        kRealityServerMaxFramePrefixSize,
                                        kRealityServerMaxFramePrefixSize);
@@ -533,9 +536,11 @@ static void serverFixtureDestroy(server_lifecycle_fixture_t *fixture)
     bufferpoolDestroy(fixture->pool);
     masterpoolMakeEmpty(fixture->large_master);
     masterpoolMakeEmpty(fixture->small_master);
+    masterpoolMakeEmpty(fixture->medium_master);
     masterpoolMakeEmpty(fixture->splice_master);
     masterpoolDestroy(fixture->large_master);
     masterpoolDestroy(fixture->small_master);
+    masterpoolDestroy(fixture->medium_master);
     masterpoolDestroy(fixture->splice_master);
 }
 
@@ -1459,7 +1464,7 @@ static void testServerObservationDoesNotRetainBuffers(void)
             bufferpoolReuseBuffer(fixture.pool, warm[i]);
         }
         uint32_t large_before, small_before;
-        bufferpoolCachedTierCountsForTest(fixture.pool, &large_before, &small_before, NULL);
+        bufferpoolCachedTierCountsForTest(fixture.pool, &large_before, &small_before, NULL, NULL);
         for (uint32_t repetition = 0; repetition < 4096; ++repetition)
         {
             for (uint32_t offset = 0; offset < sizeof(record); offset += chunks[split])
@@ -1467,7 +1472,7 @@ static void testServerObservationDoesNotRetainBuffers(void)
                 realityserverTunnelDownStreamPayload(
                     fixture.reality, fixture.line, serverBufferFromBytes(&fixture, record + offset, chunks[split]));
                 uint32_t large_after, small_after;
-                bufferpoolCachedTierCountsForTest(fixture.pool, &large_after, &small_after, NULL);
+                bufferpoolCachedTierCountsForTest(fixture.pool, &large_after, &small_after, NULL, NULL);
                 requireServer(large_before == large_after && small_before == small_after,
                               "pre-key downstream observation retained pooled buffers");
                 requireServer(ls->mode == kRealityServerModePending && ! ls->session_keys_ready &&
@@ -2440,10 +2445,14 @@ static void runServerSizingCase(uint16_t tls_version, const reality_v2_record_pr
 {
     master_pool_t *large_master = masterpoolCreateWithCapacity(8);
     master_pool_t *small_master = masterpoolCreateWithCapacity(8);
+    master_pool_t *medium_master = masterpoolCreateWithCapacity(8);
     master_pool_t *splice_master = masterpoolCreateWithCapacity(8);
-    buffer_pool_t *pool          = bufferpoolCreate(large_master, small_master, splice_master, 8, 65536, 1024);
-    bufferpoolUpdateAllocationPaddings(
-        pool, kRealityServerMaxFramePrefixSize, kRealityServerMaxFramePrefixSize, kRealityServerMaxFramePrefixSize);
+    buffer_pool_t *pool = bufferpoolCreate(large_master, medium_master, small_master, splice_master, 8, 65536, 1024);
+    bufferpoolUpdateAllocationPaddings(pool,
+                                       kRealityServerMaxFramePrefixSize,
+                                       kRealityServerMaxFramePrefixSize,
+                                       kRealityServerMaxFramePrefixSize,
+                                       kRealityServerMaxFramePrefixSize);
     buffer_pool_t  *shortcut[1]         = {pool};
     buffer_pool_t **saved_shortcuts     = GSTATE.shortcut_buffer_pools;
     const bool      saved_initialized   = GSTATE.flag_initialized;
@@ -2531,9 +2540,11 @@ static void runServerSizingCase(uint16_t tls_version, const reality_v2_record_pr
     bufferpoolDestroy(pool);
     masterpoolMakeEmpty(large_master);
     masterpoolMakeEmpty(small_master);
+    masterpoolMakeEmpty(medium_master);
     masterpoolMakeEmpty(splice_master);
     masterpoolDestroy(large_master);
     masterpoolDestroy(small_master);
+    masterpoolDestroy(medium_master);
     masterpoolDestroy(splice_master);
 }
 

@@ -85,10 +85,12 @@ typedef struct httpserver_split_callback_fixture_s
     tunnel_t          *next;
 } httpserver_split_callback_fixture_t;
 
+static uint32_t g_pool_size = kTestLargeBufferSize;
+
 static void fixtureSetup(httpserver_split_callback_fixture_t *fixture)
 {
     memoryZero(fixture, sizeof(*fixture));
-    twfWorkerEnvSetup(&fixture->env, kTestLargeBufferSize, 0);
+    twfWorkerEnvSetup(&fixture->env, g_pool_size, 64);
 
     fixture->prev = twfCreatePrevTunnel(&fixture->prev_trace);
     fixture->http = tunnelCreate(NULL, sizeof(httpserver_tstate_t), sizeof(httpserver_lstate_t));
@@ -294,8 +296,105 @@ static void caseFinishedNextSuppressesBackpressure(void)
     fixtureTeardown(&fixture);
 }
 
+static uint32_t waiting_bytes;
+static void     waitingBody(tunnel_t *t, line_t *l, sbuf_t *buf)
+{
+    discard t;
+    for (uint32_t i = 0; i < sbufGetLength(buf); ++i)
+        twfRequire(sbufGetMutablePtr(buf)[i] == 'q', "split waiting payload changed");
+    waiting_bytes += sbufGetLength(buf);
+    lineReuseBuffer(l, buf);
+}
+static void caseWaitingBoundary(uint32_t large, uint32_t length, bool append, bool bypass)
+{
+    g_pool_size = large;
+    httpserver_split_callback_fixture_t fixture;
+    fixtureSetup(&fixture);
+    httpserver_tstate_t *ts             = tunnelGetState(fixture.http);
+    ts->h1_transport_mode               = kHttpServerH1TransportSplit;
+    ts->split_upload_method             = (char *) "POST";
+    ts->split_download_method           = (char *) "GET";
+    ts->split_upload_path               = (char *) "/upload";
+    ts->split_download_path             = (char *) "/download";
+    ts->split_id_name                   = (char *) "id";
+    ts->split_direction_name            = (char *) "direction";
+    ts->split_upload_value              = (char *) "upload";
+    ts->split_download_value            = (char *) "download";
+    ts->status_code                     = 200;
+    ts->no_split_upload_buffering_limit = bypass;
+    ts->split_upload_map                = hmap_httpserver_split_t_init();
+    ts->split_download_map              = hmap_httpserver_split_t_init();
+    mutexInit(&ts->split_upload_map_mutex);
+    mutexInit(&ts->split_download_map_mutex);
+    tunnel_chain_t *chain      = tunnelchainCreate(1);
+    chain->sum_line_state_size = fixture.http->lstate_size;
+    tunnelchainFinalize(chain);
+    fixture.http->chain      = chain;
+    fixture.next->fnPayloadU = waitingBody;
+    line_t *upload           = twfLineCreate(fixture.http->lstate_size);
+    httpserverSplitUpStreamInit(fixture.http, upload);
+    const uint64_t limit = httpserverSplitWaitingLimit(upload);
+    sbuf_t        *data  = bufferpoolGetLargeBuffer(fixture.env.pool);
+    data                 = sbufReserveSpace(data, length + 256);
+    int header           = stringNPrintf((char *) sbufGetMutablePtr(data),
+                               256,
+                               "POST /upload?id=seven HTTP/1.1\r\nHost: example.test\r\nContent-Length: %u\r\n\r\n",
+                               length + 1);
+    memorySet(sbufGetMutablePtr(data) + header, 'q', length);
+    sbufSetLength(data, header + length);
+    if (append)
+    {
+        sbuf_t *prefix = bufferpoolGetSmallBuffer(fixture.env.pool);
+        sbufMoveTo(prefix, data, header);
+        httpserverSplitUpStreamPayload(fixture.http, upload, prefix);
+    }
+    httpserverSplitUpStreamPayload(fixture.http, upload, data);
+    if (length > limit && ! bypass)
+    {
+        twfRequire(fixture.prev_trace.prev_finish == 1, "split waiting overflow survived");
+        twfRequireLineStateZeroed(upload, fixture.http, "split overflow retained state");
+    }
+    else
+    {
+        twfRequire(fixture.prev_trace.prev_finish == 0, "split valid header/body delivery closed");
+        line_t *download = twfLineCreate(fixture.http->lstate_size);
+        httpserverSplitUpStreamInit(fixture.http, download);
+        const char *request = "GET /download?id=seven HTTP/1.1\r\nHost: example.test\r\n\r\n";
+        sbuf_t     *peer    = bufferpoolGetSmallBuffer(fixture.env.pool);
+        sbufWrite(peer, request, strlen(request));
+        sbufSetLength(peer, strlen(request));
+        waiting_bytes = 0;
+        httpserverSplitUpStreamPayload(fixture.http, download, peer);
+        twfRequire(waiting_bytes == length, "split partner arrival lost waiting data");
+        line_t *main_line = ((httpserver_lstate_t *) lineGetState(upload, fixture.http))->split_main_line;
+        twfRequire(main_line != NULL, "split pair has no main line");
+        httpserverSplitDownStreamFinish(fixture.http, main_line);
+        twfRequireLineStateZeroed(download, fixture.http, "split download retained state");
+        twfLineDestroy(download);
+    }
+    twfLineDestroy(upload);
+    hmap_httpserver_split_t_drop(&ts->split_upload_map);
+    hmap_httpserver_split_t_drop(&ts->split_download_map);
+    mutexDestroy(&ts->split_upload_map_mutex);
+    mutexDestroy(&ts->split_download_map_mutex);
+    tunnelchainDestroy(chain);
+    fixtureTeardown(&fixture);
+    g_pool_size = kTestLargeBufferSize;
+}
+
 int main(void)
 {
+    const uint32_t sizes[] = {32768, 512 * 1024};
+    for (unsigned i = 0; i < 2; ++i)
+        for (unsigned append = 0; append < 2; ++append)
+        {
+            uint32_t limit = 131070 * (sizes[i] / 32768);
+            caseWaitingBoundary(sizes[i], limit - 1, append, false);
+            caseWaitingBoundary(sizes[i], limit, append, false);
+            caseWaitingBoundary(sizes[i], limit + 1, append, false);
+        }
+    caseWaitingBoundary(512 * 1024, 512 * 1024, false, false);
+    caseWaitingBoundary(32768, 131071, false, true);
     caseUnpairedDownloadAbsorbsAllCallbacks();
     casePairedDownloadMapsBackpressureToMain();
     caseTransportRoleAbsorbsAllCallbacks(kHttpServerSplitRoleUnknown,

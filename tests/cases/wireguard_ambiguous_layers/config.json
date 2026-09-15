@@ -27,10 +27,9 @@
     },
     {
       "name": "udp-next",
-      "type": "UdpStatelessSocket",
+      "type": "BlackHole",
       "settings": {
-        "listen-address": "127.0.0.1",
-        "listen-port": 26762
+        "mode": "passive"
       }
     }
   ]

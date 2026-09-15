@@ -54,6 +54,7 @@ typedef struct ww_global_state_s
     generic_pool_t               **shortcut_context_pools;
     master_pool_t                 *masterpool_buffer_pools_large;
     master_pool_t                 *masterpool_buffer_pools_small;
+    master_pool_t                 *masterpool_buffer_pools_medium;
     master_pool_t                 *masterpool_buffer_pools_splice;
     master_pool_t                 *masterpool_wios;
     master_pool_t                 *masterpool_wio_fds;

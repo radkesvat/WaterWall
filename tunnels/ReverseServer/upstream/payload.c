@@ -15,7 +15,7 @@ static void reverseclienthandleBufferMerging(line_t *d, reverseserver_lstate_t *
 static bool checkBufferSizeLimitD(tunnel_t *t, line_t *d, reverseserver_lstate_t *dls,
                                   reverseserver_thread_box_t *this_tb, sbuf_t *buf)
 {
-    if (sbufGetLength(buf) > kMaxBuffering)
+    if (sbufGetLength(buf) > reverseserverWaitingLimit(d))
     {
         LOGD("ReverseServer: Upstream payload is too large, dropping connection");
 
@@ -134,7 +134,10 @@ static sbuf_t *createHandshakeBuffer(line_t *d, reverseserver_tstate_t *ts)
 static bool pipeToRemoteWorker(tunnel_t *t, line_t *d, reverseserver_lstate_t *dls, reverseserver_thread_box_t *this_tb,
                                reverseserver_tstate_t *ts, wid_t wi, sbuf_t *buf)
 {
-    if (! pipeTo(t, d, wi))
+    buffer_pool_t *pool = lineGetBufferPool(d);
+    uint32_t       capacity;
+    const uint64_t length = ts->handshake_length + (buf != NULL ? (uint64_t) sbufGetLength(buf) : 0);
+    if (! sbufTryComputeCapacity(length, bufferpoolGetLargeBufferPadding(pool), &capacity) || ! pipeTo(t, d, wi))
     {
         return false;
     }
@@ -142,23 +145,15 @@ static bool pipeToRemoteWorker(tunnel_t *t, line_t *d, reverseserver_lstate_t *d
     reverseserverRemoveConnectionD(this_tb, dls);
     reverseserverLinestateDestroy(dls);
 
-    sbuf_t   *handshake_buf = createHandshakeBuffer(d, ts);
-    tunnel_t *prev_tun      = t->prev;
-
-    if (! lineCallWithRefWithBuf(d, tunnelUpStreamPayload, prev_tun, handshake_buf))
-    {
-        if (buf != NULL)
-        {
-            reuseBuffer(buf);
-        }
-        return true;
-    }
-
+    sbuf_t *handshake_buf = createHandshakeBuffer(d, ts);
     if (buf != NULL)
     {
-        discard lineCallWithRefWithBuf(d, tunnelUpStreamPayload, prev_tun, buf);
+        sbufTransferLifetime(buf, handshake_buf);
+        handshake_buf = sbufAppendMerge(pool, handshake_buf, buf);
     }
-
+    /* One replay callback keeps a Pause emitted while handling the handshake
+     * from being followed by another newly initiated payload callback. */
+    tunnelUpStreamPayload(t->prev, d, handshake_buf);
     return true;
 }
 
@@ -186,12 +181,21 @@ static bool tryPairWithRemoteUpstreamConnection(tunnel_t *t, line_t *d, reverses
 static void handleUnpairedConnectionD(tunnel_t *t, line_t *d, reverseserver_lstate_t *dls, reverseserver_tstate_t *ts,
                                       reverseserver_thread_box_t *this_tb, sbuf_t *buf)
 {
-    reverseclienthandleBufferMerging(d, dls, &buf);
-
-    if (! checkBufferSizeLimitD(t, d, dls, this_tb, buf))
+    uint32_t       capacity;
+    const uint64_t total = (uint64_t) sbufGetLength(buf) + (dls->buffering != NULL ? sbufGetLength(dls->buffering) : 0);
+    if (! sbufTryComputeCapacity(total, bufferpoolGetLargeBufferPadding(lineGetBufferPool(d)), &capacity))
     {
+        lineReuseBuffer(d, buf);
+        if (dls->buffering != NULL)
+            lineReuseBuffer(d, dls->buffering);
+        dls->buffering = NULL;
+        if (dls->handshaked)
+            reverseserverRemoveConnectionD(this_tb, dls);
+        reverseserverLinestateDestroy(dls);
+        tunnelPrevDownStreamFinish(t, d);
         return;
     }
+    reverseclienthandleBufferMerging(d, dls, &buf);
 
     if (! processHandshakeD(t, d, dls, this_tb, ts, buf))
     {
@@ -207,6 +211,13 @@ static void handleUnpairedConnectionD(tunnel_t *t, line_t *d, reverseserver_lsta
     {
         return;
     }
+    buf            = dls->buffering;
+    dls->buffering = NULL;
+    if (buf != NULL && ! checkBufferSizeLimitD(t, d, dls, this_tb, buf))
+    {
+        return;
+    }
+    dls->buffering = buf;
 }
 
 void reverseserverTunnelUpStreamPayload(tunnel_t *t, line_t *d, sbuf_t *buf)

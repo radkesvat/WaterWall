@@ -24,6 +24,7 @@ typedef struct tlsclient_lifecycle_fixture_s
 {
     master_pool_t                *large_master;
     master_pool_t                *small_master;
+    master_pool_t                *medium_master;
     master_pool_t                *splice_master;
     buffer_pool_t                *pool;
     buffer_pool_t               **saved_shortcuts;
@@ -168,9 +169,10 @@ static void fixtureInitialize(tlsclient_lifecycle_fixture_t *fixture)
     GSTATE.workers_count         = 2;
     fixture->large_master        = masterpoolCreateWithCapacity(8);
     fixture->small_master        = masterpoolCreateWithCapacity(8);
+    fixture->medium_master       = masterpoolCreateWithCapacity(8);
     fixture->splice_master       = masterpoolCreateWithCapacity(8);
-    fixture->pool =
-        bufferpoolCreate(fixture->large_master, fixture->small_master, fixture->splice_master, 8, 65536, 1024);
+    fixture->pool                = bufferpoolCreate(
+        fixture->large_master, fixture->medium_master, fixture->small_master, fixture->splice_master, 8, 65536, 1024);
     fixture->saved_shortcuts     = GSTATE.shortcut_buffer_pools;
     fixture->shortcut[0]         = fixture->pool;
     GSTATE.shortcut_buffer_pools = fixture->shortcut;
@@ -244,9 +246,11 @@ static void fixtureDestroy(tlsclient_lifecycle_fixture_t *fixture)
     bufferpoolDestroy(fixture->pool);
     masterpoolMakeEmpty(fixture->large_master);
     masterpoolMakeEmpty(fixture->small_master);
+    masterpoolMakeEmpty(fixture->medium_master);
     masterpoolMakeEmpty(fixture->splice_master);
     masterpoolDestroy(fixture->large_master);
     masterpoolDestroy(fixture->small_master);
+    masterpoolDestroy(fixture->medium_master);
     masterpoolDestroy(fixture->splice_master);
 }
 

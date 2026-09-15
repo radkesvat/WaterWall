@@ -85,6 +85,21 @@ void bufferstreamPush(buffer_stream_t *self, sbuf_t *buf);
 sbuf_t *bufferstreamReadExact(buffer_stream_t *self, size_t bytes);
 
 /**
+ * Append exactly bytes from the stream into caller-owned ordinary storage.
+ * Source length and destination append space are checked before consumption;
+ * insufficient bytes or space terminate the program. Zero bytes is a no-op.
+ * The destination must not be one of the stream's buffers. Its allocation,
+ * cursor, and padding stay unchanged; use_left_padding is not consumed here.
+ * Fully consumed sources are recycled, and partial sources remain in the stream.
+ * No destination allocation, growth, or intermediate merge is performed.
+ * Existing destination lifetime metadata is preserved. An empty destination
+ * without metadata inherits the first contributing source's lifetime (cloned
+ * for a partial source). Other source lifetimes settle through normal recycling,
+ * as with byte-stream merges; this does not aggregate independent lifetimes.
+ */
+void bufferstreamMoveExactBytesTo(buffer_stream_t *self, sbuf_t *destination, size_t bytes);
+
+/**
  * Reads at least the next bytes, possibly more according to internal chunking.
  * Requires 0 < bytes <= buffered length; original push boundaries do not define
  * the returned size.

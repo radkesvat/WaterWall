@@ -97,8 +97,41 @@ static void caseTerminatorSplitAcrossPayloadsResumesAndDropsTrailingBytes(void)
     fixtureTeardown(&fixture);
 }
 
+static void caseHeaderLimitExcludesDeliveredBody(unsigned mode)
+{
+    twfSetCase("HttpClient checks header size separately from a large delivered body");
+    httpclient_chunked_fixture_t fixture;
+    fixtureSetup(&fixture);
+    httpclient_lstate_t *ls      = lineGetState(fixture.line, fixture.http);
+    ls->h1_headers_parsed        = false;
+    const char    *header        = "HTTP/1.1 200 OK\r\nContent-Length: 600000\r\n\r\n";
+    const uint32_t header_length = (uint32_t) stringLength(header);
+    const uint32_t length        = 512 * 1024;
+    sbuf_t        *input         = bufferpoolTryGetBestFit(fixture.env.pool, length, 0);
+    memorySet(sbufGetMutablePtr(input), 'b', length);
+    sbufSetLength(input, length);
+    if (mode == 0)
+        memoryCopy(sbufGetMutablePtr(input), header, header_length);
+    else if (mode == 1)
+        memoryCopy((uint8_t *) sbufGetMutablePtr(input) + kHttpClientMaxHeaderBytes, "\r\n\r\n", 4);
+    bufferstreamPush(&ls->in_stream, input);
+    bool accepted = httpclientTransportHandleHttp1ResponseHeaderPhase(fixture.http, fixture.line, ls);
+    twfRequire(accepted == (mode == 0), "HTTP header admission used the complete delivery length");
+    if (accepted)
+    {
+        twfRequire(ls->h1_headers_parsed, "valid coalesced HTTP headers were not parsed");
+        twfRequire(bufferstreamGetBufLen(&ls->in_stream) == length - header_length,
+                   "header parsing lost or consumed the following body");
+        twfRequire(bufferstreamViewByteAt(&ls->in_stream, length - header_length - 1) == 'b',
+                   "header parsing changed the trailing body");
+    }
+    fixtureTeardown(&fixture);
+}
+
 int main(void)
 {
+    for (unsigned mode = 0; mode < 3; ++mode)
+        caseHeaderLimitExcludesDeliveredBody(mode);
     caseTerminatorSplitAcrossPayloadsResumesAndDropsTrailingBytes();
     return 0;
 }

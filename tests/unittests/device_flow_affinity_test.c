@@ -908,8 +908,9 @@ static void testSameTargetRefusalCleansLaterChunks(void)
 
     master_pool_t *large_master = masterpoolCreateWithCapacity(8);
     master_pool_t *small_master = masterpoolCreateWithCapacity(8);
+    master_pool_t *medium_master = masterpoolCreateWithCapacity(8);
     master_pool_t *splice_master = masterpoolCreateWithCapacity(8);
-    buffer_pool_t *pool          = bufferpoolCreate(large_master, small_master, splice_master, 8, 256, 64);
+    buffer_pool_t *pool = bufferpoolCreate(large_master, medium_master, small_master, splice_master, 8, 256, 64);
     require(large_master != NULL && small_master != NULL && pool != NULL,
             "failed to create the dispatch-refusal buffer pool");
 
@@ -951,9 +952,11 @@ static void testSameTargetRefusalCleansLaterChunks(void)
     bufferpoolDestroy(pool);
     masterpoolMakeEmpty(large_master);
     masterpoolMakeEmpty(small_master);
+    masterpoolMakeEmpty(medium_master);
     masterpoolMakeEmpty(splice_master);
     masterpoolDestroy(large_master);
     masterpoolDestroy(small_master);
+    masterpoolDestroy(medium_master);
     masterpoolDestroy(splice_master);
 }
 
@@ -989,8 +992,9 @@ static void testMixedWorkerRefusalCleansTrackedPublications(void)
 
     master_pool_t *large_master = masterpoolCreateWithCapacity(16);
     master_pool_t *small_master = masterpoolCreateWithCapacity(16);
+    master_pool_t *medium_master = masterpoolCreateWithCapacity(16);
     master_pool_t *splice_master = masterpoolCreateWithCapacity(16);
-    buffer_pool_t *pool          = bufferpoolCreate(large_master, small_master, splice_master, 16, 256, 128);
+    buffer_pool_t *pool = bufferpoolCreate(large_master, medium_master, small_master, splice_master, 16, 256, 128);
     require(large_master != NULL && small_master != NULL && pool != NULL,
             "failed to create mixed-worker refusal buffer pool");
     require(getWorkersCount() >= kBucketCount, "mixed-worker refusal fixture needs three worker buckets");
@@ -1066,9 +1070,11 @@ static void testMixedWorkerRefusalCleansTrackedPublications(void)
     bufferpoolDestroy(pool);
     masterpoolMakeEmpty(large_master);
     masterpoolMakeEmpty(small_master);
+    masterpoolMakeEmpty(medium_master);
     masterpoolMakeEmpty(splice_master);
     masterpoolDestroy(large_master);
     masterpoolDestroy(small_master);
+    masterpoolDestroy(medium_master);
     masterpoolDestroy(splice_master);
 }
 

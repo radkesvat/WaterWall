@@ -27,6 +27,7 @@ typedef struct ptc_fixture_s
     line_t          *packet_line;
 } ptc_fixture_t;
 
+static uint32_t                 g_pool_size = 4096;
 static ptc_fixture_t           *g_fixture;
 static ptc_submit_expectation_t g_submit_expectation;
 static uint32_t                 g_schedule_calls;
@@ -114,7 +115,7 @@ line_task_submit_result_e __wrap_lineScheduleTaskWithBuf(line_t *const line, Lin
 static void ptcFixtureSetup(ptc_fixture_t *fixture)
 {
     memoryZero(fixture, sizeof(*fixture));
-    twfWorkerEnvSetup(&fixture->env, 4096, 0);
+    twfWorkerEnvSetup(&fixture->env, g_pool_size, 0);
 
     fixture->ptc  = tunnelCreate(NULL, sizeof(ptc_tstate_t), sizeof(ptc_lstate_t));
     fixture->next = twfCreateNextTunnel(&fixture->trace);
@@ -296,6 +297,79 @@ static void caseCreditedDeliveryRefusalRollsBackCreditAndRetainsPbuf(void)
     ptcFixtureTeardown(&fixture);
 }
 
+static void casePendingBudgetAllowsOneReadOfHeadroom(void)
+{
+    twfSetCase("PTC admits a 512 KiB delivery and rejects bytes beyond bounded headroom");
+    g_pool_size = 512 * 1024;
+    ptc_fixture_t fixture;
+    ptcFixtureSetup(&fixture);
+    const uint32_t pcb_baseline = ptcTcpPcbUsed();
+    discard        ptcAttachTestPcb(&fixture, pcb_baseline);
+    ptc_tstate_t  *ts     = tunnelGetState(fixture.ptc);
+    ptc_lstate_t  *ls     = lineGetState(fixture.line, fixture.ptc);
+    ts->max_pending_bytes = 256 * 1024;
+    ls->next_init_sent    = true;
+    ls->write_paused      = true;
+    sbuf_t *buf           = bufferpoolGetLargeBuffer(fixture.env.pool);
+    sbufSetLength(buf, g_pool_size);
+    ptcTunnelDownStreamPayload(fixture.ptc, fixture.line, buf);
+    twfRequire(lineIsAlive(fixture.line) && ls->pending_bytes == g_pool_size,
+               "PTC rejected the delivery before Pause could act");
+    buf = bufferpoolGetLargeBuffer(fixture.env.pool);
+    sbufSetLength(buf, ts->max_pending_bytes);
+    ptcTunnelDownStreamPayload(fixture.ptc, fixture.line, buf);
+    twfRequire(ls->pending_bytes == ts->max_pending_bytes + g_pool_size,
+               "PTC did not admit the exact headroom boundary");
+    buf = bufferpoolGetSmallBuffer(fixture.env.pool);
+    sbufSetLength(buf, 1);
+    lineRef(fixture.line);
+    ptcTunnelDownStreamPayload(fixture.ptc, fixture.line, buf);
+    twfRequire(! lineIsAlive(fixture.line) && fixture.trace.next_finish == 1,
+               "PTC failed to close the flow exceeding its bounded headroom");
+    lineUnref(fixture.line);
+    fixture.line = NULL;
+    twfRequireEqualU32(ptcTcpPcbUsed(), pcb_baseline, "PTC overflow leaked its PCB");
+    ptcFixtureTeardown(&fixture);
+    g_pool_size = 4096;
+}
+
+static void caseResumeWaitsForDeliveryHeadroom(void)
+{
+    twfSetCase("PTC waits for ACK budget before resuming another large delivery");
+    ptc_fixture_t fixture;
+    ptcFixtureSetup(&fixture);
+    const uint32_t baseline = ptcTcpPcbUsed();
+    discard        ptcAttachTestPcb(&fixture, baseline);
+    ptc_tstate_t  *ts = tunnelGetState(fixture.ptc);
+    ptc_lstate_t  *ls = lineGetState(fixture.line, fixture.ptc);
+    LOCK_TCPIP_CORE();
+    twfRequire(ptcReserveWriteSlots(ls), "PTC could not reserve a test ACK record");
+    ptcAckQueuePushBack(ls, NULL, ts->max_pending_bytes + 1);
+    ls->write_paused = true;
+    twfRequire(ptcFlushWriteQueue(ls) == kPtcFlushRetryable && ls->write_paused,
+               "PTC resumed with charged ACK bytes still using delivery headroom");
+    UNLOCK_TCPIP_CORE();
+    ptcResumeUpstreamTask(fixture.ptc, fixture.line);
+    twfRequire(fixture.trace.len == 0, "a stale PTC Resume bypassed renewed pressure");
+    LOCK_TCPIP_CORE();
+    sbuf_ack_t *ack = sbuf_ack_queue_t_front_mut(&ls->ack_queue);
+    ack->written    = ack->total;
+    ptcAckQueuePopFront(ls);
+    twfRequire(ptcFlushWriteQueue(ls) == kPtcFlushComplete && ! ls->write_paused,
+               "PTC failed to resume after ACK records released the budget");
+    UNLOCK_TCPIP_CORE();
+    ptcResumeUpstreamTask(fixture.ptc, fixture.line);
+    twfRequire(stringCompare(fixture.trace.seq, "R") == 0,
+               "PTC did not publish Resume after headroom became available");
+    lineRef(fixture.line);
+    ptcCloseLineForStop(fixture.ptc, fixture.line);
+    twfRequire(! lineIsAlive(fixture.line), "PTC cleanup left its owned line alive");
+    lineUnref(fixture.line);
+    fixture.line = NULL;
+    twfRequireEqualU32(ptcTcpPcbUsed(), baseline, "PTC budget test leaked its PCB");
+    ptcFixtureTeardown(&fixture);
+}
+
 static atomic_bool g_lwip_initialized;
 
 static void ptcLwipInitialized(void *argument)
@@ -316,6 +390,8 @@ int main(void)
     }
     ptcRxWrapperPoolInitializeOnce();
 
+    casePendingBudgetAllowsOneReadOfHeadroom();
+    caseResumeWaitsForDeliveryHeadroom();
     caseForeignRetryRefusalPublishesAndDrainsOwnedLine();
     caseCreditedDeliveryRefusalRollsBackCreditAndRetainsPbuf();
 

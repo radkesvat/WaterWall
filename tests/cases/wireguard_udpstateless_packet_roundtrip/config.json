@@ -15,7 +15,7 @@
           "ttl": 64
         }
       },
-      "next": "wg-client"
+      "next": "tester-packet-bridge"
     },
     {
       "name": "wg-client",
@@ -31,7 +31,7 @@
           }
         ]
       },
-      "next": "udp-client"
+      "next": "wg-packet-bridge"
     },
     {
       "name": "udp-client",
@@ -39,7 +39,8 @@
       "settings": {
         "listen-address": "127.0.0.1",
         "listen-port": 26750
-      }
+      },
+      "next": "wg-client"
     },
     {
       "name": "udp-server",
@@ -77,6 +78,20 @@
           "protocol": 253,
           "ttl": 64
         }
+      }
+    },
+    {
+      "name": "tester-packet-bridge",
+      "type": "Bridge",
+      "settings": {
+        "pair": "wg-packet-bridge"
+      }
+    },
+    {
+      "name": "wg-packet-bridge",
+      "type": "Bridge",
+      "settings": {
+        "pair": "tester-packet-bridge"
       }
     }
   ]

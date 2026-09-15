@@ -4,7 +4,12 @@
 
 tunnel_t *obfuscatorclientTunnelCreate(node_t *node)
 {
-    tunnel_t *t = packettunnelCreate(node, sizeof(obfuscatorclient_tstate_t), 0);
+    bool stream_records = false;
+    getBoolFromJsonObjectOrDefault(&stream_records, node->node_settings_json, "tls_record_header", false);
+    getBoolFromJsonObject(&stream_records, node->node_settings_json, "tls_header");
+    tunnel_t *t = stream_records
+                      ? tunnelCreate(node, sizeof(obfuscatorclient_tstate_t), sizeof(obfuscatorclient_lstate_t))
+                      : packettunnelCreate(node, sizeof(obfuscatorclient_tstate_t), 0);
     if (! t)
     {
         return NULL;
@@ -12,6 +17,17 @@ tunnel_t *obfuscatorclientTunnelCreate(node_t *node)
 
     t->fnPayloadU = &obfuscatorclientTunnelUpStreamPayload;
     t->fnPayloadD = &obfuscatorclientTunnelDownStreamPayload;
+
+    if (stream_records)
+    {
+        t->fnInitU   = obfuscatorclientTunnelUpStreamInit;
+        t->fnInitD   = obfuscatorclientTunnelDownStreamInit;
+        t->fnEstU    = tunnelNextUpStreamEst;
+        t->fnFinU    = obfuscatorclientTunnelUpStreamFinish;
+        t->fnFinD    = obfuscatorclientTunnelDownStreamFinish;
+        t->fnPauseU  = obfuscatorclientTunnelUpStreamPause;
+        t->fnResumeU = obfuscatorclientTunnelUpStreamResume;
+    }
 
     obfuscatorclient_tstate_t *ts = tunnelGetState(t);
 

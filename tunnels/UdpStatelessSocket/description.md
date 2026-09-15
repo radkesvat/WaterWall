@@ -5,7 +5,7 @@ Sync note: Any change to this file must also be applied to WaterWall/WaterWall-D
 
 # UdpStatelessSocket Node
 
-`UdpStatelessSocket` is a UDP endpoint adapter. It binds one UDP socket, receives datagrams from any peer, and creates normal WaterWall lines for inbound peer flows.
+`UdpStatelessSocket` is a UDP chain-head adapter. It binds one UDP socket, receives datagrams from any peer, and creates normal WaterWall lines for inbound peer flows.
 
 It exists primarily to support components such as `WireGuardDevice`, which need one UDP socket that can both send to configured peers and accept packets from peers that contact the socket first.
 
@@ -17,18 +17,19 @@ It exists primarily to support components such as `WireGuardDevice`, which need 
 - Creates one normal line per inbound peer flow and forwards received datagrams over that line.
 - Sends outbound datagrams on owned peer lines back to the stored peer endpoint.
 - Sends outbound datagrams on other lines to the destination address stored in the line's routing context.
-- Works in both directions using the same socket and the same payload path.
+- Receives peer traffic upstream toward `next` and accepts outgoing datagrams downstream from `next`.
 
 Inbound peer lines use `UdpListener`-style idle lifetimes: a short init timeout and a longer keepalive timeout after traffic starts.
 
 ## Typical Placement
 
-A common layout is:
+The supported layout starts with `UdpStatelessSocket`:
 
-- `WireGuardDevice` or another packet-oriented node
-- `UdpStatelessSocket`
+```text
+UdpStatelessSocket -> WireGuardDevice -> packet side node
+```
 
-or the reverse, depending on chain wiring.
+Head-only placement is the current design decision, not a temporary restriction. A previous node or a missing next node is rejected at startup. Tail placement and downstream peer initialization are disabled.
 
 `UdpStatelessSocket` is meant to sit at the UDP edge of a chain when a component needs one socket for UDP send/receive while still giving received peers distinct WaterWall line lifetimes.
 
@@ -47,7 +48,8 @@ or the reverse, depending on chain wiring.
     "large-recv-buffer": true,
     "source-ip": "192.0.2.10",
     "verbose": false
-  }
+  },
+  "next": "wg"
 }
 ```
 
@@ -110,11 +112,11 @@ or the reverse, depending on chain wiring.
 When a UDP datagram arrives on the bound socket:
 
 - `UdpStatelessSocket` builds a flow key from the UDP peer endpoint, the local socket endpoint, and this tunnel instance
-- if no matching flow exists, it creates a normal line, initializes this tunnel's line state, and sends `Init` into the connected side of the chain
+- if no matching flow exists, it creates a normal line, initializes this tunnel's line state, and sends upstream `Init` toward `next`
 - it writes the peer endpoint into the line source routing context and records the local listener port
 - it forwards the datagram body over that peer's line
 
-If this node is the last node in the chain, received datagrams start from the next/tail side and are sent downstream toward the previous node. Otherwise, they start from the previous/head side and are sent upstream toward the next node.
+Received datagrams always enter from the head and are forwarded upstream toward `next`.
 
 ### Send path
 
@@ -140,12 +142,7 @@ That combination is why it is useful for `WireGuardDevice`, where the device may
 
 ### Chain integration
 
-At receive time, `UdpStatelessSocket` decides which side owns the new peer line:
-
-- if it is the last node in the chain, it sends downstream `Init`, payload, and `Finish` toward the previous node
-- otherwise, it sends upstream `Init`, payload, and `Finish` toward the next node
-
-This lets the same tunnel work in different adapter positions without changing its socket behavior.
+`UdpStatelessSocket` always owns new peer lines at the head. It sends upstream `Init`, payload, and local/idle-expiry `Finish` toward `next`. Downstream `Finish` from `next` closes an owned peer line without reflecting a callback. Downstream sends on borrowed transport or packet lines remain supported. Calls into the adapter from a previous/upstream node are disabled.
 
 ### Worker behavior
 
@@ -179,10 +176,10 @@ Source-backed metadata:
 
 | Property | Value |
 | --- | --- |
-| node flags | `kNodeFlagChainHead` &#124; `kNodeFlagChainEnd` |
-| `can_have_prev` | `true` |
+| node flags | `kNodeFlagChainHead` |
+| `can_have_prev` | `false` |
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayerAnything` |
-| `layer_group_prev_node` | `kNodeLayerAnything` |
+| `layer_group_prev_node` | `kNodeLayerNone` |
 | `layer_group_next_node` | `kNodeLayerAnything` |
 | `required_padding_left` | `0` bytes |

@@ -75,6 +75,15 @@ WW_EXPORT bool muxTryComputeEncodedLength(uint32_t payload_length, bool prepend_
  */
 WW_EXPORT sbuf_t *muxReadCompleteFrame(buffer_stream_t *stream, mux_frame_t *frame);
 
+/** Inspect a complete frame without consuming it; decode header fields to host order.
+ * Returns false for an incomplete frame, leaving frame unspecified. */
+WW_EXPORT bool muxPeekCompleteFrame(buffer_stream_t *stream, mux_frame_t *frame);
+
+/** Extract an already-peeked DATA frame for a paused child. Mux chooses small/medium
+ * retained storage before consuming bytes, preserving a suitable whole chunk.
+ * Returns the complete wire frame, including its header. */
+WW_EXPORT sbuf_t *muxReadFrameForQueue(buffer_stream_t *stream, const mux_frame_t *frame);
+
 /**
  * Consume one child payload and encode it as one or more MUX DATA frames.
  * An empty payload produces one zero-length DATA frame. Payloads larger than

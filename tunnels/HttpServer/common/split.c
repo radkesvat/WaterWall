@@ -844,14 +844,14 @@ static bool splitHandleHeaders(tunnel_t *t, line_t *l, httpserver_lstate_t *ls)
         return true;
     }
 
-    if (bufferstreamGetBufLen(&ls->in_stream) > kHttpServerMaxHeaderBytes)
+    size_t     header_end = 0;
+    const bool complete   = bufferstreamFindDoubleCRLF(&ls->in_stream, &header_end);
+    if ((complete ? header_end : bufferstreamGetBufLen(&ls->in_stream)) > kHttpServerMaxHeaderBytes)
     {
         LOGE("HttpServer: split HTTP/1.1 request header exceeded maximum size");
         return false;
     }
-
-    size_t header_end = 0;
-    if (! bufferstreamFindDoubleCRLF(&ls->in_stream, &header_end))
+    if (! complete)
     {
         return true;
     }
@@ -926,6 +926,15 @@ void httpserverSplitUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
+    uint32_t       capacity;
+    const uint64_t total = (uint64_t) bufferstreamGetBufLen(&ls->in_stream) + sbufGetLength(buf);
+    if (! sbufTryComputeCapacity(total, bufferpoolGetLargeBufferPadding(lineGetBufferPool(l)), &capacity))
+    {
+        lineReuseBuffer(l, buf);
+        splitCloseFromTransport(t, l, true);
+        lineUnref(l);
+        return;
+    }
     bufferstreamPush(&ls->in_stream, buf);
 
     bool ok = splitHandleHeaders(t, l, ls);
@@ -935,7 +944,7 @@ void httpserverSplitUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         {
             ok = httpserverTransportDrainHttp1RequestBody(t, l, ls);
         }
-        else if (bufferstreamGetBufLen(&ls->in_stream) > kHttpServerSplitMaxBuffering)
+        else if (bufferstreamGetBufLen(&ls->in_stream) > httpserverSplitWaitingLimit(l))
         {
             httpserver_tstate_t *ts = tunnelGetState(t);
             if (! ts->no_split_upload_buffering_limit) // probably running test cases

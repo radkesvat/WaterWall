@@ -10,6 +10,7 @@ typedef struct udpovertcpserver_tstate_s
 typedef struct udpovertcpserver_lstate_s
 {
     buffer_stream_t read_stream;
+    bool            tcp_mode; // Negotiated stream payloads may span multiple wire frames.
     bool            upstream_initialized;
 } udpovertcpserver_lstate_t;
 

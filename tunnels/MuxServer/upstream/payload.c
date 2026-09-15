@@ -204,14 +204,19 @@ void muxserverTunnelUpStreamPayload(tunnel_t *t, line_t *parent_l, sbuf_t *buf)
 
     while (true)
     {
-        mux_frame_t frame        = {0};
-        sbuf_t     *frame_buffer = muxReadCompleteFrame(&parent_ls->read_stream, &frame);
-
-        if (! frame_buffer)
+        mux_frame_t frame = {0};
+        if (! muxPeekCompleteFrame(&parent_ls->read_stream, &frame))
         {
             break;
         }
 
+        muxserver_lstate_t *child_ls =
+            frame.flags == kMuxFlagOpen ? NULL : muxserverFindChildByConnectionId(parent_ls, frame.cid);
+        const bool retain = frame.flags == kMuxFlagData && child_ls != NULL && child_ls->paused &&
+                            child_ls->close_state == kMuxServerChildCloseOpen;
+        sbuf_t *frame_buffer =
+            retain ? muxReadFrameForQueue(&parent_ls->read_stream, &frame)
+                   : bufferstreamReadExact(&parent_ls->read_stream, (size_t) frame.length + kMuxFrameLength);
         if (frame.flags == kMuxFlagOpen)
         {
             if (! handleOpenFrame(t, parent_l, parent_ls, &frame, frame_buffer))
@@ -224,7 +229,6 @@ void muxserverTunnelUpStreamPayload(tunnel_t *t, line_t *parent_l, sbuf_t *buf)
             continue;
         }
 
-        muxserver_lstate_t *child_ls = muxserverFindChildByConnectionId(parent_ls, frame.cid);
         if (! child_ls)
         {
             // LOGD("MuxServer: UpStreamPayload: No child line state found for cid: %u", frame.cid);

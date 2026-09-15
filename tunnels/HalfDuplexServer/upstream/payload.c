@@ -2,6 +2,30 @@
 
 #include "loggers/network_logger.h"
 
+static void checkWaitingLimit(tunnel_t *t, line_t *l, halfduplexserver_tstate_t *ts, halfduplexserver_lstate_t *ls)
+{
+    if (sbufGetLength(ls->buffering) >= halfduplexserverWaitingLimit(l))
+    {
+        mutexLock(&(ts->pending_line_maps_mutex));
+        hmap_cons_t_iter f_iter = hmap_cons_t_find(&(ts->upload_line_map), ls->pair_id);
+        bool             found  = f_iter.ref != hmap_cons_t_end(&(ts->upload_line_map)).ref;
+
+        if (! found)
+        {
+            mutexUnlock(&(ts->pending_line_maps_mutex));
+            LOGF("HalfDuplexServer: Thread safety is done incorrectly  [%s:%d]", __FILENAME__, __LINE__);
+            abortProgramNow(1);
+        }
+        hmap_cons_t_erase_at(&(ts->upload_line_map), f_iter);
+        mutexUnlock(&(ts->pending_line_maps_mutex));
+
+        lineReuseBuffer(l, ls->buffering);
+        ls->buffering = NULL;
+        halfduplexserverLinestateDestroy(ls);
+        tunnelPrevDownStreamFinish(t, l);
+    }
+}
+
 static sbuf_t *handleBuffering(line_t *l, halfduplexserver_lstate_t *ls, sbuf_t *buf)
 {
     if (ls->buffering)
@@ -277,6 +301,10 @@ static bool handleUnknownState(tunnel_t *t, line_t *l, sbuf_t *buf, halfduplexse
         {
             lineReuseBuffer(l, buf);
         }
+        else
+        {
+            checkWaitingLimit(t, l, ts, ls);
+        }
         return true;
 
     case kHalfDuplexServerPendingDuplicate:
@@ -313,32 +341,26 @@ static void handleUploadInTable(tunnel_t *t, line_t *l, sbuf_t *buf, halfduplexs
         ls->buffering = buf;
     }
 
-    if (sbufGetLength(ls->buffering) >= kMaxBuffering)
-    {
-        mutexLock(&(ts->pending_line_maps_mutex));
-        hmap_cons_t_iter f_iter = hmap_cons_t_find(&(ts->upload_line_map), ls->pair_id);
-        bool             found  = f_iter.ref != hmap_cons_t_end(&(ts->upload_line_map)).ref;
-
-        if (! found)
-        {
-            mutexUnlock(&(ts->pending_line_maps_mutex));
-            LOGF("HalfDuplexServer: Thread safety is done incorrectly  [%s:%d]", __FILENAME__, __LINE__);
-            abortProgramNow(1);
-        }
-        hmap_cons_t_erase_at(&(ts->upload_line_map), f_iter);
-        mutexUnlock(&(ts->pending_line_maps_mutex));
-
-        lineReuseBuffer(l, ls->buffering);
-        ls->buffering = NULL;
-        halfduplexserverLinestateDestroy(ls);
-        tunnelPrevDownStreamFinish(t, l);
-    }
+    checkWaitingLimit(t, l, ts, ls);
 }
 
 void halfduplexserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     halfduplexserver_tstate_t *ts = tunnelGetState(t);
     halfduplexserver_lstate_t *ls = lineGetState(l, t);
+
+    if (ls->buffering != NULL)
+    {
+        uint32_t       capacity;
+        const uint64_t total = (uint64_t) sbufGetLength(ls->buffering) + sbufGetLength(buf);
+        if (! sbufTryComputeCapacity(total, sbufGetLeftPadding(ls->buffering), &capacity))
+        {
+            lineReuseBuffer(l, buf);
+            halfduplexserverTunnelUpStreamFinish(t, l);
+            tunnelPrevDownStreamFinish(t, l);
+            return;
+        }
+    }
 
     switch (ls->state)
     {

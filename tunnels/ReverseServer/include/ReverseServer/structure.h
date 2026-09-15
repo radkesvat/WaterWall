@@ -61,3 +61,10 @@ void reverseserverAddConnectionU(reverseserver_thread_box_t *box, reverseserver_
 void reverseserverRemoveConnectionU(reverseserver_thread_box_t *box, reverseserver_lstate_t *con);
 void reverseserverAddConnectionD(reverseserver_thread_box_t *box, reverseserver_lstate_t *con);
 void reverseserverRemoveConnectionD(reverseserver_thread_box_t *box, reverseserver_lstate_t *con);
+
+/* 32 KiB is the waiting-budget reference, independent of runtime read sizes. */
+static inline uint64_t reverseserverWaitingLimit(line_t *line)
+{
+    const uint64_t large = bufferpoolGetLargeBufferSize(lineGetBufferPool(line));
+    return (uint64_t) kMaxBuffering * max(UINT64_C(1), (large + 32767) / 32768);
+}

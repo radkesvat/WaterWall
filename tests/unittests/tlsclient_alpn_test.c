@@ -25,6 +25,7 @@ typedef struct tlsclient_test_worker_env_s
     wid_t           saved_wid;
     master_pool_t  *large_master;
     master_pool_t  *small_master;
+    master_pool_t  *medium_master;
     master_pool_t  *splice_master;
     buffer_pool_t  *pool;
     buffer_pool_t  *buffer_pools[1];
@@ -75,14 +76,20 @@ static void workerEnvSetup(tlsclient_test_worker_env_t *env)
 
     env->large_master = masterpoolCreateWithCapacity(8);
     env->small_master = masterpoolCreateWithCapacity(8);
+    env->medium_master = masterpoolCreateWithCapacity(8);
     env->splice_master = masterpoolCreateWithCapacity(8);
     require(env->large_master != NULL && env->small_master != NULL, "failed to create ClientHello test master pools");
 
-    env->pool = bufferpoolCreate(
-        env->large_master, env->small_master, env->splice_master, 4, kTestLargeBufferSize, kTestSmallBufferSize);
+    env->pool = bufferpoolCreate(env->large_master,
+                                 env->medium_master,
+                                 env->small_master,
+                                 env->splice_master,
+                                 4,
+                                 kTestLargeBufferSize,
+                                 kTestSmallBufferSize);
     require(env->pool != NULL, "failed to create ClientHello test buffer pool");
     bufferpoolUpdateAllocationPaddings(
-        env->pool, kTestBufferLeftPadding, kTestBufferLeftPadding, kTestBufferLeftPadding);
+        env->pool, kTestBufferLeftPadding, kTestBufferLeftPadding, kTestBufferLeftPadding, kTestBufferLeftPadding);
 
     env->buffer_pools[0]         = env->pool;
     GSTATE.shortcut_buffer_pools = env->buffer_pools;
@@ -101,9 +108,11 @@ static void workerEnvTeardown(tlsclient_test_worker_env_t *env)
     bufferpoolDestroy(env->pool);
     masterpoolMakeEmpty(env->large_master);
     masterpoolMakeEmpty(env->small_master);
+    masterpoolMakeEmpty(env->medium_master);
     masterpoolMakeEmpty(env->splice_master);
     masterpoolDestroy(env->large_master);
     masterpoolDestroy(env->small_master);
+    masterpoolDestroy(env->medium_master);
     masterpoolDestroy(env->splice_master);
 }
 

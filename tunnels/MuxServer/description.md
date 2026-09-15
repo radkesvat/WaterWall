@@ -355,6 +355,15 @@ one `Data` frame, but this is not general boundary protection across arbitrary
 chains. The UDP framing pair has its own limits: currently it requires nonempty
 datagrams. Its restriction does not change MUX's support for empty `Data`.
 
+Paused child queues reuse small or fixed 64 KiB medium buffers. Mux peeks a
+complete frame and checks the child before extracting it into its final pooled
+destination. Fragmented frames are copied directly from the parent stream,
+without first merging unrelated carrier bytes. A suitable whole buffer transfers
+directly. Unpaused children keep ordinary exact-frame delivery. Queue limits
+continue to charge actual retained allocations, while flow control counts payload
+bytes. Medium buffers are helper storage; ordinary event-loop reads use the large
+tier.
+
 ## Node Metadata
 
 Source-backed metadata:

@@ -5,6 +5,13 @@ add_library(ObfuscatorClient STATIC
                     instance/node.c
                     common/helpers.c
                     common/line_state.c
+                    common/stream.c
+                    upstream/init.c
+                    downstream/init.c
+                    upstream/fin.c
+                    downstream/fin.c
+                    upstream/pause.c
+                    upstream/resume.c
                     upstream/payload.c
                     downstream/payload.c
 

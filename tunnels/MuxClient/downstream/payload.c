@@ -118,15 +118,18 @@ void muxclientTunnelDownStreamPayload(tunnel_t *t, line_t *parent_l, sbuf_t *buf
 
     while (true)
     {
-        mux_frame_t frame        = {0};
-        sbuf_t     *frame_buffer = muxReadCompleteFrame(&parent_ls->read_stream, &frame);
-
-        if (! frame_buffer)
+        mux_frame_t frame = {0};
+        if (! muxPeekCompleteFrame(&parent_ls->read_stream, &frame))
         {
             break;
         }
 
         muxclient_lstate_t *child_ls = muxclientFindChildByConnectionId(parent_ls, frame.cid);
+        const bool          retain   = frame.flags == kMuxFlagData && child_ls != NULL && child_ls->paused &&
+                            child_ls->close_state == kMuxClientChildCloseOpen;
+        sbuf_t *frame_buffer =
+            retain ? muxReadFrameForQueue(&parent_ls->read_stream, &frame)
+                   : bufferstreamReadExact(&parent_ls->read_stream, (size_t) frame.length + kMuxFrameLength);
         if (! child_ls)
         {
             // LOGD("MuxClient: DownStreamPayload: No child line state found for cid: %u", frame.cid);

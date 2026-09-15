@@ -983,11 +983,13 @@ bool tundeviceBringUp(tun_device_t *tdev)
 
     bufferpoolUpdateAllocationPaddings(tdev->reader_buffer_pool,
                                        bufferpoolGetLargeBufferPadding(worker_pool),
+                                       bufferpoolGetMediumBufferPadding(worker_pool),
                                        bufferpoolGetSmallBufferPadding(worker_pool),
                                        bufferpoolGetSpliceBufferPadding(worker_pool));
 
     bufferpoolUpdateAllocationPaddings(tdev->writer_buffer_pool,
                                        bufferpoolGetLargeBufferPadding(worker_pool),
+                                       bufferpoolGetMediumBufferPadding(worker_pool),
                                        bufferpoolGetSmallBufferPadding(worker_pool),
                                        bufferpoolGetSpliceBufferPadding(worker_pool));
 
@@ -1286,6 +1288,7 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void
     worker_small_buffer_size          = max(worker_small_buffer_size, (uint32_t) mtu + sizeof(uint32_t));
 
     buffer_pool_t *reader_bpool = bufferpoolCreate(GSTATE.masterpool_buffer_pools_large,
+                                                   GSTATE.masterpool_buffer_pools_medium,
                                                    GSTATE.masterpool_buffer_pools_small,
                                                    GSTATE.masterpool_buffer_pools_splice,
                                                    RAM_PROFILE,
@@ -1299,6 +1302,7 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void
     }
 
     buffer_pool_t *writer_bpool = bufferpoolCreate(GSTATE.masterpool_buffer_pools_large,
+                                                   GSTATE.masterpool_buffer_pools_medium,
                                                    GSTATE.masterpool_buffer_pools_small,
                                                    GSTATE.masterpool_buffer_pools_splice,
                                                    RAM_PROFILE,

@@ -37,6 +37,7 @@ void udpovertcpclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
     bool                       send_protocol_marker = ! udpovertcpclientLineIsUdp(l);
 
     udpovertcpclientLinestateInitialize(ls, lineGetBufferPool(l));
+    ls->tcp_mode = protocol_marker == IP_PROTO_TCP;
 
     if (! lineCallWithRef(l, tunnelNextUpStreamInit, t))
     {

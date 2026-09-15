@@ -38,6 +38,7 @@ static bool initializeUpstream(tunnel_t *t, line_t *l, udpovertcpserver_lstate_t
 {
     setDestinationProtocol(l, protocol);
     ls->upstream_initialized = true;
+    ls->tcp_mode             = protocol == IP_PROTO_TCP;
     return lineCallWithRef(l, tunnelNextUpStreamInit, t);
 }
 

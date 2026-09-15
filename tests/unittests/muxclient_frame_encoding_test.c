@@ -18,6 +18,8 @@ enum
     kTestMaxFrames       = 64
 };
 
+static uint32_t g_pool_size = kTestLargeBufferSize;
+
 static bool g_reject_next_queue_reallocation = false;
 
 void *__real_memoryReAllocate(void *ptr, size_t size);
@@ -108,7 +110,7 @@ typedef struct muxclient_fixture_s
 static void fixtureSetup(muxclient_fixture_t *fixture, uint32_t capture_capacity)
 {
     memoryZero(&fixture->trace, sizeof(fixture->trace));
-    twfWorkerEnvSetup(&fixture->env, kTestLargeBufferSize, kMuxFrameLength * 2);
+    twfWorkerEnvSetup(&fixture->env, g_pool_size, kMuxFrameLength * 2);
 
     fixture->capture = memoryAllocate(capture_capacity);
     twfRequire(fixture->capture != NULL, "failed to allocate the neighbour capture buffer");
@@ -411,7 +413,7 @@ static void destroySurvivingClientChild(muxclient_fixture_t *fixture, line_t *ch
 /*
  * This shape catches the average-based policy from PR #332. The trigger is the
  * most-recently-active child has one retained allocation containing 20 KiB,
- * while an older stalled child has two one-byte allocations. The largest
+ * while an older stalled child has two 4097-byte medium allocations. The largest
  * retained charge and largest logical payload therefore select different
  * children. Three idle children also distinguish an average-based heuristic.
  */
@@ -422,7 +424,7 @@ static void caseParentBufferLimitClosesActualLargestQueue(void)
     enum
     {
         kIdleChildren = 3,
-        kLargeEntry   = 1,
+        kLargeEntry   = 4097,
         kTriggerQueue = 20u * 1024u,
     };
 
@@ -433,7 +435,9 @@ static void caseParentBufferLimitClosesActualLargestQueue(void)
     muxclient_lstate_t *parent_ls  = lineGetState(fixture.parent_l, fixture.mux);
     muxclient_lstate_t *trigger_ls = lineGetState(fixture.child_l, fixture.mux);
 
-    const size_t entry_charge = pooledBufferCharge(fixture.env.pool, false);
+    sbuf_t      *medium       = bufferpoolGetMediumBuffer(fixture.env.pool);
+    const size_t entry_charge = muxQueuedSbufCharge(medium);
+    bufferpoolReuseBuffer(fixture.env.pool, medium);
     twfRequire(entry_charge <= UINT32_MAX / 3U, "test parent charge is not representable by the setting");
     ts->parent_buffer_limit = (uint32_t) (3U * entry_charge);
     trigger_ls->paused      = true;
@@ -859,7 +863,7 @@ static void casePeerCloseWaitsForResume(void)
     twfRequire(child_ls->close_state == kMuxClientChildClosePeerDraining,
                "peer Close did not publish the draining state");
     twfRequire(child_ls->parent == parent_ls, "a blocked peer-close child was removed from CID routing");
-    const size_t entry_charge = pooledBufferCharge(fixture.env.pool, false);
+    const size_t entry_charge = pooledBufferCharge(fixture.env.pool, true);
     requireEqualCharge(child_ls->pending_child_queue_charge,
                        2U * entry_charge,
                        "peer Close changed child retained-charge accounting before delivery");
@@ -992,7 +996,7 @@ static void caseParentLossDetachesAndDrainsBorrowedChild(void)
     twfRequire(child_ls->close_state == kMuxClientChildCloseParentGoneDraining,
                "parent loss did not publish detached drain state");
     twfRequireEqualU32(ts->detached_child_counts[0], 1, "detached borrowed child count is wrong");
-    const size_t entry_charge = pooledBufferCharge(fixture.env.pool, false);
+    const size_t entry_charge = pooledBufferCharge(fixture.env.pool, true);
     requireEqualCharge(child_ls->pending_child_queue_charge,
                        2U * entry_charge,
                        "detached borrowed child retained the wrong allocation charge");
@@ -1246,7 +1250,7 @@ static void runMuxclientDetachedAggregateLimitCase(bool unlimited_bytes, bool co
     line_t *older_parent = fixture.parent_l;
     detachClientParent(&fixture, older_parent);
     fixture.parent_l          = NULL;
-    const size_t entry_charge = pooledBufferCharge(fixture.env.pool, false);
+    const size_t entry_charge = pooledBufferCharge(fixture.env.pool, true);
     twfRequireEqualU32(ts->detached_child_counts[0], 1, "older detached MuxClient child was not retained");
     requireEqualCharge(
         ts->detached_queued_charge[0], entry_charge, "older detached MuxClient allocation charge was not retained");
@@ -1320,7 +1324,7 @@ static void runMuxclientReentrantPauseCase(bool parent_loss)
 
     muxclient_tstate_t *ts           = tunnelGetState(fixture.mux);
     muxclient_lstate_t *child_ls     = lineGetState(fixture.child_l, fixture.mux);
-    const size_t        entry_charge = pooledBufferCharge(fixture.env.pool, false);
+    const size_t        entry_charge = pooledBufferCharge(fixture.env.pool, true);
     child_ls->paused                 = false;
     fixture.prev->fnPayloadD         = pauseClientChildAfterFirstPayload;
     g_reentrant_pause_client_mux     = fixture.mux;
@@ -1453,8 +1457,140 @@ static void caseDetachedBorrowedChildSurvivesWorkerStop(bool empty)
     fixtureTeardown(&fixture);
 }
 
+static uint32_t pooled_frame_count;
+static void     pooledFrameSink(tunnel_t *t, line_t *l, sbuf_t *buf)
+{
+    discard t;
+    twfRequire(sbufGetLength(buf) == 4097, "pooled queue lost frame boundary");
+    const uint8_t *p = sbufGetRawPtr(buf);
+    for (uint32_t i = 0; i < 4097; ++i)
+        twfRequire(p[i] == (uint8_t) (pooled_frame_count + i), "pooled queue changed FIFO bytes");
+    ++pooled_frame_count;
+    lineReuseBuffer(l, buf);
+}
+
+static void casePooledRetainedFrames(bool separate)
+{
+    twfSetCase("48 x 4097-byte frames retain pooled medium allocations with a 512 KiB pool");
+    g_pool_size = 512 * 1024;
+    muxclient_fixture_t fixture;
+    fixtureSetup(&fixture, 512 * 1024);
+    muxclient_lstate_t *child = lineGetState(fixture.child_l, fixture.mux);
+    child->paused             = true;
+    child->open_frame_sent    = true;
+    fixture.prev->fnPayloadD  = pooledFrameSink;
+    pooled_frame_count        = 0;
+    sbuf_t *batch             = NULL;
+    for (uint32_t i = 0; i < 48; ++i)
+    {
+        if (! batch)
+            batch = bufferpoolGetLargeBuffer(fixture.env.pool);
+        const uint32_t offset = sbufGetLength(batch);
+        uint8_t       *p      = sbufGetMutablePtr(batch) + offset;
+        writeFrameHeader(p, 4097, kMuxFlagData, kTestChildCid);
+        for (uint32_t j = 0; j < 4097; ++j)
+            p[kMuxFrameLength + j] = (uint8_t) (i + j);
+        sbufSetLength(batch, offset + kMuxFrameLength + 4097);
+        if (separate || i == 47)
+        {
+            muxclientTunnelDownStreamPayload(fixture.mux, fixture.parent_l, batch);
+            batch = NULL;
+        }
+    }
+    twfRequire(lineIsAlive(fixture.child_l) && child->l != NULL, "pooled queue closed a valid child");
+    twfRequire(bufferqueueGetBufCount(&child->pending_child_data) == 48, "pooled queue lost frames");
+    twfRequire(child->pending_child_queue_charge < 48 * (MEDIUM_BUFFER_SIZE + 512),
+               "paused queue did not replace large receive allocations with pooled storage");
+    twfRequire(pooled_frame_count == 0, "pooled queue crossed Pause");
+    muxclientTunnelUpStreamResume(fixture.mux, fixture.child_l);
+    twfRequire(pooled_frame_count == 48 && child->pending_child_queue_charge == 0, "pooled queue did not drain");
+    fixtureTeardown(&fixture);
+    g_pool_size = kTestLargeBufferSize;
+}
+
+static sbuf_t *expected_forwarded_buffer;
+static void    directFrameSink(tunnel_t *t, line_t *l, sbuf_t *buf)
+{
+    discard t;
+    twfRequire(buf == expected_forwarded_buffer, "unpaused delivery replaced the original receive allocation");
+    twfRequire(sbufGetLength(buf) == 4097, "unpaused delivery changed frame length");
+    for (uint32_t i = 0; i < 4097; ++i)
+        twfRequire(((const uint8_t *) sbufGetRawPtr(buf))[i] == patternByte(i),
+                   "unpaused delivery changed payload bytes");
+    expected_forwarded_buffer = NULL;
+    lineReuseBuffer(l, buf);
+}
+
+static void caseUnpausedFrameKeepsReceiveAllocation(void)
+{
+    twfSetCase("an unpaused child receives the whole frame without a retention copy");
+    g_pool_size = 512 * 1024;
+    muxclient_fixture_t fixture;
+    fixtureSetup(&fixture, 1);
+    fixture.prev->fnPayloadD = directFrameSink;
+    sbuf_t  *buf             = bufferpoolGetLargeBuffer(fixture.env.pool);
+    uint8_t *raw             = sbufGetMutablePtr(buf);
+    writeFrameHeader(raw, 4097, kMuxFlagData, kTestChildCid);
+    for (uint32_t i = 0; i < 4097; ++i)
+        raw[kMuxFrameLength + i] = patternByte(i);
+    sbufSetLength(buf, kMuxFrameLength + 4097);
+    expected_forwarded_buffer = buf;
+    muxclientTunnelDownStreamPayload(fixture.mux, fixture.parent_l, buf);
+    twfRequire(expected_forwarded_buffer == NULL, "unpaused frame was held instead of forwarded");
+    fixtureTeardown(&fixture);
+    g_pool_size = kTestLargeBufferSize;
+}
+
+static void caseFragmentedPausedFrameKeepsCarrierRemainder(void)
+{
+    twfSetCase("a paused fragmented frame moves directly to medium storage without merging its carrier tail");
+    g_pool_size = 512 * 1024;
+    muxclient_fixture_t fixture;
+    fixtureSetup(&fixture, 256);
+    muxclient_lstate_t *child  = lineGetState(fixture.child_l, fixture.mux);
+    muxclient_lstate_t *parent = lineGetState(fixture.parent_l, fixture.mux);
+    child->paused              = true;
+    child->open_frame_sent     = true;
+    fixture.prev->fnPayloadD   = pooledFrameSink;
+    pooled_frame_count         = 0;
+    const uint32_t first_bytes = 17;
+    const uint32_t frame_bytes = kMuxFrameLength + 4097;
+    const uint32_t trailing    = kMuxFrameLength + 10000;
+    sbuf_t        *first       = bufferpoolGetLargeBuffer(fixture.env.pool);
+    uint8_t       *raw         = sbufGetMutablePtr(first);
+    writeFrameHeader(raw, 4097, kMuxFlagData, kTestChildCid);
+    for (uint32_t j = 0; j < 4097; ++j)
+        raw[kMuxFrameLength + j] = (uint8_t) j;
+    sbuf_t  *second     = bufferpoolGetLargeBuffer(fixture.env.pool);
+    uint8_t *second_raw = sbufGetMutablePtr(second);
+    memoryCopyLarge(second_raw, raw + first_bytes, frame_bytes - first_bytes);
+    writeFrameHeader(second_raw + frame_bytes - first_bytes, kMuxMaxDataFrameLength, kMuxFlagData, kTestChildCid);
+    memorySet(second_raw + frame_bytes - first_bytes + kMuxFrameLength, 'x', 10000);
+    sbufSetLength(first, first_bytes);
+    sbufSetLength(second, frame_bytes - first_bytes + trailing);
+    const uint32_t second_cursor = second->curpos;
+    muxclientTunnelDownStreamPayload(fixture.mux, fixture.parent_l, first);
+    twfRequire(bufferqueueGetBufCount(&child->pending_child_data) == 0, "an incomplete frame was extracted");
+    muxclientTunnelDownStreamPayload(fixture.mux, fixture.parent_l, second);
+    twfRequire(pooled_frame_count == 0 && bufferqueueGetBufCount(&child->pending_child_data) == 1,
+               "fragment extraction crossed Pause or changed frame count");
+    twfRequire(bufferstreamGetBufLen(&parent->read_stream) == trailing &&
+                   *bs_doublequeue_t_front(&parent->read_stream.q) == second &&
+                   second->curpos == second_cursor + frame_bytes - first_bytes,
+               "fragment extraction copied or replaced the unrelated carrier remainder");
+    muxclientTunnelUpStreamResume(fixture.mux, fixture.child_l);
+    twfRequire(pooled_frame_count == 1 && child->pending_child_queue_charge == 0,
+               "fragmented frame did not drain once");
+    fixtureTeardown(&fixture);
+    g_pool_size = kTestLargeBufferSize;
+}
+
 int main(void)
 {
+    caseFragmentedPausedFrameKeepsCarrierRemainder();
+    caseUnpausedFrameKeepsReceiveAllocation();
+    casePooledRetainedFrames(false);
+    casePooledRetainedFrames(true);
     caseQuiescenceDropsPayload(false, false);
     caseQuiescenceDropsPayload(true, false);
     caseQuiescenceDropsPayload(true, true);

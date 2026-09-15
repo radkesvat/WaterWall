@@ -62,6 +62,7 @@ typedef struct env_s
     test_wio_fd_pool_t         fd_handles;
     master_pool_t             *large_master;
     master_pool_t             *small_master;
+    master_pool_t             *medium_master;
     master_pool_t             *splice_master;
     master_pool_t             *wio_master;
     buffer_pool_t             *buffer_pool;
@@ -75,9 +76,11 @@ static void envSetup(env_t *env)
 {
     env->large_master = masterpoolCreateWithCapacity(64);
     env->small_master = masterpoolCreateWithCapacity(64);
+    env->medium_master = masterpoolCreateWithCapacity(64);
     env->splice_master = masterpoolCreateWithCapacity(64);
     env->wio_master   = masterpoolCreateWithCapacity(64);
-    env->buffer_pool   = bufferpoolCreate(env->large_master, env->small_master, env->splice_master, 64, 8192, 1024);
+    env->buffer_pool =
+        bufferpoolCreate(env->large_master, env->medium_master, env->small_master, env->splice_master, 64, 8192, 1024);
     env->wio_pool     = threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(env->wio_master, sizeof(wio_t), 64);
     env->wio_pools[0] = env->wio_pool;
     env->wio_pools[1] = env->wio_pool;
@@ -102,10 +105,12 @@ static void envTeardown(env_t *env)
     masterpoolMakeEmpty(env->wio_master);
     masterpoolMakeEmpty(env->large_master);
     masterpoolMakeEmpty(env->small_master);
+    masterpoolMakeEmpty(env->medium_master);
     masterpoolMakeEmpty(env->splice_master);
     masterpoolDestroy(env->wio_master);
     masterpoolDestroy(env->large_master);
     masterpoolDestroy(env->small_master);
+    masterpoolDestroy(env->medium_master);
     masterpoolDestroy(env->splice_master);
 }
 
@@ -168,7 +173,7 @@ static uint32_t largeBufferCacheCount(buffer_pool_t *pool)
 {
     uint32_t large_count = 0;
     uint32_t small_count = 0;
-    bufferpoolCachedTierCountsForTest(pool, &large_count, &small_count, NULL);
+    bufferpoolCachedTierCountsForTest(pool, &large_count, &small_count, NULL, NULL);
     discard small_count;
     return large_count;
 }

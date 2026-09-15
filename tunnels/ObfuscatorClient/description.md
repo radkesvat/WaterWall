@@ -7,7 +7,7 @@ Sync note: Any change to this file must also be applied to WaterWall/WaterWall-D
 
 `ObfuscatorClient` applies a reversible payload transform to traffic passing through it. In the current implementation, the only supported method is XOR obfuscation.
 
-It is implemented as a stateless packet tunnel and does not keep per-line tunnel state.
+The option-off path is stateless. TLS-like stream framing keeps normal-line receive state; exact packet lines remain stateless.
 
 In practice, this node is used together with `ObfuscatorServer` configured with the same method and key.
 
@@ -126,7 +126,7 @@ It simply forwards:
 - upstream `init`, `est`, `finish`, `pause`, `resume`
 - downstream `init`, `est`, `finish`, `pause`, `resume`
 
-Only payload is modified.
+Normal stream Init initializes receive state, Finish releases it, and Pause/Resume govern decoding.
 
 ### Implementation details
 
@@ -144,7 +144,7 @@ That optimization affects speed only, not the visible behavior.
 - Current support is limited to `method: "xor"`.
 - This is obfuscation, not cryptographic security.
 - `xor_key` is stored as a single byte in the current implementation, so values outside `0..255` are effectively truncated.
-- When `tls_record_header` is enabled, a single payload buffer must fit in one TLS-style record, so payloads larger than `65535` bytes are dropped.
+- Exact packet lines retain the one-packet/one-record limit and oversized-datagram drop policy.
 
 ## Node Metadata
 
@@ -159,3 +159,11 @@ Source-backed metadata:
 | `layer_group_prev_node` | `kNodeLayerSameAsNext` |
 | `layer_group_next_node` | `kNodeLayerSameAsPrev` |
 | `required_padding_left` | `5` bytes |
+
+With TLS-like framing enabled on ordinary streams, large deliveries split into
+records of at most 65,535 body bytes, applying XOR and skip per record. One encoded
+aggregate is sent per delivery. Receivers reassemble fragmented headers/bodies,
+coalesce complete records into one onward callback, and retain partial tails.
+Pause stops decoding until Resume. Retention is bounded by
+`65540 + max(65536, 2 * L)` bytes, with `L` from the line pool; malformed records
+and overflow close the borrowed normal line. Packet behavior stays unchanged.

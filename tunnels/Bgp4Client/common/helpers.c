@@ -4,8 +4,7 @@
 
 static uint8_t bgp4clientRandomNonOpenType(void)
 {
-    return (uint8_t) (kBgp4ClientTypeUpdate +
-                      (fastRand() % (kBgp4ClientTypeRouteRefresh - kBgp4ClientTypeUpdate + 1)));
+    return (uint8_t) (kBgp4ClientTypeUpdate + (fastRand() % (kBgp4ClientTypeRouteRefresh - kBgp4ClientTypeUpdate + 1)));
 }
 
 bool bgp4clientLoadSettings(bgp4client_tstate_t *ts, const cJSON *settings)
@@ -33,27 +32,37 @@ bool bgp4clientWrapPayload(tunnel_t *t, line_t *l, sbuf_t **buf_io, uint8_t type
 {
     discard t;
 
-    sbuf_t  *buf      = *buf_io;
-    uint32_t body_len = sbufGetLength(buf) + kBgp4ClientTypeSize;
-
-    if (body_len > kBgp4ClientMaxBodyLength)
+    sbuf_t        *buf            = *buf_io;
+    const uint32_t length         = sbufGetLength(buf);
+    const uint32_t maximum        = kBgp4ClientMaxBodyLength - kBgp4ClientTypeSize;
+    const uint64_t frames         = max(UINT64_C(1), ((uint64_t) length + maximum - 1) / maximum);
+    const uint64_t encoded_length = length + frames * kBgp4ClientFramePrefixSize;
+    buffer_pool_t *pool           = lineGetBufferPool(l);
+    sbuf_t        *encoded = bufferpoolTryGetBestFit(pool, encoded_length, bufferpoolGetLargeBufferPadding(pool));
+    if (encoded == NULL || encoded_length > sbufGetMaximumWriteableSize(encoded))
     {
-        LOGW("Bgp4Client: payload too large to wrap as a BGP message");
-        lineReuseBuffer(l, buf);
+        if (encoded != NULL)
+            bufferpoolReuseBuffer(pool, encoded);
+        bufferpoolReuseBuffer(pool, buf);
         return false;
     }
-
-    sbufShiftLeft(buf, kBgp4ClientTypeSize);
-    sbufWriteUI8(buf, type);
-
-    uint16_t body_len_network = htons((uint16_t) sbufGetLength(buf));
-    sbufShiftLeft(buf, kBgp4ClientLengthSize);
-    sbufWriteUnAlignedUI16(buf, body_len_network);
-
-    sbufShiftLeft(buf, kBgp4ClientMarkerLength);
-    memorySet(sbufGetMutablePtr(buf), kBgp4ClientMarkerByte, kBgp4ClientMarkerLength);
-
-    *buf_io = buf;
+    uint32_t offset = 0;
+    uint8_t *out    = sbufGetMutablePtr(encoded);
+    for (uint64_t frame = 0; frame < frames; ++frame)
+    {
+        const uint32_t count = min(length - offset, maximum);
+        memorySet(out, kBgp4ClientMarkerByte, kBgp4ClientMarkerLength);
+        const uint16_t wire_length = htons((uint16_t) (count + kBgp4ClientTypeSize));
+        sbufByteCopy(out + kBgp4ClientMarkerLength, &wire_length, sizeof(wire_length));
+        out[kBgp4ClientFrameHeaderSize] = frame == 0 ? type : bgp4clientNextPayloadType();
+        memoryCopy(out + kBgp4ClientFramePrefixSize, (const uint8_t *) sbufGetRawPtr(buf) + offset, count);
+        out += kBgp4ClientFramePrefixSize + count;
+        offset += count;
+    }
+    sbufSetLength(encoded, (uint32_t) encoded_length);
+    sbufTransferLifetime(buf, encoded);
+    bufferpoolReuseBuffer(pool, buf);
+    *buf_io = encoded;
     return true;
 }
 
@@ -61,8 +70,7 @@ bool bgp4clientWrapFirstOpenPayload(tunnel_t *t, line_t *l, sbuf_t **buf_io)
 {
     bgp4client_tstate_t *ts  = tunnelGetState(t);
     sbuf_t              *buf = *buf_io;
-    uint8_t              optional_len =
-        (uint8_t) (kBgp4ClientOpenOptionalMin + (fastRand() % kBgp4ClientOpenOptionalRange));
+    uint8_t optional_len     = (uint8_t) (kBgp4ClientOpenOptionalMin + (fastRand() % kBgp4ClientOpenOptionalRange));
 
     sbufShiftLeft(buf, kBgp4ClientOpenHeaderSize + optional_len);
 
@@ -110,13 +118,19 @@ bool bgp4clientReadFrame(tunnel_t *t, line_t *l, buffer_stream_t *stream, sbuf_t
     }
 
     uint16_t body_len_network = 0;
-    bufferstreamViewBytesAt(stream, kBgp4ClientMarkerLength, (uint8_t *) &body_len_network,
-                            sizeof(body_len_network));
+    bufferstreamViewBytesAt(stream, kBgp4ClientMarkerLength, (uint8_t *) &body_len_network, sizeof(body_len_network));
     uint16_t body_len = ntohs(body_len_network);
 
     if (body_len <= kBgp4ClientTypeSize)
     {
         LOGE("Bgp4Client: BGP message is too short");
+        return false;
+    }
+
+    const uint8_t type = bufferstreamViewByteAt(stream, kBgp4ClientFrameHeaderSize);
+    if (type < kBgp4ClientTypeUpdate || type > kBgp4ClientTypeRouteRefresh)
+    {
+        LOGE("Bgp4Client: invalid message type");
         return false;
     }
 

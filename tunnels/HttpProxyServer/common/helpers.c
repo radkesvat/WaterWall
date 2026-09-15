@@ -115,6 +115,7 @@ void hpsClose(hps_session_t *s, bool from_client)
     {
         discardBuffer(s, &s->input[i]);
         discardBuffer(s, &s->output[i]);
+        discardBuffer(s, &s->deferred[i]);
         clearHeader(s, i);
     }
     if (! from_client)
@@ -135,16 +136,48 @@ static size_t pending(hps_session_t *s)
     return n;
 }
 
+/* The working budget excludes already-delivered input; each direction has D
+ * bytes of separate headroom. Capacity is bounded independently when admitted. */
+static uint64_t deliveryAllowance(hps_session_t *s)
+{
+    return max(UINT64_C(65536), 2 * (uint64_t) bufferpoolGetLargeBufferSize(lineGetBufferPool(s->client)));
+}
+
+static uint64_t retained(hps_session_t *s)
+{
+    uint64_t n = pending(s);
+    for (unsigned d = 0; d < 2; ++d)
+        if (s->deferred[d])
+            n += sbufGetLength(s->deferred[d]);
+    return n;
+}
+
+static uint64_t bufferCharge(const sbuf_t *buffer)
+{
+    return buffer ? (uint64_t) sbufGetTotalCapacity(buffer) + sizeof(sbuf_t) + kSbufAllocationAlignment : 0;
+}
+
+static bool remainderAllocationFits(hps_session_t *s, const sbuf_t *buffer)
+{
+    buffer_pool_t *pool          = lineGetBufferPool(s->client);
+    const uint64_t payload_bound = max((uint64_t) bufferpoolGetSmallBufferSize(pool), 2 * deliveryAllowance(s));
+    const uint16_t padding       = max(bufferpoolGetMediumBufferPadding(pool),
+                                 max(bufferpoolGetSmallBufferPadding(pool), bufferpoolGetLargeBufferPadding(pool)));
+    uint32_t       capacity;
+    return sbufTryComputeCapacity(payload_bound, padding, &capacity) &&
+           bufferCharge(buffer) <= (uint64_t) capacity + sizeof(sbuf_t) + kSbufAllocationAlignment;
+}
+
 /* Four coalesced retained buffers bound entries independently of TCP fragmentation. */
 static bool allocationFits(hps_session_t *s, const sbuf_t *replace, const sbuf_t *candidate)
 {
-    uint64_t charge = sbufGetTotalCapacity(candidate) + sizeof(sbuf_t) + kSbufAllocationAlignment;
+    uint64_t charge = bufferCharge(candidate);
     for (unsigned i = 0; i < 2; ++i)
     {
         const sbuf_t *buffers[] = {s->input[i], s->output[i]};
         for (unsigned j = 0; j < 2; ++j)
             if (buffers[j] && buffers[j] != replace)
-                charge += sbufGetTotalCapacity(buffers[j]) + sizeof(sbuf_t) + kSbufAllocationAlignment;
+                charge += bufferCharge(buffers[j]);
     }
     return charge <= (uint64_t) settings(s)->max_pending * 4;
 }
@@ -152,7 +185,9 @@ static bool allocationFits(hps_session_t *s, const sbuf_t *replace, const sbuf_t
 static sbuf_t *makeBuffer(hps_session_t *s, size_t n)
 {
     buffer_pool_t *pool = lineGetBufferPool(s->client);
-    sbuf_t        *b    = bufferpoolGetBestFit(pool, (uint32_t) n, bufferpoolGetLargeBufferPadding(pool));
+    sbuf_t        *b    = bufferpoolTryGetBestFit(pool, n, bufferpoolGetLargeBufferPadding(pool));
+    if (b == NULL)
+        return NULL;
     if (sbufGetMaximumWriteableSize(b) < n)
     {
         lineReuseBuffer(s->client, b);
@@ -230,6 +265,7 @@ static void fail(hps_session_t *s, unsigned status)
     {
         discardBuffer(s, &s->input[i]);
         discardBuffer(s, &s->output[i]);
+        discardBuffer(s, &s->deferred[i]);
     }
     const char *reason = "Bad Request";
     switch (status)
@@ -291,10 +327,11 @@ static void pressure(hps_session_t *s)
         /* Future requests cannot drain until the current response arrives. Reserve
          * headroom by stopping client input, without stopping that response producer.
          * Recompute after each callback: a Resume can synchronously drain buffers. */
-        size_t n =
-            d == 0 ? pending(s)
-                   : (s->input[1] ? sbufGetLength(s->input[1]) : 0) + (s->output[1] ? sbufGetLength(s->output[1]) : 0);
-        bool want = s->paused[d] || n >= settings(s)->max_pending * 3 / 4 ||
+        uint64_t n    = d == 0 ? retained(s)
+                               : (uint64_t) (s->input[1] ? sbufGetLength(s->input[1]) : 0) +
+                                  (s->output[1] ? sbufGetLength(s->output[1]) : 0) +
+                                  (s->deferred[1] ? sbufGetLength(s->deferred[1]) : 0);
+        bool     want = s->paused[d] || s->deferred[d] != NULL || n >= settings(s)->max_pending * 3 / 4 ||
                     (d == 0 && (s->upload_stopped || s->phase == kHpsError));
         if (! want && n > settings(s)->max_pending / 2 && s->read_paused[d])
             want = true;
@@ -566,6 +603,7 @@ static bool response(hps_session_t *s)
                 s->child_reusable = false;
                 discardBuffer(s, &s->input[0]);
                 discardBuffer(s, &s->output[0]);
+                discardBuffer(s, &s->deferred[0]);
             }
         }
         if (! (s->http10 && h.status < 200) && ! rewrite(s, &h, 1))
@@ -639,6 +677,32 @@ static hps_step_t body(hps_session_t *s, unsigned d)
     return kHpsStepProgress;
 }
 
+static bool admitDeferred(hps_session_t *s, unsigned d)
+{
+    if (! s->deferred[d] || s->paused[d] || s->phase == kHpsError)
+        return false;
+    if (d == 0 && (s->upload_stopped || s->phase == kHpsConnect ||
+                   (s->phase == kHpsExchange && (! s->child_established || s->request_body.kind == kHpsBodyDone))))
+        return false;
+    size_t room = settings(s)->max_pending - pending(s);
+    if ((d == 0 ? s->phase == kHpsRequest : s->response_header) && room > 1024)
+        room -= 1024;
+    size_t n = min(min((size_t) 16384, sbufGetLength(s->deferred[d])), room);
+    if (! n)
+        return false;
+    if (! appendInput(s, d, sbufGetRawPtr(s->deferred[d]), n))
+    {
+        fail(s, 503);
+        return true;
+    }
+    if (n == sbufGetLength(s->deferred[d]))
+        discardBuffer(s, &s->deferred[d]);
+    else
+        sbufShiftRight(s->deferred[d], (uint32_t) n);
+    s->progress_at = nowMs();
+    return true;
+}
+
 static void pump(hps_session_t *s)
 {
     if (s->pumping)
@@ -651,6 +715,12 @@ static void pump(hps_session_t *s)
     {
         s->again = false;
         if (! active(s) || settings(s)->workers[lineGetWID(s->client)].quiescing)
+            break;
+        if (admitDeferred(s, 1))
+            s->again = true;
+        if (active(s) && admitDeferred(s, 0))
+            s->again = true;
+        if (! active(s))
             break;
         if (flush(s, 1))
             s->again = true;
@@ -728,9 +798,9 @@ static void pump(hps_session_t *s)
             }
             if (! active(s) || s->phase != kHpsExchange)
                 continue;
-            if (s->child_eof && s->response_body.kind == kHpsBodyEof && ! s->input[1])
+            if (s->child_eof && s->response_body.kind == kHpsBodyEof && ! s->input[1] && ! s->deferred[1])
                 s->response_body.kind = kHpsBodyDone;
-            if (s->child_eof && needs_input && ! s->again &&
+            if (s->child_eof && ! s->deferred[1] && needs_input && ! s->again &&
                 (s->response_header || s->response_body.kind != kHpsBodyDone))
             {
                 fail(s, 502);
@@ -739,7 +809,7 @@ static void pump(hps_session_t *s)
             }
             if (! s->response_header && s->response_body.kind == kHpsBodyDone && ! s->output[1])
             {
-                if (s->input[1])
+                if (s->input[1] || s->deferred[1])
                 {
                     fail(s, 502);
                     s->again = true;
@@ -863,34 +933,64 @@ void hpsPayload(tunnel_t *t, line_t *l, sbuf_t *buf, unsigned d)
     lineRef(l);
     if (d == 1)
         ++s->receiving_down;
-    size_t               offset = 0, length = sbufGetLength(buf);
-    const unsigned char *data = sbufGetRawPtr(buf);
-    pump(s);
-    while (offset < length && active(s))
+    const uint64_t allowance = deliveryAllowance(s);
+    const bool     oversized = (uint64_t) sbufGetLength(buf) > allowance + settings(s)->max_pending;
+    /* Preserve streaming of larger callbacks when their prefix can make immediate
+     * progress. Only the retained remainder consumes delivery headroom. */
+    while (
+        ! oversized && sbufGetLength(buf) > allowance && active(s) && ! s->deferred[d] && ! s->paused[d] &&
+        s->phase != kHpsError &&
+        ! (d == 0 && (s->upload_stopped || s->phase == kHpsConnect ||
+                      (s->phase == kHpsExchange && (! s->child_established || s->request_body.kind == kHpsBodyDone)))))
     {
-        if ((d == 0 && s->upload_stopped) || s->phase == kHpsError)
-            break;
         size_t room = settings(s)->max_pending - pending(s);
-        /* Rewriting a complete header can add Via and normalized framing fields.
-         * Do not fill its temporary headroom with coalesced body bytes. */
         if ((d == 0 ? s->phase == kHpsRequest : s->response_header) && room > 1024)
             room -= 1024;
-        size_t n = min(min((size_t) 16384, length - offset), room);
-        if (! n || ! appendInput(s, d, data + offset, n))
-        {
-            fail(s, 503);
-            pump(s);
+        size_t n = min((size_t) 16384, room);
+        if (! n || ! appendInput(s, d, sbufGetRawPtr(buf), n))
             break;
-        }
-        offset += n;
-        s->progress_at = nowMs();
+        sbufShiftRight(buf, (uint32_t) n);
         pump(s);
     }
+    const uint64_t length = sbufGetLength(buf);
+    const uint64_t older  = s->deferred[d] ? sbufGetLength(s->deferred[d]) : 0;
+    if (! active(s) || (d == 0 && s->upload_stopped) || s->phase == kHpsError)
+        lineReuseBuffer(l, buf);
+    else if (oversized || length + older > allowance)
+    {
+        lineReuseBuffer(l, buf);
+        fail(s, 503);
+    }
+    else if (length != 0)
+    {
+        /* Use bounded best-fit storage at admission instead of retaining an
+         * arbitrarily oversized carrier allocation. Working storage is charged
+         * separately; this slot is at most aligned(max(small, 2*D)) plus padding. */
+        sbuf_t *remainder = makeBuffer(s, (size_t) (length + older));
+        if (! remainder || ! remainderAllocationFits(s, remainder))
+        {
+            if (remainder)
+                lineReuseBuffer(l, remainder);
+            lineReuseBuffer(l, buf);
+            fail(s, 503);
+        }
+        else
+        {
+            if (older)
+                sbufMoveTo(remainder, s->deferred[d], (uint32_t) older);
+            sbufMoveTo(remainder, buf, (uint32_t) length);
+            sbufTransferLifetime(buf, remainder);
+            lineReuseBuffer(l, buf);
+            discardBuffer(s, &s->deferred[d]);
+            s->deferred[d] = remainder;
+        }
+    }
+    else
+        lineReuseBuffer(l, buf);
     if (d == 1)
         --s->receiving_down;
     if (active(s))
         pump(s);
-    lineReuseBuffer(l, buf);
     lineUnref(l);
     hpsRelease(s);
 }

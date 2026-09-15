@@ -25,13 +25,14 @@ typedef struct obfuscatorserver_tstate_s
 
 typedef struct obfuscatorserver_lstate_s
 {
-    int unused;
+    buffer_stream_t read_stream;
+    bool            paused;
 } obfuscatorserver_lstate_t;
 
 enum
 {
     kTunnelStateSize               = sizeof(obfuscatorserver_tstate_t),
-    kLineStateSize                 = 0,
+    kLineStateSize                 = sizeof(obfuscatorserver_lstate_t),
     kObfuscatorTlsRecordHeaderSize = 5
 };
 
@@ -42,10 +43,20 @@ void obfuscatorserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 
 void obfuscatorserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 
-void obfuscatorserverLinestateInitialize(obfuscatorserver_lstate_t *ls);
+void obfuscatorserverLinestateInitialize(obfuscatorserver_lstate_t *ls, line_t *l);
 void obfuscatorserverLinestateDestroy(obfuscatorserver_lstate_t *ls);
 
 void obfuscatorserverXorByte(uint8_t *data, size_t size, uint8_t key);
 void obfuscatorserverApplyXor(tunnel_t *t, line_t *l, sbuf_t *buf);
 bool obfuscatorserverWrapTlsRecordHeader(line_t *l, sbuf_t **buf_io);
 bool obfuscatorserverStripTlsRecordHeader(line_t *l, sbuf_t *buf);
+
+void obfuscatorserverTunnelUpStreamInit(tunnel_t *t, line_t *l);
+void obfuscatorserverTunnelDownStreamInit(tunnel_t *t, line_t *l);
+void obfuscatorserverTunnelUpStreamFinish(tunnel_t *t, line_t *l);
+void obfuscatorserverTunnelDownStreamFinish(tunnel_t *t, line_t *l);
+void obfuscatorserverTunnelUpStreamPause(tunnel_t *t, line_t *l);
+void obfuscatorserverTunnelUpStreamResume(tunnel_t *t, line_t *l);
+void obfuscatorserverEncodeStream(tunnel_t *t, line_t *l, sbuf_t *buf);
+void obfuscatorserverDecodeStream(tunnel_t *t, line_t *l, sbuf_t *buf);
+void obfuscatorserverDrainStream(tunnel_t *t, line_t *l);

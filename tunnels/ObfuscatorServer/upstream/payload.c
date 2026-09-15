@@ -5,6 +5,11 @@
 void obfuscatorserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     obfuscatorserver_tstate_t *ts = tunnelGetState(t);
+    if (ts->tls_record_header && ! tunnelchainIsWorkerPacketLine(tunnelGetChain(t), l))
+    {
+        obfuscatorserverEncodeStream(t, l, buf);
+        return;
+    }
 
     if (ts->method == kObfuscatorMethodXor)
     {

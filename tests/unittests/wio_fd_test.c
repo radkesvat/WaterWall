@@ -15,7 +15,7 @@ typedef struct test_env_s
 {
     test_worker_registry_t     registry;
     test_wio_fd_pool_t         descriptors;
-    master_pool_t             *masters[4];
+    master_pool_t             *masters[5];
     buffer_pool_t             *buffers;
     buffer_pool_t             *buffer_pools[1];
     threadsafe_generic_pool_t *wios;
@@ -169,7 +169,8 @@ static void setupWithBufferSize(test_env_t *env, uint32_t large_size)
         env->masters[i] = masterpoolCreateWithCapacity(8);
         require(env->masters[i] != NULL, "failed to create test master pool");
     }
-    env->buffers = bufferpoolCreate(env->masters[0], env->masters[1], env->masters[2], 4, large_size, 1024);
+    env->buffers =
+        bufferpoolCreate(env->masters[0], env->masters[4], env->masters[1], env->masters[2], 4, large_size, 1024);
     env->wios    = threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(env->masters[3], sizeof(wio_t), 4);
     require(env->buffers != NULL && env->wios != NULL, "failed to create test pools");
     env->buffer_pools[0]         = env->buffers;
@@ -789,7 +790,7 @@ static void runSpliceCase(splice_case_t kind, uint32_t large_size, uint32_t leng
 {
     test_env_t env;
     setupWithBufferSize(&env, large_size);
-    bufferpoolUpdateAllocationPaddings(env.buffers, 64, 64, 64);
+    bufferpoolUpdateAllocationPaddings(env.buffers, 64, 64, 64, 64);
     int            sockets[2];
     wio_t         *io    = socketIO(&env, sockets);
     splice_probe_t probe = {.env = &env, .kind = kind, .length = length};
@@ -817,9 +818,18 @@ static void runSpliceCase(splice_case_t kind, uint32_t large_size, uint32_t leng
     EVENT_PENDING(io);
     require(wloopProcessEvents(env.loop, 0) >= 0 && probe.calls == 0 && ! io->closed,
             "spurious readiness fabricated payload or closed a live socket");
-    require(send(sockets[1], probe.data, length, 0) == (ssize_t) length, "failed to queue splice fixture bytes");
-    for (unsigned int attempt = 0; attempt < 16 && probe.received < length; ++attempt)
+    // Deliveries can exceed the kernel send buffer; feed without blocking the reader's own thread.
+    uint32_t supplied = 0;
+    for (unsigned int attempt = 0; attempt < 256 && probe.received < length; ++attempt)
     {
+        if (supplied < length)
+        {
+            const ssize_t sent = send(sockets[1], probe.data + supplied, length - supplied, MSG_DONTWAIT);
+            if (sent > 0)
+                supplied += (uint32_t) sent;
+            else
+                require(sent < 0 && (errno == EAGAIN || errno == EINTR), "failed to queue splice fixture bytes");
+        }
         require(wloopProcessEvents(env.loop, 0) >= 0, "splice fixture dispatch failed");
     }
     if (kind == kSpliceWriteError)
@@ -874,7 +884,7 @@ static void testSplicePipeFallback(void)
 {
     test_env_t env;
     setup(&env);
-    bufferpoolUpdateAllocationPaddings(env.buffers, 64, 64, 64);
+    bufferpoolUpdateAllocationPaddings(env.buffers, 64, 64, 64, 64);
     int            sockets[2];
     wio_t         *io    = socketIO(&env, sockets);
     splice_probe_t probe = {.env = &env, .kind = kSplicePipeFallback, .length = 9};
@@ -929,7 +939,7 @@ static void testSpliceReadConditions(void)
     {
         test_env_t env;
         setup(&env);
-        bufferpoolUpdateAllocationPaddings(env.buffers, 64, 64, 64);
+        bufferpoolUpdateAllocationPaddings(env.buffers, 64, 64, 64, 64);
         int            sockets[2];
         wio_t         *io    = socketIO(&env, sockets);
         splice_probe_t probe = {.env = &env, .kind = kSpliceConvertPipe, .length = 9};
@@ -1041,7 +1051,7 @@ static void testSpliceBufferQueue(void)
 {
     test_env_t env;
     setup(&env);
-    bufferpoolUpdateAllocationPaddings(env.buffers, 64, 64, 64);
+    bufferpoolUpdateAllocationPaddings(env.buffers, 64, 64, 64, 64);
     int            sockets[2];
     wio_t         *source   = socketIO(&env, sockets);
     buffer_queue_t queue    = bufferqueueCreate(1);
@@ -1099,7 +1109,7 @@ static void testSpliceQueueCleanupAndRefusal(void)
 {
     test_env_t env;
     setup(&env);
-    bufferpoolUpdateAllocationPaddings(env.buffers, 64, 64, 64);
+    bufferpoolUpdateAllocationPaddings(env.buffers, 64, 64, 64, 64);
     int    sockets[2];
     wio_t *source = socketIO(&env, sockets);
     for (unsigned int mode = 0; mode < 3; ++mode)
@@ -1175,7 +1185,7 @@ static void testSpliceMaterializationRetries(void)
 {
     test_env_t env;
     setup(&env);
-    bufferpoolUpdateAllocationPaddings(env.buffers, 64, 64, 64);
+    bufferpoolUpdateAllocationPaddings(env.buffers, 64, 64, 64, 64);
     int    sockets[2];
     wio_t *source = socketIO(&env, sockets);
     for (unsigned int partial = 0; partial < 2; ++partial)
@@ -1234,7 +1244,7 @@ static void testPrivateBodies(void)
 {
     test_env_t env;
     setup(&env);
-    bufferpoolUpdateAllocationPaddings(env.buffers, 64, 64, 64);
+    bufferpoolUpdateAllocationPaddings(env.buffers, 64, 64, 64, 64);
     int          sockets[2];
     wio_t       *source = socketIO(&env, sockets);
     unsigned int before = pipe_calls;
@@ -1308,7 +1318,7 @@ static void testPrivateCancellation(void)
     {
         test_env_t env;
         setup(&env);
-        bufferpoolUpdateAllocationPaddings(env.buffers, 64, 64, 64);
+        bufferpoolUpdateAllocationPaddings(env.buffers, 64, 64, 64, 64);
         int     source_fds[2], dest_fds[2];
         wio_t  *source = socketIO(&env, source_fds);
         wio_t  *dest   = socketIO(&env, dest_fds);
@@ -1378,7 +1388,7 @@ static void testSpliceWrite(splice_write_case_t kind)
 {
     test_env_t env;
     setup(&env);
-    bufferpoolUpdateAllocationPaddings(env.buffers, 64, 64, 64);
+    bufferpoolUpdateAllocationPaddings(env.buffers, 64, 64, 64, 64);
     int    source_fds[2], destination_fds[2];
     wio_t *source      = socketIO(&env, source_fds);
     wio_t *destination = socketIO(&env, destination_fds);
@@ -1520,7 +1530,7 @@ static void testSpliceWrite(splice_write_case_t kind)
 static void testSpliceReads(void)
 {
     runSpliceCase(kSpliceConvertPipe, 4096, 4097);
-    runSpliceCase(kSpliceConvertPipe, 65536, LARGE_BUFFER_SIZE_RAM_HIGH + 17);
+    runSpliceCase(kSpliceConvertPipe, 2 * LARGE_BUFFER_SIZE_RAM_HIGH, LARGE_BUFFER_SIZE_RAM_HIGH + 17);
     runSpliceCase(kSpliceConvertPipe, 4096, 9);
     runSpliceCase(kSplicePartialPipe, 4096, 9);
     runSpliceCase(kSpliceRetainPipe, 4096, 9);

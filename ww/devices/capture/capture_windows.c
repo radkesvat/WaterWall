@@ -425,6 +425,7 @@ bool caputredeviceBringUp(capture_device_t *cdev)
 
     bufferpoolUpdateAllocationPaddings(cdev->reader_buffer_pool,
                                        bufferpoolGetLargeBufferPadding(worker_pool),
+                                       bufferpoolGetMediumBufferPadding(worker_pool),
                                        bufferpoolGetSmallBufferPadding(worker_pool),
                                        bufferpoolGetSpliceBufferPadding(worker_pool));
 
@@ -530,13 +531,12 @@ capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_
     buffer_pool_t *worker_pool = getCurrentEventWorkerBufferPool();
 
     buffer_pool_t *reader_bpool = bufferpoolCreate(GSTATE.masterpool_buffer_pools_large,
+                                                   GSTATE.masterpool_buffer_pools_medium,
                                                    GSTATE.masterpool_buffer_pools_small,
                                                    GSTATE.masterpool_buffer_pools_splice,
                                                    RAM_PROFILE,
                                                    bufferpoolGetLargeBufferSize(worker_pool),
-                                                   bufferpoolGetSmallBufferSize(worker_pool)
-
-    );
+                                                   bufferpoolGetSmallBufferSize(worker_pool));
     if (UNLIKELY(reader_bpool == NULL))
     {
         LOGE("CaptureDevice: failed to construct reader buffer pool");

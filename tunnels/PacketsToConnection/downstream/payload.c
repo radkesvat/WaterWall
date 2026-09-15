@@ -22,6 +22,8 @@ typedef enum ptc_write_outcome_e
     kPtcWriteOwned = 0,
     /* The buffer went nowhere and must be recycled. */
     kPtcWriteReuse,
+    /* lwIP copied the bytes, but outstanding records still consume delivery headroom. */
+    kPtcWriteReuseAndPause,
     /* The buffer is queued; next must be told to stop producing. */
     kPtcWritePause,
     /* The PCB was reset; the owned line must be closed toward the network. */
@@ -117,6 +119,12 @@ static ptc_write_outcome_t ptcTcpWriteLocked(ptc_tstate_t *ts, ptc_lstate_t *ls,
      * keeps a fast flow from holding one pooled buffer per unacknowledged write.
      */
     sbuf_ack_queue_t_back_mut(&ls->ack_queue)->buf = NULL;
+    if (ls->pending_bytes > ts->max_pending_bytes)
+    {
+        ls->write_paused = true;
+        ptcArmWritePollLocked(ls, tpcb);
+        return kPtcWriteReuseAndPause;
+    }
     return kPtcWriteReuse;
 }
 
@@ -204,7 +212,8 @@ void ptcTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         (ls->kind == kPtcLineKindTcp) ? ptcTcpWriteLocked(ts, ls, buf, buf_len) : ptcUdpSendLocked(ls, buf, buf_len);
     UNLOCK_TCPIP_CORE();
 
-    if (outcome == kPtcWriteReuse || outcome == kPtcWriteOverLimit || outcome == kPtcWriteNoMemory)
+    if (outcome == kPtcWriteReuse || outcome == kPtcWriteReuseAndPause || outcome == kPtcWriteOverLimit ||
+        outcome == kPtcWriteNoMemory)
     {
         lineReuseBuffer(l, buf);
     }
@@ -215,9 +224,11 @@ void ptcTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         {
             if (outcome == kPtcWriteOverLimit)
             {
-                LOGW("PacketsToConnection: retained payload passed max-pending-bytes (%u) or %u entries, "
+                LOGW("PacketsToConnection: retained payload passed max-pending-bytes (%u budget bytes + %u delivery "
+                     "bytes) or %u entries, "
                      "closing the flow",
                      (unsigned int) ts->max_pending_bytes,
+                     (unsigned int) bufferpoolGetLargeBufferSize(lineGetBufferPool(l)),
                      (unsigned int) ts->max_pending_entries);
             }
             else
@@ -236,7 +247,7 @@ void ptcTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
-    if (outcome == kPtcWritePause)
+    if (outcome == kPtcWritePause || outcome == kPtcWriteReuseAndPause)
     {
         if (ptcNextGateEnter(t))
         {

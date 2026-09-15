@@ -67,14 +67,14 @@ bool muxTryComputeEncodedLength(uint32_t payload_length, bool prepend_open, uint
     return true;
 }
 
-sbuf_t *muxReadCompleteFrame(buffer_stream_t *stream, mux_frame_t *frame)
+bool muxPeekCompleteFrame(buffer_stream_t *stream, mux_frame_t *frame)
 {
     assert(stream != NULL);
     assert(frame != NULL);
 
     if (bufferstreamGetBufLen(stream) < kMuxFrameLength)
     {
-        return NULL;
+        return false;
     }
 
     bufferstreamViewBytesAt(stream, 0, (uint8_t *) frame, kMuxFrameLength);
@@ -85,12 +85,45 @@ sbuf_t *muxReadCompleteFrame(buffer_stream_t *stream, mux_frame_t *frame)
 
     if (bufferstreamGetBufLen(stream) < total_length)
     {
-        return NULL;
+        return false;
     }
 
     frame->length = payload_length;
     frame->cid    = cid;
-    return bufferstreamReadExact(stream, total_length);
+    return true;
+}
+
+sbuf_t *muxReadCompleteFrame(buffer_stream_t *stream, mux_frame_t *frame)
+{
+    if (! muxPeekCompleteFrame(stream, frame))
+        return NULL;
+    return bufferstreamReadExact(stream, (size_t) frame->length + kMuxFrameLength);
+}
+
+sbuf_t *muxReadFrameForQueue(buffer_stream_t *stream, const mux_frame_t *frame)
+{
+    assert(frame->flags == kMuxFlagData);
+    const size_t total = (size_t) frame->length + kMuxFrameLength;
+    assert(bufferstreamGetBufLen(stream) >= total);
+    buffer_pool_t *pool = stream->pool;
+    const bool     small =
+        frame->length <= bufferpoolGetSmallBufferSize(pool) && bufferpoolGetSmallBufferPadding(pool) >= kMuxFrameLength;
+    const uint32_t capacity = small ? bufferpoolGetSmallBufferSize(pool) : bufferpoolGetMediumBufferSize(pool);
+    const uint16_t padding  = small ? bufferpoolGetSmallBufferPadding(pool) : bufferpoolGetMediumBufferPadding(pool);
+    if (frame->length > capacity || padding < kMuxFrameLength)
+        return bufferstreamReadExact(stream, total);
+
+    const sbuf_t *front = *bs_doublequeue_t_front(&stream->q);
+    if (sbufGetLength(front) == total &&
+        (sbufGetLeftPadding(front) > padding || sbufGetTotalCapacity(front) <= (uint64_t) capacity + padding))
+        return bufferstreamReadExact(stream, total);
+
+    sbuf_t *destination = small ? bufferpoolGetSmallBuffer(pool) : bufferpoolGetMediumBuffer(pool);
+    // Store the Mux header in our advertised prefix budget; removing it restores full pool headroom.
+    sbufShiftLeft(destination, kMuxFrameLength);
+    sbufSetLength(destination, 0);
+    bufferstreamMoveExactBytesTo(stream, destination, total);
+    return destination;
 }
 
 mux_encode_result_t muxEncodeChildPayload(buffer_pool_t *pool, sbuf_t *input, mux_cid_t cid, bool prepend_open,

@@ -75,6 +75,7 @@ struct hps_session_s
     hps_phase_t     phase;
     sbuf_t         *input[2];
     sbuf_t         *output[2];
+    sbuf_t         *deferred[2]; /* One bounded already-delivered remainder per direction. */
     hps_body_t      request_body;
     hps_body_t      response_body;
     hps_header_t    trailer_context[2];

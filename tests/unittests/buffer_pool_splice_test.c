@@ -39,7 +39,7 @@ static void require(bool condition, const char *message)
 static uint32_t cachedSpliceCount(buffer_pool_t *pool)
 {
     uint32_t large, small, splice;
-    bufferpoolCachedTierCountsForTest(pool, &large, &small, &splice);
+    bufferpoolCachedTierCountsForTest(pool, &large, &small, &splice, NULL);
     require(large == 0 && small == 0, "splice operations touched the large/small caches");
     return splice;
 }
@@ -58,30 +58,30 @@ static void testRechargeBatches(void)
 {
     static const uint32_t widths[]              = {1, 2, 3, 4, 8, 256};
     sbuf_t *(*const getters[])(buffer_pool_t *) = {
-        bufferpoolGetLargeBuffer, bufferpoolGetSmallBuffer, bufferpoolGetSpliceBuffer};
+        bufferpoolGetLargeBuffer, bufferpoolGetSmallBuffer, bufferpoolGetSpliceBuffer, bufferpoolGetMediumBuffer};
 
     for (size_t w = 0; w < ARRAY_SIZE(widths); ++w)
     {
-        master_pool_t *masters[3];
+        master_pool_t *masters[4];
         for (size_t tier = 0; tier < ARRAY_SIZE(masters); ++tier)
         {
             masters[tier] = masterpoolCreateWithCapacity(16);
             require(masters[tier] != NULL, "failed to create refill test master");
         }
-        buffer_pool_t *pool = bufferpoolCreate(masters[0], masters[1], masters[2], widths[w], 8192, 1024);
+        buffer_pool_t *pool = bufferpoolCreate(masters[0], masters[3], masters[1], masters[2], widths[w], 8192, 1024);
         require(pool != NULL, "failed to create refill test pool");
         const uint32_t batch = min(widths[w], 4U);
         for (size_t tier = 0; tier < ARRAY_SIZE(getters); ++tier)
         {
-            uint32_t before[3];
-            bufferpoolCachedTierCountsForTest(pool, &before[0], &before[1], &before[2]);
+            uint32_t before[4];
+            bufferpoolCachedTierCountsForTest(pool, &before[0], &before[1], &before[2], &before[3]);
             sbuf_t *buffers[8];
             // Hold the first batch to force a second refill of the same tier.
             for (uint32_t i = 0; i < batch * 2U; ++i)
             {
                 buffers[i] = getters[tier](pool);
-                uint32_t counts[3];
-                bufferpoolCachedTierCountsForTest(pool, &counts[0], &counts[1], &counts[2]);
+                uint32_t counts[4];
+                bufferpoolCachedTierCountsForTest(pool, &counts[0], &counts[1], &counts[2], &counts[3]);
                 require(counts[tier] == batch - 1U - i % batch, "refill exceeded its four-buffer or small-pool limit");
                 for (size_t other = 0; other < ARRAY_SIZE(counts); ++other)
                 {
@@ -109,10 +109,10 @@ static void testRechargeBatches(void)
 static void testPipeDestruction(void)
 {
 #if WW_HAVE_SPLICE
-    master_pool_t *masters[3];
-    for (unsigned int i = 0; i < 3; ++i)
+    master_pool_t *masters[4];
+    for (unsigned int i = 0; i < ARRAY_SIZE(masters); ++i)
         masters[i] = masterpoolCreateWithCapacity(2);
-    buffer_pool_t *pool = bufferpoolCreate(masters[0], masters[1], masters[2], 1, 256, 64);
+    buffer_pool_t *pool = bufferpoolCreate(masters[0], masters[3], masters[1], masters[2], 1, 256, 64);
     sbuf_t        *buffers[12];
     int            descriptors[24];
     for (unsigned int i = 0; i < 12; ++i)
@@ -134,12 +134,12 @@ static void testPipeDestruction(void)
     masterpoolMakeEmpty(masters[2]);
     for (unsigned int i = 0; i < 24; ++i)
         require(fcntl(descriptors[i], F_GETFD) == -1 && errno == EBADF, "pool teardown leaked a pipe");
-    pool        = bufferpoolCreate(masters[0], masters[1], masters[2], 1, 256, 64);
+    pool        = bufferpoolCreate(masters[0], masters[3], masters[1], masters[2], 1, 256, 64);
     sbuf_t *buf = bufferpoolGetSpliceBuffer(pool);
     require(sbufSpliceInitPipe(buf) == 0, "geometry pipe creation failed");
     splice_buffer_metadata_t metadata = sbufSpliceMetadata(buf);
-    buffer_pool_t           *other    = bufferpoolCreate(masters[0], masters[1], masters[2], 1, 256, 64);
-    bufferpoolUpdateAllocationPaddings(other, 0, 0, 64);
+    buffer_pool_t           *other    = bufferpoolCreate(masters[0], masters[3], masters[1], masters[2], 1, 256, 64);
+    bufferpoolUpdateAllocationPaddings(other, 0, 0, 0, 64);
     bufferpoolReuseBuffer(other, buf);
     require(fcntl(metadata.pipefd[0], F_GETFD) == -1 && fcntl(metadata.pipefd[1], F_GETFD) == -1,
             "incompatible pool return leaked its private pipe");
@@ -157,7 +157,7 @@ static void testPipeDestruction(void)
     bufferpoolReuseBuffer(other, buf);
     bufferpoolDestroy(other);
     bufferpoolDestroy(pool);
-    for (unsigned int i = 0; i < 3; ++i)
+    for (unsigned int i = 0; i < ARRAY_SIZE(masters); ++i)
     {
         masterpoolMakeEmpty(masters[i]);
         masterpoolDestroy(masters[i]);
@@ -168,11 +168,11 @@ static void testPipeDestruction(void)
 static void testDiscardOnPoolReturn(void)
 {
 #if WW_HAVE_SPLICE
-    master_pool_t *masters[3];
-    for (unsigned int i = 0; i < 3; ++i)
+    master_pool_t *masters[4];
+    for (unsigned int i = 0; i < ARRAY_SIZE(masters); ++i)
         masters[i] = masterpoolCreateWithCapacity(2);
-    buffer_pool_t *pool = bufferpoolCreate(masters[0], masters[1], masters[2], 1, 256, 64);
-    bufferpoolUpdateAllocationPaddings(pool, 64, 64, 64);
+    buffer_pool_t *pool = bufferpoolCreate(masters[0], masters[3], masters[1], masters[2], 1, 256, 64);
+    bufferpoolUpdateAllocationPaddings(pool, 64, 64, 64, 64);
     sbuf_t *buf = bufferpoolGetSpliceBuffer(pool);
     require(sbufSpliceInitPipe(buf) == 0, "discard fixture pipe initialization failed");
     const splice_buffer_metadata_t metadata = sbufSpliceMetadata(buf);
@@ -196,7 +196,7 @@ static void testDiscardOnPoolReturn(void)
     bufferpoolReuseBuffer(pool, reused);
 #endif
     bufferpoolDestroy(pool);
-    for (unsigned int i = 0; i < 3; ++i)
+    for (unsigned int i = 0; i < ARRAY_SIZE(masters); ++i)
     {
         masterpoolMakeEmpty(masters[i]);
         masterpoolDestroy(masters[i]);
@@ -208,10 +208,10 @@ int main(void)
 {
     testDiscardOnPoolReturn();
 #ifdef WW_SPLICE_POOL_BYPASS_TEST
-    master_pool_t *masters[3];
-    for (unsigned int i = 0; i < 3; ++i)
+    master_pool_t *masters[4];
+    for (unsigned int i = 0; i < ARRAY_SIZE(masters); ++i)
         masters[i] = masterpoolCreateWithCapacity(2);
-    buffer_pool_t *pool = bufferpoolCreate(masters[0], masters[1], masters[2], 1, 256, 64);
+    buffer_pool_t *pool = bufferpoolCreate(masters[0], masters[3], masters[1], masters[2], 1, 256, 64);
     sbuf_t        *buf  = bufferpoolGetSpliceBuffer(pool);
     require(sbufSpliceInitPipe(buf) == 0, "bypass pipe initialization failed");
     splice_buffer_metadata_t metadata = sbufSpliceMetadata(buf);
@@ -219,7 +219,7 @@ int main(void)
     require(fcntl(metadata.pipefd[0], F_GETFD) == -1 && fcntl(metadata.pipefd[1], F_GETFD) == -1,
             "bypass return leaked its private pipe");
     bufferpoolDestroy(pool);
-    for (unsigned int i = 0; i < 3; ++i)
+    for (unsigned int i = 0; i < ARRAY_SIZE(masters); ++i)
     {
         masterpoolMakeEmpty(masters[i]);
         masterpoolDestroy(masters[i]);
@@ -230,29 +230,32 @@ int main(void)
     testPipeDestruction();
     master_pool_t *large = masterpoolCreateWithCapacity(16);
     master_pool_t *small = masterpoolCreateWithCapacity(16);
+    master_pool_t *medium = masterpoolCreateWithCapacity(16);
     master_pool_t *splice = masterpoolCreateWithCapacity(16);
     require(large != NULL && small != NULL && splice != NULL, "failed to create test master pools");
-    require(bufferpoolCreate(large, small, NULL, 2, 4096, 512) == NULL, "missing splice master was accepted");
+    require(bufferpoolCreate(large, NULL, small, splice, 2, 4096, 512) == NULL, "missing medium master was accepted");
+    require(bufferpoolCreate(large, medium, small, NULL, 2, 4096, 512) == NULL, "missing splice master was accepted");
 
 #ifdef WW_SPLICE_POOL_FAILURE_TEST
     const MasterPoolItemCreateHandle original_large = large->create_item_handle;
     const MasterPoolItemCreateHandle original_small = small->create_item_handle;
+    const MasterPoolItemCreateHandle original_medium = medium->create_item_handle;
     const MasterPoolItemCreateHandle original_splice = splice->create_item_handle;
-    for (unsigned int allocation = 1; allocation <= 4; ++allocation)
+    for (unsigned int allocation = 1; allocation <= 5; ++allocation)
     {
         fail_allocation = allocation;
-        require(bufferpoolCreate(large, small, splice, 2, 4096, 512) == NULL,
+        require(bufferpoolCreate(large, medium, small, splice, 2, 4096, 512) == NULL,
                 "buffer pool metadata allocation failure was not returned");
         require(fail_allocation == 0, "metadata allocation failure was not exercised");
         require(large->create_item_handle == original_large && small->create_item_handle == original_small &&
-                    splice->create_item_handle == original_splice,
+                    splice->create_item_handle == original_splice && medium->create_item_handle == original_medium,
                 "failed construction published master callbacks");
     }
 #endif
 
-    buffer_pool_t *pool = bufferpoolCreate(large, small, splice, 2, 4096, 512);
+    buffer_pool_t *pool = bufferpoolCreate(large, medium, small, splice, 2, 4096, 512);
     require(pool != NULL, "failed to create splice test pool");
-    bufferpoolUpdateAllocationPaddings(pool, 64, 64, 33);
+    bufferpoolUpdateAllocationPaddings(pool, 64, 64, 64, 33);
     require(bufferpoolGetSpliceBufferStorageSize(pool) == 32 && bufferpoolGetSpliceBufferPadding(pool) == 64,
             "splice tier getters reported incorrect geometry");
     require(cachedSpliceCount(pool) == 0, "splice cache was eagerly populated");
@@ -291,9 +294,9 @@ int main(void)
     }
 
     // A second pool can draw from the shared master while requiring different headroom.
-    buffer_pool_t *other = bufferpoolCreate(large, small, splice, 1, 4096, 512);
+    buffer_pool_t *other = bufferpoolCreate(large, medium, small, splice, 1, 4096, 512);
     require(other != NULL, "failed to create the second splice pool");
-    bufferpoolUpdateAllocationPaddings(other, 64, 64, 96);
+    bufferpoolUpdateAllocationPaddings(other, 64, 64, 64, 96);
     sbuf_t *buffer = bufferpoolGetSpliceBuffer(other);
     checkSplice(buffer, 96);
     bufferpoolReuseBuffer(other, buffer);
@@ -302,9 +305,11 @@ int main(void)
     bufferpoolDestroy(pool);
     masterpoolMakeEmpty(large);
     masterpoolMakeEmpty(small);
+    masterpoolMakeEmpty(medium);
     masterpoolMakeEmpty(splice);
     masterpoolDestroy(large);
     masterpoolDestroy(small);
+    masterpoolDestroy(medium);
     masterpoolDestroy(splice);
     return 0;
 #endif

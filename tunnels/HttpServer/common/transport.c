@@ -2372,14 +2372,15 @@ bool httpserverTransportHandleHttp1RequestHeaderPhase(tunnel_t *t, line_t *l, ht
         return true;
     }
 
-    if (bufferstreamGetBufLen(&ls->in_stream) > kHttpServerMaxHeaderBytes)
+    size_t     header_end = 0;
+    const bool complete   = bufferstreamFindDoubleCRLF(&ls->in_stream, &header_end);
+    if ((complete ? header_end : bufferstreamGetBufLen(&ls->in_stream)) > kHttpServerMaxHeaderBytes)
     {
         LOGE("HttpServer: request header exceeded maximum size");
         return false;
     }
 
-    size_t header_end = 0;
-    if (! bufferstreamFindDoubleCRLF(&ls->in_stream, &header_end))
+    if (! complete)
     {
         return true;
     }

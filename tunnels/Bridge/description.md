@@ -43,6 +43,12 @@ No node may be inserted in either gap. For example,
 `Bridge -> SpeedLimit -> ReverseClient` and `ReverseServer -> SpeedLimit -> Bridge`
 are forbidden. Place any additional processing outside these gaps.
 
+This rule preserves the ownership assumptions of ordinary stream tunnels.
+ReverseClient's downstream Init goes directly into Bridge, which forwards
+upstream Init on its paired branch. Bridge passes the same line and never takes
+ownership of it. Keep the direction change at this boundary instead of placing
+a middle tunnel there that assumes the owner is toward `prev`.
+
 These are chain-design rules that users must follow; the code does not automatically
 validate these adjacency requirements. They apply to these reverse-node connections
 and do not require every Bridge to have a reverse-node neighbor.

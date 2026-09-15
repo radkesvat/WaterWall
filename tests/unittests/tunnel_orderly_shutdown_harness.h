@@ -166,6 +166,7 @@ typedef struct tos_worker_env_s
     test_wio_fd_pool_t         fd_handles;
     master_pool_t             *large_masters[kTosMaxWorkers];
     master_pool_t             *small_masters[kTosMaxWorkers];
+    master_pool_t             *medium_masters[kTosMaxWorkers];
     master_pool_t             *splice_masters[kTosMaxWorkers];
     master_pool_t             *message_master;
     master_pool_t             *wios_master;
@@ -210,11 +211,13 @@ static void tosWorkerEnvSetup(tos_worker_env_t *env, wid_t count, uint32_t large
     {
         env->large_masters[wi] = masterpoolCreateWithCapacity(8);
         env->small_masters[wi] = masterpoolCreateWithCapacity(8);
+        env->medium_masters[wi] = masterpoolCreateWithCapacity(8);
         env->splice_masters[wi] = masterpoolCreateWithCapacity(8);
         twfRequire(env->large_masters[wi] != NULL && env->small_masters[wi] != NULL,
                    "failed to create a test master pool");
 
         env->pools[wi] = bufferpoolCreate(env->large_masters[wi],
+                                          env->medium_masters[wi],
                                           env->small_masters[wi],
                                           env->splice_masters[wi],
                                           4,

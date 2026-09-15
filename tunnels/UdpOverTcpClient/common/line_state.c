@@ -4,7 +4,7 @@
 
 void udpovertcpclientLinestateInitialize(udpovertcpclient_lstate_t *ls, buffer_pool_t *pool)
 {
-    ls->read_stream = bufferstreamCreate(pool, kHeaderSize);
+    *ls = (udpovertcpclient_lstate_t) {.read_stream = bufferstreamCreate(pool, kHeaderSize)};
 }
 
 void udpovertcpclientLinestateDestroy(udpovertcpclient_lstate_t *ls)

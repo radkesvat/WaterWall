@@ -913,8 +913,9 @@ static void testLinestateDestroyClearsPartialTlsState(void)
 {
     master_pool_t          *large_master = masterpoolCreateWithCapacity(8);
     master_pool_t          *small_master = masterpoolCreateWithCapacity(8);
+    master_pool_t          *medium_master = masterpoolCreateWithCapacity(8);
     master_pool_t          *splice_master = masterpoolCreateWithCapacity(8);
-    buffer_pool_t          *pool          = bufferpoolCreate(large_master, small_master, splice_master, 8, 8192, 1024);
+    buffer_pool_t *pool = bufferpoolCreate(large_master, medium_master, small_master, splice_master, 8, 8192, 1024);
     uint32_t                aligned_size = tunnelGetCorrectAlignedLineStateSize(sizeof(realityserver_lstate_t));
     realityserver_lstate_t *ls           = memoryAllocateCacheAlignedZero(aligned_size);
     require(ls != NULL, "failed to allocate aligned RealityServer line state");
@@ -971,9 +972,11 @@ static void testLinestateDestroyClearsPartialTlsState(void)
     bufferpoolDestroy(pool);
     masterpoolMakeEmpty(large_master);
     masterpoolMakeEmpty(small_master);
+    masterpoolMakeEmpty(medium_master);
     masterpoolMakeEmpty(splice_master);
     masterpoolDestroy(large_master);
     masterpoolDestroy(small_master);
+    masterpoolDestroy(medium_master);
     masterpoolDestroy(splice_master);
 }
 

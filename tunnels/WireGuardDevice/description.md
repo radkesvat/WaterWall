@@ -54,11 +54,9 @@ In practice:
 
 ## Typical Placement
 
-The intended shape is:
+`UdpStatelessSocket` supports only chain-head placement. With this socket, WireGuard's transport side faces `prev`.
 
-- packet side node -> `WireGuardDevice` -> `UdpStatelessSocket`
-
-or the reverse:
+The supported shape with a head-only UDP socket is:
 
 - `UdpStatelessSocket` -> `WireGuardDevice` -> packet side node
 
@@ -75,7 +73,6 @@ side only:
 
 ```text
 UdpStatelessSocket -> UserController -> WireGuardDevice -> packet side node
-packet side node -> WireGuardDevice -> UserController -> UdpStatelessSocket
 ```
 
 The packet side is intentionally left untouched. Worker packet lines do not pass through the internal `UserController`;
@@ -111,7 +108,7 @@ Startup fails unless the two adjacent edges resolve to exactly one L3 side and o
       }
     ]
   },
-  "next": "udp-edge"
+  "next": "packet-side"
 }
 ```
 
@@ -296,8 +293,7 @@ So in normal Waterwall chains:
   "settings": {
     "device-name": "tun0",
     "device-ip": "10.44.0.1/24"
-  },
-  "next": "wg-client"
+  }
 }
 ```
 
@@ -316,7 +312,7 @@ So in normal Waterwall chains:
       }
     ]
   },
-  "next": "udp-client"
+  "next": "tun0"
 }
 ```
 
@@ -327,7 +323,8 @@ So in normal Waterwall chains:
   "settings": {
     "listen-address": "0.0.0.0",
     "listen-port": 51820
-  }
+  },
+  "next": "wg-client"
 }
 ```
 
@@ -377,11 +374,15 @@ Conceptually:
 
 ### 3. Verified loopback-style packet test shape
 
-The repository already tests this pattern:
+The repository connects packet-mode `TesterClient` to the packet side through a
+`Bridge` pair:
 
-- packet-mode `TesterClient`
-- `WireGuardDevice`
-- `UdpStatelessSocket`
+```text
+TesterClient(packet) -> Bridge A
+UdpStatelessSocket -> WireGuardDevice -> Bridge B
+```
+
+Bridge A and Bridge B are paired.
 
 paired against:
 

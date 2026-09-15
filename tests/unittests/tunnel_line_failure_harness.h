@@ -123,10 +123,14 @@ void __wrap_sbufDestroy(sbuf_t *b);
 
 sbuf_t *__real_bufferpoolGetLargeBuffer(buffer_pool_t *pool);
 sbuf_t *__real_bufferpoolGetSmallBuffer(buffer_pool_t *pool);
+sbuf_t *__real_bufferpoolGetMediumBuffer(buffer_pool_t *pool);
+sbuf_t *__real_bufferpoolTryGetBestFit(buffer_pool_t *pool, uint64_t size, uint16_t padding);
 void    __real_bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *b);
 
 sbuf_t *__wrap_bufferpoolGetLargeBuffer(buffer_pool_t *pool);
 sbuf_t *__wrap_bufferpoolGetSmallBuffer(buffer_pool_t *pool);
+sbuf_t *__wrap_bufferpoolGetMediumBuffer(buffer_pool_t *pool);
+sbuf_t *__wrap_bufferpoolTryGetBestFit(buffer_pool_t *pool, uint64_t size, uint16_t padding);
 void    __wrap_bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *b);
 
 static void twfLedgerForget(sbuf_t **table, uint32_t *count, sbuf_t *b)
@@ -183,6 +187,16 @@ sbuf_t *__wrap_bufferpoolGetLargeBuffer(buffer_pool_t *pool)
 sbuf_t *__wrap_bufferpoolGetSmallBuffer(buffer_pool_t *pool)
 {
     return twfTrackAcquired(__real_bufferpoolGetSmallBuffer(pool));
+}
+
+sbuf_t *__wrap_bufferpoolGetMediumBuffer(buffer_pool_t *pool)
+{
+    return twfTrackAcquired(__real_bufferpoolGetMediumBuffer(pool));
+}
+
+sbuf_t *__wrap_bufferpoolTryGetBestFit(buffer_pool_t *pool, uint64_t size, uint16_t padding)
+{
+    return twfTrackAcquired(__real_bufferpoolTryGetBestFit(pool, size, padding));
 }
 
 void __wrap_bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *b)
@@ -444,6 +458,7 @@ typedef struct twf_worker_env_s
     test_wio_fd_pool_t         fd_handles;
     master_pool_t             *large_master;
     master_pool_t             *small_master;
+    master_pool_t             *medium_master;
     master_pool_t             *splice_master;
     master_pool_t             *wios_master;
     buffer_pool_t             *pool;
@@ -481,17 +496,23 @@ static void twfWorkerEnvSetupWithSmallBuffers(twf_worker_env_t *env, uint32_t la
 
     env->large_master = masterpoolCreateWithCapacity(8);
     env->small_master = masterpoolCreateWithCapacity(8);
+    env->medium_master = masterpoolCreateWithCapacity(8);
     env->splice_master = masterpoolCreateWithCapacity(8);
     env->wios_master  = masterpoolCreateWithCapacity(8);
     twfRequire(env->large_master != NULL && env->small_master != NULL && env->wios_master != NULL,
                "failed to create the test master pools");
 
-    env->pool = bufferpoolCreate(
-        env->large_master, env->small_master, env->splice_master, 4, large_buffer_size, small_buffer_size);
+    env->pool = bufferpoolCreate(env->large_master,
+                                 env->medium_master,
+                                 env->small_master,
+                                 env->splice_master,
+                                 4,
+                                 large_buffer_size,
+                                 small_buffer_size);
     twfRequire(env->pool != NULL, "failed to create the test buffer pool");
 
     // Must happen before any buffer leaves the pool, exactly like the runtime does it during chain finalization.
-    bufferpoolUpdateAllocationPaddings(env->pool, left_padding, left_padding, left_padding);
+    bufferpoolUpdateAllocationPaddings(env->pool, left_padding, left_padding, left_padding, left_padding);
 
     env->pool_shortcut[0]        = env->pool;
     GSTATE.shortcut_buffer_pools = env->pool_shortcut;
@@ -538,10 +559,12 @@ static void twfWorkerEnvTeardown(twf_worker_env_t *env)
     bufferpoolDestroy(env->pool);
     masterpoolMakeEmpty(env->large_master);
     masterpoolMakeEmpty(env->small_master);
+    masterpoolMakeEmpty(env->medium_master);
     masterpoolMakeEmpty(env->splice_master);
     masterpoolMakeEmpty(env->wios_master);
     masterpoolDestroy(env->large_master);
     masterpoolDestroy(env->small_master);
+    masterpoolDestroy(env->medium_master);
     masterpoolDestroy(env->splice_master);
     masterpoolDestroy(env->wios_master);
 }

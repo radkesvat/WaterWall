@@ -30,6 +30,31 @@ static inline size_t muxQueuedSbufCharge(const sbuf_t *buf)
     return sizeof(sbuf_t) + (size_t) sbufGetTotalCapacity(buf) + (size_t) kSbufAllocationAlignment;
 }
 
+/* Only paused-child queue admission should trade a copy for a smaller retained
+ * allocation. BufferStream and immediately forwarded frames preserve their
+ * whole-chunk fast path. Both candidate sizes come from reusable pool tiers. */
+static inline sbuf_t *muxPrepareQueuedPayload(buffer_pool_t *pool, sbuf_t *buf)
+{
+    const uint32_t length  = sbufGetLength(buf);
+    const uint16_t padding = sbufGetLeftPadding(buf);
+    const bool     use_small =
+        length <= bufferpoolGetSmallBufferSize(pool) && padding <= bufferpoolGetSmallBufferPadding(pool);
+    const uint32_t capacity = use_small ? bufferpoolGetSmallBufferSize(pool) : bufferpoolGetMediumBufferSize(pool);
+    const uint16_t target_padding =
+        use_small ? bufferpoolGetSmallBufferPadding(pool) : bufferpoolGetMediumBufferPadding(pool);
+    if (length > capacity || padding > target_padding ||
+        (uint64_t) capacity + target_padding >= sbufGetTotalCapacity(buf))
+        return buf;
+
+    sbuf_t *retained = use_small ? bufferpoolGetSmallBuffer(pool) : bufferpoolGetMediumBuffer(pool);
+    assert(length <= sbufGetMaximumWriteableSize(retained));
+    memoryCopyLarge(sbufGetMutablePtr(retained), sbufGetRawPtr(buf), length);
+    sbufSetLength(retained, length);
+    sbufTransferLifetime(buf, retained);
+    bufferpoolReuseBuffer(pool, buf);
+    return retained;
+}
+
 /**
  * Test whether adding a candidate charge would reach a nonzero hard limit.
  *

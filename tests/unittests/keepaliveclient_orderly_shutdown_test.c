@@ -185,8 +185,11 @@ static void caseTimerSnapshotRetainsEveryLineAcrossReentrantClose(void)
     tosResetProcessApi(true);
 
     tosWorkerEnvSetup(&g_env, kTestWorkerCount, kTestLargeBufferSize, kTestSmallBufferSize);
-    bufferpoolUpdateAllocationPaddings(
-        g_env.pools[0], kKeepAliveFramePrefixSize, kKeepAliveFramePrefixSize, kKeepAliveFramePrefixSize);
+    bufferpoolUpdateAllocationPaddings(g_env.pools[0],
+                                       kKeepAliveFramePrefixSize,
+                                       kKeepAliveFramePrefixSize,
+                                       kKeepAliveFramePrefixSize,
+                                       kKeepAliveFramePrefixSize);
 
     tunnel_t *owner     = tunnelCreate(NULL, sizeof(keepaliveclient_snapshot_owner_state_t), 0);
     tunnel_t *keepalive = tunnelCreate(NULL, sizeof(keepaliveclient_tstate_t), sizeof(keepaliveclient_lstate_t));

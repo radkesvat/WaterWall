@@ -100,9 +100,10 @@ static void auditFailedStartup(void)
         ! GSTATE.flag_libsodium_initialized && GSTATE.workers == NULL && GSTATE.workers_count == 0 &&
         GSTATE.signal_manager == NULL && GSTATE.socekt_manager == NULL && GSTATE.node_manager == NULL &&
         GSTATE.openssl_dedicated_memory == NULL && GSTATE.masterpool_buffer_pools_large == NULL &&
-        GSTATE.masterpool_buffer_pools_small == NULL && GSTATE.masterpool_buffer_pools_splice == NULL &&
-        GSTATE.masterpool_wios == NULL && GSTATE.masterpool_wio_fds == NULL &&
-        GSTATE.masterpool_context_pools == NULL && GSTATE.masterpool_messages == NULL;
+        GSTATE.masterpool_buffer_pools_medium == NULL && GSTATE.masterpool_buffer_pools_small == NULL &&
+        GSTATE.masterpool_buffer_pools_splice == NULL && GSTATE.masterpool_wios == NULL &&
+        GSTATE.masterpool_wio_fds == NULL && GSTATE.masterpool_context_pools == NULL &&
+        GSTATE.masterpool_messages == NULL;
     if (! clean)
     {
         fprintf(stderr,

@@ -46,6 +46,7 @@ typedef struct test_env_s
 {
     master_pool_t *large_master;
     master_pool_t *small_master;
+    master_pool_t *medium_master;
     master_pool_t *splice_master;
     buffer_pool_t *buffer_pools[2];
 } test_env_t;
@@ -261,13 +262,17 @@ static void envSetup(test_env_t *env)
     memoryZero(env, sizeof(*env));
     env->large_master    = masterpoolCreateWithCapacity(64);
     env->small_master    = masterpoolCreateWithCapacity(64);
+    env->medium_master   = masterpoolCreateWithCapacity(64);
     env->splice_master   = masterpoolCreateWithCapacity(64);
-    env->buffer_pools[0] = bufferpoolCreate(env->large_master, env->small_master, env->splice_master, 64, 8192, 4096);
-    env->buffer_pools[1] = bufferpoolCreate(env->large_master, env->small_master, env->splice_master, 64, 8192, 4096);
+    env->buffer_pools[0] =
+        bufferpoolCreate(env->large_master, env->medium_master, env->small_master, env->splice_master, 64, 8192, 4096);
+    env->buffer_pools[1] =
+        bufferpoolCreate(env->large_master, env->medium_master, env->small_master, env->splice_master, 64, 8192, 4096);
 
     GSTATE.shortcut_buffer_pools         = env->buffer_pools;
     GSTATE.masterpool_buffer_pools_large = env->large_master;
     GSTATE.masterpool_buffer_pools_small = env->small_master;
+    GSTATE.masterpool_buffer_pools_medium = env->medium_master;
     GSTATE.masterpool_buffer_pools_splice = env->splice_master;
     GSTATE.workers_count                 = 3;
     testWorkerRegistryInstall(&g_test_worker_registry);
@@ -283,6 +288,7 @@ static void envTeardown(test_env_t *env)
     GSTATE.shortcut_buffer_pools         = NULL;
     GSTATE.masterpool_buffer_pools_large = NULL;
     GSTATE.masterpool_buffer_pools_small = NULL;
+    GSTATE.masterpool_buffer_pools_medium = NULL;
     GSTATE.masterpool_buffer_pools_splice = NULL;
     frandThreadCleanup();
     frandGlobalCleanup();
@@ -294,9 +300,11 @@ static void envTeardown(test_env_t *env)
     bufferpoolDestroy(env->buffer_pools[1]);
     masterpoolMakeEmpty(env->large_master);
     masterpoolMakeEmpty(env->small_master);
+    masterpoolMakeEmpty(env->medium_master);
     masterpoolMakeEmpty(env->splice_master);
     masterpoolDestroy(env->large_master);
     masterpoolDestroy(env->small_master);
+    masterpoolDestroy(env->medium_master);
     masterpoolDestroy(env->splice_master);
 }
 

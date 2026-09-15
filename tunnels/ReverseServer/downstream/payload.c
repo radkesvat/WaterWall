@@ -15,7 +15,7 @@ static void reverseServerHandleBufferMerging(line_t *u, reverseserver_lstate_t *
 static bool checkBufferSizeLimitU(tunnel_t *t, line_t *u, reverseserver_lstate_t *uls,
                                   reverseserver_thread_box_t *this_tb, sbuf_t *buf)
 {
-    if (sbufGetLength(buf) > kMaxBuffering)
+    if (sbufGetLength(buf) > reverseserverWaitingLimit(u))
     {
         LOGD("ReverseServer: Downstream payload is too large, dropping connection");
 
@@ -83,16 +83,30 @@ static bool pairWithLocalDownstreamConnection(tunnel_t *t, line_t *u, reverseser
 static void handleUnpairedConnectionU(tunnel_t *t, line_t *u, reverseserver_lstate_t *uls,
                                       reverseserver_thread_box_t *this_tb, sbuf_t *buf)
 {
-    reverseServerHandleBufferMerging(u, uls, &buf);
-
-    if (! checkBufferSizeLimitU(t, u, uls, this_tb, buf))
+    uint32_t       capacity;
+    const uint64_t total = (uint64_t) sbufGetLength(buf) + (uls->buffering != NULL ? sbufGetLength(uls->buffering) : 0);
+    if (! sbufTryComputeCapacity(total, bufferpoolGetLargeBufferPadding(lineGetBufferPool(u)), &capacity))
     {
+        lineReuseBuffer(u, buf);
+        if (uls->buffering != NULL)
+            lineReuseBuffer(u, uls->buffering);
+        uls->buffering = NULL;
+        if (uls->handshaked)
+            reverseserverRemoveConnectionU(this_tb, uls);
+        reverseserverLinestateDestroy(uls);
+        tunnelNextUpStreamFinish(t, u);
         return;
     }
+    reverseServerHandleBufferMerging(u, uls, &buf);
 
     processHandshakeU(uls, this_tb);
 
     if (pairWithLocalDownstreamConnection(t, u, uls, this_tb, buf))
+    {
+        return;
+    }
+
+    if (! checkBufferSizeLimitU(t, u, uls, this_tb, buf))
     {
         return;
     }

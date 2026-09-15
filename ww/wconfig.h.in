@@ -184,20 +184,16 @@ enum ram_profiles_e
 */
 
 #define SMALL_BUFFER_SIZE 4096
+#define MEDIUM_BUFFER_SIZE         (64 * 1024)
 #define SPLICE_BUFFER_STORAGE_SIZE 32
 #define kMaxAllowedPacketLength 1500
 
-/*
-    large buffer size is used for large buffers that are allocated for Tcp Read/Write buffers
-    going lower than 4096 bytes is not recommended, as it is the standard page size for most systems
-    and reduces throughput significantly
-
-    during tests with iperf, 32768 was the best record for throughput
-*/
+/* Ordinary socket reads use the large tier. Medium buffers are fixed-size helpers
+ * for framing and retained queues; their cache counts still follow the memory profile. */
 
 // Depending on memory profile, we can choose which is the best buffer size (core.json typically)
 #define LARGE_BUFFER_SIZE_RAM_LOW   4096
-#define LARGE_BUFFER_SIZE_RAM_HIGH  32768
+#define LARGE_BUFFER_SIZE_RAM_HIGH  (512 * 1024)
 #define LARGE_RAM_PROFILE_THRESHOLD kRamProfileM1Memory
 
 #define PROPER_LARGE_BUFFER_SIZE(ram_profile)                                                                           \

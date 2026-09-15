@@ -8,7 +8,8 @@ static line_t   *client, *child;
 static unsigned  opens, closes, establishments, client_writes, request_writes;
 static unsigned  close_on; /* 1 Init, 2 Est, 3 Payload, 4 Pause, 5 Resume */
 static bool      refuse, automatic_response;
-static char      received[262144], sent[131072];
+static char      received[2 * 1024 * 1024], sent[2 * 1024 * 1024];
+static bool      pause_request, pause_response, delay_establishment;
 static size_t    received_len;
 static size_t    sent_len;
 static bool      producer_paused[2];
@@ -60,6 +61,11 @@ static void previousPayload(tunnel_t *t, line_t *l, sbuf_t *b)
     lineReuseBuffer(l, b);
     if (close_on == 3)
         clientClose();
+    else if (pause_response)
+    {
+        pause_response = false;
+        httpproxyserverTunnelUpStreamPause(proxy, client);
+    }
 }
 
 static void childPause(tunnel_t *t, line_t *l)
@@ -122,7 +128,7 @@ static void childInit(tunnel_t *t, line_t *l)
         lineUnref(l);
         child = NULL;
     }
-    else
+    else if (! delay_establishment)
         httpproxyserverTunnelDownStreamEst(proxy, l);
 }
 
@@ -150,12 +156,18 @@ static void childPayload(tunnel_t *t, line_t *l, sbuf_t *b)
     sent[sent_len] = 0;
     ++request_writes;
     lineReuseBuffer(l, b);
+    if (pause_request)
+    {
+        pause_request = false;
+        httpproxyserverTunnelDownStreamPause(proxy, l);
+    }
     if (automatic_response)
         sendBytes(l, true, "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
 }
 
 static void resetClient(tunnel_chain_t *chain)
 {
+    pause_request = pause_response = delay_establishment = false;
     opens = closes = establishments = client_writes = request_writes = 0;
     received_len                                                     = 0;
     sent_len                                                         = 0;
@@ -223,10 +235,13 @@ static void pipelinePressure(tunnel_chain_t *chain, const char *get)
     automatic_response = false;
     sendBytes(client, false, get);
     httpproxyserverTunnelUpStreamPause(proxy, client);
-    char overflow[70001];
-    memorySet(overflow, 'x', sizeof(overflow) - 1);
-    overflow[sizeof(overflow) - 1] = 0;
-    sendBytes(client, false, overflow); /* Bounded tolerance for an already in-flight callback. */
+    const size_t overflow_length =
+        max(UINT64_C(65536), 2 * (uint64_t) bufferpoolGetLargeBufferSize(lineGetBufferPool(client))) + 1;
+    char *overflow = memoryAllocate(overflow_length + 1);
+    memorySet(overflow, 'x', overflow_length);
+    overflow[overflow_length] = 0;
+    sendBytes(client, false, overflow); /* True overflow of the pool-derived allowance. */
+    memoryFree(overflow);
     httpproxyserverTunnelUpStreamResume(proxy, client);
     require(! lineIsAlive(client) && child == NULL, "R1 real overflow did not settle");
     lineUnref(client);
@@ -424,15 +439,100 @@ static void localAuthentication(tunnel_chain_t *chain)
     tunnelBind(proxy, next);
 }
 
-int main(void)
+static void requireRetainedBounds(hps_session_t *session)
+{
+    buffer_pool_t *pool    = lineGetBufferPool(session->client);
+    const uint64_t p       = ((hps_tstate_t *) tunnelGetState(proxy))->max_pending;
+    const uint64_t d       = max(UINT64_C(65536), 2 * (uint64_t) bufferpoolGetLargeBufferSize(pool));
+    uint64_t       working = 0, charge = 0, total = 0;
+    uint32_t       remainder_capacity;
+    require(sbufTryComputeCapacity(max((uint64_t) bufferpoolGetSmallBufferSize(pool), 2 * d),
+                                   max(bufferpoolGetSmallBufferPadding(pool), bufferpoolGetLargeBufferPadding(pool)),
+                                   &remainder_capacity),
+            "test remainder bound geometry");
+    for (unsigned direction = 0; direction < 2; ++direction)
+    {
+        sbuf_t *buffers[] = {session->input[direction], session->output[direction]};
+        for (unsigned i = 0; i < 2; ++i)
+            if (buffers[i])
+            {
+                working += sbufGetLength(buffers[i]);
+                charge += sbufGetTotalCapacity(buffers[i]) + sizeof(sbuf_t) + kSbufAllocationAlignment;
+            }
+        if (session->deferred[direction])
+        {
+            require(sbufGetLength(session->deferred[direction]) <= d, "remainder exceeded logical allowance");
+            require(sbufGetTotalCapacity(session->deferred[direction]) <= remainder_capacity,
+                    "remainder exceeded allocation allowance");
+            total += sbufGetLength(session->deferred[direction]);
+        }
+    }
+    require(working <= p && charge <= 4 * p && total + working <= p + 2 * d, "retained budgets exceeded");
+}
+
+static void largeDeliveries(tunnel_chain_t *chain, bool delayed, bool close_retained)
+{
+    resetClient(chain);
+    automatic_response  = false;
+    delay_establishment = delayed;
+    pause_request       = ! delayed;
+    const size_t n      = 512 * 1024;
+    char        *text   = memoryAllocate(n + 6000);
+    char         padding[5001];
+    memorySet(padding, 'h', 5000);
+    padding[5000] = 0;
+    int prefix    = stringNPrintf(
+        text,
+        n + 6000,
+        "POST http://127.0.0.1:80/large HTTP/1.1\r\nHost: a\r\nX-Large: %s\r\nContent-Length: %zu\r\n\r\n",
+        padding,
+        n);
+    memorySet(text + prefix, 'q', n);
+    text[prefix + n] = 0;
+    sendBytes(client, false, text);
+    hps_session_t *session = ((hps_lstate_t *) lineGetState(client, proxy))->session;
+    require(lineIsAlive(client) && session && session->deferred[0], "large request lost its deferred remainder");
+    requireRetainedBounds(session);
+    require(producer_paused[0] && ! strstr(received, "503"), "large request did not use bounded headroom");
+    if (close_retained)
+    {
+        clientClose();
+        lineUnref(client);
+        memoryFree(text);
+        return;
+    }
+    if (delayed)
+        httpproxyserverTunnelDownStreamEst(proxy, child);
+    else
+        httpproxyserverTunnelDownStreamResume(proxy, child);
+    const char *body = strstr(sent, "\r\n\r\n");
+    require(body && strlen(body + 4) == n && strspn(body + 4, "q") == n, "large request bytes changed");
+    prefix = stringNPrintf(text, n + 6000, "HTTP/1.1 200 OK\r\nContent-Length: %zu\r\n\r\n", n);
+    memorySet(text + prefix, 'r', n);
+    text[prefix + n] = 0;
+    pause_response   = true;
+    sendBytes(child, true, text);
+    require(session->deferred[1] && producer_paused[1], "large response lost its deferred remainder");
+    requireRetainedBounds(session);
+    httpproxyserverTunnelUpStreamResume(proxy, client);
+    body = strstr(received, "\r\n\r\n");
+    require(body && strlen(body + 4) == n && strspn(body + 4, "r") == n, "large response bytes changed");
+    require(! session->deferred[0] && ! session->deferred[1], "large delivery failed to drain");
+    clientClose();
+    lineUnref(client);
+    memoryFree(text);
+}
+
+static void runSuite(uint32_t large_size)
 {
     GSTATE.flag_initialized = true;
     GSTATE.workers_count    = 2;
     master_pool_t *large = masterpoolCreateWithCapacity(8), *small = masterpoolCreateWithCapacity(8);
+    master_pool_t *medium = masterpoolCreateWithCapacity(8);
     master_pool_t *splice = masterpoolCreateWithCapacity(8);
     master_pool_t *ios  = masterpoolCreateWithCapacity(8);
-    buffer_pool_t *pool   = bufferpoolCreate(large, small, splice, 4, 16384, 1024);
-    bufferpoolUpdateAllocationPaddings(pool, 64, 64, 64);
+    buffer_pool_t *pool   = bufferpoolCreate(large, medium, small, splice, 4, large_size, 4096);
+    bufferpoolUpdateAllocationPaddings(pool, 64, 64, 64, 64);
     threadsafe_generic_pool_t *io_pool =
         threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(ios, sizeof(wio_t), 8);
     GSTATE.shortcut_buffer_pools = &pool;
@@ -487,7 +587,13 @@ int main(void)
     const char *get      = "GET http://127.0.0.1:80/a HTTP/1.1\r\nHost: ignored.test\r\n\r\n";
     const char *fix_case = getenv("HPS_FIX_CASE");
     if (! fix_case || ! stringCompare(fix_case, "R1"))
-        pipelinePressure(chain, get);
+        if (large_size == 512 * 1024)
+        {
+            largeDeliveries(chain, false, false);
+            largeDeliveries(chain, true, false);
+            largeDeliveries(chain, false, true);
+        }
+    pipelinePressure(chain, get);
     if (! fix_case || ! stringCompare(fix_case, "R3"))
         responseEof(chain, get);
     for (unsigned event = 1; event <= 5; ++event)
@@ -679,12 +785,20 @@ int main(void)
     bufferpoolDestroy(pool);
     masterpoolMakeEmpty(large);
     masterpoolMakeEmpty(small);
+    masterpoolMakeEmpty(medium);
     masterpoolMakeEmpty(splice);
     masterpoolMakeEmpty(ios);
     masterpoolDestroy(large);
     masterpoolDestroy(small);
+    masterpoolDestroy(medium);
     masterpoolDestroy(splice);
     masterpoolDestroy(ios);
     puts("http_proxy_server_lifecycle: passed");
+}
+
+int main(void)
+{
+    runSuite(32768);
+    runSuite(512 * 1024);
     return 0;
 }

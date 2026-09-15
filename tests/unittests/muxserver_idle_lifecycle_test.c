@@ -525,9 +525,11 @@ static void caseWorkerDrainIsLocal(void)
     twfWorkerEnvSetup(&env, kIdleBufferSize, kMuxFrameLength * 2U);
     master_pool_t *large       = masterpoolCreateWithCapacity(8);
     master_pool_t *small       = masterpoolCreateWithCapacity(8);
+    master_pool_t *medium      = masterpoolCreateWithCapacity(8);
     master_pool_t *splice      = masterpoolCreateWithCapacity(8);
-    buffer_pool_t *second_pool = bufferpoolCreate(large, small, splice, 4, kIdleBufferSize, 1024);
-    bufferpoolUpdateAllocationPaddings(second_pool, kMuxFrameLength * 2U, kMuxFrameLength * 2U, kMuxFrameLength * 2U);
+    buffer_pool_t *second_pool = bufferpoolCreate(large, medium, small, splice, 4, kIdleBufferSize, 1024);
+    bufferpoolUpdateAllocationPaddings(
+        second_pool, kMuxFrameLength * 2U, kMuxFrameLength * 2U, kMuxFrameLength * 2U, kMuxFrameLength * 2U);
     wloop_t       *second_loop   = wloopCreate(WLOOP_FLAG_AUTO_FREE, second_pool, 1);
     buffer_pool_t *pools[2]      = {env.pool, second_pool};
     wloop_t       *loops[2]      = {env.loop, second_loop};
@@ -591,6 +593,7 @@ static void caseWorkerDrainIsLocal(void)
     bufferpoolDestroy(second_pool);
     masterpoolDestroy(large);
     masterpoolDestroy(small);
+    masterpoolDestroy(medium);
     masterpoolDestroy(splice);
     GSTATE.workers_count         = 2;
     GSTATE.workers               = &env.worker;

@@ -30,6 +30,7 @@ typedef struct env_s
     test_wio_fd_pool_t         fd_handles;
     master_pool_t             *large_master;
     master_pool_t             *small_master;
+    master_pool_t             *medium_master;
     master_pool_t             *splice_master;
     master_pool_t             *wio_master;
     threadsafe_generic_pool_t *wio_pool;
@@ -59,6 +60,7 @@ static void envSetup(env_t *env)
 {
     env->large_master = masterpoolCreateWithCapacity(64);
     env->small_master = masterpoolCreateWithCapacity(64);
+    env->medium_master = masterpoolCreateWithCapacity(64);
     env->splice_master = masterpoolCreateWithCapacity(64);
     env->wio_master   = masterpoolCreateWithCapacity(64);
     env->wio_pool     = threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(env->wio_master, sizeof(wio_t), 64);
@@ -84,10 +86,12 @@ static void envTeardown(env_t *env)
     masterpoolMakeEmpty(env->wio_master);
     masterpoolMakeEmpty(env->large_master);
     masterpoolMakeEmpty(env->small_master);
+    masterpoolMakeEmpty(env->medium_master);
     masterpoolMakeEmpty(env->splice_master);
     masterpoolDestroy(env->wio_master);
     masterpoolDestroy(env->large_master);
     masterpoolDestroy(env->small_master);
+    masterpoolDestroy(env->medium_master);
     masterpoolDestroy(env->splice_master);
 }
 
@@ -105,7 +109,8 @@ static WTHREAD_ROUTINE(loopRunnerMain) // NOLINT
 static void runnerCreate(loop_runner_t *runner, env_t *env)
 {
     memoryZero(runner, sizeof(*runner));
-    runner->pool = bufferpoolCreate(env->large_master, env->small_master, env->splice_master, 64, 8192, 1024);
+    runner->pool =
+        bufferpoolCreate(env->large_master, env->medium_master, env->small_master, env->splice_master, 64, 8192, 1024);
     runner->loop = wloopCreate(0, runner->pool, 0);
     require(runner->loop != NULL, "failed to create the event loop");
 }

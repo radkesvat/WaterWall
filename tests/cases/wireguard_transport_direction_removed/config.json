@@ -20,10 +20,9 @@
     },
     {
       "name": "udp",
-      "type": "UdpStatelessSocket",
+      "type": "BlackHole",
       "settings": {
-        "listen-address": "127.0.0.1",
-        "listen-port": 26760
+        "mode": "passive"
       }
     }
   ]

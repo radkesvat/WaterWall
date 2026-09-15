@@ -30,6 +30,7 @@ typedef struct client_delay_fixture_s
 {
     master_pool_t         *large_master;
     master_pool_t         *small_master;
+    master_pool_t         *medium_master;
     master_pool_t         *splice_master;
     buffer_pool_t         *pool;
     buffer_pool_t        **saved_buffer_pools;
@@ -193,12 +194,13 @@ static void clientFixtureSetup(client_delay_fixture_t *fixture)
 
     fixture->large_master = masterpoolCreateWithCapacity(64);
     fixture->small_master = masterpoolCreateWithCapacity(8);
+    fixture->medium_master = masterpoolCreateWithCapacity(8);
     fixture->splice_master = masterpoolCreateWithCapacity(8);
-    fixture->pool =
-        bufferpoolCreate(fixture->large_master, fixture->small_master, fixture->splice_master, 8, 32768, 1024);
+    fixture->pool          = bufferpoolCreate(
+        fixture->large_master, fixture->medium_master, fixture->small_master, fixture->splice_master, 8, 32768, 1024);
     requireClient(fixture->large_master != NULL && fixture->small_master != NULL && fixture->pool != NULL,
                   "failed to create client lifecycle pools");
-    bufferpoolUpdateAllocationPaddings(fixture->pool, 64, 64, 64);
+    bufferpoolUpdateAllocationPaddings(fixture->pool, 64, 64, 64, 64);
 
     fixture->buffer_pools[0]     = fixture->pool;
     GSTATE.shortcut_buffer_pools = fixture->buffer_pools;
@@ -277,9 +279,11 @@ static void clientFixtureTeardown(client_delay_fixture_t *fixture)
     bufferpoolDestroy(fixture->pool);
     masterpoolMakeEmpty(fixture->large_master);
     masterpoolMakeEmpty(fixture->small_master);
+    masterpoolMakeEmpty(fixture->medium_master);
     masterpoolMakeEmpty(fixture->splice_master);
     masterpoolDestroy(fixture->large_master);
     masterpoolDestroy(fixture->small_master);
+    masterpoolDestroy(fixture->medium_master);
     masterpoolDestroy(fixture->splice_master);
 
     GSTATE.workers_count = fixture->saved_workers_count;

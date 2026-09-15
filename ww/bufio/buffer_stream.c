@@ -4,6 +4,7 @@
 
 #include "buffer_stream.h"
 #include "buffer_pool.h"
+#include "loggers/internal_logger.h"
 #include "shiftbuffer.h"
 #include "stc/common.h"
 
@@ -57,7 +58,13 @@ static sbuf_t *bufferstreamAllocExactReadBuffer(buffer_stream_t *self, uint32_t 
     }
     else
     {
-        slice = bufferpoolGetLargeBuffer(self->pool);
+        slice = bufferpoolTryGetBestFit(
+            self->pool, required_payload, max(use_left_padding, bufferpoolGetLargeBufferPadding(self->pool)));
+        if (slice == NULL)
+        {
+            printError("BufferStream: exact read allocation is unrepresentable");
+            abortProgramNow(1);
+        }
     }
 
     assert(sbufGetLeftCapacity(slice) >= use_left_padding);
@@ -153,6 +160,7 @@ sbuf_t *bufferstreamReadExact(buffer_stream_t *self, size_t bytes)
             sbuf_t *slice = bufferstreamAllocExactReadBuffer(self, (uint32_t) bytes);
 
             slice = sbufMoveTo(slice, container, (uint32_t) bytes);
+            sbufCloneLifetime(container, slice);
             bs_doublequeue_t_push_front(&self->q, container);
             return slice;
         }
@@ -166,6 +174,63 @@ sbuf_t *bufferstreamReadExact(buffer_stream_t *self, size_t bytes)
 
         container = sbufAppendMerge(self->pool, container, bs_doublequeue_t_pull_front(&self->q));
     }
+}
+
+void bufferstreamMoveExactBytesTo(buffer_stream_t *self, sbuf_t *destination, size_t bytes)
+{
+    assert(self != NULL && destination != NULL);
+    assert((destination->flags & kSbufFlagSplice) == 0);
+    assert(destination->curpos <= destination->capacity);
+
+    const uint32_t length   = sbufGetLength(destination);
+    const uint32_t writable = sbufGetMaximumWriteableSize(destination);
+    if (UNLIKELY(bytes > self->size))
+    {
+        LOGF("BufferStream: exact move exceeds available source bytes");
+        abortProgramNow(1);
+    }
+    if (UNLIKELY(length > writable || bytes > writable - length))
+    {
+        LOGF("BufferStream: exact move exceeds destination append space");
+        abortProgramNow(1);
+    }
+    if (UNLIKELY(bytes == 0))
+        return;
+
+    bool     inherit_lifetime = length == 0 && sbufGetLifetime(destination) == NULL;
+    uint8_t *target           = sbufGetMutablePtr(destination) + length;
+    size_t   remaining        = bytes;
+    self->size -= bytes;
+    while (remaining > 0)
+    {
+        assert(! bs_doublequeue_t_is_empty(&self->q));
+        sbuf_t *source = *bs_doublequeue_t_front(&self->q);
+        assert(source != destination && (source->flags & kSbufFlagSplice) == 0);
+        const uint32_t available = sbufGetLength(source);
+        const uint32_t count     = (uint32_t) min(remaining, (size_t) available);
+        if (count != 0)
+        {
+            memoryCopyLarge(target, sbufGetRawPtr(source), count);
+            target += count;
+            remaining -= count;
+            if (inherit_lifetime)
+            {
+                if (count == available)
+                    sbufTransferLifetime(source, destination);
+                else
+                    sbufCloneLifetime(source, destination);
+                inherit_lifetime = false;
+            }
+        }
+        if (count == available)
+        {
+            bs_doublequeue_t_pop_front(&self->q);
+            bufferpoolReuseBuffer(self->pool, source);
+        }
+        else
+            sbufShiftRight(source, count);
+    }
+    sbufSetLength(destination, length + (uint32_t) bytes);
 }
 
 sbuf_t *bufferstreamReadAtLeast(buffer_stream_t *self, size_t bytes)

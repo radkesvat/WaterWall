@@ -117,3 +117,10 @@ halfduplexserver_pending_decision_t halfduplexserverTestPendingClaim(halfduplexs
 void                                halfduplexserverPendingBeforeLockTestSeam(bool is_upload);
 void                                halfduplexserverPendingMissTestSeam(bool is_upload);
 #endif
+
+/* Pool geometry is finalized before payload, not during construction. */
+static inline uint64_t halfduplexserverWaitingLimit(line_t *line)
+{
+    const uint64_t large = bufferpoolGetLargeBufferSize(lineGetBufferPool(line));
+    return (uint64_t) kMaxBuffering * max(UINT64_C(1), (large + 32767) / 32768);
+}

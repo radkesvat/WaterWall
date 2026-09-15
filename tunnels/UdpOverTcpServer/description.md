@@ -97,7 +97,9 @@ The current maximum accepted packet size is:
 
 - `65535 - 20 - 8 - 2`
 
-Packets larger than that limit are dropped on the send-back path.
+UDP datagrams larger than that limit are dropped on the send-back path. For a
+negotiated TCP line, larger payloads are split into consecutive frames within
+this limit and emitted in one onward callback, preserving TCP byte order.
 
 ### Data flow direction
 

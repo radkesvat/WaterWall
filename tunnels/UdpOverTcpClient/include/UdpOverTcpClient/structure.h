@@ -10,6 +10,7 @@ typedef struct udpovertcpclient_tstate_s
 typedef struct udpovertcpclient_lstate_s
 {
     buffer_stream_t read_stream;
+    bool            tcp_mode; // Negotiated stream payloads may span multiple wire frames.
 } udpovertcpclient_lstate_t;
 
 enum

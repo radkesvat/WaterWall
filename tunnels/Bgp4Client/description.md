@@ -38,3 +38,10 @@ Source-backed metadata:
 | `layer_group_prev_node` | `kNodeLayer4` |
 | `layer_group_next_node` | `kNodeLayer4` |
 | `required_padding_left` | `39` bytes |
+
+Large stream deliveries are split into frames with at most 65,534 ordinary
+payload bytes. The first client frame reserves its actual OPEN prefix and emits
+exactly one OPEN. Encoders send one aggregate per delivery; decoders reassemble
+fragments and coalesce complete frames into one callback, preserving Pause.
+Read retention is bounded by `max(65536, 2 * L) + 65553`, with `L` from the line pool.
+Malformed records close the borrowed line through its owner.

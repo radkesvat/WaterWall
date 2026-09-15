@@ -1,13 +1,11 @@
 #include "structure.h"
 
-#include "loggers/network_logger.h"
-
-void obfuscatorclientLinestateInitialize(obfuscatorclient_lstate_t *ls)
+void obfuscatorclientLinestateInitialize(obfuscatorclient_lstate_t *ls, line_t *l)
 {
-    discard ls;
+    *ls = (obfuscatorclient_lstate_t) {.read_stream = bufferstreamCreate(lineGetBufferPool(l), 0)};
 }
-
 void obfuscatorclientLinestateDestroy(obfuscatorclient_lstate_t *ls)
 {
-    memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(obfuscatorclient_lstate_t)));
+    bufferstreamDestroy(&ls->read_stream);
+    memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(*ls)));
 }

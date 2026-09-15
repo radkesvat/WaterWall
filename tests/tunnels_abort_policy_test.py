@@ -326,7 +326,7 @@ MANIFEST = [
      ("HalfDuplexServer: Thread safety is done incorrectly",
       "HalfDuplexServer: Unexpected"),
      "runtime flow-callback invariant: HalfDuplexServer finish map membership and state"),
-    ("tunnels/HalfDuplexServer/upstream/payload.c", "handleUploadInTable", 1,
+    ("tunnels/HalfDuplexServer/upstream/payload.c", "checkWaitingLimit", 1,
      ("HalfDuplexServer: Thread safety is done incorrectly",),
      "runtime flow-callback invariant: HalfDuplexServer payload map membership"),
     ("tunnels/TcpConnector/upstream/fin.c", "tcpconnectorTunnelUpStreamFinish", 2,

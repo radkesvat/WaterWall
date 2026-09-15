@@ -132,7 +132,7 @@ Each unpaired half can buffer data while waiting for its peer.
 
 Current limit:
 
-- about `64 KB` maximum buffered data per waiting half
+- `65535 * max(1, ceil(L / 32768))` bytes per waiting half, with `L` from the line pool
 
 If that limit is exceeded, the waiting half is dropped.
 
@@ -165,3 +165,5 @@ Source-backed metadata:
 | `layer_group_prev_node` | `kNodeLayer4` |
 | `layer_group_next_node` | `kNodeLayer4` |
 | `required_padding_left` | `0` bytes |
+
+Handshake validation and available pairing precede the waiting check. Close occurs strictly above the limit: 65,535 bytes at 32 KiB and 1,048,560 bytes at 512 KiB.

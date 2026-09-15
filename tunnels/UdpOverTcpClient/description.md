@@ -99,7 +99,10 @@ The current maximum accepted packet size is:
 
 That is the maximum packet length defined by this tunnel's implementation.
 
-If an outbound packet is larger than this value, it is dropped.
+UDP datagrams larger than this value are dropped. Negotiated TCP payloads may
+be larger: the encoder splits them into consecutive frames, each within this
+limit, and sends the complete encoded sequence in one onward callback. TCP byte
+order is preserved; its callback boundaries are not wire message boundaries.
 
 ### Data flow direction
 
@@ -130,7 +133,7 @@ When either side finishes, the tunnel destroys its read buffer state and forward
 
 - `UdpOverTcpClient` is intended to be paired with `UdpOverTcpServer`.
 - There are no tunnel-specific JSON settings today.
-- Outbound packets larger than the hard-coded maximum are dropped.
+- Outbound UDP datagrams larger than the hard-coded maximum are dropped; TCP payloads are framed in bounded pieces.
 - If the inbound framed byte stream overflows the internal buffer, the buffer is emptied instead of closing the line.
 - `UpStreamEst` and `DownStreamInit` are disabled in the current implementation.
 

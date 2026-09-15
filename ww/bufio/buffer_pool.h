@@ -1,7 +1,7 @@
 #pragma once
 
 /*
- * Buffer pool for ordinary large/small buffers and dedicated splice wrappers.
+ * Buffer pool for ordinary small/medium/large buffers and dedicated splice wrappers.
  */
 
 #include "generic_pool.h"
@@ -34,6 +34,7 @@ typedef struct buffer_pool_s buffer_pool_t;
 /**
  * Creates a buffer pool with specified parameters.
  * @param mp_large The master pool for large buffers.
+ * @param mp_medium The master pool for fixed 64 KiB helper buffers.
  * @param mp_small The master pool for small buffers.
  * @param mp_splice The master pool for splice wrappers, with 32 bytes of control storage.
  * @param bufcount The number of buffers to preallocate.
@@ -44,8 +45,9 @@ typedef struct buffer_pool_s buffer_pool_t;
  *         cannot be satisfied. Nothing is published and no master-pool
  *         callback is installed on failure.
  */
-buffer_pool_t *bufferpoolCreate(master_pool_t *mp_large, master_pool_t *mp_small, master_pool_t *mp_splice,
-                                uint32_t bufcount, uint32_t large_buffer_size, uint32_t small_buffer_size);
+buffer_pool_t *bufferpoolCreate(master_pool_t *mp_large, master_pool_t *mp_medium, master_pool_t *mp_small,
+                                master_pool_t *mp_splice, uint32_t bufcount, uint32_t large_buffer_size,
+                                uint32_t small_buffer_size);
 
 /**
  * @brief Destroy a buffer pool and free all pooled buffers.
@@ -61,6 +63,12 @@ void bufferpoolDestroy(buffer_pool_t *pool);
  */
 sbuf_t *bufferpoolGetLargeBuffer(buffer_pool_t *pool);
 
+/** Retrieve a fixed 64 KiB helper buffer. Cache counts follow the pool width;
+ * event-loop reads continue to request large buffers explicitly. */
+sbuf_t  *bufferpoolGetMediumBuffer(buffer_pool_t *pool);
+uint32_t bufferpoolGetMediumBufferSize(buffer_pool_t *pool);
+uint16_t bufferpoolGetMediumBufferPadding(buffer_pool_t *pool);
+
 /**
  * Retrieves a small buffer from the buffer pool.
  * @param pool The buffer pool.
@@ -74,8 +82,8 @@ sbuf_t *bufferpoolGetSmallBuffer(buffer_pool_t *pool);
 sbuf_t *bufferpoolGetSpliceBuffer(buffer_pool_t *pool);
 
 /**
- * Retrieve the smallest large/small pooled buffer satisfying both payload capacity
- * and left-padding requirements. Splice allocation is explicit. When neither
+ * Retrieve the smallest small/medium/large pooled buffer satisfying both payload capacity
+ * and left-padding requirements. Splice allocation is explicit. When no
  * ordinary tier fits, allocate a dedicated
  * padded buffer; bufferpoolReuseBuffer() safely destroys that fallback.
  *
@@ -85,6 +93,10 @@ sbuf_t *bufferpoolGetSpliceBuffer(buffer_pool_t *pool);
  * @return A reset owned buffer satisfying both requirements.
  */
 sbuf_t *bufferpoolGetBestFit(buffer_pool_t *pool, uint32_t minimum_payload, uint16_t minimum_left_padding);
+
+/** Checked best-fit allocation for wide computed lengths. Returns NULL for
+ * unrepresentable geometry; otherwise uses the same pooled tiers as GetBestFit. */
+sbuf_t *bufferpoolTryGetBestFit(buffer_pool_t *pool, uint64_t minimum_payload, uint16_t minimum_left_padding);
 
 /**
  * Reuses a buffer by returning it to the buffer pool.
@@ -112,11 +124,13 @@ void bufferpoolResetThreadOwnership(buffer_pool_t *pool);
  * Updates the allocation paddings for the buffer pool.
  * @param pool The buffer pool.
  * @param large_buffer_left_padding The left padding for large buffers.
+ * @param medium_buffer_left_padding The left padding for medium buffers.
  * @param small_buffer_left_padding The left padding for small buffers.
  * @param splice_buffer_left_padding The left padding for splice buffers.
  */
 void bufferpoolUpdateAllocationPaddings(buffer_pool_t *pool, uint16_t large_buffer_left_padding,
-                                        uint16_t small_buffer_left_padding, uint16_t splice_buffer_left_padding);
+                                        uint16_t medium_buffer_left_padding, uint16_t small_buffer_left_padding,
+                                        uint16_t splice_buffer_left_padding);
 
 /**
  * Gets the size of large buffers in the buffer pool.
