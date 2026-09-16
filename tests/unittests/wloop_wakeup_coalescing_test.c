@@ -109,8 +109,14 @@ static WTHREAD_ROUTINE(loopRunnerMain) // NOLINT
 static void runnerCreate(loop_runner_t *runner, env_t *env)
 {
     memoryZero(runner, sizeof(*runner));
-    runner->pool =
-        bufferpoolCreate(env->large_master, env->medium_master, env->small_master, env->splice_master, 64, 8192, 1024);
+    runner->pool = bufferpoolCreate(env->large_master,
+                                    env->medium_master,
+                                    env->small_master,
+                                    env->splice_master,
+                                    64,
+                                    8192,
+                                    MEDIUM_BUFFER_SIZE_RAM_HIGH,
+                                    1024);
     runner->loop = wloopCreate(0, runner->pool, 0);
     require(runner->loop != NULL, "failed to create the event loop");
 }

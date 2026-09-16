@@ -821,7 +821,7 @@ static void caseWaitingBoundary(uint32_t large, uint32_t total, bool append)
 
 int main(void)
 {
-    const uint32_t sizes[] = {32768, 512 * 1024};
+    const uint32_t sizes[] = {32768, LARGE_BUFFER_SIZE_RAM_HIGH};
     for (unsigned i = 0; i < 2; ++i)
         for (unsigned append = 0; append < 2; ++append)
         {
@@ -830,7 +830,7 @@ int main(void)
             caseWaitingBoundary(sizes[i], limit, append);
             caseWaitingBoundary(sizes[i], limit + 1, append);
         }
-    caseWaitingBoundary(512 * 1024, 512 * 1024 + kHLFDIntroSize, false);
+    caseWaitingBoundary(LARGE_BUFFER_SIZE_RAM_HIGH, LARGE_BUFFER_SIZE_RAM_HIGH + kHLFDIntroSize, false);
     caseSimultaneousOppositeRolesCannotBothMiss();
     runRejectedPairingCase(true, false);
     runRejectedPairingCase(false, false);

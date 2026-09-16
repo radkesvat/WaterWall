@@ -91,6 +91,7 @@ static void envSetup(test_env_t *env)
                                         env->splice_master,
                                         64,
                                         kTestLargeBuffer,
+                                        MEDIUM_BUFFER_SIZE_RAM_HIGH,
                                         kTestSmallBuffer);
     env->buffer_pools[0] = env->buffer_pool;
 

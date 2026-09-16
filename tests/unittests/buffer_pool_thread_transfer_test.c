@@ -30,7 +30,8 @@ static void *accessPool(void *userdata)
     sbuf_t *buf = bufferpoolGetSmallBuffer(probe->pool);
     bufferpoolReuseBuffer(probe->pool, buf);
     buf = bufferpoolGetMediumBuffer(probe->pool);
-    require(sbufGetTotalCapacityNoPadding(buf) == MEDIUM_BUFFER_SIZE, "worker transfer changed medium capacity");
+    require(sbufGetTotalCapacityNoPadding(buf) == MEDIUM_BUFFER_SIZE_RAM_HIGH,
+            "worker transfer changed medium capacity");
     bufferpoolReuseBuffer(probe->pool, buf);
     buf = bufferpoolGetSpliceBuffer(probe->pool);
     require(sbufGetTotalCapacityNoPadding(buf) == 32, "worker transfer changed splice capacity");
@@ -51,7 +52,8 @@ int main(void)
     master_pool_t      *small_master = masterpoolCreateWithCapacity(8);
     master_pool_t      *medium_master = masterpoolCreateWithCapacity(8);
     master_pool_t      *splice_master = masterpoolCreateWithCapacity(8);
-    buffer_pool_t *pool = bufferpoolCreate(large_master, medium_master, small_master, splice_master, 8, 8192, 4096);
+    buffer_pool_t      *pool          = bufferpoolCreate(
+        large_master, medium_master, small_master, splice_master, 8, 8192, MEDIUM_BUFFER_SIZE_RAM_HIGH, 4096);
     pool_thread_probe_t first        = {
                .pool       = pool,
                .may_access = true,

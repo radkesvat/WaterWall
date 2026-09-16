@@ -136,9 +136,9 @@ static void caseHeaderLimitExcludesDeliveredBody(unsigned mode)
     fixtureSetup(&fixture);
     httpserver_lstate_t *ls      = lineGetState(fixture.line, fixture.http);
     ls->h1_headers_parsed        = false;
-    const char    *header        = "POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 600000\r\n\r\n";
+    const char    *header        = "POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 2097152\r\n\r\n";
     const uint32_t header_length = (uint32_t) stringLength(header);
-    const uint32_t length        = 512 * 1024;
+    const uint32_t length        = LARGE_BUFFER_SIZE_RAM_HIGH;
     sbuf_t        *input         = bufferpoolTryGetBestFit(fixture.env.pool, length, 0);
     memorySet(sbufGetMutablePtr(input), 'b', length);
     sbufSetLength(input, length);

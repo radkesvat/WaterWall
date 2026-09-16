@@ -36,8 +36,14 @@ void mxbSetupEnvironment(mxb_fixture_t *fixture, uint32_t combined_lstate_size)
                    env->line_master != NULL,
                "failed to create Mux/TLS test master pools");
 
-    env->pool = bufferpoolCreate(
-        env->large_master, env->medium_master, env->small_master, env->splice_master, 32, 512 * 1024, 2048);
+    env->pool = bufferpoolCreate(env->large_master,
+                                 env->medium_master,
+                                 env->small_master,
+                                 env->splice_master,
+                                 32,
+                                 LARGE_BUFFER_SIZE_RAM_HIGH,
+                                 MEDIUM_BUFFER_SIZE_RAM_HIGH,
+                                 2048);
     mxbRequire(env->pool != NULL, "failed to create Mux/TLS test buffer pool");
     bufferpoolUpdateAllocationPaddings(env->pool, 64, 64, 64, 64);
 

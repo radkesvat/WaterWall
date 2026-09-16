@@ -184,20 +184,24 @@ enum ram_profiles_e
 */
 
 #define SMALL_BUFFER_SIZE 4096
-#define MEDIUM_BUFFER_SIZE         (64 * 1024)
+#define MEDIUM_BUFFER_SIZE_RAM_LOW  (32 * 1024)
+#define MEDIUM_BUFFER_SIZE_RAM_HIGH (64 * 1024)
 #define SPLICE_BUFFER_STORAGE_SIZE 32
 #define kMaxAllowedPacketLength 1500
 
-/* Ordinary socket reads use the large tier. Medium buffers are fixed-size helpers
- * for framing and retained queues; their cache counts still follow the memory profile. */
+/* Ordinary socket reads use the large tier. Medium buffers are helpers for framing
+ * and retained queues. S1/S2 use smaller sizes; every tier's cache counts follow the memory profile. */
 
 // Depending on memory profile, we can choose which is the best buffer size (core.json typically)
-#define LARGE_BUFFER_SIZE_RAM_LOW   4096
-#define LARGE_BUFFER_SIZE_RAM_HIGH  (512 * 1024)
+#define LARGE_BUFFER_SIZE_RAM_LOW   (64 * 1024)
+#define LARGE_BUFFER_SIZE_RAM_HIGH  (1024 * 1024)
 #define LARGE_RAM_PROFILE_THRESHOLD kRamProfileM1Memory
 
 #define PROPER_LARGE_BUFFER_SIZE(ram_profile)                                                                           \
     ((ram_profile) >= LARGE_RAM_PROFILE_THRESHOLD ? LARGE_BUFFER_SIZE_RAM_HIGH : LARGE_BUFFER_SIZE_RAM_LOW)
+
+#define PROPER_MEDIUM_BUFFER_SIZE(ram_profile)                                                                         \
+    ((ram_profile) >= LARGE_RAM_PROFILE_THRESHOLD ? MEDIUM_BUFFER_SIZE_RAM_HIGH : MEDIUM_BUFFER_SIZE_RAM_LOW)
 
 // Recent host-load sampling interval for isSystemUnderLoad().
 #define SYSTEM_LOAD_SAMPLER_INTERVAL_MS 500

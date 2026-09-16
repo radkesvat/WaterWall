@@ -59,7 +59,7 @@ static void testPayload(bool tcp, uint32_t length)
 {
     twfSetCase(tcp ? "UOT fragments large TCP payloads in one callback" : "UOT preserves UDP datagram limits");
     twf_worker_env_t env;
-    twfWorkerEnvSetup(&env, 512 * 1024, 32);
+    twfWorkerEnvSetup(&env, LARGE_BUFFER_SIZE_RAM_HIGH, 32);
     twf_trace_t trace = {0};
     tunnel_t   *prev  = twfCreatePrevTunnel(&trace);
     tunnel_t   *uot   = createUot(NULL);
@@ -117,7 +117,7 @@ int main(void)
 {
     testPayload(true, kMaxAllowedUDPPacketLength);
     testPayload(true, kMaxAllowedUDPPacketLength + 1);
-    testPayload(true, 512 * 1024);
+    testPayload(true, LARGE_BUFFER_SIZE_RAM_HIGH);
     testPayload(false, kMaxAllowedUDPPacketLength);
     testPayload(false, kMaxAllowedUDPPacketLength + 1);
     return 0;

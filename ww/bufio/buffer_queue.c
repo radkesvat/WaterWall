@@ -5,7 +5,6 @@
 
 #include "buffer_queue.h"
 #include "buffer_pool.h"
-#include "loggers/internal_logger.h"
 #include "stc/common.h"
 #include "tunnel.h"
 
@@ -102,11 +101,6 @@ static sbuf_t *bufferqueueTakeBuffer(sbuf_t *buf)
     if (buf->flags & kSbufFlagSplice)
     {
         assert(sbufGetLifetime(buf) == NULL);
-        if (UNLIKELY(sbufGetLength(buf) != 0 && (buf->flags & kSbufFlagSplicePiped) == 0))
-        {
-            LOGF("buffer queue: nonempty splice payload requires kSbufFlagSplicePiped");
-            abortProgramNow(1);
-        }
         // Its private pipe already owns the body; ordinary duplication would copy metadata as payload.
     }
     else

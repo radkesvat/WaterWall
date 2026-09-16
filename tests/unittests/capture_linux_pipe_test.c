@@ -644,8 +644,14 @@ static void envSetup(test_env_t *env)
     env->small_master    = masterpoolCreateWithCapacity(16);
     env->medium_master   = masterpoolCreateWithCapacity(16);
     env->splice_master   = masterpoolCreateWithCapacity(16);
-    env->buffer_pool =
-        bufferpoolCreate(env->large_master, env->medium_master, env->small_master, env->splice_master, 16, 8192, 4096);
+    env->buffer_pool     = bufferpoolCreate(env->large_master,
+                                        env->medium_master,
+                                        env->small_master,
+                                        env->splice_master,
+                                        16,
+                                        8192,
+                                        MEDIUM_BUFFER_SIZE_RAM_HIGH,
+                                        4096);
     env->buffer_pools[0] = env->buffer_pool;
 
     GSTATE.flag_initialized = true;
@@ -699,8 +705,14 @@ static void deviceSetup(capture_device_t *cdev, test_env_t *env, reader_probe_t 
     cdev->rule_states        = memoryAllocateZero(kTestCaptureRangeCount * sizeof(*cdev->rule_states));
     cdev->rule_token         = UINT64_C(0x1122334455667788);
     cdev->queue_restartable  = true;
-    cdev->reader_buffer_pool =
-        bufferpoolCreate(env->large_master, env->medium_master, env->small_master, env->splice_master, 16, 8192, 4096);
+    cdev->reader_buffer_pool = bufferpoolCreate(env->large_master,
+                                                env->medium_master,
+                                                env->small_master,
+                                                env->splice_master,
+                                                16,
+                                                8192,
+                                                MEDIUM_BUFFER_SIZE_RAM_HIGH,
+                                                4096);
     cdev->routine_reader     = probeReader;
     cdev->userdata           = probe;
     cdev->running            = false;

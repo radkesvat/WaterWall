@@ -171,8 +171,14 @@ static void fixtureInitialize(tlsclient_lifecycle_fixture_t *fixture)
     fixture->small_master        = masterpoolCreateWithCapacity(8);
     fixture->medium_master       = masterpoolCreateWithCapacity(8);
     fixture->splice_master       = masterpoolCreateWithCapacity(8);
-    fixture->pool                = bufferpoolCreate(
-        fixture->large_master, fixture->medium_master, fixture->small_master, fixture->splice_master, 8, 65536, 1024);
+    fixture->pool                = bufferpoolCreate(fixture->large_master,
+                                     fixture->medium_master,
+                                     fixture->small_master,
+                                     fixture->splice_master,
+                                     8,
+                                     65536,
+                                     MEDIUM_BUFFER_SIZE_RAM_HIGH,
+                                     1024);
     fixture->saved_shortcuts     = GSTATE.shortcut_buffer_pools;
     fixture->shortcut[0]         = fixture->pool;
     GSTATE.shortcut_buffer_pools = fixture->shortcut;

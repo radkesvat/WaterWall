@@ -109,7 +109,7 @@ static void nio_accept(wio_t *io)
     wio_t    *connio = NULL;
     while (accept_cnt++ < 3)
     {
-        if (! wloopNormalDispatchAllowed(io->loop))
+        if (UNLIKELY(! wloopNormalDispatchAllowed(io->loop)))
         {
             return;
         }
@@ -146,7 +146,7 @@ static void nio_accept(wio_t *io)
         connio->accept_cb = io->accept_cb;
         connio->userdata  = io->userdata;
 
-        if (! wloopNormalDispatchAllowed(io->loop))
+        if (UNLIKELY(! wloopNormalDispatchAllowed(io->loop)))
         {
             wioClose(connio);
             return;
@@ -176,7 +176,7 @@ static void nio_connect(wio_t *io)
         addrlen = sizeof(sockaddr_u);
         getsockname(wioGetFD(io), io->localaddr, &addrlen);
 
-        if (wloopNormalDispatchAllowed(io->loop))
+        if (LIKELY(wloopNormalDispatchAllowed(io->loop)))
         {
             __connect_cb(io);
         }
@@ -297,7 +297,6 @@ static int nioWriteBuffer(wio_t *io, sbuf_t *buf, int *error)
 #if WW_HAVE_SPLICE
     if (buf->flags & kSbufFlagSplice)
     {
-        assert(buf->flags & kSbufFlagSplicePiped);
         assert(sbufGetLifetime(buf) == NULL);
         assert(buf->curpos <= sbufGetLeftPadding(buf));
         const uint32_t prefix = (uint32_t) sbufGetLeftPadding(buf) - buf->curpos;
@@ -392,12 +391,12 @@ static void nio_read(wio_t *io)
             assert(requested > 0);
             buf = bufferpoolGetSpliceBuffer(pool);
             assert(sbufGetLifetime(buf) == NULL);
-            if (! wloopNormalDispatchAllowed(io->loop))
+            if (UNLIKELY(! wloopNormalDispatchAllowed(io->loop)))
             {
                 bufferpoolReuseBuffer(pool, buf);
                 return;
             }
-            if (UNLIKELY(sbufSpliceInitPipe(buf) != 0))
+            if (UNLIKELY(sbufSpliceInitPipe(buf, read_limit) != 0))
             {
                 // No socket bytes were consumed; use ordinary storage for this delivery.
                 bufferpoolReuseBuffer(pool, buf);
@@ -425,8 +424,7 @@ static void nio_read(wio_t *io)
             // Only bytes already held in this private pipe become visible to the callback.
             buf->capacity = (uint32_t) sbufGetLeftPadding(buf) + (uint32_t) moved;
             sbufSetLength(buf, (uint32_t) moved);
-            buf->flags |= kSbufFlagSplicePiped;
-            if (! wloopNormalDispatchAllowed(io->loop))
+            if (UNLIKELY(! wloopNormalDispatchAllowed(io->loop)))
             {
                 bufferpoolReuseBuffer(pool, buf);
                 return;
@@ -496,7 +494,7 @@ read_ordinary:
     // printf("%d \n",nread);
 
     sbufSetLength(buf, min(available, (uint32_t) nread));
-    if (! wloopNormalDispatchAllowed(io->loop))
+    if (UNLIKELY(! wloopNormalDispatchAllowed(io->loop)))
     {
         bufferpoolReuseBuffer(io->loop->bufpool, buf);
         return;
@@ -564,13 +562,13 @@ write:
         // EVENTLOOP_FREE(pbuf->base);
         bufferpoolReuseBuffer(io->loop->bufpool, buf);
         write_queue_pop_front(&io->write_queue);
-        if (! wloopNormalDispatchAllowed(io->loop))
+        if (UNLIKELY(! wloopNormalDispatchAllowed(io->loop)))
         {
             return;
         }
         __write_cb(io);
 
-        if (! io->closed && wloopNormalDispatchAllowed(io->loop))
+        if (! io->closed && LIKELY(wloopNormalDispatchAllowed(io->loop)))
         {
             // write continue
             goto write;
@@ -578,7 +576,7 @@ write:
     }
     else
     {
-        if (wloopNormalDispatchAllowed(io->loop))
+        if (LIKELY(wloopNormalDispatchAllowed(io->loop)))
         {
             __write_cb(io);
         }
@@ -596,7 +594,7 @@ disconnect:
 
 static void wio_handle_events(wio_t *io)
 {
-    if (! wloopNormalDispatchAllowed(io->loop))
+    if (UNLIKELY(! wloopNormalDispatchAllowed(io->loop)))
     {
         io->revents = 0;
         return;
@@ -613,7 +611,7 @@ static void wio_handle_events(wio_t *io)
         }
     }
 
-    if (! wloopNormalDispatchAllowed(io->loop))
+    if (UNLIKELY(! wloopNormalDispatchAllowed(io->loop)))
     {
         io->revents = 0;
         return;
@@ -806,7 +804,7 @@ int wioWriteDatagram(wio_t *io, sbuf_t *buf, const sockaddr_u *peer_addr)
     {
         wloopNormalAdmissionEnd(io->loop);
     }
-    if (nested_callback || wloopNormalDispatchAllowed(io->loop))
+    if (nested_callback || LIKELY(wloopNormalDispatchAllowed(io->loop)))
     {
         __write_cb(io);
     }
@@ -825,11 +823,6 @@ int wioWrite(wio_t *io, sbuf_t *buf)
             abortProgramNow(1);
         }
         assert(sbufGetLifetime(buf) == NULL && "Splice buffers must not carry lifetime metadata");
-        if (UNLIKELY((buf->flags & kSbufFlagSplicePiped) == 0))
-        {
-            LOGF("wioWrite: requires kSbufFlagSplicePiped");
-            abortProgramNow(1);
-        }
 #else
         LOGF("wioWrite: splice is unsupported on this build");
         abortProgramNow(1);
@@ -939,7 +932,7 @@ write_done:
         {
             wloopNormalAdmissionEnd(io->loop);
         }
-        if (nested_callback || wloopNormalDispatchAllowed(io->loop))
+        if (nested_callback || LIKELY(wloopNormalDispatchAllowed(io->loop)))
         {
             __write_cb(io);
         }

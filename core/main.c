@@ -228,6 +228,10 @@ int waterwallInnerMain(int argc, char **argv)
     }
 
     increaseFileLimit();
+    if (getCoreSettings()->splice_enabled)
+    {
+        tryIncreasePipeLimit();
+    }
     startup_result                            = loadImportedTunnelsIntoCore();
     const bool imported_tunnels_checkpoint_ok = waterwallStartupCheckpoint();
     if (UNLIKELY(! wwStartupSucceeded(startup_result) || ! imported_tunnels_checkpoint_ok))

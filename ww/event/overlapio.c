@@ -701,7 +701,7 @@ static void acceptRetryTimerCb(wtimer_t *timer)
 // shrinking its capacity forever.
 static void repostAcceptOrScheduleRetry(wio_t *io, woverlapped_t *record)
 {
-    if (! wloopNormalDispatchAllowed(io->loop))
+    if (UNLIKELY(! wloopNormalDispatchAllowed(io->loop)))
     {
         recordRetire(record);
         return;
@@ -823,7 +823,7 @@ static int enqueue_send(wio_t *io, sbuf_t *buf)
 
 static void dispatch_recv(wio_t *io, woverlapped_t *record)
 {
-    if (record->cancel_reason != WOVERLAPPED_NOT_CANCELED || ! wloopNormalDispatchAllowed(io->loop))
+    if (record->cancel_reason != WOVERLAPPED_NOT_CANCELED || UNLIKELY(! wloopNormalDispatchAllowed(io->loop)))
     {
         // Stop/close/shutdown: recycle the buffer, no callback, no repost, and do
         // not treat it as a socket failure.
@@ -868,7 +868,8 @@ static void dispatch_recv(wio_t *io, woverlapped_t *record)
     }
 
     // Repost only if still open, same generation, and read is still enabled.
-    if (! io->closed && record->io_id == io->id && (io->events & WW_READ) && wloopNormalDispatchAllowed(io->loop))
+    if (! io->closed && record->io_id == io->id && (io->events & WW_READ) &&
+        LIKELY(wloopNormalDispatchAllowed(io->loop)))
     {
         if (hasUncancelledReceive(io))
         {
@@ -896,7 +897,7 @@ static void dispatch_recv(wio_t *io, woverlapped_t *record)
 
 static void dispatch_send(wio_t *io, woverlapped_t *record)
 {
-    if (record->cancel_reason != WOVERLAPPED_NOT_CANCELED || ! wloopNormalDispatchAllowed(io->loop))
+    if (record->cancel_reason != WOVERLAPPED_NOT_CANCELED || UNLIKELY(! wloopNormalDispatchAllowed(io->loop)))
     {
         recordRetire(record);
         return;
@@ -924,7 +925,8 @@ static void dispatch_send(wio_t *io, woverlapped_t *record)
         discard wloopInvokeWriteCallback(io, io->write_cb); // may close io synchronously
     }
 
-    if (io->closed || record->io_id != io->id || (io->events & WW_WRITE) == 0 || ! wloopNormalDispatchAllowed(io->loop))
+    if (io->closed || record->io_id != io->id || (io->events & WW_WRITE) == 0 ||
+        UNLIKELY(! wloopNormalDispatchAllowed(io->loop)))
     {
         recordRetire(record);
         return;
@@ -981,7 +983,7 @@ static void dispatch_connect(wio_t *io, woverlapped_t *record)
         wioDel(io, WW_WRITE);
     }
 
-    if (canceled || ! wloopNormalDispatchAllowed(io->loop))
+    if (canceled || UNLIKELY(! wloopNormalDispatchAllowed(io->loop)))
     {
         recordRetire(record);
         return;
@@ -1015,7 +1017,7 @@ static void dispatch_connect(wio_t *io, woverlapped_t *record)
 
 static void dispatch_accept(wio_t *io, woverlapped_t *record)
 {
-    if (record->cancel_reason != WOVERLAPPED_NOT_CANCELED || ! wloopNormalDispatchAllowed(io->loop))
+    if (record->cancel_reason != WOVERLAPPED_NOT_CANCELED || UNLIKELY(! wloopNormalDispatchAllowed(io->loop)))
     {
         // Expected cleanup (listener stop/close/shutdown): close the provisional
         // accepted socket and retire without parsing addresses or reposting.
@@ -1112,7 +1114,7 @@ static void dispatch_accept(wio_t *io, woverlapped_t *record)
     {
         // A close of the listener inside accept_cb drains the other posted accept
         // records without callbacks; this record stays local and safe.
-        if (wloopNormalDispatchAllowed(io->loop))
+        if (LIKELY(wloopNormalDispatchAllowed(io->loop)))
         {
             io->accept_cb(connio);
         }
@@ -1139,7 +1141,7 @@ static void wioIocpDispatchCompleted(wio_t *io)
         {
             break;
         }
-        if (! wloopNormalDispatchAllowed(io->loop))
+        if (UNLIKELY(! wloopNormalDispatchAllowed(io->loop)))
         {
             recordRetire(record);
             continue;
@@ -1554,7 +1556,7 @@ int wioWriteDatagram(wio_t *io, sbuf_t *buf, const sockaddr_u *peer_addr)
         io->error = err;
         return -1;
     }
-    if (io->write_cb != NULL && (nested_callback || wloopNormalDispatchAllowed(io->loop)))
+    if (io->write_cb != NULL && (nested_callback || LIKELY(wloopNormalDispatchAllowed(io->loop))))
     {
         discard wloopInvokeWriteCallback(io, io->write_cb);
     }
@@ -1705,7 +1707,7 @@ int wioWrite(wio_t *io, sbuf_t *buf)
             wloopNormalAdmissionEnd(io->loop);
         }
         runAfterDirectSendHook(io);
-        if (cb != NULL && (nested_callback || wloopNormalDispatchAllowed(io->loop)))
+        if (cb != NULL && (nested_callback || LIKELY(wloopNormalDispatchAllowed(io->loop))))
         {
             discard wloopInvokeWriteCallback(io, cb);
         }
@@ -1763,7 +1765,7 @@ int wioWrite(wio_t *io, sbuf_t *buf)
         // The active record holds io alive through a callback-driven wioFree().
         wwrite_cb cb          = io->write_cb;
         io->last_write_hrtime = io->loop->cur_hrtime;
-        if (cb != NULL && (nested_callback || wloopNormalDispatchAllowed(io->loop)))
+        if (cb != NULL && (nested_callback || LIKELY(wloopNormalDispatchAllowed(io->loop))))
         {
             discard wloopInvokeWriteCallback(io, cb);
         }

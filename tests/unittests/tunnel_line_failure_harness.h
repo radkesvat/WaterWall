@@ -508,6 +508,7 @@ static void twfWorkerEnvSetupWithSmallBuffers(twf_worker_env_t *env, uint32_t la
                                  env->splice_master,
                                  4,
                                  large_buffer_size,
+                                 MEDIUM_BUFFER_SIZE_RAM_HIGH,
                                  small_buffer_size);
     twfRequire(env->pool != NULL, "failed to create the test buffer pool");
 

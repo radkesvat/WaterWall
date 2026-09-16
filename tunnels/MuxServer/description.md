@@ -355,7 +355,9 @@ one `Data` frame, but this is not general boundary protection across arbitrary
 chains. The UDP framing pair has its own limits: currently it requires nonempty
 datagrams. Its restriction does not change MUX's support for empty `Data`.
 
-Paused child queues reuse small or fixed 64 KiB medium buffers. Mux peeks a
+Paused child queues reuse small, medium, or large buffers. In S1/S2, medium
+buffers hold 32 KiB and larger frames use the 64 KiB large tier; higher profiles
+use 64 KiB medium buffers. Mux peeks a
 complete frame and checks the child before extracting it into its final pooled
 destination. Fragmented frames are copied directly from the parent stream,
 without first merging unrelated carrier bytes. A suitable whole buffer transfers

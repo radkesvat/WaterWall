@@ -102,6 +102,94 @@ static const char *commandResultDiagnostic(cmd_result_t *result)
     return *start != '\0' ? start : "no diagnostic output";
 }
 
+#if WW_HAVE_SPLICE
+static bool readPipeLimitValue(const char **cursor, unsigned long *value)
+{
+    while (isspace((unsigned char) **cursor))
+    {
+        ++*cursor;
+    }
+    if (! isdigit((unsigned char) **cursor))
+    {
+        return false;
+    }
+    char *end;
+    errno  = 0;
+    *value = strtoul(*cursor, &end, 10);
+    if (errno == ERANGE || (*end != '\0' && ! isspace((unsigned char) *end)))
+    {
+        return false;
+    }
+    *cursor = end;
+    return true;
+}
+#endif
+
+void tryIncreasePipeLimit(void)
+{
+#if WW_HAVE_SPLICE
+    cmd_result_t limits = execCmd("sysctl -n fs.pipe-user-pages-soft fs.pipe-user-pages-hard 2>&1");
+    if (limits.exit_code != 0)
+    {
+        LOGW("Core: Could not read pipe page limits (exit %d: %s); keeping current limits",
+             limits.exit_code,
+             commandResultDiagnostic(&limits));
+        return;
+    }
+
+    const char   *cursor = limits.output;
+    unsigned long soft, hard;
+    if (! readPipeLimitValue(&cursor, &soft) || ! readPipeLimitValue(&cursor, &hard))
+    {
+        LOGW("Core: Invalid pipe page limits; keeping current limits");
+        return;
+    }
+    while (isspace((unsigned char) *cursor))
+    {
+        ++cursor;
+    }
+    if (*cursor != '\0')
+    {
+        LOGW("Core: Invalid pipe page limits; keeping current limits");
+        return;
+    }
+    // Zero means unlimited. Never replace an unlimited soft limit with a finite one.
+    if (soft == 0)
+    {
+        return;
+    }
+    unsigned long target = hard;
+    if (target == 0)
+    {
+        const long page_size = sysconf(_SC_PAGESIZE);
+        if (page_size <= 0)
+        {
+            LOGW("Core: Could not determine page size for the pipe soft limit; keeping current limits");
+            return;
+        }
+        const unsigned long target_bytes = 512UL * 1024UL * 1024UL;
+        target = target_bytes / (unsigned long) page_size + (target_bytes % (unsigned long) page_size != 0);
+    }
+    if (soft >= target)
+    {
+        return;
+    }
+
+    char command[128];
+    snprintf(command, sizeof(command), "sysctl -w fs.pipe-user-pages-soft=%lu 2>&1", target);
+    cmd_result_t result = execCmd(command);
+    if (result.exit_code != 0)
+    {
+        LOGW("Core: Could not raise the system-wide pipe soft limit to %lu pages (exit %d: %s)",
+             target,
+             result.exit_code,
+             commandResultDiagnostic(&result));
+        return;
+    }
+    LOGI("Core: System-wide pipe soft limit raised from %lu to %lu pages", soft, target);
+#endif
+}
+
 static void tryEnableFq(void)
 {
     cmd_result_t current = execCmd("sysctl -n net.core.default_qdisc 2>&1");
@@ -192,6 +280,11 @@ void tryEnableBbr(void)
 }
 
 #else
+
+void tryIncreasePipeLimit(void)
+{
+    discard(0);
+}
 
 void tryEnableBbr(void)
 {

@@ -1293,6 +1293,7 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void
                                                    GSTATE.masterpool_buffer_pools_splice,
                                                    RAM_PROFILE,
                                                    worker_large_buffer_size,
+                                                   bufferpoolGetMediumBufferSize(worker_pool),
                                                    worker_small_buffer_size);
     if (UNLIKELY(reader_bpool == NULL))
     {
@@ -1307,6 +1308,7 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void
                                                    GSTATE.masterpool_buffer_pools_splice,
                                                    RAM_PROFILE,
                                                    worker_large_buffer_size,
+                                                   bufferpoolGetMediumBufferSize(worker_pool),
                                                    worker_small_buffer_size);
     if (UNLIKELY(writer_bpool == NULL))
     {

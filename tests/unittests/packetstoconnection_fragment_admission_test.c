@@ -478,8 +478,14 @@ static void envSetup(test_env_t *env)
     env->small_master = masterpoolCreateWithCapacity(16);
     env->medium_master = masterpoolCreateWithCapacity(16);
     env->splice_master = masterpoolCreateWithCapacity(16);
-    env->worker_pool =
-        bufferpoolCreate(env->large_master, env->medium_master, env->small_master, env->splice_master, 16, 4096, 1024);
+    env->worker_pool   = bufferpoolCreate(env->large_master,
+                                        env->medium_master,
+                                        env->small_master,
+                                        env->splice_master,
+                                        16,
+                                        4096,
+                                        MEDIUM_BUFFER_SIZE_RAM_HIGH,
+                                        1024);
     require(env->large_master != NULL && env->small_master != NULL && env->worker_pool != NULL,
             "failed to create fragment-admission test pools");
 

@@ -34,11 +34,12 @@ typedef struct buffer_pool_s buffer_pool_t;
 /**
  * Creates a buffer pool with specified parameters.
  * @param mp_large The master pool for large buffers.
- * @param mp_medium The master pool for fixed 64 KiB helper buffers.
+ * @param mp_medium The master pool for medium helper buffers.
  * @param mp_small The master pool for small buffers.
  * @param mp_splice The master pool for splice wrappers, with 32 bytes of control storage.
  * @param bufcount The number of buffers to preallocate.
  * @param large_buffer_size The size of each large buffer.
+ * @param medium_buffer_size The size of each medium helper buffer.
  * @param small_buffer_size The size of each small buffer.
  * @return A pointer to the completely constructed buffer pool, or NULL when
  *         the input geometry, any master pool, or any metadata allocation
@@ -47,7 +48,7 @@ typedef struct buffer_pool_s buffer_pool_t;
  */
 buffer_pool_t *bufferpoolCreate(master_pool_t *mp_large, master_pool_t *mp_medium, master_pool_t *mp_small,
                                 master_pool_t *mp_splice, uint32_t bufcount, uint32_t large_buffer_size,
-                                uint32_t small_buffer_size);
+                                uint32_t medium_buffer_size, uint32_t small_buffer_size);
 
 /**
  * @brief Destroy a buffer pool and free all pooled buffers.
@@ -63,7 +64,8 @@ void bufferpoolDestroy(buffer_pool_t *pool);
  */
 sbuf_t *bufferpoolGetLargeBuffer(buffer_pool_t *pool);
 
-/** Retrieve a fixed 64 KiB helper buffer. Cache counts follow the pool width;
+/** Retrieve a medium helper buffer (32 KiB in S1/S2, 64 KiB in higher profiles).
+ * Cache counts follow the pool width;
  * event-loop reads continue to request large buffers explicitly. */
 sbuf_t  *bufferpoolGetMediumBuffer(buffer_pool_t *pool);
 uint32_t bufferpoolGetMediumBufferSize(buffer_pool_t *pool);
@@ -77,8 +79,7 @@ uint16_t bufferpoolGetMediumBufferPadding(buffer_pool_t *pool);
 sbuf_t *bufferpoolGetSmallBuffer(buffer_pool_t *pool);
 
 /** Retrieve an empty splice wrapper with kSbufFlagSplice set, 32 bytes of control storage, and reserved left padding.
- * Its private pipe is uninitialized or empty. Populate the pipe before publishing its actual logical size
- * and kSbufFlagSplicePiped. */
+ * Its private pipe is uninitialized or empty. Populate the pipe before publishing its actual logical body size. */
 sbuf_t *bufferpoolGetSpliceBuffer(buffer_pool_t *pool);
 
 /**

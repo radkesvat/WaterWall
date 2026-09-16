@@ -55,10 +55,9 @@ static sbuf_t *makeInput(buffer_pool_t *pool, bool splice_input)
     {
 #if WW_HAVE_SPLICE
         buf = twfTrackAcquired(bufferpoolGetSpliceBuffer(pool));
-        twfRequire(sbufSpliceInitPipe(buf) == 0, "failed to create input private pipe");
+        twfRequire(sbufSpliceInitPipe(buf, 0) == 0, "failed to create input private pipe");
         twfRequire(write(sbufSpliceMetadata(buf).pipefd[1], "payload", 7) == 7, "failed to fill input private pipe");
         buf->capacity = (uint32_t) buf->l_pad + 7;
-        buf->flags |= kSbufFlagSplicePiped;
 #else
         twfRequire(false, "splice fixture is unsupported");
         return NULL;

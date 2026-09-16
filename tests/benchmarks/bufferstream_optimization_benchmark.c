@@ -37,6 +37,7 @@ typedef struct pool_fixture_s
 {
     master_pool_t *large;
     master_pool_t *small;
+    master_pool_t *medium;
     master_pool_t *splice_buffer_pool;
     buffer_pool_t *pool;
 } pool_fixture_t;
@@ -103,18 +104,25 @@ static pool_fixture_t makePool(const geometry_t *geometry, uint32_t width)
         .large              = masterpoolCreateWithCapacity(width),
         .small              = masterpoolCreateWithCapacity(width),
         .splice_buffer_pool = masterpoolCreateWithCapacity(width),
+        .medium             = masterpoolCreateWithCapacity(width),
     };
-    if (fixture.large == NULL || fixture.small == NULL || fixture.splice_buffer_pool == NULL)
+    if (fixture.large == NULL || fixture.small == NULL || fixture.medium == NULL || fixture.splice_buffer_pool == NULL)
     {
         fatal("master-pool allocation failed");
     }
-    fixture.pool = bufferpoolCreate(
-        fixture.large, fixture.small, fixture.splice_buffer_pool, width, geometry->large, geometry->small);
+    fixture.pool = bufferpoolCreate(fixture.large,
+                                    fixture.medium,
+                                    fixture.small,
+                                    fixture.splice_buffer_pool,
+                                    width,
+                                    geometry->large,
+                                    MEDIUM_BUFFER_SIZE_RAM_HIGH,
+                                    geometry->small);
     if (fixture.pool == NULL)
     {
         fatal("buffer-pool allocation failed");
     }
-    bufferpoolUpdateAllocationPaddings(fixture.pool, kPadding, kPadding, kPadding);
+    bufferpoolUpdateAllocationPaddings(fixture.pool, kPadding, kPadding, kPadding, kPadding);
     return fixture;
 }
 
@@ -123,9 +131,11 @@ static void freePool(pool_fixture_t *fixture)
     bufferpoolDestroy(fixture->pool);
     masterpoolMakeEmpty(fixture->large);
     masterpoolMakeEmpty(fixture->small);
+    masterpoolMakeEmpty(fixture->medium);
     masterpoolMakeEmpty(fixture->splice_buffer_pool);
     masterpoolDestroy(fixture->large);
     masterpoolDestroy(fixture->small);
+    masterpoolDestroy(fixture->medium);
     masterpoolDestroy(fixture->splice_buffer_pool);
 }
 

@@ -175,7 +175,8 @@ int main(void)
     g_splice_master = masterpoolCreateWithCapacity(16);
     require(g_large_master != NULL && g_small_master != NULL, "failed to create master pools");
 
-    g_pool = bufferpoolCreate(g_large_master, g_medium_master, g_small_master, g_splice_master, 8, 512, 256);
+    g_pool = bufferpoolCreate(
+        g_large_master, g_medium_master, g_small_master, g_splice_master, 8, 512, MEDIUM_BUFFER_SIZE_RAM_HIGH, 256);
     require(g_pool != NULL, "failed to create the buffer pool");
 
     testNonFragmentBypassesTableAndZerosResult();

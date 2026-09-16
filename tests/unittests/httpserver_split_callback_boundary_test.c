@@ -384,7 +384,7 @@ static void caseWaitingBoundary(uint32_t large, uint32_t length, bool append, bo
 
 int main(void)
 {
-    const uint32_t sizes[] = {32768, 512 * 1024};
+    const uint32_t sizes[] = {32768, LARGE_BUFFER_SIZE_RAM_HIGH};
     for (unsigned i = 0; i < 2; ++i)
         for (unsigned append = 0; append < 2; ++append)
         {
@@ -393,7 +393,7 @@ int main(void)
             caseWaitingBoundary(sizes[i], limit, append, false);
             caseWaitingBoundary(sizes[i], limit + 1, append, false);
         }
-    caseWaitingBoundary(512 * 1024, 512 * 1024, false, false);
+    caseWaitingBoundary(LARGE_BUFFER_SIZE_RAM_HIGH, LARGE_BUFFER_SIZE_RAM_HIGH, false, false);
     caseWaitingBoundary(32768, 131071, false, true);
     caseUnpairedDownloadAbsorbsAllCallbacks();
     casePairedDownloadMapsBackpressureToMain();

@@ -148,7 +148,7 @@ bool wloopNormalAdmissionBegin(wloop_t *loop)
     }
 
     mutexLock(&loop->normal_admission_mutex);
-    if (! wloopNormalDispatchAllowed(loop))
+    if (UNLIKELY(! wloopNormalDispatchAllowed(loop)))
     {
         mutexUnlock(&loop->normal_admission_mutex);
         return false;
@@ -375,7 +375,7 @@ static int wloopProcessPendings(wloop_t *loop)
             next = cur->pending_next;
             if (cur->pending && cur->loop == loop)
             {
-                if (! wloopNormalDispatchAllowed(loop))
+                if (UNLIKELY(! wloopNormalDispatchAllowed(loop)))
                 {
                     wloopReleasePending(cur, true);
                     cur = next;
@@ -451,14 +451,14 @@ int wloopProcessEvents(wloop_t *loop, int timeout_ms)
         wwSleepMS((unsigned int) blocktime_ms);
     }
     wloopUpdateTime(loop);
-    if (wloopLoadStatus(loop) == WLOOP_STATUS_STOP || ! wloopNormalDispatchAllowed(loop))
+    if (wloopLoadStatus(loop) == WLOOP_STATUS_STOP || UNLIKELY(! wloopNormalDispatchAllowed(loop)))
     {
         discard wloopProcessPendings(loop);
         return 0;
     }
 
 process_timers:
-    if (loop->ntimers && wloopNormalDispatchAllowed(loop))
+    if (loop->ntimers && LIKELY(wloopNormalDispatchAllowed(loop)))
     {
         ntimers = wloopProcessTimers(loop);
     }
@@ -466,7 +466,7 @@ process_timers:
     uint32_t npendings = loop->npendings;
     if (npendings == 0)
     {
-        if (loop->nidles && wloopNormalDispatchAllowed(loop))
+        if (loop->nidles && LIKELY(wloopNormalDispatchAllowed(loop)))
         {
             nidles = wloopProcessIdles(loop);
         }
@@ -575,7 +575,7 @@ static void eventFDReadCB(wio_t *io, sbuf_t *buf)
         const size_t wanted      = min(normal_remaining, ARRAY_SIZE(batch));
 
         mutexLock(&loop->custom_events_mutex);
-        if (wloopNormalDispatchAllowed(loop))
+        if (LIKELY(wloopNormalDispatchAllowed(loop)))
         {
             while (batch_count < wanted && ! event_queue_empty(&loop->custom_events))
             {
@@ -596,7 +596,7 @@ static void eventFDReadCB(wio_t *io, sbuf_t *buf)
             // post more work, which belongs to the separately armed next wake.
             // Each copied event remains an independent normal root; if an
             // earlier callback closes admission, discard the unstarted suffix.
-            if (! wloopNormalDispatchAllowed(loop))
+            if (UNLIKELY(! wloopNormalDispatchAllowed(loop)))
             {
                 break;
             }
@@ -1566,7 +1566,7 @@ widle_t *widleAdd(wloop_t *loop, widle_cb cb, uint32_t repeat)
         return NULL;
     }
     mutexLock(&loop->normal_admission_mutex);
-    if (! wloopNormalDispatchAllowed(loop))
+    if (UNLIKELY(! wloopNormalDispatchAllowed(loop)))
     {
         mutexUnlock(&loop->normal_admission_mutex);
         return NULL;
@@ -1605,7 +1605,7 @@ wtimer_t *wtimerAdd(wloop_t *loop, wtimer_cb cb, uint32_t timeout_ms, uint32_t r
     if (loop == NULL || timeout_ms == 0)
         return NULL;
     mutexLock(&loop->normal_admission_mutex);
-    if (! wloopNormalDispatchAllowed(loop))
+    if (UNLIKELY(! wloopNormalDispatchAllowed(loop)))
     {
         mutexUnlock(&loop->normal_admission_mutex);
         return NULL;
@@ -1646,7 +1646,7 @@ wtimer_try_add_result_e wtimerTryAdd(wloop_t *loop, wtimer_cb cb, uint32_t timeo
     }
 
     mutexLock(&loop->normal_admission_mutex);
-    if (! wloopNormalDispatchAllowed(loop))
+    if (UNLIKELY(! wloopNormalDispatchAllowed(loop)))
     {
         mutexUnlock(&loop->normal_admission_mutex);
         return kWTimerTryAddAdmissionClosed;
@@ -1700,7 +1700,7 @@ bool wtimerReset(wtimer_t *timer, uint32_t timeout_ms)
     }
     wloop_t *loop = timer->loop;
     mutexLock(&loop->normal_admission_mutex);
-    if (! wloopNormalDispatchAllowed(loop))
+    if (UNLIKELY(! wloopNormalDispatchAllowed(loop)))
     {
         mutexUnlock(&loop->normal_admission_mutex);
         return false;
@@ -1747,7 +1747,7 @@ wtimer_t *wtimerAddPeriod(wloop_t *loop, wtimer_cb cb, int8_t minute, int8_t hou
         return NULL;
     }
     mutexLock(&loop->normal_admission_mutex);
-    if (! wloopNormalDispatchAllowed(loop))
+    if (UNLIKELY(! wloopNormalDispatchAllowed(loop)))
     {
         mutexUnlock(&loop->normal_admission_mutex);
         return NULL;
@@ -2179,7 +2179,7 @@ static int wioAddWithNormalAuthority(wio_t *io, wio_cb cb, int events, bool alre
     if (! control_io && ! already_admitted)
     {
         mutexLock(&loop->normal_admission_mutex);
-        if (! wloopNormalDispatchAllowed(loop))
+        if (UNLIKELY(! wloopNormalDispatchAllowed(loop)))
         {
             mutexUnlock(&loop->normal_admission_mutex);
             return -1;

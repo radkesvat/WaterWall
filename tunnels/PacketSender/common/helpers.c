@@ -380,7 +380,7 @@ void packetsenderStopWorker(packetsender_worker_state_t *slot)
 
 static void packetsenderReportInitialTimerFailure(packetsender_worker_state_t *slot)
 {
-    if (! wloopNormalDispatchAllowed(getWorkerLoop(slot->wid)))
+    if (UNLIKELY(! wloopNormalDispatchAllowed(getWorkerLoop(slot->wid))))
     {
         return;
     }
@@ -393,7 +393,7 @@ static void packetsenderReportInitialTimerFailure(packetsender_worker_state_t *s
 
 static void packetsenderReportTimerRearmFailure(packetsender_worker_state_t *slot)
 {
-    if (! wloopNormalDispatchAllowed(getWorkerLoop(slot->wid)))
+    if (UNLIKELY(! wloopNormalDispatchAllowed(getWorkerLoop(slot->wid))))
     {
         return;
     }

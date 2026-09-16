@@ -294,8 +294,14 @@ static void setupEnv(test_env_t *env)
 
     for (wid_t wid = 0; wid < 2; ++wid)
     {
-        env->buffer_pools[wid] = bufferpoolCreate(
-            env->large_master, env->medium_master, env->small_master, env->splice_master, 64, 4096, 512);
+        env->buffer_pools[wid] = bufferpoolCreate(env->large_master,
+                                                  env->medium_master,
+                                                  env->small_master,
+                                                  env->splice_master,
+                                                  64,
+                                                  4096,
+                                                  MEDIUM_BUFFER_SIZE_RAM_HIGH,
+                                                  512);
         env->wios_pools[wid] =
             threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(env->wios_master, sizeof(wio_t), 64);
         env->loops[wid]         = wloopCreate(0, env->buffer_pools[wid], wid);

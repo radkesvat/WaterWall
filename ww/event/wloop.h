@@ -351,7 +351,7 @@ WW_EXPORT void wioDisableSplice(wio_t *io);
 WW_EXPORT bool wioIsSpliceEnabled(const wio_t *io);
 /**
  * Consume a splice wrapper into caller-supplied ordinary storage and return dest.
- * Requires Splice and SplicePiped. Reads the body from the private pipe read end,
+ * Requires kSbufFlagSplice. Reads the body from the private pipe read end,
  * copying any real prefix before it. Preserves
  * the source cursor/remaining left headroom and total length; dest's allocation
  * capacity and original l_pad stay unchanged. Replaces dest's previous payload.
@@ -362,7 +362,7 @@ WW_EXPORT bool wioIsSpliceEnabled(const wio_t *io);
  * Requires exclusive ownership of the wrapper and its private pipe.
  * Requires no lifetime metadata on buf, checked by a debug assertion. Destination
  * lifetime metadata remains caller-managed; this helper leaves it untouched.
- * Clears splice flags on dest and releases buf through bufferpoolReuseBuffer(),
+ * Clears kSbufFlagSplice on dest and releases buf through bufferpoolReuseBuffer(),
  * retaining its empty private pipe for reuse. The caller must
  * own this pool's thread context and must not use buf after this call.
  * Unsupported builds log with LOGF and abort.
@@ -370,7 +370,7 @@ WW_EXPORT bool wioIsSpliceEnabled(const wio_t *io);
 WW_EXPORT sbuf_t          *wioTransformSpliceBufferToRealBuffer(sbuf_t *buf, sbuf_t *dest, buffer_pool_t *pool);
 /**
  * Append exactly bytes from the front of a splice buffer to dest and return dest.
- * Requires Splice and SplicePiped on buf, an ordinary dest,
+ * Requires kSbufFlagSplice on buf, an ordinary dest,
  * and no source lifetime metadata (debug assert). Zero bytes is a validated no-op.
  * Copies real prefix bytes first in payload order, reading the requested remainder
  * from the private pipe read end. Requires exclusive ownership of the wrapper.

@@ -110,8 +110,14 @@ static tlsserver_padding_fixture_t createFixture(uint16_t version)
     fixture.small_master                = masterpoolCreateWithCapacity(8);
     fixture.medium_master               = masterpoolCreateWithCapacity(8);
     fixture.splice_master               = masterpoolCreateWithCapacity(8);
-    fixture.pool                        = bufferpoolCreate(
-        fixture.large_master, fixture.medium_master, fixture.small_master, fixture.splice_master, 4, 32768, 1024);
+    fixture.pool                        = bufferpoolCreate(fixture.large_master,
+                                    fixture.medium_master,
+                                    fixture.small_master,
+                                    fixture.splice_master,
+                                    4,
+                                    32768,
+                                    MEDIUM_BUFFER_SIZE_RAM_HIGH,
+                                    1024);
     require(fixture.large_master != NULL && fixture.small_master != NULL && fixture.pool != NULL,
             "failed to create the TlsServer padding buffer pool");
     bufferpoolUpdateAllocationPaddings(fixture.pool, 64, 64, 64, 64);

@@ -18,8 +18,9 @@
  * identity is not guaranteed for ordinary buffers: Debug insertion may replace
  * the input allocation; insertion returns the exact retained buffer.
  * Splice wrappers retain their allocation and exclusively owned private pipes
- * in every build. Nonempty splice entries require kSbufFlagSplicePiped and must
- * not carry lifetime metadata. Mixed ordinary/splice entries preserve FIFO order.
+ * in every build. Claimed body bytes must already be in the private pipe;
+ * empty bodies need no initialized pipe. Splice entries must not carry lifetime
+ * metadata. Mixed ordinary/splice entries preserve FIFO order.
  * While queued, neither payload nor length may be changed through a retained alias;
  * pop first before consuming or modifying an entry.
  */

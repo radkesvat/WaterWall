@@ -119,8 +119,14 @@ static void envSetup(test_env_t *env)
     env->small_master = masterpoolCreateWithCapacity(8);
     env->medium_master = masterpoolCreateWithCapacity(8);
     env->splice_master = masterpoolCreateWithCapacity(8);
-    env->worker_pool =
-        bufferpoolCreate(env->large_master, env->medium_master, env->small_master, env->splice_master, 8, 1024, 256);
+    env->worker_pool   = bufferpoolCreate(env->large_master,
+                                        env->medium_master,
+                                        env->small_master,
+                                        env->splice_master,
+                                        8,
+                                        1024,
+                                        MEDIUM_BUFFER_SIZE_RAM_HIGH,
+                                        256);
     require(env->large_master != NULL && env->small_master != NULL && env->worker_pool != NULL,
             "failed to create test pools");
 

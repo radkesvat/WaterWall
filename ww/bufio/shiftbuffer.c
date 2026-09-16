@@ -3,7 +3,6 @@
  */
 
 #include "shiftbuffer.h"
-#include "loggers/internal_logger.h"
 #include "splice_buffer.h"
 #if WW_HAVE_SPLICE
 #include <fcntl.h>
@@ -238,26 +237,49 @@ sbuf_t *sbufSlice(sbuf_t *const b, const uint32_t bytes)
     return newbuf;
 }
 
-int sbufSpliceInitPipe(sbuf_t *buf)
+int sbufSpliceInitPipe(sbuf_t *buf, uint32_t preferred_capacity)
 {
 #if WW_HAVE_SPLICE
+    assert(preferred_capacity <= INT_MAX);
     splice_buffer_metadata_t metadata = sbufSpliceMetadata(buf);
-    if (metadata.pipefd[0] >= 0)
+    if (metadata.pipefd[0] < 0)
     {
-        assert(metadata.pipefd[1] >= 0);
-        return 0;
+        int pair[2];
+        if (pipe2(pair, O_NONBLOCK | O_CLOEXEC) != 0)
+        {
+            return -1;
+        }
+        metadata = (splice_buffer_metadata_t) {.pipefd = {pair[0], pair[1]}};
+        sbufSpliceSetMetadata(buf, metadata);
     }
-    int pair[2];
-    if (pipe2(pair, O_NONBLOCK | O_CLOEXEC) != 0)
+    assert(metadata.pipefd[1] >= 0);
+    if (preferred_capacity > metadata.pipe_capacity && buf->len == 0)
     {
-        return -1;
+        const uint64_t now = getHRTimeUs();
+        if (now < metadata.capacity_retry_at_us)
+        {
+            return 0;
+        }
+        assert(sbufSpliceIsReusable(buf));
+        int capacity = fcntl(metadata.pipefd[0], F_GETPIPE_SZ);
+        if (capacity > 0)
+        {
+            metadata.pipe_capacity = (uint32_t) capacity;
+            if (metadata.pipe_capacity < preferred_capacity)
+            {
+                capacity = fcntl(metadata.pipefd[0], F_SETPIPE_SZ, (int) preferred_capacity);
+                if (capacity > 0)
+                    metadata.pipe_capacity = (uint32_t) capacity;
+            }
+        }
+        // Keep usable pipes after rejection, but let empty pooled pairs recover later.
+        metadata.capacity_retry_at_us = metadata.pipe_capacity < preferred_capacity ? now + UINT64_C(1000000) : 0;
+        sbufSpliceSetMetadata(buf, metadata);
     }
-    metadata.pipefd[0] = pair[0];
-    metadata.pipefd[1] = pair[1];
-    sbufSpliceSetMetadata(buf, metadata);
     return 0;
 #else
     discard buf;
+    discard preferred_capacity;
     errno = ENOSYS;
     return -1;
 #endif
@@ -265,15 +287,14 @@ int sbufSpliceInitPipe(sbuf_t *buf)
 
 void sbufSpliceClosePipe(sbuf_t *buf)
 {
-    splice_buffer_metadata_t metadata = sbufSpliceMetadata(buf);
 #if WW_HAVE_SPLICE
+    splice_buffer_metadata_t metadata = sbufSpliceMetadata(buf);
     if (metadata.pipefd[0] >= 0)
         close(metadata.pipefd[0]);
     if (metadata.pipefd[1] >= 0)
         close(metadata.pipefd[1]);
 #endif
-    metadata.pipefd[0] = metadata.pipefd[1] = -1;
-    sbufSpliceSetMetadata(buf, metadata);
+    sbufSpliceSetMetadata(buf, (splice_buffer_metadata_t) {.pipefd = {-1, -1}});
 }
 
 void sbufSpliceDiscard(sbuf_t *buf)
@@ -283,11 +304,6 @@ void sbufSpliceDiscard(sbuf_t *buf)
     if (buf->len == 0)
     {
         return;
-    }
-    if ((buf->flags & kSbufFlagSplicePiped) == 0)
-    {
-        LOGF("sbufSpliceDiscard: nonempty splice payload must have kSbufFlagSplicePiped set");
-        abortProgramNow(1);
     }
 #if WW_HAVE_SPLICE
     splice_buffer_metadata_t metadata = sbufSpliceMetadata(buf);

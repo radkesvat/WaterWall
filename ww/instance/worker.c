@@ -442,6 +442,7 @@ bool workerTryCreateBufferPool(worker_t *worker)
                                            GSTATE.masterpool_buffer_pools_splice,
                                            RAM_PROFILE,
                                            PROPER_LARGE_BUFFER_SIZE(RAM_PROFILE),
+                                           PROPER_MEDIUM_BUFFER_SIZE(RAM_PROFILE),
                                            SMALL_BUFFER_SIZE);
     if (UNLIKELY(pool == NULL))
     {

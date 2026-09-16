@@ -222,6 +222,7 @@ static void tosWorkerEnvSetup(tos_worker_env_t *env, wid_t count, uint32_t large
                                           env->splice_masters[wi],
                                           4,
                                           large_buffer_size,
+                                          MEDIUM_BUFFER_SIZE_RAM_HIGH,
                                           small_buffer_size);
         twfRequire(env->pools[wi] != NULL, "failed to create a test buffer pool");
 

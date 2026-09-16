@@ -910,7 +910,8 @@ static void testSameTargetRefusalCleansLaterChunks(void)
     master_pool_t *small_master = masterpoolCreateWithCapacity(8);
     master_pool_t *medium_master = masterpoolCreateWithCapacity(8);
     master_pool_t *splice_master = masterpoolCreateWithCapacity(8);
-    buffer_pool_t *pool = bufferpoolCreate(large_master, medium_master, small_master, splice_master, 8, 256, 64);
+    buffer_pool_t *pool          = bufferpoolCreate(
+        large_master, medium_master, small_master, splice_master, 8, 256, MEDIUM_BUFFER_SIZE_RAM_HIGH, 64);
     require(large_master != NULL && small_master != NULL && pool != NULL,
             "failed to create the dispatch-refusal buffer pool");
 
@@ -994,7 +995,8 @@ static void testMixedWorkerRefusalCleansTrackedPublications(void)
     master_pool_t *small_master = masterpoolCreateWithCapacity(16);
     master_pool_t *medium_master = masterpoolCreateWithCapacity(16);
     master_pool_t *splice_master = masterpoolCreateWithCapacity(16);
-    buffer_pool_t *pool = bufferpoolCreate(large_master, medium_master, small_master, splice_master, 16, 256, 128);
+    buffer_pool_t *pool          = bufferpoolCreate(
+        large_master, medium_master, small_master, splice_master, 16, 256, MEDIUM_BUFFER_SIZE_RAM_HIGH, 128);
     require(large_master != NULL && small_master != NULL && pool != NULL,
             "failed to create mixed-worker refusal buffer pool");
     require(getWorkersCount() >= kBucketCount, "mixed-worker refusal fixture needs three worker buckets");

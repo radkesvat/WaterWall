@@ -264,10 +264,22 @@ static void envSetup(test_env_t *env)
     env->small_master    = masterpoolCreateWithCapacity(64);
     env->medium_master   = masterpoolCreateWithCapacity(64);
     env->splice_master   = masterpoolCreateWithCapacity(64);
-    env->buffer_pools[0] =
-        bufferpoolCreate(env->large_master, env->medium_master, env->small_master, env->splice_master, 64, 8192, 4096);
-    env->buffer_pools[1] =
-        bufferpoolCreate(env->large_master, env->medium_master, env->small_master, env->splice_master, 64, 8192, 4096);
+    env->buffer_pools[0] = bufferpoolCreate(env->large_master,
+                                            env->medium_master,
+                                            env->small_master,
+                                            env->splice_master,
+                                            64,
+                                            8192,
+                                            MEDIUM_BUFFER_SIZE_RAM_HIGH,
+                                            4096);
+    env->buffer_pools[1] = bufferpoolCreate(env->large_master,
+                                            env->medium_master,
+                                            env->small_master,
+                                            env->splice_master,
+                                            64,
+                                            8192,
+                                            MEDIUM_BUFFER_SIZE_RAM_HIGH,
+                                            4096);
 
     GSTATE.shortcut_buffer_pools         = env->buffer_pools;
     GSTATE.masterpool_buffer_pools_large = env->large_master;

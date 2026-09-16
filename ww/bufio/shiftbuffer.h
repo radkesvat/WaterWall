@@ -36,7 +36,9 @@ enum
      * at that fixed offset when a tunnel prepends bytes by shifting left.
      * Length and capacity account for that logical payload, not the wrapper's
      * physical storage, and must not be used as bounds for accessing buf bytes.
-     * Splice buffers must not carry sbuf_lifetime_t metadata; lifetime stays NULL.
+     * Any claimed body bytes must already be in the private pipe. Empty bodies
+     * may have an uninitialized or empty pipe. Splice buffers must not carry
+     * sbuf_lifetime_t metadata; lifetime stays NULL.
      *
      * The splice path may supply these wrappers to ordinary Payload callbacks. Event-loop
      * I/O and splice-aware adapters (initially TcpListener and TcpConnector)
@@ -64,9 +66,7 @@ enum
      * body is resident in memory. Violating this contract can corrupt the
      * descriptor pointer, break I/O, or crash the process; a crash is not guaranteed.
      */
-    kSbufFlagSplice = 1U << 0,
-    /** The body has been spliced into the pipe; meaningful only with kSbufFlagSplice. */
-    kSbufFlagSplicePiped = 1U << 1
+    kSbufFlagSplice = 1U << 0
 };
 
 struct sbuf_s
@@ -287,7 +287,7 @@ sbuf_t *sbufCreate(uint32_t minimum_capacity);
  *
  * @param pad_left Requested left padding in bytes, rounded up to a 32-byte boundary.
  * @return sbuf_t* Empty wrapper with only kSbufFlagSplice set and an uninitialized private pipe pair.
- * Populate the pipe before publishing its actual logical payload size and kSbufFlagSplicePiped.
+ * Populate the pipe before publishing its actual logical body size.
  */
 sbuf_t *sbufCreateSplice(uint16_t pad_left);
 

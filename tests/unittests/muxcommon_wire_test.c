@@ -35,7 +35,7 @@ static void require(bool condition, const char *message)
     }
 }
 
-static test_pool_t testPoolCreate(void)
+static test_pool_t testPoolCreateWithSizes(uint32_t large_size, uint32_t medium_size)
 {
     test_pool_t result = {
         .large_master  = masterpoolCreateWithCapacity(kTestPoolCapacity),
@@ -51,7 +51,8 @@ static test_pool_t testPoolCreate(void)
                                    result.small_master,
                                    result.splice_master,
                                    kTestPoolCapacity,
-                                   kTestLargeBufferSize,
+                                   large_size,
+                                   medium_size,
                                    1024);
     require(result.pool != NULL, "failed to create buffer pool");
     bufferpoolUpdateAllocationPaddings(
@@ -376,7 +377,7 @@ static void     releaseRetentionLifetime(sbuf_lifetime_t *lifetime)
 
 static void testPausedRetentionStorage(buffer_pool_t *pool)
 {
-    const uint32_t lengths[] = {0, 1, 4097, kMuxMaxDataFrameLength, MEDIUM_BUFFER_SIZE + 1};
+    const uint32_t lengths[] = {0, 1, 4097, kMuxMaxDataFrameLength, bufferpoolGetMediumBufferSize(pool) + 1};
     for (size_t i = 0; i < ARRAY_SIZE(lengths); ++i)
     {
         sbuf_t         *input             = makePayload(pool, lengths[i]);
@@ -386,8 +387,9 @@ static void testPausedRetentionStorage(buffer_pool_t *pool)
         retention_lifetime_releases = 0;
         sbuf_t        *retained     = muxPrepareQueuedPayload(pool, input);
         const uint32_t expected = lengths[i] <= bufferpoolGetSmallBufferSize(pool) ? bufferpoolGetSmallBufferSize(pool)
-                                  : lengths[i] <= MEDIUM_BUFFER_SIZE               ? MEDIUM_BUFFER_SIZE
-                                                                                   : original_capacity;
+                                  : lengths[i] <= bufferpoolGetMediumBufferSize(pool)
+                                      ? bufferpoolGetMediumBufferSize(pool)
+                                      : original_capacity;
         require(sbufGetTotalCapacityNoPadding(retained) == expected, "paused retention selected the wrong pooled tier");
         require(sbufGetLength(retained) == lengths[i], "paused retention changed the payload length");
         require(sbufGetLeftCapacity(retained) >= bufferpoolGetLargeBufferPadding(pool),
@@ -406,32 +408,52 @@ static void testPausedRetentionStorage(buffer_pool_t *pool)
 
 static void testQueuedFrameExtraction(buffer_pool_t *pool)
 {
-    const uint32_t lengths[] = {0, 1, 1024, 4097, kMuxMaxDataFrameLength, UINT16_MAX};
+    const uint32_t lengths[] = {
+        0, 1, 1024, 4097, bufferpoolGetMediumBufferSize(pool) / 2, 32768, 32769, kMuxMaxDataFrameLength, UINT16_MAX};
     for (size_t i = 0; i < ARRAY_SIZE(lengths); ++i)
-    {
-        buffer_stream_t stream = bufferstreamCreate(pool, kMuxFrameLength);
-        const uint32_t  length = lengths[i];
-        sbuf_t         *input  = makePayload(pool, length + kMuxFrameLength);
-        mux_frame_t     wire;
-        muxSetMuxFrameHeader(&wire, (mux_length_t) length, kTestCid, kMuxFlagData);
-        memoryCopy(sbufGetMutablePtr(input), &wire, kMuxFrameLength);
-        bufferstreamPush(&stream, input);
-        mux_frame_t frame;
-        require(muxPeekCompleteFrame(&stream, &frame) && frame.length == length && frame.cid == kTestCid &&
-                    bufferstreamGetBufLen(&stream) == length + kMuxFrameLength,
-                "frame peek consumed bytes or decoded the wrong header");
-        sbuf_t *read = muxReadFrameForQueue(&stream, &frame);
-        require(sbufGetLength(read) == length + kMuxFrameLength && bufferstreamIsEmpty(&stream),
-                "queued frame extraction changed wire length");
-        sbufShiftRight(read, kMuxFrameLength);
-        require(sbufGetLeftCapacity(read) >= bufferpoolGetLargeBufferPadding(pool),
-                "queued frame extraction consumed onward padding");
-        const uint32_t expected =
-            length <= bufferpoolGetSmallBufferSize(pool) ? bufferpoolGetSmallBufferSize(pool) : MEDIUM_BUFFER_SIZE;
-        require(sbufGetTotalCapacityNoPadding(read) == expected, "queued frame did not select final pooled storage");
-        bufferpoolReuseBuffer(pool, read);
-        bufferstreamDestroy(&stream);
-    }
+        for (unsigned int fragmented = 0; fragmented < 2; ++fragmented)
+        {
+            buffer_stream_t stream = bufferstreamCreate(pool, kMuxFrameLength);
+            const uint32_t  length = lengths[i];
+            sbuf_t         *input  = makePayload(pool, length);
+            mux_frame_t     wire;
+            muxSetMuxFrameHeader(&wire, (mux_length_t) length, kTestCid, kMuxFlagData);
+            sbufShiftLeft(input, kMuxFrameLength);
+            memoryCopy(sbufGetMutablePtr(input), &wire, kMuxFrameLength);
+            if (fragmented)
+            {
+                sbuf_t *head = bufferpoolGetSmallBuffer(pool);
+                // Split even the empty DATA frame's header across stream chunks.
+                sbufSetLength(head, 3);
+                memoryCopy(sbufGetMutablePtr(head), sbufGetRawPtr(input), 3);
+                sbufShiftRight(input, 3);
+                bufferstreamPush(&stream, head);
+            }
+            bufferstreamPush(&stream, input);
+            mux_frame_t frame;
+            require(muxPeekCompleteFrame(&stream, &frame) && frame.length == length && frame.cid == kTestCid &&
+                        bufferstreamGetBufLen(&stream) == length + kMuxFrameLength,
+                    "frame peek consumed bytes or decoded the wrong header");
+            sbuf_t *read = muxReadFrameForQueue(&stream, &frame);
+            require(sbufGetLength(read) == length + kMuxFrameLength && bufferstreamIsEmpty(&stream),
+                    "queued frame extraction changed wire length");
+            sbufShiftRight(read, kMuxFrameLength);
+            require(sbufGetLeftCapacity(read) >= bufferpoolGetLargeBufferPadding(pool),
+                    "queued frame extraction consumed onward padding");
+            const uint32_t expected = length <= bufferpoolGetSmallBufferSize(pool) ? bufferpoolGetSmallBufferSize(pool)
+                                      : length <= bufferpoolGetMediumBufferSize(pool)
+                                          ? bufferpoolGetMediumBufferSize(pool)
+                                          : bufferpoolGetLargeBufferSize(pool);
+            require(sbufGetTotalCapacityNoPadding(read) == expected,
+                    "queued frame did not select final pooled storage");
+            for (uint32_t j = 0; j < length; ++j)
+                require(((const uint8_t *) sbufGetRawPtr(read))[j] == patternByte(j),
+                        "queued frame changed payload bytes");
+            if (! fragmented && expected == bufferpoolGetLargeBufferSize(pool))
+                require(read == input, "suitable whole large frame was unnecessarily copied");
+            bufferpoolReuseBuffer(pool, read);
+            bufferstreamDestroy(&stream);
+        }
     buffer_stream_t stream = bufferstreamCreate(pool, kMuxFrameLength);
     sbuf_t         *input  = bufferpoolGetMediumBuffer(pool);
     mux_frame_t     frame;
@@ -448,7 +470,7 @@ static void testQueuedFrameExtraction(buffer_pool_t *pool)
 
 int main(void)
 {
-    test_pool_t test_pool = testPoolCreate();
+    test_pool_t test_pool = testPoolCreateWithSizes(kTestLargeBufferSize, MEDIUM_BUFFER_SIZE_RAM_HIGH);
 
     testPausedRetentionStorage(test_pool.pool);
     testQueuedFrameExtraction(test_pool.pool);
@@ -459,6 +481,10 @@ int main(void)
     testQueuedSbufCharge(test_pool.pool);
     testEncodingAndOwnership(test_pool.pool);
 
+    testPoolDestroy(&test_pool);
+    test_pool = testPoolCreateWithSizes(LARGE_BUFFER_SIZE_RAM_LOW, MEDIUM_BUFFER_SIZE_RAM_LOW);
+    testPausedRetentionStorage(test_pool.pool);
+    testQueuedFrameExtraction(test_pool.pool);
     testPoolDestroy(&test_pool);
     puts("muxcommon_wire_test: all cases passed");
     return 0;

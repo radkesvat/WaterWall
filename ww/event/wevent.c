@@ -161,13 +161,8 @@ sbuf_t *wioTransformSpliceBufferToRealBuffer(sbuf_t *buf, sbuf_t *dest, buffer_p
         abortProgramNow(1);
     }
     assert(sbufGetLifetime(buf) == NULL && "Splice buffers must not carry lifetime metadata");
-    if (UNLIKELY((buf->flags & kSbufFlagSplicePiped) == 0))
-    {
-        LOGF("wioTransformSpliceBufferToRealBuffer: requires kSbufFlagSplicePiped");
-        abortProgramNow(1);
-    }
     assert(dest != NULL && pool != NULL);
-    if (UNLIKELY((dest->flags & (kSbufFlagSplice | kSbufFlagSplicePiped)) != 0))
+    if (UNLIKELY((dest->flags & kSbufFlagSplice) != 0))
     {
         LOGF("wioTransformSpliceBufferToRealBuffer: destination must be an ordinary buffer");
         abortProgramNow(1);
@@ -209,7 +204,7 @@ sbuf_t *wioTransformSpliceBufferToRealBuffer(sbuf_t *buf, sbuf_t *dest, buffer_p
     wioReadSplicePipe(metadata.pipefd[0], dest->buf + buf->l_pad, body_bytes, __func__);
 
     sbufSetLength(dest, buf->len);
-    dest->flags = buf->flags & (uint16_t) ~(kSbufFlagSplice | kSbufFlagSplicePiped);
+    dest->flags = buf->flags & (uint16_t) ~kSbufFlagSplice;
     sbufSetLength(buf, 0);
     bufferpoolReuseBuffer(pool, buf);
     return dest;
@@ -229,12 +224,7 @@ sbuf_t *wioPartialReadSpliceBuffer(sbuf_t *buf, sbuf_t *dest, uint32_t bytes)
         abortProgramNow(1);
     }
     assert(sbufGetLifetime(buf) == NULL && "Splice buffers must not carry lifetime metadata");
-    if (UNLIKELY((buf->flags & kSbufFlagSplicePiped) == 0))
-    {
-        LOGF("wioPartialReadSpliceBuffer: requires kSbufFlagSplicePiped");
-        abortProgramNow(1);
-    }
-    if (UNLIKELY(dest == NULL || (dest->flags & (kSbufFlagSplice | kSbufFlagSplicePiped)) != 0))
+    if (UNLIKELY(dest == NULL || (dest->flags & kSbufFlagSplice) != 0))
     {
         LOGF("wioPartialReadSpliceBuffer: destination must be an ordinary buffer");
         abortProgramNow(1);

@@ -185,4 +185,4 @@ Source-backed metadata:
 | `layer_group_next_node` | `kNodeLayer4` |
 | `required_padding_left` | `0` bytes |
 
-The waiting bound applies at initial publication and on later appends. Close occurs at or above 131,070 bytes at 32 KiB or 2,097,120 bytes at 512 KiB; available peers pair before waiting limits apply.
+The waiting bound applies at initial publication and on later appends. Close occurs at or above 131,070 bytes at 32 KiB or 4,194,240 bytes at 1 MiB; available peers pair before waiting limits apply.

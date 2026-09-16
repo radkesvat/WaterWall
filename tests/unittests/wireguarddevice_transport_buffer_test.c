@@ -128,7 +128,8 @@ int main(void)
     require(large_master != NULL && small_master != NULL, "failed to create master pools");
 
     // Standard small buffer: 4096, large buffer: 32768
-    buffer_pool_t *pool = bufferpoolCreate(large_master, medium_master, small_master, splice_master, 8, 32768, 4096);
+    buffer_pool_t *pool = bufferpoolCreate(
+        large_master, medium_master, small_master, splice_master, 8, 32768, MEDIUM_BUFFER_SIZE_RAM_HIGH, 4096);
     require(pool != NULL, "failed to create buffer pool");
     bufferpoolUpdateAllocationPaddings(pool, 64, 64, 64, 64);
 

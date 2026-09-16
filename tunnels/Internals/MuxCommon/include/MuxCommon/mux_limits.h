@@ -32,21 +32,28 @@ static inline size_t muxQueuedSbufCharge(const sbuf_t *buf)
 
 /* Only paused-child queue admission should trade a copy for a smaller retained
  * allocation. BufferStream and immediately forwarded frames preserve their
- * whole-chunk fast path. Both candidate sizes come from reusable pool tiers. */
+ * whole-chunk fast path. Candidate sizes come from reusable small/medium/large tiers. */
 static inline sbuf_t *muxPrepareQueuedPayload(buffer_pool_t *pool, sbuf_t *buf)
 {
     const uint32_t length  = sbufGetLength(buf);
     const uint16_t padding = sbufGetLeftPadding(buf);
     const bool     use_small =
         length <= bufferpoolGetSmallBufferSize(pool) && padding <= bufferpoolGetSmallBufferPadding(pool);
-    const uint32_t capacity = use_small ? bufferpoolGetSmallBufferSize(pool) : bufferpoolGetMediumBufferSize(pool);
-    const uint16_t target_padding =
-        use_small ? bufferpoolGetSmallBufferPadding(pool) : bufferpoolGetMediumBufferPadding(pool);
+    const bool use_medium =
+        length <= bufferpoolGetMediumBufferSize(pool) && padding <= bufferpoolGetMediumBufferPadding(pool);
+    const uint32_t capacity       = use_small    ? bufferpoolGetSmallBufferSize(pool)
+                                    : use_medium ? bufferpoolGetMediumBufferSize(pool)
+                                                 : bufferpoolGetLargeBufferSize(pool);
+    const uint16_t target_padding = use_small    ? bufferpoolGetSmallBufferPadding(pool)
+                                    : use_medium ? bufferpoolGetMediumBufferPadding(pool)
+                                                 : bufferpoolGetLargeBufferPadding(pool);
     if (length > capacity || padding > target_padding ||
         (uint64_t) capacity + target_padding >= sbufGetTotalCapacity(buf))
         return buf;
 
-    sbuf_t *retained = use_small ? bufferpoolGetSmallBuffer(pool) : bufferpoolGetMediumBuffer(pool);
+    sbuf_t *retained = use_small    ? bufferpoolGetSmallBuffer(pool)
+                       : use_medium ? bufferpoolGetMediumBuffer(pool)
+                                    : bufferpoolGetLargeBuffer(pool);
     assert(length <= sbufGetMaximumWriteableSize(retained));
     memoryCopyLarge(sbufGetMutablePtr(retained), sbufGetRawPtr(buf), length);
     sbufSetLength(retained, length);

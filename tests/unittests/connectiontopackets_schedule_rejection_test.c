@@ -323,8 +323,8 @@ static void caseCreditedDeliveryRefusalTransfersBufferAndRetainsPbuf(void)
 
 static void casePendingBudgetAllowsOneReadOfHeadroom(void)
 {
-    twfSetCase("CTP admits a 512 KiB delivery and rejects bytes beyond bounded headroom");
-    g_pool_size = 512 * 1024;
+    twfSetCase("CTP admits a full large-buffer delivery and rejects bytes beyond bounded headroom");
+    g_pool_size = LARGE_BUFFER_SIZE_RAM_HIGH;
     ctp_fixture_t fixture;
     ctpFixtureSetup(&fixture);
     ctp_tstate_t *ts      = tunnelGetState(fixture.ctp);

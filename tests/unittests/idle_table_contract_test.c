@@ -123,6 +123,7 @@ static void contractEnvSetup(contract_env_t *env)
                                            env->splice_masters[wid],
                                            4,
                                            kContractBufSize,
+                                           MEDIUM_BUFFER_SIZE_RAM_HIGH,
                                            kContractBufSize);
         require(env->pools[wid] != NULL, "failed to create worker buffer pool");
 

@@ -89,8 +89,8 @@ int main(void)
     master_pool_t             *medium_master = masterpoolCreateWithCapacity(8);
     master_pool_t             *splice_master = masterpoolCreateWithCapacity(8);
     master_pool_t             *wio_master   = masterpoolCreateWithCapacity(8);
-    buffer_pool_t             *buffer_pool =
-        bufferpoolCreate(large_master, medium_master, small_master, splice_master, 8, 8192, 1024);
+    buffer_pool_t             *buffer_pool   = bufferpoolCreate(
+        large_master, medium_master, small_master, splice_master, 8, 8192, MEDIUM_BUFFER_SIZE_RAM_HIGH, 1024);
     threadsafe_generic_pool_t *wio_pool =
         threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(wio_master, sizeof(wio_t), 8);
     threadsafe_generic_pool_t *wio_pools[] = {wio_pool};

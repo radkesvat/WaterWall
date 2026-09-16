@@ -287,7 +287,7 @@ static void workerMessageDrainQueue(worker_t *worker)
             mutexUnlock(&worker->control_mutex);
             return;
         }
-        if (! wloopNormalDispatchAllowed(loop))
+        if (UNLIKELY(! wloopNormalDispatchAllowed(loop)))
         {
             queue->wakeup_pending = false;
             mutexUnlock(&worker->control_mutex);
@@ -313,7 +313,7 @@ static void workerMessageDrainQueue(worker_t *worker)
         {
             /* The drain root itself may have been admitted before closure, but
              * later records in its snapshot are independent callback roots. */
-            if (! wloopNormalDispatchAllowed(loop))
+            if (UNLIKELY(! wloopNormalDispatchAllowed(loop)))
             {
                 workerMessageCleanupLocalBatch(loop, batch, i, batch_count, kWorkerMessageCancelQuiesced);
                 break;
@@ -335,7 +335,7 @@ static void workerMessageDrainQueue(worker_t *worker)
             mutexUnlock(&worker->control_mutex);
             return;
         }
-        if (! wloopNormalDispatchAllowed(loop))
+        if (UNLIKELY(! wloopNormalDispatchAllowed(loop)))
         {
             queue->wakeup_pending = false;
             mutexUnlock(&worker->control_mutex);
@@ -351,7 +351,7 @@ static void workerMessageDrainQueue(worker_t *worker)
             return;
         }
 
-        if (! wloopNormalDispatchAllowed(loop))
+        if (UNLIKELY(! wloopNormalDispatchAllowed(loop)))
         {
             queue->wakeup_pending = false;
             mutexUnlock(&worker->control_mutex);
@@ -812,7 +812,7 @@ static void runTimedTask(wtimer_t *timer)
 
     workerTimedMessageDetachFromOwner(worker, loop, timed_msg, "deadline completion");
 
-    if (! wloopNormalDispatchAllowed(loop))
+    if (UNLIKELY(! wloopNormalDispatchAllowed(loop)))
     {
         weventSetUserData(timer, NULL);
         wtimerDelete(timer);

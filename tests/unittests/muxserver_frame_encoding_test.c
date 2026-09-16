@@ -957,10 +957,10 @@ static void     pooledFrameSink(tunnel_t *t, line_t *l, sbuf_t *buf)
 
 static void casePooledRetainedFrames(bool separate)
 {
-    twfSetCase("48 x 4097-byte frames retain pooled medium allocations with a 512 KiB pool");
-    g_pool_size = 512 * 1024;
+    twfSetCase("48 x 4097-byte frames retain pooled medium allocations with the large-buffer pool");
+    g_pool_size = LARGE_BUFFER_SIZE_RAM_HIGH;
     muxserver_fixture_t fixture;
-    fixtureSetup(&fixture, 512 * 1024);
+    fixtureSetup(&fixture, LARGE_BUFFER_SIZE_RAM_HIGH);
     muxserver_lstate_t *child = lineGetState(fixture.child_l, fixture.mux);
     child->paused             = true;
 
@@ -985,7 +985,7 @@ static void casePooledRetainedFrames(bool separate)
     }
     twfRequire(lineIsAlive(fixture.child_l) && child->l != NULL, "pooled queue closed a valid child");
     twfRequire(bufferqueueGetBufCount(&child->pending_child_data) == 48, "pooled queue lost frames");
-    twfRequire(child->pending_child_queue_charge < 48 * (MEDIUM_BUFFER_SIZE + 512),
+    twfRequire(child->pending_child_queue_charge < 48 * (MEDIUM_BUFFER_SIZE_RAM_HIGH + 512),
                "paused queue did not replace large receive allocations with pooled storage");
     twfRequire(pooled_frame_count == 0, "pooled queue crossed Pause");
     muxserverTunnelDownStreamResume(fixture.mux, fixture.child_l);
@@ -1010,7 +1010,7 @@ static void    directFrameSink(tunnel_t *t, line_t *l, sbuf_t *buf)
 static void caseUnpausedFrameKeepsReceiveAllocation(void)
 {
     twfSetCase("an unpaused child receives the whole frame without a retention copy");
-    g_pool_size = 512 * 1024;
+    g_pool_size = LARGE_BUFFER_SIZE_RAM_HIGH;
     muxserver_fixture_t fixture;
     fixtureSetup(&fixture, 1);
     fixture.next->fnPayloadU = directFrameSink;
@@ -1030,7 +1030,7 @@ static void caseUnpausedFrameKeepsReceiveAllocation(void)
 static void caseFragmentedPausedFrameKeepsCarrierRemainder(void)
 {
     twfSetCase("a paused fragmented frame moves directly to medium storage without merging its carrier tail");
-    g_pool_size = 512 * 1024;
+    g_pool_size = LARGE_BUFFER_SIZE_RAM_HIGH;
     muxserver_fixture_t fixture;
     fixtureSetup(&fixture, 256);
     muxserver_lstate_t *child  = lineGetState(fixture.child_l, fixture.mux);

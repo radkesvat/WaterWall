@@ -57,8 +57,14 @@ static void envSetup(test_env_t *env)
     env->small_master = masterpoolCreateWithCapacity(16);
     env->medium_master = masterpoolCreateWithCapacity(16);
     env->splice_master = masterpoolCreateWithCapacity(16);
-    env->buffer_pool =
-        bufferpoolCreate(env->large_master, env->medium_master, env->small_master, env->splice_master, 16, 8192, 4096);
+    env->buffer_pool   = bufferpoolCreate(env->large_master,
+                                        env->medium_master,
+                                        env->small_master,
+                                        env->splice_master,
+                                        16,
+                                        8192,
+                                        MEDIUM_BUFFER_SIZE_RAM_HIGH,
+                                        4096);
 }
 
 static void envTeardown(test_env_t *env)

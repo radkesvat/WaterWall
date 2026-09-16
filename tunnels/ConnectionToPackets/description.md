@@ -230,7 +230,7 @@ TCP applies real backpressure in both directions:
 
 The total pending-byte bound is `P + L`, where `P = max-pending-bytes` and `L`
 is the line pool's large payload capacity. This finite allowance covers input
-already delivered before Pause can take effect, including a 512 KiB delivery
+already delivered before Pause can take effect, including a 1 MiB delivery
 with the default 256 KiB budget. It does not raise the entry limit or change
 when Pause/Resume is sent. Admission is checked before queue insertion; excess
 input closes only that flow and is not passed into graceful drain.

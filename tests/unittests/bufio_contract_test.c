@@ -80,6 +80,7 @@ static pool_fixture_t poolFixtureCreate(uint32_t large_size, uint32_t small_size
                                     fixture.splice_master,
                                     kTestPoolWidth,
                                     large_size,
+                                    MEDIUM_BUFFER_SIZE_RAM_HIGH,
                                     small_size);
     require(fixture.pool != NULL, "failed to create BufferStream test pool");
     bufferpoolUpdateAllocationPaddings(fixture.pool, large_padding, large_padding, small_padding, small_padding);
@@ -215,10 +216,9 @@ static void testFlagsInitializationAndReuse(buffer_pool_t *pool)
     bufferpoolReuseBuffer(pool, buffer);
 
     buffer = bufferpoolGetSpliceBuffer(pool);
-    buffer->flags |= kSbufFlagSplicePiped;
     bufferpoolReuseBuffer(pool, buffer);
     buffer = bufferpoolGetSpliceBuffer(pool);
-    require(buffer->flags == kSbufFlagSplice, "pool reuse retained the previous splice location flags");
+    require(buffer->flags == kSbufFlagSplice, "pool checkout did not restore the splice flag");
     bufferpoolReuseBuffer(pool, buffer);
 }
 
@@ -836,7 +836,7 @@ static void runExactAllocationCase(pool_fixture_t *fixture, uint16_t use_left_pa
 
 static void testWholeExactReadDoesNotCompact(void)
 {
-    const uint32_t sizes[] = {32768, 512 * 1024};
+    const uint32_t sizes[] = {32768, LARGE_BUFFER_SIZE_RAM_HIGH};
     for (size_t geometry = 0; geometry < ARRAY_SIZE(sizes); ++geometry)
     {
         pool_fixture_t fixture = poolFixtureCreate(sizes[geometry], 4096, 64, 64);
@@ -1029,7 +1029,7 @@ static void testInvalidViewsAbort(buffer_pool_t *pool)
 
 static void testMoveExactBytesTo(void)
 {
-    pool_fixture_t  fixture       = poolFixtureCreate(512 * 1024, 4096, 64, 64);
+    pool_fixture_t  fixture       = poolFixtureCreate(LARGE_BUFFER_SIZE_RAM_HIGH, 4096, 64, 64);
     buffer_stream_t stream        = bufferstreamCreate(fixture.pool, 8);
     sbuf_t         *empty         = makePooledBuffer(fixture.pool, false, 0, 0, 0);
     sbuf_t         *first         = makePooledBuffer(fixture.pool, true, 5000, 5, 0x10);
@@ -1191,7 +1191,8 @@ int main(void)
     master_pool_t *small_master  = masterpoolCreateWithCapacity(16);
     master_pool_t *medium_master = masterpoolCreateWithCapacity(16);
     master_pool_t *splice_master = masterpoolCreateWithCapacity(16);
-    buffer_pool_t *pool = bufferpoolCreate(large_master, medium_master, small_master, splice_master, 8, 256, 64);
+    buffer_pool_t *pool          = bufferpoolCreate(
+        large_master, medium_master, small_master, splice_master, 8, 256, MEDIUM_BUFFER_SIZE_RAM_HIGH, 64);
     bufferpoolUpdateAllocationPaddings(pool, 64, 64, 64, 64);
 
     testFlagsInitializationAndReuse(pool);

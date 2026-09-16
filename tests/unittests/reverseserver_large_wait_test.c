@@ -85,7 +85,7 @@ static void runCase(uint32_t large, uint32_t length, bool local_first, bool avai
 }
 int main(void)
 {
-    const uint32_t sizes[] = {32768, 512 * 1024};
+    const uint32_t sizes[] = {32768, LARGE_BUFFER_SIZE_RAM_HIGH};
     for (unsigned i = 0; i < 2; ++i)
     {
         uint32_t limit = 65535 * (sizes[i] / 32768);
@@ -97,6 +97,6 @@ int main(void)
         }
         runCase(sizes[i], limit + 1, true, true);
     }
-    runCase(512 * 1024, 512 * 1024, true, false);
+    runCase(LARGE_BUFFER_SIZE_RAM_HIGH, LARGE_BUFFER_SIZE_RAM_HIGH, true, false);
     return 0;
 }

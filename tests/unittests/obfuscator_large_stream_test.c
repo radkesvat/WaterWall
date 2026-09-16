@@ -18,7 +18,7 @@ static void releaseRecord(sbuf_lifetime_t *base)
 }
 
 static unsigned  interruption;
-static uint32_t  pool_size = 512 * 1024;
+static uint32_t  pool_size = LARGE_BUFFER_SIZE_RAM_HIGH;
 static tunnel_t *decoder;
 static bool      decoder_receives_upstream;
 static void      ownerFinish(tunnel_t *t, line_t *l)
@@ -216,7 +216,7 @@ int main(void)
 {
     twfRequire(globalstateInitializeSecureRandom(), "secure random initialization failed");
     twfRequire(frandGlobalInit(), "random initialization failed");
-    const uint32_t lengths[] = {65534, 65535, 65536, 512 * 1024};
+    const uint32_t lengths[] = {65534, 65535, 65536, LARGE_BUFFER_SIZE_RAM_HIGH};
     for (unsigned direction = 0; direction < 2; ++direction)
         for (unsigned i = 0; i < 4; ++i)
         {
@@ -227,12 +227,12 @@ int main(void)
     {
         runCase(direction != 0, 128, 1);
         for (interruption = 1; interruption <= 4; ++interruption)
-            runCase(direction != 0, 512 * 1024, 0);
+            runCase(direction != 0, LARGE_BUFFER_SIZE_RAM_HIGH, 0);
         interruption = 0;
     }
     pool_size = 32768;
-    runCase(false, 512 * 1024, 65521);
-    runCase(true, 512 * 1024, 65521);
+    runCase(false, LARGE_BUFFER_SIZE_RAM_HIGH, 65521);
+    runCase(true, LARGE_BUFFER_SIZE_RAM_HIGH, 65521);
     frandThreadCleanup();
     frandGlobalCleanup();
     return 0;

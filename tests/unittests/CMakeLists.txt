@@ -78,7 +78,7 @@ if(TARGET ww)
     add_executable(wio_fd_test wio_fd_test.c)
     target_link_libraries(wio_fd_test PRIVATE ww)
     target_link_options(wio_fd_test PRIVATE "-Wl,--wrap=pipe2" "-Wl,--wrap=read" "-Wl,--wrap=send" "-Wl,--wrap=splice"
-        "-Wl,--wrap=memoryReAllocate")
+        "-Wl,--wrap=memoryReAllocate" "-Wl,--wrap=fcntl" "-Wl,--wrap=getHRTimeUs")
     add_dependencies(waterwall_unit_tests wio_fd_test)
     add_waterwall_unit_test(waterwall.wio_fd_unit wio_fd_test "unit;event;fd;pipe;lifetime")
 
@@ -1240,6 +1240,20 @@ if(TARGET ww)
       waterwall.os_helpers_bbr_unit
       os_helpers_bbr_test
       "unit;core;linux;bbr"
+    )
+
+    add_executable(os_helpers_pipe_limit_test
+      os_helpers_pipe_limit_test.c
+      ${CMAKE_SOURCE_DIR}/core/os_helpers.c
+    )
+    target_include_directories(os_helpers_pipe_limit_test PRIVATE ${CMAKE_SOURCE_DIR}/core)
+    target_link_libraries(os_helpers_pipe_limit_test PRIVATE ww)
+    target_link_options(os_helpers_pipe_limit_test PRIVATE "-Wl,--wrap=sysconf")
+    add_dependencies(waterwall_unit_tests os_helpers_pipe_limit_test)
+    add_waterwall_unit_test(
+      waterwall.os_helpers_pipe_limit_unit
+      os_helpers_pipe_limit_test
+      "unit;core;linux;pipe;startup"
     )
 
     add_executable(global_crypto_startup_failure_test

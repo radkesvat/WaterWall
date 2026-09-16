@@ -607,6 +607,7 @@ raw_device_t *rawdeviceCreate(const char *name, uint32_t mark, void *userdata)
                                                    GSTATE.masterpool_buffer_pools_splice,
                                                    RAM_PROFILE,
                                                    bufferpoolGetLargeBufferSize(worker_pool),
+                                                   bufferpoolGetMediumBufferSize(worker_pool),
                                                    bufferpoolGetSmallBufferSize(worker_pool));
     if (UNLIKELY(writer_bpool == NULL))
     {

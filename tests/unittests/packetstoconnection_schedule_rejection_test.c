@@ -299,8 +299,8 @@ static void caseCreditedDeliveryRefusalRollsBackCreditAndRetainsPbuf(void)
 
 static void casePendingBudgetAllowsOneReadOfHeadroom(void)
 {
-    twfSetCase("PTC admits a 512 KiB delivery and rejects bytes beyond bounded headroom");
-    g_pool_size = 512 * 1024;
+    twfSetCase("PTC admits a full large-buffer delivery and rejects bytes beyond bounded headroom");
+    g_pool_size = LARGE_BUFFER_SIZE_RAM_HIGH;
     ptc_fixture_t fixture;
     ptcFixtureSetup(&fixture);
     const uint32_t pcb_baseline = ptcTcpPcbUsed();

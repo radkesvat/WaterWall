@@ -79,7 +79,7 @@ WW_EXPORT sbuf_t *muxReadCompleteFrame(buffer_stream_t *stream, mux_frame_t *fra
  * Returns false for an incomplete frame, leaving frame unspecified. */
 WW_EXPORT bool muxPeekCompleteFrame(buffer_stream_t *stream, mux_frame_t *frame);
 
-/** Extract an already-peeked DATA frame for a paused child. Mux chooses small/medium
+/** Extract an already-peeked DATA frame for a paused child. Mux chooses small/medium/large
  * retained storage before consuming bytes, preserving a suitable whole chunk.
  * Returns the complete wire frame, including its header. */
 WW_EXPORT sbuf_t *muxReadFrameForQueue(buffer_stream_t *stream, const mux_frame_t *frame);

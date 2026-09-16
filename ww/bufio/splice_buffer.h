@@ -5,7 +5,9 @@
  * in a pool. Delivered payload is already in this allocation's pipe. */
 typedef struct splice_buffer_metadata_s
 {
-    int pipefd[2];
+    int      pipefd[2];
+    uint32_t pipe_capacity;        // Last known kernel capacity; zero means not yet known.
+    uint64_t capacity_retry_at_us; // Monotonic deadline after a failed query/growth; survives pooling.
 } splice_buffer_metadata_t;
 static_assert(sizeof(splice_buffer_metadata_t) <= SPLICE_BUFFER_STORAGE_SIZE,
               "splice metadata must fit control storage");
@@ -20,7 +22,13 @@ static inline void sbufSpliceSetMetadata(sbuf_t *buf, splice_buffer_metadata_t m
 {
     sbufByteCopy(buf->buf + buf->l_pad, &metadata, sizeof(metadata));
 }
-int  sbufSpliceInitPipe(sbuf_t *buf);
+/* Create the private pipe if needed. For empty buffers, try to grow its capacity
+ * to preferred_capacity (at most INT_MAX); zero skips capacity negotiation.
+ * Query/growth failure is nonfatal and retains the usable pipe. Undersized or
+ * unknown-capacity pairs retry on later empty initialization at most once per
+ * second per pair, including after pool reuse. Never shrinks a pipe or resizes
+ * a buffer with payload. Returns -1 only when creation fails or splice is unsupported. */
+int  sbufSpliceInitPipe(sbuf_t *buf, uint32_t preferred_capacity);
 void sbufSpliceClosePipe(sbuf_t *buf);
 /* Discard an exclusively owned splice payload before recycling. Drains the private
  * pipe, or closes it on error; clears length/cursor without freeing the wrapper.

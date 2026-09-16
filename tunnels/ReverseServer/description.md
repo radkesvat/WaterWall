@@ -166,4 +166,4 @@ Source-backed metadata:
 | `layer_group_next_node` | `kNodeLayer4` |
 | `required_padding_left` | `0` bytes |
 
-Handshake validation and available pairing precede the waiting check. Close occurs strictly above the limit: 65,535 bytes at 32 KiB and 1,048,560 bytes at 512 KiB.
+Handshake validation and available pairing precede the waiting check. Close occurs strictly above the limit: 65,535 bytes at 32 KiB and 2,097,120 bytes at 1 MiB.

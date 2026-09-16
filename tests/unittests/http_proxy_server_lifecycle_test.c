@@ -476,7 +476,7 @@ static void largeDeliveries(tunnel_chain_t *chain, bool delayed, bool close_reta
     automatic_response  = false;
     delay_establishment = delayed;
     pause_request       = ! delayed;
-    const size_t n      = 512 * 1024;
+    const size_t n      = LARGE_BUFFER_SIZE_RAM_HIGH;
     char        *text   = memoryAllocate(n + 6000);
     char         padding[5001];
     memorySet(padding, 'h', 5000);
@@ -531,7 +531,8 @@ static void runSuite(uint32_t large_size)
     master_pool_t *medium = masterpoolCreateWithCapacity(8);
     master_pool_t *splice = masterpoolCreateWithCapacity(8);
     master_pool_t *ios  = masterpoolCreateWithCapacity(8);
-    buffer_pool_t *pool   = bufferpoolCreate(large, medium, small, splice, 4, large_size, 4096);
+    buffer_pool_t *pool =
+        bufferpoolCreate(large, medium, small, splice, 4, large_size, MEDIUM_BUFFER_SIZE_RAM_HIGH, 4096);
     bufferpoolUpdateAllocationPaddings(pool, 64, 64, 64, 64);
     threadsafe_generic_pool_t *io_pool =
         threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(ios, sizeof(wio_t), 8);
@@ -587,7 +588,7 @@ static void runSuite(uint32_t large_size)
     const char *get      = "GET http://127.0.0.1:80/a HTTP/1.1\r\nHost: ignored.test\r\n\r\n";
     const char *fix_case = getenv("HPS_FIX_CASE");
     if (! fix_case || ! stringCompare(fix_case, "R1"))
-        if (large_size == 512 * 1024)
+        if (large_size == LARGE_BUFFER_SIZE_RAM_HIGH)
         {
             largeDeliveries(chain, false, false);
             largeDeliveries(chain, true, false);
@@ -799,6 +800,6 @@ static void runSuite(uint32_t large_size)
 int main(void)
 {
     runSuite(32768);
-    runSuite(512 * 1024);
+    runSuite(LARGE_BUFFER_SIZE_RAM_HIGH);
     return 0;
 }

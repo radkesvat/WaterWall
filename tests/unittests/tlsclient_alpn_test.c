@@ -86,6 +86,7 @@ static void workerEnvSetup(tlsclient_test_worker_env_t *env)
                                  env->splice_master,
                                  4,
                                  kTestLargeBufferSize,
+                                 MEDIUM_BUFFER_SIZE_RAM_HIGH,
                                  kTestSmallBufferSize);
     require(env->pool != NULL, "failed to create ClientHello test buffer pool");
     bufferpoolUpdateAllocationPaddings(

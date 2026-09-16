@@ -24,6 +24,7 @@ struct buffer_pool_s
     uint16_t large_buffer_left_padding;
 
     uint32_t medium_buffers_container_len;
+    uint32_t medium_buffers_size;
     uint16_t medium_buffer_left_padding;
 
     uint32_t small_buffers_container_len;
@@ -91,8 +92,7 @@ uint16_t bufferpoolGetLargeBufferPadding(buffer_pool_t *pool)
 
 uint32_t bufferpoolGetMediumBufferSize(buffer_pool_t *pool)
 {
-    discard pool;
-    return MEDIUM_BUFFER_SIZE;
+    return pool->medium_buffers_size;
 }
 
 uint16_t bufferpoolGetMediumBufferPadding(buffer_pool_t *pool)
@@ -136,7 +136,7 @@ static master_pool_item_t *createLargeBufHandle(void *userdata)
 static master_pool_item_t *createMediumBufHandle(void *userdata)
 {
     buffer_pool_t *bpool = userdata;
-    return sbufCreateWithPadding(MEDIUM_BUFFER_SIZE, bpool->medium_buffer_left_padding);
+    return sbufCreateWithPadding(bpool->medium_buffers_size, bpool->medium_buffer_left_padding);
 }
 
 /**
@@ -252,7 +252,7 @@ static void reChargeMediumBuffers(buffer_pool_t *pool)
         pool->medium_buffers[index] = requireExactMasterBuffer(pool,
                                                                pool->medium_buffers_mp,
                                                                pool->medium_buffers[index],
-                                                               MEDIUM_BUFFER_SIZE,
+                                                               pool->medium_buffers_size,
                                                                pool->medium_buffer_left_padding,
                                                                createMediumBufHandle);
     }
@@ -430,7 +430,7 @@ sbuf_t *bufferpoolGetLargeBuffer(buffer_pool_t *pool)
         --(pool->small_buffers_container_len);
         return pool->small_buffers[pool->small_buffers_container_len];
     }
-    if (pool->large_buffers_size == MEDIUM_BUFFER_SIZE &&
+    if (pool->large_buffers_size == pool->medium_buffers_size &&
         pool->large_buffer_left_padding == pool->medium_buffer_left_padding && pool->medium_buffers_container_len > 0)
     {
         return pool->medium_buffers[--pool->medium_buffers_container_len];
@@ -445,7 +445,9 @@ sbuf_t *bufferpoolGetMediumBuffer(buffer_pool_t *pool)
 {
 #if BYPASS_BUFFERPOOL == 1
     return masterpoolRequireCreatedItem(
-        pool->medium_buffers_mp, sbufCreateWithPadding(MEDIUM_BUFFER_SIZE, pool->medium_buffer_left_padding), pool);
+        pool->medium_buffers_mp,
+        sbufCreateWithPadding(pool->medium_buffers_size, pool->medium_buffer_left_padding),
+        pool);
 #endif
 
 #if BUFFER_POOL_DEBUG == 1
@@ -459,12 +461,12 @@ sbuf_t *bufferpoolGetMediumBuffer(buffer_pool_t *pool)
         --(pool->medium_buffers_container_len);
         return pool->medium_buffers[pool->medium_buffers_container_len];
     }
-    if (pool->large_buffers_size == MEDIUM_BUFFER_SIZE &&
+    if (pool->large_buffers_size == pool->medium_buffers_size &&
         pool->large_buffer_left_padding == pool->medium_buffer_left_padding && pool->large_buffers_container_len > 0)
     {
         return pool->large_buffers[--pool->large_buffers_container_len];
     }
-    if (pool->small_buffers_size == MEDIUM_BUFFER_SIZE &&
+    if (pool->small_buffers_size == pool->medium_buffers_size &&
         pool->small_buffer_left_padding == pool->medium_buffer_left_padding && pool->small_buffers_container_len > 0)
     {
         return pool->small_buffers[--pool->small_buffers_container_len];
@@ -498,7 +500,7 @@ sbuf_t *bufferpoolGetSmallBuffer(buffer_pool_t *pool)
         --(pool->large_buffers_container_len);
         return pool->large_buffers[pool->large_buffers_container_len];
     }
-    if (pool->small_buffers_size == MEDIUM_BUFFER_SIZE &&
+    if (pool->small_buffers_size == pool->medium_buffers_size &&
         pool->small_buffer_left_padding == pool->medium_buffer_left_padding && pool->medium_buffers_container_len > 0)
     {
         return pool->medium_buffers[--pool->medium_buffers_container_len];
@@ -536,13 +538,13 @@ sbuf_t *bufferpoolGetBestFit(buffer_pool_t *pool, uint32_t minimum_payload, uint
     const bool small_fits =
         minimum_payload <= pool->small_buffers_size && minimum_left_padding <= pool->small_buffer_left_padding;
     const bool medium_fits =
-        minimum_payload <= MEDIUM_BUFFER_SIZE && minimum_left_padding <= pool->medium_buffer_left_padding;
+        minimum_payload <= pool->medium_buffers_size && minimum_left_padding <= pool->medium_buffer_left_padding;
     const bool large_fits =
         minimum_payload <= pool->large_buffers_size && minimum_left_padding <= pool->large_buffer_left_padding;
-    if (small_fits && (! medium_fits || pool->small_buffers_size <= MEDIUM_BUFFER_SIZE) &&
+    if (small_fits && (! medium_fits || pool->small_buffers_size <= pool->medium_buffers_size) &&
         (! large_fits || pool->small_buffers_size <= pool->large_buffers_size))
         return bufferpoolGetSmallBuffer(pool);
-    if (medium_fits && (! large_fits || MEDIUM_BUFFER_SIZE <= pool->large_buffers_size))
+    if (medium_fits && (! large_fits || pool->medium_buffers_size <= pool->large_buffers_size))
         return bufferpoolGetMediumBuffer(pool);
     if (large_fits)
         return bufferpoolGetLargeBuffer(pool);
@@ -616,7 +618,7 @@ void bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *b)
         }
         pool->large_buffers[(pool->large_buffers_container_len)++] = b;
     }
-    else if (bufferMatchesGeometry(b, MEDIUM_BUFFER_SIZE, pool->medium_buffer_left_padding))
+    else if (bufferMatchesGeometry(b, pool->medium_buffers_size, pool->medium_buffer_left_padding))
     {
         if (UNLIKELY(pool->medium_buffers_container_len > pool->free_threshold))
             shrinkMediumBuffers(pool);
@@ -667,7 +669,7 @@ sbuf_t *sbufDuplicateByPool(buffer_pool_t *pool, sbuf_t *b)
     {
         bnew = bufferpoolGetLargeBuffer(pool);
     }
-    else if (sbufGetTotalCapacityNoPadding(b) == MEDIUM_BUFFER_SIZE)
+    else if (sbufGetTotalCapacityNoPadding(b) == pool->medium_buffers_size)
     {
         bnew = bufferpoolGetMediumBuffer(pool);
     }
@@ -787,17 +789,19 @@ void bufferpoolCachedTierCountsForTest(const buffer_pool_t *pool, uint32_t *larg
 
 buffer_pool_t *bufferpoolCreate(master_pool_t *mp_large, master_pool_t *mp_medium, master_pool_t *mp_small,
                                 master_pool_t *mp_splice, uint32_t bufcount, uint32_t large_buffer_size,
-                                uint32_t small_buffer_size)
+                                uint32_t medium_buffer_size, uint32_t small_buffer_size)
 {
     uint32_t capacity;
     uint32_t free_threshold;
     size_t   container_len;
     uint32_t rounded_large_buffer_size;
     uint32_t rounded_small_buffer_size;
+    uint32_t rounded_medium_buffer_size;
 
     if (mp_large == NULL || mp_medium == NULL || mp_small == NULL || mp_splice == NULL ||
         ! bufferpoolTryComputeGeometry(bufcount, &capacity, &free_threshold, &container_len) ||
         ! bufferpoolTryRoundBufferSize(large_buffer_size, &rounded_large_buffer_size) ||
+        ! bufferpoolTryRoundBufferSize(medium_buffer_size, &rounded_medium_buffer_size) ||
         ! bufferpoolTryRoundBufferSize(small_buffer_size, &rounded_small_buffer_size))
     {
         return NULL;
@@ -867,10 +871,11 @@ buffer_pool_t *bufferpoolCreate(master_pool_t *mp_large, master_pool_t *mp_mediu
     }
 
     *ptr_pool = (buffer_pool_t) {
-        .cap                = capacity,
-        .large_buffers_size = rounded_large_buffer_size,
-        .small_buffers_size = rounded_small_buffer_size,
-        .free_threshold     = free_threshold,
+        .cap                 = capacity,
+        .large_buffers_size  = rounded_large_buffer_size,
+        .medium_buffers_size = rounded_medium_buffer_size,
+        .small_buffers_size  = rounded_small_buffer_size,
+        .free_threshold      = free_threshold,
 
 #if BUFFER_POOL_DEBUG == 1
         .in_use = 0,

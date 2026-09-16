@@ -108,8 +108,14 @@ sbuf_t *muxReadFrameForQueue(buffer_stream_t *stream, const mux_frame_t *frame)
     buffer_pool_t *pool = stream->pool;
     const bool     small =
         frame->length <= bufferpoolGetSmallBufferSize(pool) && bufferpoolGetSmallBufferPadding(pool) >= kMuxFrameLength;
-    const uint32_t capacity = small ? bufferpoolGetSmallBufferSize(pool) : bufferpoolGetMediumBufferSize(pool);
-    const uint16_t padding  = small ? bufferpoolGetSmallBufferPadding(pool) : bufferpoolGetMediumBufferPadding(pool);
+    const bool medium = frame->length <= bufferpoolGetMediumBufferSize(pool) &&
+                        bufferpoolGetMediumBufferPadding(pool) >= kMuxFrameLength;
+    const uint32_t capacity = small    ? bufferpoolGetSmallBufferSize(pool)
+                              : medium ? bufferpoolGetMediumBufferSize(pool)
+                                       : bufferpoolGetLargeBufferSize(pool);
+    const uint16_t padding  = small    ? bufferpoolGetSmallBufferPadding(pool)
+                              : medium ? bufferpoolGetMediumBufferPadding(pool)
+                                       : bufferpoolGetLargeBufferPadding(pool);
     if (frame->length > capacity || padding < kMuxFrameLength)
         return bufferstreamReadExact(stream, total);
 
@@ -118,7 +124,9 @@ sbuf_t *muxReadFrameForQueue(buffer_stream_t *stream, const mux_frame_t *frame)
         (sbufGetLeftPadding(front) > padding || sbufGetTotalCapacity(front) <= (uint64_t) capacity + padding))
         return bufferstreamReadExact(stream, total);
 
-    sbuf_t *destination = small ? bufferpoolGetSmallBuffer(pool) : bufferpoolGetMediumBuffer(pool);
+    sbuf_t *destination = small    ? bufferpoolGetSmallBuffer(pool)
+                          : medium ? bufferpoolGetMediumBuffer(pool)
+                                   : bufferpoolGetLargeBuffer(pool);
     // Store the Mux header in our advertised prefix budget; removing it restores full pool headroom.
     sbufShiftLeft(destination, kMuxFrameLength);
     sbufSetLength(destination, 0);
