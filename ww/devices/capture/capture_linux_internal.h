@@ -53,7 +53,10 @@ typedef enum capturedevice_command_status_e
 // real NFQUEUE socket or requiring root.
 capturedevice_command_status_t capturedeviceRunIptablesQueueRule(const char *operation, const char *cidr,
                                                                  uint32_t queue_number, const char *rule_comment);
+capturedevice_command_status_t capturedeviceRunIptablesNotrackRule(const char *operation, const char *cidr,
+                                                                   const char *rule_comment);
 capturedevice_command_status_t capturedeviceReadIptablesInputRules(char **input_rules);
+capturedevice_command_status_t capturedeviceReadIptablesNotrackRules(char **notrack_rules);
 void                           capturedeviceApplySysctls(bool skip_sysctl);
 
 // Select the first queue at or after `start` (with uint16_t wraparound) that is

@@ -21,6 +21,12 @@ typedef enum capture_rule_state_e
     kCaptureRuleInstalled,
     kCaptureRuleOutcomeUnknown
 } capture_rule_state_t;
+
+typedef struct capture_range_rule_states_s
+{
+    capture_rule_state_t queue;
+    capture_rule_state_t notrack;
+} capture_range_rule_states_t;
 #endif
 
 typedef struct capture_device_s
@@ -37,10 +43,11 @@ typedef struct capture_device_s
     uint32_t queue_number;
     char   **capture_cidrs;
     uint32_t capture_range_count;
-    // Serialized Linux rule/resource state, independent of `up`. Each CIDR rule
-    // is tracked explicitly because a timed-out iptables mutation may have
+    // Serialized Linux rule/resource state, independent of `up`. Each CIDR's
+    // INPUT queue and raw PREROUTING NOTRACK rules are tracked independently
+    // because a timed-out iptables mutation may have
     // committed before its command was terminated.
-    capture_rule_state_t *rule_states;
+    capture_range_rule_states_t *rule_states;
     uint64_t              rule_token;
     // Cleared when a terminal lifecycle failure closes the NFQUEUE socket.
     // Such an object may retry rule cleanup, but must never bind or start again.

@@ -35,7 +35,7 @@ enum
     // numeric xtables lock wait only bounds lock acquisition inside iptables; the
     // parent-side command deadline is authoritative and also covers a hung
     // executable or wrapper. Mutations and sysctls should produce little output,
-    // so 64 KiB bounds a broken tool. INPUT inspection legitimately scales with
+    // so 64 KiB bounds a broken tool. Rule inspection legitimately scales with
     // firewall size and therefore gets the same 1 MiB cap used by socket-manager
     // iptables inspection.
     kCaptureIptablesLockWaitSeconds  = 5,
@@ -450,26 +450,53 @@ capturedevice_command_status_t capturedeviceRunIptablesQueueRule(const char *ope
     return capturedeviceRunCommand("iptables", argv);
 }
 
-capturedevice_command_status_t capturedeviceReadIptablesInputRules(char **input_rules)
+capturedevice_command_status_t capturedeviceRunIptablesNotrackRule(const char *operation, const char *cidr,
+                                                                   const char *rule_comment)
 {
     char lock_wait_arg[16];
     stringNPrintf(lock_wait_arg, sizeof(lock_wait_arg), "%d", kCaptureIptablesLockWaitSeconds);
 
-    const char *const                    argv[] = {"iptables", "-w", lock_wait_arg, "-S", "INPUT", NULL};
-    const capturedevice_command_status_t status =
-        capturedeviceRunCommandCapture("iptables", argv, kCaptureInspectionMaxOutputBytes, input_rules);
+    // INPUT captures local delivery. Do not exempt transit traffic from
+    // conntrack merely because it shares a captured source range. Keep the
+    // ordinary raw priority: fragment reassembly still precedes this rule.
+    const char *const argv[] = {"iptables",   "-w",        lock_wait_arg, "-t",        "raw",        operation,
+                                "PREROUTING", "-s",        cidr,          "-m",        "addrtype",   "--dst-type",
+                                "LOCAL",      "-m",        "comment",     "--comment", rule_comment, "-j",
+                                "CT",         "--notrack", NULL};
+    return capturedeviceRunCommand("iptables", argv);
+}
 
-    // `iptables -S INPUT` always prints at least the chain policy line, so an
+static capturedevice_command_status_t capturedeviceReadIptablesRules(bool notrack, char **rules)
+{
+    char lock_wait_arg[16];
+    stringNPrintf(lock_wait_arg, sizeof(lock_wait_arg), "%d", kCaptureIptablesLockWaitSeconds);
+
+    const char *const input_argv[]   = {"iptables", "-w", lock_wait_arg, "-S", "INPUT", NULL};
+    const char *const notrack_argv[] = {"iptables", "-w", lock_wait_arg, "-t", "raw", "-S", "PREROUTING", NULL};
+    const capturedevice_command_status_t status = capturedeviceRunCommandCapture(
+        "iptables", notrack ? notrack_argv : input_argv, kCaptureInspectionMaxOutputBytes, rules);
+
+    // Listing a built-in chain always prints at least the policy line, so an
     // empty snapshot after a clean exit means the output was lost. Accepting it
-    // would make every NFQUEUE number look unused.
-    if (status == kCapturedeviceCommandOk && (*input_rules == NULL || **input_rules == '\0'))
+    // would hide owned rules or make every NFQUEUE number look unused.
+    if (status == kCapturedeviceCommandOk && (*rules == NULL || **rules == '\0'))
     {
-        memoryFree(*input_rules);
-        *input_rules = NULL;
+        memoryFree(*rules);
+        *rules = NULL;
         return kCapturedeviceCommandFailed;
     }
 
     return status;
+}
+
+capturedevice_command_status_t capturedeviceReadIptablesInputRules(char **input_rules)
+{
+    return capturedeviceReadIptablesRules(false, input_rules);
+}
+
+capturedevice_command_status_t capturedeviceReadIptablesNotrackRules(char **notrack_rules)
+{
+    return capturedeviceReadIptablesRules(true, notrack_rules);
 }
 
 static const char *capturedeviceCommandStatusName(capturedevice_command_status_t status)
@@ -602,22 +629,26 @@ static bool capturedeviceChooseQueueNumber(uint16_t *selected)
 
 enum
 {
-    kCaptureRuleCommentSize = 40
+    kCaptureRuleCommentSize = 48
 };
 
-static void capturedeviceFormatRuleComment(const capture_device_t *cdev, uint32_t index, char *comment,
+static void capturedeviceFormatRuleComment(const capture_device_t *cdev, uint32_t index, bool notrack, char *comment,
                                            size_t comment_size)
 {
-    stringNPrintf(
-        comment, comment_size, "WWCAP_%016llX_%08X", (unsigned long long) cdev->rule_token, (unsigned int) index);
+    stringNPrintf(comment,
+                  comment_size,
+                  "%s_%016llX_%08X",
+                  notrack ? "WWCAP_NOTRACK" : "WWCAP",
+                  (unsigned long long) cdev->rule_token,
+                  (unsigned int) index);
 }
 
-static uint32_t capturedevicePendingRuleCount(const capture_device_t *cdev)
+static uint32_t capturedevicePendingRangeCount(const capture_device_t *cdev)
 {
     uint32_t pending = 0;
     for (uint32_t i = 0; i < cdev->capture_range_count; ++i)
     {
-        if (cdev->rule_states[i] != kCaptureRuleAbsent)
+        if (cdev->rule_states[i].queue != kCaptureRuleAbsent || cdev->rule_states[i].notrack != kCaptureRuleAbsent)
         {
             ++pending;
         }
@@ -625,46 +656,53 @@ static uint32_t capturedevicePendingRuleCount(const capture_device_t *cdev)
     return pending;
 }
 
-static bool capturedeviceReconcileUnknownRules(capture_device_t *cdev)
+static capture_rule_state_t *capturedeviceRuleState(capture_device_t *cdev, uint32_t index, bool notrack)
+{
+    return notrack ? &cdev->rule_states[index].notrack : &cdev->rule_states[index].queue;
+}
+
+static bool capturedeviceReconcileUnknownRules(capture_device_t *cdev, bool notrack)
 {
     bool has_unknown = false;
     for (uint32_t i = 0; i < cdev->capture_range_count; ++i)
     {
-        has_unknown = has_unknown || cdev->rule_states[i] == kCaptureRuleOutcomeUnknown;
+        has_unknown = has_unknown || *capturedeviceRuleState(cdev, i, notrack) == kCaptureRuleOutcomeUnknown;
     }
     if (! has_unknown)
     {
         return true;
     }
 
-    char                          *input_rules = NULL;
-    capturedevice_command_status_t status      = capturedeviceReadIptablesInputRules(&input_rules);
+    char                          *rules  = NULL;
+    capturedevice_command_status_t status = capturedeviceReadIptablesRules(notrack, &rules);
     if (status != kCapturedeviceCommandOk)
     {
-        LOGE("CaptureDevice: could not reconcile outcome-unknown NFQUEUE rules (%s)",
+        LOGE("CaptureDevice: could not reconcile outcome-unknown %s rules (%s)",
+             notrack ? "NOTRACK" : "NFQUEUE",
              capturedeviceCommandStatusName(status));
         return false;
     }
 
     for (uint32_t i = 0; i < cdev->capture_range_count; ++i)
     {
-        if (cdev->rule_states[i] != kCaptureRuleOutcomeUnknown)
+        capture_rule_state_t *state = capturedeviceRuleState(cdev, i, notrack);
+        if (*state != kCaptureRuleOutcomeUnknown)
         {
             continue;
         }
 
         char comment[kCaptureRuleCommentSize];
-        capturedeviceFormatRuleComment(cdev, i, comment, sizeof(comment));
-        cdev->rule_states[i] = strstr(input_rules, comment) != NULL ? kCaptureRuleInstalled : kCaptureRuleAbsent;
+        capturedeviceFormatRuleComment(cdev, i, notrack, comment, sizeof(comment));
+        *state = strstr(rules, comment) != NULL ? kCaptureRuleInstalled : kCaptureRuleAbsent;
     }
 
-    memoryFree(input_rules);
+    memoryFree(rules);
     return true;
 }
 
-static bool capturedeviceRemoveInstalledRules(capture_device_t *cdev)
+static bool capturedeviceRemoveRuleKind(capture_device_t *cdev, bool notrack)
 {
-    if (! capturedeviceReconcileUnknownRules(cdev))
+    if (! capturedeviceReconcileUnknownRules(cdev, notrack))
     {
         return false;
     }
@@ -672,35 +710,47 @@ static bool capturedeviceRemoveInstalledRules(capture_device_t *cdev)
     for (uint32_t i = cdev->capture_range_count; i > 0; --i)
     {
         const uint32_t index = i - 1;
-        if (cdev->rule_states[index] == kCaptureRuleAbsent)
+        capture_rule_state_t *state = capturedeviceRuleState(cdev, index, notrack);
+        if (*state == kCaptureRuleAbsent)
         {
             continue;
         }
 
-        assert(cdev->rule_states[index] == kCaptureRuleInstalled);
+        assert(*state == kCaptureRuleInstalled);
         char comment[kCaptureRuleCommentSize];
-        capturedeviceFormatRuleComment(cdev, index, comment, sizeof(comment));
+        capturedeviceFormatRuleComment(cdev, index, notrack, comment, sizeof(comment));
         const capturedevice_command_status_t status =
-            capturedeviceRunIptablesQueueRule("-D", cdev->capture_cidrs[index], cdev->queue_number, comment);
+            notrack ? capturedeviceRunIptablesNotrackRule("-D", cdev->capture_cidrs[index], comment)
+                    : capturedeviceRunIptablesQueueRule("-D", cdev->capture_cidrs[index], cdev->queue_number, comment);
         if (status != kCapturedeviceCommandOk)
         {
             if (capturedeviceCommandOutcomeMayBeUnknown(status))
             {
-                cdev->rule_states[index] = kCaptureRuleOutcomeUnknown;
+                *state = kCaptureRuleOutcomeUnknown;
             }
 
-            LOGE("CaptureDevice: failed to remove iptables NFQUEUE rule for %s (%s); %u rules remain pending or "
+            LOGE("CaptureDevice: failed to remove iptables %s rule for %s (%s); %u capture ranges remain pending or "
                  "outcome-unknown",
+                 notrack ? "NOTRACK" : "NFQUEUE",
                  cdev->capture_cidrs[index],
                  capturedeviceCommandStatusName(status),
-                 capturedevicePendingRuleCount(cdev));
+                 capturedevicePendingRangeCount(cdev));
             return false;
         }
 
-        cdev->rule_states[index] = kCaptureRuleAbsent;
+        *state = kCaptureRuleAbsent;
     }
 
     return true;
+}
+
+static bool capturedeviceRemoveInstalledRules(capture_device_t *cdev)
+{
+    // Restore tracking first. Still retire the queue rules if NOTRACK cleanup
+    // fails; each kind retains its own state for the next bounded cleanup pass.
+    const bool notrack_ok = capturedeviceRemoveRuleKind(cdev, true);
+    const bool queue_ok   = capturedeviceRemoveRuleKind(cdev, false);
+    return notrack_ok && queue_ok;
 }
 
 static void capturedeviceDisableQueue(capture_device_t *cdev, const char *reason)
@@ -2024,6 +2074,48 @@ static bool capturedeviceActivate(capture_device_t *cdev)
     return can_activate;
 }
 
+static bool capturedeviceInstallRuleKind(capture_device_t *cdev, bool notrack)
+{
+    for (uint32_t i = 0; i < cdev->capture_range_count; ++i)
+    {
+        if (! capturedeviceReaderOperational(cdev))
+        {
+            LOGE("CaptureDevice: reader failed before %s rule %u could be installed",
+                 notrack ? "NOTRACK" : "NFQUEUE",
+                 i);
+            return false;
+        }
+
+        capture_rule_state_t *state = capturedeviceRuleState(cdev, i, notrack);
+        assert(*state == kCaptureRuleAbsent);
+        char comment[kCaptureRuleCommentSize];
+        capturedeviceFormatRuleComment(cdev, i, notrack, comment, sizeof(comment));
+        const capturedevice_command_status_t status =
+            notrack ? capturedeviceRunIptablesNotrackRule("-I", cdev->capture_cidrs[i], comment)
+                    : capturedeviceRunIptablesQueueRule("-I", cdev->capture_cidrs[i], cdev->queue_number, comment);
+        if (status != kCapturedeviceCommandOk)
+        {
+            if (capturedeviceCommandOutcomeMayBeUnknown(status))
+            {
+                *state = kCaptureRuleOutcomeUnknown;
+            }
+            LOGE("CaptureDevice: failed to install iptables %s rule for %s (%s)",
+                 notrack ? "NOTRACK" : "NFQUEUE",
+                 cdev->capture_cidrs[i],
+                 capturedeviceCommandStatusName(status));
+            return false;
+        }
+
+        *state = kCaptureRuleInstalled;
+        if (! capturedeviceReaderOperational(cdev))
+        {
+            LOGE("CaptureDevice: reader failed after %s rule %u was installed", notrack ? "NOTRACK" : "NFQUEUE", i);
+            return false;
+        }
+    }
+    return true;
+}
+
 static void capturedeviceRollbackStartup(capture_device_t *cdev)
 {
     captureLifecycleTransitionToStopping(&cdev->lifecycle);
@@ -2031,10 +2123,10 @@ static void capturedeviceRollbackStartup(capture_device_t *cdev)
     const bool cleanup_complete = capturedeviceRemoveInstalledRules(cdev);
     if (! cleanup_complete)
     {
-        LOGE("CaptureDevice: startup rollback left %u NFQUEUE rules pending or unknown",
-             capturedevicePendingRuleCount(cdev));
+        LOGE("CaptureDevice: startup rollback left rules pending or unknown for %u capture ranges",
+             capturedevicePendingRangeCount(cdev));
     }
-    if (capturedevicePendingRuleCount(cdev) != 0)
+    if (capturedevicePendingRangeCount(cdev) != 0)
     {
         // Request closure before stopping. The inactive reader keeps accepting
         // packets until it exits, then its wrapper closes the queue without any
@@ -2062,14 +2154,14 @@ bool caputredeviceBringUp(capture_device_t *cdev)
     // Pending rules while no reader is running must never keep targeting a bound
     // queue. Close first, retry cleanup, and refuse restart even if that retry
     // succeeds because the NFQUEUE socket cannot be safely reconstructed here.
-    if (capturedevicePendingRuleCount(cdev) != 0)
+    if (capturedevicePendingRangeCount(cdev) != 0)
     {
         capturedeviceDisableQueue(cdev, "pending cleanup at bring-up");
         if (! capturedeviceRemoveInstalledRules(cdev))
         {
-            LOGE("CaptureDevice: refusing to bring up %s while %u NFQUEUE rules remain pending or unknown",
+            LOGE("CaptureDevice: refusing to bring up %s while rules for %u capture ranges remain pending or unknown",
                  cdev->name,
-                 capturedevicePendingRuleCount(cdev));
+                 capturedevicePendingRangeCount(cdev));
             return false;
         }
     }
@@ -2109,50 +2201,16 @@ bool caputredeviceBringUp(capture_device_t *cdev)
         return false;
     }
 
-    bool insertion_failed = false;
-    for (uint32_t i = 0; i < cdev->capture_range_count; ++i)
-    {
-        if (! capturedeviceReaderOperational(cdev))
-        {
-            LOGE("CaptureDevice: reader failed before NFQUEUE rule %u could be installed", i);
-            insertion_failed = true;
-            break;
-        }
-
-        assert(cdev->rule_states[i] == kCaptureRuleAbsent);
-        char comment[kCaptureRuleCommentSize];
-        capturedeviceFormatRuleComment(cdev, i, comment, sizeof(comment));
-        const capturedevice_command_status_t status =
-            capturedeviceRunIptablesQueueRule("-I", cdev->capture_cidrs[i], cdev->queue_number, comment);
-        if (status != kCapturedeviceCommandOk)
-        {
-            if (capturedeviceCommandOutcomeMayBeUnknown(status))
-            {
-                cdev->rule_states[i] = kCaptureRuleOutcomeUnknown;
-            }
-            LOGE("CaptureDevice: failed to install iptables NFQUEUE rule for %s (%s)",
-                 cdev->capture_cidrs[i],
-                 capturedeviceCommandStatusName(status));
-            insertion_failed = true;
-            break;
-        }
-
-        cdev->rule_states[i] = kCaptureRuleInstalled;
-        if (! capturedeviceReaderOperational(cdev))
-        {
-            LOGE("CaptureDevice: reader failed after NFQUEUE rule %u was installed", i);
-            insertion_failed = true;
-            break;
-        }
-    }
-
-    if (insertion_failed || ! capturedeviceActivate(cdev))
+    // Exempt incoming traffic only after its INPUT capture rules and reader
+    // exist. Any partial failure rolls back both independently tracked kinds.
+    if (! capturedeviceInstallRuleKind(cdev, false) || ! capturedeviceInstallRuleKind(cdev, true) ||
+        ! capturedeviceActivate(cdev))
     {
         capturedeviceRollbackStartup(cdev);
         return false;
     }
 
-    assert(capturedevicePendingRuleCount(cdev) == cdev->capture_range_count);
+    assert(capturedevicePendingRangeCount(cdev) == cdev->capture_range_count);
     LOGI("CaptureDevice: device %s is now up", cdev->name);
     return true;
 }
@@ -2178,7 +2236,7 @@ bool caputredeviceBringDown(capture_device_t *cdev)
     // Keep the reader consuming and accepting while iptables cleanup may block.
     bool result = capturedeviceRemoveInstalledRules(cdev);
 
-    if (capturedevicePendingRuleCount(cdev) != 0)
+    if (capturedevicePendingRangeCount(cdev) != 0)
     {
         // Request closure before stopping. The inactive reader keeps accepting
         // packets until its routine returns, then its wrapper closes the queue.
@@ -2380,14 +2438,14 @@ capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_
     uint64_t rule_token = fastRand64();
 
     size_t rule_states_size;
-    if (! memoryTryComputeArraySize(capture_range_count, sizeof(capture_rule_state_t), &rule_states_size))
+    if (! memoryTryComputeArraySize(capture_range_count, sizeof(capture_range_rule_states_t), &rule_states_size))
     {
         bufferpoolDestroy(reader_bpool);
         close(socket_netfilter);
         capturedeviceFreeCidrs(capture_cidrs, capture_range_count);
         return NULL;
     }
-    capture_rule_state_t *rule_states = memoryAllocateZero(rule_states_size);
+    capture_range_rule_states_t *rule_states = memoryAllocateZero(rule_states_size);
     capture_device_t     *cdev        = memoryAllocate(sizeof(capture_device_t));
     if (UNLIKELY(rule_states == NULL || cdev == NULL))
     {
@@ -2529,21 +2587,21 @@ void capturedeviceDestroy(capture_device_t *cdev)
         abortProgramNow(1);
     }
 
-    if (capturedevicePendingRuleCount(cdev) != 0)
+    if (capturedevicePendingRangeCount(cdev) != 0)
     {
         // A down device has no reader. Close before the final cleanup attempt so
-        // any still-installed rule is fail-open throughout that bounded retry.
+        // any still-installed NFQUEUE rule is fail-open throughout that bounded retry.
         capturedeviceDisableQueue(cdev, "pending cleanup during destruction");
         discard capturedeviceRemoveInstalledRules(cdev);
     }
-    const uint32_t pending_rule_count = capturedevicePendingRuleCount(cdev);
-    if (pending_rule_count != 0)
+    const uint32_t pending_range_count = capturedevicePendingRangeCount(cdev);
+    if (pending_range_count != 0)
     {
-        LOGE("CaptureDevice: closing queue %u with %u NFQUEUE rules still pending or outcome-unknown; "
-             "--queue-bypass prevents an absent-listener traffic drop, and future capture devices will avoid "
-             "queue numbers still referenced by INPUT rules",
+        LOGE("CaptureDevice: closing queue %u with rules for %u capture ranges still pending or outcome-unknown; "
+             "--queue-bypass covers remaining NFQUEUE rules only. Remaining WWCAP_NOTRACK rules must be removed "
+             "from raw PREROUTING to restore tracking",
              cdev->queue_number,
-             pending_rule_count);
+             pending_range_count);
     }
 
     pthread_mutex_lock(&cdev->reader_state_mutex);

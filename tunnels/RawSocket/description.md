@@ -147,7 +147,7 @@ When a packet is captured:
 - fragmented packets are never given a transport checksum calculated over one fragment. Linux passes their bytes
   unchanged to the existing fragment-affinity validation, which may reject them
 - only IPv4 packets are currently forwarded by this path
-- matching packets are intercepted and dropped from the host kernel stack (using drop-and-dispatch verdicts or packet diversion), so the host OS kernel does not process them and only WaterWall receives and has access to them
+- matching packets are intercepted and dropped from the host kernel stack (using drop-and-dispatch verdicts or packet diversion), preventing normal local transport delivery while WaterWall processes its captured copy
 - the packet is forwarded through the chosen adjacent side using the worker packet line
 
 Fragment affinity follows the captured packet buffer through forwarding, delay, one-to-one copies, duplication, worker
@@ -174,7 +174,7 @@ Both upstream and downstream payload handlers write to the same raw output devic
 
 ### Capture filter behavior
 
-The capture device is configured from the ranges supplied through either `capture-ips` or `capture-ip`. Captured packets matching the configured source IP filter are dropped from the host kernel networking stack: the host operating system kernel does not process them, and only WaterWall receives and has access to them.
+The capture device is configured from the ranges supplied through either `capture-ips` or `capture-ip`. Captured packets matching the configured source IP filter are dropped from the host kernel networking stack: normal local transport delivery stops while capture is active, and WaterWall processes its captured copy.
 
 Current implementation behavior:
 
@@ -184,6 +184,30 @@ Current implementation behavior:
 
 By default the Linux capture backend also applies best-effort `sysctl` tuning before creating NFQUEUE resources. `"skip-sysctl": true` suppresses only that tuning batch. The netlink operations and iptables commands needed to configure NFQUEUE remain enabled.
 
+Linux capture automatically installs a matching `CT --notrack` rule in `raw
+PREROUTING` for each capture source range. The exemption also requires
+`--dst-type LOCAL`: it covers packets addressed to a local unicast address,
+without exempting ordinary transit traffic, broadcasts, or multicast. The INPUT
+capture rule still uses its existing source-only match. Raw-table matching is
+before DNAT, so exempted traffic cannot rely on this host's conntrack-based NAT
+or stateful firewall handling. No OUTPUT exemption is installed.
+
+The rules use normal raw-table priority, leaving fragment reassembly and the
+1,500-byte capture limit unchanged. They do not change interface MTU or provide
+PMTU discovery; necessary ICMP errors still need to reach the responsible stack.
+`skip-sysctl` does not disable NOTRACK setup.
+
+All INPUT queue rules are installed before the NOTRACK rules, with the reader
+already ready. Startup fails and rolls back both kinds if either installation
+fails. Cleanup attempts NOTRACK removal before NFQUEUE removal and tracks failed
+or outcome-unknown commands independently in their respective tables. A NOTRACK
+cleanup failure does not prevent an attempt to remove the queue rules. Reader
+failure requests orderly shutdown, whose lifecycle owner performs rule cleanup.
+Removing NOTRACK restores tracking for subsequent packets; already-untracked
+packets are not retroactively tracked. `--queue-bypass` affects only NFQUEUE:
+abrupt process death or failed cleanup can leave `WWCAP_NOTRACK_...` rules that
+an administrator must remove from `raw PREROUTING` to restore tracking.
+
 On Linux, the NFQUEUE rules use `--queue-bypass`. If WaterWall is not listening
 on the queue, matching packets continue through the host firewall instead of
 being dropped by an absent queue. This is a fail-open availability policy:
@@ -192,7 +216,7 @@ make queue overflow fail-open while WaterWall remains bound to the queue.
 WaterWall avoids queue numbers already referenced by existing INPUT rules. A
 terminal capture startup or rule-cleanup failure closes the queue promptly and
 makes that capture-device object non-restartable, activating `--queue-bypass`
-for any rule that could not be removed. The queue reader must report ready
+for any NFQUEUE rule that could not be removed. The queue reader must report ready
 before the first rule is installed and remains running throughout rule
 insertion, rollback, and bring-down cleanup. Until every rule is installed and
 the raw output device is ready, packets receive `NF_ACCEPT` and are not

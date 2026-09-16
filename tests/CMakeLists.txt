@@ -786,6 +786,21 @@ add_waterwall_privileged_probe_integration_test(waterwall.socket_manager_udp_wil
 add_waterwall_privileged_probe_integration_test(waterwall.socket_manager_tcp_range_socket_wildcard_specific_tun socket_manager_tcp_range_socket_wildcard_specific_tun 15)
 add_waterwall_privileged_probe_integration_test(waterwall.socket_manager_udp_range_socket_wildcard_specific_tun socket_manager_udp_range_socket_wildcard_specific_tun 15)
 add_waterwall_iptables_recovery_integration_test(waterwall.socket_manager_iptables_crash_recovery)
+
+if(LINUX AND WATERWALL_ENABLE_PRIVILEGED_INTEGRATION_TESTS)
+  # This test mutates firewall rules, so always isolate it even when ordinary
+  # integration tests have explicitly selected host-serial mode.
+  add_test(
+    NAME waterwall.capture_linux_notrack
+    COMMAND "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/run_in_network_namespace.sh"
+      "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/capture_linux_notrack_integration.py"
+      "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>"
+  )
+  set_tests_properties(waterwall.capture_linux_notrack PROPERTIES
+    TIMEOUT 60
+    LABELS "integration;linux;privileged;capture;nfqueue;network-isolated"
+  )
+endif()
 add_waterwall_integration_test(waterwall.ping_new_ip_icmp_roundtrip ping_new_ip_icmp_roundtrip)
 add_waterwall_expected_failure_integration_test(
   waterwall.ping_legacy_settings_rejected

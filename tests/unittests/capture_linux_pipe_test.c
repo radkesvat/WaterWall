@@ -77,12 +77,14 @@ typedef struct command_step_s
     const char       *operation;
     const char       *cidr;
     command_outcome_t outcome;
+    bool              notrack;
 } command_step_t;
 
 typedef struct recorded_command_s
 {
     char operation[kMaxCommandText];
     char cidr[kMaxCommandText];
+    bool notrack;
 } recorded_command_t;
 
 static command_step_t     command_steps[kMaxCommandSteps];
@@ -94,6 +96,8 @@ static size_t             slow_delete_sleep_us     = 0;
 static bool               fail_next_capture_thread = false;
 static bool               fake_rule_present[kTestCaptureRangeCount];
 static char               fake_rule_comments[kTestCaptureRangeCount][kMaxCommandText];
+static bool               fake_notrack_present[kTestCaptureRangeCount];
+static char               fake_notrack_comments[kTestCaptureRangeCount][kMaxCommandText];
 static capture_device_t  *expect_running_during_insert = NULL;
 static capture_device_t  *expect_running_during_delete = NULL;
 static capture_device_t  *observe_capture_thread       = NULL;
@@ -181,12 +185,20 @@ static void commandScriptReset(void)
     injected_verdict        = UINT32_MAX;
     memset(fake_rule_present, 0, sizeof(fake_rule_present));
     memset(fake_rule_comments, 0, sizeof(fake_rule_comments));
+    memset(fake_notrack_present, 0, sizeof(fake_notrack_present));
+    memset(fake_notrack_comments, 0, sizeof(fake_notrack_comments));
 }
 
 static void commandScriptAppend(const char *operation, const char *cidr, command_outcome_t outcome)
 {
     require(command_step_count < kMaxCommandSteps, "too many scripted command steps");
     command_steps[command_step_count++] = (command_step_t) {.operation = operation, .cidr = cidr, .outcome = outcome};
+}
+
+static void commandScriptAppendNotrack(const char *operation, const char *cidr, command_outcome_t outcome)
+{
+    commandScriptAppend(operation, cidr, outcome);
+    command_steps[command_step_count - 1].notrack = true;
 }
 
 static void requireCommandScriptConsumed(const char *message)
@@ -200,9 +212,10 @@ static void requireCommandAt(size_t index, const char *operation, const char *ci
     require(index < recorded_command_count, message);
     require(strcmp(recorded_commands[index].operation, operation) == 0, message);
     require(strcmp(recorded_commands[index].cidr, cidr) == 0, message);
+    require(! recorded_commands[index].notrack, message);
 }
 
-static void scriptSuccessfulInsertions(void)
+static void scriptQueueInsertions(void)
 {
     for (uint32_t i = 0; i < kTestCaptureRangeCount; ++i)
     {
@@ -210,12 +223,35 @@ static void scriptSuccessfulInsertions(void)
     }
 }
 
-static void scriptSuccessfulDeletions(void)
+static void scriptSuccessfulInsertions(void)
+{
+    scriptQueueInsertions();
+    for (uint32_t i = 0; i < kTestCaptureRangeCount; ++i)
+    {
+        commandScriptAppendNotrack("-I", test_cidrs[i], kCommandSuccess);
+    }
+}
+
+static void scriptNotrackDeletions(void)
+{
+    for (uint32_t i = kTestCaptureRangeCount; i > 0; --i)
+    {
+        commandScriptAppendNotrack("-D", test_cidrs[i - 1], kCommandSuccess);
+    }
+}
+
+static void scriptQueueDeletions(void)
 {
     for (uint32_t i = kTestCaptureRangeCount; i > 0; --i)
     {
         commandScriptAppend("-D", test_cidrs[i - 1], kCommandSuccess);
     }
+}
+
+static void scriptSuccessfulDeletions(void)
+{
+    scriptNotrackDeletions();
+    scriptQueueDeletions();
 }
 
 static int commandRuleIndex(const char *cidr)
@@ -230,25 +266,28 @@ static int commandRuleIndex(const char *cidr)
     return -1;
 }
 
-static void writeFakeInputRules(proc_command_result_t *out)
+static void writeFakeRules(proc_command_result_t *out, bool notrack)
 {
     char   snapshot[1024];
-    size_t offset = 0;
-    snapshot[0]   = '\0';
+    const char *chain                = notrack ? "PREROUTING" : "INPUT";
+    const bool *present              = notrack ? fake_notrack_present : fake_rule_present;
+    char(*comments)[kMaxCommandText] = notrack ? fake_notrack_comments : fake_rule_comments;
+    size_t offset                    = (size_t) snprintf(snapshot, sizeof(snapshot), "-P %s ACCEPT\n", chain);
 
     for (uint32_t i = 0; i < kTestCaptureRangeCount; ++i)
     {
-        if (! fake_rule_present[i])
+        if (! present[i])
         {
             continue;
         }
 
         int written = snprintf(snapshot + offset,
                                sizeof(snapshot) - offset,
-                               "-A INPUT -s %s -m comment --comment %s -j NFQUEUE --queue-num %u --queue-bypass\n",
+                               "-A %s -s %s -m comment --comment %s -j %s\n",
+                               chain,
                                test_cidrs[i],
-                               fake_rule_comments[i],
-                               kTestQueueNumber);
+                               comments[i],
+                               notrack ? "CT --notrack" : "NFQUEUE --queue-num 77 --queue-bypass");
         require(written > 0 && (size_t) written < sizeof(snapshot) - offset,
                 "fake iptables snapshot exceeded its buffer");
         offset += (size_t) written;
@@ -266,27 +305,36 @@ bool __wrap_procRunArgvWithDeadline(const char *file, const char *const argv[], 
     require(strcmp(file, "iptables") == 0 || strcmp(file, "sysctl") == 0,
             "this test must never execute anything but the wrapped iptables/sysctl seams");
 
+    if (strcmp(file, "sysctl") == 0)
+    {
+        memset(out, 0, sizeof(*out));
+        out->exit_code = 0;
+        return true;
+    }
+    const bool  notrack   = strcmp(argv[3], "-t") == 0;
+    const char *operation = argv[notrack ? 5 : 3];
+
     // Rule deletion is deliberately slow in the lifecycle test so the reader can
     // observe running == false and exit before BringDown writes its wake token.
-    if (slow_delete_sleep_us > 0 && strcmp(file, "iptables") == 0 && strcmp(argv[3], "-D") == 0)
+    if (slow_delete_sleep_us > 0 && strcmp(operation, "-D") == 0)
     {
         usleep((useconds_t) slow_delete_sleep_us);
     }
-    if (expect_running_during_delete != NULL && strcmp(file, "iptables") == 0 && strcmp(argv[3], "-D") == 0)
+    if (expect_running_during_delete != NULL && strcmp(operation, "-D") == 0)
     {
         require(atomicLoadExplicit(&expect_running_during_delete->running, memory_order_relaxed),
                 "BringDown stopped its reader before rule cleanup completed");
         require(! atomicLoadExplicit(&expect_running_during_delete->capture_active, memory_order_acquire),
                 "BringDown left capture active while deleting NFQUEUE rules");
     }
-    if (expect_running_during_insert != NULL && strcmp(file, "iptables") == 0 && strcmp(argv[3], "-I") == 0)
+    if (expect_running_during_insert != NULL && strcmp(operation, "-I") == 0)
     {
         require(atomicLoadExplicit(&expect_running_during_insert->running, memory_order_relaxed),
                 "BringUp exposed a rule before starting its reader");
         require(! atomicLoadExplicit(&expect_running_during_insert->capture_active, memory_order_acquire),
                 "BringUp activated capture before every NFQUEUE rule was installed");
     }
-    if (strcmp(file, "iptables") == 0 && strcmp(argv[3], "-I") == 0 &&
+    if (! notrack && strcmp(operation, "-I") == 0 &&
         atomicExchangeExplicit(&inject_packet_on_next_insert, false, memory_order_acq_rel))
     {
         require(injected_packet_peer_fd >= 0, "packet injection did not have a queue-socket peer");
@@ -310,28 +358,24 @@ bool __wrap_procRunArgvWithDeadline(const char *file, const char *const argv[], 
     }
 
     memset(out, 0, sizeof(*out));
-    if (strcmp(file, "sysctl") == 0)
-    {
-        out->exit_code = 0;
-        return true;
-    }
-
     require(recorded_command_count < kMaxRecordedCommands, "too many recorded iptables commands");
-    const bool is_snapshot = strcmp(argv[3], "-S") == 0;
+    const bool is_snapshot = strcmp(operation, "-S") == 0;
     require(options->max_output_bytes == (is_snapshot ? 1024U * 1024U : 64U * 1024U),
             "Capture used the wrong output cap for an iptables command");
-    const char         *cidr   = is_snapshot ? "" : argv[6];
+    const char         *cidr   = is_snapshot ? "" : argv[notrack ? 8 : 6];
     recorded_command_t *record = &recorded_commands[recorded_command_count++];
-    snprintf(record->operation, sizeof(record->operation), "%s", argv[3]);
+    snprintf(record->operation, sizeof(record->operation), "%s", operation);
     snprintf(record->cidr, sizeof(record->cidr), "%s", cidr);
+    record->notrack = notrack;
 
     command_outcome_t outcome = kCommandSuccess;
     if (command_step_count != 0)
     {
         require(command_step_index < command_step_count, "Capture issued an unexpected iptables command");
         const command_step_t *step = &command_steps[command_step_index++];
-        require(strcmp(argv[3], step->operation) == 0, "iptables operation did not match the lifecycle script");
+        require(strcmp(operation, step->operation) == 0, "iptables operation did not match the lifecycle script");
         require(strcmp(cidr, step->cidr) == 0, "iptables CIDR did not match the lifecycle script");
+        require(notrack == step->notrack, "iptables table did not match the lifecycle script");
         outcome = step->outcome;
     }
 
@@ -345,15 +389,17 @@ bool __wrap_procRunArgvWithDeadline(const char *file, const char *const argv[], 
         outcome == kCommandSuccess || outcome == kCommandTimeoutApplied || outcome == kCommandOutputTooLargeApplied;
     if (mutation_applied && ! is_snapshot)
     {
-        if (strcmp(argv[3], "-I") == 0)
+        bool *present                    = notrack ? fake_notrack_present : fake_rule_present;
+        char(*comments)[kMaxCommandText] = notrack ? fake_notrack_comments : fake_rule_comments;
+        if (strcmp(operation, "-I") == 0)
         {
-            fake_rule_present[rule_index] = true;
-            snprintf(fake_rule_comments[rule_index], sizeof(fake_rule_comments[rule_index]), "%s", argv[10]);
+            present[rule_index] = true;
+            snprintf(comments[rule_index], sizeof(comments[rule_index]), "%s", argv[notrack ? 16 : 10]);
         }
         else
         {
-            require(strcmp(argv[3], "-D") == 0, "unexpected iptables mutation operation");
-            fake_rule_present[rule_index] = false;
+            require(strcmp(operation, "-D") == 0, "unexpected iptables mutation operation");
+            present[rule_index] = false;
         }
     }
 
@@ -378,7 +424,7 @@ bool __wrap_procRunArgvWithDeadline(const char *file, const char *const argv[], 
         out->exit_code = 0;
         if (is_snapshot)
         {
-            writeFakeInputRules(out);
+            writeFakeRules(out, notrack);
         }
         return true;
     }
@@ -760,19 +806,31 @@ static capture_device_t *ownedDeviceCreate(test_env_t *env, reader_probe_t *prob
     return cdev;
 }
 
-static uint32_t countRuleState(const capture_device_t *cdev, capture_rule_state_t state)
+static uint32_t countQueueRuleState(const capture_device_t *cdev, capture_rule_state_t state)
 {
     uint32_t count = 0;
     for (uint32_t i = 0; i < cdev->capture_range_count; ++i)
     {
-        count += cdev->rule_states[i] == state ? 1U : 0U;
+        count += cdev->rule_states[i].queue == state ? 1U : 0U;
     }
     return count;
 }
 
-static void requireAllRulesInState(const capture_device_t *cdev, capture_rule_state_t state, const char *message)
+static void requireAllQueueRulesInState(const capture_device_t *cdev, capture_rule_state_t state, const char *message)
 {
-    require(countRuleState(cdev, state) == cdev->capture_range_count, message);
+    require(countQueueRuleState(cdev, state) == cdev->capture_range_count, message);
+}
+
+static void requireAllNotrackRulesInState(const capture_device_t *cdev, capture_rule_state_t state, const char *message)
+{
+    for (uint32_t i = 0; i < cdev->capture_range_count; ++i)
+    {
+        require(cdev->rule_states[i].notrack == state, message);
+        if (state != kCaptureRuleOutcomeUnknown)
+        {
+            require(fake_notrack_present[i] == (state == kCaptureRuleInstalled), message);
+        }
+    }
 }
 
 static void attachQueueSocket(capture_device_t *cdev, int pair[2])
@@ -992,7 +1050,7 @@ static void testReaderExitBeforeReadinessPreventsInsertion(test_env_t *env)
 
     require(! caputredeviceBringUp(&cdev), "a reader that exits before readiness must fail bring-up");
     require(recorded_command_count == 0, "pre-readiness reader failure installed an NFQUEUE rule");
-    requireAllRulesInState(&cdev, kCaptureRuleAbsent, "pre-readiness reader failure changed firewall state");
+    requireAllQueueRulesInState(&cdev, kCaptureRuleAbsent, "pre-readiness reader failure changed firewall state");
     require(! atomicLoadExplicit(&cdev.up, memory_order_acquire) &&
                 ! atomicLoadExplicit(&cdev.capture_active, memory_order_acquire) &&
                 ! atomicLoadExplicit(&cdev.running, memory_order_acquire),
@@ -1036,8 +1094,10 @@ static void testPacketDuringInsertionIsAcceptedWithoutDispatch(test_env_t *env)
             "startup packet injection reached the capture callback");
     require(atomicLoadExplicit(&cdev.capture_active, memory_order_acquire),
             "capture did not activate after all rules were installed");
+    requireAllNotrackRulesInState(&cdev, kCaptureRuleInstalled, "capture activated without its NOTRACK rules");
 
     require(caputredeviceBringDown(&cdev), "bring-down after startup packet injection failed");
+    requireAllNotrackRulesInState(&cdev, kCaptureRuleAbsent, "bring-down left NOTRACK installed");
     close(queue_pair[1]);
     requireCommandScriptConsumed("startup packet injection changed the firewall lifecycle command sequence");
     deviceTeardown(&cdev);
@@ -1249,7 +1309,7 @@ static void testPartialInsertionRollsBackConfirmedPrefix(test_env_t *env)
     expect_running_during_insert = NULL;
     require(! cdev.up, "partial insertion failure marked the device up");
     require(! cdev.running, "partial insertion failure left the reader running");
-    requireAllRulesInState(&cdev, kCaptureRuleAbsent, "successful rollback did not clear every rule state");
+    requireAllQueueRulesInState(&cdev, kCaptureRuleAbsent, "successful rollback did not clear every rule state");
     require(cdev.queue_restartable, "a fully rolled-back insertion failure unnecessarily disabled the queue");
     require(atomicLoadExplicit(&probe.started, memory_order_relaxed) == 1,
             "partial insertion did not start its reader before exposing the first rule");
@@ -1277,7 +1337,7 @@ static void testPartialRollbackFailureIsRetriedByDestroy(test_env_t *env)
     atomicStoreExplicit(&probe.verify_queue_fd_lifetime, true, memory_order_relaxed);
 
     require(! caputredeviceBringUp(cdev), "a failed insertion with failed rollback must fail bring-up");
-    require(countRuleState(cdev, kCaptureRuleInstalled) == 1,
+    require(countQueueRuleState(cdev, kCaptureRuleInstalled) == 1,
             "failed rollback did not retain the confirmed installed rule");
     require(! cdev->up && ! cdev->running, "failed startup rollback left the device operational");
     require(atomicLoadExplicit(&probe.started, memory_order_relaxed) == 1,
@@ -1298,6 +1358,7 @@ static void testReverseDeletionPreservesPerRuleState(test_env_t *env)
 {
     commandScriptReset();
     scriptSuccessfulInsertions();
+    scriptNotrackDeletions();
     commandScriptAppend("-D", test_cidrs[2], kCommandSuccess);
     commandScriptAppend("-D", test_cidrs[1], kCommandFailure);
     commandScriptAppend("-D", test_cidrs[1], kCommandSuccess);
@@ -1312,8 +1373,8 @@ static void testReverseDeletionPreservesPerRuleState(test_env_t *env)
 
     require(caputredeviceBringUp(cdev), "initial bring-up for reverse deletion failed");
     require(! caputredeviceBringDown(cdev), "a scripted middle deletion failure must fail bring-down");
-    require(cdev->rule_states[0] == kCaptureRuleInstalled && cdev->rule_states[1] == kCaptureRuleInstalled &&
-                cdev->rule_states[2] == kCaptureRuleAbsent,
+    require(cdev->rule_states[0].queue == kCaptureRuleInstalled &&
+                cdev->rule_states[1].queue == kCaptureRuleInstalled && cdev->rule_states[2].queue == kCaptureRuleAbsent,
             "reverse cleanup did not preserve exact per-rule state after a middle failure");
     require(! cdev->up && ! cdev->running, "failed bring-down left the device operational");
     require(! cdev->queue_restartable, "failed rule cleanup left the queue restartable");
@@ -1321,8 +1382,8 @@ static void testReverseDeletionPreservesPerRuleState(test_env_t *env)
     require(! atomicLoadExplicit(&probe.queue_fd_changed_before_exit, memory_order_relaxed),
             "reverse cleanup closed the queue descriptor while its reader still owned it");
     requireQueueSocketClosed(cdev, queue_pair[0]);
-    requireCommandAt(3, "-D", test_cidrs[2], "cleanup did not begin at the end of the installed prefix");
-    requireCommandAt(4, "-D", test_cidrs[1], "cleanup did not stop at the scripted middle failure");
+    requireCommandAt(9, "-D", test_cidrs[2], "cleanup did not begin at the end of the installed prefix");
+    requireCommandAt(10, "-D", test_cidrs[1], "cleanup did not stop at the scripted middle failure");
 
     capturedeviceDestroy(cdev);
     close(queue_pair[1]);
@@ -1333,9 +1394,10 @@ static void testRebringupRefusesWhenPendingCleanupStillFails(test_env_t *env)
 {
     commandScriptReset();
     scriptSuccessfulInsertions();
+    scriptNotrackDeletions();
     commandScriptAppend("-D", test_cidrs[2], kCommandFailure);
     commandScriptAppend("-D", test_cidrs[2], kCommandFailure);
-    scriptSuccessfulDeletions();
+    scriptQueueDeletions();
 
     reader_probe_t    probe;
     capture_device_t *cdev = ownedDeviceCreate(env, &probe);
@@ -1346,15 +1408,16 @@ static void testRebringupRefusesWhenPendingCleanupStillFails(test_env_t *env)
 
     require(caputredeviceBringUp(cdev), "initial bring-up for pending-cleanup refusal failed");
     require(! caputredeviceBringDown(cdev), "the scripted deletion failure must fail bring-down");
-    requireAllRulesInState(cdev, kCaptureRuleInstalled, "the failed first deletion must retain every installed rule");
+    requireAllQueueRulesInState(
+        cdev, kCaptureRuleInstalled, "the failed first deletion must retain every installed rule");
     require(! atomicLoadExplicit(&probe.queue_fd_changed_before_exit, memory_order_relaxed),
             "pending-cleanup bring-down closed the queue descriptor while its reader still owned it");
     requireQueueSocketClosed(cdev, queue_pair[0]);
     require(! caputredeviceBringUp(cdev), "re-bring-up must fail while pending cleanup still fails");
-    requireAllRulesInState(cdev, kCaptureRuleInstalled, "failed re-bring-up cleanup changed retained rule state");
+    requireAllQueueRulesInState(cdev, kCaptureRuleInstalled, "failed re-bring-up cleanup changed retained rule state");
     require(atomicLoadExplicit(&probe.started, memory_order_relaxed) == 1,
             "failed re-bring-up started a second reader");
-    require(recorded_command_count == 5, "failed pending cleanup must not issue any fresh insertion");
+    require(recorded_command_count == 11, "failed pending cleanup must not issue any fresh insertion");
 
     capturedeviceDestroy(cdev);
     close(queue_pair[1]);
@@ -1365,8 +1428,9 @@ static void testBringdownFailureIsRetriedByDestroy(test_env_t *env)
 {
     commandScriptReset();
     scriptSuccessfulInsertions();
+    scriptNotrackDeletions();
     commandScriptAppend("-D", test_cidrs[2], kCommandFailure);
-    scriptSuccessfulDeletions();
+    scriptQueueDeletions();
 
     reader_probe_t    probe;
     capture_device_t *cdev = ownedDeviceCreate(env, &probe);
@@ -1380,7 +1444,8 @@ static void testBringdownFailureIsRetriedByDestroy(test_env_t *env)
     require(! caputredeviceBringDown(cdev), "a rule deletion failure must fail bring-down");
     expect_running_during_delete = NULL;
     require(! cdev->up && ! cdev->running, "failed bring-down did not stop the device");
-    requireAllRulesInState(cdev, kCaptureRuleInstalled, "failed first deletion did not retain every installed rule");
+    requireAllQueueRulesInState(
+        cdev, kCaptureRuleInstalled, "failed first deletion did not retain every installed rule");
     require(atomicLoadExplicit(&probe.exited, memory_order_relaxed) == 1, "failed bring-down did not join the reader");
     require(! atomicLoadExplicit(&probe.queue_fd_changed_before_exit, memory_order_relaxed),
             "failed bring-down closed the queue descriptor while its reader still owned it");
@@ -1403,7 +1468,7 @@ static void testReaderCreationFailureDoesNotTouchFirewall(test_env_t *env)
     require(! caputredeviceBringUp(&cdev), "reader creation failure must fail bring-up");
     require(! fail_next_capture_thread, "the injected pthread_create failure was not consumed");
     require(! cdev.up && ! cdev.running, "reader creation failure left the device operational");
-    requireAllRulesInState(&cdev, kCaptureRuleAbsent, "reader creation failure changed firewall rule state");
+    requireAllQueueRulesInState(&cdev, kCaptureRuleAbsent, "reader creation failure changed firewall rule state");
     require(cdev.queue_restartable, "reader creation failure disabled a queue that has no installed rules");
     require(atomicLoadExplicit(&probe.started, memory_order_relaxed) == 0,
             "the failed pthread_create unexpectedly ran the reader");
@@ -1456,7 +1521,8 @@ static void testReaderDeathFailsOpenAndDestroyJoins(test_env_t *env)
                 ! atomicLoadExplicit(&cdev->up, memory_order_acquire) &&
                 ! atomicLoadExplicit(&cdev->capture_active, memory_order_acquire),
             "unexpected reader exit left capture operational");
-    requireAllRulesInState(cdev, kCaptureRuleInstalled, "unexpected reader exit changed installed-rule accounting");
+    requireAllQueueRulesInState(
+        cdev, kCaptureRuleInstalled, "unexpected reader exit changed installed-rule accounting");
     requireQueueSocketClosed(cdev, queue_pair[0]);
     require(captureLifecycleLoad(&cdev->lifecycle) == kCaptureLifecycleFailed,
             "unexpected runtime reader exit did not publish FAILED");
@@ -1492,7 +1558,7 @@ static void testInsertionTimeoutStopsAndRollsBackConfirmedRules(test_env_t *env)
     expect_running_during_insert = &cdev;
     require(! caputredeviceBringUp(&cdev), "a timed-out insertion must fail bring-up");
     expect_running_during_insert = NULL;
-    requireAllRulesInState(&cdev, kCaptureRuleAbsent, "insertion timeout rollback left a pending or unknown rule");
+    requireAllQueueRulesInState(&cdev, kCaptureRuleAbsent, "insertion timeout rollback left a pending or unknown rule");
     require(! cdev.up && ! cdev.running, "insertion timeout left the device operational");
     require(cdev.queue_restartable && cdev.socket == queue_pair[0],
             "a fully reconciled insertion timeout unnecessarily disabled the queue");
@@ -1524,7 +1590,7 @@ static void testCommittedInsertionTimeoutIsReconciledAndRemoved(test_env_t *env)
     atomicStoreExplicit(&probe.consume_token, true, memory_order_relaxed);
 
     require(! caputredeviceBringUp(&cdev), "a committed-before-timeout insertion must fail bring-up");
-    requireAllRulesInState(
+    requireAllQueueRulesInState(
         &cdev, kCaptureRuleAbsent, "committed-before-timeout insertion was not reconciled and deleted");
     require(! fake_rule_present[1], "the fake firewall retained the timed-out committed insertion");
     requireCommandAt(2, "-S", "", "timed-out insertion was not reconciled through an INPUT snapshot");
@@ -1553,7 +1619,7 @@ static void testCommittedInsertionOutputLimitIsReconciledAndRemoved(test_env_t *
     atomicStoreExplicit(&probe.consume_token, true, memory_order_relaxed);
 
     require(! caputredeviceBringUp(&cdev), "a committed-before-output-limit insertion must fail bring-up");
-    requireAllRulesInState(
+    requireAllQueueRulesInState(
         &cdev, kCaptureRuleAbsent, "committed-before-output-limit insertion was not reconciled and deleted");
     require(! fake_rule_present[1], "the fake firewall retained the output-limited committed insertion");
     requireCommandAt(2, "-S", "", "output-limited insertion was not reconciled through an INPUT snapshot");
@@ -1571,9 +1637,10 @@ static void testDeletionTimeoutIsReconciledDuringDestroy(test_env_t *env)
 {
     commandScriptReset();
     scriptSuccessfulInsertions();
+    scriptNotrackDeletions();
     commandScriptAppend("-D", test_cidrs[2], kCommandTimeout);
     commandScriptAppend("-S", "", kCommandSuccess);
-    scriptSuccessfulDeletions();
+    scriptQueueDeletions();
 
     reader_probe_t    probe;
     capture_device_t *cdev = ownedDeviceCreate(env, &probe);
@@ -1581,9 +1648,9 @@ static void testDeletionTimeoutIsReconciledDuringDestroy(test_env_t *env)
 
     require(caputredeviceBringUp(cdev), "bring-up before deletion timeout failed");
     require(! caputredeviceBringDown(cdev), "a deletion timeout must fail bring-down");
-    require(cdev->rule_states[2] == kCaptureRuleOutcomeUnknown,
+    require(cdev->rule_states[2].queue == kCaptureRuleOutcomeUnknown,
             "timed-out deletion was not represented as outcome-unknown");
-    require(recorded_command_count == 4, "deletion timeout did not stop its cleanup pass immediately");
+    require(recorded_command_count == 10, "deletion timeout did not stop its cleanup pass immediately");
 
     capturedeviceDestroy(cdev);
     requireCommandScriptConsumed("destruction did not reconcile and remove a timed-out deletion");
@@ -1593,6 +1660,7 @@ static void testCommittedDeletionTimeoutDoesNotBlockEarlierCleanup(test_env_t *e
 {
     commandScriptReset();
     scriptSuccessfulInsertions();
+    scriptNotrackDeletions();
     commandScriptAppend("-D", test_cidrs[2], kCommandTimeoutApplied);
     commandScriptAppend("-S", "", kCommandSuccess);
     commandScriptAppend("-D", test_cidrs[1], kCommandSuccess);
@@ -1604,14 +1672,14 @@ static void testCommittedDeletionTimeoutDoesNotBlockEarlierCleanup(test_env_t *e
 
     require(caputredeviceBringUp(cdev), "bring-up before committed deletion timeout failed");
     require(! caputredeviceBringDown(cdev), "a committed-before-timeout deletion must fail bring-down");
-    require(cdev->rule_states[2] == kCaptureRuleOutcomeUnknown,
+    require(cdev->rule_states[2].queue == kCaptureRuleOutcomeUnknown,
             "committed-before-timeout deletion was not represented as outcome-unknown");
     require(! fake_rule_present[2], "the fake firewall did not apply the timed-out deletion");
 
     capturedeviceDestroy(cdev);
-    requireCommandAt(4, "-S", "", "destruction did not reconcile the timed-out deletion");
+    requireCommandAt(10, "-S", "", "destruction did not reconcile the timed-out deletion");
     requireCommandAt(
-        5, "-D", test_cidrs[1], "an already-applied timed-out deletion blocked cleanup of an earlier rule");
+        11, "-D", test_cidrs[1], "an already-applied timed-out deletion blocked cleanup of an earlier rule");
     requireCommandScriptConsumed("committed deletion timeout issued an unexpected cleanup sequence");
 }
 
@@ -1619,6 +1687,7 @@ static void testCommittedDeletionOutputLimitDoesNotBlockEarlierCleanup(test_env_
 {
     commandScriptReset();
     scriptSuccessfulInsertions();
+    scriptNotrackDeletions();
     commandScriptAppend("-D", test_cidrs[2], kCommandOutputTooLargeApplied);
     commandScriptAppend("-S", "", kCommandSuccess);
     commandScriptAppend("-D", test_cidrs[1], kCommandSuccess);
@@ -1630,15 +1699,127 @@ static void testCommittedDeletionOutputLimitDoesNotBlockEarlierCleanup(test_env_
 
     require(caputredeviceBringUp(cdev), "bring-up before committed output-limited deletion failed");
     require(! caputredeviceBringDown(cdev), "a committed-before-output-limit deletion must fail bring-down");
-    require(cdev->rule_states[2] == kCaptureRuleOutcomeUnknown,
+    require(cdev->rule_states[2].queue == kCaptureRuleOutcomeUnknown,
             "committed-before-output-limit deletion was not represented as outcome-unknown");
     require(! fake_rule_present[2], "the fake firewall did not apply the output-limited deletion");
 
     capturedeviceDestroy(cdev);
-    requireCommandAt(4, "-S", "", "destruction did not reconcile the output-limited deletion");
+    requireCommandAt(10, "-S", "", "destruction did not reconcile the output-limited deletion");
     requireCommandAt(
-        5, "-D", test_cidrs[1], "an already-applied output-limited deletion blocked cleanup of an earlier rule");
+        11, "-D", test_cidrs[1], "an already-applied output-limited deletion blocked cleanup of an earlier rule");
     requireCommandScriptConsumed("committed output-limited deletion issued an unexpected cleanup sequence");
+}
+
+static void testNotrackInsertionFailureRollsBackBothKinds(test_env_t *env)
+{
+    const command_outcome_t outcomes[] = {
+        kCommandFailure,
+        kCommandTimeout,
+        kCommandTimeoutApplied,
+        kCommandOutputTooLargeApplied,
+    };
+    for (size_t i = 0; i < sizeof(outcomes) / sizeof(outcomes[0]); ++i)
+    {
+        commandScriptReset();
+        scriptQueueInsertions();
+        commandScriptAppendNotrack("-I", test_cidrs[0], kCommandSuccess);
+        commandScriptAppendNotrack("-I", test_cidrs[1], outcomes[i]);
+        if (outcomes[i] != kCommandFailure)
+        {
+            commandScriptAppendNotrack("-S", "", kCommandSuccess);
+        }
+        if (outcomes[i] == kCommandTimeoutApplied || outcomes[i] == kCommandOutputTooLargeApplied)
+        {
+            commandScriptAppendNotrack("-D", test_cidrs[1], kCommandSuccess);
+        }
+        commandScriptAppendNotrack("-D", test_cidrs[0], kCommandSuccess);
+        scriptQueueDeletions();
+
+        capture_device_t cdev;
+        reader_probe_t   probe;
+        deviceSetup(&cdev, env, &probe);
+        expect_running_during_insert = &cdev;
+        expect_running_during_delete = &cdev;
+        require(! caputredeviceBringUp(&cdev), "failed NOTRACK installation activated capture");
+        expect_running_during_insert = NULL;
+        expect_running_during_delete = NULL;
+        requireAllQueueRulesInState(&cdev, kCaptureRuleAbsent, "NOTRACK rollback left queue rules");
+        requireAllNotrackRulesInState(&cdev, kCaptureRuleAbsent, "NOTRACK rollback left exemptions");
+        require(! cdev.up && ! cdev.running && ! cdev.reader_thread_joinable,
+                "NOTRACK rollback left its reader operational");
+        require(cdev.queue_restartable, "successful NOTRACK rollback disabled the queue");
+        requireCommandScriptConsumed("NOTRACK rollback did not reconcile and remove both rule kinds");
+        deviceTeardown(&cdev);
+    }
+}
+
+static void testNotrackDeletionFailureStillRemovesQueueRules(test_env_t *env)
+{
+    const command_outcome_t outcomes[] = {
+        kCommandFailure,
+        kCommandTimeout,
+        kCommandTimeoutApplied,
+        kCommandOutputTooLargeApplied,
+    };
+    for (size_t i = 0; i < sizeof(outcomes) / sizeof(outcomes[0]); ++i)
+    {
+        commandScriptReset();
+        scriptSuccessfulInsertions();
+        commandScriptAppendNotrack("-D", test_cidrs[2], outcomes[i]);
+        scriptQueueDeletions();
+        if (outcomes[i] != kCommandFailure)
+        {
+            commandScriptAppendNotrack("-S", "", kCommandSuccess);
+        }
+        if (outcomes[i] == kCommandFailure || outcomes[i] == kCommandTimeout)
+        {
+            commandScriptAppendNotrack("-D", test_cidrs[2], kCommandSuccess);
+        }
+        commandScriptAppendNotrack("-D", test_cidrs[1], kCommandSuccess);
+        commandScriptAppendNotrack("-D", test_cidrs[0], kCommandSuccess);
+
+        reader_probe_t    probe;
+        capture_device_t *cdev = ownedDeviceCreate(env, &probe);
+        require(caputredeviceBringUp(cdev), "bring-up before NOTRACK deletion failure failed");
+        const int queue_socket = cdev->socket;
+        require(! caputredeviceBringDown(cdev), "NOTRACK deletion failure was not reported");
+        requireAllQueueRulesInState(cdev, kCaptureRuleAbsent, "NOTRACK deletion failure blocked queue cleanup");
+        require(cdev->rule_states[2].notrack ==
+                    (outcomes[i] == kCommandFailure ? kCaptureRuleInstalled : kCaptureRuleOutcomeUnknown),
+                "failed NOTRACK deletion lost its independent rule state");
+        requireQueueSocketClosed(cdev, queue_socket);
+        capturedeviceDestroy(cdev);
+        for (uint32_t range = 0; range < kTestCaptureRangeCount; ++range)
+        {
+            require(! fake_notrack_present[range], "destruction left a NOTRACK exemption behind");
+        }
+        requireCommandScriptConsumed("destruction did not retry only the remaining NOTRACK rules");
+    }
+}
+
+static void testNotrackInspectionFailureStillRemovesQueueRules(test_env_t *env)
+{
+    commandScriptReset();
+    scriptQueueInsertions();
+    commandScriptAppendNotrack("-I", test_cidrs[0], kCommandSuccess);
+    commandScriptAppendNotrack("-I", test_cidrs[1], kCommandTimeoutApplied);
+    commandScriptAppendNotrack("-S", "", kCommandFailure);
+    scriptQueueDeletions();
+    commandScriptAppendNotrack("-S", "", kCommandSuccess);
+    commandScriptAppendNotrack("-D", test_cidrs[1], kCommandSuccess);
+    commandScriptAppendNotrack("-D", test_cidrs[0], kCommandSuccess);
+
+    reader_probe_t    probe;
+    capture_device_t *cdev = ownedDeviceCreate(env, &probe);
+    require(! caputredeviceBringUp(cdev), "unresolved NOTRACK installation activated capture");
+    requireAllQueueRulesInState(cdev, kCaptureRuleAbsent, "failed raw-table inspection blocked INPUT cleanup");
+    require(cdev->rule_states[0].notrack == kCaptureRuleInstalled &&
+                cdev->rule_states[1].notrack == kCaptureRuleOutcomeUnknown,
+            "failed raw-table inspection lost NOTRACK ownership");
+    capturedeviceDestroy(cdev);
+    require(! fake_notrack_present[0] && ! fake_notrack_present[1],
+            "destruction failed to reconcile NOTRACK ownership");
+    requireCommandScriptConsumed("NOTRACK inspection recovery used the wrong rule kind or cleanup sequence");
 }
 
 // ---------------------------------------------------------------------------
@@ -1822,6 +2003,9 @@ int main(void)
     testDeletionTimeoutIsReconciledDuringDestroy(&env);
     testCommittedDeletionTimeoutDoesNotBlockEarlierCleanup(&env);
     testCommittedDeletionOutputLimitDoesNotBlockEarlierCleanup(&env);
+    testNotrackInsertionFailureRollsBackBothKinds(&env);
+    testNotrackDeletionFailureStillRemovesQueueRules(&env);
+    testNotrackInspectionFailureStillRemovesQueueRules(&env);
     // Isolated proof that the reader's poll is bounded, ordered before the
     // end-to-end case so a regression is attributed to the primitive first.
     testProductionReaderLeavesPollWithoutWakeToken(&env);

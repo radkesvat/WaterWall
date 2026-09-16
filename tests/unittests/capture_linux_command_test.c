@@ -10,7 +10,7 @@
 enum
 {
     kMaxRecordedCalls = 32,
-    kMaxRecordedArgs  = 16,
+    kMaxRecordedArgs  = 24,
     kMaxArgLength     = 128,
     // Capture's own policy constants, duplicated here so the test fails if the
     // production values drift without anyone noticing.
@@ -236,6 +236,62 @@ static void testDeleteBuildsExactArgv(void)
     require(dropped_result_count == 1, "deletion must drop its command result exactly once");
 }
 
+static void testNotrackRulesStayInRawPrerouting(void)
+{
+    const char *const operations[] = {"-I", "-D"};
+    for (size_t op = 0; op < sizeof(operations) / sizeof(operations[0]); ++op)
+    {
+        resetRecording(kFakeOutcomeSuccess, SIZE_MAX);
+        require(capturedeviceRunIptablesNotrackRule(operations[op], "203.0.113.0/24", "WWCAP_NOTRACK_TEST") ==
+                    kCapturedeviceCommandOk,
+                "NOTRACK mutation failed");
+        const char *const expected[] = {
+            "iptables",           "-w", "5",        "-t",         "raw",   operations[op], "PREROUTING", "-s",
+            "203.0.113.0/24",     "-m", "addrtype", "--dst-type", "LOCAL", "-m",           "comment",    "--comment",
+            "WWCAP_NOTRACK_TEST", "-j", "CT",       "--notrack",
+        };
+        require(recorded_call_count == 1, "NOTRACK mutation must issue exactly one command");
+        const recorded_call_t *call = &recorded_calls[0];
+        requireEqStr(call->file, "iptables", "NOTRACK must invoke iptables directly");
+        require(call->argc == sizeof(expected) / sizeof(expected[0]), "NOTRACK argument count mismatch");
+        for (size_t i = 0; i < call->argc; ++i)
+        {
+            requireEqStr(
+                call->argv[i], expected[i], "NOTRACK must match only the selected source and local destination");
+        }
+        requireMutationOptions(call, "NOTRACK must retain the bounded mutation policy");
+        requireNoShellInvocation();
+        require(dropped_result_count == 1, "NOTRACK mutation leaked its command result");
+    }
+}
+
+static void testNotrackInspectionUsesRawPrerouting(void)
+{
+    resetRecording(kFakeOutcomeSuccess, SIZE_MAX);
+    fake_success_output     = "-P PREROUTING ACCEPT\n";
+    fake_success_output_len = strlen(fake_success_output);
+    char *rules             = NULL;
+    require(capturedeviceReadIptablesNotrackRules(&rules) == kCapturedeviceCommandOk, "NOTRACK rule inspection failed");
+    requireEqStr(rules, fake_success_output, "NOTRACK inspection lost its snapshot");
+    memoryFree(rules);
+
+    const char *const expected[] = {"iptables", "-w", "5", "-t", "raw", "-S", "PREROUTING"};
+    require(recorded_call_count == 1, "NOTRACK inspection must issue exactly one command");
+    require(recorded_calls[0].argc == sizeof(expected) / sizeof(expected[0]),
+            "NOTRACK inspection argument count mismatch");
+    for (size_t i = 0; i < recorded_calls[0].argc; ++i)
+    {
+        requireEqStr(recorded_calls[0].argv[i], expected[i], "NOTRACK inspection queried the wrong chain/table");
+    }
+    requireInspectionOptions(&recorded_calls[0], "NOTRACK inspection used the wrong command bounds");
+    require(dropped_result_count == 1, "NOTRACK inspection leaked its command result");
+
+    resetRecording(kFakeOutcomeSuccess, SIZE_MAX);
+    rules = NULL;
+    require(capturedeviceReadIptablesNotrackRules(&rules) == kCapturedeviceCommandFailed && rules == NULL,
+            "NOTRACK inspection must reject a lost snapshot");
+}
+
 static void testIptablesTimeoutIsDistinctFromNonzeroExit(void)
 {
     resetRecording(kFakeOutcomeNonzeroExit, 0);
@@ -405,6 +461,8 @@ static void testSysctlSkipRunsNoCommands(void)
 
 int main(void)
 {
+    testNotrackRulesStayInRawPrerouting();
+    testNotrackInspectionUsesRawPrerouting();
     testInsertBuildsExactArgv();
     testDeleteBuildsExactArgv();
     testIptablesTimeoutIsDistinctFromNonzeroExit();
