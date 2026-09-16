@@ -49,6 +49,35 @@ static bool muxclientComputeFixedStorageGeometry(size_t workers_count, uint32_t 
     return true;
 }
 
+static bool muxclientReadParentWriteSettings(const cJSON *settings, muxclient_tstate_t *ts)
+{
+    const char    *names[]    = {"parent-write-buffer-pause-threshold", "parent-write-buffer-limit"};
+    uint32_t      *values[]   = {&ts->parent_write_pause_threshold, &ts->parent_write_limit};
+    const uint32_t defaults[] = {kMuxDefaultParentWritePauseThreshold, kMuxDefaultParentWriteLimit};
+    for (size_t i = 0; i < 2; ++i)
+    {
+        int64_t parsed = 0;
+        switch (jsonGetObjectIntegerInRange(settings, names[i], 1, INT_MAX, &parsed))
+        {
+        case kJsonValueMissing:
+            *values[i] = defaults[i];
+            break;
+        case kJsonValuePresent:
+            *values[i] = (uint32_t) parsed;
+            break;
+        case kJsonValueInvalid:
+            LOGF("MuxClient: \"%s\" must be a positive integer no greater than INT_MAX", names[i]);
+            return false;
+        }
+    }
+    if (ts->parent_write_pause_threshold >= ts->parent_write_limit)
+    {
+        LOGF("MuxClient: parent-write-buffer-pause-threshold must be less than parent-write-buffer-limit");
+        return false;
+    }
+    return true;
+}
+
 tunnel_t *muxclientTunnelCreate(node_t *node)
 {
     int wc = getWorkersCount();
@@ -99,6 +128,12 @@ tunnel_t *muxclientTunnelCreate(node_t *node)
     int                           detached_child_limit          = (int) detached_defaults.child_limit;
     bool                          log_main_line_stats           = false;
     uint32_t                      staged_fixed_connections      = 0;
+
+    if (! muxclientReadParentWriteSettings(settings, ts))
+    {
+        tunnelDestroy(t);
+        return NULL;
+    }
 
     if (! muxclientReadMaxChildren(settings, &ts->max_children))
     {

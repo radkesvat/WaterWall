@@ -92,12 +92,17 @@ typedef struct test_fixture_s
     line_t          *reentrant_close_line;
     bool             close_reentrant_on_finish;
     bool             close_reentrant_on_est;
+    bool             pause_reentrant_on_est;
 } test_fixture_t;
 
 static void prevDownStreamEst(tunnel_t *t, line_t *l)
 {
     test_fixture_t *fixture = *(test_fixture_t **) tunnelGetState(t);
     ++fixture->est_calls;
+    if (fixture->pause_reentrant_on_est && l == fixture->reentrant_close_line)
+    {
+        udpconnectorTunnelUpStreamPause(fixture->connector, l);
+    }
     if (fixture->close_reentrant_on_est && l == fixture->reentrant_close_line)
     {
         udpconnectorTunnelUpStreamFinish(fixture->connector, l);
@@ -363,6 +368,29 @@ static void testCase1_DifferentPeersShareSocket(void)
     twfRequire(! lineIsAlive(l1), "re-entrant Est close left the owner line logically alive");
     lineUnref(l1);
 
+    teardownFixture(&fixture);
+
+    twfSetCase("UdpConnector preserves Pause received during fallback Est");
+    setupFixtureMode(&fixture, kUdpConnectorBalanceModeConnection);
+    l1                             = createAndInitLineIpv4(&fixture, "127.0.0.1", 20001);
+    fixture.reentrant_close_line   = l1;
+    fixture.pause_reentrant_on_est = true;
+    est_ls                         = lineGetState(l1, fixture.connector);
+    io                             = est_ls->fixed_binding->socket->io;
+    wioSetPeerAddr(io, &est_source.sa, sockaddrLen(&est_source));
+    udpconnectorOnSocketRecvFrom(io, makeDatagram(&fixture, "pause_during_est"));
+    twfRequire(est_ls->established && est_ls->read_paused, "fallback Est did not retain Pause");
+    twfRequireEqualU32(fixture.est_calls, 1, "fallback Est was not delivered exactly once");
+    twfRequireEqualU32(fixture.payload_calls, 0, "fallback Est Pause was followed by Payload");
+    twfRequireNoLeakedBuffers();
+
+    udpconnectorTunnelUpStreamResume(fixture.connector, l1);
+    udpconnectorOnSocketRecvFrom(io, makeDatagram(&fixture, "after_resume"));
+    twfRequireEqualU32(fixture.est_calls, 1, "Resume repeated Est");
+    twfRequireEqualU32(fixture.payload_calls, 1, "Resume failed to restore datagram delivery");
+    twfRequire(strcmp(fixture.last_payload_data, "after_resume") == 0, "Resume delivered the wrong datagram");
+    udpconnectorTunnelUpStreamFinish(fixture.connector, l1);
+    lineDestroy(l1);
     teardownFixture(&fixture);
 }
 

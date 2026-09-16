@@ -1,33 +1,11 @@
 #include "structure.h"
 
-#include "loggers/network_logger.h"
-
 void muxclientTunnelDownStreamResume(tunnel_t *t, line_t *parent_l)
 {
-    muxclient_tstate_t *ts_shutdown = tunnelGetState(t);
-    if (ts_shutdown->worker_states[lineGetWID(parent_l)].quiescing)
-    {
+    muxclient_tstate_t *ts     = tunnelGetState(t);
+    muxclient_lstate_t *parent = lineGetState(parent_l, t);
+    if (ts->worker_states[lineGetWID(parent_l)].quiescing || parent->parent_finishing)
         return;
-    }
-
-    muxclient_lstate_t *parent_ls = lineGetState(parent_l, t);
-    muxclient_lstate_t *child_ls  = parent_ls->child_next;
-
-    if (parent_ls->parent_finishing)
-    {
-        return;
-    }
-
-    lineRef(parent_l);
-    while (child_ls && lineIsAlive(parent_l))
-    {
-        muxclient_lstate_t *temp = child_ls->child_next;
-        if (! muxclientResumeChildSource(t, parent_l, child_ls, false, true))
-        {
-            break;
-        }
-        child_ls = temp;
-    }
-
-    lineUnref(parent_l);
+    parent->parent_state->output.transport_paused = false;
+    muxclientDrainParentOutput(t, parent_l);
 }

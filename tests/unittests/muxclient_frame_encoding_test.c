@@ -133,6 +133,8 @@ static void fixtureSetup(muxclient_fixture_t *fixture, uint32_t capture_capacity
     ts->child_buffer_pause_tolerance  = kMuxDefaultChildBufferPauseTolerance;
     ts->child_buffer_resume_threshold = kMuxDefaultChildBufferResumeThreshold;
     ts->parent_buffer_limit           = kMuxDefaultParentBufferLimit;
+    ts->parent_write_pause_threshold  = kMuxDefaultParentWritePauseThreshold;
+    ts->parent_write_limit            = kMuxDefaultParentWriteLimit;
     ts->detached_buffer_limit         = kMuxMinimumDetachedBufferLimit;
     ts->detached_child_limit          = kMuxMinimumDetachedChildLimit;
     ts->workers_count                 = 1;
@@ -193,6 +195,7 @@ static void fixtureTeardown(muxclient_fixture_t *fixture)
     tunnelDestroy(fixture->prev);
     tunnelDestroy(fixture->mux);
     tunnelDestroy(fixture->next);
+    masterpoolMakeEmpty(fixture->lines.master);
     twfLinePoolTeardown(&fixture->lines);
     twfWorkerEnvTeardown(&fixture->env);
 }
@@ -214,7 +217,7 @@ static sbuf_t *makePatternPayload(muxclient_fixture_t *fixture, uint32_t length)
 static size_t pooledBufferCharge(buffer_pool_t *pool, bool small)
 {
     sbuf_t      *buf    = small ? bufferpoolGetSmallBuffer(pool) : bufferpoolGetLargeBuffer(pool);
-    const size_t charge = muxQueuedSbufCharge(buf);
+    const size_t charge = sbufGetAllocationCharge(buf);
     bufferpoolReuseBuffer(pool, buf);
     return charge;
 }
@@ -378,13 +381,13 @@ static void caseReentrantParentCloseReturnsImmediately(void)
 
     twfRequireEqualU32(fixture.trace.next_payload, 1, "the child payload never reached the parent transport");
     twfRequire(! lineIsAlive(fixture.parent_l), "the re-entrant close did not take effect");
-    twfRequire(parent_ls->last_writer == fixture.child_l,
+    twfRequire(parent_ls->parent_state->output.pumping,
                "the payload path reset parent state after the parent had died");
     twfRequireNoLeakedBuffers();
 
     // Put the line back into a shape the shared teardown can clean up.
     fixture.parent_l->alive = true;
-    parent_ls->last_writer  = NULL;
+    parent_ls->parent_state->output.pumping = false;
 
     fixtureTeardown(&fixture);
 }
@@ -396,6 +399,7 @@ static line_t *createPausedClientChild(muxclient_fixture_t *fixture, muxclient_l
 
     muxclientLinestateInitialize(child_ls, child_l, true, cid);
     child_ls->paused = true;
+    child_ls->open_frame_submitted = true; // incoming-data fixture represents an already opened CID
     muxclientJoinConnection(parent_ls, child_ls);
     return child_l;
 }
@@ -436,7 +440,7 @@ static void caseParentBufferLimitClosesActualLargestQueue(void)
     muxclient_lstate_t *trigger_ls = lineGetState(fixture.child_l, fixture.mux);
 
     sbuf_t      *medium       = bufferpoolGetMediumBuffer(fixture.env.pool);
-    const size_t entry_charge = muxQueuedSbufCharge(medium);
+    const size_t entry_charge = sbufGetAllocationCharge(medium);
     bufferpoolReuseBuffer(fixture.env.pool, medium);
     twfRequire(entry_charge <= UINT32_MAX / 3U, "test parent charge is not representable by the setting");
     ts->parent_buffer_limit = (uint32_t) (3U * entry_charge);
@@ -490,7 +494,7 @@ static void caseParentBufferLimitClosesActualLargestQueue(void)
                        kTriggerQueue,
                        "shedding changed the surviving trigger child's logical payload");
     twfRequireEqualText(
-        fixture.trace.seq, "Pf", "queue pressure must emit one Close and child Finish without pausing the parent");
+        fixture.trace.seq, "fP", "queue pressure must emit one Close and child Finish without pausing the parent");
 
     frame_view_t frames[2];
     uint32_t     frame_count = parseFrames(fixture.capture, fixture.trace.capture_len, frames, 2);
@@ -589,7 +593,7 @@ static void caseCoalescedDataBoundaries(bool paused, bool empty_only)
     muxclient_lstate_t *parent_ls = lineGetState(fixture.parent_l, fixture.mux);
     muxclient_lstate_t *child_ls  = lineGetState(fixture.child_l, fixture.mux);
     // Parent replies belong to a child whose Open has already been sent.
-    child_ls->open_frame_sent = true;
+    child_ls->open_frame_submitted = true;
     child_ls->paused          = paused;
     fixture.prev->fnPayloadD  = captureSeparateDataFrame;
     g_boundary_child          = fixture.child_l;
@@ -683,7 +687,7 @@ static void caseParsedTinyFrameUsesAllocationCharge(uint32_t payload_length, con
     ts->child_buffer_limit    = (uint32_t) (2U * charge);
     ts->parent_buffer_limit   = kMuxParentBufferLimitUnlimited;
     child_ls->paused          = true;
-    child_ls->open_frame_sent = true;
+    child_ls->open_frame_submitted = true;
     line_t *sibling_l         = createPausedClientChild(&fixture, parent_ls, kTestChildCid + 1U);
 
     sendParsedTinyClientData(&fixture, payload_length);
@@ -696,7 +700,7 @@ static void caseParsedTinyFrameUsesAllocationCharge(uint32_t payload_length, con
                        "tiny Data changed logical queue length semantics");
     const sbuf_t *retained = bufferqueueFront(&child_ls->pending_child_data);
     twfRequire(retained != NULL, "the first tiny Data frame has no retained sbuf");
-    requireEqualCharge(muxQueuedSbufCharge(retained), charge, "the parser retained an unexpected buffer geometry");
+    requireEqualCharge(sbufGetAllocationCharge(retained), charge, "the parser retained an unexpected buffer geometry");
     requireEqualCharge(
         child_ls->pending_child_queue_charge, charge, "the first tiny Data frame did not charge its child queue");
     requireEqualCharge(
@@ -712,7 +716,7 @@ static void caseParsedTinyFrameUsesAllocationCharge(uint32_t payload_length, con
     twfRequire(sibling_ls->parent == parent_ls, "the tiny-frame child limit detached a sibling");
     requireEqualCharge(
         parent_ls->pending_child_queue_charge, 0, "the tiny-frame child close retained parent allocation charge");
-    twfRequireEqualText(fixture.trace.seq, "Pf", "the tiny-frame limit used the wrong close directions");
+    twfRequireEqualText(fixture.trace.seq, "fP", "the tiny-frame limit used the wrong close directions");
 
     destroySurvivingClientChild(&fixture, sibling_l);
     fixtureTeardown(&fixture);
@@ -730,7 +734,7 @@ static void caseParsedTinyFrameTransfersToDetachedAccounting(void)
     muxclient_lstate_t *child_ls  = lineGetState(fixture.child_l, fixture.mux);
     const size_t        charge    = pooledBufferCharge(fixture.env.pool, true);
     child_ls->paused              = true;
-    child_ls->open_frame_sent     = true;
+    child_ls->open_frame_submitted = true;
     ts->unsatisfied_lines[0]      = fixture.parent_l;
 
     sendParsedTinyClientData(&fixture, 0);
@@ -771,7 +775,7 @@ static void caseQueueReservationFailureClosesOnlyClientChild(void)
     muxclient_lstate_t *parent_ls = lineGetState(fixture.parent_l, fixture.mux);
     muxclient_lstate_t *child_ls  = lineGetState(fixture.child_l, fixture.mux);
     child_ls->paused              = true;
-    child_ls->open_frame_sent     = true;
+    child_ls->open_frame_submitted = true;
 
     bufferqueueDestroy(&child_ls->pending_child_data);
     bufferqueueInitEmpty(&child_ls->pending_child_data);
@@ -786,7 +790,7 @@ static void caseQueueReservationFailureClosesOnlyClientChild(void)
     twfRequireLineStateZeroed(fixture.child_l, fixture.mux, "queue reservation failure retained child state");
     requireEqualCharge(
         parent_ls->pending_child_queue_charge, 0, "queue reservation failure mutated parent charge accounting");
-    twfRequireEqualText(fixture.trace.seq, "Pf", "queue reservation failure used the wrong close directions");
+    twfRequireEqualText(fixture.trace.seq, "fP", "queue reservation failure used the wrong close directions");
 
     fixtureTeardown(&fixture);
 }
@@ -798,7 +802,7 @@ static void queueTwoPausedClientPayloads(muxclient_fixture_t *fixture, uint32_t 
     muxclient_lstate_t *child_ls  = lineGetState(fixture->child_l, fixture->mux);
 
     child_ls->paused          = true;
-    child_ls->open_frame_sent = true;
+    child_ls->open_frame_submitted = true;
     twfRequire(muxclientQueueChildPayload(
                    fixture->mux, fixture->parent_l, ts, parent_ls, child_ls, makePatternPayload(fixture, first_len)),
                "queueing the first paused child payload failed");
@@ -902,12 +906,12 @@ static void casePeerCloseDropsLateFramesAndKeepsSiblingProgress(void)
     muxclient_lstate_t *parent_ls = lineGetState(fixture.parent_l, fixture.mux);
     muxclient_lstate_t *child_ls  = lineGetState(fixture.child_l, fixture.mux);
     child_ls->paused              = true;
-    child_ls->open_frame_sent     = true;
+    child_ls->open_frame_submitted = true;
 
     line_t             *sibling_l  = createPausedClientChild(&fixture, parent_ls, kSiblingCid);
     muxclient_lstate_t *sibling_ls = lineGetState(sibling_l, fixture.mux);
     sibling_ls->paused             = false;
-    sibling_ls->open_frame_sent    = true;
+    sibling_ls->open_frame_submitted = true;
 
     sbuf_t *batch = bufferpoolGetLargeBuffer(fixture.env.pool);
     batch         = sbufReserveSpace(batch, kBatchBytes);
@@ -937,7 +941,7 @@ static void casePeerCloseDropsLateFramesAndKeepsSiblingProgress(void)
     const sbuf_t *retained = bufferqueueFront(&child_ls->pending_child_data);
     twfRequire(retained != NULL, "the pre-Close payload queue has no retained buffer");
     requireEqualCharge(child_ls->pending_child_queue_charge,
-                       muxQueuedSbufCharge(retained),
+                       sbufGetAllocationCharge(retained),
                        "late Data changed child retained-charge accounting");
     requireEqualCharge(parent_ls->pending_child_queue_charge,
                        child_ls->pending_child_queue_charge,
@@ -1198,7 +1202,7 @@ static line_t *createClientChildOnParent(muxclient_fixture_t *fixture, line_t *p
     muxclient_lstate_t *child_ls  = lineGetState(child_l, fixture->mux);
     muxclientLinestateInitialize(child_ls, child_l, true, cid);
     child_ls->paused          = true;
-    child_ls->open_frame_sent = true;
+    child_ls->open_frame_submitted = true;
     muxclientJoinConnection(parent_ls, child_ls);
     twfRequire(muxclientQueueChildPayload(fixture->mux,
                                           parent_l,
@@ -1238,7 +1242,7 @@ static void runMuxclientDetachedAggregateLimitCase(bool unlimited_bytes, bool co
     muxclient_tstate_t *ts       = tunnelGetState(fixture.mux);
     muxclient_lstate_t *older_ls = lineGetState(fixture.child_l, fixture.mux);
     older_ls->paused             = true;
-    older_ls->open_frame_sent    = true;
+    older_ls->open_frame_submitted = true;
     twfRequire(muxclientQueueChildPayload(fixture.mux,
                                           fixture.parent_l,
                                           ts,
@@ -1411,7 +1415,7 @@ static void caseQuiescenceDropsPayload(bool parent_input, bool paused)
     twfRequireEqualU32(fixture.trace.len, 0, "quiesced payload emitted MUX callbacks");
     twfRequire(child_ls->l == fixture.child_l && child_ls->parent == parent_ls,
                "quiesced payload changed child membership before Finish");
-    twfRequire(! child_ls->open_frame_sent && ! child_ls->peer_flow_paused && child_ls->paused == paused,
+    twfRequire(! child_ls->open_frame_submitted && ! child_ls->peer_flow_paused && child_ls->paused == paused,
                "quiesced payload changed wire or flow-control state");
     requireEqualCharge(child_ls->pending_child_queue_charge, 0, "quiesced payload retained child charge");
     requireEqualCharge(parent_ls->pending_child_queue_charge, 0, "quiesced payload retained parent charge");
@@ -1477,7 +1481,7 @@ static void casePooledRetainedFrames(bool separate)
     fixtureSetup(&fixture, LARGE_BUFFER_SIZE_RAM_HIGH);
     muxclient_lstate_t *child = lineGetState(fixture.child_l, fixture.mux);
     child->paused             = true;
-    child->open_frame_sent    = true;
+    child->open_frame_submitted = true;
     fixture.prev->fnPayloadD  = pooledFrameSink;
     pooled_frame_count        = 0;
     sbuf_t *batch             = NULL;
@@ -1550,7 +1554,7 @@ static void caseFragmentedPausedFrameKeepsCarrierRemainder(void)
     muxclient_lstate_t *child  = lineGetState(fixture.child_l, fixture.mux);
     muxclient_lstate_t *parent = lineGetState(fixture.parent_l, fixture.mux);
     child->paused              = true;
-    child->open_frame_sent     = true;
+    child->open_frame_submitted = true;
     fixture.prev->fnPayloadD   = pooledFrameSink;
     pooled_frame_count         = 0;
     const uint32_t first_bytes = 17;
@@ -1585,8 +1589,59 @@ static void caseFragmentedPausedFrameKeepsCarrierRemainder(void)
     g_pool_size = kTestLargeBufferSize;
 }
 
+static tunnel_t *strict_mux;
+static bool      strict_paused;
+static bool      strict_pause_next;
+
+static void strictParentPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
+{
+    twfRequire(! strict_paused, "parent received Payload after Pause and before Resume");
+    twfNextPayload(t, l, buf);
+    if (strict_pause_next)
+    {
+        strict_pause_next = false;
+        strict_paused     = true;
+        muxclientTunnelDownStreamPause(strict_mux, l);
+    }
+}
+
+static void caseStrictParentPause(void)
+{
+    twfSetCase("all parent output obeys strict Pause and drains in FIFO order");
+    muxclient_fixture_t fixture;
+    fixtureSetup(&fixture, 4096);
+    strict_mux                 = fixture.mux;
+    strict_paused              = false;
+    strict_pause_next          = true;
+    fixture.next->fnPayloadU   = strictParentPayload;
+    muxclient_lstate_t *parent = lineGetState(fixture.parent_l, fixture.mux);
+    muxclientTunnelUpStreamPayload(fixture.mux, fixture.child_l, makePatternPayload(&fixture, 1));
+    line_t *sibling = createPausedClientChild(&fixture, parent, 8);
+    ((muxclient_lstate_t *) lineGetState(sibling, fixture.mux))->open_frame_submitted = false;
+    muxclientTunnelUpStreamPayload(fixture.mux, sibling, makePatternPayload(&fixture, 2));
+    twfRequire(muxclientSendControlFrame(
+                   fixture.mux, fixture.parent_l, parent, fixture.child_l, kTestChildCid, kMuxFlagFlowPause),
+               "control submission failed");
+    twfRequireEqualU32(fixture.trace.next_payload, 1, "output crossed transport Pause");
+    strict_paused = false;
+    muxclientTunnelDownStreamResume(fixture.mux, fixture.parent_l);
+    twfRequireEqualU32(fixture.trace.next_payload, 3, "Resume did not drain all output");
+    frame_view_t frames[8];
+    uint32_t     count = parseFrames(fixture.capture, fixture.trace.capture_len, frames, 8);
+    twfRequire(count == 5 && frames[2].flags == kMuxFlagOpen && frames[2].cid == 8 && frames[3].flags == kMuxFlagData &&
+                   frames[4].flags == kMuxFlagFlowPause,
+               "retained frames lost FIFO order");
+    destroySurvivingClientChild(&fixture, sibling);
+    fixtureTeardown(&fixture);
+}
+
+#define MUX_OUTPUT_CLIENT
+#include "mux_parent_output_cases.h"
+
 int main(void)
 {
+    runParentOutputCases();
+    caseStrictParentPause();
     caseFragmentedPausedFrameKeepsCarrierRemainder();
     caseUnpausedFrameKeepsReceiveAllocation();
     casePooledRetainedFrames(false);

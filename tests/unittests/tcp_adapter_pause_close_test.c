@@ -185,8 +185,75 @@ static void runPauseCase(bool splice_input, bool close_line)
     twfWorkerEnvTeardown(&env);
 }
 
+#ifdef TCP_PAUSE_TEST_LISTENER
+void __wrap_socketacceptresultDestroy(socket_accept_result_t *result);
+void __wrap_socketacceptresultDestroy(socket_accept_result_t *result)
+{
+    memoryFree(result);
+}
+
+static void pauseDuringInit(tunnel_t *t, line_t *line)
+{
+    discard t;
+    expected_line = line;
+    tcplistenerTunnelDownStreamPause(adapter, line);
+}
+
+static void runAcceptedInitPauseCase(void)
+{
+    twfSetCase("TcpListener preserves Pause received during accepted-line Init");
+    twf_worker_env_t env;
+    twfWorkerEnvSetup(&env, 4096, 64);
+    adapter  = tunnelCreate(NULL, sizeof(adapter_tstate_t), sizeof(adapter_lstate_t));
+    neighbor = tunnelCreate(NULL, 0, 0);
+    twfRequire(adapter != NULL && neighbor != NULL, "failed to create accept fixture");
+    tunnelBind(adapter, neighbor);
+    neighbor->fnInitU             = pauseDuringInit;
+    adapter_tstate_t   *ts        = tunnelGetState(adapter);
+    local_idle_table_t *tables[1] = {NULL};
+    ts->idle_tables               = tables;
+    ts->initial_idle_timeout_ms   = 60000;
+    tunnel_chain_t *chain         = tunnelchainCreate(1);
+    chain->sum_line_state_size    = adapter->lstate_size;
+    tunnelchainFinalize(chain);
+    adapter->chain = chain;
+    int sockets[2];
+    twfRequire(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) == 0, "accept socketpair failed");
+    wio_t             *io   = wioGet(env.loop, sockets[0]);
+    struct sockaddr_in peer = {
+        .sin_family = AF_INET, .sin_port = htons(1234), .sin_addr.s_addr = htonl(INADDR_LOOPBACK)};
+    wioSetPeerAddr(io, (struct sockaddr *) &peer, sizeof(peer));
+    wioDetach(io);
+    socket_accept_result_t *result = memoryAllocateZero(sizeof(*result));
+    result->io                     = io;
+    result->tunnel                 = adapter;
+    result->wid                    = 0;
+    result->real_localport         = 1234;
+    wevent_t event                 = {.loop = env.loop};
+    weventSetUserData(&event, result);
+    expected_line = NULL;
+    tcplistenerOnInboundConnected(&event);
+    twfRequire(expected_line != NULL, "accepted line did not receive Init");
+    adapter_lstate_t *ls = lineGetState(expected_line, adapter);
+    twfRequire(ls->read_paused && ! (io->events & WW_READ), "accept restarted reads after Init Pause");
+    tcplistenerTunnelDownStreamResume(adapter, expected_line);
+    twfRequire(! ls->read_paused && (io->events & WW_READ), "genuine Resume did not enable reads");
+    finishLine(expected_line);
+    expected_line = NULL;
+    localidletableDestroy(tables[0]);
+    close(sockets[1]);
+    tunnelchainDestroy(chain);
+    tunnelDestroy(adapter);
+    tunnelDestroy(neighbor);
+    twfWorkerEnvTeardown(&env);
+}
+#endif
+
 int main(void)
 {
+#ifdef TCP_PAUSE_TEST_LISTENER
+    runAcceptedInitPauseCase();
+#endif
 #if WW_HAVE_SPLICE
     runPauseCase(true, true);
     runPauseCase(true, false);

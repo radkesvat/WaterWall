@@ -128,6 +128,8 @@ static void fixtureSetup(muxserver_fixture_t *fixture, uint32_t capture_capacity
     ts->child_buffer_pause_tolerance  = kMuxDefaultChildBufferPauseTolerance;
     ts->child_buffer_resume_threshold = kMuxDefaultChildBufferResumeThreshold;
     ts->parent_buffer_limit           = kMuxDefaultParentBufferLimit;
+    ts->parent_write_pause_threshold  = kMuxDefaultParentWritePauseThreshold;
+    ts->parent_write_limit            = kMuxDefaultParentWriteLimit;
     ts->detached_buffer_limit         = kMuxMinimumDetachedBufferLimit;
     ts->detached_child_limit          = kMuxMinimumDetachedChildLimit;
     ts->workers_count                 = 1;
@@ -170,6 +172,7 @@ static void fixtureTeardown(muxserver_fixture_t *fixture)
     {
         lineDestroy(fixture->parent_l);
     }
+    masterpoolMakeEmpty(fixture->lines.master);
     twfLinePoolTeardown(&fixture->lines);
     memoryFree(fixture->capture);
     tunnelDestroy(fixture->prev);
@@ -195,7 +198,7 @@ static sbuf_t *makePatternPayload(muxserver_fixture_t *fixture, uint32_t length)
 static size_t pooledBufferCharge(buffer_pool_t *pool, bool small)
 {
     sbuf_t      *buf    = small ? bufferpoolGetSmallBuffer(pool) : bufferpoolGetLargeBuffer(pool);
-    const size_t charge = muxQueuedSbufCharge(buf);
+    const size_t charge = sbufGetAllocationCharge(buf);
     bufferpoolReuseBuffer(pool, buf);
     return charge;
 }
@@ -479,7 +482,7 @@ static void caseParsedTinyFrameUsesAllocationCharge(uint32_t payload_length, con
                        "tiny Data changed logical queue length semantics");
     const sbuf_t *retained = bufferqueueFront(&child_ls->pending_child_data);
     twfRequire(retained != NULL, "the first tiny Data frame has no retained sbuf");
-    requireEqualCharge(muxQueuedSbufCharge(retained), charge, "the parser retained an unexpected buffer geometry");
+    requireEqualCharge(sbufGetAllocationCharge(retained), charge, "the parser retained an unexpected buffer geometry");
     requireEqualCharge(
         child_ls->pending_child_queue_charge, charge, "the first tiny Data frame did not charge its child queue");
     requireEqualCharge(
@@ -620,7 +623,7 @@ static void caseConfiguredResumeThresholdControlsFlowResume(void)
     fixtureTeardown(&fixture);
 }
 
-static void casePerParentAdmissionRejectsWithClose(void)
+static void casePerParentAdmissionRejectsWithClose(bool blocked)
 {
     twfSetCase("MuxServer per-parent admission limit rejects one fresh cid without closing siblings");
 
@@ -629,12 +632,20 @@ static void casePerParentAdmissionRejectsWithClose(void)
     muxserver_tstate_t *ts = tunnelGetState(fixture.mux);
     ts->max_children       = 1;
 
+    if (blocked)
+        muxserverTunnelUpStreamPause(fixture.mux, fixture.parent_l);
+
     const mux_cid_t rejected_cid = kTestChildCid + 100U;
     sbuf_t         *open         = bufferpoolGetLargeBuffer(fixture.env.pool);
     sbufSetLength(open, kMuxFrameLength);
     writeFrameHeader(sbufGetMutablePtr(open), 0, kMuxFlagOpen, rejected_cid);
     muxserverTunnelUpStreamPayload(fixture.mux, fixture.parent_l, open);
 
+    if (blocked)
+    {
+        twfRequire(fixture.trace.prev_payload == 0, "rejected Open reply bypassed Pause");
+        muxserverTunnelUpStreamResume(fixture.mux, fixture.parent_l);
+    }
     muxserver_lstate_t *parent_ls = lineGetState(fixture.parent_l, fixture.mux);
     twfRequire(lineIsAlive(fixture.parent_l), "resource rejection closed the healthy borrowed parent");
     twfRequire(lineIsAlive(fixture.child_l), "resource rejection closed an admitted sibling");
@@ -782,7 +793,7 @@ static void casePeerCloseDropsLateFramesAndKeepsSiblingProgress(void)
     const sbuf_t *retained = bufferqueueFront(&child_ls->pending_child_data);
     twfRequire(retained != NULL, "the pre-Close server payload queue has no retained buffer");
     requireEqualCharge(child_ls->pending_child_queue_charge,
-                       muxQueuedSbufCharge(retained),
+                       sbufGetAllocationCharge(retained),
                        "late server Data changed child retained-charge accounting");
     requireEqualCharge(parent_ls->pending_child_queue_charge,
                        child_ls->pending_child_queue_charge,
@@ -1070,8 +1081,11 @@ static void caseFragmentedPausedFrameKeepsCarrierRemainder(void)
     g_pool_size = kTestLargeBufferSize;
 }
 
+#include "mux_parent_output_cases.h"
+
 int main(void)
 {
+    runParentOutputCases();
     caseFragmentedPausedFrameKeepsCarrierRemainder();
     caseUnpausedFrameKeepsReceiveAllocation();
     casePooledRetainedFrames(false);
@@ -1090,7 +1104,8 @@ int main(void)
     caseParsedTinyFrameTransfersToDetachedAccounting();
     caseQueueReservationFailureClosesOnlyServerChild();
     caseConfiguredResumeThresholdControlsFlowResume();
-    casePerParentAdmissionRejectsWithClose();
+    casePerParentAdmissionRejectsWithClose(false);
+    casePerParentAdmissionRejectsWithClose(true);
     caseDuplicateOpenClosesParent();
     caseChildIdlePromotionAndImmediateRemoval();
     casePeerCloseDropsLateFramesAndKeepsSiblingProgress();

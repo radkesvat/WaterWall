@@ -47,6 +47,8 @@ void mxbMuxServerCreate(mxb_fixture_t *fixture)
     ts->child_buffer_pause_tolerance  = kMuxDefaultChildBufferPauseTolerance;
     ts->child_buffer_resume_threshold = kMuxDefaultChildBufferResumeThreshold;
     ts->parent_buffer_limit           = kMxbRetainedChargeLimit;
+    ts->parent_write_pause_threshold  = kMuxDefaultParentWritePauseThreshold;
+    ts->parent_write_limit            = kMuxDefaultParentWriteLimit;
     ts->detached_buffer_limit         = kMxbRetainedChargeLimit;
     ts->detached_child_limit          = kMuxMinimumDetachedChildLimit;
     ts->workers_count                 = 1;

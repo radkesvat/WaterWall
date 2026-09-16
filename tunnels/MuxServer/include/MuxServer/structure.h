@@ -1,6 +1,7 @@
 #pragma once
 
 #include "MuxCommon/mux_limits.h"
+#include "MuxCommon/mux_parent_output.h"
 #include "MuxCommon/mux_wire.h"
 #include "local_widle_table.h"
 #include "loggers/log_rate_limiter.h"
@@ -46,6 +47,7 @@ typedef struct muxserver_rejection_bucket_s
 
 typedef struct muxserver_parent_state_s
 {
+    mux_parent_output_t          output;
     muxserver_child_map_t        child_map;
     muxserver_rejection_bucket_t rejection_bucket;
 } muxserver_parent_state_t;
@@ -63,6 +65,8 @@ typedef struct muxserver_tstate_s
     uint32_t child_buffer_pause_tolerance;
     uint32_t child_buffer_resume_threshold;
     uint32_t parent_buffer_limit;
+    uint32_t parent_write_pause_threshold;
+    uint32_t parent_write_limit;
     uint32_t detached_buffer_limit;
     uint32_t detached_child_limit;
     uint32_t max_children;
@@ -90,7 +94,6 @@ struct muxserver_lstate_s
 {
     tunnel_t *t;           // owning MuxServer instance
     line_t   *l;           // the line this state is associated with
-    line_t   *last_writer; // used when parent, to track the last writer line
 
     struct muxserver_lstate_s *parent;             // the parent  f is_child is true
     struct muxserver_lstate_s *child_prev;         // previous child in the parent connection
@@ -109,7 +112,8 @@ struct muxserver_lstate_s
     bool                      paused : 1;           // child: local child write side is paused
     bool                      flow_paused_sent : 1; // child: FlowPause was sent to the peer for this cid
     bool                      peer_flow_paused : 1; // child: peer sent FlowPause for this cid
-    bool parent_write_paused : 1;                   // child: parent transport write pause was reflected to this child
+    bool                      source_starting : 1;  // child: producer Init/Est callback is still on the stack
+    bool                      parent_write_paused : 1; // child: local parent FIFO pressure was reflected to this child
     bool parent_finishing : 1;                      // parent: main FIN is being handled, suppress parent writes
     bool detached_registered : 1;                   // child: present in its worker's detached owner registry
     bool child_slot_reserved : 1;                   // child: aggregate reservation is owned until state destruction
@@ -199,7 +203,8 @@ void                         muxserverRefreshChildIdle(tunnel_t *t, muxserver_ls
  * @param notify_child_next send Finish to the child's next side. Must be false when this close is the reaction to
  *                          a Finish received from that same side.
  *
- * The caller must return immediately: the parent line may be dead afterwards.
+ * The parent may be dead afterwards. A caller that continues must hold its own parent reference and
+ * recheck parent life/state; the owned child is logically dead.
  */
 void muxserverCloseChildKeepParent(tunnel_t *t, line_t *parent_l, muxserver_lstate_t *parent_ls,
                                    muxserver_lstate_t *child_ls, bool notify_child_next);
@@ -229,3 +234,10 @@ void muxserverAbortDetachedChild(tunnel_t *t, line_t *child_l, muxserver_lstate_
 void muxserverHandleParentLoss(tunnel_t *t, line_t *parent_l, bool notify_parent_prev);
 muxserver_detached_registry_t *muxserverGetDetachedRegistry(tunnel_t *t, line_t *child_l);
 muxserver_worker_state_t      *muxserverGetWorkerState(tunnel_t *t, line_t *line);
+
+/* Takes buf on every result. True proves only the parent survives; callers that
+ * continue using a child must hold and check that child's reference separately.
+ * publish_child/flag publish wire state after admission, before any callback. */
+bool muxserverSendParentOutput(tunnel_t *t, line_t *parent_l, sbuf_t *buf, muxserver_lstate_t *publish_child,
+                               uint8_t flag);
+void muxserverDrainParentOutput(tunnel_t *t, line_t *parent_l);

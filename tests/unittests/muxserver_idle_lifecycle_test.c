@@ -77,6 +77,8 @@ static void idleFixtureSetup(muxserver_idle_fixture_t *fixture)
     ts->child_buffer_pause_tolerance      = kMuxDefaultChildBufferPauseTolerance;
     ts->child_buffer_resume_threshold     = kMuxDefaultChildBufferResumeThreshold;
     ts->parent_buffer_limit               = kMuxDefaultParentBufferLimit;
+    ts->parent_write_pause_threshold      = kMuxDefaultParentWritePauseThreshold;
+    ts->parent_write_limit                = kMuxDefaultParentWriteLimit;
     ts->detached_buffer_limit             = kMuxMinimumDetachedBufferLimit;
     ts->detached_child_limit              = kMuxMinimumDetachedChildLimit;
     ts->max_children                      = 16;

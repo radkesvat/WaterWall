@@ -22,7 +22,7 @@ void muxclientTunnelUpStreamPause(tunnel_t *t, line_t *child_l)
     }
 
     muxclient_lstate_t *parent_ls = child_ls->parent;
-    if (parent_ls->parent_finishing || ! child_ls->open_frame_sent)
+    if (parent_ls->parent_finishing || ! child_ls->open_frame_submitted)
     {
         return;
     }

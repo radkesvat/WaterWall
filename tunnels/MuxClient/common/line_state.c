@@ -14,10 +14,10 @@ void muxclientLinestateInitialize(muxclient_lstate_t *ls, line_t *l, bool is_chi
             LOGF("MuxClient: failed to allocate parent-only state");
             abortProgramNow(1);
         }
+        bufferqueueInitEmpty(&parent_state->output.pending);
         parent_state->child_map = muxclient_child_map_t_init();
     }
     *ls = (muxclient_lstate_t) {.l                  = l,
-                                .last_writer        = NULL,
                                 .parent             = NULL,
                                 .child_prev         = NULL,
                                 .child_next         = NULL,
@@ -35,7 +35,7 @@ void muxclientLinestateInitialize(muxclient_lstate_t *ls, line_t *l, bool is_chi
                                 .peer_flow_paused           = false,
                                 .parent_write_paused        = false,
                                 .parent_finishing           = false,
-                                .open_frame_sent            = ! is_child,
+                                .open_frame_submitted       = ! is_child,
                                 .selection_retired          = false};
 }
 
@@ -101,6 +101,7 @@ void muxclientLinestateDestroy(muxclient_lstate_t *ls)
 
     if (! ls->is_child)
     {
+        bufferqueueDestroy(&ls->parent_state->output.pending);
         muxclient_child_map_t_drop(&ls->parent_state->child_map);
         memoryFree(ls->parent_state);
         ls->parent_state = NULL;

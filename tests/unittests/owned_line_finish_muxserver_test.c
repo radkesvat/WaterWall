@@ -63,6 +63,8 @@ static void fixtureSetup(muxserver_fixture_t *fixture)
     ts->child_buffer_pause_tolerance      = kMuxDefaultChildBufferPauseTolerance;
     ts->child_buffer_resume_threshold     = kMuxDefaultChildBufferResumeThreshold;
     ts->parent_buffer_limit               = kMuxDefaultParentBufferLimit;
+    ts->parent_write_pause_threshold      = kMuxDefaultParentWritePauseThreshold;
+    ts->parent_write_limit                = kMuxDefaultParentWriteLimit;
     ts->detached_buffer_limit             = kMuxMinimumDetachedBufferLimit;
     ts->detached_child_limit              = kMuxMinimumDetachedChildLimit;
     ts->max_live_children                 = 1024;
@@ -246,7 +248,7 @@ static sbuf_t *makeMuxserverQueuedPayload(muxserver_fixture_t *fixture, uint32_t
 static size_t pooledBufferCharge(muxserver_fixture_t *fixture, bool small)
 {
     sbuf_t *buf = small ? bufferpoolGetSmallBuffer(fixture->env.pool) : bufferpoolGetLargeBuffer(fixture->env.pool);
-    const size_t charge = muxQueuedSbufCharge(buf);
+    const size_t charge = sbufGetAllocationCharge(buf);
     bufferpoolReuseBuffer(fixture->env.pool, buf);
     return charge;
 }
@@ -405,7 +407,7 @@ static void caseParentBufferLimitClosesActualLargestQueue(void)
                        kTriggerQueue,
                        "shedding changed the surviving trigger child's logical payload");
     twfRequireEqualText(
-        fixture.trace.seq, "pF", "queue pressure must emit one Close and child Finish without pausing the parent");
+        fixture.trace.seq, "Fp", "queue pressure must emit one Close and child Finish without pausing the parent");
 
     lineUnref(large_l);
     for (uint32_t i = 0; i < (uint32_t) kIdleChildren; ++i)

@@ -298,8 +298,26 @@ static void testDiscardOnPoolReturn(void)
 #endif
 }
 
+static void testAllocationCharge(void)
+{
+    sbuf_t      *buf      = sbufCreateSplice(33);
+    const size_t expected = sizeof(sbuf_t) + 64 + SPLICE_BUFFER_STORAGE_SIZE + kSbufAllocationAlignment;
+    require(sbufGetAllocationCharge(buf) == expected, "unopened splice wrapper has wrong allocation charge");
+    buf->capacity = 64 + 1024 * 1024;
+    buf->len      = 1024 * 1024;
+    require(sbufGetAllocationCharge(buf) == expected, "logical splice body changed physical charge");
+    sbufShiftLeft(buf, 8);
+    require(sbufGetAllocationCharge(buf) == expected, "splice prefix changed physical charge");
+    buf->len      = 8;
+    buf->capacity = 64;
+    require(sbufGetAllocationCharge(buf) == expected, "consumed splice body reduced physical charge");
+    buf->len = 0;
+    sbufDestroy(buf);
+}
+
 int main(void)
 {
+    testAllocationCharge();
     testPipeCheckout();
     testDiscardOnPoolReturn();
 #ifdef WW_SPLICE_POOL_BYPASS_TEST

@@ -269,8 +269,8 @@ static void testQueuedSbufCharge(buffer_pool_t *pool)
     sbuf_t *one_small   = bufferpoolGetSmallBuffer(pool);
     sbufSetLength(one_small, 1);
 
-    const size_t empty_charge = muxQueuedSbufCharge(empty_small);
-    const size_t one_charge   = muxQueuedSbufCharge(one_small);
+    const size_t empty_charge = sbufGetAllocationCharge(empty_small);
+    const size_t one_charge   = sbufGetAllocationCharge(one_small);
     require(empty_charge > 0, "an empty queued sbuf has no retained allocation charge");
     require(empty_charge == one_charge, "payload length changed an otherwise identical sbuf allocation charge");
     require(empty_charge ==
@@ -278,20 +278,20 @@ static void testQueuedSbufCharge(buffer_pool_t *pool)
             "small-buffer charge omitted real allocation bytes");
 
     sbuf_t *large = bufferpoolGetLargeBuffer(pool);
-    require(muxQueuedSbufCharge(large) ==
+    require(sbufGetAllocationCharge(large) ==
                 sizeof(sbuf_t) + (size_t) sbufGetTotalCapacity(large) + (size_t) kSbufAllocationAlignment,
             "large-buffer charge omitted real allocation bytes");
-    require(muxQueuedSbufCharge(large) != empty_charge, "queued sbuf charge used one fixed pool-tier constant");
+    require(sbufGetAllocationCharge(large) != empty_charge, "queued sbuf charge used one fixed pool-tier constant");
 
     sbuf_t *unpadded = sbufCreateWithPadding(77, 0);
     sbuf_t *padded   = sbufCreateWithPadding(77, 33);
-    require(muxQueuedSbufCharge(unpadded) ==
+    require(sbufGetAllocationCharge(unpadded) ==
                 sizeof(sbuf_t) + (size_t) sbufGetTotalCapacity(unpadded) + (size_t) kSbufAllocationAlignment,
             "dedicated-buffer charge omitted real allocation bytes");
-    require(muxQueuedSbufCharge(padded) ==
+    require(sbufGetAllocationCharge(padded) ==
                 sizeof(sbuf_t) + (size_t) sbufGetTotalCapacity(padded) + (size_t) kSbufAllocationAlignment,
             "padded-buffer charge omitted real allocation bytes");
-    require(muxQueuedSbufCharge(padded) > muxQueuedSbufCharge(unpadded),
+    require(sbufGetAllocationCharge(padded) > sbufGetAllocationCharge(unpadded),
             "queued sbuf charge excluded retained left padding");
 
     require(! muxQueueChargeWouldReachLimit(10, 9, 20), "below-limit projected charge was rejected");
@@ -300,6 +300,12 @@ static void testQueuedSbufCharge(buffer_pool_t *pool)
     require(muxQueueChargeWouldReachLimit(0, SIZE_MAX, SIZE_MAX),
             "maximum candidate charge did not reach an equal limit");
 
+    const size_t before = sbufGetAllocationCharge(padded);
+    sbufSetLength(padded, 50);
+    sbufShiftRight(padded, 17);
+    sbufConsume(padded, 10);
+    sbufShiftLeft(padded, 8);
+    require(sbufGetAllocationCharge(padded) == before, "cursor/length changes reduced allocation charge");
     sbufDestroy(padded);
     sbufDestroy(unpadded);
     bufferpoolReuseBuffer(pool, large);
@@ -307,10 +313,20 @@ static void testQueuedSbufCharge(buffer_pool_t *pool)
     bufferpoolReuseBuffer(pool, empty_small);
 }
 
+static unsigned retention_lifetime_releases;
+static void     releaseRetentionLifetime(sbuf_lifetime_t *lifetime)
+{
+    discard lifetime;
+    ++retention_lifetime_releases;
+}
+
 static void testEncodeCase(buffer_pool_t *pool, uint32_t payload_length, bool prepend_open, uint32_t data_frames)
 {
     sbuf_t             *input   = makePayload(pool, payload_length);
     sbuf_t             *encoded = NULL;
+    sbuf_lifetime_t     lifetime = {.release = releaseRetentionLifetime};
+    retention_lifetime_releases  = 0;
+    sbufAttachLifetime(input, &lifetime);
     mux_encode_result_t result  = muxEncodeChildPayload(pool, input, kTestCid, prepend_open, &encoded);
     require(result == kMuxEncodeSuccess && encoded != NULL, "payload encoding failed");
 
@@ -323,7 +339,10 @@ static void testEncodeCase(buffer_pool_t *pool, uint32_t payload_length, bool pr
         require(frames[0].cid == kTestCid, "encoded Open frame has the wrong cid");
     }
     requirePayload(frames, count, prepend_open ? 1U : 0U, payload_length);
+    require(sbufGetLifetime(encoded) == &lifetime && retention_lifetime_releases == 0,
+            "encoding released or lost lifetime metadata");
     bufferpoolReuseBuffer(pool, encoded);
+    require(retention_lifetime_releases == 1, "encoding did not settle lifetime once");
 }
 
 static void testEncodingAndOwnership(buffer_pool_t *pool)
@@ -366,13 +385,6 @@ static void testEncodingAndOwnership(buffer_pool_t *pool)
     testEncodeCase(pool, kMuxMaxDataFrameLength + 1U, false, 2);
     testEncodeCase(pool, 2U * kMuxMaxDataFrameLength, false, 2);
     testEncodeCase(pool, 2U * kMuxMaxDataFrameLength + 1U, true, 3);
-}
-
-static unsigned retention_lifetime_releases;
-static void     releaseRetentionLifetime(sbuf_lifetime_t *lifetime)
-{
-    discard lifetime;
-    ++retention_lifetime_releases;
 }
 
 static void testPausedRetentionStorage(buffer_pool_t *pool)

@@ -83,6 +83,8 @@ static void fixtureSetup(muxclient_capacity_fixture_t *fixture, uint8_t mode, ui
     ts->child_buffer_pause_tolerance  = kMuxDefaultChildBufferPauseTolerance;
     ts->child_buffer_resume_threshold = kMuxDefaultChildBufferResumeThreshold;
     ts->parent_buffer_limit           = kMuxDefaultParentBufferLimit;
+    ts->parent_write_pause_threshold  = kMuxDefaultParentWritePauseThreshold;
+    ts->parent_write_limit            = kMuxDefaultParentWriteLimit;
     ts->detached_buffer_limit         = kMuxMinimumDetachedBufferLimit;
     ts->detached_child_limit          = kMuxMinimumDetachedChildLimit;
     ts->max_children                  = 16;
@@ -349,9 +351,9 @@ static void caseServerCloseTargetsOnlyIndexedChild(void)
     line_t             *parent_l   = parent_ls->l;
     const mux_cid_t     second_cid = second_ls->connection_id;
     const mux_cid_t     third_cid  = third_ls->connection_id;
-    first_ls->open_frame_sent      = true;
-    second_ls->open_frame_sent     = true;
-    third_ls->open_frame_sent      = true;
+    first_ls->open_frame_submitted  = true;
+    second_ls->open_frame_submitted = true;
+    third_ls->open_frame_submitted  = true;
 
     sendParentFrame(&fixture, parent_l, second_cid, kMuxFlagClose, 0);
     twfRequireLineStateZeroed(second, fixture.mux, "server Close retained the indexed borrowed child");
@@ -462,7 +464,7 @@ static void caseProductionHashDispatchAtScale(void)
         fixtureTrackChild(&fixture, children[i]);
         muxclient_lstate_t *child_ls = lineGetState(children[i], fixture.mux);
         muxclientLinestateInitialize(child_ls, children[i], true, cid);
-        child_ls->open_frame_sent = true;
+        child_ls->open_frame_submitted = true;
         muxclientJoinConnection(parent_ls, child_ls);
     }
     twfRequireEqualU32(parent_ls->children_count, kClientDispatchChildren, "scalable setup did not publish every CID");
@@ -689,8 +691,117 @@ static void caseWorkerDrainIsLocal(void)
     twfWorkerEnvTeardown(&env);
 }
 
+static bool output_est_active;
+static bool output_close_in_est;
+
+static void outputEstProducer(tunnel_t *prev, line_t *child_l)
+{
+    discard prev;
+    output_est_active = true;
+    sbuf_t *buf       = bufferpoolGetSmallBuffer(g_client_fixture->env.pool);
+    sbufSetLength(buf, 1);
+    muxclientTunnelUpStreamPayload(g_client_fixture->mux, child_l, buf);
+    if (output_close_in_est)
+    {
+        muxclientTunnelUpStreamFinish(g_client_fixture->mux, child_l);
+        lineDestroy(child_l);
+    }
+    output_est_active = false;
+}
+
+static void outputInitSafePause(tunnel_t *prev, line_t *child_l)
+{
+    twfRequire(! output_est_active, "parent pressure reached producer before Est completed");
+    quietChildPause(prev, child_l);
+}
+
+static void caseNewChildInheritsOutputGate(bool close_in_est)
+{
+    twfSetCase("MuxClient child joins a gated parent and safely produces or closes during Est");
+    muxclient_capacity_fixture_t f;
+    fixtureSetup(&f, kConcurrencyModeCounter, 0);
+    muxclient_tstate_t *ts           = tunnelGetState(f.mux);
+    ts->concurrency_capacity         = 32;
+    ts->parent_write_pause_threshold = 1;
+    f.prev->fnPauseD                 = outputInitSafePause;
+    line_t             *first        = fixtureOpenChild(&f);
+    muxclient_lstate_t *child        = lineGetState(first, f.mux);
+    line_t             *parent       = child->parent->l;
+    muxclientTunnelDownStreamPause(f.mux, parent);
+    sbuf_t *buf = bufferpoolGetSmallBuffer(f.env.pool);
+    sbufSetLength(buf, 1);
+    muxclientTunnelUpStreamPayload(f.mux, first, buf);
+    f.prev->fnEstD      = outputEstProducer;
+    output_close_in_est = close_in_est;
+    line_t *second      = fixtureOpenChild(&f);
+    if (close_in_est)
+        twfRequire(! lineIsAlive(second), "reentrant Est Finish was lost");
+    else
+    {
+        muxclient_lstate_t *second_state = lineGetState(second, f.mux);
+        twfRequire(second_state->parent == child->parent && second_state->parent_write_paused,
+                   "new child missed parent gate");
+        twfRequire(f.quiet_pauses == 2, "new child did not receive exactly one Pause");
+    }
+    muxclientTunnelDownStreamResume(f.mux, parent);
+    fixtureTeardown(&f);
+}
+
+static void caseIdleParentWaitsForOutput(uint8_t mode, bool stop)
+{
+    twfSetCase("zero-child parents retain ordered final output until drain or owner Stop");
+    muxclient_capacity_fixture_t f;
+    fixtureSetup(&f, mode, mode == kConcurrencyModeFixedConnectionsCount ? 1 : 0);
+    muxclient_tstate_t *ts           = tunnelGetState(f.mux);
+    ts->concurrency_capacity         = 1;
+    line_t             *child        = fixtureOpenChild(&f);
+    muxclient_lstate_t *child_state  = lineGetState(child, f.mux);
+    muxclient_lstate_t *parent_state = child_state->parent;
+    line_t             *parent       = parent_state->l;
+    lineRef(parent);
+    if (mode == kConcurrencyModeTimer)
+    {
+        parent_state->creation_epoch = 0;
+        ts->concurrency_duration     = 1;
+    }
+    muxclientTunnelDownStreamPause(f.mux, parent);
+    sbuf_t *buf = bufferpoolGetSmallBuffer(f.env.pool);
+    sbufSetLength(buf, 1);
+    muxclientTunnelUpStreamPayload(f.mux, child, buf);
+    fixtureFinishChild(&f, child);
+    twfRequire(lineIsAlive(parent) && parent_state->children_count == 0 && parent_state->parent_state->owned &&
+                   bufferqueueGetBufCount(&parent_state->parent_state->output.pending) == 2,
+               "last-child Finish lost parent output ownership");
+    twfRequire(f.trace.next_payload == 0, "final Close bypassed parent Pause");
+    if (mode != kConcurrencyModeFixedConnectionsCount)
+        twfRequire(ts->unsatisfied_lines[0] == NULL && parent_state->selection_retired,
+                   "pending idle parent stayed selectable");
+    if (stop)
+    {
+        muxclientTunnelOnWorkerStop(f.mux, 0, wwLifecycleProcessShutdown());
+        twfRequire(! lineIsAlive(parent) && f.trace.next_payload == 0, "Stop waited for Resume or emitted output");
+    }
+    else
+    {
+        muxclientTunnelDownStreamResume(f.mux, parent);
+        twfRequire(f.trace.next_payload == 2, "idle parent lost final ordered output");
+        twfRequire(lineIsAlive(parent) == (mode == kConcurrencyModeFixedConnectionsCount),
+                   "idle drain failed to close exhausted parent or closed reusable fixed parent");
+    }
+    lineUnref(parent);
+    fixtureTeardown(&f);
+}
+
 int main(void)
 {
+    caseNewChildInheritsOutputGate(false);
+    caseNewChildInheritsOutputGate(true);
+    caseIdleParentWaitsForOutput(kConcurrencyModeCounter, false);
+    caseIdleParentWaitsForOutput(kConcurrencyModeTimer, false);
+    caseIdleParentWaitsForOutput(kConcurrencyModeFixedConnectionsCount, false);
+    caseIdleParentWaitsForOutput(kConcurrencyModeCounter, true);
+    caseIdleParentWaitsForOutput(kConcurrencyModeTimer, true);
+    caseIdleParentWaitsForOutput(kConcurrencyModeFixedConnectionsCount, true);
     caseWorkerDrainIsLocal();
     caseShutdownInventory(kConcurrencyModeCounter, 0, 1);
     caseShutdownInventory(kConcurrencyModeCounter, 0, 2);

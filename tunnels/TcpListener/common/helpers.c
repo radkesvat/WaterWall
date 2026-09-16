@@ -170,7 +170,8 @@ void tcplistenerOnInboundConnected(wevent_t *ev)
         return;
     }
 
-    if (UNLIKELY(wioRead(io) != 0))
+    // Init may attach this source to an already backpressured Mux parent.
+    if (! ls->read_paused && UNLIKELY(wioRead(io) != 0))
     {
         return;
     }

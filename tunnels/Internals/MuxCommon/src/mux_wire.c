@@ -205,6 +205,7 @@ mux_encode_result_t muxEncodeChildPayload(buffer_pool_t *pool, sbuf_t *input, mu
 
     assert(offset == encoded_length);
 
+    sbufTransferLifetime(input, encoded);
     bufferpoolReuseBuffer(pool, input);
     *encoded_out = encoded;
     return kMuxEncodeSuccess;

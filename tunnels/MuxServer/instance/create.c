@@ -24,6 +24,35 @@ static bool muxserverReadUintSetting(const cJSON *settings, const char *name, ui
     return false;
 }
 
+static bool muxserverReadParentWriteSettings(const cJSON *settings, muxserver_tstate_t *ts)
+{
+    const char    *names[]    = {"parent-write-buffer-pause-threshold", "parent-write-buffer-limit"};
+    uint32_t      *values[]   = {&ts->parent_write_pause_threshold, &ts->parent_write_limit};
+    const uint32_t defaults[] = {kMuxDefaultParentWritePauseThreshold, kMuxDefaultParentWriteLimit};
+    for (size_t i = 0; i < 2; ++i)
+    {
+        int64_t parsed = 0;
+        switch (jsonGetObjectIntegerInRange(settings, names[i], 1, INT_MAX, &parsed))
+        {
+        case kJsonValueMissing:
+            *values[i] = defaults[i];
+            break;
+        case kJsonValuePresent:
+            *values[i] = (uint32_t) parsed;
+            break;
+        case kJsonValueInvalid:
+            LOGF("MuxServer: \"%s\" must be a positive integer no greater than INT_MAX", names[i]);
+            return false;
+        }
+    }
+    if (ts->parent_write_pause_threshold >= ts->parent_write_limit)
+    {
+        LOGF("MuxServer: parent-write-buffer-pause-threshold must be less than parent-write-buffer-limit");
+        return false;
+    }
+    return true;
+}
+
 tunnel_t *muxserverTunnelCreate(node_t *node)
 {
     int wc = getWorkersCount();
@@ -77,6 +106,12 @@ tunnel_t *muxserverTunnelCreate(node_t *node)
     uint32_t                       memory_high_watermark         = 0;
     uint32_t                       memory_low_watermark          = 0;
     uint32_t                       memory_reserve                = 0;
+
+    if (! muxserverReadParentWriteSettings(settings, ts))
+    {
+        tunnelDestroy(t);
+        return NULL;
+    }
 
     if (! muxserverReadUintSetting(
             settings, "max-children", kMuxDefaultMaxChildrenPerParent, 1, INT_MAX, &max_children) ||

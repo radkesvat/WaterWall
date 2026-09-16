@@ -47,18 +47,5 @@ void muxserverTunnelDownStreamPayload(tunnel_t *t, line_t *child_l, sbuf_t *buf)
         return;
     }
 
-    line_t *parent_line = child_ls->parent->l;
-
-    muxserver_lstate_t *parent_ls = lineGetState(parent_line, t);
-
-    lineRef(parent_line);
-    parent_ls->last_writer = child_l; // update the last writer to the current child
-
-    tunnelPrevDownStreamPayload(t, parent_line, encoded);
-
-    if (lineIsAlive(parent_line))
-    {
-        parent_ls->last_writer = NULL; // reset the last writer after sending the payload
-    }
-    lineUnref(parent_line);
+    discard muxserverSendParentOutput(t, child_ls->parent->l, encoded, child_ls, kMuxFlagData);
 }

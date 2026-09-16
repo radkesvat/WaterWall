@@ -1,46 +1,10 @@
 #include "structure.h"
 
-#include "loggers/network_logger.h"
-
 void muxclientTunnelDownStreamPause(tunnel_t *t, line_t *parent_l)
 {
-    muxclient_tstate_t *ts_shutdown = tunnelGetState(t);
-    if (ts_shutdown->worker_states[lineGetWID(parent_l)].quiescing)
-    {
+    muxclient_tstate_t *ts     = tunnelGetState(t);
+    muxclient_lstate_t *parent = lineGetState(parent_l, t);
+    if (ts->worker_states[lineGetWID(parent_l)].quiescing || parent->parent_finishing)
         return;
-    }
-
-    muxclient_lstate_t *parent_ls = lineGetState(parent_l, t);
-
-    if (parent_ls->parent_finishing)
-    {
-        return;
-    }
-
-    if (LIKELY(parent_ls->last_writer != NULL))
-    {
-        line_t             *rl       = parent_ls->last_writer;
-        muxclient_lstate_t *child_ls = lineGetState(rl, t);
-        parent_ls->last_writer       = NULL;
-        lineRef(parent_l);
-        discard muxclientPauseChildSource(t, parent_l, child_ls, false, true);
-        lineUnref(parent_l);
-    }
-    else
-    {
-        muxclient_lstate_t *child_ls = parent_ls->child_next;
-
-        lineRef(parent_l);
-
-        while (child_ls && lineIsAlive(parent_l))
-        {
-            muxclient_lstate_t *temp = child_ls->child_next;
-            if (! muxclientPauseChildSource(t, parent_l, child_ls, false, true))
-            {
-                break;
-            }
-            child_ls = temp;
-        }
-        lineUnref(parent_l);
-    }
+    parent->parent_state->output.transport_paused = true;
 }

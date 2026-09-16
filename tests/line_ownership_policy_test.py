@@ -287,7 +287,7 @@ OWNER_CLOSE_SITES = [
      "the mux parent after child queues transfer during ordinary loss or are released during shutdown"),
     ("tunnels/MuxServer/common/helpers.c", "muxserverCloseShutdownChild",
      "an attached owned child closed silently during worker drain or shutdown-time Finish"),
-    ("tunnels/MuxServer/common/helpers.c", "muxserverCloseChildKeepParent",
+    ("tunnels/MuxServer/common/helpers.c", "muxserverCloseChildKeepParentImpl",
      "an attached mux child closed locally while its borrowed parent remains live"),
     ("tunnels/MuxServer/common/helpers.c", "muxserverFinalizeAttachedPeerClose",
      "an attached mux child after its ordered peer-Close queue drains"),
@@ -329,7 +329,7 @@ OWNER_DESTROY_COUNTS = {
     ("tunnels/UdpListener/downstream/fin.c", "udplistenerTunnelDownStreamFinish"): 2,
     ("tunnels/PacketsToStream/downstream/fin.c", "packetstostreamTunnelDownStreamFinish"): 2,
     ("tunnels/MuxClient/common/helpers.c", "muxclientHandleParentLoss"): 2,
-    ("tunnels/MuxServer/common/helpers.c", "muxserverCloseChildKeepParent"): 2,
+    ("tunnels/MuxServer/common/helpers.c", "muxserverCloseChildKeepParentImpl"): 2,
     ("tunnels/ReverseClient/common/helpers.c", "reverseclientClosePair"): 2,
 }
 

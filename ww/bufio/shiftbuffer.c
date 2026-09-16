@@ -11,6 +11,15 @@
 #endif
 #include "wlibc.h"
 
+size_t sbufGetAllocationCharge(const sbuf_t *buf)
+{
+    assert(buf != NULL);
+    const size_t storage = (buf->flags & kSbufFlagSplice)
+                               ? (size_t) sbufGetLeftPadding(buf) + SPLICE_BUFFER_STORAGE_SIZE
+                               : (size_t) sbufGetTotalCapacity(buf);
+    return sizeof(sbuf_t) + storage + (size_t) kSbufAllocationAlignment;
+}
+
 uint16_t sbufAlignLeftPadding(uint16_t pad_left)
 {
     const uint32_t aligned_pad = (((uint32_t) pad_left) + 31U) & ~31U;

@@ -20,5 +20,23 @@ void muxclientTunnelUpStreamInit(tunnel_t *t, line_t *child_l)
     muxclientJoinConnection(parent_ls, child_ls);
     parent_ls->connection_id = new_cid;
 
+    child_ls->source_starting = true;
+    lineRef(parent_l);
+    lineRef(child_l);
     tunnelPrevDownStreamEst(t, child_l);
+    if (lineIsAlive(child_l))
+    {
+        child_ls = lineGetState(child_l, t);
+        if (child_ls->is_child)
+        {
+            child_ls->source_starting = false;
+            if (lineIsAlive(parent_l) && child_ls->parent == parent_ls && ! parent_ls->parent_finishing &&
+                parent_ls->parent_state->output.sources_throttled)
+            {
+                discard muxclientPauseChildSource(t, parent_l, child_ls, false, true);
+            }
+        }
+    }
+    lineUnref(child_l);
+    lineUnref(parent_l);
 }

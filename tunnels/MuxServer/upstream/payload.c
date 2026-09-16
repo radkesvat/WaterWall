@@ -30,13 +30,9 @@ static bool rejectFreshOpen(tunnel_t *t, line_t *parent_l, muxserver_lstate_t *p
              (unsigned int) atomicLoadRelaxed(&ts->live_children_count));
     }
 
-    sbuf_t *close_frame = bufferpoolGetSmallBuffer(lineGetBufferPool(parent_l));
+    sbuf_t *close_frame = muxParentOutputControlBuffer(lineGetBufferPool(parent_l));
     muxMakeMuxFrame(close_frame, cid, kMuxFlagClose);
-    lineRef(parent_l);
-    tunnelPrevDownStreamPayload(t, parent_l, close_frame);
-    const bool parent_alive = lineIsAlive(parent_l);
-    lineUnref(parent_l);
-    return parent_alive;
+    return muxserverSendParentOutput(t, parent_l, close_frame, NULL, kMuxFlagClose);
 }
 
 static bool handleOpenFrame(tunnel_t *t, line_t *parent_l, muxserver_lstate_t *parent_ls, mux_frame_t *frame,
@@ -94,7 +90,20 @@ static bool handleOpenFrame(tunnel_t *t, line_t *parent_l, muxserver_lstate_t *p
     muxserverJoinConnection(parent_ls, new_child_ls);
 
     lineRef(parent_l);
-    discard lineCallWithRef(child_l, tunnelNextUpStreamInit, t);
+    new_child_ls->source_starting = true;
+    lineRef(child_l);
+    tunnelNextUpStreamInit(t, child_l);
+    if (lineIsAlive(child_l))
+    {
+        new_child_ls                  = lineGetState(child_l, t);
+        new_child_ls->source_starting = false;
+        if (lineIsAlive(parent_l) && new_child_ls->parent == parent_ls && ! parent_ls->parent_finishing &&
+            parent_ls->parent_state->output.sources_throttled)
+        {
+            discard muxserverPauseChildSource(t, parent_l, new_child_ls, false, true);
+        }
+    }
+    lineUnref(child_l);
     bool    parent_alive = lineIsAlive(parent_l);
     lineUnref(parent_l);
     return parent_alive;

@@ -48,6 +48,8 @@ void mxbMuxClientCreate(mxb_fixture_t *fixture)
     ts->child_buffer_pause_tolerance  = kMuxDefaultChildBufferPauseTolerance;
     ts->child_buffer_resume_threshold = kMuxDefaultChildBufferResumeThreshold;
     ts->parent_buffer_limit           = kMxbRetainedChargeLimit;
+    ts->parent_write_pause_threshold  = kMuxDefaultParentWritePauseThreshold;
+    ts->parent_write_limit            = kMuxDefaultParentWriteLimit;
     ts->detached_buffer_limit         = kMxbRetainedChargeLimit;
     ts->detached_child_limit          = kMuxMinimumDetachedChildLimit;
     ts->workers_count                 = 1;
@@ -65,7 +67,7 @@ void mxbMuxClientInitializeLines(mxb_fixture_t *fixture)
     muxclientLinestateInitialize(parent_ls, fixture->parent, false, 0);
     muxclientRegisterParent(tunnelGetState(fixture->mux), parent_ls);
     muxclientLinestateInitialize(child_ls, fixture->child, true, kMxbClientCid);
-    child_ls->open_frame_sent = true;
+    child_ls->open_frame_submitted = true;
     muxclientJoinConnection(parent_ls, child_ls);
     ((muxclient_tstate_t *) tunnelGetState(fixture->mux))->unsatisfied_lines[0] = fixture->parent;
 }

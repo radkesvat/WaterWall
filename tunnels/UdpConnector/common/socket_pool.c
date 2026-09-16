@@ -646,7 +646,8 @@ void udpconnectorOnSocketRecvFrom(wio_t *io, sbuf_t *buf)
     {
         ls->established = true;
         tunnelPrevDownStreamEst(t, l);
-        if (! lineIsAlive(l))
+        // Est may close the line or pause delivery of this already-read datagram.
+        if (! lineIsAlive(l) || ls->read_paused)
         {
             bufferpoolReuseBuffer(pool, buf);
             lineUnref(l);

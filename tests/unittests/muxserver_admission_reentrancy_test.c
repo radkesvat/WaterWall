@@ -116,6 +116,8 @@ static void fixtureSetup(muxserver_admission_fixture_t *fixture, uint32_t captur
     ts->child_buffer_pause_tolerance      = kMuxDefaultChildBufferPauseTolerance;
     ts->child_buffer_resume_threshold     = kMuxDefaultChildBufferResumeThreshold;
     ts->parent_buffer_limit               = kMuxDefaultParentBufferLimit;
+    ts->parent_write_pause_threshold      = kMuxDefaultParentWritePauseThreshold;
+    ts->parent_write_limit                = kMuxDefaultParentWriteLimit;
     ts->detached_buffer_limit             = kMuxMinimumDetachedBufferLimit;
     ts->detached_child_limit              = kMuxMinimumDetachedChildLimit;
     ts->max_children                      = 16;
@@ -665,8 +667,79 @@ static void caseDuplicatePeerDrainingCidClosesParent(void)
     fixtureTeardown(&fixture);
 }
 
+static bool     parent_output_init_active;
+static bool     parent_output_close_in_init;
+static bool     parent_output_loss_in_pause;
+static unsigned parent_output_pauses;
+
+static void parentOutputInit(tunnel_t *next, line_t *child)
+{
+    discard next;
+    parent_output_init_active = true;
+    sbuf_t *buf               = bufferpoolGetSmallBuffer(g_server_fixture->env.pool);
+    sbufSetLength(buf, 1);
+    muxserverTunnelDownStreamPayload(g_server_fixture->mux, child, buf);
+    if (parent_output_close_in_init)
+        muxserverTunnelDownStreamFinish(g_server_fixture->mux, child);
+    parent_output_init_active = false;
+}
+
+static void parentOutputPause(tunnel_t *next, line_t *child)
+{
+    discard next;
+    discard child;
+    twfRequire(! parent_output_init_active, "parent gate reached producer before Init completed");
+    ++parent_output_pauses;
+    if (parent_output_loss_in_pause)
+    {
+        parent_output_loss_in_pause = false;
+        line_t *parent              = g_server_fixture->parents[0];
+        muxserverTunnelUpStreamFinish(g_server_fixture->mux, parent);
+        lineDestroy(parent);
+        forgetParent(g_server_fixture, parent);
+    }
+}
+
+static void caseParentGateDuringInit(bool close_in_init, bool loss_in_pause)
+{
+    twfSetCase("MuxServer parent gate handles output, child close and parent loss during Init completion");
+    muxserver_admission_fixture_t f;
+    fixtureSetup(&f, 128);
+    muxserver_tstate_t *ts           = tunnelGetState(f.mux);
+    ts->parent_write_pause_threshold = 1;
+    line_t *parent                   = fixtureCreateParent(&f);
+    muxserverTunnelUpStreamPause(f.mux, parent);
+    f.next->fnInitU             = parentOutputInit;
+    f.next->fnPauseU            = parentOutputPause;
+    parent_output_pauses        = 0;
+    parent_output_close_in_init = false;
+    parent_output_loss_in_pause = loss_in_pause;
+    lineRef(parent);
+    sendFrame(&f, parent, 101, kMuxFlagOpen, 0);
+    if (loss_in_pause)
+        twfRequire(! lineIsAlive(parent), "gate callback failed to close parent");
+    else
+    {
+        muxserver_lstate_t *state = lineGetState(parent, f.mux);
+        twfRequire(parent_output_pauses == 1 && state->parent_state->output.sources_throttled,
+                   "child that raised gate during Init missed Pause");
+        parent_output_close_in_init = close_in_init;
+        sendFrame(&f, parent, 102, kMuxFlagOpen, 0);
+        twfRequire(parent_output_pauses == (close_in_init ? 1U : 2U),
+                   "new child missed gate or dead child received Pause");
+        twfRequire(f.trace.prev_payload == 0, "Init output bypassed parent Pause");
+        muxserverTunnelUpStreamResume(f.mux, parent);
+        twfRequire(state->parent_state->output.charge == 0, "Init output remained stranded");
+    }
+    lineUnref(parent);
+    fixtureTeardown(&f);
+}
+
 int main(void)
 {
+    caseParentGateDuringInit(false, false);
+    caseParentGateDuringInit(true, false);
+    caseParentGateDuringInit(false, true);
     caseExactPerParentCapPreservesSiblings();
     caseAggregateCapAcrossParentsReusesOneReleasedSlot();
     caseMemoryAdmissionDrivesProductionParser();

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "MuxCommon/mux_limits.h"
+#include "MuxCommon/mux_parent_output.h"
 #include "MuxCommon/mux_wire.h"
 #include "wwapi.h"
 
@@ -16,6 +17,7 @@ typedef struct muxclient_lstate_s muxclient_lstate_t;
 
 typedef struct muxclient_parent_state_s
 {
+    mux_parent_output_t   output;
     muxclient_child_map_t child_map;
     muxclient_lstate_t   *owner_prev;
     muxclient_lstate_t   *owner_next;
@@ -38,6 +40,8 @@ typedef struct muxclient_tstate_s
     uint32_t child_buffer_pause_tolerance;
     uint32_t child_buffer_resume_threshold;
     uint32_t parent_buffer_limit;
+    uint32_t parent_write_pause_threshold;
+    uint32_t parent_write_limit;
     uint32_t detached_buffer_limit;
     uint32_t detached_child_limit;
     uint32_t max_children;
@@ -71,7 +75,6 @@ typedef enum muxclient_child_drain_result_e
 struct muxclient_lstate_s
 {
     line_t *l;           // the line this state is associated with
-    line_t *last_writer; // used when parent, to track the last writer line
 
     struct muxclient_lstate_s *parent;             // the parent  f is_child is true
     struct muxclient_lstate_s *child_prev;         // previous child in the parent connection
@@ -88,9 +91,10 @@ struct muxclient_lstate_s
     bool                      paused : 1;           // child: local child write side is paused
     bool                      flow_paused_sent : 1; // child: FlowPause was sent to the peer for this cid
     bool                      peer_flow_paused : 1; // child: peer sent FlowPause for this cid
-    bool parent_write_paused : 1;                   // child: parent transport write pause was reflected to this child
+    bool                      source_starting : 1;  // child: producer Init/Est callback is still on the stack
+    bool                      parent_write_paused : 1; // child: local parent FIFO pressure was reflected to this child
     bool parent_finishing : 1;                      // parent: main FIN is being handled, suppress parent writes
-    bool open_frame_sent : 1;                       // child: peer has received the Open frame for this cid
+    bool                      open_frame_submitted : 1; // child: Open has entered ordered parent output for this cid
     bool selection_retired : 1;                     // non-fixed parent: never selected for another child
 };
 
@@ -149,14 +153,15 @@ void muxclientCloseIdleExhaustedParentLine(tunnel_t *t, muxclient_tstate_t *ts, 
 
 /**
  * Close one child of a still-live parent connection: unlink it, release its flow control, emit the Close frame
- * (preceded by an Open frame when the peer never saw this cid) and destroy the child line state.
+ * (preceded by an Open frame when none has been submitted for this cid) and destroy the child line state.
  *
  * MuxClient does not own the child line, so it never calls lineDestroy() on it.
  *
  * @param notify_child_prev send Finish to the child's previous side. Must be false when this close is the reaction
  *                          to a Finish received from that same side.
  *
- * The caller must return immediately: both the parent line and the child line may be dead afterwards.
+ * Both lines may be dead afterwards. A caller that continues must hold its own parent reference and
+ * recheck parent life/state; the child state is gone.
  */
 void muxclientCloseChildKeepParent(tunnel_t *t, muxclient_tstate_t *ts, line_t *parent_l, muxclient_lstate_t *parent_ls,
                                    muxclient_lstate_t *child_ls, bool notify_child_prev);
@@ -188,3 +193,10 @@ void muxclientHandleParentLoss(tunnel_t *t, line_t *parent_l, bool notify_parent
 void muxclientRegisterParent(muxclient_tstate_t *ts, muxclient_lstate_t *ls);
 void muxclientUnregisterParent(muxclient_tstate_t *ts, muxclient_lstate_t *ls);
 void muxclientTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);
+
+/* Takes buf on every result. True proves only the parent survives; callers that
+ * continue using a child must hold and check that child's reference separately.
+ * publish_child/flag publish wire state after admission, before any callback. */
+bool muxclientSendParentOutput(tunnel_t *t, line_t *parent_l, sbuf_t *buf, muxclient_lstate_t *publish_child,
+                               uint8_t flag);
+void muxclientDrainParentOutput(tunnel_t *t, line_t *parent_l);

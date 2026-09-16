@@ -121,6 +121,35 @@ Fixed connection count mode:
 
   This value must be greater than `0`.
 
+### Parent write buffering
+
+Each parent has a lazy FIFO of encoded outgoing buffers, shared by its children.
+The following optional settings measure **retained sbuf allocation charge in bytes**,
+including the buffer header, full capacity (with padding), and alignment overhead.
+They do not measure logical wire bytes or process RSS.
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `parent-write-buffer-pause-threshold` | `8388608` (8 MiB) | Pause attached child producers when retained charge reaches this value. |
+| `parent-write-buffer-limit` | `16777216` (16 MiB) | Maximum retained charge for each parent; equality is allowed. |
+
+Both must be integers in `[1, INT_MAX]`, with the pause threshold strictly below
+the hard limit. Zero, negative, fractional, nonnumeric, and out-of-range values
+reject startup. Each omitted field independently uses its default; the final
+pair is validated without adjusting either value. A hard limit below 8 MiB
+therefore requires overriding the pause threshold too. For example, inside
+`settings`:
+
+```json
+{
+  "parent-write-buffer-pause-threshold": 2097152,
+  "parent-write-buffer-limit": 4194304
+}
+```
+
+These settings apply independently to every parent of this node. They are separate
+from `parent-buffer-limit`, which bounds incoming decoded data retained for children.
+
 ## Optional `settings` Fields
 
 - `max-children` `(integer, optional)`
@@ -211,7 +240,7 @@ Fixed connection count mode:
 
 Each child line gets a 32-bit connection id (`cid`). That id is used inside MUX frames so the remote `MuxServer` can map traffic back to the correct child stream.
 
-In timer and counter modes, `MuxClient` keeps one current reusable parent line per worker. The code calls this the unsatisfied line. As long as that parent is still allowed to accept more children, new child lines will join it. If another child arrives while the parent is at `max-children`, the parent is selection-retired, remains alive for current children, and closes at zero while the arriving child uses a new parent.
+In timer and counter modes, `MuxClient` keeps one current reusable parent line per worker. The code calls this the unsatisfied line. As long as that parent is still allowed to accept more children, new child lines will join it. If another child arrives while the parent is at `max-children`, the parent is selection-retired, remains alive for current children, and closes after the last child leaves and pending output is handed off; the arriving child uses a new parent.
 
 In fixed connection count mode, `MuxClient` keeps a fixed-size parent pool per worker. When a worker first needs a mux parent, it opens `per-worker-connections-count` parent transport lines for that worker. New child lines are assigned to the least-loaded non-finishing parent below `max-children`, with a round-robin tie break. If every fixed parent is full, the new borrowed child receives Finish immediately; no extra parent or unbounded wait queue is created. Capacity is reusable when a parent drops below the live cap.
 
@@ -240,8 +269,10 @@ The current parent line becomes exhausted in one of these ways:
 
 An exhausted parent line is not closed immediately. It simply stops accepting new child lines. Existing child streams continue using it until they finish.
 
-When the parent is exhausted and its last child closes, `MuxClient` closes the parent transport line too. If a reusable
-parent becomes exhausted while it has no active children, `MuxClient` closes it before replacing it with a new parent.
+When an exhausted parent has no children, `MuxClient` retires it from selection and
+closes it once pending encoded output has been handed off and no send is active.
+A replacement parent can serve new children while the old parent waits for Resume.
+The owned-parent inventory retains the old parent throughout that wait.
 
 Child response lookup uses a per-parent hash index and remains average O(1). A
 server resource-rejection `Close(cid)` finishes only that matching borrowed
@@ -314,7 +345,31 @@ positive allocation charge and therefore advances every applicable hard memory b
 The charge approximates memory retained by live Mux queues, not whole-process RSS. Allocator caches, queue-ring
 storage, and the buffer pools' fixed baseline may remain allocated outside a particular live queue's charge.
 
-When the remote side pauses the shared parent line, `MuxClient` tries to pause the child that most recently wrote to that parent. If no recent writer is known, it pauses all attached children. Resume only clears parent-write pressure; a child that is still under peer `FlowPause` remains paused.
+Parent transport `Pause` immediately stops every parent-bound Payload callback,
+including controls and Close replies. New encoded output joins the parent's FIFO;
+it does not depend on the originating child remaining alive. Short stalls below
+`parent-write-buffer-pause-threshold` cause no child-wide callback pass. Reaching
+the threshold pauses attached child producers once; newly initialized children
+inherit that gate after their producer Init/Est callback returns.
+
+`Resume` drains FIFO order until empty or paused again. Queue-throttled producers
+resume only when the FIFO is empty and the transport is writable; peer FlowPause
+and terminal-close pressure remain independent. Reentrant output joins the FIFO
+behind older output. Incoming parent reads and unrelated parents remain active.
+
+A candidate that would exceed `parent-write-buffer-limit`, or a queue reservation
+failure, closes only the affected parent through normal local teardown. The
+candidate and undeliverable output are recycled; the process is not terminated.
+An unblocked direct write needs no FIFO allocation and is not constrained by the
+retention limit. Small control frames use a fitting small pooled allocation with
+chain padding. Parent loss immediately discards outgoing backlog, while existing
+incoming child queues retain their separate detached-drain behavior.
+
+An exhausted timer/counter parent with no remaining children stays in MuxClient's
+owned-parent inventory until its queued final frames have been handed off and no
+send is active. It is retired from new-child selection while waiting. Fixed
+parents remain reusable under their existing policy. Worker Stop discards pending
+output and closes all owned parents, including retired parents with no children.
 
 A peer `Close` is ordered after earlier `Data` for the same `cid`. If the local child destination is paused,
 `MuxClient` retains those earlier bytes and waits for Resume; it never forces Payload through Pause and sends local

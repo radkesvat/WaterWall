@@ -15,6 +15,7 @@ void muxserverLinestateInitialize(tunnel_t *t, muxserver_lstate_t *ls, line_t *l
             LOGF("MuxServer: failed to allocate parent-only state");
             abortProgramNow(1);
         }
+        bufferqueueInitEmpty(&parent_state->output.pending);
         parent_state->child_map               = muxserver_child_map_t_init();
         parent_state->rejection_bucket.tokens = kMuxServerRejectedOpenBurst;
     }
@@ -124,6 +125,7 @@ void muxserverLinestateDestroy(tunnel_t *t, muxserver_lstate_t *ls)
 
     if (! ls->is_child)
     {
+        bufferqueueDestroy(&ls->parent_state->output.pending);
         muxserver_child_map_t_drop(&ls->parent_state->child_map);
         memoryFree(ls->parent_state);
         ls->parent_state = NULL;

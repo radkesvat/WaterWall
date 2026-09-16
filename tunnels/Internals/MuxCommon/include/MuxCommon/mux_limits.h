@@ -15,21 +15,6 @@ typedef struct mux_admission_defaults_s
     uint32_t fallback_live_children;
 } mux_admission_defaults_t;
 
-/**
- * Return the MUX hard-memory-budget charge for one retained queue entry.
- *
- * Logical payload length remains the correct measurement for queue contents,
- * protocol flow control, and most buffer users. MUX uses this stricter charge
- * only because its child, parent, and detached hard limits must bound the
- * allocations retained while the shared parent transport remains readable.
- * The capacity includes left padding; the header and aligned-allocation
- * over-allocation are also bytes held by the live sbuf allocation.
- */
-static inline size_t muxQueuedSbufCharge(const sbuf_t *buf)
-{
-    return sizeof(sbuf_t) + (size_t) sbufGetTotalCapacity(buf) + (size_t) kSbufAllocationAlignment;
-}
-
 /* Only paused-child queue admission should trade a copy for a smaller retained
  * allocation. BufferStream and immediately forwarded frames preserve their
  * whole-chunk fast path. Candidate sizes come from reusable small/medium/large tiers. */
@@ -76,6 +61,8 @@ static inline bool muxQueueChargeWouldReachLimit(size_t current, size_t candidat
 
 enum
 {
+    kMuxDefaultParentWritePauseThreshold = 8 * 1024 * 1024,
+    kMuxDefaultParentWriteLimit          = 16 * 1024 * 1024,
     kMuxMinimumDetachedBufferLimit = 32 * 1024 * 1024,
     kMuxMaximumDetachedBufferLimit = 256 * 1024 * 1024,
     kMuxMinimumDetachedChildLimit  = 4096,

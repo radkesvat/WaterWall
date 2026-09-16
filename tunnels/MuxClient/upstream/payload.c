@@ -28,7 +28,7 @@ void muxclientTunnelUpStreamPayload(tunnel_t *t, line_t *child_l, sbuf_t *buf)
         return;
     }
 
-    const bool send_open = ! child_ls->open_frame_sent;
+    const bool send_open = ! child_ls->open_frame_submitted;
 
     const uint32_t      payload_length = sbufGetLength(buf);
     sbuf_t             *encoded        = NULL;
@@ -45,21 +45,5 @@ void muxclientTunnelUpStreamPayload(tunnel_t *t, line_t *child_l, sbuf_t *buf)
         return;
     }
 
-    // published only after the encoding succeeded, so a failed child never claims to have opened its cid
-    child_ls->open_frame_sent = true;
-
-    line_t *parent_line = child_ls->parent->l;
-
-    muxclient_lstate_t *parent_ls = lineGetState(parent_line, t);
-
-    lineRef(parent_line);
-    parent_ls->last_writer = child_l; // update the last writer to the current child
-
-    tunnelNextUpStreamPayload(t, parent_line, encoded);
-
-    if (lineIsAlive(parent_line))
-    {
-        parent_ls->last_writer = NULL; // reset the last writer after sending the payload
-    }
-    lineUnref(parent_line);
+    discard muxclientSendParentOutput(t, child_ls->parent->l, encoded, child_ls, kMuxFlagData);
 }

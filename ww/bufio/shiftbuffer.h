@@ -244,6 +244,16 @@ uint16_t sbufAlignLeftPadding(uint16_t pad_left);
  */
 void sbufDestroy(sbuf_t *b);
 
+/** Allocation charge for this sbuf's own userspace storage, in bytes.
+ * Ordinary: header + total capacity (including padding) + alignment overhead.
+ * Splice: header + original left padding + fixed control storage + alignment overhead,
+ * independent of logical length/capacity and whether its private pipe is initialized.
+ * Excludes kernel pipe memory, referenced lifetime objects, allocator bookkeeping
+ * beyond explicit alignment overhead, and pool/queue storage; this is not RSS.
+ * Valid allocated-buffer geometry is required. O(1), without allocation or syscalls.
+ */
+size_t sbufGetAllocationCharge(const sbuf_t *buf);
+
 /* Attach/detach the one optional lifetime reference owned by a buffer. */
 void             sbufAttachLifetime(sbuf_t *b, sbuf_lifetime_t *lifetime);
 sbuf_lifetime_t *sbufTakeLifetime(sbuf_t *b);

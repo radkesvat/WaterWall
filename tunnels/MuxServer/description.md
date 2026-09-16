@@ -61,6 +61,35 @@ A common layout is:
 
 There are no required tunnel-specific settings in the current implementation.
 
+### Parent write buffering
+
+Each parent has a lazy FIFO of encoded outgoing buffers, shared by its children.
+The following optional settings measure **retained sbuf allocation charge in bytes**,
+including the buffer header, full capacity (with padding), and alignment overhead.
+They do not measure logical wire bytes or process RSS.
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `parent-write-buffer-pause-threshold` | `8388608` (8 MiB) | Pause attached child producers when retained charge reaches this value. |
+| `parent-write-buffer-limit` | `16777216` (16 MiB) | Maximum retained charge for each parent; equality is allowed. |
+
+Both must be integers in `[1, INT_MAX]`, with the pause threshold strictly below
+the hard limit. Zero, negative, fractional, nonnumeric, and out-of-range values
+reject startup. Each omitted field independently uses its default; the final
+pair is validated without adjusting either value. A hard limit below 8 MiB
+therefore requires overriding the pause threshold too. For example, inside
+`settings`:
+
+```json
+{
+  "parent-write-buffer-pause-threshold": 2097152,
+  "parent-write-buffer-limit": 4194304
+}
+```
+
+These settings apply independently to every parent of this node. They are separate
+from `parent-buffer-limit`, which bounds incoming decoded data retained for children.
+
 ## Optional `settings` Fields
 
 - `child-buffer-limit` `(integer, bytes, optional)`
@@ -289,7 +318,29 @@ has a positive allocation charge and advances every applicable hard memory budge
 The charge approximates memory retained by live Mux queues, not whole-process RSS. Allocator caches, queue-ring
 storage, and the buffer pools' fixed baseline may remain allocated outside a particular live queue's charge.
 
-If the parent transport is paused without a known recent writer, `MuxServer` pauses all child lines attached to that parent. Resume only clears parent-write pressure; a child that is still under peer `FlowPause` remains paused.
+Parent transport `Pause` immediately stops every parent-bound Payload callback,
+including controls and Close replies. New encoded output joins the parent's FIFO;
+it does not depend on the originating child remaining alive. Short stalls below
+`parent-write-buffer-pause-threshold` cause no child-wide callback pass. Reaching
+the threshold pauses attached child producers once; newly initialized children
+inherit that gate after their producer Init/Est callback returns.
+
+`Resume` drains FIFO order until empty or paused again. Queue-throttled producers
+resume only when the FIFO is empty and the transport is writable; peer FlowPause
+and terminal-close pressure remain independent. Reentrant output joins the FIFO
+behind older output. Incoming parent reads and unrelated parents remain active.
+
+A candidate that would exceed `parent-write-buffer-limit`, or a queue reservation
+failure, closes only the affected parent through normal local teardown. The
+candidate and undeliverable output are recycled; the process is not terminated.
+An unblocked direct write needs no FIFO allocation and is not constrained by the
+retention limit. Small control frames use a fitting small pooled allocation with
+chain padding. Parent loss immediately discards outgoing backlog, while existing
+incoming child queues retain their separate detached-drain behavior.
+
+MuxServer borrows its parent lines: local overflow destroys its parent state and
+notifies the parent owner, while MuxServer itself closes its owned children.
+Rejected-Open Close replies use the same FIFO as Data and other controls.
 
 ### Buffering and overflow handling
 
