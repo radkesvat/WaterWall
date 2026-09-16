@@ -506,9 +506,11 @@ bool caputredeviceBringDown(capture_device_t *cdev)
 }
 
 capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_ranges, uint32_t capture_range_count,
-                                      bool skip_sysctl, void *userdata, CaptureReadEventHandle cb)
+                                      bool skip_sysctl, bool bypass_conntrack, void *userdata,
+                                      CaptureReadEventHandle cb)
 {
     discard skip_sysctl;
+    discard bypass_conntrack; // Linux netfilter policy; WinDivert has no conntrack setting.
 
     if (capture_ranges == NULL || capture_range_count == 0)
     {

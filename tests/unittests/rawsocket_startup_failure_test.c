@@ -8,9 +8,9 @@ static raw_device_t     fake_raw_device;
 static bool             fake_raw_device_up;
 
 capture_device_t *__wrap_caputredeviceCreate(const char *name, const ipmask_t *capture_ranges,
-                                             uint32_t capture_range_count, bool skip_sysctl, void *userdata,
-                                             CaptureReadEventHandle cb);
-raw_device_t     *__wrap_rawdeviceCreate(const char *name, uint32_t mark, void *userdata);
+                                             uint32_t capture_range_count, bool skip_sysctl, bool bypass_conntrack,
+                                             void *userdata, CaptureReadEventHandle cb);
+raw_device_t     *__wrap_rawdeviceCreate(const char *name, uint32_t mark, bool bypass_conntrack, void *userdata);
 bool              __wrap_caputredeviceBringUp(capture_device_t *cdev);
 bool              __wrap_rawdeviceBringUp(raw_device_t *rdev);
 bool              __wrap_caputredeviceBringDown(capture_device_t *cdev);
@@ -52,13 +52,14 @@ void rawsocketOnIPPacketReceived(struct capture_device_s *cdev, void *userdata, 
 }
 
 capture_device_t *__wrap_caputredeviceCreate(const char *name, const ipmask_t *capture_ranges,
-                                             uint32_t capture_range_count, bool skip_sysctl, void *userdata,
-                                             CaptureReadEventHandle cb)
+                                             uint32_t capture_range_count, bool skip_sysctl, bool bypass_conntrack,
+                                             void *userdata, CaptureReadEventHandle cb)
 {
     require(name != NULL, "RawSocket did not pass a capture device name");
     require(capture_ranges != NULL, "RawSocket did not pass capture ranges");
     require(capture_range_count == 1, "RawSocket passed the wrong capture range count");
     require(skip_sysctl, "RawSocket did not pass skip-sysctl to the capture device");
+    require(! bypass_conntrack, "RawSocket did not disable capture conntrack bypass alongside output");
     require(userdata != NULL, "RawSocket did not pass tunnel userdata to capture device");
     require(cb == rawsocketOnIPPacketReceived, "RawSocket passed the wrong capture callback");
 
@@ -67,9 +68,10 @@ capture_device_t *__wrap_caputredeviceCreate(const char *name, const ipmask_t *c
     return &fake_capture_device;
 }
 
-raw_device_t *__wrap_rawdeviceCreate(const char *name, uint32_t mark, void *userdata)
+raw_device_t *__wrap_rawdeviceCreate(const char *name, uint32_t mark, bool bypass_conntrack, void *userdata)
 {
     require(name != NULL, "RawSocket did not pass a raw device name");
+    require(! bypass_conntrack, "custom-mark fixture unexpectedly enabled conntrack bypass");
     require(mark == 7, "RawSocket passed the wrong firewall mark");
     require(userdata != NULL, "RawSocket did not pass tunnel userdata to raw device");
 

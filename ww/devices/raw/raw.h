@@ -23,6 +23,12 @@ typedef struct raw_device_s
 #else
     int socket;
 #endif
+#ifdef OS_LINUX
+    /* Lifecycle-owner state; never modified by the writer thread. */
+    bool bypass_conntrack;
+    bool notrack_rule_pending;
+    char notrack_comment[48];
+#endif
     log_rate_limiter_t discard_log_limiter;
     uint64_t           oversized_packet_total;
     uint64_t           message_too_large_packet_total;
@@ -49,6 +55,6 @@ void rawdeviceRequestStop(raw_device_t *rdev);
 bool rawdeviceBringDown(raw_device_t *rdev);
 bool rawdeviceWrite(raw_device_t *rdev, sbuf_t *buf);
 
-raw_device_t *rawdeviceCreate(const char *name, uint32_t mark, void *userdata);
+raw_device_t *rawdeviceCreate(const char *name, uint32_t mark, bool bypass_conntrack, void *userdata);
 
 void rawdeviceDestroy(raw_device_t *rdev);

@@ -11,13 +11,13 @@ static unsigned int     raw_bring_down_count;
 static unsigned int     raw_destroy_count;
 
 capture_device_t *__wrap_caputredeviceCreate(const char *name, const ipmask_t *capture_ranges,
-                                             uint32_t capture_range_count, bool skip_sysctl, void *userdata,
-                                             CaptureReadEventHandle cb);
+                                             uint32_t capture_range_count, bool skip_sysctl, bool bypass_conntrack,
+                                             void *userdata, CaptureReadEventHandle cb);
 bool              __wrap_caputredeviceBringUp(capture_device_t *cdev);
 bool              __wrap_capturedeviceRequestStop(capture_device_t *cdev);
 bool              __wrap_caputredeviceBringDown(capture_device_t *cdev);
 void              __wrap_capturedeviceDestroy(capture_device_t *cdev);
-raw_device_t     *__wrap_rawdeviceCreate(const char *name, uint32_t mark, void *userdata);
+raw_device_t     *__wrap_rawdeviceCreate(const char *name, uint32_t mark, bool bypass_conntrack, void *userdata);
 bool              __wrap_rawdeviceBringUp(raw_device_t *rdev);
 void              __wrap_rawdeviceRequestStop(raw_device_t *rdev);
 bool              __wrap_rawdeviceBringDown(raw_device_t *rdev);
@@ -48,13 +48,14 @@ void rawsocketOnIPPacketReceived(struct capture_device_s *cdev, void *userdata, 
 }
 
 capture_device_t *__wrap_caputredeviceCreate(const char *name, const ipmask_t *capture_ranges,
-                                             uint32_t capture_range_count, bool skip_sysctl, void *userdata,
-                                             CaptureReadEventHandle cb)
+                                             uint32_t capture_range_count, bool skip_sysctl, bool bypass_conntrack,
+                                             void *userdata, CaptureReadEventHandle cb)
 {
     discard name;
     discard capture_ranges;
     discard capture_range_count;
     discard skip_sysctl;
+    discard bypass_conntrack;
     discard userdata;
     discard cb;
     ++capture_call_count;
@@ -88,9 +89,10 @@ void __wrap_capturedeviceDestroy(capture_device_t *cdev)
     ++capture_call_count;
 }
 
-raw_device_t *__wrap_rawdeviceCreate(const char *name, uint32_t mark, void *userdata)
+raw_device_t *__wrap_rawdeviceCreate(const char *name, uint32_t mark, bool bypass_conntrack, void *userdata)
 {
     require(name != NULL, "RawSocket did not pass a raw device name in write-only mode");
+    require(! bypass_conntrack, "custom-mark fixture unexpectedly enabled conntrack bypass");
     require(mark == 11, "RawSocket passed the wrong firewall mark in write-only mode");
     require(userdata != NULL, "RawSocket did not pass tunnel userdata to the raw device");
     ++raw_create_count;

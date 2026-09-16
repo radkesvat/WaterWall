@@ -800,6 +800,26 @@ if(LINUX AND WATERWALL_ENABLE_PRIVILEGED_INTEGRATION_TESTS)
     TIMEOUT 60
     LABELS "integration;linux;privileged;capture;nfqueue;network-isolated"
   )
+  add_test(
+    NAME waterwall.capture_linux_conntrack_enabled
+    COMMAND "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/run_in_network_namespace.sh"
+      "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/capture_linux_notrack_integration.py"
+      "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>" --tracked
+  )
+  set_tests_properties(waterwall.capture_linux_conntrack_enabled PROPERTIES
+    TIMEOUT 60
+    LABELS "integration;linux;privileged;capture;nfqueue;conntrack;network-isolated"
+  )
+  add_test(
+    NAME waterwall.raw_linux_notrack
+    COMMAND "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/run_in_network_namespace.sh"
+      "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/raw_linux_notrack_integration.py"
+      "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>"
+  )
+  set_tests_properties(waterwall.raw_linux_notrack PROPERTIES
+    TIMEOUT 60
+    LABELS "integration;linux;privileged;raw;conntrack;network-isolated"
+  )
 endif()
 add_waterwall_integration_test(waterwall.ping_new_ip_icmp_roundtrip ping_new_ip_icmp_roundtrip)
 add_waterwall_expected_failure_integration_test(

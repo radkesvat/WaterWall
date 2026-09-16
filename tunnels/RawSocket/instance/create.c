@@ -201,6 +201,22 @@ tunnel_t *rawsocketCreate(node_t *node)
     }
     state->skip_sysctl = cJSON_IsTrue(skip_sysctl);
 
+    const cJSON *bypass_conntrack = cJSON_GetObjectItemCaseSensitive(settings, "bypass-conntrack");
+    if (bypass_conntrack != NULL && ! cJSON_IsBool(bypass_conntrack))
+    {
+        LOGF("JSON Error: RawSocket->settings->bypass-conntrack (boolean field) : expected true or false");
+        rawsocketDestroy(t, wwLifecycleStartupRollback());
+        return NULL;
+    }
+    state->bypass_conntrack = bypass_conntrack == NULL || cJSON_IsTrue(bypass_conntrack);
+    if (state->bypass_conntrack && cJSON_GetObjectItemCaseSensitive(settings, "mark") != NULL)
+    {
+        LOGF("JSON Error: RawSocket->settings->mark requires bypass-conntrack=false; conntrack bypass owns the "
+             "output socket mark");
+        rawsocketDestroy(t, wwLifecycleStartupRollback());
+        return NULL;
+    }
+
     state->raw_device_name = rawsocketDuplicateSettingOrDefault(settings, "raw-device-name", "unnamed-raw-device");
     if (state->capture_range_count > 0)
     {

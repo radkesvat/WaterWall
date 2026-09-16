@@ -899,6 +899,8 @@ if(TARGET ww)
     )
     target_compile_definitions(raw_linux_writer_test PRIVATE DEVICE_WRITER_CHANNEL_TEST_HOOKS=1)
     target_link_options(raw_linux_writer_test PRIVATE
+      "-Wl,--wrap=rawLinuxNotrackInstall"
+      "-Wl,--wrap=rawLinuxNotrackRemove"
       "-Wl,--wrap=pthread_join"
       "-Wl,--wrap=sendmmsg"
       "-Wl,--wrap=poll"
@@ -912,6 +914,21 @@ if(TARGET ww)
       waterwall.raw_linux_writer_unit
       raw_linux_writer_test
       "unit;net;raw;linux;lifetime;writer"
+    )
+
+    add_executable(raw_linux_notrack_test raw_linux_notrack_test.c)
+    target_link_libraries(raw_linux_notrack_test PRIVATE ww)
+    target_link_options(raw_linux_notrack_test PRIVATE
+      "-Wl,--wrap=procRunArgvWithDeadline"
+      "-Wl,--wrap=setsockopt"
+      "-Wl,--wrap=fastRand32"
+      "-Wl,--wrap=fastRand64"
+    )
+    add_dependencies(waterwall_unit_tests raw_linux_notrack_test)
+    add_waterwall_unit_test(
+      waterwall.raw_linux_notrack_unit
+      raw_linux_notrack_test
+      "unit;net;raw;linux;conntrack"
     )
 
     # Wraps send/sendto for a deterministic EAGAIN/EINTR/ENOBUFS seam.

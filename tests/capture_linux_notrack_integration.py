@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Exercise real capture/conntrack rules inside run_in_network_namespace.sh."""
 
+import argparse
 import json
 from pathlib import Path
 import re
@@ -60,7 +61,7 @@ def expect_no_delivery(receiver):
     raise AssertionError(f"captured packet reached the host UDP socket: {packet!r}")
 
 
-def run(binary, directory):
+def run(binary, directory, bypass_conntrack):
     # Link-layer loopback injection starts at ingress, with no OUTPUT conntrack
     # attachment. These namespace-local settings admit its local source/route.
     command("sysctl", "-qw", "net.ipv4.conf.all.rp_filter=0", "net.ipv4.conf.lo.rp_filter=0",
@@ -74,6 +75,8 @@ def run(binary, directory):
         }},
         {"name": "sink", "type": "BlackHole", "settings": {"mode": "passive"}},
     ]}
+    if not bypass_conntrack:
+        config["nodes"][0]["settings"]["bypass-conntrack"] = False
     core = {
         "configs": ["config.json"],
         "misc": {"workers": 1, "ram-profile": "client", "mtu": 1500, "try-enabling-bbr": False},
@@ -109,33 +112,38 @@ def run(binary, directory):
                         raise AssertionError("capture did not become ready")
                     time.sleep(0.05)
 
+                assert "WWCAP_" in iptables("-S", "INPUT")
+                assert ("WWCAP_NOTRACK_" in iptables("-t", "raw", "-S", "PREROUTING")) == bypass_conntrack
+                assert ("WWRAW_NOTRACK_" in iptables("-t", "raw", "-S", "OUTPUT")) == bypass_conntrack
+
                 send_packet(sender, "127.0.0.2", "127.0.0.1", port, b"captured", 2)
-                expect_counters((1, 1))
+                expect_counters((1, 1) if bypass_conntrack else (0, 2))
                 expect_no_delivery(receiver)
 
-                # Reassembly still precedes NOTRACK and capture: one datagram,
-                # two wire fragments, one additional untracked observation.
+                # Reassembly still precedes capture with either policy: two
+                # wire fragments produce one additional datagram observation.
                 send_packet(sender, "127.0.0.2", "127.0.0.1", port, bytes(1400), 3, fragmented=True)
-                expect_counters((2, 1))
+                expect_counters((2, 1) if bypass_conntrack else (0, 3))
                 expect_no_delivery(receiver)
 
                 send_packet(sender, "127.0.0.3", "127.0.0.1", port, b"unrelated", 4)
                 assert receiver.recv(65535) == b"unrelated"
-                expect_counters((2, 2))
+                expect_counters((2, 2) if bypass_conntrack else (0, 4))
 
                 # Same capture source, nonlocal destination: keep tracking.
                 # TTL 1 prevents recirculation if this namespace forwards on lo.
                 send_packet(sender, "127.0.0.2", "203.0.113.1", port, b"transit", 5, ttl=1)
-                expect_counters((2, 3))
+                expect_counters((2, 3) if bypass_conntrack else (0, 5))
                 assert "WWCAP" not in iptables("-t", "raw", "-S", "OUTPUT")
 
                 process.terminate()
                 assert process.wait(timeout=15) in (0, 143)
                 assert "WWCAP" not in iptables("-t", "raw", "-S", "PREROUTING")
                 assert "WWCAP" not in iptables("-S", "INPUT")
+                assert "WWRAW_NOTRACK_" not in iptables("-t", "raw", "-S", "OUTPUT")
                 send_packet(sender, "127.0.0.2", "127.0.0.1", port, b"restored", 6)
                 assert receiver.recv(65535) == b"restored"
-                expect_counters((2, 4))
+                expect_counters((2, 4) if bypass_conntrack else (0, 6))
             finally:
                 if process.poll() is None:
                     process.terminate()
@@ -147,17 +155,21 @@ def run(binary, directory):
 
 
 def main():
-    binary = str(Path(sys.argv[1]).resolve())
+    parser = argparse.ArgumentParser()
+    parser.add_argument("binary")
+    parser.add_argument("--tracked", action="store_true", help="disable bypass-conntrack on both paths")
+    args = parser.parse_args()
+    binary = str(Path(args.binary).resolve())
     with tempfile.TemporaryDirectory(prefix="waterwall-capture-notrack-") as temporary:
         directory = Path(temporary)
         try:
-            run(binary, directory)
+            run(binary, directory, not args.tracked)
         except Exception:
             log = directory / "stdout.log"
             if log.exists():
                 print(log.read_text()[-20000:], file=sys.stderr)
             raise
-    print("Capture NOTRACK, fragment reassembly, scope, and shutdown restoration passed")
+    print(f"Capture with bypass-conntrack={not args.tracked}, fragments, scope, and cleanup passed")
 
 
 if __name__ == "__main__":

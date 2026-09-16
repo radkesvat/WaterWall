@@ -46,6 +46,7 @@ void rawsocketOnStart(tunnel_t *t)
                                                     state->capture_ranges,
                                                     state->capture_range_count,
                                                     state->skip_sysctl,
+                                                    state->bypass_conntrack,
                                                     t,
                                                     rawsocketOnIPPacketReceived);
 
@@ -58,7 +59,7 @@ void rawsocketOnStart(tunnel_t *t)
     }
 
     // we are not going to read, so pass read call back as null therfore no buffers for read will be allocated
-    state->raw_device = rawdeviceCreate(state->raw_device_name, state->firewall_mark, t);
+    state->raw_device = rawdeviceCreate(state->raw_device_name, state->firewall_mark, state->bypass_conntrack, t);
     if (state->raw_device == NULL)
     {
         rawsocketDestroyStartupDevices(state);

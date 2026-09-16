@@ -69,6 +69,12 @@ typedef struct raw_selected_closed_probe_s
 #endif
 
 static bool fail_next_thread_join;
+static bool         fail_next_notrack_install;
+static bool         fail_next_notrack_remove;
+static unsigned int notrack_removals;
+
+bool __wrap_rawLinuxNotrackInstall(raw_device_t *rdev);
+bool __wrap_rawLinuxNotrackRemove(raw_device_t *rdev);
 
 int __real_pthread_join(pthread_t thread, void **retval);
 int __wrap_pthread_join(pthread_t thread, void **retval);
@@ -131,6 +137,37 @@ static void require(bool condition, const char *message)
         fprintf(stderr, "FAIL: %s\n", message);
         exit(1);
     }
+}
+
+bool __wrap_rawLinuxNotrackInstall(raw_device_t *rdev)
+{
+    require(! rdev->writer_joinable && ! deviceWriterChannelHasCurrent(&rdev->writer_channel),
+            "NOTRACK was installed after publishing the writer");
+    if (! rdev->bypass_conntrack)
+    {
+        return true;
+    }
+    rdev->notrack_rule_pending = true;
+    const bool result          = ! fail_next_notrack_install;
+    fail_next_notrack_install  = false;
+    return result;
+}
+
+bool __wrap_rawLinuxNotrackRemove(raw_device_t *rdev)
+{
+    if (! rdev->notrack_rule_pending)
+    {
+        return true;
+    }
+    require(! rdev->writer_joinable, "NOTRACK was removed before the writer joined");
+    ++notrack_removals;
+    if (fail_next_notrack_remove)
+    {
+        fail_next_notrack_remove = false;
+        return false;
+    }
+    rdev->notrack_rule_pending = false;
+    return true;
 }
 
 static void captureLog(int log_level, const char *buf, int len)
@@ -577,6 +614,35 @@ static void productionWriterDeviceDestroy(raw_device_t *rdev)
     bufferpoolDestroy(rdev->writer_buffer_pool);
 }
 
+static void testRawNotrackLifecycle(test_env_t *env)
+{
+    resetFailureInjection();
+    raw_device_t rdev;
+    productionWriterDeviceInit(&rdev, env, "notrack-lifecycle");
+    rdev.bypass_conntrack     = true;
+    fail_next_notrack_install = true;
+    require(! rawdeviceBringUp(&rdev), "NOTRACK installation failure still started the device");
+    require(! rdev.notrack_rule_pending && ! rdev.writer_joinable &&
+                ! deviceWriterChannelHasCurrent(&rdev.writer_channel) &&
+                rawLifecycleLoad(&rdev.lifecycle) == kRawLifecycleDown,
+            "NOTRACK installation failure did not roll back before writer publication");
+
+    require(rawdeviceBringUp(&rdev), "NOTRACK device restart failed");
+    unsigned int removals = notrack_removals;
+    rawdeviceRequestStop(&rdev);
+    require(rdev.notrack_rule_pending && notrack_removals == removals, "nonblocking stop request ran firewall cleanup");
+    fail_next_thread_join = true;
+    require(! rawdeviceBringDown(&rdev) && rdev.notrack_rule_pending && notrack_removals == removals,
+            "failed join removed the rule while writer ownership remained");
+    fail_next_notrack_remove = true;
+    require(! rawdeviceBringDown(&rdev) && ! rdev.writer_joinable && rdev.notrack_rule_pending,
+            "failed rule cleanup lost retry state or retained joined writer ownership");
+    require(rawdeviceBringDown(&rdev) && ! rdev.notrack_rule_pending, "NOTRACK cleanup retry failed");
+    require(rawdeviceBringUp(&rdev) && rdev.notrack_rule_pending, "NOTRACK was not reinstalled on restart");
+    require(rawdeviceBringDown(&rdev), "restarted NOTRACK device did not stop");
+    productionWriterDeviceDestroy(&rdev);
+}
+
 static void queueRawPackets(raw_device_t *rdev, test_env_t *env, unsigned int count)
 {
     for (unsigned int i = 0; i < count; i++)
@@ -886,6 +952,7 @@ int main(void)
     testRawBringDownQuiescesConcurrentWriters(&env);
     testRawJoinFailureRetainsOwnership(&env);
     testRawRestartTransfersWriterPoolOwnership(&env);
+    testRawNotrackLifecycle(&env);
     testRawSendErrorPolicyEndsOnTerminalFailure(&env);
     testRawPollTerminalEventFailsTheDevice(&env);
     envTeardown(&env);

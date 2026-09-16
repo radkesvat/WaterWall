@@ -429,6 +429,11 @@ bool rawdeviceBringUp(raw_device_t *rdev)
         return false;
     }
 
+    if (! rawLinuxNotrackRemove(rdev) || ! rawLinuxNotrackInstall(rdev))
+    {
+        goto rollback;
+    }
+
     /*
      * Device bring-up/creation runs on an event worker even though the reader
      * and writer threads it manages stay unregistered. Read that worker's pool
@@ -446,8 +451,7 @@ bool rawdeviceBringUp(raw_device_t *rdev)
     if (! deviceWriterChannelOpen(&rdev->writer_channel, kRawWriteChannelQueueMax))
     {
         LOGE("RawDevice: failed to open writer channel");
-        rawLifecycleTransitionStoppingToDown(&rdev->lifecycle);
-        return false;
+        goto rollback;
     }
 
     // wthread_error_t read_error = threadCreate(&rdev->read_thread, rdev->routine_reader, rdev);
@@ -456,10 +460,7 @@ bool rawdeviceBringUp(raw_device_t *rdev)
     if (UNLIKELY(error != kWThreadErrorNone))
     {
         LOGE("RawDevice: failed to create writer thread: error %u (%s)", error, strerror((int) error));
-        deviceWriterChannelClose(&rdev->writer_channel);
-        discard deviceWriterChannelRetireCurrent(&rdev->writer_channel);
-        rawLifecycleTransitionStoppingToDown(&rdev->lifecycle);
-        return false;
+        goto rollback;
     }
 
     rdev->writer_joinable = true;
@@ -473,31 +474,7 @@ bool rawdeviceBringUp(raw_device_t *rdev)
     return true;
 
 rollback:
-    rawLifecycleTransitionToStopping(&rdev->lifecycle);
-    deviceWriterChannelClose(&rdev->writer_channel);
-
-    bool rollback_ok = true;
-    if (rdev->writer_joinable)
-    {
-        if (safeThreadJoin(rdev->write_thread))
-        {
-            rdev->writer_joinable = false;
-            bufferpoolResetThreadOwnership(rdev->writer_buffer_pool);
-        }
-        else
-        {
-            LOGE("RawDevice: failed to join writer during startup rollback");
-            rollback_ok = false;
-        }
-    }
-    if (! rdev->writer_joinable && ! deviceWriterChannelRetireCurrent(&rdev->writer_channel))
-    {
-        rollback_ok = false;
-    }
-    if (rollback_ok)
-    {
-        rawLifecycleTransitionStoppingToDown(&rdev->lifecycle);
-    }
+    discard rawdeviceBringDown(rdev);
     return false;
 }
 
@@ -510,7 +487,7 @@ void rawdeviceRequestStop(raw_device_t *rdev)
 bool rawdeviceBringDown(raw_device_t *rdev)
 {
     if (rawLifecycleLoad(&rdev->lifecycle) == kRawLifecycleDown && ! rdev->writer_joinable &&
-        ! deviceWriterChannelHasCurrent(&rdev->writer_channel))
+        ! deviceWriterChannelHasCurrent(&rdev->writer_channel) && ! rdev->notrack_rule_pending)
     {
         LOGE("RawDevice: device is already down");
         return true;
@@ -536,6 +513,12 @@ bool rawdeviceBringDown(raw_device_t *rdev)
     {
         bring_down_ok = false;
     }
+    /* The final send must still see NOTRACK. Never remove the rule while a
+     * failed join leaves a writer capable of sending through this socket. */
+    if (! rdev->writer_joinable && ! rawLinuxNotrackRemove(rdev))
+    {
+        bring_down_ok = false;
+    }
 
     if (bring_down_ok)
     {
@@ -546,9 +529,9 @@ bool rawdeviceBringDown(raw_device_t *rdev)
     return bring_down_ok;
 }
 
-raw_device_t *rawdeviceCreate(const char *name, uint32_t mark, void *userdata)
+raw_device_t *rawdeviceCreate(const char *name, uint32_t mark, bool bypass_conntrack, void *userdata)
 {
-
+    assert(! bypass_conntrack || mark == 0);
     int rsocket = socket(PF_INET, SOCK_RAW, IPPROTO_RAW);
     if (rsocket < 0)
     {
@@ -637,6 +620,7 @@ raw_device_t *rawdeviceCreate(const char *name, uint32_t mark, void *userdata)
                             .routine_writer     = rawLinuxWriteRoutine,
                             .socket             = rsocket,
                             .mark               = mark,
+                            .bypass_conntrack   = bypass_conntrack,
                             .userdata           = userdata,
                             .writer_buffer_pool = writer_bpool,
                             .writer_joinable    = false};
@@ -650,13 +634,18 @@ void rawdeviceDestroy(raw_device_t *rdev)
 {
 
     if (rawLifecycleLoad(&rdev->lifecycle) != kRawLifecycleDown || rdev->writer_joinable ||
-        deviceWriterChannelHasCurrent(&rdev->writer_channel))
+        deviceWriterChannelHasCurrent(&rdev->writer_channel) || rdev->notrack_rule_pending)
     {
-        if (! rawdeviceBringDown(rdev))
+        discard rawdeviceBringDown(rdev);
+        if (rdev->writer_joinable || deviceWriterChannelHasCurrent(&rdev->writer_channel))
         {
             LOGF("RawDevice: refusing to destroy device while writer ownership remains");
             abortProgramNow(1);
         }
+    }
+    if (rdev->notrack_rule_pending)
+    {
+        discard rawLinuxNotrackRemove(rdev);
     }
     /*
      * Node destruction runs after all worker and lwIP producer contexts have

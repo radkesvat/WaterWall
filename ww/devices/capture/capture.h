@@ -43,6 +43,7 @@ typedef struct capture_device_s
     uint32_t queue_number;
     char   **capture_cidrs;
     uint32_t capture_range_count;
+    bool     bypass_conntrack;
     // Serialized Linux rule/resource state, independent of `up`. Each CIDR's
     // INPUT queue and raw PREROUTING NOTRACK rules are tracked independently
     // because a timed-out iptables mutation may have
@@ -89,9 +90,10 @@ bool caputredeviceBringUp(capture_device_t *cdev);
 bool capturedeviceRequestStop(capture_device_t *cdev);
 bool caputredeviceBringDown(capture_device_t *cdev);
 
-/* skip_sysctl suppresses only optional Linux kernel tuning; required capture
- * backend and filtering setup is unaffected. */
+/* skip_sysctl suppresses only optional Linux kernel tuning. bypass_conntrack
+ * controls Linux NOTRACK rules; NFQUEUE capture remains enabled either way. */
 capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_ranges, uint32_t capture_range_count,
-                                      bool skip_sysctl, void *userdata, CaptureReadEventHandle cb);
+                                      bool skip_sysctl, bool bypass_conntrack, void *userdata,
+                                      CaptureReadEventHandle cb);
 
 void capturedeviceDestroy(capture_device_t *cdev);

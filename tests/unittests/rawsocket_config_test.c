@@ -130,11 +130,48 @@ static void testInvalidCaptureElementIsRejected(void)
     destroyRawSocket(t, settings);
 }
 
+static void testConntrackSetting(void)
+{
+    static const char *enabled[] = {"{}", "{\"bypass-conntrack\":true}"};
+    for (size_t i = 0; i < ARRAY_SIZE(enabled); ++i)
+    {
+        cJSON    *settings;
+        tunnel_t *t = createRawSocket(enabled[i], &settings);
+        require(t != NULL && ((rawsocket_tstate_t *) tunnelGetState(t))->bypass_conntrack,
+                "RawSocket did not enable outbound conntrack bypass");
+        destroyRawSocket(t, settings);
+    }
+
+    cJSON    *settings;
+    tunnel_t *t = createRawSocket("{\"bypass-conntrack\":false,\"mark\":42}", &settings);
+    require(t != NULL, "RawSocket rejected a custom mark with conntrack bypass disabled");
+    rawsocket_tstate_t *state = tunnelGetState(t);
+    require(! state->bypass_conntrack && state->firewall_mark == 42, "RawSocket lost the explicit mark opt-out");
+    destroyRawSocket(t, settings);
+
+    static const char *invalid[] = {
+        "{\"mark\":42}",
+        "{\"mark\":0}",
+        "{\"mark\":null}",
+        "{\"bypass-conntrack\":true,\"mark\":42}",
+        "{\"bypass-conntrack\":\"true\"}",
+        "{\"bypass-conntrack\":0}",
+        "{\"bypass-conntrack\":null}",
+    };
+    for (size_t i = 0; i < ARRAY_SIZE(invalid); ++i)
+    {
+        t = createRawSocket(invalid[i], &settings);
+        require(t == NULL, "RawSocket accepted a conflicting mark or a non-boolean bypass setting");
+        destroyRawSocket(t, settings);
+    }
+}
+
 int main(void)
 {
     testAliasesAcceptSingleAndArray();
     testMissingOrEmptyCaptureListEnablesWriteOnlyMode();
     testSkipSysctlSetting();
     testInvalidCaptureElementIsRejected();
+    testConntrackSetting();
     return 0;
 }

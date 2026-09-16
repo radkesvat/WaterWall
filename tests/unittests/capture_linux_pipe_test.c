@@ -743,6 +743,7 @@ static void deviceSetup(capture_device_t *cdev, test_env_t *env, reader_probe_t 
     cdev->socket              = -1;
     cdev->queue_number        = kTestQueueNumber;
     cdev->capture_range_count = kTestCaptureRangeCount;
+    cdev->bypass_conntrack    = true;
     cdev->capture_cidrs       = memoryAllocateZero(kTestCaptureRangeCount * sizeof(char *));
     for (uint32_t i = 0; i < kTestCaptureRangeCount; ++i)
     {
@@ -1710,6 +1711,28 @@ static void testCommittedDeletionOutputLimitDoesNotBlockEarlierCleanup(test_env_
     requireCommandScriptConsumed("committed output-limited deletion issued an unexpected cleanup sequence");
 }
 
+static void testConntrackBypassDisabledStillCaptures(test_env_t *env)
+{
+    commandScriptReset();
+    scriptQueueInsertions();
+    scriptQueueDeletions();
+
+    capture_device_t cdev;
+    reader_probe_t   probe;
+    deviceSetup(&cdev, env, &probe);
+    cdev.bypass_conntrack = false;
+
+    require(caputredeviceBringUp(&cdev), "capture failed with conntrack bypass disabled");
+    require(cdev.up && cdev.capture_active && cdev.reader_thread_joinable,
+            "disabling conntrack bypass also disabled capture");
+    requireAllQueueRulesInState(&cdev, kCaptureRuleInstalled, "disabled bypass omitted NFQUEUE rules");
+    requireAllNotrackRulesInState(&cdev, kCaptureRuleAbsent, "disabled bypass installed NOTRACK rules");
+    require(caputredeviceBringDown(&cdev), "capture cleanup failed with conntrack bypass disabled");
+    requireAllQueueRulesInState(&cdev, kCaptureRuleAbsent, "disabled bypass left NFQUEUE rules behind");
+    requireCommandScriptConsumed("disabled bypass ran unexpected firewall commands");
+    deviceTeardown(&cdev);
+}
+
 static void testNotrackInsertionFailureRollsBackBothKinds(test_env_t *env)
 {
     const command_outcome_t outcomes[] = {
@@ -2004,6 +2027,7 @@ int main(void)
     testCommittedDeletionTimeoutDoesNotBlockEarlierCleanup(&env);
     testCommittedDeletionOutputLimitDoesNotBlockEarlierCleanup(&env);
     testNotrackInsertionFailureRollsBackBothKinds(&env);
+    testConntrackBypassDisabledStillCaptures(&env);
     testNotrackDeletionFailureStillRemovesQueueRules(&env);
     testNotrackInspectionFailureStillRemovesQueueRules(&env);
     // Isolated proof that the reader's poll is bounded, ordered before the

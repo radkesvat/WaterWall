@@ -353,8 +353,9 @@ bool rawdeviceBringDown(raw_device_t *rdev)
     return bring_down_ok;
 }
 
-raw_device_t *rawdeviceCreate(const char *name, uint32_t mark, void *userdata)
+raw_device_t *rawdeviceCreate(const char *name, uint32_t mark, bool bypass_conntrack, void *userdata)
 {
+    discard bypass_conntrack; // Linux netfilter policy; WinDivert has no conntrack setting.
     if (! windivertManagerEnsureLoaded())
     {
         LOGE("RawDevice: failed to load WinDivert");

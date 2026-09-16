@@ -2201,10 +2201,10 @@ bool caputredeviceBringUp(capture_device_t *cdev)
         return false;
     }
 
-    // Exempt incoming traffic only after its INPUT capture rules and reader
-    // exist. Any partial failure rolls back both independently tracked kinds.
-    if (! capturedeviceInstallRuleKind(cdev, false) || ! capturedeviceInstallRuleKind(cdev, true) ||
-        ! capturedeviceActivate(cdev))
+    // When enabled, exempt incoming traffic only after its INPUT capture rules
+    // and reader exist. Rollback removes every rule actually installed.
+    if (! capturedeviceInstallRuleKind(cdev, false) ||
+        (cdev->bypass_conntrack && ! capturedeviceInstallRuleKind(cdev, true)) || ! capturedeviceActivate(cdev))
     {
         capturedeviceRollbackStartup(cdev);
         return false;
@@ -2260,7 +2260,8 @@ bool caputredeviceBringDown(capture_device_t *cdev)
 }
 
 capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_ranges, uint32_t capture_range_count,
-                                      bool skip_sysctl, void *userdata, CaptureReadEventHandle cb)
+                                      bool skip_sysctl, bool bypass_conntrack, void *userdata,
+                                      CaptureReadEventHandle cb)
 {
     if (capture_ranges == NULL || capture_range_count == 0)
     {
@@ -2480,6 +2481,7 @@ capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_
                                 .netfilter_queue_number = queue_number,
                                 .capture_cidrs          = capture_cidrs,
                                 .capture_range_count    = capture_range_count,
+                                .bypass_conntrack       = bypass_conntrack,
                                 .rule_states            = rule_states,
                                 .rule_token             = rule_token,
                                 .queue_restartable      = true,

@@ -593,6 +593,7 @@ elseif(UNIX AND NOT ANDROID)
         target_sources(ww PRIVATE
             devices/capture/capture_linux.c
             devices/raw/raw_linux.c
+            devices/raw/raw_linux_notrack.c
         )
     endif()
 
@@ -1556,6 +1557,7 @@ set_target_properties(ww PROPERTIES UNITY_BUILD_BATCH_SIZE 500)
 set_source_files_properties(
     devices/capture/capture_linux.c
     devices/raw/raw_linux.c
+    devices/raw/raw_linux_notrack.c
     devices/raw/raw_windows.c
     devices/capture/capture_windows.c
     base/wlsem.c
