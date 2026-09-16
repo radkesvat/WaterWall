@@ -47,6 +47,7 @@ void rawsocketOnStart(tunnel_t *t)
                                                     state->capture_range_count,
                                                     state->skip_sysctl,
                                                     state->bypass_conntrack,
+                                                    &state->capture_protocol_filter,
                                                     t,
                                                     rawsocketOnIPPacketReceived);
 

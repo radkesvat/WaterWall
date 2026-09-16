@@ -166,6 +166,43 @@ static void testConntrackSetting(void)
     }
 }
 
+static void testProtocolExclusions(void)
+{
+    cJSON    *settings;
+    tunnel_t *t = createRawSocket("{\"dont-capture-protocols\":[0,1,6,6,31,32,63,64,127,128,254,255]}", &settings);
+    require(t != NULL, "RawSocket rejected valid protocol exclusions");
+    rawsocket_tstate_t *state = tunnelGetState(t);
+    for (unsigned int protocol = 0; protocol < kCaptureIpProtocolCount; ++protocol)
+    {
+        const bool expected = protocol == 0 || protocol == 1 || protocol == 6 || protocol == 31 || protocol == 32 ||
+                              protocol == 63 || protocol == 64 || protocol == 127 || protocol == 128 || protocol >= 254;
+        require(captureProtocolFilterExcludes(&state->capture_protocol_filter, (uint8_t) protocol) == expected,
+                "RawSocket changed a literal protocol exclusion or its neighboring bits");
+    }
+    destroyRawSocket(t, settings);
+
+    const char *const empty[] = {"{}", "{\"dont-capture-protocols\":[]}"};
+    for (size_t i = 0; i < ARRAY_SIZE(empty); ++i)
+    {
+        t = createRawSocket(empty[i], &settings);
+        require(t != NULL &&
+                    captureProtocolFilterIsEmpty(&((rawsocket_tstate_t *) tunnelGetState(t))->capture_protocol_filter),
+                "absent/empty exclusions changed the capture default");
+        destroyRawSocket(t, settings);
+    }
+
+    const char *const invalid[] = {
+        "null", "6", "\"6\"", "{}", "[true]", "[null]", "[\"6\"]", "[-1]", "[256]", "[1.5]", "[1e100]", "[[]]"};
+    for (size_t i = 0; i < ARRAY_SIZE(invalid); ++i)
+    {
+        char json[128];
+        snprintf(json, sizeof(json), "{\"dont-capture-protocols\":%s}", invalid[i]);
+        t = createRawSocket(json, &settings);
+        require(t == NULL, "RawSocket accepted an invalid protocol exclusion");
+        destroyRawSocket(t, settings);
+    }
+}
+
 int main(void)
 {
     testAliasesAcceptSingleAndArray();
@@ -173,5 +210,6 @@ int main(void)
     testSkipSysctlSetting();
     testInvalidCaptureElementIsRejected();
     testConntrackSetting();
+    testProtocolExclusions();
     return 0;
 }

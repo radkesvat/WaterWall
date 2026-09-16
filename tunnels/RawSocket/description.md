@@ -13,7 +13,7 @@ This node is a layer-3 adapter rather than a connection-oriented tunnel.
 
 - Optionally creates a capture device for matching IPv4 packets.
 - Creates a raw output device for sending raw IPv4 packets.
-- When capture is enabled, captures packets that match the configured IP filter and drops them from the host kernel network stack so only WaterWall receives and accesses them.
+- When capture is enabled, captures packets that match the configured IP and protocol filters and drops them from the host kernel network stack so only WaterWall receives and accesses them.
 - Forwards captured packets to the adjacent chain side.
 - Writes raw IP packets from the chain out through the raw device.
 - Applies checksum recalculation before writing when the line requests it.
@@ -90,6 +90,24 @@ For write-only packet injection, omit all capture-range keys:
   Equivalent names for the IPv4 addresses or IPv4 CIDR ranges used by the capture device filter. Either key accepts one string or an array, and every array element becomes a capture range. `listen-ips` remains accepted as a compatibility alias with the same input shapes.
 
   Each value may be a single IPv4 address such as `"192.0.2.10"` or a CIDR range such as `"198.51.100.0/24"`. IPv6 entries are rejected. If no capture key is present, or the selected key contains an empty array, capture is disabled and `RawSocket` starts only its raw output device.
+
+- `dont-capture-protocols` `(array of integers)`
+  IPv4 Protocol identifiers to leave out of capture, such as `1` for ICMP,
+  `6` for TCP, or `17` for UDP. Entries must be integers from `0` through `255`;
+  duplicates are ignored. Zero is the literal protocol byte, not “all protocols.”
+
+  Default: `[]` (also used when omitted)
+
+  Excluded incoming packets skip this node's capture and incoming NOTRACK rules,
+  including when `bypass-conntrack` is enabled. They continue through normal host
+  conntrack and firewall processing. This setting does not restrict raw output:
+  packets sent by WaterWall's raw socket still follow `bypass-conntrack`.
+
+  For example, these settings leave incoming ICMP and TCP to the host:
+
+  ```json
+  { "dont-capture-protocols": [1, 6] }
+  ```
 
 - `capture-filter-mode` `(string)`
   Filter mode for captured traffic. This field is required when at least one capture range is configured and is ignored in write-only mode.
@@ -221,22 +239,30 @@ logged comment if cleanup cannot complete.
 
 ### Capture filter behavior
 
-The capture device is configured from the ranges supplied through either `capture-ips` or `capture-ip`. Captured packets matching the configured source IP filter are dropped from the host kernel networking stack: normal local transport delivery stops while capture is active, and WaterWall processes its captured copy.
+The capture device is configured from the ranges supplied through either `capture-ips` or `capture-ip`. Captured packets matching the configured source IP and protocol filters are dropped from the host kernel networking stack: normal local transport delivery stops while capture is active, and WaterWall processes its captured copy.
 
 Current implementation behavior:
 
-- on Windows, the capture filter is built from equivalent `ip.SrcAddr` equality or inclusive range checks
+- on Windows, the capture filter combines `ip.SrcAddr` equality or inclusive range checks with exclusions on `ip.Protocol`
 - on Linux, one netfilter queue rule is created for each configured IPv4 address or CIDR range
 - `capture-filter-mode` is parsed, but only the `source-ip` path is currently implemented
+
+On Linux, a nonempty `dont-capture-protocols` list requires the iptables `bpf`
+match (`xt_bpf`). One fixed-size classic BPF predicate checks the IPv4 Protocol
+byte in both the NFQUEUE and incoming NOTRACK rules. It also handles fragments
+and protocol zero without interpreting transport headers. Missing matcher
+support fails startup and rolls back installed rules. An empty list adds no
+protocol matcher. Windows applies the same exclusions in its WinDivert filter.
 
 By default the Linux capture backend also applies best-effort `sysctl` tuning before creating NFQUEUE resources. `"skip-sysctl": true` suppresses only that tuning batch. The netlink operations and iptables commands needed to configure NFQUEUE remain enabled.
 
 When `bypass-conntrack` is enabled (the default), Linux capture installs a
-matching `CT --notrack` rule in `raw PREROUTING` for each capture source range.
+matching `CT --notrack` rule in `raw PREROUTING` for each capture source range, with the same protocol exclusions as capture.
 The exemption also requires `--dst-type LOCAL`: it covers packets addressed to a local unicast address,
 without exempting ordinary transit traffic, broadcasts, or multicast. The INPUT
-capture rule still uses its existing source-only match. Raw-table matching is
-before DNAT, so exempted traffic cannot rely on this host's conntrack-based NAT
+capture rule checks the source range and protocol exclusions without this
+destination-type restriction. Raw-table matching is before DNAT, so exempted
+traffic cannot rely on this host's conntrack-based NAT
 or stateful firewall handling. Setting `bypass-conntrack=false` disables these
 capture exemptions along with the output exemption. NFQUEUE capture continues
 with its existing drop-and-dispatch behavior.

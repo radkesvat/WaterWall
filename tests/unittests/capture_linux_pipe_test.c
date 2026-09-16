@@ -98,6 +98,7 @@ static bool               fake_rule_present[kTestCaptureRangeCount];
 static char               fake_rule_comments[kTestCaptureRangeCount][kMaxCommandText];
 static bool               fake_notrack_present[kTestCaptureRangeCount];
 static char               fake_notrack_comments[kTestCaptureRangeCount][kMaxCommandText];
+static char               expected_protocol_filter[kCaptureLinuxProtocolFilterSize];
 static capture_device_t  *expect_running_during_insert = NULL;
 static capture_device_t  *expect_running_during_delete = NULL;
 static capture_device_t  *observe_capture_thread       = NULL;
@@ -187,6 +188,7 @@ static void commandScriptReset(void)
     memset(fake_rule_comments, 0, sizeof(fake_rule_comments));
     memset(fake_notrack_present, 0, sizeof(fake_notrack_present));
     memset(fake_notrack_comments, 0, sizeof(fake_notrack_comments));
+    expected_protocol_filter[0] = '\0';
 }
 
 static void commandScriptAppend(const char *operation, const char *cidr, command_outcome_t outcome)
@@ -360,6 +362,14 @@ bool __wrap_procRunArgvWithDeadline(const char *file, const char *const argv[], 
     memset(out, 0, sizeof(*out));
     require(recorded_command_count < kMaxRecordedCommands, "too many recorded iptables commands");
     const bool is_snapshot = strcmp(operation, "-S") == 0;
+    if (! is_snapshot && expected_protocol_filter[0] != '\0')
+    {
+        const size_t base = notrack ? 20 : 16;
+        require(argv[base] != NULL && strcmp(argv[base], "-m") == 0 && strcmp(argv[base + 1], "bpf") == 0 &&
+                    strcmp(argv[base + 2], "--bytecode") == 0 &&
+                    strcmp(argv[base + 3], expected_protocol_filter) == 0 && argv[base + 4] == NULL,
+                "rule installation or cleanup changed its protocol exclusion predicate");
+    }
     require(options->max_output_bytes == (is_snapshot ? 1024U * 1024U : 64U * 1024U),
             "Capture used the wrong output cap for an iptables command");
     const char         *cidr   = is_snapshot ? "" : argv[notrack ? 8 : 6];
@@ -1803,6 +1813,11 @@ static void testNotrackDeletionFailureStillRemovesQueueRules(test_env_t *env)
 
         reader_probe_t    probe;
         capture_device_t *cdev = ownedDeviceCreate(env, &probe);
+        capture_protocol_filter_t filter = {0};
+        captureProtocolFilterExclude(&filter, 0);
+        captureProtocolFilterExclude(&filter, 6);
+        captureLinuxBuildProtocolFilter(&filter, cdev->protocol_filter);
+        strcpy(expected_protocol_filter, cdev->protocol_filter);
         require(caputredeviceBringUp(cdev), "bring-up before NOTRACK deletion failure failed");
         const int queue_socket = cdev->socket;
         require(! caputredeviceBringDown(cdev), "NOTRACK deletion failure was not reported");

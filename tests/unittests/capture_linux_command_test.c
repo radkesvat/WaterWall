@@ -6,12 +6,15 @@
 
 #include "devices/capture/capture_linux_internal.h"
 #include "wwapi.h"
+#include <linux/filter.h>
+#include <sys/socket.h>
+#include <unistd.h>
 
 enum
 {
     kMaxRecordedCalls = 32,
-    kMaxRecordedArgs  = 24,
-    kMaxArgLength     = 128,
+    kMaxRecordedArgs  = 32,
+    kMaxArgLength     = kCaptureLinuxProtocolFilterSize,
     // Capture's own policy constants, duplicated here so the test fails if the
     // production values drift without anyone noticing.
     kExpectedTimeoutMs                = 7000,
@@ -213,7 +216,8 @@ static void requireNoShellInvocation(void)
 static void testInsertBuildsExactArgv(void)
 {
     resetRecording(kFakeOutcomeSuccess, SIZE_MAX);
-    require(capturedeviceRunIptablesQueueRule("-I", "10.0.0.0/8", 7, "WWCAP_TEST_INSERT") == kCapturedeviceCommandOk,
+    require(capturedeviceRunIptablesQueueRule("-I", "10.0.0.0/8", 7, "WWCAP_TEST_INSERT", "") ==
+                kCapturedeviceCommandOk,
             "a clean iptables insertion must succeed");
     require(recorded_call_count == 1, "insertion must run exactly one command");
     requireIptablesArgv(&recorded_calls[0], "-I", "10.0.0.0/8", "7", "WWCAP_TEST_INSERT");
@@ -226,7 +230,7 @@ static void testInsertBuildsExactArgv(void)
 static void testDeleteBuildsExactArgv(void)
 {
     resetRecording(kFakeOutcomeSuccess, SIZE_MAX);
-    require(capturedeviceRunIptablesQueueRule("-D", "192.168.1.0/24", 12, "WWCAP_TEST_DELETE") ==
+    require(capturedeviceRunIptablesQueueRule("-D", "192.168.1.0/24", 12, "WWCAP_TEST_DELETE", "") ==
                 kCapturedeviceCommandOk,
             "a clean iptables deletion must succeed");
     require(recorded_call_count == 1, "deletion must run exactly one command");
@@ -242,7 +246,7 @@ static void testNotrackRulesStayInRawPrerouting(void)
     for (size_t op = 0; op < sizeof(operations) / sizeof(operations[0]); ++op)
     {
         resetRecording(kFakeOutcomeSuccess, SIZE_MAX);
-        require(capturedeviceRunIptablesNotrackRule(operations[op], "203.0.113.0/24", "WWCAP_NOTRACK_TEST") ==
+        require(capturedeviceRunIptablesNotrackRule(operations[op], "203.0.113.0/24", "WWCAP_NOTRACK_TEST", "") ==
                     kCapturedeviceCommandOk,
                 "NOTRACK mutation failed");
         const char *const expected[] = {
@@ -295,25 +299,25 @@ static void testNotrackInspectionUsesRawPrerouting(void)
 static void testIptablesTimeoutIsDistinctFromNonzeroExit(void)
 {
     resetRecording(kFakeOutcomeNonzeroExit, 0);
-    require(capturedeviceRunIptablesQueueRule("-D", "10.0.0.0/8", 1, "WWCAP_TEST_STATUS") ==
+    require(capturedeviceRunIptablesQueueRule("-D", "10.0.0.0/8", 1, "WWCAP_TEST_STATUS", "") ==
                 kCapturedeviceCommandFailed,
             "a nonzero iptables exit must report a plain command failure");
     require(dropped_result_count == 1, "a failed command must still drop its result exactly once");
 
     resetRecording(kFakeOutcomeTimeout, 0);
-    require(capturedeviceRunIptablesQueueRule("-D", "10.0.0.0/8", 1, "WWCAP_TEST_STATUS") ==
+    require(capturedeviceRunIptablesQueueRule("-D", "10.0.0.0/8", 1, "WWCAP_TEST_STATUS", "") ==
                 kCapturedeviceCommandTimedOut,
             "an iptables timeout must be distinguishable from a nonzero exit");
     require(dropped_result_count == 1, "a timed-out command must still drop its result exactly once");
 
     resetRecording(kFakeOutcomeSpawnFailure, 0);
-    require(capturedeviceRunIptablesQueueRule("-I", "10.0.0.0/8", 1, "WWCAP_TEST_STATUS") ==
+    require(capturedeviceRunIptablesQueueRule("-I", "10.0.0.0/8", 1, "WWCAP_TEST_STATUS", "") ==
                 kCapturedeviceCommandSpawnFailed,
             "a spawn failure must be distinguishable from a nonzero exit");
     require(dropped_result_count == 1, "a spawn-failed command must still drop its result exactly once");
 
     resetRecording(kFakeOutcomeOutputTooLarge, 0);
-    require(capturedeviceRunIptablesQueueRule("-I", "10.0.0.0/8", 1, "WWCAP_TEST_STATUS") ==
+    require(capturedeviceRunIptablesQueueRule("-I", "10.0.0.0/8", 1, "WWCAP_TEST_STATUS", "") ==
                 kCapturedeviceCommandOutputTooLarge,
             "output-limit termination must be distinguishable from a nonzero exit");
     require(dropped_result_count == 1, "an output-limited command must still drop its result exactly once");
@@ -459,6 +463,107 @@ static void testSysctlSkipRunsNoCommands(void)
     require(dropped_result_count == 0, "skip-sysctl unexpectedly produced a command result");
 }
 
+static void testProtocolFilterUsesTheSamePredicateForEveryRule(void)
+{
+    capture_protocol_filter_t filter = {0};
+    char                      bytecode[kCaptureLinuxProtocolFilterSize];
+    captureLinuxBuildProtocolFilter(&filter, bytecode);
+    require(bytecode[0] == '\0', "empty exclusions unnecessarily enabled a BPF match");
+    captureProtocolFilterExclude(&filter, 0);
+    captureProtocolFilterExclude(&filter, 6);
+    captureLinuxBuildProtocolFilter(&filter, bytecode);
+
+    resetRecording(kFakeOutcomeSuccess, SIZE_MAX);
+    const char *const operations[] = {"-I", "-D"};
+    for (size_t i = 0; i < ARRAY_SIZE(operations); ++i)
+    {
+        require(capturedeviceRunIptablesQueueRule(operations[i], "192.0.2.0/24", 77, "WWCAP_TEST", bytecode) ==
+                    kCapturedeviceCommandOk,
+                "filtered NFQUEUE mutation failed");
+        require(capturedeviceRunIptablesNotrackRule(operations[i], "192.0.2.0/24", "WWCAP_NOTRACK_TEST", bytecode) ==
+                    kCapturedeviceCommandOk,
+                "filtered NOTRACK mutation failed");
+    }
+    require(recorded_call_count == 4, "filtered rules changed the number of mutations");
+    for (size_t i = 0; i < recorded_call_count; ++i)
+    {
+        const recorded_call_t *call   = &recorded_calls[i];
+        const size_t           offset = i % 2 == 0 ? 16 : 20;
+        require(call->argc == offset + 4, "protocol match has the wrong argument count");
+        requireEqStr(call->argv[offset], "-m", "protocol matcher lost its module flag");
+        requireEqStr(call->argv[offset + 1], "bpf", "protocol matcher uses the wrong module");
+        requireEqStr(call->argv[offset + 2], "--bytecode", "protocol matcher lost its bytecode flag");
+        requireEqStr(call->argv[offset + 3], bytecode, "capture/NOTRACK insertion/deletion predicates differ");
+        requireMutationOptions(call, "filtered mutation lost its deadline");
+    }
+    requireNoShellInvocation();
+}
+
+static void testProtocolFilterInTheKernel(void)
+{
+    /* Execute the actual generated cBPF on an unprivileged datagram socket.
+     * No userspace interpreter or firewall privilege is needed to check all
+     * protocol bytes, including bitmap word boundaries and an all-excluded set. */
+    for (unsigned int scenario = 0; scenario < 4; ++scenario)
+    {
+        capture_protocol_filter_t filter = {0};
+        for (unsigned int protocol = 0; protocol < kCaptureIpProtocolCount; ++protocol)
+        {
+            if (scenario == 0 || (scenario == 1 && protocol % 2 == 0) || (scenario == 2 && protocol % 31 == 0) ||
+                (scenario == 3 && protocol == 255))
+            {
+                captureProtocolFilterExclude(&filter, (uint8_t) protocol);
+            }
+        }
+        char bytecode[kCaptureLinuxProtocolFilterSize];
+        captureLinuxBuildProtocolFilter(&filter, bytecode);
+        char               *cursor;
+        const unsigned long count = strtoul(bytecode, &cursor, 10);
+        struct sock_filter  instructions[64];
+        require(count > 0 && count <= ARRAY_SIZE(instructions), "protocol program exceeds xt_bpf's limit");
+        for (unsigned long i = 0; i < count; ++i)
+        {
+            int consumed = 0;
+            require(sscanf(cursor,
+                           ",%hu %hhu %hhu %u%n",
+                           &instructions[i].code,
+                           &instructions[i].jt,
+                           &instructions[i].jf,
+                           &instructions[i].k,
+                           &consumed) == 4 &&
+                        consumed > 0,
+                    "invalid generated cBPF instruction");
+            cursor += consumed;
+        }
+        require(*cursor == '\0', "trailing bytes in generated cBPF program");
+        struct sock_fprog program = {.len = (unsigned short) count, .filter = instructions};
+        int               sockets[2];
+        require(socketpair(AF_UNIX, SOCK_DGRAM, 0, sockets) == 0, "unable to create protocol-filter sockets");
+        require(setsockopt(sockets[1], SOL_SOCKET, SO_ATTACH_FILTER, &program, sizeof(program)) == 0,
+                "the kernel rejected the generated protocol filter");
+        for (unsigned int protocol = 0; protocol < kCaptureIpProtocolCount; ++protocol)
+        {
+            uint8_t packet[20] = {0x45};
+            packet[9]          = (uint8_t) protocol;
+            require(send(sockets[0], packet, sizeof(packet), 0) == sizeof(packet), "filter test send failed");
+            const ssize_t received = recv(sockets[1], packet, sizeof(packet), MSG_DONTWAIT);
+            if (captureProtocolFilterExcludes(&filter, (uint8_t) protocol))
+            {
+                require(received == -1 && (errno == EAGAIN || errno == EWOULDBLOCK),
+                        "the protocol filter admitted an excluded byte");
+            }
+            else
+            {
+                /* xt_bpf uses the positive result as a boolean; SO_ATTACH_FILTER
+                 * additionally truncates admitted test datagrams to that value. */
+                require(received == 1, "the protocol filter rejected a non-excluded byte");
+            }
+        }
+        close(sockets[0]);
+        close(sockets[1]);
+    }
+}
+
 int main(void)
 {
     testNotrackRulesStayInRawPrerouting();
@@ -473,6 +578,8 @@ int main(void)
     testSysctlNonzeroExitStaysBestEffort();
     testSysctlTimeoutStopsTheRestOfTheBatch();
     testSysctlSkipRunsNoCommands();
+    testProtocolFilterUsesTheSamePredicateForEveryRule();
+    testProtocolFilterInTheKernel();
 
     printf("capture_linux_command_test: all tests passed\n");
     return 0;

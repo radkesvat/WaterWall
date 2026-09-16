@@ -21,8 +21,8 @@ def iptables(*args):
     return command("iptables", "-w", "5", *args)
 
 
-def counters():
-    rules = iptables("-t", "mangle", "-L", "WWCAP_TEST_CT", "-n", "-v", "-x", "--line-numbers")
+def counters(chain="WWCAP_TEST_CT"):
+    rules = iptables("-t", "mangle", "-L", chain, "-n", "-v", "-x", "--line-numbers")
     return tuple(int(match[1]) for match in re.finditer(r"^\s*\d+\s+(\d+)\s+\d+\s", rules, re.MULTILINE))
 
 
@@ -36,21 +36,100 @@ def expect_counters(expected):
     raise AssertionError(f"conntrack counters: expected {expected}, got {actual}")
 
 
-def send_packet(sender, source, destination, port, payload, ident, fragmented=False, ttl=64):
-    udp = struct.pack("!HHHH", 41000 + ident, port, len(payload) + 8, 0) + payload
-    pieces = [(0, 0, udp)]
+def checksum(data):
+    data += bytes(len(data) % 2)
+    value = sum(struct.unpack(f"!{len(data) // 2}H", data))
+    while value >> 16:
+        value = (value & 0xFFFF) + (value >> 16)
+    return ~value & 0xFFFF
+
+
+def send_ipv4(sender, source, destination, protocol, payload, ident, fragmented=False, ttl=64):
+    pieces = [(0, 0, payload)]
     if fragmented:
-        pieces = [(0, 0x2000, udp[:800]), (100, 0, udp[800:])]
+        pieces = [(0, 0x2000, payload[:800]), (100, 0, payload[800:])]
     for offset, flags, body in pieces:
         header = struct.pack(
             "!BBHHHBBH4s4s", 0x45, 0, 20 + len(body), ident, flags | offset,
-            ttl, socket.IPPROTO_UDP, 0, socket.inet_aton(source), socket.inet_aton(destination),
+            ttl, protocol, 0, socket.inet_aton(source), socket.inet_aton(destination),
         )
-        checksum = sum(struct.unpack("!10H", header))
-        while checksum >> 16:
-            checksum = (checksum & 0xFFFF) + (checksum >> 16)
-        header = header[:10] + struct.pack("!H", ~checksum & 0xFFFF) + header[12:]
+        header = header[:10] + struct.pack("!H", checksum(header)) + header[12:]
         sender.send(bytes(12) + b"\x08\x00" + header + body)
+
+
+def send_packet(sender, source, destination, port, payload, ident, fragmented=False, ttl=64):
+    udp = struct.pack("!HHHH", 41000 + ident, port, len(payload) + 8, 0) + payload
+    send_ipv4(sender, source, destination, socket.IPPROTO_UDP, udp, ident, fragmented, ttl)
+
+
+def exercise_protocol_exclusions(sender):
+    # Count only packets injected from the capture source, after conntrack.
+    iptables("-t", "mangle", "-N", "WWCAP_EXCLUDED_CT")
+    iptables("-t", "mangle", "-A", "PREROUTING", "-s", "127.0.0.2", "-d", "127.0.0.1",
+             "-j", "WWCAP_EXCLUDED_CT")
+    iptables("-t", "mangle", "-A", "WWCAP_EXCLUDED_CT", "-m", "conntrack", "--ctstate", "UNTRACKED")
+    iptables("-t", "mangle", "-A", "WWCAP_EXCLUDED_CT", "-m", "conntrack", "--ctstate", "NEW,ESTABLISHED,RELATED")
+    command("sysctl", "-qw", "net.ipv4.icmp_ratelimit=0")
+
+    def require_tracked(before):
+        after = counters("WWCAP_EXCLUDED_CT")
+        assert after[0] == 0 and after[1] > before[1], (before, after)
+
+    with socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_ICMP) as receiver:
+        receiver.bind(("127.0.0.2", 0))
+        receiver.settimeout(3)
+        echo = struct.pack("!BBHHH", 8, 0, 0, 0x4321, 1) + bytes(1400)
+        echo = echo[:2] + struct.pack("!H", checksum(echo)) + echo[4:]
+        before = counters("WWCAP_EXCLUDED_CT")
+        send_ipv4(sender, "127.0.0.2", "127.0.0.1", 1, echo, 10, fragmented=True)
+        reply = receiver.recv(4096)
+        body = reply[(reply[0] & 15) * 4:]
+        assert body[0] == 0 and body[4:] == echo[4:], "excluded fragmented ICMP did not reach host echo handling"
+        require_tracked(before)
+
+        # Exclusion must continue through the administrator's INPUT rules.
+        iptables("-A", "INPUT", "-s", "127.0.0.2", "-p", "icmp", "-j", "DROP")
+        send_ipv4(sender, "127.0.0.2", "127.0.0.1", 1, echo, 11)
+        receiver.settimeout(0.3)
+        expect_no_delivery(receiver)
+        iptables("-D", "INPUT", "-s", "127.0.0.2", "-p", "icmp", "-j", "DROP")
+        receiver.settimeout(3)
+
+        # Zero reaches the host's protocol-unreachable handler. Protocol 255 is
+        # delivered to IPPROTO_RAW sockets, so observe its host delivery directly.
+        with socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_RAW) as raw_receiver:
+            raw_receiver.bind(("127.0.0.1", 0))
+            raw_receiver.settimeout(3)
+            for protocol in (0, 255):
+                before = counters("WWCAP_EXCLUDED_CT")
+                send_ipv4(sender, "127.0.0.2", "127.0.0.1", protocol, bytes(8), 100 + protocol)
+                if protocol == 0:
+                    reply = receiver.recv(4096)
+                    body = reply[(reply[0] & 15) * 4:]
+                    assert body[:2] == bytes((3, 2)) and body[8 + 9] == 0, "protocol zero did not reach host stack"
+                else:
+                    reply = raw_receiver.recv(4096)
+                    assert reply[9] == 255 and reply[20:] == bytes(8), "protocol 255 did not reach host raw socket"
+                require_tracked(before)
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+        port = listener.getsockname()[1]
+        iptables("-t", "mangle", "-N", "WWCAP_HOST_SYNACK")
+        iptables("-t", "mangle", "-A", "OUTPUT", "-s", "127.0.0.1", "-d", "127.0.0.2", "-p", "tcp",
+                 "--sport", str(port), "--dport", "44007", "--tcp-flags", "SYN,ACK", "SYN,ACK", "-j", "WWCAP_HOST_SYNACK")
+        iptables("-t", "mangle", "-A", "WWCAP_HOST_SYNACK")
+        tcp = struct.pack("!HHIIBBHHH", 44007, port, 12345, 0, 0x50, 2, 32768, 0, 0)
+        pseudo = socket.inet_aton("127.0.0.2") + socket.inet_aton("127.0.0.1") + struct.pack("!BBH", 0, 6, len(tcp))
+        tcp = tcp[:16] + struct.pack("!H", checksum(pseudo + tcp)) + tcp[18:]
+        before = counters("WWCAP_EXCLUDED_CT")
+        send_ipv4(sender, "127.0.0.2", "127.0.0.1", 6, tcp, 12)
+        deadline = time.monotonic() + 3
+        while counters("WWCAP_HOST_SYNACK")[0] == 0:
+            assert time.monotonic() < deadline, "excluded TCP did not reach the host listener"
+            time.sleep(0.02)
+        require_tracked(before)
 
 
 def expect_no_delivery(receiver):
@@ -61,7 +140,7 @@ def expect_no_delivery(receiver):
     raise AssertionError(f"captured packet reached the host UDP socket: {packet!r}")
 
 
-def run(binary, directory, bypass_conntrack):
+def run(binary, directory, bypass_conntrack, exclude_protocols):
     # Link-layer loopback injection starts at ingress, with no OUTPUT conntrack
     # attachment. These namespace-local settings admit its local source/route.
     command("sysctl", "-qw", "net.ipv4.conf.all.rp_filter=0", "net.ipv4.conf.lo.rp_filter=0",
@@ -77,6 +156,8 @@ def run(binary, directory, bypass_conntrack):
     ]}
     if not bypass_conntrack:
         config["nodes"][0]["settings"]["bypass-conntrack"] = False
+    if exclude_protocols:
+        config["nodes"][0]["settings"]["dont-capture-protocols"] = [0, 1, 6, 6, 255]
     core = {
         "configs": ["config.json"],
         "misc": {"workers": 1, "ram-profile": "client", "mtu": 1500, "try-enabling-bbr": False},
@@ -136,6 +217,9 @@ def run(binary, directory, bypass_conntrack):
                 expect_counters((2, 3) if bypass_conntrack else (0, 5))
                 assert "WWCAP" not in iptables("-t", "raw", "-S", "OUTPUT")
 
+                if exclude_protocols:
+                    exercise_protocol_exclusions(sender)
+
                 process.terminate()
                 assert process.wait(timeout=15) in (0, 143)
                 assert "WWCAP" not in iptables("-t", "raw", "-S", "PREROUTING")
@@ -158,18 +242,19 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("binary")
     parser.add_argument("--tracked", action="store_true", help="disable bypass-conntrack on both paths")
+    parser.add_argument("--exclude-protocols", action="store_true", help="exclude ICMP, TCP, and protocol-byte boundaries")
     args = parser.parse_args()
     binary = str(Path(args.binary).resolve())
     with tempfile.TemporaryDirectory(prefix="waterwall-capture-notrack-") as temporary:
         directory = Path(temporary)
         try:
-            run(binary, directory, not args.tracked)
+            run(binary, directory, not args.tracked, args.exclude_protocols)
         except Exception:
             log = directory / "stdout.log"
             if log.exists():
                 print(log.read_text()[-20000:], file=sys.stderr)
             raise
-    print(f"Capture with bypass-conntrack={not args.tracked}, fragments, scope, and cleanup passed")
+    print(f"Capture with bypass-conntrack={not args.tracked}, exclusions={args.exclude_protocols}, fragments, scope, and cleanup passed")
 
 
 if __name__ == "__main__":

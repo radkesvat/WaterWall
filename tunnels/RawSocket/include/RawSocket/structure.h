@@ -25,6 +25,7 @@ typedef struct rawsocket_tstate_s
     capture_device_t *capture_device;
     ipmask_t         *capture_ranges;
     uint32_t          capture_range_count;
+    capture_protocol_filter_t capture_protocol_filter;
     char             *capture_device_name;
     bool              skip_sysctl;
     uint32_t          except_fwmark;

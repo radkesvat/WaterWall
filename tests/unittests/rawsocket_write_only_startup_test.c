@@ -12,7 +12,8 @@ static unsigned int     raw_destroy_count;
 
 capture_device_t *__wrap_caputredeviceCreate(const char *name, const ipmask_t *capture_ranges,
                                              uint32_t capture_range_count, bool skip_sysctl, bool bypass_conntrack,
-                                             void *userdata, CaptureReadEventHandle cb);
+                                             const capture_protocol_filter_t *protocol_filter, void *userdata,
+                                             CaptureReadEventHandle cb);
 bool              __wrap_caputredeviceBringUp(capture_device_t *cdev);
 bool              __wrap_capturedeviceRequestStop(capture_device_t *cdev);
 bool              __wrap_caputredeviceBringDown(capture_device_t *cdev);
@@ -49,13 +50,15 @@ void rawsocketOnIPPacketReceived(struct capture_device_s *cdev, void *userdata, 
 
 capture_device_t *__wrap_caputredeviceCreate(const char *name, const ipmask_t *capture_ranges,
                                              uint32_t capture_range_count, bool skip_sysctl, bool bypass_conntrack,
-                                             void *userdata, CaptureReadEventHandle cb)
+                                             const capture_protocol_filter_t *protocol_filter, void *userdata,
+                                             CaptureReadEventHandle cb)
 {
     discard name;
     discard capture_ranges;
     discard capture_range_count;
     discard skip_sysctl;
     discard bypass_conntrack;
+    discard protocol_filter;
     discard userdata;
     discard cb;
     ++capture_call_count;

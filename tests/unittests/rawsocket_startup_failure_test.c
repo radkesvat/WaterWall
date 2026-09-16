@@ -9,7 +9,8 @@ static bool             fake_raw_device_up;
 
 capture_device_t *__wrap_caputredeviceCreate(const char *name, const ipmask_t *capture_ranges,
                                              uint32_t capture_range_count, bool skip_sysctl, bool bypass_conntrack,
-                                             void *userdata, CaptureReadEventHandle cb);
+                                             const capture_protocol_filter_t *protocol_filter, void *userdata,
+                                             CaptureReadEventHandle cb);
 raw_device_t     *__wrap_rawdeviceCreate(const char *name, uint32_t mark, bool bypass_conntrack, void *userdata);
 bool              __wrap_caputredeviceBringUp(capture_device_t *cdev);
 bool              __wrap_rawdeviceBringUp(raw_device_t *rdev);
@@ -53,13 +54,17 @@ void rawsocketOnIPPacketReceived(struct capture_device_s *cdev, void *userdata, 
 
 capture_device_t *__wrap_caputredeviceCreate(const char *name, const ipmask_t *capture_ranges,
                                              uint32_t capture_range_count, bool skip_sysctl, bool bypass_conntrack,
-                                             void *userdata, CaptureReadEventHandle cb)
+                                             const capture_protocol_filter_t *protocol_filter, void *userdata,
+                                             CaptureReadEventHandle cb)
 {
     require(name != NULL, "RawSocket did not pass a capture device name");
     require(capture_ranges != NULL, "RawSocket did not pass capture ranges");
     require(capture_range_count == 1, "RawSocket passed the wrong capture range count");
     require(skip_sysctl, "RawSocket did not pass skip-sysctl to the capture device");
     require(! bypass_conntrack, "RawSocket did not disable capture conntrack bypass alongside output");
+    require(captureProtocolFilterExcludes(protocol_filter, 1) && captureProtocolFilterExcludes(protocol_filter, 6) &&
+                ! captureProtocolFilterExcludes(protocol_filter, 17),
+            "RawSocket lost its capture protocol exclusions");
     require(userdata != NULL, "RawSocket did not pass tunnel userdata to capture device");
     require(cb == rawsocketOnIPPacketReceived, "RawSocket passed the wrong capture callback");
 
@@ -155,6 +160,8 @@ static void runRawSocketStartWithCaptureBringupFailure(int write_fd)
     state->capture_range_count = 1;
     state->skip_sysctl         = true;
     state->firewall_mark       = 7;
+    captureProtocolFilterExclude(&state->capture_protocol_filter, 1);
+    captureProtocolFilterExclude(&state->capture_protocol_filter, 6);
 
     ww_startup_context_t startup = {0};
     wwStartupContextBegin(&startup);

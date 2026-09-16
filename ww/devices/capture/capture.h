@@ -4,6 +4,7 @@
 
 #include "buffer_pool.h"
 #include "devices/capture/capture_lifecycle.h"
+#include "devices/capture/capture_protocol_filter.h"
 #include "devices/device_reader_session.h"
 #include "loggers/log_rate_limiter.h"
 #include "wmutex.h"
@@ -44,6 +45,7 @@ typedef struct capture_device_s
     char   **capture_cidrs;
     uint32_t capture_range_count;
     bool     bypass_conntrack;
+    char     protocol_filter[kCaptureLinuxProtocolFilterSize];
     // Serialized Linux rule/resource state, independent of `up`. Each CIDR's
     // INPUT queue and raw PREROUTING NOTRACK rules are tracked independently
     // because a timed-out iptables mutation may have
@@ -93,7 +95,8 @@ bool caputredeviceBringDown(capture_device_t *cdev);
 /* skip_sysctl suppresses only optional Linux kernel tuning. bypass_conntrack
  * controls Linux NOTRACK rules; NFQUEUE capture remains enabled either way. */
 capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_ranges, uint32_t capture_range_count,
-                                      bool skip_sysctl, bool bypass_conntrack, void *userdata,
+                                      bool skip_sysctl, bool bypass_conntrack,
+                                      const capture_protocol_filter_t *protocol_filter, void *userdata,
                                       CaptureReadEventHandle cb);
 
 void capturedeviceDestroy(capture_device_t *cdev);

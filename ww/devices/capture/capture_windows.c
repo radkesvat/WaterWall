@@ -58,14 +58,16 @@ static bool capturedeviceAppendFilter(char *filter, size_t filter_len, size_t *o
     return true;
 }
 
-static char *capturedeviceBuildWinDivertFilter(const ipmask_t *ranges, uint32_t range_count)
+static char *capturedeviceBuildWinDivertFilter(const ipmask_t *ranges, uint32_t range_count,
+                                               const capture_protocol_filter_t *protocol_filter)
 {
     size_t ranges_size;
-    if (! memoryTryComputeArraySize(range_count, 80U, &ranges_size) || ranges_size > SIZE_MAX - 10U)
+    const size_t protocol_extra = captureProtocolFilterIsEmpty(protocol_filter) ? 0 : kCaptureIpProtocolCount * 32U;
+    if (! memoryTryComputeArraySize(range_count, 80U, &ranges_size) || ranges_size > SIZE_MAX - 10U - protocol_extra)
     {
         return NULL;
     }
-    const size_t filter_len = 10U + ranges_size; // "ip and (" + ")" + NUL
+    const size_t filter_len = 10U + ranges_size + protocol_extra; // "ip and (" + ")" + exclusions + NUL
 
     char  *filter = memoryAllocate(filter_len);
     size_t offset = 0;
@@ -117,6 +119,41 @@ static char *capturedeviceBuildWinDivertFilter(const ipmask_t *ranges, uint32_t 
     {
         memoryFree(filter);
         return NULL;
+    }
+
+    /* Collapse consecutive exclusions so large lists keep the WinDivert
+     * expression small. ip.Protocol also matches non-initial IPv4 fragments. */
+    for (unsigned int protocol = 0; protocol < kCaptureIpProtocolCount; ++protocol)
+    {
+        if (! captureProtocolFilterExcludes(protocol_filter, (uint8_t) protocol))
+        {
+            continue;
+        }
+        const unsigned int first = protocol;
+        while (protocol + 1 < kCaptureIpProtocolCount &&
+               captureProtocolFilterExcludes(protocol_filter, (uint8_t) (protocol + 1)))
+        {
+            ++protocol;
+        }
+        bool appended;
+        if (first == 0 && protocol == kCaptureIpProtocolCount - 1)
+        {
+            appended = capturedeviceAppendFilter(filter, filter_len, &offset, " and false");
+        }
+        else if (first == protocol)
+        {
+            appended = capturedeviceAppendFilter(filter, filter_len, &offset, " and ip.Protocol != %u", first);
+        }
+        else
+        {
+            appended = capturedeviceAppendFilter(
+                filter, filter_len, &offset, " and (ip.Protocol < %u or ip.Protocol > %u)", first, protocol);
+        }
+        if (! appended)
+        {
+            memoryFree(filter);
+            return NULL;
+        }
     }
 
     return filter;
@@ -506,7 +543,8 @@ bool caputredeviceBringDown(capture_device_t *cdev)
 }
 
 capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_ranges, uint32_t capture_range_count,
-                                      bool skip_sysctl, bool bypass_conntrack, void *userdata,
+                                      bool skip_sysctl, bool bypass_conntrack,
+                                      const capture_protocol_filter_t *protocol_filter, void *userdata,
                                       CaptureReadEventHandle cb)
 {
     discard skip_sysctl;
@@ -547,7 +585,7 @@ capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_
     }
 
     char *device_name = stringDuplicate(name);
-    char *filter      = capturedeviceBuildWinDivertFilter(capture_ranges, capture_range_count);
+    char *filter      = capturedeviceBuildWinDivertFilter(capture_ranges, capture_range_count, protocol_filter);
     if (UNLIKELY(device_name == NULL || filter == NULL))
     {
         memoryFree(device_name);

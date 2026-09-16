@@ -1,5 +1,6 @@
 #pragma once
 
+#include "capture_protocol_filter.h"
 #include "shiftbuffer.h"
 #include "wlibc.h"
 #include "wthread.h"
@@ -52,9 +53,13 @@ typedef enum capturedevice_command_status_e
 // exposed only so the command-wiring unit test can drive them without opening a
 // real NFQUEUE socket or requiring root.
 capturedevice_command_status_t capturedeviceRunIptablesQueueRule(const char *operation, const char *cidr,
-                                                                 uint32_t queue_number, const char *rule_comment);
+                                                                 uint32_t queue_number, const char *rule_comment,
+                                                                 const char *protocol_filter);
 capturedevice_command_status_t capturedeviceRunIptablesNotrackRule(const char *operation, const char *cidr,
-                                                                   const char *rule_comment);
+                                                                   const char *rule_comment,
+                                                                   const char *protocol_filter);
+void                           captureLinuxBuildProtocolFilter(const capture_protocol_filter_t *filter,
+                                                               char                             output[kCaptureLinuxProtocolFilterSize]);
 capturedevice_command_status_t capturedeviceReadIptablesInputRules(char **input_rules);
 capturedevice_command_status_t capturedeviceReadIptablesNotrackRules(char **notrack_rules);
 void                           capturedeviceApplySysctls(bool skip_sysctl);

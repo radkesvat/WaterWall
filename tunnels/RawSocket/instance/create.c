@@ -155,6 +155,33 @@ static bool rawsocketLoadCaptureRanges(rawsocket_tstate_t *state, const cJSON *s
     return true;
 }
 
+static bool rawsocketLoadProtocolFilter(capture_protocol_filter_t *filter, const cJSON *settings)
+{
+    const cJSON *protocols = cJSON_GetObjectItemCaseSensitive(settings, "dont-capture-protocols");
+    if (protocols == NULL)
+    {
+        return true;
+    }
+    if (! cJSON_IsArray(protocols))
+    {
+        LOGF("JSON Error: RawSocket->settings->dont-capture-protocols : expected an array of integers from 0 to 255");
+        return false;
+    }
+    const cJSON *protocol;
+    cJSON_ArrayForEach(protocol, protocols)
+    {
+        if (! cJSON_IsNumber(protocol) || protocol->valuedouble < 0 || protocol->valuedouble > 255 ||
+            protocol->valuedouble != protocol->valueint)
+        {
+            LOGF("JSON Error: RawSocket->settings->dont-capture-protocols : each entry must be an integer from 0 to "
+                 "255");
+            return false;
+        }
+        captureProtocolFilterExclude(filter, (uint8_t) protocol->valueint);
+    }
+    return true;
+}
+
 static char *rawsocketDuplicateSettingOrDefault(const cJSON *settings, const char *key, const char *fallback)
 {
     const cJSON *value  = cJSON_GetObjectItemCaseSensitive(settings, key);
@@ -186,7 +213,8 @@ tunnel_t *rawsocketCreate(node_t *node)
     rawsocket_tstate_t *state    = tunnelGetState(t);
     const cJSON        *settings = node->node_settings_json;
 
-    if (! rawsocketLoadCaptureRanges(state, settings))
+    if (! rawsocketLoadCaptureRanges(state, settings) ||
+        ! rawsocketLoadProtocolFilter(&state->capture_protocol_filter, settings))
     {
         rawsocketDestroy(t, wwLifecycleStartupRollback());
         return NULL;
