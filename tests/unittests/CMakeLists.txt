@@ -79,7 +79,7 @@ if(TARGET ww)
     target_link_libraries(wio_fd_test PRIVATE ww)
     target_link_options(wio_fd_test PRIVATE "-Wl,--wrap=pipe2" "-Wl,--wrap=read" "-Wl,--wrap=send" "-Wl,--wrap=splice"
         "-Wl,--wrap=memoryReAllocate" "-Wl,--wrap=fcntl" "-Wl,--wrap=getHRTimeUs"
-        "-Wl,--wrap=sbufSpliceIsReusable")
+        "-Wl,--wrap=sbufSpliceIsReusable" "-Wl,--wrap=ioctl")
     add_dependencies(waterwall_unit_tests wio_fd_test)
     add_waterwall_unit_test(waterwall.wio_fd_unit wio_fd_test "unit;event;fd;pipe;lifetime")
 
@@ -982,7 +982,7 @@ if(TARGET ww)
     )
 
     add_executable(wloop_stop_request_test wloop_stop_request_test.c)
-    target_link_options(wloop_stop_request_test PRIVATE "-Wl,--wrap=send")
+    target_link_options(wloop_stop_request_test PRIVATE "-Wl,--wrap=send" "-Wl,--wrap=wloopInvokeWriteCallback")
     target_link_libraries(wloop_stop_request_test PRIVATE ww)
     add_dependencies(waterwall_unit_tests wloop_stop_request_test)
 

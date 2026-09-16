@@ -17,6 +17,7 @@
 #include "wloop_internal.h"
 #include "worker_registry_fixture.h"
 #include "wwapi.h"
+#include <poll.h>
 
 /*
  * Fake worker table for the stubbed GSTATE below. Without it the identity
@@ -48,6 +49,20 @@ static void require(bool condition, const char *message)
         fprintf(stderr, "FAIL: %s\n", message);
         exit(1);
     }
+}
+
+static wio_t *close_before_write_callback;
+bool          __real_wloopInvokeWriteCallback(wio_t *io, wwrite_cb cb);
+bool          __wrap_wloopInvokeWriteCallback(wio_t *io, wwrite_cb cb);
+
+bool __wrap_wloopInvokeWriteCallback(wio_t *io, wwrite_cb cb)
+{
+    if (close_before_write_callback != NULL && io == close_before_write_callback)
+    {
+        close_before_write_callback = NULL;
+        require(wloopCloseNormalAdmission(io->loop), "failed to close admission after a completed send");
+    }
+    return __real_wloopInvokeWriteCallback(io, cb);
 }
 
 static void envSetup(env_t *env)
@@ -225,6 +240,7 @@ typedef struct cross_loop_write_probe_s
 static void crossLoopWriteCallback(wio_t *io)
 {
     cross_loop_write_probe_t *probe = weventGetUserdata(io);
+    require(wloopCurrentThreadInNormalCallback(io->loop), "write callback lacks target-loop authority");
     probe->write_callbacks++;
 }
 
@@ -249,6 +265,80 @@ static wio_t *createSocketPairIO(wloop_t *loop, int *peer_fd)
     require(io != NULL, "failed to create a WIO for the stream socket pair");
     *peer_fd = sockets[1];
     return io;
+}
+
+static void closeAdmissionThenWriteEvent(wevent_t *event)
+{
+    require(wloopCloseNormalAdmission(event->loop), "failed to close admission inside an admitted callback");
+    crossLoopWriteEvent(event);
+}
+
+static void testDirectWriteCallbackAdmission(env_t *env)
+{
+    for (unsigned int mode = 0; mode < 4; ++mode)
+    {
+        const bool datagram = (mode & 1U) != 0;
+        const bool nested   = mode >= 2;
+        wloop_t   *loop     = wloopCreate(0, env->buffer_pool, 0);
+        require(loop != NULL, "failed to create direct-write admission loop");
+        int    peer_fd = -1;
+        wio_t *target;
+        if (datagram)
+        {
+            sockaddr_u peer;
+            memoryZero(&peer, sizeof(peer));
+            require(sockaddrSetIpAddressPort(&peer, "127.0.0.1", 0) == 0, "failed to create datagram address");
+            peer_fd = socket(AF_INET, SOCK_DGRAM, 0);
+            require(peer_fd >= 0 && bind(peer_fd, &peer.sa, sockaddrLen(&peer)) == 0,
+                    "failed to bind direct-write datagram peer");
+            socklen_t size = sizeof(peer);
+            require(getsockname(peer_fd, &peer.sa, &size) == 0, "failed to get datagram peer address");
+            int fd = socket(AF_INET, SOCK_DGRAM, 0);
+            require(fd >= 0, "failed to create direct-write datagram socket");
+            target = wioGet(loop, fd);
+            require(target != NULL, "failed to wrap direct-write datagram socket");
+            wioSetPeerAddr(target, &peer.sa, (int) size);
+        }
+        else
+        {
+            target = createSocketPairIO(loop, &peer_fd);
+        }
+        cross_loop_write_probe_t probe = {.target = target};
+        weventSetUserData(target, &probe);
+        wioSetCallBackWrite(target, crossLoopWriteCallback);
+        warmLargeBufferCache(env->buffer_pool, 1);
+        const uint32_t cached_before = largeBufferCacheCount(env->buffer_pool);
+        probe.buf                    = makeWriteBuffer(env->buffer_pool, 1);
+        if (nested)
+        {
+            wevent_t event;
+            memoryZero(&event, sizeof(event));
+            event.cb       = closeAdmissionThenWriteEvent;
+            event.userdata = &probe;
+            require(wloopPostEvent(loop, &event), "failed to post admitted nested write");
+            discard wloopProcessEvents(loop, 0);
+        }
+        else
+        {
+            close_before_write_callback = target;
+            probe.result                = wioWrite(target, probe.buf);
+            probe.buf                   = NULL;
+        }
+        require(probe.result == 1 && close_before_write_callback == NULL && ! wloopNormalDispatchAllowed(loop),
+                "direct write missed the callback admission boundary");
+        require(probe.write_callbacks == (nested ? 1 : 0),
+                "callback guard failed to distinguish an independent root from admitted nested work");
+        require(! wioIsClosed(target) && write_queue_empty(&target->write_queue) &&
+                    largeBufferCacheCount(env->buffer_pool) == cached_before,
+                "callback admission changed completed-send ownership or closed the socket");
+        struct pollfd readable = {.fd = peer_fd, .events = POLLIN};
+        char          byte     = 0;
+        require(poll(&readable, 1, 1000) == 1 && recv(peer_fd, &byte, 1, MSG_DONTWAIT) == 1 && byte == 'w',
+                "the admitted send did not reach its peer");
+        wioClose(target);
+        close(peer_fd);
+        wloopDestroy(&loop);
+    }
 }
 
 static void testCrossLoopCallbackCannotBorrowAdmission(env_t *env)
@@ -1158,6 +1248,7 @@ int main(void)
     env_t env;
     envSetup(&env);
 
+    testDirectWriteCallbackAdmission(&env);
     testCrossLoopCallbackCannotBorrowAdmission(&env);
     testAcceptedCrossLoopWriteBindsTargetAuthority(&env);
     testCustomEventAuthorityUsesDestinationLoop(&env);

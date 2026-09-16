@@ -6,6 +6,7 @@
 #include "worker_registry_fixture.h"
 
 #include <fcntl.h>
+#include <netinet/tcp.h>
 #include <stdarg.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
@@ -124,6 +125,22 @@ static int          read_test_fd      = -1, splice_read_error;
 static size_t       splice_read_limit = SIZE_MAX;
 static bool         splice_read_eof;
 static unsigned int splice_read_calls;
+static size_t       splice_read_requested;
+static unsigned int socket_read_queries;
+int                 __real_ioctl(int fd, unsigned long request, ...);
+int                 __wrap_ioctl(int fd, unsigned long request, ...);
+
+int __wrap_ioctl(int fd, unsigned long request, ...)
+{
+    va_list args;
+    va_start(args, request);
+    void *arg = va_arg(args, void *);
+    va_end(args);
+    if (fd == read_test_fd && request == FIONREAD)
+        ++socket_read_queries;
+    return __real_ioctl(fd, request, arg);
+}
+
 static int          last_splice_read_pipe = -1;
 static wloop_t     *quiesce_after_splice_read;
 static int          pipe_read_fd    = -1, pipe_read_error;
@@ -187,6 +204,7 @@ ssize_t __wrap_splice(int in, off_t *in_offset, int out, off_t *out_offset, size
     if (in == read_test_fd)
     {
         ++splice_read_calls;
+        splice_read_requested = len;
         last_splice_read_pipe = out;
         if (splice_read_error != 0)
         {
@@ -1009,11 +1027,14 @@ static void runSpliceCase(splice_case_t kind, uint32_t large_size, uint32_t leng
     }
     require(wioRead(io) == 0, "failed to start splice fixture reads");
     read_test_fd = sockets[0];
-    // No data and no EOF: zero availability must not fabricate a splice wrapper.
+    // No data and no EOF: splice and its ordinary fallback must both defer delivery.
+    const int deferred_read_error = splice_read_error;
+    splice_read_error             = 0;
     io->revents = WW_READ;
     EVENT_PENDING(io);
     require(wloopProcessEvents(env.loop, 0) >= 0 && probe.calls == 0 && ! io->closed,
             "spurious readiness fabricated payload or closed a live socket");
+    splice_read_error = deferred_read_error;
     // Deliveries can exceed the kernel send buffer; feed without blocking the reader's own thread.
     uint32_t supplied = 0;
     for (unsigned int attempt = 0; attempt < 256 && probe.received < length; ++attempt)
@@ -1059,7 +1080,7 @@ static void runSpliceCase(splice_case_t kind, uint32_t large_size, uint32_t leng
     {
         close(sockets[1]);
         require(wloopProcessEvents(env.loop, 0) >= 0 && probe.closes == 1 && wioIsClosed(io),
-                "zero availability at EOF failed to close the connection");
+                "ordinary EOF confirmation failed to close the connection");
     }
     if (kind == kSpliceForwardWrite)
     {
@@ -1148,12 +1169,12 @@ static void testSpliceReadConditions(void)
         splice_read_calls = 0;
         splice_read_error = mode == 0 ? EAGAIN : mode == 1 ? EINTR : 0;
         splice_read_limit = mode == 2 ? 4 : SIZE_MAX;
-        runSpliceCase(kSpliceConvertPipe, 4096, 9);
-        require(splice_read_error == 0 && splice_read_calls == (mode == 2 ? 3U : 2U),
+        runSpliceCase(mode == 0 ? kSplicePipeFallback : kSpliceConvertPipe, 4096, 9);
+        require(splice_read_error == 0 && splice_read_calls == mode + 3,
                 "read loop did not retry transient input or deliver actual short-splice lengths");
         splice_read_limit = SIZE_MAX;
     }
-    // Positive availability followed by EOF/error, admission closure after splice,
+    // Zero splice progress with queued data, errors, admission closure after splice,
     // and a missing callback must settle every still-local wrapper.
     for (unsigned int mode = 0; mode < 4; ++mode)
     {
@@ -1162,7 +1183,7 @@ static void testSpliceReadConditions(void)
         bufferpoolUpdateAllocationPaddings(env.buffers, 64, 64, 64, 64);
         int            sockets[2];
         wio_t         *io    = socketIO(&env, sockets);
-        splice_probe_t probe = {.env = &env, .kind = kSpliceConvertPipe, .length = 9};
+        splice_probe_t probe = {.env = &env, .kind = mode == 0 ? kSplicePipeFallback : kSpliceConvertPipe, .length = 9};
         memcpy(probe.data, "123456789", 9);
         weventSetUserData(io, &probe);
         wioSetCallBackClose(io, spliceClosed);
@@ -1173,9 +1194,9 @@ static void testSpliceReadConditions(void)
         splice_read_error         = mode == 1 ? ECONNRESET : 0;
         quiesce_after_splice_read = mode == 2 ? env.loop : NULL;
         require(send(sockets[1], probe.data, 9, 0) == 9, "failed to supply read-condition payload");
-        require(wloopProcessEvents(env.loop, 0) >= 0 && probe.calls == 0,
+        require(wloopProcessEvents(env.loop, 0) >= 0 && probe.calls == (mode == 0 ? 1U : 0U),
                 "read loop delivered payload after a terminal or suppressed read");
-        if (mode < 2)
+        if (mode == 1)
         {
             require(probe.closes == 1 && wioIsClosed(io) && wioGetError(io) == (mode == 1 ? ECONNRESET : 0),
                     "splice EOF/error did not follow normal read closure");
@@ -1184,6 +1205,8 @@ static void testSpliceReadConditions(void)
         {
             require(! wioIsClosed(io) && quiesce_after_splice_read == NULL,
                     "suppressed delivery closed its source or missed the quiescence hook");
+            if (mode == 0)
+                require(probe.received == 9, "zero splice progress discarded readable ordinary bytes");
         }
         sbuf_t *reused = bufferpoolGetSpliceBuffer(env.buffers);
         require(sbufSpliceMetadata(reused).pipefd[1] == last_splice_read_pipe && sbufSpliceIsReusable(reused),
@@ -1192,6 +1215,120 @@ static void testSpliceReadConditions(void)
         wioClose(io);
         close(sockets[1]);
         read_test_fd = -1;
+        teardown(&env);
+    }
+}
+
+static void testDirectSpliceRead(void)
+{
+    test_env_t env;
+    setup(&env);
+    bufferpoolUpdateAllocationPaddings(env.buffers, 64, 64, 64, 64);
+    int            sockets[2];
+    wio_t         *io    = socketIO(&env, sockets);
+    splice_probe_t probe = {.env = &env, .kind = kSpliceConvertPipe, .length = 9};
+    memcpy(probe.data, "123456789", 9);
+    weventSetUserData(io, &probe);
+    wioSetCallBackRead(io, spliceRead);
+    require(wioEnableSplice(io) == 0 && wioRead(io) == 0, "failed to start direct splice read");
+    read_test_fd        = sockets[0];
+    socket_read_queries = splice_read_calls = 0;
+    require(send(sockets[1], probe.data, 9, 0) == 9, "failed to supply direct splice bytes");
+    require(wloopProcessEvents(env.loop, 0) >= 0 && probe.received == 9 && probe.calls == 1 && splice_read_calls == 1 &&
+                splice_read_requested == 4096 && socket_read_queries == 0,
+            "direct splice queried socket availability or required the full requested count");
+    wioClose(io);
+    close(sockets[1]);
+    read_test_fd = -1;
+    teardown(&env);
+}
+
+typedef struct urgent_read_probe_s
+{
+    buffer_pool_t *pool;
+    uint8_t        data[16];
+    uint32_t       received;
+    unsigned int   splice_calls;
+    unsigned int   ordinary_calls;
+} urgent_read_probe_t;
+
+static void urgentRead(wio_t *io, sbuf_t *buf)
+{
+    urgent_read_probe_t *probe = weventGetUserdata(io);
+    if (buf->flags & kSbufFlagSplice)
+    {
+        ++probe->splice_calls;
+        buf = wioTransformSpliceBufferToRealBuffer(buf, bufferpoolGetLargeBuffer(probe->pool), probe->pool);
+    }
+    else
+    {
+        ++probe->ordinary_calls;
+    }
+    require(sbufGetLength(buf) <= sizeof(probe->data) - probe->received, "urgent fixture received excess data");
+    memcpy(probe->data + probe->received, sbufGetRawPtr(buf), sbufGetLength(buf));
+    probe->received += sbufGetLength(buf);
+    bufferpoolReuseBuffer(probe->pool, buf);
+}
+
+static void testSpliceUrgentRead(void)
+{
+    for (unsigned int mode = 0; mode < 4; ++mode)
+    {
+        test_env_t env;
+        setup(&env);
+        int listener = socket(AF_INET, SOCK_STREAM, 0);
+        require(listener >= 0, "failed to create urgent fixture listener");
+        struct sockaddr_in address = {.sin_family = AF_INET, .sin_addr.s_addr = htonl(INADDR_LOOPBACK)};
+        require(bind(listener, (struct sockaddr *) &address, sizeof(address)) == 0 && listen(listener, 1) == 0,
+                "failed to bind urgent fixture listener");
+        socklen_t size = sizeof(address);
+        require(getsockname(listener, (struct sockaddr *) &address, &size) == 0, "failed to get urgent fixture port");
+        int sender = socket(AF_INET, SOCK_STREAM, 0);
+        require(sender >= 0 && connect(sender, (struct sockaddr *) &address, sizeof(address)) == 0,
+                "failed to connect urgent fixture sender");
+        int receiver = accept(listener, NULL, NULL);
+        require(receiver >= 0, "failed to accept urgent fixture connection");
+        close(listener);
+        const int inline_urgent = mode & 1U;
+        const int nodelay       = 1;
+        require(setsockopt(receiver, SOL_SOCKET, SO_OOBINLINE, &inline_urgent, sizeof(inline_urgent)) == 0 &&
+                    setsockopt(sender, IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay)) == 0,
+                "failed to configure urgent fixture sockets");
+        wio_t              *io    = wioGet(env.loop, receiver);
+        urgent_read_probe_t probe = {.pool = env.buffers};
+        weventSetUserData(io, &probe);
+        wioSetCallBackRead(io, urgentRead);
+        require(wioEnableSplice(io) == 0 && wioRead(io) == 0, "failed to start urgent fixture reads");
+        require(send(sender, "AAA", 3, 0) == 3 && send(sender, "!", 1, MSG_OOB) == 1 && send(sender, "BBB", 3, 0) == 3,
+                "failed to supply urgent fixture payload");
+        const bool half_closed = mode >= 2;
+        if (half_closed)
+            require(shutdown(sender, SHUT_WR) == 0, "failed to half-close urgent fixture sender");
+        const uint32_t expected = inline_urgent ? 7 : 6;
+        for (unsigned int attempt = 0;
+             attempt < 32 && (probe.received < expected || (half_closed && ! wioIsClosed(io)));
+             ++attempt)
+            require(wloopProcessEvents(env.loop, 10) >= 0, "urgent fixture dispatch failed");
+        require(probe.received == expected && memoryEqual(probe.data, inline_urgent ? "AAA!BBB" : "AAABBB", expected) &&
+                    probe.splice_calls > 0 && probe.ordinary_calls > 0,
+                "splice stalled or lost bytes at an urgent boundary");
+        if (half_closed)
+        {
+            require(wioIsClosed(io), "urgent EOF did not close after all ordinary bytes were delivered");
+        }
+        else
+        {
+            const unsigned int previous_splices = probe.splice_calls;
+            require(! wioIsClosed(io) && wioIsSpliceEnabled(io) && send(sender, "CCC", 3, 0) == 3,
+                    "ordinary fallback disabled splice or closed the source");
+            for (unsigned int attempt = 0; attempt < 32 && probe.received < expected + 3; ++attempt)
+                require(wloopProcessEvents(env.loop, 10) >= 0, "post-urgent dispatch failed");
+            require(probe.received == expected + 3 && memoryEqual(probe.data + expected, "CCC", 3) &&
+                        probe.splice_calls > previous_splices,
+                    "reads did not resume splice after the urgent boundary");
+            wioClose(io);
+        }
+        close(sender);
         teardown(&env);
     }
 }
@@ -1910,6 +2047,8 @@ int main(void)
     testPendingDescriptorReuse();
     testPendingDetachRejected();
 #if WW_HAVE_SPLICE
+    testDirectSpliceRead();
+    testSpliceUrgentRead();
     testPipeCapacityPreference();
     testSpliceReuseValidation();
     testPipeCapacityRetry();

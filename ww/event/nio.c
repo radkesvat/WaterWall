@@ -368,72 +368,50 @@ static void nio_read(wio_t *io)
 
     sbuf_t *buf;
 
-#if WW_HAVE_SPLICE || defined(OS_LINUX)
-    int queued_bytes = 0;
-#endif
 #if WW_HAVE_SPLICE
     if (io->io_type == WIO_TYPE_TCP && wioIsSpliceEnabled(io))
     {
-        if (UNLIKELY(ioctl(wioGetFD(io), FIONREAD, &queued_bytes) != 0))
+        buffer_pool_t *pool       = io->loop->bufpool;
+        const uint32_t read_limit = min(bufferpoolGetLargeBufferSize(pool), (uint32_t) LARGE_BUFFER_SIZE_RAM_HIGH);
+        assert(read_limit > 0);
+        // wio_handle_events checked admission before entering this read; recheck before delivery below.
+        buf = bufferpoolGetSpliceBuffer(pool);
+        if (UNLIKELY(buf == NULL))
         {
-            err = socketERRNO();
-            if (err == EAGAIN || err == EINTR)
-            {
-                return;
-            }
-            LOGE("read fd=%d FIONREAD error: %s:%d", wioGetFD(io), socketStrError(err), err);
+            // No socket bytes were consumed; use ordinary storage for this delivery.
+            goto read_ordinary;
+        }
+        assert(sbufGetLifetime(buf) == NULL);
+        const splice_buffer_metadata_t metadata = sbufSpliceMetadata(buf);
+        ssize_t                        moved;
+        do
+        {
+            moved = splice(wioGetFD(io), NULL, metadata.pipefd[1], NULL, read_limit, SPLICE_F_NONBLOCK);
+        } while (moved < 0 && errno == EINTR);
+        if (moved <= 0)
+        {
+            err = moved < 0 ? socketERRNO() : 0;
+            bufferpoolReuseBuffer(pool, buf);
+            // TCP urgent data can stop splice even when recv can progress. A FIN at
+            // that boundary can also make splice return zero before ordinary EOF.
+            if (moved == 0 || err == EAGAIN)
+                goto read_ordinary;
+            LOGE("read fd=%d splice error: %s:%d", wioGetFD(io), socketStrError(err), err);
             io->error = err;
             goto read_error;
         }
-        if (queued_bytes > 0)
-        {
-            buffer_pool_t *pool       = io->loop->bufpool;
-            const uint32_t read_limit = min(bufferpoolGetLargeBufferSize(pool), (uint32_t) LARGE_BUFFER_SIZE_RAM_HIGH);
-            const uint32_t requested  = min((uint32_t) queued_bytes, read_limit);
-            assert(requested > 0);
-            if (UNLIKELY(! wloopNormalDispatchAllowed(io->loop)))
-            {
-                return;
-            }
-            buf = bufferpoolGetSpliceBuffer(pool);
-            if (UNLIKELY(buf == NULL))
-            {
-                // No socket bytes were consumed; use ordinary storage for this delivery.
-                goto read_ordinary;
-            }
-            assert(sbufGetLifetime(buf) == NULL);
-            const splice_buffer_metadata_t metadata = sbufSpliceMetadata(buf);
-            ssize_t                        moved;
-            do
-            {
-                moved = splice(wioGetFD(io), NULL, metadata.pipefd[1], NULL, requested, SPLICE_F_NONBLOCK);
-            } while (moved < 0 && errno == EINTR);
-            if (moved <= 0)
-            {
-                err = moved < 0 ? socketERRNO() : 0;
-                bufferpoolReuseBuffer(pool, buf);
-                if (moved == 0)
-                    goto disconnect;
-                if (err == EAGAIN)
-                    return;
-                LOGE("read fd=%d splice error: %s:%d", wioGetFD(io), socketStrError(err), err);
-                io->error = err;
-                goto read_error;
-            }
 
-            // Only bytes already held in this private pipe become visible to the callback.
-            buf->capacity = (uint32_t) sbufGetLeftPadding(buf) + (uint32_t) moved;
-            sbufSetLength(buf, (uint32_t) moved);
-            if (UNLIKELY(! wloopNormalDispatchAllowed(io->loop)))
-            {
-                bufferpoolReuseBuffer(pool, buf);
-                return;
-            }
-            __read_cb(io, buf);
-            // Ownership transferred; the callback may free both buf and io.
+        // Only bytes already held in this private pipe become visible to the callback.
+        buf->capacity = (uint32_t) sbufGetLeftPadding(buf) + (uint32_t) moved;
+        sbufSetLength(buf, (uint32_t) moved);
+        if (UNLIKELY(! wloopNormalDispatchAllowed(io->loop)))
+        {
+            bufferpoolReuseBuffer(pool, buf);
             return;
         }
-        // FIONREAD == 0 is not EOF proof. The ordinary nonblocking read handles EOF and transient readiness.
+        __read_cb(io, buf);
+        // Ownership transferred; the callback may free both buf and io.
+        return;
     }
 read_ordinary:
 #endif
@@ -443,13 +421,9 @@ read_ordinary:
     case WIO_TYPE_TCP:
     case WIO_TYPE_UDP:
 #if defined(OS_LINUX)
-        // A TCP splice fallback already queried availability without consuming socket bytes.
-        if ((io->io_type != WIO_TYPE_TCP || ! wioIsSpliceEnabled(io)) &&
-            ioctl(wioGetFD(io), FIONREAD, &queued_bytes) != 0)
-        {
-            queued_bytes = 0;
-        }
-        if (queued_bytes > 0)
+    {
+        int queued_bytes = 0;
+        if (ioctl(wioGetFD(io), FIONREAD, &queued_bytes) == 0 && queued_bytes > 0)
         {
             buffer_pool_t *pool = io->loop->bufpool;
             // TCP can leave unread bytes queued; UDP must fit the entire next datagram.
@@ -459,7 +433,8 @@ read_ordinary:
             buf                      = bufferpoolGetBestFit(pool, requested, bufferpoolGetLargeBufferPadding(pool));
             break;
         }
-        // A zero hint can mean TCP EOF/transient readiness or an empty UDP datagram.
+        // A failed/zero hint still needs a receive: EOF, transient readiness, and empty UDP are distinct.
+    }
 #endif
         buf = bufferpoolGetLargeBuffer(io->loop->bufpool);
         break;
@@ -825,10 +800,8 @@ int wioWriteDatagram(wio_t *io, sbuf_t *buf, const sockaddr_u *peer_addr)
     {
         wloopNormalAdmissionEnd(io->loop);
     }
-    if (nested_callback || LIKELY(wloopNormalDispatchAllowed(io->loop)))
-    {
-        __write_cb(io);
-    }
+    // The callback helper admits independent roots and preserves already-admitted nested callbacks.
+    __write_cb(io);
     return nwrite;
 }
 
@@ -953,10 +926,7 @@ write_done:
         {
             wloopNormalAdmissionEnd(io->loop);
         }
-        if (nested_callback || LIKELY(wloopNormalDispatchAllowed(io->loop)))
-        {
-            __write_cb(io);
-        }
+        __write_cb(io);
         return nwrite;
     }
     if (! nested_callback)
