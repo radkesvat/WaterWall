@@ -11,3 +11,13 @@ Windows clang/MinGW new-handler compatibility:
   coalesce the weak fallback with the C++ runtime definition.
 - WaterWall does not use mimalloc's mi_new APIs.
 - Reapply this guard when updating the vendored mimalloc sources.
+
+Idempotent automatic process initialization:
+- Status: applied to src/init.c.
+- Windows MinGW/Clang can invoke the loader hook from both TLS callbacks and a
+  compiler constructor. Guard the whole hook with mimalloc's mi_atomic_do_once,
+  not only mi_process_init, so output setup and other loader work run once.
+- Duplicate output initialization otherwise flushes a stray newline to stderr
+  before main, breaking ordinary/packed startup equivalence.
+- Keep the existing packed-application output comparison exact; reapply this
+  guard when updating mimalloc unless upstream provides equivalent protection.

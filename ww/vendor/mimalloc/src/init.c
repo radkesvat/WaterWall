@@ -501,36 +501,51 @@ mi_decl_nodiscard bool mi_is_redirected(void) mi_attr_noexcept {
   return _mi_is_redirected();
 }
 
-// Called once by the process loader from `src/prim/prim.c` before `main` is called.
-void _mi_auto_process_init(void) {
-  os_preloading = false;
+static void mi_auto_process_init_once(void)
+{
+    os_preloading = false;
 
-  mi_process_init();
-  mi_process_setup_auto_thread_done();
+    mi_process_init();
+    mi_process_setup_auto_thread_done();
 
-  _mi_options_post_init();  // now we can print to stderr
-  if (_mi_is_redirected()) _mi_verbose_message("malloc is redirected.\n");
+    _mi_options_post_init(); // now we can print to stderr
+    if (_mi_is_redirected())
+        _mi_verbose_message("malloc is redirected.\n");
 
-  // show message from the redirector (if present)
-  const char* msg = NULL;
-  _mi_allocator_init(&msg);
-  if (msg != NULL && (mi_option_is_enabled(mi_option_verbose) || mi_option_is_enabled(mi_option_show_errors))) {
-    _mi_fputs(NULL,NULL,NULL,msg);
-  }
-
-  // reseed random
-  mi_theap_t* theap = _mi_theap_default();
-  if (theap != NULL) {
-    _mi_random_reinit_if_weak(&theap->random);
-    mi_subproc_t* subproc = _mi_theap_subproc(theap);
-    if (subproc->theap_meta != NULL) {
-      mi_lock(&subproc->theap_meta_lock) {
-        _mi_random_reinit_if_weak(&subproc->theap_meta->random);
-      }
+    // show message from the redirector (if present)
+    const char *msg = NULL;
+    _mi_allocator_init(&msg);
+    if (msg != NULL && (mi_option_is_enabled(mi_option_verbose) || mi_option_is_enabled(mi_option_show_errors)))
+    {
+        _mi_fputs(NULL, NULL, NULL, msg);
     }
-  }
+
+    // reseed random
+    mi_theap_t *theap = _mi_theap_default();
+    if (theap != NULL)
+    {
+        _mi_random_reinit_if_weak(&theap->random);
+        mi_subproc_t *subproc = _mi_theap_subproc(theap);
+        if (subproc->theap_meta != NULL)
+        {
+            mi_lock(&subproc->theap_meta_lock)
+            {
+                _mi_random_reinit_if_weak(&subproc->theap_meta->random);
+            }
+        }
+    }
 }
 
+// Windows TLS callbacks and a compiler constructor may both reach this hook.
+// Guard the complete loader setup, including output initialization, just as
+// mi_process_init and mi_process_done guard their own work.
+void _mi_auto_process_init(void)
+{
+    mi_atomic_do_once
+    {
+        mi_auto_process_init_once();
+    }
+}
 
 // Initialize the process; called by thread_init, the process loader, or an initial allocation (perhaps by the loader or a system library)
 static void mi_process_init_once(void) {

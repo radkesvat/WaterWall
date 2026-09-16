@@ -204,7 +204,7 @@ static bool appendInput(hps_session_t *s, unsigned direction, const unsigned cha
     size_t  length = old ? sbufGetLength(old) : 0;
     if (! old || sbufGetMaximumWriteableSize(old) < length + n)
     {
-        sbuf_t *b = makeBuffer(s, min(settings(s)->max_pending, max(4096, (length + n) * 2)));
+        sbuf_t *b = makeBuffer(s, MIN_SIZE(settings(s)->max_pending, MAX_SIZE(4096, (length + n) * 2)));
         if (! b)
             return false;
         if (! allocationFits(s, old, b))

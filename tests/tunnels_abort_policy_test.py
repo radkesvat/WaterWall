@@ -27,7 +27,7 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 # Total number of audited Category-D conversions. The manifest must account for
 # every one of them.
-EXPECTED_TOTAL_ABORTS = 193
+EXPECTED_TOTAL_ABORTS = 194
 
 
 # ---------------------------------------------------------------------------
@@ -639,9 +639,10 @@ MANIFEST = [
      ("lineUnRefInternal: line reference count underflow",
       "lineUnRefInternal: line reclaimed while still logically alive"),
      "runtime line-lifetime invariant: reference underflow or live final release"),
-    ("ww/net/line.h", "lineRef", 1,
-     ("lineRef: attempted to reference a dead line or line reference count overflow",),
-     "runtime line-lifetime invariant: reference after logical death or reference overflow"),
+    ("ww/net/line.h", "lineRef", 2,
+     ("lineRef: attempted to reference a dead line",
+      "lineRef: attempted to reference a dead line or line reference count overflow"),
+     "runtime line-lifetime invariant: reference after logical death, zero references, or reference overflow"),
     ("ww/net/line.h", "lineDestroy", 1,
      ("lineDestroy: duplicate line destruction or line is not alive",),
      "runtime line-lifetime invariant: duplicate logical destruction"),
@@ -651,8 +652,8 @@ MANIFEST = [
       "%s: packet line died during runtime"),
      "runtime packet-line invariant: lifecycle-anchor publication must keep the worker packet line alive"),
     ("ww/net/pipe_tunnel.c", "lineRefForce", 1,
-     ("PipeTunnel: forced physical reference failed due to reference count overflow",),
-     "runtime line-lifetime invariant: PipeTunnel forced physical reference overflow"),
+     ("PipeTunnel: forced physical reference is dead or overflowed",),
+     "runtime line-lifetime invariant: PipeTunnel forced physical reference from zero or overflow"),
     ("ww/net/pipe_tunnel.c", "pipePairRef", 1,
      ("PipeTunnel: pair reference count is dead or overflowed (%u)",),
      "runtime reference invariant: PipeTunnel pair reference is dead or overflowed"),
