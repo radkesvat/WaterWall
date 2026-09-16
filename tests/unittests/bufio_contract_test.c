@@ -216,10 +216,15 @@ static void testFlagsInitializationAndReuse(buffer_pool_t *pool)
     bufferpoolReuseBuffer(pool, buffer);
 
     buffer = bufferpoolGetSpliceBuffer(pool);
+#if WW_HAVE_SPLICE
+    require(buffer != NULL, "splice buffer checkout failed");
     bufferpoolReuseBuffer(pool, buffer);
     buffer = bufferpoolGetSpliceBuffer(pool);
-    require(buffer->flags == kSbufFlagSplice, "pool checkout did not restore the splice flag");
+    require(buffer != NULL && buffer->flags == kSbufFlagSplice, "pool checkout did not restore the splice flag");
     bufferpoolReuseBuffer(pool, buffer);
+#else
+    require(buffer == NULL && errno == ENOSYS, "unsupported splice checkout did not return ENOSYS");
+#endif
 }
 
 static void testDuplicateToCopiesCompleteSource(void)

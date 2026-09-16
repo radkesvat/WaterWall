@@ -14,7 +14,7 @@
 
     preallocates (n) number of buffers at each call to charge(),
 
-    users should call bufferpoolGetLargeBuffer() when they want a buffer, and later call bufferpoolReuseBuffer when
+    users select a buffer tier or call bufferpoolGetBestFit(), and later call bufferpoolReuseBuffer when
     they are done with the buffer.
 
     recharing is done autmatically and internally.
@@ -65,8 +65,8 @@ void bufferpoolDestroy(buffer_pool_t *pool);
 sbuf_t *bufferpoolGetLargeBuffer(buffer_pool_t *pool);
 
 /** Retrieve a medium helper buffer (32 KiB in S1/S2, 64 KiB in higher profiles).
- * Cache counts follow the pool width;
- * event-loop reads continue to request large buffers explicitly. */
+ * Cache counts follow the pool width. Linux NIO ordinary TCP/UDP reads may also
+ * select this tier through best-fit allocation. */
 sbuf_t  *bufferpoolGetMediumBuffer(buffer_pool_t *pool);
 uint32_t bufferpoolGetMediumBufferSize(buffer_pool_t *pool);
 uint16_t bufferpoolGetMediumBufferPadding(buffer_pool_t *pool);
@@ -79,7 +79,10 @@ uint16_t bufferpoolGetMediumBufferPadding(buffer_pool_t *pool);
 sbuf_t *bufferpoolGetSmallBuffer(buffer_pool_t *pool);
 
 /** Retrieve an empty splice wrapper with kSbufFlagSplice set, 32 bytes of control storage, and reserved left padding.
- * Its private pipe is uninitialized or empty. Populate the pipe before publishing its actual logical body size. */
+ * Checkout initializes its private pipe, requesting the pool's large payload size capped at LARGE_BUFFER_SIZE_RAM_HIGH.
+ * Capacity query/growth failure retains a usable pipe; existing empty pairs and their retry state survive reuse.
+ * Returns NULL with errno if pipe creation fails or splice is unsupported; the unused wrapper is recycled internally.
+ * Pool refill only allocates wrappers. Populate the checked-out pipe before publishing its actual logical body size. */
 sbuf_t *bufferpoolGetSpliceBuffer(buffer_pool_t *pool);
 
 /**

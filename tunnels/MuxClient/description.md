@@ -402,8 +402,8 @@ destination. Fragmented frames are copied directly from the parent stream,
 without first merging unrelated carrier bytes. A suitable whole buffer transfers
 directly. Unpaused children keep ordinary exact-frame delivery. Queue limits
 continue to charge actual retained allocations, while flow control counts payload
-bytes. Medium buffers are helper storage; ordinary event-loop reads use the large
-tier.
+bytes. Medium buffers serve helper storage and may also be selected for ordinary
+Linux NIO TCP/UDP reads through best-fit allocation.
 
 ## Node Metadata
 

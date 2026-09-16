@@ -6,7 +6,6 @@
 #include "buffer_pool_internal.h"
 #include "loggers/internal_logger.h"
 #include "shiftbuffer.h"
-#include "splice_buffer.h"
 #include "wmath.h"
 
 enum
@@ -514,10 +513,9 @@ sbuf_t *bufferpoolGetSmallBuffer(buffer_pool_t *pool)
 sbuf_t *bufferpoolGetSpliceBuffer(buffer_pool_t *pool)
 {
 #if BYPASS_BUFFERPOOL == 1
-    return masterpoolRequireCreatedItem(
-        pool->splice_buffers_mp, sbufCreateSplice(pool->splice_buffer_left_padding), pool);
-#endif
-
+    sbuf_t *buf =
+        masterpoolRequireCreatedItem(pool->splice_buffers_mp, sbufCreateSplice(pool->splice_buffer_left_padding), pool);
+#else
 #if BUFFER_POOL_DEBUG == 1
     pool->in_use += 1;
 #endif
@@ -529,6 +527,15 @@ sbuf_t *bufferpoolGetSpliceBuffer(buffer_pool_t *pool)
     }
     sbuf_t *buf = pool->splice_buffers[--pool->splice_buffers_container_len];
     buf->flags  = kSbufFlagSplice;
+#endif
+    const uint32_t preferred_capacity = min(pool->large_buffers_size, (uint32_t) LARGE_BUFFER_SIZE_RAM_HIGH);
+    if (UNLIKELY(sbufSpliceInitPipe(buf, preferred_capacity) != 0))
+    {
+        const int error = errno;
+        bufferpoolReuseBuffer(pool, buf);
+        errno = error;
+        return NULL;
+    }
     return buf;
 }
 

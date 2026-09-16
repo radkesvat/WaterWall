@@ -8,7 +8,7 @@
 #include "wevent.h"
 #include "wsocket.h"
 #include "wthread.h"
-#if WW_HAVE_SPLICE
+#if WW_HAVE_SPLICE || defined(OS_LINUX)
 #include <sys/ioctl.h>
 #endif
 
@@ -368,10 +368,12 @@ static void nio_read(wio_t *io)
 
     sbuf_t *buf;
 
+#if WW_HAVE_SPLICE || defined(OS_LINUX)
+    int queued_bytes = 0;
+#endif
 #if WW_HAVE_SPLICE
     if (io->io_type == WIO_TYPE_TCP && wioIsSpliceEnabled(io))
     {
-        int queued_bytes = 0;
         if (UNLIKELY(ioctl(wioGetFD(io), FIONREAD, &queued_bytes) != 0))
         {
             err = socketERRNO();
@@ -389,19 +391,17 @@ static void nio_read(wio_t *io)
             const uint32_t read_limit = min(bufferpoolGetLargeBufferSize(pool), (uint32_t) LARGE_BUFFER_SIZE_RAM_HIGH);
             const uint32_t requested  = min((uint32_t) queued_bytes, read_limit);
             assert(requested > 0);
-            buf = bufferpoolGetSpliceBuffer(pool);
-            assert(sbufGetLifetime(buf) == NULL);
             if (UNLIKELY(! wloopNormalDispatchAllowed(io->loop)))
             {
-                bufferpoolReuseBuffer(pool, buf);
                 return;
             }
-            if (UNLIKELY(sbufSpliceInitPipe(buf, read_limit) != 0))
+            buf = bufferpoolGetSpliceBuffer(pool);
+            if (UNLIKELY(buf == NULL))
             {
                 // No socket bytes were consumed; use ordinary storage for this delivery.
-                bufferpoolReuseBuffer(pool, buf);
                 goto read_ordinary;
             }
+            assert(sbufGetLifetime(buf) == NULL);
             const splice_buffer_metadata_t metadata = sbufSpliceMetadata(buf);
             ssize_t                        moved;
             do
@@ -440,9 +440,30 @@ read_ordinary:
 
     switch (io->io_type)
     {
-    default:
     case WIO_TYPE_TCP:
     case WIO_TYPE_UDP:
+#if defined(OS_LINUX)
+        // A TCP splice fallback already queried availability without consuming socket bytes.
+        if ((io->io_type != WIO_TYPE_TCP || ! wioIsSpliceEnabled(io)) &&
+            ioctl(wioGetFD(io), FIONREAD, &queued_bytes) != 0)
+        {
+            queued_bytes = 0;
+        }
+        if (queued_bytes > 0)
+        {
+            buffer_pool_t *pool = io->loop->bufpool;
+            // TCP can leave unread bytes queued; UDP must fit the entire next datagram.
+            const uint32_t requested = io->io_type == WIO_TYPE_TCP
+                                           ? min((uint32_t) queued_bytes, bufferpoolGetLargeBufferSize(pool))
+                                           : (uint32_t) queued_bytes;
+            buf                      = bufferpoolGetBestFit(pool, requested, bufferpoolGetLargeBufferPadding(pool));
+            break;
+        }
+        // A zero hint can mean TCP EOF/transient readiness or an empty UDP datagram.
+#endif
+        buf = bufferpoolGetLargeBuffer(io->loop->bufpool);
+        break;
+    default:
         buf = bufferpoolGetLargeBuffer(io->loop->bufpool);
         break;
     case WIO_TYPE_IP:
@@ -451,7 +472,7 @@ read_ordinary:
     }
 
     unsigned int available = sbufGetMaximumWriteableSize(buf);
-    assert(available >= 1024);
+    assert(available > 0);
 
     nread = __nio_read(io, sbufGetMutablePtr(buf), available);
 

@@ -27,6 +27,24 @@ void *__wrap_memoryAllocate(size_t size)
 }
 #endif
 
+#if WW_HAVE_SPLICE
+static unsigned int pipe_calls;
+static int          pipe_error;
+int                 __real_pipe2(int pair[2], int flags);
+int                 __wrap_pipe2(int pair[2], int flags);
+
+int __wrap_pipe2(int pair[2], int flags)
+{
+    ++pipe_calls;
+    if (pipe_error != 0)
+    {
+        errno = pipe_error;
+        return -1;
+    }
+    return __real_pipe2(pair, flags);
+}
+#endif
+
 static void require(bool condition, const char *message)
 {
     if (! condition)
@@ -46,12 +64,76 @@ static uint32_t cachedSpliceCount(buffer_pool_t *pool)
 
 static void checkSplice(sbuf_t *buffer, uint16_t padding)
 {
+    require(buffer != NULL, "splice checkout failed");
     require(sbufGetTotalCapacityNoPadding(buffer) == SPLICE_BUFFER_STORAGE_SIZE,
             "splice buffer lost its physical control-storage capacity");
     require(sbufGetLeftPadding(buffer) == padding && sbufGetLeftCapacity(buffer) == padding,
             "splice buffer has incorrect padding or cursor");
     require(sbufGetLength(buffer) == 0 && buffer->flags == kSbufFlagSplice && sbufGetLifetime(buffer) == NULL,
             "splice checkout retained payload metadata");
+    const splice_buffer_metadata_t metadata = sbufSpliceMetadata(buffer);
+    require(metadata.pipefd[0] >= 0 && metadata.pipefd[1] >= 0 && sbufSpliceIsReusable(buffer),
+            "splice checkout did not supply an empty initialized pipe");
+}
+
+static void testPipeCheckout(void)
+{
+#if WW_HAVE_SPLICE
+    const unsigned int initial_calls = pipe_calls;
+    sbuf_t            *raw           = sbufCreateSplice(33);
+    require(pipe_calls == initial_calls && sbufSpliceMetadata(raw).pipefd[0] == -1 &&
+                sbufSpliceMetadata(raw).pipefd[1] == -1,
+            "wrapper allocation eagerly created a pipe");
+    sbufDestroySplice(raw);
+#endif
+    master_pool_t *masters[4];
+    for (size_t i = 0; i < ARRAY_SIZE(masters); ++i)
+        masters[i] = masterpoolCreateWithCapacity(16);
+    buffer_pool_t *pool = bufferpoolCreate(masters[0], masters[1], masters[2], masters[3], 8, 8192, 4096, 1024);
+    require(pool != NULL, "failed to create checkout pool");
+    bufferpoolUpdateAllocationPaddings(pool, 64, 64, 64, 64);
+#if WW_HAVE_SPLICE
+    require(pipe_calls == initial_calls, "pool construction eagerly created pipes");
+    const int errors[] = {EMFILE, ENFILE};
+    for (size_t i = 0; i < ARRAY_SIZE(errors); ++i)
+    {
+        pipe_error = errors[i];
+        require(bufferpoolGetSpliceBuffer(pool) == NULL && errno == errors[i],
+                "checkout did not propagate pipe creation failure");
+#ifndef WW_SPLICE_POOL_BYPASS_TEST
+        require(cachedSpliceCount(pool) == 4, "failed checkout lost its wrapper or recharged again");
+#endif
+    }
+    pipe_error  = 0;
+    sbuf_t *buf = bufferpoolGetSpliceBuffer(pool);
+    checkSplice(buf, 64);
+    require(pipe_calls == initial_calls + ARRAY_SIZE(errors) + 1, "pool refill created pipes for spare wrappers");
+    const splice_buffer_metadata_t metadata = sbufSpliceMetadata(buf);
+    require((fcntl(metadata.pipefd[0], F_GETFL) & O_NONBLOCK) && (fcntl(metadata.pipefd[1], F_GETFL) & O_NONBLOCK) &&
+                (fcntl(metadata.pipefd[0], F_GETFD) & FD_CLOEXEC) && (fcntl(metadata.pipefd[1], F_GETFD) & FD_CLOEXEC),
+            "checkout returned blocking or inheritable pipe descriptors");
+    bufferpoolReuseBuffer(pool, buf);
+#ifndef WW_SPLICE_POOL_BYPASS_TEST
+    pipe_error     = EMFILE;
+    sbuf_t *reused = bufferpoolGetSpliceBuffer(pool);
+    require(reused == buf && sbufSpliceMetadata(reused).pipefd[0] == metadata.pipefd[0] &&
+                sbufSpliceMetadata(reused).pipefd[1] == metadata.pipefd[1] &&
+                pipe_calls == initial_calls + ARRAY_SIZE(errors) + 1,
+            "cached pipe checkout recreated its descriptors");
+    pipe_error = 0;
+    bufferpoolReuseBuffer(pool, reused);
+#endif
+#else
+    for (unsigned int i = 0; i < 2; ++i)
+        require(bufferpoolGetSpliceBuffer(pool) == NULL && errno == ENOSYS,
+                "unsupported splice checkout did not return ENOSYS");
+#endif
+    bufferpoolDestroy(pool);
+    for (size_t i = 0; i < ARRAY_SIZE(masters); ++i)
+    {
+        masterpoolMakeEmpty(masters[i]);
+        masterpoolDestroy(masters[i]);
+    }
 }
 
 static void testRechargeBatches(void)
@@ -74,6 +156,10 @@ static void testRechargeBatches(void)
         const uint32_t batch = min(widths[w], 4U);
         for (size_t tier = 0; tier < ARRAY_SIZE(getters); ++tier)
         {
+#if ! WW_HAVE_SPLICE
+            if (getters[tier] == bufferpoolGetSpliceBuffer)
+                continue;
+#endif
             uint32_t before[4];
             bufferpoolCachedTierCountsForTest(pool, &before[0], &before[1], &before[2], &before[3]);
             sbuf_t *buffers[8];
@@ -81,6 +167,7 @@ static void testRechargeBatches(void)
             for (uint32_t i = 0; i < batch * 2U; ++i)
             {
                 buffers[i] = getters[tier](pool);
+                require(buffers[i] != NULL, "refill test checkout failed");
                 uint32_t counts[4];
                 bufferpoolCachedTierCountsForTest(pool, &counts[0], &counts[1], &counts[2], &counts[3]);
                 require(counts[tier] == batch - 1U - i % batch, "refill exceeded its four-buffer or small-pool limit");
@@ -120,7 +207,7 @@ static void testPipeDestruction(void)
     for (unsigned int i = 0; i < 12; ++i)
     {
         buffers[i] = bufferpoolGetSpliceBuffer(pool);
-        require(sbufSpliceInitPipe(buffers[i], 0) == 0, "private pipe creation failed");
+        require(buffers[i] != NULL, "private pipe checkout failed");
         splice_buffer_metadata_t metadata = sbufSpliceMetadata(buffers[i]);
         descriptors[2 * i]                = metadata.pipefd[0];
         descriptors[2 * i + 1]            = metadata.pipefd[1];
@@ -138,7 +225,7 @@ static void testPipeDestruction(void)
         require(fcntl(descriptors[i], F_GETFD) == -1 && errno == EBADF, "pool teardown leaked a pipe");
     pool = bufferpoolCreate(masters[0], masters[3], masters[1], masters[2], 1, 256, MEDIUM_BUFFER_SIZE_RAM_HIGH, 64);
     sbuf_t *buf = bufferpoolGetSpliceBuffer(pool);
-    require(sbufSpliceInitPipe(buf, 0) == 0, "geometry pipe creation failed");
+    require(buf != NULL, "geometry pipe checkout failed");
     splice_buffer_metadata_t metadata = sbufSpliceMetadata(buf);
     buffer_pool_t           *other =
         bufferpoolCreate(masters[0], masters[3], masters[1], masters[2], 1, 256, MEDIUM_BUFFER_SIZE_RAM_HIGH, 64);
@@ -153,10 +240,14 @@ static void testPipeDestruction(void)
     sbufReset(buf);
     master_pool_item_t *item = buf;
     masterpoolReuseItems(masters[2], &item, 1);
-    buf = bufferpoolGetSpliceBuffer(other);
-    require(sbufGetLeftPadding(buf) == 64 && fcntl(metadata.pipefd[0], F_GETFD) == -1 &&
-                fcntl(metadata.pipefd[1], F_GETFD) == -1,
+    // Refuse the replacement pipe so its descriptor numbers cannot hide closure of the old pair.
+    pipe_error = EMFILE;
+    require(bufferpoolGetSpliceBuffer(other) == NULL, "replacement pipe failure was not returned");
+    require(fcntl(metadata.pipefd[0], F_GETFD) == -1 && fcntl(metadata.pipefd[1], F_GETFD) == -1,
             "master geometry replacement leaked private pipes");
+    pipe_error = 0;
+    buf        = bufferpoolGetSpliceBuffer(other);
+    checkSplice(buf, 64);
     bufferpoolReuseBuffer(other, buf);
     bufferpoolDestroy(other);
     bufferpoolDestroy(pool);
@@ -178,7 +269,7 @@ static void testDiscardOnPoolReturn(void)
         bufferpoolCreate(masters[0], masters[3], masters[1], masters[2], 1, 256, MEDIUM_BUFFER_SIZE_RAM_HIGH, 64);
     bufferpoolUpdateAllocationPaddings(pool, 64, 64, 64, 64);
     sbuf_t *buf = bufferpoolGetSpliceBuffer(pool);
-    require(sbufSpliceInitPipe(buf, 0) == 0, "discard fixture pipe initialization failed");
+    require(buf != NULL, "discard fixture pipe checkout failed");
     const splice_buffer_metadata_t metadata = sbufSpliceMetadata(buf);
     require(write(metadata.pipefd[1], "BODY", 4) == 4, "discard fixture pipe write failed");
     buf->capacity = (uint32_t) buf->l_pad + 4;
@@ -209,6 +300,7 @@ static void testDiscardOnPoolReturn(void)
 
 int main(void)
 {
+    testPipeCheckout();
     testDiscardOnPoolReturn();
 #ifdef WW_SPLICE_POOL_BYPASS_TEST
     master_pool_t *masters[4];
@@ -217,7 +309,7 @@ int main(void)
     buffer_pool_t *pool =
         bufferpoolCreate(masters[0], masters[3], masters[1], masters[2], 1, 256, MEDIUM_BUFFER_SIZE_RAM_HIGH, 64);
     sbuf_t        *buf  = bufferpoolGetSpliceBuffer(pool);
-    require(sbufSpliceInitPipe(buf, 0) == 0, "bypass pipe initialization failed");
+    require(buf != NULL, "bypass pipe checkout failed");
     splice_buffer_metadata_t metadata = sbufSpliceMetadata(buf);
     bufferpoolReuseBuffer(pool, buf);
     require(fcntl(metadata.pipefd[0], F_GETFD) == -1 && fcntl(metadata.pipefd[1], F_GETFD) == -1,
@@ -266,6 +358,7 @@ int main(void)
             "splice tier getters reported incorrect geometry");
     require(cachedSpliceCount(pool) == 0, "splice cache was eagerly populated");
 
+#if WW_HAVE_SPLICE
     sbuf_t *buffers[10];
     for (size_t i = 0; i < ARRAY_SIZE(buffers); ++i)
     {
@@ -306,6 +399,7 @@ int main(void)
     bufferpoolReuseBuffer(other, buffer);
 
     bufferpoolDestroy(other);
+#endif
     bufferpoolDestroy(pool);
     masterpoolMakeEmpty(large);
     masterpoolMakeEmpty(small);

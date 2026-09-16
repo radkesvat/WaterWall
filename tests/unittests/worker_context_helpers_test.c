@@ -128,9 +128,13 @@ static void testAccessorsOnOwningWorker(void)
     require(getCurrentEventWorkerWID() == 0, "getCurrentEventWorkerWID() did not return 0");
     require(getCurrentEventWorkerBufferPool() == getWorkerBufferPool(0), "current buffer pool is not worker 0's");
     sbuf_t *splice = bufferpoolGetSpliceBuffer(getCurrentEventWorkerBufferPool());
-    require(sbufGetTotalCapacityNoPadding(splice) == SPLICE_BUFFER_STORAGE_SIZE,
+#if WW_HAVE_SPLICE
+    require(splice != NULL && sbufGetTotalCapacityNoPadding(splice) == SPLICE_BUFFER_STORAGE_SIZE,
             "current worker splice buffer has wrong capacity");
     reuseBuffer(splice);
+#else
+    require(splice == NULL && errno == ENOSYS, "unsupported splice checkout did not return ENOSYS");
+#endif
     require(getCurrentEventWorkerContextPool() == getWorkerContextPool(0), "current context pool is not worker 0's");
     require(getCurrentEventWorkerLoop() == getWorkerLoop(0), "current loop is not worker 0's");
     require(getLoopEventWorkerWID(getWorkerLoop(0)) == 0, "getLoopEventWorkerWID() did not resolve worker 0");

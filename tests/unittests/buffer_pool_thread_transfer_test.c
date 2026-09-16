@@ -34,8 +34,12 @@ static void *accessPool(void *userdata)
             "worker transfer changed medium capacity");
     bufferpoolReuseBuffer(probe->pool, buf);
     buf = bufferpoolGetSpliceBuffer(probe->pool);
-    require(sbufGetTotalCapacityNoPadding(buf) == 32, "worker transfer changed splice capacity");
+#if WW_HAVE_SPLICE
+    require(buf != NULL && sbufGetTotalCapacityNoPadding(buf) == 32, "worker transfer changed splice capacity");
     bufferpoolReuseBuffer(probe->pool, buf);
+#else
+    require(buf == NULL && errno == ENOSYS, "unsupported splice checkout did not return ENOSYS");
+#endif
     atomicAddExplicit(&probe->accesses, 1, memory_order_relaxed);
     return NULL;
 }
