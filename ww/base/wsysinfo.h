@@ -25,9 +25,9 @@ typedef struct wtimer_s wtimer_t;
 #endif
 
 /**
- * @brief Get the number of configured CPUs.
+ * @brief Get the platform's logical CPU count; Linux counts online CPUs.
  *
- * @return Number of logical processors configured on the host.
+ * @return Number of logical processors reported by the operating system.
  */
 static inline int getNCPU(void)
 {
@@ -35,10 +35,9 @@ static inline int getNCPU(void)
     SYSTEM_INFO si;
     GetSystemInfo(&si);
     return (int) si.dwNumberOfProcessors;
+#elif defined(OS_LINUX)
+    return get_nprocs();
 #else
-    // return get_nprocs();
-    // return get_nprocs_conf();
-    // return sysconf(_SC_NPROCESSORS_ONLN);     // processors available
     return (int) sysconf(_SC_NPROCESSORS_CONF); // processors configured
 #endif
 }

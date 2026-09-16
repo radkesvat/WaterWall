@@ -5,6 +5,27 @@
 #include <stdio.h>
 #include <string.h>
 
+#ifdef OS_LINUX
+int  __wrap_get_nprocs(void);
+long __wrap_sysconf(int name);
+long __real_sysconf(int name);
+
+/* Model a machine with 16 configured logical CPUs, only three online. */
+int __wrap_get_nprocs(void)
+{
+    return 3;
+}
+
+long __wrap_sysconf(int name)
+{
+    if (name == _SC_NPROCESSORS_CONF)
+    {
+        return 16;
+    }
+    return __real_sysconf(name);
+}
+#endif
+
 #define CHECK(x)                                                                                                       \
     do                                                                                                                 \
     {                                                                                                                  \
@@ -42,6 +63,26 @@ int main(void)
     destroyCoreSettings();
     CHECK(getCoreSettings() == NULL);
     destroyCoreSettings();
+#ifdef OS_LINUX
+    const struct
+    {
+        const char  *json;
+        unsigned int workers;
+    } worker_cases[] = {
+        {"{\"configs\":[\"nodes.json\"]}", 3},
+        {"{\"configs\":[\"nodes.json\"],\"misc\":{}}", 3},
+        {"{\"configs\":[\"nodes.json\"],\"misc\":{\"workers\":0}}", 3},
+        {"{\"configs\":[\"nodes.json\"],\"misc\":{\"workers\":-1}}", 3},
+        {"{\"configs\":[\"nodes.json\"],\"misc\":{\"workers\":5}}", 5},
+        {"{\"configs\":[\"nodes.json\"],\"misc\":{\"workers\":300}}", 254},
+    };
+    for (size_t i = 0; i < sizeof(worker_cases) / sizeof(worker_cases[0]); ++i)
+    {
+        CHECK(testParse(worker_cases[i].json));
+        CHECK(getCoreSettings()->workers_count == worker_cases[i].workers);
+        destroyCoreSettings();
+    }
+#endif
     const struct
     {
         const char *json;

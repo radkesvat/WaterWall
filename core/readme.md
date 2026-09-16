@@ -246,6 +246,9 @@ setting nobody chose. This applies to every field in the table, not only to
 | `try-enabling-bbr` | boolean | `true` on Linux; `false` otherwise | Linux-only best-effort startup attempt to enable TCP BBR. |
 | `libs-path` | string | `"libs/"` | Directory used when loading external tunnel libraries. |
 
+On Linux, automatic worker sizing uses the online logical CPU count from
+`get_nprocs()`, excluding configured CPUs that are offline.
+
 Recommended example:
 
 ```json

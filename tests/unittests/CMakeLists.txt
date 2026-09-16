@@ -3468,6 +3468,9 @@ add_executable(core_configuration_test
 )
 target_include_directories(core_configuration_test PRIVATE ${CMAKE_SOURCE_DIR}/core)
 target_link_libraries(core_configuration_test PRIVATE ww)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  target_link_options(core_configuration_test PRIVATE "LINKER:--wrap=get_nprocs" "LINKER:--wrap=sysconf")
+endif()
 add_dependencies(waterwall_unit_tests core_configuration_test)
 add_waterwall_unit_test(
   waterwall.core_configuration_unit

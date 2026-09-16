@@ -135,12 +135,17 @@ With no configured capture range, no capture device, NFQUEUE socket, capture rea
 When a packet is captured:
 
 - the packet is checked for IP version
-- checksum provenance is consumed at the backend boundary. WinDivert's checksum/direction flags and Linux NFQUEUE's
-  `NFQA_SKB_INFO` independently classify IPv4, TCP, and UDP checksums as metadata-proven valid, explicitly
-  not-ready/offloaded, or untrusted. Trusted unfragmented offload is materialized on the captured copy, including the
-  TCP/UDP pseudoheader checksum; untrusted corrupt bytes are dropped rather than repaired
-- fragmented packets are never given a transport checksum calculated over one fragment. A fragmented L4-offload packet
-  is dropped; an IP-header-only offload may repair that header while preserving a demonstrably valid transport checksum
+- Linux capture requires complete IPv4 with a bounded header length and a total length matching the captured bytes.
+  It preserves invalid checksums and opaque transport bytes, including XORed headers, unusual TCP flags, invalid TCP
+  data offsets, and inconsistent UDP lengths. It retains Netlink message safety checks, actual truncation detection,
+  and the 1,500-byte capture limit
+- Linux only attempts checksum completion when `NFQA_SKB_INFO` explicitly sets `NFQA_SKB_CSUMNOTREADY` on an
+  unfragmented packet. If its headers cannot be interpreted safely, the bytes remain unchanged and capture still
+  admits the packet. An invalid checksum without pending-offload metadata never causes repair or rejection
+- Windows retains WinDivert checksum/direction provenance handling: explicitly pending offload is materialized when
+  possible, while untrusted corrupt checksums and fragmented transport offload are rejected
+- fragmented packets are never given a transport checksum calculated over one fragment. Linux passes their bytes
+  unchanged to the existing fragment-affinity validation, which may reject them
 - only IPv4 packets are currently forwarded by this path
 - matching packets are intercepted and dropped from the host kernel stack (using drop-and-dispatch verdicts or packet diversion), so the host OS kernel does not process them and only WaterWall receives and has access to them
 - the packet is forwarded through the chosen adjacent side using the worker packet line

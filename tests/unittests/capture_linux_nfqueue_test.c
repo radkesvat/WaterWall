@@ -1,6 +1,8 @@
 #include "wwapi.h"
 
+#include "devices/capture/capture_linux_checksum.h"
 #include "devices/capture/capture_linux_internal.h"
+#include "devices/device_frag_affinity.h"
 
 #include <arpa/inet.h>
 #include <linux/netfilter/nfnetlink.h>
@@ -330,8 +332,110 @@ static void testPrefixPacketIdRecovery(void)
             "incomplete packet header prefix produced a packet id");
 }
 
+static void makeIpv4Packet(uint8_t *packet, uint32_t length, uint8_t protocol)
+{
+    fillPayload(packet, length);
+    memoryZero(packet, 20);
+    packet[0] = 0x45;
+    packet[8] = 64;
+    packet[9] = protocol;
+    PUT_BE16(packet + 2, (uint16_t) length);
+    PUT_BE32(packet + 12, UINT32_C(0xC0000201));
+    PUT_BE32(packet + 16, UINT32_C(0xC0000202));
+}
+
+static void requirePacketPreserved(uint8_t *packet, uint32_t length, bool has_skb_info, uint32_t skb_info)
+{
+    uint8_t original[128];
+    require(length <= sizeof(original), "packet fixture exceeds snapshot storage");
+    memoryCopy(original, packet, length);
+    require(captureLinuxPreparePacket(packet, length, has_skb_info, skb_info),
+            "capture rejected opaque transport bytes or an invalid checksum");
+    require(memoryCompare(packet, original, length) == 0, "capture changed opaque packet bytes");
+}
+
+static void testOpaqueCapturePayload(void)
+{
+    uint8_t packet[64];
+    makeIpv4Packet(packet, sizeof(packet), IP_PROTO_TCP);
+    packet[32] = 0x50;
+    packet[33] = 0xFF; // Deliberately unusual TCP flags; checksums are invalid.
+    requirePacketPreserved(packet, sizeof(packet), false, 0);
+    requirePacketPreserved(packet, sizeof(packet), true, 0);
+    requirePacketPreserved(packet, sizeof(packet), false, NFQA_SKB_CSUMNOTREADY);
+
+    for (uint32_t i = 20; i < sizeof(packet); ++i)
+    {
+        packet[i] ^= 0xA5; // Includes the TCP data offset and checksum.
+    }
+    requirePacketPreserved(packet, sizeof(packet), true, 0);
+    requirePacketPreserved(packet, sizeof(packet), true, NFQA_SKB_CSUMNOTREADY);
+
+    makeIpv4Packet(packet, 21, IP_PROTO_TCP); // Too short to contain a TCP header.
+    requirePacketPreserved(packet, 21, true, 0);
+    requirePacketPreserved(packet, 21, true, NFQA_SKB_CSUMNOTREADY);
+
+    makeIpv4Packet(packet, sizeof(packet), IP_PROTO_UDP);
+    PUT_BE16(packet + 24, 1); // Deliberately invalid UDP length.
+    requirePacketPreserved(packet, sizeof(packet), false, 0);
+    requirePacketPreserved(packet, sizeof(packet), true, NFQA_SKB_CSUMNOTREADY);
+
+    makeIpv4Packet(packet, sizeof(packet), IP_PROTO_TCP);
+    packet[0] = 0x4F; // Bounded IPv4 options, followed by just four transport bytes.
+    requirePacketPreserved(packet, sizeof(packet), false, 0);
+
+    makeIpv4Packet(packet, sizeof(packet), IP_PROTO_TCP);
+    PUT_BE16(packet + 6, 0x2000); // Fragment validation belongs to the affinity layer.
+    requirePacketPreserved(packet, sizeof(packet), true, NFQA_SKB_CSUMNOTREADY);
+}
+
+static void testCaptureOffloadCompletion(void)
+{
+    uint8_t       packet[64];
+    const uint8_t protocols[] = {IP_PROTO_TCP, IP_PROTO_UDP};
+    for (size_t i = 0; i < sizeof(protocols) / sizeof(protocols[0]); ++i)
+    {
+        makeIpv4Packet(packet, sizeof(packet), protocols[i]);
+        if (protocols[i] == IP_PROTO_TCP)
+        {
+            packet[32] = 0x50;
+        }
+        else
+        {
+            PUT_BE16(packet + 24, sizeof(packet) - 20);
+        }
+        require(captureLinuxPreparePacket(packet, sizeof(packet), true, NFQA_SKB_CSUMNOTREADY),
+                "capture rejected a packet with pending kernel checksum offload");
+        const device_packet_checksum_validity_t validity = deviceIpv4ChecksumValidity(packet, sizeof(packet));
+        require(validity.ipv4 && (protocols[i] == IP_PROTO_TCP ? validity.tcp : validity.udp),
+                "capture failed to finish explicitly pending IPv4/transport checksum offload");
+    }
+}
+
+static void testCaptureIpv4Bounds(void)
+{
+    uint8_t packet[40];
+    makeIpv4Packet(packet, sizeof(packet), IP_PROTO_TCP);
+    require(! captureLinuxPreparePacket(packet, 19, false, 0), "capture accepted a short IPv4 header");
+    packet[0] = 0x65;
+    require(! captureLinuxPreparePacket(packet, sizeof(packet), false, 0), "capture accepted IPv6");
+    packet[0] = 0x44;
+    require(! captureLinuxPreparePacket(packet, sizeof(packet), false, 0), "capture accepted an undersized IHL");
+    packet[0] = 0x4F;
+    require(! captureLinuxPreparePacket(packet, sizeof(packet), false, 0), "capture accepted IHL beyond storage");
+    packet[0]                        = 0x45;
+    const uint16_t invalid_lengths[] = {19, sizeof(packet) - 1, sizeof(packet) + 1};
+    for (size_t i = 0; i < sizeof(invalid_lengths) / sizeof(invalid_lengths[0]); ++i)
+    {
+        PUT_BE16(packet + 2, invalid_lengths[i]);
+        require(! captureLinuxPreparePacket(packet, sizeof(packet), false, 0),
+                "capture accepted an inconsistent IPv4 total length");
+    }
+}
+
 int main(void)
 {
+    checkSumInit();
     testValidPayload(1U);
     testValidPayload(kMaxAllowedPacketLength - 1U);
     testValidPayload(kMaxAllowedPacketLength);
@@ -344,6 +448,9 @@ int main(void)
     testMalformedBoundsRejected();
     testCaptureLengthLessThanPayloadRejected();
     testPrefixPacketIdRecovery();
+    testOpaqueCapturePayload();
+    testCaptureOffloadCompletion();
+    testCaptureIpv4Bounds();
 
     return 0;
 }

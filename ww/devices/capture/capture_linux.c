@@ -1451,11 +1451,10 @@ static netfilter_packet_result_t netfilterGetPacketUntil(capture_device_t *cdev,
 
     captureLinuxNetfilterExposePacket(buff, message, &packet_view);
 
-    const device_packet_checksum_provenance_t checksum_provenance =
-        captureLinuxChecksumProvenance(packet_view.has_skb_info, packet_view.skb_info);
-    if (! deviceIpv4PreparePacketChecksums(sbufGetMutablePtr(buff), sbufGetLength(buff), checksum_provenance))
+    if (! captureLinuxPreparePacket(
+            sbufGetMutablePtr(buff), sbufGetLength(buff), packet_view.has_skb_info, packet_view.skb_info))
     {
-        return kNetfilterPacketDiscarded;
+        return kNetfilterPacketMalformedDiscarded;
     }
     return kNetfilterPacketReady;
 }
@@ -1669,12 +1668,6 @@ WTHREAD_ROUTINE(captureLinuxReadRoutine) // NOLINT
                 {
                 case kNetfilterPacketReady:
                     // Length was set in netfilterGetPacket via sbufSetLength.
-                    if (UNLIKELY(sbufGetLength(bufs[queued_count]) > kMaxAllowedPacketLength))
-                    {
-                        capturedeviceRecordNetfilterDiscard(cdev);
-                        bufferpoolReuseBuffer(cdev->reader_buffer_pool, bufs[queued_count]);
-                        continue;
-                    }
                     queued_count++;
                     break;
 
@@ -1691,7 +1684,8 @@ WTHREAD_ROUTINE(captureLinuxReadRoutine) // NOLINT
                     continue;
 
                 case kNetfilterPacketMalformedDiscarded:
-                    LOGW("CaptureDevice: discarded a malformed netfilter packet after sending NF_DROP");
+                    LOGW("CaptureDevice: discarded a malformed netfilter message or invalid IPv4 packet after "
+                         "sending NF_DROP");
                     bufferpoolReuseBuffer(cdev->reader_buffer_pool, bufs[queued_count]);
                     continue;
 
