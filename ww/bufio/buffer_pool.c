@@ -573,11 +573,13 @@ void bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *b)
     if (is_splice)
     {
         sbufSpliceDiscard(b);
+#if BUFFER_POOL_DEBUG == 1
         if (UNLIKELY(! sbufSpliceIsReusable(b)))
         {
             LOGF("bufferpoolReuseBuffer: splice payload and pipe must be empty after discard");
             abortProgramNow(1);
         }
+#endif
     }
 
 #if BYPASS_BUFFERPOOL == 1

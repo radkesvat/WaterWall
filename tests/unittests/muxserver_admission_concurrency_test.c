@@ -1,5 +1,5 @@
 #include "MuxServer/structure.h"
-#include "wio_fd_pool_fixture.h"
+#include "wevent.h"
 
 #include "wthread.h"
 
@@ -34,7 +34,6 @@ typedef struct race_memory_provider_s
 
 struct admission_race_fixture_s
 {
-    test_wio_fd_pool_t         fd_handles;
     master_pool_t             *large_masters[kRaceWorkers];
     master_pool_t             *small_masters[kRaceWorkers];
     master_pool_t             *medium_masters[kRaceWorkers];
@@ -265,7 +264,6 @@ static void raceFixtureSetup(admission_race_fixture_t *fixture)
     GSTATE.workers               = fixture->workers;
     GSTATE.workers_count         = kRaceWorkers;
     GSTATE.shortcut_buffer_pools = fixture->pools;
-    testWioFdPoolSetup(&fixture->fd_handles);
     GSTATE.shortcut_wios_pools   = fixture->wios_pools;
     GSTATE.shortcut_loops        = fixture->loops;
 
@@ -443,7 +441,6 @@ static void raceFixtureTeardown(admission_race_fixture_t *fixture)
     GSTATE.workers               = NULL;
     GSTATE.workers_count         = 0;
     GSTATE.shortcut_buffer_pools = NULL;
-    testWioFdPoolTeardown(&fixture->fd_handles);
     GSTATE.shortcut_wios_pools   = NULL;
     GSTATE.shortcut_loops        = NULL;
     g_race_fixture               = NULL;

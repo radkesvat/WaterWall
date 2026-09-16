@@ -46,7 +46,6 @@ typedef struct worker_s
     // Thread-safe pool for managing WIO objects.
     // functions like wloopPostEvent allocate WIO from target wid loop.
     threadsafe_generic_pool_t *wios_pool;
-    generic_pool_t            *wio_fd_pool;
 
     /*
      * `loop` and `message_queue` are published and detached together.

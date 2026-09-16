@@ -1,5 +1,7 @@
 #pragma once
 
+#include "wevent.h"
+
 /*
  * Shared scaffolding for the Category-C per-line failure-injection tests.
  *
@@ -20,7 +22,6 @@
  *   -Wl,--wrap=bufferpoolGetLargeBuffer -Wl,--wrap=bufferpoolGetSmallBuffer -Wl,--wrap=bufferpoolReuseBuffer
  */
 
-#include "wio_fd_pool_fixture.h"
 #include "wwapi.h"
 
 // ---------------------------------------------------------------------------
@@ -455,7 +456,6 @@ static tunnel_t *twfCreateNextTunnel(twf_trace_t *trace)
 
 typedef struct twf_worker_env_s
 {
-    test_wio_fd_pool_t         fd_handles;
     master_pool_t             *large_master;
     master_pool_t             *small_master;
     master_pool_t             *medium_master;
@@ -521,7 +521,6 @@ static void twfWorkerEnvSetupWithSmallBuffers(twf_worker_env_t *env, uint32_t la
     env->wios_pool = threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(env->wios_master, sizeof(wio_t), 8);
     twfRequire(env->wios_pool != NULL, "failed to create the test wios pool");
     env->wios_shortcut[0]      = env->wios_pool;
-    testWioFdPoolSetup(&env->fd_handles);
     GSTATE.shortcut_wios_pools = env->wios_shortcut;
 
     env->loop = wloopCreate(WLOOP_FLAG_AUTO_FREE, env->pool, 0);
@@ -552,7 +551,6 @@ static void twfWorkerEnvTeardown(twf_worker_env_t *env)
     GSTATE.flag_initialized      = false;
     GSTATE.workers               = NULL;
     GSTATE.shortcut_buffer_pools = NULL;
-    testWioFdPoolTeardown(&env->fd_handles);
     GSTATE.shortcut_wios_pools   = NULL;
     GSTATE.shortcut_loops        = NULL;
 

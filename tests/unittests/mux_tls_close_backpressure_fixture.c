@@ -66,7 +66,6 @@ void mxbSetupEnvironment(mxb_fixture_t *fixture, uint32_t combined_lstate_size)
     GSTATE.workers_count         = 2;
     GSTATE.workers               = &env->worker;
     GSTATE.shortcut_buffer_pools = env->buffer_pools;
-    testWioFdPoolSetup(&env->fd_handles);
     GSTATE.shortcut_wios_pools   = env->wios_pools;
     GSTATE.shortcut_loops        = env->loops;
     testWorkerBindWID(0);
@@ -106,7 +105,6 @@ void mxbTeardownEnvironment(mxb_fixture_t *fixture)
     GSTATE.workers_count         = env->saved_workers_count;
     GSTATE.workers               = env->saved_workers;
     GSTATE.shortcut_buffer_pools = env->saved_buffer_pools;
-    testWioFdPoolTeardown(&env->fd_handles);
     GSTATE.shortcut_wios_pools   = env->saved_wios_pools;
     GSTATE.shortcut_loops        = env->saved_loops;
 }

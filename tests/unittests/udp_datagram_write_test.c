@@ -1,3 +1,4 @@
+#include "wevent.h"
 // Focused invariants for the nonblocking datagram write path (wioWriteDatagram):
 //
 //   - UDP sockets managed by the event loop are nonblocking.
@@ -13,7 +14,6 @@
 // (ld --wrap), so the transient errors are injected instead of relying on the
 // host UDP send buffer to fill at a predictable point.
 
-#include "wio_fd_pool_fixture.h"
 #include "wwapi.h"
 
 #include "threadsafe_generic_pool.h"
@@ -319,8 +319,6 @@ int main(void)
     GSTATE.flag_initialized = true;
     GSTATE.workers_count    = 2;
     testWorkerRegistryInstall(&g_test_worker_registry);
-    test_wio_fd_pool_t fd_handles = {0};
-    testWioFdPoolSetup(&fd_handles);
     GSTATE.shortcut_wios_pools = wio_pools;
     testWorkerBindWID(0);
 
@@ -347,7 +345,6 @@ int main(void)
     require(rejected != NULL && wioIsClosed(rejected), "failed socket init did not reject the io");
 
     wloopDestroy(&loop);
-    testWioFdPoolTeardown(&fd_handles);
     GSTATE.shortcut_wios_pools = NULL;
 
     threadsafegenericpoolDestroy(wio_pool);

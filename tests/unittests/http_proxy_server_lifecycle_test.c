@@ -1,6 +1,6 @@
 #include "AuthenticationClient/structure.h"
 #include "HttpProxyServer/structure.h"
-#include "wio_fd_pool_fixture.h"
+#include "wevent.h"
 
 /* Real pool-backed lines and callbacks, with no sockets or linker wrapping. */
 static tunnel_t *proxy, *prev, *next;
@@ -537,8 +537,6 @@ static void runSuite(uint32_t large_size)
     threadsafe_generic_pool_t *io_pool =
         threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(ios, sizeof(wio_t), 8);
     GSTATE.shortcut_buffer_pools = &pool;
-    test_wio_fd_pool_t fd_handles = {0};
-    testWioFdPoolSetup(&fd_handles);
     GSTATE.shortcut_wios_pools   = &io_pool;
     wloop_t *loop                = wloopCreate(WLOOP_FLAG_AUTO_FREE, pool, 0);
     GSTATE.shortcut_loops        = &loop;
@@ -780,7 +778,6 @@ static void runSuite(uint32_t large_size)
     tunnelchainDestroy(chain);
     cJSON_Delete(node.node_settings_json);
     wloopDestroy(&loop);
-    testWioFdPoolTeardown(&fd_handles);
     testWorkerUnbindWID();
     threadsafegenericpoolDestroy(io_pool);
     bufferpoolDestroy(pool);

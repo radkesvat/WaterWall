@@ -2,7 +2,7 @@
 #include "TlsClient/interface.h"
 #include "iowatcher.h"
 #include "tricks/overlapsni/trick.h"
-#include "wio_fd_pool_fixture.h"
+#include "wevent.h"
 #include "worker_registry_fixture.h"
 
 static test_worker_registry_t g_test_worker_registry;
@@ -41,7 +41,6 @@ typedef struct captured_packet_s
 
 typedef struct test_env_s
 {
-    test_wio_fd_pool_t         fd_handles;
     master_pool_t             *large_master;
     master_pool_t             *small_master;
     master_pool_t             *medium_master;
@@ -335,8 +334,7 @@ static void setupEnv(test_env_t *env)
     GSTATE.workers_count                 = 3;
     GSTATE.shortcut_buffer_pools         = env->buffer_pools;
     GSTATE.shortcut_loops                = env->loops;
-    testWioFdPoolSetup(&env->fd_handles);
-    GSTATE.shortcut_wios_pools           = env->wios_pools;
+    GSTATE.shortcut_wios_pools            = env->wios_pools;
     GSTATE.masterpool_buffer_pools_large = env->large_master;
     GSTATE.masterpool_buffer_pools_small = env->small_master;
     GSTATE.masterpool_buffer_pools_medium = env->medium_master;
@@ -392,8 +390,7 @@ static void destroyEnv(test_env_t *env)
     GSTATE.workers_count                 = 0;
     GSTATE.shortcut_buffer_pools         = NULL;
     GSTATE.shortcut_loops                = NULL;
-    testWioFdPoolTeardown(&env->fd_handles);
-    GSTATE.shortcut_wios_pools           = NULL;
+    GSTATE.shortcut_wios_pools            = NULL;
     GSTATE.masterpool_buffer_pools_large = NULL;
     GSTATE.masterpool_buffer_pools_small = NULL;
     GSTATE.masterpool_buffer_pools_medium = NULL;

@@ -1,9 +1,9 @@
+#include "wevent.h"
 /*
  * Forced-backend coverage for the event-loop wake channel. CMake builds this
  * source once with the pipe backend and once with the socketpair backend.
  */
 
-#include "wio_fd_pool_fixture.h"
 #include "wloop_internal.h"
 #include "wwapi.h"
 
@@ -27,7 +27,6 @@ static test_worker_registry_t g_test_worker_registry;
 
 typedef struct env_s
 {
-    test_wio_fd_pool_t         fd_handles;
     master_pool_t             *large_master;
     master_pool_t             *small_master;
     master_pool_t             *medium_master;
@@ -69,7 +68,6 @@ static void envSetup(env_t *env)
     GSTATE.flag_initialized = true;
     GSTATE.workers_count    = 2;
     testWorkerRegistryInstall(&g_test_worker_registry);
-    testWioFdPoolSetup(&env->fd_handles);
     GSTATE.shortcut_wios_pools = env->wio_pools;
     testWorkerBindWID(0);
 }
@@ -80,7 +78,6 @@ static void envTeardown(env_t *env)
     GSTATE.flag_initialized = false;
     GSTATE.workers_count    = 0;
     testWorkerRegistryRestore(&g_test_worker_registry);
-    testWioFdPoolTeardown(&env->fd_handles);
     GSTATE.shortcut_wios_pools = NULL;
     threadsafegenericpoolDestroy(env->wio_pool);
     masterpoolMakeEmpty(env->wio_master);

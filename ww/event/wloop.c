@@ -1885,7 +1885,7 @@ wio_t *wioGet(wloop_t *loop, int fd)
         return NULL;
     }
     wio_t *io = __wio_get(loop, fd);
-    if (io != NULL && io->closed && io->fd_handle != NULL)
+    if (io != NULL && io->closed && io->fd >= 0)
     {
         // The close callback still has access to this descriptor; do not reopen its wrapper mid-close.
         return NULL;
@@ -1921,9 +1921,9 @@ wio_t *wioGet(wloop_t *loop, int fd)
         io->io_slot       = fd;
         loop->ios.ptr[fd] = io;
     }
-    if (io->fd_handle == NULL)
+    if (io->fd < 0)
     {
-        io->fd_handle = wiofdCreate(fd);
+        io->fd = fd;
     }
     assert(wioGetFD(io) == fd);
 
@@ -2040,7 +2040,7 @@ static void wioReleaseNoCloseNow(wio_t *io)
     wioDelKeepaliveTimer(io);
     wioDelHeartBeatTimer(io);
     wioDone(io);
-    wioReleaseFDHandle(io, true);
+    wioReleaseFD(io, true);
 
     io->release_no_close = 0;
 #ifdef EVENT_IOCP
@@ -2161,7 +2161,7 @@ bool wioExists(wloop_t *loop, int fd)
 static int wioAddWithNormalAuthority(wio_t *io, wio_cb cb, int events, bool already_admitted)
 {
     printd("wioAdd fd=%d io->events=%d events=%d\n", wioGetFD(io), io->events, events);
-    if (io->fd_handle == NULL)
+    if (io->fd < 0)
     {
         return -1;
     }

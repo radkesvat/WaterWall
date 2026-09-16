@@ -1037,7 +1037,7 @@ static void dispatch_accept(wio_t *io, woverlapped_t *record)
 
     // SO_UPDATE_ACCEPT_CONTEXT takes a SOCKET, which is 8 bytes on Win64. Keeping
     // this as int would pass sizeof(int) == 4 as the option length. Widening here
-    // (rather than at wio_fd_t.fd) keeps the change local.
+    // (rather than at wio_t.fd) keeps the change local.
     const SOCKET              listenfd             = (SOCKET) wioGetFD(io);
     const int                 connfd               = record->fd;
     LPFN_GETACCEPTEXSOCKADDRS GetAcceptExSockaddrs = NULL;
@@ -1854,8 +1854,8 @@ int wioClose(wio_t *io)
     wioDelHeartBeatTimer(io);
     wioCloseCallBack(io);
 
-    // Other holders may keep the descriptor alive; outstanding I/O was cancelled above.
-    wioReleaseFDHandle(io, false);
+    // Outstanding I/O was cancelled above; native operation records still protect the WIO allocation.
+    wioReleaseFD(io, false);
 
     /*
      * Release the close-stack lifetime reference last. Finalization may return io

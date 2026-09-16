@@ -1,4 +1,4 @@
-#include "wio_fd_pool_fixture.h"
+#include "wevent.h"
 #include "worker_registry_fixture.h"
 #include "wsocket.h"
 #include "wwapi.h"
@@ -80,8 +80,6 @@ static void test_wio_get_bounds(void)
     GSTATE.flag_initialized = true;
     GSTATE.workers_count    = 2;
     testWorkerRegistryInstall(&g_test_worker_registry);
-    test_wio_fd_pool_t fd_handles = {0};
-    testWioFdPoolSetup(&fd_handles);
     GSTATE.shortcut_wios_pools = wio_pools;
     testWorkerBindWID(0);
 
@@ -101,12 +99,11 @@ static void test_wio_get_bounds(void)
     require(! wioExists(loop, WIO_MAX_FD + 1), "wioExists(loop, WIO_MAX_FD + 1) must return false");
 
     // A rejected attach must leave the detached io untouched and avoid indexing.
-    wio_fd_t detached_handle = {.fd = -1};
-    wio_t    detached_io     = {.fd_handle = &detached_handle};
+    wio_t detached_io = {.fd = -1, .io_slot = -1};
     wioAttach(loop, &detached_io);
     require(detached_io.loop == NULL, "wioAttach must reject negative fds");
 
-    detached_handle.fd = WIO_MAX_FD + 1;
+    detached_io.fd = WIO_MAX_FD + 1;
     wioAttach(loop, &detached_io);
     require(detached_io.loop == NULL, "wioAttach must reject fds above WIO_MAX_FD");
 
@@ -122,7 +119,6 @@ static void test_wio_get_bounds(void)
     require(io_max != NULL, "wioGet(loop, WIO_MAX_FD - 1) must succeed");
 
     wloopDestroy(&loop);
-    testWioFdPoolTeardown(&fd_handles);
     GSTATE.shortcut_wios_pools = NULL;
 
     threadsafegenericpoolDestroy(wio_pool);

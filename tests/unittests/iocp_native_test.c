@@ -1,3 +1,4 @@
+#include "wevent.h"
 // Native IOCP backend correctness tests (Windows-only, EVENT_IOCP).
 //
 // These exercise the invariants from iocp-implementation-plan.md that the wepoll
@@ -19,7 +20,6 @@
 // (windows-iocp preset). Under any other backend it is an empty success so the
 // same CMake wiring is harmless.
 
-#include "wio_fd_pool_fixture.h"
 #include "wlibc.h"
 
 #if ! defined(EVENT_IOCP)
@@ -59,7 +59,6 @@ static void require(bool condition, const char *message)
 
 typedef struct env_s
 {
-    test_wio_fd_pool_t         fd_handles;
     master_pool_t             *large_master;
     master_pool_t             *small_master;
     master_pool_t             *medium_master;
@@ -94,7 +93,6 @@ static void envSetup(env_t *env)
     env->saved_workers_count = GSTATE.workers_count;
     GSTATE.workers_count     = 3; // two event workers plus the lwIP-style pseudo-worker
     testWorkerRegistryInstall(&env->worker_registry);
-    testWioFdPoolSetup(&env->fd_handles);
     GSTATE.shortcut_wios_pools = env->wio_pools;
     testWorkerBindWID(0);
 }
@@ -102,7 +100,6 @@ static void envSetup(env_t *env)
 static void envTeardown(env_t *env)
 {
     testWorkerUnbindWID();
-    testWioFdPoolTeardown(&env->fd_handles);
     GSTATE.shortcut_wios_pools = NULL;
     testWorkerRegistryRestore(&env->worker_registry);
     GSTATE.workers_count = env->saved_workers_count;

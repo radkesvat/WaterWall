@@ -301,11 +301,6 @@ void workerPerformDrain(worker_t *worker, const ww_lifecycle_context_t *context)
 
 static void workerDestroyPools(worker_t *worker)
 {
-    if (worker->wio_fd_pool)
-    {
-        genericpoolDestroy(worker->wio_fd_pool);
-        worker->wio_fd_pool = NULL;
-    }
     if (worker->wios_pool)
     {
         threadsafegenericpoolDestroy(worker->wios_pool);
@@ -415,19 +410,16 @@ bool workerTryCreateCorePools(worker_t *worker)
         threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(GSTATE.masterpool_wios, sizeof(wio_t), RAM_PROFILE);
     generic_pool_t *context_pool = genericpoolCreateWithDefaultAllocatorAndCapacity(
         GSTATE.masterpool_context_pools, sizeof(context_t), RAM_PROFILE);
-    generic_pool_t *wio_fd_pool = wiofdCreatePool(GSTATE.masterpool_wio_fds, RAM_PROFILE);
 
-    if (UNLIKELY(wios_pool == NULL || context_pool == NULL || wio_fd_pool == NULL))
+    if (UNLIKELY(wios_pool == NULL || context_pool == NULL))
     {
         threadsafegenericpoolDestroy(wios_pool);
         genericpoolDestroy(context_pool);
-        genericpoolDestroy(wio_fd_pool);
         return false;
     }
 
     worker->wios_pool    = wios_pool;
     worker->context_pool = context_pool;
-    worker->wio_fd_pool  = wio_fd_pool;
     return true;
 }
 

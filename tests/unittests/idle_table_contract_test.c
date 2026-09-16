@@ -1,6 +1,6 @@
 #include "local_widle_table.h"
+#include "wevent.h"
 #include "widle_table.h"
-#include "wio_fd_pool_fixture.h"
 #include "wwapi.h"
 
 enum
@@ -13,7 +13,6 @@ enum
 
 typedef struct contract_env_s
 {
-    test_wio_fd_pool_t         fd_handles;
     master_pool_t             *large_masters[kContractWorkers];
     master_pool_t             *small_masters[kContractWorkers];
     master_pool_t             *medium_masters[kContractWorkers];
@@ -104,7 +103,6 @@ static void contractEnvSetup(contract_env_t *env)
     GSTATE.workers_count         = kContractWorkers + 1U;
     GSTATE.shortcut_buffer_pools = env->pools;
     GSTATE.shortcut_loops        = env->loops;
-    testWioFdPoolSetup(&env->fd_handles);
     GSTATE.shortcut_wios_pools   = env->wios_pools;
     GSTATE.masterpool_messages   = env->message_master;
 
@@ -170,7 +168,6 @@ static void contractEnvTeardown(contract_env_t *env)
     GSTATE.workers               = NULL;
     GSTATE.shortcut_buffer_pools = NULL;
     GSTATE.shortcut_loops        = NULL;
-    testWioFdPoolTeardown(&env->fd_handles);
     GSTATE.shortcut_wios_pools   = NULL;
     GSTATE.masterpool_messages   = NULL;
 

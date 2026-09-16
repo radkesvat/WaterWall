@@ -23,7 +23,6 @@ typedef struct wtimer_s   wtimer_t;
 typedef struct wtimeout_s wtimeout_t;
 typedef struct wperiod_s  wperiod_t;
 typedef struct wio_s      wio_t;
-typedef struct wio_fd_s   wio_fd_t;
 
 typedef void (*wevent_cb)(wevent_t *ev);
 typedef void (*widle_cb)(widle_t *idle);
@@ -337,8 +336,6 @@ WW_EXPORT bool wioExists(wloop_t *loop, int fd);
 // NOTE: fd cannot be used as unique identifier, so we provide an id.
 WW_EXPORT uint32_t         wioGetID(wio_t *io);
 WW_EXPORT int              wioGetFD(const wio_t *io);
-// Borrow the shared descriptor object; retain with wiofdRef() before keeping it beyond WIO close.
-WW_EXPORT wio_fd_t *wioGetFDHandle(const wio_t *io);
 // Owner-thread mode selection, initially disabled for each newly adopted descriptor.
 // Enabling requires an open WIO whose read interest has never been registered;
 // stopping reads does not reset this precondition. Checked by debug assertions.

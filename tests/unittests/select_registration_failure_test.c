@@ -1,4 +1,4 @@
-#include "wio_fd_pool_fixture.h"
+#include "wevent.h"
 #include "wwapi.h"
 
 #include "threadsafe_generic_pool.h"
@@ -98,8 +98,6 @@ int main(void)
     GSTATE.flag_initialized = true;
     GSTATE.workers_count    = 2;
     testWorkerRegistryInstall(&g_test_worker_registry);
-    test_wio_fd_pool_t fd_handles = {0};
-    testWioFdPoolSetup(&fd_handles);
     GSTATE.shortcut_wios_pools = wio_pools;
     testWorkerBindWID(0);
 
@@ -170,7 +168,6 @@ int main(void)
     require(fcntl(wrapped_eventfd_fd, F_GETFD) == -1 && errno == EBADF,
             "rejected eventfd wakeup descriptor remained open");
     wloopDestroy(&loop);
-    testWioFdPoolTeardown(&fd_handles);
     GSTATE.shortcut_wios_pools = NULL;
 
     threadsafegenericpoolDestroy(wio_pool);

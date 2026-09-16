@@ -13,117 +13,6 @@
 #include "overlapio.h"
 #endif
 
-static pool_item_t *wiofdAllocateItem(generic_pool_t *pool)
-{
-    discard pool;
-    return memoryAllocateZero(sizeof(wio_fd_t));
-}
-
-static void wiofdFreeItem(pool_item_t *item)
-{
-    memoryFree(item);
-}
-
-static master_pool_item_t *wiofdAllocateSharedItem(void *userdata)
-{
-    discard userdata;
-    return wiofdAllocateItem(NULL);
-}
-
-generic_pool_t *wiofdCreatePool(master_pool_t *master, uint32_t capacity)
-{
-    generic_pool_t *pool = genericpoolCreateWithCapacity(master, capacity, wiofdAllocateItem, wiofdFreeItem);
-    if (pool != NULL)
-    {
-        genericpoolSetItemSize(pool, sizeof(wio_fd_t));
-        masterpoolInstallCallBacks(master, wiofdAllocateSharedItem, wiofdFreeItem);
-    }
-    return pool;
-}
-
-wio_fd_t *wiofdCreate(int fd)
-{
-    master_pool_t *master = GSTATE.masterpool_wio_fds;
-    assert(master != NULL);
-    worker_t       *worker = tryGetCurrentEventWorker();
-    generic_pool_t *pool   = worker != NULL ? worker->wio_fd_pool : NULL;
-    wio_fd_t       *handle;
-    if (pool != NULL)
-    {
-        assert(pool->mp == master);
-        handle = genericpoolGetItem(pool);
-    }
-    else
-    {
-        masterpoolRecordCheckout(master);
-        masterpoolGetItems(master, (master_pool_item_t **) &handle, 1, NULL);
-    }
-    *handle = (wio_fd_t) {.fd = fd, .refc = 1, .is_socket = true};
-    return handle;
-}
-
-uint32_t wiofdGetRefCount(const wio_fd_t *handle)
-{
-    return atomicLoadU32Relaxed(&handle->refc);
-}
-
-void wiofdRef(wio_fd_t *handle)
-{
-    const uint32_t previous = atomicIncU32Relaxed(&handle->refc);
-    if (UNLIKELY(previous == 0 || previous == UINT32_MAX))
-    {
-        LOGF("wiofdRef: invalid descriptor reference count");
-        abortProgramNow(1);
-    }
-}
-
-void wiofdUnref(wio_fd_t *handle)
-{
-    const uint32_t previous = atomicDecU32Explicit(&handle->refc, memory_order_acq_rel);
-    if (UNLIKELY(previous == 0))
-    {
-        LOGF("wiofdUnref: descriptor reference count underflow");
-        abortProgramNow(1);
-    }
-    if (previous != 1)
-    {
-        return;
-    }
-
-    if (handle->fd >= 0)
-    {
-#ifdef OS_WIN
-        if (handle->is_socket)
-        {
-            closesocket(handle->fd);
-        }
-        else
-        {
-            _close(handle->fd);
-        }
-#else
-        close(handle->fd);
-#endif
-        handle->fd = -1;
-    }
-
-    master_pool_t  *master = GSTATE.masterpool_wio_fds;
-    worker_t       *worker = tryGetCurrentEventWorker();
-    generic_pool_t *pool   = worker != NULL ? worker->wio_fd_pool : NULL;
-    assert(master != NULL);
-    if (pool != NULL)
-    {
-        assert(pool->mp == master);
-        genericpoolReuseItem(pool, handle);
-    }
-    else
-    {
-        master_pool_item_t *item = handle;
-        masterpoolReuseItems(master, &item, 1);
-        masterpoolRecordReturn(master);
-    }
-}
-
 #if WW_HAVE_SPLICE
 static void wioReadSplicePipe(int fd, uint8_t *dest, uint32_t bytes, const char *caller)
 {
@@ -409,7 +298,8 @@ void wioInit(wio_t *io)
     // write_queue_init(&io->write_queue, 4);
 
     // recursivemutexInit(&io->write_mutex);
-    discard io;
+    io->fd      = -1;
+    io->io_slot = -1;
 }
 
 void wioReady(wio_t *io)
@@ -494,7 +384,9 @@ void wioReady(wio_t *io)
 
     // io_type
     fillIoType(io);
-    io->fd_handle->is_socket = (io->io_type & WIO_TYPE_SOCKET) != 0;
+#ifdef OS_WIN
+    io->fd_is_socket = (io->io_type & WIO_TYPE_SOCKET) != 0;
+#endif
     if (io->io_type & WIO_TYPE_SOCKET)
     {
         wioSocketInit(io);
@@ -600,7 +492,7 @@ void wioFinalizeNow(wio_t *io)
 #else
 void wioFinalizeNow(wio_t *io)
 {
-    assert(io->destroy && ! io->close_in_progress && io->fd_handle == NULL);
+    assert(io->destroy && ! io->close_in_progress && io->fd < 0);
     if (io->loop != NULL && io->io_slot >= 0 && io->io_slot < (int) io->loop->ios.maxsize &&
         io->loop->ios.ptr[io->io_slot] == io)
     {
@@ -645,12 +537,7 @@ uint32_t wioGetID(wio_t *io)
 
 int wioGetFD(const wio_t *io)
 {
-    return io->fd_handle != NULL ? io->fd_handle->fd : -1;
-}
-
-wio_fd_t *wioGetFDHandle(const wio_t *io)
-{
-    return io->fd_handle;
+    return io->fd;
 }
 
 int wioEnableSplice(wio_t *io)
@@ -677,18 +564,26 @@ bool wioIsSpliceEnabled(const wio_t *io)
     return io->splice_enabled;
 }
 
-void wioReleaseFDHandle(wio_t *io, bool keep_fd)
+void wioReleaseFD(wio_t *io, bool keep_fd)
 {
-    wio_fd_t *handle = io->fd_handle;
-    io->fd_handle    = NULL;
-    if (handle != NULL)
+    const int fd = io->fd;
+    io->fd       = -1;
+    if (fd < 0 || keep_fd)
     {
-        if (keep_fd)
-        {
-            handle->fd = -1;
-        }
-        wiofdUnref(handle);
+        return;
     }
+#ifdef OS_WIN
+    if (io->fd_is_socket)
+    {
+        closesocket(fd);
+    }
+    else
+    {
+        _close(fd);
+    }
+#else
+    close(fd);
+#endif
 }
 
 wio_type_e wioGetType(wio_t *io)

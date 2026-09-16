@@ -2,7 +2,7 @@
 #include "loggers/internal_logger.h"
 #include "splice_buffer.h"
 #include "threadsafe_generic_pool.h"
-#include "wio_fd_pool_fixture.h"
+#include "wevent.h"
 #include "worker_registry_fixture.h"
 
 #include <fcntl.h>
@@ -15,7 +15,6 @@
 typedef struct test_env_s
 {
     test_worker_registry_t     registry;
-    test_wio_fd_pool_t         descriptors;
     master_pool_t             *masters[5];
     buffer_pool_t             *buffers;
     buffer_pool_t             *buffer_pools[1];
@@ -25,6 +24,16 @@ typedef struct test_env_s
 } test_env_t;
 
 #if WW_HAVE_SPLICE
+static unsigned int splice_reuse_checks;
+bool                __real_sbufSpliceIsReusable(const sbuf_t *buf);
+bool                __wrap_sbufSpliceIsReusable(const sbuf_t *buf);
+
+bool __wrap_sbufSpliceIsReusable(const sbuf_t *buf)
+{
+    ++splice_reuse_checks;
+    return __real_sbufSpliceIsReusable(buf);
+}
+
 static bool fail_queue_allocation;
 void       *__real_memoryReAllocate(void *ptr, size_t size);
 void       *__wrap_memoryReAllocate(void *ptr, size_t size);
@@ -233,8 +242,6 @@ static void setupWithBufferSize(test_env_t *env, uint32_t large_size)
     GSTATE.workers_count = 2;
     testWorkerRegistryInstall(&env->registry);
     testWorkerBindWID(0);
-    testWioFdPoolSetup(&env->descriptors);
-    env->registry.slots[0].wio_fd_pool = env->descriptors.pool;
     for (size_t i = 0; i < ARRAY_SIZE(env->masters); ++i)
     {
         env->masters[i] = masterpoolCreateWithCapacity(8);
@@ -266,9 +273,7 @@ static void setup(test_env_t *env)
 static void teardown(test_env_t *env)
 {
     wloopDestroy(&env->loop);
-    require(masterpoolGetCheckedOut(env->descriptors.master) == 0, "descriptor pool retained a live object");
-    env->registry.slots[0].wio_fd_pool = NULL;
-    testWioFdPoolTeardown(&env->descriptors);
+    require(masterpoolGetCheckedOut(env->masters[3]) == 0, "loop cleanup retained a live WIO allocation");
     GSTATE.shortcut_wios_pools = NULL;
     threadsafegenericpoolDestroy(env->wios);
     bufferpoolDestroy(env->buffers);
@@ -287,17 +292,14 @@ static wio_t *socketIO(test_env_t *env, int sockets[2])
     require(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) == 0, "failed to create socket pair");
     wio_t *io = wioGet(env->loop, sockets[0]);
     require(io != NULL && wioIsOpened(io), "failed to wrap descriptor");
-    wio_fd_t *handle = wioGetFDHandle(io);
-    require(handle != NULL && handle->fd == sockets[0] && wiofdGetRefCount(handle) == 1,
-            "new WIO did not adopt its descriptor with one reference");
+    require(wioGetFD(io) == sockets[0], "new WIO did not adopt its descriptor");
     return io;
 }
 
-static void testRetainedDescriptors(test_env_t *env)
+static void testOwnedDescriptor(test_env_t *env)
 {
     int       sockets[2];
     wio_t    *io     = socketIO(env, sockets);
-    wio_fd_t *handle = wioGetFDHandle(io);
 #if WW_HAVE_SPLICE
     sbuf_t *pipe_buf = sbufCreateSplice(0);
     fail_pipe = true;
@@ -317,21 +319,12 @@ static void testRetainedDescriptors(test_env_t *env)
     require(sbufSpliceInitPipe(unsupported, 0) == -1 && errno == ENOSYS, "unsupported pipe initialization succeeded");
     sbufDestroySplice(unsupported);
 #endif
-    wiofdRef(handle);
-    require(wioClose(io) == 0 && wioGetFDHandle(io) == NULL && wioGetFD(io) == -1,
-            "WIO close retained its descriptor reference");
+    require(wioClose(io) == 0 && wioGetFD(io) == -1, "WIO close did not invalidate its descriptor");
     require(wioAdd(io, NULL, WW_READ) == -1, "closed WIO accepted new watcher interest");
-    require(wiofdGetRefCount(handle) == 1 && fcntl(sockets[0], F_GETFD) >= 0,
-            "WIO close closed an externally retained descriptor");
-    char byte = 'x';
-#if WW_HAVE_SPLICE
-    require(write(writer, &byte, 1) == 1 && read(reader, &byte, 1) == 1, "retained pipe stopped working");
-#endif
-    require(send(handle->fd, &byte, 1, 0) == 1 && recv(sockets[1], &byte, 1, 0) == 1,
-            "retained socket stopped working");
-    wiofdUnref(handle);
     requireClosed(sockets[0]);
 #if WW_HAVE_SPLICE
+    char byte = 'x';
+    require(write(writer, &byte, 1) == 1 && read(reader, &byte, 1) == 1, "retained pipe stopped working");
     sbufDestroySplice(pipe_buf);
     requireClosed(reader);
     requireClosed(writer);
@@ -340,88 +333,72 @@ static void testRetainedDescriptors(test_env_t *env)
     require(dup2(sockets[1], sockets[0]) == sockets[0], "failed to reuse descriptor number");
     require(wioClose(io) == 0 && fcntl(sockets[0], F_GETFD) >= 0, "repeated close affected a reused descriptor");
     wio_t *reused = wioGet(env->loop, sockets[0]);
-    require(reused == io && wiofdGetRefCount(wioGetFDHandle(reused)) == 1, "closed WIO was not reusable");
+    require(reused == io && wioGetFD(reused) == sockets[0], "closed WIO was not reusable");
     wioClose(reused);
     close(sockets[1]);
 }
 
 static void testNoClose(test_env_t *env)
 {
-    int       sockets[2];
-    wio_t    *io     = socketIO(env, sockets);
-    wio_fd_t *handle = wioGetFDHandle(io);
+    int    sockets[2];
+    wio_t *io = socketIO(env, sockets);
 #if WW_HAVE_SPLICE
     sbuf_t *pipe_buf = sbufCreateSplice(0);
     require(sbufSpliceInitPipe(pipe_buf, 0) == 0, "failed to create no-close pipe");
     int reader = sbufSpliceMetadata(pipe_buf).pipefd[0], writer = sbufSpliceMetadata(pipe_buf).pipefd[1];
 #endif
-    wiofdRef(handle);
     wioReleaseNoClose(io);
-    require(handle->fd == -1 && wiofdGetRefCount(handle) == 1,
-            "watcher release did not relinquish descriptor ownership");
+    require(! wioExists(env->loop, sockets[0]), "watcher release retained its array slot");
     require(fcntl(sockets[0], F_GETFD) >= 0, "watcher release closed the external descriptor");
-    wiofdUnref(handle);
 #if WW_HAVE_SPLICE
     sbufDestroySplice(pipe_buf);
     requireClosed(reader);
     requireClosed(writer);
 #endif
-    require(fcntl(sockets[0], F_GETFD) >= 0, "final box release closed a relinquished descriptor");
+    char byte = 'x';
+    require(send(sockets[0], &byte, 1, 0) == 1 && recv(sockets[1], &byte, 1, 0) == 1,
+            "released external socket stopped working");
     close(sockets[0]);
     close(sockets[1]);
 }
 
-static WTHREAD_ROUTINE(releaseHandle)
+static void testFileDescriptor(test_env_t *env)
 {
-    require(tryGetCurrentEventWorker() == NULL, "foreign releaser inherited an event worker");
-    wiofdUnref(userdata);
-    return 0;
+    int pair[2];
+    require(pipe(pair) == 0, "failed to create a non-socket descriptor");
+    wio_t *io = wioGet(env->loop, pair[0]);
+    require(io != NULL && wioGetFD(io) == pair[0] && ! (wioGetType(io) & WIO_TYPE_SOCKET),
+            "non-socket descriptor was not adopted correctly");
+    wioClose(io);
+    require(wioGetFD(io) == -1, "non-socket close retained the descriptor");
+    requireClosed(pair[0]);
+    require(fcntl(pair[1], F_GETFD) >= 0, "closing the reader closed an unrelated descriptor");
+    close(pair[1]);
 }
 
-typedef struct foreign_create_s
+static void testPrimaryDescriptorZero(void)
 {
-    int       fd;
-    wio_fd_t *handle;
-} foreign_create_t;
-
-static WTHREAD_ROUTINE(createHandle)
-{
-    foreign_create_t *create = userdata;
-    create->handle           = wiofdCreate(create->fd);
-    return 0;
-}
-
-static void testForeignReferences(test_env_t *env)
-{
-    for (unsigned int iteration = 0; iteration < 16; ++iteration)
+    pid_t child = fork();
+    require(child >= 0, "failed to fork primary descriptor-zero fixture");
+    if (child == 0)
     {
-        int       sockets[2];
-        wio_t    *io     = socketIO(env, sockets);
-        wio_fd_t *handle = wioGetFDHandle(io);
-        wiofdRef(handle);
-        wiofdRef(handle);
+        test_env_t env;
+        setup(&env);
+        close(STDIN_FILENO);
+        int    sockets[2];
+        wio_t *io = socketIO(&env, sockets);
+        require(sockets[0] == STDIN_FILENO && wioGetFD(io) == STDIN_FILENO,
+                "descriptor zero was treated as uninitialized");
         wioClose(io);
-        wthread_t threads[2];
-        require(threadCreate(&threads[0], releaseHandle, handle) == kWThreadErrorNone &&
-                    threadCreate(&threads[1], releaseHandle, handle) == kWThreadErrorNone,
-                "failed to create concurrent releasers");
-        require(threadJoin(threads[0]) == 0 && threadJoin(threads[1]) == 0, "failed to join concurrent releasers");
-        requireClosed(sockets[0]);
+        require(wioGetFD(io) == -1, "descriptor-zero close failed to invalidate the WIO");
+        requireClosed(STDIN_FILENO);
         close(sockets[1]);
-        require(masterpoolGetCheckedOut(env->descriptors.master) == 0, "foreign release did not return the pooled box");
+        teardown(&env);
+        _Exit(0);
     }
-    int sockets[2];
-    require(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) == 0, "failed to create foreign-acquisition sockets");
-    const uint32_t   cached = env->descriptors.pool->len;
-    foreign_create_t create = {.fd = sockets[0]};
-    wthread_t        thread;
-    require(threadCreate(&thread, createHandle, &create) == kWThreadErrorNone && threadJoin(thread) == 0,
-            "foreign descriptor acquisition failed");
-    require(env->descriptors.pool->len == cached && wiofdGetRefCount(create.handle) == 1,
-            "foreign acquisition touched the worker-local pool");
-    wiofdUnref(create.handle);
-    requireClosed(sockets[0]);
-    close(sockets[1]);
+    int status;
+    require(waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 0,
+            "primary descriptor-zero fixture failed");
 }
 
 static int    callback_fd;
@@ -472,7 +449,7 @@ static void readReusedDescriptor(wio_t *io, sbuf_t *buf)
 
     const size_t checked_out = masterpoolGetCheckedOut(probe->env->masters[3]);
     wioFree(io);
-    require(io->destroy && io->pending && io->fd_handle == NULL,
+    require(io->destroy && io->pending && wioGetFD(io) == -1,
             "free from a read callback lost its pending allocation protection");
     require(masterpoolGetCheckedOut(probe->env->masters[3]) == checked_out,
             "read callback returned its WIO to the pool before dispatch finished");
@@ -500,7 +477,7 @@ static void testPendingDescriptorReuse(void)
     wio_t *fresh = wioGet(env.loop, sockets[0]);
     require(fresh != NULL && wioIsOpened(fresh) && fresh != old && ! fresh->pending,
             "descriptor reuse inherited the old WIO's pending entry");
-    require(old->destroy && old->pending && old->loop == env.loop && old->fd_handle == NULL,
+    require(old->destroy && old->pending && old->loop == env.loop && wioGetFD(old) == -1,
             "retired WIO did not remain owned by its original pending list");
     wioDetach(fresh);
     wioAttach(destination, fresh);
@@ -542,27 +519,6 @@ static void testPendingDetachRejected(void)
     int status;
     require(waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 1,
             "pending detach was not rejected before handoff");
-}
-
-static void testOutliveLocalPool(test_env_t *env)
-{
-    int       sockets[2];
-    wio_t    *io     = socketIO(env, sockets);
-    wio_fd_t *handle = wioGetFDHandle(io);
-    wiofdRef(handle);
-    wioClose(io);
-    env->registry.slots[0].wio_fd_pool = NULL;
-    genericpoolDestroy(env->descriptors.pool);
-    env->descriptors.pool = NULL;
-    wthread_t thread;
-    require(threadCreate(&thread, releaseHandle, handle) == kWThreadErrorNone && threadJoin(thread) == 0,
-            "failed to release a descriptor after its local pool was destroyed");
-    requireClosed(sockets[0]);
-    close(sockets[1]);
-    require(masterpoolGetCheckedOut(env->descriptors.master) == 0, "late descriptor release missed the shared master");
-    env->descriptors.pool = wiofdCreatePool(env->descriptors.master, 8);
-    require(env->descriptors.pool != NULL, "failed to restore test descriptor pool");
-    env->registry.slots[0].wio_fd_pool = env->descriptors.pool;
 }
 
 static void testPipeDescriptorZero(void)
@@ -642,6 +598,35 @@ static void testPipeCapacityPreference(void)
     mock_pipe_capacity = false;
     pipe_query_error = pipe_growth_error = 0;
     mock_pipe_time                       = false;
+}
+
+static void testSpliceReuseValidation(void)
+{
+    test_env_t env;
+    setup(&env);
+    for (unsigned int length = 0; length <= 4; length += 4)
+    {
+        sbuf_t *buf = bufferpoolGetSpliceBuffer(env.buffers);
+        require(sbufSpliceInitPipe(buf, 0) == 0, "could not create recycle-check pipe");
+        if (length != 0)
+        {
+            require(write(sbufSpliceMetadata(buf).pipefd[1], "data", length) == (ssize_t) length,
+                    "could not fill recycle-check pipe");
+            buf->capacity = (uint32_t) buf->l_pad + length;
+            sbufSetLength(buf, length);
+        }
+        splice_reuse_checks = 0;
+        bufferpoolReuseBuffer(env.buffers, buf);
+#if BUFFER_POOL_DEBUG == 1
+        require(splice_reuse_checks == 1, "pool debugging did not verify kernel emptiness");
+#else
+        require(splice_reuse_checks == 0, "pool return checked kernel emptiness with pool debugging disabled");
+#endif
+        buf = bufferpoolGetSpliceBuffer(env.buffers);
+        require(sbufSpliceIsReusable(buf), "pool return failed to discard the private body");
+        bufferpoolReuseBuffer(env.buffers, buf);
+    }
+    teardown(&env);
 }
 
 static void testPipeCapacityRetry(void)
@@ -821,7 +806,6 @@ static void spliceRead(wio_t *io, sbuf_t *buf)
     int                            available = -1;
     require(ioctl(metadata.pipefd[0], FIONREAD, &available) == 0 && available == (int) count,
             "delivered length did not match actual private-pipe bytes");
-    require(wiofdGetRefCount(wioGetFDHandle(io)) == 1, "read callback retained an unnecessary source reference");
     const int source_fd = wioGetFD(io);
 
     switch (probe->kind)
@@ -1793,7 +1777,9 @@ static void testSpliceReads(void)
         {kSpliceSmallDestination, "destination too small"},
         {kSplicePartialRange, "requested bytes or prefix exceed source length"},
         {kSplicePartialCapacity, "destination has insufficient append space"},
+#if BUFFER_POOL_DEBUG == 1
         {kSpliceResidualPipe, "splice payload and pipe must be empty"},
+#endif
         {kSpliceShortPipe, "incomplete read from pipe (requested=10, consumed=9, result=-1"},
         {kSpliceShortPartial, "incomplete read from pipe (requested=10, consumed=9, result=-1"},
         {kSpliceEOFPipe, "incomplete read from pipe (requested=10, consumed=9, result=0"},
@@ -1852,11 +1838,13 @@ static void testSpliceReads(void)
 
 int main(void)
 {
+    testPrimaryDescriptorZero();
     testPipeDescriptorZero();
     testPendingDescriptorReuse();
     testPendingDetachRejected();
 #if WW_HAVE_SPLICE
     testPipeCapacityPreference();
+    testSpliceReuseValidation();
     testPipeCapacityRetry();
     testSpliceReadCapacityPreference();
     testSpliceBufferQueue();
@@ -1875,11 +1863,10 @@ int main(void)
 #endif
     test_env_t env;
     setup(&env);
-    testRetainedDescriptors(&env);
+    testOwnedDescriptor(&env);
     testNoClose(&env);
-    testForeignReferences(&env);
+    testFileDescriptor(&env);
     testCloseCallback(&env);
-    testOutliveLocalPool(&env);
     teardown(&env);
     return 0;
 }

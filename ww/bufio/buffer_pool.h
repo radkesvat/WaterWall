@@ -102,9 +102,11 @@ sbuf_t *bufferpoolTryGetBestFit(buffer_pool_t *pool, uint64_t minimum_payload, u
 /**
  * Reuses a buffer by returning it to the buffer pool.
  * Takes ownership and discards remaining payload, including a splice wrapper's
- * real prefix and private-pipe body. Splice discard and kernel-emptiness validation
- * run before reset and also when pooling is bypassed. Healthy empty pairs survive
- * reuse; a drain failure closes the pair. Callers must exclusively own the buffer.
+ * real prefix and private-pipe body. Splice discard runs in every build, including
+ * when pooling is bypassed. With BUFFER_POOL_DEBUG == 1, kernel-emptiness validation
+ * logs a fatal error and aborts on failure before reset, independently of NDEBUG.
+ * Healthy empty pairs survive reuse; a drain failure closes the pair.
+ * Callers must exclusively own the buffer.
  * @param pool The buffer pool.
  * @param b The buffer to reuse.
  */

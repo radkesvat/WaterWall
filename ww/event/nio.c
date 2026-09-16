@@ -1002,7 +1002,7 @@ int wioClose(wio_t *io)
 
     wioDone(io);
     __close_cb(io);
-    wioReleaseFDHandle(io, false);
+    wioReleaseFD(io, false);
     io->close_in_progress = 0;
     if (io->destroy && ! freeing)
     {

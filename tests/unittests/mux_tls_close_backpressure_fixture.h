@@ -1,6 +1,7 @@
 #pragma once
 
-#include "wio_fd_pool_fixture.h"
+#include "wevent.h"
+
 #include "wwapi.h"
 
 enum
@@ -25,7 +26,6 @@ typedef enum mxb_terminal_cause_e
 
 typedef struct mxb_environment_s
 {
-    test_wio_fd_pool_t          fd_handles;
     uint8_t                     saved_flag_initialized;
     uint32_t                    saved_workers_count;
     worker_t                   *saved_workers;

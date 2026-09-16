@@ -9,7 +9,6 @@
 
 #include "array.h"
 #include "buffer_pool.h"
-#include "generic_pool.h"
 #include "heap.h"
 #include "list.h"
 #include "queue.h"
@@ -139,24 +138,6 @@ struct wperiod_s
 
 QUEUE_DECL(sbuf_t *, write_queue)
 
-struct wio_fd_s
-{
-    int          fd;
-    atomic_u32_t refc;
-    bool         is_socket;
-};
-
-/** Create a worker-local descriptor pool backed by the supplied shared master. */
-generic_pool_t *wiofdCreatePool(master_pool_t *master, uint32_t capacity);
-/** Adopt a socket with one reference; WIO readiness sets the type when wrapping a non-socket descriptor. */
-wio_fd_t *wiofdCreate(int fd);
-/** Retain a live descriptor object. A held reference is required during publication. */
-void wiofdRef(wio_fd_t *handle);
-/** Release one reference; the last release closes the primary descriptor and recycles the object. */
-void wiofdUnref(wio_fd_t *handle);
-/** Observe the 32-bit reference count without acquiring another reference. */
-uint32_t wiofdGetRefCount(const wio_fd_t *handle);
-
 struct wio_s
 {
     WEVENT_FIELDS
@@ -174,6 +155,9 @@ struct wio_s
     unsigned close : 1;
     unsigned release_no_close : 1;
     unsigned splice_enabled : 1;
+#ifdef OS_WIN
+    unsigned fd_is_socket : 1; // Capture the native close kind when the descriptor is adopted.
+#endif
     unsigned read_started : 1; // Sticky until descriptor reuse, including across wioReadStop().
 #ifndef EVENT_IOCP
     unsigned close_in_progress : 1; // Defer callback-driven wioFree until the close frame returns.
@@ -188,7 +172,7 @@ struct wio_s
     // back to SOCKET explicitly at any call taking the handle *by address* --
     // see SO_UPDATE_ACCEPT_CONTEXT in overlapio.c, where the option length is
     // derived from the value's type.
-    wio_fd_t *fd_handle;
+    int       fd;      // Owned descriptor; -1 after close or release without close.
     int       io_slot; // Dense-array membership; retained after releasing the descriptor, never used for I/O.
     int error;
     int events;
@@ -286,7 +270,7 @@ uint32_t wioSetNextID(void);
 // Return a closed, detached WIO after all callback/IOCP references have retired.
 void wioFinalizeNow(wio_t *io);
 // Drop WIO ownership; keep_fd returns the primary descriptor to its external owner.
-void wioReleaseFDHandle(wio_t *io, bool keep_fd);
+void wioReleaseFD(wio_t *io, bool keep_fd);
 
 void wioAcceptCallBack(wio_t *io);
 void wioConnectCallBack(wio_t *io);

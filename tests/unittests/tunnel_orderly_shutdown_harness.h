@@ -1,5 +1,7 @@
 #pragma once
 
+#include "wevent.h"
+
 /*
  * Shared scaffolding for the Category-B orderly-shutdown failure-injection
  * tests.
@@ -31,7 +33,6 @@
 
 #define TWF_CUSTOM_PROCESS_API_WRAPS 1
 #include "tunnel_line_failure_harness.h"
-#include "wio_fd_pool_fixture.h"
 
 #include <sys/wait.h>
 #include <unistd.h>
@@ -163,7 +164,6 @@ enum
 // to publish N + 1.
 typedef struct tos_worker_env_s
 {
-    test_wio_fd_pool_t         fd_handles;
     master_pool_t             *large_masters[kTosMaxWorkers];
     master_pool_t             *small_masters[kTosMaxWorkers];
     master_pool_t             *medium_masters[kTosMaxWorkers];
@@ -204,7 +204,6 @@ static void tosWorkerEnvSetup(tos_worker_env_t *env, wid_t count, uint32_t large
     GSTATE.workers_count         = (uint32_t) count + 1U;
     GSTATE.shortcut_buffer_pools = env->pools;
     GSTATE.shortcut_loops        = env->loops;
-    testWioFdPoolSetup(&env->fd_handles);
     GSTATE.shortcut_wios_pools   = env->wios_pools;
 
     for (wid_t wi = 0; wi < count; ++wi)
@@ -292,7 +291,7 @@ static void tosPumpWorker(tos_worker_env_t *env, wid_t wid)
 
 static void tosWorkerEnvTeardown(tos_worker_env_t *env)
 {
-    // Retire loop-owned descriptor references before destroying their shared pool.
+    // Close loop-owned descriptors and retire WIO allocations before destroying their pool.
     for (wid_t wi = 0; wi < env->count; ++wi)
     {
         discard tosSetCurrentWorker(wi);
@@ -306,7 +305,6 @@ static void tosWorkerEnvTeardown(tos_worker_env_t *env)
     GSTATE.workers               = NULL;
     GSTATE.shortcut_buffer_pools = NULL;
     GSTATE.shortcut_loops        = NULL;
-    testWioFdPoolTeardown(&env->fd_handles);
     GSTATE.shortcut_wios_pools   = NULL;
 }
 
