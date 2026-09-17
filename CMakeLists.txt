@@ -1331,6 +1331,27 @@ if(WW_PACK_RUNTIME)
   endif()
 endif()
 
+# This metadata-only check also runs for cross-built Linux artifacts. Packed
+# builds must check the embedded application as well as the public launcher.
+if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT ANDROID
+    AND NOT WW_BUILD_UNIT_TESTS
+    AND NOT (ENABLE_ASAN OR ENABLE_TSAN OR ENABLE_LSAN OR ENABLE_USAN))
+  if(NOT CMAKE_READELF)
+    find_program(CMAKE_READELF NAMES readelf llvm-readelf REQUIRED)
+  endif()
+  set(waterwall_dependency_binaries "$<TARGET_FILE:${WATERWALL_APPLICATION_TARGET}>")
+  if(WW_PACK_RUNTIME)
+    list(APPEND waterwall_dependency_binaries "$<TARGET_FILE:Waterwall>")
+  endif()
+  add_test(NAME waterwall.linux_runtime_dependencies
+    COMMAND "${CMAKE_COMMAND}"
+      "-DREADELF=${CMAKE_READELF}"
+      "-DWATERWALL_BINARIES=${waterwall_dependency_binaries}"
+      -P "${PROJECT_SOURCE_DIR}/tests/linux_runtime_dependencies.cmake")
+  set_tests_properties(waterwall.linux_runtime_dependencies PROPERTIES
+    TIMEOUT 30 LABELS "policy;build;linking")
+endif()
+
 if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING)
   target_compile_definitions(${WATERWALL_APPLICATION_TARGET} PRIVATE WATERWALL_SYSTEM_LOAD_TEST_HOOKS=1)
   add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tests)

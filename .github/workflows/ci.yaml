@@ -345,9 +345,14 @@ jobs:
         run: >
           cmake --preset ${{ matrix.preset }}
           -DWW_PACK_RUNTIME=${{ matrix.pack_runtime }}
+          -DBUILD_TESTING=ON
           -DCPM_SOURCE_CACHE="${{ env.cpm-path }}"
       - name: Build
         run: cmake --build --preset ${{ matrix.preset }}
+      - name: Check Linux runtime dependencies
+        run: >
+          ctest --test-dir build/${{ matrix.preset }} -C Release
+          -R '^waterwall\.linux_runtime_dependencies$' --output-on-failure --no-tests=error
       - name: Network namespace preflight
         if: matrix.preset == 'linux-gcc-x64'
         run: bash tests/run_test_lane.sh preflight build/${{ matrix.preset }}

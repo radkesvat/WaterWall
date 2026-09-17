@@ -1375,6 +1375,34 @@ set(MI_SECURE OFF)
 
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/vendor/mimalloc)
 
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT ANDROID)
+    # Mimalloc exports -latomic whenever it is available, even from its static
+    # target. -static-libgcc/-static-libstdc++ do not make that dependency static.
+    get_directory_property(mimalloc_atomic_library
+        DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/vendor/mimalloc" DEFINITION MI_LIB_ATOMIC)
+    if(mimalloc_atomic_library)
+        get_filename_component(mimalloc_atomic_directory "${mimalloc_atomic_library}" DIRECTORY)
+        find_library(WW_ATOMIC_STATIC_LIBRARY NAMES libatomic.a
+            HINTS ${mimalloc_atomic_directory} ${CMAKE_C_IMPLICIT_LINK_DIRECTORIES}
+            REQUIRED)
+        # Preserve the upstream link interface and ordering, replacing only the
+        # detected atomic library (which can also be an absolute shared path).
+        foreach(link_property IN ITEMS LINK_LIBRARIES INTERFACE_LINK_LIBRARIES)
+            get_target_property(mimalloc_libraries mimalloc-static ${link_property})
+            set(mimalloc_static_libraries "")
+            foreach(library IN LISTS mimalloc_libraries)
+                if(library STREQUAL mimalloc_atomic_library)
+                    set(library "${WW_ATOMIC_STATIC_LIBRARY}")
+                elseif(library STREQUAL "$<LINK_ONLY:${mimalloc_atomic_library}>")
+                    set(library "$<LINK_ONLY:${WW_ATOMIC_STATIC_LIBRARY}>")
+                endif()
+                list(APPEND mimalloc_static_libraries "${library}")
+            endforeach()
+            set_property(TARGET mimalloc-static PROPERTY ${link_property} "${mimalloc_static_libraries}")
+        endforeach()
+    endif()
+endif()
+
 if(MINGW)
     # mingw-w64 omits this WinError.h constant, which the Windows mimalloc
     # backend uses to classify retryable virtual-memory allocation failures.
