@@ -3,6 +3,7 @@
 #include "ev_memory.h"
 #include "startup.h"
 #include "tunnel_orderly_shutdown_harness.h"
+#include "wloop_internal.h"
 
 enum
 {
@@ -220,7 +221,7 @@ static void caseRequiredStartupFailuresPropagateStartupStatus(void)
     state->connection_count         = 1;
 
     tosResetProcessApi(true);
-    eventloopTestFailNextTryZalloc();
+    wtimerTestFailNextAcquire();
     track_next_allocation        = true;
     tracked_allocation           = NULL;
     tracked_free_count           = 0;
@@ -256,7 +257,7 @@ static void caseAcceptedQueuedTimerSetupFailureUsesCleanup(void)
     twfRequire(tracked_allocation != NULL && tracked_free_count == 0,
                "accepted queued setup released its payload before settlement");
 
-    eventloopTestFailNextTryZalloc();
+    wtimerTestFailNextAcquire();
     tosPumpWorker(&fixture.env, 0);
     twfRequireEqualU32((uint32_t) tracked_free_count, 1, "accepted setup cleanup did not release the stream id once");
     tosRequireAcceptedRequest(1);

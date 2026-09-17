@@ -15,6 +15,7 @@
 #include "ev_memory.h"
 #include "startup.h"
 #include "tunnel_orderly_shutdown_harness.h"
+#include "wloop_internal.h"
 
 enum
 {
@@ -268,7 +269,7 @@ static void caseSynchronousStartRefusalPropagatesStartupStatus(void)
     tester->chain        = &chain;
 
     ww_startup_context_t startup = {0};
-    eventloopTestFailNextTryZalloc();
+    wtimerTestFailNextAcquire();
     wwStartupContextBegin(&startup);
     testerclientTunnelOnStart(tester);
     twfRequire(! wwStartupSucceeded(wwStartupContextEnd(&startup)),
@@ -297,7 +298,7 @@ static void caseAcceptedQueuedTimerSetupFailureUsesCleanup(void)
     twfRequire(wwStartupSucceeded(wwStartupContextEnd(&startup)), "accepted queued setup reported startup failure");
     tosRequireNoProcessApiCall();
 
-    eventloopTestFailNextTryZalloc();
+    wtimerTestFailNextAcquire();
     tosPumpWorker(&env, 0);
     tosRequireAcceptedRequest(1);
 

@@ -9,6 +9,7 @@
 
 #include "ev_memory.h"
 #include "tunnel_line_failure_harness.h"
+#include "wloop_internal.h"
 
 enum
 {
@@ -347,7 +348,7 @@ static void caseTimeoutInstallFailureClosesEveryRoleOnce(void)
     line_t                            *main_line = NULL;
     timeoutFixtureSetup(&fixture, &main_line);
 
-    eventloopTestFailNextTryZalloc();
+    wtimerTestFailNextAcquire();
     connectionfisherclientTunnelUpStreamInit(fixture.fisher, main_line);
 
     twfRequireEqualU32((uint32_t) fixture.env.loop->ntimers, 0, "failed ConnectionFisher timeout remained armed");

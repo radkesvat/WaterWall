@@ -48,6 +48,12 @@ void genericpoolShrink(generic_pool_t *pool)
 #endif
 }
 
+void genericpoolTryReCharge(generic_pool_t *pool)
+{
+    const uint32_t increase = min(pool->cap - pool->len, pool->cap / 2);
+    pool->len += masterpoolTryGetItems(pool->mp, &pool->available[pool->len], increase, pool);
+}
+
 /**
  * Performs the initial charge of the pool.
  * @param pool The generic pool to charge.

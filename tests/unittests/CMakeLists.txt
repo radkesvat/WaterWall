@@ -3217,7 +3217,7 @@ add_waterwall_unit_test(
 # Category-B orderly-shutdown failure injection. One executable per tunnel so
 # that only one tunnel's structure.h is ever visible in a translation unit.
 # Direct public-wtimer callers wrap wtimerAdd. Scheduler-backed delayed callers
-# inject at eventloopTryZalloc(), the production recoverable timer boundary.
+# inject at recoverable timer acquisition, including warmed pool caches.
 foreach(orderly_case IN ITEMS
   "TesterClient|testerclient_orderly_shutdown_test|testerclient|OFF"
   "SpeedTestClient|speedtestclient_orderly_shutdown_test|speedtestclient|OFF"

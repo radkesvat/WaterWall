@@ -62,6 +62,7 @@ typedef struct worker_s
     dns_resolver_t          dns_resolver;  // Worker-local async DNS resolver.
     buffer_pool_t          *buffer_pool;   // Buffer pool for managing memory buffers.
     generic_pool_t         *context_pool;  // Generic pool for managing context objects.
+    generic_pool_t         *timer_pool;    // Owner-local delayed-message timeout records.
     worker_message_queue_t *message_queue; // Worker-owned queued/timed messages.
     wthread_t               thread;        // Thread associated with the worker.
     // Lifetime lock for loop/message_queue and the worker phase protocol.
@@ -100,8 +101,8 @@ extern thread_local wid_t tl_wid; // Thread-local worker ID. */
 bool workerInit(worker_t *worker, wid_t wid, bool eventloop);
 
 /**
- * Transactionally construct the worker's WIO and context pool metadata.
- * Returns false without publishing either pool when any constructor fails.
+ * Transactionally construct WIO, context, and event-worker timer pool metadata.
+ * Returns false without publishing pools when any constructor fails.
  */
 bool workerTryCreateCorePools(worker_t *worker);
 bool workerTryCreateBufferPool(worker_t *worker);

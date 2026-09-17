@@ -1357,7 +1357,9 @@ set(LIBS ${LIBS} ww_lwip)
 set(MI_USE_CXX OFF) 
 set(MI_NO_USE_CXX ON)
 set(MI_OVERRIDE OFF)
-set(MI_XMALLOC ON)
+# WaterWall's ordinary wrappers enforce fatal allocation failure. Explicit
+# recoverable allocation must be able to receive NULL from the same backend.
+set(MI_XMALLOC OFF)
 if(WW_HAVE_ADVANCED_CPU_INSTRUCTIONS AND WW_HAVE_AVX2)
     set(MI_OPT_ARCH 1)
     set(MI_OPT_SIMD 1)
@@ -1611,6 +1613,7 @@ if(BUILD_TESTING)
         bufio/buffer_stream.c
         libc/wfrand.c
         instance/global_state.c
+        managers/memory_manager.c
         managers/signal_manager.c
         managers/node_manager.c
         managers/windivert_manager.c

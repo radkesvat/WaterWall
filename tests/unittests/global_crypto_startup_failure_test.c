@@ -102,7 +102,8 @@ static void auditFailedStartup(void)
         GSTATE.openssl_dedicated_memory == NULL && GSTATE.masterpool_buffer_pools_large == NULL &&
         GSTATE.masterpool_buffer_pools_medium == NULL && GSTATE.masterpool_buffer_pools_small == NULL &&
         GSTATE.masterpool_buffer_pools_splice == NULL && GSTATE.masterpool_wios == NULL &&
-        GSTATE.masterpool_context_pools == NULL && GSTATE.masterpool_messages == NULL;
+        GSTATE.masterpool_context_pools == NULL && GSTATE.masterpool_messages == NULL &&
+        GSTATE.masterpool_timers == NULL;
     if (! clean)
     {
         fprintf(stderr,

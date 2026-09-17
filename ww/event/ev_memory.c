@@ -32,59 +32,40 @@ long eventloopFreeCount(void)
     return (long) s_free_cnt;
 }
 
-void *eventloopMalloc(size_t size)
+static void *eventloopCountAllocation(void *ptr)
 {
-    atomicIncRelaxed(&s_alloc_cnt);
-    void *ptr = memoryAllocate(size);
-    if (! ptr)
+    if (ptr != NULL)
     {
-        printError("malloc failed!\n");
-        exit(-1);
+        atomicIncRelaxed(&s_alloc_cnt);
     }
     return ptr;
+}
+
+void *eventloopMalloc(size_t size)
+{
+    return eventloopCountAllocation(memoryAllocate(size));
 }
 
 void *eventloopRealloc(void *oldptr, size_t newsize, size_t oldsize)
 {
-    atomicIncRelaxed(&s_alloc_cnt);
     if (oldptr)
         atomicIncRelaxed(&s_free_cnt);
     void *ptr = memoryReAllocate(oldptr, newsize);
-    if (! ptr)
-    {
-        printError("realloc failed!\n");
-        exit(-1);
-    }
     if (newsize > oldsize)
     {
         memoryZero((char *) ptr + oldsize, newsize - oldsize);
     }
-    return ptr;
+    return eventloopCountAllocation(ptr);
 }
 
 void *eventloopCalloc(size_t nmemb, size_t size)
 {
-    atomicIncRelaxed(&s_alloc_cnt);
-    void *ptr = memoryAllocateZero(nmemb * size);
-    if (! ptr)
-    {
-        printError("calloc failed!\n");
-        exit(-1);
-    }
-
-    return ptr;
+    return eventloopCountAllocation(memoryCalloc(nmemb, size));
 }
 
 void *eventloopZalloc(size_t size)
 {
-    atomicIncRelaxed(&s_alloc_cnt);
-    void *ptr = memoryAllocateZero(size);
-    if (! ptr)
-    {
-        printError("malloc failed!\n");
-        exit(-1);
-    }
-    return ptr;
+    return eventloopCountAllocation(memoryAllocateZero(size));
 }
 
 void *eventloopTryZalloc(size_t size)
@@ -96,15 +77,7 @@ void *eventloopTryZalloc(size_t size)
     }
 #endif
 
-    /* MI_XMALLOC makes the ordinary memoryAllocate() family fail-fast. Use
-     * the unoverridden CRT family for this deliberately recoverable boundary;
-     * MI_OVERRIDE is disabled by the build. */
-    void *ptr = calloc(1, size);
-    if (ptr != NULL)
-    {
-        atomicIncRelaxed(&s_alloc_cnt);
-    }
-    return ptr;
+    return eventloopCountAllocation(memoryTryAllocateZero(size));
 }
 
 void eventloopFree(void *ptr)
@@ -112,16 +85,6 @@ void eventloopFree(void *ptr)
     if (ptr)
     {
         memoryFree(ptr);
-        ptr = NULL;
-        atomicIncRelaxed(&s_free_cnt);
-    }
-}
-
-void eventloopTryFree(void *ptr)
-{
-    if (ptr != NULL)
-    {
-        free(ptr);
         atomicIncRelaxed(&s_free_cnt);
     }
 }

@@ -146,6 +146,18 @@ static void testAccessorsOnOwningWorker(void)
     require(! currentThreadIsEventWorkerWID(1), "worker 0 claimed to own worker 1");
 }
 
+static void testWorkerTimerPools(void)
+{
+    worker_t *worker = getWorker(0);
+    require(worker->timer_pool != NULL && worker->loop->timer_pool == worker->timer_pool,
+            "worker loop did not receive its timer pool");
+    require(worker->timer_pool->mp == GSTATE.masterpool_timers && worker->timer_pool->cap == 2 * RAM_PROFILE &&
+                GSTATE.masterpool_timers->cap == 4 * RAM_PROFILE,
+            "timer pool sizes do not follow the memory profile");
+    require(getWorker(1)->timer_pool != worker->timer_pool, "workers share a local timer pool");
+    require(getWorker(getTotalWorkersCount() - 1)->timer_pool == NULL, "pseudo-worker has an unused timer pool");
+}
+
 static void testPredicatesRejectUnregisteredAndLwip(void)
 {
     const wid_t lwip_wid = getTotalWorkersCount() - 1;
@@ -764,7 +776,7 @@ static void testWakeupFailurePreservesBothOwnershipContracts(void)
 static void testTimerAllocationFailureRefusesWithoutEarlyExecution(void)
 {
     probeReset();
-    eventloopTestFailNextTryZalloc();
+    wtimerTestFailNextAcquire();
     require(sendWorkerMessageTimedWithCleanup(
                 0, (WorkerMessageCallback) probeCallback, probeCleanup, 25U, NULL, NULL, NULL) ==
                 kWorkerMessageSubmitRejectedCleanupRan,
@@ -2841,6 +2853,7 @@ int main(int argc, char **argv)
     initTestGlobalState();
 
     testAccessorsOnOwningWorker();
+    testWorkerTimerPools();
     testPredicatesRejectUnregisteredAndLwip();
 
     testOwningWorkerOutsideCallbackQueues();

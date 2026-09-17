@@ -111,14 +111,14 @@ static inline size_t masterpoolGetCheckedOut(const master_pool_t *const pool)
 master_pool_item_t *masterpoolRequireCreatedItem(master_pool_t *pool, master_pool_item_t *item, void *userdata);
 
 /**
- * Retrieves a specified number of items from the master pool.
+ * Takes up to count cached items without creating new ones.
  * @param pool The master pool.
  * @param iptr Pointer to the array where the items will be stored.
  * @param count The number of items to retrieve.
- * @param userdata User data passed to the create handler.
+ * @return Number of initialized entries in iptr.
  */
-static inline void masterpoolGetItems(master_pool_t *const pool, master_pool_item_t **const iptr, const uint32_t count,
-                                      void *userdata)
+static inline uint32_t masterpoolTakeCachedItems(master_pool_t *const pool, master_pool_item_t **const iptr,
+                                                 const uint32_t count)
 {
     uint32_t i = 0;
 
@@ -144,10 +144,35 @@ static inline void masterpoolGetItems(master_pool_t *const pool, master_pool_ite
         mutexUnlock(&(pool->mutex));
     }
 
-    for (; i < count; i++)
+    return i;
+}
+
+/* Ordinary acquisition remains fail-fast if an item cannot be created. */
+static inline void masterpoolGetItems(master_pool_t *const pool, master_pool_item_t **const iptr, const uint32_t count,
+                                      void *userdata)
+{
+    for (uint32_t i = masterpoolTakeCachedItems(pool, iptr, count); i < count; i++)
     {
         iptr[i] = masterpoolRequireCreatedItem(pool, pool->create_item_handle(userdata), userdata);
     }
+}
+
+/* Fallible acquisition retains any successfully acquired prefix. A nullable
+ * create callback is required for allocation failure to be recoverable. */
+static inline uint32_t masterpoolTryGetItems(master_pool_t *const pool, master_pool_item_t **const iptr,
+                                             const uint32_t count, void *userdata)
+{
+    uint32_t i = masterpoolTakeCachedItems(pool, iptr, count);
+    for (; i < count; ++i)
+    {
+        master_pool_item_t *item = pool->create_item_handle(userdata);
+        if (item == NULL)
+        {
+            break;
+        }
+        iptr[i] = item;
+    }
+    return i;
 }
 
 /**

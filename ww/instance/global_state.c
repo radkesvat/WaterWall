@@ -46,6 +46,7 @@ static void globalstateDestroyMasterPools(void)
     masterpoolMakeEmpty(GSTATE.masterpool_wios);
     masterpoolMakeEmpty(GSTATE.masterpool_context_pools);
     masterpoolMakeEmpty(GSTATE.masterpool_messages);
+    masterpoolMakeEmpty(GSTATE.masterpool_timers);
 
     masterpoolDestroy(GSTATE.masterpool_buffer_pools_large);
     masterpoolDestroy(GSTATE.masterpool_buffer_pools_small);
@@ -54,6 +55,7 @@ static void globalstateDestroyMasterPools(void)
     masterpoolDestroy(GSTATE.masterpool_wios);
     masterpoolDestroy(GSTATE.masterpool_context_pools);
     masterpoolDestroy(GSTATE.masterpool_messages);
+    masterpoolDestroy(GSTATE.masterpool_timers);
 
     GSTATE.masterpool_buffer_pools_large = NULL;
     GSTATE.masterpool_buffer_pools_small = NULL;
@@ -62,6 +64,7 @@ static void globalstateDestroyMasterPools(void)
     GSTATE.masterpool_wios               = NULL;
     GSTATE.masterpool_context_pools       = NULL;
     GSTATE.masterpool_messages           = NULL;
+    GSTATE.masterpool_timers              = NULL;
 }
 
 static err_t wwDefaultInternalLwipIpv4Hook(struct pbuf *p, struct netif *inp)
@@ -80,9 +83,10 @@ static bool initializeMasterPools(void)
     master_pool_t *wios     = masterpoolCreateWithCapacity(2 * RAM_PROFILE);
     master_pool_t *contexts = masterpoolCreateWithCapacity(2 * RAM_PROFILE);
     master_pool_t *messages = masterpoolCreateWithCapacity(2 * RAM_PROFILE);
+    master_pool_t *timers   = masterpoolCreateWithCapacity(2 * RAM_PROFILE);
 
     if (UNLIKELY(large == NULL || small == NULL || splice == NULL || medium == NULL || wios == NULL ||
-                 contexts == NULL || messages == NULL))
+                 contexts == NULL || messages == NULL || timers == NULL))
     {
         masterpoolDestroy(large);
         masterpoolDestroy(small);
@@ -91,6 +95,7 @@ static bool initializeMasterPools(void)
         masterpoolDestroy(wios);
         masterpoolDestroy(contexts);
         masterpoolDestroy(messages);
+        masterpoolDestroy(timers);
         printError("GlobalState: failed to construct master-pool metadata");
         return false;
     }
@@ -102,6 +107,7 @@ static bool initializeMasterPools(void)
     GSTATE.masterpool_wios               = wios;
     GSTATE.masterpool_context_pools       = contexts;
     GSTATE.masterpool_messages           = messages;
+    GSTATE.masterpool_timers              = timers;
 
     workerMessagesInstallMasterPoolCallbacks(GSTATE.masterpool_messages);
     return true;

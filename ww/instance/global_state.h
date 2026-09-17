@@ -59,6 +59,7 @@ typedef struct ww_global_state_s
     master_pool_t                 *masterpool_wios;
     master_pool_t                 *masterpool_context_pools;
     master_pool_t                 *masterpool_messages;
+    master_pool_t                 *masterpool_timers;
     worker_t                      *workers;
     struct application_shutdown_s *application_shutdown;
     struct signal_manager_s       *signal_manager;

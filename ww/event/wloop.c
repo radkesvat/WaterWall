@@ -192,9 +192,9 @@ static int timersCompare(const struct heap_node *lhs, const struct heap_node *rh
 static void wtimerFreeAllocation(wtimer_t *timer)
 {
     assert(timer != NULL);
-    if (timer->fallible_allocation)
+    if (timer->allocation_pool != NULL)
     {
-        eventloopTryFree(timer);
+        genericpoolReuseItem(timer->allocation_pool, timer);
         return;
     }
     eventloopFree(timer);
@@ -1630,6 +1630,26 @@ wtimer_t *wtimerAdd(wloop_t *loop, wtimer_cb cb, uint32_t timeout_ms, uint32_t r
     return (wtimer_t *) timer;
 }
 
+static pool_item_t *wtimerPoolAllocate(generic_pool_t *pool)
+{
+    discard pool;
+    return eventloopTryZalloc(sizeof(wtimeout_t));
+}
+
+generic_pool_t *wtimerPoolCreate(master_pool_t *master, uint32_t pool_width)
+{
+    return genericpoolCreateWithCapacity(master, pool_width, wtimerPoolAllocate, eventloopFree);
+}
+
+#ifdef WW_EVENT_MEMORY_TEST_SEAM
+static atomic_bool s_fail_next_timer_acquire;
+
+void wtimerTestFailNextAcquire(void)
+{
+    atomicStoreExplicit(&s_fail_next_timer_acquire, true, memory_order_release);
+}
+#endif
+
 wtimer_try_add_result_e wtimerTryAdd(wloop_t *loop, wtimer_cb cb, uint32_t timeout_ms, uint32_t repeat,
                                      wtimer_t **timer_out)
 {
@@ -1652,14 +1672,25 @@ wtimer_try_add_result_e wtimerTryAdd(wloop_t *loop, wtimer_cb cb, uint32_t timeo
         return kWTimerTryAddAdmissionClosed;
     }
 
-    wtimeout_t *timer = eventloopTryZalloc(sizeof(*timer));
+#ifdef WW_EVENT_MEMORY_TEST_SEAM
+    if (atomicExchangeExplicit(&s_fail_next_timer_acquire, false, memory_order_acq_rel))
+    {
+        mutexUnlock(&loop->normal_admission_mutex);
+        return kWTimerTryAddResourceFailure;
+    }
+#endif
+
+    wtimeout_t *timer =
+        loop->timer_pool != NULL ? genericpoolTryGetItem(loop->timer_pool) : eventloopTryZalloc(sizeof(*timer));
     if (timer == NULL)
     {
         mutexUnlock(&loop->normal_admission_mutex);
         return kWTimerTryAddResourceFailure;
     }
 
-    timer->fallible_allocation = 1;
+    /* Cached records may still contain pending flags, callbacks and list links. */
+    memoryZero(timer, sizeof(*timer));
+    timer->allocation_pool     = loop->timer_pool;
     timer->event_type          = WEVENT_TYPE_TIMEOUT;
     timer->priority            = WEVENT_HIGHEST_PRIORITY;
     timer->repeat              = repeat;

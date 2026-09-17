@@ -19,6 +19,9 @@ typedef struct dedicated_memory_s dedicated_memory_t;
 
 void *memoryAllocate(size_t size);
 void *memoryAllocateZero(size_t size);
+/* Recoverable zero-initialized allocation. Returns NULL on failure; successful
+ * storage belongs to the ordinary allocator and is released with memoryFree(). */
+void *memoryTryAllocateZero(size_t size);
 bool  memoryAlignedAllocationSizeIsRepresentable(size_t size, size_t alignment);
 void *memoryAllocateAligned(size_t size, size_t alignment);
 void *memoryAllocateAlignedZero(size_t size, size_t alignment);

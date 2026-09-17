@@ -66,6 +66,9 @@ struct wloop_s
     struct heap      realtimers; // realtime
     struct list_head quiesced_timers;
     uint32_t         ntimers;
+    /* Optional worker-owned pool for recoverable timeout records. Installed
+     * before use and kept alive until this loop has released every timer. */
+    generic_pool_t *timer_pool;
     // ios: with fd as array.index
     struct io_array ios;
     uint32_t        nios;
@@ -104,16 +107,16 @@ struct widle_s
     struct list_node node;
 };
 
-/* `fallible_allocation` records the matching release family for the internal
- * recoverable timer path. Normal public timers are zero-initialized here. */
+/* Pooled timers retain their owner pool through pending/deferred release.
+ * All timer storage uses the ordinary WaterWall allocation family. */
 #define WTIMER_FIELDS                                                                                                  \
     WEVENT_FIELDS                                                                                                      \
     uint32_t         repeat;                                                                                           \
     uint64_t         next_timeout;                                                                                     \
     struct heap_node node;                                                                                             \
     struct list_node quiesced_node;                                                                                    \
-    unsigned         quiesced : 1;                                                                                     \
-    unsigned         fallible_allocation : 1;
+    generic_pool_t  *allocation_pool;                                                                                  \
+    unsigned         quiesced : 1;
 
 struct wtimer_s
 {

@@ -9,6 +9,7 @@
 #include "wevent.h"
 #include "wfrand.h"
 #include "wloop.h"
+#include "wloop_internal.h"
 #include "worker_messages.h"
 #include "wthread.h"
 
@@ -309,6 +310,7 @@ static void workerDestroyPools(worker_t *worker)
     {
         genericpoolDestroy(worker->context_pool);
     }
+    genericpoolDestroy(worker->timer_pool);
     if (worker->buffer_pool)
     {
         bufferpoolDestroy(worker->buffer_pool);
@@ -316,6 +318,7 @@ static void workerDestroyPools(worker_t *worker)
 
     worker->wios_pool    = NULL;
     worker->context_pool = NULL;
+    worker->timer_pool   = NULL;
     worker->buffer_pool  = NULL;
 }
 
@@ -410,16 +413,20 @@ bool workerTryCreateCorePools(worker_t *worker)
         threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(GSTATE.masterpool_wios, sizeof(wio_t), RAM_PROFILE);
     generic_pool_t *context_pool = genericpoolCreateWithDefaultAllocatorAndCapacity(
         GSTATE.masterpool_context_pools, sizeof(context_t), RAM_PROFILE);
+    generic_pool_t *timer_pool =
+        worker->has_event_loop ? wtimerPoolCreate(GSTATE.masterpool_timers, RAM_PROFILE) : NULL;
 
-    if (UNLIKELY(wios_pool == NULL || context_pool == NULL))
+    if (UNLIKELY(wios_pool == NULL || context_pool == NULL || (worker->has_event_loop && timer_pool == NULL)))
     {
         threadsafegenericpoolDestroy(wios_pool);
         genericpoolDestroy(context_pool);
+        genericpoolDestroy(timer_pool);
         return false;
     }
 
     worker->wios_pool    = wios_pool;
     worker->context_pool = context_pool;
+    worker->timer_pool   = timer_pool;
     return true;
 }
 
@@ -477,7 +484,7 @@ bool workerInit(worker_t *worker, wid_t wid, bool eventloop)
 
     if (UNLIKELY(! workerTryCreateCorePools(worker)))
     {
-        LOGF("Worker %d: failed to construct WIO/context pool metadata", (int) wid);
+        LOGF("Worker %d: failed to construct WIO/context/timer pool metadata", (int) wid);
         workerRollbackInitialization(worker);
         return false;
     }
@@ -493,6 +500,7 @@ bool workerInit(worker_t *worker, wid_t wid, bool eventloop)
     {
         // note that loop depeneds on worker->buffer_pool
         worker->loop = wloopCreate(0, worker->buffer_pool, wid);
+        worker->loop->timer_pool = worker->timer_pool;
 
         int dns_rc = asyncdnsInit(&worker->dns_resolver, worker->loop, &GSTATE.dns_options);
         if (dns_rc != ARES_SUCCESS)

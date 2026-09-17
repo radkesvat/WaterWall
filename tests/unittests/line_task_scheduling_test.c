@@ -540,7 +540,7 @@ static void testTimerResourceFailures(line_task_test_env_t *env)
 
     probeReset(&probe);
     line = createLine(env, 0);
-    eventloopTestFailNextTryZalloc();
+    wtimerTestFailNextAcquire();
     require(lineScheduleDelayedTask(line, probeTask, 25, probe_tunnel, probeCancellation) ==
                 kLineTaskSubmitRejectedSettled,
             "owner timer allocation failure did not report RejectedSettled");
@@ -553,7 +553,7 @@ static void testTimerResourceFailures(line_task_test_env_t *env)
     tracked_buffer_lifetime_t owner_lifetime;
     line        = createLine(env, 0);
     sbuf_t *buf = createTrackedPooledBuffer(line, &probe, &owner_lifetime);
-    eventloopTestFailNextTryZalloc();
+    wtimerTestFailNextAcquire();
     require(lineScheduleDelayedTaskWithBuf(line, probeTaskWithBuf, 25, probe_tunnel, buf, probeCancellation) ==
                 kLineTaskSubmitRejectedSettled,
             "buffered owner timer allocation failure did not report RejectedSettled");
@@ -579,7 +579,7 @@ static void testTimerResourceFailures(line_task_test_env_t *env)
         .kind     = kForeignSubmitDelayed,
     };
     wthread_t poster;
-    eventloopTestFailNextTryZalloc();
+    wtimerTestFailNextAcquire();
     require(threadCreate(&poster, foreignSubmitRoutine, &submission) == kWThreadErrorNone,
             "failed to start foreign timer-failure submitter");
     require(threadJoin(poster) == 0, "failed to join foreign timer-failure submitter");
@@ -606,7 +606,7 @@ static void testTimerResourceFailures(line_task_test_env_t *env)
         .delay_ms = 25,
         .kind     = kForeignSubmitBufferedDelayed,
     };
-    eventloopTestFailNextTryZalloc();
+    wtimerTestFailNextAcquire();
     require(threadCreate(&poster, foreignSubmitRoutine, &submission) == kWThreadErrorNone,
             "failed to start foreign buffered timer-failure submitter");
     require(threadJoin(poster) == 0, "failed to join foreign buffered timer-failure submitter");
@@ -631,7 +631,7 @@ static void testTimerResourceFailures(line_task_test_env_t *env)
     for (uint32_t attempt = 0; attempt < 32U; ++attempt)
     {
         probeReset(&probe);
-        eventloopTestFailNextTryZalloc();
+        wtimerTestFailNextAcquire();
         require(lineScheduleDelayedTask(line, probeTask, 25, probe_tunnel, probeCancellation) ==
                     kLineTaskSubmitRejectedSettled,
                 "repeated timer allocation failure was not settled synchronously");
@@ -785,7 +785,7 @@ static void testLineDeathNullAndBufferedSettlement(line_task_test_env_t *env)
     line                  = createLine(env, 0);
     sbuf_t *reentrant_buf = createTrackedPooledBuffer(line, &probe, &reentrant_lifetime);
     lineRef(line);
-    eventloopTestFailNextTryZalloc();
+    wtimerTestFailNextAcquire();
     require(
         lineScheduleDelayedTaskWithBuf(line, probeTaskWithBuf, 25, probe_tunnel, reentrant_buf, probeCancellation) ==
             kLineTaskSubmitRejectedSettled,
