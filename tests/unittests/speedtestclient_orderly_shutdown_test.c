@@ -3,7 +3,6 @@
 #include "ev_memory.h"
 #include "startup.h"
 #include "tunnel_orderly_shutdown_harness.h"
-#include "wloop_internal.h"
 
 enum
 {
@@ -94,7 +93,7 @@ line_task_submit_result_e __wrap_lineScheduleDelayedTask(line_t *const line, Lin
     lineRef(line);
     if (on_cancel != NULL)
     {
-        on_cancel(t, line, kLineTaskCancelResourceFailure);
+        on_cancel(t, line, kLineTaskCancelAdmissionClosed);
     }
     lineUnref(line);
     return kLineTaskSubmitRejectedSettled;
@@ -221,7 +220,7 @@ static void caseRequiredStartupFailuresPropagateStartupStatus(void)
     state->connection_count         = 1;
 
     tosResetProcessApi(true);
-    wtimerTestFailNextAcquire();
+    workerMessagesCloseAdmission(getWorker(0));
     track_next_allocation        = true;
     tracked_allocation           = NULL;
     tracked_free_count           = 0;
@@ -236,9 +235,9 @@ static void caseRequiredStartupFailuresPropagateStartupStatus(void)
     fixtureTeardown(&fixture);
 }
 
-static void caseAcceptedQueuedTimerSetupFailureUsesCleanup(void)
+static void caseAcceptedQueuedTimerAdmissionClosureUsesCleanup(void)
 {
-    twfSetCase("SpeedTestClient accepted queued timer failure uses runtime cleanup");
+    twfSetCase("SpeedTestClient accepted queued timer admission closure uses cleanup");
     tosResetProcessApi(true);
     speedtestclient_fixture_t fixture;
     fixtureSetup(&fixture);
@@ -257,10 +256,10 @@ static void caseAcceptedQueuedTimerSetupFailureUsesCleanup(void)
     twfRequire(tracked_allocation != NULL && tracked_free_count == 0,
                "accepted queued setup released its payload before settlement");
 
-    wtimerTestFailNextAcquire();
+    workerMessagesCloseAdmission(getWorker(0));
     tosPumpWorker(&fixture.env, 0);
     twfRequireEqualU32((uint32_t) tracked_free_count, 1, "accepted setup cleanup did not release the stream id once");
-    tosRequireAcceptedRequest(1);
+    tosRequireNoProcessApiCall();
 
     discard tosSetCurrentWorker(previous_wid);
     fixtureTeardown(&fixture);
@@ -359,7 +358,7 @@ int main(void)
 {
     caseWorkerStopDrainsOnlyItsPublishedSlots();
     caseRequiredStartupFailuresPropagateStartupStatus();
-    caseAcceptedQueuedTimerSetupFailureUsesCleanup();
+    caseAcceptedQueuedTimerAdmissionClosureUsesCleanup();
     caseEstStopsAfterSendAdmissionClosesLine();
     caseReportRejectionClosesOwnedLine();
     caseAcceptedReportCancellationLeavesOwnerDrainSafe();

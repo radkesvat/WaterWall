@@ -88,9 +88,6 @@ static inline void genericpoolDebugCheckThreadAccess(generic_pool_t *pool)
  */
 void genericpoolReCharge(generic_pool_t *pool);
 
-/* Keeps a partial refill when the nullable item allocator runs out of memory. */
-void genericpoolTryReCharge(generic_pool_t *pool);
-
 /**
  * Shrinks the pool by releasing a number of buffers.
  * @param pool The generic pool to shrink.
@@ -123,33 +120,6 @@ static inline pool_item_t *genericpoolGetItem(generic_pool_t *pool)
         --(pool->len);
         item = pool->available[pool->len];
     }
-    return item;
-}
-
-/* Returns NULL only when neither cached storage nor the pool's item allocator
- * can supply an item. Failed acquisition does not change checked-out counts. */
-static inline pool_item_t *genericpoolTryGetItem(generic_pool_t *pool)
-{
-    pool_item_t *item;
-#if BYPASS_GENERIC_POOL == 1
-    item = pool->create_item_handle(pool);
-    if (item == NULL)
-    {
-        return NULL;
-    }
-#else
-    genericpoolDebugCheckThreadAccess(pool);
-    if (UNLIKELY(pool->len == 0))
-    {
-        genericpoolTryReCharge(pool);
-        if (pool->len == 0)
-        {
-            return NULL;
-        }
-    }
-    item = pool->available[--pool->len];
-#endif
-    masterpoolRecordCheckout(pool->mp);
     return item;
 }
 

@@ -532,124 +532,6 @@ static void testSynchronousRefusals(line_task_test_env_t *env)
     tunnelDestroy(probe_tunnel);
 }
 
-static void testTimerResourceFailures(line_task_test_env_t *env)
-{
-    line_task_probe_t probe;
-    line_t           *line;
-    tunnel_t         *probe_tunnel = probeTunnelCreate(&probe);
-
-    probeReset(&probe);
-    line = createLine(env, 0);
-    wtimerTestFailNextAcquire();
-    require(lineScheduleDelayedTask(line, probeTask, 25, probe_tunnel, probeCancellation) ==
-                kLineTaskSubmitRejectedSettled,
-            "owner timer allocation failure did not report RejectedSettled");
-    requireCancelDisposition(
-        &probe, kLineTaskCancelResourceFailure, "owner timer failure violated task XOR cancellation");
-    lineDestroy(line);
-    requirePoolBaseline(env, "owner timer failure leaked pooled records");
-
-    probeReset(&probe);
-    tracked_buffer_lifetime_t owner_lifetime;
-    line        = createLine(env, 0);
-    sbuf_t *buf = createTrackedPooledBuffer(line, &probe, &owner_lifetime);
-    wtimerTestFailNextAcquire();
-    require(lineScheduleDelayedTaskWithBuf(line, probeTaskWithBuf, 25, probe_tunnel, buf, probeCancellation) ==
-                kLineTaskSubmitRejectedSettled,
-            "buffered owner timer allocation failure did not report RejectedSettled");
-    requireCancelDisposition(
-        &probe, kLineTaskCancelResourceFailure, "buffered owner failure violated task XOR cancellation");
-    require(atomicLoadRelaxed(&probe.buffer_was_live_during_cancel), "buffer settled before cancellation notification");
-    require(atomicLoadRelaxed(&probe.buffer_releases) == 1, "owner cancellation did not settle buffer exactly once");
-    sbuf_t *reacquired = reacquireTrackedPooledBuffer(line, buf);
-    require(reacquired == buf, "owner cancellation destroyed its pooled buffer instead of recycling it");
-    lineReuseBuffer(line, reacquired);
-    lineDestroy(line);
-    requirePoolBaseline(env, "buffered owner timer failure leaked pooled records");
-
-    probeReset(&probe);
-    line_live_gate_t gate;
-    line = createLine(env, 0);
-    liveGateInit(&gate, line);
-    foreign_submit_t submission = {
-        .gate     = &gate,
-        .probe    = &probe,
-        .tunnel   = probe_tunnel,
-        .delay_ms = 25,
-        .kind     = kForeignSubmitDelayed,
-    };
-    wthread_t poster;
-    wtimerTestFailNextAcquire();
-    require(threadCreate(&poster, foreignSubmitRoutine, &submission) == kWThreadErrorNone,
-            "failed to start foreign timer-failure submitter");
-    require(threadJoin(poster) == 0, "failed to join foreign timer-failure submitter");
-    require(submission.result == kLineTaskSubmitAcceptedAsync,
-            "foreign timer setup was not reported as asynchronous admission");
-    pumpOwnerUntilTerminal(&probe, "foreign owner-side timer failure did not cancel");
-    requireCancelDisposition(
-        &probe, kLineTaskCancelResourceFailure, "foreign timer failure violated task XOR cancellation");
-    require(atomicLoadRelaxed(&probe.callback_wid) == 0,
-            "foreign timer failure cancellation did not run on the owner worker");
-    liveGateDestroy(&gate);
-    requirePoolBaseline(env, "foreign timer failure leaked pooled records");
-
-    probeReset(&probe);
-    tracked_buffer_lifetime_t foreign_lifetime;
-    line                = createLine(env, 0);
-    sbuf_t *foreign_buf = createTrackedPooledBuffer(line, &probe, &foreign_lifetime);
-    liveGateInit(&gate, line);
-    submission = (foreign_submit_t) {
-        .gate     = &gate,
-        .probe    = &probe,
-        .tunnel   = probe_tunnel,
-        .buf      = foreign_buf,
-        .delay_ms = 25,
-        .kind     = kForeignSubmitBufferedDelayed,
-    };
-    wtimerTestFailNextAcquire();
-    require(threadCreate(&poster, foreignSubmitRoutine, &submission) == kWThreadErrorNone,
-            "failed to start foreign buffered timer-failure submitter");
-    require(threadJoin(poster) == 0, "failed to join foreign buffered timer-failure submitter");
-    require(submission.result == kLineTaskSubmitAcceptedAsync,
-            "foreign buffered timer setup was not reported as asynchronous admission");
-    pumpOwnerUntilTerminal(&probe, "foreign buffered owner-side timer failure did not cancel");
-    requireCancelDisposition(
-        &probe, kLineTaskCancelResourceFailure, "foreign buffered timer failure violated task XOR cancellation");
-    require(atomicLoadRelaxed(&probe.callback_wid) == 0,
-            "foreign buffered timer failure cancellation did not run on the owner worker");
-    require(atomicLoadRelaxed(&probe.buffer_was_live_during_cancel),
-            "foreign delayed buffer settled before cancellation notification");
-    require(atomicLoadRelaxed(&probe.buffer_releases) == 1,
-            "foreign delayed cancellation did not settle its buffer exactly once");
-    reacquired = reacquireTrackedPooledBuffer(line, foreign_buf);
-    require(reacquired == foreign_buf, "foreign delayed cancellation did not recycle the buffer on the owner worker");
-    lineReuseBuffer(line, reacquired);
-    liveGateDestroy(&gate);
-    requirePoolBaseline(env, "foreign buffered timer failure leaked pooled records");
-
-    line = createLine(env, 0);
-    for (uint32_t attempt = 0; attempt < 32U; ++attempt)
-    {
-        probeReset(&probe);
-        wtimerTestFailNextAcquire();
-        require(lineScheduleDelayedTask(line, probeTask, 25, probe_tunnel, probeCancellation) ==
-                    kLineTaskSubmitRejectedSettled,
-                "repeated timer allocation failure was not settled synchronously");
-        requireCancelDisposition(
-            &probe, kLineTaskCancelResourceFailure, "repeated timer allocation failure lost terminal settlement");
-        requirePoolBaseline(env, "repeated timer allocation failure leaked or corrupted scheduler state");
-    }
-
-    probeReset(&probe);
-    require(lineScheduleDelayedTask(line, probeTask, 2, probe_tunnel, probeCancellation) == kLineTaskSubmitTimerArmed,
-            "timer heap did not accept work after repeated injected failures");
-    pumpOwnerUntilTerminal(&probe, "post-failure timer did not execute");
-    requireTaskDisposition(&probe, "post-failure timer violated task XOR cancellation");
-    requirePoolBaseline(env, "post-failure timer retained scheduler state");
-    lineDestroy(line);
-    tunnelDestroy(probe_tunnel);
-}
-
 static void testLineDeathNullAndBufferedSettlement(line_task_test_env_t *env)
 {
     line_task_probe_t probe;
@@ -785,13 +667,12 @@ static void testLineDeathNullAndBufferedSettlement(line_task_test_env_t *env)
     line                  = createLine(env, 0);
     sbuf_t *reentrant_buf = createTrackedPooledBuffer(line, &probe, &reentrant_lifetime);
     lineRef(line);
-    wtimerTestFailNextAcquire();
-    require(
-        lineScheduleDelayedTaskWithBuf(line, probeTaskWithBuf, 25, probe_tunnel, reentrant_buf, probeCancellation) ==
-            kLineTaskSubmitRejectedSettled,
-        "buffered re-entrant cancellation was not settled synchronously");
+    workerMessagesEnqueueTestSetFailure(kWorkerMessageEnqueueFailDequeGrowth);
+    require(lineScheduleTaskWithBuf(line, probeTaskWithBuf, probe_tunnel, reentrant_buf, probeCancellation) ==
+                kLineTaskSubmitRejectedSettled,
+            "buffered re-entrant cancellation was not settled synchronously");
     requireCancelDisposition(
-        &probe, kLineTaskCancelResourceFailure, "buffered re-entrant cancellation violated task XOR cancellation");
+        &probe, kLineTaskCancelEnqueueFailure, "buffered re-entrant cancellation violated task XOR cancellation");
     require(! lineIsAlive(line), "buffered re-entrant cancellation did not destroy the live line");
     require(atomicLoadRelaxed(&probe.buffer_was_live_during_cancel),
             "buffered re-entrant cancellation released the buffer before notification");
@@ -973,24 +854,22 @@ static void unexpectedPendingTimerCallback(wtimer_t *timer)
     require(false, "raw loop destruction dispatched a pending timer callback");
 }
 
-static void testPendingTryTimerLoopDestruction(void)
+static void testPendingTimerLoopDestruction(void)
 {
     const long outstanding_before = eventloopAllocCount() - eventloopFreeCount();
     wloop_t   *loop               = wloopCreate(0, NULL, 0);
-    wtimer_t  *pending_timer      = NULL;
-    wtimer_t  *heap_timer         = NULL;
+    wtimer_t  *pending_timer      = wtimerAdd(loop, unexpectedPendingTimerCallback, 60000, 1);
+    wtimer_t  *heap_timer         = wtimerAdd(loop, unexpectedPendingTimerCallback, 60000, 1);
 
-    require(wtimerTryAdd(loop, unexpectedPendingTimerCallback, 60000, 1, &pending_timer) == kWTimerTryAddInstalled,
-            "failed to install the raw-loop pending timer fixture");
-    require(wtimerTryAdd(loop, unexpectedPendingTimerCallback, 60000, 1, &heap_timer) == kWTimerTryAddInstalled,
-            "failed to install the raw-loop heap timer fixture");
+    require(pending_timer != NULL, "failed to install the raw-loop pending timer fixture");
+    require(heap_timer != NULL, "failed to install the raw-loop heap timer fixture");
     wtimerTestMakePendingOneShot(pending_timer);
     require(wloopNTimers(loop) == 1, "pending one-shot fixture corrupted the remaining timer heap");
 
     wloopDestroy(&loop);
     require(loop == NULL, "raw loop destruction did not consume the loop");
     require(eventloopAllocCount() - eventloopFreeCount() == outstanding_before,
-            "raw loop destruction leaked or mismatched the pending try-timer allocation");
+            "raw loop destruction leaked or mismatched the pending timer allocation");
 }
 
 int main(void)
@@ -1000,7 +879,6 @@ int main(void)
 
     testSuccessfulSubmissions(&env);
     testSynchronousRefusals(&env);
-    testTimerResourceFailures(&env);
     testLineDeathNullAndBufferedSettlement(&env);
 
     lineTaskEnvTeardown(&env);
@@ -1008,7 +886,7 @@ int main(void)
     testQuiescenceSettlement();
     testTeardownSettlement();
     testTimerInstallAdmissionBoundary();
-    testPendingTryTimerLoopDestruction();
+    testPendingTimerLoopDestruction();
 
     puts("line_task_scheduling_test: all cases passed");
     return 0;

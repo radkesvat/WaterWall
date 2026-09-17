@@ -773,21 +773,6 @@ static void testWakeupFailurePreservesBothOwnershipContracts(void)
     atomicStoreExplicit(&g_fail_wakeup_post, false, memory_order_release);
 }
 
-static void testTimerAllocationFailureRefusesWithoutEarlyExecution(void)
-{
-    probeReset();
-    wtimerTestFailNextAcquire();
-    require(sendWorkerMessageTimedWithCleanup(
-                0, (WorkerMessageCallback) probeCallback, probeCleanup, 25U, NULL, NULL, NULL) ==
-                kWorkerMessageSubmitRejectedCleanupRan,
-            "timer-allocation failure was reported as an armed delayed task");
-
-    require(atomicLoadRelaxed(&g_probe.ran) == 0,
-            "timer-allocation failure executed a minimum-delay callback synchronously");
-    require(atomicLoadRelaxed(&g_probe.cleaned) == 1,
-            "timer-allocation refusal did not run ownership cleanup exactly once");
-}
-
 static void testTimedRearmRefusalCleansExactlyOnce(void)
 {
     probeReset();
@@ -1657,7 +1642,6 @@ static void testMessageAdmissionRacesWorkerTeardown(void)
 #ifdef WW_WORKER_MESSAGE_LINK_WRAP
     testWorkerMessageHardSuccessorWakeFallback();
     testWakeupFailurePreservesBothOwnershipContracts();
-    testTimerAllocationFailureRefusesWithoutEarlyExecution();
 #endif
     runTeardownWinsRace(1, kRacePostNormal);
     runTeardownWinsRace(2, kRacePostWithCleanup);

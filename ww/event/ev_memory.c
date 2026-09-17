@@ -13,15 +13,6 @@
 static atomic_long s_alloc_cnt = (0);
 static atomic_long s_free_cnt  = (0);
 
-#ifdef WW_EVENT_MEMORY_TEST_SEAM
-static atomic_bool s_fail_next_try_zalloc;
-
-void eventloopTestFailNextTryZalloc(void)
-{
-    atomicStoreExplicit(&s_fail_next_try_zalloc, true, memory_order_release);
-}
-#endif
-
 long eventloopAllocCount(void)
 {
     return (long) s_alloc_cnt;
@@ -32,52 +23,59 @@ long eventloopFreeCount(void)
     return (long) s_free_cnt;
 }
 
-static void *eventloopCountAllocation(void *ptr)
+void *eventloopMalloc(size_t size)
 {
-    if (ptr != NULL)
+    atomicIncRelaxed(&s_alloc_cnt);
+    void *ptr = memoryAllocate(size);
+    if (! ptr)
     {
-        atomicIncRelaxed(&s_alloc_cnt);
+        printError("malloc failed!\n");
+        exit(-1);
     }
     return ptr;
 }
 
-void *eventloopMalloc(size_t size)
-{
-    return eventloopCountAllocation(memoryAllocate(size));
-}
-
 void *eventloopRealloc(void *oldptr, size_t newsize, size_t oldsize)
 {
+    atomicIncRelaxed(&s_alloc_cnt);
     if (oldptr)
         atomicIncRelaxed(&s_free_cnt);
     void *ptr = memoryReAllocate(oldptr, newsize);
+    if (! ptr)
+    {
+        printError("realloc failed!\n");
+        exit(-1);
+    }
     if (newsize > oldsize)
     {
         memoryZero((char *) ptr + oldsize, newsize - oldsize);
     }
-    return eventloopCountAllocation(ptr);
+    return ptr;
 }
 
 void *eventloopCalloc(size_t nmemb, size_t size)
 {
-    return eventloopCountAllocation(memoryCalloc(nmemb, size));
+    atomicIncRelaxed(&s_alloc_cnt);
+    void *ptr = memoryAllocateZero(nmemb * size);
+    if (! ptr)
+    {
+        printError("calloc failed!\n");
+        exit(-1);
+    }
+
+    return ptr;
 }
 
 void *eventloopZalloc(size_t size)
 {
-    return eventloopCountAllocation(memoryAllocateZero(size));
-}
-
-void *eventloopTryZalloc(size_t size)
-{
-#ifdef WW_EVENT_MEMORY_TEST_SEAM
-    if (atomicExchangeExplicit(&s_fail_next_try_zalloc, false, memory_order_acq_rel))
+    atomicIncRelaxed(&s_alloc_cnt);
+    void *ptr = memoryAllocateZero(size);
+    if (! ptr)
     {
-        return NULL;
+        printError("malloc failed!\n");
+        exit(-1);
     }
-#endif
-
-    return eventloopCountAllocation(memoryTryAllocateZero(size));
+    return ptr;
 }
 
 void eventloopFree(void *ptr)
@@ -85,6 +83,7 @@ void eventloopFree(void *ptr)
     if (ptr)
     {
         memoryFree(ptr);
+        ptr = NULL;
         atomicIncRelaxed(&s_free_cnt);
     }
 }

@@ -1610,8 +1610,19 @@ wtimer_t *wtimerAdd(wloop_t *loop, wtimer_cb cb, uint32_t timeout_ms, uint32_t r
         mutexUnlock(&loop->normal_admission_mutex);
         return NULL;
     }
+    /* Foreign startup callers cannot borrow the loop owner's local pool. */
+    generic_pool_t *pool = currentThreadIsEventWorkerWID((wid_t) loop->wid) ? loop->timer_pool : NULL;
     wtimeout_t *timer;
-    EVENTLOOP_ALLOC_SIZEOF(timer);
+    if (pool != NULL)
+    {
+        timer = genericpoolGetItem(pool);
+        memoryZero(timer, sizeof(*timer));
+        timer->allocation_pool = pool;
+    }
+    else
+    {
+        EVENTLOOP_ALLOC_SIZEOF(timer);
+    }
     timer->event_type = WEVENT_TYPE_TIMEOUT;
     timer->priority   = WEVENT_HIGHEST_PRIORITY;
     timer->repeat     = repeat;
@@ -1628,86 +1639,6 @@ wtimer_t *wtimerAdd(wloop_t *loop, wtimer_cb cb, uint32_t timeout_ms, uint32_t r
     loop->ntimers++;
     mutexUnlock(&loop->normal_admission_mutex);
     return (wtimer_t *) timer;
-}
-
-static pool_item_t *wtimerPoolAllocate(generic_pool_t *pool)
-{
-    discard pool;
-    return eventloopTryZalloc(sizeof(wtimeout_t));
-}
-
-generic_pool_t *wtimerPoolCreate(master_pool_t *master, uint32_t pool_width)
-{
-    return genericpoolCreateWithCapacity(master, pool_width, wtimerPoolAllocate, eventloopFree);
-}
-
-#ifdef WW_EVENT_MEMORY_TEST_SEAM
-static atomic_bool s_fail_next_timer_acquire;
-
-void wtimerTestFailNextAcquire(void)
-{
-    atomicStoreExplicit(&s_fail_next_timer_acquire, true, memory_order_release);
-}
-#endif
-
-wtimer_try_add_result_e wtimerTryAdd(wloop_t *loop, wtimer_cb cb, uint32_t timeout_ms, uint32_t repeat,
-                                     wtimer_t **timer_out)
-{
-    assert(timer_out != NULL);
-    if (timer_out == NULL)
-    {
-        return kWTimerTryAddResourceFailure;
-    }
-    *timer_out = NULL;
-
-    if (loop == NULL || cb == NULL || timeout_ms == 0)
-    {
-        return kWTimerTryAddAdmissionClosed;
-    }
-
-    mutexLock(&loop->normal_admission_mutex);
-    if (UNLIKELY(! wloopNormalDispatchAllowed(loop)))
-    {
-        mutexUnlock(&loop->normal_admission_mutex);
-        return kWTimerTryAddAdmissionClosed;
-    }
-
-#ifdef WW_EVENT_MEMORY_TEST_SEAM
-    if (atomicExchangeExplicit(&s_fail_next_timer_acquire, false, memory_order_acq_rel))
-    {
-        mutexUnlock(&loop->normal_admission_mutex);
-        return kWTimerTryAddResourceFailure;
-    }
-#endif
-
-    wtimeout_t *timer =
-        loop->timer_pool != NULL ? genericpoolTryGetItem(loop->timer_pool) : eventloopTryZalloc(sizeof(*timer));
-    if (timer == NULL)
-    {
-        mutexUnlock(&loop->normal_admission_mutex);
-        return kWTimerTryAddResourceFailure;
-    }
-
-    /* Cached records may still contain pending flags, callbacks and list links. */
-    memoryZero(timer, sizeof(*timer));
-    timer->allocation_pool     = loop->timer_pool;
-    timer->event_type          = WEVENT_TYPE_TIMEOUT;
-    timer->priority            = WEVENT_HIGHEST_PRIORITY;
-    timer->repeat              = repeat;
-    timer->timeout             = timeout_ms;
-    wloopUpdateTime(loop);
-    timer->next_timeout = loop->cur_hrtime + (uint64_t) timeout_ms * 1000;
-    if (timeout_ms >= 1000 && timeout_ms % 100 == 0)
-    {
-        timer->next_timeout = timer->next_timeout / 100000 * 100000;
-    }
-    heap_insert(&loop->timers, &timer->node);
-    EVENT_ADD(loop, timer, cb);
-    loop->ntimers++;
-    mutexUnlock(&loop->normal_admission_mutex);
-
-    *timer_out = (wtimer_t *) timer;
-    return kWTimerTryAddInstalled;
 }
 
 #ifdef WW_EVENT_MEMORY_TEST_SEAM

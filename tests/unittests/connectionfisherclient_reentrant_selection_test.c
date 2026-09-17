@@ -9,7 +9,6 @@
 
 #include "ev_memory.h"
 #include "tunnel_line_failure_harness.h"
-#include "wloop_internal.h"
 
 enum
 {
@@ -340,15 +339,15 @@ static void timeoutFixtureTeardown(connectionfisher_timeout_fixture_t *fixture)
     twfWorkerEnvTeardown(&fixture->env);
 }
 
-static void caseTimeoutInstallFailureClosesEveryRoleOnce(void)
+static void caseTimeoutAdmissionClosureClosesEveryRoleOnce(void)
 {
-    twfSetCase("connectionfisher timeout install failure closes every role once");
+    twfSetCase("connectionfisher timeout admission closure closes every role once");
 
     connectionfisher_timeout_fixture_t fixture;
     line_t                            *main_line = NULL;
     timeoutFixtureSetup(&fixture, &main_line);
 
-    wtimerTestFailNextAcquire();
+    workerMessagesCloseAdmission(&fixture.env.worker);
     connectionfisherclientTunnelUpStreamInit(fixture.fisher, main_line);
 
     twfRequireEqualU32((uint32_t) fixture.env.loop->ntimers, 0, "failed ConnectionFisher timeout remained armed");
@@ -375,7 +374,7 @@ int main(void)
     caseReentrantSiblingFinishKeepsSnapshotValid();
     caseReentrantSiblingFinishKeepsMainCloseSnapshotValid();
     caseSelectedChildFinishClosesDetachedLosers();
-    caseTimeoutInstallFailureClosesEveryRoleOnce();
+    caseTimeoutAdmissionClosureClosesEveryRoleOnce();
     puts("connectionfisherclient_reentrant_selection_test: all cases passed");
     return 0;
 }

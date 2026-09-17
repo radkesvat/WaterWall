@@ -864,13 +864,11 @@ static bool setupTimedTaskChecked(worker_t *worker, void *arg1, void *arg2, void
     }
 #endif
 
-    wtimer_t                     *k_timer      = NULL;
-    const wtimer_try_add_result_e timer_result = wtimerTryAdd(loop, runTimedTask, delay_ms, 1, &k_timer);
-    if (UNLIKELY(timer_result != kWTimerTryAddInstalled))
+    wtimer_t *k_timer = wtimerAdd(loop, runTimedTask, delay_ms, 1);
+    if (UNLIKELY(k_timer == NULL))
     {
-        /* A delayed callback may depend on a minimum delay and may schedule
-         * itself again. Running it inline turns allocation pressure into
-         * unbounded recursion and violates the timer contract. */
+        /* Timer allocation is fail-fast; only admission closure can refuse
+         * this owner-worker call with an already validated positive delay. */
         mutexUnlock(&worker->control_mutex);
         if (retain_on_refusal)
         {
@@ -878,10 +876,7 @@ static bool setupTimedTaskChecked(worker_t *worker, void *arg1, void *arg2, void
         }
         else
         {
-            const worker_message_cancel_reason_e reason = timer_result == kWTimerTryAddAdmissionClosed
-                                                              ? kWorkerMessageCancelAdmissionClosed
-                                                              : kWorkerMessageCancelResourceFailure;
-            cleanupTimedWorkerMessage(timed_msg, reason);
+            cleanupTimedWorkerMessage(timed_msg, kWorkerMessageCancelAdmissionClosed);
         }
         return false;
     }

@@ -66,7 +66,7 @@ struct wloop_s
     struct heap      realtimers; // realtime
     struct list_head quiesced_timers;
     uint32_t         ntimers;
-    /* Optional worker-owned pool for recoverable timeout records. Installed
+    /* Optional worker-owned pool for timeout records. Installed
      * before use and kept alive until this loop has released every timer. */
     generic_pool_t *timer_pool;
     // ios: with fd as array.index

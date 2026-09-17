@@ -3,6 +3,11 @@
 #include "wloop_internal.h"
 #include "worker_registry_fixture.h"
 
+#if defined(OS_UNIX)
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
+
 static void require(bool condition, const char *message)
 {
     if (! condition)
@@ -20,9 +25,8 @@ static void unexpectedTimer(wtimer_t *timer)
 
 static wtimer_t *addTimer(wloop_t *loop)
 {
-    wtimer_t *timer = NULL;
-    require(wtimerTryAdd(loop, unexpectedTimer, 60000, 1, &timer) == kWTimerTryAddInstalled,
-            "timer installation failed");
+    wtimer_t *timer = wtimerAdd(loop, unexpectedTimer, 60000, 1);
+    require(timer != NULL, "timer installation failed");
     require(timer->allocation_pool == loop->timer_pool, "timer lost its pool provenance");
     return timer;
 }
@@ -31,11 +35,18 @@ static void testReuseAndMasterTransfer(uint32_t width)
 {
     const long      outstanding = eventloopAllocCount() - eventloopFreeCount();
     master_pool_t  *master      = masterpoolCreateWithCapacity(2 * width);
-    generic_pool_t *first       = wtimerPoolCreate(master, width);
-    generic_pool_t *second      = wtimerPoolCreate(master, width);
+    generic_pool_t *first       = genericpoolCreateWithDefaultAllocatorAndCapacity(master, sizeof(wtimeout_t), width);
+    generic_pool_t *second      = genericpoolCreateWithDefaultAllocatorAndCapacity(master, sizeof(wtimeout_t), width);
     require(master && first && second, "pool construction failed");
     wloop_t *loop    = wloopCreate(0, NULL, 0);
     loop->timer_pool = first;
+
+    testWorkerUnbindWID();
+    wtimer_t *foreign = wtimerAdd(loop, unexpectedTimer, 60000, 1);
+    require(foreign != NULL && foreign->allocation_pool == NULL && first->len == 0,
+            "foreign timer creation borrowed a worker-local pool");
+    wtimerDelete(foreign);
+    testWorkerBindWID(0);
 
     wtimer_t *warm = addTimer(loop);
     weventSetUserData(warm, first);
@@ -58,7 +69,8 @@ static void testReuseAndMasterTransfer(uint32_t width)
     loop->timer_pool           = second; /* No timers remain on the loop. */
     const long before_transfer = eventloopAllocCount();
     wtimer_t  *transferred     = addTimer(loop);
-    require(eventloopAllocCount() == before_transfer, "master refill allocated instead of reusing idle timers");
+    require(transferred == warm && eventloopAllocCount() == before_transfer,
+            "master refill did not reuse idle timer storage");
     wtimerDelete(transferred);
 
     wloopDestroy(&loop);
@@ -69,40 +81,32 @@ static void testReuseAndMasterTransfer(uint32_t width)
     require(eventloopAllocCount() - eventloopFreeCount() == outstanding, "timer pool family leaked storage");
 }
 
-static void testRefillFailure(void)
+#if defined(OS_UNIX)
+static pool_item_t *refuseTimerAllocation(generic_pool_t *pool)
 {
-    master_pool_t  *master = masterpoolCreateWithCapacity(2);
-    generic_pool_t *pool   = wtimerPoolCreate(master, 2);
-    require(master && pool, "failure fixture pool construction failed");
-    wloop_t *loop    = wloopCreate(0, NULL, 0);
-    loop->timer_pool = pool;
-    wtimer_t *timer  = NULL;
-    eventloopTestFailNextTryZalloc();
-    require(wtimerTryAdd(loop, unexpectedTimer, 60000, 1, &timer) == kWTimerTryAddResourceFailure && timer == NULL,
-            "cold refill failure did not report ResourceFailure");
-    require(masterpoolGetCheckedOut(master) == 0 && pool->len == 0 && loop->ntimers == 0,
-            "failed refill changed ownership or published a timer");
-
-    timer = addTimer(loop);
-    wtimerDelete(timer);
-    genericpoolShrink(pool);
-    /* One cached master item is enough even if creation of the rest of the
-     * requested refill batch fails. */
-    generic_pool_t *receiver = wtimerPoolCreate(master, 4);
-    require(receiver != NULL, "partial-refill pool construction failed");
-    loop->timer_pool = receiver;
-    eventloopTestFailNextTryZalloc();
-    timer = addTimer(loop);
-    require(masterpoolGetCheckedOut(master) == 1, "partial refill lost checkout accounting");
-    wtimerDelete(timer);
-
-    wloopDestroy(&loop);
-    genericpoolDestroy(receiver);
-    genericpoolDestroy(pool);
-    require(masterpoolGetCheckedOut(master) == 0, "partial refill leaked a timer");
-    masterpoolMakeEmpty(master);
-    masterpoolDestroy(master);
+    discard pool;
+    return NULL;
 }
+
+static void testAllocationFailureIsFatal(void)
+{
+    const pid_t child = fork();
+    require(child >= 0, "failed to fork timer allocation failure case");
+    if (child == 0)
+    {
+        master_pool_t  *master = masterpoolCreateWithCapacity(2);
+        generic_pool_t *pool   = genericpoolCreateWithCapacity(master, 1, refuseTimerAllocation, memoryFree);
+        require(master != NULL && pool != NULL, "failed to construct allocation failure fixture");
+        wloop_t *loop    = wloopCreate(0, NULL, 0);
+        loop->timer_pool = pool;
+        discard wtimerAdd(loop, unexpectedTimer, 60000, 1);
+        _Exit(0);
+    }
+    int status = 0;
+    require(waitpid(child, &status, 0) == child, "failed to wait for timer allocation failure case");
+    require(WIFEXITED(status) && WEXITSTATUS(status) == 1, "timer allocation failure did not terminate the process");
+}
+#endif
 
 static unsigned int callbacks;
 
@@ -122,13 +126,12 @@ static void testDeferredReclamation(void)
 {
     const long      outstanding = eventloopAllocCount() - eventloopFreeCount();
     master_pool_t  *master      = masterpoolCreateWithCapacity(8);
-    generic_pool_t *pool        = wtimerPoolCreate(master, 4);
+    generic_pool_t *pool        = genericpoolCreateWithDefaultAllocatorAndCapacity(master, sizeof(wtimeout_t), 4);
     require(master && pool, "deferred fixture pool construction failed");
     wloop_t *loop    = wloopCreate(0, NULL, 0);
     loop->timer_pool = pool;
-    wtimer_t *timer  = NULL;
-    require(wtimerTryAdd(loop, reentrantTimer, 60000, 1, &timer) == kWTimerTryAddInstalled,
-            "callback timer installation failed");
+    wtimer_t *timer  = wtimerAdd(loop, reentrantTimer, 60000, 1);
+    require(timer != NULL, "callback timer installation failed");
     wtimerTestMakePendingOneShot(timer);
     discard wloopProcessEvents(loop, 0);
     require(callbacks == 1 && masterpoolGetCheckedOut(master) == 0,
@@ -178,7 +181,9 @@ int main(void)
     {
         testReuseAndMasterTransfer(widths[i]);
     }
-    testRefillFailure();
+#if defined(OS_UNIX)
+    testAllocationFailureIsFatal();
+#endif
     testDeferredReclamation();
     testWorkerUnbindWID();
     testWorkerRegistryRestore(&registry);

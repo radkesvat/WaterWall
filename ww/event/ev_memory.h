@@ -11,15 +11,6 @@ WW_EXPORT void *eventloopCalloc(size_t nmemb, size_t size);
 WW_EXPORT void *eventloopZalloc(size_t size);
 WW_EXPORT void  eventloopFree(void *ptr);
 
-/* Recoverable zero-allocation for event records with a resource-failure
- * contract. Uses the ordinary backend and is released with eventloopFree(). */
-WW_MUST_USE WW_EXPORT void *eventloopTryZalloc(size_t size);
-
-#ifdef WW_EVENT_MEMORY_TEST_SEAM
-/* Refuse exactly the next eventloopTryZalloc() request. */
-void eventloopTestFailNextTryZalloc(void);
-#endif
-
 #define EVENTLOOP_ALLOC(ptr, size)                                                                                     \
     do                                                                                                                 \
     {                                                                                                                  \

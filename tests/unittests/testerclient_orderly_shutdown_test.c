@@ -15,7 +15,6 @@
 #include "ev_memory.h"
 #include "startup.h"
 #include "tunnel_orderly_shutdown_harness.h"
-#include "wloop_internal.h"
 
 enum
 {
@@ -82,7 +81,7 @@ line_task_submit_result_e __wrap_lineScheduleDelayedTask(line_t *const line, Lin
         lineRef(line);
         if (on_cancel != NULL)
         {
-            on_cancel(t, line, kLineTaskCancelResourceFailure);
+            on_cancel(t, line, kLineTaskCancelAdmissionClosed);
         }
         lineUnref(line);
         if (forbid_delayed_line_task_after_refusal)
@@ -269,7 +268,7 @@ static void caseSynchronousStartRefusalPropagatesStartupStatus(void)
     tester->chain        = &chain;
 
     ww_startup_context_t startup = {0};
-    wtimerTestFailNextAcquire();
+    workerMessagesCloseAdmission(getWorker(0));
     wwStartupContextBegin(&startup);
     testerclientTunnelOnStart(tester);
     twfRequire(! wwStartupSucceeded(wwStartupContextEnd(&startup)),
@@ -279,9 +278,9 @@ static void caseSynchronousStartRefusalPropagatesStartupStatus(void)
     tosWorkerEnvTeardown(&env);
 }
 
-static void caseAcceptedQueuedTimerSetupFailureUsesCleanup(void)
+static void caseAcceptedQueuedTimerAdmissionClosureUsesCleanup(void)
 {
-    twfSetCase("testerclient accepted queued timer failure uses runtime cleanup");
+    twfSetCase("testerclient accepted queued timer admission closure uses cleanup");
     tosResetProcessApi(true);
 
     tos_worker_env_t env;
@@ -298,9 +297,9 @@ static void caseAcceptedQueuedTimerSetupFailureUsesCleanup(void)
     twfRequire(wwStartupSucceeded(wwStartupContextEnd(&startup)), "accepted queued setup reported startup failure");
     tosRequireNoProcessApiCall();
 
-    wtimerTestFailNextAcquire();
+    workerMessagesCloseAdmission(getWorker(0));
     tosPumpWorker(&env, 0);
-    tosRequireAcceptedRequest(1);
+    tosRequireNoProcessApiCall();
 
     discard tosSetCurrentWorker(previous_wid);
     tunnelDestroy(tester);
@@ -981,7 +980,7 @@ static void casePayloadGeneratorInvariantAborts(void)
 int main(void)
 {
     caseSynchronousStartRefusalPropagatesStartupStatus();
-    caseAcceptedQueuedTimerSetupFailureUsesCleanup();
+    caseAcceptedQueuedTimerAdmissionClosureUsesCleanup();
     casePacketStartRefusalDoesNotArmWatchdog();
     caseDelayedPacketStartRefusalDoesNotArmWatchdog();
     caseOwnedRequestScheduleRefusalClosesLine();

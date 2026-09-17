@@ -601,9 +601,9 @@ WW_MUST_USE line_task_submit_result_e lineScheduleTaskWithBuf(line_t *const line
  * iteration and returns kLineTaskSubmitAcceptedAsync. A positive delay called
  * on the owner worker returns kLineTaskSubmitTimerArmed only after timer
  * installation succeeds. A foreign positive-delay submission returns
- * kLineTaskSubmitAcceptedAsync once owner-side setup is queued; timer allocation
- * may then fail asynchronously with kLineTaskCancelResourceFailure. Timer
- * failure never invokes the task inline. Quiescence/teardown cancels pending
+ * kLineTaskSubmitAcceptedAsync once owner-side setup is queued. Timer allocation
+ * is fail-fast. Admission closure or quiescence can still cancel queued setup;
+ * refusal never invokes the task inline. Quiescence/teardown cancels pending
  * work rather than rearming it.
  *
  * Delayed tasks are independent timer submissions; ordering is not guaranteed
@@ -629,10 +629,10 @@ WW_MUST_USE line_task_submit_result_e lineScheduleDelayedTask(line_t *const line
  *
  * This combines lineScheduleDelayedTask()'s immediate/zero/owner/foreign result
  * rules with lineScheduleTaskWithBuf()'s unconditional buffer transfer and
- * cancellation-before-internal-settlement ordering. A positive-delay timer
- * allocation failure is reported as kLineTaskCancelResourceFailure and never
- * by running @p task early. A NULL cancellation callback suppresses only caller
- * notification, not buffer, line-reference, or record settlement.
+ * cancellation-before-internal-settlement ordering. Timer allocation is
+ * fail-fast; admission refusal never runs @p task early. A NULL cancellation
+ * callback suppresses only caller notification, not buffer, line-reference, or
+ * record settlement.
  *
  * Delayed tasks are independent timer submissions; ordering is not guaranteed
  * between multiple delayed tasks, even when they use the same delay. If ordered

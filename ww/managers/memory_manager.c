@@ -6,18 +6,6 @@
 #include "mimalloc.h"
 #include "wmutex.h"
 
-static void *memoryRequireAllocation(void *ptr)
-{
-    if (UNLIKELY(ptr == NULL))
-    {
-        /* Allocation can fail before logging exists or while its allocator is
-         * active. Use the same bootstrap diagnostic as the pool allocators. */
-        printError("MemoryManager: memory allocation failed");
-        abortProgramNow(1);
-    }
-    return ptr;
-}
-
 static bool memoryAlignmentIsValid(size_t alignment)
 {
     return alignment != 0 && (alignment & (alignment - 1)) == 0;
@@ -144,7 +132,7 @@ dedicated_memory_t *memorymanagerCreateDedicatedMemory(void)
 */
 void *memoryAllocate(size_t size)
 {
-    void *ptr = memoryRequireAllocation(mi_malloc(size));
+    void *ptr = mi_malloc(size);
 #ifdef DEBUG
     if (ptr != NULL)
     {
@@ -155,17 +143,12 @@ void *memoryAllocate(size_t size)
 }
 void *memoryReAllocate(void *ptr, size_t size)
 {
-    return memoryRequireAllocation(mi_realloc(ptr, size));
+    return mi_realloc(ptr, size);
 }
 
 void *memoryCalloc(size_t n, size_t size)
 {
-    return memoryRequireAllocation(mi_calloc(n, size));
-}
-
-void *memoryTryAllocateZero(size_t size)
-{
-    return mi_zalloc(size);
+    return mi_calloc(n, size);
 }
 
 void memoryFree(void *ptr)
@@ -228,10 +211,6 @@ void memorymanagerInit(void)
 void *memoryAllocate(size_t size)
 {
     void *ptr = malloc(size);
-    if (size != 0)
-    {
-        ptr = memoryRequireAllocation(ptr);
-    }
 #ifdef DEBUG
     if (ptr != NULL)
     {
@@ -243,20 +222,12 @@ void *memoryAllocate(size_t size)
 
 void *memoryReAllocate(void *ptr, size_t size)
 {
-    void *result = realloc(ptr, size);
-    /* CRT realloc(ptr, 0) may free ptr and legitimately return NULL. */
-    return size == 0 ? result : memoryRequireAllocation(result);
+    return realloc(ptr, size);
 }
 
 void *memoryCalloc(size_t n, size_t size)
 {
-    void *ptr = calloc(n, size);
-    return n == 0 || size == 0 ? ptr : memoryRequireAllocation(ptr);
-}
-
-void *memoryTryAllocateZero(size_t size)
-{
-    return calloc(1, size);
+    return calloc(n, size);
 }
 
 void memoryFree(void *ptr)

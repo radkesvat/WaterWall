@@ -45,26 +45,6 @@ target_link_libraries(timer_pool_test PRIVATE ww)
 set_target_properties(timer_pool_test PROPERTIES DISABLE_PRECOMPILE_HEADERS ON)
 _waterwall_register_portable_contract(waterwall.timer_pool_unit timer_pool_test "unit;timer;pool;lifetime;portable")
 
-add_executable(memory_allocation_test EXCLUDE_FROM_ALL "${_waterwall_portable_unit_dir}/memory_allocation_test.c")
-target_link_libraries(memory_allocation_test PRIVATE ww)
-set_target_properties(memory_allocation_test PROPERTIES DISABLE_PRECOMPILE_HEADERS ON)
-_waterwall_register_portable_contract(
-  waterwall.memory_allocation_unit memory_allocation_test "unit;memory;allocator;failure;portable")
-
-add_executable(memory_allocation_bypass_test EXCLUDE_FROM_ALL
-  "${_waterwall_portable_unit_dir}/memory_allocation_bypass_test.c")
-target_link_libraries(memory_allocation_bypass_test PRIVATE ww)
-set_target_properties(memory_allocation_bypass_test PROPERTIES DISABLE_PRECOMPILE_HEADERS ON)
-_waterwall_register_portable_contract(
-  waterwall.memory_allocation_bypass_unit memory_allocation_bypass_test "unit;memory;allocator;failure;portable")
-
-if(ENABLE_ASAN)
-  # These tests deliberately request an unrepresentable allocation and need the
-  # backend to return NULL rather than ASan terminating before the wrapper runs.
-  set_tests_properties(waterwall.memory_allocation_unit waterwall.memory_allocation_bypass_unit PROPERTIES
-    ENVIRONMENT_MODIFICATION "ASAN_OPTIONS=string_append::allocator_may_return_null=1")
-endif()
-
 if(WIN32)
   add_executable(atomic_u32_fallback_test EXCLUDE_FROM_ALL "${_waterwall_portable_unit_dir}/atomic_u32_test.c")
   target_compile_definitions(atomic_u32_fallback_test PRIVATE WW_HAVE_C11_ATOMICS=0)

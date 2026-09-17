@@ -9,7 +9,6 @@
 #include "wevent.h"
 #include "wfrand.h"
 #include "wloop.h"
-#include "wloop_internal.h"
 #include "worker_messages.h"
 #include "wthread.h"
 
@@ -413,8 +412,9 @@ bool workerTryCreateCorePools(worker_t *worker)
         threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(GSTATE.masterpool_wios, sizeof(wio_t), RAM_PROFILE);
     generic_pool_t *context_pool = genericpoolCreateWithDefaultAllocatorAndCapacity(
         GSTATE.masterpool_context_pools, sizeof(context_t), RAM_PROFILE);
-    generic_pool_t *timer_pool =
-        worker->has_event_loop ? wtimerPoolCreate(GSTATE.masterpool_timers, RAM_PROFILE) : NULL;
+    generic_pool_t *timer_pool = worker->has_event_loop ? genericpoolCreateWithDefaultAllocatorAndCapacity(
+                                                              GSTATE.masterpool_timers, sizeof(wtimeout_t), RAM_PROFILE)
+                                                        : NULL;
 
     if (UNLIKELY(wios_pool == NULL || context_pool == NULL || (worker->has_event_loop && timer_pool == NULL)))
     {
