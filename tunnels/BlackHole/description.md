@@ -1,5 +1,5 @@
 <!--
-Documentation version: 152
+Documentation version: 153
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/BlackHole.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/BlackHole.mdx, and all files must keep the same documentation version.
 -->
 
@@ -153,10 +153,18 @@ Source-backed metadata:
 
 | Property | Value |
 | --- | --- |
-| node flags | `kNodeFlagChainEnd` &#124; `kNodeFlagNoChain` |
+| node flags | `kNodeFlagChainEnd` &#124; `kNodeFlagNoChain` &#124; `kNodeFlagSupportsSplice` |
 | `can_have_prev` | `true` |
 | `can_have_next` | `false` |
 | `layer_group` | `kNodeLayerAnything` |
 | `layer_group_prev_node` | `kNodeLayerAnything` |
 | `layer_group_next_node` | `kNodeLayerNone` |
 | `required_padding_left` | `0` bytes |
+
+## Splice support
+
+The upstream sink recycles input, discarding any remaining private-pipe body. Healthy empty pipes may remain cached for reuse. Passive mode still consumes data; active mode closes during Init and does not accept later payload on that closed normal line. There is no downstream payload handler.
+
+Ordinary fallback buffers remain accepted. Splice requires a supported Linux build, `misc.splice` enabled, no packet nodes, and support from every node in the finalized expanded/merged chain. The capability flag does not bypass these checks. No performance improvement is promised without measurement.
+
+Packet configurations of this dual-layer node still do not enable splice.

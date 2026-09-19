@@ -1,5 +1,5 @@
 <!--
-Documentation version: 153
+Documentation version: 154
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/RealityServer.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/RealityServer.mdx, and all files must keep the same documentation version.
 -->
 
@@ -81,9 +81,12 @@ The authenticated TLS 1.3 handoff requires a coordinated client/server upgrade f
 
 Source-backed metadata:
 
+This node explicitly disables splice for the entire chain through
+`kNodeFlagBlocksSplice`, even if `kNodeFlagSupportsSplice` is also set.
+
 | Property | Value |
 | --- | --- |
-| node flags | `kNodeFlagNone` |
+| node flags | `kNodeFlagNone` &#124; `kNodeFlagBlocksSplice` |
 | `can_have_prev` | `true` |
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayer4` |

@@ -12,6 +12,15 @@
 #include "TcpListener/interface.h"
 #endif
 
+#ifdef WW_TEST_EASY_SPLICE_NODES
+#include "BlackHole/interface.h"
+#include "Bridge/interface.h"
+#include "HeaderClient/interface.h"
+#include "JunkDatagramSender/interface.h"
+#include "ReverseClient/interface.h"
+#include "UserController/interface.h"
+#endif
+
 #include "managers/node_manager.c" // NOLINT: exercises private validateTunnelChains and initializePacketTunnels
 
 static void require(bool condition, const char *message)
@@ -1442,7 +1451,7 @@ static bool insertTransparentTunnelAfterSolvedLayers(tunnel_t *owner, tunnel_cha
     return true;
 }
 
-static void testSolvedTopologyExpansionIsRevalidated(bool helper_supports_splice, bool packet_chain)
+static void testSolvedTopologyExpansionIsRevalidated(unsigned helper_splice_flags, bool packet_chain)
 {
     node_t n_head = {
         .name                  = (char *) "head",
@@ -1457,7 +1466,7 @@ static void testSolvedTopologyExpansionIsRevalidated(bool helper_supports_splice
     node_t n_inserted = {
         .name                  = (char *) "inserted",
         .type                  = (char *) "Transparent",
-        .flags                 = helper_supports_splice ? kNodeFlagSupportsSplice : kNodeFlagNone,
+        .flags                 = helper_splice_flags,
         .layer_group           = kNodeLayerAnything,
         .layer_group_next_node = kNodeLayerSameAsPrev,
         .layer_group_prev_node = kNodeLayerSameAsNext,
@@ -1515,7 +1524,7 @@ static void testSolvedTopologyExpansionIsRevalidated(bool helper_supports_splice
     require(wwStartupSucceeded(wwStartupContextEnd(&startup)), "expanded chain failed to finalize");
     require(
         chain->finalized && chain->supports_splice == (WW_HAVE_SPLICE && ! GSTATE.splice_disabled && ! packet_chain &&
-                                                       helper_supports_splice),
+                                                       helper_splice_flags == kNodeFlagSupportsSplice),
         "final splice support ignored runtime policy, platform support, packet classification, or the inserted helper");
     require(t_inserted.chain_index == 1, "inserted helper was omitted from final indexing");
     vec_chains_t_drop(&cfg.chains);
@@ -1524,9 +1533,22 @@ static void testSolvedTopologyExpansionIsRevalidated(bool helper_supports_splice
 
 static void testChainSpliceCapability(void)
 {
-    // Cover empty/full chains and missing support at the head, middle, and tail.
-    const int unsupported_indices[] = {-1, 0, 32, 63};
-    for (size_t test = 0; test < ARRAY_SIZE(unsupported_indices); ++test)
+    // Missing support and explicit blockers at every part of a full chain.
+    const struct
+    {
+        int      index;
+        unsigned flags;
+    } cases[] = {{-1, kNodeFlagNone},
+                 {0, kNodeFlagNone},
+                 {32, kNodeFlagNone},
+                 {63, kNodeFlagNone},
+                 {0, kNodeFlagBlocksSplice},
+                 {32, kNodeFlagBlocksSplice},
+                 {63, kNodeFlagBlocksSplice},
+                 {0, kNodeFlagSupportsSplice | kNodeFlagBlocksSplice},
+                 {32, kNodeFlagSupportsSplice | kNodeFlagBlocksSplice},
+                 {63, kNodeFlagSupportsSplice | kNodeFlagBlocksSplice}};
+    for (size_t test = 0; test < ARRAY_SIZE(cases); ++test)
     {
         node_t          nodes[kMaxChainLen]   = {0};
         tunnel_t       *tunnels[kMaxChainLen] = {0};
@@ -1536,15 +1558,15 @@ static void testChainSpliceCapability(void)
         for (uint16_t i = 0; i < kMaxChainLen; ++i)
         {
             nodes[i].type  = (char *) "SpliceTest";
-            nodes[i].flags = i == unsupported_indices[test] ? kNodeFlagNone : kNodeFlagNone | kNodeFlagSupportsSplice;
+            nodes[i].flags = i == cases[test].index ? cases[test].flags : kNodeFlagNone | kNodeFlagSupportsSplice;
             tunnels[i]     = tunnelCreate(&nodes[i], 0, 0);
             require(tunnels[i] != NULL, "failed to create splice-capability tunnel");
             tunnelchainInsert(chain, tunnels[i]);
         }
         require(! chain->supports_splice, "chain advertised splice support during assembly");
         tunnelchainFinalize(chain);
-        require(chain->finalized && chain->supports_splice ==
-                                        (WW_HAVE_SPLICE && ! GSTATE.splice_disabled && unsupported_indices[test] < 0),
+        require(chain->finalized &&
+                    chain->supports_splice == (WW_HAVE_SPLICE && ! GSTATE.splice_disabled && cases[test].index < 0),
                 "splice capability ignored runtime policy or a node in the full chain");
         tunnelchainDestroy(chain);
         for (uint16_t i = 0; i < kMaxChainLen; ++i)
@@ -1600,6 +1622,74 @@ static void testRealTcpMuxSpliceCapability(void)
     memoryFree(tail.type);
 }
 
+#endif
+
+#ifdef WW_TEST_EASY_SPLICE_NODES
+static void testEasyNodeSpliceCapability(void)
+{
+    node_t         nodes[] = {nodeHeaderClientGet(),
+                              nodeBridgeGet(),
+                              nodeUserControllerGet(),
+                              nodeBlackHoleGet(),
+                              nodeReverseClientGet(),
+                              nodeJunkDatagramSenderGet()};
+    const unsigned flags[] = {kNodeFlagNone,
+                              kNodeFlagChainHead | kNodeFlagChainEnd,
+                              kNodeFlagNone,
+                              kNodeFlagChainEnd | kNodeFlagNoChain,
+                              kNodeFlagNone,
+                              kNodeFlagNone};
+    for (unsigned i = 0; i < sizeof(nodes) / sizeof(nodes[0]); ++i)
+    {
+        node_t *node = &nodes[i];
+        require(node->flags == (flags[i] | kNodeFlagSupportsSplice), "easy node placement/splice flags changed");
+        require(node->required_padding_left == (i == 0 ? 108 : 0), "easy node padding changed");
+        const bool dual = i == 1 || i == 3 || i == 5;
+        require(node->layer_group == (dual ? kNodeLayerAnything : kNodeLayer4), "easy node layer changed");
+        require(node->layer_group_next_node == (i == 3   ? kNodeLayerNone
+                                                : i == 5 ? kNodeLayerSameAsPrev
+                                                : dual   ? kNodeLayerAnything
+                                                         : kNodeLayer4),
+                "easy node next layer changed");
+        require(node->layer_group_prev_node == (i == 5 ? kNodeLayerSameAsNext
+                                                : dual ? kNodeLayerAnything
+                                                       : kNodeLayer4),
+                "easy node previous layer changed");
+        require(node->can_have_prev && node->can_have_next == (i != 3) && node->is_adapter == (i == 3),
+                "easy node placement constraints changed");
+        for (unsigned packet = 0; packet <= (unsigned) dual; ++packet)
+        {
+            node_t   head = {.type                  = (char *) "source",
+                             .flags                 = kNodeFlagChainHead | kNodeFlagSupportsSplice,
+                             .layer_group           = packet ? kNodeLayer3 : kNodeLayer4,
+                             .layer_group_next_node = packet ? kNodeLayer3 : kNodeLayer4,
+                             .layer_group_prev_node = kNodeLayerNone,
+                             .can_have_next         = true};
+            node_t   tail = {.type                  = (char *) "sink",
+                             .flags                 = kNodeFlagChainEnd | kNodeFlagSupportsSplice,
+                             .layer_group           = packet ? kNodeLayer3 : kNodeLayer4,
+                             .layer_group_prev_node = packet ? kNodeLayer3 : kNodeLayer4,
+                             .layer_group_next_node = kNodeLayerNone,
+                             .can_have_prev         = true};
+            tunnel_t a = {.node = &head}, b = {.node = node}, c = {.node = &tail};
+            bindTunnels(&a, &b);
+            if (i != 3)
+                bindTunnels(&b, &c);
+            tunnel_chain_t *chain = tunnelchainCreate(0);
+            tunnelchainInsert(chain, &a);
+            tunnelchainInsert(chain, &b);
+            if (i != 3)
+                tunnelchainInsert(chain, &c);
+            node_layer_solver_status_t status = {0};
+            require(nodeLayerSolveChain(chain, &status), status.message);
+            tunnelchainFinalize(chain);
+            require(chain->supports_splice == (WW_HAVE_SPLICE && ! GSTATE.splice_disabled && ! packet),
+                    "easy node ignored final chain eligibility");
+            tunnelchainDestroy(chain);
+        }
+        memoryFree(node->type);
+    }
+}
 #endif
 
 static void testNodeManagerPreFinalizationChainCleanup(void)
@@ -1676,11 +1766,16 @@ int main(void)
     for (unsigned int disabled = 0; disabled < 2; ++disabled)
     {
         GSTATE.splice_disabled = disabled != 0;
-        testSolvedTopologyExpansionIsRevalidated(false, false);
-        testSolvedTopologyExpansionIsRevalidated(true, false);
-        testSolvedTopologyExpansionIsRevalidated(false, true);
-        testSolvedTopologyExpansionIsRevalidated(true, true);
+        testSolvedTopologyExpansionIsRevalidated(kNodeFlagNone, false);
+        testSolvedTopologyExpansionIsRevalidated(kNodeFlagSupportsSplice, false);
+        testSolvedTopologyExpansionIsRevalidated(kNodeFlagBlocksSplice, false);
+        testSolvedTopologyExpansionIsRevalidated(kNodeFlagSupportsSplice | kNodeFlagBlocksSplice, false);
+        testSolvedTopologyExpansionIsRevalidated(kNodeFlagNone, true);
+        testSolvedTopologyExpansionIsRevalidated(kNodeFlagSupportsSplice, true);
         testChainSpliceCapability();
+#ifdef WW_TEST_EASY_SPLICE_NODES
+        testEasyNodeSpliceCapability();
+#endif
 #ifdef WW_TEST_REAL_TCP_MUX_NODES
         testRealTcpMuxSpliceCapability();
 #endif

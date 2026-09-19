@@ -108,7 +108,9 @@ enum node_flags
     // this node should only have one instance in the whole chain config (singleton pattern)
     kNodeFlagSingleton = (1 << 4),
     // this node supports splice payloads
-    kNodeFlagSupportsSplice = (1 << 5)
+    kNodeFlagSupportsSplice = (1 << 5),
+    // explicitly disables chain splice, even when support is also advertised
+    kNodeFlagBlocksSplice = (1 << 6)
 };
 
 enum node_layer_group

@@ -1,5 +1,5 @@
 <!--
-Documentation version: 154
+Documentation version: 155
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/JunkDatagramSender.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/JunkDatagramSender.mdx, and all files must keep the same documentation version.
 -->
 
@@ -101,10 +101,18 @@ Source-backed metadata:
 
 | Property | Value |
 | --- | --- |
-| node flags | `kNodeFlagNone` |
+| node flags | `kNodeFlagNone` &#124; `kNodeFlagSupportsSplice` |
 | `can_have_prev` | `true` |
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayerAnything` |
 | `layer_group_prev_node` | `kNodeLayerSameAsNext` |
 | `layer_group_next_node` | `kNodeLayerSameAsPrev` |
 | `required_padding_left` | `0` bytes |
+
+## Splice support
+
+Generated junk and its delayed duplicates remain ordinary buffers. Incoming application payloads pass through opaquely, preserving their private-pipe bodies and existing ordering relative to immediate junk. Terminal directions discard input; if sending junk closes the line, the still-owned application buffer is recycled.
+
+Ordinary fallback buffers remain accepted. Splice requires a supported Linux build, `misc.splice` enabled, no packet nodes, and support from every node in the finalized expanded/merged chain. The capability flag does not bypass these checks. No performance improvement is promised without measurement.
+
+Packet configurations of this dual-layer node still do not enable splice.

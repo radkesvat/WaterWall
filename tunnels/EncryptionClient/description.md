@@ -1,5 +1,5 @@
 <!--
-Documentation version: 152
+Documentation version: 153
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/EncryptionClient.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/EncryptionClient.mdx, and all files must keep the same documentation version.
 -->
 
@@ -51,9 +51,12 @@ The selected algorithm is configured locally on both peers and is not exposed in
 
 Source-backed metadata:
 
+This node explicitly disables splice for the entire chain through
+`kNodeFlagBlocksSplice`, even if `kNodeFlagSupportsSplice` is also set.
+
 | Property | Value |
 | --- | --- |
-| node flags | `kNodeFlagNone` |
+| node flags | `kNodeFlagNone` &#124; `kNodeFlagBlocksSplice` |
 | `can_have_prev` | `true` |
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayer4` |

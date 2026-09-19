@@ -738,6 +738,15 @@ add_waterwall_integration_test(waterwall.http_websocket_bidirectional_roundtrip 
 add_waterwall_integration_test(waterwall.http_websocket_bidirectional_tcp_loopback http_websocket_bidirectional_tcp_loopback)
 add_waterwall_integration_test(waterwall.http_upgrade_custom_bidirectional_roundtrip http_upgrade_custom_bidirectional_roundtrip)
 add_waterwall_integration_test(waterwall.http_upgrade_custom_bidirectional_tcp_loopback http_upgrade_custom_bidirectional_tcp_loopback)
+# Use a PROXY-aware external peer so HeaderServer cannot disable chain splice eligibility.
+foreach(splice_mode IN ITEMS true false)
+  add_waterwall_isolated_test(waterwall.headerclient_tcp_splice_${splice_mode}
+    "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/headerclient_splice_integration.py"
+    "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>" "${splice_mode}")
+  set_tests_properties(waterwall.headerclient_tcp_splice_${splice_mode} PROPERTIES TIMEOUT 60)
+  add_waterwall_test_labels(waterwall.headerclient_tcp_splice_${splice_mode} "integration" "tunnels")
+  add_waterwall_case_resource_lock(waterwall.headerclient_tcp_splice_${splice_mode} headerclient_tcp_splice)
+endforeach()
 # Exercise both real TCP/Mux directions with the same integrity-checked topology.
 add_waterwall_integration_test(waterwall.mux_tcp_splice_roundtrip mux_tcp_splice_roundtrip)
 set_tests_properties(waterwall.mux_tcp_splice_roundtrip PROPERTIES ENVIRONMENT "WATERWALL_TEST_SPLICE=true")

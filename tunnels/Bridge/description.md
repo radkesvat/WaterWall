@@ -1,5 +1,5 @@
 <!--
-Documentation version: 152
+Documentation version: 153
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/Bridge.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/Bridge.mdx, and all files must keep the same documentation version.
 -->
 
@@ -152,10 +152,18 @@ Source-backed metadata:
 
 | Property | Value |
 | --- | --- |
-| node flags | `kNodeFlagChainHead` &#124; `kNodeFlagChainEnd` |
+| node flags | `kNodeFlagChainHead` &#124; `kNodeFlagChainEnd` &#124; `kNodeFlagSupportsSplice` |
 | `can_have_prev` | `true` |
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayerAnything` |
 | `layer_group_prev_node` | `kNodeLayerAnything` |
 | `layer_group_next_node` | `kNodeLayerAnything` |
 | `required_padding_left` | `0` bytes |
+
+## Splice support
+
+Both supported payload directions transfer the original buffer and exact line through the paired Bridge with the existing callback direction mapping. The merged topology must be eligible as a whole. Bridge never acquires ownership of the forwarded line.
+
+Ordinary fallback buffers remain accepted. Splice requires a supported Linux build, `misc.splice` enabled, no packet nodes, and support from every node in the finalized expanded/merged chain. The capability flag does not bypass these checks. No performance improvement is promised without measurement.
+
+Packet configurations of this dual-layer node still do not enable splice.

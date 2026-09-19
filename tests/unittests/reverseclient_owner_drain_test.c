@@ -1,6 +1,10 @@
 #include "ReverseClient/structure.h"
 
+#if WW_HAVE_SPLICE
+#include "buffer_disposal_probe.h"
+#endif
 #include "global_state.h"
+#include "splice_buffer.h"
 #include "worker_messages.h"
 
 typedef enum endpoint_behavior_e
@@ -19,6 +23,10 @@ typedef struct reverseclient_fixture_s
     line_t             *upstream_line;
     line_t             *downstream_line;
     endpoint_behavior_e behavior;
+    bool                close_downstream_init;
+    sbuf_t             *expected_payload;
+    bool                expected_splice;
+    unsigned int        payload_count;
     unsigned int        upstream_init_count;
     unsigned int        downstream_init_count;
     unsigned int        upstream_finish_count;
@@ -60,11 +68,33 @@ static void nextInit(tunnel_t *next, line_t *line)
     }
 }
 
+static void checkPayload(line_t *line, sbuf_t *buf)
+{
+    if (g_fixture->expected_payload != NULL)
+    {
+        require(buf == g_fixture->expected_payload, "ReverseClient replaced the application buffer");
+        require(sbufIsSplice(buf) == g_fixture->expected_splice &&
+                    sbufGetResidentPrefixLength(buf) == (g_fixture->expected_splice ? 3 : 7),
+                "ReverseClient changed payload representation");
+        char bytes[7];
+        sbufReadRangeToMemory(buf, bytes, sizeof(bytes));
+        require(memcmp(bytes, "prebody", sizeof(bytes)) == 0, "ReverseClient changed application bytes");
+        g_fixture->expected_payload = NULL;
+        ++g_fixture->payload_count;
+    }
+    else
+    {
+        require(! sbufIsSplice(buf) && sbufGetLength(buf) == 1 && sbufReadUI8(buf) == 0x5A,
+                "ReverseClient handshake must remain ordinary");
+    }
+    lineReuseBuffer(line, buf);
+}
+
 static void nextPayload(tunnel_t *next, line_t *line, sbuf_t *buf)
 {
     discard next;
-    discard line;
-    reuseBuffer(buf);
+    require(line == g_fixture->upstream_line, "upstream payload used the wrong paired line");
+    checkPayload(line, buf);
 }
 
 static void nextFinish(tunnel_t *next, line_t *line)
@@ -79,13 +109,22 @@ static void prevInit(tunnel_t *prev, line_t *line)
     discard prev;
     g_fixture->downstream_line = line;
     g_fixture->downstream_init_count++;
+    if (g_fixture->close_downstream_init)
+    {
+        reverseclient_tstate_t *ts = tunnelGetState(g_fixture->reverse);
+        atomicStoreRelaxed(&ts->stopping, true);
+        reverseclientTunnelUpStreamFinish(g_fixture->reverse, line);
+    }
 }
 
 static void prevPayload(tunnel_t *prev, line_t *line, sbuf_t *buf)
 {
     discard prev;
-    discard line;
-    reuseBuffer(buf);
+    require(line == g_fixture->downstream_line, "downstream payload used the wrong paired line");
+    if (g_fixture->expected_payload != NULL)
+        checkPayload(line, buf);
+    else
+        lineReuseBuffer(line, buf);
 }
 
 static void prevFinish(tunnel_t *prev, line_t *line)
@@ -208,16 +247,82 @@ static void testActivePairDrain(void)
     createFirstPair(&fixture);
 
     sbuf_t *payload = bufferpoolGetLargeBuffer(getWorkerBufferPool(0));
-    sbufSetLength(payload, 1);
+    sbufSetLength(payload, 7);
+    sbufWrite(payload, "prebody", 7);
+    fixture.expected_payload = payload;
     reverseclientTunnelDownStreamPayload(fixture.reverse, fixture.upstream_line, payload);
     require(fixture.downstream_init_count == 1, "active pair did not publish its downstream side");
     require(reverseclientOwnedPairCount(fixture.reverse, 0) == 1, "active pair left the owner registry");
+    require(fixture.expected_payload == NULL, "ordinary activation payload was lost");
+    payload = bufferpoolGetLargeBuffer(getWorkerBufferPool(0));
+    sbufSetLength(payload, 7);
+    sbufWrite(payload, "prebody", 7);
+    fixture.expected_payload = payload;
+    reverseclientTunnelUpStreamPayload(fixture.reverse, fixture.downstream_line, payload);
+    require(fixture.expected_payload == NULL && fixture.payload_count == 2, "ordinary upstream payload was lost");
 
     quiesceAndDrain(&fixture);
     require(fixture.upstream_finish_count == 1 && fixture.downstream_finish_count == 1,
             "active drain did not finish both initialized sides exactly once");
     fixtureTeardown(&fixture);
 }
+
+#if WW_HAVE_SPLICE
+static sbuf_t *privatePayload(void)
+{
+    sbuf_t *buf = bufferpoolGetSpliceBuffer(getWorkerBufferPool(0));
+    require(buf != NULL, "failed to get ReverseClient splice input");
+    require(write(sbufSpliceMetadata(buf).pipefd[1], "body", 4) == 4, "populate ReverseClient private pipe");
+    buf->capacity = buf->l_pad + 4;
+    sbufSetLength(buf, 4);
+    sbufShiftLeft(buf, 3);
+    sbufWrite(buf, "pre", 3);
+    return buf;
+}
+
+static void testSpliceActivation(bool close_during_init)
+{
+    reverseclient_fixture_t fixture;
+    fixtureSetup(&fixture, kEndpointEstablish);
+    fixture.close_downstream_init = close_during_init;
+    fixture.expected_splice       = true;
+    createFirstPair(&fixture);
+    sbuf_t     *buf         = privatePayload();
+    atomic_uint disposed    = 0;
+    int         pipe_reader = -1;
+    if (close_during_init)
+    {
+        pipe_reader = dup(sbufSpliceMetadata(buf).pipefd[0]);
+        require(pipe_reader >= 0, "duplicate pipe reader for disposal observation");
+        watchBufferDisposal(buf, &disposed);
+    }
+    else
+        fixture.expected_payload = buf;
+    reverseclientTunnelDownStreamPayload(fixture.reverse, fixture.upstream_line, buf);
+    require(fixture.downstream_init_count == 1, "splice activation missed downstream Init");
+    if (close_during_init)
+    {
+        require(atomic_load(&disposed) == 1, "Init death did not dispose held splice exactly once");
+        char    byte;
+        ssize_t result = read(pipe_reader, &byte, 1);
+        require(result == 0 || (result == -1 && errno == EAGAIN), "Init death left pipe bytes");
+        close(pipe_reader);
+        require(reverseclientOwnedPairCount(fixture.reverse, 0) == 0, "Init death retained pair");
+        require(masterpoolGetCheckedOut(fixture.chain->masterpool_line_pool) == 0, "Init death retained lines");
+    }
+    else
+    {
+        require(fixture.expected_payload == NULL && fixture.payload_count == 1, "activation lost payload");
+        fixture.expected_payload = privatePayload();
+        reverseclientTunnelDownStreamPayload(fixture.reverse, fixture.upstream_line, fixture.expected_payload);
+        fixture.expected_payload = privatePayload();
+        reverseclientTunnelUpStreamPayload(fixture.reverse, fixture.downstream_line, fixture.expected_payload);
+        require(fixture.expected_payload == NULL && fixture.payload_count == 3, "established pair forwarding failed");
+    }
+    quiesceAndDrain(&fixture);
+    fixtureTeardown(&fixture);
+}
+#endif
 
 static void testReentrantInitClose(void)
 {
@@ -316,6 +421,11 @@ int main(void)
     init_data.dns_logger_data.log_level      = log_off;
     require(wwStartupSucceeded(createGlobalState(init_data)), "failed to create ReverseClient owner test state");
 
+    globalstateUpdateAllocationPadding(32);
+#if WW_HAVE_SPLICE
+    testSpliceActivation(false);
+    testSpliceActivation(true);
+#endif
     testConnectingPairDrain();
     testActivePairDrain();
     testReentrantInitClose();

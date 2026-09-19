@@ -1,5 +1,5 @@
 <!--
-Documentation version: 152
+Documentation version: 153
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/ReverseClient.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/ReverseClient.mdx, and all files must keep the same documentation version.
 -->
 
@@ -183,10 +183,16 @@ Source-backed metadata:
 
 | Property | Value |
 | --- | --- |
-| node flags | `kNodeFlagNone` |
+| node flags | `kNodeFlagNone` &#124; `kNodeFlagSupportsSplice` |
 | `can_have_prev` | `true` |
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayer4` |
 | `layer_group_prev_node` | `kNodeLayer4` |
 | `layer_group_next_node` | `kNodeLayer4` |
 | `required_padding_left` | `0` bytes |
+
+## Splice support
+
+The generated handshake remains an ordinary buffer. Application payloads retain their private-pipe bodies when forwarded between the two owned normal lines, including pair activation. If downstream Init closes the pair, the held application buffer is recycled once. Keep the direct Bridge -> ReverseClient adjacency. This capability does not imply ReverseServer support; chains containing ReverseServer remain in ordinary mode.
+
+Ordinary fallback buffers remain accepted. Splice requires a supported Linux build, `misc.splice` enabled, no packet nodes, and support from every node in the finalized expanded/merged chain. The capability flag does not bypass these checks. No performance improvement is promised without measurement.

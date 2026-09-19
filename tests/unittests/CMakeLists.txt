@@ -1123,6 +1123,11 @@ if(TARGET ww)
         target_link_libraries(node_layer_validation_test PRIVATE MuxClient MuxServer TcpListener TcpConnector)
         target_compile_definitions(node_layer_validation_test PRIVATE WW_TEST_REAL_TCP_MUX_NODES=1)
       endif()
+      if(TARGET HeaderClient AND TARGET Bridge AND TARGET UserController AND TARGET BlackHole
+         AND TARGET ReverseClient AND TARGET JunkDatagramSender)
+        target_link_libraries(node_layer_validation_test PRIVATE HeaderClient Bridge UserController BlackHole ReverseClient JunkDatagramSender)
+        target_compile_definitions(node_layer_validation_test PRIVATE WW_TEST_EASY_SPLICE_NODES=1)
+      endif()
       add_dependencies(waterwall_unit_tests node_layer_validation_test)
 
       add_waterwall_unit_test(
@@ -1141,6 +1146,11 @@ if(TARGET ww)
       if(TARGET MuxClient AND TARGET MuxServer AND TARGET TcpListener AND TARGET TcpConnector)
         target_link_libraries(node_layer_validation_no_splice_test PRIVATE MuxClient MuxServer TcpListener TcpConnector)
         target_compile_definitions(node_layer_validation_no_splice_test PRIVATE WW_TEST_REAL_TCP_MUX_NODES=1)
+      endif()
+      if(TARGET HeaderClient AND TARGET Bridge AND TARGET UserController AND TARGET BlackHole
+         AND TARGET ReverseClient AND TARGET JunkDatagramSender)
+        target_link_libraries(node_layer_validation_no_splice_test PRIVATE HeaderClient Bridge UserController BlackHole ReverseClient JunkDatagramSender)
+        target_compile_definitions(node_layer_validation_no_splice_test PRIVATE WW_TEST_EASY_SPLICE_NODES=1)
       endif()
       add_dependencies(waterwall_unit_tests node_layer_validation_no_splice_test)
 
@@ -1788,6 +1798,9 @@ if(TARGET ReverseClient AND UNIX)
     ${CMAKE_SOURCE_DIR}/tunnels/ReverseClient/include
   )
   target_link_libraries(reverseclient_owner_drain_test PRIVATE ReverseClient ww)
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_link_options(reverseclient_owner_drain_test PRIVATE "-Wl,--wrap=sbufDestroy" "-Wl,--wrap=bufferpoolReuseBuffer")
+  endif()
   add_dependencies(waterwall_unit_tests reverseclient_owner_drain_test)
   add_waterwall_unit_test(
     waterwall.reverseclient_owner_drain_unit
@@ -3597,3 +3610,16 @@ add_custom_target(check_waterwall_unit_tests
   DEPENDS waterwall_unit_tests
   USES_TERMINAL
 )
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND TARGET HeaderClient AND TARGET Bridge AND TARGET BlackHole
+   AND TARGET UserController AND TARGET JunkDatagramSender)
+  add_executable(easy_nodes_splice_test
+    easy_nodes_splice_test.c easy_nodes_splice_header.c easy_nodes_splice_bridge.c
+    easy_nodes_splice_user.c easy_nodes_splice_junk.c)
+  target_link_libraries(easy_nodes_splice_test PRIVATE HeaderClient Bridge BlackHole UserController AuthenticationClient JunkDatagramSender ww)
+  target_link_options(easy_nodes_splice_test PRIVATE
+    "-Wl,--wrap=sbufDestroy" "-Wl,--wrap=bufferpoolReuseBuffer" "-Wl,--wrap=snprintf" "-Wl,--wrap=__snprintf_chk"
+    "-Wl,--wrap=authenticationclientUserAccountTraffic" "-Wl,--wrap=authenticationclientUserReleaseConnection")
+  add_dependencies(waterwall_unit_tests easy_nodes_splice_test)
+  add_waterwall_unit_test(waterwall.easy_nodes_splice_unit easy_nodes_splice_test "unit;tunnels;splice;buffers;ownership")
+endif()

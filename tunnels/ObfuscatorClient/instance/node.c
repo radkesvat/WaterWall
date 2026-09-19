@@ -19,7 +19,7 @@ node_t nodeObfuscatorClientGet(void)
              .node_settings_json    = NULL,
              .node_manager_config   = NULL,
              .instance              = NULL,
-             .flags                 = kNodeFlagNone,
+             .flags                 = kNodeFlagNone | kNodeFlagBlocksSplice,
              .required_padding_left = kObfuscatorTlsRecordHeaderSize,
              .layer_group           = kNodeLayerAnything,
              .layer_group_next_node = kNodeLayerSameAsPrev,

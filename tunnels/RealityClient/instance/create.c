@@ -104,7 +104,6 @@ static bool initializeInternalTlsClient(tunnel_t *t, node_t *node)
     ts->tls_node.hash_next           = node->hash_next;
     ts->tls_node.node_settings_json  = ts->tls_settings;
     ts->tls_node.node_manager_config = node->node_manager_config;
-    ts->tls_node.flags               = kNodeFlagNone;
 
     ts->tls_tunnel = tlsclientTunnelCreate(&ts->tls_node);
     if (ts->tls_tunnel == NULL)

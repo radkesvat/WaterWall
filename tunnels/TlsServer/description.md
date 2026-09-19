@@ -1,5 +1,5 @@
 <!--
-Documentation version: 155
+Documentation version: 156
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/TlsServer.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/TlsServer.mdx, and all files must keep the same documentation version.
 -->
 
@@ -490,9 +490,12 @@ So if your goal is wire-level similarity to default nginx, keep the defaults unl
 
 Source-backed metadata:
 
+This node explicitly disables splice for the entire chain through
+`kNodeFlagBlocksSplice`, even if `kNodeFlagSupportsSplice` is also set.
+
 | Property | Value |
 | --- | --- |
-| node flags | `kNodeFlagNone` |
+| node flags | `kNodeFlagNone` &#124; `kNodeFlagBlocksSplice` |
 | `can_have_prev` | `true` |
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayer4` |

@@ -19,7 +19,7 @@ node_t nodeTcpOverUdpClientGet(void)
              .node_settings_json    = NULL,
              .node_manager_config   = NULL,
              .instance              = NULL,
-             .flags                 = kNodeFlagNone,
+             .flags                 = kNodeFlagNone | kNodeFlagBlocksSplice,
              .required_padding_left = 1, // kFrameHeaderLength in structure.h
              .layer_group           = kNodeLayer4,
              .layer_group_next_node = kNodeLayer4,

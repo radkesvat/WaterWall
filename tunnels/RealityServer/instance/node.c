@@ -17,7 +17,7 @@ node_t nodeRealityServerGet(void)
                   .node_settings_json    = NULL,
                   .node_manager_config   = NULL,
                   .instance              = NULL,
-                  .flags                 = kNodeFlagNone,
+                  .flags                 = kNodeFlagNone | kNodeFlagBlocksSplice,
                   .required_padding_left = kRealityServerMaxFramePrefixSize,
                   .layer_group           = kNodeLayer4,
                   .layer_group_next_node = kNodeLayer4,

@@ -1,5 +1,5 @@
 <!--
-Documentation version: 152
+Documentation version: 153
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/HeaderClient.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/HeaderClient.mdx, and all files must keep the same documentation version.
 -->
 
@@ -357,10 +357,16 @@ Source-backed metadata:
 
 | Property | Value |
 | --- | --- |
-| node flags | `kNodeFlagNone` |
+| node flags | `kNodeFlagNone` &#124; `kNodeFlagSupportsSplice` |
 | `can_have_prev` | `true` |
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayer4` |
 | `layer_group_prev_node` | `kNodeLayer4` |
 | `layer_group_next_node` | `kNodeLayer4` |
 | `required_padding_left` | `108` bytes |
+
+## Splice support
+
+The one-time header is written only into advertised real left padding, ahead of any existing prefix. The application body stays in its private pipe; subsequent upstream and all downstream payloads pass through unchanged. HeaderClient support does not imply HeaderServer support: a chain containing the unchanged HeaderServer remains in ordinary mode.
+
+Ordinary fallback buffers remain accepted. Splice requires a supported Linux build, `misc.splice` enabled, no packet nodes, and support from every node in the finalized expanded/merged chain. The capability flag does not bypass these checks. No performance improvement is promised without measurement.
