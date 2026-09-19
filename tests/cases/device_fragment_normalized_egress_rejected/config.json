@@ -1,0 +1,24 @@
+{
+  "name": "device_fragment_normalized_egress_rejected",
+  "nodes": [
+    {
+      "name": "tun",
+      "type": "TunDevice",
+      "next": "stack",
+      "settings": {
+        "fragment-policy": "reassemble",
+        "device-name": "wwfrag0",
+        "device-ip": "10.253.80.1/24",
+        "device-mtu": 1500,
+        "route-table": "off"
+      }
+    },
+    {
+      "name": "stack",
+      "type": "BlackHole",
+      "settings": {
+        "mode": "passive"
+      }
+    }
+  ]
+}

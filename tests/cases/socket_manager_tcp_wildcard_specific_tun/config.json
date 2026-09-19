@@ -5,6 +5,7 @@
       "name": "fixture-tun",
       "type": "TunDevice",
       "settings": {
+        "fragment-policy": "preserve-fragments",
         "device-name": "wwsmtcp1",
         "device-ip": "10.251.21.1/32",
         "device-mtu": 1500,

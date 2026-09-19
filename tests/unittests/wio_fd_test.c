@@ -820,8 +820,7 @@ static void spliceRead(wio_t *io, sbuf_t *buf)
     const uint32_t limit = min(bufferpoolGetLargeBufferSize(pool), (uint32_t) LARGE_BUFFER_SIZE_RAM_HIGH);
     require(count <= min(probe->length - probe->received, limit) && count > 0,
             "splice delivery exceeded available bytes or its read cap");
-    require(buf->flags == kSbufFlagSplice && buf->curpos == 64 && buf->capacity == 64 + count &&
-                sbufGetLifetime(buf) == NULL,
+    require(buf->flags == kSbufFlagSplice && buf->curpos == 64 && buf->capacity == 64 + count,
             "splice dispatch supplied an invalid pipe-backed wrapper");
     const splice_buffer_metadata_t metadata  = sbufSpliceMetadata(buf);
     int                            available = -1;

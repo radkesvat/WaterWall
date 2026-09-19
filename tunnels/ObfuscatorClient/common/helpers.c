@@ -112,7 +112,6 @@ static sbuf_t *obfuscatorclientCloneBufferWithPadding(line_t *l, sbuf_t *buf)
 
     sbufSetLength(clone, payload_len);
     sbufWriteBuf(clone, buf, payload_len);
-    sbufTransferLifetime(buf, clone);
     lineReuseBuffer(l, buf);
 
     return clone;

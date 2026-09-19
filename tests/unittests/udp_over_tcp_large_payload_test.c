@@ -14,26 +14,16 @@ typedef udpovertcpclient_lstate_t uot_lstate_t;
 
 static uint32_t         expected_length;
 static uint32_t         payload_calls;
-static uint32_t         lifetime_releases;
-static sbuf_lifetime_t *expected_lifetime;
 
 static uint8_t payloadByte(uint32_t index)
 {
     return (uint8_t) (index * 17U + 9U);
 }
 
-static void releasePayload(sbuf_lifetime_t *lifetime)
-{
-    twfRequire(lifetime == expected_lifetime, "UOT released the wrong lifetime");
-    ++lifetime_releases;
-}
-
 static void encodedSink(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     discard t;
     ++payload_calls;
-    twfRequire(sbufGetLifetime(buf) == expected_lifetime && lifetime_releases == 0,
-               "UOT lost or prematurely released payload lifetime");
     const uint8_t *wire     = sbufGetRawPtr(buf);
     uint32_t       offset   = 0;
     uint32_t       consumed = 0;
@@ -89,12 +79,8 @@ static void testPayload(bool tcp, uint32_t length)
     for (uint32_t i = 0; i < length; ++i)
         raw[i] = payloadByte(i);
     sbufSetLength(input, length);
-    sbuf_lifetime_t lifetime = {.release = releasePayload};
-    expected_lifetime        = &lifetime;
     expected_length          = length;
     payload_calls            = 0;
-    lifetime_releases        = 0;
-    sbufAttachLifetime(input, &lifetime);
 #ifdef TEST_UOT_SERVER
     uot->fnPayloadD(uot, line, input);
 #else
@@ -103,7 +89,6 @@ static void testPayload(bool tcp, uint32_t length)
     const bool accepted = tcp || length <= kMaxAllowedUDPPacketLength;
     twfRequire(payload_calls == (accepted ? 1U : 0U),
                "UOT emitted multiple callbacks or accepted an oversized datagram");
-    twfRequire(lifetime_releases == 1, "UOT did not settle the payload exactly once");
     destroyUotState(ls);
     twfLineDestroy(line);
     tunnelDestroy(uot);

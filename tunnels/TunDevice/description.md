@@ -36,6 +36,7 @@ Payload coming from either side and reaching `TunDevice` is written into the TUN
   "name": "tun0-adapter",
   "type": "TunDevice",
   "settings": {
+    "fragment-policy": "preserve-fragments",
     "device-name": "tun0",
     "device-ip": "10.10.0.1/24",
     "device-mtu": 1500,
@@ -53,6 +54,7 @@ Full-route example with local ranges excluded:
   "name": "tun0-adapter",
   "type": "TunDevice",
   "settings": {
+    "fragment-policy": "preserve-fragments",
     "device-name": "tun0",
     "device-ip": "10.10.0.1/24",
     "device-mtu": 1500,
@@ -312,3 +314,13 @@ Source-backed metadata:
 | `layer_group_prev_node` | `kNodeLayer3` |
 | `layer_group_next_node` | `kNodeLayer3` |
 | `required_padding_left` | `0` bytes |
+
+### `fragment-policy` (required)
+
+Select `reassemble` for an audited local-stack ingress path, or
+`preserve-fragments` for audited raw forwarding to external packet egress or a
+sink. Missing/invalid settings and unsupported paths fail startup. Reassembly
+emits complete IPv4 datagrams up to 65,535 bytes; it does not raise global packet,
+raw-output or device-MTU limits. Packet/stream bridges, routing and unknown
+transforms are not eligible. See Developer Guide Part 4 for the exact supported
+path matrix, storage limits and ordinary post-delivery lifecycle contract.

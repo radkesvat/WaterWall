@@ -40,7 +40,6 @@ void obfuscatorserverEncodeStream(tunnel_t *t, line_t *l, sbuf_t *buf)
     }
     out->curpos = start;
     sbufSetLength(out, (uint32_t) total);
-    sbufTransferLifetime(buf, out);
     bufferpoolReuseBuffer(pool, buf);
     tunnelNextUpStreamPayload(t, l, out);
 }
@@ -80,8 +79,6 @@ void obfuscatorserverDrainStream(tunnel_t *t, line_t *l)
         sbuf_t *record = bufferstreamReadExact(&ls->read_stream, length + 5);
         sbufShiftRight(record, 5);
         obfuscatorserverApplyXor(t, l, record);
-        if (first_record)
-            sbufTransferLifetime(record, out);
         sbufMoveTo(out, record, length);
         bufferpoolReuseBuffer(pool, record);
     }

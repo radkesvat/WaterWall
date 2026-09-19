@@ -1832,7 +1832,8 @@ bool tundeviceBringDown(tun_device_t *tdev)
     return bring_down_ok;
 }
 
-tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void *userdata, TunReadEventHandle cb)
+tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void *userdata, TunReadEventHandle cb,
+                              device_fragment_policy_t fragment_policy)
 {
     discard offload; // todo (send/receive offloading)
 
@@ -1999,8 +2000,8 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void
                             .mtu                 = mtu};
     atomic_init(&tdev->lifecycle, kTunLifecycleDown);
     deviceWriterChannelInit(&tdev->writer_channel);
-    tdev->reader_session =
-        deviceReaderSessionCreate(RAM_PROFILE * 2, kMaxReadDistributeQueueSize, tdev, tunDeliverPacket, reader_bpool);
+    tdev->reader_session = deviceReaderSessionCreate(
+        RAM_PROFILE * 2, kMaxReadDistributeQueueSize, tdev, tunDeliverPacket, reader_bpool, fragment_policy);
     if (UNLIKELY(tdev->reader_session == NULL))
     {
         LOGE("TunDevice: failed to allocate reader session");

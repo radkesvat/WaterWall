@@ -59,13 +59,13 @@ def main():
             ('{"name":"x","nodes":[{"name":"' + SECRET + '","type":"' + SECRET + '"}]}',
              "external nodes are disabled"),
             (json.dumps({"name": "x", "nodes": [{"name": "x", "type": "TunDevice", "settings": {
-                "device-name": "wwtest", "device-ip": "10.0.0.1/24", "post-up-script": SECRET}}]}),
+                "fragment-policy": "preserve-fragments", "device-name": "wwtest", "device-ip": "10.0.0.1/24", "post-up-script": SECRET}}]}),
              "user scripts are disabled"),
             ('{"name":"x","variables":{"script":"' + SECRET + '"},"nodes":['
-             '{"name":"x","type":"TunDevice","settings":{"device-name":"wwtest",'
+             '{"name":"x","type":"TunDevice","settings":{"fragment-policy":"preserve-fragments","device-name":"wwtest",'
              '"device-ip":"10.0.0.1/24","pre-down-script":$script$}}]}', "user scripts are disabled"),
             (json.dumps({"name": "x", "nodes": [{"name": "x", "type": "TunDevice", "settings": {
-                "device-name": "wwtest", "device-ip": "10.0.0.1/24", "dns": [SECRET]}}]}),
+                "fragment-policy": "preserve-fragments", "device-name": "wwtest", "device-ip": "10.0.0.1/24", "dns": [SECRET]}}]}),
              "dns contains invalid IPv4 address: <restricted>"),
             ('{"name":"x","nodes":[],' + '"padding":"' + 'x' * (8 * 1024 * 1024) + '"}', "input limit"),
         ]
@@ -75,7 +75,7 @@ def main():
 
         # Both route lists share the CIDR diagnostic, including after expansion.
         for key in ("route-cidrs", "route-exclude-cidrs"):
-            settings = {"device-name": "wwtest", "device-ip": "10.0.0.1/24",
+            settings = {"fragment-policy": "preserve-fragments", "device-name": "wwtest", "device-ip": "10.0.0.1/24",
                         "system-route": True, key: [SECRET]}
             nodes = {"name": "x", "nodes": [{"name": "x", "type": "TunDevice", "settings": settings}]}
             diagnostic = f"TunDevice->settings->{key} contains invalid CIDR entry: "

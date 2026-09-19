@@ -1,121 +1,48 @@
 #include "devices/device_frag_affinity.h"
-
 #include "devices/device_flow_affinity.h"
 #include "global_state.h"
 #include "loggers/internal_logger.h"
-#include "loggers/log_rate_limiter.h"
-#include "wchecksum.h"
-
 #include "lwip/inet_chksum.h"
 #include "lwip/prot/tcp.h"
 #include "lwip/prot/udp.h"
+#include "wchecksum.h"
 
 enum
 {
     kDeviceFragAffinityIpv4MoreFragments = 0x2000,
-    kDeviceFragAffinityIpv4OffsetMask    = 0x1FFF,
-    kDeviceFragAffinityLogIntervalMs     = 5U * 1000U,
+    kDeviceFragAffinityIpv4OffsetMask    = 0x1fff,
     kDeviceFragAffinityMaxPayloadEnd     = UINT16_MAX - 20U
 };
-
-static atomic_log_rate_limiter_t g_frag_affinity_full_log;
-
 typedef struct device_frag_range_s
 {
-    uint32_t begin;
-    uint32_t end;
+    uint32_t begin, end;
 } device_frag_range_t;
-
-typedef struct device_staged_frag_s
-{
-    sbuf_t  *buf;
-    uint32_t offset;
-    uint16_t payload_len;
-    bool     more_fragments;
-} device_staged_frag_t;
-
-/*
- * A released identity that may still have a prefix inside reassembly.
- *
- * Deliberately not an association: no staged buffers, no coverage ranges, no
- * publication accounting. Holding the full association for a reassembly lifetime
- * would let ordinary refusals consume the association table.
- */
-typedef struct device_frag_quarantine_s
-{
-    uint32_t src;
-    uint32_t dst;
-    uint16_t ident;
-    uint8_t  proto;
-    bool     in_use;
-    uint64_t expires_at_ms;
-    uint32_t release_epoch;
-} device_frag_quarantine_t;
-
-typedef struct device_frag_quarantine_sweep_s
-{
-    uint16_t free_slots[kDeviceFragAffinityMaxQuarantine];
-    uint16_t free_count;
-    uint16_t next_free;
-} device_frag_quarantine_sweep_t;
-
 typedef struct device_frag_affinity_entry_s
 {
-    uint32_t src;
-    uint32_t dst;
-    uint16_t ident;
-    uint8_t  proto;
-    uint64_t serial;
-
-    bool in_use;
-    bool poisoned;
-    bool completion_pending;
-    /* The last factual settlement describes the exact lwIP reassembly key. */
-    bool     residue_known;
-    bool     residue_present;
-    bool     wid_known;
-    wid_t    wid;
+    uint32_t            src, dst;
+    uint16_t            ident;
+    uint8_t             proto;
+    bool                in_use, poisoned, wid_known, saw_last;
+    wid_t               wid;
+    uint64_t            expires_at_ms;
     uint64_t zero_flow_hash;
-
-    uint64_t expires_at_ms;
-    uint64_t residue_release_at_ms;
-    uint32_t residue_release_epoch;
-    uint32_t final_end;
-    uint32_t pending_publications;
-    bool     residue_barrier_armed;
-    bool     saw_last;
-
-    uint8_t             range_count;
+    uint32_t            final_end;
+    uint16_t            fragments;
+    uint8_t             range_count, staged_count;
     device_frag_range_t ranges[kDeviceFragAffinityMaxRanges];
-
-    uint8_t              staged_count;
-    device_staged_frag_t staged[kDeviceFragAffinityMaxStagedPerEntry];
+    sbuf_t             *staged[kDeviceFragAffinityMaxStagedPerEntry];
+    sbuf_t             *assembly;
 } device_frag_affinity_entry_t;
-
 struct device_frag_affinity_table_s
 {
-    buffer_pool_t *release_pool;
-    wmutex_t       lock;
-
-    /*
-     * Whether a reader generation is open. Closed means every offer is consumed
-     * and recycled without creating or modifying an association, which is what
-     * stops an orphan tail - a fragment that yields no dispatch and therefore
-     * never reaches the session's own admission check - from being staged after
-     * End and adopted by the next generation's fragment zero.
-     */
-    bool generation_open;
-
-    uint32_t staged_total;
-    uint32_t staged_bytes;
-    uint32_t quarantine_count;
-    uint64_t next_expiry_ms;
-    uint64_t next_serial;
-
-    sbuf_t *release_scratch[kDeviceFragAffinityMaxStagedPerEntry];
-
+    buffer_pool_t               *release_pool;
+    wmutex_t                     lock;
+    bool                         generation_open;
+    device_fragment_policy_t     policy;
+    size_t                       retained_bytes;
+    uint32_t                     staged_total;
+    sbuf_t                      *release_scratch[kDeviceFragAffinityMaxStagedPerEntry];
     device_frag_affinity_entry_t entries[kDeviceFragAffinityMaxEntries];
-    device_frag_quarantine_t     quarantine[kDeviceFragAffinityMaxQuarantine];
 };
 
 typedef struct device_frag_view_s
@@ -358,598 +285,6 @@ static device_frag_parse_result_t deviceFragAffinityParse(const uint8_t *packet,
     return kDeviceFragParseValid;
 }
 
-static uint32_t deviceFragAffinityHome(const device_frag_view_t *view)
-{
-    uint64_t mixed = ((uint64_t) view->src << 32U) ^ (uint64_t) view->dst;
-
-    mixed ^= ((uint64_t) view->ident << 8U) ^ (uint64_t) view->proto;
-    mixed *= UINT64_C(0x9E3779B97F4A7C15);
-    mixed ^= mixed >> 29U;
-    return (uint32_t) (mixed % (uint64_t) kDeviceFragAffinityMaxEntries);
-}
-
-static bool deviceFragAffinityEntryMatches(const device_frag_affinity_entry_t *entry, const device_frag_view_t *view)
-{
-    return entry->in_use && entry->src == view->src && entry->dst == view->dst && entry->ident == view->ident &&
-           entry->proto == view->proto;
-}
-
-static void deviceFragAffinityDropStaged(device_frag_affinity_table_t *table, device_frag_affinity_entry_t *entry)
-{
-    assert(table->release_pool != NULL || entry->staged_count == 0);
-    for (uint8_t i = 0; i < entry->staged_count; ++i)
-    {
-        table->staged_bytes -= sbufGetLength(entry->staged[i].buf);
-        bufferpoolReuseBuffer(table->release_pool, entry->staged[i].buf);
-        entry->staged[i] = (device_staged_frag_t) {0};
-    }
-
-    table->staged_total -= entry->staged_count;
-    entry->staged_count = 0;
-}
-
-static void deviceFragAffinityReleaseEntry(device_frag_affinity_table_t *table, device_frag_affinity_entry_t *entry)
-{
-    deviceFragAffinityDropStaged(table, entry);
-    memorySet(entry, 0, sizeof(*entry));
-}
-
-/*
- * Marks the identity untrustworthy without touching the release pool.
- *
- * Split out because a generation boundary runs on the lifecycle thread while the
- * reader thread still owns the reader buffer pool. Metadata is safe to change
- * from there; returning a buffer to a thread-affine pool is not.
- */
-static void deviceFragAffinityPoisonMetadata(device_frag_affinity_entry_t *entry)
-{
-    entry->poisoned              = true;
-    entry->wid_known             = false;
-    entry->range_count           = 0;
-    entry->saw_last              = false;
-    entry->final_end             = 0;
-    entry->completion_pending    = false;
-    entry->residue_known         = false;
-    entry->residue_present       = false;
-    entry->residue_barrier_armed = false;
-    entry->residue_release_at_ms = 0;
-    entry->residue_release_epoch = 0;
-}
-
-static void deviceFragAffinityPoison(device_frag_affinity_table_t *table, device_frag_affinity_entry_t *entry)
-{
-    deviceFragAffinityDropStaged(table, entry);
-    deviceFragAffinityPoisonMetadata(entry);
-}
-
-// ---------------------------------------------------------------------------
-// quarantine ring
-// ---------------------------------------------------------------------------
-
-static uint32_t deviceFragResidueReleaseEpoch(void)
-{
-    return ip4_reass_tmr_epoch() + (uint32_t) kDeviceFragAffinityResidueTimerPasses;
-}
-
-static bool deviceFragResidueEpochReached(uint32_t current_epoch, uint32_t release_epoch)
-{
-    /* Modular comparison is unambiguous because a barrier is only 16 passes
-     * away, far below half of the uint32_t sequence space. */
-    return (uint32_t) (current_epoch - release_epoch) < UINT32_C(0x80000000);
-}
-
-static bool deviceFragResidueBarrierReady(uint64_t now_ms, uint64_t expires_at_ms, uint32_t current_epoch,
-                                          uint32_t release_epoch)
-{
-    return now_ms >= expires_at_ms && deviceFragResidueEpochReached(current_epoch, release_epoch);
-}
-
-static void deviceFragAffinityArmResidueBarrier(device_frag_affinity_entry_t *entry, uint64_t now_ms)
-{
-    entry->residue_release_at_ms = now_ms + (uint64_t) kDeviceFragAffinityResidueTimeoutMs;
-    entry->residue_release_epoch = deviceFragResidueReleaseEpoch();
-    entry->residue_barrier_armed = true;
-}
-
-static bool deviceFragQuarantineBlocks(device_frag_affinity_table_t *table, const device_frag_view_t *view,
-                                       uint64_t now_ms)
-{
-    if (table->quarantine_count == 0)
-    {
-        return false;
-    }
-
-    const uint32_t current_epoch = ip4_reass_tmr_epoch();
-
-    for (uint32_t i = 0; i < (uint32_t) kDeviceFragAffinityMaxQuarantine; ++i)
-    {
-        device_frag_quarantine_t *record = &table->quarantine[i];
-        if (! record->in_use || record->src != view->src || record->dst != view->dst || record->ident != view->ident ||
-            record->proto != view->proto)
-        {
-            continue;
-        }
-        if (deviceFragResidueBarrierReady(now_ms, record->expires_at_ms, current_epoch, record->release_epoch))
-        {
-            *record = (device_frag_quarantine_t) {0};
-            --table->quarantine_count;
-            return false;
-        }
-        return true;
-    }
-    return false;
-}
-
-/*
- * Takes an identity out of the association table and holds only its name and
- * its wall-clock/actual-timer-pass release barrier.
- *
- * Returns false when every record is still live. A live quarantine is never
- * evicted to make room for another one, so the caller keeps the poisoned
- * association in place instead - which is correct, just more expensive.
- */
-static bool deviceFragQuarantineAdmit(device_frag_affinity_table_t *table, const device_frag_affinity_entry_t *entry,
-                                      uint64_t now_ms)
-{
-    device_frag_quarantine_t *free_slot     = NULL;
-    const uint32_t            current_epoch = ip4_reass_tmr_epoch();
-    const uint64_t            release_at_ms = entry->residue_barrier_armed
-                                                  ? entry->residue_release_at_ms
-                                                  : now_ms + (uint64_t) kDeviceFragAffinityResidueTimeoutMs;
-    const uint32_t            release_epoch = entry->residue_barrier_armed
-                                                  ? entry->residue_release_epoch
-                                                  : current_epoch + (uint32_t) kDeviceFragAffinityResidueTimerPasses;
-
-    for (uint32_t i = 0; i < (uint32_t) kDeviceFragAffinityMaxQuarantine; ++i)
-    {
-        device_frag_quarantine_t *record = &table->quarantine[i];
-
-        if (record->in_use && record->src == entry->src && record->dst == entry->dst && record->ident == entry->ident &&
-            record->proto == entry->proto)
-        {
-            if (release_at_ms >= record->expires_at_ms)
-            {
-                record->expires_at_ms = release_at_ms;
-                record->release_epoch = release_epoch;
-            }
-            return true;
-        }
-
-        if (! record->in_use)
-        {
-            free_slot = (free_slot != NULL) ? free_slot : record;
-        }
-        else if (deviceFragResidueBarrierReady(now_ms, record->expires_at_ms, current_epoch, record->release_epoch))
-        {
-            record->in_use = false;
-            --table->quarantine_count;
-            free_slot = (free_slot != NULL) ? free_slot : record;
-        }
-    }
-
-    if (free_slot == NULL)
-    {
-        return false;
-    }
-
-    *free_slot = (device_frag_quarantine_t) {
-        .src           = entry->src,
-        .dst           = entry->dst,
-        .ident         = entry->ident,
-        .proto         = entry->proto,
-        .in_use        = true,
-        .expires_at_ms = release_at_ms,
-        .release_epoch = release_epoch,
-    };
-    ++table->quarantine_count;
-    return true;
-}
-
-static void deviceFragQuarantineSweep(device_frag_affinity_table_t *table, uint64_t now_ms,
-                                      device_frag_quarantine_sweep_t *sweep)
-{
-    const uint32_t current_epoch = ip4_reass_tmr_epoch();
-
-    *sweep = (device_frag_quarantine_sweep_t) {0};
-
-    for (uint32_t i = 0; i < (uint32_t) kDeviceFragAffinityMaxQuarantine; ++i)
-    {
-        device_frag_quarantine_t *record = &table->quarantine[i];
-        if (record->in_use &&
-            deviceFragResidueBarrierReady(now_ms, record->expires_at_ms, current_epoch, record->release_epoch))
-        {
-            record->in_use = false;
-            --table->quarantine_count;
-        }
-        if (! record->in_use)
-        {
-            sweep->free_slots[sweep->free_count++] = (uint16_t) i;
-        }
-    }
-}
-
-/*
- * An identity cannot simultaneously be an association and a quarantine record:
- * every new association passes deviceFragQuarantineBlocks() while holding the
- * same table lock, and an association key is unique. The batch sweep can
- * therefore consume its one-pass free-slot inventory without repeating a
- * 512-record exact-key scan for each association.
- */
-static bool deviceFragQuarantineAdmitSwept(device_frag_affinity_table_t       *table,
-                                           const device_frag_affinity_entry_t *entry,
-                                           device_frag_quarantine_sweep_t     *sweep)
-{
-    if (sweep->next_free >= sweep->free_count)
-    {
-        return false;
-    }
-
-    device_frag_quarantine_t *record = &table->quarantine[sweep->free_slots[sweep->next_free++]];
-    assert(! record->in_use);
-    assert(entry->residue_barrier_armed);
-    *record = (device_frag_quarantine_t) {
-        .src           = entry->src,
-        .dst           = entry->dst,
-        .ident         = entry->ident,
-        .proto         = entry->proto,
-        .in_use        = true,
-        .expires_at_ms = entry->residue_release_at_ms,
-        .release_epoch = entry->residue_release_epoch,
-    };
-    ++table->quarantine_count;
-    return true;
-}
-
-static void deviceFragAffinityRefreshNextExpiry(device_frag_affinity_table_t *table)
-{
-    uint64_t earliest = UINT64_MAX;
-
-    for (uint32_t i = 0; i < (uint32_t) kDeviceFragAffinityMaxEntries; ++i)
-    {
-        const device_frag_affinity_entry_t *entry = &table->entries[i];
-        if (entry->in_use && entry->expires_at_ms < earliest)
-        {
-            earliest = entry->expires_at_ms;
-        }
-    }
-    table->next_expiry_ms = earliest;
-}
-
-static void deviceFragAffinitySweep(device_frag_affinity_table_t *table, uint64_t now_ms)
-{
-    const uint32_t                 current_epoch = ip4_reass_tmr_epoch();
-    device_frag_quarantine_sweep_t quarantine_sweep;
-
-    /* One pass both releases safe records and inventories every free slot. The
-     * inventory is consumed monotonically below, so mixed recovery is linear in
-     * the quarantine and association table sizes. */
-    deviceFragQuarantineSweep(table, now_ms, &quarantine_sweep);
-
-    for (uint32_t i = 0; i < (uint32_t) kDeviceFragAffinityMaxEntries; ++i)
-    {
-        device_frag_affinity_entry_t *entry = &table->entries[i];
-        if (entry->in_use && now_ms >= entry->expires_at_ms)
-        {
-            if (entry->pending_publications != 0)
-            {
-                /* Queue admission is not consumer delivery. */
-                deviceFragAffinityPoison(table, entry);
-                entry->expires_at_ms = UINT64_MAX;
-            }
-            else if (entry->poisoned || (entry->residue_known && entry->residue_present))
-            {
-                if (entry->residue_barrier_armed &&
-                    deviceFragResidueBarrierReady(
-                        now_ms, entry->residue_release_at_ms, current_epoch, entry->residue_release_epoch))
-                {
-                    deviceFragAffinityReleaseEntry(table, entry);
-                    continue;
-                }
-
-                /* The last factual observation still found this exact key in
-                 * lwIP. Keep only its identity for one further stack lifetime;
-                 * device-side byte coverage and elapsed wall time are not proof
-                 * that the reassembly timer actually ran. */
-                if (! entry->residue_barrier_armed)
-                {
-                    deviceFragAffinityArmResidueBarrier(entry, now_ms);
-                }
-                const uint64_t release_at_ms = entry->residue_release_at_ms;
-                const uint32_t release_epoch = entry->residue_release_epoch;
-                const bool     admitted      = deviceFragQuarantineAdmitSwept(table, entry, &quarantine_sweep);
-
-                deviceFragAffinityPoison(table, entry);
-                if (admitted)
-                {
-                    deviceFragAffinityReleaseEntry(table, entry);
-                }
-                else
-                {
-                    entry->residue_barrier_armed = true;
-                    entry->residue_release_at_ms = release_at_ms;
-                    entry->residue_release_epoch = release_epoch;
-                    entry->expires_at_ms         = now_ms > UINT64_MAX - (uint64_t) IP_TMR_INTERVAL
-                                                       ? UINT64_MAX
-                                                       : now_ms + (uint64_t) IP_TMR_INTERVAL;
-                }
-            }
-            else
-            {
-                deviceFragAffinityReleaseEntry(table, entry);
-            }
-        }
-    }
-    deviceFragAffinityRefreshNextExpiry(table);
-}
-
-static device_frag_affinity_entry_t *deviceFragAffinityFind(device_frag_affinity_table_t *table,
-                                                            const device_frag_view_t     *view)
-{
-    const uint32_t home = deviceFragAffinityHome(view);
-
-    for (uint32_t step = 0; step < (uint32_t) kDeviceFragAffinityMaxEntries; ++step)
-    {
-        device_frag_affinity_entry_t *entry = &table->entries[(home + step) % kDeviceFragAffinityMaxEntries];
-        if (deviceFragAffinityEntryMatches(entry, view))
-        {
-            return entry;
-        }
-    }
-    return NULL;
-}
-
-static device_frag_affinity_entry_t *deviceFragAffinityInsert(device_frag_affinity_table_t *table,
-                                                              const device_frag_view_t *view, uint64_t now_ms)
-{
-    const uint32_t home = deviceFragAffinityHome(view);
-
-    for (uint32_t step = 0; step < (uint32_t) kDeviceFragAffinityMaxEntries; ++step)
-    {
-        device_frag_affinity_entry_t *entry = &table->entries[(home + step) % kDeviceFragAffinityMaxEntries];
-        if (entry->in_use)
-        {
-            continue;
-        }
-
-        ++table->next_serial;
-        if (UNLIKELY(table->next_serial == 0))
-        {
-            ++table->next_serial;
-        }
-
-        *entry = (device_frag_affinity_entry_t) {
-            .src           = view->src,
-            .dst           = view->dst,
-            .ident         = view->ident,
-            .proto         = view->proto,
-            .serial        = table->next_serial,
-            .in_use        = true,
-            .expires_at_ms = now_ms + (uint64_t) kDeviceFragAffinityTimeoutMs,
-        };
-        table->next_expiry_ms = min(table->next_expiry_ms, entry->expires_at_ms);
-        return entry;
-    }
-    return NULL;
-}
-
-device_frag_affinity_table_t *deviceFragAffinityCreate(buffer_pool_t *release_pool)
-{
-    if (release_pool == NULL)
-    {
-        return NULL;
-    }
-
-    device_frag_affinity_table_t *table = memoryAllocateZero(sizeof(*table));
-    if (table != NULL)
-    {
-        table->release_pool = release_pool;
-        /* Creation is the first generation; End closes it and Begin reopens it. */
-        table->generation_open = true;
-        table->next_expiry_ms  = UINT64_MAX;
-        if (UNLIKELY(! mutexTryInit(&table->lock)))
-        {
-            memoryFree(table);
-            return NULL;
-        }
-    }
-    return table;
-}
-
-static void deviceFragAffinityResetLocked(device_frag_affinity_table_t *table)
-{
-    for (uint32_t i = 0; i < (uint32_t) kDeviceFragAffinityMaxEntries; ++i)
-    {
-        if (table->entries[i].in_use)
-        {
-            deviceFragAffinityReleaseEntry(table, &table->entries[i]);
-        }
-    }
-    memorySet(table->quarantine, 0, sizeof(table->quarantine));
-    table->quarantine_count = 0;
-
-    table->next_expiry_ms = UINT64_MAX;
-    assert(table->staged_total == 0);
-    assert(table->staged_bytes == 0);
-}
-
-void deviceFragAffinityReleaseStagedBuffers(device_frag_affinity_table_t *table)
-{
-    if (table == NULL)
-    {
-        return;
-    }
-
-    mutexLock(&table->lock);
-    if (table->release_pool != NULL)
-    {
-        for (uint32_t i = 0; i < (uint32_t) kDeviceFragAffinityMaxEntries; ++i)
-        {
-            if (table->entries[i].in_use)
-            {
-                deviceFragAffinityDropStaged(table, &table->entries[i]);
-            }
-        }
-    }
-    assert(table->staged_total == 0);
-    assert(table->staged_bytes == 0);
-    mutexUnlock(&table->lock);
-}
-
-void deviceFragAffinityBeginGeneration(device_frag_affinity_table_t *table)
-{
-    if (table == NULL)
-    {
-        return;
-    }
-
-    mutexLock(&table->lock);
-    table->generation_open = true;
-    mutexUnlock(&table->lock);
-}
-
-void deviceFragAffinityEndGeneration(device_frag_affinity_table_t *table)
-{
-    if (table == NULL)
-    {
-        return;
-    }
-
-    const uint64_t now_ms = (uint64_t) (getHRTimeUs() / 1000ULL);
-
-    mutexLock(&table->lock);
-
-    /*
-     * Closing first is what makes the rest of this a sweep rather than a race:
-     * an offer already inside the table holds this lock and finishes, and every
-     * offer after it is refused outright.
-     */
-    table->generation_open = false;
-
-    for (uint32_t i = 0; i < (uint32_t) kDeviceFragAffinityMaxEntries; ++i)
-    {
-        device_frag_affinity_entry_t *entry = &table->entries[i];
-        if (! entry->in_use)
-        {
-            continue;
-        }
-
-        /*
-         * Metadata only. The staged buffers stay where they are because the
-         * reader thread still owns the pool they came from; the next
-         * generation's sweep or deviceFragAffinityRetireReleasePool() returns
-         * them, both from a thread that owns that pool.
-         */
-        deviceFragAffinityPoisonMetadata(entry);
-        entry->expires_at_ms =
-            entry->pending_publications != 0 ? UINT64_MAX : now_ms + (uint64_t) kDeviceFragAffinityResidueTimeoutMs;
-        if (entry->pending_publications == 0)
-        {
-            deviceFragAffinityArmResidueBarrier(entry, now_ms);
-        }
-    }
-    deviceFragAffinityRefreshNextExpiry(table);
-    mutexUnlock(&table->lock);
-}
-
-void deviceFragAffinityRetireReleasePool(device_frag_affinity_table_t *table)
-{
-    if (table == NULL)
-    {
-        return;
-    }
-
-    assert(table->release_pool != NULL);
-    mutexLock(&table->lock);
-    table->generation_open = false;
-    /* Outstanding receipts keep their association metadata and the session
-     * alive, but staged reader buffers cannot outlive the device-owned pool. */
-    for (uint32_t i = 0; i < (uint32_t) kDeviceFragAffinityMaxEntries; ++i)
-    {
-        if (table->entries[i].in_use)
-        {
-            deviceFragAffinityDropStaged(table, &table->entries[i]);
-        }
-    }
-    assert(table->staged_total == 0);
-    assert(table->staged_bytes == 0);
-    table->release_pool = NULL;
-    mutexUnlock(&table->lock);
-}
-
-void deviceFragAffinityDestroy(device_frag_affinity_table_t *table)
-{
-    if (table == NULL)
-    {
-        return;
-    }
-
-    mutexLock(&table->lock);
-    if (table->release_pool != NULL)
-    {
-        deviceFragAffinityResetLocked(table);
-    }
-    else
-    {
-        /* Receipt references keep this table alive. At final destruction no
-         * receipt remains, so metadata can be forgotten without pool access. */
-        assert(table->staged_total == 0);
-        assert(table->staged_bytes == 0);
-        memoryZero(table->entries, sizeof(table->entries));
-        memoryZero(table->quarantine, sizeof(table->quarantine));
-        table->quarantine_count = 0;
-    }
-    mutexUnlock(&table->lock);
-    mutexDestroy(&table->lock);
-    memoryFree(table);
-}
-
-bool deviceFragAffinityPublicationMayEnter(device_frag_affinity_table_t             *table,
-                                           const device_frag_affinity_publication_t *publication)
-{
-    if (table == NULL || publication == NULL || ! publication->valid ||
-        publication->slot >= (uint16_t) kDeviceFragAffinityMaxEntries)
-    {
-        return false;
-    }
-
-    mutexLock(&table->lock);
-    const device_frag_affinity_entry_t *entry = &table->entries[publication->slot];
-    const bool allowed = table->generation_open && entry->in_use && entry->serial == publication->serial &&
-                         ! entry->poisoned && entry->pending_publications != 0;
-    mutexUnlock(&table->lock);
-    return allowed;
-}
-
-static bool deviceFragAffinityHashAsWhole(uint8_t *packet, uint32_t length, uint64_t *out_hash, wid_t *out_wid)
-{
-    const uint16_t saved = GET_BE16(packet + 6);
-
-    PUT_BE16(packet + 6, 0);
-    const bool ok = deviceFlowAffinityHash(packet, length, out_hash);
-    PUT_BE16(packet + 6, saved);
-    if (ok)
-    {
-        *out_wid = (wid_t) (*out_hash % getWorkersCount());
-    }
-    return ok;
-}
-
-static void deviceFragAffinityTakeStaged(device_frag_affinity_table_t *table, device_frag_affinity_entry_t *entry,
-                                         device_frag_affinity_result_t *out)
-{
-    for (uint8_t i = 0; i < entry->staged_count; ++i)
-    {
-        table->release_scratch[i] = entry->staged[i].buf;
-        table->staged_bytes -= sbufGetLength(entry->staged[i].buf);
-        entry->staged[i] = (device_staged_frag_t) {0};
-    }
-
-    out->released       = table->release_scratch;
-    out->released_count = entry->staged_count;
-    table->staged_total -= entry->staged_count;
-    entry->staged_count = 0;
-}
-
 /* Rejects overlap exactly as the reassembler does; adjacency is merged. */
 typedef enum device_frag_account_result_e
 {
@@ -1055,344 +390,313 @@ static device_frag_account_result_t deviceFragAffinityAccount(device_frag_affini
     return kDeviceFragAccountOk;
 }
 
-static device_frag_affinity_action_t deviceFragAffinityDropCurrent(device_frag_affinity_table_t *table, sbuf_t *buf)
+static bool deviceFragAffinityHashAsWhole(uint8_t *packet, uint32_t length, uint64_t *out_hash, wid_t *out_wid)
 {
-    assert(table->release_pool != NULL);
-    bufferpoolReuseBuffer(table->release_pool, buf);
-    return kDeviceFragAffinityConsumedDrop;
+    const uint16_t saved = GET_BE16(packet + 6);
+
+    PUT_BE16(packet + 6, 0);
+    const bool ok = deviceFlowAffinityHash(packet, length, out_hash);
+    PUT_BE16(packet + 6, saved);
+    if (ok)
+    {
+        *out_wid = (wid_t) (*out_hash % getWorkersCount());
+    }
+    return ok;
 }
 
-/*
- * Finds or creates the association this fragment belongs to, or answers NULL
- * when the fragment must simply be consumed.
- *
- * NULL covers everything that has to refuse before any coverage is accounted: a
- * closed producer generation, an identity still quarantined because its
- * reassembly residue is unknown, an exhausted table, a malformed fragment, an
- * already-poisoned identity, and one arriving behind a completion that has not
- * settled yet.
- */
-static device_frag_affinity_entry_t *deviceFragAffinityAdmitLocked(device_frag_affinity_table_t *table,
-                                                                   const device_frag_view_t     *view,
-                                                                   device_frag_parse_result_t parsed, uint64_t now_ms)
+static void deviceFragReleaseStorage(device_frag_affinity_table_t *table, device_frag_affinity_entry_t *entry)
 {
-    if (! table->generation_open)
+    for (unsigned i = 0; i < entry->staged_count; ++i)
     {
-        /*
-         * A tail with no fragment zero produces no dispatch at all, so it would
-         * otherwise never reach the reader session's own admission check and
-         * would survive into the next generation as a healthy adoptable entry.
-         */
+        table->retained_bytes -= sbufGetAllocationCharge(entry->staged[i]);
+        bufferpoolReuseBuffer(table->release_pool, entry->staged[i]);
+    }
+    table->staged_total -= entry->staged_count;
+    entry->staged_count = 0;
+    if (entry->assembly)
+    {
+        table->retained_bytes -= sbufGetAllocationCharge(entry->assembly);
+        bufferpoolReuseBuffer(table->release_pool, entry->assembly);
+        entry->assembly = NULL;
+    }
+}
+static void deviceFragPoison(device_frag_affinity_table_t *table, device_frag_affinity_entry_t *entry, uint64_t now)
+{
+    deviceFragReleaseStorage(table, entry);
+    if (! entry->poisoned)
+    {
+        entry->poisoned      = true;
+        entry->expires_at_ms = now + kDeviceFragAffinityTimeoutMs;
+    }
+}
+static void deviceFragSweep(device_frag_affinity_table_t *table, uint64_t now)
+{
+    for (unsigned i = 0; i < kDeviceFragAffinityMaxEntries; ++i)
+    {
+        device_frag_affinity_entry_t *entry = &table->entries[i];
+        if (! entry->in_use || now < entry->expires_at_ms)
+            continue;
+        if (entry->poisoned)
+        {
+            deviceFragReleaseStorage(table, entry);
+            *entry = (device_frag_affinity_entry_t) {0};
+        }
+        else
+        {
+            /* Expired payload gets one fixed local poison interval. No stack receipt. */
+            uint64_t expiry = entry->expires_at_ms;
+            deviceFragPoison(table, entry, expiry);
+            if (now >= entry->expires_at_ms)
+                *entry = (device_frag_affinity_entry_t) {0};
+        }
+    }
+}
+device_frag_affinity_table_t *deviceFragAffinityCreate(buffer_pool_t *pool, device_fragment_policy_t policy)
+{
+    if (policy != kDeviceFragmentReassemble && policy != kDeviceFragmentPreserve)
+        return NULL;
+    if (! pool)
+        return NULL;
+    device_frag_affinity_table_t *table = memoryAllocateZero(sizeof(*table));
+    if (! table)
+        return NULL;
+    if (! mutexTryInit(&table->lock))
+    {
+        memoryFree(table);
         return NULL;
     }
-
-    if (now_ms >= table->next_expiry_ms)
-    {
-        deviceFragAffinitySweep(table, now_ms);
-    }
-
-    device_frag_affinity_entry_t *entry = deviceFragAffinityFind(table, view);
-
-    if (entry == NULL)
-    {
-        /*
-         * A quarantined identity was released while reassembly might still hold
-         * a prefix of it. Re-adopting it is exactly how an accepted prefix and a
-         * later same-identification datagram combine into a hybrid.
-         */
-        if (deviceFragQuarantineBlocks(table, view, now_ms))
-        {
-            return NULL;
-        }
-
-        entry = deviceFragAffinityInsert(table, view, now_ms);
-        if (entry == NULL)
-        {
-            if (atomicLogRateLimiterShouldLog(&g_frag_affinity_full_log, kDeviceFragAffinityLogIntervalMs))
-            {
-                LOGD("device fragment affinity: association capacity exhausted; dropping one datagram");
-            }
-            return NULL;
-        }
-    }
-
-    if (entry->poisoned)
-    {
-        /* A rejected retry is not a new residue observation. Preserve the
-         * original wall/epoch barrier instead of restarting it forever. */
-        return NULL;
-    }
-
-    if (parsed == kDeviceFragParseInvalid || UNLIKELY(entry->completion_pending))
-    {
-        deviceFragAffinityPoison(table, entry);
-        return NULL;
-    }
-
-    return entry;
+    table->release_pool    = pool;
+    table->policy          = policy;
+    table->generation_open = true;
+    return table;
 }
-
-/*
- * The caller has already classified this packet. Keeping parsing outside the
- * mutex makes ordinary packets avoid both the fragment-table lock and its
- * clock read, while every fragment-specific decision remains serialized here.
- */
-static device_frag_affinity_action_t deviceFragAffinityOfferParsedLocked(
-    device_frag_affinity_table_t *table, uint64_t now_ms, const device_frag_view_t *view,
-    device_frag_parse_result_t parsed, uint32_t length, sbuf_t *buf, device_frag_affinity_result_t *out)
+void deviceFragAffinityBeginGeneration(device_frag_affinity_table_t *table)
 {
-    assert(table != NULL);
-    assert(table->release_pool != NULL);
-    assert(buf != NULL);
-    assert(out != NULL);
-    assert(parsed != kDeviceFragParseNotFragment);
-
-    device_frag_affinity_entry_t *entry = deviceFragAffinityAdmitLocked(table, view, parsed, now_ms);
-    if (entry == NULL)
-    {
-        return deviceFragAffinityDropCurrent(table, buf);
-    }
-
-    const bool is_zero        = view->offset == 0;
-    uint64_t   zero_flow_hash = 0;
-    wid_t      zero_hashed    = 0;
-    if (is_zero)
-    {
-        if (! deviceFragAffinityHashAsWhole(sbufGetMutablePtr(buf), length, &zero_flow_hash, &zero_hashed))
-        {
-            deviceFragAffinityPoison(table, entry);
-            return deviceFragAffinityDropCurrent(table, buf);
-        }
-
-        if (entry->wid_known && entry->zero_flow_hash != zero_flow_hash)
-        {
-            deviceFragAffinityPoison(table, entry);
-            return deviceFragAffinityDropCurrent(table, buf);
-        }
-    }
-
-    const device_frag_account_result_t account_result = deviceFragAffinityAccount(entry, view);
-    if (account_result != kDeviceFragAccountOk)
-    {
-        /*
-         * A rejected fragment never changes coverage. An overlapping zero must
-         * also reclaim any staged tails because it cannot safely publish them.
-         */
-        if ((is_zero && entry->staged_count != 0) || account_result == kDeviceFragAccountConflict ||
-            account_result == kDeviceFragAccountCapacity)
-        {
-            deviceFragAffinityPoison(table, entry);
-        }
-        return deviceFragAffinityDropCurrent(table, buf);
-    }
-
-    if (is_zero && ! entry->wid_known)
-    {
-        entry->wid_known      = true;
-        entry->wid            = zero_hashed;
-        entry->zero_flow_hash = zero_flow_hash;
-        entry->expires_at_ms  = now_ms + (uint64_t) kDeviceFragAffinityTimeoutMs;
-        deviceFragAffinityRefreshNextExpiry(table);
-        deviceFragAffinityTakeStaged(table, entry, out);
-    }
-
-    if (! entry->wid_known)
-    {
-        const uint32_t bytes = sbufGetLength(buf);
-        if (entry->staged_count >= (uint8_t) kDeviceFragAffinityMaxStagedPerEntry ||
-            table->staged_total >= (uint32_t) kDeviceFragAffinityMaxStaged ||
-            bytes > (uint32_t) kDeviceFragAffinityMaxStagedBytes - table->staged_bytes)
-        {
-            deviceFragAffinityPoison(table, entry);
-            return deviceFragAffinityDropCurrent(table, buf);
-        }
-
-        entry->staged[entry->staged_count++] = (device_staged_frag_t) {
-            .buf            = buf,
-            .offset         = view->offset,
-            .payload_len    = view->payload_len,
-            .more_fragments = view->more_fragments,
-        };
-        ++table->staged_total;
-        table->staged_bytes += bytes;
-        assert(out->released_count == 0);
-        return kDeviceFragAffinityStaged;
-    }
-
-    const bool completes_datagram = deviceFragAffinityIsComplete(entry);
-    out->wid                      = entry->wid;
-    out->publication              = (device_frag_affinity_publication_t) {
-                     .serial = entry->serial,
-                     .slot   = (uint16_t) (entry - table->entries),
-                     .count  = (uint16_t) (out->released_count + 1U),
-                     .valid  = true,
-    };
-    entry->pending_publications += out->publication.count;
-    entry->completion_pending = completes_datagram;
-    return kDeviceFragAffinityDispatch;
-}
-
-/*
- * Retires an identity whose residue is unknown.
- *
- * The association slot is handed back and only the identity is retained, so a
- * burst of ordinary refusals cannot occupy the association table for a whole
- * reassembly lifetime. When every quarantine record is still live the poisoned
- * association stays where it is: a live quarantine is never evicted to admit
- * another identity.
- */
-static void deviceFragAffinityQuarantineEntry(device_frag_affinity_table_t *table, device_frag_affinity_entry_t *entry,
-                                              uint64_t now_ms)
-{
-    if (deviceFragQuarantineAdmit(table, entry, now_ms))
-    {
-        deviceFragAffinityReleaseEntry(table, entry);
+    if (! table)
         return;
-    }
-
-    if (! entry->residue_barrier_armed)
-    {
-        deviceFragAffinityArmResidueBarrier(entry, now_ms);
-    }
-    entry->expires_at_ms = entry->residue_release_at_ms;
-}
-
-/*
- * Applies one settled publication's outcome to the identity's terminal state.
- * Called only once every token of this identity has settled.
- */
-static void deviceFragAffinitySettleTerminalLocked(device_frag_affinity_table_t *table,
-                                                   device_frag_affinity_entry_t *entry, uint64_t now_ms)
-{
-    if (entry->poisoned)
-    {
-        deviceFragAffinityQuarantineEntry(table, entry, now_ms);
-        return;
-    }
-
-    /*
-     * Releasing means the identity becomes adoptable again immediately, so it
-     * needs one of two proofs: the datagram completed, or the consumer purged
-     * the exact reassembly key and nothing of it remains.
-     */
-    if (entry->residue_known && ! entry->residue_present)
-    {
-        deviceFragAffinityReleaseEntry(table, entry);
-        return;
-    }
-
-    /*
-     * A healthy but incomplete association. Its lifetime restarts from real
-     * settlement rather than from the read that admitted fragment zero: a
-     * fragment can sit in a paused worker queue for most of the reader-side
-     * timeout, and lwIP only starts its own reassembly lifetime when the worker
-     * finally consumes it. Never shortened, so publications settling out of
-     * order cannot pull a later deadline back.
-     */
-    const uint64_t settled_deadline = now_ms + (uint64_t) kDeviceFragAffinityTimeoutMs;
-    if (settled_deadline > entry->expires_at_ms)
-    {
-        entry->expires_at_ms = settled_deadline;
-    }
-}
-
-static void deviceFragAffinitySettlePublicationAt(device_frag_affinity_table_t *table, uint64_t now_ms,
-                                                  const device_frag_affinity_publication_t *publication,
-                                                  device_frag_settlement_t                  settlement)
-{
-    if (table == NULL || publication == NULL || ! publication->valid ||
-        publication->slot >= (uint16_t) kDeviceFragAffinityMaxEntries)
-    {
-        return;
-    }
-
     mutexLock(&table->lock);
-    device_frag_affinity_entry_t *entry = &table->entries[publication->slot];
-    if (! entry->in_use || entry->serial != publication->serial)
-    {
-        mutexUnlock(&table->lock);
-        return;
-    }
-
-    assert(entry->pending_publications >= publication->count);
-    if (UNLIKELY(entry->pending_publications < publication->count))
-    {
-        deviceFragAffinityPoison(table, entry);
-        deviceFragAffinityArmResidueBarrier(entry, now_ms);
-        entry->expires_at_ms = entry->residue_release_at_ms;
-        deviceFragAffinityRefreshNextExpiry(table);
-        mutexUnlock(&table->lock);
-        return;
-    }
-    entry->pending_publications -= publication->count;
-
-    switch (settlement)
-    {
-    case kDeviceFragSettlementUnknown:
-        /* Poisoned until expiry so a delivered prefix cannot mix with a retry. */
-        deviceFragAffinityPoison(table, entry);
-        break;
-
-    case kDeviceFragSettlementNoResidue:
-        entry->completion_pending = false;
-        entry->residue_known      = true;
-        entry->residue_present    = false;
-        break;
-
-    case kDeviceFragSettlementResiduePresent:
-        entry->residue_known   = true;
-        entry->residue_present = true;
-        deviceFragAffinityArmResidueBarrier(entry, now_ms);
-        break;
-    }
-
-    if (entry->pending_publications == 0)
-    {
-        deviceFragAffinitySettleTerminalLocked(table, entry, now_ms);
-    }
-    else if (entry->poisoned)
-    {
-        /* Pending work still names this slot; it cannot be reused or quarantined yet. */
-        entry->expires_at_ms = UINT64_MAX;
-    }
-
-    deviceFragAffinityRefreshNextExpiry(table);
+    table->generation_open = true;
     mutexUnlock(&table->lock);
 }
-
-void deviceFragAffinitySettlePublication(device_frag_affinity_table_t             *table,
-                                         const device_frag_affinity_publication_t *publication,
-                                         device_frag_settlement_t                  settlement)
+void deviceFragAffinityEndGeneration(device_frag_affinity_table_t *table)
 {
-    deviceFragAffinitySettlePublicationAt(table, (uint64_t) (getHRTimeUs() / 1000ULL), publication, settlement);
+    if (! table)
+        return;
+    uint64_t now = getHRTimeUs() / 1000ULL;
+    mutexLock(&table->lock);
+    table->generation_open = false;
+    for (unsigned i = 0; i < kDeviceFragAffinityMaxEntries; ++i)
+    {
+        device_frag_affinity_entry_t *entry = &table->entries[i];
+        /* Lifecycle thread never accesses the reader's pool. */
+        if (entry->in_use && ! entry->poisoned)
+        {
+            entry->poisoned      = true;
+            entry->expires_at_ms = now + kDeviceFragAffinityTimeoutMs;
+        }
+    }
+    mutexUnlock(&table->lock);
+}
+void deviceFragAffinityReleaseStagedBuffers(device_frag_affinity_table_t *table)
+{
+    if (! table)
+        return;
+    mutexLock(&table->lock);
+    for (unsigned i = 0; i < kDeviceFragAffinityMaxEntries; ++i)
+        deviceFragReleaseStorage(table, &table->entries[i]);
+    assert(table->retained_bytes == 0 && table->staged_total == 0);
+    mutexUnlock(&table->lock);
+}
+void deviceFragAffinityRetireReleasePool(device_frag_affinity_table_t *table)
+{
+    if (! table)
+        return;
+    deviceFragAffinityReleaseStagedBuffers(table);
+    mutexLock(&table->lock);
+    table->generation_open = false;
+    table->release_pool    = NULL;
+    mutexUnlock(&table->lock);
+}
+void deviceFragAffinityDestroy(device_frag_affinity_table_t *table)
+{
+    if (! table)
+        return;
+    deviceFragAffinityReleaseStagedBuffers(table);
+    mutexDestroy(&table->lock);
+    memoryFree(table);
+}
+
+/* Caller holds the mutex and owns the reader pool. Rejections consume input. */
+static device_frag_affinity_action_t deviceFragOfferLocked(device_frag_affinity_table_t *table,
+                                                           const device_frag_view_t     *view,
+                                                           device_frag_parse_result_t parsed, sbuf_t *buf,
+                                                           device_frag_affinity_result_t *out, uint64_t now)
+{
+    device_frag_affinity_entry_t *entry = NULL, *free_entry = NULL;
+    if (! table->generation_open)
+        goto drop;
+    deviceFragSweep(table, now);
+    for (unsigned i = 0; i < kDeviceFragAffinityMaxEntries; ++i)
+    {
+        device_frag_affinity_entry_t *candidate = &table->entries[i];
+        if (! candidate->in_use)
+        {
+            if (! free_entry)
+                free_entry = candidate;
+            continue;
+        }
+        if (candidate->src == view->src && candidate->dst == view->dst && candidate->ident == view->ident &&
+            candidate->proto == view->proto)
+        {
+            entry = candidate;
+            break;
+        }
+    }
+    if (! entry)
+    {
+        if (! free_entry)
+            goto drop;
+        entry  = free_entry;
+        *entry = (device_frag_affinity_entry_t) {.src           = view->src,
+                                                 .dst           = view->dst,
+                                                 .ident         = view->ident,
+                                                 .proto         = view->proto,
+                                                 .in_use        = true,
+                                                 .expires_at_ms = now + kDeviceFragAffinityTimeoutMs};
+    }
+    if (entry->poisoned)
+        goto drop;
+    if (parsed == kDeviceFragParseInvalid || entry->fragments == kDeviceFragAffinityMaxFragments)
+        goto poison;
+    uint64_t zero_hash = 0;
+    wid_t    zero_wid  = 0;
+    if (table->policy == kDeviceFragmentPreserve && view->offset == 0)
+    {
+        if (! deviceFragAffinityHashAsWhole(sbufGetMutablePtr(buf), sbufGetLength(buf), &zero_hash, &zero_wid) ||
+            (entry->wid_known && entry->zero_flow_hash != zero_hash))
+            goto poison;
+    }
+    /* Account into a candidate so allocation refusal never publishes unwritten coverage. */
+    device_frag_affinity_entry_t candidate = *entry;
+    device_frag_account_result_t accounted = deviceFragAffinityAccount(&candidate, view);
+    if (accounted != kDeviceFragAccountOk)
+    {
+        if (accounted != kDeviceFragAccountOverlap || (view->offset == 0 && ! entry->wid_known))
+            goto poison;
+        goto drop;
+    }
+    if (table->policy == kDeviceFragmentReassemble)
+    {
+        const uint32_t need    = 20U + (uint32_t) view->offset + view->payload_len;
+        const uint16_t padding = bufferpoolGetLargeBufferPadding(table->release_pool);
+        if (! entry->assembly || need > sbufGetMaximumWriteableSize(entry->assembly))
+        {
+            buffer_pool_fit_t fit;
+            if (! bufferpoolQueryBestFit(table->release_pool, need, padding, &fit) ||
+                fit.allocation_charge > kDeviceFragAffinityMaxAssemblyBytes - table->retained_bytes)
+                goto poison;
+            /* Reserve the full replacement, including the still-live old allocation. */
+            table->retained_bytes += fit.allocation_charge;
+            sbuf_t *grown = bufferpoolTryGetBestFit(table->release_pool, need, padding);
+            if (UNLIKELY(grown == NULL || sbufGetAllocationCharge(grown) != fit.allocation_charge ||
+                         sbufGetMaximumWriteableSize(grown) < need || sbufGetLeftCapacity(grown) < padding))
+            {
+                LOGF("Device fragment assembly: best-fit allocation geometry changed");
+                abortProgramNow(1);
+            }
+            if (entry->assembly)
+            {
+                if (entry->wid_known)
+                    memoryCopy(sbufGetMutablePtr(grown), sbufGetRawPtr(entry->assembly), 20);
+                for (unsigned i = 0; i < entry->range_count; ++i)
+                {
+                    device_frag_range_t r = entry->ranges[i];
+                    memoryCopy(sbufGetMutablePtr(grown) + 20 + r.begin,
+                               (const uint8_t *) sbufGetRawPtr(entry->assembly) + 20 + r.begin,
+                               r.end - r.begin);
+                }
+                table->retained_bytes -= sbufGetAllocationCharge(entry->assembly);
+                bufferpoolReuseBuffer(table->release_pool, entry->assembly);
+            }
+            candidate.assembly = grown;
+        }
+        uint8_t *bytes = sbufGetMutablePtr(candidate.assembly);
+        if (view->offset == 0)
+        {
+            memoryCopy(bytes, sbufGetRawPtr(buf), 20);
+            candidate.wid_known = true;
+        }
+        memoryCopy(bytes + 20 + view->offset, (const uint8_t *) sbufGetRawPtr(buf) + 20, view->payload_len);
+        ++candidate.fragments;
+        *entry = candidate;
+        bufferpoolReuseBuffer(table->release_pool, buf);
+        if (! entry->wid_known || ! deviceFragAffinityIsComplete(entry))
+            return kDeviceFragAffinityStaged;
+        /* Fragment zero is authoritative for TOS/TTL/DF/reserved bits; clear only MF/offset. */
+        PUT_BE16(bytes + 2, 20U + entry->final_end);
+        PUT_BE16(bytes + 6, GET_BE16(bytes + 6) & 0xc000U);
+        PUT_BE16(bytes + 10, 0);
+        PUT_BE16(bytes + 10, deviceIpv4HeaderChecksum(bytes, 20));
+        sbufSetLength(entry->assembly, 20U + entry->final_end);
+        out->completed = entry->assembly;
+        table->retained_bytes -= sbufGetAllocationCharge(entry->assembly);
+        *entry = (device_frag_affinity_entry_t) {0};
+        return kDeviceFragAffinityComplete;
+    }
+    if (view->offset == 0 && ! entry->wid_known)
+    {
+        candidate.zero_flow_hash = zero_hash;
+        candidate.wid            = zero_wid;
+        candidate.wid_known      = true;
+    }
+    if (! candidate.wid_known)
+    {
+        size_t charge = sbufGetAllocationCharge(buf);
+        if (candidate.staged_count == kDeviceFragAffinityMaxStagedPerEntry ||
+            table->staged_total == kDeviceFragAffinityMaxStaged ||
+            charge > kDeviceFragAffinityMaxStagedBytes - table->retained_bytes)
+            goto poison;
+        candidate.staged[candidate.staged_count++] = buf;
+        ++table->staged_total;
+        table->retained_bytes += charge;
+        ++candidate.fragments;
+        *entry = candidate;
+        return kDeviceFragAffinityStaged;
+    }
+    out->wid            = candidate.wid;
+    out->released       = table->release_scratch;
+    out->released_count = candidate.staged_count;
+    for (unsigned i = 0; i < candidate.staged_count; ++i)
+    {
+        table->release_scratch[i] = candidate.staged[i];
+        table->retained_bytes -= sbufGetAllocationCharge(candidate.staged[i]);
+    }
+    table->staged_total -= candidate.staged_count;
+    candidate.staged_count = 0;
+    ++candidate.fragments;
+    *entry = candidate;
+    if (deviceFragAffinityIsComplete(entry))
+        *entry = (device_frag_affinity_entry_t) {0};
+    return kDeviceFragAffinityDispatch;
+poison:
+    deviceFragPoison(table, entry, now);
+drop:
+    bufferpoolReuseBuffer(table->release_pool, buf);
+    return kDeviceFragAffinityConsumedDrop;
 }
 
 device_frag_affinity_action_t deviceFragAffinityOffer(device_frag_affinity_table_t *table, const uint8_t *packet,
                                                       uint32_t length, sbuf_t *buf, device_frag_affinity_result_t *out)
 {
-    if (out != NULL)
-    {
-        *out = (device_frag_affinity_result_t) {0};
-    }
-
-    device_frag_view_t               view   = {0};
-    const device_frag_parse_result_t parsed = deviceFragAffinityParse(packet, length, &view);
+    *out                              = (device_frag_affinity_result_t) {0};
+    device_frag_view_t         view   = {0};
+    device_frag_parse_result_t parsed = deviceFragAffinityParse(packet, length, &view);
     if (parsed == kDeviceFragParseNotFragment)
-    {
         return kDeviceFragAffinityNotFragment;
-    }
-
-    /* A fragment always needs the shared table; only non-fragments may use a
-     * NULL table to bypass fragment classification. */
-    assert(table != NULL);
-    assert(table->release_pool != NULL);
-    assert(buf != NULL);
-    assert(out != NULL);
-
-    const uint64_t now_ms = (uint64_t) (getHRTimeUs() / 1000ULL);
+    assert(table && table->release_pool);
     mutexLock(&table->lock);
-    const device_frag_affinity_action_t action =
-        deviceFragAffinityOfferParsedLocked(table, now_ms, &view, parsed, length, buf, out);
+    device_frag_affinity_action_t result =
+        deviceFragOfferLocked(table, &view, parsed, buf, out, getHRTimeUs() / 1000ULL);
     mutexUnlock(&table->lock);
-    return action;
+    return result;
 }

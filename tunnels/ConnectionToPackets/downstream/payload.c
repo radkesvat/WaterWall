@@ -1,7 +1,5 @@
 #include "structure.h"
 
-#include "devices/device_frag_settlement.h"
-
 #include "loggers/network_logger.h"
 
 /*
@@ -25,8 +23,6 @@ typedef struct ctp_inject_msg_s
     struct pbuf_custom pbuf;
 
     tunnel_t            *tunnel;
-    device_frag_claim_t *claim;
-    ctp_frag_key_t       claim_key;
     ctp_frag_key_t       delivery_key;
     ctp_flow_key_t       key;
     uint64_t             generation;
@@ -71,17 +67,6 @@ void ctpInjectMessageDestroy(void *payload)
 {
     ctp_inject_msg_t *msg = payload;
 
-    deviceFragClaimResolve(msg->claim, kDeviceFragSettlementUnknown);
-    msg->claim = NULL;
-    memoryFreeAligned(msg);
-}
-
-void ctpInjectMessageResolveNoResidue(void *payload)
-{
-    ctp_inject_msg_t *msg = payload;
-
-    deviceFragClaimResolve(msg->claim, kDeviceFragSettlementNoResidue);
-    msg->claim = NULL;
     memoryFreeAligned(msg);
 }
 
@@ -94,9 +79,6 @@ void ctpInjectMessageResolveNoResidue(void *payload)
  */
 static void ctpInjectPbufFree(struct pbuf *p)
 {
-    ctp_inject_msg_t *msg = (ctp_inject_msg_t *) p;
-    assert(msg->claim == NULL);
-    discard msg;
     ctpInjectMessageDestroy(p);
 }
 
@@ -107,38 +89,12 @@ static void ctpInjectPacketCleanup(void *arg1, void *arg2, void *arg3, worker_me
     discard              arg3;
     ctp_inject_msg_t    *msg           = arg1;
     tunnel_t            *t             = msg->tunnel;
-    device_frag_claim_t *settled_claim = NULL;
-
-    /* Accepted messages settle before tunnel destruction. During quiesce,
-     * stopping is already published, so delivery settlement only releases its
-     * outstanding count and cannot schedule a new purge message. */
-    if (t != NULL)
+    if (t != NULL && msg->has_delivery_token)
     {
-        if (currentThreadIsEventWorkerWID(msg->wid))
-        {
-            ctp_tstate_t *ts = tunnelGetState(t);
-
-            LOCK_TCPIP_CORE();
-            ctp_netif_ctx_t *ctx = (ts->netifs != NULL && msg->wid < ts->netifs_count) ? ts->netifs[msg->wid] : NULL;
-            if (ctx != NULL && ctx->added && ctx->tunnel == t && ctx->wid == msg->wid && msg->claim != NULL)
-            {
-                discard ip4_reass_purge(&ctx->netif,
-                                        &(ip4_addr_t) {.addr = msg->claim_key.remote_addr_network},
-                                        &(ip4_addr_t) {.addr = msg->claim_key.local_addr_network},
-                                        msg->claim_key.protocol,
-                                        msg->claim_key.ident);
-                settled_claim = msg->claim;
-                msg->claim    = NULL;
-            }
-            UNLOCK_TCPIP_CORE();
-            ctpDrainTerminalLinesOnCurrentWorker(t, msg->wid);
-        }
-        if (msg->has_delivery_token)
-        {
-            ctpFragSettleDelivery(t, &msg->delivery_key, msg->delivery_serial, false, ctpFragSchedulePurge);
-        }
+        ctpFragSettleDelivery(t, &msg->delivery_key, msg->delivery_serial, false, ctpFragSchedulePurge);
     }
-    deviceFragClaimResolve(settled_claim, kDeviceFragSettlementNoResidue);
+    if (t != NULL && currentThreadIsEventWorkerWID(msg->wid))
+        ctpDrainTerminalLinesOnCurrentWorker(t, msg->wid);
     ctpInjectMessageDestroy(msg);
 }
 
@@ -163,7 +119,6 @@ static void ctpInjectPacketOnWorker(worker_t *worker, void *arg1, void *arg2, vo
      * core lock.
      */
     bool handed_to_lwip  = false;
-    bool claim_gate_held = false;
     bool exact_netif     = false;
     bool delivered       = false;
 
@@ -178,9 +133,8 @@ static void ctpInjectPacketOnWorker(worker_t *worker, void *arg1, void *arg2, vo
     }
 
     if (exact_netif && ! atomicLoadRelaxed(&ts->stopping) &&
-        ctpFlowStillOwns(t, &msg->key, msg->generation, worker->wid) && deviceFragClaimBeginTakenStackUse(msg->claim))
+        ctpFlowStillOwns(t, &msg->key, msg->generation, worker->wid))
     {
-        claim_gate_held = msg->claim != NULL;
 
         /*
          * The message is wrapped rather than copied into a pool pbuf. That
@@ -202,9 +156,6 @@ static void ctpInjectPacketOnWorker(worker_t *worker, void *arg1, void *arg2, vo
         else
         {
             /* input may synchronously free the custom pbuf and `msg`. */
-            device_frag_claim_t *claim     = msg->claim;
-            const ctp_frag_key_t claim_key = msg->claim_key;
-            msg->claim                     = NULL;
             msg->tunnel                    = NULL;
             handed_to_lwip                 = true;
 
@@ -213,44 +164,8 @@ static void ctpInjectPacketOnWorker(worker_t *worker, void *arg1, void *arg2, vo
             if (input_result != ERR_OK)
             {
                 pbuf_free(p);
-                if (claim != NULL)
-                {
-                    discard ip4_reass_purge(&ctx->netif,
-                                            &(ip4_addr_t) {.addr = claim_key.remote_addr_network},
-                                            &(ip4_addr_t) {.addr = claim_key.local_addr_network},
-                                            claim_key.protocol,
-                                            claim_key.ident);
-                }
             }
-
-            if (claim != NULL)
-            {
-                const bool residue = ip4_reass_has(&ctx->netif,
-                                                   &(ip4_addr_t) {.addr = claim_key.remote_addr_network},
-                                                   &(ip4_addr_t) {.addr = claim_key.local_addr_network},
-                                                   claim_key.protocol,
-                                                   claim_key.ident);
-                deviceFragClaimEndStackUse(claim);
-                deviceFragClaimResolve(claim,
-                                       residue ? kDeviceFragSettlementResiduePresent : kDeviceFragSettlementNoResidue);
-            }
-            claim_gate_held = false;
         }
-    }
-
-    if (! handed_to_lwip && msg->claim != NULL && exact_netif)
-    {
-        discard ip4_reass_purge(&ctx->netif,
-                                &(ip4_addr_t) {.addr = msg->claim_key.remote_addr_network},
-                                &(ip4_addr_t) {.addr = msg->claim_key.local_addr_network},
-                                msg->claim_key.protocol,
-                                msg->claim_key.ident);
-        if (claim_gate_held)
-        {
-            deviceFragClaimEndStackUse(msg->claim);
-        }
-        deviceFragClaimResolve(msg->claim, kDeviceFragSettlementNoResidue);
-        msg->claim = NULL;
     }
 
     UNLOCK_TCPIP_CORE();
@@ -298,10 +213,8 @@ static ctp_frag_publish_result_t ctpInjectPublish(tunnel_t *t, const ctp_flow_ke
         return (ctp_frag_publish_result_t) {.accepted = true};
     }
 
-    device_frag_claim_t *refused_claim = msg->claim;
-    msg->claim                         = NULL;
     memoryFreeAligned(msg);
-    return (ctp_frag_publish_result_t) {.refused_receipt = refused_claim, .accepted = false};
+    return (ctp_frag_publish_result_t) {.accepted = false};
 }
 
 static void ctpFragPurgeCleanup(void *arg1, void *arg2, void *arg3, worker_message_cancel_reason_e reason)
@@ -537,7 +450,6 @@ static ctp_inject_msg_t *ctpAllocatePacketMessage(uint32_t len)
 
     assert(((uintptr_t) msg->data % MEM_ALIGNMENT) == 0);
 
-    msg->claim              = NULL;
     msg->tunnel             = NULL;
     msg->len                = len;
     msg->has_delivery_token = false;
@@ -573,13 +485,6 @@ void ctpTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
-    if (UNLIKELY(! deviceFragClaimPacketMatches(buf)))
-    {
-        lineReuseBuffer(l, buf);
-        ctpPacketIngressGateLeave(t);
-        return;
-    }
-
     /* Copy into the aligned injection allocation before any typed packet access. */
     ctp_inject_msg_t *msg = ctpAllocatePacketMessage(sbufGetLength(buf));
     if (UNLIKELY(msg == NULL))
@@ -605,9 +510,6 @@ void ctpTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         ctpPacketIngressGateLeave(t);
         return;
     }
-
-    msg->claim     = deviceFragClaimTake(buf);
-    msg->claim_key = view.frag_key;
 
     // The packet-line buffer belongs to this worker's pool and must not travel.
     lineReuseBuffer(l, buf);

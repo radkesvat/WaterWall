@@ -159,8 +159,52 @@ static void testPacketTunnelLifecycleCallbacksPassThrough(void)
     tunnelDestroy(prev);
 }
 
+static void testFragmentPolicyPaths(void)
+{
+    node_t                     source_node    = {.type = (char[]) {"TunDevice"}};
+    node_t                     stack_node     = {.type = (char[]) {"PacketsToConnection"}};
+    node_t                     transform_node = {.type = (char[]) {"Disturber"}};
+    node_t                     egress_node    = {.type = (char[]) {"RawSocket"}};
+    tunnel_t                  *source         = tunnelCreate(&source_node, sizeof(packet_lifecycle_anchor_t), 0);
+    tunnel_t                  *transform      = tunnelCreate(&transform_node, 0, 0);
+    tunnel_t                  *stack          = tunnelCreate(&stack_node, 0, 0);
+    tunnel_t                  *egress         = tunnelCreate(&egress_node, 0, 0);
+    packet_lifecycle_anchor_t *anchor         = tunnelGetState(source);
+    anchor->name                              = "test";
+    anchor->direction                         = kPacketLifecycleAnchorPublishUpstream;
+    tunnelBind(source, transform);
+    tunnelBind(transform, stack);
+    require(packettunnelValidateFragmentPath(source, kDeviceFragmentReassemble), "normalized stack path rejected");
+    require(! packettunnelValidateFragmentPath(source, kDeviceFragmentPreserve), "raw path reached local stack");
+    transform->next = egress;
+    require(packettunnelValidateFragmentPath(source, kDeviceFragmentPreserve), "raw external path rejected");
+    require(! packettunnelValidateFragmentPath(source, kDeviceFragmentReassemble),
+            "normalized path reached limited egress");
+    transform_node.type = (char[]) {"PacketsToStream"};
+    require(! packettunnelValidateFragmentPath(source, kDeviceFragmentPreserve),
+            "packet/stream path silently treated as I/O");
+    transform_node.type = (char[]) {"Router"};
+    require(! packettunnelValidateFragmentPath(source, kDeviceFragmentPreserve), "ambiguous routing accepted");
+    anchor->direction = kPacketLifecycleAnchorPublishDownstream;
+    source->prev      = stack;
+    stack_node.type   = (char[]) {"ConnectionToPackets"};
+    require(packettunnelValidateFragmentPath(source, kDeviceFragmentReassemble), "downstream local stack rejected");
+    device_fragment_policy_t policy   = kDeviceFragmentPolicyUnset;
+    cJSON                   *settings = cJSON_Parse("{}");
+    require(! packettunnelReadFragmentPolicy(settings, &policy), "omitted policy accepted");
+    cJSON_AddStringToObject(settings, "fragment-policy", "reassemble");
+    require(packettunnelReadFragmentPolicy(settings, &policy) && policy == kDeviceFragmentReassemble,
+            "explicit policy rejected");
+    cJSON_Delete(settings);
+    tunnelDestroy(source);
+    tunnelDestroy(transform);
+    tunnelDestroy(stack);
+    tunnelDestroy(egress);
+}
+
 int main(void)
 {
     testPacketTunnelLifecycleCallbacksPassThrough();
+    testFragmentPolicyPaths();
     return 0;
 }

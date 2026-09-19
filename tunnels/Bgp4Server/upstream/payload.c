@@ -52,8 +52,6 @@ void bgp4serverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             return;
         }
 
-        if (sbufGetLength(batch) == 0)
-            sbufTransferLifetime(body, batch);
         sbufMoveTo(batch, body, sbufGetLength(body));
         bufferpoolReuseBuffer(pool, body);
     }

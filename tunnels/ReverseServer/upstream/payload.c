@@ -148,7 +148,6 @@ static bool pipeToRemoteWorker(tunnel_t *t, line_t *d, reverseserver_lstate_t *d
     sbuf_t *handshake_buf = createHandshakeBuffer(d, ts);
     if (buf != NULL)
     {
-        sbufTransferLifetime(buf, handshake_buf);
         handshake_buf = sbufAppendMerge(pool, handshake_buf, buf);
     }
     /* One replay callback keeps a Pause emitted while handling the handshake

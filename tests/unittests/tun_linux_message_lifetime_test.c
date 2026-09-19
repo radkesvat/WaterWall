@@ -176,6 +176,7 @@ typedef struct injected_io_result_s
 {
     ssize_t result; // Bytes to report; 0 for end of stream, -1 for an error.
     int     error;  // errno to publish when result is -1.
+    const uint8_t *bytes;
 } injected_io_result_t;
 
 static int                  tun_handle_fd = -1;
@@ -186,6 +187,7 @@ static injected_io_result_t injected_writes[kMaxInjectedIoResults];
 static unsigned int         injected_write_count;
 static unsigned int         observed_write_calls;
 static bool                 inject_reader_pollin;
+static bool                 deliver_fragment_batch;
 // Observed from inside the I/O loop, before the routine has returned, so a
 // recoverable error can be checked while the device is still meant to be up.
 static tun_device_t *in_flight_device;
@@ -343,6 +345,22 @@ ssize_t __wrap_read(int fd, void *buf, size_t count)
                 "the reader kept reading a device that reported a permanent error");
         const unsigned int index = observed_read_calls++;
         checkInFlightExpectations(index + 1);
+        if (injected_reads[index].bytes != NULL)
+        {
+            require(injected_reads[index].result > 0 && (size_t) injected_reads[index].result <= count,
+                    "injected packet too large");
+            memoryCopy(buf, injected_reads[index].bytes, (size_t) injected_reads[index].result);
+        }
+        if (deliver_fragment_batch && index == 3)
+        {
+            require(captured_message_count == 1, "reader did not flush one fragment batch");
+            testWorkerBindWID(0);
+            worker_t            worker  = {.wid = 0};
+            captured_message_t *message = &captured_messages[0];
+            message->callback(&worker, message->arg1, message->arg2, message->arg3);
+            testWorkerUnbindWID();
+            captured_message_count = 0;
+        }
         return applyInjectedIoResult(&injected_reads[index]);
     }
     return __real_read(fd, buf, count);
@@ -631,7 +649,7 @@ static void runCapturedThreadBody(unsigned int index)
 
 static tun_device_t *createRunningDevice(void)
 {
-    tun_device_t *tdev = tundeviceCreate("ww-lifetime-test", false, 1500, NULL, NULL);
+    tun_device_t *tdev = tundeviceCreate("ww-lifetime-test", false, 1500, NULL, NULL, kDeviceFragmentPreserve);
     require(tdev != NULL, "production tundeviceCreate failed");
     require(tundeviceBringUp(tdev), "production tundeviceBringUp failed");
     return tdev;
@@ -647,7 +665,8 @@ static void observeReadCallback(tun_device_t *tdev, void *userdata, sbuf_t *buf,
 
 static tun_device_t *createRunningReaderDevice(void)
 {
-    tun_device_t *tdev = tundeviceCreate("ww-lifetime-test", false, 1500, NULL, observeReadCallback);
+    tun_device_t *tdev =
+        tundeviceCreate("ww-lifetime-test", false, 1500, NULL, observeReadCallback, kDeviceFragmentPreserve);
     require(tdev != NULL, "production reader-device create failed");
     require(tundeviceBringUp(tdev), "production reader-device bring-up failed");
     return tdev;
@@ -705,7 +724,7 @@ static void testTunWriterRefusalClassesUseFreshTlsState(void)
     /* Down reaches the actual Linux TUN device layer without a published writer
      * generation. A fresh helper starts its sparse TLS sampler at ordinal one. */
     resetFakeThreads(0);
-    tun_device_t *tdev = tundeviceCreate("ww-lifetime-test", false, 1500, NULL, NULL);
+    tun_device_t *tdev = tundeviceCreate("ww-lifetime-test", false, 1500, NULL, NULL, kDeviceFragmentPreserve);
     require(tdev != NULL, "failed to create down TUN refusal fixture");
     tun_refusal_probe_t down = {.tdev = tdev};
     resetTunLogCapture();
@@ -851,7 +870,8 @@ static void testBringUpRollsBackThreadCreationFailures(void)
     for (unsigned int failed_call = 1; failed_call <= 2; failed_call++)
     {
         resetFakeThreads(failed_call);
-        tun_device_t *tdev = tundeviceCreate("ww-lifetime-test", false, 1500, NULL, observeReadCallback);
+        tun_device_t *tdev =
+            tundeviceCreate("ww-lifetime-test", false, 1500, NULL, observeReadCallback, kDeviceFragmentPreserve);
         require(tdev != NULL, "thread-failure device create failed");
 
         device_reader_session_t *session           = tunLinuxReaderSession(tdev);
@@ -891,7 +911,8 @@ static void testThreadExitDuringStartupRollsBack(unsigned int exit_on_create_cal
     resetShutdownRequests();
     run_fake_thread_on_create_call = exit_on_create_call;
 
-    tun_device_t *tdev = tundeviceCreate("ww-lifetime-test", false, 1500, NULL, observeReadCallback);
+    tun_device_t *tdev =
+        tundeviceCreate("ww-lifetime-test", false, 1500, NULL, observeReadCallback, kDeviceFragmentPreserve);
     require(tdev != NULL, "startup-exit device create failed");
 
     if (exit_on_create_call == 1)
@@ -957,7 +978,8 @@ static void testUnexpectedThreadExitTakesTheDeviceDown(unsigned int which)
 
     resetFakeThreads(0);
     resetShutdownRequests();
-    tun_device_t *tdev = tundeviceCreate("ww-lifetime-test", false, 1500, NULL, observeReadCallback);
+    tun_device_t *tdev =
+        tundeviceCreate("ww-lifetime-test", false, 1500, NULL, observeReadCallback, kDeviceFragmentPreserve);
     require(tdev != NULL, "unexpected-exit device create failed");
 
     // Return immediately from the selected body instead of running the real loop.
@@ -1014,7 +1036,8 @@ static void testNormalStopDoesNotRequestShutdown(void)
     resetFakeThreads(0);
     resetShutdownRequests();
 
-    tun_device_t *tdev = tundeviceCreate("ww-lifetime-test", false, 1500, NULL, observeReadCallback);
+    tun_device_t *tdev =
+        tundeviceCreate("ww-lifetime-test", false, 1500, NULL, observeReadCallback, kDeviceFragmentPreserve);
     require(tdev != NULL, "normal-stop device create failed");
 
     // Capture both bodies without running them, so they can return after the
@@ -1053,7 +1076,8 @@ static void testPermanentReadErrorFailsTheDevice(int io_errno, const char *label
     resetShutdownRequests();
     resetIoInjection();
 
-    tun_device_t *tdev = tundeviceCreate("ww-lifetime-test", false, 1500, NULL, observeReadCallback);
+    tun_device_t *tdev =
+        tundeviceCreate("ww-lifetime-test", false, 1500, NULL, observeReadCallback, kDeviceFragmentPreserve);
     require(tdev != NULL, "read-error device create failed");
     require(tundeviceBringUp(tdev), "read-error device bring-up failed");
     require(tundeviceIsUp(tdev), "bring-up did not publish the device as up");
@@ -1086,7 +1110,8 @@ static void testTransientReadErrorKeepsTheDeviceUp(void)
     resetShutdownRequests();
     resetIoInjection();
 
-    tun_device_t *tdev = tundeviceCreate("ww-lifetime-test", false, 1500, NULL, observeReadCallback);
+    tun_device_t *tdev =
+        tundeviceCreate("ww-lifetime-test", false, 1500, NULL, observeReadCallback, kDeviceFragmentPreserve);
     require(tdev != NULL, "transient-read device create failed");
     require(tundeviceBringUp(tdev), "transient-read device bring-up failed");
 
@@ -1425,7 +1450,8 @@ static void testHandoffFailureFallsBackToHardAbort(void)
         shutdown_request_accepts = false;
         hard_abort_is_expected   = true;
 
-        tun_device_t *tdev = tundeviceCreate("ww-lifetime-test", false, 1500, NULL, observeReadCallback);
+        tun_device_t *tdev =
+            tundeviceCreate("ww-lifetime-test", false, 1500, NULL, observeReadCallback, kDeviceFragmentPreserve);
         if (tdev == NULL)
         {
             _Exit(70);
@@ -1449,6 +1475,82 @@ static void testHandoffFailureFallsBackToHardAbort(void)
             "a refused shutdown request did not fall back to the hard abort");
 }
 
+static unsigned fragment_deliveries;
+static bool     normalized_delivery;
+static void     observeFragmentPacket(tun_device_t *tdev, void *userdata, sbuf_t *buf, uint8_t wid)
+{
+    discard        tdev;
+    discard        userdata;
+    const uint8_t *bytes = sbufGetRawPtr(buf);
+    if (normalized_delivery)
+    {
+        require(fragment_deliveries == 0 && sbufGetLength(buf) == 148 && GET_BE16(bytes + 6) == 0,
+                "normalized backend emitted a fragment");
+        for (unsigned i = 0; i < 128; ++i)
+            require(bytes[20 + i] == (uint8_t) i, "normalized backend changed payload");
+    }
+    else
+    {
+        require(sbufGetLength(buf) == 84 && GET_BE16(bytes + 6) == (fragment_deliveries == 0 ? 8 : 0x2000),
+                "raw backend changed fragment order/size");
+        unsigned start = fragment_deliveries == 0 ? 64 : 0;
+        for (unsigned i = 0; i < 64; ++i)
+            require(bytes[20 + i] == (uint8_t) (start + i), "raw backend changed bytes");
+    }
+    ++fragment_deliveries;
+    bufferpoolReuseBuffer(getWorkerBufferPool(wid), buf);
+}
+static void testReaderFragmentPolicy(bool normalized)
+{
+    resetFakeThreads(0);
+    resetShutdownRequests();
+    resetIoInjection();
+    resetCapturedMessages();
+    uint8_t packets[2][84] = {{0}};
+    for (unsigned part = 0; part < 2; ++part)
+    {
+        uint8_t *p = packets[part];
+        p[0]       = 0x45;
+        p[8]       = 64;
+        p[9]       = 17;
+        PUT_BE16(p + 2, 84);
+        PUT_BE16(p + 4, 42);
+        PUT_BE16(p + 6, part ? 8 : 0x2000);
+        PUT_BE32(p + 12, 0x0a000001);
+        PUT_BE32(p + 16, 0xc0000201);
+        for (unsigned i = 0; i < 64; ++i)
+            p[20 + i] = (uint8_t) (part * 64 + i);
+        uint32_t sum = 0;
+        for (unsigned i = 0; i < 20; i += 2)
+            sum += GET_BE16(p + i);
+        while (sum >> 16)
+            sum = (sum & 65535) + (sum >> 16);
+        PUT_BE16(p + 10, (uint16_t) ~sum);
+    }
+    tun_device_t *tdev = tundeviceCreate("ww-fragment-test",
+                                         false,
+                                         1500,
+                                         NULL,
+                                         observeFragmentPacket,
+                                         normalized ? kDeviceFragmentReassemble : kDeviceFragmentPreserve);
+    require(tdev && tundeviceBringUp(tdev), "fragment backend setup failed");
+    const injected_io_result_t reads[] = {{.result = 84, .bytes = packets[1]},
+                                          {.result = 84, .bytes = packets[0]},
+                                          {.result = -1, .error = EAGAIN},
+                                          {.result = -1, .error = EIO}};
+    normalized_delivery                = normalized;
+    fragment_deliveries                = 0;
+    deliver_fragment_batch             = true;
+    inject_reader_pollin               = true;
+    armDeviceReads(reads, ARRAY_SIZE(reads));
+    runCapturedThreadBody(kCapturedReaderThread);
+    deliver_fragment_batch = false;
+    require(fragment_deliveries == (normalized ? 1U : 2U), "backend policy lost/duplicated packets");
+    resetIoInjection();
+    require(tundeviceBringDown(tdev), "fragment backend shutdown failed");
+    tundeviceDestroy(tdev);
+}
+
 int main(void)
 {
     test_env_t env;
@@ -1457,6 +1559,8 @@ int main(void)
     require(logger != NULL, "failed to create TUN writer log-capture logger");
     loggerSetHandler(logger, captureTunLog);
     setInternalLogger(logger);
+    testReaderFragmentPolicy(true);
+    testReaderFragmentPolicy(false);
     testQueuedCleanupOutlivesDevice();
     testClosedAndStaleDeliveriesDoNotTouchDevice();
     testTunWriterRefusalClassesUseFreshTlsState();

@@ -57,6 +57,11 @@ tunnel_t *tundeviceTunnelCreate(node_t *node)
 
     const cJSON *settings = node->node_settings_json;
 
+    if (! packettunnelReadFragmentPolicy(settings, &state->fragment_policy))
+    {
+        return tundeviceTunnelCreateFail(t);
+    }
+
     if (! checkJsonIsObjectAndHasChild(settings))
     {
         LOGF("JSON Error: TunDevice->settings (object field) : The object was empty or invalid");

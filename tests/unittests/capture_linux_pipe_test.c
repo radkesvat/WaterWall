@@ -784,7 +784,8 @@ static void deviceSetup(capture_device_t *cdev, test_env_t *env, reader_probe_t 
     require(pthread_mutex_init(&cdev->reader_state_mutex, NULL) == 0, "failed to initialize the reader-state mutex");
     require(pthread_cond_init(&cdev->reader_state_changed, NULL) == 0,
             "failed to initialize the reader-state condition variable");
-    cdev->reader_session = deviceReaderSessionCreate(16, 512, cdev, testDeliverPacket, cdev->reader_buffer_pool);
+    cdev->reader_session =
+        deviceReaderSessionCreate(16, 512, cdev, testDeliverPacket, cdev->reader_buffer_pool, kDeviceFragmentPreserve);
 }
 
 static void deviceTeardown(capture_device_t *cdev)

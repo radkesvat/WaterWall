@@ -82,7 +82,6 @@ add_library(ww STATIC
     # Device primitives
     devices/device_flow_affinity.c
     devices/device_frag_affinity.c
-    devices/device_frag_settlement.c
     devices/device_reader_session.c
     devices/device_writer_channel.c
     

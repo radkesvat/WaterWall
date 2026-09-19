@@ -48,6 +48,7 @@ inserted into an unrelated Echo Reply.
   "name": "raw-ip",
   "type": "RawSocket",
   "settings": {
+    "fragment-policy": "preserve-fragments",
     "capture-device-name": "capture-in",
     "raw-device-name": "raw-out",
     "capture-filter-mode": "source-ip",
@@ -68,6 +69,7 @@ For write-only packet injection, omit all capture-range keys:
   "name": "raw-output",
   "type": "RawSocket",
   "settings": {
+    "fragment-policy": "preserve-fragments",
     "raw-device-name": "raw-out",
     "bypass-conntrack": true
   }
@@ -155,7 +157,8 @@ For write-only packet injection, omit all capture-range keys:
   For explicit policy routing, use:
 
   ```json
-  "settings": { "bypass-conntrack": false, "mark": 10 }
+  "settings": {
+    "fragment-policy": "preserve-fragments", "bypass-conntrack": false, "mark": 10 }
   ```
 
 ## Detailed Behavior
@@ -347,3 +350,13 @@ Source-backed metadata:
 | `layer_group_prev_node` | `kNodeLayer3` |
 | `layer_group_next_node` | `kNodeLayer3` |
 | `required_padding_left` | `0` bytes |
+
+### `fragment-policy` (required)
+
+Select `reassemble` for an audited local-stack ingress path, or
+`preserve-fragments` for audited raw forwarding to external packet egress or a
+sink. Missing/invalid settings and unsupported paths fail startup. Reassembly
+emits complete IPv4 datagrams up to 65,535 bytes; it does not raise global packet,
+raw-output or device-MTU limits. Packet/stream bridges, routing and unknown
+transforms are not eligible. See Developer Guide Part 4 for the exact supported
+path matrix, storage limits and ordinary post-delivery lifecycle contract.

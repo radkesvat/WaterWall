@@ -30,7 +30,6 @@ static sbuf_t *encodeLargeTcpPayload(line_t *l, sbuf_t *buf)
         consumed += chunk;
     }
     sbufSetLength(encoded, (uint32_t) wire_length);
-    sbufTransferLifetime(buf, encoded);
     bufferpoolReuseBuffer(pool, buf);
     return encoded;
 }

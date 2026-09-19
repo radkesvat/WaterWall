@@ -1,0 +1,10 @@
+{
+  "name": "device-fragment-normalized-roundtrip",
+  "nodes": [
+    {"name":"tun", "type":"TunDevice", "next":"stack", "settings":{
+      "fragment-policy":"reassemble", "device-name":"wwfrag0", "device-ip":"10.253.80.1/24",
+      "device-mtu":1500, "route-table":"off"}},
+    {"name":"stack", "type":"PacketsToConnection", "next":"out"},
+    {"name":"out", "type":"UdpConnector", "settings":{"address":"127.0.0.1", "port":24371}}
+  ]
+}

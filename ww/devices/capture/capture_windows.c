@@ -545,7 +545,7 @@ bool caputredeviceBringDown(capture_device_t *cdev)
 capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_ranges, uint32_t capture_range_count,
                                       bool skip_sysctl, bool bypass_conntrack,
                                       const capture_protocol_filter_t *protocol_filter, void *userdata,
-                                      CaptureReadEventHandle cb)
+                                      CaptureReadEventHandle cb, device_fragment_policy_t fragment_policy)
 {
     discard skip_sysctl;
     discard bypass_conntrack; // Linux netfilter policy; WinDivert has no conntrack setting.
@@ -617,7 +617,8 @@ capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_
                                 .filter                = filter};
     atomic_init(&cdev->lifecycle, kCaptureLifecycleDown);
 
-    cdev->reader_session = deviceReaderSessionCreate(RAM_PROFILE * 2, 1, cdev, captureDeliverPacket, reader_bpool);
+    cdev->reader_session =
+        deviceReaderSessionCreate(RAM_PROFILE * 2, 1, cdev, captureDeliverPacket, reader_bpool, fragment_policy);
     if (UNLIKELY(cdev->reader_session == NULL))
     {
         LOGE("CaptureDevice: failed to allocate reader session");

@@ -64,62 +64,7 @@ void sbufDestroy(sbuf_t *b)
         sbufDestroySplice(b);
         return;
     }
-    sbufReleaseLifetime(b);
     memoryFreeAligned(b);
-}
-
-void sbufAttachLifetime(sbuf_t *b, sbuf_lifetime_t *lifetime)
-{
-    assert(b != NULL);
-    assert(! sbufIsSplice(b));
-    assert(b->lifetime == NULL);
-    b->lifetime = lifetime;
-}
-
-sbuf_lifetime_t *sbufTakeLifetime(sbuf_t *b)
-{
-    assert(b != NULL);
-
-    sbuf_lifetime_t *lifetime = b->lifetime;
-    b->lifetime               = NULL;
-    return lifetime;
-}
-
-sbuf_lifetime_t *sbufGetLifetime(const sbuf_t *b)
-{
-    assert(b != NULL);
-    return b->lifetime;
-}
-
-void sbufTransferLifetime(sbuf_t *source, sbuf_t *destination)
-{
-    assert(source != NULL && destination != NULL && source != destination);
-    assert(destination->lifetime == NULL);
-    destination->lifetime = sbufTakeLifetime(source);
-}
-
-void sbufCloneLifetime(const sbuf_t *source, sbuf_t *destination)
-{
-    assert(source != NULL && destination != NULL && source != destination);
-    assert(destination->lifetime == NULL);
-
-    sbuf_lifetime_t *lifetime = source->lifetime;
-    if (lifetime != NULL)
-    {
-        assert(lifetime->retain != NULL && lifetime->release != NULL);
-        lifetime->retain(lifetime);
-        destination->lifetime = lifetime;
-    }
-}
-
-void sbufReleaseLifetime(sbuf_t *b)
-{
-    sbuf_lifetime_t *lifetime = sbufTakeLifetime(b);
-    if (lifetime != NULL)
-    {
-        assert(lifetime->release != NULL);
-        lifetime->release(lifetime);
-    }
 }
 
 static sbuf_t *sbufAllocate(uint32_t capacity, uint16_t pad_left)
@@ -141,7 +86,6 @@ static sbuf_t *sbufAllocate(uint32_t capacity, uint16_t pad_left)
     b->curpos   = pad_left;
     b->capacity = capacity;
     b->l_pad    = pad_left;
-    b->lifetime = NULL;
 
     return b;
 }
@@ -209,8 +153,6 @@ bool sbufDuplicateTo(const sbuf_t *b, sbuf_t *dest)
     {
         memoryCopyLarge(sbufGetMutablePtr(dest), sbufGetRawPtr(b), source_length);
     }
-    sbufReleaseLifetime(dest);
-    sbufCloneLifetime(b, dest);
     return true;
 }
 
@@ -266,7 +208,6 @@ sbuf_t *sbufSlice(sbuf_t *const b, const uint32_t bytes)
 {
     sbuf_t *newbuf = sbufCreateWithPadding(sbufGetTotalCapacityNoPadding(b), b->l_pad);
     sbufMoveTo(newbuf, b, bytes);
-    sbufCloneLifetime(b, newbuf);
     return newbuf;
 }
 
@@ -333,7 +274,6 @@ void sbufSpliceClosePipe(sbuf_t *buf)
 void sbufSpliceDiscard(sbuf_t *buf)
 {
     assert(sbufIsSplice(buf));
-    assert(sbufGetLifetime(buf) == NULL);
     if (buf->len == 0)
     {
         return;
@@ -378,7 +318,6 @@ bool sbufSpliceIsReusable(const sbuf_t *buf)
 
 void sbufDestroySplice(sbuf_t *buf)
 {
-    assert(buf->lifetime == NULL);
     sbufSpliceClosePipe(buf);
     memoryFreeAligned(buf);
 }

@@ -163,7 +163,6 @@ if(TARGET ww)
     target_compile_definitions(device_flow_affinity_test PRIVATE DEVICE_FLOW_AFFINITY_TEST_TRACKING=1)
     target_link_options(device_flow_affinity_test PRIVATE
       "-Wl,--wrap=bufferpoolReuseBuffer"
-      "-Wl,--wrap=deviceFragAffinitySettlePublication"
       "-Wl,--wrap=deviceFragAffinityOffer"
     )
   endif()
@@ -222,7 +221,6 @@ if(TARGET ww)
       "-Wl,--wrap=memoryFree"
       "-Wl,--wrap=masterpoolDestroy"
       "-Wl,--wrap=bufferpoolReuseBuffer"
-      "-Wl,--wrap=deviceFragAffinitySettlePublication"
     )
     target_compile_definitions(device_reader_session_test PRIVATE DEVICE_READER_SESSION_TEST_HOOKS=1)
     target_link_libraries(device_reader_session_test PRIVATE ww)
@@ -622,7 +620,7 @@ if(TARGET ww)
   add_library(mismatched_abi_node_library SHARED legacy_node_library.c)
   target_compile_definitions(
     mismatched_abi_node_library
-    PRIVATE FIXTURE_NODE_TYPE="MismatchedAbiFixture" FIXTURE_ABI_VERSION=2
+    PRIVATE FIXTURE_NODE_TYPE="MismatchedAbiFixture" FIXTURE_ABI_VERSION=3
   )
   set_target_properties(mismatched_abi_node_library PROPERTIES PREFIX "")
   add_library(external_node_abi_v3_library SHARED lifecycle_v2_node_library.c)
@@ -1192,7 +1190,8 @@ if(TARGET ww)
       )
     endif()
     target_link_libraries(worker_context_helpers_test PRIVATE ww)
-    add_dependencies(waterwall_unit_tests worker_context_helpers_test)
+    target_link_options(worker_context_helpers_test PRIVATE "-Wl,--wrap=sbufDestroy" "-Wl,--wrap=bufferpoolReuseBuffer")
+  add_dependencies(waterwall_unit_tests worker_context_helpers_test)
 
     add_waterwall_unit_test(
       waterwall.worker_context_helpers_unit
@@ -1209,7 +1208,8 @@ if(TARGET ww)
       WW_EVENT_MEMORY_TEST_SEAM=1
     )
     target_link_libraries(line_task_scheduling_test PRIVATE ww)
-    add_dependencies(waterwall_unit_tests line_task_scheduling_test)
+    target_link_options(line_task_scheduling_test PRIVATE "-Wl,--wrap=sbufDestroy" "-Wl,--wrap=bufferpoolReuseBuffer")
+  add_dependencies(waterwall_unit_tests line_task_scheduling_test)
 
     add_waterwall_unit_test(
       waterwall.line_task_scheduling_unit
@@ -2341,7 +2341,6 @@ if(TARGET PacketsToConnection)
     )
     target_link_options(packetstoconnection_fragment_admission_test PRIVATE
       "-Wl,--wrap=bufferpoolReuseBuffer"
-      "-Wl,--wrap=deviceFragAffinitySettlePublication"
     )
     target_link_libraries(packetstoconnection_fragment_admission_test PRIVATE PacketsToConnection ww)
     add_dependencies(waterwall_unit_tests packetstoconnection_fragment_admission_test)

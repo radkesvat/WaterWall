@@ -69,7 +69,7 @@ static void checkSplice(sbuf_t *buffer, uint16_t padding)
             "splice buffer lost its physical control-storage capacity");
     require(sbufGetLeftPadding(buffer) == padding && sbufGetLeftCapacity(buffer) == padding,
             "splice buffer has incorrect padding or cursor");
-    require(sbufGetLength(buffer) == 0 && buffer->flags == kSbufFlagSplice && sbufGetLifetime(buffer) == NULL,
+    require(sbufGetLength(buffer) == 0 && buffer->flags == kSbufFlagSplice,
             "splice checkout retained payload metadata");
     const splice_buffer_metadata_t metadata = sbufSpliceMetadata(buffer);
     require(metadata.pipefd[0] >= 0 && metadata.pipefd[1] >= 0 && sbufSpliceIsReusable(buffer),

@@ -289,7 +289,8 @@ static capture_device_t *createDevice(test_env_t *env)
     require(pthread_cond_init(&cdev->reader_state_changed, NULL) == 0,
             "failed to initialize the capture reader condition variable");
 
-    cdev->reader_session = deviceReaderSessionCreate(4, 512, cdev, deliverPacket, cdev->reader_buffer_pool);
+    cdev->reader_session =
+        deviceReaderSessionCreate(4, 512, cdev, deliverPacket, cdev->reader_buffer_pool, kDeviceFragmentPreserve);
     return cdev;
 }
 

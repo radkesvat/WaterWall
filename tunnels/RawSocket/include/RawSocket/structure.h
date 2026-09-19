@@ -20,7 +20,9 @@ enum capturedevice_filter_type_dynamic_value_status
 
 typedef struct rawsocket_tstate_s
 {
+
     packet_lifecycle_anchor_t lifecycle_anchor;
+    device_fragment_policy_t  fragment_policy;
 
     capture_device_t *capture_device;
     ipmask_t         *capture_ranges;

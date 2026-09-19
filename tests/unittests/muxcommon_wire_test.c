@@ -588,20 +588,10 @@ static void testQueuedSbufCharge(buffer_pool_t *pool)
     bufferpoolReuseBuffer(pool, empty_small);
 }
 
-static unsigned retention_lifetime_releases;
-static void     releaseRetentionLifetime(sbuf_lifetime_t *lifetime)
-{
-    discard lifetime;
-    ++retention_lifetime_releases;
-}
-
 static void testEncodeCase(buffer_pool_t *pool, uint32_t payload_length, bool prepend_open, uint32_t data_frames)
 {
     sbuf_t         *input       = makePayload(pool, payload_length);
-    sbuf_t         *encoded     = NULL;
-    sbuf_lifetime_t lifetime    = {.release = releaseRetentionLifetime};
-    retention_lifetime_releases = 0;
-    sbufAttachLifetime(input, &lifetime);
+    sbuf_t             *encoded     = NULL;
     mux_encode_result_t result = muxEncodeChildPayload(pool, input, kTestCid, prepend_open, &encoded);
     require(result == kMuxEncodeSuccess && encoded != NULL, "payload encoding failed");
 
@@ -614,10 +604,7 @@ static void testEncodeCase(buffer_pool_t *pool, uint32_t payload_length, bool pr
         require(frames[0].cid == kTestCid, "encoded Open frame has the wrong cid");
     }
     requirePayload(frames, count, prepend_open ? 1U : 0U, payload_length);
-    require(sbufGetLifetime(encoded) == &lifetime && retention_lifetime_releases == 0,
-            "encoding released or lost lifetime metadata");
     bufferpoolReuseBuffer(pool, encoded);
-    require(retention_lifetime_releases == 1, "encoding did not settle lifetime once");
 }
 
 static void testEncodingAndOwnership(buffer_pool_t *pool)
@@ -672,9 +659,6 @@ static void testPausedRetentionStorage(buffer_pool_t *pool)
     {
         sbuf_t         *input             = makePayload(pool, lengths[i]);
         const uint32_t  original_capacity = sbufGetTotalCapacityNoPadding(input);
-        sbuf_lifetime_t lifetime          = {.release = releaseRetentionLifetime};
-        sbufAttachLifetime(input, &lifetime);
-        retention_lifetime_releases = 0;
         sbuf_t        *retained     = muxPrepareQueuedPayload(pool, input);
         const uint32_t expected = lengths[i] <= bufferpoolGetSmallBufferSize(pool) ? bufferpoolGetSmallBufferSize(pool)
                                   : lengths[i] <= bufferpoolGetMediumBufferSize(pool)
@@ -687,12 +671,9 @@ static void testPausedRetentionStorage(buffer_pool_t *pool)
         for (uint32_t j = 0; j < lengths[i]; ++j)
             require(((const uint8_t *) sbufGetRawPtr(retained))[j] == patternByte(j),
                     "paused retention changed payload bytes");
-        require(sbufGetLifetime(retained) == &lifetime && retention_lifetime_releases == 0,
-                "paused retention released or lost the payload lifetime");
         require(muxPrepareQueuedPayload(pool, retained) == retained,
                 "suitably sized retained storage was copied again");
         bufferpoolReuseBuffer(pool, retained);
-        require(retention_lifetime_releases == 1, "paused retention failed to settle the lifetime exactly once");
     }
 }
 

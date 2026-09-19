@@ -758,7 +758,6 @@ sbuf_t *sbufDuplicateByPool(buffer_pool_t *pool, sbuf_t *b)
 
     sbufSetLength(bnew, source_length);
     sbufWriteBuf(bnew, b, source_length);
-    sbufCloneLifetime(b, bnew);
     return bnew;
 }
 

@@ -5,6 +5,7 @@
       "name": "raw-in-out",
       "type": "RawSocket",
       "settings": {
+        "fragment-policy": "preserve-fragments",
         "capture-device-name": "ping-direct-capture",
         "raw-device-name": "ping-direct-raw",
         "capture-filter-mode": "source-ip",
@@ -31,6 +32,7 @@
       "name": "server-tun",
       "type": "TunDevice",
       "settings": {
+        "fragment-policy": "preserve-fragments",
         "device-name": "wwpingdirect0",
         "device-ip": "10.252.30.1/24",
         "device-mtu": 1400,

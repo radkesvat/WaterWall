@@ -297,7 +297,6 @@ static int nioWriteBuffer(wio_t *io, sbuf_t *buf, int *error)
 #if WW_HAVE_SPLICE
     if (sbufIsSplice(buf))
     {
-        assert(sbufGetLifetime(buf) == NULL);
         const uint32_t prefix  = sbufGetResidentPrefixLength(buf);
         const uint32_t body    = sbufGetLength(buf) - prefix;
         int            written = 0;
@@ -377,7 +376,6 @@ static void nio_read(wio_t *io)
             // No socket bytes were consumed; use ordinary storage for this delivery.
             goto read_ordinary;
         }
-        assert(sbufGetLifetime(buf) == NULL);
         const splice_buffer_metadata_t metadata = sbufSpliceMetadata(buf);
         ssize_t                        moved;
         do
@@ -812,7 +810,6 @@ int wioWrite(wio_t *io, sbuf_t *buf)
             LOGF("wioWrite: splice buffers require a TCP destination");
             abortProgramNow(1);
         }
-        assert(sbufGetLifetime(buf) == NULL && "Splice buffers must not carry lifetime metadata");
 #else
         LOGF("wioWrite: splice is unsupported on this build");
         abortProgramNow(1);

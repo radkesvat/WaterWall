@@ -213,6 +213,12 @@ tunnel_t *rawsocketCreate(node_t *node)
     rawsocket_tstate_t *state    = tunnelGetState(t);
     const cJSON        *settings = node->node_settings_json;
 
+    if (! packettunnelReadFragmentPolicy(settings, &state->fragment_policy))
+    {
+        rawsocketDestroy(t, wwLifecycleStartupRollback());
+        return NULL;
+    }
+
     if (! rawsocketLoadCaptureRanges(state, settings) ||
         ! rawsocketLoadProtocolFilter(&state->capture_protocol_filter, settings))
     {

@@ -20,13 +20,6 @@ void ptcFragmentAdmissionTestInstallHooks(const ptc_fragment_admission_test_hook
     ptc_fragment_admission_test_hooks = hooks != NULL ? *hooks : (ptc_fragment_admission_test_hooks_t) {0};
 }
 
-static void ptcFragmentAdmissionTestRunHook(PtcFragmentAdmissionTestHook hook, sbuf_t *buf, struct netif *inp)
-{
-    if (hook != NULL)
-    {
-        hook(buf, inp, ptc_fragment_admission_test_hooks.context);
-    }
-}
 #endif
 
 static bool ptcPacketNeedsAlignedCopy(const sbuf_t *buf)
@@ -116,7 +109,6 @@ static sbuf_t *ptcAcquireAlignedCopy(buffer_pool_t *pool, sbuf_t *src)
 
     sbufSetLength(dst, len);
     memoryCopyLarge(sbufGetMutablePtr(dst), sbufGetRawPtr(src), len);
-    sbufTransferLifetime(src, dst);
     return dst;
 }
 
@@ -134,9 +126,7 @@ typedef struct ptc_fragment_key_s
 /*
  * Reads the reassembly identity out of an IPv4 packet, if it has one.
  *
- * Only a fragment has reassembly state to purge, and only a fragment is ever
- * tracked by the device fragment table, so an unfragmented packet answers false
- * and every settlement path below becomes a no-op for it.
+ * Only a fragment has reassembly state to purge.
  */
 static bool ptcReadFragmentKey(const sbuf_t *buf, ptc_fragment_key_t *out)
 {
@@ -162,20 +152,11 @@ static bool ptcReadFragmentKey(const sbuf_t *buf, ptc_fragment_key_t *out)
     return true;
 }
 
-/*
- * Refuses a fragment and reports why the refusal is safe.
- *
- * Purging first is the whole point: an earlier fragment of this identity may
- * already sit in reassembly, and releasing the device's association while that
- * prefix survives is exactly how a later same-identification datagram completes
- * a hybrid. With the exact key gone, the identity holds nothing and can be
- * reused immediately. Called with LOCK_TCPIP_CORE() held, like every other
- * reassembly operation.
- */
-static void ptcReportFragmentRefusalLocked(const ptc_fragment_key_t *key, struct netif *inp, sbuf_t *buf)
+/* Remove any incomplete prefix when stack input cannot accept this fragment.
+ * Called under the lwIP core lock. Non-device fragment sources still need this. */
+static void ptcPurgeRefusedFragmentLocked(const ptc_fragment_key_t *key, struct netif *inp)
 {
     discard ip4_reass_purge(inp, &key->source, &key->destination, key->protocol, key->identification);
-    deviceFragClaimResolveBuffer(buf, kDeviceFragSettlementNoResidue);
 }
 
 static void ptcSubmitPacketToStack(sbuf_t *buf, struct netif *inp)
@@ -191,39 +172,6 @@ static void ptcSubmitPacketToStack(sbuf_t *buf, struct netif *inp)
      */
     ptc_fragment_key_t fragment_key;
     const bool         is_fragment = ptcReadFragmentKey(buf, &fragment_key);
-
-    if (UNLIKELY(! deviceFragClaimPacketMatches(buf)))
-    {
-        /* The receipt names the pre-transform identity, so a query of these
-         * mutated bytes cannot factually settle it. Drop this copy and keep the
-         * original identity quarantined as unknown. Purging the mutated key is
-         * still useful if another corrupted copy reached lwIP first. */
-        if (is_fragment)
-        {
-            discard ip4_reass_purge(inp,
-                                    &fragment_key.source,
-                                    &fragment_key.destination,
-                                    fragment_key.protocol,
-                                    fragment_key.identification);
-        }
-        deviceFragClaimResolveBuffer(buf, kDeviceFragSettlementUnknown);
-        bufferpoolReuseBuffer(origin_pool, buf);
-        return;
-    }
-
-    if (UNLIKELY(! deviceFragClaimMayEnterStack(buf)))
-    {
-        if (is_fragment)
-        {
-            ptcReportFragmentRefusalLocked(&fragment_key, inp, buf);
-        }
-        else
-        {
-            deviceFragClaimResolveBuffer(buf, kDeviceFragSettlementUnknown);
-        }
-        bufferpoolReuseBuffer(origin_pool, buf);
-        return;
-    }
 
     /*
      * Packet transforms may leave the sbuf cursor at any byte alignment. Keep
@@ -253,7 +201,7 @@ static void ptcSubmitPacketToStack(sbuf_t *buf, struct netif *inp)
         {
             if (is_fragment)
             {
-                ptcReportFragmentRefusalLocked(&fragment_key, inp, buf);
+                ptcPurgeRefusedFragmentLocked(&fragment_key, inp);
             }
             bufferpoolReuseBuffer(origin_pool, buf);
             return;
@@ -263,27 +211,6 @@ static void ptcSubmitPacketToStack(sbuf_t *buf, struct netif *inp)
         buf = aligned;
     }
 
-    device_frag_claim_t *stack_claim = NULL;
-#ifdef PTC_FRAGMENT_ADMISSION_TEST_HOOKS
-    ptcFragmentAdmissionTestRunHook(ptc_fragment_admission_test_hooks.before_stack_admission, buf, inp);
-#endif
-    if (UNLIKELY(! deviceFragClaimBeginStackUse(buf, &stack_claim)))
-    {
-        if (is_fragment)
-        {
-            ptcReportFragmentRefusalLocked(&fragment_key, inp, buf);
-        }
-        else
-        {
-            deviceFragClaimResolveBuffer(buf, kDeviceFragSettlementUnknown);
-        }
-        bufferpoolReuseBuffer(origin_pool, buf);
-        return;
-    }
-
-#ifdef PTC_FRAGMENT_ADMISSION_TEST_HOOKS
-    ptcFragmentAdmissionTestRunHook(ptc_fragment_admission_test_hooks.after_stack_admission, buf, inp);
-#endif
     my_custom_pbuf_t *custombuf =
 #ifdef PTC_FRAGMENT_ADMISSION_TEST_HOOKS
         ptc_fragment_admission_test_hooks.fail_rx_wrapper_allocation ? NULL :
@@ -298,10 +225,9 @@ static void ptcSubmitPacketToStack(sbuf_t *buf, struct netif *inp)
             LOGW("PacketsToConnection: dropping a packet, the zero-copy RX wrapper pool (%d) is exhausted",
                  (int) WW_LWIP_RX_WRAPPER_POOL_SIZE);
         }
-        deviceFragClaimEndStackUse(stack_claim);
         if (is_fragment)
         {
-            ptcReportFragmentRefusalLocked(&fragment_key, inp, buf);
+            ptcPurgeRefusedFragmentLocked(&fragment_key, inp);
         }
         bufferpoolReuseBuffer(origin_pool, buf);
         return;
@@ -319,22 +245,17 @@ static void ptcSubmitPacketToStack(sbuf_t *buf, struct netif *inp)
         PBUF_RAW, sbufGetLength(buf), PBUF_REF, &custombuf->p, sbufGetMutablePtr(buf), sbufGetLength(buf));
     if (p == NULL)
     {
-        deviceFragClaimEndStackUse(stack_claim);
         if (is_fragment)
         {
-            ptcReportFragmentRefusalLocked(&fragment_key, inp, buf);
+            ptcPurgeRefusedFragmentLocked(&fragment_key, inp);
         }
         bufferpoolReuseBuffer(origin_pool, buf);
         LWIP_MEMPOOL_FREE(RX_POOL, custombuf);
         return;
     }
 
-    /* The pbuf may synchronously release its sbuf before input returns. Keep the
-     * receipt separately until the exact post-input reassembly query is done. */
-    device_frag_claim_t *claim = deviceFragClaimTake(buf);
-    assert(claim == stack_claim);
-    const err_t input_result = inp->input(p, inp);
-    if (input_result != ERR_OK)
+    /* Input may synchronously free the custom pbuf and its sbuf. */
+    if (inp->input(p, inp) != ERR_OK)
     {
         if (is_fragment)
         {
@@ -343,32 +264,8 @@ static void ptcSubmitPacketToStack(sbuf_t *buf, struct netif *inp)
                                     &fragment_key.destination,
                                     fragment_key.protocol,
                                     fragment_key.identification);
-            deviceFragClaimEndStackUse(stack_claim);
-            deviceFragClaimResolve(claim, kDeviceFragSettlementNoResidue);
-        }
-        else
-        {
-            deviceFragClaimEndStackUse(stack_claim);
-            deviceFragClaimResolve(claim, kDeviceFragSettlementUnknown);
         }
         pbuf_free(p);
-        return;
-    }
-
-    if (is_fragment)
-    {
-#ifdef PTC_FRAGMENT_ADMISSION_TEST_HOOKS
-        ptcFragmentAdmissionTestRunHook(ptc_fragment_admission_test_hooks.before_residue_query, buf, inp);
-#endif
-        const bool residue = ip4_reass_has(
-            inp, &fragment_key.source, &fragment_key.destination, fragment_key.protocol, fragment_key.identification);
-        deviceFragClaimEndStackUse(stack_claim);
-        deviceFragClaimResolve(claim, residue ? kDeviceFragSettlementResiduePresent : kDeviceFragSettlementNoResidue);
-    }
-    else
-    {
-        deviceFragClaimEndStackUse(stack_claim);
-        deviceFragClaimResolve(claim, kDeviceFragSettlementUnknown);
     }
 }
 
@@ -416,12 +313,6 @@ static void processV4(tunnel_t *t, line_t *l, sbuf_t *buf)
     ip_addr_t      dest_ip;
 
     if (! ptcValidateIpv4Packet(buf, iphdr))
-    {
-        lineReuseBuffer(l, buf);
-        return;
-    }
-
-    if (UNLIKELY(! deviceFragClaimPacketMatches(buf)))
     {
         lineReuseBuffer(l, buf);
         return;
@@ -498,7 +389,6 @@ static void processV4(tunnel_t *t, line_t *l, sbuf_t *buf)
             LOGW("PacketsToConnection: dropping a fragmented UDP packet addressed to the fake-DNS endpoint; "
                  "fragmented UDP to that address is not supported");
         }
-        deviceFragClaimResolveBuffer(buf, kDeviceFragSettlementNoResidue);
         lineReuseBuffer(l, buf);
         return;
     }
@@ -513,7 +403,7 @@ static void processV4(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     /*
      * From here on there is a netif to name, so a refusal can purge the exact
-     * reassembly key instead of leaving the device to quarantine the identity.
+     * reassembly key rather than leaving an incomplete prefix in the stack.
      * Everything refused above this point has no route, and therefore no netif
      * an earlier fragment of this datagram could have entered through.
      */
@@ -528,7 +418,7 @@ static void processV4(tunnel_t *t, line_t *l, sbuf_t *buf)
             LOGW("PacketsToConnection: failed to create pretend TCP gateway");
             if (tracked_fragment)
             {
-                ptcReportFragmentRefusalLocked(&fragment_key, &route_ctx->netif, buf);
+                ptcPurgeRefusedFragmentLocked(&fragment_key, &route_ctx->netif);
             }
             lineReuseBuffer(l, buf);
             return;
@@ -541,7 +431,7 @@ static void processV4(tunnel_t *t, line_t *l, sbuf_t *buf)
             LOGW("PacketsToConnection: failed to create pretend UDP gateway");
             if (tracked_fragment)
             {
-                ptcReportFragmentRefusalLocked(&fragment_key, &route_ctx->netif, buf);
+                ptcPurgeRefusedFragmentLocked(&fragment_key, &route_ctx->netif);
             }
             lineReuseBuffer(l, buf);
             return;
@@ -551,7 +441,7 @@ static void processV4(tunnel_t *t, line_t *l, sbuf_t *buf)
     default:
         if (tracked_fragment)
         {
-            ptcReportFragmentRefusalLocked(&fragment_key, &route_ctx->netif, buf);
+            ptcPurgeRefusedFragmentLocked(&fragment_key, &route_ctx->netif);
         }
         lineReuseBuffer(l, buf);
         return;

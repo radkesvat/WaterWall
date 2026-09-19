@@ -5,6 +5,7 @@
       "name": "tun-in",
       "type": "TunDevice",
       "settings": {
+        "fragment-policy": "preserve-fragments",
         "device-name": "ww-tun-br",
         "device-ip": "10.252.31.1/24",
         "device-mtu": 1400,

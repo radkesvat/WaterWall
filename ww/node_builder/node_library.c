@@ -327,7 +327,7 @@ static node_t dynLoadNodeLib(hash_t htype)
             if (! dynGetSymbol(handle, WW_EXTERNAL_NODE_LIFECYCLE_ABI_SYMBOL, &lifecycle_abi, sizeof(lifecycle_abi)) ||
                 lifecycle_abi == NULL)
             {
-                LOGE("NodeLibrary: rejecting \"%s\": missing external-node ABI v3 descriptor", full_path);
+                LOGE("NodeLibrary: rejecting \"%s\": missing external-node ABI descriptor", full_path);
                 dynCloseLibrary(handle);
                 continue;
             }

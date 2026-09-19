@@ -2,7 +2,6 @@
 
 #include "wwapi.h"
 
-#include "devices/device_frag_settlement.h"
 #include "quiescence_gate.h"
 
 #include "lwip/priv/tcp_priv.h"
@@ -331,13 +330,9 @@ void ptcRxWrapperPoolInitializeOnce(void);
  * library is compiled without it, so no hook load or allocation branch reaches
  * device traffic.
  */
-typedef void (*PtcFragmentAdmissionTestHook)(sbuf_t *buf, struct netif *inp, void *context);
 
 typedef struct ptc_fragment_admission_test_hooks_s
 {
-    PtcFragmentAdmissionTestHook before_stack_admission;
-    PtcFragmentAdmissionTestHook after_stack_admission;
-    PtcFragmentAdmissionTestHook before_residue_query;
     void                        *context;
     bool                         fail_aligned_copy;
     bool                         fail_rx_wrapper_allocation;

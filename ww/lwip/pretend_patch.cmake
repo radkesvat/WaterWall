@@ -82,84 +82,7 @@ function(ww_apply_lwip_pretend_patch lwip_dir)
         [=[struct pbuf * ip4_reass(struct pbuf *p, struct netif *inp);
 u16_t ip4_reass_purge(struct netif *inp, const ip4_addr_t *src, const ip4_addr_t *dest,
                       u8_t proto, u16_t ident);
-u8_t ip4_reass_has(struct netif *inp, const ip4_addr_t *src, const ip4_addr_t *dest,
-                   u8_t proto, u16_t ident);
-u32_t ip4_reass_tmr_epoch(void);
 u16_t ip4_reass_purge_netif(struct netif *inp);]=])
-
-    # The quarantine clock counts actual lwIP timer passes. Elapsed wall time
-    # alone is insufficient because a stalled core does not replay missed timer
-    # callbacks. This atomic conveys only the counter value, so relaxed ordering
-    # is sufficient; no other state is published through it.
-    file(WRITE "${lwip_dir}/src/include/lwip/ww_atomic.h" [=[#ifndef LWIP_HDR_WW_ATOMIC_H
-#define LWIP_HDR_WW_ATOMIC_H
-
-#include <stdint.h>
-
-#if defined(_WIN32) && defined(_MSC_VER)
-#include <windows.h>
-typedef volatile LONG ww_lwip_atomic_u32_t;
-
-static __inline uint32_t
-ww_lwip_atomic_u32_load_relaxed(const ww_lwip_atomic_u32_t *value)
-{
-  return (uint32_t)InterlockedCompareExchange((volatile LONG *)value, 0, 0);
-}
-
-static __inline void
-ww_lwip_atomic_u32_increment_relaxed(ww_lwip_atomic_u32_t *value)
-{
-  (void)InterlockedIncrement(value);
-}
-#elif defined(__STDC_VERSION__) && (__STDC_VERSION__ >= 201112L) && !defined(__STDC_NO_ATOMICS__)
-#include <stdatomic.h>
-typedef atomic_uint_least32_t ww_lwip_atomic_u32_t;
-
-static inline uint32_t
-ww_lwip_atomic_u32_load_relaxed(const ww_lwip_atomic_u32_t *value)
-{
-  return (uint32_t)atomic_load_explicit(value, memory_order_relaxed);
-}
-
-static inline void
-ww_lwip_atomic_u32_increment_relaxed(ww_lwip_atomic_u32_t *value)
-{
-  (void)atomic_fetch_add_explicit(value, 1, memory_order_relaxed);
-}
-#elif defined(__GNUC__) || defined(__clang__)
-typedef uint_least32_t ww_lwip_atomic_u32_t;
-
-static inline uint32_t
-ww_lwip_atomic_u32_load_relaxed(const ww_lwip_atomic_u32_t *value)
-{
-  return (uint32_t)__atomic_load_n(value, __ATOMIC_RELAXED);
-}
-
-static inline void
-ww_lwip_atomic_u32_increment_relaxed(ww_lwip_atomic_u32_t *value)
-{
-  (void)__atomic_add_fetch(value, 1, __ATOMIC_RELAXED);
-}
-#else
-#error "WaterWall lwIP requires a supported 32-bit atomic backend"
-#endif
-
-#endif /* LWIP_HDR_WW_ATOMIC_H */
-]=])
-
-    ww_lwip_replace_once(
-        "${lwip_dir}/src/core/ipv4/ip4_frag.c"
-        [=[#include <string.h>]=]
-        [=[#include <string.h>
-#include "lwip/ww_atomic.h"]=])
-
-    ww_lwip_replace_once(
-        "${lwip_dir}/src/core/ipv4/ip4_frag.c"
-        [=[static struct ip_reassdata *reassdatagrams;
-static u16_t ip_reass_pbufcount;]=]
-        [=[static struct ip_reassdata *reassdatagrams;
-static u16_t ip_reass_pbufcount;
-static ww_lwip_atomic_u32_t ip_reass_timer_epoch;]=])
 
     ww_lwip_replace_once(
         "${lwip_dir}/src/core/ipv4/ip4_frag.c"
@@ -615,13 +538,6 @@ ip_reass_tmr(void)
       ip_reass_free_complete_datagram(tmp, prev);
     }
   }
-  ww_lwip_atomic_u32_increment_relaxed(&ip_reass_timer_epoch);
-}
-
-u32_t
-ip4_reass_tmr_epoch(void)
-{
-  return (u32_t)ww_lwip_atomic_u32_load_relaxed(&ip_reass_timer_epoch);
 }
 
 u16_t
@@ -642,25 +558,6 @@ ip4_reass_purge(struct netif *inp, const ip4_addr_t *src, const ip4_addr_t *dest
     }
     prev = r;
     r = r->next;
-  }
-  return 0;
-}
-
-u8_t
-ip4_reass_has(struct netif *inp, const ip4_addr_t *src, const ip4_addr_t *dest,
-              u8_t proto, u16_t ident)
-{
-  const u8_t input_netif_idx = (inp != NULL) ? netif_get_index(inp) : NETIF_NO_INDEX;
-  const struct ip_reassdata *r;
-
-  LWIP_ASSERT_CORE_LOCKED();
-
-  for (r = reassdatagrams; r != NULL; r = r->next) {
-    if ((r->input_netif_idx == input_netif_idx) &&
-        ip4_addr_eq(&r->iphdr.src, src) && ip4_addr_eq(&r->iphdr.dest, dest) &&
-        (IPH_PROTO(&r->iphdr) == proto) && (lwip_ntohs(IPH_ID(&r->iphdr)) == ident)) {
-      return 1;
-    }
   }
   return 0;
 }

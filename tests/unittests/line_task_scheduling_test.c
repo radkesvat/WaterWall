@@ -1,5 +1,6 @@
 /* Focused contract coverage for the four canonical line-task schedulers. */
 
+#include "buffer_disposal_probe.h"
 #include "ev_memory.h"
 #include "global_state.h"
 #include "master_pool.h"
@@ -24,7 +25,7 @@ typedef struct line_task_probe_s
 
 typedef struct tracked_buffer_lifetime_s
 {
-    sbuf_lifetime_t    base;
+
     line_task_probe_t *probe;
 } tracked_buffer_lifetime_t;
 
@@ -170,42 +171,28 @@ static tunnel_t *probeTunnelCreate(line_task_probe_t *probe)
     return t;
 }
 
-static void trackedBufferRetain(sbuf_lifetime_t *base)
-{
-    discard base;
-    require(false, "line-task test unexpectedly cloned a tracked buffer");
-}
-
-static void trackedBufferRelease(sbuf_lifetime_t *base)
-{
-    tracked_buffer_lifetime_t *lifetime = (tracked_buffer_lifetime_t *) base;
-    atomicAddExplicit(&lifetime->probe->buffer_releases, 1, memory_order_relaxed);
-}
-
 static sbuf_t *createTrackedBuffer(line_task_probe_t *probe, tracked_buffer_lifetime_t *lifetime)
 {
     *lifetime = (tracked_buffer_lifetime_t) {
-        .base  = {.retain = trackedBufferRetain, .release = trackedBufferRelease},
         .probe = probe,
     };
 
     sbuf_t *buf = sbufCreate(64);
     require(buf != NULL, "failed to allocate a tracked line-task buffer");
     sbufSetLength(buf, 16);
-    sbufAttachLifetime(buf, &lifetime->base);
+    watchBufferDisposal(buf, &lifetime->probe->buffer_releases);
     return buf;
 }
 
 static sbuf_t *createTrackedPooledBuffer(line_t *line, line_task_probe_t *probe, tracked_buffer_lifetime_t *lifetime)
 {
     *lifetime = (tracked_buffer_lifetime_t) {
-        .base  = {.retain = trackedBufferRetain, .release = trackedBufferRelease},
         .probe = probe,
     };
 
     sbuf_t *buf = bufferpoolGetSmallBuffer(lineGetBufferPool(line));
     sbufSetLength(buf, 16);
-    sbufAttachLifetime(buf, &lifetime->base);
+    watchBufferDisposal(buf, &lifetime->probe->buffer_releases);
     return buf;
 }
 

@@ -163,6 +163,7 @@ static void testAdminRefusal(bool restricted)
         configPolicyRestrict();
     cJSON *settings = cJSON_Parse("{\"device-name\":\"fixture\",\"device-ip\":\"192.0.2.1/24\",\"device-mtu\":1500}");
     require(settings != NULL, "cannot parse constructor fixture");
+    cJSON_AddStringToObject(settings, "fragment-policy", "preserve-fragments");
     node_t               node    = {.node_settings_json = settings};
     ww_startup_context_t context = {0};
     unsigned int         before  = modal_calls;

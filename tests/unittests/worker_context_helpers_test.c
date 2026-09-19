@@ -7,6 +7,7 @@
  * worker-local state, and nothing ever silently falls back to worker 0.
  */
 
+#include "buffer_disposal_probe.h"
 #include "ev_memory.h"
 #include "global_state.h"
 #include "wloop_internal.h"
@@ -233,32 +234,18 @@ static void pipeTestOwnedInit(tunnel_t *t, line_t *line)
 
 typedef struct pipe_payload_lifetime_s
 {
-    sbuf_lifetime_t base;
+
     atomic_uint     releases;
 } pipe_payload_lifetime_t;
 
-static void pipePayloadLifetimeRetain(sbuf_lifetime_t *base)
-{
-    discard base;
-    require(false, "pipe payload was unexpectedly cloned");
-}
-
-static void pipePayloadLifetimeRelease(sbuf_lifetime_t *base)
-{
-    pipe_payload_lifetime_t *lifetime = (pipe_payload_lifetime_t *) base;
-    atomicAddExplicit(&lifetime->releases, 1, memory_order_relaxed);
-}
-
 static sbuf_t *pipeTestPayload(pipe_payload_lifetime_t *lifetime)
 {
-    *lifetime = (pipe_payload_lifetime_t) {
-        .base = {.retain = pipePayloadLifetimeRetain, .release = pipePayloadLifetimeRelease},
-    };
+    *lifetime = (pipe_payload_lifetime_t) {0};
     atomic_init(&lifetime->releases, 0);
     sbuf_t *buf = sbufCreate(32);
     require(buf != NULL, "failed to allocate a pipe payload");
     sbufSetLength(buf, 32);
-    sbufAttachLifetime(buf, &lifetime->base);
+    watchBufferDisposal(buf, &lifetime->releases);
     return buf;
 }
 
@@ -1785,8 +1772,8 @@ typedef struct line_refusal_poster_s
 
 typedef struct line_buffer_lifetime_s
 {
-    sbuf_lifetime_t base;
-    atomic_int      releases;
+
+    atomic_uint releases;
 } line_buffer_lifetime_t;
 
 typedef struct line_refcount_publication_s
@@ -1846,18 +1833,6 @@ static void testLineRefcountPublishesTeardownToFinalReleaser(void)
     genericpoolDestroy(pool);
     masterpoolMakeEmpty(master);
     masterpoolDestroy(master);
-}
-
-static void lineBufferLifetimeRetain(sbuf_lifetime_t *base)
-{
-    discard base;
-    require(false, "line refusal test unexpectedly cloned its buffer lifetime");
-}
-
-static void lineBufferLifetimeRelease(sbuf_lifetime_t *base)
-{
-    line_buffer_lifetime_t *lifetime = (line_buffer_lifetime_t *) base;
-    atomicAddExplicit(&lifetime->releases, 1, memory_order_relaxed);
 }
 
 static void refusedLineTask(tunnel_t *t, line_t *line)
@@ -1930,13 +1905,11 @@ static void exerciseForeignFinalLineReleaseDuringDetach(void)
     plain_line->routing_context.dest_ctx.domain = stringDuplicate("plain.example");
     lwip_line->routing_context.dest_ctx.domain  = stringDuplicate("lwip.example");
 
-    line_buffer_lifetime_t lifetime = {
-        .base = {.retain = lineBufferLifetimeRetain, .release = lineBufferLifetimeRelease},
-    };
+    line_buffer_lifetime_t lifetime = {0};
     atomic_init(&lifetime.releases, 0);
     sbuf_t *buf = sbufCreate(32);
     require(buf != NULL, "failed to create refused line-task buffer");
-    sbufAttachLifetime(buf, &lifetime.base);
+    watchBufferDisposal(buf, &lifetime.releases);
 
     line_refusal_poster_t plain = {.line = plain_line};
     line_refusal_poster_t lwip  = {.line = lwip_line, .buf = buf, .with_buffer = true, .bind_lwip = true};

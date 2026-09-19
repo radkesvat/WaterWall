@@ -992,3 +992,17 @@ add_custom_target(check_waterwall_tests
   DEPENDS ${WATERWALL_TEST_TARGET}
   USES_TERMINAL
 )
+
+add_waterwall_expected_failure_integration_test(
+  waterwall.device_fragment_policy_required device_fragment_policy_required
+  "Device source requires fragment-policy")
+add_waterwall_expected_failure_integration_test(
+  waterwall.device_fragment_raw_stack_rejected device_fragment_raw_stack_rejected
+  "unsupported fragment-policy path")
+add_waterwall_expected_failure_integration_test(
+  waterwall.device_fragment_normalized_egress_rejected device_fragment_normalized_egress_rejected
+  "unsupported fragment-policy path")
+add_waterwall_privileged_probe_integration_test(
+  waterwall.device_fragment_normalized_roundtrip device_fragment_normalized_roundtrip 25)
+add_waterwall_privileged_probe_integration_test(
+  waterwall.device_fragment_raw_forward device_fragment_raw_forward 20)

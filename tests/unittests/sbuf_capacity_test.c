@@ -99,7 +99,7 @@ static void testSpliceCapacityAndPadding(void)
                 "splice control-storage capacity was rounded up or included its padding");
         require(sbufGetLeftPadding(buffer) == padding && sbufGetLeftCapacity(buffer) == padding,
                 "splice allocation did not reserve aligned left padding");
-        require(sbufGetLength(buffer) == 0 && buffer->flags == kSbufFlagSplice && sbufGetLifetime(buffer) == NULL,
+        require(sbufGetLength(buffer) == 0 && buffer->flags == kSbufFlagSplice,
                 "splice buffer metadata was not initialized");
         uint8_t *payload = sbufGetMutablePtr(buffer);
         require((uintptr_t) buffer % kSbufAllocationAlignment == 0 &&

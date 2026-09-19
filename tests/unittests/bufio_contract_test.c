@@ -814,7 +814,6 @@ static sbuf_t *mapSharedTestBuffer(uint32_t payload_capacity, uint16_t left_padd
     buffer->capacity           = capacity;
     buffer->l_pad              = left_padding;
     buffer->flags              = 0;
-    buffer->lifetime           = NULL;
     *sbufGetMutablePtr(buffer) = value;
     return buffer;
 }

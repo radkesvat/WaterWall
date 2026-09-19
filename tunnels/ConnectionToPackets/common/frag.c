@@ -1,7 +1,5 @@
 #include "structure.h"
 
-#include "devices/device_frag_settlement.h"
-
 #include "loggers/network_logger.h"
 
 #include "loggers/log_rate_limiter.h"
@@ -143,8 +141,7 @@ static void ctpFragRequestPurgeLocked(ctp_frag_entry_t *entry, const ctp_frag_ke
     entry->purge_queued = true;
 }
 
-static void ctpFragReleaseEntryLocked(ctp_tstate_t *ts, ctp_frag_entry_t *entry, ctp_frag_discard_fn release,
-                                      device_frag_settlement_t refused_settlement)
+static void ctpFragReleaseEntryLocked(ctp_tstate_t *ts, ctp_frag_entry_t *entry, ctp_frag_discard_fn release)
 {
     for (uint8_t i = 0; i < entry->pending_count; ++i)
     {
@@ -152,20 +149,13 @@ static void ctpFragReleaseEntryLocked(ctp_tstate_t *ts, ctp_frag_entry_t *entry,
         release(entry->pending[i].payload);
     }
     entry->pending_count = 0;
-
-    for (uint8_t i = 0; i < entry->refused_receipt_count; ++i)
-    {
-        deviceFragClaimResolve(entry->refused_receipts[i], refused_settlement);
-        entry->refused_receipts[i] = NULL;
-    }
-    entry->refused_receipt_count = 0;
 }
 
 void ctpFragClearLocked(ctp_tstate_t *ts, ctp_frag_discard_fn release)
 {
     c_foreach(i, ctp_frag_map_t, ts->frags)
     {
-        ctpFragReleaseEntryLocked(ts, &i.ref->second, release, kDeviceFragSettlementUnknown);
+        ctpFragReleaseEntryLocked(ts, &i.ref->second, release);
     }
     ctp_frag_map_t_clear(&ts->frags);
     ts->frag_next_expiry_ms = 0;
@@ -173,21 +163,7 @@ void ctpFragClearLocked(ctp_tstate_t *ts, ctp_frag_discard_fn release)
 
 void ctpFragClearAfterNetifPurgeLocked(tunnel_t *t)
 {
-    ctp_tstate_t *ts = tunnelGetState(t);
-
-    c_foreach(i, ctp_frag_map_t, ts->frags)
-    {
-        ctp_frag_entry_t *entry = &i.ref->second;
-        ctp_netif_ctx_t  *ctx   = (ts->netifs != NULL && entry->wid < ts->netifs_count) ? ts->netifs[entry->wid] : NULL;
-        const bool        exact_netif = ctx != NULL && ctx->added && ctx->tunnel == t && ctx->wid == entry->wid;
-
-        ctpFragReleaseEntryLocked(ts,
-                                  entry,
-                                  exact_netif ? ctpInjectMessageResolveNoResidue : ctpInjectMessageDestroy,
-                                  exact_netif ? kDeviceFragSettlementNoResidue : kDeviceFragSettlementUnknown);
-    }
-    ctp_frag_map_t_clear(&ts->frags);
-    ts->frag_next_expiry_ms = 0;
+    ctpFragClearLocked(tunnelGetState(t), ctpInjectMessageDestroy);
 }
 
 void ctpFragTableDestroy(ctp_tstate_t *ts, ctp_frag_discard_fn release)
@@ -294,7 +270,7 @@ static void ctpFragSweepExpiredLocked(ctp_tstate_t *ts, uint64_t now_ms, ctp_fra
         }
 
         swept += entry->pending_count;
-        ctpFragReleaseEntryLocked(ts, entry, release, kDeviceFragSettlementUnknown);
+        ctpFragReleaseEntryLocked(ts, entry, release);
 
         if (entry->state == (uint8_t) kCtpFragStateUnresolved)
         {
@@ -529,7 +505,7 @@ static void ctpFragHoldLocked(ctp_tstate_t *ts, ctp_frag_entry_t *entry, void *p
 static void ctpFragPoisonLocked(ctp_tstate_t *ts, ctp_frag_entry_t *entry, const ctp_frag_key_t *frag_key,
                                 ctp_frag_discard_fn release, ctp_frag_purge_batch_t *purges, uint64_t now_ms)
 {
-    ctpFragReleaseEntryLocked(ts, entry, release, kDeviceFragSettlementUnknown);
+    ctpFragReleaseEntryLocked(ts, entry, release);
 
     entry->state         = (uint8_t) kCtpFragStatePoisoned;
     entry->range_count   = 0;
@@ -716,9 +692,8 @@ static void ctpFragAcceptLocked(ctp_tstate_t *ts, ctp_frag_entry_t *entry, const
  */
 void ctpFragRetirePurged(tunnel_t *t, const ctp_frag_key_t *frag_key, uint64_t serial, bool exact_absence)
 {
+    discard       exact_absence;
     ctp_tstate_t *ts = tunnelGetState(t);
-    void         *receipts[kCtpFragMaxPendingPerDatagram + 1];
-    uint8_t       receipt_count = 0;
 
     rwlockWriteLock(&ts->flows_lock);
     ctp_frag_map_t_iter it = ctp_frag_map_t_find(&ts->frags, *frag_key);
@@ -727,18 +702,9 @@ void ctpFragRetirePurged(tunnel_t *t, const ctp_frag_key_t *frag_key, uint64_t s
         (it.ref->second.state == (uint8_t) kCtpFragStatePublishing ||
          it.ref->second.state == (uint8_t) kCtpFragStatePoisoned))
     {
-        receipt_count = it.ref->second.refused_receipt_count;
-        memcpy(receipts, it.ref->second.refused_receipts, sizeof(it.ref->second.refused_receipts[0]) * receipt_count);
-        it.ref->second.refused_receipt_count = 0;
         ctp_frag_map_t_erase_at(&ts->frags, it);
     }
     rwlockWriteUnlock(&ts->flows_lock);
-
-    for (uint8_t i = 0; i < receipt_count; ++i)
-    {
-        deviceFragClaimResolve(receipts[i],
-                               exact_absence ? kDeviceFragSettlementNoResidue : kDeviceFragSettlementUnknown);
-    }
 }
 
 static void ctpFragSettleDeliveryAt(tunnel_t *t, const ctp_frag_key_t *frag_key, uint64_t serial, bool delivered,
@@ -912,7 +878,7 @@ static ctp_frag_drop_reason_t ctpFragBindZeroLocked(ctp_tstate_t *ts, ctp_frag_e
     default:
         // No flow owns this datagram, so nothing staged for it could ever be
         // delivered either.
-        ctpFragReleaseEntryLocked(ts, entry, release, kDeviceFragSettlementUnknown);
+        ctpFragReleaseEntryLocked(ts, entry, release);
         ctp_frag_map_t_erase(&ts->frags, *frag_key);
         return kCtpFragDropNoFlow;
     }
@@ -928,7 +894,7 @@ static void ctpFragRollbackUnresolvedZeroLocked(ctp_tstate_t *ts, ctp_frag_entry
                                                 const ctp_frag_key_t *frag_key, ctp_frag_discard_fn release)
 {
     assert(entry->state == (uint8_t) kCtpFragStateUnresolved);
-    ctpFragReleaseEntryLocked(ts, entry, release, kDeviceFragSettlementUnknown);
+    ctpFragReleaseEntryLocked(ts, entry, release);
     ctp_frag_map_t_erase(&ts->frags, *frag_key);
 }
 
@@ -1097,8 +1063,6 @@ static void ctpFragSettlePublishBatch(tunnel_t *t, const ctp_frag_key_t *frag_ke
 {
     ctp_tstate_t *ts        = tunnelGetState(t);
     bool          published = true;
-    void         *unknown_receipts[kCtpFragMaxPendingPerDatagram + 1];
-    uint8_t       unknown_receipt_count = 0;
 
     rwlockWriteLock(&ts->flows_lock);
 
@@ -1118,22 +1082,6 @@ static void ctpFragSettlePublishBatch(tunnel_t *t, const ctp_frag_key_t *frag_ke
                 assert(entry->pending_deliveries > 0);
                 --entry->pending_deliveries;
                 published = false;
-                if (results[i].refused_receipt != NULL)
-                {
-                    if (entry->refused_receipt_count < ARRAY_SIZE(entry->refused_receipts))
-                    {
-                        entry->refused_receipts[entry->refused_receipt_count++] = results[i].refused_receipt;
-                    }
-                    else
-                    {
-                        /*
-                         * Concurrent refused batches can outnumber the per-datagram
-                         * retention bound. Conservatively quarantine any overflow;
-                         * never turn a bounded ownership table into an overwrite.
-                         */
-                        unknown_receipts[unknown_receipt_count++] = results[i].refused_receipt;
-                    }
-                }
             }
         }
 
@@ -1156,23 +1104,8 @@ static void ctpFragSettlePublishBatch(tunnel_t *t, const ctp_frag_key_t *frag_ke
             ctpFragRequestPurgeLocked(entry, frag_key, purges, now_ms);
         }
     }
-    else
-    {
-        for (uint8_t i = 0; i < batch->count; ++i)
-        {
-            if (results[i].refused_receipt != NULL)
-            {
-                unknown_receipts[unknown_receipt_count++] = results[i].refused_receipt;
-            }
-        }
-    }
 
     rwlockWriteUnlock(&ts->flows_lock);
-
-    for (uint8_t i = 0; i < unknown_receipt_count; ++i)
-    {
-        deviceFragClaimResolve(unknown_receipts[i], kDeviceFragSettlementUnknown);
-    }
 }
 
 static void ctpFragHandlePacketAt(tunnel_t *t, uint64_t now_ms, const ctp_frag_key_t *frag_key,

@@ -472,39 +472,21 @@ static void caseParentWriteConfiguration(void)
     fixtureTeardown(&f);
 }
 
-static unsigned pqLifetimeRefs;
-static void     pqLifetimeRetain(sbuf_lifetime_t *lifetime)
-{
-    discard lifetime;
-    ++pqLifetimeRefs;
-}
-static void pqLifetimeRelease(sbuf_lifetime_t *lifetime)
-{
-    discard lifetime;
-    twfRequire(pqLifetimeRefs != 0, "output released lifetime twice");
-    --pqLifetimeRefs;
-}
-
 static void caseParentQueuedChildClose(bool with_data)
 {
-    twfSetCase("encoded output and lifetime survive local child Finish");
+    twfSetCase("encoded output survives local child Finish");
     pq_fixture_t f;
     pqSetup(&f);
     pqParentPause(&f);
-    sbuf_lifetime_t lifetime = {.retain = pqLifetimeRetain, .release = pqLifetimeRelease};
-    pqLifetimeRefs           = 0;
     if (with_data)
     {
-        sbuf_t *buf    = makePatternPayload(&f, 1);
-        pqLifetimeRefs = 1;
-        sbufAttachLifetime(buf, &lifetime);
+        sbuf_t *buf = makePatternPayload(&f, 1);
         pqSend(f.mux, f.child_l, buf);
     }
     lineRef(f.child_l);
     pqFinish(f.mux, f.child_l);
     twfRequire(pqDeliveries == 0, "child Close bypassed Pause");
     twfRequireLineStateZeroed(f.child_l, f.mux, "local Finish retained child state");
-    twfRequire(pqLifetimeRefs == (unsigned) with_data, "child teardown released queued output lifetime");
 #ifndef MUX_OUTPUT_CLIENT
     twfRequire(! lineIsAlive(f.child_l), "local Finish left owned child alive");
     lineUnref(f.child_l);
@@ -513,7 +495,7 @@ static void caseParentQueuedChildClose(bool with_data)
     lineUnref(f.child_l);
 #endif
     pqParentResume(&f);
-    twfRequire(pqLifetimeRefs == 0 && pqOutput(&f)->charge == 0, "drain leaked output lifetime");
+    twfRequire(pqOutput(&f)->charge == 0, "drain leaked output charge");
     frame_view_t frames[4];
     unsigned     count = parseFrames(f.capture, f.trace.capture_len, frames, 4);
 #ifdef MUX_OUTPUT_CLIENT

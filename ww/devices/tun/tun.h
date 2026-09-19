@@ -1,4 +1,5 @@
 #pragma once
+#include "devices/device_frag_affinity.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -25,7 +26,8 @@ typedef struct tun_default_route_s
     char     ifname[64];
 } tun_default_route_t;
 
-tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void *userdata, TunReadEventHandle cb);
+tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void *userdata, TunReadEventHandle cb,
+                              device_fragment_policy_t fragment_policy);
 void          tundeviceDestroy(tun_device_t *tdev);
 bool          tundeviceBringUp(tun_device_t *tdev);
 bool          tundeviceRequestStop(tun_device_t *tdev);
@@ -46,7 +48,7 @@ bool          tundeviceDisableReversePathFiltering(const char *ifname);
 /* Moves a prepared reservation into the device. On an earlier failure the
  * caller retains any non-null lease and releases it during constructor rollback. */
 tun_device_t *tundeviceCreateOwned(const char *name, bool offload, uint16_t mtu, void *userdata, TunReadEventHandle cb,
-                                   tun_windows_ownership_t *ownership);
+                                   device_fragment_policy_t fragment_policy, tun_windows_ownership_t *ownership);
 /* Releases the process-wide Wintun module after every device has stopped. */
 void tundevicePlatformShutdown(void);
 #endif

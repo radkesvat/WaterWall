@@ -3,20 +3,6 @@
 extern tunnel_t *obfuscatorclientTunnelCreate(node_t *node);
 extern tunnel_t *obfuscatorserverTunnelCreate(node_t *node);
 
-typedef struct record_lifetime_s
-{
-    sbuf_lifetime_t base;
-    unsigned        references;
-} record_lifetime_t;
-static void retainRecord(sbuf_lifetime_t *base)
-{
-    ++((record_lifetime_t *) base)->references;
-}
-static void releaseRecord(sbuf_lifetime_t *base)
-{
-    --((record_lifetime_t *) base)->references;
-}
-
 static unsigned  interruption;
 static uint32_t  pool_size = LARGE_BUFFER_SIZE_RAM_HIGH;
 static tunnel_t *decoder;
@@ -78,7 +64,6 @@ static void receive(tunnel_t *t, line_t *l, sbuf_t *buf)
 
 static void runCase(bool reverse, uint32_t length, uint32_t fragment)
 {
-    record_lifetime_t lifetime = {.base = {.retain = retainRecord, .release = releaseRecord}, .references = 1};
     twf_worker_env_t  env;
     twfWorkerEnvSetupWithSmallBuffers(&env, pool_size, 4096, 128);
     cJSON *settings =
@@ -140,7 +125,6 @@ static void runCase(bool reverse, uint32_t length, uint32_t fragment)
             empty_records[15]       = pattern(0) ^ 90;
             sbufWrite(encoded, empty_records, sizeof(empty_records));
             sbufSetLength(encoded, sizeof(empty_records));
-            sbufAttachLifetime(encoded, &lifetime.base);
         }
         if (interruption == 2)
             sbufGetMutablePtr(encoded)[0] = 0;
@@ -185,7 +169,7 @@ static void runCase(bool reverse, uint32_t length, uint32_t fragment)
         }
         if (interruption == 4)
         {
-            twfRequire(received == 1 && lifetime.references == 0, "empty records lost lifetime ownership");
+            twfRequire(received == 1, "empty records lost payload bytes");
             break;
         }
         twfRequire(received == length, "decoder lost stream bytes");
@@ -210,6 +194,7 @@ static void runCase(bool reverse, uint32_t length, uint32_t fragment)
     tunnelDestroy(client);
     tunnelDestroy(server);
     cJSON_Delete(settings);
+    twfRequireNoLeakedBuffers();
     twfWorkerEnvTeardown(&env);
 }
 int main(void)

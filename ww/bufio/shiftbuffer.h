@@ -12,20 +12,6 @@
     it will be aligned to 32 bytes boundary which will help memoryCopyAVX2 to use Aligned memory copy
 */
 
-typedef struct sbuf_lifetime_s sbuf_lifetime_t;
-
-/*
- * Optional ownership metadata that follows a buffer through asynchronous
- * packet transforms.  The buffer owns one reference while attached.  Generic
- * buffer code deliberately knows nothing about the metadata's concrete type:
- * duplication retains it, and reset/destruction releases it.
- */
-struct sbuf_lifetime_s
-{
-    void (*retain)(sbuf_lifetime_t *lifetime);
-    void (*release)(sbuf_lifetime_t *lifetime);
-};
-
 enum
 {
     /**
@@ -37,8 +23,7 @@ enum
      * Length and capacity account for that logical payload, not the wrapper's
      * physical storage, and must not be used as bounds for accessing buf bytes.
      * Any claimed body bytes must already be in the private pipe. Empty bodies
-     * may have an uninitialized or empty pipe. Splice buffers must not carry
-     * sbuf_lifetime_t metadata; lifetime stays NULL.
+     * may have an uninitialized or empty pipe.
      *
      * The splice path may supply these wrappers to ordinary Payload callbacks. Event-loop
      * I/O and splice-aware adapters (initially TcpListener and TcpConnector)
@@ -78,8 +63,6 @@ struct sbuf_s
                     // something like leave-room in lwip pbuf
 
     uint16_t flags;
-
-    sbuf_lifetime_t *lifetime;
 
     MSVC_ATTR_ALIGNED_32 uint8_t buf[] GNU_ATTR_ALIGNED_32;
 };
@@ -254,7 +237,7 @@ void sbufDestroy(sbuf_t *b);
  * Ordinary: header + total capacity (including padding) + alignment overhead.
  * Splice: header + original left padding + fixed control storage + alignment overhead,
  * independent of logical length/capacity and whether its private pipe is initialized.
- * Excludes kernel pipe memory, referenced lifetime objects, allocator bookkeeping
+ * Excludes kernel pipe memory, allocator bookkeeping
  * beyond explicit alignment overhead, and pool/queue storage; this is not RSS.
  * Valid allocated-buffer geometry is required. O(1), without allocation or syscalls.
  */
@@ -268,14 +251,6 @@ bool   sbufTryComputeQueueCharge(uint32_t capacity, size_t *charge);
 bool   sbufTryGetQueueCharge(const sbuf_t *buf, size_t *charge);
 size_t sbufGetQueueCharge(const sbuf_t *buf);
 
-/* Attach/detach the one optional lifetime reference owned by a buffer. */
-void             sbufAttachLifetime(sbuf_t *b, sbuf_lifetime_t *lifetime);
-sbuf_lifetime_t *sbufTakeLifetime(sbuf_t *b);
-sbuf_lifetime_t *sbufGetLifetime(const sbuf_t *b);
-void             sbufTransferLifetime(sbuf_t *source, sbuf_t *destination);
-void             sbufCloneLifetime(const sbuf_t *source, sbuf_t *destination);
-void             sbufReleaseLifetime(sbuf_t *b);
-
 /**
  * @brief Reset a buffer for pool reuse.
  *
@@ -283,7 +258,6 @@ void             sbufReleaseLifetime(sbuf_t *b);
  */
 static inline void sbufReset(sbuf_t *b)
 {
-    sbufReleaseLifetime(b);
     b->flags  = 0;
     b->len    = 0;
     b->curpos = b->l_pad;
@@ -325,7 +299,7 @@ int  sbufSpliceInitPipe(sbuf_t *buf, uint32_t preferred_capacity);
 void sbufSpliceClosePipe(sbuf_t *buf);
 /* Discard an exclusively owned splice payload before recycling. Drains the private
  * pipe, or closes it on error; clears length/cursor without freeing the wrapper.
- * Empty unused wrappers are valid. No lifetime metadata is allowed. */
+ * Empty unused wrappers are valid. */
 void sbufSpliceDiscard(sbuf_t *buf);
 /* Checks kernel emptiness as well as logical settlement; reset never drains. */
 bool sbufSpliceIsReusable(const sbuf_t *buf);
@@ -555,7 +529,6 @@ static inline sbuf_t *sbufReserveSpace(sbuf_t *const b, const uint32_t bytes)
         sbuf_t  *bigger_buf      = sbufCreateWithPadding(needed_writable, b->l_pad);
         sbufSetLength(bigger_buf, current_length);
         sbufWriteBuf(bigger_buf, b, current_length);
-        sbufTransferLifetime(b, bigger_buf);
         sbufDestroy(b);
         return bigger_buf;
     }
@@ -699,9 +672,7 @@ static inline void sbufWriteUI16(sbuf_t *const b, const uint16_t data)
  */
 static sbuf_t *debugBufferWontBeReused(sbuf_t *b)
 {
-    sbuf_lifetime_t *lifetime = sbufTakeLifetime(b);
-    sbuf_t          *nbuf     = sbufDuplicate(b);
-    sbufAttachLifetime(nbuf, lifetime);
+    sbuf_t *nbuf = sbufDuplicate(b);
     sbufDestroy(b);
     return nbuf;
 }

@@ -17,7 +17,9 @@
 
 typedef struct tundevice_tstate_s
 {
+
     packet_lifecycle_anchor_t lifecycle_anchor;
+    device_fragment_policy_t  fragment_policy;
 
     // settings form json
     char    *name;        // name of the device

@@ -11,8 +11,8 @@
 #include "worker.h"
 
 /*
- * Hands one packet to the packet chain. Fragment settlement follows the sbuf's
- * ownership through the receipt attached by the session before this call.
+ * Hands one packet to the packet chain. After this callback takes ownership,
+ * the packet follows ordinary buffer lifecycle semantics.
  */
 typedef void (*DeviceReaderDeliverFn)(void *device, sbuf_t *buf, wid_t wid);
 
@@ -28,17 +28,15 @@ typedef struct device_reader_session_s
     DeviceReaderDeliverFn deliver;
     buffer_pool_t        *reader_buffer_pool;
 
-    /*
-     * Keeps a fragmented datagram on the worker its transport ports would have
-     * chosen. Reader classification, event-worker settlement, and lifecycle
-     * generation transitions share its mutex-protected metadata. Staged buffers
-     * remain reader-pool-owned and are retired only after the producer joins.
-     */
+    /* Reader-owned assembly/raw staging. The mutex serializes generation
+     * transitions; only the reader (or the joined-reader lifecycle owner) may
+     * access its pool and release retained storage. */
     device_frag_affinity_table_t *frag_affinity;
 } device_reader_session_t;
 
 device_reader_session_t *deviceReaderSessionCreate(uint32_t pool_capacity, uint16_t batch_capacity, void *device,
-                                                   DeviceReaderDeliverFn deliver, buffer_pool_t *reader_buffer_pool);
+                                                   DeviceReaderDeliverFn deliver, buffer_pool_t *reader_buffer_pool,
+                                                   device_fragment_policy_t policy);
 void                     deviceReaderSessionRef(device_reader_session_t *session);
 void                     deviceReaderSessionUnref(device_reader_session_t *session);
 
@@ -63,7 +61,7 @@ void deviceReaderSessionInstallEndWaitYieldHook(DeviceReaderSessionEndWaitYieldH
  * ownership was reset, while that pool is still alive. It returns the staged
  * fragments End deliberately left in place - End runs on the lifecycle thread
  * while the reader still owns the pool, so it must not touch it - and keeps the
- * poison and quarantine state a reopened generation needs.
+ * local poison state a reopened generation needs.
  */
 void deviceReaderSessionRetireGenerationBuffers(device_reader_session_t *session);
 
@@ -81,7 +79,3 @@ void deviceReaderSessionRetireProducerBuffers(device_reader_session_t *session);
  * cleanup.
  */
 bool deviceReaderSessionPost(device_reader_session_t *session, wid_t target_wid, sbuf_t **bufs, unsigned int count);
-
-/* Same ownership contract, with one optional fragment-settlement token per buffer. */
-bool deviceReaderSessionPostTracked(device_reader_session_t *session, wid_t target_wid, sbuf_t **bufs,
-                                    const device_frag_affinity_publication_t *publications, unsigned int count);

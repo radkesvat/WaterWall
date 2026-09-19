@@ -149,7 +149,7 @@ def run(binary, directory, bypass_conntrack, exclude_protocols):
 
     config = {"name": "capture-notrack", "nodes": [
         {"name": "capture", "type": "RawSocket", "next": "sink", "settings": {
-            "capture-device-name": "notrack-test", "capture-ips": ["127.0.0.2"],
+            "fragment-policy": "preserve-fragments", "capture-device-name": "notrack-test", "capture-ips": ["127.0.0.2"],
             "capture-filter-mode": "source-ip", "skip-sysctl": True,
         }},
         {"name": "sink", "type": "BlackHole", "settings": {"mode": "passive"}},

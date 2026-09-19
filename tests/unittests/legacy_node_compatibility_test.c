@@ -234,7 +234,7 @@ static void verifyExternalNodeAbiV3(const char *path, const char *directory)
     char        candidate[MAX_PATH];
     stageCandidate(path, directory, type, candidate, sizeof(candidate));
     void *handle = openLibrary(candidate);
-    require(handle != NULL, "failed to open external-node ABI v3 fixture");
+    require(handle != NULL, "failed to open current external-node ABI fixture");
 
     LifecycleReset        reset         = NULL;
     LifecycleSetAllocator set_allocator = NULL;
@@ -246,9 +246,9 @@ static void verifyExternalNodeAbiV3(const char *path, const char *directory)
     reset();
 
     node_t node = nodelibraryLoadByTypeName(type);
-    require(node.createHandle != NULL, "external-node ABI v3 fixture was rejected");
+    require(node.createHandle != NULL, "current external-node ABI fixture was rejected");
     tunnel_t *tunnel = nodemanagerCreateTunnelInstance(&node);
-    require(tunnel != NULL, "external-node ABI v3 tunnel construction failed");
+    require(tunnel != NULL, "current external-node ABI tunnel construction failed");
 
     const ww_lifecycle_context_t context = {
         .scope        = kWwLifecycleProcessShutdown,
@@ -318,6 +318,6 @@ int main(void)
     verifyRejectedLibrary(MISMATCHED_NODE_LIBRARY_PATH, directory, "MismatchedAbiFixture");
     verifyExternalNodeAbiV3(EXTERNAL_NODE_ABI_V3_LIBRARY_PATH, directory);
 
-    puts("external-node ABI v3 tests passed");
+    puts("current external-node ABI tests passed");
     return 0;
 }

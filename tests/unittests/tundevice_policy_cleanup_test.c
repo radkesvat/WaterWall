@@ -89,7 +89,8 @@ static void fakeRecordFailure(int code, application_shutdown_reason_e reason)
     }
 }
 
-static tun_device_t *fakeCreate(const char *name, bool offload, uint16_t mtu, void *userdata, TunReadEventHandle cb)
+static tun_device_t *fakeCreate(const char *name, bool offload, uint16_t mtu, void *userdata, TunReadEventHandle cb,
+                                device_fragment_policy_t fragment_policy)
 {
     (void) name;
     (void) offload;
@@ -142,7 +143,8 @@ void tundeviceOnIPPacketReceived(tun_device_t *device, void *userdata, sbuf_t *b
 #define tundeviceBringDown                                                fakeBringDown
 #define applicationShutdownRecordFailure                                  fakeRecordFailure
 #define tundeviceCreate                                                   fakeCreate
-#define tundeviceCreateOwned(name, offload, mtu, userdata, cb, ownership) fakeCreate(name, offload, mtu, userdata, cb)
+#define tundeviceCreateOwned(name, offload, mtu, userdata, cb, policy, ownership)                                      \
+    fakeCreate(name, offload, mtu, userdata, cb, policy)
 #define tundeviceAssignIP                                                 fakeAssignIp
 #define tundeviceBringUp                                                  fakeDeviceSuccess
 #define tundeviceRequestStop                                              fakeDeviceSuccess
@@ -150,6 +152,13 @@ void tundeviceOnIPPacketReceived(tun_device_t *device, void *userdata, sbuf_t *b
 #define execCmd                                                           fakeExec
 #include "../../tunnels/TunDevice/common/dns.c"
 #include "../../tunnels/TunDevice/common/routes.c"
+static bool fakeValidateFragmentPath(tunnel_t *t, device_fragment_policy_t policy)
+{
+    discard t;
+    discard policy;
+    return true;
+}
+#define packettunnelValidateFragmentPath fakeValidateFragmentPath
 #include "../../tunnels/TunDevice/instance/start.c"
 #include "../../tunnels/TunDevice/instance/stop.c"
 

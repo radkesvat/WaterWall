@@ -1251,7 +1251,8 @@ static int tunDarwinOpen(const char *name, char actual_name[IFNAMSIZ])
     return fd;
 }
 
-tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void *userdata, TunReadEventHandle cb)
+tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void *userdata, TunReadEventHandle cb,
+                              device_fragment_policy_t fragment_policy)
 {
     discard offload;
     if (mtu <= 16)
@@ -1347,8 +1348,8 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void
                             .mtu                 = mtu};
     atomic_init(&tdev->lifecycle, kTunLifecycleDown);
     deviceWriterChannelInit(&tdev->writer_channel);
-    tdev->reader_session =
-        deviceReaderSessionCreate(RAM_PROFILE * 2, kMaxReadDistributeQueueSize, tdev, tunDeliverPacket, reader_bpool);
+    tdev->reader_session = deviceReaderSessionCreate(
+        RAM_PROFILE * 2, kMaxReadDistributeQueueSize, tdev, tunDeliverPacket, reader_bpool, fragment_policy);
     if (UNLIKELY(tdev->reader_session == NULL))
     {
         LOGE("TunDevice: failed to allocate reader session");

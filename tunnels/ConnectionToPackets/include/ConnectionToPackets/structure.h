@@ -381,8 +381,7 @@ typedef struct ctp_frag_pending_s
 
 typedef struct ctp_frag_publish_result_s
 {
-    /* NULL on acceptance; a refused device claim is returned transactionally. */
-    void *refused_receipt;
+    /* Publishing consumes the injection message on acceptance and refusal. */
     bool  accepted;
 } ctp_frag_publish_result_t;
 
@@ -412,7 +411,6 @@ typedef struct ctp_frag_entry_s
     uint64_t           serial;     /* exact association identity for queued purge barriers */
     uint64_t           expires_at_ms;
     ctp_frag_pending_t pending[kCtpFragMaxPendingPerDatagram];
-    void              *refused_receipts[kCtpFragMaxPendingPerDatagram + 1];
     ctp_frag_range_t   ranges[kCtpFragMaxRanges];
     uint32_t           final_end;
 
@@ -440,7 +438,6 @@ typedef struct ctp_frag_entry_s
 
     uint8_t range_count;
     uint8_t pending_count;
-    uint8_t refused_receipt_count;
     uint8_t state; /* ctp_frag_state_t */
     wid_t   wid;
 
@@ -789,7 +786,6 @@ void ctpFragSettleDelivery(tunnel_t *t, const ctp_frag_key_t *frag_key, uint64_t
 
 /* Releases one staged return packet. Matches ctp_frag_discard_fn. */
 void ctpInjectMessageDestroy(void *payload);
-void ctpInjectMessageResolveNoResidue(void *payload);
 
 // ---------------------------------------------------------------------------
 // common/helpers.c - shared open/close/scheduling helpers

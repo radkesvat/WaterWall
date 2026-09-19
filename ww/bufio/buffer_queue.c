@@ -100,7 +100,6 @@ static sbuf_t *bufferqueueTakeBuffer(sbuf_t *buf)
 {
     if (sbufIsSplice(buf))
     {
-        assert(sbufGetLifetime(buf) == NULL);
         // Its private pipe already owns the body; ordinary duplication would copy metadata as payload.
     }
     else

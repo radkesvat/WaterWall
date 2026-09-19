@@ -69,7 +69,7 @@ def run(binary, directory):
                 {"name": name + "-tcp", "type": "TcpListener", "next": name + "-packets",
                  "settings": {"address": "127.0.0.1", "port": listeners[-1]}},
                 {"name": name + "-packets", "type": "StreamToPackets", "next": name},
-                {"name": name, "type": "RawSocket", "settings": {"raw-device-name": name, **policy}},
+                {"name": name, "type": "RawSocket", "settings": {"fragment-policy": "preserve-fragments", "raw-device-name": name, **policy}},
             ])
             # The namespace contains no competing applications; reserve distinct
             # ephemeral ports until all three have been selected.

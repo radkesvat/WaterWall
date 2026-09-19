@@ -47,7 +47,6 @@ sbuf_t *sbufSpliceMaterializeToBuffer(sbuf_t *buf, sbuf_t *dest, buffer_pool_t *
         LOGF("sbufSpliceMaterializeToBuffer: requires kSbufFlagSplice");
         abortProgramNow(1);
     }
-    assert(sbufGetLifetime(buf) == NULL && "Splice buffers must not carry lifetime metadata");
     assert(dest != NULL && pool != NULL);
     if (UNLIKELY(sbufIsSplice(dest)))
     {
@@ -107,7 +106,6 @@ sbuf_t *sbufSpliceReadToBuffer(sbuf_t *buf, sbuf_t *dest, uint32_t bytes)
         LOGF("sbufSpliceReadToBuffer: requires kSbufFlagSplice");
         abortProgramNow(1);
     }
-    assert(sbufGetLifetime(buf) == NULL && "Splice buffers must not carry lifetime metadata");
     if (UNLIKELY(dest == NULL || sbufIsSplice(dest)))
     {
         LOGF("sbufSpliceReadToBuffer: destination must be an ordinary buffer");

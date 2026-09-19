@@ -71,7 +71,6 @@ static inline sbuf_t *muxPrepareQueuedPayload(buffer_pool_t *pool, sbuf_t *buf)
     assert(length <= sbufGetMaximumWriteableSize(retained));
     memoryCopyLarge(sbufGetMutablePtr(retained), sbufGetRawPtr(buf), length);
     sbufSetLength(retained, length);
-    sbufTransferLifetime(buf, retained);
     bufferpoolReuseBuffer(pool, buf);
     return retained;
 }

@@ -146,7 +146,6 @@ mux_encode_result_t muxEncodeChildPayload(buffer_pool_t *pool, sbuf_t *input, mu
 
     encoded = sbufReserveSpace(encoded, encoded_length);
     sbufSetLength(encoded, 0);
-    sbufTransferLifetime(input, encoded);
 
     if (prepend_open)
     {

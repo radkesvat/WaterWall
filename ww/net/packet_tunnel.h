@@ -4,6 +4,8 @@
  * Declares packet-oriented tunnel defaults used by L3/L4 style nodes.
  */
 
+#include "cJSON.h"
+#include "devices/device_frag_affinity.h"
 #include "tunnel.h"
 
 /**
@@ -80,3 +82,7 @@ bool packettunnelTakeChecksumRequest(line_t *line);
  * individual fragment.
  */
 bool packettunnelFinalizeChecksumRequest(bool requested, uint8_t *packet, uint32_t length);
+
+/* Explicit source policy, validated against the actual publication direction. */
+bool packettunnelReadFragmentPolicy(const cJSON *settings, device_fragment_policy_t *policy);
+bool packettunnelValidateFragmentPath(tunnel_t *source, device_fragment_policy_t policy);

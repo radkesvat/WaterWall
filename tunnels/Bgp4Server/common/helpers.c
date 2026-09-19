@@ -60,7 +60,6 @@ bool bgp4serverWrapPayload(tunnel_t *t, line_t *l, sbuf_t **buf_io, uint8_t type
         offset += count;
     }
     sbufSetLength(encoded, (uint32_t) encoded_length);
-    sbufTransferLifetime(buf, encoded);
     bufferpoolReuseBuffer(pool, buf);
     *buf_io = encoded;
     return true;

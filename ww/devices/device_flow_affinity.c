@@ -225,20 +225,19 @@ static wid_t deviceFlowAffinitySelectWID(const sbuf_t *buf)
  * that releases them. Everything else is the ordinary one-in, one-out case.
  */
 static unsigned int deviceFlowAffinityAppend(device_reader_session_t *session, sbuf_t *buf, sbuf_t **dispatch,
-                                             uint8_t *dispatch_wids, unsigned int filled,
-                                             device_frag_affinity_publication_t *dispatch_publications)
+                                             uint8_t *dispatch_wids, unsigned int filled)
 {
     device_frag_affinity_result_t frag;
 
     const device_frag_affinity_action_t action =
         deviceFragAffinityOffer(session->frag_affinity, sbufGetRawPtr(buf), sbufGetLength(buf), buf, &frag);
 
-    if (action == kDeviceFragAffinityNotFragment)
+    if (action == kDeviceFragAffinityNotFragment || action == kDeviceFragAffinityComplete)
     {
-        // Only a confirmed non-fragment may use the ordinary flow hash.
+        if (action == kDeviceFragAffinityComplete)
+            buf = frag.completed;
         dispatch[filled]              = buf;
         dispatch_wids[filled]         = (uint8_t) deviceFlowAffinitySelectWID(buf);
-        dispatch_publications[filled] = (device_frag_affinity_publication_t) {0};
         return filled + 1;
     }
 
@@ -253,8 +252,6 @@ static unsigned int deviceFlowAffinityAppend(device_reader_session_t *session, s
     {
         dispatch[filled]                    = frag.released[i];
         dispatch_wids[filled]               = (uint8_t) frag.wid;
-        dispatch_publications[filled]       = frag.publication;
-        dispatch_publications[filled].count = 1;
         ++filled;
     }
 
@@ -267,8 +264,6 @@ static unsigned int deviceFlowAffinityAppend(device_reader_session_t *session, s
     assert(action == kDeviceFragAffinityDispatch);
     dispatch[filled]                    = buf;
     dispatch_wids[filled]               = (uint8_t) frag.wid;
-    dispatch_publications[filled]       = frag.publication;
-    dispatch_publications[filled].count = 1;
     return filled + 1;
 }
 
@@ -280,14 +275,12 @@ static unsigned int deviceFlowAffinityAppend(device_reader_session_t *session, s
  * of one flow, and each worker's queue is touched once.
  */
 static bool deviceFlowAffinityPostSorted(device_reader_session_t *session, sbuf_t **dispatch, const uint8_t *wids,
-                                         const device_frag_affinity_publication_t *publications,
-                                         unsigned int                              dispatch_count)
+                                         unsigned int dispatch_count)
 {
     uint16_t                           counts[kDeviceFlowAffinityBuckets]  = {0};
     uint16_t                           offsets[kDeviceFlowAffinityBuckets] = {0};
     uint16_t                           positions[kDeviceFlowAffinityBuckets];
     sbuf_t                            *sorted[kDeviceFlowAffinityMaxDispatch];
-    device_frag_affinity_publication_t sorted_publications[kDeviceFlowAffinityMaxDispatch];
 
     for (unsigned int i = 0; i < dispatch_count; ++i)
     {
@@ -307,7 +300,6 @@ static bool deviceFlowAffinityPostSorted(device_reader_session_t *session, sbuf_
     {
         const uint16_t position       = positions[wids[i]]++;
         sorted[position]              = dispatch[i];
-        sorted_publications[position] = publications[i];
     }
 
     for (unsigned int wid = 0; wid < kDeviceFlowAffinityBuckets; ++wid)
@@ -317,18 +309,12 @@ static bool deviceFlowAffinityPostSorted(device_reader_session_t *session, sbuf_
         while (remaining > 0)
         {
             const uint16_t chunk = min(remaining, session->batch_capacity);
-            if (! deviceReaderSessionPostTracked(session,
-                                                 (wid_t) wid,
-                                                 &sorted[offsets[wid] + posted],
-                                                 &sorted_publications[offsets[wid] + posted],
-                                                 chunk))
+            if (! deviceReaderSessionPost(session, (wid_t) wid, &sorted[offsets[wid] + posted], chunk))
             {
                 /* The refused chunk was consumed by message cleanup; these were never posted. */
                 const unsigned int first_unposted = (unsigned int) offsets[wid] + posted + chunk;
                 for (unsigned int i = first_unposted; i < dispatch_count; ++i)
                 {
-                    deviceFragAffinitySettlePublication(
-                        session->frag_affinity, &sorted_publications[i], kDeviceFragSettlementUnknown);
                     bufferpoolReuseBuffer(session->reader_buffer_pool, sorted[i]);
                 }
                 return false;
@@ -350,15 +336,14 @@ void deviceFlowAffinityPostBatch(device_reader_session_t *session, sbuf_t **bufs
         const unsigned int                 chunk_count = min(count, (unsigned int) kDeviceFlowAffinityMaxBatch);
         uint8_t                            wids[kDeviceFlowAffinityMaxDispatch];
         sbuf_t                            *dispatch[kDeviceFlowAffinityMaxDispatch];
-        device_frag_affinity_publication_t publications[kDeviceFlowAffinityMaxDispatch];
         unsigned int                       dispatch_count = 0;
 
         for (unsigned int i = 0; i < chunk_count; ++i)
         {
-            dispatch_count = deviceFlowAffinityAppend(session, bufs[i], dispatch, wids, dispatch_count, publications);
+            dispatch_count = deviceFlowAffinityAppend(session, bufs[i], dispatch, wids, dispatch_count);
         }
 
-        const bool admitted = deviceFlowAffinityPostSorted(session, dispatch, wids, publications, dispatch_count);
+        const bool admitted = deviceFlowAffinityPostSorted(session, dispatch, wids, dispatch_count);
 
         if (! admitted)
         {
@@ -368,7 +353,7 @@ void deviceFlowAffinityPostBatch(device_reader_session_t *session, sbuf_t **bufs
                 bufferpoolReuseBuffer(session->reader_buffer_pool, bufs[i]);
             }
 
-            /* Publication settlement poisons any partially admitted datagram. */
+            /* Remaining reader-owned buffers have been released. */
             return;
         }
 

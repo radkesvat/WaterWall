@@ -1446,13 +1446,14 @@ bool tundeviceWrite(tun_device_t *tdev, sbuf_t *buf)
 //     // Sleep(2200);
 // }
 
-tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void *userdata, TunReadEventHandle cb)
+tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void *userdata, TunReadEventHandle cb,
+                              device_fragment_policy_t fragment_policy)
 {
-    return tundeviceCreateOwned(name, offload, mtu, userdata, cb, NULL);
+    return tundeviceCreateOwned(name, offload, mtu, userdata, cb, fragment_policy, NULL);
 }
 
 tun_device_t *tundeviceCreateOwned(const char *name, bool offload, uint16_t mtu, void *userdata, TunReadEventHandle cb,
-                                   tun_windows_ownership_t *ownership)
+                                   device_fragment_policy_t fragment_policy, tun_windows_ownership_t *ownership)
 {
     discard offload;
     if (mtu <= 16)
@@ -1553,8 +1554,8 @@ tun_device_t *tundeviceCreateOwned(const char *name, bool offload, uint16_t mtu,
     atomic_init(&tdev->lifecycle, kTunLifecycleDown);
 
     deviceWriterChannelInit(&tdev->writer_channel);
-    tdev->reader_session =
-        deviceReaderSessionCreate(RAM_PROFILE * 2, kMaxReadDistributeQueueSize, tdev, tunDeliverPacket, reader_bpool);
+    tdev->reader_session = deviceReaderSessionCreate(
+        RAM_PROFILE * 2, kMaxReadDistributeQueueSize, tdev, tunDeliverPacket, reader_bpool, fragment_policy);
     if (UNLIKELY(tdev->reader_session == NULL))
     {
         LOGE("TunDevice: failed to allocate reader session");

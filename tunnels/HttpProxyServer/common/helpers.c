@@ -979,7 +979,6 @@ void hpsPayload(tunnel_t *t, line_t *l, sbuf_t *buf, unsigned d)
             if (older)
                 sbufMoveTo(remainder, s->deferred[d], (uint32_t) older);
             sbufMoveTo(remainder, buf, (uint32_t) length);
-            sbufTransferLifetime(buf, remainder);
             lineReuseBuffer(l, buf);
             discardBuffer(s, &s->deferred[d]);
             s->deferred[d] = remainder;

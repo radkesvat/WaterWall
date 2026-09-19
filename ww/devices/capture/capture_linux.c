@@ -2345,7 +2345,7 @@ bool caputredeviceBringDown(capture_device_t *cdev)
 capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_ranges, uint32_t capture_range_count,
                                       bool skip_sysctl, bool bypass_conntrack,
                                       const capture_protocol_filter_t *protocol_filter, void *userdata,
-                                      CaptureReadEventHandle cb)
+                                      CaptureReadEventHandle cb, device_fragment_policy_t fragment_policy)
 {
     if (capture_ranges == NULL || capture_range_count == 0)
     {
@@ -2630,7 +2630,7 @@ capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_
     }
 
     cdev->reader_session = deviceReaderSessionCreate(
-        RAM_PROFILE * 2, kMaxReadDistributeQueueSize, cdev, captureDeliverPacket, reader_bpool);
+        RAM_PROFILE * 2, kMaxReadDistributeQueueSize, cdev, captureDeliverPacket, reader_bpool, fragment_policy);
     if (UNLIKELY(cdev->reader_session == NULL))
     {
         LOGE("CaptureDevice: failed to allocate reader session");

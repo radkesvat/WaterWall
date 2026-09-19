@@ -14,6 +14,8 @@ static tunnel_t *createRawSocket(const char *settings_text, cJSON **settings_out
     cJSON *settings = cJSON_Parse(settings_text);
     require(settings != NULL, "failed to parse RawSocket test settings");
 
+    cJSON_AddStringToObject(settings, "fragment-policy", "preserve-fragments");
+
     node_t    node = {.node_settings_json = settings, .hash_next = 1};
     tunnel_t *t    = rawsocketCreate(&node);
 

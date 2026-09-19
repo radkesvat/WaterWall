@@ -1,4 +1,5 @@
 #pragma once
+#include "devices/device_frag_affinity.h"
 
 #include "wlibc.h"
 
@@ -97,6 +98,6 @@ bool caputredeviceBringDown(capture_device_t *cdev);
 capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_ranges, uint32_t capture_range_count,
                                       bool skip_sysctl, bool bypass_conntrack,
                                       const capture_protocol_filter_t *protocol_filter, void *userdata,
-                                      CaptureReadEventHandle cb);
+                                      CaptureReadEventHandle cb, device_fragment_policy_t fragment_policy);
 
 void capturedeviceDestroy(capture_device_t *cdev);

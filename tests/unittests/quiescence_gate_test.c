@@ -60,7 +60,8 @@ static void testDeliver(void *device, sbuf_t *buf, wid_t wid)
 static device_reader_session_t *createTestSession(void)
 {
     static int test_device;
-    return deviceReaderSessionCreate(4, 1, &test_device, testDeliver, (buffer_pool_t *) (void *) &test_device);
+    return deviceReaderSessionCreate(
+        4, 1, &test_device, testDeliver, (buffer_pool_t *) (void *) &test_device, kDeviceFragmentPreserve);
 }
 
 static void *closeGateRoutine(void *userdata)
