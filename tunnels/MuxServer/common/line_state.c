@@ -5,7 +5,6 @@
 void muxserverLinestateInitialize(tunnel_t *t, muxserver_lstate_t *ls, line_t *l, bool is_child,
                                   mux_cid_t connection_id)
 {
-    wid_t                     wid          = lineGetWID(l);
     muxserver_parent_state_t *parent_state = NULL;
     if (! is_child)
     {
@@ -15,20 +14,25 @@ void muxserverLinestateInitialize(tunnel_t *t, muxserver_lstate_t *ls, line_t *l
             LOGF("MuxServer: failed to allocate parent-only state");
             abortProgramNow(1);
         }
+        parent_state->read_stream = splicestreamCreate(lineGetBufferPool(l), kMuxFrameLength);
+        if (UNLIKELY(parent_state->read_stream == NULL))
+        {
+            LOGF("MuxServer: failed to allocate parent stream");
+            abortProgramNow(1);
+        }
         bufferqueueInitEmpty(&parent_state->output.pending);
         parent_state->child_map               = muxserver_child_map_t_init();
         parent_state->rejection_bucket.tokens = kMuxServerRejectedOpenBurst;
     }
 
-    *ls = (muxserver_lstate_t) {.t                  = t,
-                                .l                  = l,
-                                .parent             = NULL,
-                                .child_prev         = NULL,
-                                .child_next         = NULL,
-                                .detached_prev      = NULL,
-                                .detached_next      = NULL,
-                                .read_stream        = bufferstreamCreate(getWorkerBufferPool(wid), kMuxFrameLength),
-                                .pending_child_data = bufferqueueCreate(kMuxChildBufferQueueCap),
+    *ls = (muxserver_lstate_t) {.t                          = t,
+                                .l                          = l,
+                                .parent                     = NULL,
+                                .child_prev                 = NULL,
+                                .child_next                 = NULL,
+                                .detached_prev              = NULL,
+                                .detached_next              = NULL,
+                                .pending_child_data         = bufferqueueCreate(kMuxChildBufferQueueCap),
                                 .pending_child_queue_charge = 0,
                                 .connection_id              = connection_id,
                                 .close_state                = kMuxServerChildCloseOpen,
@@ -125,12 +129,12 @@ void muxserverLinestateDestroy(tunnel_t *t, muxserver_lstate_t *ls)
 
     if (! ls->is_child)
     {
-        bufferqueueDestroy(&ls->parent_state->output.pending);
+        muxParentOutputDestroy(&ls->parent_state->output, lineGetBufferPool(ls->l));
         muxserver_child_map_t_drop(&ls->parent_state->child_map);
+        splicestreamDestroy(ls->parent_state->read_stream);
         memoryFree(ls->parent_state);
         ls->parent_state = NULL;
     }
-    bufferstreamDestroy(&(ls->read_stream));
     bufferqueueDestroy(&(ls->pending_child_data));
     memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(muxserver_lstate_t)));
 }

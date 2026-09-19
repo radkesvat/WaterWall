@@ -118,10 +118,10 @@ line_t *mxbCreateLine(mxb_fixture_t *fixture)
 
 static void mxbWriteFrameHeader(uint8_t *out, uint32_t length, uint8_t flag, uint32_t cid)
 {
-    out[0] = (uint8_t) (length >> 8U);
-    out[1] = (uint8_t) length;
-    out[2] = flag;
-    out[3] = 0;
+    out[0] = (uint8_t) (length >> 16U);
+    out[1] = (uint8_t) (length >> 8U);
+    out[2] = (uint8_t) length;
+    out[3] = flag;
     out[4] = (uint8_t) (cid >> 24U);
     out[5] = (uint8_t) (cid >> 16U);
     out[6] = (uint8_t) (cid >> 8U);

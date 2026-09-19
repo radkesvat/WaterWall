@@ -30,10 +30,10 @@ static muxserver_idle_fixture_t *g_idle_fixture;
 
 static void writeFrameHeader(uint8_t *out, uint32_t length, uint8_t flags, mux_cid_t cid)
 {
-    out[0] = (uint8_t) ((length >> 8U) & 0xFFU);
-    out[1] = (uint8_t) (length & 0xFFU);
-    out[2] = flags;
-    out[3] = 0;
+    out[0] = (uint8_t) (length >> 16U);
+    out[1] = (uint8_t) (length >> 8U);
+    out[2] = (uint8_t) length;
+    out[3] = flags;
     out[4] = (uint8_t) ((cid >> 24U) & 0xFFU);
     out[5] = (uint8_t) ((cid >> 16U) & 0xFFU);
     out[6] = (uint8_t) ((cid >> 8U) & 0xFFU);
@@ -154,7 +154,7 @@ static void reenterOpenOnClose(tunnel_t *prev, line_t *parent_l, sbuf_t *buf)
                "idle Close re-entry reached the wrong parent");
     twfRequireEqualU32(sbufGetLength(buf), kMuxFrameLength, "idle expiry emitted a non-control frame");
     const uint8_t *bytes = sbufGetRawPtr(buf);
-    twfRequire(bytes[0] == 0 && bytes[1] == 0 && bytes[2] == kMuxFlagClose,
+    twfRequire(bytes[0] == 0 && bytes[1] == 0 && bytes[2] == 0 && bytes[3] == kMuxFlagClose,
                "idle expiry emitted malformed Close bytes");
     twfRequire(readFrameCid(bytes) != fixture->reentrant_cid, "idle expiry closed the replacement CID");
     fixture->trace.prev_payload++;
@@ -361,7 +361,7 @@ static void casePayloadAfterWorkerStopCannotReopenInventory(void)
     twfRequire(ts->worker_states[0].child_idle_table == NULL, "post-stop Open recreated the idle table");
     twfRequireEqualU32(
         (uint32_t) atomicLoadRelaxed(&ts->live_children_count), 0, "post-stop Open reserved another child");
-    twfRequire(parent->children_count == 0 && bufferstreamGetBufLen(&parent->read_stream) == 0,
+    twfRequire(parent->children_count == 0 && splicestreamLength(parent->parent_state->read_stream) == 0,
                "post-stop payload retained a child or input bytes");
     twfRequire(lineIsAlive(fixture.parent_l), "MUX destroyed the borrowed parent");
     twfRequireNoLeakedBuffers();
@@ -401,7 +401,7 @@ static void caseQuiescenceDropsPayload(bool parent_input, bool paused)
     twfRequire(child->pending_child_queue_charge == 0 && child->parent->pending_child_queue_charge == 0 &&
                    bufferqueueGetBufCount(&child->pending_child_data) == 0,
                "quiesced payload retained child buffers or charge");
-    twfRequire(child->parent->children_count == 1 && bufferstreamGetBufLen(&child->parent->read_stream) == 0,
+    twfRequire(child->parent->children_count == 1 && splicestreamLength(child->parent->parent_state->read_stream) == 0,
                "quiesced payload admitted another child or retained input bytes");
     twfRequireNoLeakedBuffers();
     idleFixtureTeardown(&fixture);

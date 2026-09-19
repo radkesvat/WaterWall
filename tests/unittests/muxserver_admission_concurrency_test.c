@@ -101,8 +101,8 @@ static void writeOpenFrame(uint8_t *out, mux_cid_t cid)
 {
     out[0] = 0;
     out[1] = 0;
-    out[2] = kMuxFlagOpen;
-    out[3] = 0;
+    out[2] = 0;
+    out[3] = kMuxFlagOpen;
     out[4] = (uint8_t) ((cid >> 24U) & 0xFFU);
     out[5] = (uint8_t) ((cid >> 16U) & 0xFFU);
     out[6] = (uint8_t) ((cid >> 8U) & 0xFFU);
@@ -132,7 +132,8 @@ static void racePrevPayload(tunnel_t *prev, line_t *parent_l, sbuf_t *buf)
     require(sbufGetLength(buf) == kMuxFrameLength, "race rejection emitted the wrong frame length");
     const uint8_t  *bytes      = sbufGetRawPtr(buf);
     const mux_cid_t actual_cid = readFrameCid(bytes);
-    require(bytes[0] == 0 && bytes[1] == 0 && bytes[2] == kMuxFlagClose, "race parser emitted malformed Close bytes");
+    require(bytes[0] == 0 && bytes[1] == 0 && bytes[2] == 0 && bytes[3] == kMuxFlagClose,
+            "race parser emitted malformed Close bytes");
     if (fixture->expected_child_close_cid[wid] != 0)
     {
         require(actual_cid == fixture->expected_child_close_cid[wid],

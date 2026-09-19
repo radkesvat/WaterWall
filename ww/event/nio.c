@@ -295,12 +295,10 @@ static int nioWriteBuffer(wio_t *io, sbuf_t *buf, int *error)
 {
     *error = 0;
 #if WW_HAVE_SPLICE
-    if (buf->flags & kSbufFlagSplice)
+    if (sbufIsSplice(buf))
     {
         assert(sbufGetLifetime(buf) == NULL);
-        assert(buf->curpos <= sbufGetLeftPadding(buf));
-        const uint32_t prefix = (uint32_t) sbufGetLeftPadding(buf) - buf->curpos;
-        assert(prefix <= sbufGetLength(buf));
+        const uint32_t prefix  = sbufGetResidentPrefixLength(buf);
         const uint32_t body    = sbufGetLength(buf) - prefix;
         int            written = 0;
         if (prefix != 0)
@@ -345,13 +343,11 @@ static int nioWriteBuffer(wio_t *io, sbuf_t *buf, int *error)
 
 static void nioConsumeWrittenBuffer(sbuf_t *buf, uint32_t bytes)
 {
-    if (buf->flags & kSbufFlagSplice)
+    if (sbufIsSplice(buf))
     {
-        assert(buf->curpos <= sbufGetLeftPadding(buf));
-        const uint32_t prefix = min(bytes, (uint32_t) sbufGetLeftPadding(buf) - buf->curpos);
+        const uint32_t prefix = min(bytes, sbufGetResidentPrefixLength(buf));
         sbufShiftRight(buf, prefix);
-        sbufConsume(buf, bytes - prefix);
-        buf->capacity -= bytes - prefix;
+        sbufSpliceConsumeBody(buf, bytes - prefix);
     }
     else
     {
@@ -807,7 +803,7 @@ int wioWriteDatagram(wio_t *io, sbuf_t *buf, const sockaddr_u *peer_addr)
 
 int wioWrite(wio_t *io, sbuf_t *buf)
 {
-    const bool splice_buffer = (buf->flags & kSbufFlagSplice) != 0;
+    const bool splice_buffer = sbufIsSplice(buf);
     if (splice_buffer)
     {
 #if WW_HAVE_SPLICE

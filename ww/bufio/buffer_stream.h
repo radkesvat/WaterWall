@@ -1,7 +1,9 @@
 #pragma once
 
 /*
- * Stream-like container for staged reads over queued pooled buffers.
+ * Stream-like container for staged reads over queued ordinary resident buffers.
+ * Every API requires ordinary input, including bounded CRLF searches. Fixed-header
+ * protocols accepting private pipes use splice_stream.h instead.
  */
 
 #include "wlibc.h"
@@ -63,8 +65,7 @@ void bufferstreamDestroy(buffer_stream_t *self);
  * allocation identity or one retained chunk per push. Payload contents and FIFO
  * byte order are preserved; coalescing is permitted, not guaranteed.
  * The current policy copies only positive inputs of at most 4096 bytes that fit
- * wholly in the tail's actual spare capacity, excluding lifetime metadata on
- * either allocation. It never grows or compacts the tail,
+ * wholly in the tail's actual spare capacity. It never grows or compacts the tail,
  * searches older entries, partially merges, or consumes left padding. The tail
  * can exceed 4096 bytes. Empty inputs are enqueued; an eligible empty tail can
  * absorb later input. Coalescing does not replace byte limits or backpressure.
@@ -92,10 +93,6 @@ sbuf_t *bufferstreamReadExact(buffer_stream_t *self, size_t bytes);
  * cursor, and padding stay unchanged; use_left_padding is not consumed here.
  * Fully consumed sources are recycled, and partial sources remain in the stream.
  * No destination allocation, growth, or intermediate merge is performed.
- * Existing destination lifetime metadata is preserved. An empty destination
- * without metadata inherits the first contributing source's lifetime (cloned
- * for a partial source). Other source lifetimes settle through normal recycling,
- * as with byte-stream merges; this does not aggregate independent lifetimes.
  */
 void bufferstreamMoveExactBytesTo(buffer_stream_t *self, sbuf_t *destination, size_t bytes);
 

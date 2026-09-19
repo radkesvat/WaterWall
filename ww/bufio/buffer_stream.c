@@ -121,7 +121,7 @@ void bufferstreamPush(buffer_stream_t *self, sbuf_t *buf)
     {
         sbuf_t *tail = *bs_doublequeue_t_back(&self->q);
 
-        if (tail != buf && sbufGetLifetime(tail) == NULL && sbufGetLifetime(buf) == NULL)
+        if (tail != buf)
         {
             const uint32_t tail_len              = sbufGetLength(tail);
             const uint32_t tail_maximum_writable = sbufGetMaximumWriteableSize(tail);
@@ -160,7 +160,6 @@ sbuf_t *bufferstreamReadExact(buffer_stream_t *self, size_t bytes)
             sbuf_t *slice = bufferstreamAllocExactReadBuffer(self, (uint32_t) bytes);
 
             slice = sbufMoveTo(slice, container, (uint32_t) bytes);
-            sbufCloneLifetime(container, slice);
             bs_doublequeue_t_push_front(&self->q, container);
             return slice;
         }
@@ -179,7 +178,7 @@ sbuf_t *bufferstreamReadExact(buffer_stream_t *self, size_t bytes)
 void bufferstreamMoveExactBytesTo(buffer_stream_t *self, sbuf_t *destination, size_t bytes)
 {
     assert(self != NULL && destination != NULL);
-    assert((destination->flags & kSbufFlagSplice) == 0);
+    assert(! sbufIsSplice(destination));
     assert(destination->curpos <= destination->capacity);
 
     const uint32_t length   = sbufGetLength(destination);
@@ -197,15 +196,14 @@ void bufferstreamMoveExactBytesTo(buffer_stream_t *self, sbuf_t *destination, si
     if (UNLIKELY(bytes == 0))
         return;
 
-    bool     inherit_lifetime = length == 0 && sbufGetLifetime(destination) == NULL;
-    uint8_t *target           = sbufGetMutablePtr(destination) + length;
-    size_t   remaining        = bytes;
+    uint8_t *target    = sbufGetMutablePtr(destination) + length;
+    size_t   remaining = bytes;
     self->size -= bytes;
     while (remaining > 0)
     {
         assert(! bs_doublequeue_t_is_empty(&self->q));
         sbuf_t *source = *bs_doublequeue_t_front(&self->q);
-        assert(source != destination && (source->flags & kSbufFlagSplice) == 0);
+        assert(source != destination && ! sbufIsSplice(source));
         const uint32_t available = sbufGetLength(source);
         const uint32_t count     = (uint32_t) min(remaining, (size_t) available);
         if (count != 0)
@@ -213,14 +211,6 @@ void bufferstreamMoveExactBytesTo(buffer_stream_t *self, sbuf_t *destination, si
             memoryCopyLarge(target, sbufGetRawPtr(source), count);
             target += count;
             remaining -= count;
-            if (inherit_lifetime)
-            {
-                if (count == available)
-                    sbufTransferLifetime(source, destination);
-                else
-                    sbufCloneLifetime(source, destination);
-                inherit_lifetime = false;
-            }
         }
         if (count == available)
         {

@@ -72,7 +72,7 @@ static void caseUdpSourceDrainsBeforeMuxWorkerStop(uint8_t mode)
     line_t *parent = twfLinePoolCreateLine(&lines);
     lineRef(parent);
     muxclient_lstate_t *parent_ls = lineGetState(parent, mux);
-    muxclientLinestateInitialize(parent_ls, parent, false, 0);
+    muxclientLinestateInitialize(mux, parent_ls, parent, false, 0);
     muxclientRegisterParent(ts, parent_ls);
 
     if (mode == kConcurrencyModeFixedConnectionsCount)

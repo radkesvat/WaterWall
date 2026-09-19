@@ -54,7 +54,7 @@ static sbuf_t *makeInput(buffer_pool_t *pool, bool splice_input)
     if (splice_input)
     {
 #if WW_HAVE_SPLICE
-        buf = twfTrackAcquired(bufferpoolGetSpliceBuffer(pool));
+        buf = bufferpoolGetSpliceBuffer(pool);
         twfRequire(buf != NULL, "failed to check out input private pipe");
         twfRequire(write(sbufSpliceMetadata(buf).pipefd[1], "payload", 7) == 7, "failed to fill input private pipe");
         buf->capacity = (uint32_t) buf->l_pad + 7;
@@ -146,7 +146,7 @@ static void runPauseCase(bool splice_input, bool close_line)
         twfRequireLastRecycle(input, env.pool, "still-local input used the wrong pool after line destruction");
         if (splice_input)
         {
-            sbuf_t *reused = twfTrackAcquired(bufferpoolGetSpliceBuffer(env.pool));
+            sbuf_t *reused = bufferpoolGetSpliceBuffer(env.pool);
             twfRequire(reused == input && sbufSpliceIsReusable(reused), "unconsumed private body was not discarded");
             bufferpoolReuseBuffer(env.pool, reused);
         }
@@ -165,7 +165,7 @@ static void runPauseCase(bool splice_input, bool close_line)
         if (splice_input)
         {
             twfRequire(received == input, "surviving Pause replaced a splice wrapper");
-            received = wioTransformSpliceBufferToRealBuffer(received, bufferpoolGetLargeBuffer(env.pool), env.pool);
+            received = sbufSpliceMaterializeToBuffer(received, bufferpoolGetLargeBuffer(env.pool), env.pool);
         }
         twfRequire(sbufGetLength(received) == 11 && memoryEqual(sbufGetRawPtr(received), "HDR:payload", 11),
                    "surviving Pause corrupted its input payload");

@@ -2,8 +2,10 @@
 
 #include "loggers/network_logger.h"
 
-void muxclientLinestateInitialize(muxclient_lstate_t *ls, line_t *l, bool is_child, mux_cid_t connection_id)
+void muxclientLinestateInitialize(tunnel_t *t, muxclient_lstate_t *ls, line_t *l, bool is_child,
+                                  mux_cid_t connection_id)
 {
+    discard                   t;
     wid_t                     wid          = lineGetWID(l);
     muxclient_parent_state_t *parent_state = NULL;
     if (! is_child)
@@ -14,15 +16,20 @@ void muxclientLinestateInitialize(muxclient_lstate_t *ls, line_t *l, bool is_chi
             LOGF("MuxClient: failed to allocate parent-only state");
             abortProgramNow(1);
         }
+        parent_state->read_stream = splicestreamCreate(lineGetBufferPool(l), kMuxFrameLength);
+        if (UNLIKELY(parent_state->read_stream == NULL))
+        {
+            LOGF("MuxClient: failed to allocate parent stream");
+            abortProgramNow(1);
+        }
         bufferqueueInitEmpty(&parent_state->output.pending);
         parent_state->child_map = muxclient_child_map_t_init();
     }
-    *ls = (muxclient_lstate_t) {.l                  = l,
-                                .parent             = NULL,
-                                .child_prev         = NULL,
-                                .child_next         = NULL,
-                                .read_stream        = bufferstreamCreate(getWorkerBufferPool(wid), kMuxFrameLength),
-                                .pending_child_data = bufferqueueCreate(kMuxChildBufferQueueCap),
+    *ls = (muxclient_lstate_t) {.l                          = l,
+                                .parent                     = NULL,
+                                .child_prev                 = NULL,
+                                .child_next                 = NULL,
+                                .pending_child_data         = bufferqueueCreate(kMuxChildBufferQueueCap),
                                 .pending_child_queue_charge = 0,
                                 .creation_epoch             = is_child ? 0 : wloopNowMS(getWorkerLoop(wid)),
                                 .connection_id              = connection_id,
@@ -101,12 +108,12 @@ void muxclientLinestateDestroy(muxclient_lstate_t *ls)
 
     if (! ls->is_child)
     {
-        bufferqueueDestroy(&ls->parent_state->output.pending);
+        muxParentOutputDestroy(&ls->parent_state->output, lineGetBufferPool(ls->l));
         muxclient_child_map_t_drop(&ls->parent_state->child_map);
+        splicestreamDestroy(ls->parent_state->read_stream);
         memoryFree(ls->parent_state);
         ls->parent_state = NULL;
     }
-    bufferstreamDestroy(&(ls->read_stream));
     bufferqueueDestroy(&(ls->pending_child_data));
     memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(muxclient_lstate_t)));
 }

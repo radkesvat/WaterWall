@@ -1,5 +1,5 @@
 <!--
-Documentation version: 159
+Documentation version: 161
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/MuxServer.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/MuxServer.mdx, and all files must keep the same documentation version.
 -->
 
@@ -64,9 +64,11 @@ There are no required tunnel-specific settings in the current implementation.
 ### Parent write buffering
 
 Each parent has a lazy FIFO of encoded outgoing buffers, shared by its children.
-The following optional settings measure **retained sbuf allocation charge in bytes**,
-including the buffer header, full capacity (with padding), and alignment overhead.
-They do not measure logical wire bytes or process RSS.
+The following optional settings measure **queue-capacity charge in bytes**:
+`sizeof(sbuf_t) + sbufGetTotalCapacity(buf) + kSbufAllocationAlignment`.
+Ordinary capacity is resident allocation; splice capacity is logical geometry.
+Padding is included once. Kernel pipe capacity and control storage are not added;
+this is not a physical memory, descriptor, or RSS limit.
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
@@ -88,14 +90,14 @@ therefore requires overriding the pause threshold too. For example, inside
 ```
 
 These settings apply independently to every parent of this node. They are separate
-from `parent-buffer-limit`, which bounds incoming decoded data retained for children.
+from `parent-buffer-limit`, which bounds incoming assembly plus attached child queues.
 
 ## Optional `settings` Fields
 
 - `child-buffer-limit` `(integer, bytes, optional)`
-  Maximum retained `sbuf_t` allocation charge per paused child line before `MuxServer` closes that child stream.
-  Each queued entry is charged by its actual capacity (including left padding), buffer header, and aligned-allocation
-  overhead, rather than only by its application payload length.
+  Maximum queue-capacity charge per paused child line before `MuxServer` closes that child stream.
+  Ordinary entries charge actual capacity (including padding), the buffer header, and alignment overhead.
+  Splice entries charge logical sbuf capacity plus sbuf/alignment overhead, including reserved padding once.
 
   Default: `25165824` (`24 MB`).
 
@@ -117,19 +119,17 @@ from `parent-buffer-limit`, which bounds incoming decoded data retained for chil
   Default: `262144` (`256 KiB`). Raising it resumes the peer earlier and may reduce high-RTT throughput gaps, at the
   cost of weaker hysteresis and potentially more pause/resume cycling.
 
-  Both pause tolerance and resume threshold intentionally use logical payload bytes. Allocation charge is used only
-  by the three memory-sensitive hard byte budgets.
+  Both pause tolerance and resume threshold intentionally use logical payload bytes. Queue-capacity charge is used by the hard retention budgets.
 
 - `parent-buffer-limit` `(integer, bytes, optional)`
-  Per-parent retained-allocation-charge budget for child-destined queues across all children. When a newly queued
-  buffer makes the total reach the budget, `MuxServer` closes the child with the largest retained charge. Equal-sized queues prefer the
-  oldest attached child. This releases the pressure without pausing unrelated streams on the shared parent.
+  Per-parent queue-capacity budget for incoming assembly plus all attached child queues.
+  On reaching it, beneficial incoming compaction precedes largest-child shedding; ties prefer the oldest child.
+  Recovery may close several children or, if pressure cannot be relieved, the affected parent.
 
   Default: `50331648` (`48 MiB`). Set to `0` to disable the aggregate budget; `child-buffer-limit` still bounds each
   individual child. The value may intentionally be lower than `child-buffer-limit`.
 
-  The limit applies to each parent independently. Approximate worst-case live-queue charge is therefore
-  `parent-buffer-limit` multiplied by the number of accepted parent transport connections.
+  Each parent has an independent retained-state limit, with transient delivered input excluded from an instantaneous ceiling.
 
 - `max-children` `(integer, optional)`
   Hard maximum attached live children on one parent transport. Default: `10000`.
@@ -159,7 +159,7 @@ from `parent-buffer-limit`, which bounds incoming decoded data retained for chil
   child table below. It must be positive and no greater than `max-live-children`.
 
 - `detached-buffer-limit` `(integer, bytes, optional)`
-  Per-worker retained-allocation-charge limit for blocked child queues kept after parent loss. The default depends on the global
+  Per-worker queue-capacity-charge limit for blocked child queues kept after parent loss. The default depends on the global
   `misc.ram-profile`, as shown below. Reaching it aborts only the newly detached blocked child. Set to `0` to disable
   this aggregate bound.
 
@@ -188,8 +188,9 @@ from `parent-buffer-limit`, which bounds incoming decoded data retained for chil
   death suppresses normal stats execution; when the queued or timed runner is reached, the task settles as `LineDead`.
   Worker quiescence actively cancels pending queued or timed stats work. Neither path rearms it.
 
-  The log keeps `parent-line-read-paused=no` for compatibility. Its `parent-queued-bytes` value is the same retained
-  allocation charge enforced by `parent-buffer-limit`, not logical application payload bytes. It also reports
+  The log keeps `parent-line-read-paused=no` for compatibility. Its `parent-child-queue-charge` and
+  `parent-input-queue-charge` fields report the separate charges whose sum is limited by
+  `parent-buffer-limit`, not logical payload bytes. It also reports
   `children-close-pending`, along with `wid`, parent-line write pause state, child count, child read-pause count, and
   child write-pause count.
   Default: `false`.
@@ -247,10 +248,21 @@ transport lifetime. There is no MUX wire-format change.
 
 `MuxServer` expects the same 8-byte header used by `MuxClient`:
 
-- `length` `(uint16)`
-- `flags` `(uint8)`
-- `_pad1` `(uint8)`
-- `cid` `(uint32)`
+| Offset | Size | Meaning |
+| --- | --- | --- |
+| 0 | 3 bytes | Unsigned payload length, big-endian. |
+| 3 | 1 byte | Frame type/flags. |
+| 4 | 4 bytes | Unsigned connection ID, big-endian. |
+
+The inclusive payload maximum is **1 MiB (1,048,576 bytes)** for every frame
+type, independent of RAM profile, buffer sizes and requested or granted pipe
+capacity. A maximum frame occupies 1,048,584 wire bytes; a preceding Open adds
+another eight bytes (1,048,592 total). Decoding rejects a larger declaration as
+soon as all eight header bytes arrive, even for unknown CIDs or types, and closes
+only that parent through normal parent-loss cleanup. Permitted frames wait for
+the complete body; unknown frames consume their declared body and empty Data
+still produces one delivery. Complete frames drain before the incomplete
+remainder is checked against **1,048,584 bytes**, including its cached header.
 
 Header size: `8 bytes`
 
@@ -262,7 +274,7 @@ Frame flags:
 - `3`: `FlowResume`
 - `4`: `Data`
 
-One MUX `Data` frame carries at most `65,527` payload bytes. The shared encoder
+One MUX `Data` frame carries at most `1,048,576` payload bytes. The shared encoder
 splits a larger downstream child payload into consecutive `Data` frames in byte
 order. The complete encoding, including all headers, must fit in `uint32_t`;
 an unrepresentable encoding recycles the input and closes only that child.
@@ -291,7 +303,7 @@ During normal operation, if a child finishes from the service-facing side, `MuxS
 During normal operation, if the parent transport line itself finishes, its borrowed MUX state is destroyed immediately. Already accepted child
 queues detach from it and drain independently under ordinary child Pause/Resume. `MuxServer` inventories these owned
 detached children per worker, rejects new outbound child data, and finishes/destroys each child after its queue drains.
-`detached-buffer-limit` bounds retained allocation charge and `detached-child-limit` bounds child count per worker.
+`detached-buffer-limit` bounds queue-capacity charge and `detached-child-limit` bounds child count per worker.
 
 ### Pause and resume behavior
 
@@ -307,15 +319,15 @@ taken for one indefinitely blocked destination also prevents unrelated child fra
 global head-of-line blocking even though the other streams and the parent transport are healthy.
 
 Pressure is bounded by closing a child instead. If one child's retained queue charge reaches `child-buffer-limit`, that child is closed.
-If the total retained charge reaches `parent-buffer-limit`, the child retaining the largest charged allocation is closed; equal-size ties prefer
-the oldest attached child. The total was below the budget before the newest buffer, and the largest queue charge is
-at least that buffer's charge, so one close returns the parent below budget in the normal accounting path.
+When incoming assembly plus attached child charge reaches `parent-buffer-limit`, beneficial incoming
+compaction runs first. Remaining pressure closes the largest queued child with the oldest tie-break,
+rechecking after each callback. Multiple closes may be needed; unrelieved pressure closes the parent.
 
 Logical queue length remains the sum of application payload bytes and continues to drive `FlowPause`/`FlowResume`.
 Zero-length `Data` remains non-activity for child idle timing. If it must be retained for a paused child, however, it
-has a positive allocation charge and advances every applicable hard memory budget.
+has a positive allocation charge and advances every applicable hard queue budget.
 
-The charge approximates memory retained by live Mux queues, not whole-process RSS. Allocator caches, queue-ring
+The queue-capacity charge is a policy budget, not exact kernel memory or whole-process RSS. Allocator caches, queue-ring
 storage, and the buffer pools' fixed baseline may remain allocated outside a particular live queue's charge.
 
 Parent transport `Pause` immediately stops every parent-bound Payload callback,
@@ -348,7 +360,7 @@ Incoming MUX bytes are buffered until a full frame is available.
 
 Current overflow limit:
 
-- `1 MB` buffered on the parent read stream
+- `1,048,584 bytes` of incomplete parent input, including the eight-byte header
 
 If that limit is exceeded, `MuxServer` discards the incomplete parent remainder, finishes the parent line toward the
 previous side, and applies the same detached drain behavior to already parsed child queues.
@@ -368,26 +380,27 @@ During worker quiescence, `MuxServer` detaches its idle timer and switches termi
 MUX queues without sending payload, Close frames, or flow-control work. Its worker-local child idle table
 inventories every owned child, attached or detached. Worker stop drains the complete table, releases each child’s
 queue charge and live reservation exactly once, finishes toward the child destination, and destroys the child.
-A borrowed parent can remain alive with valid empty MUX state until its actual owner sends Finish later. The idle
+A borrowed parent can remain alive with valid MUX state and outgoing backlog until its actual owner sends Finish later. The idle
 table is destroyed on its worker after drain; aggregate live-child checks run after all workers have stopped.
 Ordinary connection loss, idle expiry, and ordered peer Close keep their normal runtime behavior.
 
 ## Frame boundaries and UDP
 
-The parent receive accumulator is a byte stream and may coalesce transport
-buffers. The decoder reads exactly one MUX header and its declared payload at a
-time. For an open child, each decoded `Data` frame is delivered as one child
-`Payload` callback. Paused-child queues keep those decoded frames as separate
-buffer entries and drain them in FIFO order on Resume.
+The parent receive accumulator uses a dedicated fixed-header splice stream.
+It physically caches only the eight-byte header and extracts exactly the declared
+body after it is complete. Bodies may split one source pipe or combine several
+pipes while preserving FIFO order and independent ownership. The next header is
+cached only after the current body is consumed. Child callbacks receive only the
+body; paused-child queues preserve one entry and callback per Data frame.
 
 Zero-length child payloads are valid: the encoder emits a `Data` frame with an
 eight-byte header and no body. The decoder delivers an empty payload; this is
 neither EOF nor `Close`. Empty frames remain separate through paused-child
 queues even when their total logical byte count is zero. They still incur the
-existing retained-allocation charge and do not count as nonempty idle activity.
+existing queue-capacity charge and do not count as nonempty idle activity.
 
 MUX preserves its wire-frame boundaries, not every original callback or UDP
-datagram boundary. Both encoders put a payload of at most `65,527` bytes in one
+datagram boundary. Both encoders put a payload of at most `1,048,576` bytes in one
 `Data` frame and split larger payloads into several frames. The receiver does
 not reassemble the original callback boundary. A transform on the child side
 can also change payload boundaries before framing or after decoding.
@@ -406,16 +419,77 @@ one `Data` frame, but this is not general boundary protection across arbitrary
 chains. The UDP framing pair has its own limits: currently it requires nonempty
 datagrams. Its restriction does not change MUX's support for empty `Data`.
 
-Paused child queues reuse small, medium, or large buffers. In S1/S2, medium
-buffers hold 32 KiB and larger frames use the 64 KiB large tier; higher profiles
-use 64 KiB medium buffers. Mux peeks a
-complete frame and checks the child before extracting it into its final pooled
-destination. Fragmented frames are copied directly from the parent stream,
-without first merging unrelated carrier bytes. A suitable whole buffer transfers
-directly. Unpaused children keep ordinary exact-frame delivery. Queue limits
-continue to charge actual retained allocations, while flow control counts payload
-bytes. Medium buffers serve helper storage and may also be selected for ordinary
-Linux NIO TCP/UDP reads through best-fit allocation.
+### Splice retention and large batches
+
+See the developer guide for the [limits table](https://radkesvat.github.io/WaterWall-Docs/docs/devguides/part3-buffers-and-padding#queue-capacity-budgets),
+[allocation and data-flow walkthrough](https://radkesvat.github.io/WaterWall-Docs/docs/devguides/part3-buffers-and-padding#mux-allocation-and-data-flow),
+and [edge-case reference](https://radkesvat.github.io/WaterWall-Docs/docs/devguides/part3-buffers-and-padding#mux-buffer-edge-cases).
+
+Mux uses one **queue-capacity charge** for every owned buffer:
+
+```text
+sizeof(sbuf_t) + sbufGetTotalCapacity(buf) + kSbufAllocationAlignment
+```
+
+Capacity includes reserved left padding. Ordinary entries therefore retain their
+allocation-based charge; splice entries charge logical sbuf capacity, without
+adding wrapper control storage or kernel pipe capacity. Unknown cached pipe
+capacity does not force a valid retained source into ordinary storage.
+
+`parent-buffer-limit` (48 MiB by default) covers incoming frame assembly plus
+all attached child queues. The stream counter remains separate from the child
+aggregate, and their sum is checked at stable return boundaries. Complete frames
+in a coalesced delivery drain first, even if its temporary charge exceeds the
+limit. Cached header bytes count toward the independent 1,048,584-byte incomplete
+frame bound, but the header cache and stream/queue metadata carry no sbuf charge.
+Active splice-head body consumption reduces logical capacity and its charge;
+prefix consumption and ordinary cursor movement do not reduce capacity.
+
+Reaching a finite receive limit first attempts to combine incoming fragments
+into one ordinary best-fit buffer, only if its predicted total charge is strictly
+lower. Compaction preserves the cached header and exact byte order. It does not
+run on every Push or rewrite child/output queues. Remaining pressure sheds the
+largest queued child, preferring the oldest on ties, and rechecks after every
+callback. Several victims may be needed. No victim or no progress closes only
+that parent through normal parent-loss cleanup. A zero parent limit disables
+this combined finite bound; it introduces no other aggregate cap.
+
+`child-buffer-limit` remains 24 MiB by default and rejects equality. Outgoing
+parent queues remain separate: their pause threshold is 8 MiB, hard limit is
+16 MiB, and hard-limit equality is permitted. Detached queues retain their
+per-worker settings and zero/unlimited meanings. FlowPause/FlowResume continue
+to count logical payload bytes. Ordinary child candidates may still compact to
+a cheaper pooled tier; valid splice candidates are not individually materialized
+for queue pressure.
+
+There is no worker-wide pipe-count or pipe-capacity quota. Other parents cannot
+force fallback through shared pipe reservations. These charges are not physical
+memory, FD, kernel page-reference, socket-queue or RSS bounds, nor a strict
+instantaneous memory ceiling. More retained splice data can use more descriptors
+and nominal kernel capacity under the same logical budget. Pools may cache empty
+pipes after recycling; lower charge does not prove those resources were closed.
+
+Inputs through 1 MiB use the fitting single-buffer path, including one Data header
+for empty input. Larger ordinary input uses one encoded aggregate; larger splice
+input uses a complete ordered batch, with Open once before the first client Data.
+A real 1 MiB pipe body plus a resident prefix can require splitting. Batch staging
+uses completed logical capacity for pipe estimates and reserves ordinary fallback
+costs for the remaining frames. All fallible admission precedes publication and
+callbacks. Refusal discards the local batch and closes only the affected parent.
+A fitting writable-parent direct write still needs no FIFO admission.
+
+Actual pipe creation, capacity and slot pressure remain transfer constraints.
+Short progress/EINTR and complete ordinary fallback preserve every byte, even
+after partial transfer. Nominal 1 MiB capacity does not prove available slots.
+Best-fit fallback preserves headroom and may exceed a low-profile large tier.
+Pool sizes, pipe targets, protocol limits and JSON defaults remain unchanged.
+
+Pause stops the output pump; Resume preserves FIFO. Nested output and child Close
+follow admitted Data. Child death does not release parent-owned output. Parent
+loss discards incoming/output ownership and transfers eligible blocked child
+queues to detached accounting. Pop, transfer and discard settle scalar charges
+before callbacks; final owner cleanup settles every queue. HTTP and ordinary
+BufferStream remain ordinary-only.
 
 ## Node Metadata
 
@@ -423,7 +497,7 @@ Source-backed metadata:
 
 | Property | Value |
 | --- | --- |
-| node flags | `kNodeFlagNone` |
+| node flags | `kNodeFlagSupportsSplice` |
 | `can_have_prev` | `true` |
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayer4` |

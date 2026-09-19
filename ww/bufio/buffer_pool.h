@@ -85,6 +85,22 @@ sbuf_t *bufferpoolGetSmallBuffer(buffer_pool_t *pool);
  * Pool refill only allocates wrappers. Populate the checked-out pipe before publishing its actual logical body size. */
 sbuf_t *bufferpoolGetSpliceBuffer(buffer_pool_t *pool);
 
+typedef struct buffer_pool_fit_s
+{
+    size_t   allocation_charge; // Same userspace-storage charge as sbufGetAllocationCharge().
+    uint32_t payload_capacity;  // Excludes left padding; includes allocation alignment rounding.
+    uint16_t left_padding;      // Actual aligned padding.
+    bool     pooled;            // Selects a configured tier rather than dedicated storage.
+} buffer_pool_fit_t;
+
+/** Query the ordinary allocation GetBestFit would select, without allocating or
+ * changing the pool. Uses the same tier selection, including padding eligibility
+ * and small/medium/large tie order. False means unrepresentable geometry and
+ * leaves fit unchanged. The result remains valid while pool geometry is unchanged.
+ * This does not reserve an allocation or include any kernel-pipe charge. */
+bool bufferpoolQueryBestFit(const buffer_pool_t *pool, uint64_t minimum_payload, uint16_t minimum_left_padding,
+                            buffer_pool_fit_t *fit);
+
 /**
  * Retrieve the smallest small/medium/large pooled buffer satisfying both payload capacity
  * and left-padding requirements. Splice allocation is explicit. When no

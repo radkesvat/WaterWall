@@ -33,6 +33,11 @@ void muxserverTunnelDownStreamPayload(tunnel_t *t, line_t *child_l, sbuf_t *buf)
     {
         muxserverRefreshChildIdle(t, child_ls);
     }
+    if (sbufIsSplice(buf) && payload_length > kMuxMaxDataFrameLength)
+    {
+        muxserverSendSpliceBatch(t, child_ls->parent->l, buf, child_ls);
+        return;
+    }
     sbuf_t             *encoded = NULL;
     mux_encode_result_t encode_result =
         muxEncodeChildPayload(lineGetBufferPool(child_l), buf, child_ls->connection_id, false, &encoded);

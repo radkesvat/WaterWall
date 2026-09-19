@@ -19,12 +19,20 @@ enum
 static uint32_t g_pool_size = kTestLargeBufferSize;
 
 static bool g_reject_next_queue_reallocation = false;
+static int  g_reject_queue_after             = -1;
 
 void *__real_memoryReAllocate(void *ptr, size_t size);
 void *__wrap_memoryReAllocate(void *ptr, size_t size);
 
 void *__wrap_memoryReAllocate(void *ptr, size_t size)
 {
+    if (g_reject_queue_after == 0)
+    {
+        g_reject_queue_after = -1;
+        return NULL;
+    }
+    if (g_reject_queue_after > 0)
+        --g_reject_queue_after;
     if (g_reject_next_queue_reallocation)
     {
         g_reject_next_queue_reallocation = false;
@@ -55,8 +63,9 @@ static uint32_t parseFrames(const uint8_t *bytes, uint32_t len, frame_view_t *ou
         twfRequire(len - offset >= kMuxFrameLength, "the encoded stream ends inside a frame header");
         twfRequire(count < max_frames, "the encoded stream has more frames than the test can hold");
 
-        const uint32_t length = ((uint32_t) bytes[offset] << 8U) | (uint32_t) bytes[offset + 1U];
-        const uint8_t  flags  = bytes[offset + 2U];
+        const uint32_t length =
+            ((uint32_t) bytes[offset] << 16U) | ((uint32_t) bytes[offset + 1U] << 8U) | bytes[offset + 2U];
+        const uint8_t  flags  = bytes[offset + 3U];
         const uint32_t cid    = ((uint32_t) bytes[offset + 4U] << 24U) | ((uint32_t) bytes[offset + 5U] << 16U) |
                              ((uint32_t) bytes[offset + 6U] << 8U) | (uint32_t) bytes[offset + 7U];
 
@@ -72,10 +81,10 @@ static uint32_t parseFrames(const uint8_t *bytes, uint32_t len, frame_view_t *ou
 
 static void writeFrameHeader(uint8_t *out, uint32_t length, uint8_t flags, uint32_t cid)
 {
-    out[0] = (uint8_t) ((length >> 8U) & 0xFFU);
-    out[1] = (uint8_t) (length & 0xFFU);
-    out[2] = flags;
-    out[3] = 0;
+    out[0] = (uint8_t) (length >> 16U);
+    out[1] = (uint8_t) (length >> 8U);
+    out[2] = (uint8_t) length;
+    out[3] = flags;
     out[4] = (uint8_t) ((cid >> 24U) & 0xFFU);
     out[5] = (uint8_t) ((cid >> 16U) & 0xFFU);
     out[6] = (uint8_t) ((cid >> 8U) & 0xFFU);
@@ -277,14 +286,15 @@ static void caseLargeCompleteBatchIsDrained(void)
     };
 
     const uint32_t batch_bytes = kBatchFrames * (kBatchFrameLength + kMuxFrameLength);
-    twfRequire(batch_bytes > kMaxMainChannelBufferSize, "the batch must exceed the read-stream limit to be a test");
+    twfRequire(batch_bytes > kMuxMaxBufferedFrameLength, "the batch must exceed the read-stream limit to be a test");
 
     muxserver_fixture_t fixture;
-    fixtureSetup(&fixture, batch_bytes);
+    fixtureSetup(&fixture, batch_bytes + 17U);
+    ((muxserver_tstate_t *) tunnelGetState(fixture.mux))->parent_buffer_limit = 4096;
 
     sbuf_t *batch = bufferpoolGetLargeBuffer(fixture.env.pool);
-    batch         = sbufReserveSpace(batch, batch_bytes);
-    sbufSetLength(batch, batch_bytes);
+    batch         = sbufReserveSpace(batch, batch_bytes + kMuxFrameLength + 3U);
+    sbufSetLength(batch, batch_bytes + kMuxFrameLength + 3U);
 
     uint8_t *raw      = sbufGetMutablePtr(batch);
     uint32_t offset   = 0;
@@ -301,6 +311,8 @@ static void caseLargeCompleteBatchIsDrained(void)
         produced += kBatchFrameLength;
     }
 
+    writeFrameHeader(raw + offset, 17, kMuxFlagData, kTestChildCid);
+    memset(raw + offset + kMuxFrameLength, 0x5a, 3);
     muxserverTunnelUpStreamPayload(fixture.mux, fixture.parent_l, batch);
 
     twfRequire(lineIsAlive(fixture.parent_l), "the parent line was closed by a batch of complete frames");
@@ -313,6 +325,18 @@ static void caseLargeCompleteBatchIsDrained(void)
         twfRequire(fixture.capture[i] == patternByte(i), "the drained frames arrived out of order");
     }
 
+    muxserver_lstate_t *parent = lineGetState(fixture.parent_l, fixture.mux);
+    twfRequire(splicestreamLength(parent->parent_state->read_stream) == kMuxFrameLength + 3U,
+               "large delivery did not preserve exact partial-frame remainder");
+    sbuf_t *tail = bufferpoolGetSmallBuffer(fixture.env.pool);
+    memset(sbufGetMutablePtr(tail), 0x5a, 14);
+    sbufSetLength(tail, 14);
+    muxserverTunnelUpStreamPayload(fixture.mux, fixture.parent_l, tail);
+    twfRequire(fixture.trace.next_payload == kBatchFrames + 1U &&
+                   splicestreamLength(parent->parent_state->read_stream) == 0,
+               "partial frame after a large complete batch did not finish once");
+    for (uint32_t i = produced; i < produced + 17U; ++i)
+        twfRequire(fixture.capture[i] == 0x5a, "partial-frame body after batch changed");
     fixtureTeardown(&fixture);
 }
 
@@ -407,12 +431,13 @@ static void caseCoalescedDataBoundaries(bool paused, bool empty_only)
         }
         if (i == 1)
         {
-            twfRequireEqualU32((uint32_t) bs_doublequeue_t_size(&parent_ls->read_stream.q),
-                               1,
-                               "the receive fixture did not exercise tail coalescing");
+            twfRequireEqualU32(parent_ls->parent_state->read_stream->header_filled,
+                               4,
+                               "partial transport headers were not gathered in the fixed cache");
         }
     }
-    twfRequire(bufferstreamIsEmpty(&parent_ls->read_stream), "complete frames left undecoded parent bytes");
+    twfRequire((splicestreamLength(parent_ls->parent_state->read_stream) == 0),
+               "complete frames left undecoded parent bytes");
 
     if (paused)
     {
@@ -616,7 +641,7 @@ static void caseConfiguredResumeThresholdControlsFlowResume(void)
     twfRequireEqualText(fixture.trace.seq, "PPp", "MuxServer sent FlowResume above its configured threshold");
     twfRequireEqualU32(fixture.trace.next_payload, 2, "MuxServer did not drain both queued child payloads");
     twfRequireEqualU32(fixture.trace.prev_payload, 1, "MuxServer did not send exactly one FlowResume frame");
-    twfRequire(fixture.capture[kFirst + kSecond + 2U] == kMuxFlagFlowResume,
+    twfRequire(fixture.capture[kFirst + kSecond + 3U] == kMuxFlagFlowResume,
                "MuxServer emitted the wrong control frame at its configured resume threshold");
     twfRequire(! child_ls->flow_paused_sent, "MuxServer retained its sent-pause latch after FlowResume");
 
@@ -1070,10 +1095,11 @@ static void caseFragmentedPausedFrameKeepsCarrierRemainder(void)
     muxserverTunnelUpStreamPayload(fixture.mux, fixture.parent_l, second);
     twfRequire(pooled_frame_count == 0 && bufferqueueGetBufCount(&child->pending_child_data) == 1,
                "fragment extraction crossed Pause or changed frame count");
-    twfRequire(bufferstreamGetBufLen(&parent->read_stream) == trailing &&
-                   *bs_doublequeue_t_front(&parent->read_stream.q) == second &&
-                   second->curpos == second_cursor + frame_bytes - first_bytes,
-               "fragment extraction copied or replaced the unrelated carrier remainder");
+    twfRequire(splicestreamLength(parent->parent_state->read_stream) == trailing &&
+                   parent->parent_state->read_stream->head != NULL &&
+                   sbufGetLength(parent->parent_state->read_stream->head) == trailing - kMuxFrameLength,
+               "fragment extraction consumed unrelated carrier body");
+    discard second_cursor;
     muxserverTunnelDownStreamResume(fixture.mux, fixture.child_l);
     twfRequire(pooled_frame_count == 1 && child->pending_child_queue_charge == 0,
                "fragmented frame did not drain once");

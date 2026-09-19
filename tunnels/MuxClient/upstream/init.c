@@ -16,7 +16,7 @@ void muxclientTunnelUpStreamInit(tunnel_t *t, line_t *child_l)
 
     mux_cid_t new_cid = parent_ls->connection_id + 1;
 
-    muxclientLinestateInitialize(child_ls, child_l, true, new_cid);
+    muxclientLinestateInitialize(t, child_ls, child_l, true, new_cid);
     muxclientJoinConnection(parent_ls, child_ls);
     parent_ls->connection_id = new_cid;
 

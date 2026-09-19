@@ -107,6 +107,12 @@ if [[ -f "$run_dir/workers.txt" ]]; then
   fi
 fi
 
+test_splice=${WATERWALL_TEST_SPLICE:-true}
+if [[ "$test_splice" != true && "$test_splice" != false ]]; then
+  echo "Invalid WATERWALL_TEST_SPLICE: expected true or false" >&2
+  exit 2
+fi
+
 cat >"$generated_core_json" <<EOF
 {
   "log": {
@@ -121,6 +127,7 @@ cat >"$generated_core_json" <<EOF
   ],
   "misc": {
     "workers": $test_workers,
+    "splice": $test_splice,
     "ram-profile": "$TEST_RAM_PROFILE",
     "mtu": 1500,
     "try-enabling-bbr": false

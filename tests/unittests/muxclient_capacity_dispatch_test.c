@@ -33,10 +33,10 @@ static muxclient_capacity_fixture_t *g_client_fixture = NULL;
 
 static void writeFrameHeader(uint8_t *out, uint32_t length, uint8_t flags, mux_cid_t cid)
 {
-    out[0] = (uint8_t) ((length >> 8U) & 0xFFU);
-    out[1] = (uint8_t) (length & 0xFFU);
-    out[2] = flags;
-    out[3] = 0;
+    out[0] = (uint8_t) (length >> 16U);
+    out[1] = (uint8_t) (length >> 8U);
+    out[2] = (uint8_t) length;
+    out[3] = flags;
     out[4] = (uint8_t) ((cid >> 24U) & 0xFFU);
     out[5] = (uint8_t) ((cid >> 16U) & 0xFFU);
     out[6] = (uint8_t) ((cid >> 8U) & 0xFFU);
@@ -463,7 +463,7 @@ static void caseProductionHashDispatchAtScale(void)
         children[i]         = twfLinePoolCreateLine(&fixture.child_lines);
         fixtureTrackChild(&fixture, children[i]);
         muxclient_lstate_t *child_ls = lineGetState(children[i], fixture.mux);
-        muxclientLinestateInitialize(child_ls, children[i], true, cid);
+        muxclientLinestateInitialize(fixture.mux, child_ls, children[i], true, cid);
         child_ls->open_frame_submitted = true;
         muxclientJoinConnection(parent_ls, child_ls);
     }
@@ -654,7 +654,7 @@ static void caseWorkerDrainIsLocal(void)
         parents[wid] = lineCreateForWorker(wid, line_pools, wid);
         lineRef(parents[wid]);
         muxclient_lstate_t *parent = lineGetState(parents[wid], mux);
-        muxclientLinestateInitialize(parent, parents[wid], false, 0);
+        muxclientLinestateInitialize(mux, parent, parents[wid], false, 0);
         muxclientRegisterParent(ts, parent);
         ts->unsatisfied_lines[wid] = parents[wid];
     }

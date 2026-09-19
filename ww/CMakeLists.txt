@@ -95,6 +95,8 @@ add_library(ww STATIC
     bufio/threadsafe_generic_pool.c
     bufio/master_pool.c
     bufio/shiftbuffer.c
+    bufio/splice_buffer.c
+    bufio/splice_stream.c
     
     # Utilities
     utils/base64.c

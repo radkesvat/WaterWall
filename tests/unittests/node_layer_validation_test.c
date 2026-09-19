@@ -5,6 +5,13 @@
 
 #include "wwapi.h"
 
+#ifdef WW_TEST_REAL_TCP_MUX_NODES
+#include "MuxClient/interface.h"
+#include "MuxServer/interface.h"
+#include "TcpConnector/interface.h"
+#include "TcpListener/interface.h"
+#endif
+
 #include "managers/node_manager.c" // NOLINT: exercises private validateTunnelChains and initializePacketTunnels
 
 static void require(bool condition, const char *message)
@@ -448,9 +455,8 @@ static void testValidBridgeSameLayerL3(void)
     t_ping.chain = &chain;
     t_br_b.chain = &chain;
 
-    require(tunnelchainRegisterLayerRelation(&chain, &t_br_a, kTunnelLayerSidePrev,
-                                            &t_br_b, kTunnelLayerSidePrev,
-                                            kTunnelLayerRelationSame),
+    require(tunnelchainRegisterLayerRelation(
+                &chain, &t_br_a, kTunnelLayerSidePrev, &t_br_b, kTunnelLayerSidePrev, kTunnelLayerRelationSame),
             "failed to register Bridge prev relation");
 
     node_layer_solver_status_t status = {0};
@@ -522,9 +528,8 @@ static void testValidBridgeSameLayerL4(void)
     t_br_b.chain    = &chain;
     t_tcp_out.chain = &chain;
 
-    require(tunnelchainRegisterLayerRelation(&chain, &t_br_a, kTunnelLayerSidePrev,
-                                            &t_br_b, kTunnelLayerSideNext,
-                                            kTunnelLayerRelationSame),
+    require(tunnelchainRegisterLayerRelation(
+                &chain, &t_br_a, kTunnelLayerSidePrev, &t_br_b, kTunnelLayerSideNext, kTunnelLayerRelationSame),
             "failed to register Bridge relation");
 
     node_layer_solver_status_t status = {0};
@@ -597,9 +602,8 @@ static void testRejectBridgeMixedLayerL3L4(void)
     t_tcp.chain  = &chain;
     t_br_b.chain = &chain;
 
-    require(tunnelchainRegisterLayerRelation(&chain, &t_br_a, kTunnelLayerSidePrev,
-                                            &t_br_b, kTunnelLayerSidePrev,
-                                            kTunnelLayerRelationSame),
+    require(tunnelchainRegisterLayerRelation(
+                &chain, &t_br_a, kTunnelLayerSidePrev, &t_br_b, kTunnelLayerSidePrev, kTunnelLayerRelationSame),
             "failed to register Bridge relation");
 
     node_layer_solver_status_t status = {0};
@@ -699,9 +703,8 @@ static void testRejectBridgeMixedLayerAcrossTransparent(void)
     t_obf2.chain = &chain;
     t_br_b.chain = &chain;
 
-    require(tunnelchainRegisterLayerRelation(&chain, &t_br_a, kTunnelLayerSidePrev,
-                                            &t_br_b, kTunnelLayerSidePrev,
-                                            kTunnelLayerRelationSame),
+    require(tunnelchainRegisterLayerRelation(
+                &chain, &t_br_a, kTunnelLayerSidePrev, &t_br_b, kTunnelLayerSidePrev, kTunnelLayerRelationSame),
             "failed to register Bridge relation");
 
     node_layer_solver_status_t status = {0};
@@ -770,9 +773,8 @@ static void testBridgeRelationsSurviveChainCombine(void)
     tunnelchainInsert(src, &t_br_b);
 
     // Register on src chain before combine
-    require(tunnelchainRegisterLayerRelation(src, &t_br_a, kTunnelLayerSidePrev,
-                                            &t_br_b, kTunnelLayerSidePrev,
-                                            kTunnelLayerRelationSame),
+    require(tunnelchainRegisterLayerRelation(
+                src, &t_br_a, kTunnelLayerSidePrev, &t_br_b, kTunnelLayerSidePrev, kTunnelLayerRelationSame),
             "failed to register relation on source chain");
 
     ww_startup_context_t startup = {0};
@@ -859,7 +861,7 @@ static void testValidLoggerTunnelL3toL3(void)
         .can_have_next         = true,
         .can_have_prev         = false,
     };
-    node_t n_log = makeLoggerTunnelNode("logger");
+    node_t n_log  = makeLoggerTunnelNode("logger");
     node_t n_tail = {
         .name                  = (char *) "tail",
         .type                  = (char *) "PingServer",
@@ -906,7 +908,7 @@ static void testValidLoggerTunnelL4toL4(void)
         .can_have_next         = true,
         .can_have_prev         = false,
     };
-    node_t n_log = makeLoggerTunnelNode("logger");
+    node_t n_log  = makeLoggerTunnelNode("logger");
     node_t n_tail = {
         .name                  = (char *) "tail",
         .type                  = (char *) "TcpConnector",
@@ -953,7 +955,7 @@ static void testRejectLoggerTunnelL3toL4(void)
         .can_have_next         = true,
         .can_have_prev         = false,
     };
-    node_t n_log = makeLoggerTunnelNode("logger");
+    node_t n_log  = makeLoggerTunnelNode("logger");
     node_t n_tail = {
         .name                  = (char *) "tail",
         .type                  = (char *) "TcpConnector",
@@ -1001,7 +1003,7 @@ static void testValidConditionalSameAsStandalone(void)
 
 static void testValidConditionalSameAsHead(void)
 {
-    node_t n_log = makeOptionalTransparentNode("head-optional");
+    node_t n_log  = makeOptionalTransparentNode("head-optional");
     node_t n_tail = {
         .name                  = (char *) "tail",
         .type                  = (char *) "TcpConnector",
@@ -1119,7 +1121,7 @@ static void testRejectMiddleNodesAtBoundaries(void)
 
     node_t         n_logger_standalone = makeLoggerTunnelNode("logger-standalone");
     tunnel_t       t_logger_standalone = {.node = &n_logger_standalone};
-    tunnel_chain_t chain4 = {0};
+    tunnel_chain_t chain4              = {0};
     tunnelarrayInsert(&chain4.tunnels, &t_logger_standalone);
     t_logger_standalone.chain = &chain4;
 
@@ -1212,56 +1214,61 @@ static void testMalformedMetadataMatrix(void)
     require(nodeLayerValidateNodeMetadata(&base, &status), "base metadata validation failed");
 
     // 2. Unknown bits in layer_group
-    node_t bad_lg = base;
+    node_t bad_lg      = base;
     bad_lg.layer_group = 0x80;
     require(! nodeLayerValidateNodeMetadata(&bad_lg, &status), "Unknown bits in layer_group did not fail");
     require(status.code == kNodeLayerSolverErrMetadataShape, "Wrong error code for bad layer_group");
 
     // 3. None combined with other bits in layer_group
-    node_t bad_lg_none = base;
+    node_t bad_lg_none      = base;
     bad_lg_none.layer_group = kNodeLayerNone | kNodeLayer3;
-    require(! nodeLayerValidateNodeMetadata(&bad_lg_none, &status), "None combined with layer3 in layer_group did not fail");
+    require(! nodeLayerValidateNodeMetadata(&bad_lg_none, &status),
+            "None combined with layer3 in layer_group did not fail");
 
     // 4. Multiple relation bits in layer_group_next_node
-    node_t bad_multi_rel = base;
+    node_t bad_multi_rel                = base;
     bad_multi_rel.can_have_next         = true;
     bad_multi_rel.layer_group_next_node = kNodeLayerSameAsPrev | kNodeLayerOppositePrev;
     require(! nodeLayerValidateNodeMetadata(&bad_multi_rel, &status), "Multiple relation bits did not fail");
 
     // 5. Base bits combined with SameAs in layer_group_next_node
-    node_t bad_base_same = base;
+    node_t bad_base_same                = base;
     bad_base_same.can_have_next         = true;
     bad_base_same.layer_group_next_node = kNodeLayer3 | kNodeLayerSameAsPrev;
     require(! nodeLayerValidateNodeMetadata(&bad_base_same, &status), "Base plus SameAs did not fail");
 
     // 6. Wrong-direction relative flag (SameAsNext in next_node)
-    node_t bad_dir_next = base;
+    node_t bad_dir_next                = base;
     bad_dir_next.can_have_next         = true;
     bad_dir_next.layer_group_next_node = kNodeLayerSameAsNext;
-    require(! nodeLayerValidateNodeMetadata(&bad_dir_next, &status), "Forward-referencing relative flag in next_node did not fail");
+    require(! nodeLayerValidateNodeMetadata(&bad_dir_next, &status),
+            "Forward-referencing relative flag in next_node did not fail");
 
     // 7. Wrong-direction relative flag (SameAsPrev in prev_node)
-    node_t bad_dir_prev = base;
+    node_t bad_dir_prev                = base;
     bad_dir_prev.layer_group_prev_node = kNodeLayerSameAsPrev;
-    require(! nodeLayerValidateNodeMetadata(&bad_dir_prev, &status), "Backward-referencing relative flag in prev_node did not fail");
+    require(! nodeLayerValidateNodeMetadata(&bad_dir_prev, &status),
+            "Backward-referencing relative flag in prev_node did not fail");
 
     // 8. Bare Opposite without base layer in next_node
-    node_t bad_bare_opp = base;
+    node_t bad_bare_opp                = base;
     bad_bare_opp.can_have_next         = true;
     bad_bare_opp.layer_group_next_node = kNodeLayerOppositePrev;
     require(! nodeLayerValidateNodeMetadata(&bad_bare_opp, &status), "Bare Opposite without base layer did not fail");
 
     // 9. can_have_next = false with non-None next_node
-    node_t bad_can_next = base;
+    node_t bad_can_next                = base;
     bad_can_next.can_have_next         = false;
     bad_can_next.layer_group_next_node = kNodeLayer4;
-    require(! nodeLayerValidateNodeMetadata(&bad_can_next, &status), "can_have_next = false with non-None did not fail");
+    require(! nodeLayerValidateNodeMetadata(&bad_can_next, &status),
+            "can_have_next = false with non-None did not fail");
 
     // 10. can_have_prev = false with non-None prev_node
-    node_t bad_can_prev = base;
+    node_t bad_can_prev                = base;
     bad_can_prev.can_have_prev         = false;
     bad_can_prev.layer_group_prev_node = kNodeLayer4;
-    require(! nodeLayerValidateNodeMetadata(&bad_can_prev, &status), "can_have_prev = false with non-None did not fail");
+    require(! nodeLayerValidateNodeMetadata(&bad_can_prev, &status),
+            "can_have_prev = false with non-None did not fail");
 }
 
 /* ========================================================================= */
@@ -1279,7 +1286,7 @@ typedef struct test_packet_lstate_s
 static void fakePacketMiddleInitU(tunnel_t *t, line_t *l)
 {
     test_packet_lstate_t *ls = lineGetState(l, t);
-    ls->magic = 0xCAFEBABE;
+    ls->magic                = 0xCAFEBABE;
     ls->init_count++;
     tunnelNextUpStreamInit(t, l);
 }
@@ -1340,10 +1347,10 @@ static void testPacketLineInitAndPayloadExecution(void)
 
     tunnel_t t_head = {.node = &n_head, .fnInitU = tunnelNextUpStreamInit, .fnPayloadU = tunnelNextUpStreamPayload};
     tunnel_t t_mid  = {
-        .node         = &n_mid,
-        .lstate_size  = sizeof(test_packet_lstate_t),
-        .fnInitU      = fakePacketMiddleInitU,
-        .fnPayloadU   = fakePacketMiddlePayloadU,
+         .node        = &n_mid,
+         .lstate_size = sizeof(test_packet_lstate_t),
+         .fnInitU     = fakePacketMiddleInitU,
+         .fnPayloadU  = fakePacketMiddlePayloadU,
     };
     tunnel_t t_tail = {.node = &n_tail, .fnInitU = fakePacketTailInitU, .fnPayloadU = fakePacketTailPayloadU};
 
@@ -1428,10 +1435,10 @@ static bool insertTransparentTunnelAfterSolvedLayers(tunnel_t *owner, tunnel_cha
     tunnelchainInsertAt(chain, g_layer_expansion_tunnel, (uint16_t) (owner_index + 1U));
     require(g_layer_expansion_tunnel->chain == chain, "layer-dependent tunnel insertion failed");
 
-    owner->next                         = g_layer_expansion_tunnel;
-    g_layer_expansion_tunnel->prev      = owner;
-    g_layer_expansion_tunnel->next      = next;
-    next->prev                          = g_layer_expansion_tunnel;
+    owner->next                    = g_layer_expansion_tunnel;
+    g_layer_expansion_tunnel->prev = owner;
+    g_layer_expansion_tunnel->next = next;
+    next->prev                     = g_layer_expansion_tunnel;
     return true;
 }
 
@@ -1553,6 +1560,48 @@ static void testChainSpliceCapability(void)
     tunnelchainDestroy(empty);
 }
 
+#ifdef WW_TEST_REAL_TCP_MUX_NODES
+static void testRealTcpMuxSpliceCapability(void)
+{
+    node_t head      = nodeTcpListenerGet();
+    node_t muxclient = nodeMuxClientGet();
+    node_t muxserver = nodeMuxServerGet();
+    node_t tail      = nodeTcpConnectorGet();
+
+    require((head.flags & kNodeFlagSupportsSplice) != 0, "TcpListener lost splice capability");
+    require((muxclient.flags & kNodeFlagSupportsSplice) != 0, "MuxClient does not advertise splice capability");
+    require((muxserver.flags & kNodeFlagSupportsSplice) != 0, "MuxServer does not advertise splice capability");
+    require((tail.flags & kNodeFlagSupportsSplice) != 0, "TcpConnector lost splice capability");
+    require(muxclient.required_padding_left == 16 && muxserver.required_padding_left == 8,
+            "Mux splice capability changed its framing padding budgets");
+
+    tunnel_t t_head      = {.node = &head};
+    tunnel_t t_muxclient = {.node = &muxclient};
+    tunnel_t t_muxserver = {.node = &muxserver};
+    tunnel_t t_tail      = {.node = &tail};
+    bindTunnels(&t_head, &t_muxclient);
+    bindTunnels(&t_muxclient, &t_muxserver);
+    bindTunnels(&t_muxserver, &t_tail);
+
+    tunnel_chain_t *chain = tunnelchainCreate(0);
+    require(chain != NULL, "failed to create real TCP/Mux splice-capability chain");
+    tunnelchainInsert(chain, &t_head);
+    tunnelchainInsert(chain, &t_muxclient);
+    tunnelchainInsert(chain, &t_muxserver);
+    tunnelchainInsert(chain, &t_tail);
+    tunnelchainFinalize(chain);
+    require(chain->finalized && chain->supports_splice == (WW_HAVE_SPLICE && ! GSTATE.splice_disabled),
+            "real TCP/Mux chain ignored platform or misc.splice capability gating");
+    tunnelchainDestroy(chain);
+
+    memoryFree(head.type);
+    memoryFree(muxclient.type);
+    memoryFree(muxserver.type);
+    memoryFree(tail.type);
+}
+
+#endif
+
 static void testNodeManagerPreFinalizationChainCleanup(void)
 {
     // Test that an invalid chain caught during validation records startup failure
@@ -1632,6 +1681,9 @@ int main(void)
         testSolvedTopologyExpansionIsRevalidated(false, true);
         testSolvedTopologyExpansionIsRevalidated(true, true);
         testChainSpliceCapability();
+#ifdef WW_TEST_REAL_TCP_MUX_NODES
+        testRealTcpMuxSpliceCapability();
+#endif
     }
     GSTATE.splice_disabled = saved_splice_disabled;
     testNodeManagerPreFinalizationChainCleanup();

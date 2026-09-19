@@ -9,7 +9,7 @@ import time
 
 ADDRESS = ("127.0.0.1", 26780)
 ECHO_ADDRESS = ("127.0.0.1", 26781)
-HEADER = struct.Struct("!HBBI")
+HEADER = struct.Struct("!II")
 OPEN = 0
 CLOSE = 1
 DATA = 4
@@ -84,7 +84,7 @@ def connect_with_retry() -> socket.socket:
 
 
 def send_frame(sock: socket.socket, cid: int, flags: int, payload: bytes = b"") -> None:
-    sock.sendall(HEADER.pack(len(payload), flags, 0, cid) + payload)
+    sock.sendall(HEADER.pack((len(payload) << 8) | flags, cid) + payload)
 
 
 def read_frame(sock: socket.socket, pending: bytearray) -> tuple[int, int, bytes]:
@@ -93,7 +93,8 @@ def read_frame(sock: socket.socket, pending: bytearray) -> tuple[int, int, bytes
         if not chunk:
             raise AssertionError("Mux parent closed while waiting for a frame")
         pending.extend(chunk)
-    length, flags, _pad, cid = HEADER.unpack(pending[: HEADER.size])
+    length_flags, cid = HEADER.unpack(pending[: HEADER.size])
+    length, flags = length_flags >> 8, length_flags & 0xff
     total = HEADER.size + length
     while len(pending) < total:
         chunk = sock.recv(4096)

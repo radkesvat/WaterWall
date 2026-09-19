@@ -243,7 +243,7 @@ static void testMuxEncodedLengthBoundary(void)
     enum
     {
         kMuxFrameLength        = 8,
-        kMuxMaxDataFrameLength = 0xFFFF - kMuxFrameLength
+        kMuxMaxDataFrameLength = 1024U * 1024U
     };
 
     // The smallest payload whose encoded length lands above the largest aligned

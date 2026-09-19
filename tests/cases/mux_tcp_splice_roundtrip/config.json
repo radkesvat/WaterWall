@@ -1,0 +1,100 @@
+{
+  "name": "mux-tcp-splice-roundtrip",
+  "nodes": [
+    {
+      "name": "speedtest-client",
+      "type": "TesterClient",
+      "settings": {
+        "allow-early-response": true
+      },
+      "next": "client-to-mux-client"
+    },
+    {
+      "name": "client-to-mux-client",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 27000,
+        "nodelay": true,
+        "fastopen": false
+      }
+    },
+    {
+      "name": "mux-client-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 27000,
+        "nodelay": true
+      },
+      "next": "mux-client"
+    },
+    {
+      "name": "mux-client",
+      "type": "MuxClient",
+      "settings": {
+        "mode": "fixed-connections-count",
+        "per-worker-connections-count": 1,
+        "child-buffer-limit": 67108864,
+        "child-buffer-pause-tolerance": 1048576
+      },
+      "next": "mux-client-to-mux-server"
+    },
+    {
+      "name": "mux-client-to-mux-server",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 27001,
+        "nodelay": true,
+        "fastopen": false
+      }
+    },
+    {
+      "name": "mux-server-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 27001,
+        "nodelay": true
+      },
+      "next": "mux-server"
+    },
+    {
+      "name": "mux-server",
+      "type": "MuxServer",
+      "settings": {
+        "child-buffer-limit": 67108864,
+        "child-buffer-pause-tolerance": 1048576
+      },
+      "next": "mux-server-to-speedtest-server"
+    },
+    {
+      "name": "mux-server-to-speedtest-server",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 27002,
+        "nodelay": true,
+        "fastopen": false
+      }
+    },
+    {
+      "name": "speedtest-server-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 27002,
+        "nodelay": true
+      },
+      "next": "speedtest-server"
+    },
+    {
+      "name": "speedtest-server",
+      "type": "TesterServer",
+      "settings": {
+        "streaming-response": true
+      }
+    }
+  ]
+}

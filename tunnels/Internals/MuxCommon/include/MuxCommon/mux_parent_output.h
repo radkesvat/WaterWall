@@ -1,6 +1,6 @@
 #pragma once
 
-#include "wwapi.h"
+#include "MuxCommon/mux_limits.h"
 
 typedef struct mux_parent_output_s
 {
@@ -12,18 +12,20 @@ typedef struct mux_parent_output_s
     bool           notifying;
 } mux_parent_output_t;
 
-/* Transactional admission; equality with the limit is permitted. Ordinary Debug
- * replacement preserves capacity and padding because sbuf allocations are already
- * rounded. Check the returned allocation, never an alias of the replaced buffer. */
+/* Transactional admission; equality with the resource limit is permitted.
+ * Failure preserves the supplied candidate, queue, and all counters. Preparation
+ * (including any earlier ordinary fallback) belongs to the caller. Ordinary Debug
+ * replacement preserves allocation geometry; Debug checks the retained pointer
+ * before publishing the precomputed cost. */
 static inline bool muxParentOutputEnqueue(mux_parent_output_t *output, sbuf_t **buf, size_t limit)
 {
-    const size_t charge = sbufGetAllocationCharge(*buf);
-    if (output->charge > limit || charge > limit - output->charge || ! bufferqueueTryPushBack(&output->pending, buf))
-    {
+    size_t cost;
+    if (! sbufTryGetQueueCharge(*buf, &cost) || output->charge > limit || cost > limit - output->charge ||
+        ! bufferqueueTryPushBack(&output->pending, buf))
         return false;
-    }
-    assert(sbufGetAllocationCharge(*buf) == charge);
-    output->charge += sbufGetAllocationCharge(*buf);
+
+    assert(sbufGetQueueCharge(*buf) == cost);
+    output->charge += cost;
     return true;
 }
 
@@ -31,10 +33,26 @@ static inline sbuf_t *muxParentOutputPop(mux_parent_output_t *output)
 {
     sbuf_t *buf = bufferqueuePopFront(&output->pending);
     assert(buf != NULL);
-    const size_t charge = sbufGetAllocationCharge(buf);
-    assert(output->charge >= charge);
-    output->charge -= charge;
+    const size_t cost = sbufGetQueueCharge(buf);
+    if (UNLIKELY(output->charge < cost))
+    {
+        printError("Mux: parent output resource charge underflow");
+        abortProgramNow(1);
+    }
+    output->charge -= cost;
     return buf;
+}
+
+static inline void muxParentOutputDestroy(mux_parent_output_t *output, buffer_pool_t *pool)
+{
+    const size_t discarded = muxDiscardRetainedQueue(&output->pending, pool);
+    if (UNLIKELY(discarded != output->charge))
+    {
+        printError("Mux: parent output resource charge disagrees with queued ownership");
+        abortProgramNow(1);
+    }
+    output->charge -= discarded;
+    bufferqueueDestroy(&output->pending);
 }
 
 /* Small pooled controls must still carry the full onward chain headroom. */

@@ -1,7 +1,27 @@
 #ifndef MUX_COMMON_MUX_LIMITS_H_
 #define MUX_COMMON_MUX_LIMITS_H_
 
+#include "splice_buffer.h"
 #include "wwapi.h"
+
+/* Discard locally owned queue entries. The caller settles its scalar aggregate using the returned charge. */
+static inline size_t muxDiscardRetainedQueue(buffer_queue_t *queue, buffer_pool_t *pool)
+{
+    size_t  charge = 0;
+    sbuf_t *buf;
+    while ((buf = bufferqueuePopFront(queue)) != NULL)
+    {
+        const size_t cost = sbufGetQueueCharge(buf);
+        if (UNLIKELY(charge > SIZE_MAX - cost))
+        {
+            printError("Mux: discarded resource charge overflow");
+            abortProgramNow(1);
+        }
+        charge += cost;
+        bufferpoolReuseBuffer(pool, buf);
+    }
+    return charge;
+}
 
 typedef struct mux_detached_defaults_s
 {
@@ -15,30 +35,39 @@ typedef struct mux_admission_defaults_s
     uint32_t fallback_live_children;
 } mux_admission_defaults_t;
 
-/* Only paused-child queue admission should trade a copy for a smaller retained
- * allocation. BufferStream and immediately forwarded frames preserve their
- * whole-chunk fast path. Candidate sizes come from reusable small/medium/large tiers. */
-static inline sbuf_t *muxPrepareQueuedPayload(buffer_pool_t *pool, sbuf_t *buf)
+/* Explicit ordinary fallback only when residency is required; preserves headroom. */
+static inline sbuf_t *muxMaterializeRetainedPayload(buffer_pool_t *pool, sbuf_t *buf)
 {
-    const uint32_t length  = sbufGetLength(buf);
-    const uint16_t padding = sbufGetLeftPadding(buf);
-    const bool     use_small =
-        length <= bufferpoolGetSmallBufferSize(pool) && padding <= bufferpoolGetSmallBufferPadding(pool);
-    const bool use_medium =
-        length <= bufferpoolGetMediumBufferSize(pool) && padding <= bufferpoolGetMediumBufferPadding(pool);
-    const uint32_t capacity       = use_small    ? bufferpoolGetSmallBufferSize(pool)
-                                    : use_medium ? bufferpoolGetMediumBufferSize(pool)
-                                                 : bufferpoolGetLargeBufferSize(pool);
-    const uint16_t target_padding = use_small    ? bufferpoolGetSmallBufferPadding(pool)
-                                    : use_medium ? bufferpoolGetMediumBufferPadding(pool)
-                                                 : bufferpoolGetLargeBufferPadding(pool);
-    if (length > capacity || padding > target_padding ||
-        (uint64_t) capacity + target_padding >= sbufGetTotalCapacity(buf))
+    if (! sbufIsSplice(buf))
         return buf;
 
-    sbuf_t *retained = use_small    ? bufferpoolGetSmallBuffer(pool)
-                       : use_medium ? bufferpoolGetMediumBuffer(pool)
-                                    : bufferpoolGetLargeBuffer(pool);
+    assert(buf->curpos <= UINT16_MAX);
+    sbuf_t *resident = bufferpoolTryGetBestFit(pool, sbufGetLength(buf), (uint16_t) buf->curpos);
+    if (UNLIKELY(resident == NULL))
+    {
+        printError("Mux: retained splice payload cannot be represented as ordinary storage");
+        abortProgramNow(1);
+    }
+    sbufSpliceMaterializeToBuffer(buf, resident, pool);
+    return resident;
+}
+
+/* Only paused-child queue admission should trade an ordinary allocation for a
+ * smaller retained tier. Immediately forwarded frames keep their whole-chunk
+ * fast path. Candidate sizes come from reusable small/medium/large tiers. */
+static inline sbuf_t *muxPrepareQueuedPayload(buffer_pool_t *pool, sbuf_t *buf)
+{
+    if (sbufIsSplice(buf))
+        return buf;
+    const uint32_t    length  = sbufGetLength(buf);
+    const uint16_t    padding = sbufGetLeftPadding(buf);
+    buffer_pool_fit_t fit;
+    if (! bufferpoolQueryBestFit(pool, length, padding, &fit) || ! fit.pooled ||
+        fit.allocation_charge >= sbufGetAllocationCharge(buf))
+        return buf;
+
+    sbuf_t *retained = bufferpoolTryGetBestFit(pool, fit.payload_capacity, fit.left_padding);
+    assert(retained != NULL); // Selected pool geometry is already representable.
     assert(length <= sbufGetMaximumWriteableSize(retained));
     memoryCopyLarge(sbufGetMutablePtr(retained), sbufGetRawPtr(buf), length);
     sbufSetLength(retained, length);

@@ -521,7 +521,7 @@ sbuf_t *bufferpoolGetSpliceBuffer(buffer_pool_t *pool)
 #endif
 
     bufferpoolDebugCheckThreadAccess(pool);
-    if (pool->splice_buffers_container_len == 0)
+    if (UNLIKELY(pool->splice_buffers_container_len == 0))
     {
         reChargeSpliceBuffers(pool);
     }
@@ -539,7 +539,16 @@ sbuf_t *bufferpoolGetSpliceBuffer(buffer_pool_t *pool)
     return buf;
 }
 
-sbuf_t *bufferpoolGetBestFit(buffer_pool_t *pool, uint32_t minimum_payload, uint16_t minimum_left_padding)
+typedef enum buffer_pool_tier_e
+{
+    kBufferPoolTierSmall,
+    kBufferPoolTierMedium,
+    kBufferPoolTierLarge,
+    kBufferPoolTierDedicated
+} buffer_pool_tier_t;
+
+static buffer_pool_tier_t bufferpoolSelectBestFit(const buffer_pool_t *pool, uint64_t minimum_payload,
+                                                  uint16_t minimum_left_padding)
 {
     assert(pool != NULL);
     const bool small_fits =
@@ -550,11 +559,61 @@ sbuf_t *bufferpoolGetBestFit(buffer_pool_t *pool, uint32_t minimum_payload, uint
         minimum_payload <= pool->large_buffers_size && minimum_left_padding <= pool->large_buffer_left_padding;
     if (small_fits && (! medium_fits || pool->small_buffers_size <= pool->medium_buffers_size) &&
         (! large_fits || pool->small_buffers_size <= pool->large_buffers_size))
-        return bufferpoolGetSmallBuffer(pool);
+        return kBufferPoolTierSmall;
     if (medium_fits && (! large_fits || pool->medium_buffers_size <= pool->large_buffers_size))
-        return bufferpoolGetMediumBuffer(pool);
+        return kBufferPoolTierMedium;
     if (large_fits)
+        return kBufferPoolTierLarge;
+    return kBufferPoolTierDedicated;
+}
+
+bool bufferpoolQueryBestFit(const buffer_pool_t *pool, uint64_t minimum_payload, uint16_t minimum_left_padding,
+                            buffer_pool_fit_t *fit)
+{
+    const buffer_pool_tier_t tier    = bufferpoolSelectBestFit(pool, minimum_payload, minimum_left_padding);
+    uint64_t                 payload = minimum_payload;
+    uint16_t                 padding = minimum_left_padding;
+    switch (tier)
+    {
+    case kBufferPoolTierSmall:
+        payload = pool->small_buffers_size;
+        padding = pool->small_buffer_left_padding;
+        break;
+    case kBufferPoolTierMedium:
+        payload = pool->medium_buffers_size;
+        padding = pool->medium_buffer_left_padding;
+        break;
+    case kBufferPoolTierLarge:
+        payload = pool->large_buffers_size;
+        padding = pool->large_buffer_left_padding;
+        break;
+    case kBufferPoolTierDedicated:
+        break;
+    }
+    uint32_t capacity;
+    if (! sbufTryComputeCapacity(payload, padding, &capacity))
+        return false;
+    padding = sbufAlignLeftPadding(padding);
+    *fit    = (buffer_pool_fit_t) {.allocation_charge = sizeof(sbuf_t) + (size_t) capacity + kSbufAllocationAlignment,
+                                   .payload_capacity  = capacity - padding,
+                                   .left_padding      = padding,
+                                   .pooled            = tier != kBufferPoolTierDedicated};
+    return true;
+}
+
+sbuf_t *bufferpoolGetBestFit(buffer_pool_t *pool, uint32_t minimum_payload, uint16_t minimum_left_padding)
+{
+    switch (bufferpoolSelectBestFit(pool, minimum_payload, minimum_left_padding))
+    {
+    case kBufferPoolTierSmall:
+        return bufferpoolGetSmallBuffer(pool);
+    case kBufferPoolTierMedium:
+        return bufferpoolGetMediumBuffer(pool);
+    case kBufferPoolTierLarge:
         return bufferpoolGetLargeBuffer(pool);
+    case kBufferPoolTierDedicated:
+        break;
+    }
     bufferpoolDebugCheckThreadAccess(pool);
 #if BUFFER_POOL_DEBUG == 1 && BYPASS_BUFFERPOOL != 1
     pool->in_use += 1;
@@ -576,7 +635,7 @@ void bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *b)
     assert(pool != NULL && b != NULL);
     bufferpoolDebugCheckThreadAccess(pool);
 
-    const bool is_splice = (b->flags & kSbufFlagSplice) != 0;
+    const bool is_splice = sbufIsSplice(b);
     if (is_splice)
     {
         sbufSpliceDiscard(b);
@@ -597,7 +656,7 @@ void bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *b)
 #if BUFFER_POOL_DEBUG == 1
     pool->in_use -= 1;
 #endif
-    if (b->flags & kSbufFlagSplice)
+    if (is_splice)
     {
         // A splice wrapper reports logical capacity; restore its actual allocation geometry before reset.
         b->capacity = (uint32_t) b->l_pad + SPLICE_BUFFER_STORAGE_SIZE;

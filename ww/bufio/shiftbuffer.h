@@ -92,6 +92,12 @@ static_assert(SIZEOF_STRUCT_SBUF == 32, "sbuf_s size should be 32 bytes, buf arr
 static_assert(_Alignof(sbuf_t) == 32, "sbuf_s alignment should be 32 bytes");
 static_assert(offsetof(sbuf_t, buf) == 32, "sbuf_s buf array should start at offset 32");
 
+/** Whether this valid buffer currently uses the splice representation. */
+static inline bool sbufIsSplice(const sbuf_t *buf)
+{
+    return (buf->flags & kSbufFlagSplice) != 0;
+}
+
 enum
 {
     // Alignment sbuf allocation requests so AVX copies can use aligned
@@ -253,6 +259,14 @@ void sbufDestroy(sbuf_t *b);
  * Valid allocated-buffer geometry is required. O(1), without allocation or syscalls.
  */
 size_t sbufGetAllocationCharge(const sbuf_t *buf);
+
+/** Queue policy: sbuf header + capacity (including padding) + allocation alignment.
+ * Ordinary capacity is resident storage; splice capacity is logical geometry.
+ * This is not a bound on kernel resources or physical memory. Checked forms leave
+ * the result unchanged on overflow; the internal getter requires representability. */
+bool   sbufTryComputeQueueCharge(uint32_t capacity, size_t *charge);
+bool   sbufTryGetQueueCharge(const sbuf_t *buf, size_t *charge);
+size_t sbufGetQueueCharge(const sbuf_t *buf);
 
 /* Attach/detach the one optional lifetime reference owned by a buffer. */
 void             sbufAttachLifetime(sbuf_t *b, sbuf_lifetime_t *lifetime);

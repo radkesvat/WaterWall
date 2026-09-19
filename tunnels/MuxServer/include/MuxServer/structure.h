@@ -2,6 +2,7 @@
 
 #include "MuxCommon/mux_limits.h"
 #include "MuxCommon/mux_parent_output.h"
+#include "MuxCommon/mux_retention.h"
 #include "MuxCommon/mux_wire.h"
 #include "local_widle_table.h"
 #include "loggers/log_rate_limiter.h"
@@ -48,6 +49,9 @@ typedef struct muxserver_rejection_bucket_s
 typedef struct muxserver_parent_state_s
 {
     mux_parent_output_t          output;
+    unsigned                     receive_depth;     // Defer aggregate enforcement until complete frames drain.
+    bool                         receive_enforcing; // Close callbacks may re-enter parser/admission.
+    splice_stream_t             *read_stream;
     muxserver_child_map_t        child_map;
     muxserver_rejection_bucket_t rejection_bucket;
 } muxserver_parent_state_t;
@@ -100,9 +104,8 @@ struct muxserver_lstate_s
     struct muxserver_lstate_s *child_next;         // next child in the parent connection
     struct muxserver_lstate_s *detached_prev;      // child-only detached owner registry link
     struct muxserver_lstate_s *detached_next;      // child-only detached owner registry link
-    buffer_stream_t            read_stream;        // encoded parent bytes; parse exact MUX frames after coalescing
     buffer_queue_t             pending_child_data; // decoded frames kept separate, including empty Data, while paused
-    size_t    pending_child_queue_charge; // child: own retained allocation charge; parent: attached-child aggregate
+    size_t    pending_child_queue_charge; // child: own retained resource charge; parent: attached-child aggregate
     mux_cid_t connection_id;              // unique connection id, used for multiplexing
     muxserver_child_close_state_t close_state; // child: monotonic ordered-close/drain state
     uint32_t children_count; // number of children in the parent connection, used for concurrency mode counter
@@ -146,7 +149,6 @@ enum
     kLineStateSize                        = sizeof(muxserver_lstate_t),
     kConcurrencyModeTimer                 = kDvsFirstOption,
     kConcurrencyModeCounter               = kDvsSecondOption,
-    kMaxMainChannelBufferSize             = 1024 * 1024, // 1MB
     kMuxDefaultChildBufferLimit           = 24 * 1024 * 1024,
     kMuxDefaultChildBufferPauseTolerance  = 512 * 1024,
     kMuxDefaultChildBufferResumeThreshold = 256 * 1024,
@@ -241,3 +243,7 @@ muxserver_worker_state_t      *muxserverGetWorkerState(tunnel_t *t, line_t *line
 bool muxserverSendParentOutput(tunnel_t *t, line_t *parent_l, sbuf_t *buf, muxserver_lstate_t *publish_child,
                                uint8_t flag);
 void muxserverDrainParentOutput(tunnel_t *t, line_t *parent_l);
+
+void muxserverSendSpliceBatch(tunnel_t *t, line_t *parent_l, sbuf_t *input, muxserver_lstate_t *child);
+
+bool muxserverEnforceParentReceiveLimit(tunnel_t *t, line_t *parent_l);

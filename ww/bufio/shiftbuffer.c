@@ -14,10 +14,34 @@
 size_t sbufGetAllocationCharge(const sbuf_t *buf)
 {
     assert(buf != NULL);
-    const size_t storage = (buf->flags & kSbufFlagSplice)
-                               ? (size_t) sbufGetLeftPadding(buf) + SPLICE_BUFFER_STORAGE_SIZE
-                               : (size_t) sbufGetTotalCapacity(buf);
+    const size_t storage = sbufIsSplice(buf) ? (size_t) sbufGetLeftPadding(buf) + SPLICE_BUFFER_STORAGE_SIZE
+                                             : (size_t) sbufGetTotalCapacity(buf);
     return sizeof(sbuf_t) + storage + (size_t) kSbufAllocationAlignment;
+}
+
+bool sbufTryComputeQueueCharge(uint32_t capacity, size_t *charge)
+{
+    const size_t overhead = sizeof(sbuf_t) + (size_t) kSbufAllocationAlignment;
+    if ((uint64_t) capacity > SIZE_MAX - overhead)
+        return false;
+    *charge = overhead + (size_t) capacity;
+    return true;
+}
+
+bool sbufTryGetQueueCharge(const sbuf_t *buf, size_t *charge)
+{
+    return sbufTryComputeQueueCharge(sbufGetTotalCapacity(buf), charge);
+}
+
+size_t sbufGetQueueCharge(const sbuf_t *buf)
+{
+    size_t charge;
+    if (UNLIKELY(! sbufTryGetQueueCharge(buf, &charge)))
+    {
+        printError("sbuf: unrepresentable queue capacity charge");
+        abortProgramNow(1);
+    }
+    return charge;
 }
 
 uint16_t sbufAlignLeftPadding(uint16_t pad_left)
@@ -35,7 +59,7 @@ uint16_t sbufAlignLeftPadding(uint16_t pad_left)
 
 void sbufDestroy(sbuf_t *b)
 {
-    if (b->flags & kSbufFlagSplice)
+    if (sbufIsSplice(b))
     {
         sbufDestroySplice(b);
         return;
@@ -47,7 +71,7 @@ void sbufDestroy(sbuf_t *b)
 void sbufAttachLifetime(sbuf_t *b, sbuf_lifetime_t *lifetime)
 {
     assert(b != NULL);
-    assert((b->flags & kSbufFlagSplice) == 0);
+    assert(! sbufIsSplice(b));
     assert(b->lifetime == NULL);
     b->lifetime = lifetime;
 }
@@ -254,7 +278,7 @@ int sbufSpliceInitPipe(sbuf_t *buf, uint32_t preferred_capacity)
     if (metadata.pipefd[0] < 0)
     {
         int pair[2];
-        if (pipe2(pair, O_NONBLOCK | O_CLOEXEC) != 0)
+        if (UNLIKELY(pipe2(pair, O_NONBLOCK | O_CLOEXEC) != 0))
         {
             return -1;
         }
@@ -308,7 +332,7 @@ void sbufSpliceClosePipe(sbuf_t *buf)
 
 void sbufSpliceDiscard(sbuf_t *buf)
 {
-    assert(buf->flags & kSbufFlagSplice);
+    assert(sbufIsSplice(buf));
     assert(sbufGetLifetime(buf) == NULL);
     if (buf->len == 0)
     {
@@ -324,7 +348,7 @@ void sbufSpliceDiscard(sbuf_t *buf)
             ssize_t consumed = read(metadata.pipefd[0], scratch, sizeof(scratch));
             if (consumed > 0)
                 continue;
-            if (consumed < 0 && errno == EINTR)
+            if (UNLIKELY(consumed < 0 && errno == EINTR))
                 continue;
             if (consumed < 0 && errno == EAGAIN)
                 break;

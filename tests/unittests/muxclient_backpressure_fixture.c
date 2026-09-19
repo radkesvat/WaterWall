@@ -64,9 +64,9 @@ void mxbMuxClientInitializeLines(mxb_fixture_t *fixture)
 {
     muxclient_lstate_t *parent_ls = lineGetState(fixture->parent, fixture->mux);
     muxclient_lstate_t *child_ls  = lineGetState(fixture->child, fixture->mux);
-    muxclientLinestateInitialize(parent_ls, fixture->parent, false, 0);
+    muxclientLinestateInitialize(fixture->mux, parent_ls, fixture->parent, false, 0);
     muxclientRegisterParent(tunnelGetState(fixture->mux), parent_ls);
-    muxclientLinestateInitialize(child_ls, fixture->child, true, kMxbClientCid);
+    muxclientLinestateInitialize(fixture->mux, child_ls, fixture->child, true, kMxbClientCid);
     child_ls->open_frame_submitted = true;
     muxclientJoinConnection(parent_ls, child_ls);
     ((muxclient_tstate_t *) tunnelGetState(fixture->mux))->unsatisfied_lines[0] = fixture->parent;

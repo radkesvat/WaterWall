@@ -2,6 +2,7 @@
 
 #include "MuxCommon/mux_limits.h"
 #include "MuxCommon/mux_parent_output.h"
+#include "MuxCommon/mux_retention.h"
 #include "MuxCommon/mux_wire.h"
 #include "wwapi.h"
 
@@ -18,6 +19,9 @@ typedef struct muxclient_lstate_s muxclient_lstate_t;
 typedef struct muxclient_parent_state_s
 {
     mux_parent_output_t   output;
+    unsigned              receive_depth;     // Defer aggregate enforcement until complete frames drain.
+    bool                  receive_enforcing; // Close callbacks may re-enter parser/admission.
+    splice_stream_t      *read_stream;
     muxclient_child_map_t child_map;
     muxclient_lstate_t   *owner_prev;
     muxclient_lstate_t   *owner_next;
@@ -79,9 +83,8 @@ struct muxclient_lstate_s
     struct muxclient_lstate_s *parent;             // the parent  f is_child is true
     struct muxclient_lstate_s *child_prev;         // previous child in the parent connection
     struct muxclient_lstate_s *child_next;         // next child in the parent connection
-    buffer_stream_t            read_stream;        // encoded parent bytes; parse exact MUX frames after coalescing
     buffer_queue_t             pending_child_data; // decoded frames kept separate, including empty Data, while paused
-    size_t    pending_child_queue_charge; // child: own retained allocation charge; parent: attached-child aggregate
+    size_t    pending_child_queue_charge; // child: own retained resource charge; parent: attached-child aggregate
     uint64_t  creation_epoch;             // epoch of the connection creation, used for concurrency mode timer
     mux_cid_t connection_id;              // unique connection id, used for multiplexing
     muxclient_child_close_state_t close_state; // child: monotonic ordered-close/drain state
@@ -105,7 +108,6 @@ enum
     kConcurrencyModeTimer                 = kDvsFirstOption,
     kConcurrencyModeCounter               = kDvsSecondOption,
     kConcurrencyModeFixedConnectionsCount = kDvsThirdOption,
-    kMaxMainChannelBufferSize             = 1024 * 1024, // 1MB
     kMuxDefaultChildBufferLimit           = 24 * 1024 * 1024,
     kMuxDefaultChildBufferPauseTolerance  = 512 * 1024,
     kMuxDefaultChildBufferResumeThreshold = 256 * 1024,
@@ -133,7 +135,8 @@ void muxclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void muxclientTunnelDownStreamPause(tunnel_t *t, line_t *l);
 void muxclientTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
-void muxclientLinestateInitialize(muxclient_lstate_t *ls, line_t *l, bool is_child, mux_cid_t connection_id);
+void muxclientLinestateInitialize(tunnel_t *t, muxclient_lstate_t *ls, line_t *l, bool is_child,
+                                  mux_cid_t connection_id);
 void muxclientLinestateDestroy(muxclient_lstate_t *ls);
 
 bool    muxclientCheckConnectionIsExhausted(muxclient_tstate_t *ts, muxclient_lstate_t *ls);
@@ -200,3 +203,7 @@ void muxclientTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_c
 bool muxclientSendParentOutput(tunnel_t *t, line_t *parent_l, sbuf_t *buf, muxclient_lstate_t *publish_child,
                                uint8_t flag);
 void muxclientDrainParentOutput(tunnel_t *t, line_t *parent_l);
+
+void muxclientSendSpliceBatch(tunnel_t *t, line_t *parent_l, sbuf_t *input, muxclient_lstate_t *child);
+
+bool muxclientEnforceParentReceiveLimit(tunnel_t *t, line_t *parent_l);

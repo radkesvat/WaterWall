@@ -346,45 +346,6 @@ WW_EXPORT int              wioGetFD(const wio_t *io);
 WW_EXPORT int  wioEnableSplice(wio_t *io);
 WW_EXPORT void wioDisableSplice(wio_t *io);
 WW_EXPORT bool wioIsSpliceEnabled(const wio_t *io);
-/**
- * Consume a splice wrapper into caller-supplied ordinary storage and return dest.
- * Requires kSbufFlagSplice. Reads the body from the private pipe read end,
- * copying any real prefix before it. Preserves
- * the source cursor/remaining left headroom and total length; dest's allocation
- * capacity and original l_pad stay unchanged. Replaces dest's previous payload.
- * Insufficient storage for that cursor and complete payload, invalid flags, an
- * uninitialized selected pipe, EOF, or a read error other than EINTR before all
- * claimed bytes are read log with LOGF and abort in every build. Positive short
- * reads accumulate and EINTR retries. An empty body needs no read syscall.
- * Requires exclusive ownership of the wrapper and its private pipe.
- * Requires no lifetime metadata on buf, checked by a debug assertion. Destination
- * lifetime metadata remains caller-managed; this helper leaves it untouched.
- * Clears kSbufFlagSplice on dest and releases buf through bufferpoolReuseBuffer(),
- * retaining its empty private pipe for reuse. The caller must
- * own this pool's thread context and must not use buf after this call.
- * Unsupported builds log with LOGF and abort.
- */
-WW_EXPORT sbuf_t          *wioTransformSpliceBufferToRealBuffer(sbuf_t *buf, sbuf_t *dest, buffer_pool_t *pool);
-/**
- * Append exactly bytes from the front of a splice buffer to dest and return dest.
- * Requires kSbufFlagSplice on buf, an ordinary dest,
- * and no source lifetime metadata (debug assert). Zero bytes is a validated no-op.
- * Copies real prefix bytes first in payload order, reading the requested remainder
- * from the private pipe read end. Requires exclusive ownership of the wrapper.
- * Invalid flags, cursor/length bounds, insufficient source bytes or destination
- * append space, an uninitialized selected pipe, EOF, or a read error other than
- * EINTR before the requested bytes are read use LOGF and abort in every build.
- * Positive short reads accumulate and EINTR retries.
- * Source length decreases by bytes. Its cursor advances only across consumed
- * prefix bytes; logical capacity decreases by the body bytes read, keeping the
- * pipe metadata at buf + l_pad. Flags remain valid for the remainder.
- * Destination cursor, padding, flags, and lifetime metadata stay unchanged.
- * Both buffers remain caller-owned. The caller returns buf through bufferpoolReuseBuffer()
- * with its worker buffer pool when finished; recycling discards any remainder.
- * This helper never frees either buffer.
- * Unsupported builds abort.
- */
-WW_EXPORT sbuf_t          *wioPartialReadSpliceBuffer(sbuf_t *buf, sbuf_t *dest, uint32_t bytes);
 WW_EXPORT int              wioGetError(wio_t *io);
 WW_EXPORT int              wioGetEvents(wio_t *io);
 WW_EXPORT int              wioGetREvents(wio_t *io);

@@ -60,7 +60,6 @@ static bool processFrameForChild(tunnel_t *t, line_t *parent_l, mux_frame_t *fra
 
     case kMuxFlagData:
         // LOGD("MuxClient: DownStreamPayload: Data frame received, cid: %u", frame->cid);
-        sbufShiftRight(frame_buffer, kMuxFrameLength);
         if (child_ls->paused)
         {
             return muxclientQueueChildPayload(t, parent_l, ts, parent_ls, child_ls, frame_buffer);
@@ -79,13 +78,13 @@ static bool processFrameForChild(tunnel_t *t, line_t *parent_l, mux_frame_t *fra
     return true;
 }
 
-static bool isOverFlow(buffer_stream_t *read_stream)
+static bool isOverFlow(splice_stream_t *read_stream)
 {
-    if (bufferstreamGetBufLen(read_stream) > kMaxMainChannelBufferSize)
+    if (splicestreamLength(read_stream) > kMuxMaxBufferedFrameLength)
     {
         LOGW("MuxClient: DownStreamPayload: Read stream overflow, size: %zu, limit: %zu",
-             bufferstreamGetBufLen(read_stream),
-             kMaxMainChannelBufferSize);
+             splicestreamLength(read_stream),
+             (size_t) kMuxMaxBufferedFrameLength);
         return true;
     }
     return false;
@@ -96,30 +95,32 @@ static void handleOverFlow(tunnel_t *t, line_t *parent_l)
     muxclientHandleParentLoss(t, parent_l, true);
 }
 
-void muxclientTunnelDownStreamPayload(tunnel_t *t, line_t *parent_l, sbuf_t *buf)
+static void processParentPayload(tunnel_t *t, line_t *parent_l, sbuf_t *buf)
 {
-    muxclient_tstate_t *ts = tunnelGetState(t);
-    // Do not decode a neighbour's final flush into new child or flow-control work.
-    if (ts->worker_states[lineGetWID(parent_l)].quiescing)
-    {
-        lineReuseBuffer(parent_l, buf);
-        return;
-    }
+    muxclient_tstate_t *ts        = tunnelGetState(t);
     muxclient_lstate_t *parent_ls = lineGetState(parent_l, t);
 
-    if (parent_ls->parent_finishing)
+    // Parent storage may coalesce; exact frame reads below restore the wire boundaries, including empty Data.
+    if (! splicestreamPush(parent_ls->parent_state->read_stream, buf))
     {
-        lineReuseBuffer(parent_l, buf);
+        handleOverFlow(t, parent_l);
         return;
     }
 
-    // Parent storage may coalesce; exact frame reads below restore the wire boundaries, including empty Data.
-    bufferstreamPush(&(parent_ls->read_stream), buf);
-
-    while (true)
+    while (parent_ls->parent_state != NULL && ! parent_ls->parent_finishing &&
+           ! ts->worker_states[lineGetWID(parent_l)].quiescing)
     {
         mux_frame_t frame = {0};
-        if (! muxPeekCompleteFrame(&parent_ls->read_stream, &frame))
+        const mux_peek_result_t result = muxPeekCompleteFrame(parent_ls->parent_state->read_stream, &frame);
+        if (result == kMuxPeekInvalidLength)
+        {
+            LOGW("MuxClient: invalid frame payload length %u (maximum %u)",
+                 (unsigned int) frame.length,
+                 (unsigned int) kMuxMaxDataFrameLength);
+            muxclientHandleParentLoss(t, parent_l, true);
+            return;
+        }
+        if (result == kMuxPeekNeedMore)
         {
             break;
         }
@@ -127,9 +128,9 @@ void muxclientTunnelDownStreamPayload(tunnel_t *t, line_t *parent_l, sbuf_t *buf
         muxclient_lstate_t *child_ls = muxclientFindChildByConnectionId(parent_ls, frame.cid);
         const bool          retain   = frame.flags == kMuxFlagData && child_ls != NULL && child_ls->paused &&
                             child_ls->close_state == kMuxClientChildCloseOpen;
-        sbuf_t *frame_buffer =
-            retain ? muxReadFrameForQueue(&parent_ls->read_stream, &frame)
-                   : bufferstreamReadExact(&parent_ls->read_stream, (size_t) frame.length + kMuxFrameLength);
+        const bool forward_splice = frame.flags == kMuxFlagData && child_ls != NULL && ! child_ls->paused &&
+                                    child_ls->close_state == kMuxClientChildCloseOpen;
+        sbuf_t *frame_buffer = muxReadFrameBody(parent_ls->parent_state->read_stream, &frame, retain || forward_splice);
         if (! child_ls)
         {
             // LOGD("MuxClient: DownStreamPayload: No child line state found for cid: %u", frame.cid);
@@ -154,9 +155,32 @@ void muxclientTunnelDownStreamPayload(tunnel_t *t, line_t *parent_l, sbuf_t *buf
     }
 
     // Only the incomplete remainder counts toward the limit. A single batch may legally carry far more than
-    // kMaxMainChannelBufferSize bytes of complete frames, and those must be drained rather than judged an overflow.
-    if (isOverFlow(&(parent_ls->read_stream)))
+    // kMuxMaxBufferedFrameLength bytes of complete frames, and those must be drained rather than judged an overflow.
+    if (parent_ls->parent_state != NULL && isOverFlow(parent_ls->parent_state->read_stream))
     {
         handleOverFlow(t, parent_l);
+        return;
     }
+}
+
+void muxclientTunnelDownStreamPayload(tunnel_t *t, line_t *parent_l, sbuf_t *buf)
+{
+    muxclient_tstate_t *ts     = tunnelGetState(t);
+    muxclient_lstate_t *parent = lineGetState(parent_l, t);
+    if (ts->worker_states[lineGetWID(parent_l)].quiescing || parent->parent_finishing)
+    {
+        lineReuseBuffer(parent_l, buf);
+        return;
+    }
+    lineRef(parent_l);
+    ++parent->parent_state->receive_depth;
+    processParentPayload(t, parent_l, buf);
+    if (lineIsAlive(parent_l) && parent->parent_state != NULL && ! parent->parent_finishing)
+    {
+        assert(parent->parent_state->receive_depth != 0);
+        --parent->parent_state->receive_depth;
+        if (! ts->worker_states[lineGetWID(parent_l)].quiescing)
+            discard muxclientEnforceParentReceiveLimit(t, parent_l);
+    }
+    lineUnref(parent_l);
 }

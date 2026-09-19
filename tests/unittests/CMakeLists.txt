@@ -84,7 +84,8 @@ if(TARGET ww)
     add_waterwall_unit_test(waterwall.wio_fd_unit wio_fd_test "unit;event;fd;pipe;lifetime")
 
     add_executable(wio_fd_no_splice_test wio_fd_test.c ${CMAKE_SOURCE_DIR}/ww/event/wevent.c
-        ${CMAKE_SOURCE_DIR}/ww/event/nio.c ${CMAKE_SOURCE_DIR}/ww/bufio/shiftbuffer.c)
+        ${CMAKE_SOURCE_DIR}/ww/event/nio.c ${CMAKE_SOURCE_DIR}/ww/bufio/shiftbuffer.c
+        ${CMAKE_SOURCE_DIR}/ww/bufio/splice_buffer.c)
     target_compile_definitions(wio_fd_no_splice_test PRIVATE WW_HAVE_SPLICE=0)
     target_link_libraries(wio_fd_no_splice_test PRIVATE ww)
     add_dependencies(waterwall_unit_tests wio_fd_no_splice_test)
@@ -316,6 +317,9 @@ if(TARGET ww)
 
   add_executable(bufio_contract_test bufio_contract_test.c)
   target_link_libraries(bufio_contract_test PRIVATE ww)
+  if(LINUX)
+    target_link_options(bufio_contract_test PRIVATE "-Wl,--wrap=read" "-Wl,--wrap=splice")
+  endif()
   add_dependencies(waterwall_unit_tests bufio_contract_test)
 
   add_waterwall_unit_test(
@@ -323,6 +327,28 @@ if(TARGET ww)
     bufio_contract_test
     "unit;bufio;sbuf;buffer-stream;invariant"
   )
+
+  if(LINUX)
+    # Compile the actual stream and splice primitives with splice disabled.
+    # Linking only the normal ww objects would not exercise these code paths.
+    add_executable(bufio_contract_no_splice_test
+      bufio_contract_test.c
+      ${CMAKE_SOURCE_DIR}/ww/bufio/splice_stream.c
+      ${CMAKE_SOURCE_DIR}/ww/bufio/buffer_stream.c
+      ${CMAKE_SOURCE_DIR}/ww/bufio/splice_buffer.c
+      ${CMAKE_SOURCE_DIR}/ww/bufio/buffer_pool.c
+      ${CMAKE_SOURCE_DIR}/ww/bufio/shiftbuffer.c
+    )
+    target_compile_definitions(bufio_contract_no_splice_test PRIVATE WW_HAVE_SPLICE=0)
+    target_link_libraries(bufio_contract_no_splice_test PRIVATE ww)
+    add_dependencies(waterwall_unit_tests bufio_contract_no_splice_test)
+
+    add_waterwall_unit_test(
+      waterwall.bufio_contract_no_splice_unit
+      bufio_contract_no_splice_test
+      "unit;bufio;sbuf;buffer-stream;invariant;no-splice"
+    )
+  endif()
 
   add_executable(system_load_semantics_test system_load_semantics_test.c)
   target_link_libraries(system_load_semantics_test PRIVATE ww)
@@ -479,6 +505,8 @@ if(TARGET ww)
           "-Wl,--wrap=requestProgramShutdown"
           "-Wl,--wrap=bufferpoolGetLargeBuffer"
           "-Wl,--wrap=bufferpoolTryGetBestFit"
+          "-Wl,--wrap=bufferpoolGetBestFit"
+          "-Wl,--wrap=bufferpoolGetSpliceBuffer"
           "-Wl,--wrap=bufferpoolGetMediumBuffer"
           "-Wl,--wrap=bufferpoolGetSmallBuffer"
           "-Wl,--wrap=bufferpoolReuseBuffer"
@@ -1093,6 +1121,10 @@ if(TARGET ww)
         node_layer_validation_test.c
       )
       target_link_libraries(node_layer_validation_test PRIVATE ww)
+      if(TARGET MuxClient AND TARGET MuxServer AND TARGET TcpListener AND TARGET TcpConnector)
+        target_link_libraries(node_layer_validation_test PRIVATE MuxClient MuxServer TcpListener TcpConnector)
+        target_compile_definitions(node_layer_validation_test PRIVATE WW_TEST_REAL_TCP_MUX_NODES=1)
+      endif()
       add_dependencies(waterwall_unit_tests node_layer_validation_test)
 
       add_waterwall_unit_test(
@@ -1108,6 +1140,10 @@ if(TARGET ww)
       )
       target_compile_definitions(node_layer_validation_no_splice_test PRIVATE WW_HAVE_SPLICE=0)
       target_link_libraries(node_layer_validation_no_splice_test PRIVATE ww)
+      if(TARGET MuxClient AND TARGET MuxServer AND TARGET TcpListener AND TARGET TcpConnector)
+        target_link_libraries(node_layer_validation_no_splice_test PRIVATE MuxClient MuxServer TcpListener TcpConnector)
+        target_compile_definitions(node_layer_validation_no_splice_test PRIVATE WW_TEST_REAL_TCP_MUX_NODES=1)
+      endif()
       add_dependencies(waterwall_unit_tests node_layer_validation_no_splice_test)
 
       add_waterwall_unit_test(
@@ -1769,6 +1805,8 @@ if(UNIX)
     "-Wl,--wrap=requestProgramShutdown"
     "-Wl,--wrap=bufferpoolGetLargeBuffer"
     "-Wl,--wrap=bufferpoolTryGetBestFit"
+    "-Wl,--wrap=bufferpoolGetBestFit"
+    "-Wl,--wrap=bufferpoolGetSpliceBuffer"
     "-Wl,--wrap=bufferpoolGetMediumBuffer"
     "-Wl,--wrap=bufferpoolGetSmallBuffer"
     "-Wl,--wrap=bufferpoolReuseBuffer"
@@ -2153,6 +2191,8 @@ endif()
 # are therefore compiled into the test as well; the linker satisfies them from these objects and never pulls the
 # library members, so the buffer ledger sees every acquire and every recycle in every configuration.
 set(WATERWALL_LINE_FAILURE_WW_SOURCES
+  ${CMAKE_SOURCE_DIR}/ww/bufio/splice_stream.c
+  ${CMAKE_SOURCE_DIR}/ww/bufio/splice_buffer.c
   ${CMAKE_SOURCE_DIR}/ww/bufio/buffer_queue.c
   ${CMAKE_SOURCE_DIR}/ww/bufio/buffer_stream.c
 )
@@ -2162,6 +2202,8 @@ set(WATERWALL_LINE_FAILURE_WRAPS
   "-Wl,--wrap=requestProgramShutdown"
   "-Wl,--wrap=bufferpoolGetLargeBuffer"
   "-Wl,--wrap=bufferpoolTryGetBestFit"
+  "-Wl,--wrap=bufferpoolGetBestFit"
+  "-Wl,--wrap=bufferpoolGetSpliceBuffer"
   "-Wl,--wrap=bufferpoolGetMediumBuffer"
   "-Wl,--wrap=bufferpoolGetSmallBuffer"
   "-Wl,--wrap=bufferpoolReuseBuffer"
@@ -2946,6 +2988,10 @@ foreach(mux_side Client Server)
     target_link_options(${mux_test} PRIVATE
       ${WATERWALL_LINE_FAILURE_WRAPS}
       "-Wl,--wrap=memoryReAllocate"
+      "-Wl,--wrap=sbufConcat"
+      "-Wl,--wrap=sbufSpliceReadToBuffer"
+      "-Wl,--wrap=sbufReadRangeToMemory"
+      "-Wl,--wrap=sbufSpliceMaterializeToBuffer"
     )
     target_link_libraries(${mux_test} PRIVATE ww)
     add_dependencies(waterwall_unit_tests ${mux_test})

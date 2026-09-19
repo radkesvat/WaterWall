@@ -53,6 +53,27 @@
 #define pqStop               muxserverTunnelOnWorkerStop
 #endif
 
+/* sbufConcat may grow its first buffer. Its internal destruction is in the
+ * same translation unit as sbufDestroy, so --wrap=sbufDestroy cannot observe
+ * that call. Track the replacement at the public concat boundary instead. */
+sbuf_t *__real_sbufConcat(sbuf_t *root, const sbuf_t *buf);
+sbuf_t *__wrap_sbufConcat(sbuf_t *root, const sbuf_t *buf);
+
+sbuf_t *__wrap_sbufConcat(sbuf_t *root, const sbuf_t *buf)
+{
+    sbuf_t *result = __real_sbufConcat(root, buf);
+    if (result != root)
+    {
+        twfLedgerForget(g_twf_buffers.live, &g_twf_buffers.live_count, root);
+        twfLedgerForget(g_twf_buffers.recycled, &g_twf_buffers.recycled_count, root);
+        if (! twfLedgerContains(g_twf_buffers.live, g_twf_buffers.live_count, result))
+            twfTrackAcquired(result);
+    }
+    return result;
+}
+
+#include "mux_splice_retention_probe.h"
+
 static pq_fixture_t *pqFixture;
 static unsigned      pqPauses, pqResumes, pqDeliveries;
 static bool          pqTransportPaused;
@@ -595,7 +616,7 @@ static void caseChildCloseKeepsParentParsing(void)
     pqReceive(f.mux, f.parent_l, batch);
 
     twfRequire(lineIsAlive(f.parent_l) && ! lineIsAlive(f.child_l), "Pause did not close only its child");
-    twfRequire(bufferstreamGetBufLen(&parent->read_stream) == 0, "complete sibling frame remained stranded");
+    twfRequire(splicestreamLength(parent->parent_state->read_stream) == 0, "complete sibling frame remained stranded");
     twfRequire(pqChildDeliveries(&f) == 1 && f.trace.capture_len == 1 && f.capture[0] == 34,
                "sibling payload was not delivered immediately and intact");
     twfRequire(parent->pending_child_queue_charge == 0, "closed child's incoming queue charge was retained");
@@ -606,8 +627,691 @@ static void caseChildCloseKeepsParentParsing(void)
     fixtureTeardown(&f);
 }
 
+#if WW_HAVE_SPLICE
+#include "splice_buffer.h"
+#include <sys/ioctl.h>
+
+static unsigned pqSpliceParentDeliveries;
+static unsigned pqSpliceChildDeliveries;
+static int      pqExpectSpliceChild;
+static uint32_t pqExpectedChildLength;
+static int      pqExpectedPipe;
+
+static sbuf_t *pqSpliceBytes(pq_fixture_t *f, const uint8_t *bytes, uint32_t length)
+{
+    sbuf_t *buf = bufferpoolGetSpliceBuffer(f->env.pool);
+    twfRequire(buf != NULL, "failed to allocate private-pipe fixture");
+    const int fd     = sbufSpliceMetadata(buf).pipefd[1];
+    uint32_t  offset = 0;
+    while (offset < length)
+    {
+        ssize_t n = write(fd, bytes + offset, length - offset);
+        if (n < 0 && errno == EINTR)
+            continue;
+        twfRequire(n > 0, "private pipe could not hold the complete fixture payload");
+        offset += (uint32_t) n;
+    }
+    buf->capacity = buf->l_pad + length;
+    sbufSetLength(buf, length);
+    return buf;
+}
+
+static sbuf_t *pqSplicePattern(pq_fixture_t *f, uint32_t length)
+{
+    uint8_t bytes[128];
+    twfRequire(length <= sizeof(bytes), "splice pattern fixture is too large");
+    for (uint32_t i = 0; i < length; ++i)
+        bytes[i] = patternByte(i);
+    return pqSpliceBytes(f, bytes, length);
+}
+
+static int      pqParentPipeFDs[2];
+static unsigned pqParentPipeFDCount;
+
+static void pqSpliceParentSink(tunnel_t *t, line_t *l, sbuf_t *buf)
+{
+    if ((buf->flags & kSbufFlagSplice) != 0)
+    {
+        ++pqSpliceParentDeliveries;
+        twfRequire(pqParentPipeFDCount == 0 || pqSpliceParentDeliveries <= pqParentPipeFDCount,
+                   "parent emitted an unexpected private pipe");
+        const int expected = pqParentPipeFDCount == 0 ? pqExpectedPipe : pqParentPipeFDs[pqSpliceParentDeliveries - 1U];
+        twfRequire(sbufSpliceMetadata(buf).pipefd[0] == expected,
+                   "parent output replaced or reordered the original private pipe");
+        buf = muxMaterializeRetainedPayload(lineGetBufferPool(l), buf);
+    }
+    pqSink(t, l, buf);
+}
+
+static void pqSpliceChildSink(tunnel_t *t, line_t *l, sbuf_t *buf)
+{
+    discard t;
+    ++pqSpliceChildDeliveries;
+    const bool opaque = (buf->flags & kSbufFlagSplice) != 0;
+    twfRequire(pqExpectSpliceChild < 0 || opaque == (pqExpectSpliceChild != 0),
+               "decoded child representation violates its delivery contract");
+    if (opaque)
+    {
+        twfRequire(pqExpectedPipe < 0 || sbufSpliceMetadata(buf).pipefd[0] == pqExpectedPipe,
+                   "direct child delivery replaced the original private pipe");
+        buf = muxMaterializeRetainedPayload(lineGetBufferPool(l), buf);
+    }
+    twfRequire(sbufGetLength(buf) == pqExpectedChildLength, "decoded child frame length changed");
+    for (uint32_t i = 0; i < pqExpectedChildLength; ++i)
+        twfRequire(((const uint8_t *) sbufGetRawPtr(buf))[i] == patternByte(i),
+                   "decoded child payload differs from the pipe input");
+    lineReuseBuffer(l, buf);
+}
+
+static void pqSetSpliceSinks(pq_fixture_t *f)
+{
+    pqSpliceParentDeliveries = pqSpliceChildDeliveries = 0;
+    pqParentPipeFDCount                                = 0;
+    pqMaterializedBodyBytes                            = 0;
+    pqParentSink(f)->pqPayloadSlot                     = pqSpliceParentSink;
+#ifdef MUX_OUTPUT_CLIENT
+    f->prev->fnPayloadD                                                     = pqSpliceChildSink;
+    ((pq_state_t *) lineGetState(f->child_l, f->mux))->open_frame_submitted = true;
+#else
+    f->next->fnPayloadU = pqSpliceChildSink;
+#endif
+}
+
+static void pqResumeDecodedChild(pq_fixture_t *f)
+{
+#ifdef MUX_OUTPUT_CLIENT
+    muxclientTunnelUpStreamResume(f->mux, f->child_l);
+#else
+    muxserverTunnelDownStreamResume(f->mux, f->child_l);
+#endif
+}
+
+/* Exercise the real node callbacks, not only the shared wire helpers. */
+static void caseSpliceDecodedFrames(bool paused, bool header_in_pipe, uint32_t length)
+{
+    twfSetCase("complete Mux frames preserve eligible pipes for forwarding and paused retention");
+    pq_fixture_t f;
+    pqSetup(&f);
+    pqSetSpliceSinks(&f);
+    pq_state_t *child  = lineGetState(f.child_l, f.mux);
+    pq_state_t *parent = lineGetState(f.parent_l, f.mux);
+    child->paused      = paused;
+    uint8_t wire[kMuxFrameLength + 64];
+    writeFrameHeader(wire, length, kMuxFlagData, kTestChildCid);
+    for (uint32_t i = 0; i < length; ++i)
+        wire[kMuxFrameLength + i] = patternByte(i);
+    sbuf_t *input = header_in_pipe ? pqSpliceBytes(&f, wire, kMuxFrameLength + length)
+                                   : pqSpliceBytes(&f, wire + kMuxFrameLength, length);
+    if (! header_in_pipe)
+    {
+        sbufShiftLeft(input, kMuxFrameLength);
+        sbufWrite(input, wire, kMuxFrameLength);
+    }
+    pqExpectedPipe        = sbufSpliceMetadata(input).pipefd[0];
+    pqExpectedChildLength = length;
+    pqExpectSpliceChild   = length != 0;
+    pqReceive(f.mux, f.parent_l, input);
+    /* For a paused frame only the eight-byte wire header, when originally in
+     * the pipe, may have been read. The body remains untouched until Resume. */
+    if (paused)
+        twfRequire(pqMaterializedBodyBytes == (header_in_pipe ? kMuxFrameLength : 0U),
+                   "eligible decoded retention materialized body bytes before Resume");
+    twfRequire((splicestreamLength(parent->parent_state->read_stream) == 0),
+               "complete frame remained in the carrier stream");
+    if (paused)
+    {
+        const sbuf_t *queued = bufferqueueFront(&child->pending_child_data);
+        twfRequire(pqSpliceChildDeliveries == 0 && queued != NULL &&
+                       ((queued->flags & kSbufFlagSplice) != 0) == (length != 0),
+                   "paused child violated retained representation or delivered through Pause");
+        const size_t cost = sbufGetQueueCharge(queued);
+        requireEqualCharge(
+            child->pending_child_queue_charge, cost, "paused splice frame omitted its queue-capacity charge");
+        requireEqualCharge(
+            parent->pending_child_queue_charge, cost, "attached-parent aggregate omitted queued splice capacity");
+
+        if (length != 0)
+            twfRequire(queued == input && sbufSpliceMetadata(queued).pipefd[0] == pqExpectedPipe,
+                       "paused frame did not retain its original wrapper and pipe");
+        int available = -1;
+        twfRequire(ioctl(pqExpectedPipe, FIONREAD, &available) == 0 && available == (int) length,
+                   "eligible queued frame consumed its private body before Resume");
+        pqResumeDecodedChild(&f);
+        twfRequire(child->pending_child_queue_charge == 0 && parent->pending_child_queue_charge == 0,
+                   "Resume did not settle child and parent queue charges");
+    }
+    twfRequire(pqSpliceChildDeliveries == 1, "Data was not delivered exactly once, including empty Data");
+    fixtureTeardown(&f);
+}
+
+static sbuf_t *pqTinyCarrierByte(pq_fixture_t *f, uint32_t index, bool splice_input)
+{
+    const uint8_t byte = patternByte(index);
+    if (splice_input)
+        return pqSpliceBytes(f, &byte, 1);
+    sbuf_t *buf = bufferpoolGetSmallBuffer(f->env.pool);
+    sbufSetLength(buf, 1);
+    sbufWriteUI8(buf, byte);
+    return buf;
+}
+
+static void caseSpliceManyIncompleteFragments(bool splice_input, bool complete, bool paused_child)
+{
+    twfSetCase("many tiny carrier fragments compact only at parent receive pressure");
+    pq_fixture_t f;
+    pqSetup(&f);
+    pqSetSpliceSinks(&f);
+    pq_state_t *parent                                           = lineGetState(f.parent_l, f.mux);
+    pq_state_t *child                                            = lineGetState(f.child_l, f.mux);
+    child->paused                                                = paused_child;
+    sbuf_t        *header                                        = bufferpoolGetSmallBuffer(f.env.pool);
+    const uint32_t payload_length                                = 160;
+    ((pq_tstate_t *) tunnelGetState(f.mux))->parent_buffer_limit = 8192;
+    twfRequire(payload_length <= kMuxMaxDataFrameLength, "tiny-carrier fixture exceeds one frame");
+    sbufSetLength(header, kMuxFrameLength);
+    writeFrameHeader(sbufGetMutablePtr(header), payload_length, kMuxFlagData, kTestChildCid);
+    pqExpectedChildLength = payload_length;
+    pqExpectSpliceChild   = -1;
+    pqExpectedPipe        = -1;
+    pqReceive(f.mux, f.parent_l, header);
+    for (uint32_t n = 1; n < payload_length; ++n)
+    {
+        pqReceive(f.mux, f.parent_l, pqTinyCarrierByte(&f, n - 1U, splice_input));
+        splice_stream_t *stream = parent->parent_state->read_stream;
+        twfRequire(splicestreamLength(stream) == kMuxFrameLength + n, "fragment retention changed carrier byte count");
+        twfRequire(pqSpliceChildDeliveries == 0 && child->pending_child_queue_charge == 0 &&
+                       parent->pending_child_queue_charge == 0,
+                   "incomplete frame was delivered or charged as a decoded child frame");
+
+        const size_t entries = bufferqueueGetBufCount(&stream->pending) + (stream->head != NULL);
+        twfRequire(entries <= n && splicestreamCharge(stream) < 8192,
+                   "incoming fragments exceeded the configured receive budget");
+    }
+    if (complete)
+    {
+        pqReceive(f.mux, f.parent_l, pqTinyCarrierByte(&f, payload_length - 1U, splice_input));
+        twfRequire((splicestreamLength(parent->parent_state->read_stream) == 0),
+                   "completed carrier frame remained retained");
+        if (paused_child)
+        {
+            twfRequire(pqSpliceChildDeliveries == 0 && bufferqueueGetBufCount(&child->pending_child_data) == 1,
+                       "completed fragmented frame crossed Pause or lost its boundary");
+            const sbuf_t *queued = bufferqueueFront(&child->pending_child_data);
+            requireEqualCharge(child->pending_child_queue_charge,
+                               sbufGetQueueCharge(queued),
+                               "completed paused frame charge does not match retained allocation");
+            pqResumeDecodedChild(&f);
+        }
+        twfRequire(pqSpliceChildDeliveries == 1 && child->pending_child_queue_charge == 0 &&
+                       parent->pending_child_queue_charge == 0,
+                   "completed frame did not deliver once and settle its charge");
+    }
+    /* Also exercise destruction before the declared frame is complete. */
+    fixtureTeardown(&f);
+}
+
+static void caseSpliceIncompleteCarrier(void)
+{
+    twfSetCase("incomplete splice headers and bodies retain bounded pipes between callbacks");
+    for (uint32_t split = 0; split <= 32; ++split)
+    {
+        pq_fixture_t f;
+        pqSetup(&f);
+        pqSetSpliceSinks(&f);
+        uint8_t wire[40];
+        writeFrameHeader(wire, 32, kMuxFlagData, kTestChildCid);
+        for (uint32_t i = 0; i < 32; ++i)
+            wire[kMuxFrameLength + i] = patternByte(i);
+        pqExpectedChildLength = 32;
+        pqExpectSpliceChild   = split == 0 || split == 8;
+        pqReceive(f.mux, f.parent_l, pqSpliceBytes(&f, wire, split));
+        pq_state_t *parent = lineGetState(f.parent_l, f.mux);
+        twfRequire(pqSpliceChildDeliveries == 0 && parent->parent_state->read_stream->total == split,
+                   "incomplete carrier was consumed as a complete frame");
+
+        sbuf_t *rest        = pqSpliceBytes(&f, wire + split, sizeof(wire) - split);
+        pqExpectedPipe      = split <= 8 ? sbufSpliceMetadata(rest).pipefd[0] : -1;
+        pqExpectSpliceChild = true;
+        pqReceive(f.mux, f.parent_l, rest);
+        twfRequire(pqSpliceChildDeliveries == 1 && parent->parent_state->read_stream->total == 0,
+                   "fragmented splice frame failed to finish in FIFO order");
+        fixtureTeardown(&f);
+    }
+}
+
+static void caseSpliceParentOutput(bool paused)
+{
+    twfSetCase("splice parent output obeys Pause, control ordering and queue-capacity limits");
+    pq_fixture_t f;
+    pqSetup(&f);
+    pqSetSpliceSinks(&f);
+#ifdef MUX_OUTPUT_CLIENT
+    ((pq_state_t *) lineGetState(f.child_l, f.mux))->open_frame_submitted = false;
+#endif
+    if (paused)
+        pqParentPause(&f);
+    sbuf_t *input       = pqSplicePattern(&f, 32);
+    pqExpectedPipe      = sbufSpliceMetadata(input).pipefd[0];
+    pqParentPipeFDs[0]  = pqExpectedPipe;
+    pqParentPipeFDCount = 1;
+    pqSend(f.mux, f.child_l, input);
+    if (paused)
+    {
+        const sbuf_t *retained = bufferqueueFront(&pqOutput(&f)->pending);
+        twfRequire(retained == input && (retained->flags & kSbufFlagSplice) != 0 && pqDeliveries == 0,
+                   "parent failed to retain its original pipe or wrote through Pause");
+        const size_t cost = sbufGetQueueCharge(retained);
+        requireEqualCharge(
+            pqOutput(&f)->charge, cost, "parent splice output omitted logical capacity from queue charge");
+        twfRequire(pqMaterializedBodyBytes == 0, "paused parent materialized its body");
+        int available = -1;
+        twfRequire(ioctl(pqExpectedPipe, FIONREAD, &available) == 0 && available == 32,
+                   "queued parent body was consumed before Resume");
+        pq_state_t *parent = lineGetState(f.parent_l, f.mux);
+        twfRequire(pqControl(f.mux, f.parent_l, parent, f.child_l, kTestChildCid, kMuxFlagFlowPause),
+                   "interleaved control could not enter paused output");
+        sbuf_t *second      = pqSplicePattern(&f, 17);
+        pqParentPipeFDs[1]  = sbufSpliceMetadata(second).pipefd[0];
+        pqParentPipeFDCount = 2;
+        pqSend(f.mux, f.child_l, second);
+        twfRequire(pqMaterializedBodyBytes == 0,
+                   "interleaved control consumed a queued body or changed queue accounting");
+        twfRequire(ioctl(pqParentPipeFDs[1], FIONREAD, &available) == 0 && available == 17,
+                   "second queued parent body was consumed before Resume");
+        pqPauseAt = 1;
+        pqParentResume(&f);
+        twfRequire(pqDeliveries == 1 && pqOutput(&f)->charge != 0,
+                   "Pause during pipe drain lost residual ownership or allowed another Payload");
+        pqPauseAt = 0;
+        pqParentResume(&f);
+        twfRequire(pqOutput(&f)->charge == 0 && pqSpliceParentDeliveries == 2,
+                   "queued output did not drain and settle its retained pipes");
+    }
+    else
+        twfRequire(pqSpliceParentDeliveries == 1, "writable output unnecessarily materialized a fitting pipe body");
+    frame_view_t frames[5];
+    uint32_t     n = parseFrames(f.capture, f.trace.capture_len, frames, 5);
+#ifdef MUX_OUTPUT_CLIENT
+    twfRequire(frames[0].flags == kMuxFlagOpen, "splice first output lost Open-before-Data");
+    const uint32_t first = 1;
+#else
+    const uint32_t first = 0;
+#endif
+    twfRequire(n == first + (paused ? 3U : 1U) && frames[first].length == 32,
+               "splice parent encoding changed frame boundaries");
+    for (uint32_t i = 0; i < 32; ++i)
+        twfRequire(frames[first].data[i] == patternByte(i), "splice parent output changed bytes");
+    if (paused)
+        twfRequire(frames[first + 1].flags == kMuxFlagFlowPause && frames[first + 2].length == 17,
+                   "parent control overtook or interrupted retained Data");
+    fixtureTeardown(&f);
+}
+
+static void caseSpliceParentRefusal(void)
+{
+    twfSetCase("queue refusal settles the owned splice candidate and closes only its parent");
+    pq_fixture_t f;
+    pqSetup(&f);
+    pqSetSpliceSinks(&f);
+    pqParentPause(&f);
+    lineRef(f.parent_l);
+    lineRef(f.child_l);
+    sbuf_t   *input                  = pqSplicePattern(&f, 32);
+    const int fd                     = sbufSpliceMetadata(input).pipefd[0];
+    g_reject_next_queue_reallocation = true;
+    pqSend(f.mux, f.child_l, input);
+    twfRequire(! g_reject_next_queue_reallocation, "splice queue refusal seam was not reached");
+    twfRequireLineStateZeroed(f.parent_l, f.mux, "splice refusal left parent state retained");
+    twfRequireLineStateZeroed(f.child_l, f.mux, "splice refusal left child state retained");
+    int available = -1;
+    twfRequire(ioctl(fd, FIONREAD, &available) == 0 && available == 0,
+               "splice refusal failed to drain the original private pipe");
+#ifdef MUX_OUTPUT_CLIENT
+    twfRequire(! lineIsAlive(f.parent_l), "splice refusal left owned parent alive");
+    lineUnref(f.parent_l);
+    f.parent_l = NULL;
+    lineUnref(f.child_l);
+#else
+    twfRequire(! lineIsAlive(f.child_l), "splice refusal left owned child alive");
+    lineUnref(f.child_l);
+    f.child_l = NULL;
+    lineUnref(f.parent_l);
+#endif
+    twfRequireNoLeakedBuffers();
+    fixtureTeardown(&f);
+}
+#endif
+
+#if WW_HAVE_SPLICE
+/* Exercise real admission and drain/discard/detach after enabling bounded
+ * retention. Ordinary and incomplete-carrier regressions remain independent. */
+
+static void pqAccountingChildSink(tunnel_t *t, line_t *l, sbuf_t *buf)
+{
+    pq_state_t *child = lineGetState(l, pqFixture->mux);
+    twfRequire(child->pending_child_queue_charge == 0, "popped child charge was not released before callback");
+    pqSpliceChildSink(t, l, buf);
+}
+
+static void caseAccountedSpliceLifecycle(unsigned detach, bool discard_queue)
+{
+    twfSetCase("accounted child pipes settle through attached/detached drain and discard");
+    pq_fixture_t f;
+    pqSetup(&f);
+    pqSetSpliceSinks(&f);
+#ifdef MUX_OUTPUT_CLIENT
+    f.prev->fnPayloadD = pqAccountingChildSink;
+#else
+    f.next->fnPayloadU = pqAccountingChildSink;
+#endif
+    pq_state_t *child  = lineGetState(f.child_l, f.mux);
+    pq_state_t *parent = lineGetState(f.parent_l, f.mux);
+
+    child->paused         = true;
+    sbuf_t *buf           = pqSplicePattern(&f, 32);
+    pqExpectedPipe        = sbufSpliceMetadata(buf).pipefd[0];
+    pqExpectedChildLength = 32;
+    pqExpectSpliceChild   = true;
+    const size_t cost     = sbufGetQueueCharge(buf);
+
+    pq_tstate_t *ts_admission = tunnelGetState(f.mux);
+    twfRequire(pqQueue(f.mux, f.parent_l, ts_admission, parent, child, buf),
+               "real child admission rejected a within-budget pipe");
+    twfRequire(bufferqueueFront(&child->pending_child_data) == buf && child->pending_child_queue_charge == cost &&
+                   parent->pending_child_queue_charge == cost && pqMaterializedBodyBytes == 0,
+               "real admission replaced a pipe, read its body, or published incorrect resource counters");
+
+    lineRef(f.child_l);
+    if (detach)
+    {
+        lineRef(f.parent_l);
+        if (detach == 2)
+        {
+            uint8_t invalid[kMuxFrameLength];
+            writeFrameHeader(invalid, kMuxMaxDataFrameLength + 1U, kMuxFlagData, kTestChildCid);
+            pqReceive(f.mux, f.parent_l, pqSpliceBytes(&f, invalid, sizeof(invalid)));
+        }
+        else
+            pqLoss(f.mux, f.parent_l, false);
+        twfRequireLineStateZeroed(f.parent_l, f.mux, "parent loss retained its own state");
+#ifdef MUX_OUTPUT_CLIENT
+        twfRequire(! lineIsAlive(f.parent_l), "parent loss did not destroy the owned client parent");
+#endif
+        lineUnref(f.parent_l);
+#ifdef MUX_OUTPUT_CLIENT
+        f.parent_l = NULL;
+#endif
+        twfRequire(child->parent == NULL && child->pending_child_queue_charge == cost,
+                   "detaching a child released or duplicated its retained queue charge");
+#ifdef MUX_OUTPUT_CLIENT
+        pq_tstate_t *ts = tunnelGetState(f.mux);
+        twfRequire(ts->detached_queued_charge[lineGetWID(f.child_l)] == cost,
+                   "client detached queue charge omitted logical splice capacity");
+#else
+        twfRequire(muxserverGetDetachedRegistry(f.mux, f.child_l)->queued_charge == cost,
+                   "server detached queue charge omitted logical splice capacity");
+#endif
+    }
+    int available = -1;
+    twfRequire(ioctl(pqExpectedPipe, FIONREAD, &available) == 0 && available == 32 && pqSpliceChildDeliveries == 0,
+               "queued child pipe was materialized or delivered before Resume");
+    if (discard_queue)
+        pqFinish(f.mux, f.child_l);
+    else
+        pqResumeDecodedChild(&f);
+
+    twfRequire(pqSpliceChildDeliveries == (discard_queue ? 0U : 1U),
+               "child settlement delivered the wrong number of frames");
+#ifndef MUX_OUTPUT_CLIENT
+    const bool child_dead = ! lineIsAlive(f.child_l);
+#endif
+    twfRequire(child->pending_child_queue_charge == 0, "child cleanup retained queue capacity charge");
+    lineUnref(f.child_l);
+#ifndef MUX_OUTPUT_CLIENT
+    if (child_dead)
+        f.child_l = NULL;
+#endif
+    fixtureTeardown(&f);
+}
+
+static void caseAccountedSpliceReservationFailure(void)
+{
+    twfSetCase("transactional parent reservation failure publishes no pipe cost and consumes no body");
+    pq_fixture_t f;
+    pqSetup(&f);
+    mux_parent_output_t output = {0};
+    bufferqueueInitEmpty(&output.pending);
+
+    sbuf_t   *buf                    = pqSplicePattern(&f, 32);
+    sbuf_t   *original               = buf;
+    const int fd                     = sbufSpliceMetadata(buf).pipefd[0];
+    g_reject_next_queue_reallocation = true;
+    twfRequire(! muxParentOutputEnqueue(&output, &buf, SIZE_MAX), "refused reservation admitted a pipe");
+    int available = -1;
+    twfRequire(! g_reject_next_queue_reallocation && buf == original && output.charge == 0 &&
+                   bufferqueueGetBufCount(&output.pending) == 0 && ioctl(fd, FIONREAD, &available) == 0 &&
+                   available == 32,
+               "failed parent admission changed candidate ownership, body, or resource counters");
+    lineReuseBuffer(f.child_l, buf);
+    muxParentOutputDestroy(&output, f.env.pool);
+    fixtureTeardown(&f);
+}
+#endif
+
+#if WW_HAVE_SPLICE
+static bool pqHaveMaximumPipe(pq_fixture_t *f)
+{
+    sbuf_t    *pipe      = bufferpoolGetSpliceBuffer(f->env.pool);
+    const bool available = pipe != NULL && sbufSpliceMetadata(pipe).pipe_capacity >= kMuxMaxDataFrameLength;
+    if (pipe != NULL)
+        bufferpoolReuseBuffer(f->env.pool, pipe);
+    if (! available)
+        fprintf(stderr, "SKIP: maximum Mux splice wrapper/batch requires a real 1048576-byte pipe\n");
+    return available;
+}
+
+static void pqMaximumFittingSink(tunnel_t *t, line_t *l, sbuf_t *buf)
+{
+    twfRequire(pqMaterializedBodyBytes == 0 && (buf->flags & kSbufFlagSplice) != 0,
+               "fitting maximum splice path materialized the body before delivery");
+    pqSpliceParentSink(t, l, buf); // Sink verification reads are intentionally excluded above.
+}
+
+static void caseMaximumFittingSplice(void)
+{
+    twfSetCase("a maximum fitting splice body stays in its original wrapper without materialization");
+    pq_fixture_t f;
+    pqSetup(&f);
+    if (! pqHaveMaximumPipe(&f))
+    {
+        fixtureTeardown(&f);
+        return;
+    }
+    f.capture                = memoryReAllocate(f.capture, kMuxMaxBufferedFrameLength);
+    f.trace.capture          = f.capture;
+    f.trace.capture_capacity = kMuxMaxBufferedFrameLength;
+    pqSetSpliceSinks(&f);
+    pqParentSink(&f)->pqPayloadSlot = pqMaximumFittingSink;
+    uint8_t *bytes                  = memoryAllocate(kMuxMaxDataFrameLength);
+    for (uint32_t i = 0; i < kMuxMaxDataFrameLength; ++i)
+        bytes[i] = patternByte(i);
+    sbuf_t *input  = pqSpliceBytes(&f, bytes, kMuxMaxDataFrameLength);
+    pqExpectedPipe = sbufSpliceMetadata(input).pipefd[0];
+    pqSend(f.mux, f.child_l, input);
+    frame_view_t frame[1];
+    twfRequire(pqDeliveries == 1 && parseFrames(f.capture, f.trace.capture_len, frame, 1) == 1 &&
+                   frame[0].length == kMuxMaxDataFrameLength &&
+                   memcmp(frame[0].data, bytes, kMuxMaxDataFrameLength) == 0,
+               "maximum fitting splice frame was split or corrupted");
+    memoryFree(bytes);
+    fixtureTeardown(&f);
+}
+#endif
+
+#include "mux_bounded_retention_cases.h"
+#include "mux_splice_batch_cases.h"
+
+/* Boundary inputs use low-profile receive geometry and independent wire bytes. */
+static void pqReceiveBytes(pq_fixture_t *f, const uint8_t *bytes, uint32_t length)
+{
+    sbuf_t *input = bufferpoolGetBestFit(f->env.pool, length, bufferpoolGetLargeBufferPadding(f->env.pool));
+    memoryCopy(sbufGetMutablePtr(input), bytes, length);
+    sbufSetLength(input, length);
+    pqReceive(f->mux, f->parent_l, input);
+}
+
+static void caseFrameLengthFragmentation(uint32_t length, uint32_t first, bool byte_tail)
+{
+    twfSetCase("24-bit frame waits for its exact body including header accounting on low-profile pools");
+    g_pool_size = LARGE_BUFFER_SIZE_RAM_LOW;
+    pq_fixture_t f;
+    fixtureSetup(&f, length + 1U);
+    const uint32_t wire_length = kMuxFrameLength + length;
+    uint8_t       *wire        = memoryAllocate(wire_length);
+    writeFrameHeader(wire, length, kMuxFlagData, kTestChildCid);
+    for (uint32_t i = 0; i < length; ++i)
+        wire[kMuxFrameLength + i] = patternByte(i);
+    pqReceiveBytes(&f, wire, first);
+    pq_state_t *parent = lineGetState(f.parent_l, f.mux);
+    twfRequire(lineIsAlive(f.parent_l) && parent->parent_state != NULL && pqChildDeliveries(&f) == 0,
+               "valid incomplete maximum frame closed or delivered early");
+    for (uint32_t offset = first; offset < wire_length;)
+    {
+        const uint32_t count = byte_tail ? 1U : wire_length - offset;
+        pqReceiveBytes(&f, wire + offset, count);
+        offset += count;
+        if (offset < wire_length)
+            twfRequire(parent->parent_state != NULL && pqChildDeliveries(&f) == 0 &&
+                           splicestreamLength(parent->parent_state->read_stream) == offset,
+                       "header bytes incorrectly triggered incomplete-frame overflow");
+    }
+    twfRequire(pqChildDeliveries(&f) == 1 && f.trace.capture_len == length &&
+                   splicestreamLength(parent->parent_state->read_stream) == 0,
+               "completed boundary frame was not delivered exactly once");
+    for (uint32_t i = 0; i < length; ++i)
+        twfRequire(f.capture[i] == patternByte(i), "fragmented maximum body changed bytes");
+    memoryFree(wire);
+    fixtureTeardown(&f);
+    g_pool_size = kTestLargeBufferSize;
+}
+
+static void caseInvalidFrameLength(uint32_t length, uint8_t flag, bool unknown_cid, bool suffix)
+{
+    twfSetCase("oversized declaration closes only its parent at header completion and discards suffix");
+    pq_fixture_t f;
+    fixtureSetup(&f, 64);
+    pq_tstate_t *ts = tunnelGetState(f.mux);
+    discard      ts;
+    /* A second independent parent must remain usable after malformed input. */
+    line_t     *other_parent = twfLinePoolCreateLine(&f.lines);
+    pq_state_t *other        = lineGetState(other_parent, f.mux);
+#ifdef MUX_OUTPUT_CLIENT
+    muxclientLinestateInitialize(f.mux, other, other_parent, false, 0);
+    muxclientRegisterParent(ts, other);
+#else
+    muxserverLinestateInitialize(f.mux, other, other_parent, false, 0);
+#endif
+    line_t *other_child                                       = pqSibling(&f, other, 99);
+    ((pq_state_t *) lineGetState(other_child, f.mux))->paused = false;
+    uint8_t wire[2 * kMuxFrameLength + 1];
+    writeFrameHeader(wire, length, flag, unknown_cid ? UINT32_MAX : kTestChildCid);
+    writeFrameHeader(wire + kMuxFrameLength, 1, kMuxFlagData, kTestChildCid);
+    wire[2 * kMuxFrameLength] = 0x5a;
+    lineRef(f.parent_l);
+    lineRef(f.child_l);
+    pqReceiveBytes(&f, wire, 7);
+    twfRequire(((pq_state_t *) lineGetState(f.parent_l, f.mux))->parent_state != NULL,
+               "partial malformed header closed before length could be decoded");
+#if WW_HAVE_SPLICE
+    if (suffix)
+        pqReceive(f.mux, f.parent_l, pqSpliceBytes(&f, wire + 7, sizeof(wire) - 7U));
+    else
+#endif
+        pqReceiveBytes(&f, wire + 7, suffix ? sizeof(wire) - 7U : 1U);
+    twfRequire(pqChildDeliveries(&f) == 0, "invalid frame or suffix reached a child");
+    twfRequireLineStateZeroed(f.parent_l, f.mux, "invalid length retained parent state");
+
+#ifdef MUX_OUTPUT_CLIENT
+    twfRequire(! lineIsAlive(f.parent_l) && f.trace.next_finish == 1, "invalid length did not destroy owned parent");
+    lineUnref(f.parent_l);
+    f.parent_l = NULL;
+    lineUnref(f.child_l);
+#else
+    twfRequire(f.trace.prev_finish == 1 && ! lineIsAlive(f.child_l), "invalid length did not close borrowed parent");
+    lineUnref(f.parent_l);
+    lineUnref(f.child_l);
+    f.child_l = NULL;
+#endif
+    line_t *saved_parent = f.parent_l;
+    f.parent_l           = other_parent;
+    writeFrameHeader(wire, 1, kMuxFlagData, 99);
+    wire[kMuxFrameLength] = 0x36;
+    pqReceiveBytes(&f, wire, kMuxFrameLength + 1);
+    twfRequire(pqChildDeliveries(&f) == 1 && f.capture[0] == 0x36, "malformed peer damaged independent parent");
+    pqDestroySibling(&f, other_child);
+#ifdef MUX_OUTPUT_CLIENT
+    muxclientUnregisterParent(ts, other);
+    muxclientLinestateDestroy(other);
+#else
+    muxserverLinestateDestroy(f.mux, other);
+#endif
+    lineDestroy(other_parent);
+    f.parent_l = saved_parent;
+    fixtureTeardown(&f);
+}
+
+static void runFrameLengthCases(void)
+{
+    const uint32_t lengths[] = {0, 1, 65527, 65535, 65536, kMuxMaxDataFrameLength - 1, kMuxMaxDataFrameLength};
+    for (size_t i = 0; i < ARRAY_SIZE(lengths); ++i)
+        for (uint32_t split = 1; split < kMuxFrameLength; ++split)
+            caseFrameLengthFragmentation(lengths[i], split, false);
+    caseFrameLengthFragmentation(kMuxMaxDataFrameLength, 65535, false);
+    caseFrameLengthFragmentation(kMuxMaxDataFrameLength, 65536, false);
+    caseFrameLengthFragmentation(kMuxMaxDataFrameLength, kMuxMaxBufferedFrameLength - 1U, false);
+    caseFrameLengthFragmentation(kMuxMaxDataFrameLength, kMuxMaxDataFrameLength, true);
+    const uint8_t flags[] = {kMuxFlagOpen, kMuxFlagClose, kMuxFlagFlowPause, kMuxFlagFlowResume, kMuxFlagData, 255};
+    for (size_t i = 0; i < ARRAY_SIZE(flags); ++i)
+        for (unsigned cid = 0; cid < 2; ++cid)
+            for (unsigned suffix = 0; suffix < 2; ++suffix)
+            {
+                caseInvalidFrameLength(kMuxMaxDataFrameLength + 1U, flags[i], cid != 0, suffix != 0);
+                caseInvalidFrameLength(0xffffff, flags[i], cid != 0, suffix != 0);
+            }
+}
+
+#include "mux_receive_limits_cases.h"
+
 static void runParentOutputCases(void)
 {
+    runReceiveLimitCases();
+    runFrameLengthCases();
+#if WW_HAVE_SPLICE
+    caseMaximumFittingSplice();
+    for (unsigned mode = 0; mode < 5; ++mode)
+        caseSpliceBatch(mode);
+    for (unsigned mode = 0; mode < 4; ++mode)
+        caseSpliceBatchAdmission(mode);
+    runBoundedSpliceRetentionCases();
+    for (unsigned detach = 0; detach < 3; ++detach)
+        for (unsigned discard_queue = 0; discard_queue < 2; ++discard_queue)
+            caseAccountedSpliceLifecycle(detach, discard_queue != 0);
+    caseAccountedSpliceReservationFailure();
+    for (unsigned input = 0; input < 2; ++input)
+        for (unsigned complete = 0; complete < 2; ++complete)
+            for (unsigned paused = 0; paused < 2; ++paused)
+                caseSpliceManyIncompleteFragments(input != 0, complete != 0, paused != 0);
+    caseSpliceParentOutput(false);
+    caseSpliceParentOutput(true);
+    caseSpliceParentRefusal();
+    caseSpliceIncompleteCarrier();
+    for (unsigned paused = 0; paused < 2; ++paused)
+        for (unsigned in_pipe = 0; in_pipe < 2; ++in_pipe)
+        {
+            caseSpliceDecodedFrames(paused != 0, in_pipe != 0, 0);
+            caseSpliceDecodedFrames(paused != 0, in_pipe != 0, 32);
+        }
+#endif
     caseChildCloseKeepsParentParsing();
     caseQueueLimitCloseCannotReenterChild();
     caseParentQueuedChildClose(false);

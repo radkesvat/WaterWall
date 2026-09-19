@@ -10,6 +10,70 @@ static void require(bool condition, const char *message)
     }
 }
 
+static void checkBestFitQuery(buffer_pool_t *pool, uint32_t bytes, uint16_t padding, uint32_t expected_capacity,
+                              uint16_t expected_padding, bool expected_pooled)
+{
+    uint32_t before[4], after[4];
+    bufferpoolCachedTierCountsForTest(pool, &before[0], &before[1], &before[2], &before[3]);
+    buffer_pool_fit_t fit;
+    require(bufferpoolQueryBestFit(pool, bytes, padding, &fit), "best-fit query rejected valid geometry");
+    bufferpoolCachedTierCountsForTest(pool, &after[0], &after[1], &after[2], &after[3]);
+    require(memoryEqual(before, after, sizeof(before)), "best-fit query changed pool caches");
+    require(fit.payload_capacity == expected_capacity && fit.left_padding == expected_padding &&
+                fit.pooled == expected_pooled,
+            "best-fit query selected the wrong geometry");
+
+    sbuf_t *buf = bufferpoolGetBestFit(pool, bytes, padding);
+    require(fit.payload_capacity == sbufGetTotalCapacityNoPadding(buf) && fit.left_padding == sbufGetLeftPadding(buf) &&
+                fit.allocation_charge == sbufGetAllocationCharge(buf),
+            "best-fit prediction disagrees with the actual allocation");
+    bufferpoolReuseBuffer(pool, buf);
+}
+
+static void testBestFitQuery(void)
+{
+    master_pool_t *masters[4];
+    for (size_t i = 0; i < ARRAY_SIZE(masters); ++i)
+        masters[i] = masterpoolCreateWithCapacity(8);
+    // Tier names need not follow capacity order for custom/device pools.
+    buffer_pool_t *pool = bufferpoolCreate(masters[0], masters[1], masters[2], masters[3], 2, 8192, 65536, 1024);
+    require(pool != NULL, "query test pool construction failed");
+    bufferpoolUpdateAllocationPaddings(pool, 64, 64, 32, 32);
+    checkBestFitQuery(pool, 0, 0, 1024, 32, true);
+    checkBestFitQuery(pool, 1024, 32, 1024, 32, true);
+    checkBestFitQuery(pool, 1025, 32, 8192, 64, true);
+    checkBestFitQuery(pool, 8193, 32, 65536, 64, true);
+    checkBestFitQuery(pool, 512, 33, 8192, 64, true);
+    checkBestFitQuery(pool, 512, 65, 512, 96, false);
+    checkBestFitQuery(pool, 65537, 1, 65536 + kCpuLineCacheSize, 32, false);
+
+    const buffer_pool_fit_t sentinel = {
+        .allocation_charge = 123, .payload_capacity = 456, .left_padding = 7, .pooled = true};
+    buffer_pool_fit_t fit = sentinel;
+    require(! bufferpoolQueryBestFit(pool, UINT64_MAX, 32, &fit) &&
+                ! bufferpoolQueryBestFit(pool, UINT32_MAX, 32, &fit) &&
+                ! bufferpoolQueryBestFit(pool, 0, UINT16_MAX, &fit),
+            "best-fit query accepted unrepresentable geometry");
+    require(fit.allocation_charge == sentinel.allocation_charge && fit.payload_capacity == sentinel.payload_capacity &&
+                fit.left_padding == sentinel.left_padding && fit.pooled == sentinel.pooled,
+            "failed best-fit query changed its output");
+    bufferpoolDestroy(pool);
+
+    // Equal capacities prefer small, then medium, then large, subject to padding.
+    pool = bufferpoolCreate(masters[0], masters[1], masters[2], masters[3], 2, 4096, 4096, 4096);
+    require(pool != NULL, "equal-tier query pool construction failed");
+    bufferpoolUpdateAllocationPaddings(pool, 96, 64, 32, 32);
+    checkBestFitQuery(pool, 4096, 0, 4096, 32, true);
+    checkBestFitQuery(pool, 4096, 33, 4096, 64, true);
+    checkBestFitQuery(pool, 4096, 65, 4096, 96, true);
+    bufferpoolDestroy(pool);
+    for (size_t i = 0; i < ARRAY_SIZE(masters); ++i)
+    {
+        masterpoolMakeEmpty(masters[i]);
+        masterpoolDestroy(masters[i]);
+    }
+}
+
 static void testMediumPoolGeometry(uint32_t large_size, uint32_t medium_size)
 {
     master_pool_t *masters[4];
@@ -19,6 +83,7 @@ static void testMediumPoolGeometry(uint32_t large_size, uint32_t medium_size)
         bufferpoolCreate(masters[0], masters[1], masters[2], masters[3], 2, large_size, medium_size, 4096);
     require(pool != NULL, "medium test pool construction failed");
     bufferpoolUpdateAllocationPaddings(pool, 32, 32, 32, 32);
+    checkBestFitQuery(pool, 4097, 32, medium_size, 32, true);
 
     sbuf_t *best = bufferpoolGetBestFit(pool, 4097, 32);
     require(sbufGetTotalCapacityNoPadding(best) == medium_size,
@@ -113,6 +178,7 @@ static void testLowProfilePoolWidths(void)
 
 int main(void)
 {
+    testBestFitQuery();
     testLowProfilePoolWidths();
     const uint32_t profiles[] = {kRamProfileS1Memory,
                                  kRamProfileS2Memory,

@@ -61,10 +61,10 @@ static system_memory_provider_result_t serverMemoryProvider(void *userdata, syst
 
 static void writeFrameHeader(uint8_t *out, uint32_t length, uint8_t flags, mux_cid_t cid)
 {
-    out[0] = (uint8_t) ((length >> 8U) & 0xFFU);
-    out[1] = (uint8_t) (length & 0xFFU);
-    out[2] = flags;
-    out[3] = 0;
+    out[0] = (uint8_t) (length >> 16U);
+    out[1] = (uint8_t) (length >> 8U);
+    out[2] = (uint8_t) length;
+    out[3] = flags;
     out[4] = (uint8_t) ((cid >> 24U) & 0xFFU);
     out[5] = (uint8_t) ((cid >> 16U) & 0xFFU);
     out[6] = (uint8_t) ((cid >> 8U) & 0xFFU);
@@ -209,7 +209,7 @@ static void requireCloseFrame(const muxserver_admission_fixture_t *fixture, mux_
     const uint8_t  *raw = fixture->capture;
     const mux_cid_t encoded_cid =
         ((mux_cid_t) raw[4] << 24U) | ((mux_cid_t) raw[5] << 16U) | ((mux_cid_t) raw[6] << 8U) | (mux_cid_t) raw[7];
-    twfRequire(raw[0] == 0 && raw[1] == 0 && raw[2] == kMuxFlagClose && encoded_cid == cid,
+    twfRequire(raw[0] == 0 && raw[1] == 0 && raw[2] == 0 && raw[3] == kMuxFlagClose && encoded_cid == cid,
                "rejection emitted a malformed Close frame");
 }
 

@@ -698,7 +698,7 @@ static void testPipeCapacityRetry(void)
     require(sbufSpliceInitPipe(buf, preferred) == 0 && pipe_query_calls == 2 && pipe_growth_calls == 2,
             "initialization retried growth on a nonempty buffer");
     sbuf_t *dest = bufferpoolGetSmallBuffer(env.buffers);
-    wioPartialReadSpliceBuffer(buf, dest, 1);
+    sbufSpliceReadToBuffer(buf, dest, 1);
     require(sbufGetLength(dest) == 1 && memoryEqual(sbufGetRawPtr(dest), "x", 1),
             "growth retry disturbed the pipe payload");
     bufferpoolReuseBuffer(env.buffers, dest);
@@ -846,7 +846,7 @@ static void spliceRead(wio_t *io, sbuf_t *buf)
     }
     case kSpliceDirectRecycleEmpty: {
         sbuf_t *dest = bufferpoolGetLargeBuffer(pool);
-        wioPartialReadSpliceBuffer(buf, dest, count);
+        sbufSpliceReadToBuffer(buf, dest, count);
         bufferpoolReuseBuffer(pool, dest);
         bufferpoolReuseBuffer(pool, buf);
         probe->received += count;
@@ -854,19 +854,19 @@ static void spliceRead(wio_t *io, sbuf_t *buf)
     }
     case kSpliceRecycleUnused:
         bufferpoolReuseBuffer(pool, bufferpoolGetSpliceBuffer(pool));
-        bufferpoolReuseBuffer(pool, wioTransformSpliceBufferToRealBuffer(buf, bufferpoolGetLargeBuffer(pool), pool));
+        bufferpoolReuseBuffer(pool, sbufSpliceMaterializeToBuffer(buf, bufferpoolGetLargeBuffer(pool), pool));
         probe->received += count;
         return;
     case kSpliceSmallDestination:
-        wioTransformSpliceBufferToRealBuffer(buf, sbufCreateWithPadding(0, 64), pool);
+        sbufSpliceMaterializeToBuffer(buf, sbufCreateWithPadding(0, 64), pool);
         break;
     case kSplicePartialRange:
-        wioPartialReadSpliceBuffer(buf, bufferpoolGetLargeBuffer(pool), count + 1);
+        sbufSpliceReadToBuffer(buf, bufferpoolGetLargeBuffer(pool), count + 1);
         break;
     case kSplicePartialCapacity: {
         sbuf_t *dest = bufferpoolGetLargeBuffer(pool);
         sbufSetLength(dest, sbufGetMaximumWriteableSize(dest));
-        wioPartialReadSpliceBuffer(buf, dest, 1);
+        sbufSpliceReadToBuffer(buf, dest, 1);
         break;
     }
     case kSpliceResidualPipe:
@@ -887,14 +887,14 @@ static void spliceRead(wio_t *io, sbuf_t *buf)
         ++buf->capacity;
         sbufSetLength(buf, count + 1);
         if (probe->kind == kSpliceShortPartial || probe->kind == kSpliceEOFPartial)
-            wioPartialReadSpliceBuffer(buf, bufferpoolGetLargeBuffer(pool), count + 1);
+            sbufSpliceReadToBuffer(buf, bufferpoolGetLargeBuffer(pool), count + 1);
         else
-            wioTransformSpliceBufferToRealBuffer(buf, bufferpoolGetLargeBuffer(pool), pool);
+            sbufSpliceMaterializeToBuffer(buf, bufferpoolGetLargeBuffer(pool), pool);
         break;
     case kSpliceFailedRead:
         pipe_read_fd    = metadata.pipefd[0];
         pipe_read_error = EAGAIN;
-        wioTransformSpliceBufferToRealBuffer(buf, bufferpoolGetLargeBuffer(pool), pool);
+        sbufSpliceMaterializeToBuffer(buf, bufferpoolGetLargeBuffer(pool), pool);
         break;
     case kSpliceFailedPartial:
         pipe_read_fd          = metadata.pipefd[0];
@@ -902,11 +902,11 @@ static void spliceRead(wio_t *io, sbuf_t *buf)
         pipe_read_limit       = 2;
         pipe_read_calls       = 0;
         pipe_read_error_after = 1;
-        wioPartialReadSpliceBuffer(buf, bufferpoolGetLargeBuffer(pool), count);
+        sbufSpliceReadToBuffer(buf, bufferpoolGetLargeBuffer(pool), count);
         break;
     case kSpliceInvalidFlags:
         buf->flags &= (uint16_t) ~kSbufFlagSplice;
-        wioPartialReadSpliceBuffer(buf, bufferpoolGetLargeBuffer(pool), 1);
+        sbufSpliceReadToBuffer(buf, bufferpoolGetLargeBuffer(pool), 1);
         break;
     case kSpliceWriteNonTCP:
         io->io_type = WIO_TYPE_UDP;
@@ -943,7 +943,7 @@ static void spliceRead(wio_t *io, sbuf_t *buf)
         if (probe->kind == kSpliceRetainPartial)
         {
             sbuf_t *dest = bufferpoolGetLargeBuffer(pool);
-            wioPartialReadSpliceBuffer(buf, dest, 6);
+            sbufSpliceReadToBuffer(buf, dest, 6);
             require(sbufGetLength(dest) == 6 && memoryEqual(sbufGetRawPtr(dest), "HEAD", 4),
                     "deferred partial read lost its prefix");
             bufferpoolReuseBuffer(pool, dest);
@@ -972,22 +972,22 @@ static void spliceRead(wio_t *io, sbuf_t *buf)
     {
         sbufSetLength(dest, 2);
         sbufWrite(dest, ">>", 2);
-        require(wioPartialReadSpliceBuffer(buf, dest, 0) == dest && sbufGetLength(dest) == 2 &&
+        require(sbufSpliceReadToBuffer(buf, dest, 0) == dest && sbufGetLength(dest) == 2 &&
                     sbufGetLength(buf) == count + 4,
                 "zero-byte partial read changed either buffer");
-        wioPartialReadSpliceBuffer(buf, dest, 2);
+        sbufSpliceReadToBuffer(buf, dest, 2);
         require(buf->curpos == 62, "prefix-only read advanced beyond the real prefix");
-        wioPartialReadSpliceBuffer(buf, dest, 4);
+        sbufSpliceReadToBuffer(buf, dest, 4);
         require(buf->curpos == 64 && buf->capacity == 64 + count - 2 && sbufGetLength(buf) == count - 2,
                 "mixed prefix/body read left incorrect source accounting");
-        wioPartialReadSpliceBuffer(buf, dest, sbufGetLength(buf));
+        sbufSpliceReadToBuffer(buf, dest, sbufGetLength(buf));
         require(sbufGetLength(buf) == 0 && buf->curpos == 64 && buf->capacity == 64,
                 "full partial consumption did not leave an empty wrapper");
         bufferpoolReuseBuffer(pool, buf);
     }
     else
     {
-        require(wioTransformSpliceBufferToRealBuffer(buf, dest, pool) == dest,
+        require(sbufSpliceMaterializeToBuffer(buf, dest, pool) == dest,
                 "full conversion did not return caller-supplied storage");
     }
     requireSplicePayload(probe, dest, count, partial);
@@ -1057,7 +1057,7 @@ static void runSpliceCase(splice_case_t kind, uint32_t large_size, uint32_t leng
         require(probe.closes == 1 && probe.held != NULL, "private pipe did not outlive WIO close");
         const int reader = sbufSpliceMetadata(probe.held).pipefd[0], writer = sbufSpliceMetadata(probe.held).pipefd[1];
         sbuf_t *dest = bufferpoolGetLargeBuffer(env.buffers);
-        wioTransformSpliceBufferToRealBuffer(probe.held, dest, env.buffers);
+        sbufSpliceMaterializeToBuffer(probe.held, dest, env.buffers);
         probe.received = 0;
         if (kind == kSpliceRetainPartial)
             require(sbufGetLength(dest) == length - 2 && memoryEqual(sbufGetRawPtr(dest), probe.data + 2, length - 2),
@@ -1258,7 +1258,7 @@ static void urgentRead(wio_t *io, sbuf_t *buf)
     if (buf->flags & kSbufFlagSplice)
     {
         ++probe->splice_calls;
-        buf = wioTransformSpliceBufferToRealBuffer(buf, bufferpoolGetLargeBuffer(probe->pool), probe->pool);
+        buf = sbufSpliceMaterializeToBuffer(buf, bufferpoolGetLargeBuffer(probe->pool), probe->pool);
     }
     else
     {
@@ -1372,9 +1372,9 @@ static void testDeferredSpliceReads(void)
                 sbufSpliceMetadata(held.buffers[0]).pipefd[0] != sbufSpliceMetadata(held.buffers[1]).pipefd[0],
             "unconsumed callback prevented a later independent read");
     sbuf_t *dest = bufferpoolGetLargeBuffer(env.buffers);
-    wioTransformSpliceBufferToRealBuffer(held.buffers[1], dest, env.buffers);
+    sbufSpliceMaterializeToBuffer(held.buffers[1], dest, env.buffers);
     require(sbufGetLength(dest) == 3 && memoryEqual(sbufGetRawPtr(dest), "BBB", 3), "B consumed A's bytes");
-    wioTransformSpliceBufferToRealBuffer(held.buffers[0], dest, env.buffers);
+    sbufSpliceMaterializeToBuffer(held.buffers[0], dest, env.buffers);
     require(sbufGetLength(dest) == 3 && memoryEqual(sbufGetRawPtr(dest), "AAA", 3), "deferred A lost its bytes");
     bufferpoolReuseBuffer(env.buffers, dest);
     close(sockets[1]);
@@ -1427,7 +1427,7 @@ static void testSpliceBufferQueue(void)
     require(bufferqueuePopFront(&queue) == a && bufferqueueGetBufLen(&queue) == 11,
             "splice pop changed identity or queue accounting");
     sbuf_t *dest = bufferpoolGetLargeBuffer(env.buffers);
-    wioPartialReadSpliceBuffer(a, dest, 3);
+    sbufSpliceReadToBuffer(a, dest, 3);
     require(sbufGetLength(dest) == 3 && memoryEqual(sbufGetRawPtr(dest), "a:A", 3),
             "queued splice lost its real prefix or body");
     sbuf_t *remainder = a;
@@ -1438,7 +1438,7 @@ static void testSpliceBufferQueue(void)
     requireClosed(sockets[0]);
     close(sockets[1]);
 
-    wioTransformSpliceBufferToRealBuffer(bufferqueuePopFront(&queue), dest, env.buffers);
+    sbufSpliceMaterializeToBuffer(bufferqueuePopFront(&queue), dest, env.buffers);
     require(sbufGetLength(dest) == 2 && memoryEqual(sbufGetRawPtr(dest), "AA", 2),
             "queued remainder depended on the source or read another pipe's bytes");
     require(bufferqueuePopFront(&queue) == ordinary && ordinary->flags == 0 && sbufGetLength(ordinary) == 6 &&
@@ -1448,7 +1448,7 @@ static void testSpliceBufferQueue(void)
     require(bufferqueuePopFront(&queue) == empty, "zero-length splice entry was dropped");
     bufferpoolReuseBuffer(env.buffers, empty);
     require(bufferqueuePopFront(&queue) == b, "queue replaced the second private body");
-    wioTransformSpliceBufferToRealBuffer(b, dest, env.buffers);
+    sbufSpliceMaterializeToBuffer(b, dest, env.buffers);
     require(sbufGetLength(dest) == 5 && memoryEqual(sbufGetRawPtr(dest), "b:BBB", 5),
             "queue mixed independent private bodies");
     bufferpoolReuseBuffer(env.buffers, dest);
@@ -1531,7 +1531,7 @@ static void testSpliceQueueCleanupAndRefusal(void)
         bufferpoolReuseBuffer(env.buffers, reused);
         sbuf_t *fresh = makeSpliceWriteBuffer(&env, source, sockets[1], "NEW", "");
         sbuf_t *dest  = bufferpoolGetLargeBuffer(env.buffers);
-        wioTransformSpliceBufferToRealBuffer(fresh, dest, env.buffers);
+        sbufSpliceMaterializeToBuffer(fresh, dest, env.buffers);
         require(sbufGetLength(dest) == 3 && memoryEqual(sbufGetRawPtr(dest), "NEW", 3),
                 "queue cleanup left stale body bytes in a reused pipe");
         bufferpoolReuseBuffer(env.buffers, dest);
@@ -1564,7 +1564,7 @@ static void testSpliceMaterializationRetries(void)
             pipe_read_error_after = mode == 2 ? 1 : 0;
             if (partial)
             {
-                require(wioPartialReadSpliceBuffer(buf, dest, 7) == dest && sbufGetLength(dest) == 9 &&
+                require(sbufSpliceReadToBuffer(buf, dest, 7) == dest && sbufGetLength(dest) == 9 &&
                             memoryEqual(sbufGetRawPtr(dest), ">>HEAD123", 9) && dest->curpos == 64,
                         "partial retries changed appended bytes or destination padding");
                 int available = -1;
@@ -1574,9 +1574,8 @@ static void testSpliceMaterializationRetries(void)
             }
             else
             {
-                require(wioTransformSpliceBufferToRealBuffer(buf, dest, env.buffers) == dest &&
-                            sbufGetLength(dest) == 13 && memoryEqual(sbufGetRawPtr(dest), "HEAD123456789", 13) &&
-                            dest->curpos == 60,
+                require(sbufSpliceMaterializeToBuffer(buf, dest, env.buffers) == dest && sbufGetLength(dest) == 13 &&
+                            memoryEqual(sbufGetRawPtr(dest), "HEAD123456789", 13) && dest->curpos == 60,
                         "conversion retries changed payload order or left headroom");
             }
             const unsigned int expected_reads = mode == 0 ? 2 : (partial ? 2 : 5) + (mode == 2 ? 1 : 0);
@@ -1588,7 +1587,7 @@ static void testSpliceMaterializationRetries(void)
             pipe_read_error_after = 0;
             if (partial)
             {
-                wioTransformSpliceBufferToRealBuffer(buf, dest, env.buffers);
+                sbufSpliceMaterializeToBuffer(buf, dest, env.buffers);
                 require(sbufGetLength(dest) == 6 && memoryEqual(sbufGetRawPtr(dest), "456789", 6),
                         "partial retry consumed bytes belonging to the remainder");
             }
@@ -1612,10 +1611,10 @@ static void testPrivateBodies(void)
     sbufSpliceClosePipe(empty);
     unsigned int before      = pipe_calls;
     sbuf_t      *prefix_dest = bufferpoolGetLargeBuffer(env.buffers);
-    require(wioPartialReadSpliceBuffer(empty, prefix_dest, 0) == prefix_dest && sbufGetLength(empty) == 0 &&
+    require(sbufSpliceReadToBuffer(empty, prefix_dest, 0) == prefix_dest && sbufGetLength(empty) == 0 &&
                 sbufGetLength(prefix_dest) == 0,
             "zero-byte partial read rejected an unused splice wrapper");
-    wioTransformSpliceBufferToRealBuffer(empty, prefix_dest, env.buffers);
+    sbufSpliceMaterializeToBuffer(empty, prefix_dest, env.buffers);
     require(sbufGetLength(prefix_dest) == 0 && prefix_dest->flags == 0 && pipe_calls == before,
             "empty conversion changed the payload or created a pipe");
     empty = bufferpoolGetSpliceBuffer(env.buffers);
@@ -1625,11 +1624,11 @@ static void testPrivateBodies(void)
     sbufShiftLeft(empty, 2);
     sbufWrite(empty, "hi", 2);
     require(pipe_calls == before, "unused/prefix-only wrapper created a pipe");
-    wioPartialReadSpliceBuffer(empty, prefix_dest, 1);
+    sbufSpliceReadToBuffer(empty, prefix_dest, 1);
     require(sbufGetLength(prefix_dest) == 1 && memoryEqual(sbufGetRawPtr(prefix_dest), "h", 1) &&
                 sbufGetLength(empty) == 1 && empty->curpos == 63 && pipe_calls == before,
             "prefix-only partial read changed the remainder or created a pipe");
-    wioTransformSpliceBufferToRealBuffer(empty, prefix_dest, env.buffers);
+    sbufSpliceMaterializeToBuffer(empty, prefix_dest, env.buffers);
     require(sbufGetLength(prefix_dest) == 1 && memoryEqual(sbufGetRawPtr(prefix_dest), "i", 1) && pipe_calls == before,
             "prefix-only conversion needed a source or pipe");
     bufferpoolReuseBuffer(env.buffers, prefix_dest);
@@ -1649,12 +1648,12 @@ static void testPrivateBodies(void)
     sockets[1]   = replacement[1];
     source       = wioGet(env.loop, sockets[0]);
     sbuf_t *dest = bufferpoolGetLargeBuffer(env.buffers);
-    wioPartialReadSpliceBuffer(b, dest, 3);
-    wioPartialReadSpliceBuffer(b, dest, 2);
+    sbufSpliceReadToBuffer(b, dest, 3);
+    sbufSpliceReadToBuffer(b, dest, 2);
     require(sbufGetLength(dest) == 5 && memoryEqual(sbufGetRawPtr(dest), "b:BBB", 5),
             "reverse partial read mixed bodies");
     bufferpoolReuseBuffer(env.buffers, b);
-    wioTransformSpliceBufferToRealBuffer(a, dest, env.buffers);
+    sbufSpliceMaterializeToBuffer(a, dest, env.buffers);
     require(memoryEqual(sbufGetRawPtr(dest), "a:AAA", 5), "reverse consumption damaged A");
     before = pipe_calls;
     a      = makeSpliceWriteBuffer(&env, source, sockets[1], "OLD", "prefix");
@@ -1667,7 +1666,7 @@ static void testPrivateBodies(void)
     pipe_read_fd = -1;
     a        = makeSpliceWriteBuffer(&env, source, sockets[1], "NEW", "");
     require(sbufSpliceMetadata(a).pipefd[0] == ma.pipefd[0], "discard replaced a healthy pair");
-    wioTransformSpliceBufferToRealBuffer(a, dest, env.buffers);
+    sbufSpliceMaterializeToBuffer(a, dest, env.buffers);
     require(sbufGetLength(dest) == 3 && memoryEqual(sbufGetRawPtr(dest), "NEW", 3), "discard left stale bytes");
     a           = makeSpliceWriteBuffer(&env, source, sockets[1], "BAD", "");
     ma          = sbufSpliceMetadata(a);
@@ -1728,7 +1727,7 @@ static void testPrivateCancellation(void)
             }
         }
         sbuf_t *real = bufferpoolGetLargeBuffer(env.buffers);
-        wioTransformSpliceBufferToRealBuffer(b, real, env.buffers);
+        sbufSpliceMaterializeToBuffer(b, real, env.buffers);
         require(sbufGetLength(real) == 3 && memoryEqual(sbufGetRawPtr(real), "BBB", 3),
                 "canceling A damaged B's private body");
         bufferpoolReuseBuffer(env.buffers, real);
@@ -1848,7 +1847,7 @@ static void testSpliceWrite(splice_write_case_t kind)
     {
         sbuf_t *independent = makeSpliceWriteBuffer(&env, source, source_fds[1], "BBB", "b:");
         sbuf_t *converted   = bufferpoolGetLargeBuffer(env.buffers);
-        wioTransformSpliceBufferToRealBuffer(independent, converted, env.buffers);
+        sbufSpliceMaterializeToBuffer(independent, converted, env.buffers);
         require(memoryEqual(sbufGetRawPtr(converted), "b:BBB", 5), "B conversion consumed queued A");
         bufferpoolReuseBuffer(env.buffers, converted);
         sbuf_t *ordinary = bufferpoolGetSmallBuffer(env.buffers);
