@@ -36,6 +36,23 @@ def expect_counts(expected):
     raise AssertionError(f"output conntrack/mark counters: expected {expected}, got {actual}")
 
 
+def connect_listener(process, port, deadline):
+    # Raw writers start before SocketManager opens its TCP listeners. Keep the
+    # successful connection for the test instead of opening a disposable probe.
+    while process.poll() is None:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise AssertionError(f"TCP listener 127.0.0.1:{port} did not become ready")
+        try:
+            stream = socket.create_connection(("127.0.0.1", port), timeout=min(0.25, remaining))
+        except (ConnectionRefusedError, TimeoutError):
+            time.sleep(min(0.05, remaining))
+            continue
+        stream.settimeout(3)
+        return stream
+    raise AssertionError(f"Waterwall exited with status {process.returncode} before TCP listener {port} was ready")
+
+
 def run(binary, directory):
     # Exact/masked policies must keep their unmarked match result. These rules
     # deliberately reserve bit 31 and require bits 16..23 to remain zero.
@@ -105,7 +122,7 @@ def run(binary, directory):
                 assert len(marks) == len(set(marks)) == 2, rules
                 assert all(mark >= 0x10000 and mark & 0x80ff0000 == 0 for mark in marks), marks
                 assert "WWCAP" not in iptables("-S", "INPUT")
-                streams = [stack.enter_context(socket.create_connection(("127.0.0.1", p), timeout=3))
+                streams = [stack.enter_context(connect_listener(process, p, deadline))
                            for p in listeners]
                 for index, stream in enumerate(streams):
                     payload = names[index].encode()

@@ -264,8 +264,8 @@ void sbufReadRangeToMemory(sbuf_t *source, void *destination, uint32_t bytes)
     if (bytes != prefix)
     {
 #if WW_HAVE_SPLICE
-        spliceReadPipe(
-            sbufSpliceMetadata(source).pipefd[0], (uint8_t *) destination + prefix, bytes - prefix, __func__);
+        const splice_buffer_metadata_t metadata = sbufSpliceMetadata(source);
+        spliceReadPipe(metadata.pipefd[0], (uint8_t *) destination + prefix, bytes - prefix, __func__);
         sbufSpliceConsumeBody(source, bytes - prefix);
 #else
         LOGF("splice range: pipe source on unsupported build");

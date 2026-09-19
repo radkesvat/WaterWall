@@ -203,11 +203,14 @@ sbuf_t *splicestreamMoveFrame(splice_stream_t *s, sbuf_t *dest, uint32_t bytes)
         has_pipe |= sbufIsSplice(*i.ref);
         range += sbufGetLength(*i.ref);
     }
-    if (dest != NULL && sbufIsSplice(dest) &&
-        (! has_pipe || bytes == 0 || sbufGetLeftCapacity(dest) < padding || sbufSpliceMetadata(dest).pipefd[1] < 0))
+    if (dest != NULL && sbufIsSplice(dest))
     {
-        bufferpoolReuseBuffer(s->pool, dest);
-        dest = NULL;
+        const splice_buffer_metadata_t metadata = sbufSpliceMetadata(dest);
+        if (! has_pipe || bytes == 0 || sbufGetLeftCapacity(dest) < padding || metadata.pipefd[1] < 0)
+        {
+            bufferpoolReuseBuffer(s->pool, dest);
+            dest = NULL;
+        }
     }
     if (dest == NULL)
         dest = bufferpoolGetBestFit(s->pool, bytes, padding);
