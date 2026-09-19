@@ -125,7 +125,7 @@ static sbuf_t *makeSplicePattern(buffer_pool_t *pool, uint32_t length)
     return input;
 }
 
-static sbuf_t *makeLargeSplicePattern(buffer_pool_t *pool, uint32_t length)
+static sbuf_t *tryMakeLargeSplicePattern(buffer_pool_t *pool, uint32_t length, const char *name)
 {
     sbuf_t *input = bufferpoolGetSpliceBuffer(pool);
     require(input != NULL, "could not allocate large splice payload");
@@ -135,8 +135,13 @@ static sbuf_t *makeLargeSplicePattern(buffer_pool_t *pool, uint32_t length)
     require(sbufSpliceInitPipe(input, body) == 0, "could not initialize the large splice test pipe");
     const splice_buffer_metadata_t metadata = sbufSpliceMetadata(input);
     const int                      capacity = fcntl(metadata.pipefd[0], F_GETPIPE_SZ);
-    require(capacity >= 0 && (uint32_t) capacity >= body,
-            "test environment cannot hold the complete large payload in one nonblocking private pipe");
+    require(capacity > 0, "could not query the large splice test pipe capacity");
+    if ((uint32_t) capacity < body)
+    {
+        fprintf(stderr, "SKIP: %s requires a real %u-byte source pipe (available: %d)\n", name, body, capacity);
+        bufferpoolReuseBuffer(pool, input);
+        return NULL;
+    }
     uint8_t  bytes[4096];
     uint32_t offset = 0;
     while (offset < body)
@@ -339,17 +344,6 @@ static void testCompleteFrameParsing(buffer_pool_t *pool)
 }
 
 #if WW_HAVE_SPLICE
-static bool testPipeCapacity(buffer_pool_t *pool, uint32_t required, const char *name)
-{
-    sbuf_t    *pipe      = bufferpoolGetSpliceBuffer(pool);
-    const bool available = pipe != NULL && sbufSpliceMetadata(pipe).pipe_capacity >= required;
-    if (pipe != NULL)
-        bufferpoolReuseBuffer(pool, pipe);
-    if (! available)
-        fprintf(stderr, "SKIP: %s requires a real %u-byte pipe\n", name, required);
-    return available;
-}
-
 static void testSpliceMuxPaths(buffer_pool_t *pool)
 {
     {
@@ -387,14 +381,14 @@ static void testSpliceMuxPaths(buffer_pool_t *pool)
         requireSpliceBody(pool, encoded, 17, "Open+Data splice encode changed the private-pipe body");
     }
 
-    if (testPipeCapacity(pool, kMuxMaxDataFrameLength, "large Mux splice batch"))
+    const uint32_t payload_length = kMuxMaxDataFrameLength + 1U;
+    sbuf_t        *batch_input    = tryMakeLargeSplicePattern(pool, payload_length, "large Mux splice batch");
+    if (batch_input != NULL)
     {
-        const uint32_t      payload_length = kMuxMaxDataFrameLength + 1U;
-        sbuf_t             *input          = makeLargeSplicePattern(pool, payload_length);
         mux_parent_output_t output         = {0};
 
         bufferqueueInitEmpty(&output.pending);
-        require(muxEncodeSpliceBatch(pool, input, kTestCid, false, &output, SIZE_MAX),
+        require(muxEncodeSpliceBatch(pool, batch_input, kTestCid, false, &output, SIZE_MAX),
                 "large splice batch encoding failed");
         require(bufferqueueGetBufCount(&output.pending) == 2, "large batch did not preserve frame boundaries");
         uint32_t offset = 0;
@@ -473,14 +467,13 @@ static void testBatchFallbackEquality(buffer_pool_t *source_pool)
     const size_t limit = full.allocation_charge + tail.allocation_charge;
     for (unsigned refuse = 0; refuse < 2; ++refuse)
     {
+        sbuf_t *input =
+            tryMakeLargeSplicePattern(source_pool, kMuxMaxDataFrameLength + 1U, "Mux batch fallback equality/refusal");
+        if (input == NULL)
+            break;
         mux_parent_output_t output = {0};
         bufferqueueInitEmpty(&output.pending);
-        const bool accepted = muxEncodeSpliceBatch(fallback.pool,
-                                                   makeLargeSplicePattern(source_pool, kMuxMaxDataFrameLength + 1U),
-                                                   kTestCid,
-                                                   true,
-                                                   &output,
-                                                   limit - refuse);
+        const bool accepted = muxEncodeSpliceBatch(fallback.pool, input, kTestCid, true, &output, limit - refuse);
         require(accepted == (refuse == 0), "ordinary fallback batch equality/refusal boundary changed");
         require(output.charge == (refuse ? 0 : limit), "batch fallback charged a prediction instead of actual output");
         c_foreach(entry, ww_sbuffer_queue_t, output.pending.q)
@@ -493,14 +486,20 @@ static void testBatchFallbackEquality(buffer_pool_t *source_pool)
 
 static void testBatchWithRetainedIncoming(buffer_pool_t *pool)
 {
-    splice_stream_t *incoming = splicestreamCreate(pool, 0);
+    // Reserve the actual large source before retaining other pipes. One-byte
+    // fragments need small pipes, not 80 MiB of requested kernel capacity.
+    sbuf_t *input =
+        tryMakeLargeSplicePattern(pool, kMuxMaxDataFrameLength + 1U, "Mux batch with independent incoming retention");
+    if (input == NULL)
+        return;
+    test_pool_t      retained = testPoolCreateWithSizes(4096, 4096, 32);
+    splice_stream_t *incoming = splicestreamCreate(retained.pool, 0);
     for (unsigned i = 0; i < 80; ++i)
-        require(splicestreamPush(incoming, makeSplicePattern(pool, 1)), "incoming fixture refused");
+        require(splicestreamPush(incoming, makeSplicePattern(retained.pool, 1)), "incoming fixture refused");
     const size_t        before = splicestreamCharge(incoming);
     mux_parent_output_t output = {0};
     bufferqueueInitEmpty(&output.pending);
-    require(muxEncodeSpliceBatch(
-                pool, makeLargeSplicePattern(pool, kMuxMaxDataFrameLength + 1U), kTestCid, true, &output, SIZE_MAX),
+    require(muxEncodeSpliceBatch(pool, input, kTestCid, true, &output, SIZE_MAX),
             "incoming retention blocked independent output batch");
     require(splicestreamCharge(incoming) == before, "output batch changed incoming ownership");
     while (bufferqueueGetBufCount(&output.pending) != 0)
@@ -508,6 +507,7 @@ static void testBatchWithRetainedIncoming(buffer_pool_t *pool)
     require(output.charge == 0, "batch drain retained charge");
     muxParentOutputDestroy(&output, pool);
     splicestreamDestroy(incoming);
+    testPoolDestroy(&retained);
 }
 #endif
 
@@ -858,13 +858,13 @@ static void testHeaderPeekBoundaries(buffer_pool_t *pool)
 #if WW_HAVE_SPLICE
 static void testMaximumSpliceWrapper(buffer_pool_t *pool)
 {
-    if (! testPipeCapacity(pool, kMuxMaxDataFrameLength, "maximum fitting Mux splice wrapper"))
-        return;
     const uint32_t lengths[] = {65536, kMuxMaxDataFrameLength};
     for (size_t i = 0; i < ARRAY_SIZE(lengths); ++i)
         for (unsigned open = 0; open < 2; ++open)
         {
-            sbuf_t   *input   = makeLargeSplicePattern(pool, lengths[i]);
+            sbuf_t *input = tryMakeLargeSplicePattern(pool, lengths[i], "maximum fitting Mux splice wrapper");
+            if (input == NULL)
+                continue;
             const int fd      = sbufSpliceMetadata(input).pipefd[0];
             sbuf_t   *encoded = NULL;
             require(muxEncodeChildPayload(pool, input, kTestCid, open != 0, &encoded) == kMuxEncodeSuccess &&
@@ -882,12 +882,7 @@ static void testMaximumSpliceWrapper(buffer_pool_t *pool)
  * destination runs out of pipe slots before all 1 MiB body bytes fit. */
 static void testMaximumMixedFrame(buffer_pool_t *pool, bool mixed)
 {
-    test_pool_t sources = testPoolCreateWithSizes(LARGE_BUFFER_SIZE_RAM_LOW, MEDIUM_BUFFER_SIZE_RAM_LOW, 32);
-    if (! testPipeCapacity(sources.pool, 65536, "maximum Mux frame across 64 KiB pipes"))
-    {
-        testPoolDestroy(&sources);
-        return;
-    }
+    test_pool_t    sources  = testPoolCreateWithSizes(LARGE_BUFFER_SIZE_RAM_LOW, MEDIUM_BUFFER_SIZE_RAM_LOW, 32);
     const uint32_t length   = kMuxMaxDataFrameLength;
     uint8_t       *wire     = memoryAllocate(length + kMuxFrameLength + 3U);
     const uint8_t  header[] = {0x10, 0, 0, kMuxFlagData, 0x12, 0x34, 0x56, 0x78};
@@ -899,7 +894,7 @@ static void testMaximumMixedFrame(buffer_pool_t *pool, bool mixed)
     splice_stream_t *stream = splicestreamCreate(pool, kMuxFrameLength);
     for (uint32_t offset = 0, chunk = 0; offset < length + kMuxFrameLength + 3U; ++chunk)
     {
-        const uint32_t count = min(65536U, length + kMuxFrameLength + 3U - offset);
+        uint32_t count = min(65536U, length + kMuxFrameLength + 3U - offset);
         if (mixed && chunk % 3U == 1)
             pushBytes(pool, stream, wire + offset, count);
         else
@@ -907,10 +902,14 @@ static void testMaximumMixedFrame(buffer_pool_t *pool, bool mixed)
             const uint32_t prefix = mixed && chunk != 0 ? min(5U, count) : 0;
             sbuf_t        *input  = bufferpoolGetSpliceBuffer(sources.pool);
             require(input != NULL, "cannot allocate mixed-frame source");
+            const splice_buffer_metadata_t metadata = sbufSpliceMetadata(input);
+            const int                      capacity = fcntl(metadata.pipefd[0], F_GETPIPE_SZ);
+            require(capacity > 0, "cannot query mixed-frame source capacity");
+            count            = min(count, (uint32_t) capacity);
             uint32_t written = prefix;
             while (written < count)
             {
-                ssize_t n = write(sbufSpliceMetadata(input).pipefd[1], wire + offset + written, count - written);
+                ssize_t n = write(metadata.pipefd[1], wire + offset + written, count - written);
                 if (n < 0 && errno == EINTR)
                     continue;
                 require(n > 0, "real mixed-frame source write failed");
@@ -959,11 +958,8 @@ int main(void)
     testMaximumMixedFrame(test_pool.pool, false);
     testMaximumMixedFrame(test_pool.pool, true);
     testSpliceMuxPaths(test_pool.pool);
-    if (testPipeCapacity(test_pool.pool, kMuxMaxDataFrameLength, "Mux batch with independent incoming retention"))
-    {
-        testBatchWithRetainedIncoming(test_pool.pool);
-        testBatchFallbackEquality(test_pool.pool);
-    }
+    testBatchWithRetainedIncoming(test_pool.pool);
+    testBatchFallbackEquality(test_pool.pool);
 #endif
     testHeaderPeekBoundaries(test_pool.pool);
     testEncodedLengthBoundaries();
