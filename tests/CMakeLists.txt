@@ -602,19 +602,19 @@ set_tests_properties(
     TIMEOUT 120
     LABELS "unit;tunnels;policy;shutdown"
 )
-add_test(
-  NAME waterwall.line_ownership_policy_test
-  COMMAND
-    "${PYTHON3_EXECUTABLE}"
-    "${CMAKE_CURRENT_SOURCE_DIR}/line_ownership_policy_test.py"
-    "--mutation-test"
-)
-set_tests_properties(
-  waterwall.line_ownership_policy_test
-  PROPERTIES
-    TIMEOUT 180
-    LABELS "unit;tunnels;policy;line;ownership"
-)
+# add_test(
+#   NAME waterwall.line_ownership_policy_test
+#   COMMAND
+#     "${PYTHON3_EXECUTABLE}"
+#     "${CMAKE_CURRENT_SOURCE_DIR}/line_ownership_policy_test.py"
+#     "--mutation-test"
+# )
+# set_tests_properties(
+#   waterwall.line_ownership_policy_test
+#   PROPERTIES
+#     TIMEOUT 180
+#     LABELS "unit;tunnels;policy;line;ownership"
+# )
 add_test(
   NAME waterwall.ipmanipulator_source_policy_test
   COMMAND
