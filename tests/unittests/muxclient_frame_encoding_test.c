@@ -139,7 +139,6 @@ static void fixtureSetup(muxclient_fixture_t *fixture, uint32_t capture_capacity
     ts->concurrency_mode              = kConcurrencyModeCounter;
     ts->concurrency_capacity          = 1024;
     ts->child_buffer_limit            = kMuxDefaultChildBufferLimit;
-    ts->child_buffer_pause_tolerance  = kMuxDefaultChildBufferPauseTolerance;
     ts->child_buffer_resume_threshold = kMuxDefaultChildBufferResumeThreshold;
     ts->parent_buffer_limit           = kMuxDefaultParentBufferLimit;
     ts->parent_write_pause_threshold  = kMuxDefaultParentWritePauseThreshold;
@@ -1652,11 +1651,12 @@ static void caseStrictParentPause(void)
     twfRequireEqualU32(fixture.trace.next_payload, 1, "output crossed transport Pause");
     strict_paused = false;
     muxclientTunnelDownStreamResume(fixture.mux, fixture.parent_l);
-    twfRequireEqualU32(fixture.trace.next_payload, 3, "Resume did not drain all output");
+    twfRequireEqualU32(fixture.trace.next_payload, 4, "Resume did not drain all output");
     frame_view_t frames[8];
     uint32_t     count = parseFrames(fixture.capture, fixture.trace.capture_len, frames, 8);
-    twfRequire(count == 5 && frames[2].flags == kMuxFlagOpen && frames[2].cid == 8 && frames[3].flags == kMuxFlagData &&
-                   frames[4].flags == kMuxFlagFlowPause,
+    twfRequire(count == 6 && frames[2].flags == kMuxFlagOpen && frames[2].cid == 8 && frames[3].flags == kMuxFlagData &&
+                   frames[4].flags == kMuxFlagFlowPause && frames[4].cid == 8 && frames[5].flags == kMuxFlagFlowPause &&
+                   frames[5].cid == kTestChildCid,
                "retained frames lost FIFO order");
     destroySurvivingClientChild(&fixture, sibling);
     fixtureTeardown(&fixture);

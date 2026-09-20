@@ -45,7 +45,6 @@ void mxbMuxClientCreate(mxb_fixture_t *fixture)
     ts->concurrency_mode              = kConcurrencyModeCounter;
     ts->concurrency_capacity          = UINT32_MAX;
     ts->child_buffer_limit            = kMxbRetainedChargeLimit;
-    ts->child_buffer_pause_tolerance  = kMuxDefaultChildBufferPauseTolerance;
     ts->child_buffer_resume_threshold = kMuxDefaultChildBufferResumeThreshold;
     ts->parent_buffer_limit           = kMxbRetainedChargeLimit;
     ts->parent_write_pause_threshold  = kMuxDefaultParentWritePauseThreshold;

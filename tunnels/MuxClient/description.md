@@ -194,15 +194,6 @@ from `parent-buffer-limit`, which bounds incoming assembly plus attached child q
 
   Default: `25165824` (`24 MiB`).
 
-- `child-buffer-pause-tolerance` `(integer, bytes, optional)`
-  Logical queued-payload backstop for sending a `FlowPause` frame for a paused child.
-
-  `FlowPause` is normally sent as soon as the child's local write side pauses, before data is queued. This threshold
-  covers the ordering edge case where a child paused before its `Open` frame reached the peer. Raising it does not
-  normally delay peer throttling.
-
-  Default: `524288` (`512 KB`). Values above `child-buffer-limit` are capped to `child-buffer-limit`.
-
 - `child-buffer-resume-threshold` `(integer, bytes, optional)`
   Logical queued-payload low-water mark for sending `FlowResume` after the local child becomes writable. The frame is
   sent once the sum of queued application payload bytes falls below this value, allowing the peer to restart before
@@ -212,7 +203,7 @@ from `parent-buffer-limit`, which bounds incoming assembly plus attached child q
   Default: `262144` (`256 KiB`). Raising it resumes the peer earlier and may reduce high-RTT throughput gaps, at the
   cost of weaker hysteresis and potentially more pause/resume cycling.
 
-  Both pause tolerance and resume threshold intentionally use logical payload bytes. Queue-capacity charge is used by the hard retention budgets.
+  The resume threshold uses logical payload bytes. Queue-capacity charge is used by the hard retention budgets.
 
 - `parent-buffer-limit` `(integer, bytes, optional)`
   Per-parent queue-capacity budget for incoming assembly plus all attached child queues.
@@ -365,8 +356,10 @@ When a child line is paused or resumed by the previous node, `MuxClient` uses `F
 that child's `cid`. `FlowPause` is sent as soon as the local child write side pauses.
 
 If writing parent-delivered data to a child causes that child to pause, `MuxClient` queues later data for that child.
-The peer has normally already received `FlowPause` for that `cid`; `child-buffer-pause-tolerance` is a backstop for a
-child that paused before its `Open` frame was sent. Queued data is flushed when the child resumes. `FlowResume` is sent
+If the child paused before its first payload submitted `Open`, MuxClient submits `FlowPause` after that
+`Open` and its complete first Data payload, provided the child is still paused and attached. This also applies to
+large splice batches. A child that resumes before submission completes needs no deferred `FlowPause`.
+Queued data is flushed when the child resumes. `FlowResume` is sent
 once the child's queue drops below `child-buffer-resume-threshold`, allowing the peer to begin sending before the queue
 is completely empty.
 
@@ -379,7 +372,8 @@ When incoming assembly plus attached child charge reaches `parent-buffer-limit`,
 compaction runs first. Remaining pressure closes the largest queued child with the oldest tie-break,
 rechecking after each callback. Multiple closes may be needed; unrelieved pressure closes the parent.
 
-Logical queue length remains the sum of application payload bytes and continues to drive `FlowPause`/`FlowResume`.
+Logical queue length remains the sum of application payload bytes and drives the `FlowResume` threshold.
+`FlowPause` follows the local child pause state, independently of queue length.
 Zero-length `Data` is valid wire input: it adds no logical payload activity, but a retained zero-length frame has a
 positive allocation charge and therefore advances every applicable hard queue budget.
 
@@ -529,10 +523,10 @@ this combined finite bound; it introduces no other aggregate cap.
 `child-buffer-limit` remains 24 MiB by default and rejects equality. Outgoing
 parent queues remain separate: their pause/resume thresholds are 16/12 MiB, hard limit is
 128 MiB, and hard-limit equality is permitted. Detached queues retain their
-per-worker settings and zero/unlimited meanings. FlowPause/FlowResume continue
-to count logical payload bytes. Ordinary child candidates may still compact to
-a cheaper pooled tier; valid splice candidates are not individually materialized
-for queue pressure.
+per-worker settings and zero/unlimited meanings. The FlowResume threshold counts
+logical payload bytes; FlowPause follows the local child pause state. Ordinary
+child candidates may still compact to a cheaper pooled tier; valid splice
+candidates are not individually materialized for queue pressure.
 
 There is no worker-wide pipe-count or pipe-capacity quota. Other parents cannot
 force fallback through shared pipe reservations. These charges are not physical

@@ -322,7 +322,6 @@ static void raceFixtureSetup(admission_race_fixture_t *fixture)
 
     muxserver_tstate_t *ts            = tunnelGetState(fixture->mux);
     ts->child_buffer_limit            = kMuxDefaultChildBufferLimit;
-    ts->child_buffer_pause_tolerance  = kMuxDefaultChildBufferPauseTolerance;
     ts->child_buffer_resume_threshold = kMuxDefaultChildBufferResumeThreshold;
     ts->parent_buffer_limit           = kMuxDefaultParentBufferLimit;
     ts->parent_write_pause_threshold  = kMuxDefaultParentWritePauseThreshold;

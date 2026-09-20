@@ -55,7 +55,6 @@ static void caseUdpSourceDrainsBeforeMuxWorkerStop(uint8_t mode)
     ts->concurrency_capacity          = 16;
     ts->concurrency_duration          = UINT32_MAX;
     ts->child_buffer_limit            = kMuxDefaultChildBufferLimit;
-    ts->child_buffer_pause_tolerance  = kMuxDefaultChildBufferPauseTolerance;
     ts->child_buffer_resume_threshold = kMuxDefaultChildBufferResumeThreshold;
     ts->parent_buffer_limit           = kMuxDefaultParentBufferLimit;
     ts->parent_write_pause_threshold  = kMuxDefaultParentWritePauseThreshold;

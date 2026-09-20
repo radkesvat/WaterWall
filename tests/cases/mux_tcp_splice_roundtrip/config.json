@@ -35,8 +35,7 @@
       "settings": {
         "mode": "fixed-connections-count",
         "per-worker-connections-count": 1,
-        "child-buffer-limit": 67108864,
-        "child-buffer-pause-tolerance": 1048576
+        "child-buffer-limit": 67108864
       },
       "next": "mux-client-to-mux-server"
     },
@@ -64,8 +63,7 @@
       "name": "mux-server",
       "type": "MuxServer",
       "settings": {
-        "child-buffer-limit": 67108864,
-        "child-buffer-pause-tolerance": 1048576
+        "child-buffer-limit": 67108864
       },
       "next": "mux-server-to-speedtest-server"
     },

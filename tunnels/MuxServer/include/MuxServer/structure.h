@@ -67,7 +67,6 @@ typedef struct muxserver_worker_state_s
 typedef struct muxserver_tstate_s
 {
     uint32_t child_buffer_limit;
-    uint32_t child_buffer_pause_tolerance;
     uint32_t child_buffer_resume_threshold;
     uint32_t parent_buffer_limit;
     uint32_t parent_write_pause_threshold;
@@ -152,7 +151,6 @@ enum
     kConcurrencyModeTimer                 = kDvsFirstOption,
     kConcurrencyModeCounter               = kDvsSecondOption,
     kMuxDefaultChildBufferLimit           = 24 * 1024 * 1024,
-    kMuxDefaultChildBufferPauseTolerance  = 512 * 1024,
     kMuxDefaultChildBufferResumeThreshold = 256 * 1024,
     kMuxDefaultParentBufferLimit          = 128 * 1024 * 1024,
     kMuxParentBufferLimitUnlimited        = 0,
@@ -216,8 +214,6 @@ bool muxserverSendControlFrame(tunnel_t *t, line_t *parent_l, muxserver_lstate_t
                                mux_cid_t cid, uint8_t flag);
 bool muxserverSendChildFlowPause(tunnel_t *t, line_t *parent_l, muxserver_lstate_t *parent_ls, line_t *child_l,
                                  muxserver_lstate_t *child_ls);
-bool muxserverMaybeSendChildFlowPause(tunnel_t *t, line_t *parent_l, muxserver_tstate_t *ts,
-                                      muxserver_lstate_t *parent_ls, line_t *child_l, muxserver_lstate_t *child_ls);
 bool muxserverReleaseParentInputForChildClose(tunnel_t *t, line_t *parent_l, muxserver_lstate_t *parent_ls,
                                               muxserver_lstate_t *child_ls);
 bool muxserverPauseChildSource(tunnel_t *t, line_t *parent_l, muxserver_lstate_t *child_ls, bool peer_flow,

@@ -629,17 +629,6 @@ bool muxclientSendControlFrame(tunnel_t *t, line_t *parent_l, muxclient_lstate_t
     return parent_alive && child_alive;
 }
 
-bool muxclientMaybeSendChildFlowPause(tunnel_t *t, line_t *parent_l, muxclient_tstate_t *ts,
-                                      muxclient_lstate_t *parent_ls, line_t *child_l, muxclient_lstate_t *child_ls)
-{
-    if (bufferqueueGetBufLen(&child_ls->pending_child_data) < ts->child_buffer_pause_tolerance)
-    {
-        return true;
-    }
-
-    return muxclientSendChildFlowPause(t, parent_l, parent_ls, child_l, child_ls);
-}
-
 bool muxclientSendChildFlowPause(tunnel_t *t, line_t *parent_l, muxclient_lstate_t *parent_ls, line_t *child_l,
                                  muxclient_lstate_t *child_ls)
 {
@@ -888,18 +877,7 @@ bool muxclientQueueChildPayload(tunnel_t *t, line_t *parent_l, muxclient_tstate_
     muxclientAddChildQueueCharge(child_ls, candidate_charge);
     muxclientAddParentPendingChildCharge(parent_ls, candidate_charge);
 
-    // Control submission can close this child during parent-gate notification.
-    // The parser can still process sibling frames if the parent survives.
-    lineRef(parent_l);
-    discard muxclientMaybeSendChildFlowPause(t, parent_l, ts, parent_ls, child_ls->l, child_ls);
-    bool    keep_parsing = lineIsAlive(parent_l) && parent_ls->parent_state != NULL && ! parent_ls->parent_finishing &&
-                        ! ts->worker_states[lineGetWID(parent_l)].quiescing;
-    if (keep_parsing)
-    {
-        keep_parsing = muxclientEnforceParentReceiveLimit(t, parent_l);
-    }
-    lineUnref(parent_l);
-    return keep_parsing;
+    return muxclientEnforceParentReceiveLimit(t, parent_l);
 }
 
 static bool muxclientHandleChildBufferAfterDrain(tunnel_t *t, line_t *parent_l, muxclient_tstate_t *ts,

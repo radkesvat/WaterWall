@@ -905,20 +905,35 @@ static void caseQueueLimitCloseCannotReenterChild(void)
     fixtureTeardown(&f);
 }
 
+static void pqPauseOnReceive(tunnel_t *t, line_t *l, sbuf_t *buf)
+{
+#ifdef MUX_OUTPUT_CLIENT
+    twfPrevPayload(t, l, buf);
+    if (l == pqFixture->child_l)
+        muxclientTunnelUpStreamPause(pqFixture->mux, l);
+#else
+    twfNextPayload(t, l, buf);
+    if (l == pqFixture->child_l)
+        muxserverTunnelDownStreamPause(pqFixture->mux, l);
+#endif
+}
+
 static void caseChildCloseKeepsParentParsing(void)
 {
     twfSetCase("queued FlowPause may close one child without stranding a sibling frame");
     pq_fixture_t f;
     pqSetup(&f);
     pq_tstate_t *ts                  = tunnelGetState(f.mux);
-    ts->child_buffer_pause_tolerance = 0;
-    ts->parent_write_pause_threshold = 1;
+    ts->parent_write_pause_threshold  = 1;
     ts->parent_write_resume_threshold = 0;
     pq_state_t *parent               = lineGetState(f.parent_l, f.mux);
     pq_state_t *child                = lineGetState(f.child_l, f.mux);
-    child->paused                    = true;
 #ifdef MUX_OUTPUT_CLIENT
     child->open_frame_submitted = true;
+    f.prev->fnPayloadD          = pqPauseOnReceive;
+#else
+    discard child;
+    f.next->fnPayloadU = pqPauseOnReceive;
 #endif
     line_t *sibling                                       = pqSibling(&f, parent, 100);
     ((pq_state_t *) lineGetState(sibling, f.mux))->paused = false;
@@ -937,7 +952,7 @@ static void caseChildCloseKeepsParentParsing(void)
 
     twfRequire(lineIsAlive(f.parent_l) && ! lineIsAlive(f.child_l), "Pause did not close only its child");
     twfRequire(splicestreamLength(parent->parent_state->read_stream) == 0, "complete sibling frame remained stranded");
-    twfRequire(pqChildDeliveries(&f) == 1 && f.trace.capture_len == 1 && f.capture[0] == 34,
+    twfRequire(pqChildDeliveries(&f) == 2 && f.trace.capture_len == 2 && f.capture[0] == 17 && f.capture[1] == 34,
                "sibling payload was not delivered immediately and intact");
     twfRequire(parent->pending_child_queue_charge == 0, "closed child's incoming queue charge was retained");
 
@@ -1471,6 +1486,157 @@ static void caseMaximumFittingSplice(void)
 #include "mux_bounded_retention_cases.h"
 #include "mux_splice_batch_cases.h"
 
+static void caseChildPauseWithoutQueuedData(void)
+{
+    twfSetCase("child Pause/Resume signals the peer immediately without queued data or duplicate controls");
+    pq_fixture_t f;
+    pqSetup(&f);
+    pq_state_t *child = lineGetState(f.child_l, f.mux);
+#ifdef MUX_OUTPUT_CLIENT
+    child->open_frame_submitted = true;
+    muxclientTunnelUpStreamPause(f.mux, f.child_l);
+    muxclientTunnelUpStreamPause(f.mux, f.child_l);
+#else
+    muxserverTunnelDownStreamPause(f.mux, f.child_l);
+    muxserverTunnelDownStreamPause(f.mux, f.child_l);
+#endif
+    frame_view_t frames[2];
+    twfRequire(child->paused && child->flow_paused_sent && bufferqueueGetBufCount(&child->pending_child_data) == 0 &&
+                   parseFrames(f.capture, f.trace.capture_len, frames, 2) == 1 &&
+                   frames[0].flags == kMuxFlagFlowPause && frames[0].cid == kTestChildCid,
+               "child Pause waited for buffered data or sent duplicate FlowPause");
+#ifdef MUX_OUTPUT_CLIENT
+    muxclientTunnelUpStreamResume(f.mux, f.child_l);
+    muxclientTunnelUpStreamResume(f.mux, f.child_l);
+#else
+    muxserverTunnelDownStreamResume(f.mux, f.child_l);
+    muxserverTunnelDownStreamResume(f.mux, f.child_l);
+#endif
+    twfRequire(! child->paused && ! child->flow_paused_sent &&
+                   parseFrames(f.capture, f.trace.capture_len, frames, 2) == 2 &&
+                   frames[1].flags == kMuxFlagFlowResume && frames[1].cid == kTestChildCid,
+               "child Resume lost or duplicated its matching FlowResume");
+    fixtureTeardown(&f);
+}
+
+#ifdef MUX_OUTPUT_CLIENT
+static unsigned pqOpeningPauseMode;
+
+static void pqOpeningPauseSink(tunnel_t *t, line_t *l, sbuf_t *buf)
+{
+    if (sbufIsSplice(buf))
+        buf = muxMaterializeRetainedPayload(lineGetBufferPool(l), buf);
+    pqSink(t, l, buf);
+    if (pqDeliveries != 1)
+        return;
+    switch (pqOpeningPauseMode)
+    {
+    case 3:
+        muxclientTunnelUpStreamResume(pqFixture->mux, pqFixture->child_l);
+        break;
+    case 4:
+        muxclientTunnelUpStreamPause(pqFixture->mux, pqFixture->child_l);
+        break;
+    case 5:
+        muxclientTunnelUpStreamFinish(pqFixture->mux, pqFixture->child_l);
+        lineDestroy(pqFixture->child_l);
+        break;
+    case 6:
+        muxclientHandleParentLoss(pqFixture->mux, pqFixture->parent_l, true);
+        break;
+    }
+}
+
+static void caseClientPauseBeforeOpen(unsigned representation, unsigned mode)
+{
+    twfSetCase("MuxClient reconciles pre-Open Pause across ordinary/splice submission and reentrant callbacks");
+    pq_fixture_t f;
+    pqSetup(&f);
+#if WW_HAVE_SPLICE
+    if (representation == 2 && ! pqHaveMaximumPipe(&f))
+    {
+        fixtureTeardown(&f);
+        return;
+    }
+#endif
+    const uint32_t length           = representation == 2 ? kMuxMaxDataFrameLength + 3U : 17U;
+    f.capture                       = memoryReAllocate(f.capture, length + 128U);
+    f.trace.capture                 = f.capture;
+    f.trace.capture_capacity        = length + 128U;
+    pqParentSink(&f)->pqPayloadSlot = pqOpeningPauseSink;
+    pqOpeningPauseMode              = mode;
+    pq_state_t *child               = lineGetState(f.child_l, f.mux);
+    muxclientTunnelUpStreamPause(f.mux, f.child_l);
+    twfRequire(child->paused && ! child->flow_paused_sent && pqDeliveries == 0,
+               "child emitted FlowPause before its Open");
+    if (mode == 1)
+        pqParentPause(&f);
+    if (mode == 2)
+        muxclientTunnelUpStreamResume(f.mux, f.child_l);
+    lineRef(f.parent_l);
+    lineRef(f.child_l);
+    sbuf_t *input;
+#if WW_HAVE_SPLICE
+    if (representation == 2)
+    {
+        pqBatchLength = length;
+        input         = pqLargeSplice(&f);
+    }
+    else if (representation == 1)
+        input = pqSplicePattern(&f, length);
+    else
+#endif
+        input = makePatternPayload(&f, length);
+    pqSend(f.mux, f.child_l, input);
+    const bool expect_pause = mode == 0 || mode == 1 || mode == 4;
+    if (mode == 1)
+    {
+        twfRequire(pqDeliveries == 0 && child->flow_paused_sent,
+                   "paused parent did not retain the pre-Open FlowPause after Open/Data");
+        pqParentResume(&f);
+    }
+    frame_view_t   frames[8];
+    unsigned       count       = parseFrames(f.capture, f.trace.capture_len, frames, ARRAY_SIZE(frames));
+    const unsigned data_frames = representation == 2 && mode != 6 ? 2U : 1U;
+    twfRequire(count == 1U + data_frames + expect_pause + (mode == 5) && frames[0].flags == kMuxFlagOpen,
+               "pre-Open Pause lost, duplicated, or reordered a control frame");
+    uint32_t offset = 0;
+    for (unsigned i = 1; i <= data_frames; ++i)
+    {
+        twfRequire(frames[i].flags == kMuxFlagData && frames[i].cid == kTestChildCid,
+                   "pre-Open FlowPause overtook admitted Data");
+        for (uint32_t j = 0; j < frames[i].length; ++j)
+            twfRequire(frames[i].data[j] == patternByte(offset++), "pre-Open Pause changed payload bytes");
+    }
+    if (mode != 6)
+        twfRequire(offset == length, "pre-Open Pause lost admitted payload");
+    if (expect_pause)
+    {
+        twfRequire(frames[count - 1].flags == kMuxFlagFlowPause && child->flow_paused_sent,
+                   "paused child did not signal the peer immediately after Open/Data");
+        muxclientTunnelUpStreamResume(f.mux, f.child_l);
+        twfRequire(! child->flow_paused_sent, "resumed child retained its sent-pause latch");
+        count = parseFrames(f.capture, f.trace.capture_len, frames, ARRAY_SIZE(frames));
+        twfRequire(count == data_frames + 3U && frames[count - 1].flags == kMuxFlagFlowResume,
+                   "pre-Open Pause did not receive its matching FlowResume");
+    }
+    if (mode == 5)
+        twfRequire(! lineIsAlive(f.child_l) && frames[count - 1].flags == kMuxFlagClose,
+                   "reentrant child close emitted a late FlowPause");
+    if (mode == 6)
+        twfRequire(! lineIsAlive(f.parent_l), "reentrant parent loss left its owned line alive");
+    const bool parent_dead = ! lineIsAlive(f.parent_l);
+    const bool child_dead  = ! lineIsAlive(f.child_l);
+    lineUnref(f.parent_l);
+    lineUnref(f.child_l);
+    if (parent_dead)
+        f.parent_l = NULL;
+    if (child_dead)
+        f.child_l = NULL;
+    fixtureTeardown(&f);
+}
+#endif
+
 /* Boundary inputs use low-profile receive geometry and independent wire bytes. */
 static void pqReceiveBytes(pq_fixture_t *f, const uint8_t *bytes, uint32_t length)
 {
@@ -1604,6 +1770,17 @@ static void runFrameLengthCases(void)
 
 static void runParentOutputCases(void)
 {
+    caseChildPauseWithoutQueuedData();
+#ifdef MUX_OUTPUT_CLIENT
+    for (unsigned mode = 0; mode < 7; ++mode)
+    {
+        caseClientPauseBeforeOpen(0, mode);
+#if WW_HAVE_SPLICE
+        caseClientPauseBeforeOpen(1, mode);
+        caseClientPauseBeforeOpen(2, mode);
+#endif
+    }
+#endif
     caseParentEarlyRelease();
     caseParentResumeBoundary(0);
     caseParentResumeBoundary(2);

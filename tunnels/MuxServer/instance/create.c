@@ -110,7 +110,6 @@ tunnel_t *muxserverTunnelCreate(node_t *node)
     const cJSON                   *settings                      = node->node_settings_json;
     muxserver_tstate_t            *ts                            = tunnelGetState(t);
     int                            child_buffer_limit            = kMuxDefaultChildBufferLimit;
-    int                            child_buffer_pause_tolerance  = kMuxDefaultChildBufferPauseTolerance;
     int                            child_buffer_resume_threshold = kMuxDefaultChildBufferResumeThreshold;
     int                            parent_buffer_limit           = kMuxDefaultParentBufferLimit;
     int                            detached_buffer_limit         = (int) detached_defaults.buffer_limit;
@@ -209,10 +208,6 @@ tunnel_t *muxserverTunnelCreate(node_t *node)
     if (cJSON_IsObject(settings))
     {
         getIntFromJsonObjectOrDefault(&child_buffer_limit, settings, "child-buffer-limit", kMuxDefaultChildBufferLimit);
-        getIntFromJsonObjectOrDefault(&child_buffer_pause_tolerance,
-                                      settings,
-                                      "child-buffer-pause-tolerance",
-                                      kMuxDefaultChildBufferPauseTolerance);
         getIntFromJsonObjectOrDefault(&child_buffer_resume_threshold,
                                       settings,
                                       "child-buffer-resume-threshold",
@@ -228,13 +223,6 @@ tunnel_t *muxserverTunnelCreate(node_t *node)
     if (child_buffer_limit <= 0)
     {
         LOGF("MuxServer: \"child-buffer-limit\" must be greater than 0, got %d", child_buffer_limit);
-        tunnelDestroy(t);
-        return NULL;
-    }
-    if (child_buffer_pause_tolerance < 0)
-    {
-        LOGF("MuxServer: \"child-buffer-pause-tolerance\" must be greater than or equal to 0, got %d",
-             child_buffer_pause_tolerance);
         tunnelDestroy(t);
         return NULL;
     }
@@ -264,8 +252,6 @@ tunnel_t *muxserverTunnelCreate(node_t *node)
         return NULL;
     }
     ts->child_buffer_limit = (uint32_t) child_buffer_limit;
-    ts->child_buffer_pause_tolerance =
-        (uint32_t) min((size_t) child_buffer_pause_tolerance, (size_t) child_buffer_limit);
     ts->child_buffer_resume_threshold =
         (uint32_t) min((size_t) child_buffer_resume_threshold, (size_t) child_buffer_limit);
     // This is a per-parent budget, not another per-child limit, so it may

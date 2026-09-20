@@ -80,7 +80,6 @@ static void fixtureSetup(muxclient_capacity_fixture_t *fixture, uint8_t mode, ui
     ts->concurrency_capacity          = 2;
     ts->fixed_connections_count       = fixed_count;
     ts->child_buffer_limit            = kMuxDefaultChildBufferLimit;
-    ts->child_buffer_pause_tolerance  = kMuxDefaultChildBufferPauseTolerance;
     ts->child_buffer_resume_threshold = kMuxDefaultChildBufferResumeThreshold;
     ts->parent_buffer_limit           = kMuxDefaultParentBufferLimit;
     ts->parent_write_pause_threshold  = kMuxDefaultParentWritePauseThreshold;
