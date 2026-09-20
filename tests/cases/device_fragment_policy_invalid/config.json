@@ -1,11 +1,12 @@
 {
-  "name": "device_fragment_policy_required",
+  "name": "device_fragment_policy_invalid",
   "nodes": [
     {
       "name": "tun",
       "type": "TunDevice",
       "next": "stack",
       "settings": {
+        "fragment-policy": "invalid",
         "device-name": "wwfrag0",
         "device-ip": "10.253.80.1/24",
         "device-mtu": 1500,

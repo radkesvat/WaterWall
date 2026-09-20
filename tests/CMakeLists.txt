@@ -1003,8 +1003,8 @@ add_custom_target(check_waterwall_tests
 )
 
 add_waterwall_expected_failure_integration_test(
-  waterwall.device_fragment_policy_required device_fragment_policy_required
-  "Device source requires fragment-policy")
+  waterwall.device_fragment_policy_invalid device_fragment_policy_invalid
+  "Device source fragment-policy must be reassemble or preserve-fragments")
 add_waterwall_expected_failure_integration_test(
   waterwall.device_fragment_raw_stack_rejected device_fragment_raw_stack_rejected
   "unsupported fragment-policy path")

@@ -83,6 +83,7 @@ bool packettunnelTakeChecksumRequest(line_t *line);
  */
 bool packettunnelFinalizeChecksumRequest(bool requested, uint8_t *packet, uint32_t length);
 
-/* Explicit source policy, validated against the actual publication direction. */
+/* Defaults to reassemble when omitted; explicit invalid values are rejected. */
 bool packettunnelReadFragmentPolicy(const cJSON *settings, device_fragment_policy_t *policy);
+/* Validate the selected source policy against the actual publication direction. */
 bool packettunnelValidateFragmentPath(tunnel_t *source, device_fragment_policy_t policy);

@@ -189,22 +189,51 @@ static void testFragmentPolicyPaths(void)
     source->prev      = stack;
     stack_node.type   = (char[]) {"ConnectionToPackets"};
     require(packettunnelValidateFragmentPath(source, kDeviceFragmentReassemble), "downstream local stack rejected");
-    device_fragment_policy_t policy   = kDeviceFragmentPolicyUnset;
-    cJSON                   *settings = cJSON_Parse("{}");
-    require(! packettunnelReadFragmentPolicy(settings, &policy), "omitted policy accepted");
-    cJSON_AddStringToObject(settings, "fragment-policy", "reassemble");
-    require(packettunnelReadFragmentPolicy(settings, &policy) && policy == kDeviceFragmentReassemble,
-            "explicit policy rejected");
-    cJSON_Delete(settings);
     tunnelDestroy(source);
     tunnelDestroy(transform);
     tunnelDestroy(stack);
     tunnelDestroy(egress);
 }
 
+static void testFragmentPolicySettings(void)
+{
+    static const struct
+    {
+        const char              *json;
+        device_fragment_policy_t expected;
+    } cases[] = {
+        {"{}", kDeviceFragmentReassemble},
+        {"{\"fragment-policy\":\"reassemble\"}", kDeviceFragmentReassemble},
+        {"{\"fragment-policy\":\"preserve-fragments\"}", kDeviceFragmentPreserve},
+        {"{\"fragment-policy\":null}", kDeviceFragmentPolicyUnset},
+        {"{\"fragment-policy\":false}", kDeviceFragmentPolicyUnset},
+        {"{\"fragment-policy\":0}", kDeviceFragmentPolicyUnset},
+        {"{\"fragment-policy\":[]}", kDeviceFragmentPolicyUnset},
+        {"{\"fragment-policy\":{}}", kDeviceFragmentPolicyUnset},
+        {"{\"fragment-policy\":\"\"}", kDeviceFragmentPolicyUnset},
+        {"{\"fragment-policy\":\"invalid\"}", kDeviceFragmentPolicyUnset},
+    };
+
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i)
+    {
+        cJSON *settings = cJSON_Parse(cases[i].json);
+        require(settings != NULL, "failed to parse fragment policy settings");
+        device_fragment_policy_t policy   = kDeviceFragmentPolicyUnset;
+        const bool               accepted = packettunnelReadFragmentPolicy(settings, &policy);
+        require(accepted == (cases[i].expected != kDeviceFragmentPolicyUnset),
+                "fragment policy setting was incorrectly accepted or rejected");
+        if (accepted)
+        {
+            require(policy == cases[i].expected, "fragment policy default or explicit value was not retained");
+        }
+        cJSON_Delete(settings);
+    }
+}
+
 int main(void)
 {
     testPacketTunnelLifecycleCallbacksPassThrough();
     testFragmentPolicyPaths();
+    testFragmentPolicySettings();
     return 0;
 }

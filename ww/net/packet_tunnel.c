@@ -206,6 +206,11 @@ bool packettunnelConsumeChecksumRequest(line_t *line, sbuf_t *buf)
 bool packettunnelReadFragmentPolicy(const cJSON *settings, device_fragment_policy_t *policy)
 {
     const cJSON *value = cJSON_GetObjectItemCaseSensitive(settings, "fragment-policy");
+    if (value == NULL)
+    {
+        *policy = kDeviceFragmentReassemble;
+        return true;
+    }
     if (cJSON_IsString(value))
     {
         if (stringCompare(value->valuestring, "reassemble") == 0)
@@ -219,7 +224,7 @@ bool packettunnelReadFragmentPolicy(const cJSON *settings, device_fragment_polic
             return true;
         }
     }
-    LOGF("Device source requires fragment-policy: reassemble or preserve-fragments");
+    LOGF("Device source fragment-policy must be reassemble or preserve-fragments");
     return false;
 }
 

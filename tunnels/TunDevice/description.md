@@ -1,5 +1,5 @@
 <!--
-Documentation version: 152
+Documentation version: 153
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/TunDevice.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/TunDevice.mdx, and all files must keep the same documentation version.
 -->
 
@@ -315,12 +315,12 @@ Source-backed metadata:
 | `layer_group_next_node` | `kNodeLayer3` |
 | `required_padding_left` | `0` bytes |
 
-### `fragment-policy` (required)
+### `fragment-policy` (optional, default: `reassemble`)
 
-Select `reassemble` for an audited local-stack ingress path, or
-`preserve-fragments` for audited raw forwarding to external packet egress or a
-sink. Missing/invalid settings and unsupported paths fail startup. Reassembly
-emits complete IPv4 datagrams up to 65,535 bytes; it does not raise global packet,
-raw-output or device-MTU limits. Packet/stream bridges, routing and unknown
+Omitting this setting selects `reassemble` for an audited local-stack ingress
+path. Set `preserve-fragments` explicitly for audited raw forwarding to external
+packet egress or a sink. Invalid values (including `null`) and unsupported paths
+fail startup. Reassembly emits complete IPv4 datagrams up to 65,535 bytes; it does
+not raise global packet, raw-output or device-MTU limits. Packet/stream bridges, routing and unknown
 transforms are not eligible. See Developer Guide Part 4 for the exact supported
 path matrix, storage limits and ordinary post-delivery lifecycle contract.
