@@ -49,5 +49,15 @@ promise: individual and aggregate receive limits remain 24/128 MiB.
 
 The full plan requires three 180-second repetitions for every direction, splice
 mode and threshold profile, 30-minute scale runs in each mode, a multiworker
-isolation scenario, and two 48-hour soaks. Record exactly which were run in
-`tests/mux_backpressure_results.md`; these recipes do not claim completion.
+isolation scenario, and two 48-hour soaks. Record actual runs in an external results directory; these recipes do not
+claim completion or add temporary result artifacts to source history.
+
+For a single active writer, set `MUX_PRESSURE_CHILDREN=1 MUX_PRESSURE_HOT=1`.
+For a 2,000-child mix, use `MUX_PRESSURE_CHILDREN=2000 MUX_PRESSURE_HOT=4`.
+`MUX_PRESSURE_DIRECTION=upload` or `download` selects the hot direction.
+Samples include process `cpu_seconds`, queue charge, local paused-child count,
+and the aggregate gate. Individual writer holds can make
+`children-parent-write-paused` nonzero while `parent-sources-throttled` is false;
+aggregate throttle durations do not measure individual holds. Callback transition
+counts and sparse-writer snapshot size are checked by the shared native fixture,
+without adding production per-callback instrumentation.

@@ -13,6 +13,7 @@ import time
 HEADER = struct.Struct("!cIII")
 DURATION = float(os.getenv("MUX_PRESSURE_SECONDS", "7"))
 CHILDREN = int(os.getenv("MUX_PRESSURE_CHILDREN", "12"))
+HOT = int(os.getenv("MUX_PRESSURE_HOT", "4"))
 BATCH = int(os.getenv("MUX_PRESSURE_BATCH", "1048576"))
 DIRECTION = os.getenv("MUX_PRESSURE_DIRECTION", "both")
 NETEM = os.getenv("MUX_PRESSURE_NETEM", "false") == "true"
@@ -77,7 +78,7 @@ async def connect():
 async def child(cid, ready, start):
     reader, writer = await connect()
     mode = b"E"
-    if cid < 4:
+    if cid < HOT:
         mode = b"U" if DIRECTION == "upload" else b"D" if DIRECTION == "download" else (b"U" if cid % 2 == 0 else b"D")
     sequence = 0
     try:
@@ -131,7 +132,9 @@ def resources():
     fds = len(list(Path(f"/proc/{RUNTIME_PID}/fd").iterdir()))
     MAX_RSS_KIB = max(MAX_RSS_KIB, rss)
     MAX_FDS = max(MAX_FDS, fds)
-    return {"rss_kib": rss, "fds": fds, "max_rss_kib": MAX_RSS_KIB, "max_fds": MAX_FDS}
+    stat = Path(f"/proc/{RUNTIME_PID}/stat").read_text().rsplit(")", 1)[1].split()
+    cpu_seconds = (int(stat[11]) + int(stat[12])) / os.sysconf("SC_CLK_TCK")
+    return {"cpu_seconds": cpu_seconds, "rss_kib": rss, "fds": fds, "max_rss_kib": MAX_RSS_KIB, "max_fds": MAX_FDS}
 
 
 def queue_samples():
@@ -206,9 +209,9 @@ async def main():
                 break
         except (OSError, RuntimeError):
             continue
-    assert CHILDREN >= 4 and DURATION >= 6
+    assert CHILDREN >= 1 and 1 <= HOT <= CHILDREN and DURATION >= 6
     print(json.dumps({"duration": DURATION, "children": CHILDREN, "batch": BATCH, "direction": DIRECTION,
-                      "netem": NETEM, "fd_limit": resource.getrlimit(resource.RLIMIT_NOFILE)}), flush=True)
+                      "hot": HOT, "netem": NETEM, "fd_limit": resource.getrlimit(resource.RLIMIT_NOFILE)}), flush=True)
     if NETEM:
         carrier_netem()
     server = await asyncio.start_server(destination, "127.0.0.1", 26882)
