@@ -1,0 +1,16 @@
+{
+  "name": "mux-parent-pressure-probe",
+  "nodes": [
+    {"name": "source", "type": "TcpListener", "next": "mux-client", "settings": {"address": "127.0.0.1", "port": 26880}},
+    {"name": "mux-client", "type": "MuxClient", "next": "carrier-out", "settings": {
+      "mode": "fixed-connections-count", "per-worker-connections-count": 1,
+      "parent-write-buffer-pause-threshold": 65536, "parent-write-buffer-resume-threshold": 32768,
+      "log-main-line-stats": true}},
+    {"name": "carrier-out", "type": "TcpConnector", "settings": {"address": "127.0.0.1", "port": 26881}},
+    {"name": "carrier-in", "type": "TcpListener", "next": "mux-server", "settings": {"address": "127.0.0.1", "port": 26881}},
+    {"name": "mux-server", "type": "MuxServer", "next": "destination", "settings": {
+      "parent-write-buffer-pause-threshold": 65536, "parent-write-buffer-resume-threshold": 32768,
+      "log-main-line-stats": true}},
+    {"name": "destination", "type": "TcpConnector", "settings": {"address": "127.0.0.1", "port": 26882}}
+  ]
+}
