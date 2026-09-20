@@ -132,14 +132,14 @@ this is not a physical memory, descriptor, or RSS limit.
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
-| `parent-write-buffer-pause-threshold` | `33554432` (32 MiB) | Pause attached child producers when retained charge reaches this value. |
-| `parent-write-buffer-resume-threshold` | `29360128` (28 MiB) | Release parent pressure at or below this charge while transport is writable. Omitted values derive from pause × 7/8, rounded down. |
+| `parent-write-buffer-pause-threshold` | `16777216` (16 MiB) | Pause attached child producers when retained charge reaches this value. |
+| `parent-write-buffer-resume-threshold` | `12582912` (12 MiB) | Release parent pressure at or below this charge while transport is writable. Omitted values derive from pause × 3/4, rounded down. |
 | `parent-write-buffer-limit` | `134217728` (128 MiB) | Maximum retained charge for each parent; equality is allowed. |
 
 Pause and hard limits must be integers in `[1, INT_MAX]`; resume accepts
 `[0, INT_MAX]`. The effective tuple must satisfy `0 <= resume < pause < hard`.
 Omitted pause and hard settings use their defaults; omitted resume derives as
-`floor(pause * 7 / 8)` with a wide intermediate. Explicit zero requests
+`floor(pause * 3 / 4)` with a wide intermediate. Explicit zero requests
 empty-queue release, still subject to transport writability. Booleans, strings,
 null, fractions, negatives and out-of-range values reject startup. Invalid
 combinations report all three effective values without clamping. For example,
@@ -163,8 +163,8 @@ Peer FlowPause and terminal close remain independent reasons to stop a source.
 The 4 MiB hysteresis gap avoids waiting for the entire queue to drain, but does
 not promise continuous sender throughput or a faster carrier. The 128 MiB limit
 is per parent, allocated on demand, and is not an RSS, socket-buffer or FD bound.
-Already-admitted Data can still reach a peer-paused child; the unchanged 24 MiB
-child and 48 MiB parent receive budgets can shed children or close that parent.
+Already-admitted Data can still reach a peer-paused child; the default 24 MiB
+child and 128 MiB parent receive budgets can shed children or close that parent.
 
 With `log-main-line-stats`, five-second samples include
 `parent-output-queued-bytes`, `parent-output-queue-charge`,
@@ -192,7 +192,7 @@ from `parent-buffer-limit`, which bounds incoming assembly plus attached child q
   Ordinary entries charge actual capacity (including padding), the buffer header, and alignment overhead.
   Splice entries charge logical sbuf capacity plus sbuf/alignment overhead, including reserved padding once.
 
-  Default: `25165824` (`24 MB`).
+  Default: `25165824` (`24 MiB`).
 
 - `child-buffer-pause-tolerance` `(integer, bytes, optional)`
   Logical queued-payload backstop for sending a `FlowPause` frame for a paused child.
@@ -219,7 +219,7 @@ from `parent-buffer-limit`, which bounds incoming assembly plus attached child q
   On reaching it, beneficial incoming compaction precedes largest-child shedding; ties prefer the oldest child.
   Recovery may close several children or, if pressure cannot be relieved, the affected parent.
 
-  Default: `50331648` (`48 MiB`). Set to `0` to disable the aggregate budget; `child-buffer-limit` still bounds each
+  Default: `134217728` (`128 MiB`). Set to `0` to disable the aggregate budget; `child-buffer-limit` still bounds each
   individual child. The value may intentionally be lower than `child-buffer-limit`.
 
   Each parent has an independent retained-state limit, with transient delivered input excluded from an instantaneous ceiling.
@@ -508,7 +508,7 @@ allocation-based charge; splice entries charge logical sbuf capacity, without
 adding wrapper control storage or kernel pipe capacity. Unknown cached pipe
 capacity does not force a valid retained source into ordinary storage.
 
-`parent-buffer-limit` (48 MiB by default) covers incoming frame assembly plus
+`parent-buffer-limit` (128 MiB by default) covers incoming frame assembly plus
 all attached child queues. The stream counter remains separate from the child
 aggregate, and their sum is checked at stable return boundaries. Complete frames
 in a coalesced delivery drain first, even if its temporary charge exceeds the
@@ -527,7 +527,7 @@ that parent through normal parent-loss cleanup. A zero parent limit disables
 this combined finite bound; it introduces no other aggregate cap.
 
 `child-buffer-limit` remains 24 MiB by default and rejects equality. Outgoing
-parent queues remain separate: their pause/resume thresholds are 32/28 MiB, hard limit is
+parent queues remain separate: their pause/resume thresholds are 16/12 MiB, hard limit is
 128 MiB, and hard-limit equality is permitted. Detached queues retain their
 per-worker settings and zero/unlimited meanings. FlowPause/FlowResume continue
 to count logical payload bytes. Ordinary child candidates may still compact to

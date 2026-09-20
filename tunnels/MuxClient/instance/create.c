@@ -74,7 +74,7 @@ static bool muxclientReadParentWriteSettings(const cJSON *settings, muxclient_ts
     switch (jsonGetObjectIntegerInRange(settings, "parent-write-buffer-resume-threshold", 0, INT_MAX, &resume))
     {
     case kJsonValueMissing:
-        ts->parent_write_resume_threshold = (uint32_t) ((uint64_t) ts->parent_write_pause_threshold * 7 / 8);
+        ts->parent_write_resume_threshold = (uint32_t) ((uint64_t) ts->parent_write_pause_threshold * 3 / 4);
         break;
     case kJsonValuePresent:
         ts->parent_write_resume_threshold = (uint32_t) resume;

@@ -698,9 +698,14 @@ static void caseParentWriteConfiguration(void)
         {
             twfRequire(mux != NULL, "valid parent write settings rejected");
             pq_tstate_t *ts = tunnelGetState(mux);
-            twfRequire(ts->parent_write_pause_threshold == (pairs[i][0] ? pairs[i][0] : 33554432) &&
+            twfRequire(ts->parent_write_pause_threshold == (pairs[i][0] ? pairs[i][0] : 16777216) &&
                            ts->parent_write_limit == (pairs[i][1] ? pairs[i][1] : 134217728),
                        "parent write independent defaults drifted");
+            if (i == 0)
+            {
+                twfRequire(ts->parent_write_resume_threshold == 12582912, "default parent resume threshold drifted");
+                twfRequire(ts->parent_buffer_limit == 134217728, "default parent receive limit drifted");
+            }
             if (i == 3)
             {
                 /* Run the existing real line fixture against the parsed instance. */
@@ -734,7 +739,7 @@ static void caseParentWriteConfiguration(void)
                 f.child_l = NULL;
                 lineUnref(f.parent_l);
 #endif
-                twfRequire(original_ts->parent_write_pause_threshold == 33554432 &&
+                twfRequire(original_ts->parent_write_pause_threshold == 16777216 &&
                                original_ts->parent_write_limit == 134217728,
                            "node instances shared settings");
                 f.mux = original;
@@ -786,16 +791,16 @@ static void caseParentResumeConfiguration(void)
         }
         cJSON_Delete(settings);
     }
-    const uint32_t pauses[] = {1, 8388608, 33554432};
-    for (unsigned i = 0; i < ARRAY_SIZE(pauses); ++i)
+    const uint32_t derived[][2] = {{1, 0}, {3, 2}, {8388608, 6291456}, {16777216, 12582912}, {33554432, 25165824}};
+    for (unsigned i = 0; i < ARRAY_SIZE(derived); ++i)
     {
         cJSON *settings = pqSettings();
-        cJSON_AddNumberToObject(settings, "parent-write-buffer-pause-threshold", pauses[i]);
+        cJSON_AddNumberToObject(settings, "parent-write-buffer-pause-threshold", derived[i][0]);
         node_t    node = {.node_settings_json = settings};
         tunnel_t *mux  = pqCreate(&node);
         twfRequire(mux != NULL, "derived resume rejected");
         pq_tstate_t *ts = tunnelGetState(mux);
-        twfRequire(ts->parent_write_resume_threshold == (uint64_t) pauses[i] * 7 / 8, "derived resume incorrect");
+        twfRequire(ts->parent_write_resume_threshold == derived[i][1], "derived resume incorrect");
         pqDestroy(mux, wwLifecycleProcessShutdown());
         cJSON_Delete(settings);
     }
