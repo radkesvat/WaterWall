@@ -3016,6 +3016,7 @@ foreach(mux_side Client Server)
     waterwall_line_failure_test_use_tunnel(${mux_test} ${mux_target})
     target_link_options(${mux_test} PRIVATE
       ${WATERWALL_LINE_FAILURE_WRAPS}
+      "-Wl,--wrap=memoryAllocate"
       "-Wl,--wrap=memoryReAllocate"
       "-Wl,--wrap=sbufConcat"
       "-Wl,--wrap=sbufSpliceReadToBuffer"

@@ -41,6 +41,10 @@ void muxclientLinestateInitialize(tunnel_t *t, muxclient_lstate_t *ls, line_t *l
                                 .flow_paused_sent           = false,
                                 .peer_flow_paused           = false,
                                 .parent_write_paused        = false,
+                                .local_hold_prev            = NULL,
+                                .local_hold_next            = NULL,
+                                .source_pause_notified      = false,
+                                .source_starting            = false,
                                 .parent_finishing           = false,
                                 .open_frame_submitted       = ! is_child,
                                 .selection_retired          = false};
@@ -48,6 +52,14 @@ void muxclientLinestateInitialize(tunnel_t *t, muxclient_lstate_t *ls, line_t *l
 
 void muxclientLinestateDestroy(muxclient_lstate_t *ls)
 {
+    if (UNLIKELY(ls->parent_write_paused || ls->local_hold_prev || ls->local_hold_next ||
+                 (! ls->is_child && ls->parent_state &&
+                  (ls->parent_state->local_hold_count || ls->parent_state->local_hold_head ||
+                   ls->parent_state->local_hold_tail))))
+    {
+        LOGF("MuxClient: destroying state with local source holds still linked");
+        abortProgramNow(1);
+    }
     // Check linked list integrity before destroying
     if (! ls->is_child)
     {

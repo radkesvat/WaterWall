@@ -705,7 +705,6 @@ static void outputEstProducer(tunnel_t *prev, line_t *child_l)
     if (output_release_in_est)
     {
         muxclient_lstate_t *child  = lineGetState(child_l, g_client_fixture->mux);
-        child->parent_write_paused = true;
         muxclientTunnelDownStreamResume(g_client_fixture->mux, child->parent->l);
         twfRequire(child->parent_write_paused, "starting child was visited during release fanout");
     }
@@ -723,16 +722,17 @@ static void outputInitSafePause(tunnel_t *prev, line_t *child_l)
     quietChildPause(prev, child_l);
 }
 
-static void caseNewChildInheritsOutputGate(bool close_in_est, bool release_in_est)
+static void caseNewChildInheritsOutputGate(bool close_in_est, bool release_in_est, bool aggregate)
 {
     twfSetCase("MuxClient child joins a gated parent and safely produces or closes during Est");
     muxclient_capacity_fixture_t f;
     fixtureSetup(&f, kConcurrencyModeCounter, 0);
     muxclient_tstate_t *ts           = tunnelGetState(f.mux);
     ts->concurrency_capacity         = 32;
-    ts->parent_write_pause_threshold = 1;
+    ts->parent_write_pause_threshold  = aggregate ? 1 : kMuxDefaultParentWritePauseThreshold;
     ts->parent_write_resume_threshold = 0;
     f.prev->fnPauseD                 = outputInitSafePause;
+    f.prev->fnResumeD                 = quietChildResume;
     line_t             *first        = fixtureOpenChild(&f);
     muxclient_lstate_t *child        = lineGetState(first, f.mux);
     line_t             *parent       = child->parent->l;
@@ -753,7 +753,9 @@ static void caseNewChildInheritsOutputGate(bool close_in_est, bool release_in_es
                    "new child missed parent gate");
         twfRequire(f.quiet_pauses == (release_in_est ? 1U : 2U), "new child received incorrect Pause count");
     }
+    twfRequire(f.quiet_resumes == (release_in_est ? 1U : 0U), "startup emitted Resume without a delivered Pause");
     muxclientTunnelDownStreamResume(f.mux, parent);
+    twfRequire(f.quiet_resumes == f.quiet_pauses, "startup permission callbacks did not balance");
     fixtureTeardown(&f);
 }
 
@@ -804,9 +806,12 @@ static void caseIdleParentWaitsForOutput(uint8_t mode, bool stop)
 
 int main(void)
 {
-    caseNewChildInheritsOutputGate(false, false);
-    caseNewChildInheritsOutputGate(false, true);
-    caseNewChildInheritsOutputGate(true, false);
+    caseNewChildInheritsOutputGate(false, false, true);
+    caseNewChildInheritsOutputGate(false, false, false);
+    caseNewChildInheritsOutputGate(false, true, true);
+    caseNewChildInheritsOutputGate(false, true, false);
+    caseNewChildInheritsOutputGate(true, false, true);
+    caseNewChildInheritsOutputGate(true, false, false);
     caseIdleParentWaitsForOutput(kConcurrencyModeCounter, false);
     caseIdleParentWaitsForOutput(kConcurrencyModeTimer, false);
     caseIdleParentWaitsForOutput(kConcurrencyModeFixedConnectionsCount, false);

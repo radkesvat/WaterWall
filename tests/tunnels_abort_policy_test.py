@@ -27,7 +27,7 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 # Total number of audited Category-D conversions. The manifest must account for
 # every one of them.
-EXPECTED_TOTAL_ABORTS = 197
+EXPECTED_TOTAL_ABORTS = 201
 
 
 # ---------------------------------------------------------------------------
@@ -377,8 +377,15 @@ MANIFEST = [
     ("tunnels/IpManipulator/common/tricks/smugglefin/trick.c", "smugglefintrickUpStreamPayload", 1,
      ("IpManipulator: worker packet line died during smuggle-fin send",),
      "helper/line-state invariant: IpManipulator trick packet line died 2"),
-    ("tunnels/MuxClient/common/line_state.c", "muxclientLinestateDestroy", 9,
-     ("MuxClient: destroying a published owned parent",
+    ("tunnels/MuxClient/common/helpers.c", "muxclientRemoveLocalHold", 1,
+     ("MuxClient: local hold count underflow",),
+     "helper invariant: MuxClient local hold registry count integrity"),
+    ("tunnels/MuxServer/common/helpers.c", "muxserverRemoveLocalHold", 1,
+     ("MuxServer: local hold count underflow",),
+     "helper invariant: MuxServer local hold registry count integrity"),
+    ("tunnels/MuxClient/common/line_state.c", "muxclientLinestateDestroy", 10,
+     ("MuxClient: destroying state with local source holds still linked",
+      "MuxClient: destroying a published owned parent",
       "MuxClient: Trying to destroy parent line state with %u children still attached",
       "MuxClient: Trying to destroy parent line state with child links still present",
       "MuxClient: Trying to destroy parent line state with %zu retained child-queue charge",
@@ -388,8 +395,9 @@ MANIFEST = [
       "MuxClient: child line state unexpectedly owns parent-only state",
       "MuxClient: Trying to destroy child line state with %zu retained queue charge"),
      "helper/line-state invariant: MuxClient line-state link and queue-charge integrity"),
-    ("tunnels/MuxServer/common/line_state.c", "muxserverLinestateDestroy", 10,
-     ("MuxServer: Trying to destroy parent line state with %u children still attached",
+    ("tunnels/MuxServer/common/line_state.c", "muxserverLinestateDestroy", 11,
+     ("MuxServer: destroying state with local source holds still linked",
+      "MuxServer: Trying to destroy parent line state with %u children still attached",
       "MuxServer: Trying to destroy parent line state with child links still present",
       "MuxServer: Trying to destroy parent line state with %zu retained child-queue charge",
       "MuxServer: Trying to destroy parent line state with a nonempty or absent CID index",

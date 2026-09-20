@@ -93,19 +93,8 @@ static bool handleOpenFrame(tunnel_t *t, line_t *parent_l, muxserver_lstate_t *p
     new_child_ls->source_starting = true;
     lineRef(child_l);
     tunnelNextUpStreamInit(t, child_l);
-    if (lineIsAlive(child_l))
-    {
-        new_child_ls                  = lineGetState(child_l, t);
-        new_child_ls->source_starting = false;
-        if (lineIsAlive(parent_l) && new_child_ls->parent == parent_ls && ! parent_ls->parent_finishing &&
-            ! ts->worker_states[lineGetWID(parent_l)].quiescing)
-        {
-            if (parent_ls->parent_state->output.sources_throttled)
-                discard muxserverPauseChildSource(t, parent_l, new_child_ls, false, true);
-            else
-                discard muxserverResumeChildSource(t, parent_l, new_child_ls, false, true);
-        }
-    }
+    if (lineIsAlive(child_l) && ((muxserver_lstate_t *) lineGetState(child_l, t))->is_child)
+        muxserverChildSourceStarted(t, child_l);
     lineUnref(child_l);
     bool    parent_alive = lineIsAlive(parent_l);
     lineUnref(parent_l);

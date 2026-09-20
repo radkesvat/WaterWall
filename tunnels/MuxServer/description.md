@@ -83,7 +83,7 @@ Omitted pause and hard settings use their defaults; omitted resume derives as
 empty-queue release, still subject to transport writability. Booleans, strings,
 null, fractions, negatives and out-of-range values reject startup. Invalid
 combinations report all three effective values without clamping. For example,
-inside `settings` (derives a 1.75 MiB resume threshold):
+inside `settings` (derives a 1.5 MiB resume threshold):
 
 ```json
 {
@@ -96,8 +96,8 @@ The gate uses retained queue charge (`sbufGetQueueCharge`), including header,
 capacity, padding and alignment, rather than wire length. Resume runs before the
 next FIFO pop, after the prior delivery returns. Synchronous resumed output
 appends behind existing frames and complete splice batches. A new pause stops
-an interrupted Resume pass; a parent-local rotating cursor gives later eligible
-children their next opportunity. Init/Est completion reconciles the current gate.
+an interrupted Resume pass; the FIFO of locally held children preserves later
+release opportunities. Init/Est completion reconciles deferred producer permission.
 Peer FlowPause and terminal close remain independent reasons to stop a source.
 
 The 4 MiB hysteresis gap avoids waiting for the entire queue to drain, but does
@@ -112,6 +112,9 @@ With `log-main-line-stats`, five-second samples include
 `parent-sources-throttled`, `children-parent-write-paused`,
 `children-peer-flow-paused`, `parent-output-throttle-ms`, and
 `parent-output-last-throttle-ms`, plus the three effective settings.
+`children-parent-write-paused` counts individual writer and aggregate holds.
+It can be nonzero while `parent-sources-throttled` is false. That boolean and
+its current/last throttle durations describe only the aggregate pause-all latch.
 Throttle durations use the owner's 64-bit monotonic clock; current duration is
 zero outside a throttle episode. `parent-child-queue-charge` and
 `parent-input-queue-charge` describe incoming storage. Logging remains optional
@@ -351,16 +354,37 @@ The queue-capacity charge is a policy budget, not exact kernel memory or whole-p
 storage, and the buffer pools' fixed baseline may remain allocated outside a particular live queue's charge.
 
 Parent transport `Pause` immediately stops every parent-bound Payload callback,
-including controls and Close replies. New encoded output joins the parent's FIFO;
-it does not depend on the originating child remaining alive. Short stalls below
-`parent-write-buffer-pause-threshold` cause no child-wide callback pass. Reaching
-the threshold pauses attached child producers once; newly initialized children
-inherit that gate after their producer Init/Est callback returns.
+including controls and Close replies. A child submitting Data while transport is
+blocked acquires an individual local producer hold after its complete payload or
+splice batch is admitted. A direct submission that leaves transport paused also
+holds its writer before returning. A transient Pause followed by Resume uses the
+final state. Empty Data follows the same policy; control frames alone do not make
+the referenced child a writer. Idle siblings below the aggregate threshold remain
+unpaused until they write.
 
-`Resume` drains FIFO order until empty or paused again. Queue-throttled producers
-resume at or below `parent-write-buffer-resume-threshold` while the transport is writable; peer FlowPause
-and terminal-close pressure remain independent. Reentrant output joins the FIFO
-behind older output. Incoming parent reads and unrelated parents remain active.
+At charge greater than or equal to `parent-write-buffer-pause-threshold`, the
+aggregate pause-all latch still holds every attached open child. Local writer
+holds do not activate that latch themselves. Both causes share one local reason
+per child and one parent-local FIFO of held children; duplicate causes preserve
+the child's place. A resumed writer that becomes held again joins the tail.
+
+The pump releases local holds whenever the parent is alive, not finishing, not
+quiescing, writable, and at or below `parent-write-buffer-resume-threshold`, even
+if the aggregate latch never activated. It clears that latch under the same
+condition. Before each release and the next FIFO pop it checks the state left by
+the previous callback. A transport Pause, charge above low water, renewed
+aggregate gate, parent loss, or quiescence interrupts release. Writable output
+continues draining and reconsiders waiting children without requiring an extra
+transport event. Peer FlowPause and terminal-close reasons remain independent.
+
+Release snapshots reference every locally held line before the first callback;
+callbacks may destroy siblings or the parent. Only surviving, attached, open,
+non-starting children are notified. Init/Est records reasons separately from
+already-emitted producer permission, then reconciles once safe. Unlink, terminal
+transition and shutdown remove registry membership before state destruction and
+never emit Resume just to clear the registry. The registry holds no persistent
+line references. Reentrant output follows existing Data, controls and admitted
+splice-batch remainders. Incoming parent reads and unrelated parents remain active.
 
 A candidate that would exceed `parent-write-buffer-limit`, or a queue reservation
 failure, closes only the affected parent through normal local teardown. The

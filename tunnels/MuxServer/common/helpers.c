@@ -274,6 +274,74 @@ void muxserverRefreshChildIdle(tunnel_t *t, muxserver_lstate_t *child_ls)
         worker_state->child_idle_table, child_ls->child_idle_item, ts->active_child_idle_timeout_ms);
 }
 
+/* Owner-worker registry. The local reason is membership, not an emitted Pause. */
+static void muxserverAddLocalHold(muxserver_lstate_t *child)
+{
+    if (child->parent_write_paused)
+        return;
+    assert(child->parent != NULL && child->close_state == kMuxServerChildCloseOpen);
+    muxserver_parent_state_t *state = child->parent->parent_state;
+    child->local_hold_prev          = state->local_hold_tail;
+    child->local_hold_next          = NULL;
+    if (state->local_hold_tail)
+        state->local_hold_tail->local_hold_next = child;
+    else
+        state->local_hold_head = child;
+    state->local_hold_tail = child;
+    state->local_hold_count++;
+    child->parent_write_paused = true;
+}
+
+static void muxserverRemoveLocalHold(muxserver_lstate_t *child)
+{
+    if (! child->parent_write_paused)
+        return;
+    muxserver_parent_state_t *state = child->parent->parent_state;
+    if (UNLIKELY(state->local_hold_count == 0))
+    {
+        LOGF("MuxServer: local hold count underflow");
+        abortProgramNow(1);
+    }
+    if (child->local_hold_prev)
+        child->local_hold_prev->local_hold_next = child->local_hold_next;
+    else
+        state->local_hold_head = child->local_hold_next;
+    if (child->local_hold_next)
+        child->local_hold_next->local_hold_prev = child->local_hold_prev;
+    else
+        state->local_hold_tail = child->local_hold_prev;
+    state->local_hold_count--;
+    child->local_hold_prev = child->local_hold_next = NULL;
+    child->parent_write_paused                      = false;
+}
+
+/* Each caller owns a physical parent reference across callbacks. */
+static muxserver_lstate_t *muxserverOutputParent(tunnel_t *t, line_t *parent_l)
+{
+    if (UNLIKELY(! lineIsAlive(parent_l)))
+        return NULL;
+    muxserver_lstate_t *parent = lineGetState(parent_l, t);
+    if (UNLIKELY(parent->parent_state == NULL || parent->parent_finishing))
+        return NULL;
+    return parent;
+}
+
+static bool muxserverParentActive(tunnel_t *t, line_t *parent_l)
+{
+    muxserver_tstate_t *ts = tunnelGetState(t);
+    return muxserverOutputParent(t, parent_l) != NULL && ! ts->worker_states[lineGetWID(parent_l)].quiescing;
+}
+
+static bool muxserverLocalReleaseReady(tunnel_t *t, line_t *parent_l)
+{
+    if (! muxserverParentActive(t, parent_l))
+        return false;
+    muxserver_lstate_t  *parent = lineGetState(parent_l, t);
+    muxserver_tstate_t  *ts     = tunnelGetState(t);
+    mux_parent_output_t *output = &parent->parent_state->output;
+    return ! output->transport_paused && output->charge <= ts->parent_write_resume_threshold;
+}
+
 void muxserverJoinConnection(muxserver_lstate_t *parent, muxserver_lstate_t *child)
 {
     assert(child != NULL && parent != NULL && child->is_child && (parent->is_child == false));
@@ -300,8 +368,6 @@ void muxserverJoinConnection(muxserver_lstate_t *parent, muxserver_lstate_t *chi
     }
 
     parent->child_next = child;
-    if (parent->parent_state->resume_cursor == NULL)
-        parent->parent_state->resume_cursor = child;
 
     parent->children_count++;
 }
@@ -324,6 +390,7 @@ void muxserverLeaveConnection(muxserver_lstate_t *child)
         abortProgramNow(1);
     }
     muxserver_child_map_t_erase_at(&parent->parent_state->child_map, indexed);
+    muxserverRemoveLocalHold(child);
 
     if (child->child_prev != NULL)
     {
@@ -345,8 +412,6 @@ void muxserverLeaveConnection(muxserver_lstate_t *child)
         abortProgramNow(1);
     }
     child->parent->children_count--;
-    if (parent->parent_state->resume_cursor == child)
-        parent->parent_state->resume_cursor = child->child_next ? child->child_next : parent->child_next;
 
     child->parent     = NULL;
     child->child_prev = NULL;
@@ -658,60 +723,95 @@ static bool muxserverChildSourcePaused(muxserver_lstate_t *child_ls)
            child_ls->close_state != kMuxServerChildCloseOpen;
 }
 
-bool muxserverPauseChildSource(tunnel_t *t, line_t *parent_l, muxserver_lstate_t *child_ls, bool peer_flow,
-                               bool parent_write)
+/* Publish permission before dispatch; nested reason changes remain authoritative.
+ * No child state is accessed after the callback, only the owned reference. */
+static void muxserverSyncChildSource(tunnel_t *t, muxserver_lstate_t *child)
 {
-    line_t *child_l    = child_ls->l;
-    bool    was_paused = muxserverChildSourcePaused(child_ls);
-
-    if (peer_flow)
-    {
-        child_ls->peer_flow_paused = true;
-    }
-    if (parent_write)
-    {
-        child_ls->parent_write_paused = true;
-    }
-
-    if (was_paused)
-    {
-        return true;
-    }
-
-    tunnelNextUpStreamPause(t, child_l);
-    return lineIsAlive(parent_l);
+    muxserver_tstate_t *ts = tunnelGetState(t);
+    if (child->source_starting || ts->worker_states[lineGetWID(child->l)].quiescing)
+        return;
+    const bool paused = muxserverChildSourcePaused(child);
+    if (child->source_pause_notified == paused)
+        return;
+    child->source_pause_notified = paused;
+    line_t *child_l              = child->l;
+    lineRef(child_l);
+    if (paused)
+        tunnelNextUpStreamPause(t, child_l);
+    else
+        tunnelNextUpStreamResume(t, child_l);
+    lineUnref(child_l);
 }
 
-bool muxserverResumeChildSource(tunnel_t *t, line_t *parent_l, muxserver_lstate_t *child_ls, bool peer_flow,
+bool muxserverPauseChildSource(tunnel_t *t, line_t *parent_l, muxserver_lstate_t *child, bool peer_flow,
+                               bool parent_write)
+{
+    if (peer_flow)
+        child->peer_flow_paused = true;
+    if (parent_write && child->parent != NULL && child->close_state == kMuxServerChildCloseOpen)
+        muxserverAddLocalHold(child);
+    lineRef(parent_l);
+    muxserverSyncChildSource(t, child);
+    const bool alive = muxserverOutputParent(t, parent_l) != NULL;
+    lineUnref(parent_l);
+    return alive;
+}
+
+bool muxserverResumeChildSource(tunnel_t *t, line_t *parent_l, muxserver_lstate_t *child, bool peer_flow,
                                 bool parent_write)
 {
-    line_t *child_l    = child_ls->l;
-    bool    was_paused = muxserverChildSourcePaused(child_ls);
-
     if (peer_flow)
+        child->peer_flow_paused = false;
+    if (parent_write)
+        muxserverRemoveLocalHold(child);
+    /* Peer Resume may arrive before aggregate fanout reaches this child. */
+    if (child->parent != NULL && child->close_state == kMuxServerChildCloseOpen &&
+        child->parent->parent_state->output.sources_throttled)
+        muxserverAddLocalHold(child);
+    lineRef(parent_l);
+    muxserverSyncChildSource(t, child);
+    const bool alive = muxserverOutputParent(t, parent_l) != NULL;
+    lineUnref(parent_l);
+    return alive;
+}
+
+void muxserverChildSourceStarted(tunnel_t *t, line_t *child_l)
+{
+    muxserver_lstate_t *child    = lineGetState(child_l, t);
+    line_t             *parent_l = child->parent ? child->parent->l : NULL;
+    if (parent_l)
     {
-        child_ls->peer_flow_paused = false;
-        /* The fanout may not have visited this child yet. Preserve the gate
-         * before deciding whether peer Resume permits its producer to run. */
-        if (child_ls->parent->parent_state->output.sources_throttled && (was_paused || ! child_ls->source_starting))
+        lineRef(parent_l);
+        /* Still defer this child's notification while the pump settles an
+         * already-low aggregate latch and other ready children. */
+        if (muxserverParentActive(t, parent_l))
+            muxserverDrainParentOutput(t, parent_l);
+    }
+    if (lineIsAlive(child_l))
+    {
+        child = lineGetState(child_l, t);
+        if (child->is_child)
         {
-            if (! was_paused)
-                return muxserverPauseChildSource(t, parent_l, child_ls, false, true);
-            child_ls->parent_write_paused = true;
+            child->source_starting = false;
+            const bool attached =
+                parent_l && muxserverParentActive(t, parent_l) && child->parent == lineGetState(parent_l, t);
+            if (child->close_state == kMuxServerChildCloseOpen && attached)
+            {
+                if (child->parent->parent_state->output.sources_throttled)
+                    muxserverAddLocalHold(child);
+                else if (muxserverLocalReleaseReady(t, parent_l))
+                    muxserverRemoveLocalHold(child);
+            }
+            if (attached || child->close_state != kMuxServerChildCloseOpen)
+                muxserverSyncChildSource(t, child);
         }
     }
-    if (parent_write)
+    if (parent_l)
     {
-        child_ls->parent_write_paused = false;
+        if (muxserverParentActive(t, parent_l))
+            muxserverDrainParentOutput(t, parent_l);
+        lineUnref(parent_l);
     }
-
-    if (! was_paused || muxserverChildSourcePaused(child_ls))
-    {
-        return true;
-    }
-
-    tunnelNextUpStreamResume(t, child_l);
-    return lineIsAlive(parent_l);
 }
 
 static bool muxserverCloseChildForQueueLimit(tunnel_t *t, line_t *parent_l, muxserver_lstate_t *parent_ls,
@@ -1159,7 +1259,7 @@ bool muxserverBeginPeerCloseDrain(tunnel_t *t, line_t *parent_l, muxserver_tstat
     discard ts;
     assert(child_ls->close_state == kMuxServerChildCloseOpen);
 
-    const bool source_was_paused = muxserverChildSourcePaused(child_ls);
+    muxserverRemoveLocalHold(child_ls);
     child_ls->close_state        = kMuxServerChildClosePeerDraining;
 
     const muxserver_child_drain_result_t result =
@@ -1173,15 +1273,11 @@ bool muxserverBeginPeerCloseDrain(tunnel_t *t, line_t *parent_l, muxserver_tstat
         return muxserverFinalizeAttachedPeerClose(t, parent_l, parent_ls, child_ls);
     }
 
-    if (! source_was_paused)
-    {
-        lineRef(parent_l);
-        discard    lineCallWithRef(child_l, tunnelNextUpStreamPause, t);
-        const bool parent_alive = lineIsAlive(parent_l);
-        lineUnref(parent_l);
-        return parent_alive;
-    }
-    return true;
+    lineRef(parent_l);
+    muxserverSyncChildSource(t, child_ls);
+    const bool parent_alive = lineIsAlive(parent_l);
+    lineUnref(parent_l);
+    return parent_alive;
 }
 
 static bool muxserverDetachedLimitReached(muxserver_tstate_t *ts, muxserver_detached_registry_t *registry)
@@ -1231,7 +1327,6 @@ void muxserverHandleParentLoss(tunnel_t *t, line_t *parent_l, bool notify_parent
     {
         muxserver_lstate_t *child_ls          = parent_ls->child_next;
         line_t             *child_l           = child_ls->l;
-        const bool          source_was_paused = muxserverChildSourcePaused(child_ls);
         const size_t        queued_charge     = child_ls->pending_child_queue_charge;
 
         assert(child_ls->close_state == kMuxServerChildCloseOpen ||
@@ -1281,10 +1376,7 @@ void muxserverHandleParentLoss(tunnel_t *t, line_t *parent_l, bool notify_parent
             continue;
         }
 
-        if (! source_was_paused)
-        {
-            discard lineCallWithRef(child_l, tunnelNextUpStreamPause, t);
-        }
+        muxserverSyncChildSource(t, child_ls);
     }
 
     if (! lineIsAlive(parent_l) || parent_ls->parent_state == NULL)
@@ -1312,105 +1404,140 @@ void muxserverHandleParentLoss(tunnel_t *t, line_t *parent_l, bool notify_parent
     lineUnref(parent_l);
 }
 
-/* A physical reference is held by each caller of this predicate. A borrowed
- * parent's local state can already be gone while its owner unwinds Finish. */
-static bool muxserverParentOutputAlive(tunnel_t *t, line_t *parent_l)
+/* Capture every allocation before the first callback: A may destroy B. */
+static line_t **muxserverSnapshotChildren(tunnel_t *t, line_t *parent_l, bool local, size_t *count)
 {
-    if (! lineIsAlive(parent_l))
-        return false;
     muxserver_lstate_t *parent = lineGetState(parent_l, t);
-    return parent->parent_state != NULL && ! parent->parent_finishing;
+    *count                     = local ? parent->parent_state->local_hold_count : parent->children_count;
+    size_t     bytes           = 0;
+    const bool fits            = memoryTryComputeArraySize(*count, sizeof(line_t *), &bytes);
+    line_t   **lines           = *count && fits ? memoryAllocate(bytes) : NULL;
+    if (*count && ! lines)
+    {
+        LOGE("MuxServer: unable to snapshot children for parent write pressure");
+        muxserverHandleParentLoss(t, parent_l, true);
+        return NULL;
+    }
+    muxserver_lstate_t *child = local ? parent->parent_state->local_hold_head : parent->child_next;
+    for (size_t i = 0; i < *count; ++i)
+    {
+        assert(child != NULL);
+        lines[i] = child->l;
+        lineRef(lines[i]);
+        child = local ? child->local_hold_next : child->child_next;
+    }
+    assert(child == NULL);
+    return lines;
 }
 
-/* Snapshot physical references only on a gate transition. A callback may remove
- * any sibling or attach new children; Init/Est completion handles new arrivals. */
 static void muxserverNotifyParentGate(tunnel_t *t, line_t *parent_l)
 {
-    muxserver_tstate_t  *ts     = tunnelGetState(t);
-    muxserver_lstate_t  *parent = lineGetState(parent_l, t);
-    mux_parent_output_t *output = &parent->parent_state->output;
-    if (output->notifying)
+    muxserver_lstate_t *parent = muxserverOutputParent(t, parent_l);
+    if (! parent || parent->parent_state->output.notifying)
         return;
-    output->notifying = true;
-    for (;;)
+    parent->parent_state->output.notifying = true;
+    size_t   count;
+    line_t **lines = muxserverSnapshotChildren(t, parent_l, false, &count);
+    if (count && ! lines)
+        return;
+    for (size_t i = 0; i < count; ++i)
     {
-        const bool   throttled = output->sources_throttled;
-        const size_t count     = parent->children_count;
-        size_t       bytes     = 0;
-        const bool   fits      = memoryTryComputeArraySize(count, sizeof(line_t *), &bytes);
-        line_t     **children  = count && fits ? memoryAllocate(bytes) : NULL;
-        if (count && children == NULL)
+        parent = muxserverOutputParent(t, parent_l);
+        if (parent && muxserverParentActive(t, parent_l) && parent->parent_state->output.sources_throttled &&
+            lineIsAlive(lines[i]))
         {
-            LOGE("MuxServer: unable to snapshot children for parent write pressure");
-            muxserverHandleParentLoss(t, parent_l, true);
-            return;
+            muxserver_lstate_t *child = lineGetState(lines[i], t);
+            if (child->is_child && child->parent == parent && child->close_state == kMuxServerChildCloseOpen)
+                discard muxserverPauseChildSource(t, parent_l, child, false, true);
         }
-        size_t n = 0;
-        muxserver_lstate_t *snapshot_child = throttled ? parent->child_next : parent->parent_state->resume_cursor;
-        for (; n < count; snapshot_child = snapshot_child->child_next ? snapshot_child->child_next : parent->child_next)
-        {
-            children[n++] = snapshot_child->l;
-            lineRef(snapshot_child->l);
-        }
-        for (size_t i = 0; i < n; ++i)
-        {
-            if (muxserverParentOutputAlive(t, parent_l) && ! ts->worker_states[lineGetWID(parent_l)].quiescing &&
-                output->sources_throttled == throttled && lineIsAlive(children[i]))
-            {
-                muxserver_lstate_t *child = lineGetState(children[i], t);
-                if (child->is_child && child->parent == parent && ! child->source_starting)
-                {
-                    if (throttled)
-                        discard muxserverPauseChildSource(t, parent_l, child, false, true);
-                    else
-                    {
-                        parent->parent_state->resume_cursor =
-                            child->child_next ? child->child_next : parent->child_next;
-                        discard muxserverResumeChildSource(t, parent_l, child, false, true);
-                    }
-                }
-            }
-            lineUnref(children[i]);
-        }
-        memoryFree(children);
-        if (! muxserverParentOutputAlive(t, parent_l))
-            return;
-        if (output->sources_throttled == throttled)
-            break;
+        lineUnref(lines[i]);
     }
-    output->notifying = false;
+    memoryFree(lines);
+    parent = muxserverOutputParent(t, parent_l);
+    if (parent)
+        parent->parent_state->output.notifying = false;
+}
+
+static void muxserverReleaseLocalHolds(tunnel_t *t, line_t *parent_l)
+{
+    muxserver_lstate_t *parent             = lineGetState(parent_l, t);
+    parent->parent_state->output.notifying = true;
+    size_t   count;
+    line_t **lines = muxserverSnapshotChildren(t, parent_l, true, &count);
+    if (count && ! lines)
+        return;
+    bool releasing = true;
+    for (size_t i = 0; i < count; ++i)
+    {
+        parent    = muxserverOutputParent(t, parent_l);
+        releasing = releasing && parent && muxserverLocalReleaseReady(t, parent_l) &&
+                    ! parent->parent_state->output.sources_throttled;
+        if (releasing && lineIsAlive(lines[i]))
+        {
+            muxserver_lstate_t *child = lineGetState(lines[i], t);
+            if (child->is_child && child->parent == parent && child->close_state == kMuxServerChildCloseOpen &&
+                child->parent_write_paused && ! child->source_starting)
+                discard muxserverResumeChildSource(t, parent_l, child, false, true);
+        }
+        lineUnref(lines[i]);
+    }
+    memoryFree(lines);
+    parent = muxserverOutputParent(t, parent_l);
+    if (parent)
+    {
+        parent->parent_state->output.notifying = false;
+        if (muxserverParentActive(t, parent_l) && parent->parent_state->output.sources_throttled)
+            muxserverNotifyParentGate(t, parent_l);
+    }
 }
 
 void muxserverDrainParentOutput(tunnel_t *t, line_t *parent_l)
 {
     muxserver_tstate_t *ts     = tunnelGetState(t);
-    muxserver_lstate_t *parent = lineGetState(parent_l, t);
-    if (ts->worker_states[lineGetWID(parent_l)].quiescing || parent->parent_finishing)
-        return;
-    mux_parent_output_t *output = &parent->parent_state->output;
-    if (output->pumping)
+    muxserver_lstate_t *parent = muxserverOutputParent(t, parent_l);
+    if (! parent || ! muxserverParentActive(t, parent_l) || parent->parent_state->output.pumping)
         return;
     lineRef(parent_l);
-    output->pumping = true;
-    while (muxserverParentOutputAlive(t, parent_l) && ! ts->worker_states[lineGetWID(parent_l)].quiescing &&
-           ! output->transport_paused)
+    parent->parent_state->output.pumping = true;
+    while (muxserverParentActive(t, parent_l))
     {
-        /* Decide only before the next pop, using the previous callback's state. */
-        if (output->sources_throttled && ! output->notifying && output->charge <= ts->parent_write_resume_threshold)
-        {
-            muxParentOutputSetThrottled(output, false, wloopNowLoopRunTime(getWorkerLoop(lineGetWID(parent_l))));
-            muxserverNotifyParentGate(t, parent_l);
-            continue;
-        }
-        if (! bufferqueueGetBufCount(&output->pending))
+        parent                      = lineGetState(parent_l, t);
+        mux_parent_output_t *output = &parent->parent_state->output;
+        if (output->transport_paused)
             break;
+        if (! output->notifying && output->charge <= ts->parent_write_resume_threshold)
+        {
+            if (output->sources_throttled)
+                muxParentOutputSetThrottled(output, false, wloopNowLoopRunTime(getWorkerLoop(lineGetWID(parent_l))));
+            if (parent->parent_state->local_hold_count)
+                muxserverReleaseLocalHolds(t, parent_l);
+        }
+        if (! muxserverParentActive(t, parent_l))
+            break;
+        parent = lineGetState(parent_l, t);
+        output = &parent->parent_state->output;
+        if (output->transport_paused || ! bufferqueueGetBufCount(&output->pending))
+            break;
+        /* A new snapshot requires FIFO progress; starting children finish in Init/Est. */
         sbuf_t *buf = muxParentOutputPop(output);
         tunnelPrevDownStreamPayload(t, parent_l, buf);
     }
-    const bool alive = muxserverParentOutputAlive(t, parent_l);
-    if (alive)
-        output->pumping = false;
+    parent = muxserverOutputParent(t, parent_l);
+    if (parent)
+        parent->parent_state->output.pumping = false;
     lineUnref(parent_l);
+}
+
+/* Writer and parent references belong to the submission, including non-opening Data. */
+static void muxserverHoldWriter(tunnel_t *t, line_t *parent_l, line_t *writer_l)
+{
+    if (! writer_l || ! muxserverParentActive(t, parent_l) || ! lineIsAlive(writer_l))
+        return;
+    muxserver_lstate_t *parent = lineGetState(parent_l, t);
+    muxserver_lstate_t *writer = lineGetState(writer_l, t);
+    if (writer->is_child && writer->parent == parent && writer->close_state == kMuxServerChildCloseOpen &&
+        (parent->parent_state->output.transport_paused || parent->parent_state->output.sources_throttled))
+        discard muxserverPauseChildSource(t, parent_l, writer, false, true);
 }
 
 bool muxserverSendParentOutput(tunnel_t *t, line_t *parent_l, sbuf_t *buf, muxserver_lstate_t *child, uint8_t flag)
@@ -1424,6 +1551,9 @@ bool muxserverSendParentOutput(tunnel_t *t, line_t *parent_l, sbuf_t *buf, muxse
         return false;
     }
     lineRef(parent_l);
+    line_t *writer_l = child && flag == kMuxFlagData ? child->l : NULL;
+    if (writer_l)
+        lineRef(writer_l);
     mux_parent_output_t *output = &parent->parent_state->output;
     const bool           direct =
         ! output->transport_paused && ! output->pumping && bufferqueueGetBufCount(&output->pending) == 0;
@@ -1445,6 +1575,8 @@ bool muxserverSendParentOutput(tunnel_t *t, line_t *parent_l, sbuf_t *buf, muxse
                  ts->parent_write_limit);
             bufferpoolReuseBuffer(pool, buf);
             muxserverHandleParentLoss(t, parent_l, true);
+            if (writer_l)
+                lineUnref(writer_l);
             lineUnref(parent_l);
             return false;
         }
@@ -1461,17 +1593,22 @@ bool muxserverSendParentOutput(tunnel_t *t, line_t *parent_l, sbuf_t *buf, muxse
     {
         output->pumping = true;
         tunnelPrevDownStreamPayload(t, parent_l, buf);
-        if (muxserverParentOutputAlive(t, parent_l))
-            output->pumping = false;
+        parent = muxserverOutputParent(t, parent_l);
+        if (parent)
+            parent->parent_state->output.pumping = false;
     }
     else if (output->charge >= ts->parent_write_pause_threshold && ! output->sources_throttled)
     {
         muxParentOutputSetThrottled(output, true, wloopNowLoopRunTime(getWorkerLoop(lineGetWID(parent_l))));
         muxserverNotifyParentGate(t, parent_l);
     }
-    if (muxserverParentOutputAlive(t, parent_l))
+    muxserverHoldWriter(t, parent_l, writer_l);
+    if (muxserverParentActive(t, parent_l))
         muxserverDrainParentOutput(t, parent_l);
-    const bool alive = muxserverParentOutputAlive(t, parent_l);
+    muxserverHoldWriter(t, parent_l, writer_l);
+    const bool alive = muxserverOutputParent(t, parent_l) != NULL;
+    if (writer_l)
+        lineUnref(writer_l);
     lineUnref(parent_l);
     return alive;
 }
@@ -1482,11 +1619,14 @@ void muxserverSendSpliceBatch(tunnel_t *t, line_t *parent_l, sbuf_t *input, muxs
     muxserver_lstate_t  *parent = lineGetState(parent_l, t);
     mux_parent_output_t *output = &parent->parent_state->output;
     lineRef(parent_l);
+    line_t *writer_l = child->l;
+    lineRef(writer_l);
     if (! muxEncodeSpliceBatch(
             lineGetBufferPool(parent_l), input, child->connection_id, false, output, ts->parent_write_limit))
     {
         LOGE("MuxServer: complete splice batch exceeds parent limit or reservation failed");
         muxserverHandleParentLoss(t, parent_l, true);
+        lineUnref(writer_l);
         lineUnref(parent_l);
         return;
     }
@@ -1496,7 +1636,10 @@ void muxserverSendSpliceBatch(tunnel_t *t, line_t *parent_l, sbuf_t *input, muxs
         muxParentOutputSetThrottled(output, true, wloopNowLoopRunTime(getWorkerLoop(lineGetWID(parent_l))));
         muxserverNotifyParentGate(t, parent_l);
     }
-    if (muxserverParentOutputAlive(t, parent_l))
+    muxserverHoldWriter(t, parent_l, writer_l);
+    if (muxserverParentActive(t, parent_l))
         muxserverDrainParentOutput(t, parent_l);
+    muxserverHoldWriter(t, parent_l, writer_l);
+    lineUnref(writer_l);
     lineUnref(parent_l);
 }

@@ -672,6 +672,7 @@ static bool     parent_output_close_in_init;
 static bool     parent_output_release_in_init;
 static bool     parent_output_loss_in_pause;
 static unsigned parent_output_pauses;
+static unsigned parent_output_resumes;
 
 static void parentOutputInit(tunnel_t *next, line_t *child)
 {
@@ -683,7 +684,6 @@ static void parentOutputInit(tunnel_t *next, line_t *child)
     if (parent_output_release_in_init)
     {
         muxserver_lstate_t *state  = lineGetState(child, g_server_fixture->mux);
-        state->parent_write_paused = true;
         muxserverTunnelUpStreamResume(g_server_fixture->mux, state->parent->l);
         twfRequire(state->parent_write_paused, "starting child was visited during release fanout");
     }
@@ -708,18 +708,27 @@ static void parentOutputPause(tunnel_t *next, line_t *child)
     }
 }
 
-static void caseParentGateDuringInit(bool close_in_init, bool loss_in_pause, bool release_in_init)
+static void parentOutputResume(tunnel_t *next, line_t *child)
+{
+    discard next;
+    discard child;
+    ++parent_output_resumes;
+}
+
+static void caseParentGateDuringInit(bool close_in_init, bool loss_in_pause, bool release_in_init, bool aggregate)
 {
     twfSetCase("MuxServer parent gate handles output, child close and parent loss during Init completion");
     muxserver_admission_fixture_t f;
     fixtureSetup(&f, 128);
     muxserver_tstate_t *ts           = tunnelGetState(f.mux);
-    ts->parent_write_pause_threshold = 1;
+    ts->parent_write_pause_threshold  = aggregate ? 1 : kMuxDefaultParentWritePauseThreshold;
     ts->parent_write_resume_threshold = 0;
     line_t *parent                   = fixtureCreateParent(&f);
     muxserverTunnelUpStreamPause(f.mux, parent);
     f.next->fnInitU             = parentOutputInit;
     f.next->fnPauseU            = parentOutputPause;
+    f.next->fnResumeU             = parentOutputResume;
+    parent_output_resumes         = 0;
     parent_output_pauses        = 0;
     parent_output_close_in_init = false;
     parent_output_release_in_init = false;
@@ -731,7 +740,7 @@ static void caseParentGateDuringInit(bool close_in_init, bool loss_in_pause, boo
     else
     {
         muxserver_lstate_t *state = lineGetState(parent, f.mux);
-        twfRequire(parent_output_pauses == 1 && state->parent_state->output.sources_throttled,
+        twfRequire(parent_output_pauses == 1 && state->parent_state->output.sources_throttled == aggregate,
                    "child that raised gate during Init missed Pause");
         parent_output_close_in_init = close_in_init;
         parent_output_release_in_init = release_in_init;
@@ -746,7 +755,10 @@ static void caseParentGateDuringInit(bool close_in_init, bool loss_in_pause, boo
         }
         else
             twfRequire(f.trace.prev_payload == 0, "Init output bypassed parent Pause");
+        twfRequire(parent_output_resumes == (release_in_init ? 1U : 0U),
+                   "startup emitted Resume without a delivered Pause");
         muxserverTunnelUpStreamResume(f.mux, parent);
+        twfRequire(parent_output_resumes == parent_output_pauses, "startup permission callbacks did not balance");
         twfRequire(state->parent_state->output.charge == 0, "Init output remained stranded");
     }
     lineUnref(parent);
@@ -755,10 +767,13 @@ static void caseParentGateDuringInit(bool close_in_init, bool loss_in_pause, boo
 
 int main(void)
 {
-    caseParentGateDuringInit(false, false, false);
-    caseParentGateDuringInit(false, false, true);
-    caseParentGateDuringInit(true, false, false);
-    caseParentGateDuringInit(false, true, false);
+    caseParentGateDuringInit(false, false, false, true);
+    caseParentGateDuringInit(false, false, false, false);
+    caseParentGateDuringInit(false, false, true, true);
+    caseParentGateDuringInit(false, false, true, false);
+    caseParentGateDuringInit(true, false, false, true);
+    caseParentGateDuringInit(false, true, false, true);
+    caseParentGateDuringInit(false, true, false, false);
     caseExactPerParentCapPreservesSiblings();
     caseAggregateCapAcrossParentsReusesOneReleasedSlot();
     caseMemoryAdmissionDrivesProductionParser();

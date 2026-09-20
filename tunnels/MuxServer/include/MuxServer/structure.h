@@ -48,7 +48,9 @@ typedef struct muxserver_rejection_bucket_s
 
 typedef struct muxserver_parent_state_s
 {
-    muxserver_lstate_t          *resume_cursor; // Borrowed next attached child; repaired on unlink.
+    muxserver_lstate_t          *local_hold_head;
+    muxserver_lstate_t          *local_hold_tail;
+    uint32_t                     local_hold_count;
     mux_parent_output_t          output;
     unsigned                     receive_depth;     // Defer aggregate enforcement until complete frames drain.
     bool                         receive_enforcing; // Close callbacks may re-enter parser/admission.
@@ -105,6 +107,8 @@ struct muxserver_lstate_s
     struct muxserver_lstate_s *child_next;         // next child in the parent connection
     struct muxserver_lstate_s *detached_prev;      // child-only detached owner registry link
     struct muxserver_lstate_s *detached_next;      // child-only detached owner registry link
+    muxserver_lstate_t        *local_hold_prev;
+    muxserver_lstate_t        *local_hold_next;
     buffer_queue_t             pending_child_data; // decoded frames kept separate, including empty Data, while paused
     size_t    pending_child_queue_charge; // child: own retained resource charge; parent: attached-child aggregate
     mux_cid_t connection_id;              // unique connection id, used for multiplexing
@@ -116,8 +120,9 @@ struct muxserver_lstate_s
     bool                      paused : 1;           // child: local child write side is paused
     bool                      flow_paused_sent : 1; // child: FlowPause was sent to the peer for this cid
     bool                      peer_flow_paused : 1; // child: peer sent FlowPause for this cid
+    bool                      source_pause_notified : 1; // Effective producer permission already emitted.
     bool                      source_starting : 1;  // child: producer Init/Est callback is still on the stack
-    bool                      parent_write_paused : 1; // child: local parent FIFO pressure was reflected to this child
+    bool parent_write_paused : 1; // child: local hold registry membership (writer or aggregate pressure)
     bool parent_finishing : 1;                      // parent: main FIN is being handled, suppress parent writes
     bool detached_registered : 1;                   // child: present in its worker's detached owner registry
     bool child_slot_reserved : 1;                   // child: aggregate reservation is owned until state destruction
@@ -245,3 +250,6 @@ void muxserverDrainParentOutput(tunnel_t *t, line_t *parent_l);
 void muxserverSendSpliceBatch(tunnel_t *t, line_t *parent_l, sbuf_t *input, muxserver_lstate_t *child);
 
 bool muxserverEnforceParentReceiveLimit(tunnel_t *t, line_t *parent_l);
+
+/* Complete deferred producer permission after Init/Est; caller holds the child. */
+void muxserverChildSourceStarted(tunnel_t *t, line_t *child_l);

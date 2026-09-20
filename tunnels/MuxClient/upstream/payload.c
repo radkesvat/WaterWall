@@ -75,7 +75,9 @@ void muxclientTunnelUpStreamPayload(tunnel_t *t, line_t *child_l, sbuf_t *buf)
     {
         muxclient_lstate_t *parent_ls = lineGetState(parent_l, t);
         child_ls                      = lineGetState(child_l, t);
-        if (child_ls->parent == parent_ls && child_ls->paused)
+        if (parent_ls->parent_state != NULL && ! parent_ls->parent_finishing &&
+            ! ts->worker_states[lineGetWID(parent_l)].quiescing && child_ls->is_child &&
+            child_ls->parent == parent_ls && child_ls->close_state == kMuxClientChildCloseOpen && child_ls->paused)
             discard muxclientSendChildFlowPause(t, parent_l, parent_ls, child_l, child_ls);
     }
     lineUnref(child_l);
