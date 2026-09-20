@@ -7,6 +7,7 @@
 #include "ipv4_packet_view.h"
 #include "line.h"
 #include "loggers/internal_logger.h"
+#include "objects/node.h"
 #include "wchecksum.h"
 
 static void packettunnelDefaultUpStreamEst(tunnel_t *self, line_t *line)
