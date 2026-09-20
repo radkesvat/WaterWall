@@ -9,7 +9,9 @@
           "address": "10.90.0.2",
           "port": 9121,
           "protocol": "tcp"
-        }
+        },
+        "max-payload-size": 1024,
+        "chunk-count": 1
       },
       "next": "socks5-client"
     },
@@ -112,7 +114,11 @@
     },
     {
       "name": "tester-server",
-      "type": "TesterServer"
+      "type": "TesterServer",
+      "settings": {
+        "max-payload-size": 1024,
+        "chunk-count": 1
+      }
     }
   ]
 }

@@ -491,6 +491,13 @@ void ptcTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             return;
         }
 
+        if (UNLIKELY((GET_BE16((const uint8_t *) sbufGetRawPtr(buf) + 6) & (IP_MF | IP_OFFMASK)) != 0))
+        {
+            LOGF("PacketsToConnection: received an IPv4 fragment, but upstream packet input requires a complete "
+                 "datagram; enable reassembly at packet ingress or reassemble before this node");
+            abortProgramNow(1);
+        }
+
         LOCK_TCPIP_CORE();
 
         /*

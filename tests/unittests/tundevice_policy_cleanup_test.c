@@ -152,13 +152,6 @@ void tundeviceOnIPPacketReceived(tun_device_t *device, void *userdata, sbuf_t *b
 #define execCmd                                                           fakeExec
 #include "../../tunnels/TunDevice/common/dns.c"
 #include "../../tunnels/TunDevice/common/routes.c"
-static bool fakeValidateFragmentPath(tunnel_t *t, device_fragment_policy_t policy)
-{
-    discard t;
-    discard policy;
-    return true;
-}
-#define packettunnelValidateFragmentPath fakeValidateFragmentPath
 #include "../../tunnels/TunDevice/instance/start.c"
 #include "../../tunnels/TunDevice/instance/stop.c"
 

@@ -27,7 +27,7 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 # Total number of audited Category-D conversions. The manifest must account for
 # every one of them.
-EXPECTED_TOTAL_ABORTS = 194
+EXPECTED_TOTAL_ABORTS = 197
 
 
 # ---------------------------------------------------------------------------
@@ -562,6 +562,13 @@ MANIFEST = [
       "MuxServer: child CID index disagrees with ownership list",
       "MuxServer: parent child-count underflow"),
      "runtime link invariant: MuxServer child unlink would rewire invalid state"),
+    ("tunnels/PacketsToConnection/upstream/payload.c", "ptcTunnelUpStreamPayload", 1,
+     ("PacketsToConnection: received an IPv4 fragment",),
+     "runtime packet-input invariant: local stack requires a complete IPv4 datagram"),
+    ("tunnels/ConnectionToPackets/downstream/payload.c", "ctpTunnelDownStreamPayload", 2,
+     ("ConnectionToPackets: downstream Payload arrived on a normal line",
+      "ConnectionToPackets: received an IPv4 fragment"),
+     "runtime packet-input invariant: local stack requires a packet line and complete IPv4 datagram"),
     ("tunnels/PacketsToConnection/common/helpers.c", "ptcOwnedLineRegister", 1,
      ("PacketsToConnection: invalid owned-line registration state",),
      "runtime ownership invariant: PacketsToConnection registration would index or relink invalid storage"),

@@ -1,5 +1,5 @@
 <!--
-Documentation version: 152
+Documentation version: 153
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/ConnectionToPackets.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/ConnectionToPackets.mdx, and all files must keep the same documentation version.
 -->
 
@@ -97,9 +97,14 @@ recalculation request. It takes and clears that request before any validation or
 mutable aligned storage, and then repairs the supported checksums before handing bytes to lwIP. A malformed, IPv6,
 stopping, or refused packet therefore cannot leak its request into the next unrelated packet on the worker line.
 
-For an unfragmented IPv4 TCP or UDP packet, finalization repairs the IPv4 header and transport checksum. For an IPv4
-fragment, only the IPv4 header checksum can be repaired from that fragment; the node never invents a whole-datagram
-TCP or UDP checksum from incomplete transport bytes.
+For a complete IPv4 TCP or UDP packet, finalization repairs the IPv4 header and transport checksum.
+
+The packet input requires a complete IPv4 datagram. MF or a nonzero fragment
+offset is a runtime contract violation, reported with a fatal log and immediate
+process exit in both Debug and Release; DF alone is allowed. Reassemble at device
+ingress or before this node. The check applies before protocol/flow lookup and
+stack delivery, so even an unmatched fragment is not silently admitted or dropped.
+Malformed packet structure still follows the existing validation/drop path.
 
 ## Fragmentation
 
@@ -107,72 +112,16 @@ A UDP datagram larger than the configured MTU is emitted as IPv4 fragments rathe
 handed to lwIP, which splits it in `ip4_frag()`, so the identification, offsets and `MF` flag are the stack's rather
 than this node's.
 
-Return fragments are routed back through an association table. Only fragment offset zero carries the transport ports
-the flow registry is keyed on, so that fragment resolves the datagram's owning flow and every other fragment of the
-same datagram follows it to the same worker - which matters because lwIP reassembles into whichever netif completed the
-datagram, and the per-worker netifs are not interchangeable. Fragments that arrive before fragment zero are held,
-bounded by count and by total bytes, and released if the rest of the datagram never arrives.
+Incoming return packets must already be reassembled before this node's downstream
+packet callback. The node does not accept fragments into its local stack.
+Outgoing UDP fragmentation remains supported; a directly connected packet-to-stack
+consumer must receive complete packets, so a path carrying such output needs
+reassembly before that consumer. A device's `fragment-policy` only controls its
+own reads and does not reassemble packets emitted elsewhere in the chain.
 
-An association exists only while its datagram is in flight or its queued worker work is being settled. Received byte
-ranges identify completion, but the entry is not retired merely because the last fragment was classified: a final FIFO
-barrier runs on the owner worker after every earlier injection task, purges the exact lwIP reassembly key, and only then
-makes the IPv4 identification reusable.
-
-Coverage is tracked the way lwIP tracks it rather than as a set union. lwIP is built with overlap checking and discards
-a duplicate or overlapping fragment, so this table rejects them too: absorbing an overlap would make a datagram look
-complete - and hand its identification back - while the real reassembler still had a hole in it. Only adjacency is
-merged. A fragment that contradicts what its datagram is already known to be is refused on the same grounds: data past a
-known final end, a second last fragment claiming a different total, or a last fragment that would truncate ranges
-already recorded.
-
-lwIP's reassembly list is keyed on ingress netif, source, destination, protocol and identification. The netif part keeps
-same-ID traffic routed to different workers independent; the remaining identity still must not be reused on one worker
-while older queued work can leave a partial datagram behind. Two states prevent that:
-
-- while fragments are publishing, or after any injection enqueue/revalidation failure, the identification stays
-  reserved and matching traffic is dropped until its owner-worker purge barrier completes
-- a second fragment zero is ambiguous even when it names the same flow: without a content fingerprint it may be a
-  duplicate or a newer datagram reusing the ID, so it poisons and purges the old association instead of mixing either
-  interpretation
-
-The deadline cannot expire while an admitted owner-worker injection is still queued. After a fragment is actually
-accepted by the exact lwIP netif, a healthy incomplete association is kept for at least another full timeout from that
-delivery (without shortening a later deadline). Queue admission or classification alone does not refresh it. A refused
-or cleaned injection instead poisons the identification and orders the exact FIFO purge barrier, so delayed worker
-delivery cannot either lose a valid datagram early or leave a hybrid reassembly behind.
-
-The bounds are deliberate and shed rather than grow, each with a rate-limited diagnostic:
-
-- at most `128` datagrams may be associating at once
-- at most `16` fragments, and `1 MiB` across the whole node, may wait for a fragment zero
-- at most `16` disjoint byte ranges per datagram, which is what bounds pathological reordering
-- an incomplete association expires after `15` seconds; unresolved staged data is released directly, while an
-  association that may have reached lwIP remains poisoned until its worker purge barrier completes
-
-Structurally impossible fragments are refused before any of that: a reserved flag, `DF` combined with fragmentation, an
-empty fragment, a non-final fragment whose payload is not a multiple of eight, a fragment carrying IP options, a bad
-IPv4 header checksum, and anything reaching past the largest payload lwIP will reassemble (`65535 - 20` bytes). Each of
-these is something lwIP itself drops, so accepting one here would occupy an association and record coverage for a
-datagram the stack is never going to assemble.
-
-Every packet of one flow, fragmented or not, is sent to the same packet worker. A next node that keeps per-flow state -
-`PacketsToConnection` does - pins that state to the worker that first saw the flow, and the shared packet-worker hash
-falls back to the IPv4 identification when a fragment has no ports, which would otherwise scatter one flow's datagrams
-across workers.
-
-The node's own outbound TCP does not fragment: its send MSS is derived from the same MTU. Return-side IPv4 TCP
-fragments from the packet neighbour are nevertheless valid input. Fragment zero need carry only the source and
-destination ports; the fragments stay on the resolved owner worker and lwIP validates the complete TCP header after
-reassembly. If that completed chain still splits the TCP header, lwIP first validates the declared 20-through-60-byte
-TCP header length, then copies exactly the required 40-through-80-byte IPv4-plus-TCP prefix into a small contiguous
-head and leaves the rest of the pbuf chain in place. Acceptance therefore does not depend on whether either the TCP
-options or the complete datagram fit in one original pbuf or one heap class.
-
-A device-originated fragment settlement claim follows the packet across the aligned copy, fragment staging, owner
-worker handoff, and lwIP input. Every refusal, expiry, or Stop path resolves the claim exactly once. When the exact
-live netif is still available, ConnectionToPackets purges or queries the precise IPv4 reassembly key before reporting
-`NoResidue` or `ResiduePresent`; an immediately refused owner-worker publication retains its claim until that exact
-purge has completed. If absence cannot be proved, it conservatively reports `Unknown`.
+Every output packet of one flow, including fragments, is sent to the same packet
+worker. TCP send MSS is derived from the configured MTU. Output fragmentation and
+input reassembly are separate responsibilities.
 
 ## Settings
 
@@ -352,24 +301,13 @@ from the transport headroom, `TCP_MSS`, and the allocator's own overhead, and a 
 future change to headroom or alignment pushes a normal write past it. It was previously 1536 bytes, which no normal
 full-MSS write could fit, so every one of them skipped the class entirely.
 
-The reassembly budget is deliberately independent of the flow targets: reassembly capacity is a function of how many
-*fragmented* datagrams are in flight, not of how many flows exist. Each incomplete datagram may retain at most 16 pbufs
-(including every element of an incoming pbuf chain), which covers an 8 KiB datagram at the smallest supported MTU
-(576). A seventeenth pbuf purges only that offending datagram instead of evicting unrelated reassemblies. More
-extremely fragmented return datagrams are therefore refused. The global budget remains 32 datagrams times 16 pbufs,
-and `PBUF_POOL_SIZE` is held at three times that budget so a full reassembly backlog cannot starve the receive path.
-Return packets are injected as reference pbufs rather than copied into pool buffers, so one wire packet normally costs
-exactly one unit of that budget - which is the unit lwIP charges.
-
-`PacketsToConnection`'s zero-copy receive path derives its wrapper-pool size from that budget plus the advertised TCP
-flow count plus a fixed reserve. Reassembly is not its only consumer: every segment TCP retains out of order also pins a
-wrapper, and unlike `PBUF_POOL` exhaustion, wrapper exhaustion does not trigger lwIP's out-of-order reclamation - so a
-pool sized for reassembly alone could be emptied by ordinary reordering across the flow target and then drop the very
-retransmissions that would have freed it. A per-PCB `TCP_OOSEQ_MAX_PBUFS` ceiling keeps one peer from spending the
-shared reserve.
-
-The previous development-sized values let five concurrent TCP flows exhaust the whole process, and could not reassemble
-a single fragmented 8 KiB datagram.
+The shared lwIP build retains its reassembly pool sizing, but this node's packet
+input rejects fragments before lwIP. These pool constants do not grant permission
+to submit fragments to either packet-to-stack consumer. Return packets use
+reference pbufs; TCP may retain those pbufs for out-of-order delivery.
+`PacketsToConnection` derives its wrapper pool from the shared budget, TCP flow
+target and a fixed reserve. Per-PCB `TCP_OOSEQ_MAX_PBUFS` limits bound one TCP
+peer's retained input. This change does not resize the shared pools.
 
 These pools are static. With the documented defaults a Linux release build has roughly **9.6 MB total BSS**, about an
 **8.6 MB increase** over the earlier development-sized pools' roughly 1.0 MB. Lower the cache variables to trade

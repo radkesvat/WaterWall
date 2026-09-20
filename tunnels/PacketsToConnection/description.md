@@ -1,5 +1,5 @@
 <!--
-Documentation version: 153
+Documentation version: 154
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/PacketsToConnection.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/PacketsToConnection.mdx, and all files must keep the same documentation version.
 -->
 
@@ -48,9 +48,14 @@ and clears that request before any validation or drop path, normalizes shifted i
 then repairs the supported checksums before typed parsing or lwIP ingress. A malformed, IPv6, stopping, or refused
 packet therefore cannot leak its request into the next unrelated packet on the worker line.
 
-For an unfragmented IPv4 TCP or UDP packet, finalization repairs the IPv4 header and transport checksum. For an IPv4
-fragment, only the IPv4 header checksum can be repaired from that fragment; the node never invents a whole-datagram
-TCP or UDP checksum from incomplete transport bytes.
+For a complete IPv4 TCP or UDP packet, finalization repairs the IPv4 header and transport checksum.
+
+The packet input requires a complete IPv4 datagram. MF or a nonzero fragment
+offset is a runtime contract violation, reported with a fatal log and immediate
+process exit in both Debug and Release; DF alone is allowed. Reassemble at device
+ingress or before this node. The check applies before protocol/flow lookup and
+stack delivery, so even an unmatched fragment is not silently admitted or dropped.
+Malformed packet structure still follows the existing validation/drop path.
 
 ## Flow Model
 
@@ -150,13 +155,9 @@ Important internal rules:
 - top-level packet parsing reads only the version byte before normalizing cursor alignment. Shifted packet buffers are
   copied to aligned sbuf storage before any typed IPv4/UDP access; fake-DNS additionally validates the IPv4 header and
   any nonzero UDP checksum before it can answer or mutate its mapping cache
-- a device-originated fragment carries a ref-counted settlement claim with its packet buffer through alignment copies,
-  duplication, delay, worker handoff, and cleanup. Immediately after lwIP input, PTC queries the exact reassembly key
-  (netif, source, destination, protocol, and identification); `ERR_OK` alone is not treated as acceptance. Explicit
-  refusals purge that exact key. An identity is released promptly only when the stack proves that no residue remains;
-  a retained or unknown outcome keeps it reserved so a delayed same-ID packet cannot form a hybrid datagram. Its
-  release barrier requires both the full elapsed reassembly interval and `IP_REASS_MAXAGE + 1` actual synchronized
-  lwIP reassembly-timer passes; a suspended or starved timer cannot be mistaken for stack retirement
+- upstream packet input rejects IPv4 fragments before fake DNS, route/listener creation,
+  or lwIP input. Reassembled packets follow ordinary buffer ownership; no per-buffer
+  fragment settlement claim is needed
 - every generated TCP/UDP line is registered in a per-worker owner list until its one close path unlinks it. Stop first
   detaches PCB, route-map, callback, and UDP-idle producers under the core lock, then drains each owner-worker list,
   preserves whether next-side `Init` completed, destroys PTC line state, sends exactly one next-side teardown `Finish`
@@ -334,25 +335,14 @@ The key idea is that the previous side is packet-oriented, while the next side i
 ## Limitations
 
 - IPv6 is not implemented
-- fake DNS answers from a single packet, so fragmented **UDP** addressed to its endpoint is dropped with a
-  rate-limited warning rather than parsed; a fragment used to be consumed silently, which stopped reassembly
-  from ever completing. The destination port cannot be checked, because only fragment zero carries a UDP
-  header and reading one out of a later fragment's payload bytes would be guessing - so the whole address is
-  reserved for fragmented UDP, not only for fragmented DNS. Fragmented TCP to that address is unaffected and
-  is routed normally
-- the zero-copy receive path wraps each incoming packet in a pooled descriptor whose size is derived in
-  `ww/lwip/lwipopts.h` from the shared reassembly budget *and* the TCP flow target. Both matter: one fragment
-  held for reassembly pins one descriptor, and so does one TCP segment held out of order - the larger consumer
-  of the two, and unlike `PBUF_POOL` exhaustion it does not trigger lwIP's out-of-order reclamation. The
-  resulting figure is headroom rather than a hard bound - one wrapper per advertised flow, plus the reassembly
-  budget and a fixed reserve. One incomplete IPv4 datagram may retain at most 16 pbufs (counting chained pbufs);
-  exceeding that cap purges only the offending datagram, so unusually extreme fragmentation is refused without
-  evicting unrelated reassemblies. What makes the TCP part a bound is the per-PCB
-  `TCP_OOSEQ_MAX_PBUFS`/`TCP_OOSEQ_MAX_BYTES`
-  ceiling beside it. The 32-pbuf ceiling is the effective bound; the byte ceiling is an intentionally unreachable
-  future-defense guard at the current receive window. Exhaustion past the active bound drops
-  one packet with a rate-limited warning. This wrapper pool is process-global and initialized exactly once even when
-  multiple `PacketsToConnection` instances are created; Stop, Destroy, and hot replacement never reset live wrappers
+- upstream packet input must be a complete IPv4 datagram, including traffic addressed
+  to fake DNS. Fragments are fatal contract violations, not a special fake-DNS drop case
+- the zero-copy receive path wraps each incoming packet in a pooled descriptor. TCP may
+  retain it for out-of-order delivery. The pool remains sized from the shared lwIP
+  budget, TCP flow target and fixed reserve; per-PCB `TCP_OOSEQ_MAX_PBUFS` and
+  `TCP_OOSEQ_MAX_BYTES` limits still apply. Exhaustion drops a packet with a rate-limited
+  warning. The process-global pool is initialized once and is not reset by Stop,
+  Destroy or hot replacement
 - packet transforms may leave the buffer cursor at any byte alignment, and lwIP reads typed IP/TCP headers
   straight out of it, so that exceptional case is copied into an aligned buffer and travels through the same
   custom-pbuf wrapper as everything else. It is deliberately *not* copied into an lwIP `PBUF_RAM`: with pooled

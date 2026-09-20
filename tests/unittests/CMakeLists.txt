@@ -2310,6 +2310,23 @@ if(TARGET ConnectionToPackets AND TARGET TcpUdpConnector)
   )
 endif()
 
+if(LINUX AND TARGET ConnectionToPackets AND TARGET PacketsToConnection)
+  foreach(consumer IN ITEMS PacketsToConnection ConnectionToPackets)
+    string(TOLOWER "${consumer}" consumer_lower)
+    set(fragment_target "${consumer_lower}_fragment_input_test")
+    add_executable(${fragment_target} local_stack_fragment_input_test.c)
+    target_compile_definitions(${fragment_target} PRIVATE
+      TEST_PACKETS_TO_CONNECTION=$<STREQUAL:${consumer},PacketsToConnection>)
+    target_link_libraries(${fragment_target} PRIVATE ${consumer} ww)
+    add_dependencies(waterwall_unit_tests ${fragment_target})
+    add_waterwall_unit_test(
+      waterwall.${consumer_lower}_fragment_input_unit
+      ${fragment_target}
+      "unit;tunnels;packet;fragment"
+    )
+  endforeach()
+endif()
+
 if(TARGET ConnectionToPackets)
   add_executable(connectiontopackets_netif_contract_test connectiontopackets_netif_contract_test.c)
   target_link_libraries(connectiontopackets_netif_contract_test PRIVATE ConnectionToPackets ww)

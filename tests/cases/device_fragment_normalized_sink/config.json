@@ -1,0 +1,46 @@
+{
+  "name": "device_fragment_normalized_sink",
+  "nodes": [
+    {
+      "name": "tun",
+      "type": "TunDevice",
+      "next": "rewrite",
+      "settings": {
+        "fragment-policy": "reassemble",
+        "device-name": "wwfrag0",
+        "device-ip": "10.253.80.1/24",
+        "device-mtu": 1500,
+        "route-table": "off"
+      }
+    },
+    {
+      "name": "rewrite",
+      "type": "IpOverrider",
+      "next": "xor",
+      "settings": {
+        "up": {
+          "source-ip": {
+            "ipv4": "10.253.80.1"
+          }
+        }
+      }
+    },
+    {
+      "name": "xor",
+      "type": "ObfuscatorClient",
+      "next": "stack",
+      "settings": {
+        "method": "xor",
+        "xor_key": 90,
+        "skip": "transport"
+      }
+    },
+    {
+      "name": "stack",
+      "type": "BlackHole",
+      "settings": {
+        "mode": "passive"
+      }
+    }
+  ]
+}

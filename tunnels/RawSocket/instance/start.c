@@ -40,12 +40,6 @@ void rawsocketOnStart(tunnel_t *t)
         return;
     }
 
-    if (state->capture_range_count > 0 && ! packettunnelValidateFragmentPath(t, state->fragment_policy))
-    {
-        startupFailureRecord(1);
-        return;
-    }
-
     if (state->capture_range_count > 0)
     {
         state->capture_device = caputredeviceCreate(state->capture_device_name,

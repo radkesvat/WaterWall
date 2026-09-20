@@ -19,12 +19,6 @@ void tundeviceTunnelOnStart(tunnel_t *t)
         return;
     }
 
-    if (! packettunnelValidateFragmentPath(t, state->fragment_policy))
-    {
-        startupFailureRecord(1);
-        return;
-    }
-
 #ifdef OS_WIN
     state->tdev = tundeviceCreateOwned(state->name,
                                        false,

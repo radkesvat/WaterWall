@@ -503,6 +503,13 @@ void ctpTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
+    if (UNLIKELY((GET_BE16(msg->data + 6) & (IP_MF | IP_OFFMASK)) != 0))
+    {
+        LOGF("ConnectionToPackets: received an IPv4 fragment, but downstream packet input requires a complete "
+             "datagram; enable reassembly at packet ingress or reassemble before this node");
+        abortProgramNow(1);
+    }
+
     if (! ctpBuildPacketView(t, msg->data, msg->len, &view))
     {
         lineReuseBuffer(l, buf);

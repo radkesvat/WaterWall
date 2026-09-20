@@ -1,5 +1,5 @@
 {
-  "name": "connection-to-packets-udp-fragmented-concurrent-roundtrip",
+  "name": "connection-to-packets-fragment-input-rejected",
   "nodes": [
     {
       "name": "tester-client",

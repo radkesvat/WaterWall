@@ -1,5 +1,5 @@
 <!--
-Documentation version: 154
+Documentation version: 155
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/RawSocket.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/RawSocket.mdx, and all files must keep the same documentation version.
 -->
 
@@ -191,14 +191,12 @@ When a packet is captured:
 - matching packets are intercepted and dropped from the host kernel stack (using drop-and-dispatch verdicts or packet diversion), preventing normal local transport delivery while WaterWall processes its captured copy
 - the packet is forwarded through the chosen adjacent side using the worker packet line
 
-Fragment affinity follows the captured packet buffer through forwarding, delay, one-to-one copies, duplication, worker
-handoff, and cleanup rather than ending at queue admission or callback return. Copies share one counted settlement
-claim, and the reader session remains alive until the last copy is consumed. If an identity expires or its reader
-generation ends with a claim outstanding, late copies are refused before lwIP and the key remains poisoned until its
-factual or conservative final settlement. If publication is only partially admitted, producer admission closes
-immediately, the capture reader exits (allowing Linux NFQUEUE's `--queue-bypass` lifecycle to take over), and orderly
-shutdown is requested. This prevents later same-ID packets from completing a hybrid datagram with fragments already
-queued to lwIP.
+The reader's fragment policy determines publication: `reassemble` holds fragment
+bytes until a complete datagram can be delivered, while `preserve-fragments`
+retains fragment boundaries and worker affinity. Published buffers follow ordinary
+ownership through copies, delays and worker handoff; they carry no fragment
+settlement claim. Local-stack packet inputs enforce their complete-datagram
+requirement at delivery. See the fragment-policy section below.
 
 ### Output path
 
@@ -353,10 +351,18 @@ Source-backed metadata:
 
 ### `fragment-policy` (optional, default: `reassemble`)
 
-Omitting this setting selects `reassemble` for an audited local-stack ingress
-path. Set `preserve-fragments` explicitly for audited raw forwarding to external
-packet egress or a sink. Invalid values (including `null`) and unsupported paths
-fail startup. Reassembly emits complete IPv4 datagrams up to 65,535 bytes; it does
-not raise global packet, raw-output or device-MTU limits. Packet/stream bridges, routing and unknown
-transforms are not eligible. See Developer Guide Part 4 for the exact supported
-path matrix, storage limits and ordinary post-delivery lifecycle contract.
+Omitting this setting selects `reassemble`: IPv4 fragments are assembled before
+publication into the chain. `preserve-fragments` keeps their bytes and boundaries.
+The policy does not impose a node-name or topology allowlist; ordinary layer and
+chain validation still applies. Invalid values (including `null`) fail startup.
+
+`PacketsToConnection` upstream packet input and `ConnectionToPackets` downstream
+packet input require complete IPv4 datagrams. Any fragment reaching either input
+is a runtime contract violation: a fatal diagnostic explains the reassembly
+requirement and the process exits, in Debug and Release. Reassemble before these
+consumers, regardless of the device policy or intervening nodes. DF alone is not
+a fragment; MF or a nonzero fragment offset is.
+
+Reassembly emits complete IPv4 datagrams up to 65,535 bytes. It does not raise
+packet-output limits or device MTU, and does not automatically fragment output
+again. See Developer Guide Part 4 for assembly bounds and packet ownership.

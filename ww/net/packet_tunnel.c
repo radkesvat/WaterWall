@@ -7,7 +7,6 @@
 #include "ipv4_packet_view.h"
 #include "line.h"
 #include "loggers/internal_logger.h"
-#include "objects/node.h"
 #include "wchecksum.h"
 
 static void packettunnelDefaultUpStreamEst(tunnel_t *self, line_t *line)
@@ -226,42 +225,5 @@ bool packettunnelReadFragmentPolicy(const cJSON *settings, device_fragment_polic
         }
     }
     LOGF("Device source fragment-policy must be reassemble or preserve-fragments");
-    return false;
-}
-
-bool packettunnelValidateFragmentPath(tunnel_t *source, device_fragment_policy_t policy)
-{
-    const packet_lifecycle_anchor_t *anchor   = packettunnelGetLifecycleAnchor(source);
-    const bool                       upstream = anchor->direction == kPacketLifecycleAnchorPublishUpstream;
-    tunnel_t                        *hop      = upstream ? source->next : source->prev;
-    for (unsigned visited = 0; hop != NULL && visited < kMaxChainLen; ++visited)
-    {
-        const char *type = tunnelGetNode(hop)->type;
-        if (policy == kDeviceFragmentReassemble)
-        {
-            if ((upstream && stringCompare(type, "PacketsToConnection") == 0) ||
-                (! upstream && stringCompare(type, "ConnectionToPackets") == 0))
-                return true;
-            /* Disturber forwards/delays/drops whole ordinary buffers in the same direction. */
-            if (stringCompare(type, "Disturber") != 0)
-                break;
-        }
-        else
-        {
-            if (stringCompare(type, "TunDevice") == 0 || stringCompare(type, "RawSocket") == 0 ||
-                (upstream && stringCompare(type, "BlackHole") == 0) || stringCompare(type, "PacketReceiver") == 0)
-                return true;
-            /* Audited packet transforms retain packet boundaries and direction. */
-            if (stringCompare(type, "Disturber") != 0 && stringCompare(type, "PingClient") != 0 &&
-                stringCompare(type, "PingServer") != 0 && stringCompare(type, "IpOverrider") != 0 &&
-                stringCompare(type, "IpManipulator") != 0)
-                break;
-        }
-        hop = upstream ? hop->next : hop->prev;
-    }
-    LOGF("%s: unsupported fragment-policy path; reassemble requires a whole-datagram local-stack path; "
-         "preserve-fragments requires an audited packet path to external egress or a sink. "
-         "Mixed, packet/stream, routing and unknown transform paths are unsupported",
-         anchor->name);
     return false;
 }
