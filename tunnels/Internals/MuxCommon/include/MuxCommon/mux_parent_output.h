@@ -6,11 +6,29 @@ typedef struct mux_parent_output_s
 {
     buffer_queue_t pending;
     size_t         charge;
+    uint64_t       throttle_started_us;
+    uint64_t       last_throttle_us;
     bool           transport_paused;
     bool           sources_throttled;
     bool           pumping;
     bool           notifying;
 } mux_parent_output_t;
+
+/* The boolean makes timestamp zero a valid start. Time comes from the owner loop. */
+static inline void muxParentOutputSetThrottled(mux_parent_output_t *output, bool throttled, uint64_t now_us)
+{
+    assert(output->sources_throttled != throttled);
+    if (throttled)
+        output->throttle_started_us = now_us;
+    else
+        output->last_throttle_us = now_us - output->throttle_started_us;
+    output->sources_throttled = throttled;
+}
+
+static inline uint64_t muxParentOutputThrottleMS(const mux_parent_output_t *output, uint64_t now_us)
+{
+    return output->sources_throttled ? (now_us - output->throttle_started_us) / 1000 : 0;
+}
 
 /* Transactional admission; equality with the resource limit is permitted.
  * Failure preserves the supplied candidate, queue, and all counters. Preparation

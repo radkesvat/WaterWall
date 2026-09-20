@@ -227,6 +227,7 @@ static void caseSpliceLocalLimit(bool parent_output, bool refuse_entry)
     {
         ts->parent_write_limit           = (uint32_t) (entry_charge - (refuse_entry ? 1U : 0U));
         ts->parent_write_pause_threshold = 1;
+        ts->parent_write_resume_threshold = 0;
         pqParentPause(&f);
     }
     else

@@ -234,6 +234,279 @@ static void caseParentPumpReentrancy(void)
     fixtureTeardown(&f);
 }
 
+static void pqEarlyResume(tunnel_t *t, line_t *l)
+{
+    twfRequire(pqOutput(pqFixture)->charge > 0, "producer release waited for an empty FIFO");
+    pqSourceResume(t, l);
+}
+
+static void caseParentEarlyRelease(void)
+{
+    twfSetCase("writable parent releases producers with retained output");
+    pq_fixture_t f;
+    pqSetup(&f);
+    pq_tstate_t *ts                   = tunnelGetState(f.mux);
+    const size_t charge               = pooledBufferCharge(f.env.pool, false);
+    ts->parent_write_pause_threshold  = (uint32_t) (2 * charge);
+    ts->parent_write_resume_threshold = (uint32_t) charge;
+    ts->parent_write_limit            = (uint32_t) (4 * charge);
+    pqSource(&f)->pqResumeSlot        = pqEarlyResume;
+    pqParentPause(&f);
+    pqSend(f.mux, f.child_l, makePatternPayload(&f, 1));
+    pqSend(f.mux, f.child_l, makePatternPayload(&f, 2));
+    pqParentResume(&f);
+    twfRequire(pqResumes == 1 && pqOutput(&f)->charge == 0, "early release failed to drain");
+    fixtureTeardown(&f);
+}
+
+static void caseParentResumeBoundary(unsigned mode)
+{
+    twfSetCase("resume boundary uses post-delivery transport state and preserves hysteresis");
+    pq_fixture_t f;
+    pqSetup(&f);
+    pq_tstate_t   *ts                 = tunnelGetState(f.mux);
+    const uint32_t cost               = (uint32_t) pooledBufferCharge(f.env.pool, false);
+    ts->parent_write_pause_threshold  = 3 * cost;
+    ts->parent_write_resume_threshold = cost + (mode == 2 ? 1 : 0);
+    ts->parent_write_limit            = 6 * cost;
+    pqParentPause(&f);
+    for (unsigned i = 0; i < 3; ++i)
+        pqSend(f.mux, f.child_l, makePatternPayload(&f, i + 1));
+    pqPauseAt = 1;
+    pqParentResume(&f);
+    twfRequire(pqOutput(&f)->charge == 2 * cost && pqResumes == 0, "released above resume threshold");
+    pqPauseAt = 2;
+    pqParentResume(&f);
+    twfRequire(pqOutput(&f)->charge == cost && pqResumes == 0, "released before observing transport Pause");
+    pqSource(&f)->pqResumeSlot = pqEarlyResume;
+    pqPauseAt                  = 3;
+    pqParentResume(&f);
+    twfRequire(pqResumes == 1 && ! pqOutput(&f)->sources_throttled, "writable low queue did not release");
+    pqSend(f.mux, f.child_l, makePatternPayload(&f, 4));
+    pqSend(f.mux, f.child_l, makePatternPayload(&f, 5));
+    twfRequire(pqPauses == 1 && ! pqOutput(&f)->sources_throttled, "hysteresis reclosed gate below pause");
+    pqPauseAt = 0;
+    pqParentResume(&f);
+    fixtureTeardown(&f);
+}
+
+static void pqFifoResume(tunnel_t *t, line_t *l)
+{
+    pqEarlyResume(t, l);
+    pqSend(pqFixture->mux, l, makePatternPayload(pqFixture, 4));
+}
+
+static void caseParentResumeFIFO(void)
+{
+    twfSetCase("synchronous resumed payload follows retained Data and controls");
+    pq_fixture_t f;
+    pqSetup(&f);
+    pq_tstate_t   *ts                 = tunnelGetState(f.mux);
+    const uint32_t cost               = (uint32_t) pooledBufferCharge(f.env.pool, false);
+    ts->parent_write_pause_threshold  = 2 * cost;
+    ts->parent_write_resume_threshold = cost;
+    ts->parent_write_limit            = 8 * cost;
+    pqParentPause(&f);
+    pqSend(f.mux, f.child_l, makePatternPayload(&f, 1));
+    pqSend(f.mux, f.child_l, makePatternPayload(&f, 2));
+    pq_state_t *parent = lineGetState(f.parent_l, f.mux);
+    twfRequire(pqControl(f.mux, f.parent_l, parent, f.child_l, kTestChildCid, kMuxFlagFlowPause),
+               "control admission failed");
+    pqSource(&f)->pqResumeSlot = pqFifoResume;
+    pqParentResume(&f);
+    frame_view_t frames[5];
+    unsigned     n = parseFrames(f.capture, f.trace.capture_len, frames, 5);
+#ifdef MUX_OUTPUT_CLIENT
+    const unsigned first = 1;
+#else
+    const unsigned first = 0;
+#endif
+    twfRequire(n == first + 4 && frames[first].length == 1 && frames[first + 1].length == 2 &&
+                   frames[first + 2].flags == kMuxFlagFlowPause && frames[first + 3].length == 4,
+               "resumed source overtook old output");
+    fixtureTeardown(&f);
+}
+
+static unsigned pqFairSeen[2000];
+static bool     pqFairRefill;
+static void     pqFairResume(tunnel_t *t, line_t *l)
+{
+    discard     t;
+    pq_state_t *child = lineGetState(l, pqFixture->mux);
+    twfRequire(child->connection_id >= 100 && child->connection_id < 2100, "unexpected fairness child");
+    pqFairSeen[child->connection_id - 100]++;
+    ++pqResumes;
+    if (pqFairRefill)
+    {
+        pqParentPause(pqFixture);
+        pqSend(pqFixture->mux, l, makePatternPayload(pqFixture, 1));
+    }
+}
+
+static void pqDiscardSink(tunnel_t *t, line_t *l, sbuf_t *buf)
+{
+    discard t;
+    twfRequire(! pqTransportPaused, "fairness pump wrote through Pause");
+    ++pqDeliveries;
+    lineReuseBuffer(l, buf);
+}
+
+static void caseParentFairness(void)
+{
+    twfSetCase("2000 eligible children receive opportunities across interrupted release passes and churn");
+    pq_fixture_t f;
+    pqSetup(&f);
+    pq_tstate_t   *ts                 = tunnelGetState(f.mux);
+    const uint32_t cost               = (uint32_t) pooledBufferCharge(f.env.pool, false);
+    ts->parent_write_pause_threshold  = 2 * cost;
+    ts->parent_write_resume_threshold = cost;
+    ts->parent_write_limit            = 4 * cost;
+    pq_state_t *parent                = lineGetState(f.parent_l, f.mux);
+    /* Keep the fixture child peer-paused; it must never receive a local Resume. */
+    pq_state_t *fixture_child = lineGetState(f.child_l, f.mux);
+    discard     pqPeerPause(f.mux, f.parent_l, fixture_child, true, false);
+    line_t    **children = memoryAllocate(2000 * sizeof(*children));
+    for (unsigned i = 0; i < 2000; ++i)
+        children[i] = pqSibling(&f, parent, 100 + i);
+    pqSource(&f)->pqResumeSlot      = pqFairResume;
+    pqParentSink(&f)->pqPayloadSlot = pqDiscardSink;
+    memoryZero(pqFairSeen, sizeof(pqFairSeen));
+    pqFairRefill = true;
+    pqParentPause(&f);
+    pqSend(f.mux, children[0], makePatternPayload(&f, 1));
+    pqSend(f.mux, children[0], makePatternPayload(&f, 1));
+    for (unsigned round = 0; round < 2; ++round)
+    {
+        for (unsigned i = 0; i < 2000; ++i)
+        {
+            const unsigned before = pqResumes;
+            pqParentResume(&f);
+            twfRequire(pqResumes == before + 1 && pqOutput(&f)->sources_throttled,
+                       "interrupted pass resumed an obsolete remainder");
+        }
+        for (unsigned i = 0; i < 2000; ++i)
+            twfRequire(pqFairSeen[i] == round + 1, "list position starved a stable eligible child");
+    }
+    /* Remove the cursor target and replace it while pressure remains active. */
+    pq_state_t *target = parent->parent_state->resume_cursor;
+    if (target == fixture_child)
+        target = target->child_next ? target->child_next : parent->child_next;
+    const unsigned removed = target->connection_id - 100;
+    pqDestroySibling(&f, children[removed]);
+    children[removed]                                                            = pqSibling(&f, parent, 100 + removed);
+    ((pq_state_t *) lineGetState(children[removed], f.mux))->parent_write_paused = true;
+    pqFairRefill                                                                 = false;
+    pqParentResume(&f);
+    twfRequire(! pqOutput(&f)->sources_throttled && fixture_child->peer_flow_paused &&
+                   ! fixture_child->parent_write_paused,
+               "final release erased peer gate or stranded output");
+    for (unsigned i = 0; i < 2000; ++i)
+        pqDestroySibling(&f, children[i]);
+    memoryFree(children);
+    twfRequire(parent->parent_state->resume_cursor == fixture_child, "cursor retained a removed child");
+    fixtureTeardown(&f);
+}
+
+static unsigned pqResumeMutationMode;
+static line_t  *pqMutationSibling;
+static line_t  *pqMutationAdded;
+static void     pqMutationResume(tunnel_t *t, line_t *l)
+{
+    discard t;
+    ++pqResumes;
+    if (pqResumes != 1)
+        return;
+    pq_state_t *parent = lineGetState(pqFixture->parent_l, pqFixture->mux);
+    if (pqResumeMutationMode == 0)
+    {
+        pqFinish(pqFixture->mux, l);
+#ifdef MUX_OUTPUT_CLIENT
+        lineDestroy(l);
+#endif
+    }
+    else if (pqResumeMutationMode == 1)
+    {
+        pqDestroySibling(pqFixture, pqMutationSibling);
+        pqMutationSibling = NULL;
+    }
+    else if (pqResumeMutationMode == 2)
+        pqLoss(pqFixture->mux, pqFixture->parent_l, true);
+    else if (pqResumeMutationMode == 3)
+        pqMutationAdded = pqSibling(pqFixture, parent, 102);
+    else
+    {
+        pq_tstate_t *ts                = tunnelGetState(pqFixture->mux);
+        ts->worker_states[0].quiescing = true;
+    }
+}
+
+static void caseParentResumeMutation(unsigned mode)
+{
+    twfSetCase("nonempty release tolerates self/sibling removal, attachment, parent death and quiescence");
+    pq_fixture_t f;
+    pqSetup(&f);
+    pq_tstate_t   *ts                                               = tunnelGetState(f.mux);
+    const uint32_t cost                                             = (uint32_t) pooledBufferCharge(f.env.pool, false);
+    ts->parent_write_pause_threshold                                = 2 * cost;
+    ts->parent_write_resume_threshold                               = cost;
+    ts->parent_write_limit                                          = 8 * cost;
+    pq_state_t *parent                                              = lineGetState(f.parent_l, f.mux);
+    pqMutationSibling                                               = pqSibling(&f, parent, 101);
+    ((pq_state_t *) lineGetState(pqMutationSibling, f.mux))->paused = false;
+    pqMutationAdded                                                 = NULL;
+    pqResumeMutationMode                                            = mode;
+    pqSource(&f)->pqResumeSlot                                      = pqMutationResume;
+    lineRef(f.parent_l);
+    lineRef(f.child_l);
+    pqParentPause(&f);
+    pqSend(f.mux, f.child_l, makePatternPayload(&f, 1));
+    pqSend(f.mux, f.child_l, makePatternPayload(&f, 1));
+    pqParentResume(&f);
+    if (mode == 2)
+    {
+        twfRequireLineStateZeroed(f.parent_l, f.mux, "parent death retained output state");
+#ifdef MUX_OUTPUT_CLIENT
+        lineDestroy(pqMutationSibling); // Fake owner settles the borrowed sibling after Finish.
+#endif
+        pqMutationSibling = NULL;
+    }
+    else if (mode == 4)
+    {
+        twfRequire(pqResumes == 1 && pqOutput(&f)->charge == cost, "quiescence allowed payload or further Resume");
+        ts->worker_states[0].quiescing = false; // Fixture cleanup only.
+    }
+    else
+        twfRequire(pqOutput(&f)->charge == 0, "mutation stranded retained output");
+    if (pqMutationAdded)
+        pqDestroySibling(&f, pqMutationAdded);
+    if (pqMutationSibling)
+        pqDestroySibling(&f, pqMutationSibling);
+    const bool parent_dead = ! lineIsAlive(f.parent_l);
+    const bool child_dead  = ! lineIsAlive(f.child_l);
+    lineUnref(f.child_l);
+    lineUnref(f.parent_l);
+    if (parent_dead)
+        f.parent_l = NULL;
+    if (child_dead)
+        f.child_l = NULL;
+    fixtureTeardown(&f);
+}
+
+static void caseParentThrottleClock(void)
+{
+    twfSetCase("throttle episodes use 64-bit monotonic time including zero start");
+    mux_parent_output_t output  = {0};
+    const uint64_t      elapsed = ((uint64_t) UINT32_MAX + 1234) * 1000;
+    muxParentOutputSetThrottled(&output, true, 0);
+    twfRequire(muxParentOutputThrottleMS(&output, elapsed) == elapsed / 1000, "long throttle duration truncated");
+    muxParentOutputSetThrottled(&output, false, elapsed);
+    twfRequire(output.last_throttle_us == elapsed && muxParentOutputThrottleMS(&output, elapsed) == 0,
+               "completed episode duration lost");
+    muxParentOutputSetThrottled(&output, true, elapsed + 1);
+    muxParentOutputSetThrottled(&output, false, elapsed + 2001);
+    twfRequire(output.last_throttle_us == 2000, "repeated episode did not replace last duration");
+}
+
 static void caseParentGate(unsigned children, bool resume_in_pause)
 {
     twfSetCase("parent high water fans out once and releases only empty+writable");
@@ -242,6 +515,7 @@ static void caseParentGate(unsigned children, bool resume_in_pause)
     pq_tstate_t *ts                  = tunnelGetState(f.mux);
     const size_t charge              = pooledBufferCharge(f.env.pool, false);
     ts->parent_write_pause_threshold = (uint32_t) (2 * charge);
+    ts->parent_write_resume_threshold = 0;
     ts->parent_write_limit           = (uint32_t) (4 * charge);
     pq_state_t *parent               = lineGetState(f.parent_l, f.mux);
     line_t    **siblings             = memoryAllocate(children * sizeof(*siblings));
@@ -280,6 +554,7 @@ static void caseParentGateMutation(void)
     pq_tstate_t *ts                  = tunnelGetState(f.mux);
     const size_t charge              = pooledBufferCharge(f.env.pool, false);
     ts->parent_write_pause_threshold = (uint32_t) charge;
+    ts->parent_write_resume_threshold = 0;
     ts->parent_write_limit           = (uint32_t) (4 * charge);
     pq_state_t *parent               = lineGetState(f.parent_l, f.mux);
     line_t     *victim               = pqSibling(&f, parent, 100);
@@ -327,6 +602,7 @@ static void caseParentHardLimit(bool defaults, bool reservation_failure, bool sh
     if (! defaults)
     {
         ts->parent_write_pause_threshold = 8192;
+        ts->parent_write_resume_threshold = 0;
         ts->parent_write_limit           = 16384;
     }
     const size_t threshold = ts->parent_write_pause_threshold;
@@ -407,7 +683,7 @@ static void caseParentWriteConfiguration(void)
         }
     }
     const uint32_t pairs[][2] = {
-        {0, 0}, {4096, 0}, {0, 33554432}, {8192, 16384}, {16384, 16384}, {32768, 16384}, {0, 16384}};
+        {0, 0}, {4096, 0}, {0, 67108864}, {8192, 16384}, {16384, 16384}, {32768, 16384}, {0, 16384}};
     for (unsigned i = 0; i < ARRAY_SIZE(pairs); ++i)
     {
         cJSON *settings = pqSettings();
@@ -422,8 +698,8 @@ static void caseParentWriteConfiguration(void)
         {
             twfRequire(mux != NULL, "valid parent write settings rejected");
             pq_tstate_t *ts = tunnelGetState(mux);
-            twfRequire(ts->parent_write_pause_threshold == (pairs[i][0] ? pairs[i][0] : 8388608) &&
-                           ts->parent_write_limit == (pairs[i][1] ? pairs[i][1] : 16777216),
+            twfRequire(ts->parent_write_pause_threshold == (pairs[i][0] ? pairs[i][0] : 33554432) &&
+                           ts->parent_write_limit == (pairs[i][1] ? pairs[i][1] : 134217728),
                        "parent write independent defaults drifted");
             if (i == 3)
             {
@@ -458,8 +734,8 @@ static void caseParentWriteConfiguration(void)
                 f.child_l = NULL;
                 lineUnref(f.parent_l);
 #endif
-                twfRequire(original_ts->parent_write_pause_threshold == 8388608 &&
-                               original_ts->parent_write_limit == 16777216,
+                twfRequire(original_ts->parent_write_pause_threshold == 33554432 &&
+                               original_ts->parent_write_limit == 134217728,
                            "node instances shared settings");
                 f.mux = original;
                 tunnelBind(f.prev, original);
@@ -467,6 +743,60 @@ static void caseParentWriteConfiguration(void)
             }
             pqDestroy(mux, wwLifecycleProcessShutdown());
         }
+        cJSON_Delete(settings);
+    }
+    fixtureTeardown(&f);
+}
+
+static void caseParentResumeConfiguration(void)
+{
+    twfSetCase("strict effective pause/resume/limit tuple parsing");
+    pq_fixture_t f;
+    pqSetup(&f);
+    const char *bad[] = {"-1", "1.5", "2147483648", "true", "false", "null", "\"0\"", "[]", "{}"};
+    for (unsigned i = 0; i < ARRAY_SIZE(bad); ++i)
+    {
+        cJSON *settings = pqSettings();
+        cJSON_AddItemToObject(settings, "parent-write-buffer-resume-threshold", cJSON_Parse(bad[i]));
+        node_t node = {.node_settings_json = settings};
+        twfRequire(pqCreate(&node) == NULL, "invalid resume type accepted");
+        cJSON_Delete(settings);
+    }
+    const uint32_t tuples[][3] = {{1, 0, 2},
+                                  {8388608, 7340032, 134217728},
+                                  {INT_MAX - 1, INT_MAX - 2, INT_MAX},
+                                  {2, 2, 3},
+                                  {2, 3, 4},
+                                  {2, 0, 2},
+                                  {INT_MAX, 0, INT_MAX}};
+    for (unsigned i = 0; i < ARRAY_SIZE(tuples); ++i)
+    {
+        cJSON *settings = pqSettings();
+        cJSON_AddNumberToObject(settings, "parent-write-buffer-pause-threshold", tuples[i][0]);
+        cJSON_AddNumberToObject(settings, "parent-write-buffer-resume-threshold", tuples[i][1]);
+        cJSON_AddNumberToObject(settings, "parent-write-buffer-limit", tuples[i][2]);
+        node_t    node = {.node_settings_json = settings};
+        tunnel_t *mux  = pqCreate(&node);
+        twfRequire((mux != NULL) == (i < 3), "incorrect tuple acceptance");
+        if (mux)
+        {
+            pq_tstate_t *ts = tunnelGetState(mux);
+            twfRequire(ts->parent_write_resume_threshold == tuples[i][1], "explicit resume changed");
+            pqDestroy(mux, wwLifecycleProcessShutdown());
+        }
+        cJSON_Delete(settings);
+    }
+    const uint32_t pauses[] = {1, 8388608, 33554432};
+    for (unsigned i = 0; i < ARRAY_SIZE(pauses); ++i)
+    {
+        cJSON *settings = pqSettings();
+        cJSON_AddNumberToObject(settings, "parent-write-buffer-pause-threshold", pauses[i]);
+        node_t    node = {.node_settings_json = settings};
+        tunnel_t *mux  = pqCreate(&node);
+        twfRequire(mux != NULL, "derived resume rejected");
+        pq_tstate_t *ts = tunnelGetState(mux);
+        twfRequire(ts->parent_write_resume_threshold == (uint64_t) pauses[i] * 7 / 8, "derived resume incorrect");
+        pqDestroy(mux, wwLifecycleProcessShutdown());
         cJSON_Delete(settings);
     }
     fixtureTeardown(&f);
@@ -515,6 +845,7 @@ static void caseParentAdmissionArithmeticAndDirect(void)
     pqSetup(&f);
     pq_tstate_t *ts                  = tunnelGetState(f.mux);
     ts->parent_write_pause_threshold = 1;
+    ts->parent_write_resume_threshold = 0;
     ts->parent_write_limit           = 2;
     pqSend(f.mux, f.child_l, makePatternPayload(&f, 1));
     twfRequire(pqDeliveries == 1 && pqOutput(&f)->pending.q.cbuf == NULL,
@@ -539,6 +870,7 @@ static void caseQueueLimitCloseCannotReenterChild(void)
     pqSetup(&f);
     pq_tstate_t *ts                  = tunnelGetState(f.mux);
     ts->parent_write_pause_threshold = 1;
+    ts->parent_write_resume_threshold = 0;
     ts->child_buffer_limit           = 1;
     pq_state_t *parent               = lineGetState(f.parent_l, f.mux);
     pq_state_t *child                = lineGetState(f.child_l, f.mux);
@@ -576,6 +908,7 @@ static void caseChildCloseKeepsParentParsing(void)
     pq_tstate_t *ts                  = tunnelGetState(f.mux);
     ts->child_buffer_pause_tolerance = 0;
     ts->parent_write_pause_threshold = 1;
+    ts->parent_write_resume_threshold = 0;
     pq_state_t *parent               = lineGetState(f.parent_l, f.mux);
     pq_state_t *child                = lineGetState(f.child_l, f.mux);
     child->paused                    = true;
@@ -1266,11 +1599,19 @@ static void runFrameLengthCases(void)
 
 static void runParentOutputCases(void)
 {
+    caseParentEarlyRelease();
+    caseParentResumeBoundary(0);
+    caseParentResumeBoundary(2);
+    caseParentResumeFIFO();
+    caseParentFairness();
+    caseParentThrottleClock();
+    for (unsigned mode = 0; mode < 5; ++mode)
+        caseParentResumeMutation(mode);
     runReceiveLimitCases();
     runFrameLengthCases();
 #if WW_HAVE_SPLICE
     caseMaximumFittingSplice();
-    for (unsigned mode = 0; mode < 5; ++mode)
+    for (unsigned mode = 0; mode < 6; ++mode)
         caseSpliceBatch(mode);
     for (unsigned mode = 0; mode < 4; ++mode)
         caseSpliceBatchAdmission(mode);
@@ -1300,7 +1641,7 @@ static void runParentOutputCases(void)
     caseParentQueuedChildClose(true);
     caseParentAdmissionArithmeticAndDirect();
     caseParentPumpReentrancy();
-    caseParentGate(1000, false);
+    caseParentGate(2000, false);
     caseParentGate(3, true);
     caseParentGateMutation();
     caseParentHardLimit(true, false, false);
@@ -1308,4 +1649,5 @@ static void runParentOutputCases(void)
     caseParentHardLimit(true, true, false);
     caseParentHardLimit(false, false, true);
     caseParentWriteConfiguration();
+    caseParentResumeConfiguration();
 }

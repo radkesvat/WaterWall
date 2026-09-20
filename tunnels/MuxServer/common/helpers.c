@@ -300,6 +300,8 @@ void muxserverJoinConnection(muxserver_lstate_t *parent, muxserver_lstate_t *chi
     }
 
     parent->child_next = child;
+    if (parent->parent_state->resume_cursor == NULL)
+        parent->parent_state->resume_cursor = child;
 
     parent->children_count++;
 }
@@ -343,6 +345,8 @@ void muxserverLeaveConnection(muxserver_lstate_t *child)
         abortProgramNow(1);
     }
     child->parent->children_count--;
+    if (parent->parent_state->resume_cursor == child)
+        parent->parent_state->resume_cursor = child->child_next ? child->child_next : parent->child_next;
 
     child->parent     = NULL;
     child->child_prev = NULL;
@@ -359,6 +363,7 @@ muxserver_lstate_t *muxserverFindChildByConnectionId(muxserver_lstate_t *parent,
 typedef struct muxserver_parent_stats_s
 {
     uint32_t parent_write_paused;
+    uint32_t peer_flow_paused;
     uint32_t child_read_paused;
     uint32_t child_write_paused;
     uint32_t children_close_pending;
@@ -378,6 +383,8 @@ static void muxserverCollectParentStats(muxserver_lstate_t *parent_ls, muxserver
         {
             stats->parent_write_paused++;
         }
+        if (child_ls->peer_flow_paused)
+            stats->peer_flow_paused++;
         if (child_ls->paused)
         {
             stats->child_write_paused++;
@@ -407,17 +414,35 @@ static void muxserverParentStatsLogTask(tunnel_t *t, line_t *parent_l)
     muxserver_parent_stats_t stats;
     muxserverCollectParentStats(parent_ls, &stats);
 
-    LOGI("MuxServer: main line stats wid=%u parent-line-write-paused=%s parent-line-read-paused=no "
-         "children-count=%u children-close-pending=%u childs-read-paused=%u childs-write-paused=%u "
-         "parent-child-queue-charge=%zu parent-input-queue-charge=%zu",
+    mux_parent_output_t *output = &parent_ls->parent_state->output;
+    const uint64_t       now_us = wloopNowLoopRunTime(getWorkerLoop(lineGetWID(parent_l)));
+    LOGI("MuxServer: main line stats wid=%u children-count=%u children-close-pending=%u "
+         "childs-read-paused=%u childs-write-paused=%u "
+         "parent-child-queue-charge=%zu parent-input-queue-charge=%zu "
+         "parent-output-queued-bytes=%zu parent-output-queue-charge=%zu parent-output-queue-items=%zu "
+         "parent-transport-paused=%s parent-sources-throttled=%s "
+         "children-parent-write-paused=%u children-peer-flow-paused=%u "
+         "parent-output-throttle-ms=%llu parent-output-last-throttle-ms=%llu "
+         "parent-write-buffer-pause-threshold=%u parent-write-buffer-resume-threshold=%u parent-write-buffer-limit=%u",
          (unsigned int) lineGetWID(parent_l),
-         boolToYesNo(stats.parent_write_paused > 0),
          parent_ls->children_count,
          stats.children_close_pending,
          stats.child_read_paused,
          stats.child_write_paused,
          parent_ls->pending_child_queue_charge,
-         splicestreamCharge(parent_ls->parent_state->read_stream));
+         splicestreamCharge(parent_ls->parent_state->read_stream),
+         (size_t) bufferqueueGetBufLen(&output->pending),
+         output->charge,
+         (size_t) bufferqueueGetBufCount(&output->pending),
+         boolToYesNo(output->transport_paused),
+         boolToYesNo(output->sources_throttled),
+         stats.parent_write_paused,
+         stats.peer_flow_paused,
+         (unsigned long long) muxParentOutputThrottleMS(output, now_us),
+         (unsigned long long) (output->last_throttle_us / 1000),
+         ts->parent_write_pause_threshold,
+         ts->parent_write_resume_threshold,
+         ts->parent_write_limit);
 
     if (! parent_ls->parent_finishing)
     {
@@ -1323,6 +1348,7 @@ static bool muxserverParentOutputAlive(tunnel_t *t, line_t *parent_l)
  * any sibling or attach new children; Init/Est completion handles new arrivals. */
 static void muxserverNotifyParentGate(tunnel_t *t, line_t *parent_l)
 {
+    muxserver_tstate_t  *ts     = tunnelGetState(t);
     muxserver_lstate_t  *parent = lineGetState(parent_l, t);
     mux_parent_output_t *output = &parent->parent_state->output;
     if (output->notifying)
@@ -1342,16 +1368,16 @@ static void muxserverNotifyParentGate(tunnel_t *t, line_t *parent_l)
             return;
         }
         size_t n = 0;
-        for (muxserver_lstate_t *child = parent->child_next; child; child = child->child_next)
+        muxserver_lstate_t *snapshot_child = throttled ? parent->child_next : parent->parent_state->resume_cursor;
+        for (; n < count; snapshot_child = snapshot_child->child_next ? snapshot_child->child_next : parent->child_next)
         {
-            assert(n < count);
-            children[n++] = child->l;
-            lineRef(child->l);
+            children[n++] = snapshot_child->l;
+            lineRef(snapshot_child->l);
         }
         for (size_t i = 0; i < n; ++i)
         {
-            if (muxserverParentOutputAlive(t, parent_l) && output->sources_throttled == throttled &&
-                lineIsAlive(children[i]))
+            if (muxserverParentOutputAlive(t, parent_l) && ! ts->worker_states[lineGetWID(parent_l)].quiescing &&
+                output->sources_throttled == throttled && lineIsAlive(children[i]))
             {
                 muxserver_lstate_t *child = lineGetState(children[i], t);
                 if (child->is_child && child->parent == parent && ! child->source_starting)
@@ -1359,7 +1385,11 @@ static void muxserverNotifyParentGate(tunnel_t *t, line_t *parent_l)
                     if (throttled)
                         discard muxserverPauseChildSource(t, parent_l, child, false, true);
                     else
+                    {
+                        parent->parent_state->resume_cursor =
+                            child->child_next ? child->child_next : parent->child_next;
                         discard muxserverResumeChildSource(t, parent_l, child, false, true);
+                    }
                 }
             }
             lineUnref(children[i]);
@@ -1384,18 +1414,20 @@ void muxserverDrainParentOutput(tunnel_t *t, line_t *parent_l)
         return;
     lineRef(parent_l);
     output->pumping = true;
-    while (muxserverParentOutputAlive(t, parent_l) && ! output->transport_paused)
+    while (muxserverParentOutputAlive(t, parent_l) && ! ts->worker_states[lineGetWID(parent_l)].quiescing &&
+           ! output->transport_paused)
     {
-        if (bufferqueueGetBufCount(&output->pending))
+        /* Decide only before the next pop, using the previous callback's state. */
+        if (output->sources_throttled && ! output->notifying && output->charge <= ts->parent_write_resume_threshold)
         {
-            sbuf_t *buf = muxParentOutputPop(output);
-            tunnelPrevDownStreamPayload(t, parent_l, buf);
+            muxParentOutputSetThrottled(output, false, wloopNowLoopRunTime(getWorkerLoop(lineGetWID(parent_l))));
+            muxserverNotifyParentGate(t, parent_l);
             continue;
         }
-        if (! output->sources_throttled || output->notifying)
+        if (! bufferqueueGetBufCount(&output->pending))
             break;
-        output->sources_throttled = false;
-        muxserverNotifyParentGate(t, parent_l);
+        sbuf_t *buf = muxParentOutputPop(output);
+        tunnelPrevDownStreamPayload(t, parent_l, buf);
     }
     const bool alive = muxserverParentOutputAlive(t, parent_l);
     if (alive)
@@ -1456,7 +1488,7 @@ bool muxserverSendParentOutput(tunnel_t *t, line_t *parent_l, sbuf_t *buf, muxse
     }
     else if (output->charge >= ts->parent_write_pause_threshold && ! output->sources_throttled)
     {
-        output->sources_throttled = true;
+        muxParentOutputSetThrottled(output, true, wloopNowLoopRunTime(getWorkerLoop(lineGetWID(parent_l))));
         muxserverNotifyParentGate(t, parent_l);
     }
     if (muxserverParentOutputAlive(t, parent_l))
@@ -1483,7 +1515,7 @@ void muxserverSendSpliceBatch(tunnel_t *t, line_t *parent_l, sbuf_t *input, muxs
     /* Complete parent ownership precedes gate callbacks. */
     if (output->charge >= ts->parent_write_pause_threshold && ! output->sources_throttled)
     {
-        output->sources_throttled = true;
+        muxParentOutputSetThrottled(output, true, wloopNowLoopRunTime(getWorkerLoop(lineGetWID(parent_l))));
         muxserverNotifyParentGate(t, parent_l);
     }
     if (muxserverParentOutputAlive(t, parent_l))

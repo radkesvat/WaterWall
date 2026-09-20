@@ -4,6 +4,7 @@
 
 void muxclientTunnelUpStreamInit(tunnel_t *t, line_t *child_l)
 {
+    muxclient_tstate_t *ts       = tunnelGetState(t);
     muxclient_lstate_t *child_ls = lineGetState(child_l, t);
     line_t             *parent_l = muxclientGetParentLineForNewChild(t, child_l);
     if (parent_l == NULL)
@@ -31,9 +32,12 @@ void muxclientTunnelUpStreamInit(tunnel_t *t, line_t *child_l)
         {
             child_ls->source_starting = false;
             if (lineIsAlive(parent_l) && child_ls->parent == parent_ls && ! parent_ls->parent_finishing &&
-                parent_ls->parent_state->output.sources_throttled)
+                ! ts->worker_states[lineGetWID(parent_l)].quiescing)
             {
-                discard muxclientPauseChildSource(t, parent_l, child_ls, false, true);
+                if (parent_ls->parent_state->output.sources_throttled)
+                    discard muxclientPauseChildSource(t, parent_l, child_ls, false, true);
+                else
+                    discard muxclientResumeChildSource(t, parent_l, child_ls, false, true);
             }
         }
     }

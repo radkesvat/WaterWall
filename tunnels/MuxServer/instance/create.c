@@ -45,9 +45,27 @@ static bool muxserverReadParentWriteSettings(const cJSON *settings, muxserver_ts
             return false;
         }
     }
-    if (ts->parent_write_pause_threshold >= ts->parent_write_limit)
+    int64_t resume = 0;
+    switch (jsonGetObjectIntegerInRange(settings, "parent-write-buffer-resume-threshold", 0, INT_MAX, &resume))
     {
-        LOGF("MuxServer: parent-write-buffer-pause-threshold must be less than parent-write-buffer-limit");
+    case kJsonValueMissing:
+        ts->parent_write_resume_threshold = (uint32_t) ((uint64_t) ts->parent_write_pause_threshold * 7 / 8);
+        break;
+    case kJsonValuePresent:
+        ts->parent_write_resume_threshold = (uint32_t) resume;
+        break;
+    case kJsonValueInvalid:
+        LOGF("MuxServer: parent-write-buffer-resume-threshold must be an integer in [0, INT_MAX]");
+        return false;
+    }
+    if (ts->parent_write_resume_threshold >= ts->parent_write_pause_threshold ||
+        ts->parent_write_pause_threshold >= ts->parent_write_limit)
+    {
+        LOGF("MuxServer: require parent-write-buffer-resume-threshold=%u < "
+             "parent-write-buffer-pause-threshold=%u < parent-write-buffer-limit=%u",
+             ts->parent_write_resume_threshold,
+             ts->parent_write_pause_threshold,
+             ts->parent_write_limit);
         return false;
     }
     return true;

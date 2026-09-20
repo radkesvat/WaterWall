@@ -40,6 +40,14 @@ static sbuf_t *pqLargeSplice(pq_fixture_t *f)
     return input;
 }
 
+static void pqBatchResume(tunnel_t *t, line_t *l)
+{
+    if (pqResumes == 0)
+        pqFifoResume(t, l);
+    else
+        pqSourceResume(t, l);
+}
+
 static void caseSpliceBatch(unsigned mode)
 {
     twfSetCase("large splice batch publishes atomically and preserves Pause/Close ordering");
@@ -67,6 +75,13 @@ static void caseSpliceBatch(unsigned mode)
         pqNestedAt = 1;
         pqToggleAt = 1;
     }
+    if (mode == 5)
+    {
+        pq_tstate_t *ts                   = tunnelGetState(f.mux);
+        ts->parent_write_pause_threshold  = 512 * 1024;
+        ts->parent_write_resume_threshold = 256 * 1024;
+        pqSource(&f)->pqResumeSlot        = pqBatchResume;
+    }
     lineRef(f.parent_l);
     lineRef(f.child_l);
     pqSend(f.mux, f.child_l, pqLargeSplice(&f));
@@ -88,7 +103,7 @@ static void caseSpliceBatch(unsigned mode)
 #else
         const uint32_t start = 0;
 #endif
-        twfRequire(count == start + 2U + (mode == 2 || mode == 3), "batch frame/control count changed");
+        twfRequire(count == start + 2U + (mode == 2 || mode == 3 || mode == 5), "batch frame/control count changed");
         uint32_t offset = 0;
         for (unsigned i = 0; i < 2; ++i)
         {
@@ -99,6 +114,9 @@ static void caseSpliceBatch(unsigned mode)
                 twfRequire(frame->data[j] == patternByte(offset++), "split batch corrupted payload");
         }
         twfRequire(offset == pqBatchLength, "batch lost bytes");
+        if (mode == 5)
+            twfRequire(pqResumes >= 1 && frames[count - 1].length == 4,
+                       "early resumed output overtook admitted batch remainder");
         if (mode == 3)
             twfRequire(frames[count - 1].flags == kMuxFlagClose, "reentrant Close preceded admitted Data");
         twfRequire(pqOutput(&f)->charge == 0, "batch drain leaked cost");
@@ -141,6 +159,7 @@ static void caseSpliceBatchAdmission(unsigned mode)
     pq_tstate_t *ts                  = tunnelGetState(f.mux);
     ts->parent_write_limit           = (uint32_t) ordinary_cost - (mode == 1 ? 1U : 0U);
     ts->parent_write_pause_threshold = (uint32_t) ordinary_cost - 1U;
+    ts->parent_write_resume_threshold = 0;
     if (mode == 0)
         pqParentPause(&f);
     sbuf_t *input = pqLargeSplice(&f);

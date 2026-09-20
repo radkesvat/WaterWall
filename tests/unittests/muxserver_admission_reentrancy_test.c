@@ -117,6 +117,7 @@ static void fixtureSetup(muxserver_admission_fixture_t *fixture, uint32_t captur
     ts->child_buffer_resume_threshold     = kMuxDefaultChildBufferResumeThreshold;
     ts->parent_buffer_limit               = kMuxDefaultParentBufferLimit;
     ts->parent_write_pause_threshold      = kMuxDefaultParentWritePauseThreshold;
+    ts->parent_write_resume_threshold     = kMuxDefaultParentWriteResumeThreshold;
     ts->parent_write_limit                = kMuxDefaultParentWriteLimit;
     ts->detached_buffer_limit             = kMuxMinimumDetachedBufferLimit;
     ts->detached_child_limit              = kMuxMinimumDetachedChildLimit;
@@ -669,6 +670,7 @@ static void caseDuplicatePeerDrainingCidClosesParent(void)
 
 static bool     parent_output_init_active;
 static bool     parent_output_close_in_init;
+static bool     parent_output_release_in_init;
 static bool     parent_output_loss_in_pause;
 static unsigned parent_output_pauses;
 
@@ -679,6 +681,13 @@ static void parentOutputInit(tunnel_t *next, line_t *child)
     sbuf_t *buf               = bufferpoolGetSmallBuffer(g_server_fixture->env.pool);
     sbufSetLength(buf, 1);
     muxserverTunnelDownStreamPayload(g_server_fixture->mux, child, buf);
+    if (parent_output_release_in_init)
+    {
+        muxserver_lstate_t *state  = lineGetState(child, g_server_fixture->mux);
+        state->parent_write_paused = true;
+        muxserverTunnelUpStreamResume(g_server_fixture->mux, state->parent->l);
+        twfRequire(state->parent_write_paused, "starting child was visited during release fanout");
+    }
     if (parent_output_close_in_init)
         muxserverTunnelDownStreamFinish(g_server_fixture->mux, child);
     parent_output_init_active = false;
@@ -700,19 +709,21 @@ static void parentOutputPause(tunnel_t *next, line_t *child)
     }
 }
 
-static void caseParentGateDuringInit(bool close_in_init, bool loss_in_pause)
+static void caseParentGateDuringInit(bool close_in_init, bool loss_in_pause, bool release_in_init)
 {
     twfSetCase("MuxServer parent gate handles output, child close and parent loss during Init completion");
     muxserver_admission_fixture_t f;
     fixtureSetup(&f, 128);
     muxserver_tstate_t *ts           = tunnelGetState(f.mux);
     ts->parent_write_pause_threshold = 1;
+    ts->parent_write_resume_threshold = 0;
     line_t *parent                   = fixtureCreateParent(&f);
     muxserverTunnelUpStreamPause(f.mux, parent);
     f.next->fnInitU             = parentOutputInit;
     f.next->fnPauseU            = parentOutputPause;
     parent_output_pauses        = 0;
     parent_output_close_in_init = false;
+    parent_output_release_in_init = false;
     parent_output_loss_in_pause = loss_in_pause;
     lineRef(parent);
     sendFrame(&f, parent, 101, kMuxFlagOpen, 0);
@@ -724,10 +735,18 @@ static void caseParentGateDuringInit(bool close_in_init, bool loss_in_pause)
         twfRequire(parent_output_pauses == 1 && state->parent_state->output.sources_throttled,
                    "child that raised gate during Init missed Pause");
         parent_output_close_in_init = close_in_init;
+        parent_output_release_in_init = release_in_init;
         sendFrame(&f, parent, 102, kMuxFlagOpen, 0);
-        twfRequire(parent_output_pauses == (close_in_init ? 1U : 2U),
+        twfRequire(parent_output_pauses == ((close_in_init || release_in_init) ? 1U : 2U),
                    "new child missed gate or dead child received Pause");
-        twfRequire(f.trace.prev_payload == 0, "Init output bypassed parent Pause");
+        if (release_in_init)
+        {
+            muxserver_lstate_t *second = muxserverFindChildByConnectionId(state, 102);
+            twfRequire(second != NULL && ! second->parent_write_paused,
+                       "Init completion retained obsolete parent gate");
+        }
+        else
+            twfRequire(f.trace.prev_payload == 0, "Init output bypassed parent Pause");
         muxserverTunnelUpStreamResume(f.mux, parent);
         twfRequire(state->parent_state->output.charge == 0, "Init output remained stranded");
     }
@@ -737,9 +756,10 @@ static void caseParentGateDuringInit(bool close_in_init, bool loss_in_pause)
 
 int main(void)
 {
-    caseParentGateDuringInit(false, false);
-    caseParentGateDuringInit(true, false);
-    caseParentGateDuringInit(false, true);
+    caseParentGateDuringInit(false, false, false);
+    caseParentGateDuringInit(false, false, true);
+    caseParentGateDuringInit(true, false, false);
+    caseParentGateDuringInit(false, true, false);
     caseExactPerParentCapPreservesSiblings();
     caseAggregateCapAcrossParentsReusesOneReleasedSlot();
     caseMemoryAdmissionDrivesProductionParser();

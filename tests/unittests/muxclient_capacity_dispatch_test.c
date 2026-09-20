@@ -84,6 +84,7 @@ static void fixtureSetup(muxclient_capacity_fixture_t *fixture, uint8_t mode, ui
     ts->child_buffer_resume_threshold = kMuxDefaultChildBufferResumeThreshold;
     ts->parent_buffer_limit           = kMuxDefaultParentBufferLimit;
     ts->parent_write_pause_threshold  = kMuxDefaultParentWritePauseThreshold;
+    ts->parent_write_resume_threshold = kMuxDefaultParentWriteResumeThreshold;
     ts->parent_write_limit            = kMuxDefaultParentWriteLimit;
     ts->detached_buffer_limit         = kMuxMinimumDetachedBufferLimit;
     ts->detached_child_limit          = kMuxMinimumDetachedChildLimit;
@@ -693,6 +694,7 @@ static void caseWorkerDrainIsLocal(void)
 
 static bool output_est_active;
 static bool output_close_in_est;
+static bool output_release_in_est;
 
 static void outputEstProducer(tunnel_t *prev, line_t *child_l)
 {
@@ -701,6 +703,13 @@ static void outputEstProducer(tunnel_t *prev, line_t *child_l)
     sbuf_t *buf       = bufferpoolGetSmallBuffer(g_client_fixture->env.pool);
     sbufSetLength(buf, 1);
     muxclientTunnelUpStreamPayload(g_client_fixture->mux, child_l, buf);
+    if (output_release_in_est)
+    {
+        muxclient_lstate_t *child  = lineGetState(child_l, g_client_fixture->mux);
+        child->parent_write_paused = true;
+        muxclientTunnelDownStreamResume(g_client_fixture->mux, child->parent->l);
+        twfRequire(child->parent_write_paused, "starting child was visited during release fanout");
+    }
     if (output_close_in_est)
     {
         muxclientTunnelUpStreamFinish(g_client_fixture->mux, child_l);
@@ -715,7 +724,7 @@ static void outputInitSafePause(tunnel_t *prev, line_t *child_l)
     quietChildPause(prev, child_l);
 }
 
-static void caseNewChildInheritsOutputGate(bool close_in_est)
+static void caseNewChildInheritsOutputGate(bool close_in_est, bool release_in_est)
 {
     twfSetCase("MuxClient child joins a gated parent and safely produces or closes during Est");
     muxclient_capacity_fixture_t f;
@@ -723,6 +732,7 @@ static void caseNewChildInheritsOutputGate(bool close_in_est)
     muxclient_tstate_t *ts           = tunnelGetState(f.mux);
     ts->concurrency_capacity         = 32;
     ts->parent_write_pause_threshold = 1;
+    ts->parent_write_resume_threshold = 0;
     f.prev->fnPauseD                 = outputInitSafePause;
     line_t             *first        = fixtureOpenChild(&f);
     muxclient_lstate_t *child        = lineGetState(first, f.mux);
@@ -733,15 +743,16 @@ static void caseNewChildInheritsOutputGate(bool close_in_est)
     muxclientTunnelUpStreamPayload(f.mux, first, buf);
     f.prev->fnEstD      = outputEstProducer;
     output_close_in_est = close_in_est;
+    output_release_in_est = release_in_est;
     line_t *second      = fixtureOpenChild(&f);
     if (close_in_est)
         twfRequire(! lineIsAlive(second), "reentrant Est Finish was lost");
     else
     {
         muxclient_lstate_t *second_state = lineGetState(second, f.mux);
-        twfRequire(second_state->parent == child->parent && second_state->parent_write_paused,
+        twfRequire(second_state->parent == child->parent && second_state->parent_write_paused == ! release_in_est,
                    "new child missed parent gate");
-        twfRequire(f.quiet_pauses == 2, "new child did not receive exactly one Pause");
+        twfRequire(f.quiet_pauses == (release_in_est ? 1U : 2U), "new child received incorrect Pause count");
     }
     muxclientTunnelDownStreamResume(f.mux, parent);
     fixtureTeardown(&f);
@@ -794,8 +805,9 @@ static void caseIdleParentWaitsForOutput(uint8_t mode, bool stop)
 
 int main(void)
 {
-    caseNewChildInheritsOutputGate(false);
-    caseNewChildInheritsOutputGate(true);
+    caseNewChildInheritsOutputGate(false, false);
+    caseNewChildInheritsOutputGate(false, true);
+    caseNewChildInheritsOutputGate(true, false);
     caseIdleParentWaitsForOutput(kConcurrencyModeCounter, false);
     caseIdleParentWaitsForOutput(kConcurrencyModeTimer, false);
     caseIdleParentWaitsForOutput(kConcurrencyModeFixedConnectionsCount, false);

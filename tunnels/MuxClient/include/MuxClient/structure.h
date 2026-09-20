@@ -18,6 +18,7 @@ typedef struct muxclient_lstate_s muxclient_lstate_t;
 
 typedef struct muxclient_parent_state_s
 {
+    muxclient_lstate_t   *resume_cursor; // Borrowed next attached child; repaired on unlink.
     mux_parent_output_t   output;
     unsigned              receive_depth;     // Defer aggregate enforcement until complete frames drain.
     bool                  receive_enforcing; // Close callbacks may re-enter parser/admission.
@@ -45,6 +46,7 @@ typedef struct muxclient_tstate_s
     uint32_t child_buffer_resume_threshold;
     uint32_t parent_buffer_limit;
     uint32_t parent_write_pause_threshold;
+    uint32_t parent_write_resume_threshold;
     uint32_t parent_write_limit;
     uint32_t detached_buffer_limit;
     uint32_t detached_child_limit;
