@@ -1113,34 +1113,43 @@ static tunnel_t *createFromSettings(const char *settings_text)
 
 static void testProtocolSwapConfigurationValidation(void)
 {
-    require(createFromSettings("{\"protoswap\":17}") == NULL,
-            "legacy protocol swap accepted a literal UDP replacement");
-    require(createFromSettings("{\"protoswap-tcp\":17}") == NULL,
-            "TCP protocol swap accepted a literal UDP replacement");
-    require(createFromSettings("{\"protoswap-tcp\":6}") == NULL,
-            "TCP protocol swap accepted a literal TCP replacement");
-    require(createFromSettings("{\"protoswap-udp\":6}") == NULL,
-            "UDP protocol swap accepted a literal TCP replacement");
-    require(createFromSettings("{\"protoswap-udp\":17}") == NULL,
-            "UDP protocol swap accepted a literal UDP replacement");
+    /* Literal TCP/UDP replacements are allowed, including cross-mapped protocols. */
+    const struct
+    {
+        const char *settings;
+        int         tcp_number;
+        int         udp_number;
+    } accepted[] = {
+        {"{\"protoswap\":17}", 17, -1},
+        {"{\"protoswap-tcp\":17}", 17, -1},
+        {"{\"protoswap-tcp\":6}", 6, -1},
+        {"{\"protoswap-udp\":6}", -1, 6},
+        {"{\"protoswap-udp\":17}", -1, 17},
+        {"{\"protoswap-tcp\":17,\"protoswap-udp\":6}", 17, 6},
+        {"{\"protoswap-tcp\":143,\"protoswap-udp\":144}", 143, 144},
+        {"{\"protoswap-tcp\":143}", 143, -1},
+    };
+
+    for (size_t i = 0; i < ARRAY_SIZE(accepted); ++i)
+    {
+        tunnel_t *t = createFromSettings(accepted[i].settings);
+        require(t != NULL, "allowed protocol-swap configuration was rejected");
+        ipmanipulator_tstate_t *state = tunnelGetState(t);
+        require(state->trick_proto_swap, "configured protocol swap was not enabled");
+        require(state->trick_proto_swap_tcp_number == accepted[i].tcp_number &&
+                    state->trick_proto_swap_udp_number == accepted[i].udp_number,
+                "protocol-swap configuration did not preserve the selected mappings");
+        ipmanipulatorDestroy(t, wwLifecycleStartupRollback());
+    }
+
     require(createFromSettings("{\"protoswap-tcp-2\":144}") == NULL,
             "removed secondary TCP protocol swap was accepted alone");
     require(createFromSettings("{\"protoswap-tcp\":143,\"protoswap-tcp-2\":144}") == NULL,
             "removed secondary TCP protocol swap was accepted with protoswap-tcp");
     require(createFromSettings("{\"source-port-ghost\":true,\"protoswap-tcp-2\":144}") == NULL,
             "removed secondary TCP protocol swap was accepted with another trick");
-    require(createFromSettings("{\"protoswap-tcp\":17,\"protoswap-udp\":6}") == NULL,
-            "cross-mapped TCP/UDP protocols were accepted");
     require(createFromSettings("{\"protoswap-tcp\":143,\"protoswap-udp\":143}") == NULL,
             "shared TCP/UDP replacement protocol was accepted");
-
-    tunnel_t *valid = createFromSettings("{\"protoswap-tcp\":143,\"protoswap-udp\":144}");
-    require(valid != NULL, "unambiguous TCP/UDP protocol mapping was rejected");
-    ipmanipulatorDestroy(valid, wwLifecycleStartupRollback());
-
-    tunnel_t *tcp_only = createFromSettings("{\"protoswap-tcp\":143}");
-    require(tcp_only != NULL, "single-family TCP-to-custom-protocol mapping was rejected");
-    ipmanipulatorDestroy(tcp_only, wwLifecycleStartupRollback());
 }
 
 int main(void)
