@@ -15,7 +15,7 @@ endif()
 set(CMAKE_UNITY_BUILD_BATCH_SIZE 500)
 
 project(Waterwall
-  VERSION 1.46.93
+  VERSION 1.46.94
   DESCRIPTION "A fast and secure VPN tunnel"
   HOMEPAGE_URL "https://github.com/radkesvat/waterwall"
   LANGUAGES C CXX
