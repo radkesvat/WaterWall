@@ -694,6 +694,7 @@ jobs:
             -DCPM_SOURCE_CACHE="${{ env.cpm-path }}" \
             -DDISABLE_PRECOMPILED_HEADERS=ON \
             -DWW_PACK_RUNTIME=ON -DBUILD_TESTING=ON \
+            -DWW_WINDOWS_LINK_MAP=ON \
             2>&1 | tee build/ci-diagnostics/configure.log
 
       - name: Build
@@ -716,9 +717,24 @@ jobs:
           } 2>&1 | tee ../../../build/ci-diagnostics/bootstrap.log
 
       - name: Validate packed application
+        id: packed_application
+        env:
+          WW_WINDOWS_TEST_DIAGNOSTICS: ${{ github.workspace }}/build/ci-diagnostics/packed-application
         run: >
           ctest --test-dir build/${{ matrix.preset }} -C Release --no-tests=error --output-on-failure
           -R '^waterwall.windows_packed_application$'
+
+      - name: Replay failed application with GDB
+        if: ${{ failure() && steps.packed_application.outcome == 'failure' }}
+        continue-on-error: true
+        timeout-minutes: 5
+        run: |
+          set -o pipefail
+          {
+            pacman -S --needed --noconfirm "${MINGW_PACKAGE_PREFIX}-gdb" &&
+            python tests/windows_packed_application_debug.py \
+              --diagnostics-dir build/ci-diagnostics/packed-application
+          } 2>&1 | tee build/ci-diagnostics/debugger-setup.log
 
       - name: Collect Windows failure events
         if: failure()
@@ -762,6 +778,7 @@ jobs:
           path: |
             build/${{ matrix.preset }}/Release/Waterwall.exe
             build/${{ matrix.preset }}/Release/waterwall_application.exe
+            build/${{ matrix.preset }}/Release/waterwall_application.exe.map
             build/${{ matrix.preset }}/Testing/Temporary/
             build/${{ matrix.preset }}/CMakeFiles/CMakeConfigureLog.yaml
             build/windows-launcher-native/Testing/Temporary/

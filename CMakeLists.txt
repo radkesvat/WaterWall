@@ -15,7 +15,7 @@ endif()
 set(CMAKE_UNITY_BUILD_BATCH_SIZE 500)
 
 project(Waterwall
-  VERSION 1.46.92
+  VERSION 1.46.93
   DESCRIPTION "A fast and secure VPN tunnel"
   HOMEPAGE_URL "https://github.com/radkesvat/waterwall"
   LANGUAGES C CXX
@@ -1302,9 +1302,14 @@ if(WIN32 AND (MINGW OR MSYS))
 endif()
 
 # Platform-specific flags
+option(WW_WINDOWS_LINK_MAP "Write a Windows application linker map for crash diagnostics" OFF)
 if(MINGW OR MSYS)
   # On Windows (MinGW), statically link libgcc, libstdc++, and libwinpthread
   target_link_options(${WATERWALL_APPLICATION_TARGET} PRIVATE -static -static-libgcc -static-libstdc++)
+  if(WW_WINDOWS_LINK_MAP)
+    target_link_options(${WATERWALL_APPLICATION_TARGET} PRIVATE
+      "LINKER:-Map,$<TARGET_FILE:${WATERWALL_APPLICATION_TARGET}>.map")
+  endif()
 elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
   # Ensure static linking of C++ standard library for BoringSSL (but not glibc)
   target_link_options(${WATERWALL_APPLICATION_TARGET} PRIVATE -static-libstdc++ -static-libgcc)
