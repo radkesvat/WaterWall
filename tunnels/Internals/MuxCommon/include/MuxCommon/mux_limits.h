@@ -108,8 +108,8 @@ enum
 
     kMuxMinimumAdmissionMemoryReserve    = 32U * 1024U * 1024U,
     kMuxMaximumAdmissionMemoryReserve    = 256U * 1024U * 1024U,
-    kMuxMinimumAdmissionFallbackChildren = 4096,
-    kMuxMaximumAdmissionFallbackChildren = 12000,
+    kMuxMinimumAdmissionFallbackChildren = 20480,
+    kMuxMaximumAdmissionFallbackChildren = 60000,
 };
 
 _Static_assert(kMuxMaximumDetachedBufferLimit <= INT_MAX,
@@ -188,9 +188,8 @@ static inline mux_detached_defaults_t muxGetDefaultDetachedLimits(uint32_t ram_p
  * Select the default MuxServer admission reserve and conservative fallback
  * child ceiling for the configured RAM profile.
  *
- * Admission defaults intentionally have their own semantic helper. Their
- * initial six-tier interpolation matches the detached-drain profile, but the
- * two policies may evolve independently without silently changing callers.
+ * Admission defaults are independent of detached-drain budgets. The fallback
+ * ceilings are explicit so each RAM profile retains its exact configured default.
  */
 static inline mux_admission_defaults_t muxGetDefaultAdmissionLimits(uint32_t ram_profile)
 {
@@ -205,15 +204,12 @@ static inline mux_admission_defaults_t muxGetDefaultAdmissionLimits(uint32_t ram
     const uint32_t reserve_mib =
         kMinimumMiB +
         (((kMaximumMiB - kMinimumMiB) * tier) + (kMuxRamProfileTierMaximum / 2U)) / kMuxRamProfileTierMaximum;
-    const uint32_t fallback_children =
-        kMuxMinimumAdmissionFallbackChildren +
-        (((kMuxMaximumAdmissionFallbackChildren - kMuxMinimumAdmissionFallbackChildren) * tier) +
-         (kMuxRamProfileTierMaximum / 2U)) /
-            kMuxRamProfileTierMaximum;
+    static const uint32_t fallback_children[] = {
+        kMuxMinimumAdmissionFallbackChildren, 28385, 36290, 44190, 52095, kMuxMaximumAdmissionFallbackChildren};
 
     return (mux_admission_defaults_t) {
         .memory_reserve         = reserve_mib * 1024U * 1024U,
-        .fallback_live_children = fallback_children,
+        .fallback_live_children = fallback_children[tier],
     };
 }
 

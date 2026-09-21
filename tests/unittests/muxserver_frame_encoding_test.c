@@ -901,7 +901,7 @@ static void caseDetachedConfiguration(void)
         twfRequireEqualU32(
             ts->memory_reserve, profiles[i].buffer_limit, "profile-derived MuxServer admission reserve drifted");
         twfRequireEqualU32(ts->memory_fallback_max_live_children,
-                           profiles[i].child_limit,
+                           profiles[i].child_limit * 5U,
                            "profile-derived MuxServer fallback child ceiling drifted");
         twfRequireEqualU32(ts->initial_child_idle_timeout_ms,
                            kMuxDefaultInitialChildIdleTimeoutMs,

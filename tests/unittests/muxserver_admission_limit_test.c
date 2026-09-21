@@ -72,7 +72,7 @@ static void testAdmissionDefaults(void)
         211U * 1024U * 1024U,
         256U * 1024U * 1024U,
     };
-    static const uint32_t fallbacks[] = {4096, 5677, 7258, 8838, 10419, 12000};
+    static const uint32_t fallbacks[] = {20480, 28385, 36290, 44190, 52095, 60000};
     static const uint32_t profiles[]  = {kRamProfileS1Memory,
                                          kRamProfileS2Memory,
                                          kRamProfileM1Memory,
