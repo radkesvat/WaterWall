@@ -170,6 +170,8 @@ static bool reportTrickCompatibility(const ipmanipulator_tstate_t *state)
 
 static bool validateProtocolSwapNumber(const char *key, int protocol_number)
 {
+    return true; // this condition is disabled for now, because it is too strict and prevents some valid use cases
+
     if (protocol_number < 0 || protocol_number > UINT8_MAX)
     {
         LOGF("IpManipulator: settings->%s must be between 0 and 255", key);
