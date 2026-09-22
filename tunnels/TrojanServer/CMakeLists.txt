@@ -6,6 +6,11 @@ add_library(TrojanServer STATIC
     instance/chain.c
     instance/prepair.c
     common/helpers.c
+    common/input.c
+    common/fallback.c
+    common/udp.c
+    common/flow.c
+    common/lifecycle.c
     common/line_state.c
     upstream/init.c
     upstream/fin.c

@@ -6,23 +6,18 @@ void trojanclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
 {
     trojanclient_tstate_t  *ts       = tunnelGetState(t);
     trojanclient_lstate_t  *ls       = lineGetState(l, t);
-    trojanclient_protocol_t protocol = kTrojanClientProtocolTcp;
     address_context_t      *target   = lineGetDestinationAddressContext(l);
 
-    if (ts->resolve_domains)
-    {
-        trojanclient_domain_resolver_lstate_t *resolver_ls =
-            domainresolverTunnelGetUserLineState(ts->domain_resolver_tunnel, l);
-        protocol = resolver_ls->protocol;
-    }
-    else if (UNLIKELY(! trojanclientApplyTargetContext(t, l, &protocol)))
+    /* With local DNS, the prepare hook already applied the target before resolution. */
+    if (! ts->resolve_domains && UNLIKELY(! trojanclientApplyTargetContext(t, l)))
     {
         tunnelPrevDownStreamFinish(t, l);
         return;
     }
+    assert(target->proto_tcp != target->proto_udp);
 
-    trojanclientLinestateInitialize(ls, t, l);
-    ls->protocol = protocol;
+    trojanclientLinestateInitialize(ls, l);
+    ls->protocol = target->proto_udp ? kTrojanClientProtocolUdp : kTrojanClientProtocolTcp;
     ls->kind     = ls->protocol == kTrojanClientProtocolUdp ? kTrojanClientLineKindUdpApp : kTrojanClientLineKindDirect;
     addresscontextCopy(&ls->target_addr, target);
 
@@ -35,19 +30,11 @@ void trojanclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
 
     if (ls->protocol == kTrojanClientProtocolUdp)
     {
-        bool line_alive = true;
-        if (UNLIKELY(! trojanclientStartUdpCarrier(t, l, ls, &line_alive)))
-        {
-            if (! line_alive)
-            {
-                return;
-            }
-            trojanclientLinestateDestroy(ls);
-            tunnelPrevDownStreamFinish(t, l);
-        }
+        trojanclientStartUdpCarrier(t, l, ls);
         return;
     }
 
+    ls->next_started = true;
     tunnelNextUpStreamInit(t, l);
 }
 
@@ -57,13 +44,6 @@ bool trojanclientDomainResolverPrepare(tunnel_t *resolver, tunnel_t *client, lin
     discard resolver;
     discard direction;
 
-    trojanclient_domain_resolver_lstate_t *ls = user_lstate;
-    ls->protocol                              = kTrojanClientProtocolTcp;
-
-    if (UNLIKELY(! trojanclientApplyTargetContext(client, l, &ls->protocol)))
-    {
-        return false;
-    }
-
-    return true;
+    discard user_lstate;
+    return trojanclientApplyTargetContext(client, l);
 }

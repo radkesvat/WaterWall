@@ -6,7 +6,7 @@ void trojanclientTunnelDownStreamEst(tunnel_t *t, line_t *l)
 {
     trojanclient_lstate_t *ls = lineGetState(l, t);
 
-    if (UNLIKELY(ls->phase == kTrojanClientPhaseClosing))
+    if (UNLIKELY(ls->phase == kTrojanClientPhaseClosed))
     {
         return;
     }
@@ -16,5 +16,5 @@ void trojanclientTunnelDownStreamEst(tunnel_t *t, line_t *l)
         return;
     }
 
-    discard trojanclientOnTransportEstablished(t, l, ls);
+    trojanclientOnNextEstablished(t, l, ls);
 }

@@ -11,7 +11,7 @@ void trojanserverTunnelDownStreamEst(tunnel_t *t, line_t *l)
 
     if (ls->line_kind == kTrojanServerLineKindUdpRemote)
     {
-        trojanserverOnSelectedEstablished(t, l, ls);
+        trojanserverOnNextEstablished(t, l, ls);
         return;
     }
 
@@ -22,5 +22,5 @@ void trojanserverTunnelDownStreamEst(tunnel_t *t, line_t *l)
         return;
     }
 
-    trojanserverOnSelectedEstablished(t, l, ls);
+    trojanserverOnNextEstablished(t, l, ls);
 }

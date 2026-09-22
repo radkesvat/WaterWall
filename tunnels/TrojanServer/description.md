@@ -1,5 +1,5 @@
 <!--
-Documentation version: 153
+Documentation version: 155
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/TrojanServer.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/TrojanServer.mdx, and all files must keep the same documentation version.
 -->
 
@@ -333,7 +333,7 @@ doing this.
 The fallback branch receives `Init` immediately. During normal live operation, nonzero delay uses the configured delay
 and jitter. At delay zero, an active unpaused fallback with no older FIFO batch or scheduled drain receives payload
 inline; paused or older bytes remain FIFO and Resume schedules their drain before later payload can overtake them. The
-delayed FIFO is bounded to 1 MiB per line. Downstream responses from fallback are not intentionally delayed.
+delayed FIFO is bounded to 1 MiB and 1,024 buffers per line. Downstream responses from fallback are not intentionally delayed.
 
 An upstream `Finish` does not keep the remaining intentional delay alive. If fallback can still accept payload, accepted
 queued bytes are synchronously flushed in FIFO order before fallback `Finish`. If fallback has already paused payload, the
@@ -421,6 +421,86 @@ ATYP + DOMAIN_LEN + DOMAIN + PORT + LEN + CRLF
 When enough left padding is available, UDP responses are wrapped by prepending into the existing buffer. If a buffer does
 not have enough left capacity, the tunnel allocates a new buffer and recycles the old one.
 
+## Splice, buffering and backpressure
+
+TrojanServer accepts ordinary buffers, private-pipe splice buffers and mixed
+input in authentication, CONNECT, ASSOCIATE and fallback. The initial parser
+consumes only the required header bytes: 68 for IPv4, 80 for IPv6, or 65 plus
+the domain length, at most 320. The first callback must still contain all 56
+hash bytes. Available password CRLF bytes are checked before authentication;
+a hash accepted before a later CRLF arrives is authenticated only once. Invalid
+bytes arriving after authentication close the protected flow, without fallback.
+Credentials and database handles are recorded before protected branch Init.
+
+TCP bodies remain opaque after the request. Init and Est callbacks retain an
+authoritative FIFO, so reentrant input cannot overtake older accepted bytes.
+TCP payload can be submitted after onward Init returns, even before the connector
+establishes, subject to Pause. Est is sent downstream once.
+
+Fallback replays the inspected resident prefix and untouched input tail exactly
+once before newer input. Init remains immediate, with the configured payload
+delay and jitter. A delayed batch is one buffer and one Payload callback; mixed
+or pipe-backed assembly uses exact movement, with complete ordinary fallback on
+pipe pressure. On source Finish, an unpaused initialized branch receives at most
+one final batch synchronously. A paused branch or a branch still inside Init
+discards the pending replay. No final callback reflects toward the finished side.
+
+A fallback may generate a local response without outbound `Est`, including a
+response immediately followed by `Finish` inside its Init or Payload callback.
+While the client is writable, replies drain independently of upstream work, so
+that response reaches the client before Finish. Paused or reentrant replies stay
+in downstream FIFO order; Resume does not require Est. Source-Finish cleanup still
+absorbs replies from the final fallback batch instead of reflecting them.
+
+UDP reads only each 11-byte IPv4, 23-byte IPv6 or `8 + domain_length` header, then
+extracts exactly one body, including empty datagrams. Every backend is an owned
+normal line on the client worker. It carries the authenticated credentials and
+is initialized only after its association membership and destination are ready.
+TrojanServer borrows the client line and destroys only its own backends.
+
+UDP input backpressure is association-wide: any paused backend stops carrier
+payload delivery and further decoding until every paused backend resumes or
+closes. This deliberately permits head-of-line blocking across destinations.
+Client reply Pause propagates to all initialized backend reply producers; newly
+created backends inherit the current permission. Resume drains ready older work
+before releasing producers. Incomplete input never withholds a Resume needed to
+complete it.
+
+Replies share one association-owned FIFO in arrival order. Replies received before
+backend Est wait for that backend; later replies cannot overtake them. On backend
+close, already eligible encoded replies survive, while its pre-Est replies are
+discarded. Encoding captures the response address while the backend is valid.
+
+| Retained work | Fixed limit |
+| --- | --- |
+| UDP carrier input, including cached headers and a selected frame waiting for permission | 1,057,031 wire bytes (1 MiB plus an 8,455-byte maximum frame) |
+| Pending TCP data, each direction | 1 MiB and 1,024 buffers |
+| Pending fallback data, each direction, including replayed prefix bytes | 1 MiB and 1,024 buffers |
+| UDP replies, association-wide, including pre-Est replies | 1 MiB of encoded wire bytes and 1,024 datagrams |
+| Initial header cache | 320 actual bytes; the separate incomplete-initial limit remains 4,096 bytes |
+| Incoming UDP body | 8,192 bytes |
+| Backend reply body | 65,535 bytes |
+
+Initial assembly uses the UDP wire allowance so a partial request followed by a
+full 1 MiB delivery can fit. Once the header completes, only the selected path's
+retained work is charged. Empty output datagrams consume slots; incoming UDP
+fragments have no 1,024-entry cap. Limits do not depend on RAM profile, pool size
+or actual pipe capacity. Overflow closes the affected flow; aggregate reply
+overflow closes the association. Backend-local errors retain their local scope.
+
+UDP prepend stays within the advertised 263-byte headroom and preserves resident
+prefix bytes as payload. Insufficient padding and private-pipe resource refusal
+use the shared exact-movement helpers and complete ordinary fallback. Source-owner
+shutdown releases dependent backends, queues and private bodies before chains
+and pools disappear; delayed fallback tasks hold only physical line lifetime.
+
+Splice eligibility includes the internal UserController, connector helpers and
+all reachable fallback branches after chain finalization. The AuthenticationClient
+lookup dependency is not a payload hop. TlsServer and TlsClient still block splice
+for any chain containing them. Keep TLS in ordinary Trojan deployment guidance.
+Eligibility promises safe buffer handling, not universal zero-copy or measured
+speed improvements.
+
 ## Notes And Caveats
 
 - A production Trojan deployment should place `TlsServer` before `TrojanServer`.
@@ -438,7 +518,7 @@ Source-backed metadata:
 
 | Property | Value |
 | --- | --- |
-| node flags | `kNodeFlagNone` |
+| node flags | `kNodeFlagSupportsSplice` |
 | `can_have_prev` | `true` |
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayer4` |

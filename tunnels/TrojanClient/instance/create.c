@@ -69,11 +69,7 @@ static bool trojanclientCreateInternalDomainResolver(tunnel_t *t, node_t *node)
     }
 
     domainresolverTunnelUseLineStrategy(ts->domain_resolver_tunnel, true);
-    domainresolverTunnelSetPrepareHook(ts->domain_resolver_tunnel,
-                                       t,
-                                       sizeof(trojanclient_domain_resolver_lstate_t),
-                                       trojanclientDomainResolverPrepare,
-                                       NULL);
+    domainresolverTunnelSetPrepareHook(ts->domain_resolver_tunnel, t, 0, trojanclientDomainResolverPrepare, NULL);
     ts->domain_resolver_node.instance = ts->domain_resolver_tunnel;
     return true;
 }

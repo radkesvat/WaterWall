@@ -32,6 +32,9 @@ static void injectTrojanNonterminal(fallback_finish_fixture_t *fallback, line_t 
     trojanserverTunnelDownStreamEst(node, line);
     trojanserverTunnelDownStreamPause(node, line);
     trojanserverTunnelDownStreamResume(node, line);
+    trojanserverTunnelUpStreamInit(node, line);
+    trojanserverTunnelUpStreamPause(node, line);
+    trojanserverTunnelUpStreamResume(node, line);
 }
 
 static void injectTrojanBranchFinish(fallback_finish_fixture_t *fallback, line_t *line)
@@ -265,7 +268,7 @@ static void caseZeroDelayIsInlineAndRetainedBytesDoNotOvertake(void)
     twfRequire(! g_fallback_finish_task.pending, "zero-delay inline fallback admitted a delayed task");
     twfRequireEqualText(fixture.trace.seq, "u", "inline fallback Pause was not forwarded");
     twfRequire(lineIsAlive(fixture.line), "inline fallback Pause unexpectedly closed the line");
-    twfRequire(((trojanserver_lstate_t *) lineGetState(fixture.line, fixture.node))->fallback_payload_paused,
+    twfRequire(((trojanserver_lstate_t *) lineGetState(fixture.line, fixture.node))->next_paused,
                "inline fallback Pause was not published before returning");
 
     twfRequire(trojanserverSendFallbackPayload(
@@ -316,6 +319,85 @@ static void caseAlreadyPausedCloseDiscardsLocalBatch(void)
     fixtureDestroyClosedLine(&fixture);
 }
 
+#if WW_HAVE_SPLICE
+#include <unistd.h>
+
+static void captureSpliceFallback(tunnel_t *t, line_t *line, sbuf_t *buf)
+{
+    if (sbufIsSplice(buf))
+    {
+        buffer_pool_t *pool     = lineGetBufferPool(line);
+        sbuf_t        *ordinary = bufferpoolGetBestFit(pool, sbufGetLength(buf), bufferpoolGetLargeBufferPadding(pool));
+        buf                     = sbufSpliceMaterializeToBuffer(buf, ordinary, pool);
+    }
+    fallbackFinishFallbackPayload(t, line, buf);
+}
+
+static void caseMixedSpliceFinalBatch(void)
+{
+    for (unsigned paused = 0; paused < 2; ++paused)
+    {
+        twfSetCase("TrojanServer mixed private-pipe fallback batch settles during source shutdown");
+        trojanserver_fallback_fixture_t fixture;
+        fixtureSetup(&fixture);
+        fixture.fallback.fallback->fnPayloadU  = captureSpliceFallback;
+        fixture.fallback.inject_during_payload = injectTrojanNonterminal;
+        trojanserver_lstate_t *ls              = lineGetState(fixture.line, fixture.node);
+        sbuf_t                *pipe            = bufferpoolGetSpliceBuffer(fixture.env.pool);
+        twfRequire(pipe != NULL, "private pipe checkout failed");
+        const uint8_t  prefix[] = "private-pipe-prefix";
+        const uint32_t count    = sizeof(prefix) - 1;
+        twfRequire(write(sbufSpliceMetadata(pipe).pipefd[1], prefix, count) == count, "small pipe write failed");
+        pipe->capacity = pipe->l_pad + count;
+        sbufSetLength(pipe, count);
+        twfRequire(trojanserverSendFallbackPayload(fixture.node, fixture.line, ls, pipe), "pipe fallback rejected");
+        const uint32_t large_size = kTestLargeBufferSize + 17;
+        sbuf_t        *large      = bufferpoolGetBestFit(fixture.env.pool, large_size, 0);
+        memset(sbufGetMutablePtr(large), 'B', large_size);
+        sbufSetLength(large, large_size);
+        twfRequire(trojanserverSendFallbackPayload(fixture.node, fixture.line, ls, large), "large fallback rejected");
+        if (paused)
+            trojanserverTunnelDownStreamPause(fixture.node, fixture.line);
+        closeFromPreviousOwner(&fixture);
+        twfRequire(fixture.fallback.payload_calls == (paused ? 0U : 1U), "source Finish crossed Pause or split batch");
+        twfRequire(fixture.fallback.finish_calls == 1, "mixed fallback Finish not settled once");
+        if (! paused)
+        {
+            twfRequire(fixture.fallback.received_total_len == count + large_size, "mixed final batch truncated");
+            twfRequire(memcmp(fixture.fallback.received_prefix, prefix, count) == 0, "private prefix changed");
+            for (unsigned i = 0; i < kFallbackFinishCaptureSpan; ++i)
+                twfRequire(fixture.fallback.received_suffix[i] == 'B', "large fallback suffix changed");
+        }
+        twfRequireEqualText(fixture.trace.seq, paused ? "u" : "", "final batch reflected a callback");
+        fallbackFinishDriveDelayedTask();
+        releaseOwnerReference(&fixture);
+        fixtureDestroyClosedLine(&fixture);
+    }
+}
+#endif
+
+static void caseCanceledTaskLeavesCleanupWithOwner(void)
+{
+    twfSetCase("TrojanServer quiesced fallback task leaves its represented FIFO for owner cleanup");
+    trojanserver_fallback_fixture_t fixture;
+    fixtureSetup(&fixture);
+    trojanserver_lstate_t *ls = lineGetState(fixture.line, fixture.node);
+    twfRequire(trojanserverSendFallbackPayload(
+                   fixture.node, fixture.line, ls, fallbackFinishMakePayload(fixture.env.pool, "pending")),
+               "fallback enqueue failed");
+    twfRequire(g_fallback_finish_task.pending, "no task to cancel");
+    // The production submission uses no cancellation callback. Quiescence
+    // releases its physical reference without running owner-affine state work.
+    line_t *task_line = g_fallback_finish_task.line;
+    memoryZero(&g_fallback_finish_task, sizeof(g_fallback_finish_task));
+    lineUnref(task_line);
+    closeFromPreviousOwner(&fixture);
+    twfRequire(fixture.fallback.payload_calls == 1 && fixture.fallback.finish_calls == 1,
+               "canceled task lost the owner-controlled final batch");
+    releaseOwnerReference(&fixture);
+    fixtureDestroyClosedLine(&fixture);
+}
+
 int main(void)
 {
     caseNoPendingPayload();
@@ -325,6 +407,10 @@ int main(void)
     caseOrdinaryDelayedBatchHonorsPause();
     caseZeroDelayIsInlineAndRetainedBytesDoNotOvertake();
     caseAlreadyPausedCloseDiscardsLocalBatch();
+    caseCanceledTaskLeavesCleanupWithOwner();
+#if WW_HAVE_SPLICE
+    caseMixedSpliceFinalBatch();
+#endif
 
     printf("trojanserver_fallback_finish_lifetime_test: all cases passed\n");
     return 0;

@@ -1,20 +1,18 @@
 #include "structure.h"
 
-void trojanclientLinestateInitialize(trojanclient_lstate_t *ls, tunnel_t *t, line_t *l)
+void trojanclientLinestateInitialize(trojanclient_lstate_t *ls, line_t *l)
 {
-    *ls = (trojanclient_lstate_t) {.tunnel     = t,
-                                   .line       = l,
-                                   .in_stream  = bufferstreamCreate(lineGetBufferPool(l), 0),
-                                   .pending_up = bufferqueueCreate(kTrojanClientPendingQueueCap),
-                                   .protocol   = kTrojanClientProtocolTcp,
-                                   .phase      = kTrojanClientPhaseIdle,
-                                   .kind       = kTrojanClientLineKindDirect};
+    *ls = (trojanclient_lstate_t) {.line = l, .phase = kTrojanClientPhaseIdle, .header_needed = 1};
+    bufferqueueInitEmpty(&ls->pending_up);
+    bufferqueueInitEmpty(&ls->pending_down);
 }
 
 void trojanclientLinestateDestroy(trojanclient_lstate_t *ls)
 {
     addresscontextReset(&ls->target_addr);
-    bufferstreamDestroy(&ls->in_stream);
+    if (ls->receive_head != NULL)
+        lineReuseBuffer(ls->line, ls->receive_head);
+    bufferqueueDestroy(&ls->pending_down);
     bufferqueueDestroy(&ls->pending_up);
     memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(*ls)));
 }

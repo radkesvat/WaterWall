@@ -331,7 +331,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y ninja-build ccache iproute2 util-linux
+          sudo apt-get install -y ninja-build ccache iproute2 util-linux strace
 
       - name: Install cross-compiler
         if: matrix.preset == 'linux-gcc-arm64' || matrix.preset == 'linux-gcc-arm64-old-cpu'

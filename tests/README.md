@@ -17,6 +17,14 @@ These tests run the real `Waterwall` binary with synthetic chains built from:
 - the tunnel or tunnel-pair under test, with optional `Disturber` inbetween.
 - `TesterServer`
 
+The native Linux `trojanclient_tcp_splice_*` and `trojanclient_udp_splice_*`
+cases use a socket-connected protocol fixture and require `strace`. They verify
+successful runtime splice transfers when enabled, ordinary operation when
+disabled, and orderly shutdown; the UDP cases use a real UDP listener and check
+empty datagrams and framing boundaries. The client enables its internal
+DomainResolver so eligibility includes that inserted helper. Existing Trojan/TLS
+cases separately cover ordinary TLS interoperability.
+
 ### Test Lanes & Network Isolation
 
 On Linux, ordinary integration tests run inside private user and network namespaces created without root privileges via `tests/run_in_network_namespace.sh` (`unshare --user --map-root-user --net`). When the privileged lane invokes the same wrapper as root, it retains the caller's user namespace and creates only a private network namespace (`unshare --net`); this preserves access to runner-owned workspace paths while keeping network isolation.
@@ -800,3 +808,17 @@ tests/run_waterwall_case.sh \
   tests/cases/disturber_passthrough \
   60
 ```
+
+The native Linux `trojanserver_{tcp,tcp_db,udp,fallback,fallback_http}_splice_{true,false}` cases use
+real socket peers and the same namespace/strace pattern as the client cases.
+They verify authenticated server-first TCP, multiple real UDP destinations and
+empty datagrams, exact fallback replay, actual splice transfers and orderly
+shutdown. The database variant verifies the inserted UserController and rejects a
+second authenticated connection at its live connection limit. The server native
+units additionally cover early backend replies,
+association-wide pressure, authentication boundaries, budgets and pipe fallback;
+the existing fallback lifetime fixture covers mixed final batches as well.
+The `fallback_http` cases check local HTTP replies immediately followed by Finish
+without Est, with zero and nonzero fallback delay. HttpProxyServer disables splice
+for these chains even when requested; native tests cover the same callback order
+with ordinary and real-pipe replies.

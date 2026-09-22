@@ -695,6 +695,32 @@ add_waterwall_integration_test(waterwall.socks5_noauth_dest_protocol_tcp_loopbac
 add_waterwall_integration_test(waterwall.socks5_dest_context_domain_resolve_udp_loopback socks5_dest_context_domain_resolve_udp_loopback)
 add_waterwall_integration_test(waterwall.socks5_noauth_dest_protocol_udp_loopback socks5_noauth_dest_protocol_udp_loopback)
 add_waterwall_integration_test(waterwall.socks5_noauth_dest_protocol_fallback_tcp_loopback socks5_noauth_dest_protocol_fallback_tcp_loopback)
+# The protocol peer is socket-connected, so ordinary server/TLS nodes cannot
+# mask TrojanClient capability. strace checks actual positive splice transfers.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING)
+  foreach(protocol IN ITEMS tcp udp)
+    foreach(splice_mode IN ITEMS true false)
+      add_waterwall_isolated_test(waterwall.trojanclient_${protocol}_splice_${splice_mode}
+        "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/trojanclient_splice_integration.py"
+        "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>" "${protocol}" "${splice_mode}")
+      set_tests_properties(waterwall.trojanclient_${protocol}_splice_${splice_mode} PROPERTIES TIMEOUT 60)
+      add_waterwall_test_labels(waterwall.trojanclient_${protocol}_splice_${splice_mode} "integration" "tunnels")
+      add_waterwall_case_resource_lock(waterwall.trojanclient_${protocol}_splice_${splice_mode} trojanclient_splice)
+    endforeach()
+  endforeach()
+endif()
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING)
+  foreach(protocol IN ITEMS tcp tcp_db udp fallback fallback_http)
+    foreach(splice_mode IN ITEMS true false)
+      add_waterwall_isolated_test(waterwall.trojanserver_${protocol}_splice_${splice_mode}
+        "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/trojanserver_splice_integration.py"
+        "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>" "${protocol}" "${splice_mode}")
+      set_tests_properties(waterwall.trojanserver_${protocol}_splice_${splice_mode} PROPERTIES TIMEOUT 60)
+      add_waterwall_test_labels(waterwall.trojanserver_${protocol}_splice_${splice_mode} "integration" "tunnels")
+      add_waterwall_case_resource_lock(waterwall.trojanserver_${protocol}_splice_${splice_mode} trojanserver_splice)
+    endforeach()
+  endforeach()
+endif()
 add_waterwall_integration_test(waterwall.trojan_password_tcp_loopback trojan_password_tcp_loopback)
 add_waterwall_integration_test(waterwall.trojan_local_password_router_tcp_loopback trojan_local_password_router_tcp_loopback)
 add_waterwall_expected_failure_integration_test(

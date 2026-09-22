@@ -1,5 +1,5 @@
 <!--
-Documentation version: 152
+Documentation version: 154
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/TrojanClient.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/TrojanClient.mdx, and all files must keep the same documentation version.
 -->
 
@@ -211,6 +211,44 @@ In UDP mode:
 - oversized local UDP payloads are dropped without closing the UDP association.
 - invalid targets and queue overflows close the affected line safely.
 
+## Splice and buffering
+
+`TrojanClient` accepts ordinary buffers, private-pipe splice buffers, and mixed
+input in TCP, UDP, and destination-context modes. TCP has no response header:
+application bytes are forwarded opaquely. UDP decoding reads only the current
+variable-length header (11 bytes for IPv4, 23 for IPv6, or 8 plus the domain
+length) and extracts exactly one body per datagram, including an empty body.
+Received source addresses are validated without retargeting the association.
+UDP sends prepend within the advertised 263-byte padding; insufficient headroom
+or pipe pressure uses the existing representation-aware movement and fallback.
+
+The initial request is a separate ordinary buffer, at most 320 bytes. Transport
+establishment sends it once, without waiting for application data. If transport
+output is paused, the request waits for Resume. Request submission precedes app
+`Est`; data accepted during that callback stays behind older queued data.
+Both directions retain FIFO order and stop delivery at consumer Pause.
+
+| Retained data | Fixed limit |
+| --- | --- |
+| Pending upstream TCP or UDP application data | 1 MiB and 1,024 buffers; empty datagrams count as entries |
+| Direct TCP downstream data awaiting establishment or Resume | 1 MiB and 1,024 buffers |
+| UDP carrier input, including cached headers and active input | 1,057,031 bytes (1 MiB plus one maximum frame) |
+| One UDP payload | 8,192 bytes |
+
+The request is separate bounded control state. Queued outbound UDP data remains
+unframed until submission. Receive fragments have no 1,024-entry cap. These
+limits do not depend on buffer pool sizes, RAM profile, or kernel pipe capacity.
+Malformed carrier frames or retention overflow close only the affected flow;
+oversized local datagrams are dropped without closing the association.
+
+Splice eligibility is evaluated after internal `DomainResolver` insertion and
+requires every node in the final chain to support it, a supported platform, and
+`misc.splice` enabled. `TlsClient` still blocks splice for the whole chain. `TrojanServer` also supports
+splice across authentication, TCP, UDP and fallback; its final chain must include
+only eligible payload branches. Ordinary peers remain interoperable. This capability promises
+safe representations, not guaranteed zero-copy or a measured speed increase.
+Keep `TlsClient` in ordinary Trojan deployment configurations.
+
 ## Notes And Caveats
 
 - `TlsClient` is required for ordinary Trojan compatibility and probe resistance, but it is not inserted automatically.
@@ -227,7 +265,7 @@ Source-backed metadata:
 
 | Property | Value |
 | --- | --- |
-| node flags | `kNodeFlagNone` |
+| node flags | `kNodeFlagSupportsSplice` |
 | `can_have_prev` | `true` |
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayer4` |

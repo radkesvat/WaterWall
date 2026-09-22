@@ -3684,3 +3684,44 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND TARGET HeaderClient AND TARGET Bridge 
   add_dependencies(waterwall_unit_tests easy_nodes_splice_test)
   add_waterwall_unit_test(waterwall.easy_nodes_splice_unit easy_nodes_splice_test "unit;tunnels;splice;buffers;ownership")
 endif()
+
+if(TARGET TrojanClient AND UNIX AND NOT APPLE)
+  foreach(mode IN ITEMS splice no_splice)
+    set(trojan_test trojanclient_${mode}_test)
+    add_executable(${trojan_test} trojanclient_splice_test.c ${WATERWALL_LINE_FAILURE_WW_SOURCES})
+    waterwall_line_failure_test_use_tunnel(${trojan_test} TrojanClient)
+    target_link_libraries(${trojan_test} PRIVATE ww)
+    target_link_options(${trojan_test} PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS}
+      "-Wl,--wrap=bufferqueueTryPushBack")
+    if(mode STREQUAL "no_splice")
+      target_compile_definitions(${trojan_test} PRIVATE WW_HAVE_SPLICE=0)
+    else()
+      target_link_options(${trojan_test} PRIVATE "-Wl,--wrap=pipe2" "-Wl,--wrap=fcntl"
+        "-Wl,--wrap=read" "-Wl,--wrap=splice")
+    endif()
+    add_dependencies(waterwall_unit_tests ${trojan_test})
+    add_waterwall_unit_test(waterwall.trojanclient_${mode}_unit ${trojan_test}
+      "unit;tunnels;trojan;splice;framing;lifetime")
+  endforeach()
+endif()
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND TARGET TrojanServer)
+  foreach(mode IN ITEMS splice no_splice)
+    set(trojan_server_test trojanserver_${mode}_test)
+    add_executable(${trojan_server_test} trojanserver_splice_test.c ${WATERWALL_LINE_FAILURE_WW_SOURCES})
+    waterwall_line_failure_test_use_tunnel(${trojan_server_test} TrojanServer)
+    target_link_libraries(${trojan_server_test} PRIVATE ww)
+    target_link_options(${trojan_server_test} PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS}
+      "-Wl,--wrap=bufferqueueTryPushBack" "-Wl,--wrap=memoryAllocate" "-Wl,--wrap=lineScheduleDelayedTask"
+      "-Wl,--wrap=authenticationclientGetState" "-Wl,--wrap=authenticationclientGetUserBySHA224WithProfile")
+    if(mode STREQUAL "no_splice")
+      target_compile_definitions(${trojan_server_test} PRIVATE WW_HAVE_SPLICE=0)
+    else()
+      target_link_options(${trojan_server_test} PRIVATE "-Wl,--wrap=pipe2" "-Wl,--wrap=fcntl"
+        "-Wl,--wrap=read" "-Wl,--wrap=splice")
+    endif()
+    add_dependencies(waterwall_unit_tests ${trojan_server_test})
+    add_waterwall_unit_test(waterwall.trojanserver_${mode}_unit ${trojan_server_test}
+      "unit;tunnels;trojanserver;splice;authentication;fallback;framing;lifetime")
+  endforeach()
+endif()

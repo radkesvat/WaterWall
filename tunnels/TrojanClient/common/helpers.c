@@ -2,59 +2,12 @@
 
 #include "loggers/network_logger.h"
 
-enum
-{
-    kTrojanCommandConnect      = 0x01,
-    kTrojanCommandUdpAssociate = 0x03,
-    kTrojanAtypIpv4            = 0x01,
-    kTrojanAtypDomain          = 0x03,
-    kTrojanAtypIpv6            = 0x04
-};
-
 static sbuf_t *allocProtocolBuffer(line_t *l, uint32_t len)
 {
     buffer_pool_t *pool = lineGetBufferPool(l);
-    sbuf_t        *buf =
-        len <= bufferpoolGetSmallBufferSize(pool) ? bufferpoolGetSmallBuffer(pool) : bufferpoolGetLargeBuffer(pool);
-
-    buf = sbufReserveSpace(buf, len);
+    sbuf_t        *buf  = bufferpoolGetBestFit(pool, len, bufferpoolGetLargeBufferPadding(pool));
     sbufSetLength(buf, len);
     return buf;
-}
-
-static bool sendBufferUpstream(tunnel_t *t, line_t *l, sbuf_t *buf)
-{
-    return lineCallWithRefWithBuf(l, tunnelNextUpStreamPayload, t, buf);
-}
-
-static bool flushQueueToNext(tunnel_t *t, line_t *l, buffer_queue_t *queue)
-{
-    while (bufferqueueGetBufCount(queue) > 0)
-    {
-        sbuf_t *buf = bufferqueuePopFront(queue);
-        if (UNLIKELY(! lineCallWithRefWithBuf(l, tunnelNextUpStreamPayload, t, buf)))
-        {
-            bufferqueueDestroy(queue);
-            return false;
-        }
-    }
-
-    bufferqueueDestroy(queue);
-    return true;
-}
-
-static bool flushStreamToPrev(tunnel_t *t, line_t *l, buffer_stream_t *stream)
-{
-    while (! bufferstreamIsEmpty(stream))
-    {
-        sbuf_t *buf = bufferstreamIdealRead(stream);
-        if (UNLIKELY(! lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, buf)))
-        {
-            return false;
-        }
-    }
-
-    return true;
 }
 
 static bool trojanclientWriteAddress(uint8_t *ptr, const address_context_t *ctx, size_t *offset)
@@ -94,85 +47,6 @@ static bool trojanclientWriteAddress(uint8_t *ptr, const address_context_t *ctx,
     memoryCopy(ptr + *offset, &port_be, sizeof(port_be));
     *offset += sizeof(port_be);
     return true;
-}
-
-static int trojanclientParseAddressBytes(const uint8_t *buf, size_t len, address_context_t *out, size_t *consumed)
-{
-    if (len < 1)
-    {
-        return 0;
-    }
-
-    uint8_t atyp = buf[0];
-    size_t  need = 0;
-
-    switch (atyp)
-    {
-    case kTrojanAtypIpv4:
-        need = 1 + 4 + 2;
-        if (len < need)
-        {
-            return 0;
-        }
-
-        {
-            ip_addr_t ip = {0};
-            ip.type      = IPADDR_TYPE_V4;
-            memoryCopy(&ip.u_addr.ip4.addr, buf + 1, 4);
-            uint16_t port_be;
-            memoryCopy(&port_be, buf + 1 + 4, sizeof(port_be));
-            addresscontextSetIpPort(out, &ip, be16toh(port_be));
-        }
-        *consumed = need;
-        return 1;
-
-    case kTrojanAtypIpv6:
-        need = 1 + 16 + 2;
-        if (len < need)
-        {
-            return 0;
-        }
-
-        {
-            ip_addr_t ip = {0};
-            ip.type      = IPADDR_TYPE_V6;
-            memoryCopy(&ip.u_addr.ip6, buf + 1, 16);
-            uint16_t port_be;
-            memoryCopy(&port_be, buf + 1 + 16, sizeof(port_be));
-            addresscontextSetIpPort(out, &ip, be16toh(port_be));
-        }
-        *consumed = need;
-        return 1;
-
-    case kTrojanAtypDomain:
-        if (len < 2)
-        {
-            return 0;
-        }
-
-        if (buf[1] == 0)
-        {
-            return -1;
-        }
-
-        need = 1 + 1 + buf[1] + 2;
-        if (len < need)
-        {
-            return 0;
-        }
-
-        {
-            uint16_t port_be;
-            memoryCopy(&port_be, buf + 2 + buf[1], sizeof(port_be));
-            addresscontextDomainSet(out, (const char *) (buf + 2), buf[1]);
-            addresscontextSetPort(out, be16toh(port_be));
-        }
-        *consumed = need;
-        return 1;
-
-    default:
-        return -1;
-    }
 }
 
 static bool trojanclientAddressLength(const address_context_t *ctx, uint32_t *len_out)
@@ -255,34 +129,7 @@ static void fillUdpAssociateRequestTarget(address_context_t *target)
     addresscontextSetOnlyProtocol(target, IP_PROTO_UDP);
 }
 
-static void setLineProtocol(line_t *l, uint8_t protocol)
-{
-    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(l), protocol);
-    addresscontextSetOnlyProtocol(lineGetSourceAddressContext(l), protocol);
-}
-
-static line_t *createInternalLine(tunnel_t *t, line_t *app_l, trojanclient_line_kind_t kind)
-{
-    line_t *inner_l = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), lineGetWID(app_l));
-
-    trojanclient_lstate_t *inner_ls = lineGetState(inner_l, t);
-    trojanclientLinestateInitialize(inner_ls, t, inner_l);
-    inner_ls->kind     = kind;
-    inner_ls->app_line = app_l;
-
-    return inner_l;
-}
-
-void trojanclientTunnelstateDestroy(trojanclient_tstate_t *ts)
-{
-    assert(ts != NULL);
-
-    addresscontextReset(&ts->target_addr);
-    memoryZero(ts->password_hex, sizeof(ts->password_hex));
-    memoryZeroAligned32(ts, tunnelGetCorrectAlignedStateSize(sizeof(*ts)));
-}
-
-bool trojanclientApplyTargetContext(tunnel_t *t, line_t *l, trojanclient_protocol_t *protocol_out)
+bool trojanclientApplyTargetContext(tunnel_t *t, line_t *l)
 {
     trojanclient_tstate_t *ts       = tunnelGetState(t);
     address_context_t     *dest_ctx = lineGetDestinationAddressContext(l);
@@ -338,8 +185,6 @@ bool trojanclientApplyTargetContext(tunnel_t *t, line_t *l, trojanclient_protoco
         addresscontextSetOnlyProtocol(dest_ctx, IP_PROTO_UDP);
     }
 
-    *protocol_out = resolved_protocol;
-
     if (uses_current_dest)
     {
         addresscontextReset(&current);
@@ -352,7 +197,7 @@ bool trojanclientApplyTargetContext(tunnel_t *t, line_t *l, trojanclient_protoco
     return true;
 }
 
-static bool sendInitialRequest(tunnel_t *t, line_t *l, trojanclient_lstate_t *ls)
+bool trojanclientSendInitialRequest(tunnel_t *t, line_t *l, trojanclient_lstate_t *ls)
 {
     trojanclient_tstate_t   *ts           = tunnelGetState(t);
     address_context_t        assoc_target = {0};
@@ -400,10 +245,12 @@ static bool sendInitialRequest(tunnel_t *t, line_t *l, trojanclient_lstate_t *ls
     }
 
     addresscontextReset(&assoc_target);
-    return sendBufferUpstream(t, l, buf);
+    /* The pump already retains both the transport and its application line. */
+    tunnelNextUpStreamPayload(t, l, buf);
+    return true;
 }
 
-static bool wrapUdpPayload(line_t *l, sbuf_t **buf_io, const address_context_t *target)
+bool trojanclientWrapUdpPayload(line_t *l, sbuf_t **buf_io, const address_context_t *target)
 {
     sbuf_t  *buf     = *buf_io;
     uint32_t payload = sbufGetLength(buf);
@@ -423,16 +270,19 @@ static bool wrapUdpPayload(line_t *l, sbuf_t **buf_io, const address_context_t *
 
     if (sbufGetLeftCapacity(buf) < header_len)
     {
-        sbuf_t  *wrapped = allocProtocolBuffer(l, payload + header_len);
-        uint8_t *dst     = sbufGetMutablePtr(wrapped);
-        memoryCopy(dst + header_len, sbufGetRawPtr(buf), payload);
+        buffer_pool_t *pool    = lineGetBufferPool(l);
+        uint16_t       padding = max(bufferpoolGetLargeBufferPadding(pool), kTrojanClientUdpHeaderMaxLen);
+        sbuf_t        *wrapped = sbufIsSplice(buf) ? bufferpoolGetSpliceBuffer(pool) : NULL;
+        if (wrapped != NULL && sbufGetLeftCapacity(wrapped) < padding)
+        {
+            bufferpoolReuseBuffer(pool, wrapped);
+            wrapped = NULL;
+        }
+        wrapped = sbufMoveRangeTo(pool, buf, wrapped, payload, payload, padding);
         lineReuseBuffer(l, buf);
         buf = wrapped;
     }
-    else
-    {
-        sbufShiftLeft(buf, header_len);
-    }
+    sbufShiftLeft(buf, header_len);
 
     *buf_io = buf;
 
@@ -450,473 +300,4 @@ static bool wrapUdpPayload(line_t *l, sbuf_t **buf_io, const address_context_t *
     ptr[off++] = '\r';
     ptr[off++] = '\n';
     return true;
-}
-
-static bool forwardUdpPayloadToCarrier(tunnel_t *t, line_t *app_l, trojanclient_lstate_t *app_ls, sbuf_t *buf)
-{
-    if (UNLIKELY(app_ls->carrier_line == NULL || ! lineIsAlive(app_ls->carrier_line)))
-    {
-        lineReuseBuffer(app_l, buf);
-        trojanclientCloseLine(t, app_l, kTrojanClientCloseInternal);
-        return false;
-    }
-
-    if (UNLIKELY(sbufGetLength(buf) > kTrojanClientUdpMaxPacket))
-    {
-        trojanclient_tstate_t *ts = tunnelGetState(t);
-        if (ts->verbose)
-        {
-            LOGD("TrojanClient: dropping oversized UDP payload len=%u limit=%u",
-                 (unsigned int) sbufGetLength(buf),
-                 (unsigned int) kTrojanClientUdpMaxPacket);
-        }
-        lineReuseBuffer(app_l, buf);
-        return true;
-    }
-
-    if (UNLIKELY(! wrapUdpPayload(app_l, &buf, &app_ls->target_addr)))
-    {
-        lineReuseBuffer(app_l, buf);
-        trojanclientCloseLine(t, app_l, kTrojanClientCloseInternal);
-        return false;
-    }
-
-    return lineCallWithRefWithBuf(app_ls->carrier_line, tunnelNextUpStreamPayload, t, buf);
-}
-
-static bool drainQueuedUdpPayloads(tunnel_t *t, line_t *app_l, trojanclient_lstate_t *app_ls, buffer_queue_t *queue)
-{
-    while (bufferqueueGetBufCount(queue) > 0)
-    {
-        if (UNLIKELY(! forwardUdpPayloadToCarrier(t, app_l, app_ls, bufferqueuePopFront(queue))))
-        {
-            bufferqueueDestroy(queue);
-            return false;
-        }
-    }
-
-    bufferqueueDestroy(queue);
-    return true;
-}
-
-bool trojanclientStartUdpCarrier(tunnel_t *t, line_t *l, trojanclient_lstate_t *ls, bool *line_alive_out)
-{
-    *line_alive_out = true;
-    lineRef(l);
-
-    line_t                *carrier_l  = createInternalLine(t, l, kTrojanClientLineKindUdpCarrier);
-    trojanclient_lstate_t *carrier_ls = lineGetState(carrier_l, t);
-
-    addresscontextCopy(&carrier_ls->target_addr, &ls->target_addr);
-    carrier_ls->protocol = ls->protocol;
-    setLineProtocol(carrier_l, IP_PROTO_TCP);
-
-    ls->carrier_line = carrier_l;
-
-    if (UNLIKELY(! lineCallWithRef(carrier_l, tunnelNextUpStreamInit, t)))
-    {
-        if (lineIsAlive(l))
-        {
-            ls->carrier_line = NULL;
-        }
-        *line_alive_out = lineIsAlive(l);
-        lineUnref(l);
-        return false;
-    }
-
-    *line_alive_out = lineIsAlive(l);
-    if (! *line_alive_out)
-    {
-        trojanclientCloseOwnedLine(t, carrier_l);
-    }
-    lineUnref(l);
-
-    return true;
-}
-
-bool trojanclientForwardUdpAppPayload(tunnel_t *t, line_t *l, trojanclient_lstate_t *ls, sbuf_t *buf)
-{
-    if (ls->phase == kTrojanClientPhaseEstablished)
-    {
-        return forwardUdpPayloadToCarrier(t, l, ls, buf);
-    }
-
-    bufferqueuePushBack(&ls->pending_up, buf);
-
-    if (UNLIKELY(bufferqueueGetBufLen(&ls->pending_up) > kTrojanClientMaxPendingBytes))
-    {
-        LOGE("TrojanClient: UDP carrier queue overflow, size=%zu limit=%u",
-             bufferqueueGetBufLen(&ls->pending_up),
-             (unsigned int) kTrojanClientMaxPendingBytes);
-        trojanclientCloseLine(t, l, kTrojanClientCloseInternal);
-        return false;
-    }
-
-    return true;
-}
-
-static bool udpFrameHeaderLength(buffer_stream_t *stream, uint16_t *packet_size, uint32_t *full_len)
-{
-    if (bufferstreamGetBufLen(stream) == 0)
-    {
-        return true;
-    }
-
-    uint8_t  atyp       = bufferstreamViewByteAt(stream, 0);
-    uint32_t header_len = 0;
-
-    switch (atyp)
-    {
-    case kTrojanAtypIpv4:
-        header_len = 1 + 4 + 2 + 2 + 2;
-        if (bufferstreamGetBufLen(stream) < header_len)
-        {
-            return true;
-        }
-        *packet_size = ((uint16_t) bufferstreamViewByteAt(stream, 1 + 4 + 2) << 8U) |
-                       bufferstreamViewByteAt(stream, 1 + 4 + 2 + 1);
-        break;
-
-    case kTrojanAtypDomain:
-        if (bufferstreamGetBufLen(stream) < 1 + 1)
-        {
-            return true;
-        }
-        {
-            uint8_t domain_len = bufferstreamViewByteAt(stream, 1);
-            if (UNLIKELY(domain_len == 0))
-            {
-                return false;
-            }
-            header_len = 1U + 1U + domain_len + 2U + 2U + 2U;
-            if (bufferstreamGetBufLen(stream) < header_len)
-            {
-                return true;
-            }
-            *packet_size = ((uint16_t) bufferstreamViewByteAt(stream, 1 + 1 + domain_len + 2) << 8U) |
-                           bufferstreamViewByteAt(stream, 1 + 1 + domain_len + 2 + 1);
-        }
-        break;
-
-    case kTrojanAtypIpv6:
-        header_len = 1 + 16 + 2 + 2 + 2;
-        if (bufferstreamGetBufLen(stream) < header_len)
-        {
-            return true;
-        }
-        *packet_size = ((uint16_t) bufferstreamViewByteAt(stream, 1 + 16 + 2) << 8U) |
-                       bufferstreamViewByteAt(stream, 1 + 16 + 2 + 1);
-        break;
-
-    default:
-        return false;
-    }
-
-    if (UNLIKELY(*packet_size > kTrojanClientUdpMaxPacket))
-    {
-        return false;
-    }
-
-    if (UNLIKELY(bufferstreamViewByteAt(stream, header_len - 2U) != '\r' ||
-                 bufferstreamViewByteAt(stream, header_len - 1U) != '\n'))
-    {
-        return false;
-    }
-
-    *full_len = header_len + *packet_size;
-    return true;
-}
-
-static bool parseUdpFrame(sbuf_t *packet, address_context_t *source, uint16_t *header_len, uint16_t *packet_size)
-{
-    const uint8_t *raw      = sbufGetRawPtr(packet);
-    size_t         len      = sbufGetLength(packet);
-    size_t         addr_len = 0;
-
-    int parsed = trojanclientParseAddressBytes(raw, len, source, &addr_len);
-    if (UNLIKELY(parsed != 1 || len < addr_len + 4U))
-    {
-        return false;
-    }
-
-    uint16_t size_be = 0;
-    memoryCopy(&size_be, raw + addr_len, sizeof(size_be));
-    *packet_size = be16toh(size_be);
-
-    if (UNLIKELY(*packet_size > kTrojanClientUdpMaxPacket || raw[addr_len + 2U] != '\r' || raw[addr_len + 3U] != '\n' ||
-                 len != addr_len + 4U + *packet_size))
-    {
-        return false;
-    }
-
-    *header_len = (uint16_t) (addr_len + 4U);
-    return true;
-}
-
-static bool drainUdpFrames(tunnel_t *t, line_t *l, trojanclient_lstate_t *ls)
-{
-    while (! bufferstreamIsEmpty(&ls->in_stream))
-    {
-        uint16_t packet_size = 0;
-        uint32_t full_len    = 0;
-
-        if (UNLIKELY(! udpFrameHeaderLength(&ls->in_stream, &packet_size, &full_len)))
-        {
-            trojanclientCloseLine(t, l, kTrojanClientCloseInternal);
-            return false;
-        }
-
-        if (full_len == 0 || bufferstreamGetBufLen(&ls->in_stream) < full_len)
-        {
-            return true;
-        }
-
-        sbuf_t           *packet             = bufferstreamReadExact(&ls->in_stream, full_len);
-        address_context_t source             = {0};
-        uint16_t          header_len         = 0;
-        uint16_t          parsed_packet_size = 0;
-
-        if (UNLIKELY(! parseUdpFrame(packet, &source, &header_len, &parsed_packet_size) ||
-                     parsed_packet_size != packet_size || ! addresscontextHasPort(&source)))
-        {
-            addresscontextReset(&source);
-            lineReuseBuffer(l, packet);
-            trojanclientCloseLine(t, l, kTrojanClientCloseInternal);
-            return false;
-        }
-
-        addresscontextReset(&source);
-        sbufShiftRight(packet, header_len);
-
-        line_t *app_l = ls->app_line;
-        if (UNLIKELY(app_l == NULL || ! lineIsAlive(app_l)))
-        {
-            lineReuseBuffer(l, packet);
-            trojanclientCloseLine(t, l, kTrojanClientCloseInternal);
-            return false;
-        }
-
-        lineRef(l);
-        bool app_alive     = lineCallWithRefWithBuf(app_l, tunnelPrevDownStreamPayload, t, packet);
-        bool carrier_alive = lineIsAlive(l);
-        lineUnref(l);
-
-        if (UNLIKELY(! app_alive || ! carrier_alive))
-        {
-            return false;
-        }
-    }
-
-    return true;
-}
-
-bool trojanclientHandleUdpCarrierPayload(tunnel_t *t, line_t *l, trojanclient_lstate_t *ls, sbuf_t *buf)
-{
-    bufferstreamPush(&ls->in_stream, buf);
-
-    if (UNLIKELY(bufferstreamGetBufLen(&ls->in_stream) > kTrojanClientMaxBufferedBytes))
-    {
-        LOGE("TrojanClient: UDP carrier input buffer overflow, size=%zu limit=%u",
-             bufferstreamGetBufLen(&ls->in_stream),
-             (unsigned int) kTrojanClientMaxBufferedBytes);
-        trojanclientCloseLine(t, l, kTrojanClientCloseInternal);
-        return false;
-    }
-
-    if (ls->phase != kTrojanClientPhaseEstablished)
-    {
-        return true;
-    }
-
-    return drainUdpFrames(t, l, ls);
-}
-
-bool trojanclientOnTransportEstablished(tunnel_t *t, line_t *l, trojanclient_lstate_t *ls)
-{
-    trojanclient_tstate_t *ts = tunnelGetState(t);
-
-    if (UNLIKELY(ls->phase != kTrojanClientPhaseIdle))
-    {
-        LOGW("TrojanClient: duplicate downstream establish while phase=%d", ls->phase);
-        return true;
-    }
-
-    if (UNLIKELY(! sendInitialRequest(t, l, ls)))
-    {
-        return false;
-    }
-
-    ls->phase = kTrojanClientPhaseEstablished;
-
-    if (ls->kind == kTrojanClientLineKindUdpCarrier)
-    {
-        line_t *app_l = ls->app_line;
-        if (UNLIKELY(app_l == NULL || ! lineIsAlive(app_l)))
-        {
-            trojanclientCloseLine(t, l, kTrojanClientCloseInternal);
-            return false;
-        }
-
-        trojanclient_lstate_t *app_ls        = lineGetState(app_l, t);
-        buffer_queue_t         pending_local = bufferqueueCreate(kTrojanClientPendingQueueCap);
-
-        while (bufferqueueGetBufCount(&app_ls->pending_up) > 0)
-        {
-            bufferqueuePushBack(&pending_local, bufferqueuePopFront(&app_ls->pending_up));
-        }
-
-        if (ts->verbose)
-        {
-            LOGD("TrojanClient: UDP association established");
-        }
-
-        lineRef(l);
-        bool app_alive     = lineCallWithRef(app_l, tunnelPrevDownStreamEst, t);
-        bool carrier_alive = lineIsAlive(l);
-        lineUnref(l);
-
-        if (UNLIKELY(! app_alive || ! carrier_alive))
-        {
-            bufferqueueDestroy(&pending_local);
-            return false;
-        }
-
-        while (bufferqueueGetBufCount(&app_ls->pending_up) > 0)
-        {
-            bufferqueuePushBack(&pending_local, bufferqueuePopFront(&app_ls->pending_up));
-        }
-
-        app_ls->phase = kTrojanClientPhaseEstablished;
-
-        if (UNLIKELY(! drainQueuedUdpPayloads(t, app_l, app_ls, &pending_local)))
-        {
-            return false;
-        }
-
-        return drainUdpFrames(t, l, ls);
-    }
-
-    buffer_queue_t pending_local = bufferqueueCreate(kTrojanClientPendingQueueCap);
-    while (bufferqueueGetBufCount(&ls->pending_up) > 0)
-    {
-        bufferqueuePushBack(&pending_local, bufferqueuePopFront(&ls->pending_up));
-    }
-
-    if (ts->verbose)
-    {
-        LOGD("TrojanClient: TCP request sent");
-    }
-
-    if (UNLIKELY(! lineCallWithRef(l, tunnelPrevDownStreamEst, t)))
-    {
-        bufferqueueDestroy(&pending_local);
-        return false;
-    }
-
-    if (UNLIKELY(! flushQueueToNext(t, l, &pending_local)))
-    {
-        return false;
-    }
-
-    return flushStreamToPrev(t, l, &ls->in_stream);
-}
-
-void trojanclientCloseOwnedLine(tunnel_t *t, line_t *owned_l)
-{
-    if (owned_l == NULL || ! lineIsAlive(owned_l))
-    {
-        return;
-    }
-
-    trojanclient_lstate_t *ls = lineGetState(owned_l, t);
-    if (ls->phase == kTrojanClientPhaseClosing)
-    {
-        return;
-    }
-
-    ls->phase = kTrojanClientPhaseClosing;
-    trojanclientLinestateDestroy(ls);
-    tunnelNextUpStreamFinish(t, owned_l);
-    if (lineIsAlive(owned_l))
-    {
-        lineDestroy(owned_l);
-    }
-}
-
-void trojanclientCloseLine(tunnel_t *t, line_t *l, trojanclient_close_origin_t origin)
-{
-    trojanclient_lstate_t *ls = lineGetState(l, t);
-
-    if (ls->phase == kTrojanClientPhaseClosing)
-    {
-        return;
-    }
-
-    if (ls->kind == kTrojanClientLineKindUdpApp)
-    {
-        line_t *carrier_l = ls->carrier_line;
-        ls->carrier_line  = NULL;
-        ls->phase         = kTrojanClientPhaseClosing;
-
-        trojanclientCloseOwnedLine(t, carrier_l);
-        trojanclientLinestateDestroy(ls);
-
-        if (origin != kTrojanClientCloseFromPrev)
-        {
-            tunnelPrevDownStreamFinish(t, l);
-        }
-        return;
-    }
-
-    if (ls->kind == kTrojanClientLineKindUdpCarrier)
-    {
-        line_t                *app_l     = ls->app_line;
-        trojanclient_lstate_t *app_ls    = NULL;
-        bool                   close_app = false;
-
-        if (app_l != NULL && lineIsAlive(app_l))
-        {
-            app_ls = lineGetState(app_l, t);
-            if (app_ls->phase != kTrojanClientPhaseClosing)
-            {
-                if (app_ls->carrier_line == l)
-                {
-                    app_ls->carrier_line = NULL;
-                }
-                close_app = true;
-            }
-        }
-
-        ls->phase = kTrojanClientPhaseClosing;
-        trojanclientLinestateDestroy(ls);
-
-        if (origin != kTrojanClientCloseFromNext)
-        {
-            tunnelNextUpStreamFinish(t, l);
-        }
-        if (lineIsAlive(l))
-        {
-            lineDestroy(l);
-        }
-
-        if (close_app && app_l != NULL && lineIsAlive(app_l))
-        {
-            app_ls->phase = kTrojanClientPhaseClosing;
-            trojanclientLinestateDestroy(app_ls);
-            tunnelPrevDownStreamFinish(t, app_l);
-        }
-        return;
-    }
-
-    ls->phase = kTrojanClientPhaseClosing;
-    trojanclientLinestateDestroy(ls);
-
-    if (origin != kTrojanClientCloseFromNext)
-    {
-        tunnelNextUpStreamFinish(t, l);
-    }
-    if (origin != kTrojanClientCloseFromPrev)
-    {
-        tunnelPrevDownStreamFinish(t, l);
-    }
 }
