@@ -337,6 +337,21 @@ static void udpconnectorBindingMapErase(udpconnector_peer_binding_map_t *map, ud
     }
 }
 
+bool udpconnectorBindingCanSend(const udpconnector_binding_t *binding)
+{
+    assert(binding != NULL && binding->active && binding->socket != NULL);
+    /* Close publishes this gate before notifying any owner. Still-live siblings
+     * can reenter here while their bindings await the close handler's drain. */
+    if (binding->socket->state == kUdpConnectorPoolSocketClosing)
+    {
+        return false;
+    }
+
+    /* Healthy Draining sockets still serve their existing bindings. */
+    assert(binding->socket->io != NULL && ! wioIsClosed(binding->socket->io));
+    return true;
+}
+
 udpconnector_binding_t *udpconnectorAcquireBinding(tunnel_t *t, line_t *l, udpconnector_lstate_t *ls,
                                                    const sockaddr_u *peer_addr)
 {
@@ -352,7 +367,7 @@ udpconnector_binding_t *udpconnectorAcquireBinding(tunnel_t *t, line_t *l, udpco
         {
             return NULL;
         }
-        return ls->fixed_binding;
+        return udpconnectorBindingCanSend(ls->fixed_binding) ? ls->fixed_binding : NULL;
     }
 
     const udpconnector_peer_binding_map_value *line_binding =
@@ -360,7 +375,7 @@ udpconnector_binding_t *udpconnectorAcquireBinding(tunnel_t *t, line_t *l, udpco
     if (line_binding != NULL)
     {
         assert(line_binding->second != NULL && line_binding->second->active);
-        return line_binding->second;
+        return udpconnectorBindingCanSend(line_binding->second) ? line_binding->second : NULL;
     }
 
     udpconnector_worker_pool_t *worker_pool = udpconnectorGetLineWorkerPool(ts, l);
@@ -541,6 +556,7 @@ void udpconnectorLineDetach(tunnel_t *t, line_t *l, udpconnector_lstate_t *ls,
                             udpconnector_detach_disposition_t disposition)
 {
     assert(lineIsOnCurrentEventWorker(l));
+    lineRef(l);
 
     // 1. Settle idle handle
     if (disposition == kUdpConnectorDetachIdleExpire || disposition == kUdpConnectorDetachWorkerDrain)
@@ -559,27 +575,27 @@ void udpconnectorLineDetach(tunnel_t *t, line_t *l, udpconnector_lstate_t *ls,
         }
     }
 
-    if (disposition == kUdpConnectorDetachFinish)
+    if (disposition == kUdpConnectorDetachFinish && ! ls->finishing)
     {
-        udpconnector_binding_t *binding = ls->last_send_binding;
-        assert(binding != NULL && binding->active);
-
-        if (binding->socket->state != kUdpConnectorPoolSocketClosing && binding->socket->io != NULL &&
-            ! wioIsClosed(binding->socket->io))
+        /* A send may synchronously retire this shared socket. Its close callback
+         * detaches this line's bindings but leaves this frame in charge of local
+         * state, residual queues and the already-finished source direction. */
+        ls->finishing = true;
+        while (bufferqueueGetBufCount(&ls->pause_queue) > 0)
         {
-            while (bufferqueueGetBufCount(&ls->pause_queue) > 0)
+            sbuf_t                 *buf     = bufferqueuePopFront(&ls->pause_queue);
+            udpconnector_binding_t *binding = ls->last_send_binding;
+            if (binding != NULL && udpconnectorBindingCanSend(binding))
             {
-                sbuf_t *buf = bufferqueuePopFront(&ls->pause_queue);
                 wioWriteDatagram(binding->socket->io, buf, &binding->peer_addr);
+                if (! lineIsAlive(l))
+                {
+                    lineUnref(l);
+                    return;
+                }
             }
-        }
-        else
-        {
-            buffer_pool_t *pool = lineGetBufferPool(l);
-            while (bufferqueueGetBufCount(&ls->pause_queue) > 0)
-            {
-                bufferpoolReuseBuffer(pool, bufferqueuePopFront(&ls->pause_queue));
-            }
+            else
+                lineReuseBuffer(l, buf);
         }
     }
 
@@ -597,6 +613,7 @@ void udpconnectorLineDetach(tunnel_t *t, line_t *l, udpconnector_lstate_t *ls,
     {
         tunnelPrevDownStreamFinish(t, l);
     }
+    lineUnref(l);
 }
 
 void udpconnectorOnSocketRecvFrom(wio_t *io, sbuf_t *buf)
@@ -696,6 +713,11 @@ void udpconnectorOnSocketClose(wio_t *io)
 
         line_t                *l  = binding->line;
         udpconnector_lstate_t *ls = binding->ls;
+        if (ls->finishing)
+        {
+            udpconnectorBindingDetach(binding, kUdpConnectorDetachSocketFailure);
+            continue;
+        }
         lineRef(l);
         udpconnectorLineDetach(t, l, ls, kUdpConnectorDetachSocketFailure);
         lineUnref(l);

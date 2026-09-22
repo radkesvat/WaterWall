@@ -58,17 +58,25 @@ size_t udpconnectorQueuedWriteBytes(udpconnector_lstate_t *ls)
     return total;
 }
 
-void udpconnectorFlushWriteQueue(udpconnector_lstate_t *ls)
+bool udpconnectorFlushWriteQueue(udpconnector_lstate_t *ls)
 {
+    line_t                 *line    = ls->line;
     udpconnector_binding_t *binding = ls->fixed_binding != NULL ? ls->fixed_binding : ls->last_send_binding;
     assert(binding != NULL && binding->active);
-    assert(binding->socket != NULL && binding->socket->io != NULL && ! wioIsClosed(binding->socket->io));
 
     while (bufferqueueGetBufCount(&ls->pause_queue) > 0)
     {
         sbuf_t *buf = bufferqueuePopFront(&ls->pause_queue);
+        if (! udpconnectorBindingCanSend(binding))
+        {
+            lineReuseBuffer(line, buf);
+            continue;
+        }
         wioWriteDatagram(binding->socket->io, buf, &binding->peer_addr);
+        if (! lineIsAlive(line))
+            return false;
     }
+    return true;
 }
 
 bool udpconnectorReplayWriteQueue(udpconnector_lstate_t *ls)

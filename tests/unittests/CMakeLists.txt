@@ -961,6 +961,7 @@ if(TARGET ww)
     add_executable(udp_datagram_write_test udp_datagram_write_test.c)
     target_link_libraries(udp_datagram_write_test PRIVATE ww)
     target_link_options(udp_datagram_write_test PRIVATE
+      "-Wl,--wrap=splice" "-Wl,--wrap=read" "-Wl,--wrap=pipe2"
       "-Wl,--wrap=sendto"
       "-Wl,--wrap=send"
     )
@@ -971,6 +972,15 @@ if(TARGET ww)
       udp_datagram_write_test
       "unit;event;udp;datagram"
     )
+
+    add_executable(udp_datagram_write_no_splice_test udp_datagram_write_test.c
+      ${CMAKE_SOURCE_DIR}/ww/event/udp_send.c)
+    target_compile_definitions(udp_datagram_write_no_splice_test PRIVATE WW_HAVE_SPLICE=0)
+    target_link_libraries(udp_datagram_write_no_splice_test PRIVATE ww)
+    target_link_options(udp_datagram_write_no_splice_test PRIVATE "-Wl,--wrap=sendto" "-Wl,--wrap=send")
+    add_dependencies(waterwall_unit_tests udp_datagram_write_no_splice_test)
+    add_waterwall_unit_test(waterwall.udp_datagram_write_no_splice_unit udp_datagram_write_no_splice_test
+      "unit;event;udp;datagram;no-splice")
 
     add_executable(select_fd_range_test
       select_fd_range_test.c
@@ -1128,6 +1138,12 @@ if(TARGET ww)
         target_link_libraries(node_layer_validation_test PRIVATE HeaderClient Bridge UserController BlackHole ReverseClient JunkDatagramSender)
         target_compile_definitions(node_layer_validation_test PRIVATE WW_TEST_EASY_SPLICE_NODES=1)
       endif()
+      if(TARGET UdpListener AND TARGET UdpConnector AND TARGET UdpStatelessSocket
+         AND TARGET TcpUdpListener AND TARGET TcpUdpConnector)
+        target_link_libraries(node_layer_validation_test PRIVATE UdpListener UdpConnector UdpStatelessSocket
+          TcpUdpListener TcpUdpConnector TcpListener TcpConnector)
+        target_compile_definitions(node_layer_validation_test PRIVATE WW_TEST_UDP_SPLICE_NODES=1)
+      endif()
       add_dependencies(waterwall_unit_tests node_layer_validation_test)
 
       add_waterwall_unit_test(
@@ -1151,6 +1167,12 @@ if(TARGET ww)
          AND TARGET ReverseClient AND TARGET JunkDatagramSender)
         target_link_libraries(node_layer_validation_no_splice_test PRIVATE HeaderClient Bridge UserController BlackHole ReverseClient JunkDatagramSender)
         target_compile_definitions(node_layer_validation_no_splice_test PRIVATE WW_TEST_EASY_SPLICE_NODES=1)
+      endif()
+      if(TARGET UdpListener AND TARGET UdpConnector AND TARGET UdpStatelessSocket
+         AND TARGET TcpUdpListener AND TARGET TcpUdpConnector)
+        target_link_libraries(node_layer_validation_no_splice_test PRIVATE UdpListener UdpConnector UdpStatelessSocket
+          TcpUdpListener TcpUdpConnector TcpListener TcpConnector)
+        target_compile_definitions(node_layer_validation_no_splice_test PRIVATE WW_TEST_UDP_SPLICE_NODES=1)
       endif()
       add_dependencies(waterwall_unit_tests node_layer_validation_no_splice_test)
 
@@ -3193,6 +3215,9 @@ if(TARGET UdpStatelessSocket)
   )
   waterwall_line_failure_test_use_tunnel(owned_line_finish_udpstatelesssocket_test UdpStatelessSocket)
   target_link_options(owned_line_finish_udpstatelesssocket_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS})
+  if(LINUX)
+    target_link_options(owned_line_finish_udpstatelesssocket_test PRIVATE "-Wl,--wrap=splice")
+  endif()
   target_link_libraries(owned_line_finish_udpstatelesssocket_test PRIVATE ww)
   add_dependencies(waterwall_unit_tests owned_line_finish_udpstatelesssocket_test)
 
@@ -3480,7 +3505,7 @@ if(TARGET UdpListener)
   target_compile_definitions(udplistener_dynamic_endpoint_test PRIVATE UDPLISTENER_DYNAMIC_ENDPOINT_TEST_HOOKS=1)
   target_link_options(udplistener_dynamic_endpoint_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS})
   if(LINUX)
-    target_link_options(udplistener_dynamic_endpoint_test PRIVATE "-Wl,--wrap=wioRead")
+    target_link_options(udplistener_dynamic_endpoint_test PRIVATE "-Wl,--wrap=wioRead" "-Wl,--wrap=splice")
   endif()
   target_link_libraries(udplistener_dynamic_endpoint_test PRIVATE ww)
   add_dependencies(waterwall_unit_tests udplistener_dynamic_endpoint_test)
@@ -3501,7 +3526,7 @@ if(TARGET UdpConnector)
   target_compile_definitions(udpconnector_socket_pool_test PRIVATE UDPCONNECTOR_POOL_TEST_HOOKS=1)
   target_link_options(udpconnector_socket_pool_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS})
   if(LINUX)
-    target_link_options(udpconnector_socket_pool_test PRIVATE "-Wl,--wrap=wioRead")
+    target_link_options(udpconnector_socket_pool_test PRIVATE "-Wl,--wrap=wioRead" "-Wl,--wrap=splice")
     target_link_options(udpconnector_socket_pool_test PRIVATE "-Wl,--wrap=wioWriteDatagram")
   endif()
   target_link_libraries(udpconnector_socket_pool_test PRIVATE ww)

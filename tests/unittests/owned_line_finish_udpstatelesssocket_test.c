@@ -13,7 +13,8 @@
  */
 #include "UdpStatelessSocket/structure.h"
 
-#include "tunnel_line_failure_harness.h"
+#include "tunnel_orderly_shutdown_harness.h"
+#include "udp_splice_fixture.h"
 #include "worker_registry_fixture.h"
 
 extern node_t nodeUdpStatelessSocketGet(void);
@@ -201,8 +202,130 @@ static void caseBorrowedLineFinishDoesNotDestroy(void)
     fixtureTeardown(&fixture);
 }
 
+#if WW_HAVE_SPLICE
+static line_t  *splice_peer_line;
+static unsigned owner_splice_calls, owner_close_calls;
+static void     observeOwnerSplice(void)
+{
+    twfRequire(currentThreadIsEventWorkerWID(0), "adapter sent on a foreign worker");
+    ++owner_splice_calls;
+}
+static void observeOwnerClose(wio_t *io)
+{
+    twfRequire(currentThreadIsEventWorkerWID(0), "adapter close callback ran on a foreign worker");
+    twfRequire(wioIsClosed(io), "close callback preceded closed publication");
+    ++owner_close_calls;
+    udpstatelesssocketOnSocketClose(io);
+}
+static void recordSplicePeer(tunnel_t *t, line_t *line)
+{
+    discard t;
+    splice_peer_line = line;
+}
+static void caseSpliceOwnerDispatch(bool cancel_drain)
+{
+    twfSetCase("stateless UDP local/foreign splice disposal, cancellation and socket retirement");
+    tos_worker_env_t env;
+    tosWorkerEnvSetup(&env, 2, 8192, 1024);
+    env.pools[2]            = env.pools[0]; /* Chain padding also visits the fixture pseudo-worker. */
+    node_t node             = nodeUdpStatelessSocketGet();
+    node.hash_next          = 1;
+    node.next               = (char *) "next";
+    node.node_settings_json = cJSON_Parse("{\"listen-address\":\"127.0.0.1\",\"listen-port\":0}");
+    tunnel_t *t             = udpstatelesssocketTunnelCreate(&node);
+    twfRequire(t != NULL, "create stateless splice adapter");
+    twf_trace_t trace = {0};
+    tunnel_t   *next  = twfCreateNextTunnel(&trace);
+    next->fnInitU     = recordSplicePeer;
+    tunnelBind(t, next);
+    tunnel_chain_t *chain      = tunnelchainCreate(2);
+    chain->sum_line_state_size = t->lstate_size;
+    tunnelchainFinalize(chain);
+    t->chain = chain;
+    udpstatelesssocketTunnelOnPrepair(t);
+    udpstatelesssocket_tstate_t *ts = tunnelGetState(t);
+    twfRequire(ts->socket.io != NULL, "stateless socket prepare");
+    owner_splice_calls = owner_close_calls = 0;
+    udp_test_splice_observer               = observeOwnerSplice;
+    wioSetCallBackClose(ts->socket.io, observeOwnerClose);
+    int        receiver = socket(AF_INET, SOCK_DGRAM, 0);
+    sockaddr_u peer;
+    sockaddrSetIpAddressPort(&peer, "127.0.0.1", 0);
+    twfRequire(bind(receiver, &peer.sa, SOCKADDR_LEN(&peer)) == 0 && nonBlocking(receiver) == 0, "stateless peer bind");
+    socklen_t size = sizeof(peer);
+    getsockname(receiver, &peer.sa, &size);
+    for (wid_t wid = 0; wid < 2; ++wid)
+    {
+        discard tosSetCurrentWorker(wid);
+        udpstatelesssocketDispatchToPeer(t, udpTestSplicePayload(env.pools[wid]), &peer);
+        if (wid != 0)
+            tosPumpWorker(&env, 0);
+        char bytes[64];
+        int  n = (int) recv(receiver, bytes, sizeof(bytes), 0);
+        twfRequire(n == sizeof("pipe-backed datagram") && memcmp(bytes, "pipe-backed datagram", n) == 0,
+                   "stateless splice payload changed");
+        twfRequireNoLeakedBuffers();
+    }
+    /* Cancellation owns a detached buffer and must not borrow worker 1's pool. */
+    udpstatelesssocketDispatchToPeer(t, udpTestSplicePayload(env.pools[1]), &peer);
+    discard tosSetCurrentWorker(0);
+    workerMessagesCleanupPending(&env.workers[0]);
+    twfRequireNoLeakedBuffers();
+    wioSetPeerAddr(ts->socket.io, &peer.sa, SOCKADDR_LEN(&peer));
+    sbuf_t *ingress = bufferpoolGetSmallBuffer(env.pools[0]);
+    sbufSetLength(ingress, 0);
+    udpstatelesssocketOnRecvFrom(ts->socket.io, ingress);
+    twfRequire(splice_peer_line != NULL, "stateless ingress did not create owned peer");
+    lineRef(splice_peer_line);
+    discard tosSetCurrentWorker(1);
+    udpstatelesssocketDispatchToPeer(t, udpTestSplicePayload(env.pools[1]), &peer);
+    udpstatelesssocketDispatchToPeer(t, udpTestSplicePayload(env.pools[1]), &peer);
+    udp_test_short_splice = true;
+    if (cancel_drain)
+    {
+        discard tosSetCurrentWorker(0);
+        udpstatelesssocketDispatchToPeer(t, udpTestSplicePayload(env.pools[0]), &peer);
+        workerMessagesCleanupPending(&env.workers[0]);
+        udpstatelesssocket_lstate_t *ls       = lineGetState(splice_peer_line, t);
+        uint64_t                     deadline = localidletableTestGetDeadline(ls->idle_handle);
+        udpstatelesssocketTunnelWritePayload(t, splice_peer_line, udpTestSplicePayload(env.pools[0]));
+        twfRequire(localidletableTestGetDeadline(ls->idle_handle) == deadline,
+                   "retired stateless traffic refreshed idle deadline");
+        localidletableTestSetNowMS(ts->socket.idle_tables[0], deadline + 1);
+        localidletableTestRunExpiry(ts->socket.idle_tables[0]);
+        socketmanagerDrainUdpSocketForWorker(&ts->socket, 0);
+    }
+    else
+        tosPumpWorker(&env, 0);
+    tosPumpWorker(&env, 1);
+    discard tosSetCurrentWorker(0);
+    twfRequire(ts->socket.io == NULL && udpsockIsRetired(&ts->socket), "retirement retained stateless WIO");
+    twfRequire(owner_splice_calls == 3 && owner_close_calls == 1, "owner send/close count mismatch");
+    udp_test_splice_observer = NULL;
+    twfRequire(! lineIsAlive(splice_peer_line) && trace.next_finish == 1, "retirement retained owned peer line");
+    lineUnref(splice_peer_line);
+    splice_peer_line = NULL;
+    char byte;
+    twfRequire(recv(receiver, &byte, 1, 0) < 0 && errno == EAGAIN, "retirement leaked prefix or queued suffix");
+    udpstatelesssocketDispatchToPeer(t, udpTestSplicePayload(env.pools[0]), &peer);
+    twfRequireNoLeakedBuffers();
+    tosRequireNoProcessApiCall();
+    close(receiver);
+    tunnelchainDestroy(chain);
+    tunnelDestroy(next);
+    udpstatelesssocketTunnelDestroy(t, wwLifecycleStartupRollback());
+    cJSON_Delete(node.node_settings_json);
+    memoryFree(node.type);
+    tosWorkerEnvTeardown(&env);
+}
+#endif
+
 int main(void)
 {
+#if WW_HAVE_SPLICE
+    caseSpliceOwnerDispatch(false);
+    caseSpliceOwnerDispatch(true);
+#endif
     caseHeadOnlyMetadata();
     caseEndpointOwnerFinishKillsLine();
     caseBorrowedLineFinishDoesNotDestroy();

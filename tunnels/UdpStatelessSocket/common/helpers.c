@@ -1,4 +1,5 @@
 #include "structure.h"
+#include "udp_send.h"
 
 #include "loggers/network_logger.h"
 
@@ -210,6 +211,16 @@ void udpstatelesssocketReleaseWrittenBuffer(sbuf_t *buf, bool detached_from_orig
     }
 }
 
+void udpstatelesssocketOnSocketClose(wio_t *io)
+{
+    tunnel_t                    *t     = weventGetUserdata(io);
+    udpstatelesssocket_tstate_t *state = tunnelGetState(t);
+    weventSetUserData(io, NULL);
+    wioSetCallBackRead(io, NULL);
+    wioSetCallBackClose(io, NULL);
+    udpsockRetire(&state->socket);
+}
+
 static wio_t *udpstatelesssocketGetOwnerIo(udpstatelesssocket_tstate_t *state)
 {
     assert(currentThreadIsEventWorkerWID(state->io_wid));
@@ -231,20 +242,20 @@ static void udpstatelesssocketWriteOwnerPeer(tunnel_t *t, sbuf_t *buf, const soc
         return;
     }
 
-    ssize_t nwrite;
-    do
+    const uint32_t          length = sbufGetLength(buf);
+    const udp_send_result_t result = udpSendBuffer(wioGetFD(io), buf, peer_addr, true);
+    const int               nwrite = result.bytes;
+    if (result.retire)
     {
-        nwrite = sendto(wioGetFD(io),
-                        sbufGetRawPtr(buf),
-                        (size_t) sbufGetLength(buf),
-                        0,
-                        &peer_addr->sa,
-                        sockaddrLen((sockaddr_u *) peer_addr));
-    } while (nwrite < 0 && socketERRNO() == EINTR);
+        udpstatelesssocketReleaseWrittenBuffer(buf, detached_from_origin_worker);
+        io->error = result.error;
+        wioClose(io);
+        return;
+    }
 
     if (UNLIKELY(nwrite < 0))
     {
-        const int err = socketERRNO();
+        const int err = result.error;
         // EAGAIN/EWOULDBLOCK is a benign send-buffer-full drop for a stateless UDP socket; log it quietly.
         if (err == EAGAIN || err == EWOULDBLOCK)
         {
@@ -264,13 +275,13 @@ static void udpstatelesssocketWriteOwnerPeer(tunnel_t *t, sbuf_t *buf, const soc
                  socketStrError(err));
         }
     }
-    else if (UNLIKELY((uint32_t) nwrite != sbufGetLength(buf)))
+    else if (UNLIKELY((uint32_t) nwrite != length))
     {
         char peeraddrstr[SOCKADDR_STRLEN] = {0};
-        LOGE("UdpStatelessSocket: short UDP datagram write to [%s]: %zd/%u bytes",
+        LOGE("UdpStatelessSocket: short UDP datagram write to [%s]: %d/%u bytes",
              SOCKADDR_STR(peer_addr, peeraddrstr),
              nwrite,
-             sbufGetLength(buf));
+             length);
     }
 
     udpstatelesssocketReleaseWrittenBuffer(buf, detached_from_origin_worker);
@@ -772,8 +783,13 @@ static bool udpstatelesssocketStartDnsResolve(tunnel_t *t, line_t *l, sbuf_t *bu
 
 void udpstatelesssocketTunnelWritePayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    udpstatelesssocket_tstate_t *state    = tunnelGetState(t);
-    address_context_t           *dest_ctx = lineGetDestinationAddressContext(l);
+    udpstatelesssocket_tstate_t *state = tunnelGetState(t);
+    if (udpsockIsRetired(&state->socket))
+    {
+        lineReuseBuffer(l, buf);
+        return;
+    }
+    address_context_t *dest_ctx = lineGetDestinationAddressContext(l);
 
     udpstatelesssocket_lstate_t *ls = lineGetState(l, t);
     if (udpstatelesssocketLinestateOwnsLine(t, l, ls))

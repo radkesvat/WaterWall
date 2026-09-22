@@ -186,6 +186,8 @@ CREATION_SITES = [
      "a fixture line re-created in the owning worker's pool"),
     ("tests/unittests/tunnel_line_failure_harness.h", "twfLinePoolCreateLine", TEST_ONLY,
      "the shared pool-backed fixture line the owner-postcondition cases need"),
+    ("tests/unittests/udplistener_dynamic_endpoint_test.c", "testStaticSpliceRetirement", TEST_ONLY,
+     "one fixture-created normal peer line per worker, owned and drained by the static UdpListener"),
     ("tests/unittests/udpconnector_socket_pool_test.c", "createFixtureNormalLine", TEST_ONLY,
      "the owner-controlled normal lines used by the UdpConnector pool fixture"),
     ("tests/unittests/udpconnector_socket_pool_test.c", "testCase6_WorkerAndConnectorPoolIsolation", TEST_ONLY,

@@ -209,7 +209,46 @@ static udpsock_t *createUdpSocketSideData(wio_t *io)
     }
 
     socket->io = io;
+    socket->listener_fd = wioGetFD(io);
+    socket->owner_slot  = NULL;
+    atomic_init(&socket->retired, false);
     return socket;
+}
+
+static void drainRetiredUdpSocket(void *worker_ptr, void *arg1, void *arg2, void *arg3)
+{
+    worker_t *worker = worker_ptr;
+    discard   arg2;
+    discard   arg3;
+    socketmanagerDrainUdpSocketForWorker(arg1, worker->wid);
+}
+
+void udpsockRetire(udpsock_t *socket)
+{
+    if (atomic_exchange_explicit(&socket->retired, true, memory_order_acq_rel))
+        return;
+    socket->io = NULL;
+    if (socket->owner_slot != NULL)
+        *socket->owner_slot = NULL;
+    for (wid_t wid = 0; wid < getWorkersCount(); ++wid)
+    {
+        /* Never drain inline: the close can occur inside this table's expiry
+         * callback. Cancellation during shutdown is covered by owner drain.
+         * Enqueue pressure retains the existing finite idle deadlines; writes
+         * and receives on a retired socket cannot extend or create entries. */
+        const worker_message_submit_result_e result =
+            sendWorkerMessageForceQueueWithCleanup(wid, drainRetiredUdpSocket, NULL, socket, NULL, NULL);
+        discard result;
+    }
+}
+
+static void onUdpListenerSocketClose(wio_t *io)
+{
+    udpsock_t *socket = weventGetUserdata(io);
+    weventSetUserData(io, NULL);
+    wioSetCallBackRead(io, NULL);
+    wioSetCallBackClose(io, NULL);
+    udpsockRetire(socket);
 }
 
 static bool startUdpListener(wio_t *io, wread_cb read_cb)
@@ -2511,6 +2550,12 @@ static void runUdpPayloadCallback(void *worker_ptr, void *arg1, void *arg2, void
     udp_payload_t   *pl     = arg2;
     discard          arg3;
 
+    if (udpsockIsRetired(pl->sock))
+    {
+        sbufDestroy(pl->buf);
+        udppayloadDestroy(pl);
+        return;
+    }
     wevent_t ev = (wevent_t) {.loop = worker->loop, .cb = filter->cb, .userdata = pl};
     filter->cb(&ev);
 }
@@ -2854,7 +2899,9 @@ static void listenUdpSinglePort(wloop_t *loop, socket_filter_t *filter, char *ho
         return;
     }
     filter->listen_udp_socket = socket;
+    socket->owner_slot        = &filter->listen_io;
     weventSetUserData(filter->listen_io, socket);
+    wioSetCallBackClose(filter->listen_io, onUdpListenerSocketClose);
     endpointRegistryReserve(reg, IPPROTO_UDP, filter, port, filter->listen_io, socket);
     if (UNLIKELY(startupFailurePending()))
     {
@@ -2933,7 +2980,9 @@ static void listenUdpMultiPortIptables(wloop_t *loop, socket_filter_t *filter, c
         return;
     }
     filter->listen_udp_socket = socket;
+    socket->owner_slot        = &filter->listen_io;
     weventSetUserData(filter->listen_io, socket);
+    wioSetCallBackClose(filter->listen_io, onUdpListenerSocketClose);
     endpointRegistryReserve(reg, IPPROTO_UDP, filter, (uint16_t) main_port, filter->listen_io, socket);
     if (UNLIKELY(startupFailurePending()))
     {
@@ -3013,7 +3062,9 @@ static void listenUdpMultiPortSockets(wloop_t *loop, socket_filter_t *filter, ch
         filter->listen_udp_sockets[i]    = socket;
         filter->listen_ios_count         = (size_t) i + 1U;
         filter->listen_udp_sockets_count = (size_t) i + 1U;
+        socket->owner_slot               = &filter->listen_ios[i];
         weventSetUserData(udp_io, socket);
+        wioSetCallBackClose(udp_io, onUdpListenerSocketClose);
         endpointRegistryReserve(reg, IPPROTO_UDP, filter, port, udp_io, socket);
         if (UNLIKELY(startupFailurePending()))
         {
@@ -3093,7 +3144,9 @@ static void listenUdpPortListSockets(wloop_t *loop, socket_filter_t *filter, cha
         filter->listen_udp_sockets[i]    = socket;
         filter->listen_ios_count         = (size_t) i + 1U;
         filter->listen_udp_sockets_count = (size_t) i + 1U;
+        socket->owner_slot               = &filter->listen_ios[i];
         weventSetUserData(udp_io, socket);
+        wioSetCallBackClose(udp_io, onUdpListenerSocketClose);
         endpointRegistryReserve(reg, IPPROTO_UDP, filter, p, udp_io, socket);
         if (UNLIKELY(startupFailurePending()))
         {
@@ -3213,6 +3266,11 @@ void postUdpWrite(udpsock_t *socket_io, wid_t wid_from, sbuf_t *buf, sockaddr_u 
 {
     if (wid_from == socketmanager_gstate->wid)
     {
+        if (UNLIKELY(socket_io->io == NULL))
+        {
+            reuseBuffer(buf);
+            return;
+        }
         int     nwrite = wioWriteDatagram(socket_io->io, buf, &peer_addr);
         discard nwrite;
         return;

@@ -83,8 +83,11 @@ static void udpconnectorPacketDnsRequestUnlink(udpconnector_lstate_t *ls, udpcon
 static void udpconnectorWriteUsingBinding(line_t *l, udpconnector_tstate_t *ts, udpconnector_lstate_t *ls,
                                           udpconnector_binding_t *binding, sbuf_t *buf)
 {
-    assert(binding != NULL && binding->active && binding->socket != NULL);
-    assert(binding->socket->io != NULL && ! wioIsClosed(binding->socket->io));
+    if (! udpconnectorBindingCanSend(binding))
+    {
+        lineReuseBuffer(l, buf);
+        return;
+    }
     assert(ls->idle_handle != NULL);
 
     localidletableKeepIdleItemForAtleast(udpconnectorGetLineIdleTable(ts, l), ls->idle_handle, kUdpKeepExpireTime);
@@ -100,7 +103,7 @@ static udpconnector_binding_t *udpconnectorSelectSendBinding(tunnel_t *t, line_t
     {
         udpconnector_binding_t *binding = ls->fixed_binding;
         assert(binding != NULL && binding->active);
-        return binding;
+        return udpconnectorBindingCanSend(binding) ? binding : NULL;
     }
 
     return udpconnectorAcquireBinding(t, l, ls, peer_addr);
@@ -161,6 +164,8 @@ static bool udpconnectorFlushPacketDestinationQueue(tunnel_t *t, line_t *l, udpc
     {
         sbuf_t *buf = bufferqueuePopFront(&cache->pending_queue);
         udpconnectorWriteUsingBinding(l, ts, ls, binding, buf);
+        if (! lineIsAlive(l))
+            return false;
     }
 
     return udpconnectorMaybeResumeQueuedSender(t, l, ls);

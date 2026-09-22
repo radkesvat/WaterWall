@@ -105,6 +105,7 @@ local_idle_table_t *udpstatelesssocketGetLineIdleTable(udpstatelesssocket_tstate
 void                udpstatelesssocketCloseOwnedLineFromAdjacent(tunnel_t *t, line_t *l, bool is_chain_end);
 void                udpstatelesssocketReleaseWrittenBuffer(sbuf_t *buf, bool detached_from_origin_worker);
 void                udpstatelesssocketDispatchToPeer(tunnel_t *t, sbuf_t *buf, const sockaddr_u *peer_addr);
+void                udpstatelesssocketOnSocketClose(wio_t *io);
 void                udpstatelesssocketOnRecvFrom(wio_t *io, sbuf_t *buf);
 void                udpstatelesssocketTunnelWritePayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void                udpstatelesssocketLocalThreadSocketUpStream(void *worker, void *arg1, void *arg2, void *arg3);

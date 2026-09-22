@@ -36,6 +36,9 @@ typedef struct udpsock_s
 {
     wio_t               *io;
     local_idle_table_t **idle_tables;
+    atomic_bool          retired;     /* Cross-worker admission gate; side-data survives until worker shutdown. */
+    int                  listener_fd; /* Immutable diagnostic snapshot, never used for I/O. */
+    wio_t              **owner_slot;  /* Optional socket-manager listener slot, cleared on its I/O worker. */
 
 } udpsock_t;
 
@@ -43,6 +46,16 @@ typedef struct udpsock_s
  * @brief Get the current worker's UDP idle table for a listener socket.
  */
 local_idle_table_t *udpsockGetWorkerIdleTable(udpsock_t *socket);
+/* Called by the socket's close callback on its I/O worker. Detaches cached WIO
+ * slots, closes cross-worker admission and queues owner-local peer drains.
+ * Side-data and idle tables remain owned through shutdown. If a drain notification
+ * cannot be queued, existing bounded idle deadlines remain authoritative; no
+ * retired socket may refresh them or create a peer. Quiescence uses worker drain. */
+void               udpsockRetire(udpsock_t *socket);
+static inline bool udpsockIsRetired(const udpsock_t *socket)
+{
+    return atomic_load_explicit(&socket->retired, memory_order_acquire);
+}
 
 /**
  * @brief Drain and release one UDP listener socket's idle table for a worker.

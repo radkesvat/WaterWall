@@ -21,6 +21,16 @@
 #include "UserController/interface.h"
 #endif
 
+#ifdef WW_TEST_UDP_SPLICE_NODES
+#include "TcpConnector/interface.h"
+#include "TcpListener/interface.h"
+#include "TcpUdpConnector/interface.h"
+#include "TcpUdpListener/interface.h"
+#include "UdpConnector/interface.h"
+#include "UdpListener/interface.h"
+#include "UdpStatelessSocket/interface.h"
+#endif
+
 #include "managers/node_manager.c" // NOLINT: exercises private validateTunnelChains and initializePacketTunnels
 
 static void require(bool condition, const char *message)
@@ -1692,6 +1702,63 @@ static void testEasyNodeSpliceCapability(void)
 }
 #endif
 
+#ifdef WW_TEST_UDP_SPLICE_NODES
+static void testUdpSpliceCapabilities(void)
+{
+    node_t nodes[] = {nodeUdpListenerGet(),
+                      nodeUdpConnectorGet(),
+                      nodeUdpStatelessSocketGet(),
+                      nodeTcpUdpListenerGet(),
+                      nodeTcpUdpConnectorGet()};
+    for (unsigned i = 0; i < sizeof(nodes) / sizeof(nodes[0]); ++i)
+    {
+        bool head = i == 0 || i == 2 || i == 3;
+        require(nodes[i].flags == ((head ? kNodeFlagChainHead : kNodeFlagChainEnd) | kNodeFlagSupportsSplice),
+                "UDP capability changed placement flags");
+        require(nodes[i].required_padding_left == 0 && nodes[i].can_have_next == head && nodes[i].can_have_prev != head,
+                "UDP capability changed padding or placement");
+        require(nodes[i].layer_group == (i == 0 || i == 2 ? kNodeLayerAnything : kNodeLayer4),
+                "UDP capability changed layer");
+    }
+    node_t children[4];
+    require(
+        nodeConfigureChild(&children[0], nodeTcpListenerGet(), &nodes[3], ".tcp", kNodeChildLinkOwnerSelf, NULL) &&
+            nodeConfigureChild(&children[1], nodeUdpListenerGet(), &nodes[3], ".udp", kNodeChildLinkOwnerSelf, NULL) &&
+            nodeConfigureChild(&children[2], nodeTcpConnectorGet(), &nodes[4], ".tcp", kNodeChildLinkNone, NULL) &&
+            nodeConfigureChild(&children[3], nodeUdpConnectorGet(), &nodes[4], ".udp", kNodeChildLinkNone, NULL),
+        "combined wrapper child configuration");
+    for (unsigned blocked = 0; blocked < 2; ++blocked)
+        for (unsigned packet = 0; packet < 2; ++packet)
+        {
+            node_t   *expanded[] = {&nodes[3], &nodes[4], &children[0], &children[1], &children[2], &children[3]};
+            tunnel_t *instances[6];
+            children[3].flags     = kNodeFlagChainEnd | (blocked ? 0 : kNodeFlagSupportsSplice);
+            tunnel_chain_t *chain = tunnelchainCreate(0);
+            for (unsigned i = 0; i < 6; ++i)
+            {
+                instances[i] = tunnelCreate(expanded[i], 0, 0);
+                require(instances[i] != NULL, "expanded wrapper fixture allocation");
+                tunnelchainInsert(chain, instances[i]);
+            }
+            chain->contains_packet_node = packet;
+            tunnelchainFinalize(chain);
+            require(chain->supports_splice == (WW_HAVE_SPLICE && ! GSTATE.splice_disabled && ! blocked && ! packet),
+                    "expanded UDP wrapper bypassed child/platform/config/packet blocker");
+            tunnelchainDestroy(chain);
+            for (unsigned i = 0; i < 6; ++i)
+                tunnelDestroy(instances[i]);
+        }
+    for (unsigned i = 0; i < 4; ++i)
+    {
+        memoryFree(children[i].name);
+        memoryFree(children[i].next);
+        memoryFree(children[i].type);
+    }
+    for (unsigned i = 0; i < 5; ++i)
+        memoryFree(nodes[i].type);
+}
+#endif
+
 static void testNodeManagerPreFinalizationChainCleanup(void)
 {
     // Test that an invalid chain caught during validation records startup failure
@@ -1773,6 +1840,9 @@ int main(void)
         testSolvedTopologyExpansionIsRevalidated(kNodeFlagNone, true);
         testSolvedTopologyExpansionIsRevalidated(kNodeFlagSupportsSplice, true);
         testChainSpliceCapability();
+#ifdef WW_TEST_UDP_SPLICE_NODES
+        testUdpSpliceCapabilities();
+#endif
 #ifdef WW_TEST_EASY_SPLICE_NODES
         testEasyNodeSpliceCapability();
 #endif

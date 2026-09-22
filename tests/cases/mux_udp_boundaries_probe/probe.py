@@ -62,8 +62,8 @@ def main() -> None:
             assert client.recvfrom(65535)[0] == response(first), "initial reply changed"
 
         payloads = [
-            [b"", b"A\x00B", bytes(range(256)) * 5, b"client-zero-tail", b""],
-            [b"", b"other-child", b"Z" * 1500, b"\x00", b""],
+            [b"", b"A\x00B", bytes(range(256)) * 200, b"client-zero-tail", b""],
+            [b"", b"other-child", b"Z" * 8000, b"\x00", b""],
         ]
         for position in range(len(payloads[0])):
             for index, client in enumerate(clients):

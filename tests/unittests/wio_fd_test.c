@@ -763,7 +763,7 @@ typedef enum splice_case_e
     kSpliceFailedRead,
     kSpliceFailedPartial,
     kSpliceInvalidFlags,
-    kSpliceWriteNonTCP,
+    kSpliceWriteRawIP,
     kSpliceWriteError,
     kSpliceWriteCloseQueue,
     kSpliceWriteClosed
@@ -907,8 +907,8 @@ static void spliceRead(wio_t *io, sbuf_t *buf)
         buf->flags &= (uint16_t) ~kSbufFlagSplice;
         sbufSpliceReadToBuffer(buf, bufferpoolGetLargeBuffer(pool), 1);
         break;
-    case kSpliceWriteNonTCP:
-        io->io_type = WIO_TYPE_UDP;
+    case kSpliceWriteRawIP:
+        io->io_type = WIO_TYPE_IP;
         wioWrite(io, buf);
         break;
     case kSpliceWriteError:
@@ -1939,7 +1939,7 @@ static void testSpliceReads(void)
         {kSpliceFailedRead, "incomplete read from pipe (requested=9, consumed=0, result=-1"},
         {kSpliceFailedPartial, "incomplete read from pipe (requested=9, consumed=2, result=-1"},
         {kSpliceInvalidFlags, "requires kSbufFlagSplice"},
-        {kSpliceWriteNonTCP, "splice buffers require a TCP destination"},
+        {kSpliceWriteRawIP, "splice buffers require a TCP or UDP destination"},
     };
     for (size_t i = 0; i < ARRAY_SIZE(failures); ++i)
     {

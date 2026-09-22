@@ -1,3 +1,5 @@
+#include "splice_buffer.h"
+#include "udp_send.h"
 #include "wevent.h"
 // Focused invariants for the nonblocking datagram write path (wioWriteDatagram):
 //
@@ -30,6 +32,9 @@
  */
 static test_worker_registry_t g_test_worker_registry;
 
+#if WW_HAVE_SPLICE
+static int commit_error;
+#endif
 static int force_sendto_errno = 0;
 static int force_send_errno   = 0;
 extern ssize_t __real_sendto(int fd, const void *buf, size_t len, int flags, const struct sockaddr *addr,
@@ -40,6 +45,14 @@ ssize_t __wrap_send(int fd, const void *buf, size_t len, int flags);
 
 ssize_t __wrap_sendto(int fd, const void *buf, size_t len, int flags, const struct sockaddr *addr, socklen_t addrlen)
 {
+#if WW_HAVE_SPLICE
+    if (commit_error != 0 && len == 0 && flags == 0)
+    {
+        errno        = commit_error;
+        commit_error = 0;
+        return -1;
+    }
+#endif
     if (force_sendto_errno != 0)
     {
         errno              = force_sendto_errno;
@@ -303,6 +316,8 @@ static void runTcpChecks(wloop_t *loop, buffer_pool_t *pool, const sockaddr_u *u
     closesocket(listener);
 }
 
+#include "udp_splice_send_cases.h"
+
 int main(void)
 {
     master_pool_t             *large_master = masterpoolCreateWithCapacity(16);
@@ -333,6 +348,9 @@ int main(void)
     memoryZero(&udp_addr, sizeof(udp_addr));
     require(getsockname(wioGetFD(io_udp), &udp_addr.sa, &udp_addrlen) == 0, "failed to read UDP io address");
 
+#if WW_HAVE_SPLICE
+    runSpliceUdpChecks(loop, buffer_pool);
+#endif
     runUdpChecks(loop, buffer_pool, io_udp);
     runTcpChecks(loop, buffer_pool, &udp_addr);
 

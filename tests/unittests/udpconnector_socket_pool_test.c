@@ -9,6 +9,7 @@
 #include "UdpConnector/structure.h"
 
 #include "tunnel_orderly_shutdown_harness.h"
+#include "udp_splice_fixture.h"
 
 #if defined(OS_LINUX)
 #include <dirent.h>
@@ -20,6 +21,7 @@ static wio_t     *g_captured_wio_write_io;
 static sockaddr_u g_captured_wio_write_peer;
 static char       g_captured_wio_write_data[64];
 static uint32_t   g_captured_wio_write_len;
+static int        g_captured_wio_write_result;
 
 int __real_wioRead(wio_t *io);
 int __wrap_wioRead(wio_t *io);
@@ -37,8 +39,11 @@ int __wrap_wioRead(wio_t *io)
     return __real_wioRead(io);
 }
 
+static bool g_nested_retirement_send;
+
 int __wrap_wioWriteDatagram(wio_t *io, sbuf_t *buf, const sockaddr_u *peer_addr)
 {
+    twfRequire(! g_nested_retirement_send, "closing sibling reached wioWriteDatagram (or rerouted its input)");
     if (g_capture_wio_write)
     {
         ++g_captured_wio_write_calls;
@@ -52,7 +57,10 @@ int __wrap_wioWriteDatagram(wio_t *io, sbuf_t *buf, const sockaddr_u *peer_addr)
         memoryCopy(g_captured_wio_write_data, sbufGetRawPtr(buf), g_captured_wio_write_len);
     }
 
-    return __real_wioWriteDatagram(io, buf, peer_addr);
+    const int result = __real_wioWriteDatagram(io, buf, peer_addr);
+    if (g_capture_wio_write)
+        g_captured_wio_write_result = result;
+    return result;
 }
 
 static uint32_t countOpenFileDescriptors(void)
@@ -93,6 +101,11 @@ typedef struct test_fixture_s
     bool             close_reentrant_on_finish;
     bool             close_reentrant_on_est;
     bool             pause_reentrant_on_est;
+    bool             destroy_on_finish;
+    void (*on_finish)(struct test_fixture_s *, line_t *);
+    line_t  *retirement_lines[2];
+    unsigned retirement_path;
+    unsigned sibling_actions;
 } test_fixture_t;
 
 static void prevDownStreamEst(tunnel_t *t, line_t *l)
@@ -130,6 +143,8 @@ static void prevDownStreamFinish(tunnel_t *t, line_t *l)
 {
     test_fixture_t *fixture = *(test_fixture_t **) tunnelGetState(t);
     ++fixture->finish_calls;
+    if (fixture->on_finish != NULL)
+        fixture->on_finish(fixture, l);
     if (fixture->close_reentrant_on_finish && fixture->reentrant_close_line != NULL &&
         fixture->reentrant_close_line != l && lineIsAlive(fixture->reentrant_close_line))
     {
@@ -138,6 +153,8 @@ static void prevDownStreamFinish(tunnel_t *t, line_t *l)
         udpconnectorLineDetach(
             fixture->connector, target, lineGetState(target, fixture->connector), kUdpConnectorDetachSocketFailure);
     }
+    if (fixture->destroy_on_finish)
+        lineDestroy(l);
 }
 
 static void prevDownStreamPause(tunnel_t *t, line_t *l)
@@ -779,6 +796,14 @@ static void testCase10_FinishLineAMarksDraining(void)
     wioSetPeerAddr(io, &src.sa, sockaddrLen(&src));
     udpconnectorOnSocketRecvFrom(io, makeDatagram(&fixture, "for_b"));
     twfRequireEqualU32(fixture.payload_calls, 1, "line B must receive reply on draining socket");
+#if defined(OS_LINUX)
+    g_capture_wio_write = true;
+    udpconnectorTunnelUpStreamPayload(fixture.connector, l2, makeDatagram(&fixture, "draining send"));
+    g_capture_wio_write = false;
+    twfRequireEqualU32(g_captured_wio_write_calls, 1, "Draining must admit an existing binding's send");
+    twfRequire(g_captured_wio_write_io == io && g_captured_wio_write_result == 13,
+               "Draining must preserve the real datagram send");
+#endif
 
     udpconnectorTunnelUpStreamFinish(fixture.connector, l2);
     lineDestroy(l2);
@@ -1592,11 +1617,214 @@ static void testCase30_WorkerQuiesceStopCleanup(void)
     teardownFixture(&fixture);
 }
 
+#if WW_HAVE_SPLICE
+/* All three lines are source-owned normal lines; packet balance changes only
+ * destination selection. The source chooses the sibling from the actual first
+ * notification, independently of the socket map's iteration order. */
+static void sendOnRetiringSibling(test_fixture_t *f, line_t *notified)
+{
+    f->on_finish = NULL;
+    twfRequireEqualU32(f->finish_calls, 1, "sibling injection must run during first Finish");
+    line_t *sibling = f->retirement_lines[notified == f->retirement_lines[0] ? 1 : 0];
+    twfRequire(lineIsAlive(sibling), "sibling must still be alive before its Finish");
+    udpconnector_lstate_t *ls = lineGetState(sibling, f->connector);
+    twfRequire(! ls->write_paused && ! ls->queue_pause_sent && ! ls->finishing,
+               "sibling action must not bypass Pause or Finish");
+    twfRequire(ls->last_send_binding != NULL && ls->last_send_binding->active &&
+                   ls->last_send_binding->socket->state == kUdpConnectorPoolSocketClosing,
+               "sibling must remain bound to the retiring shared socket");
+    twfRequire(udpconnectorAcquireBinding(f->connector, sibling, ls, &ls->last_send_binding->peer_addr) == NULL,
+               "binding acquisition must refuse Closing without replacement");
+    ++f->sibling_actions;
+    g_nested_retirement_send = true;
+    if (f->retirement_path < 2)
+    {
+        sbuf_t *buf = f->retirement_path == 0 ? makeDatagram(f, "rejected sibling") : udpTestSplicePayload(f->env.pool);
+        if (sbufIsSplice(buf))
+        {
+            sbufShiftLeft(buf, 3);
+            sbufWrite(buf, "pre", 3);
+        }
+        udpconnectorTunnelUpStreamPayload(f->connector, sibling, buf);
+    }
+    else if (f->retirement_path == 4)
+    {
+        udpconnector_packet_destination_t *cache = ls->packet_destinations;
+        bufferqueuePushBack(&cache->pending_queue, makeDatagram(f, "rejected DNS queue"));
+        bufferqueuePushBack(&cache->pending_queue, udpTestSplicePayload(f->env.pool));
+        twfRequire(udpconnectorTestFlushPacketDestinationQueue(f->connector, sibling, 0),
+                   "refused destination queue must report live sibling");
+    }
+    else
+    {
+        bufferqueuePushBack(&ls->pause_queue, makeDatagram(f, "rejected cached queue"));
+        bufferqueuePushBack(&ls->pause_queue, udpTestSplicePayload(f->env.pool));
+        twfRequire(f->retirement_path == 2 ? udpconnectorFlushWriteQueue(ls) : udpconnectorReplayWriteQueue(ls),
+                   "refused queue must report live sibling");
+    }
+    g_nested_retirement_send = false;
+    twfRequire(lineIsAlive(sibling), "admission refusal must leave notification to close handler");
+    twfRequire(udpconnectorQueuedWriteBytes(ls) == 0, "nested refusal retained queued bytes");
+}
+
+static void testRetiringSibling(unsigned mode, unsigned path)
+{
+    twfSetCase(mode ? "Closing socket rejects live packet-balance sibling"
+                    : "Closing socket rejects live connection-balance sibling");
+    const uint32_t fd_count = countOpenFileDescriptors();
+    test_fixture_t f;
+    setupFixtureMode(&f, mode ? kUdpConnectorBalanceModePacket : kUdpConnectorBalanceModeConnection);
+    f.destroy_on_finish = true;
+    bufferpoolUpdateAllocationPaddings(f.env.pool, 32, 32, 32, 32);
+    line_t *a     = createAndInitLineIpv4(&f, "127.0.0.1", 20001);
+    line_t *b     = createAndInitLineIpv4(&f, "127.0.0.1", 20002);
+    line_t *other = createAndInitLineIpv4(&f, "127.0.0.1", 20001);
+    lineRef(a);
+    lineRef(b);
+    udpconnector_lstate_t *a_ls     = lineGetState(a, f.connector);
+    udpconnector_lstate_t *b_ls     = lineGetState(b, f.connector);
+    udpconnector_lstate_t *other_ls = lineGetState(other, f.connector);
+    twfRequire(a_ls->last_send_binding->socket == b_ls->last_send_binding->socket &&
+                   a_ls->last_send_binding->socket != other_ls->last_send_binding->socket,
+               "fixture must have two shared bindings and one unrelated socket");
+    for (unsigned i = 0; i < 2; ++i)
+    {
+        line_t                *line = i == 0 ? a : b;
+        udpconnector_lstate_t *ls   = lineGetState(line, f.connector);
+        ls->peer_addr               = addresscontextToSockAddr(lineGetDestinationAddressContext(line));
+        if (mode)
+        {
+            addresscontextCopy(&ls->packet_destinations[0].dest_ctx, lineGetDestinationAddressContext(line));
+            ls->packet_destinations[0].has_context = true;
+        }
+    }
+    other_ls->peer_addr = addresscontextToSockAddr(lineGetDestinationAddressContext(other));
+    if (mode)
+    {
+        addresscontextCopy(&other_ls->packet_destinations[0].dest_ctx, lineGetDestinationAddressContext(other));
+        other_ls->packet_destinations[0].has_context = true;
+    }
+    f.retirement_lines[0] = a;
+    f.retirement_lines[1] = b;
+    f.retirement_path     = path;
+    f.on_finish           = sendOnRetiringSibling;
+    udp_test_short_splice = true;
+    udpconnectorTunnelUpStreamPayload(f.connector, a, udpTestSplicePayload(f.env.pool));
+    twfRequire(! udp_test_short_splice, "retirement must follow a real positive-short splice");
+    twfRequireEqualU32(f.sibling_actions, 1, "nested sibling action did not execute exactly once");
+    twfRequireEqualU32(f.finish_calls, 2, "retirement reflected or duplicated Finish");
+    twfRequire(! lineIsAlive(a) && ! lineIsAlive(b), "affected owners must destroy both normal lines");
+    twfRequireEqualU32(atomicLoadU32Relaxed(&a->refc), 1, "retirement leaked first line reference");
+    twfRequireEqualU32(atomicLoadU32Relaxed(&b->refc), 1, "retirement leaked sibling line reference");
+    udpconnector_tstate_t *ts = tunnelGetState(f.connector);
+    twfRequire(ts->worker_pools[0].active_bindings_count == 1, "retirement retained affected binding entries");
+    twfRequire(lineIsAlive(other), "retirement killed unrelated line");
+    wio_t *unrelated = other_ls->last_send_binding->socket->io;
+    twfRequire(! wioIsClosed(unrelated), "retirement closed unrelated socket");
+    g_capture_wio_write = true;
+    udpconnectorTunnelUpStreamPayload(f.connector, other, makeDatagram(&f, "still usable"));
+    g_capture_wio_write = false;
+    twfRequireEqualU32(g_captured_wio_write_calls, 1, "unrelated socket did not send");
+    twfRequire(g_captured_wio_write_io == unrelated, "unrelated send changed socket");
+    twfRequire(g_captured_wio_write_result == 12, "real unrelated datagram send failed");
+    lineUnref(a);
+    lineUnref(b);
+    udpconnectorTunnelUpStreamFinish(f.connector, other);
+    lineDestroy(other);
+    twfRequireNoLeakedBuffers();
+    teardownFixture(&f);
+    twfRequireEqualU32(countOpenFileDescriptors(), fd_count, "sibling retirement leaked descriptors");
+}
+
+static void testSpliceSocketRetirement(void)
+{
+    for (unsigned mode = 0; mode < 2; ++mode)
+        for (unsigned path = 0; path < 4; ++path)
+        {
+            twfSetCase("UDP splice retirement preserves unrelated sockets and stops queue drains");
+            test_fixture_t f;
+            setupFixtureMode(&f, mode ? kUdpConnectorBalanceModePacket : kUdpConnectorBalanceModeConnection);
+            f.destroy_on_finish = true;
+            line_t *a           = createAndInitLineIpv4(&f, "127.0.0.1", 20001);
+            line_t *b           = createAndInitLineIpv4(&f, "127.0.0.1", 20002);
+            line_t *other       = createAndInitLineIpv4(&f, "127.0.0.1", 20001);
+            lineRef(a);
+            lineRef(b);
+            udpconnector_lstate_t *ls     = lineGetState(a, f.connector);
+            wio_t                 *failed = ls->last_send_binding->socket->io;
+            twfRequire(failed ==
+                           ((udpconnector_lstate_t *) lineGetState(b, f.connector))->last_send_binding->socket->io,
+                       "retirement peers must share socket");
+            wio_t *unrelated =
+                ((udpconnector_lstate_t *) lineGetState(other, f.connector))->last_send_binding->socket->io;
+            twfRequire(failed != unrelated, "unrelated line must use another socket");
+            if (mode)
+            {
+                addresscontextCopy(&ls->packet_destinations[0].dest_ctx, lineGetDestinationAddressContext(a));
+                ls->packet_destinations[0].has_context = true;
+            }
+            udp_test_short_splice = true;
+            if (path == 0)
+            {
+                udpconnectorTunnelUpStreamPayload(f.connector, a, udpTestSplicePayload(f.env.pool));
+            }
+            else if (path == 3)
+            {
+                if (ls->packet_destinations == NULL)
+                {
+                    ls->packet_destinations_count = 1;
+                    ls->packet_destinations       = memoryAllocateZero(sizeof(*ls->packet_destinations));
+                    twfRequire(bufferqueueInit(&ls->packet_destinations[0].pending_queue, 2), "DNS fixture queue");
+                }
+                udpconnector_packet_destination_t *cache = ls->packet_destinations;
+                addresscontextSetIpAddressPortProtocol(&cache->dest_ctx, "127.0.0.1", 20001, IP_PROTO_UDP);
+                cache->has_context = true;
+                bufferqueuePushBack(&cache->pending_queue, udpTestSplicePayload(f.env.pool));
+                bufferqueuePushBack(&cache->pending_queue, udpTestSplicePayload(f.env.pool));
+                twfRequire(! udpconnectorTestFlushPacketDestinationQueue(f.connector, a, 0),
+                           "DNS queue continued after owner death");
+            }
+            else
+            {
+                bufferqueuePushBack(&ls->pause_queue, udpTestSplicePayload(f.env.pool));
+                bufferqueuePushBack(&ls->pause_queue, udpTestSplicePayload(f.env.pool));
+                if (path == 1)
+                    twfRequire(! udpconnectorFlushWriteQueue(ls), "pause queue continued after owner death");
+                else
+                {
+                    udpconnectorTunnelUpStreamFinish(f.connector, a);
+                    lineDestroy(a);
+                }
+            }
+            twfRequire(! lineIsAlive(a) && ! lineIsAlive(b), "retirement retained affected owned lines");
+            twfRequire(lineIsAlive(other) && ! wioIsClosed(unrelated), "retirement closed an unrelated socket");
+            twfRequireEqualU32(f.finish_calls, path == 2 ? 1 : 2, "retirement reflected or duplicated Finish");
+            lineUnref(a);
+            lineUnref(b);
+            udpconnectorTunnelUpStreamFinish(f.connector, other);
+            lineDestroy(other);
+            twfRequireNoLeakedBuffers();
+            teardownFixture(&f);
+        }
+}
+#endif
+
 int main(int argc, char **argv)
 {
     (void) argc;
     (void) argv;
 
+#if WW_HAVE_SPLICE
+    if (argc == 2)
+    {
+        testRetiringSibling(stringCompare(argv[1], "packet") == 0, 0);
+        return 0;
+    }
+    for (unsigned mode = 0; mode < 2; ++mode)
+        for (unsigned path = 0; path < (mode ? 5U : 3U); ++path)
+            testRetiringSibling(mode, path);
+    testSpliceSocketRetirement();
+#endif
     testCase1_DifferentPeersShareSocket();
     testCase2_SamePeerCollidesToNewSocket();
     testCase3_DomainAndLiteralCollision();

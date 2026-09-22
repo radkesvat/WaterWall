@@ -173,6 +173,7 @@ tunnel_t *udpstatelesssocketTunnelCreate(node_t *node)
     }
     state->listen_port = (uint16_t) listen_port;
 
+    atomic_init(&state->socket.retired, false);
     state->socket.idle_tables = memoryAllocateZero(sizeof(*state->socket.idle_tables) * getWorkersCount());
     if (UNLIKELY(state->socket.idle_tables == NULL))
     {

@@ -1,5 +1,6 @@
 #include "iowatcher.h"
 #include "splice_buffer.h"
+#include "udp_send.h"
 #include "wloop_internal.h"
 #include "worker.h"
 #ifndef EVENT_IOCP
@@ -762,12 +763,36 @@ int wioWriteDatagram(wio_t *io, sbuf_t *buf, const sockaddr_u *peer_addr)
         return -1;
     }
 
+    if (sbufIsSplice(buf) && io->io_type != WIO_TYPE_UDP)
+    {
+        bufferpoolReuseBuffer(io->loop->bufpool, buf);
+        io->error = EINVAL;
+        if (! nested_callback)
+            wloopNormalAdmissionEnd(io->loop);
+        return -1;
+    }
     int len = (int) sbufGetLength(buf);
-    int nwrite = sendto(
-        wioGetFD(io), (const char *) sbufGetRawPtr(buf), (size_t) len, 0, &peer_addr->sa, SOCKADDR_LEN(peer_addr));
+    udp_send_result_t result;
+    if (io->io_type == WIO_TYPE_UDP)
+        result = udpSendBuffer(wioGetFD(io), buf, peer_addr, false);
+    else
+    {
+        int sent = sendto(wioGetFD(io), sbufGetRawPtr(buf), (size_t) len, 0, &peer_addr->sa, SOCKADDR_LEN(peer_addr));
+        result   = (udp_send_result_t) {.bytes = sent, .error = sent < 0 ? socketERRNO() : 0};
+    }
+    int nwrite = result.bytes;
+    if (result.retire)
+    {
+        io->error = result.error;
+        bufferpoolReuseBuffer(io->loop->bufpool, buf);
+        if (! nested_callback)
+            wloopNormalAdmissionEnd(io->loop);
+        wioClose(io);
+        return -1;
+    }
     if (nwrite < 0)
     {
-        int err = socketERRNO();
+        int err = result.error;
         if (nio_sendto_error_is_transient(err))
         {
             // Drop-on-pressure policy: no logging here, the pressure path must
@@ -805,9 +830,9 @@ int wioWrite(wio_t *io, sbuf_t *buf)
     if (splice_buffer)
     {
 #if WW_HAVE_SPLICE
-        if (UNLIKELY(io->io_type != WIO_TYPE_TCP))
+        if (UNLIKELY(io->io_type != WIO_TYPE_TCP && io->io_type != WIO_TYPE_UDP))
         {
-            LOGF("wioWrite: splice buffers require a TCP destination");
+            LOGF("wioWrite: splice buffers require a TCP or UDP destination");
             abortProgramNow(1);
         }
 #else

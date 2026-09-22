@@ -135,9 +135,11 @@ void udpstatelesssocketTunnelOnPrepair(tunnel_t *t)
 
     weventSetUserData(state->socket.io, t);
     wioSetCallBackRead(state->socket.io, udpstatelesssocketOnRecvFrom);
-    if (UNLIKELY(wioRead(state->socket.io) != 0))
+    wioSetCallBackClose(state->socket.io, udpstatelesssocketOnSocketClose);
+    wio_t *io = state->socket.io;
+    if (UNLIKELY(wioRead(io) != 0))
     {
-        wioClose(state->socket.io);
+        wioClose(io);
         state->socket.io = NULL;
         LOGF("UdpStatelessSocket: could not register udp socket with the event loop");
         startupFailureRecord(1);

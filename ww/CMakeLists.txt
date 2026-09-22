@@ -110,6 +110,7 @@ add_library(ww STATIC
     event/wevent.c
     event/wloop.c
     event/nio.c
+    event/udp_send.c
     event/ev_memory.c
     event/epoll.c
     event/evport.c
@@ -1600,6 +1601,7 @@ if(BUILD_TESTING)
         # archive linker can select one backend without extracting duplicate symbols.
         event/epoll.c
         event/nio.c
+        event/udp_send.c
         event/select.c
         event/wloop.c
         # Failure-injection tests compile these sources directly. Keep their

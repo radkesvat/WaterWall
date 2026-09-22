@@ -9,6 +9,11 @@ void udplistenerTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     if (ls->source_kind == kUdpListenerSourceStatic)
     {
+        if (udpsockIsRetired(ls->uio))
+        {
+            lineReuseBuffer(l, buf);
+            return;
+        }
         localidletableKeepIdleItemForAtleast(udpsockGetWorkerIdleTable(ls->uio), ls->idle_handle, kUdpKeepExpireTime);
         postUdpWrite(ls->uio, lineGetWID(l), buf, ls->peer_addr);
         return;

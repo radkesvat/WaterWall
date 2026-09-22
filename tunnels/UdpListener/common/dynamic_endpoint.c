@@ -46,6 +46,16 @@ udplistener_dynamic_endpoint_t *udplistenerFindDynamicEndpoint(tunnel_t         
     return it.ref->second;
 }
 
+static void udplistenerOnDynamicEndpointClose(wio_t *io)
+{
+    udplistener_dynamic_endpoint_t *ep = weventGetUserdata(io);
+    weventSetUserData(io, NULL);
+    wioSetCallBackRead(io, NULL);
+    wioSetCallBackClose(io, NULL);
+    ep->wio = NULL;
+    udplistenerDynamicEndpointClose(ep->tunnel, ep->handle);
+}
+
 bool udplistenerDynamicEndpointOpen(tunnel_t *t, wid_t wid, const udplistener_dynamic_endpoint_open_request_t *req,
                                     udplistener_dynamic_endpoint_open_result_t *res_out)
 {
@@ -171,6 +181,7 @@ bool udplistenerDynamicEndpointOpen(tunnel_t *t, wid_t wid, const udplistener_dy
         return false;
     }
 
+    wioSetCallBackClose(wio, udplistenerOnDynamicEndpointClose);
     res_out->handle           = ep->handle;
     res_out->bound_local_addr = ep->bound_local_addr;
     res_out->bound_local_port = ep->bound_local_port;
@@ -244,6 +255,7 @@ void udplistenerDynamicEndpointClose(tunnel_t *t, udplistener_dynamic_endpoint_h
     {
         weventSetUserData(ep->wio, NULL);
         wioSetCallBackRead(ep->wio, NULL);
+        wioSetCallBackClose(ep->wio, NULL);
         wioClose(ep->wio);
         ep->wio = NULL;
     }

@@ -35,7 +35,7 @@ void udplistenerLinestateInitialize(udplistener_lstate_t *ls, line_t *l, tunnel_
                                   .dynamic_handle   = (udplistener_dynamic_endpoint_handle_t) {0},
                                   .bound_local_port = real_localport,
                                   .idle_handle      = NULL,
-                                  .listener_fd      = wioGetFD(uio->io),
+                                  .listener_fd      = uio->listener_fd,
                                   .read_paused      = false,
                                   .peer_addr        = *peer_addr,
                                   .local_addr       = effective_local_addr};

@@ -273,6 +273,7 @@ struct udpconnector_lstate_s
     bool                               write_paused : 1;     // whether upstream writes are queued
     bool                               queue_pause_sent : 1; // whether downstream pause was sent for the queue
     bool                               route_destination_pinned : 1;
+    bool                               finishing : 1; // Close-time flush owns cleanup; never reflect Finish.
 };
 
 enum
@@ -325,7 +326,7 @@ bool   udpconnectorLinestateInitialize(udpconnector_lstate_t *ls, tunnel_t *t, l
 void   udpconnectorLinestateDestroy(udpconnector_lstate_t *ls);
 void   udpconnectorCancelPacketDnsRequests(udpconnector_lstate_t *ls);
 size_t udpconnectorQueuedWriteBytes(udpconnector_lstate_t *ls);
-void   udpconnectorFlushWriteQueue(udpconnector_lstate_t *ls);
+bool   udpconnectorFlushWriteQueue(udpconnector_lstate_t *ls);
 bool   udpconnectorReplayWriteQueue(udpconnector_lstate_t *ls);
 
 local_idle_table_t         *udpconnectorGetWorkerIdleTable(udpconnector_tstate_t *ts);
@@ -335,6 +336,8 @@ udpconnector_worker_pool_t *udpconnectorGetLineWorkerPool(udpconnector_tstate_t 
 udpconnector_pool_socket_t *udpconnectorPoolSocketCreate(tunnel_t *t, udpconnector_worker_pool_t *pool, int family);
 void                        udpconnectorPoolSocketRetire(udpconnector_pool_socket_t *sock);
 
+/* Borrows an active binding; Closing refuses sends, Draining preserves them. */
+bool                    udpconnectorBindingCanSend(const udpconnector_binding_t *binding);
 udpconnector_binding_t *udpconnectorAcquireBinding(tunnel_t *t, line_t *l, udpconnector_lstate_t *ls,
                                                    const sockaddr_u *peer_addr);
 void udpconnectorBindingDetach(udpconnector_binding_t *binding, udpconnector_detach_disposition_t disposition);

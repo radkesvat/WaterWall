@@ -290,7 +290,7 @@ void udpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
         }
         else
         {
-            udpconnectorFlushWriteQueue(ls);
+            alive = udpconnectorFlushWriteQueue(ls);
         }
     }
 

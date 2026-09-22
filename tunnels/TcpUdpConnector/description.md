@@ -1,5 +1,5 @@
 <!--
-Documentation version: 152
+Documentation version: 153
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/TcpUdpConnector.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/TcpUdpConnector.mdx, and all files must keep the same documentation version.
 -->
 
@@ -129,10 +129,20 @@ Source-backed metadata:
 
 | Property | Value |
 | --- | --- |
-| node flags | `kNodeFlagChainEnd` |
+| node flags | `kNodeFlagChainEnd` &#124; `kNodeFlagSupportsSplice` |
 | `can_have_prev` | `true` |
 | `can_have_next` | `false` |
 | `layer_group` | `kNodeLayer4` |
 | `layer_group_prev_node` | `kNodeLayer4` |
 | `layer_group_next_node` | `kNodeLayerNone` |
 | `required_padding_left` | `0` bytes |
+
+## UDP splice sending
+
+UDP receives remain ordinary buffers. On an eligible Linux chain, UDP sends accept ordinary data or a real prefix plus a private-pipe body as one datagram to its explicit destination, including empty datagrams. Supported layouts use pipe-to-socket splice. Highly fragmented pipes, or failure to establish a safe fragment bound before sending, use a complete ordinary fallback before socket assembly. Oversized datagrams are rejected without splitting.
+
+Pressure before assembly retains the existing drop policy, without a UDP retry queue. An incomplete splice or failed commit after priming retires only the affected socket; its associated normal lines close through their owners. Shared-socket peers can therefore close together. No truncated remainder is retried, and unrelated sockets remain active. Ordinary sends retain their existing error policy.
+
+The flag does not bypass platform support, `misc.splice`, packet exclusion, or support from every node in the final expanded/merged chain. No end-to-end zero-copy or measured performance gain is promised.
+
+Both internal connector nodes retain their capability flags. Eligibility includes both branches and inserted helpers, even for a TCP line. Protocol selection and UDP peer routing remain unchanged.

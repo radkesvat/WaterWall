@@ -46,7 +46,13 @@ void onUdpListenerFilteredPayloadReceived(wevent_t *ev)
     wid_t               wid            = data->wid;
     sbuf_t             *buf            = data->buf;
     uint16_t            real_localport = data->real_localport;
-    local_idle_table_t *table          = udpsockGetWorkerIdleTable(sock);
+    if (udpsockIsRetired(sock))
+    {
+        bufferpoolReuseBuffer(getWorkerBufferPool(wid), buf);
+        udppayloadDestroy(data);
+        return;
+    }
+    local_idle_table_t *table = udpsockGetWorkerIdleTable(sock);
 
     // The wio event carries the worker that owns this datagram's line.
     assert(currentThreadIsEventWorkerWID(wid));

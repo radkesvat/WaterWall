@@ -435,8 +435,12 @@ WW_EXPORT int wioReadRemain(wio_t *io);
 #define wioReadBytes(io, len)  wioReadUntillLength(io, len)
 #define wioReadUntill(io, len) wioReadUntillLength(io, len)
 
-// Independent writes may be called from another thread, but callers must serialize writes for one
-// wio_t. The backend admits each call against the target loop and owns the transferred buffer.
+// During normal operation, WIO access, writes, close and associated callbacks belong to its
+// owning event worker. Foreign producers submit through the adapter's worker-message interface;
+// serialization or target-loop admission does not transfer WIO ownership. Exclusive startup,
+// explicit detach/attach and teardown retain their separate lifecycle contracts.
+// An independent write is an owner-thread call outside an admitted normal callback. The backend
+// admits it against the owner loop and owns the transferred buffer.
 // wio_try_write => wioAdd(io, WW_WRITE) => write => wwrite_cb
 // NOTE: The internal retry queue is a stream (TCP) behavior only. For UDP/raw io,
 // wioWrite snapshots the current default peer address and delegates to
@@ -465,12 +469,19 @@ WW_EXPORT int wioWrite(wio_t *io, sbuf_t *buf);
 //            datagram also returns 0. Either way the buffer is consumed and
 //            must not be retried.
 //         -1: permanent error or invalid/closed io; io->error is set.
+// Linux UDP splice sends validate total datagram size, retain prefix/body with MORE,
+// and commit only after complete transfer. Fragment-layout/probe fallback occurs
+// before assembly. Any incomplete assembly or commit failure retires the socket;
+// the input is settled before its synchronous close callback, which may destroy
+// associated lines or the WIO. Callers must protect/recheck any continuation.
+// Ordinary UDP receive/write policy and raw-IP writes remain unchanged.
 WW_EXPORT int wioWriteDatagram(wio_t *io, sbuf_t *buf, const sockaddr_u *peer_addr);
 
-// NOTE: wioClose is thread-safe, wioCloseAsync will be called actually in other thread.
+// Owner-worker close; may invoke the close callback synchronously. No foreign-caller dispatch.
 // wioDel(io, WW_RDWR) => close => wclose_cb
 WW_EXPORT int wioClose(wio_t *io);
-// Cross-thread close uses the internal cleanup-control queue.
+// Owner-worker request for deferred close on its loop through the cleanup-control queue.
+// This API does not authorize access to another worker's WIO.
 WW_EXPORT int wioCloseAsync(wio_t *io);
 
 //------------------high-level apis-------------------------------------------

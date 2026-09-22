@@ -1,6 +1,7 @@
 #include "UdpListener/interface.h"
 #include "UdpListener/structure.h"
 #include "tunnel_orderly_shutdown_harness.h"
+#include "udp_splice_fixture.h"
 
 #if defined(OS_LINUX)
 #include <dirent.h>
@@ -918,8 +919,129 @@ static void testWrongWorkerDownstreamCallbacksAbortBeforeLineStateAccess(void)
     tosResetProcessApi(true);
 }
 
+#if WW_HAVE_SPLICE
+static void retireStaticFixtureSocket(wio_t *io)
+{
+    udpsock_t *socket = weventGetUserdata(io);
+    weventSetUserData(io, NULL);
+    wioSetCallBackClose(io, NULL);
+    udpsockRetire(socket);
+}
+static void testStaticSpliceRetirement(void)
+{
+    for (unsigned canceled = 0; canceled < 2; ++canceled)
+    {
+        twfSetCase("static UDP retirement drains exact peer owners and detaches cached WIO slots");
+        tos_worker_env_t env;
+        tosWorkerEnvSetup(&env, 2, 8192, 1024);
+        env.pools[2]       = env.pools[0]; /* Chain padding also visits the fixture pseudo-worker. */
+        tunnel_t   *source = tunnelCreate(NULL, 0, sizeof(udplistener_lstate_t));
+        twf_trace_t trace  = {0};
+        tunnel_t   *next   = twfCreateNextTunnel(&trace);
+        tunnelBind(source, next);
+        tunnel_chain_t *chain      = tunnelchainCreate(2);
+        chain->sum_line_state_size = source->lstate_size;
+        tunnelchainFinalize(chain);
+        source->chain                 = chain;
+        wio_t              *io        = wloopCreateUdpServer(env.loops[0], "127.0.0.1", 0);
+        local_idle_table_t *tables[2] = {0};
+        udpsock_t           socket = {.io = io, .idle_tables = tables, .listener_fd = wioGetFD(io), .owner_slot = &io};
+        weventSetUserData(io, &socket);
+        wioSetCallBackClose(io, retireStaticFixtureSocket);
+        sockaddr_u peer;
+        sockaddrSetIpAddressPort(&peer, "127.0.0.1", 32001);
+        line_t *lines[2];
+        for (wid_t wid = 0; wid < 2; ++wid)
+        {
+            discard tosSetCurrentWorker(wid);
+            lines[wid] = lineCreate(tunnelchainGetLinePools(chain), wid);
+            lineRef(lines[wid]);
+            udplistener_lstate_t *ls = lineGetState(lines[wid], source);
+            udplistenerLinestateInitialize(ls, lines[wid], source, &socket, 32000, &peer, &peer);
+            ls->idle_handle = localidletableCreateItem(
+                udpsockGetWorkerIdleTable(&socket), 1, ls, udplistenerOnConnectionExpire, 30000);
+        }
+        discard tosSetCurrentWorker(0);
+        udp_test_short_splice = true;
+        twfRequire(wioWriteDatagram(io, udpTestSplicePayload(env.pools[0]), &peer) == -1,
+                   "static retirement injection");
+        twfRequire(io == NULL && socket.io == NULL && udpsockIsRetired(&socket),
+                   "static WIO slots survived retirement");
+        tosPumpWorker(&env, 0);
+        if (canceled)
+        {
+            discard tosSetCurrentWorker(1);
+            workerMessagesCleanupPending(&env.workers[1]);
+            /* Canceled notification keeps the existing finite owner inventory.
+             * Retired sends cannot refresh it; expiry closes the line normally. */
+            uint64_t deadline =
+                localidletableTestGetDeadline(((udplistener_lstate_t *) lineGetState(lines[1], source))->idle_handle);
+            udplistenerTunnelDownStreamPayload(source, lines[1], udpTestSplicePayload(env.pools[1]));
+            twfRequire(localidletableTestGetDeadline(
+                           ((udplistener_lstate_t *) lineGetState(lines[1], source))->idle_handle) == deadline,
+                       "retired send extended peer lifetime");
+            localidletableTestSetNowMS(tables[1], deadline + 1);
+            localidletableTestRunExpiry(tables[1]);
+            socketmanagerDrainUdpSocketForWorker(&socket, 1);
+        }
+        else
+            tosPumpWorker(&env, 1);
+        twfRequire(! lineIsAlive(lines[0]) && ! lineIsAlive(lines[1]) && trace.next_finish == 2,
+                   "static retirement left an owned line or duplicated Finish");
+        for (wid_t wid = 0; wid < 2; ++wid)
+        {
+            discard tosSetCurrentWorker(wid);
+            lineUnref(lines[wid]);
+        }
+        discard tosSetCurrentWorker(0);
+        twfRequireNoLeakedBuffers();
+        tosRequireNoProcessApiCall();
+        tunnelchainDestroy(chain);
+        tunnelDestroy(source);
+        tunnelDestroy(next);
+        tosWorkerEnvTeardown(&env);
+    }
+}
+
+static void testDynamicSpliceRetirement(void)
+{
+    twfSetCase("dynamic UDP splice retirement closes endpoint and owned line");
+    udplistener_test_fixture_t f;
+    setupFixture(&f);
+    attachRecordingNext(&f);
+    ip_addr_t ip = {.type = IPADDR_TYPE_V4};
+    twfRequire(ip4AddrAddressToNetwork("127.0.0.1", &ip.u_addr.ip4) != 0, "dynamic splice peer");
+    udplistener_dynamic_endpoint_open_request_t req    = {.expected_peer_ip = ip, .expected_source_port = 32001};
+    udplistener_dynamic_endpoint_open_result_t  result = {0};
+    twfRequire(f.provider.open(f.provider.instance, 0, &req, &result) &&
+                   f.provider.activate(f.provider.instance, result.handle),
+               "dynamic splice endpoint");
+    udplistener_dynamic_endpoint_t *ep = udplistenerFindDynamicEndpoint(f.listener, result.handle);
+    sockaddr_u                      peer;
+    sockaddrSetIpAddressPort(&peer, "127.0.0.1", 32001);
+    wioSetPeerAddr(ep->wio, &peer.sa, SOCKADDR_LEN(&peer));
+    sbuf_t *input = bufferpoolGetSmallBuffer(f.env.pool);
+    sbufSetLength(input, 1);
+    udplistenerOnDynamicEndpointRead(ep->wio, input);
+    line_t *line = ep->line;
+    lineRef(line);
+    udp_test_short_splice = true;
+    udplistenerTunnelDownStreamPayload(f.listener, line, udpTestSplicePayload(f.env.pool));
+    twfRequire(! lineIsAlive(line) && udplistenerFindDynamicEndpoint(f.listener, result.handle) == NULL,
+               "splice failure retained endpoint or owned line");
+    twfRequireEqualU32(f.accepted_finish_calls, 1, "dynamic retirement must finish next exactly once");
+    lineUnref(line);
+    twfRequireNoLeakedBuffers();
+    teardownFixture(&f);
+}
+#endif
+
 int main(void)
 {
+#if WW_HAVE_SPLICE
+    testStaticSpliceRetirement();
+    testDynamicSpliceRetirement();
+#endif
     testWrongWorkerDownstreamCallbacksAbortBeforeLineStateAccess();
     testDynamicEndpointOpenActivateClose();
     testDynamicEndpointNonzeroOwnerWorker();

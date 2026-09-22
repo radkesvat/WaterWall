@@ -31,6 +31,7 @@ void udplistenerTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle
             {
                 weventSetUserData(ep->wio, NULL);
                 wioSetCallBackRead(ep->wio, NULL);
+                wioSetCallBackClose(ep->wio, NULL);
                 wioClose(ep->wio);
                 ep->wio = NULL;
             }
