@@ -6,23 +6,18 @@ void socks5clientTunnelUpStreamInit(tunnel_t *t, line_t *l)
 {
     socks5client_tstate_t   *ts       = tunnelGetState(t);
     socks5client_lstate_t   *ls       = lineGetState(l, t);
-    socks5client_protocol_t  protocol = kSocks5ClientProtocolTcp;
-    address_context_t *target = lineGetDestinationAddressContext(l);
+    address_context_t       *target   = lineGetDestinationAddressContext(l);
 
-    if (ts->resolve_domains)
-    {
-        socks5client_domain_resolver_lstate_t *resolver_ls =
-            domainresolverTunnelGetUserLineState(ts->domain_resolver_tunnel, l);
-        protocol = resolver_ls->protocol;
-    }
-    else if (! socks5clientApplyTargetContext(t, l, &protocol))
+    /* With local DNS, the prepare hook already applied the target before resolution. */
+    if (! ts->resolve_domains && UNLIKELY(! socks5clientApplyTargetContext(t, l)))
     {
         tunnelPrevDownStreamFinish(t, l);
         return;
     }
+    assert(target->proto_tcp != target->proto_udp);
 
     socks5clientLinestateInitialize(ls, t, l);
-    ls->protocol = protocol;
+    ls->protocol = target->proto_udp ? kSocks5ClientProtocolUdp : kSocks5ClientProtocolTcp;
     ls->kind     = ls->protocol == kSocks5ClientProtocolUdp ? kSocks5ClientLineKindUdpApp : kSocks5ClientLineKindDirect;
     addresscontextCopy(&ls->target_addr, target);
 
@@ -62,13 +57,6 @@ bool socks5clientDomainResolverPrepare(tunnel_t *resolver, tunnel_t *client, lin
     discard resolver;
     discard direction;
 
-    socks5client_domain_resolver_lstate_t *ls = user_lstate;
-    ls->protocol = kSocks5ClientProtocolTcp;
-
-    if (UNLIKELY(! socks5clientApplyTargetContext(client, l, &ls->protocol)))
-    {
-        return false;
-    }
-
-    return true;
+    discard user_lstate;
+    return socks5clientApplyTargetContext(client, l);
 }

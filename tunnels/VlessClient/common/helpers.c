@@ -203,7 +203,7 @@ void vlessclientTunnelstateDestroy(vlessclient_tstate_t *ts)
     memoryZeroAligned32(ts, tunnelGetCorrectAlignedStateSize(sizeof(*ts)));
 }
 
-bool vlessclientApplyTargetContext(tunnel_t *t, line_t *l, vlessclient_protocol_t *protocol_out)
+bool vlessclientApplyTargetContext(tunnel_t *t, line_t *l)
 {
     vlessclient_tstate_t *ts       = tunnelGetState(t);
     address_context_t    *dest_ctx = lineGetDestinationAddressContext(l);
@@ -258,8 +258,6 @@ bool vlessclientApplyTargetContext(tunnel_t *t, line_t *l, vlessclient_protocol_
     {
         addresscontextSetOnlyProtocol(dest_ctx, IP_PROTO_UDP);
     }
-
-    *protocol_out = resolved_protocol;
 
     if (uses_current_dest)
     {

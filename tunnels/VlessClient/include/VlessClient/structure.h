@@ -59,11 +59,6 @@ typedef struct vlessclient_tstate_s
     bool                   resolve_domains;
 } vlessclient_tstate_t;
 
-typedef struct vlessclient_domain_resolver_lstate_s
-{
-    vlessclient_protocol_t protocol;
-} vlessclient_domain_resolver_lstate_t;
-
 typedef struct vlessclient_lstate_s
 {
     tunnel_t               *tunnel;
@@ -108,7 +103,7 @@ void vlessclientLinestateInitialize(vlessclient_lstate_t *ls, tunnel_t *t, line_
 void vlessclientLinestateDestroy(vlessclient_lstate_t *ls);
 
 void vlessclientTunnelstateDestroy(vlessclient_tstate_t *ts);
-bool vlessclientApplyTargetContext(tunnel_t *t, line_t *l, vlessclient_protocol_t *protocol_out);
+bool vlessclientApplyTargetContext(tunnel_t *t, line_t *l);
 bool vlessclientStartUdpCarrier(tunnel_t *t, line_t *l, vlessclient_lstate_t *ls, bool *line_alive_out);
 bool vlessclientForwardUdpAppPayload(tunnel_t *t, line_t *l, vlessclient_lstate_t *ls, sbuf_t *buf);
 bool vlessclientHandleUdpCarrierPayload(tunnel_t *t, line_t *l, vlessclient_lstate_t *ls, sbuf_t *buf);

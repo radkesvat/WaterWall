@@ -69,11 +69,7 @@ static bool socks5clientCreateInternalDomainResolver(tunnel_t *t, node_t *node)
     }
 
     domainresolverTunnelUseLineStrategy(ts->domain_resolver_tunnel, true);
-    domainresolverTunnelSetPrepareHook(ts->domain_resolver_tunnel,
-                                       t,
-                                       sizeof(socks5client_domain_resolver_lstate_t),
-                                       socks5clientDomainResolverPrepare,
-                                       NULL);
+    domainresolverTunnelSetPrepareHook(ts->domain_resolver_tunnel, t, 0, socks5clientDomainResolverPrepare, NULL);
     ts->domain_resolver_node.instance = ts->domain_resolver_tunnel;
     return true;
 }

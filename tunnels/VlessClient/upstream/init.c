@@ -6,23 +6,18 @@ void vlessclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
 {
     vlessclient_tstate_t   *ts       = tunnelGetState(t);
     vlessclient_lstate_t   *ls       = lineGetState(l, t);
-    vlessclient_protocol_t  protocol = kVlessClientProtocolTcp;
-    address_context_t *target = lineGetDestinationAddressContext(l);
+    address_context_t      *target   = lineGetDestinationAddressContext(l);
 
-    if (ts->resolve_domains)
-    {
-        vlessclient_domain_resolver_lstate_t *resolver_ls =
-            domainresolverTunnelGetUserLineState(ts->domain_resolver_tunnel, l);
-        protocol = resolver_ls->protocol;
-    }
-    else if (UNLIKELY(! vlessclientApplyTargetContext(t, l, &protocol)))
+    /* With local DNS, the prepare hook already applied the target before resolution. */
+    if (! ts->resolve_domains && UNLIKELY(! vlessclientApplyTargetContext(t, l)))
     {
         tunnelPrevDownStreamFinish(t, l);
         return;
     }
+    assert(target->proto_tcp != target->proto_udp);
 
     vlessclientLinestateInitialize(ls, t, l);
-    ls->protocol = protocol;
+    ls->protocol = target->proto_udp ? kVlessClientProtocolUdp : kVlessClientProtocolTcp;
     ls->kind     = ls->protocol == kVlessClientProtocolUdp ? kVlessClientLineKindUdpApp : kVlessClientLineKindDirect;
     addresscontextCopy(&ls->target_addr, target);
 
@@ -57,13 +52,6 @@ bool vlessclientDomainResolverPrepare(tunnel_t *resolver, tunnel_t *client, line
     discard resolver;
     discard direction;
 
-    vlessclient_domain_resolver_lstate_t *ls = user_lstate;
-    ls->protocol = kVlessClientProtocolTcp;
-
-    if (UNLIKELY(! vlessclientApplyTargetContext(client, l, &ls->protocol)))
-    {
-        return false;
-    }
-
-    return true;
+    discard user_lstate;
+    return vlessclientApplyTargetContext(client, l);
 }

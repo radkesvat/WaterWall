@@ -69,11 +69,7 @@ static bool vlessclientCreateInternalDomainResolver(tunnel_t *t, node_t *node)
     }
 
     domainresolverTunnelUseLineStrategy(ts->domain_resolver_tunnel, true);
-    domainresolverTunnelSetPrepareHook(ts->domain_resolver_tunnel,
-                                       t,
-                                       sizeof(vlessclient_domain_resolver_lstate_t),
-                                       vlessclientDomainResolverPrepare,
-                                       NULL);
+    domainresolverTunnelSetPrepareHook(ts->domain_resolver_tunnel, t, 0, vlessclientDomainResolverPrepare, NULL);
     ts->domain_resolver_node.instance = ts->domain_resolver_tunnel;
     return true;
 }

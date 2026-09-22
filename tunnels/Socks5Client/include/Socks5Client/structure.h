@@ -46,11 +46,6 @@ typedef struct socks5client_tstate_s
     bool                    resolve_domains;
 } socks5client_tstate_t;
 
-typedef struct socks5client_domain_resolver_lstate_s
-{
-    socks5client_protocol_t protocol;
-} socks5client_domain_resolver_lstate_t;
-
 typedef struct socks5client_lstate_s
 {
     tunnel_t                *tunnel;
@@ -103,7 +98,7 @@ void socks5clientLinestateInitialize(socks5client_lstate_t *ls, tunnel_t *t, lin
 void socks5clientLinestateDestroy(socks5client_lstate_t *ls);
 
 void socks5clientTunnelstateDestroy(socks5client_tstate_t *ts);
-bool socks5clientApplyTargetContext(tunnel_t *t, line_t *l, socks5client_protocol_t *protocol_out);
+bool socks5clientApplyTargetContext(tunnel_t *t, line_t *l);
 bool socks5clientSendGreeting(tunnel_t *t, line_t *l, socks5client_lstate_t *ls);
 bool socks5clientSendAuthRequest(tunnel_t *t, line_t *l, socks5client_lstate_t *ls);
 bool socks5clientSendConnectRequest(tunnel_t *t, line_t *l, socks5client_lstate_t *ls);
