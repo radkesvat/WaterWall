@@ -222,7 +222,9 @@ static void tosWorkerEnvSetup(tos_worker_env_t *env, wid_t count, uint32_t large
                                           4,
                                           large_buffer_size,
                                           MEDIUM_BUFFER_SIZE_RAM_HIGH,
-                                          small_buffer_size);
+                                          small_buffer_size,
+                                          min((uint32_t) (large_buffer_size), (uint32_t) SPLICE_PAYLOAD_LIMIT),
+                                          large_buffer_size);
         twfRequire(env->pools[wi] != NULL, "failed to create a test buffer pool");
 
         env->wios_pools[wi] =

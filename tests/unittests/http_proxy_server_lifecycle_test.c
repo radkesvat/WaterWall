@@ -235,12 +235,11 @@ static void pipelinePressure(tunnel_chain_t *chain, const char *get)
     automatic_response = false;
     sendBytes(client, false, get);
     httpproxyserverTunnelUpStreamPause(proxy, client);
-    const size_t overflow_length =
-        max(UINT64_C(65536), 2 * (uint64_t) bufferpoolGetLargeBufferSize(lineGetBufferPool(client))) + 1;
+    const size_t overflow_length = UINT64_C(2) * 1024 * 1024 + 1;
     char *overflow = memoryAllocate(overflow_length + 1);
     memorySet(overflow, 'x', overflow_length);
     overflow[overflow_length] = 0;
-    sendBytes(client, false, overflow); /* True overflow of the pool-derived allowance. */
+    sendBytes(client, false, overflow); /* True overflow of the fixed delivery allowance. */
     memoryFree(overflow);
     httpproxyserverTunnelUpStreamResume(proxy, client);
     require(! lineIsAlive(client) && child == NULL, "R1 real overflow did not settle");
@@ -443,7 +442,7 @@ static void requireRetainedBounds(hps_session_t *session)
 {
     buffer_pool_t *pool    = lineGetBufferPool(session->client);
     const uint64_t p       = ((hps_tstate_t *) tunnelGetState(proxy))->max_pending;
-    const uint64_t d       = max(UINT64_C(65536), 2 * (uint64_t) bufferpoolGetLargeBufferSize(pool));
+    const uint64_t d       = UINT64_C(2) * 1024 * 1024;
     uint64_t       working = 0, charge = 0, total = 0;
     uint32_t       remainder_capacity;
     require(sbufTryComputeCapacity(max((uint64_t) bufferpoolGetSmallBufferSize(pool), 2 * d),
@@ -476,7 +475,7 @@ static void largeDeliveries(tunnel_chain_t *chain, bool delayed, bool close_reta
     automatic_response  = false;
     delay_establishment = delayed;
     pause_request       = ! delayed;
-    const size_t n      = LARGE_BUFFER_SIZE_RAM_HIGH;
+    const size_t n      = SPLICE_PAYLOAD_LIMIT;
     char        *text   = memoryAllocate(n + 6000);
     char         padding[5001];
     memorySet(padding, 'h', 5000);
@@ -523,7 +522,7 @@ static void largeDeliveries(tunnel_chain_t *chain, bool delayed, bool close_reta
     memoryFree(text);
 }
 
-static void runSuite(uint32_t large_size)
+static void runSuite(uint32_t large_size, uint32_t splice_limit)
 {
     GSTATE.flag_initialized = true;
     GSTATE.workers_count    = 2;
@@ -531,8 +530,16 @@ static void runSuite(uint32_t large_size)
     master_pool_t *medium = masterpoolCreateWithCapacity(8);
     master_pool_t *splice = masterpoolCreateWithCapacity(8);
     master_pool_t *ios  = masterpoolCreateWithCapacity(8);
-    buffer_pool_t *pool =
-        bufferpoolCreate(large, medium, small, splice, 4, large_size, MEDIUM_BUFFER_SIZE_RAM_HIGH, 4096);
+    buffer_pool_t *pool   = bufferpoolCreate(large,
+                                           medium,
+                                           small,
+                                           splice,
+                                           4,
+                                           large_size,
+                                           MEDIUM_BUFFER_SIZE_RAM_HIGH,
+                                           4096,
+                                           splice_limit,
+                                           max((uint32_t) (large_size), (uint32_t) (splice_limit)));
     bufferpoolUpdateAllocationPaddings(pool, 64, 64, 64, 64);
     threadsafe_generic_pool_t *io_pool =
         threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(ios, sizeof(wio_t), 8);
@@ -586,12 +593,11 @@ static void runSuite(uint32_t large_size)
     const char *get      = "GET http://127.0.0.1:80/a HTTP/1.1\r\nHost: ignored.test\r\n\r\n";
     const char *fix_case = getenv("HPS_FIX_CASE");
     if (! fix_case || ! stringCompare(fix_case, "R1"))
-        if (large_size == LARGE_BUFFER_SIZE_RAM_HIGH)
-        {
-            largeDeliveries(chain, false, false);
-            largeDeliveries(chain, true, false);
-            largeDeliveries(chain, false, true);
-        }
+    {
+        largeDeliveries(chain, false, false);
+        largeDeliveries(chain, true, false);
+        largeDeliveries(chain, false, true);
+    }
     pipelinePressure(chain, get);
     if (! fix_case || ! stringCompare(fix_case, "R3"))
         responseEof(chain, get);
@@ -796,7 +802,8 @@ static void runSuite(uint32_t large_size)
 
 int main(void)
 {
-    runSuite(32768);
-    runSuite(LARGE_BUFFER_SIZE_RAM_HIGH);
+    runSuite(32768, 32768);
+    runSuite(LARGE_BUFFER_SIZE_RAM_HIGH, SPLICE_PAYLOAD_LIMIT);
+    runSuite(65536, 4U * 1024U * 1024U);
     return 0;
 }

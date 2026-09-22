@@ -12,7 +12,7 @@
 enum
 {
     kTestCid             = 0x12345678U,
-    kTestLargeBufferSize = 1024U * 1024U + 64U,
+    kTestLargeBufferSize = 128U * 1024U,
     kTestPoolCapacity    = 16
 };
 
@@ -53,14 +53,19 @@ static test_pool_t testPoolCreateWithSizes(uint32_t large_size, uint32_t medium_
     };
     require(result.large_master != NULL && result.small_master != NULL, "failed to create master pools");
 
-    result.pool = bufferpoolCreate(result.large_master,
-                                   result.medium_master,
-                                   result.small_master,
-                                   result.splice_master,
-                                   kTestPoolCapacity,
-                                   large_size,
-                                   medium_size,
-                                   1024);
+    result.pool = bufferpoolCreate(
+        result.large_master,
+        result.medium_master,
+        result.small_master,
+        result.splice_master,
+        kTestPoolCapacity,
+        large_size,
+        medium_size,
+        1024,
+        large_size == kTestLargeBufferSize ? SPLICE_PAYLOAD_LIMIT : min(large_size, (uint32_t) SPLICE_PAYLOAD_LIMIT),
+        max((uint32_t) (large_size),
+            (uint32_t) (large_size == kTestLargeBufferSize ? SPLICE_PAYLOAD_LIMIT
+                                                           : min(large_size, (uint32_t) SPLICE_PAYLOAD_LIMIT))));
     require(result.pool != NULL, "failed to create buffer pool");
     bufferpoolUpdateAllocationPaddings(
         result.pool, kMuxFrameLength * 2U, kMuxFrameLength * 2U, kMuxFrameLength * 2U, splice_padding);
@@ -616,7 +621,7 @@ static void testEncodingAndOwnership(buffer_pool_t *pool)
     require(encoded == input, "in-place encode did not return its input");
     bufferpoolReuseBuffer(pool, encoded);
 
-    input = bufferpoolGetLargeBuffer(pool);
+    input = bufferpoolGetBestFit(pool, kMuxMaxDataFrameLength + 1U, bufferpoolGetLargeBufferPadding(pool));
     sbufSetLength(input, kMuxMaxDataFrameLength + 1U);
     for (uint32_t i = 0; i < sbufGetLength(input); ++i)
         sbufGetMutablePtr(input)[i] = patternByte(i);
@@ -627,7 +632,8 @@ static void testEncodingAndOwnership(buffer_pool_t *pool)
     require(encoded != NULL && encoded != original_input, "expanded encode did not return a new buffer");
 
     sbuf_t *reacquired = bufferpoolGetLargeBuffer(pool);
-    require(reacquired == original_input, "expanded encode did not recycle its input exactly once");
+    require(sbufGetTotalCapacityNoPadding(reacquired) == bufferpoolGetLargeBufferSize(pool),
+            "dedicated encoder input entered the large cache");
     bufferpoolReuseBuffer(pool, reacquired);
     bufferpoolReuseBuffer(pool, encoded);
 
@@ -679,8 +685,19 @@ static void testPausedRetentionStorage(buffer_pool_t *pool)
 
 static void testQueuedFrameExtraction(buffer_pool_t *pool)
 {
-    const uint32_t lengths[] = {
-        0, 1, 1024, 4097, bufferpoolGetMediumBufferSize(pool) / 2, 32768, 32769, kMuxMaxDataFrameLength, UINT16_MAX};
+    const uint32_t lengths[] = {0,
+                                1,
+                                1024,
+                                4097,
+                                bufferpoolGetMediumBufferSize(pool) / 2,
+                                32768,
+                                32769,
+                                131071,
+                                131072,
+                                131073,
+                                600 * 1024,
+                                kMuxMaxDataFrameLength,
+                                UINT16_MAX};
     for (size_t i = 0; i < ARRAY_SIZE(lengths); ++i)
         for (unsigned int fragmented = 0; fragmented < 2; ++fragmented)
         {
@@ -856,9 +873,60 @@ static void testHeaderPeekBoundaries(buffer_pool_t *pool)
 }
 
 #if WW_HAVE_SPLICE
+static void testLargeMaterialization(buffer_pool_t *pool)
+{
+    const uint32_t lengths[] = {20 * 1024, 131071, 131072, 131073, 600 * 1024};
+    for (size_t i = 0; i < ARRAY_SIZE(lengths); ++i)
+        for (unsigned partial = 0; partial < 2; ++partial)
+        {
+            const uint32_t length = lengths[i];
+            sbuf_t        *source = tryMakeLargeSplicePattern(pool, length, "large full/partial materialization");
+            if (source == NULL)
+                continue;
+            const size_t wrapper_charge = sbufGetAllocationCharge(source);
+            sbufShiftLeft(source, 4);
+            sbufWrite(source, "HEAD", 4);
+            require(sbufGetAllocationCharge(source) == wrapper_charge &&
+                        wrapper_charge == sizeof(sbuf_t) + 32 + SPLICE_BUFFER_STORAGE_SIZE + kSbufAllocationAlignment,
+                    "logical payload or prefix changed wrapper allocation geometry");
+            if (! partial)
+            {
+                sbuf_t *result = muxMaterializeRetainedPayload(pool, source);
+                require(! sbufIsSplice(result) && sbufGetLength(result) == length + 4 && result->curpos == 28 &&
+                            memoryEqual(sbufGetRawPtr(result), "HEAD", 4),
+                        "full materialization lost prefix or residual headroom");
+                buffer_pool_fit_t fit;
+                require(bufferpoolQueryBestFit(pool, length + 4, 28, &fit) &&
+                            sbufGetAllocationCharge(result) == fit.allocation_charge,
+                        "materialization allocated by pipe capacity instead of logical length");
+                for (uint32_t j = 0; j < length; ++j)
+                    require(sbufGetMutablePtr(result)[j + 4] == patternByte(j), "full materialization changed bytes");
+                bufferpoolReuseBuffer(pool, result);
+            }
+            else
+            {
+                sbuf_t *result = bufferpoolGetBestFit(pool, length + 6, 32);
+                sbufWrite(result, ">>", 2);
+                sbufSetLength(result, 2);
+                sbufSpliceReadToBuffer(source, result, 6);
+                require(sbufGetLength(source) == length - 2 && source->curpos == 32,
+                        "partial read did not consume prefix and exactly two body bytes");
+                sbufSpliceReadToBuffer(source, result, length - 2);
+                require(sbufGetLength(source) == 0 && sbufGetLength(result) == length + 6 && result->curpos == 32 &&
+                            memoryEqual(sbufGetRawPtr(result), ">>HEAD", 6),
+                        "partial append lost existing bytes or padding");
+                for (uint32_t j = 0; j < length; ++j)
+                    require(sbufGetMutablePtr(result)[j + 6] == patternByte(j),
+                            "partial materialization changed bytes");
+                bufferpoolReuseBuffer(pool, source);
+                bufferpoolReuseBuffer(pool, result);
+            }
+        }
+}
+
 static void testMaximumSpliceWrapper(buffer_pool_t *pool)
 {
-    const uint32_t lengths[] = {65536, kMuxMaxDataFrameLength};
+    const uint32_t lengths[] = {65536, 131071, 131072, 131073, 600 * 1024, kMuxMaxDataFrameLength};
     for (size_t i = 0; i < ARRAY_SIZE(lengths); ++i)
         for (unsigned open = 0; open < 2; ++open)
         {
@@ -954,6 +1022,7 @@ int main(void)
     testControlAndClientSequences(test_pool.pool);
     testCompleteFrameParsing(test_pool.pool);
 #if WW_HAVE_SPLICE
+    testLargeMaterialization(test_pool.pool);
     testMaximumSpliceWrapper(test_pool.pool);
     testMaximumMixedFrame(test_pool.pool, false);
     testMaximumMixedFrame(test_pool.pool, true);

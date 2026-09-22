@@ -64,7 +64,9 @@ static void envSetup(test_env_t *env)
                                         16,
                                         8192,
                                         MEDIUM_BUFFER_SIZE_RAM_HIGH,
-                                        4096);
+                                        4096,
+                                        8192,
+                                        8192);
 }
 
 static void envTeardown(test_env_t *env)

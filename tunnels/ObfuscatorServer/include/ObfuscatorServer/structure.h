@@ -33,7 +33,9 @@ enum
 {
     kTunnelStateSize               = sizeof(obfuscatorserver_tstate_t),
     kLineStateSize                 = sizeof(obfuscatorserver_lstate_t),
-    kObfuscatorTlsRecordHeaderSize = 5
+    kObfuscatorTlsRecordHeaderSize = 5,
+    // Fixed stream admission budget, independent of pool geometry and splice targets.
+    kObfuscatorMaxBufferedStreamBytes = 2U * 1024U * 1024U + UINT16_MAX + kObfuscatorTlsRecordHeaderSize
 };
 
 WW_EXPORT tunnel_t    *obfuscatorserverTunnelCreate(node_t *node);

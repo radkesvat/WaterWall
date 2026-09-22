@@ -117,7 +117,9 @@ static tlsserver_padding_fixture_t createFixture(uint16_t version)
                                     4,
                                     32768,
                                     MEDIUM_BUFFER_SIZE_RAM_HIGH,
-                                    1024);
+                                    1024,
+                                    32768,
+                                    32768);
     require(fixture.large_master != NULL && fixture.small_master != NULL && fixture.pool != NULL,
             "failed to create the TlsServer padding buffer pool");
     bufferpoolUpdateAllocationPaddings(fixture.pool, 64, 64, 64, 64);

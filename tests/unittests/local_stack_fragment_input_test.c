@@ -52,7 +52,7 @@ static void runInput(uint16_t fragments, uint8_t protocol, bool shifted, uint32_
     master_pool_t *medium = masterpoolCreateWithCapacity(8);
     master_pool_t *small  = masterpoolCreateWithCapacity(8);
     master_pool_t *splice = masterpoolCreateWithCapacity(8);
-    buffer_pool_t *pool   = bufferpoolCreate(large, medium, small, splice, 8, 4096, 2048, 1024);
+    buffer_pool_t *pool   = bufferpoolCreate(large, medium, small, splice, 8, 4096, 2048, 1024, 4096, 4096);
     require(pool != NULL, "buffer pool creation failed");
     buffer_pool_t *pools[]          = {pool};
     GSTATE.workers_count            = 2;

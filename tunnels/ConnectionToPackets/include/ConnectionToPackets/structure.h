@@ -177,6 +177,8 @@ enum
     kCtpDefaultMaxPendingBytes  = 256U * 1024U,
     kCtpMinMaxPendingBytes      = 1024U,
     kCtpMaxMaxPendingBytes      = 64U * 1024U * 1024U,
+    /* Fixed headroom for already-delivered input; not a pool allocation size. */
+    kCtpPendingDeliveryHeadroom = 1024U * 1024U,
     kCtpPendingQueueCapacity    = 8,
 
     /*

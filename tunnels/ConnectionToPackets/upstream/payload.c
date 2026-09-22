@@ -12,17 +12,16 @@ static atomic_log_rate_limiter_t ctp_admission_log;
  * path that follows would hand them to the graceful closer. Refusing first keeps
  * the limit an admission decision rather than a delivery decision.
  *
- * One read-sized allowance covers input already delivered before Pause can take
+ * Fixed delivery headroom covers input already delivered before Pause can take
  * effect. The configured budget and entry limit remain bounded admission rules.
  *
  * Returns the name of the limit that refused the payload, or NULL to admit it.
  */
-static const char *ctpRefusePendingPayload(const ctp_tstate_t *ts, ctp_lstate_t *ls, uint32_t len,
-                                           uint32_t delivery_headroom)
+static const char *ctpRefusePendingPayload(const ctp_tstate_t *ts, ctp_lstate_t *ls, uint32_t len)
 {
     const size_t queued  = bufferqueueGetBufLen(&ls->pending_queue);
     const size_t entries = bufferqueueGetBufCount(&ls->pending_queue);
-    const uint64_t maximum = (uint64_t) ts->max_pending_bytes + delivery_headroom;
+    const uint64_t maximum = (uint64_t) ts->max_pending_bytes + kCtpPendingDeliveryHeadroom;
 
     if (UNLIKELY(queued > maximum || (size_t) len > maximum - queued))
     {
@@ -68,8 +67,7 @@ void ctpTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
-    const char *refusal =
-        ctpRefusePendingPayload(ts, ls, sbufGetLength(buf), bufferpoolGetLargeBufferSize(lineGetBufferPool(l)));
+    const char *refusal = ctpRefusePendingPayload(ts, ls, sbufGetLength(buf));
 
     if (UNLIKELY(refusal != NULL))
     {
@@ -83,7 +81,7 @@ void ctpTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
                  "resetting the flow",
                  refusal,
                  (unsigned int) ts->max_pending_bytes,
-                 (unsigned int) bufferpoolGetLargeBufferSize(lineGetBufferPool(l)),
+                 (unsigned int) kCtpPendingDeliveryHeadroom,
                  (unsigned int) kCtpMaxPendingEntries);
         }
         ctpCloseLineTowardPrevWithoutDrain(t, l);

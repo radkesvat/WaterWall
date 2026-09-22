@@ -122,6 +122,8 @@ static void contractEnvSetup(contract_env_t *env)
                                            4,
                                            kContractBufSize,
                                            MEDIUM_BUFFER_SIZE_RAM_HIGH,
+                                           kContractBufSize,
+                                           min((uint32_t) (kContractBufSize), (uint32_t) SPLICE_PAYLOAD_LIMIT),
                                            kContractBufSize);
         require(env->pools[wid] != NULL, "failed to create worker buffer pool");
 

@@ -36,7 +36,8 @@ static void testBestFitQuery(void)
     for (size_t i = 0; i < ARRAY_SIZE(masters); ++i)
         masters[i] = masterpoolCreateWithCapacity(8);
     // Tier names need not follow capacity order for custom/device pools.
-    buffer_pool_t *pool = bufferpoolCreate(masters[0], masters[1], masters[2], masters[3], 2, 8192, 65536, 1024);
+    buffer_pool_t *pool =
+        bufferpoolCreate(masters[0], masters[1], masters[2], masters[3], 2, 8192, 65536, 1024, 8192, 8192);
     require(pool != NULL, "query test pool construction failed");
     bufferpoolUpdateAllocationPaddings(pool, 64, 64, 32, 32);
     checkBestFitQuery(pool, 0, 0, 1024, 32, true);
@@ -60,7 +61,7 @@ static void testBestFitQuery(void)
     bufferpoolDestroy(pool);
 
     // Equal capacities prefer small, then medium, then large, subject to padding.
-    pool = bufferpoolCreate(masters[0], masters[1], masters[2], masters[3], 2, 4096, 4096, 4096);
+    pool = bufferpoolCreate(masters[0], masters[1], masters[2], masters[3], 2, 4096, 4096, 4096, 4096, 4096);
     require(pool != NULL, "equal-tier query pool construction failed");
     bufferpoolUpdateAllocationPaddings(pool, 96, 64, 32, 32);
     checkBestFitQuery(pool, 4096, 0, 4096, 32, true);
@@ -79,8 +80,16 @@ static void testMediumPoolGeometry(uint32_t large_size, uint32_t medium_size)
     master_pool_t *masters[4];
     for (size_t i = 0; i < ARRAY_SIZE(masters); ++i)
         masters[i] = masterpoolCreateWithCapacity(32);
-    buffer_pool_t *pool =
-        bufferpoolCreate(masters[0], masters[1], masters[2], masters[3], 2, large_size, medium_size, 4096);
+    buffer_pool_t *pool = bufferpoolCreate(masters[0],
+                                           masters[1],
+                                           masters[2],
+                                           masters[3],
+                                           2,
+                                           large_size,
+                                           medium_size,
+                                           4096,
+                                           min((uint32_t) (large_size), (uint32_t) SPLICE_PAYLOAD_LIMIT),
+                                           large_size);
     require(pool != NULL, "medium test pool construction failed");
     bufferpoolUpdateAllocationPaddings(pool, 32, 32, 32, 32);
     checkBestFitQuery(pool, 4097, 32, medium_size, 32, true);
@@ -121,8 +130,16 @@ static void testMediumPoolGeometry(uint32_t large_size, uint32_t medium_size)
 
     // Shared masters may contain buffers padded for another worker/device pool.
     const uint32_t other_medium_size = medium_size == 32 * 1024 ? 64 * 1024 : 32 * 1024;
-    buffer_pool_t *other =
-        bufferpoolCreate(masters[0], masters[1], masters[2], masters[3], 1, large_size, other_medium_size, 4096);
+    buffer_pool_t *other             = bufferpoolCreate(masters[0],
+                                            masters[1],
+                                            masters[2],
+                                            masters[3],
+                                            1,
+                                            large_size,
+                                            other_medium_size,
+                                            4096,
+                                            min((uint32_t) (large_size), (uint32_t) SPLICE_PAYLOAD_LIMIT),
+                                            large_size);
     bufferpoolUpdateAllocationPaddings(other, 96, 96, 32, 32);
     sbuf_t *padded = bufferpoolGetMediumBuffer(other);
     require(sbufGetTotalCapacityNoPadding(padded) == other_medium_size && sbufGetLeftCapacity(padded) == 96,
@@ -134,6 +151,77 @@ static void testMediumPoolGeometry(uint32_t large_size, uint32_t medium_size)
     {
         masterpoolMakeEmpty(masters[i]);
         masterpoolDestroy(masters[i]);
+    }
+}
+
+static void testIndependentSizing(void)
+{
+    const uint32_t profiles[] = {kRamProfileS1Memory,
+                                 kRamProfileS2Memory,
+                                 kRamProfileM1Memory,
+                                 kRamProfileM2Memory,
+                                 kRamProfileL1Memory,
+                                 kRamProfileL2Memory};
+    for (size_t i = 0; i < ARRAY_SIZE(profiles); ++i)
+    {
+        master_pool_t *masters[4];
+        for (size_t j = 0; j < ARRAY_SIZE(masters); ++j)
+            masters[j] = masterpoolCreateWithCapacity(8);
+        const bool     low          = i < 2;
+        const uint32_t splice_limit = SPLICE_PAYLOAD_LIMIT;
+        buffer_pool_t *pool         = bufferpoolCreate(masters[0],
+                                               masters[1],
+                                               masters[2],
+                                               masters[3],
+                                               2,
+                                               PROPER_LARGE_BUFFER_SIZE(profiles[i]),
+                                               PROPER_MEDIUM_BUFFER_SIZE(profiles[i]),
+                                               SMALL_BUFFER_SIZE,
+                                               splice_limit,
+                                               PROPER_WAITING_BUDGET_BASIS(profiles[i]));
+        require(pool != NULL, "profile pool construction failed");
+        require(bufferpoolGetLargeBufferSize(pool) == (low ? 65536 : 131072) &&
+                    bufferpoolGetMediumBufferSize(pool) == (low ? 32768 : 65536) &&
+                    bufferpoolGetSmallBufferSize(pool) == 4096 && bufferpoolGetSplicePayloadLimit(pool) == 1048576 &&
+                    bufferpoolGetWaitingBudgetBasis(pool) == (low ? 65536 : 1048576),
+                "ordinary tiers, uniform splice target or independent waiting basis differ from profile table");
+        bufferpoolUpdateAllocationPaddings(pool, 64, 64, 64, 64);
+        uint32_t before[4], after[4];
+        bufferpoolCachedTierCountsForTest(pool, &before[0], &before[1], &before[2], &before[3]);
+        checkBestFitQuery(pool, 600 * 1024, 64, 600 * 1024, 64, false);
+        bufferpoolCachedTierCountsForTest(pool, &after[0], &after[1], &after[2], &after[3]);
+        require(memoryEqual(before, after, sizeof(before)), "dedicated allocation entered a pool cache");
+        require(bufferpoolGetSpliceBufferStorageSize(pool) == 32, "splice target changed wrapper storage");
+        bufferpoolDestroy(pool);
+        require(bufferpoolCreate(masters[0], masters[1], masters[2], masters[3], 2, 8192, 4096, 1024, 0, 8192) ==
+                        NULL &&
+                    bufferpoolCreate(
+                        masters[0], masters[1], masters[2], masters[3], 2, 8192, 4096, 1024, UINT32_MAX, 8192) == NULL,
+                "invalid splice limit was accepted");
+        pool = bufferpoolCreate(masters[0], masters[1], masters[2], masters[3], 2, 8192, 4096, 1024, 2048, 8192);
+        require(pool != NULL && bufferpoolGetSplicePayloadLimit(pool) == 2048 &&
+                    bufferpoolGetLargeBufferSize(pool) == 8192 && bufferpoolGetWaitingBudgetBasis(pool) == 8192,
+                "custom independent splice limit changed ordinary storage");
+        bufferpoolDestroy(pool);
+        require(bufferpoolCreate(
+                    masters[0], masters[1], masters[2], masters[3], 2, 8192, 4096, 1024, SPLICE_PAYLOAD_LIMIT, 0) ==
+                        NULL &&
+                    bufferpoolCreate(masters[0],
+                                     masters[1],
+                                     masters[2],
+                                     masters[3],
+                                     2,
+                                     8192,
+                                     4096,
+                                     1024,
+                                     SPLICE_PAYLOAD_LIMIT,
+                                     UINT32_MAX) == NULL,
+                "invalid waiting budget basis was accepted");
+        for (size_t j = 0; j < ARRAY_SIZE(masters); ++j)
+        {
+            masterpoolMakeEmpty(masters[j]);
+            masterpoolDestroy(masters[j]);
+        }
     }
 }
 
@@ -152,7 +240,9 @@ static void testLowProfilePoolWidths(void)
                                                profiles[i],
                                                PROPER_LARGE_BUFFER_SIZE(profiles[i]),
                                                PROPER_MEDIUM_BUFFER_SIZE(profiles[i]),
-                                               SMALL_BUFFER_SIZE);
+                                               SMALL_BUFFER_SIZE,
+                                               SPLICE_PAYLOAD_LIMIT,
+                                               PROPER_WAITING_BUDGET_BASIS(profiles[i]));
         require(pool != NULL, "could not create low-profile pool");
         sbuf_t *small  = bufferpoolGetSmallBuffer(pool);
         sbuf_t *medium = bufferpoolGetMediumBuffer(pool);
@@ -178,6 +268,7 @@ static void testLowProfilePoolWidths(void)
 
 int main(void)
 {
+    testIndependentSizing();
     testBestFitQuery();
     testLowProfilePoolWidths();
     const uint32_t profiles[] = {kRamProfileS1Memory,
@@ -189,7 +280,7 @@ int main(void)
     for (size_t i = 0; i < ARRAY_SIZE(profiles); ++i)
     {
         const bool low = profiles[i] < kRamProfileM1Memory;
-        require(PROPER_LARGE_BUFFER_SIZE(profiles[i]) == (low ? 64 * 1024 : 1024 * 1024),
+        require(PROPER_LARGE_BUFFER_SIZE(profiles[i]) == (low ? 64 * 1024 : 128 * 1024),
                 "profile has the wrong large-buffer capacity");
         require(PROPER_MEDIUM_BUFFER_SIZE(profiles[i]) == (low ? 32 * 1024 : 64 * 1024),
                 "profile has the wrong medium-buffer capacity");
@@ -202,8 +293,16 @@ int main(void)
     master_pool_t *small_master = masterpoolCreateWithCapacity(8);
     master_pool_t *medium_master = masterpoolCreateWithCapacity(8);
     master_pool_t *splice_master = masterpoolCreateWithCapacity(8);
-    buffer_pool_t *pool          = bufferpoolCreate(
-        large_master, medium_master, small_master, splice_master, 8, 8192, MEDIUM_BUFFER_SIZE_RAM_HIGH, 1024);
+    buffer_pool_t *pool          = bufferpoolCreate(large_master,
+                                           medium_master,
+                                           small_master,
+                                           splice_master,
+                                           8,
+                                           8192,
+                                           MEDIUM_BUFFER_SIZE_RAM_HIGH,
+                                           1024,
+                                           8192,
+                                           8192);
     bufferpoolUpdateAllocationPaddings(pool, 64, 64, 32, 32);
 
     sbuf_t *tiny = bufferpoolGetBestFit(pool, 1, 0);

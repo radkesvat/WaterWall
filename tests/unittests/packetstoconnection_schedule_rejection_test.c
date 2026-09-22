@@ -115,7 +115,12 @@ line_task_submit_result_e __wrap_lineScheduleTaskWithBuf(line_t *const line, Lin
 static void ptcFixtureSetup(ptc_fixture_t *fixture)
 {
     memoryZero(fixture, sizeof(*fixture));
-    twfWorkerEnvSetup(&fixture->env, g_pool_size, 0);
+    twfWorkerEnvSetupWithBufferSizes(&fixture->env,
+                                     min(g_pool_size, (uint32_t) LARGE_BUFFER_SIZE_RAM_HIGH),
+                                     min(g_pool_size, (uint32_t) LARGE_BUFFER_SIZE_RAM_HIGH),
+                                     0,
+                                     g_pool_size,
+                                     g_pool_size);
 
     fixture->ptc  = tunnelCreate(NULL, sizeof(ptc_tstate_t), sizeof(ptc_lstate_t));
     fixture->next = twfCreateNextTunnel(&fixture->trace);
@@ -297,10 +302,11 @@ static void caseCreditedDeliveryRefusalRollsBackCreditAndRetainsPbuf(void)
     ptcFixtureTeardown(&fixture);
 }
 
-static void casePendingBudgetAllowsOneReadOfHeadroom(void)
+static void casePendingBudgetAllowsOneReadOfHeadroom(uint32_t pool_size)
 {
-    twfSetCase("PTC admits a full large-buffer delivery and rejects bytes beyond bounded headroom");
-    g_pool_size = LARGE_BUFFER_SIZE_RAM_HIGH;
+    twfSetCase("PTC admits a 1 MiB delivery with pool-independent headroom and rejects bytes beyond bounded headroom");
+    g_pool_size             = pool_size;
+    const uint32_t headroom = 1024U * 1024U;
     ptc_fixture_t fixture;
     ptcFixtureSetup(&fixture);
     const uint32_t pcb_baseline = ptcTcpPcbUsed();
@@ -310,16 +316,17 @@ static void casePendingBudgetAllowsOneReadOfHeadroom(void)
     ts->max_pending_bytes = 256 * 1024;
     ls->next_init_sent    = true;
     ls->write_paused      = true;
-    sbuf_t *buf           = bufferpoolGetLargeBuffer(fixture.env.pool);
-    sbufSetLength(buf, g_pool_size);
+    sbuf_t *buf           = bufferpoolGetBestFit(fixture.env.pool, headroom, 0);
+    sbufSetLength(buf, headroom);
+    lineRef(fixture.line);
     ptcTunnelDownStreamPayload(fixture.ptc, fixture.line, buf);
-    twfRequire(lineIsAlive(fixture.line) && ls->pending_bytes == g_pool_size,
+    twfRequire(lineIsAlive(fixture.line) && ls->pending_bytes == headroom,
                "PTC rejected the delivery before Pause could act");
-    buf = bufferpoolGetLargeBuffer(fixture.env.pool);
+    lineUnref(fixture.line);
+    buf = bufferpoolGetBestFit(fixture.env.pool, ts->max_pending_bytes, 0);
     sbufSetLength(buf, ts->max_pending_bytes);
     ptcTunnelDownStreamPayload(fixture.ptc, fixture.line, buf);
-    twfRequire(ls->pending_bytes == ts->max_pending_bytes + g_pool_size,
-               "PTC did not admit the exact headroom boundary");
+    twfRequire(ls->pending_bytes == ts->max_pending_bytes + headroom, "PTC did not admit the exact headroom boundary");
     buf = bufferpoolGetSmallBuffer(fixture.env.pool);
     sbufSetLength(buf, 1);
     lineRef(fixture.line);
@@ -390,7 +397,9 @@ int main(void)
     }
     ptcRxWrapperPoolInitializeOnce();
 
-    casePendingBudgetAllowsOneReadOfHeadroom();
+    const uint32_t headroom_pool_sizes[] = {4096, 65536, 131072, 4U * 1024U * 1024U};
+    for (size_t i = 0; i < ARRAY_SIZE(headroom_pool_sizes); ++i)
+        casePendingBudgetAllowsOneReadOfHeadroom(headroom_pool_sizes[i]);
     caseResumeWaitsForDeliveryHeadroom();
     caseForeignRetryRefusalPublishesAndDrainsOwnedLine();
     caseCreditedDeliveryRefusalRollsBackCreditAndRetainsPbuf();

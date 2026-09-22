@@ -1,6 +1,12 @@
 #pragma once
 #include "parser.h"
 
+/* Fixed per-direction allowance for already-delivered input, independent of pool sizing. */
+enum
+{
+    kHpsDeliveryHeadroomBytes = 2U * 1024U * 1024U
+};
+
 typedef struct hps_session_s hps_session_t;
 typedef struct hps_lstate_s  hps_lstate_t;
 

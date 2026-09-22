@@ -4,7 +4,8 @@
 static void runCase(uint32_t large, uint32_t length, bool local_first, bool available)
 {
     twf_worker_env_t env;
-    twfWorkerEnvSetupWithSmallBuffers(&env, large, 4096, 64);
+    twfWorkerEnvSetupWithBufferSizes(
+        &env, min(large, (uint32_t) LARGE_BUFFER_SIZE_RAM_HIGH), 4096, 64, SPLICE_PAYLOAD_LIMIT, large);
     twf_trace_t trace      = {0};
     uint8_t    *capture    = memoryAllocate(length + 128);
     trace.capture          = capture;
@@ -22,6 +23,7 @@ static void runCase(uint32_t large, uint32_t length, bool local_first, bool avai
     reverseserverTunnelUpStreamInit(reverse, d);
     reverseserverTunnelDownStreamInit(reverse, u);
     const uint64_t limit = reverseserverWaitingLimit(u);
+    twfRequire(limit == 65535ULL * max(1U, (large + 32767) / 32768), "waiting allowance changed with ordinary storage");
     if (available)
     {
         sbuf_t *hello = bufferpoolGetSmallBuffer(env.pool);
@@ -85,7 +87,7 @@ static void runCase(uint32_t large, uint32_t length, bool local_first, bool avai
 }
 int main(void)
 {
-    const uint32_t sizes[] = {32768, LARGE_BUFFER_SIZE_RAM_HIGH};
+    const uint32_t sizes[] = {32768, 64 * 1024, SPLICE_PAYLOAD_LIMIT};
     for (unsigned i = 0; i < 2; ++i)
     {
         uint32_t limit = 65535 * (sizes[i] / 32768);
@@ -97,6 +99,6 @@ int main(void)
         }
         runCase(sizes[i], limit + 1, true, true);
     }
-    runCase(LARGE_BUFFER_SIZE_RAM_HIGH, LARGE_BUFFER_SIZE_RAM_HIGH, true, false);
+    runCase(SPLICE_PAYLOAD_LIMIT, SPLICE_PAYLOAD_LIMIT, true, false);
     return 0;
 }

@@ -1,0 +1,98 @@
+{
+  "name": "bgp4-tcp-splice-roundtrip",
+  "nodes": [
+    {
+      "name": "speedtest-client",
+      "type": "TesterClient",
+      "settings": {
+        "allow-early-response": true,
+        "max-payload-size": 1048576
+      },
+      "next": "client-to-bgp4-client"
+    },
+    {
+      "name": "client-to-bgp4-client",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 27000,
+        "nodelay": true,
+        "fastopen": false
+      }
+    },
+    {
+      "name": "bgp4-client-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 27000,
+        "nodelay": true
+      },
+      "next": "bgp4-client"
+    },
+    {
+      "name": "bgp4-client",
+      "type": "Bgp4Client",
+      "settings": {
+        "password": "waterwall-bgp4-integration"
+      },
+      "next": "bgp4-client-to-bgp4-server"
+    },
+    {
+      "name": "bgp4-client-to-bgp4-server",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 27001,
+        "nodelay": true,
+        "fastopen": false
+      }
+    },
+    {
+      "name": "bgp4-server-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 27001,
+        "nodelay": true
+      },
+      "next": "bgp4-server"
+    },
+    {
+      "name": "bgp4-server",
+      "type": "Bgp4Server",
+      "settings": {
+        "password": "waterwall-bgp4-integration"
+      },
+      "next": "bgp4-server-to-speedtest-server"
+    },
+    {
+      "name": "bgp4-server-to-speedtest-server",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 27002,
+        "nodelay": true,
+        "fastopen": false
+      }
+    },
+    {
+      "name": "speedtest-server-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 27002,
+        "nodelay": true
+      },
+      "next": "speedtest-server"
+    },
+    {
+      "name": "speedtest-server",
+      "type": "TesterServer",
+      "settings": {
+        "streaming-response": true,
+        "max-payload-size": 1048576
+      }
+    }
+  ]
+}

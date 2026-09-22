@@ -203,7 +203,9 @@ static void clientFixtureSetup(client_delay_fixture_t *fixture)
                                      8,
                                      32768,
                                      MEDIUM_BUFFER_SIZE_RAM_HIGH,
-                                     1024);
+                                     1024,
+                                     32768,
+                                     32768);
     requireClient(fixture->large_master != NULL && fixture->small_master != NULL && fixture->pool != NULL,
                   "failed to create client lifecycle pools");
     bufferpoolUpdateAllocationPaddings(fixture->pool, 64, 64, 64, 64);

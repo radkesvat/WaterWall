@@ -87,7 +87,9 @@ static void workerEnvSetup(tlsclient_test_worker_env_t *env)
                                  4,
                                  kTestLargeBufferSize,
                                  MEDIUM_BUFFER_SIZE_RAM_HIGH,
-                                 kTestSmallBufferSize);
+                                 kTestSmallBufferSize,
+                                 min((uint32_t) (kTestLargeBufferSize), (uint32_t) SPLICE_PAYLOAD_LIMIT),
+                                 kTestLargeBufferSize);
     require(env->pool != NULL, "failed to create ClientHello test buffer pool");
     bufferpoolUpdateAllocationPaddings(
         env->pool, kTestBufferLeftPadding, kTestBufferLeftPadding, kTestBufferLeftPadding, kTestBufferLeftPadding);

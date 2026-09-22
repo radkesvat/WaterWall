@@ -257,9 +257,8 @@ void ptcAckQueuePopFront(ptc_lstate_t *ls)
 
 bool ptcPendingBytesWouldOverflow(const ptc_tstate_t *ts, const ptc_lstate_t *ls, uint32_t len)
 {
-    // One read-sized allowance covers bytes delivered before Pause can take effect.
-    const uint64_t maximum =
-        (uint64_t) ts->max_pending_bytes + bufferpoolGetLargeBufferSize(lineGetBufferPool(ls->line));
+    // Fixed headroom covers bytes delivered before Pause can take effect.
+    const uint64_t maximum = (uint64_t) ts->max_pending_bytes + kPtcPendingDeliveryHeadroom;
     return ls->pending_bytes > maximum || len > maximum - ls->pending_bytes;
 }
 

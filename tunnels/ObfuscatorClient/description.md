@@ -1,5 +1,5 @@
 <!--
-Documentation version: 153
+Documentation version: 154
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/ObfuscatorClient.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/ObfuscatorClient.mdx, and all files must keep the same documentation version.
 -->
 
@@ -168,5 +168,6 @@ records of at most 65,535 body bytes, applying XOR and skip per record. One enco
 aggregate is sent per delivery. Receivers reassemble fragmented headers/bodies,
 coalesce complete records into one onward callback, and retain partial tails.
 Pause stops decoding until Resume. Retention is bounded by
-`65540 + max(65536, 2 * L)` bytes, with `L` from the line pool; malformed records
+a fixed **2,162,692 bytes** (`2 MiB + 65,540`), independent of pool sizes, RAM
+profile and splice settings. The 65,535-byte record-body limit is separate. Malformed records
 and overflow close the borrowed normal line. Packet behavior stays unchanged.

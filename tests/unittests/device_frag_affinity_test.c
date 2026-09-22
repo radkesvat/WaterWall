@@ -291,7 +291,8 @@ int main(void)
     g_splice_master = masterpoolCreateWithCapacity(16);
     require(g_large_master != NULL && g_small_master != NULL, "failed to create master pools");
 
-    g_pool = bufferpoolCreate(g_large_master, g_medium_master, g_small_master, g_splice_master, 8, 65536, 32768, 4096);
+    g_pool = bufferpoolCreate(
+        g_large_master, g_medium_master, g_small_master, g_splice_master, 8, 65536, 32768, 4096, 65536, 65536);
     require(g_pool != NULL, "failed to create the buffer pool");
 
     GSTATE.workers_count = 5;

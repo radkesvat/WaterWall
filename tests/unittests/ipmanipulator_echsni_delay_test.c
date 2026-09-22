@@ -195,7 +195,9 @@ static void envSetup(test_env_t *env)
                                                   64,
                                                   8192,
                                                   MEDIUM_BUFFER_SIZE_RAM_HIGH,
-                                                  4096);
+                                                  4096,
+                                                  8192,
+                                                  8192);
         env->wios_pools[wid] =
             threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(env->wios_master, sizeof(wio_t), 64);
         env->loops[wid]         = wloopCreate(0, env->buffer_pools[wid], wid);

@@ -113,7 +113,9 @@ static void runnerCreate(loop_runner_t *runner, env_t *env)
                                     64,
                                     8192,
                                     MEDIUM_BUFFER_SIZE_RAM_HIGH,
-                                    1024);
+                                    1024,
+                                    8192,
+                                    8192);
     runner->loop = wloopCreate(0, runner->pool, 0);
     require(runner->loop != NULL, "failed to create the event loop");
 }

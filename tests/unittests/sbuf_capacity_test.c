@@ -327,7 +327,9 @@ static void requirePoolCreateRejects(uint32_t large_buffer_size, uint32_t medium
                                            1,
                                            large_buffer_size,
                                            medium_buffer_size,
-                                           small_buffer_size);
+                                           small_buffer_size,
+                                           min((uint32_t) (large_buffer_size), (uint32_t) SPLICE_PAYLOAD_LIMIT),
+                                           large_buffer_size);
     const bool     rejected = pool == NULL;
     if (pool != NULL)
     {
@@ -366,8 +368,16 @@ static void testPoolRoundsRepresentableBufferSizes(void)
     master_pool_t *medium_master = masterpoolCreateWithCapacity(64);
     master_pool_t *splice_master = masterpoolCreateWithCapacity(64);
 
-    buffer_pool_t *pool = bufferpoolCreate(
-        large_master, medium_master, small_master, splice_master, 1, (uint32_t) kLine + 1, (uint32_t) kLine + 3, 1);
+    buffer_pool_t *pool = bufferpoolCreate(large_master,
+                                           medium_master,
+                                           small_master,
+                                           splice_master,
+                                           1,
+                                           (uint32_t) kLine + 1,
+                                           (uint32_t) kLine + 3,
+                                           1,
+                                           min((uint32_t) ((uint32_t) kLine + 1), (uint32_t) SPLICE_PAYLOAD_LIMIT),
+                                           (uint32_t) kLine + 1);
     require(pool != NULL, "bufferpoolCreate() rejected a representable geometry");
 
     require(bufferpoolGetLargeBufferSize(pool) == computeOrFail(kLine + 1, 0, "the helper rejected a pool large size"),

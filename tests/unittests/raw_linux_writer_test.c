@@ -295,7 +295,9 @@ static void envSetup(test_env_t *env)
                                                16,
                                                8192,
                                                MEDIUM_BUFFER_SIZE_RAM_HIGH,
-                                               4096);
+                                               4096,
+                                               8192,
+                                               8192);
     env->buffer_pools[0]    = env->worker_buffer_pool;
 
     GSTATE.flag_initialized = true;
@@ -423,7 +425,9 @@ static void testRawBringDownQuiescesConcurrentWriters(test_env_t *env)
                                                16,
                                                8192,
                                                MEDIUM_BUFFER_SIZE_RAM_HIGH,
-                                               4096);
+                                               4096,
+                                               8192,
+                                               8192);
     rdev.routine_writer     = testWriterRoutine;
     rdev.userdata           = &consumer;
     atomic_init(&rdev.lifecycle, kRawLifecycleDown);
@@ -511,7 +515,9 @@ static void testRawJoinFailureRetainsOwnership(test_env_t *env)
                                                16,
                                                8192,
                                                MEDIUM_BUFFER_SIZE_RAM_HIGH,
-                                               4096);
+                                               4096,
+                                               8192,
+                                               8192);
     rdev.routine_writer     = testWriterRoutine;
     rdev.userdata           = &consumer;
     atomic_init(&rdev.lifecycle, kRawLifecycleDown);
@@ -552,7 +558,9 @@ static void testRawRestartTransfersWriterPoolOwnership(test_env_t *env)
                                                16,
                                                8192,
                                                MEDIUM_BUFFER_SIZE_RAM_HIGH,
-                                               4096);
+                                               4096,
+                                               8192,
+                                               8192);
     rdev.routine_writer     = recyclingWriterRoutine;
     rdev.userdata           = &probe;
     atomic_init(&rdev.lifecycle, kRawLifecycleDown);
@@ -597,7 +605,9 @@ static void productionWriterDeviceInit(raw_device_t *rdev, test_env_t *env, cons
                                                 16,
                                                 8192,
                                                 MEDIUM_BUFFER_SIZE_RAM_HIGH,
-                                                4096);
+                                                4096,
+                                                8192,
+                                                8192);
     atomic_init(&rdev->lifecycle, kRawLifecycleDown);
     deviceWriterChannelInit(&rdev->writer_channel);
 }

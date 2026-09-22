@@ -228,7 +228,7 @@ void ptcTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
                      "bytes) or %u entries, "
                      "closing the flow",
                      (unsigned int) ts->max_pending_bytes,
-                     (unsigned int) bufferpoolGetLargeBufferSize(lineGetBufferPool(l)),
+                     (unsigned int) kPtcPendingDeliveryHeadroom,
                      (unsigned int) ts->max_pending_entries);
             }
             else

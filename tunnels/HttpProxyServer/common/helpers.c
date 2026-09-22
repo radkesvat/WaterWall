@@ -136,13 +136,6 @@ static size_t pending(hps_session_t *s)
     return n;
 }
 
-/* The working budget excludes already-delivered input; each direction has D
- * bytes of separate headroom. Capacity is bounded independently when admitted. */
-static uint64_t deliveryAllowance(hps_session_t *s)
-{
-    return max(UINT64_C(65536), 2 * (uint64_t) bufferpoolGetLargeBufferSize(lineGetBufferPool(s->client)));
-}
-
 static uint64_t retained(hps_session_t *s)
 {
     uint64_t n = pending(s);
@@ -160,7 +153,7 @@ static uint64_t bufferCharge(const sbuf_t *buffer)
 static bool remainderAllocationFits(hps_session_t *s, const sbuf_t *buffer)
 {
     buffer_pool_t *pool          = lineGetBufferPool(s->client);
-    const uint64_t payload_bound = max((uint64_t) bufferpoolGetSmallBufferSize(pool), 2 * deliveryAllowance(s));
+    const uint64_t payload_bound = max((uint64_t) bufferpoolGetSmallBufferSize(pool), 2 * kHpsDeliveryHeadroomBytes);
     const uint16_t padding       = max(bufferpoolGetMediumBufferPadding(pool),
                                  max(bufferpoolGetSmallBufferPadding(pool), bufferpoolGetLargeBufferPadding(pool)));
     uint32_t       capacity;
@@ -933,7 +926,7 @@ void hpsPayload(tunnel_t *t, line_t *l, sbuf_t *buf, unsigned d)
     lineRef(l);
     if (d == 1)
         ++s->receiving_down;
-    const uint64_t allowance = deliveryAllowance(s);
+    const uint64_t allowance = kHpsDeliveryHeadroomBytes;
     const bool     oversized = (uint64_t) sbufGetLength(buf) > allowance + settings(s)->max_pending;
     /* Preserve streaming of larger callbacks when their prefix can make immediate
      * progress. Only the retained remainder consumes delivery headroom. */

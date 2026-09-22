@@ -117,7 +117,9 @@ static pool_fixture_t makePool(const geometry_t *geometry, uint32_t width)
                                     width,
                                     geometry->large,
                                     MEDIUM_BUFFER_SIZE_RAM_HIGH,
-                                    geometry->small);
+                                    geometry->small,
+                                    min((uint32_t) (geometry->large), (uint32_t) SPLICE_PAYLOAD_LIMIT),
+                                    geometry->large);
     if (fixture.pool == NULL)
     {
         fatal("buffer-pool allocation failed");

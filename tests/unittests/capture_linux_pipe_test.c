@@ -707,7 +707,9 @@ static void envSetup(test_env_t *env)
                                         16,
                                         8192,
                                         MEDIUM_BUFFER_SIZE_RAM_HIGH,
-                                        4096);
+                                        4096,
+                                        8192,
+                                        8192);
     env->buffer_pools[0] = env->buffer_pool;
 
     GSTATE.flag_initialized = true;
@@ -769,7 +771,9 @@ static void deviceSetup(capture_device_t *cdev, test_env_t *env, reader_probe_t 
                                                 16,
                                                 8192,
                                                 MEDIUM_BUFFER_SIZE_RAM_HIGH,
-                                                4096);
+                                                4096,
+                                                8192,
+                                                8192);
     cdev->routine_reader     = probeReader;
     cdev->userdata           = probe;
     cdev->running            = false;

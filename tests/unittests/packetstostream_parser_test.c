@@ -361,7 +361,7 @@ int main(void)
     master_pool_t *mp_medium = masterpoolCreateWithCapacity(64);
     master_pool_t *mp_splice = masterpoolCreateWithCapacity(64);
     buffer_pool_t *pool      = bufferpoolCreate(
-        mp_large, mp_medium, mp_small, mp_splice, 64, 8192, MEDIUM_BUFFER_SIZE_RAM_HIGH, SMALL_BUFFER_SIZE);
+        mp_large, mp_medium, mp_small, mp_splice, 64, 8192, MEDIUM_BUFFER_SIZE_RAM_HIGH, SMALL_BUFFER_SIZE, 8192, 8192);
 
     buffer_stream_t bs = bufferstreamCreate(pool, 0);
 

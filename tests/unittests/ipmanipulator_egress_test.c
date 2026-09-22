@@ -92,7 +92,9 @@ static void envSetup(test_env_t *env)
                                         64,
                                         kTestLargeBuffer,
                                         MEDIUM_BUFFER_SIZE_RAM_HIGH,
-                                        kTestSmallBuffer);
+                                        kTestSmallBuffer,
+                                        min((uint32_t) (kTestLargeBuffer), (uint32_t) SPLICE_PAYLOAD_LIMIT),
+                                        kTestLargeBuffer);
     env->buffer_pools[0] = env->buffer_pool;
 
     GSTATE.shortcut_buffer_pools         = env->buffer_pools;

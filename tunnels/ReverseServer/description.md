@@ -1,5 +1,5 @@
 <!--
-Documentation version: 152
+Documentation version: 153
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/ReverseServer.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/ReverseServer.mdx, and all files must keep the same documentation version.
 -->
 
@@ -132,7 +132,7 @@ Each unpaired half can buffer data while waiting for its peer.
 
 Current limit:
 
-- `65535 * max(1, ceil(L / 32768))` bytes per waiting half, with `L` from the line pool
+- `65535 * max(1, ceil(L / 32768))` bytes per waiting half, with `L` from the line pool's independent waiting-budget basis (64 KiB in S1/S2, 1 MiB in higher profiles)
 
 If that limit is exceeded, the waiting half is dropped.
 
@@ -166,4 +166,4 @@ Source-backed metadata:
 | `layer_group_next_node` | `kNodeLayer4` |
 | `required_padding_left` | `0` bytes |
 
-Handshake validation and available pairing precede the waiting check. Close occurs strictly above the limit: 65,535 bytes at 32 KiB and 2,097,120 bytes at 1 MiB.
+Handshake validation and available pairing precede the waiting check. Close occurs strictly above the limit: 131,070 bytes in S1/S2 and 2,097,120 bytes in higher profiles.

@@ -1295,7 +1295,9 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void
                                                    RAM_PROFILE,
                                                    worker_large_buffer_size,
                                                    bufferpoolGetMediumBufferSize(worker_pool),
-                                                   worker_small_buffer_size);
+                                                   worker_small_buffer_size,
+                                                   bufferpoolGetSplicePayloadLimit(worker_pool),
+                                                   bufferpoolGetWaitingBudgetBasis(worker_pool));
     if (UNLIKELY(reader_bpool == NULL))
     {
         LOGE("TunDevice: failed to construct reader buffer pool");
@@ -1310,7 +1312,9 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void
                                                    RAM_PROFILE,
                                                    worker_large_buffer_size,
                                                    bufferpoolGetMediumBufferSize(worker_pool),
-                                                   worker_small_buffer_size);
+                                                   worker_small_buffer_size,
+                                                   bufferpoolGetSplicePayloadLimit(worker_pool),
+                                                   bufferpoolGetWaitingBudgetBasis(worker_pool));
     if (UNLIKELY(writer_bpool == NULL))
     {
         LOGE("TunDevice: failed to construct writer buffer pool");

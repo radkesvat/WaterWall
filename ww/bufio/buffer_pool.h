@@ -41,6 +41,8 @@ typedef struct buffer_pool_s buffer_pool_t;
  * @param large_buffer_size The size of each large buffer.
  * @param medium_buffer_size The size of each medium helper buffer.
  * @param small_buffer_size The size of each small buffer.
+ * @param splice_payload_limit Independent pipe target and socket splice request limit, in [1, INT_MAX].
+ * @param waiting_budget_basis Independent basis for node waiting limits, in [1, INT_MAX]; not a receive size.
  * @return A pointer to the completely constructed buffer pool, or NULL when
  *         the input geometry, any master pool, or any metadata allocation
  *         cannot be satisfied. Nothing is published and no master-pool
@@ -48,7 +50,8 @@ typedef struct buffer_pool_s buffer_pool_t;
  */
 buffer_pool_t *bufferpoolCreate(master_pool_t *mp_large, master_pool_t *mp_medium, master_pool_t *mp_small,
                                 master_pool_t *mp_splice, uint32_t bufcount, uint32_t large_buffer_size,
-                                uint32_t medium_buffer_size, uint32_t small_buffer_size);
+                                uint32_t medium_buffer_size, uint32_t small_buffer_size, uint32_t splice_payload_limit,
+                                uint32_t waiting_budget_basis);
 
 /**
  * @brief Destroy a buffer pool and free all pooled buffers.
@@ -79,7 +82,7 @@ uint16_t bufferpoolGetMediumBufferPadding(buffer_pool_t *pool);
 sbuf_t *bufferpoolGetSmallBuffer(buffer_pool_t *pool);
 
 /** Retrieve an empty splice wrapper with kSbufFlagSplice set, 32 bytes of control storage, and reserved left padding.
- * Checkout initializes its private pipe, requesting the pool's large payload size capped at LARGE_BUFFER_SIZE_RAM_HIGH.
+ * Checkout initializes its private pipe, requesting the pool's independent splice payload limit.
  * Capacity query/growth failure retains a usable pipe; existing empty pairs and their retry state survive reuse.
  * Returns NULL with errno if pipe creation fails or splice is unsupported; the unused wrapper is recycled internally.
  * Pool refill only allocates wrappers. Populate the checked-out pipe before publishing its actual logical body size. */
@@ -183,6 +186,13 @@ uint32_t bufferpoolGetSmallBufferSize(buffer_pool_t *pool);
  * @return uint16_t Left padding in bytes.
  */
 uint16_t bufferpoolGetSmallBufferPadding(buffer_pool_t *pool);
+
+/** Configured socket splice request limit and preferred pipe capacity, excluding padding.
+ * Fixed at construction, independent of wrapper storage and actual kernel pipe capacity. */
+uint32_t bufferpoolGetSplicePayloadLimit(buffer_pool_t *pool);
+
+/** Profile-selected basis for waiting budgets, independent of buffer storage and receive headroom. */
+uint32_t bufferpoolGetWaitingBudgetBasis(buffer_pool_t *pool);
 
 /** Return the fixed 32-byte control-storage capacity, excluding padding and logical payload size. */
 uint32_t bufferpoolGetSpliceBufferStorageSize(buffer_pool_t *pool);

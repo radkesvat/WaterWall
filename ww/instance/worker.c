@@ -442,7 +442,9 @@ bool workerTryCreateBufferPool(worker_t *worker)
                                            RAM_PROFILE,
                                            PROPER_LARGE_BUFFER_SIZE(RAM_PROFILE),
                                            PROPER_MEDIUM_BUFFER_SIZE(RAM_PROFILE),
-                                           SMALL_BUFFER_SIZE);
+                                           SMALL_BUFFER_SIZE,
+                                           SPLICE_PAYLOAD_LIMIT,
+                                           PROPER_WAITING_BUDGET_BASIS(RAM_PROFILE));
     if (UNLIKELY(pool == NULL))
     {
         return false;

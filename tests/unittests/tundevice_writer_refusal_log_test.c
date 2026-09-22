@@ -126,7 +126,9 @@ static void envSetup(test_env_t *env)
                                         8,
                                         1024,
                                         MEDIUM_BUFFER_SIZE_RAM_HIGH,
-                                        256);
+                                        256,
+                                        1024,
+                                        1024);
     require(env->large_master != NULL && env->small_master != NULL && env->worker_pool != NULL,
             "failed to create test pools");
 

@@ -3020,8 +3020,26 @@ if(TARGET Bgp4Client AND TARGET Bgp4Server)
   add_executable(bgp4_large_stream_test bgp4_large_stream_test.c ${WATERWALL_LINE_FAILURE_WW_SOURCES})
   target_link_libraries(bgp4_large_stream_test PRIVATE Bgp4Client Bgp4Server ww)
   target_link_options(bgp4_large_stream_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS})
+  target_link_options(bgp4_large_stream_test PRIVATE
+    "-Wl,--wrap=fastRand" "-Wl,--wrap=splicestreamCreate" "-Wl,--wrap=bufferqueueReserveExtra"
+    "-Wl,--wrap=pipe2" "-Wl,--wrap=splice" "-Wl,--wrap=read" "-Wl,--wrap=fcntl")
   add_dependencies(waterwall_unit_tests bgp4_large_stream_test)
   add_waterwall_unit_test(waterwall.bgp4_large_stream_unit bgp4_large_stream_test "unit;tunnels;bgp4;framing")
+  if(LINUX)
+    foreach(side Client Server)
+      add_library(bgp4_${side}_no_splice_objects OBJECT)
+      waterwall_line_failure_test_use_tunnel(bgp4_${side}_no_splice_objects Bgp4${side})
+      target_compile_definitions(bgp4_${side}_no_splice_objects PRIVATE WW_HAVE_SPLICE=0)
+    endforeach()
+    add_executable(bgp4_no_splice_test bgp4_large_stream_test.c ${WATERWALL_LINE_FAILURE_WW_SOURCES}
+      $<TARGET_OBJECTS:bgp4_Client_no_splice_objects> $<TARGET_OBJECTS:bgp4_Server_no_splice_objects>)
+    target_compile_definitions(bgp4_no_splice_test PRIVATE WW_HAVE_SPLICE=0)
+    target_link_libraries(bgp4_no_splice_test PRIVATE ww)
+    target_link_options(bgp4_no_splice_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS}
+      "-Wl,--wrap=fastRand" "-Wl,--wrap=splicestreamCreate" "-Wl,--wrap=bufferqueueReserveExtra")
+    add_dependencies(waterwall_unit_tests bgp4_no_splice_test)
+    add_waterwall_unit_test(waterwall.bgp4_no_splice_unit bgp4_no_splice_test "unit;tunnels;bgp4;framing;no-splice")
+  endif()
 endif()
 
 foreach(mux_side Client Server)

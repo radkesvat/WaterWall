@@ -90,7 +90,12 @@ static uint32_t g_pool_size = kTestLargeBufferSize;
 static void fixtureSetup(httpserver_split_callback_fixture_t *fixture)
 {
     memoryZero(fixture, sizeof(*fixture));
-    twfWorkerEnvSetup(&fixture->env, g_pool_size, 64);
+    twfWorkerEnvSetupWithBufferSizes(&fixture->env,
+                                     min(g_pool_size, (uint32_t) LARGE_BUFFER_SIZE_RAM_HIGH),
+                                     min(g_pool_size, (uint32_t) LARGE_BUFFER_SIZE_RAM_HIGH),
+                                     64,
+                                     SPLICE_PAYLOAD_LIMIT,
+                                     g_pool_size);
 
     fixture->prev = twfCreatePrevTunnel(&fixture->prev_trace);
     fixture->http = tunnelCreate(NULL, sizeof(httpserver_tstate_t), sizeof(httpserver_lstate_t));
@@ -384,7 +389,7 @@ static void caseWaitingBoundary(uint32_t large, uint32_t length, bool append, bo
 
 int main(void)
 {
-    const uint32_t sizes[] = {32768, LARGE_BUFFER_SIZE_RAM_HIGH};
+    const uint32_t sizes[] = {32768, 64 * 1024, SPLICE_PAYLOAD_LIMIT};
     for (unsigned i = 0; i < 2; ++i)
         for (unsigned append = 0; append < 2; ++append)
         {
@@ -393,7 +398,7 @@ int main(void)
             caseWaitingBoundary(sizes[i], limit, append, false);
             caseWaitingBoundary(sizes[i], limit + 1, append, false);
         }
-    caseWaitingBoundary(LARGE_BUFFER_SIZE_RAM_HIGH, LARGE_BUFFER_SIZE_RAM_HIGH, false, false);
+    caseWaitingBoundary(SPLICE_PAYLOAD_LIMIT, SPLICE_PAYLOAD_LIMIT, false, false);
     caseWaitingBoundary(32768, 131071, false, true);
     caseUnpairedDownloadAbsorbsAllCallbacks();
     casePairedDownloadMapsBackpressureToMain();

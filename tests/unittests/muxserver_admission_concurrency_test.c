@@ -283,6 +283,8 @@ static void raceFixtureSetup(admission_race_fixture_t *fixture)
                                                8,
                                                kRaceBufferSize,
                                                MEDIUM_BUFFER_SIZE_RAM_HIGH,
+                                               kRaceBufferSize,
+                                               min((uint32_t) (kRaceBufferSize), (uint32_t) SPLICE_PAYLOAD_LIMIT),
                                                kRaceBufferSize);
         fixture->wios_pools[wid] =
             threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(fixture->wios_master, sizeof(wio_t), 8);

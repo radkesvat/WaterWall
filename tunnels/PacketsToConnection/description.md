@@ -1,5 +1,5 @@
 <!--
-Documentation version: 154
+Documentation version: 156
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/PacketsToConnection.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/PacketsToConnection.mdx, and all files must keep the same documentation version.
 -->
 
@@ -240,7 +240,7 @@ This is intentional and should be treated as a current limitation of the UDP pat
   Controls how long an idle UDP flow line is kept alive before the tunnel closes it.
 - `max-pending-bytes` `(int, default: 262144)`
   Budget for TCP payload retained while lwIP has not yet taken or fully acknowledged it. Valid range
-  `1024` .. `67108864`. Admission includes one large-buffer-sized delivery allowance; exceeding the combined bound sheds that flow.
+  `1024` .. `67108864`. Admission includes a fixed 1 MiB of delivery headroom; exceeding the combined bound sheds that flow.
 - `fake-dns` `(bool or object, default: false)`
   Enables an in-tunnel fake DNS responder for IPv4 A queries. Mapped fake-IP destinations are converted back into domain destinations on generated TCP/UDP Waterwall lines.
 
@@ -248,8 +248,8 @@ The minimum allowed `udp-idle-timeout-ms` value is `1`.
 
 `Pause` is advisory between tunnels, so it cannot be the only bound on retained memory: the next tunnel may already
 have a payload callback queued, may race the pause, or may simply ignore it. The admission bound is therefore
-`P + L`, where `P = max-pending-bytes` and `L` is the line pool's large payload
-capacity. The extra `L` covers already-delivered input before Pause takes effect.
+`P + L`, where `P = max-pending-bytes` and `L` is a fixed 1 MiB of delivery
+headroom, independent of pool sizes, RAM profile and splice settings. The extra `L` covers already-delivered input before Pause takes effect.
 Each acknowledgement record charges its original payload length until fully
 acknowledged, covering queued and outstanding writes. Production stays paused
 while this charge exceeds `P`, even after the write queue becomes empty; Resume

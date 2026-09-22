@@ -2501,7 +2501,9 @@ capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_
                                                    RAM_PROFILE,
                                                    bufferpoolGetLargeBufferSize(worker_pool),
                                                    bufferpoolGetMediumBufferSize(worker_pool),
-                                                   bufferpoolGetSmallBufferSize(worker_pool));
+                                                   bufferpoolGetSmallBufferSize(worker_pool),
+                                                   bufferpoolGetSplicePayloadLimit(worker_pool),
+                                                   bufferpoolGetWaitingBudgetBasis(worker_pool));
     if (UNLIKELY(reader_bpool == NULL))
     {
         LOGE("CaptureDevice: failed to construct reader buffer pool");

@@ -4,7 +4,7 @@ extern tunnel_t *obfuscatorclientTunnelCreate(node_t *node);
 extern tunnel_t *obfuscatorserverTunnelCreate(node_t *node);
 
 static unsigned  interruption;
-static uint32_t  pool_size = LARGE_BUFFER_SIZE_RAM_HIGH;
+static uint32_t  pool_size = SPLICE_PAYLOAD_LIMIT;
 static tunnel_t *decoder;
 static bool      decoder_receives_upstream;
 static void      ownerFinish(tunnel_t *t, line_t *l)
@@ -65,7 +65,8 @@ static void receive(tunnel_t *t, line_t *l, sbuf_t *buf)
 static void runCase(bool reverse, uint32_t length, uint32_t fragment)
 {
     twf_worker_env_t  env;
-    twfWorkerEnvSetupWithSmallBuffers(&env, pool_size, 4096, 128);
+    twfWorkerEnvSetupWithBufferSizes(
+        &env, min(pool_size, (uint32_t) LARGE_BUFFER_SIZE_RAM_HIGH), 4096, 128, pool_size, pool_size);
     cJSON *settings =
         cJSON_Parse("{\"method\":\"xor\",\"xor_key\":90,\"skip\":\"transport\",\"tls_record_header\":true}");
     node_t      node   = {.node_settings_json = settings};
@@ -197,11 +198,65 @@ static void runCase(bool reverse, uint32_t length, uint32_t fragment)
     twfRequireNoLeakedBuffers();
     twfWorkerEnvTeardown(&env);
 }
+static void testFixedRetention(bool server, uint32_t ordinary_size, uint32_t splice_limit)
+{
+    twf_worker_env_t env;
+    twfWorkerEnvSetupWithBufferSizes(&env, ordinary_size, 4096, 128, splice_limit, ordinary_size);
+    cJSON *settings =
+        cJSON_Parse("{\"method\":\"xor\",\"xor_key\":90,\"skip\":\"transport\",\"tls_record_header\":true}");
+    node_t      node  = {.node_settings_json = settings};
+    tunnel_t   *t     = server ? obfuscatorserverTunnelCreate(&node) : obfuscatorclientTunnelCreate(&node);
+    twf_trace_t trace = {0};
+    tunnel_t   *prev = twfCreatePrevTunnel(&trace), *next = twfCreateNextTunnel(&trace);
+    tunnelBind(prev, t);
+    tunnelBind(t, next);
+    prev->fnFinD = ownerFinish;
+    twf_line_pool_t lines;
+    twfLinePoolSetup(&lines, t->lstate_size, 8);
+    line_t *line = twfLinePoolCreateLine(&lines);
+    lineRef(line);
+    t->fnInitU(t, line);
+    t->fnPauseU(t, line);
+
+    // The fixed decoder bound is 2 MiB plus one maximum five-byte-header record.
+    const uint32_t limit = 2U * 1024U * 1024U + 65540U;
+    sbuf_t        *input = bufferpoolGetBestFit(env.pool, limit, 128);
+    sbufSetLength(input, limit);
+    uint8_t *bytes = sbufGetMutablePtr(input);
+    memoryZero(bytes, limit);
+    for (uint32_t offset = 0; offset < limit;)
+    {
+        const uint32_t body = min(65535U, limit - offset - 5U);
+        bytes[offset]       = 23;
+        bytes[offset + 1] = bytes[offset + 2] = 3;
+        bytes[offset + 3]                     = (uint8_t) (body >> 8);
+        bytes[offset + 4]                     = (uint8_t) body;
+        offset += 5U + body;
+    }
+    t->fnPayloadD(t, line, input);
+    twfRequire(lineIsAlive(line) && trace.prev_payload == 0,
+               "Obfuscator refused its exact fixed retention boundary or ignored Pause");
+    input = bufferpoolGetSmallBuffer(env.pool);
+    sbufSetLength(input, 1);
+    sbufWriteUI8(input, 0);
+    t->fnPayloadD(t, line, input);
+    twfRequire(! lineIsAlive(line), "Obfuscator retention limit grew with pool geometry");
+    twfRequireLineStateZeroed(line, t, "Obfuscator overflow retained stream state");
+    lineUnref(line);
+    twfLinePoolTeardown(&lines);
+    tunnelDestroy(prev);
+    tunnelDestroy(next);
+    tunnelDestroy(t);
+    cJSON_Delete(settings);
+    twfRequireNoLeakedBuffers();
+    twfWorkerEnvTeardown(&env);
+}
+
 int main(void)
 {
     twfRequire(globalstateInitializeSecureRandom(), "secure random initialization failed");
     twfRequire(frandGlobalInit(), "random initialization failed");
-    const uint32_t lengths[] = {65534, 65535, 65536, LARGE_BUFFER_SIZE_RAM_HIGH};
+    const uint32_t lengths[] = {65534, 65535, 65536, SPLICE_PAYLOAD_LIMIT};
     for (unsigned direction = 0; direction < 2; ++direction)
         for (unsigned i = 0; i < 4; ++i)
         {
@@ -212,12 +267,18 @@ int main(void)
     {
         runCase(direction != 0, 128, 1);
         for (interruption = 1; interruption <= 4; ++interruption)
-            runCase(direction != 0, LARGE_BUFFER_SIZE_RAM_HIGH, 0);
+            runCase(direction != 0, SPLICE_PAYLOAD_LIMIT, 0);
         interruption = 0;
     }
     pool_size = 32768;
-    runCase(false, LARGE_BUFFER_SIZE_RAM_HIGH, 65521);
-    runCase(true, LARGE_BUFFER_SIZE_RAM_HIGH, 65521);
+    runCase(false, SPLICE_PAYLOAD_LIMIT, 65521);
+    runCase(true, SPLICE_PAYLOAD_LIMIT, 65521);
+    for (unsigned server = 0; server < 2; ++server)
+    {
+        testFixedRetention(server != 0, 8192, 4096);
+        testFixedRetention(server != 0, 65536, 4U * 1024U * 1024U);
+        testFixedRetention(server != 0, 131072, 1024U * 1024U);
+    }
     frandThreadCleanup();
     frandGlobalCleanup();
     return 0;

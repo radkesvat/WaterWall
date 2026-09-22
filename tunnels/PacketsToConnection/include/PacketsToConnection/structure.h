@@ -115,6 +115,8 @@ enum
     kPtcDefaultMaxPendingBytes = 262144U,
     kPtcMinMaxPendingBytes     = 1024U,
     kPtcMaxMaxPendingBytes     = 67108864U,
+    /* Fixed headroom for already-delivered input; not a pool allocation size. */
+    kPtcPendingDeliveryHeadroom = 1024U * 1024U,
 
     /*
      * The byte limit alone does not bound memory. Every retained payload owns a

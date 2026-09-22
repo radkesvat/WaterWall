@@ -368,7 +368,7 @@ static void nio_read(wio_t *io)
     if (io->io_type == WIO_TYPE_TCP && wioIsSpliceEnabled(io))
     {
         buffer_pool_t *pool       = io->loop->bufpool;
-        const uint32_t read_limit = min(bufferpoolGetLargeBufferSize(pool), (uint32_t) LARGE_BUFFER_SIZE_RAM_HIGH);
+        const uint32_t read_limit = bufferpoolGetSplicePayloadLimit(pool);
         assert(read_limit > 0);
         // wio_handle_events checked admission before entering this read; recheck before delivery below.
         buf = bufferpoolGetSpliceBuffer(pool);

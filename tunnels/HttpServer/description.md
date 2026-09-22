@@ -1,5 +1,5 @@
 <!--
-Documentation version: 152
+Documentation version: 153
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/HttpServer.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/HttpServer.mdx, and all files must keep the same documentation version.
 -->
 
@@ -442,4 +442,4 @@ Source-backed metadata:
 | `layer_group_next_node` | `kNodeLayer4` |
 | `required_padding_left` | `16` bytes |
 
-Split waiting uploads close strictly above `131070 * max(1, ceil(L / 32768))` bytes, using the line pool large payload capacity `L`. Header parsing and available pairing run first; coalesced body bytes do not count toward the header limit. `no-split-upload-buffering-limit` remains the explicit bypass. The threshold is 131,070 bytes at 32 KiB and 4,194,240 bytes at 1 MiB.
+Split waiting uploads close strictly above `131070 * max(1, ceil(L / 32768))` bytes, using the line pool's independent waiting-budget basis `L` (64 KiB in S1/S2, 1 MiB in higher profiles). Header parsing and available pairing run first; coalesced body bytes do not count toward the header limit. `no-split-upload-buffering-limit` remains the explicit bypass. The threshold is 262,140 bytes in S1/S2 and 4,194,240 bytes in higher profiles.

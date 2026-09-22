@@ -271,7 +271,9 @@ static void envSetup(test_env_t *env)
                                             64,
                                             8192,
                                             MEDIUM_BUFFER_SIZE_RAM_HIGH,
-                                            4096);
+                                            4096,
+                                            8192,
+                                            8192);
     env->buffer_pools[1] = bufferpoolCreate(env->large_master,
                                             env->medium_master,
                                             env->small_master,
@@ -279,7 +281,9 @@ static void envSetup(test_env_t *env)
                                             64,
                                             8192,
                                             MEDIUM_BUFFER_SIZE_RAM_HIGH,
-                                            4096);
+                                            4096,
+                                            8192,
+                                            8192);
 
     GSTATE.shortcut_buffer_pools         = env->buffer_pools;
     GSTATE.masterpool_buffer_pools_large = env->large_master;

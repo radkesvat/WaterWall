@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../../../Internals/Bgp4Common/stream.h"
 #include "wwapi.h"
 
 enum
@@ -17,7 +18,6 @@ enum
     kBgp4ServerTypeRouteRefresh = 5,
     kBgp4ServerOpenHeaderSize   = 10,
     kBgp4ServerMaxBodyLength    = UINT16_MAX,
-    kBgp4ServerMaxBufferedBytes = (kBgp4ServerFrameHeaderSize + kBgp4ServerMaxBodyLength) * 2,
 };
 
 typedef struct bgp4server_tstate_s
@@ -27,11 +27,7 @@ typedef struct bgp4server_tstate_s
     hash_t   password_hash;
 } bgp4server_tstate_t;
 
-typedef struct bgp4server_lstate_s
-{
-    buffer_stream_t read_stream;
-    bool            open_received;
-} bgp4server_lstate_t;
+typedef bgp_stream_t bgp4server_lstate_t;
 
 enum
 {
@@ -50,10 +46,9 @@ void bgp4serverTunnelDownStreamFinish(tunnel_t *t, line_t *l);
 void bgp4serverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 
 bool    bgp4serverLoadSettings(bgp4server_tstate_t *ts, const cJSON *settings);
-void    bgp4serverLinestateInitialize(bgp4server_lstate_t *ls, line_t *l);
+bool    bgp4serverLinestateInitialize(bgp4server_lstate_t *ls, line_t *l);
 void    bgp4serverLinestateDestroy(bgp4server_lstate_t *ls);
-void    bgp4serverCloseLine(tunnel_t *t, line_t *l);
-bool    bgp4serverWrapPayload(tunnel_t *t, line_t *l, sbuf_t **buf_io, uint8_t type);
-bool    bgp4serverReadFrame(tunnel_t *t, line_t *l, buffer_stream_t *stream, sbuf_t **body_out);
-bool    bgp4serverStripUpstreamBody(tunnel_t *t, line_t *l, bgp4server_lstate_t *ls, sbuf_t *body);
-uint8_t bgp4serverNextPayloadType(void);
+void    bgp4serverTunnelUpStreamPause(tunnel_t *t, line_t *l);
+void    bgp4serverTunnelUpStreamResume(tunnel_t *t, line_t *l);
+void    bgp4serverTunnelDownStreamPause(tunnel_t *t, line_t *l);
+void    bgp4serverTunnelDownStreamResume(tunnel_t *t, line_t *l);

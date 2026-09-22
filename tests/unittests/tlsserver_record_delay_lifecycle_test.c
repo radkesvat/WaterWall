@@ -224,7 +224,9 @@ static void serverFixtureSetup(server_delay_fixture_t *fixture)
                                      8,
                                      32768,
                                      MEDIUM_BUFFER_SIZE_RAM_HIGH,
-                                     1024);
+                                     1024,
+                                     32768,
+                                     32768);
     requireServer(fixture->large_master != NULL && fixture->small_master != NULL && fixture->pool != NULL,
                   "failed to create server lifecycle pools");
     bufferpoolUpdateAllocationPaddings(fixture->pool, 64, 64, 64, 64);

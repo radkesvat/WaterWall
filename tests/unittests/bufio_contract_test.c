@@ -79,7 +79,9 @@ static pool_fixture_t poolFixtureCreate(uint32_t large_size, uint32_t small_size
                                     kTestPoolWidth,
                                     large_size,
                                     MEDIUM_BUFFER_SIZE_RAM_HIGH,
-                                    small_size);
+                                    small_size,
+                                    min((uint32_t) (large_size), (uint32_t) SPLICE_PAYLOAD_LIMIT),
+                                    large_size);
     require(fixture.pool != NULL, "failed to create BufferStream test pool");
     bufferpoolUpdateAllocationPaddings(fixture.pool, large_padding, large_padding, small_padding, small_padding);
     return fixture;
@@ -1088,7 +1090,7 @@ int main(void)
     master_pool_t *medium_master = masterpoolCreateWithCapacity(16);
     master_pool_t *splice_master = masterpoolCreateWithCapacity(16);
     buffer_pool_t *pool          = bufferpoolCreate(
-        large_master, medium_master, small_master, splice_master, 8, 256, MEDIUM_BUFFER_SIZE_RAM_HIGH, 64);
+        large_master, medium_master, small_master, splice_master, 8, 256, MEDIUM_BUFFER_SIZE_RAM_HIGH, 64, 256, 256);
     bufferpoolUpdateAllocationPaddings(pool, 64, 64, 64, 64);
 
     testFlagsInitializationAndReuse(pool);

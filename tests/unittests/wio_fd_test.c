@@ -265,16 +265,23 @@ static void setupWithBufferSize(test_env_t *env, uint32_t large_size)
         env->masters[i] = masterpoolCreateWithCapacity(8);
         require(env->masters[i] != NULL, "failed to create test master pool");
     }
-    env->buffers = bufferpoolCreate(env->masters[0],
-                                    env->masters[4],
-                                    env->masters[1],
-                                    env->masters[2],
-                                    4,
-                                    large_size,
-                                    MEDIUM_BUFFER_SIZE_RAM_HIGH,
-                                    1024);
+    env->buffers =
+        bufferpoolCreate(env->masters[0],
+                         env->masters[4],
+                         env->masters[1],
+                         env->masters[2],
+                         4,
+                         large_size,
+                         MEDIUM_BUFFER_SIZE_RAM_HIGH,
+                         1024,
+                         large_size >= LARGE_BUFFER_SIZE_RAM_LOW ? SPLICE_PAYLOAD_LIMIT : large_size,
+                         max((uint32_t) (large_size),
+                             (uint32_t) (large_size >= LARGE_BUFFER_SIZE_RAM_LOW ? SPLICE_PAYLOAD_LIMIT : large_size)));
     env->wios    = threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(env->masters[3], sizeof(wio_t), 4);
     require(env->buffers != NULL && env->wios != NULL, "failed to create test pools");
+    require(bufferpoolGetSplicePayloadLimit(env->buffers) ==
+                (large_size >= LARGE_BUFFER_SIZE_RAM_LOW ? SPLICE_PAYLOAD_LIMIT : large_size),
+            "pool lost explicit splice setting, including on unsupported builds");
     env->buffer_pools[0]         = env->buffers;
     GSTATE.shortcut_buffer_pools = env->buffer_pools;
     env->wio_pools[0]          = env->wios;
@@ -660,7 +667,7 @@ static void testPipeCapacityRetry(void)
     pipe_growth_error                   = EPERM;
     pipe_query_error                    = 0;
     pipe_query_calls = pipe_growth_calls = 0;
-    const uint32_t     preferred         = LARGE_BUFFER_SIZE_RAM_HIGH;
+    const uint32_t     preferred         = SPLICE_PAYLOAD_LIMIT;
     const unsigned int initial_creates   = pipe_calls;
     sbuf_t            *buf               = bufferpoolGetSpliceBuffer(env.buffers);
     require(buf != NULL, "denied initial growth failed checkout");
@@ -817,7 +824,7 @@ static void spliceRead(wio_t *io, sbuf_t *buf)
         return;
     }
 
-    const uint32_t limit = min(bufferpoolGetLargeBufferSize(pool), (uint32_t) LARGE_BUFFER_SIZE_RAM_HIGH);
+    const uint32_t limit = bufferpoolGetSplicePayloadLimit(pool);
     require(count <= min(probe->length - probe->received, limit) && count > 0,
             "splice delivery exceeded available bytes or its read cap");
     require(buf->flags == kSbufFlagSplice && buf->curpos == 64 && buf->capacity == 64 + count,
@@ -961,7 +968,7 @@ static void spliceRead(wio_t *io, sbuf_t *buf)
     }
 
     const bool partial = probe->kind == kSplicePartialPipe;
-    sbuf_t    *dest    = bufferpoolGetLargeBuffer(pool);
+    sbuf_t    *dest    = bufferpoolGetBestFit(pool, count + 6, 64);
     if (probe->kind == kSpliceCloseBeforeRecycle)
     {
         wioFree(io);
@@ -1100,18 +1107,18 @@ static void testSpliceReadCapacityPreference(void)
 {
     for (unsigned int mode = 0; mode < 3; ++mode)
     {
-        const uint32_t read_limit =
-            mode == 0 ? PROPER_LARGE_BUFFER_SIZE(kRamProfileS1Memory) : LARGE_BUFFER_SIZE_RAM_HIGH;
+        const uint32_t read_limit = SPLICE_PAYLOAD_LIMIT;
         mock_pipe_capacity        = true;
         pipe_capacity             = 65536;
         pipe_query_error          = 0;
         pipe_growth_error         = mode == 1 ? EPERM : 0;
         pipe_query_calls = pipe_growth_calls = 0;
         pipe_requested_capacity              = 0;
-        runSpliceCase(kSpliceConvertPipe, read_limit, 9);
-        require(pipe_query_calls == 1 && pipe_growth_calls == (mode != 0),
+        runSpliceCase(kSpliceConvertPipe, mode == 0 ? LARGE_BUFFER_SIZE_RAM_LOW : LARGE_BUFFER_SIZE_RAM_HIGH, 9);
+        require(splice_read_requested == read_limit, "NIO did not request the independent splice limit");
+        require(pipe_query_calls == 1 && pipe_growth_calls == 1,
                 "read loop negotiated the wrong pipe capacity for its buffer profile");
-        require(mode == 0 || pipe_requested_capacity == (int) read_limit,
+        require(pipe_requested_capacity == (int) read_limit,
                 "read loop sized the pipe to current availability instead of its read limit");
     }
     mock_pipe_capacity = false;

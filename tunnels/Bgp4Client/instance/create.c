@@ -16,6 +16,11 @@ tunnel_t *bgp4clientTunnelCreate(node_t *node)
     t->fnFinD     = &bgp4clientTunnelDownStreamFinish;
     t->fnPayloadD = &bgp4clientTunnelDownStreamPayload;
 
+    t->fnPauseU  = &bgp4clientTunnelUpStreamPause;
+    t->fnResumeU = &bgp4clientTunnelUpStreamResume;
+    t->fnPauseD  = &bgp4clientTunnelDownStreamPause;
+    t->fnResumeD = &bgp4clientTunnelDownStreamResume;
+
     bgp4client_tstate_t *ts = tunnelGetState(t);
     if (! bgp4clientLoadSettings(ts, node->node_settings_json))
     {

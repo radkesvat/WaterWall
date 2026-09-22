@@ -438,7 +438,12 @@ static void protocolMainPayload(tunnel_t *next, line_t *line, sbuf_t *buf)
 static void protocolFixtureSetup(halfduplexserver_protocol_fixture_t *fixture)
 {
     memoryZero(fixture, sizeof(*fixture));
-    twfWorkerEnvSetup(&fixture->env, g_protocol_pool_size, 0);
+    twfWorkerEnvSetupWithBufferSizes(&fixture->env,
+                                     min(g_protocol_pool_size, (uint32_t) LARGE_BUFFER_SIZE_RAM_HIGH),
+                                     min(g_protocol_pool_size, (uint32_t) LARGE_BUFFER_SIZE_RAM_HIGH),
+                                     0,
+                                     SPLICE_PAYLOAD_LIMIT,
+                                     g_protocol_pool_size);
 
     fixture->prev       = twfCreatePrevTunnel(&fixture->trace);
     fixture->halfduplex = tunnelCreate(NULL, kTunnelStateSize, kLineStateSize);
@@ -821,7 +826,7 @@ static void caseWaitingBoundary(uint32_t large, uint32_t total, bool append)
 
 int main(void)
 {
-    const uint32_t sizes[] = {32768, LARGE_BUFFER_SIZE_RAM_HIGH};
+    const uint32_t sizes[] = {32768, 64 * 1024, SPLICE_PAYLOAD_LIMIT};
     for (unsigned i = 0; i < 2; ++i)
         for (unsigned append = 0; append < 2; ++append)
         {
@@ -830,7 +835,7 @@ int main(void)
             caseWaitingBoundary(sizes[i], limit, append);
             caseWaitingBoundary(sizes[i], limit + 1, append);
         }
-    caseWaitingBoundary(LARGE_BUFFER_SIZE_RAM_HIGH, LARGE_BUFFER_SIZE_RAM_HIGH + kHLFDIntroSize, false);
+    caseWaitingBoundary(SPLICE_PAYLOAD_LIMIT, SPLICE_PAYLOAD_LIMIT + kHLFDIntroSize, false);
     caseSimultaneousOppositeRolesCannotBothMiss();
     runRejectedPairingCase(true, false);
     runRejectedPairingCase(false, false);

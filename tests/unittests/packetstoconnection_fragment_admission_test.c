@@ -134,7 +134,9 @@ static void envSetup(test_env_t *env)
                                         16,
                                         4096,
                                         MEDIUM_BUFFER_SIZE_RAM_HIGH,
-                                        1024);
+                                        1024,
+                                        4096,
+                                        4096);
     require(env->large_master != NULL && env->small_master != NULL && env->worker_pool != NULL,
             "failed to create fragment-admission test pools");
 

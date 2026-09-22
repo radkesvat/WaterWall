@@ -255,6 +255,6 @@ void httpserverSplitDownStreamFinish(tunnel_t *t, line_t *l);
 
 static inline uint64_t httpserverSplitWaitingLimit(line_t *line)
 {
-    const uint64_t large = bufferpoolGetLargeBufferSize(lineGetBufferPool(line));
-    return (uint64_t) kHttpServerSplitMaxBuffering * max(UINT64_C(1), (large + 32767) / 32768);
+    const uint64_t basis = bufferpoolGetWaitingBudgetBasis(lineGetBufferPool(line));
+    return (uint64_t) kHttpServerSplitMaxBuffering * max(UINT64_C(1), (basis + 32767) / 32768);
 }

@@ -385,7 +385,9 @@ raw_device_t *rawdeviceCreate(const char *name, uint32_t mark, bool bypass_connt
                                                    RAM_PROFILE,
                                                    bufferpoolGetLargeBufferSize(worker_pool),
                                                    bufferpoolGetMediumBufferSize(worker_pool),
-                                                   bufferpoolGetSmallBufferSize(worker_pool));
+                                                   bufferpoolGetSmallBufferSize(worker_pool),
+                                                   bufferpoolGetSplicePayloadLimit(worker_pool),
+                                                   bufferpoolGetWaitingBudgetBasis(worker_pool));
     if (UNLIKELY(writer_bpool == NULL))
     {
         LOGE("RawDevice: failed to construct writer buffer pool");

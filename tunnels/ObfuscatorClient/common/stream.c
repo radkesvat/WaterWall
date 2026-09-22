@@ -90,10 +90,10 @@ void obfuscatorclientDecodeStream(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     obfuscatorclient_lstate_t *ls        = lineGetState(l, t);
     buffer_pool_t             *pool      = lineGetBufferPool(l);
-    const uint64_t             allowance = max(UINT64_C(65536), 2 * (uint64_t) bufferpoolGetLargeBufferSize(pool));
     const uint64_t             total     = (uint64_t) bufferstreamGetBufLen(&ls->read_stream) + sbufGetLength(buf);
     uint32_t                   capacity;
-    if (total > allowance + 65540 || ! sbufTryComputeCapacity(total, bufferpoolGetLargeBufferPadding(pool), &capacity))
+    if (total > kObfuscatorMaxBufferedStreamBytes ||
+        ! sbufTryComputeCapacity(total, bufferpoolGetLargeBufferPadding(pool), &capacity))
     {
         bufferpoolReuseBuffer(pool, buf);
         closeStream(t, l);

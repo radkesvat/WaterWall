@@ -85,7 +85,9 @@ static void envSetup(env_t *env)
                                         64,
                                         8192,
                                         MEDIUM_BUFFER_SIZE_RAM_HIGH,
-                                        1024);
+                                        1024,
+                                        8192,
+                                        8192);
     env->wio_pool     = threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(env->wio_master, sizeof(wio_t), 64);
     env->wio_pools[0] = env->wio_pool;
     env->wio_pools[1] = env->wio_pool;

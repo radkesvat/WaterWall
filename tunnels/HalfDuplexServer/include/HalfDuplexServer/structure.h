@@ -121,6 +121,6 @@ void                                halfduplexserverPendingMissTestSeam(bool is_
 /* Pool geometry is finalized before payload, not during construction. */
 static inline uint64_t halfduplexserverWaitingLimit(line_t *line)
 {
-    const uint64_t large = bufferpoolGetLargeBufferSize(lineGetBufferPool(line));
-    return (uint64_t) kMaxBuffering * max(UINT64_C(1), (large + 32767) / 32768);
+    const uint64_t basis = bufferpoolGetWaitingBudgetBasis(lineGetBufferPool(line));
+    return (uint64_t) kMaxBuffering * max(UINT64_C(1), (basis + 32767) / 32768);
 }

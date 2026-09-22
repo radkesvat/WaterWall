@@ -31,6 +31,8 @@ struct buffer_pool_s
     uint16_t small_buffer_left_padding;
 
     uint32_t splice_buffers_container_len;
+    uint32_t splice_payload_limit;
+    uint32_t waiting_budget_basis;
     uint16_t splice_buffer_left_padding;
 
 #if BUFFER_POOL_DEBUG == 1
@@ -82,6 +84,16 @@ static inline void bufferpoolDebugCheckThreadAccess(buffer_pool_t *pool)
 uint32_t bufferpoolGetLargeBufferSize(buffer_pool_t *pool)
 {
     return pool->large_buffers_size;
+}
+
+uint32_t bufferpoolGetSplicePayloadLimit(buffer_pool_t *pool)
+{
+    return pool->splice_payload_limit;
+}
+
+uint32_t bufferpoolGetWaitingBudgetBasis(buffer_pool_t *pool)
+{
+    return pool->waiting_budget_basis;
 }
 
 uint16_t bufferpoolGetLargeBufferPadding(buffer_pool_t *pool)
@@ -528,7 +540,7 @@ sbuf_t *bufferpoolGetSpliceBuffer(buffer_pool_t *pool)
     sbuf_t *buf = pool->splice_buffers[--pool->splice_buffers_container_len];
     buf->flags  = kSbufFlagSplice;
 #endif
-    const uint32_t preferred_capacity = min(pool->large_buffers_size, (uint32_t) LARGE_BUFFER_SIZE_RAM_HIGH);
+    const uint32_t preferred_capacity = pool->splice_payload_limit;
     if (UNLIKELY(sbufSpliceInitPipe(buf, preferred_capacity) != 0))
     {
         const int error = errno;
@@ -856,7 +868,8 @@ void bufferpoolCachedTierCountsForTest(const buffer_pool_t *pool, uint32_t *larg
 
 buffer_pool_t *bufferpoolCreate(master_pool_t *mp_large, master_pool_t *mp_medium, master_pool_t *mp_small,
                                 master_pool_t *mp_splice, uint32_t bufcount, uint32_t large_buffer_size,
-                                uint32_t medium_buffer_size, uint32_t small_buffer_size)
+                                uint32_t medium_buffer_size, uint32_t small_buffer_size, uint32_t splice_payload_limit,
+                                uint32_t waiting_budget_basis)
 {
     uint32_t capacity;
     uint32_t free_threshold;
@@ -865,8 +878,9 @@ buffer_pool_t *bufferpoolCreate(master_pool_t *mp_large, master_pool_t *mp_mediu
     uint32_t rounded_small_buffer_size;
     uint32_t rounded_medium_buffer_size;
 
-    if (mp_large == NULL || mp_medium == NULL || mp_small == NULL || mp_splice == NULL ||
-        ! bufferpoolTryComputeGeometry(bufcount, &capacity, &free_threshold, &container_len) ||
+    if (splice_payload_limit == 0 || splice_payload_limit > INT_MAX || waiting_budget_basis == 0 ||
+        waiting_budget_basis > INT_MAX || mp_large == NULL || mp_medium == NULL || mp_small == NULL ||
+        mp_splice == NULL || ! bufferpoolTryComputeGeometry(bufcount, &capacity, &free_threshold, &container_len) ||
         ! bufferpoolTryRoundBufferSize(large_buffer_size, &rounded_large_buffer_size) ||
         ! bufferpoolTryRoundBufferSize(medium_buffer_size, &rounded_medium_buffer_size) ||
         ! bufferpoolTryRoundBufferSize(small_buffer_size, &rounded_small_buffer_size))
@@ -938,11 +952,13 @@ buffer_pool_t *bufferpoolCreate(master_pool_t *mp_large, master_pool_t *mp_mediu
     }
 
     *ptr_pool = (buffer_pool_t) {
-        .cap                 = capacity,
-        .large_buffers_size  = rounded_large_buffer_size,
-        .medium_buffers_size = rounded_medium_buffer_size,
-        .small_buffers_size  = rounded_small_buffer_size,
-        .free_threshold      = free_threshold,
+        .cap                  = capacity,
+        .splice_payload_limit = splice_payload_limit,
+        .waiting_budget_basis = waiting_budget_basis,
+        .large_buffers_size   = rounded_large_buffer_size,
+        .medium_buffers_size  = rounded_medium_buffer_size,
+        .small_buffers_size   = rounded_small_buffer_size,
+        .free_threshold       = free_threshold,
 
 #if BUFFER_POOL_DEBUG == 1
         .in_use = 0,

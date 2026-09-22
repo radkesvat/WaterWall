@@ -1,5 +1,5 @@
 <!--
-Documentation version: 152
+Documentation version: 153
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/HalfDuplexServer.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/HalfDuplexServer.mdx, and all files must keep the same documentation version.
 -->
 
@@ -134,9 +134,9 @@ If an upload half arrives before its matching download half, the server buffers 
 
 Current maximum buffered size for a waiting upload half:
 
-- `131070 * max(1, ceil(L / 32768))` bytes, with `L` from the line pool
+- `131070 * max(1, ceil(L / 32768))` bytes, with `L` from the line pool's independent waiting-budget basis (64 KiB in S1/S2, 1 MiB in higher profiles)
 
-If that limit is exceeded before the matching download half appears, the waiting upload line is closed.
+If that limit is reached before the matching download half appears, the waiting upload line is closed.
 
 Download halves are not buffered the same way. They are mainly stored as waiting entries until the upload side arrives.
 
@@ -185,4 +185,4 @@ Source-backed metadata:
 | `layer_group_next_node` | `kNodeLayer4` |
 | `required_padding_left` | `0` bytes |
 
-The waiting bound applies at initial publication and on later appends. Close occurs at or above 131,070 bytes at 32 KiB or 4,194,240 bytes at 1 MiB; available peers pair before waiting limits apply.
+The waiting bound applies at initial publication and on later appends. Close occurs at or above 262,140 bytes in S1/S2 or 4,194,240 bytes in higher profiles; available peers pair before waiting limits apply.

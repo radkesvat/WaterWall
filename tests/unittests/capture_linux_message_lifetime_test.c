@@ -216,7 +216,9 @@ static void envSetup(test_env_t *env)
                                                16,
                                                8192,
                                                MEDIUM_BUFFER_SIZE_RAM_HIGH,
-                                               4096);
+                                               4096,
+                                               8192,
+                                               8192);
     env->buffer_pools[0]    = env->worker_buffer_pool;
     env->loops[0]           = (wloop_t *) (void *) env;
 
@@ -273,7 +275,9 @@ static capture_device_t *createDevice(test_env_t *env)
                                                 16,
                                                 8192,
                                                 MEDIUM_BUFFER_SIZE_RAM_HIGH,
-                                                4096);
+                                                4096,
+                                                8192,
+                                                8192);
     atomic_init(&cdev->lifecycle, kCaptureLifecycleDown);
     require(cdev->socket >= 0, "failed to create the queue-socket stand-in");
 

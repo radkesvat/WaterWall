@@ -203,7 +203,9 @@ static shaping_pool_t createPool(void)
                                    4,
                                    32768,
                                    MEDIUM_BUFFER_SIZE_RAM_HIGH,
-                                   1024);
+                                   1024,
+                                   32768,
+                                   32768);
     require(result.large_master != NULL && result.small_master != NULL && result.pool != NULL,
             "failed to create shaping output test pool");
     bufferpoolUpdateAllocationPaddings(result.pool, 64, 64, 64, 64);

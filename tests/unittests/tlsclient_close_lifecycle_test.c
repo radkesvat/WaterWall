@@ -178,7 +178,9 @@ static void fixtureInitialize(tlsclient_lifecycle_fixture_t *fixture)
                                      8,
                                      65536,
                                      MEDIUM_BUFFER_SIZE_RAM_HIGH,
-                                     1024);
+                                     1024,
+                                     65536,
+                                     65536);
     fixture->saved_shortcuts     = GSTATE.shortcut_buffer_pools;
     fixture->shortcut[0]         = fixture->pool;
     GSTATE.shortcut_buffer_pools = fixture->shortcut;

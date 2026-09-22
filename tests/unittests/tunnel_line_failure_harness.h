@@ -498,8 +498,9 @@ enum
  * @param small_buffer_size small-buffer size. Packet-side tunnels validate this against
  *                          kMaxAllowedPacketLength, so they need more than the default.
  */
-static void twfWorkerEnvSetupWithSmallBuffers(twf_worker_env_t *env, uint32_t large_buffer_size,
-                                              uint32_t small_buffer_size, uint16_t left_padding)
+static void twfWorkerEnvSetupWithBufferSizes(twf_worker_env_t *env, uint32_t large_buffer_size,
+                                             uint32_t small_buffer_size, uint16_t left_padding, uint32_t splice_limit,
+                                             uint32_t waiting_budget_basis)
 {
     memoryZero(env, sizeof(*env));
 
@@ -523,7 +524,9 @@ static void twfWorkerEnvSetupWithSmallBuffers(twf_worker_env_t *env, uint32_t la
                                  4,
                                  large_buffer_size,
                                  MEDIUM_BUFFER_SIZE_RAM_HIGH,
-                                 small_buffer_size);
+                                 small_buffer_size,
+                                 splice_limit,
+                                 waiting_budget_basis);
     twfRequire(env->pool != NULL, "failed to create the test buffer pool");
 
     // Must happen before any buffer leaves the pool, exactly like the runtime does it during chain finalization.
@@ -549,6 +552,17 @@ static void twfWorkerEnvSetupWithSmallBuffers(twf_worker_env_t *env, uint32_t la
     testWorkerBindWID(0);
 
     twfBufferLedgerReset();
+}
+
+static void twfWorkerEnvSetupWithSmallBuffers(twf_worker_env_t *env, uint32_t large_buffer_size,
+                                              uint32_t small_buffer_size, uint16_t left_padding)
+{
+    twfWorkerEnvSetupWithBufferSizes(env,
+                                     large_buffer_size,
+                                     small_buffer_size,
+                                     left_padding,
+                                     min(large_buffer_size, (uint32_t) SPLICE_PAYLOAD_LIMIT),
+                                     large_buffer_size);
 }
 
 static void twfWorkerEnvSetup(twf_worker_env_t *env, uint32_t large_buffer_size, uint16_t left_padding)

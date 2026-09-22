@@ -529,8 +529,16 @@ static void caseWorkerDrainIsLocal(void)
     master_pool_t *small       = masterpoolCreateWithCapacity(8);
     master_pool_t *medium      = masterpoolCreateWithCapacity(8);
     master_pool_t *splice      = masterpoolCreateWithCapacity(8);
-    buffer_pool_t *second_pool =
-        bufferpoolCreate(large, medium, small, splice, 4, kIdleBufferSize, MEDIUM_BUFFER_SIZE_RAM_HIGH, 1024);
+    buffer_pool_t *second_pool = bufferpoolCreate(large,
+                                                  medium,
+                                                  small,
+                                                  splice,
+                                                  4,
+                                                  kIdleBufferSize,
+                                                  MEDIUM_BUFFER_SIZE_RAM_HIGH,
+                                                  1024,
+                                                  min((uint32_t) (kIdleBufferSize), (uint32_t) SPLICE_PAYLOAD_LIMIT),
+                                                  kIdleBufferSize);
     bufferpoolUpdateAllocationPaddings(
         second_pool, kMuxFrameLength * 2U, kMuxFrameLength * 2U, kMuxFrameLength * 2U, kMuxFrameLength * 2U);
     wloop_t       *second_loop   = wloopCreate(WLOOP_FLAG_AUTO_FREE, second_pool, 1);

@@ -189,12 +189,21 @@ enum ram_profiles_e
 #define SPLICE_BUFFER_STORAGE_SIZE 32
 #define kMaxAllowedPacketLength 1500
 
-/* Ordinary socket reads use the large tier. Medium buffers are helpers for framing
- * and retained queues. S1/S2 use smaller sizes; every tier's cache counts follow the memory profile. */
+/* Ordinary TCP reads use best-fit storage capped at the large tier; UDP requests whole datagrams.
+ * Medium buffers also serve framing and retained queues. Cache counts follow the memory profile. */
 
 // Depending on memory profile, we can choose which is the best buffer size (core.json typically)
 #define LARGE_BUFFER_SIZE_RAM_LOW   (64 * 1024)
-#define LARGE_BUFFER_SIZE_RAM_HIGH  (1024 * 1024)
+#define LARGE_BUFFER_SIZE_RAM_HIGH  (128 * 1024)
+/* Every profile requests the same splice ceiling; actual pipe growth is best effort. */
+#define SPLICE_PAYLOAD_LIMIT (1024 * 1024)
+
+/* Waiting budgets retain their profile values independently of allocation and splice sizes. */
+#define WAITING_BUDGET_BASIS_RAM_LOW  (64 * 1024)
+#define WAITING_BUDGET_BASIS_RAM_HIGH (1024 * 1024)
+#define PROPER_WAITING_BUDGET_BASIS(ram_profile)                                                                       \
+    ((ram_profile) >= LARGE_RAM_PROFILE_THRESHOLD ? WAITING_BUDGET_BASIS_RAM_HIGH : WAITING_BUDGET_BASIS_RAM_LOW)
+
 #define LARGE_RAM_PROFILE_THRESHOLD kRamProfileM1Memory
 
 #define PROPER_LARGE_BUFFER_SIZE(ram_profile)                                                                           \
