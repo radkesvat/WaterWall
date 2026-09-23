@@ -88,18 +88,28 @@ typedef struct trojanserver_lstate_s
     trojanserver_branch_t    branch;
 
     /* The client pump serializes parser/branch-Init input and permission reentry. */
-    bool pumping;
-    bool branch_initializing;
-    bool next_initialized;
-    bool next_established;
-    bool prev_est_sent; // Est has been sent toward prev on the client line.
+    bool pumping : 1;
+    bool branch_initializing : 1;
+    bool next_initialized : 1;
+    bool next_established : 1;
+    bool prev_est_sent : 1; // Est has been sent toward prev on the client line.
 
     /* Consumer permission is distinct from notifications sent to producers.
      * UDP keeps next_paused/next_pause_sent per backend and counts paused backends. */
-    bool next_paused;     // Next asked us to stop sending upstream payload.
-    bool prev_paused;     // Prev asked us to stop sending downstream payload.
-    bool prev_pause_sent; // We told prev to pause its upstream producer.
-    bool next_pause_sent; // We told next to pause its downstream producer.
+    bool next_paused : 1;     // Next asked us to stop sending upstream payload.
+    bool prev_paused : 1;     // Prev asked us to stop sending downstream payload.
+    bool prev_pause_sent : 1; // We told prev to pause its upstream producer.
+    bool next_pause_sent : 1; // We told next to pause its downstream producer.
+
+    /* Parser, authentication and delayed-fallback flags use the same group. */
+    bool first_payload_seen : 1;
+    bool short_password : 1;
+    bool frame_ready : 1;
+    bool frame_selected : 1;
+    bool user_handle_recorded : 1;
+    bool fallback_delay_scheduled : 1;
+    bool fallback_close_draining : 1;
+    bool fallback_branch_finished_during_drain : 1;
 
     /* Client input: pending_up owns initial/UDP wire bytes, then opaque bytes
      * after CONNECT. The popped head remains owned here; input_bytes includes
@@ -113,10 +123,6 @@ typedef struct trojanserver_lstate_s
     uint16_t          header_needed;
     uint16_t          body_length;
     address_context_t frame_target;
-    bool              first_payload_seen;
-    bool              short_password;
-    bool              frame_ready;
-    bool              frame_selected;
 
     /* The map owns backend lines; selected_remote borrows the current frame's
      * backend. Replies are framed and handed to the client synchronously. */
@@ -132,15 +138,11 @@ typedef struct trojanserver_lstate_s
     user_handle_t user_handle;
     char         *auth_username;
     char         *auth_password;
-    bool          user_handle_recorded;
 
     /* Intentional delay owns a real producer backlog. At zero delay this queue
      * only preserves branch-Init/reentry order within the active dispatch.
      * Source Finish admits at most one final upstream batch. */
     buffer_queue_t *fallback_pending_up;
-    bool            fallback_delay_scheduled;
-    bool            fallback_close_draining;
-    bool            fallback_branch_finished_during_drain;
 } trojanserver_lstate_t;
 
 enum

@@ -60,15 +60,15 @@ typedef struct hps_header_s
     uint64_t        length;
     uint64_t        max_forwards;
     unsigned        status;
-    bool            http10;
-    bool            close;
-    bool            connect;
-    bool            head;
-    bool            options;
-    bool            local_options;
-    bool            has_length;
-    bool            chunked;
-    bool            has_max_forwards;
+    bool            http10 : 1;
+    bool            close : 1;
+    bool            connect : 1;
+    bool            head : 1;
+    bool            options : 1;
+    bool            local_options : 1;
+    bool            has_length : 1;
+    bool            chunked : 1;
+    bool            has_max_forwards : 1;
 } hps_header_t;
 
 bool hpsAuthority(const char *text, size_t len, bool explicit_port, hps_authority_t *out);

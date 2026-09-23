@@ -68,9 +68,6 @@ typedef struct vlessserver_lstate_s
     size_t            input_bytes;
     uint8_t           header[278];
     uint16_t          header_filled;
-    bool              first_payload_seen;
-    bool              input_dispatching;
-    bool              branch_initializing;
     buffer_budget_t   upstream_budget;
     buffer_budget_t   response_budget;
     /* Response-header/reentry ordering only; direct ready replies are forwarded. */
@@ -81,16 +78,21 @@ typedef struct vlessserver_lstate_s
     char                   *auth_password; // resolved raw password / UUID, owned (NULL if none)
     vlessserver_phase_t     phase;
     vlessserver_line_kind_t line_kind;
-    bool                    client_line_ref_held;
-    bool                    response_sent;
-    bool                    transport_est_sent;
-    bool                    response_dispatching;
-    bool                    response_paused;
-    bool                    user_handle_recorded;
-    bool                    fallback_close_draining;
-    bool                    fallback_branch_finished_during_drain;
-    bool                    fallback_payload_paused;
-    bool                    fallback_delay_scheduled;
+
+    /* Worker-owned dispatch, response and fallback flags share storage. */
+    bool first_payload_seen : 1;
+    bool input_dispatching : 1;
+    bool branch_initializing : 1;
+    bool client_line_ref_held : 1;
+    bool response_sent : 1;
+    bool transport_est_sent : 1;
+    bool response_dispatching : 1;
+    bool response_paused : 1;
+    bool user_handle_recorded : 1;
+    bool fallback_close_draining : 1;
+    bool fallback_branch_finished_during_drain : 1;
+    bool fallback_payload_paused : 1;
+    bool fallback_delay_scheduled : 1;
 } vlessserver_lstate_t;
 
 enum

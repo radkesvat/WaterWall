@@ -74,28 +74,32 @@ typedef struct trojanclient_lstate_s
      * TrojanClient owns each UDP carrier. Both association links detach on close. */
     line_t                  *line;
     line_t                  *application_line; // Carrier's borrowed application line.
-    line_t                  *carrier_line; // Application's dependent TCP carrier.
+    line_t                  *carrier_line;     // Application's dependent TCP carrier.
     trojanclient_line_kind_t kind;
     trojanclient_protocol_t  protocol;
     trojanclient_phase_t     phase;
-    address_context_t        target_addr;
 
-    /* Est is transport notification, independent of request and parser readiness. */
+    /* Worker-owned transport, dispatch and parser flags share storage. */
+    bool next_started : 1;
+    bool next_established : 1;
+    bool request_sent : 1;
+    bool est_notifying : 1;
+    bool next_paused : 1; // Permission for the independent idle-header producer only.
+    bool prev_paused : 1; // Forwarded source permission, never a parser batch gate.
+    bool first_payload_due : 1;
+    bool receiving : 1;
+    bool header_ready : 1;
+
+    address_context_t target_addr;
+
+    /* Transport context and the independent first-payload deadline. */
     tunnel_t *tunnel;
-    bool      next_started;
-    bool      next_established;
-    bool      request_sent;
-    bool      est_notifying;
-    bool      next_paused; // Permission for the independent idle-header producer only.
-    bool      prev_paused; // Forwarded source permission, never a parser batch gate.
     wtimer_t *first_payload_timer;
     uint64_t  first_payload_deadline_us;
-    bool      first_payload_due;
 
     /* Each FIFO entry is one admitted nested input batch. The outer parser
      * completes these in order and retains only an incomplete wire suffix.
      * No ready output or application payload is queued for Pause or Est. */
-    bool           receiving;
     buffer_queue_t pending_down;
 
     /* UDP decoder on the carrier. The popped head is still owned here;
@@ -106,7 +110,6 @@ typedef struct trojanclient_lstate_s
     uint16_t header_filled;
     uint16_t header_needed;
     uint16_t body_length;
-    bool     header_ready;
 } trojanclient_lstate_t;
 
 enum
