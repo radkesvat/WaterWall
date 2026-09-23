@@ -48,8 +48,9 @@ enum
     kLineStateSize                 = sizeof(tcplistener_lstate_t),
     kMaxPauseQueueSize             = (1U << 24), // 16MB
     kMinPauseQueueSize             = (1U << 10), // 1KB
-    kDefaultKeepAliveTimeOutMs     = 5 * 1000,
-    kEstablishedKeepAliveTimeOutMs = 300 * 1000,
+    kDefaultKeepAliveTimeOutMs     = 60 * 1000,
+    // Keep the idle cleanup limit aligned with TcpConnector; peers may close sooner.
+    kEstablishedKeepAliveTimeOutMs = 600 * 1000,
 
     kPauseQueueCapacity = 2
 };

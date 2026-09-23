@@ -98,7 +98,9 @@ enum
     kLineStateSize      = sizeof(tcpconnector_lstate_t),
     kMaxPauseQueueSize  = (1U << 24), // 16MB
     kMinPauseQueueSize  = (1U << 10), // 1KB
-    kReadWriteTimeoutMs = 300 * 1000,
+    kConnectTimeoutMs   = 60 * 1000,
+    // Keep the idle cleanup limit aligned with TcpListener's active default.
+    kReadWriteTimeoutMs = 600 * 1000,
     kPauseQueueCapacity = 2
 };
 

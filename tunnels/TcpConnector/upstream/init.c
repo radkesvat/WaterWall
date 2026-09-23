@@ -285,6 +285,7 @@ static bool tcpconnectorBeginConnect(tunnel_t *t, line_t *l, tcpconnector_lstate
 
     wioSetCallBackConnect(io, tcpconnectorOnOutBoundConnected);
     wioSetCallBackClose(io, tcpconnectorOnClose);
+    wioSetConnectTimeout(io, kConnectTimeoutMs);
     // wioSetReadTimeout(lstate->io, kReadWriteTimeoutMs);
 
     // issue connect on the socket

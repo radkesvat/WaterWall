@@ -303,9 +303,20 @@ connection through its line owner.
 
 This prevents unlimited buffering when the remote side is slow or the connection is not ready yet.
 
+### Connection establishment timeout
+
+Each outbound TCP connection attempt has a `60-second` deadline, matching NGINX's default `proxy_connect_timeout`.
+It starts after address resolution, when the TCP connection attempt begins, and is canceled once the socket connects.
+Immediate connection errors still close the line earlier. This is separate from the listener's initial idle deadline
+and the connector's idle cleanup limit; `TcpConnector` does not have a separate first-payload idle phase.
+
 ### Idle timeout behavior
 
-Each outbound connection is tracked in an idle table with a timeout of about `300 seconds`. Read and write activity refreshes that timeout. If the connection expires, the socket is closed and downstream `finish` is sent to the previous node.
+Each outbound connection is tracked in an idle table with a timeout of about `600 seconds`. Read and write activity refreshes that timeout. If the connection expires, the socket is closed and downstream `finish` is sent to the previous node.
+
+This ten-minute cleanup limit matches `TcpListener`'s default active idle timeout. A target that closes sooner still
+causes downstream `finish` without waiting for the idle deadline. The limit is not an NGINX maximum; fallback targets
+allowing longer inactivity require both adapter idle limits to accommodate it.
 
 ## Notes And Caveats
 

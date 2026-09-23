@@ -1,0 +1,43 @@
+{
+  "name": "tcpconnector-delayed-fallback-connect",
+  "nodes": [
+    {
+      "name": "listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 26620
+      },
+      "next": "tls-server"
+    },
+    {
+      "name": "tls-server",
+      "type": "TlsServer",
+      "settings": {
+        "cert-file": "server.crt",
+        "key-file": "server.key",
+        "fallback-node-name": "fallback",
+        "fallback-intentional-delay-ms": 0
+      },
+      "next": "protected"
+    },
+    {
+      "name": "protected",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 9,
+        "fastopen": false
+      }
+    },
+    {
+      "name": "fallback",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 26621,
+        "fastopen": false
+      }
+    }
+  ]
+}

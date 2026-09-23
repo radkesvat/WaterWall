@@ -36,8 +36,8 @@ This node is a chain head. Its upstream entry callbacks are disabled because con
     "fwmark": 10,
     "balance-group": "public-443",
     "balance-interval": 30000,
-    "initial-idle-timeout-ms": 5000,
-    "active-idle-timeout-ms": 300000,
+    "initial-idle-timeout-ms": 60000,
+    "active-idle-timeout-ms": 600000,
     "multiport-backend": "socket",
     "whitelist": [
       "192.168.1.0/24",
@@ -121,11 +121,11 @@ One of `port` or `port-range` is required.
 
 - `initial-idle-timeout-ms` `(positive integer, milliseconds)`
   Idle timeout for a newly accepted TCP connection before any listener-side payload activity is seen.
-  Default: `5000`
+  Default: `60000`
 
 - `active-idle-timeout-ms` `(positive integer, milliseconds)`
   Idle timeout after the listener sees activity on the connection.
-  Default: `300000`
+  Default: `600000`
 
   For chains such as `TcpListener -> TlsServer`, this is still listener-side activity, not proof that TLS has completed.
   A client that sends a partial TLS record can move to this timeout while `TlsServer` is still waiting for more handshake
@@ -204,14 +204,19 @@ This protects the process from unbounded buffering when the client is slow or st
 
 Each accepted connection is tracked in an idle table.
 
-- a newly accepted connection starts with the configured initial timeout, `5 seconds` by default
-- active connections are refreshed to the configured active timeout, `300 seconds` by default
+- a newly accepted connection starts with the configured initial timeout, `60 seconds` by default
+- active connections are refreshed to the configured active timeout, `600 seconds` by default
 - if the connection expires, the socket and line are closed
 
 The initial and active timeout values are configurable with `initial-idle-timeout-ms` and `active-idle-timeout-ms`.
-These are stack-level timing signals. If the listener feeds a probe-resistant TLS chain and fallback points to a public
-TLS service, keep Waterwall and that service synchronized enough that stalled-client close timing is not itself a
-fingerprint.
+The initial duration follows NGINX's default initial wait. The active duration is a ten-minute cleanup limit,
+aligned with `TcpConnector`, so fallback connections can follow the target's shorter close timing. A target close
+propagates through the chain without waiting for the idle deadline, subject to flushing queued output.
+Ten minutes is not a maximum imposed by NGINX. A shorter explicit listener timeout can still close a fallback
+connection before its target; targets allowing longer inactivity require both adapter idle limits to accommodate it.
+These are generic TCP idle timers: activity extends the deadline without tracking HTTP request stages. `TlsServer`
+independently enforces its handshake deadline, `60s` by default, and disarms it when entering fallback. HTTP header/body
+deadlines, response write timeouts, and NGINX lingering-close behavior are not implemented by these two settings.
 
 ### Balance groups
 
