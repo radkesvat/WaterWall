@@ -226,6 +226,29 @@ int wwBase64Decode(const char *in, unsigned int inlen, unsigned char *out)
     return (int) (j);
 }
 
+int wwBase64DecodeCanonical(const char *in, unsigned int inlen, unsigned char *out, size_t out_capacity)
+{
+    assert(in != NULL || inlen == 0);
+    assert(out != NULL || out_capacity == 0);
+    if (inlen % 4 != 0)
+        return -1;
+
+    size_t decoded_size = BASE64_DECODE_OUT_SIZE(inlen);
+    if (inlen != 0 && in[inlen - 1] == BASE64_PAD)
+    {
+        bool two_pads = in[inlen - 2] == BASE64_PAD;
+        decoded_size -= two_pads ? 2 : 1;
+        unsigned char last = (unsigned char) in[inlen - (two_pads ? 3 : 2)];
+        int           value;
+        if (last < BASE64DE_FIRST || last > BASE64DE_LAST || (value = base64de[last - BASE64DE_FIRST]) < 0 ||
+            (value & (two_pads ? 15 : 3)) != 0)
+            return -1;
+    }
+    if (decoded_size > out_capacity || decoded_size > INT_MAX)
+        return -1;
+    return wwBase64Decode(in, inlen, out);
+}
+
 bool wwBase64UrlEncodedSizeNoPadding(size_t input_len, size_t *output_len)
 {
     if (output_len == NULL)

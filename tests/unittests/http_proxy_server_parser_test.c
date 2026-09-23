@@ -53,8 +53,38 @@ static void framing(const char *wire, bool decode, const char *expected)
     }
 }
 
+static void basicCredentialLimits(void)
+{
+    unsigned char plain[513];
+    memorySet(plain, 'u', 255);
+    plain[255] = ':';
+    memorySet(plain + 256, 'p', sizeof(plain) - 256);
+    char credentials[6 + BASE64_ENCODE_OUT_SIZE(sizeof(plain)) + 1];
+    memoryCopy(credentials, "Basic ", 6);
+    char username[256], password[256];
+    struct
+    {
+        char          key[512];
+        unsigned char guard[16];
+    } output;
+    for (unsigned int length = 509; length <= sizeof(plain); ++length)
+    {
+        memorySet(&output, 0xa5, sizeof(output));
+        wwBase64Encode(plain, length, credentials + 6);
+        bool ok = hpsDecodeBasic(credentials, username, password, output.key);
+        require(ok == (length <= 511), "Basic credential length boundary changed");
+        if (ok)
+            require(stringLength(username) == 255 && stringLength(password) == length - 256 &&
+                        stringLength(output.key) == length && memoryEqual(output.key, plain, length),
+                    "Basic credentials changed at the maximum length");
+        for (size_t i = 0; i < sizeof(output.guard); ++i)
+            require(output.guard[i] == 0xa5, "Basic decoding exceeded its output buffer");
+    }
+}
+
 int main(void)
 {
+    basicCredentialLimits();
     hps_header_t h;
     char         storage[32769], rewritten[34000];
     size_t       n;
@@ -171,6 +201,10 @@ int main(void)
     char user[256], pass[256], key[512];
     require(hpsDecodeBasic("Basic dXNlcjpwYXNz", user, pass, key) && ! stringCompare(key, "user:pass"),
             "Basic credentials");
+    require(hpsDecodeBasic("Basic dTpwYQ==", user, pass, key) && ! stringCompare(key, "u:pa"),
+            "Basic credentials with two padding characters");
+    require(hpsDecodeBasic("Basic dTpwYWE=", user, pass, key) && ! stringCompare(key, "u:paa"),
+            "Basic credentials with one padding character");
     const char *bad_auth[] = {"Basic dTpw=",
                               "Basic dTpw!!!!",
                               "Basic dTo=",
@@ -178,7 +212,8 @@ int main(void)
                               "Basic dToAcA==",
                               "Basic dTpw\n",
                               "Digest dTpw",
-                              "Basic dTpxYR=="};
+                              "Basic dTpxYR==",
+                              "Basic dTpwYWF="};
     for (size_t i = 0; i < ARRAY_SIZE(bad_auth); ++i)
         require(! hpsDecodeBasic(bad_auth[i], user, pass, key), bad_auth[i]);
     require(! parse("POST http://a/ HTTP/1.1\r\nHost: a\r\nConnection: X-Hop\r\nTransfer-Encoding: chunked\r\n\r\n",

@@ -1,15 +1,8 @@
 #include "parser.h"
 
-static int hex(unsigned char c);
-
-static unsigned char lowerAscii(unsigned char c)
-{
-    return c >= 'A' && c <= 'Z' ? (unsigned char) (c + ('a' - 'A')) : c;
-}
-
 static bool equal(const char *a, const char *b)
 {
-    while (*a && *b && lowerAscii((unsigned char) *a) == lowerAscii((unsigned char) *b))
+    while (*a && *b && asciiCaseEqual((unsigned char) *a, (unsigned char) *b))
     {
         ++a;
         ++b;
@@ -76,7 +69,7 @@ bool hpsAuthority(const char *text, size_t len, bool explicit_port, hps_authorit
         unsigned char c = (unsigned char) host[i];
         if (c <= 32 || c >= 127 || stringChr("@%/#?\\[]", c))
             return false;
-        host[i] = (char) lowerAscii(c);
+        host[i] = (char) asciiLower(c);
     }
     if (ipv6)
     {
@@ -173,7 +166,7 @@ static bool listContains(const char *value, const char *name, bool *valid)
         {
             bool match = true;
             for (size_t i = 0; i < (size_t) (p - start); ++i)
-                match &= lowerAscii((unsigned char) start[i]) == lowerAscii((unsigned char) name[i]);
+                match &= asciiCaseEqual((unsigned char) start[i], (unsigned char) name[i]);
             found |= match;
         }
         while (*p == ' ' || *p == '\t')
@@ -296,8 +289,8 @@ unsigned hpsParseHeader(char *block, size_t len, bool response, bool response_to
             {
                 if (*escaped == '%')
                 {
-                    if (! escaped[1] || ! escaped[2] || hex((unsigned char) escaped[1]) < 0 ||
-                        hex((unsigned char) escaped[2]) < 0)
+                    if (! escaped[1] || ! escaped[2] || asciiHexValue((unsigned char) escaped[1]) < 0 ||
+                        asciiHexValue((unsigned char) escaped[2]) < 0)
                         return 400;
                     escaped += 2;
                 }
@@ -500,21 +493,13 @@ bool hpsRewriteHeader(const hps_header_t *h, bool response, bool client_http10, 
 #undef ADD
 }
 
-static int hex(unsigned char c)
-{
-    if (c >= '0' && c <= '9')
-        return c - '0';
-    c = lowerAscii(c);
-    return c >= 'a' && c <= 'f' ? c - 'a' + 10 : -1;
-}
-
 static bool chunkSize(char *p, uint64_t *value)
 {
     uint64_t n = 0;
-    if (hex((unsigned char) *p) < 0)
+    if (asciiHexValue((unsigned char) *p) < 0)
         return false;
     int digit;
-    while ((digit = hex((unsigned char) *p)) >= 0)
+    while ((digit = asciiHexValue((unsigned char) *p)) >= 0)
     {
         if (n > (UINT64_MAX - (unsigned) digit) / 16)
             return false;
@@ -664,21 +649,6 @@ int hpsBodyStep(hps_body_t *b, const unsigned char *data, size_t len, bool decod
     return 1;
 }
 
-static int base64(unsigned char c)
-{
-    if (c >= 'A' && c <= 'Z')
-        return c - 'A';
-    if (c >= 'a' && c <= 'z')
-        return c - 'a' + 26;
-    if (c >= '0' && c <= '9')
-        return c - '0' + 52;
-    if (c == '+')
-        return 62;
-    if (c == '/')
-        return 63;
-    return -1;
-}
-
 bool hpsDecodeBasic(const char *value, char username[256], char password[256], char key[512])
 {
     if (! value || stringLength(value) < 7)
@@ -691,23 +661,13 @@ bool hpsDecodeBasic(const char *value, char username[256], char password[256], c
     value += 6;
     while (*value == ' ')
         ++value;
-    size_t len = stringLength(value), n = 0;
-    if (! len || len % 4 || len > 684)
+    size_t len = stringLength(value);
+    if (! len || len > BASE64_ENCODE_OUT_SIZE(511))
         return false;
-    for (size_t i = 0; i < len; i += 4)
-    {
-        int      a = base64((unsigned char) value[i]), b = base64((unsigned char) value[i + 1]);
-        int      c = base64((unsigned char) value[i + 2]), d = base64((unsigned char) value[i + 3]);
-        unsigned bytes = value[i + 2] == '=' ? 1 : value[i + 3] == '=' ? 2 : 3;
-        if (a < 0 || b < 0 || (bytes > 1 && c < 0) || (bytes > 2 && d < 0) || (bytes < 3 && i + 4 != len) ||
-            (bytes == 1 && (value[i + 3] != '=' || (b & 15))) || (bytes == 2 && (c & 3)) || n + bytes > 511)
-            return false;
-        key[n++] = (char) ((a << 2) | (b >> 4));
-        if (bytes > 1)
-            key[n++] = (char) ((b << 4) | (c >> 2));
-        if (bytes > 2)
-            key[n++] = (char) ((c << 6) | d);
-    }
+    int decoded = wwBase64DecodeCanonical(value, (unsigned int) len, (unsigned char *) key, 511);
+    if (decoded < 0)
+        return false;
+    size_t n = (size_t) decoded;
     key[n] = 0;
     for (size_t i = 0; i < n; ++i)
         if ((unsigned char) key[i] < 32 || (unsigned char) key[i] == 127)

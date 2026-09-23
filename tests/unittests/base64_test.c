@@ -147,8 +147,62 @@ static void testBase64UrlDecode(void)
     require(! wwBase64UrlDecode("Zg", 2, NULL, 1, &output_length), "NULL decode output was accepted");
 }
 
+static void testCanonicalDecode(void)
+{
+    uint8_t output[32];
+    for (size_t i = 0; i < ARRAY_SIZE(kVectors); ++i)
+    {
+        size_t       expected = stringLength(kVectors[i].plain);
+        unsigned int length   = (unsigned int) stringLength(kVectors[i].padded);
+        memorySet(output, 0xa5, sizeof(output));
+        int decoded = wwBase64DecodeCanonical(kVectors[i].padded, length, output, expected);
+        require(decoded == (int) expected && memoryEqual(output, kVectors[i].plain, expected),
+                "canonical standard Base64 vector failed");
+        require(output[expected] == 0xa5, "exact-capacity decode wrote a terminator or exceeded capacity");
+        if (expected != 0)
+        {
+            memorySet(output, 0xa5, sizeof(output));
+            require(wwBase64DecodeCanonical(kVectors[i].padded, length, output, expected - 1) == -1,
+                    "canonical decode accepted insufficient capacity");
+            for (size_t j = 0; j < sizeof(output); ++j)
+                require(output[j] == 0xa5, "capacity refusal wrote output");
+        }
+    }
+    require(wwBase64DecodeCanonical(NULL, 0, NULL, 0) == 0, "empty canonical decode failed");
+    const char *invalid[] = {"A",
+                             "Zg",
+                             "Zg=",
+                             "Zm8",
+                             "====",
+                             "=g==",
+                             "Z===",
+                             "Zg=A",
+                             "Zg==AAAA",
+                             "Zm8=AAAA",
+                             "Zg==\n",
+                             "Z g=",
+                             "-_-_",
+                             "Z\xff==",
+                             "Zh==",
+                             "Zm9="};
+    for (size_t i = 0; i < ARRAY_SIZE(invalid); ++i)
+    {
+        memorySet(output, 0xa5, sizeof(output));
+        require(wwBase64DecodeCanonical(invalid[i], (unsigned int) stringLength(invalid[i]), output, 8) == -1,
+                "canonical decode accepted malformed input or nonzero pad bits");
+        require(output[8] == 0xa5, "malformed input exceeded capacity");
+    }
+    // The permissive API's existing pad-bit behavior remains independent of the canonical API.
+    require(wwBase64Decode("Zh==", 4, output) == 1 && output[0] == 'f', "permissive decode behavior changed");
+    const uint8_t binary[] = {0xfb, 0xff, 0xbf};
+    require(wwBase64DecodeCanonical("+/+/", 4, output, sizeof(binary)) == sizeof(binary) &&
+                memoryEqual(output, binary, sizeof(binary)),
+            "canonical decoder rejected the standard alphabet or binary output");
+}
+
 int main(void)
 {
+    testCanonicalDecode();
     testEncodedSizes();
     testBase64UrlEncode();
     testBase64UrlDecode();
