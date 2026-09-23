@@ -2,5 +2,13 @@
 
 void httpproxyserverTunnelUpStreamPause(tunnel_t *t, line_t *l)
 {
-    hpsPressure(t, l, 1, true);
+    hps_lstate_t  *ls = lineGetState(l, t);
+    hps_session_t *s  = ls->session;
+    hpsRetain(s);
+    lineRef(l);
+    s->paused[kHpsDownstream] = true;
+    hpsUpdatePressure(s);
+    hpsPump(s);
+    lineUnref(l);
+    hpsRelease(s);
 }

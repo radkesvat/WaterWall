@@ -264,6 +264,93 @@
         "nodelay": true,
         "fastopen": false
       }
+    },
+    {
+      "name": "fallback-local-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 29086,
+        "nodelay": true
+      },
+      "next": "fallback-local"
+    },
+    {
+      "name": "fallback-local",
+      "type": "HttpProxyServer",
+      "settings": {
+        "users": [
+          {
+            "username": "alice",
+            "password": "one"
+          }
+        ],
+        "fallback-node-name": "fallback-local-service",
+        "max-pending-bytes": 65536,
+        "idle-timeout-ms": 5000,
+        "header-timeout-ms": 5000
+      },
+      "next": "fallback-local-protected"
+    },
+    {
+      "name": "fallback-local-protected",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "dest_context->address",
+        "port": "dest_context->port",
+        "fastopen": false
+      }
+    },
+    {
+      "name": "fallback-local-service",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "localhost",
+        "port": 29088,
+        "domain-strategy": "only-ipv4",
+        "fastopen": false
+      }
+    },
+    {
+      "name": "fallback-tracked-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 29087,
+        "nodelay": true
+      },
+      "next": "fallback-tracked"
+    },
+    {
+      "name": "fallback-tracked",
+      "type": "HttpProxyServer",
+      "settings": {
+        "auth-client-node-name": "auth-client",
+        "fallback-node-name": "fallback-tracked-service",
+        "max-pending-bytes": 65536,
+        "idle-timeout-ms": 5000,
+        "header-timeout-ms": 5000
+      },
+      "next": "fallback-tracked-protected"
+    },
+    {
+      "name": "fallback-tracked-protected",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "dest_context->address",
+        "port": "dest_context->port",
+        "fastopen": false
+      }
+    },
+    {
+      "name": "fallback-tracked-service",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "localhost",
+        "port": 29088,
+        "domain-strategy": "only-ipv4",
+        "fastopen": false
+      }
     }
   ]
 }

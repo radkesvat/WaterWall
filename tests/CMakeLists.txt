@@ -1057,6 +1057,11 @@ add_custom_target(check_waterwall_support_tests
 
 if(TARGET HttpProxyServer AND TARGET AuthenticationServer AND TARGET Router AND TARGET Socks5Server)
   add_waterwall_probe_integration_test(waterwall.http_proxy_acceptance http_proxy 60)
+  add_waterwall_isolated_test(waterwall.http_proxy_fallback_config
+    "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/http_proxy_fallback_config_test.py"
+    "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>")
+  set_tests_properties(waterwall.http_proxy_fallback_config PROPERTIES TIMEOUT 120)
+  add_waterwall_test_labels(waterwall.http_proxy_fallback_config "integration" "http" "proxy" "configuration")
 endif()
 
 add_custom_target(check_waterwall_tests

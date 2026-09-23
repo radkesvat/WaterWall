@@ -32,6 +32,8 @@ typedef struct hps_worker_s
 
 typedef struct hps_tstate_s
 {
+    node_t           *fallback_node;
+    tunnel_t         *fallback;
     node_t           *auth_node;
     tunnel_t         *auth;
     node_t            controller_node;
@@ -58,12 +60,27 @@ struct hps_lstate_s
     bool           child;
 };
 
+typedef enum hps_direction_e
+{
+    kHpsUpstream,
+    kHpsDownstream
+} hps_direction_t;
+
+typedef enum hps_step_e
+{
+    kHpsStepBlocked,
+    kHpsStepNeedInput,
+    kHpsStepProgress,
+    kHpsStepDone
+} hps_step_t;
+
 typedef enum hps_phase_e
 {
     kHpsRequest,
     kHpsExchange,
     kHpsConnect,
     kHpsRelay,
+    kHpsFallback,
     kHpsError,
     kHpsClosed
 } hps_phase_t;
@@ -74,6 +91,7 @@ struct hps_session_s
     tunnel_t       *t;
     line_t         *client;
     line_t         *child;
+    tunnel_t       *child_entry;
     hps_session_t  *timer_prev;
     hps_session_t  *timer_next;
     wtimer_t       *timer;
@@ -82,6 +100,7 @@ struct hps_session_s
     sbuf_t         *input[2];
     sbuf_t         *output[2];
     sbuf_t         *deferred[2]; /* One bounded already-delivered remainder per direction. */
+    sbuf_t         *incoming[2]; /* Active Payload remainder; nested input appends here in FIFO order. */
     hps_body_t      request_body;
     hps_body_t      response_body;
     hps_header_t    trailer_context[2];
@@ -96,6 +115,9 @@ struct hps_session_s
     uint64_t        connect_at;
     unsigned        informationals;
     unsigned        receiving_down;
+    unsigned        receiving_up;
+    bool            protected_committed;
+    bool            child_initializing;
     bool            pumping;
     bool            again;
     bool            established;
@@ -130,13 +152,41 @@ void httpproxyserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 void httpproxyserverTunnelDownStreamPause(tunnel_t *t, line_t *l);
 void httpproxyserverTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
-void hpsInit(tunnel_t *t, line_t *l);
-void hpsFinish(tunnel_t *t, line_t *l, bool child);
-void hpsPayload(tunnel_t *t, line_t *l, sbuf_t *buf, unsigned direction);
-void hpsPressure(tunnel_t *t, line_t *l, unsigned direction, bool paused);
-void hpsEstablished(tunnel_t *t, line_t *l);
-void hpsCloseChild(hps_session_t *s, bool from_child);
-void hpsClose(hps_session_t *s, bool from_client);
-void hpsRetain(hps_session_t *s);
-void hpsRelease(hps_session_t *s);
-void hpsDetachTimer(hps_session_t *s);
+/* Small shared state accessors; callers own session/line lifetime. */
+static inline uint64_t hpsNowMs(void)
+{
+    return getHRTimeUs() / 1000;
+}
+
+static inline hps_tstate_t *hpsSettings(hps_session_t *s)
+{
+    return tunnelGetState(s->t);
+}
+
+static inline bool hpsIsActive(hps_session_t *s)
+{
+    return s->phase != kHpsClosed && lineIsAlive(s->client);
+}
+
+void       hpsRetain(hps_session_t *s);
+void       hpsRelease(hps_session_t *s);
+void       hpsDetachTimer(hps_session_t *s);
+void       hpsCloseChild(hps_session_t *s, bool from_child);
+void       hpsClose(hps_session_t *s, bool from_client);
+void       hpsClearLineState(line_t *l, tunnel_t *t);
+void       hpsCreateChild(hps_session_t *s, const char *username, const char *password);
+void       hpsDiscardBuffer(hps_session_t *s, sbuf_t **slot);
+void       hpsClearHeader(hps_session_t *s, hps_direction_t d);
+size_t     hpsPendingBytes(hps_session_t *s);
+bool       hpsAppendInput(hps_session_t *s, hps_direction_t direction, const unsigned char *data, size_t n);
+bool       hpsQueueOutput(hps_session_t *s, hps_direction_t d, const char *data, size_t n);
+void       hpsFail(hps_session_t *s, unsigned status);
+void       hpsUpdatePressure(hps_session_t *s);
+bool       hpsDeliverPayload(hps_session_t *s, hps_direction_t d, sbuf_t *b);
+int        hpsReadHeader(hps_session_t *s, hps_direction_t d, char **block);
+bool       hpsRewriteHeaderOutput(hps_session_t *s, const hps_header_t *h, hps_direction_t d);
+hps_step_t hpsProcessBody(hps_session_t *s, hps_direction_t d);
+void       hpsPump(hps_session_t *s);
+bool       hpsProcessRequest(hps_session_t *s);
+bool       hpsProcessResponse(hps_session_t *s);
+void       hpsAcceptPayload(hps_session_t *s, line_t *l, sbuf_t *buf, hps_direction_t direction);

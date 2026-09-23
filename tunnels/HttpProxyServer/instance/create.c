@@ -91,7 +91,8 @@ static bool parse(hps_tstate_t *ts, node_t *node)
                            "header-timeout-ms",
                            "connect-timeout-ms",
                            "idle-timeout-ms",
-                           "verbose"};
+                           "verbose",
+                           "fallback-node-name"};
     const cJSON *item;
     cJSON_ArrayForEach(item, json)
     {
@@ -124,6 +125,15 @@ static bool parse(hps_tstate_t *ts, node_t *node)
     }
     else if (users && ! localUsers(ts, users))
         return false;
+    const cJSON *fallback = cJSON_GetObjectItemCaseSensitive(json, "fallback-node-name");
+    if (fallback)
+    {
+        if (! cJSON_IsString(fallback) || ! fallback->valuestring[0])
+            return false;
+        ts->fallback_node = nodemanagerGetConfigNodeByName(node->node_manager_config, fallback->valuestring);
+        if (! ts->fallback_node || ts->fallback_node == node || ! (ts->fallback_node->layer_group & kNodeLayer4))
+            return false;
+    }
     uint32_t sweep;
     return integer(json, "max-header-bytes", 32768, 1024, 65536, &ts->max_header) &&
            integer(json, "max-pending-bytes", 262144, 65536, 1048576, &ts->max_pending) &&

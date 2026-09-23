@@ -273,12 +273,53 @@ def local_users(a, b, sentinel, echo):
     print("http_proxy: L2-L4 local authentication, reauthentication, pair reuse, UTF-8 and credential routing passed")
 
 
+def authentication_fallback(origin, raw_service):
+    for port, pair in ((29086, b"alice:one"), (29087, b"user:pass")):
+        failures = [b"", b"Proxy-Authorization: Digest x\r\n", b"Proxy-Authorization: Basic !!!\r\n",
+                    local_auth(b"unknown:wrong")]
+        if port == 29087:
+            failures.append(local_auth(b"disabled:pass"))
+        before = origin.connections
+        for extra in failures:
+            wire = connect(port)
+            with wire.sock:
+                raw = request(origin, b"/raw", b"POST", extra + b"Content-Length: 3\r\n"
+                              b"Expect: 100-continue\r\nConnection: X-Hop\r\nX-Hop: value\r\n") + b"abcTAIL"
+                wire.sock.sendall(raw)
+                assert wire.exact(len(b"destination-first")) == b"destination-first"
+                assert wire.exact(len(raw)) == raw, "fallback changed failed request bytes"
+                later = request(origin, extra=local_auth(pair))
+                wire.sock.sendall(later)
+                assert wire.exact(len(later)) == later, "fallback returned to protected parsing"
+        assert origin.connections == before, "authentication fallback contacted requested origin"
+        for raw in (b"CONNECT untrusted.invalid:443 HTTP/1.1\r\nHost: a\r\n\r\nTLSbytes",
+                    b"OPTIONS * HTTP/1.1\r\nHost: a\r\n\r\n",
+                    b"POST http://untrusted.invalid:19/a HTTP/1.1\r\nhOsT: a\r\n"
+                    b"Transfer-Encoding: chunked\r\n\r\n3;x=y\r\nabc\r\n0\r\n\r\nTAIL"):
+            wire = connect(port)
+            with wire.sock:
+                wire.sock.sendall(raw)
+                assert wire.exact(len(b"destination-first")) == b"destination-first"
+                assert wire.exact(len(raw)) == raw
+        before_fallback = raw_service.connections
+        wire = connect(port)
+        with wire.sock:
+            wire.sock.sendall(request(origin, extra=local_auth(pair)))
+            assert wire.response()[0] == 200
+            wire.sock.sendall(request(origin))
+            assert wire.response()[0] == 407
+        assert once(request(origin, extra=local_auth(pair) * 2), port)[0] == 400
+        assert raw_service.connections == before_fallback, "committed/malformed request selected fallback"
+    print("http_proxy: local/tracked fallback exact replay, fixed-domain branch, permanent handoff and commitment passed")
+
+
 def run():
-    origins = [Origin(), Origin(), Origin(29083), Origin(echo=True), Origin(echo=True, ipv6=True)]
-    a, b, sentinel, echo, echo6 = origins
+    origins = [Origin(), Origin(), Origin(29083), Origin(echo=True), Origin(echo=True, ipv6=True), Origin(29088, echo=True)]
+    a, b, sentinel, echo, echo6, raw_service = origins
     held = []
     try:
         local_users(a, b, sentinel, echo)
+        authentication_fallback(a, raw_service)
         # Baseline assertions below count only their own new origin connections.
         a_base, b_base, sentinel_base = a.connections, b.connections, sentinel.connections
         wire = connect()
@@ -505,6 +546,11 @@ def run():
             assert local_relay.response(head=True)[0] == 200
             assert local_relay.exact(len(b"destination-first")) == b"destination-first"
             held.append(local_relay)
+            raw_pending = connect(29086)
+            raw_pending.sock.sendall(request(a))
+            assert raw_pending.exact(len(b"destination-first")) == b"destination-first"
+            assert raw_pending.exact(len(request(a))) == request(a)
+            held.append(raw_pending)
             Path("stop-probe-ready").touch()
             deadline = time.monotonic() + 30
             while not Path("stop-probe-complete").exists():

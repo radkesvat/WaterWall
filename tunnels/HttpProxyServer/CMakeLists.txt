@@ -1,6 +1,6 @@
 add_library(HttpProxyServer STATIC
     instance/create.c instance/node.c instance/api.c instance/chain.c instance/prepair.c
-    instance/stop.c instance/destroy.c common/parser.c common/helpers.c
+    instance/stop.c instance/destroy.c common/parser.c common/input.c common/flow.c common/lifecycle.c
     upstream/init.c upstream/fin.c upstream/payload.c upstream/pause.c upstream/resume.c
     downstream/est.c downstream/fin.c downstream/payload.c downstream/pause.c downstream/resume.c)
 if(NOT TARGET AuthenticationClient OR NOT TARGET UserController)

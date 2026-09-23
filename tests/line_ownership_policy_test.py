@@ -91,8 +91,8 @@ PAIRED_LINE_ALLOCATION = ("ww/net/pipe_tunnel.c", "pipeTo")
 CREATION_SITES = [
     ("tests/unittests/http_proxy_server_lifecycle_test.c", "resetClient", TEST_ONLY,
      "fixture-owned incoming client; production proxy owns its separate child"),
-    ("tunnels/HttpProxyServer/common/helpers.c", "createChild", NORMAL_OWNER,
-     "one outbound HTTP or CONNECT child; the incoming client line remains borrowed"),
+    ("tunnels/HttpProxyServer/common/lifecycle.c", "hpsCreateChild", NORMAL_OWNER,
+     "one outbound HTTP, CONNECT or fallback child; the incoming client line remains borrowed"),
     # ------------------------------------------------------------------
     # Core
     # ------------------------------------------------------------------
@@ -273,7 +273,7 @@ CREATION_COUNTS = {
 # this is the frame that must leave the line dead.
 
 OWNER_CLOSE_SITES = [
-    ("tunnels/HttpProxyServer/common/helpers.c", "hpsCloseChild",
+    ("tunnels/HttpProxyServer/common/lifecycle.c", "hpsCloseChild",
      "detach the sole outbound child and destroy it on peer Finish, replacement, or worker drain"),
     ("tunnels/TcpListener/downstream/fin.c", "tcplistenerTunnelDownStreamFinish",
      "accepted TCP line, closed by the neighbour's Finish"),

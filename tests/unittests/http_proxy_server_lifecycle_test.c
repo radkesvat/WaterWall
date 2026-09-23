@@ -3,16 +3,23 @@
 #include "wevent.h"
 
 /* Real pool-backed lines and callbacks, with no sockets or linker wrapping. */
-static tunnel_t *proxy, *prev, *next;
+static tunnel_t *proxy, *prev, *next, *fallback;
+static unsigned  fallback_opens, init_action, child_pauses;
+static bool      in_fallback_init;
 static line_t   *client, *child;
 static unsigned  opens, closes, establishments, client_writes, request_writes;
 static unsigned  close_on; /* 1 Init, 2 Est, 3 Payload, 4 Pause, 5 Resume */
 static bool      refuse, automatic_response;
-static char      received[2 * 1024 * 1024], sent[2 * 1024 * 1024];
+static char      received[4 * 1024 * 1024], sent[4 * 1024 * 1024];
 static bool      pause_request, pause_response, delay_establishment;
 static size_t    received_len;
 static size_t    sent_len;
 static bool      producer_paused[2];
+static bool        nested_payload[2], finish_response;
+static const char *nested_bytes;
+
+static void sendBytes(line_t *l, bool downstream, const char *bytes);
+static void childEof(void);
 
 static void require(bool ok, const char *text)
 {
@@ -59,6 +66,13 @@ static void previousPayload(tunnel_t *t, line_t *l, sbuf_t *b)
     received[received_len] = 0;
     ++client_writes;
     lineReuseBuffer(l, b);
+    if (nested_payload[1])
+    {
+        nested_payload[1] = false;
+        sendBytes(child, true, nested_bytes);
+        if (finish_response)
+            childEof();
+    }
     if (close_on == 3)
         clientClose();
     else if (pause_response)
@@ -72,14 +86,21 @@ static void childPause(tunnel_t *t, line_t *l)
 {
     discard t;
     discard l;
+    require(! in_fallback_init, "Pause entered unfinished fallback Init");
+    ++child_pauses;
     producer_paused[1] = true;
+    if (close_on == 6)
+        clientClose();
 }
 
 static void childResume(tunnel_t *t, line_t *l)
 {
     discard t;
     discard l;
+    require(! in_fallback_init, "Resume entered unfinished fallback Init");
     producer_paused[1] = false;
+    if (close_on == 7)
+        clientClose();
 }
 
 static void previousPause(tunnel_t *t, line_t *l)
@@ -104,6 +125,7 @@ static void childFinish(tunnel_t *t, line_t *l)
 {
     discard t;
     require(l == child, "wrong child finished");
+    require(t == (fallback_opens ? fallback : next), "wrong Finish branch");
     ++closes;
     child = NULL;
 }
@@ -147,7 +169,9 @@ static void sendBytes(line_t *l, bool downstream, const char *bytes)
 static void childPayload(tunnel_t *t, line_t *l, sbuf_t *b)
 {
     discard t;
+    require(! in_fallback_init, "Payload entered unfinished fallback Init");
     require(l == child, "request did not use owned child");
+    require(t == ((hps_lstate_t *) lineGetState(l, proxy))->session->child_entry, "wrong Payload branch");
     require(sbufGetLeftCapacity(b) >= 64, "rewritten buffer lost chain padding");
     size_t n = sbufGetLength(b);
     require(n < sizeof(sent) - sent_len, "test request capacity");
@@ -156,6 +180,16 @@ static void childPayload(tunnel_t *t, line_t *l, sbuf_t *b)
     sent[sent_len] = 0;
     ++request_writes;
     lineReuseBuffer(l, b);
+    if (nested_payload[0])
+    {
+        nested_payload[0] = false;
+        sendBytes(client, false, nested_bytes);
+    }
+    if (close_on == 8)
+    {
+        clientClose();
+        return;
+    }
     if (pause_request)
     {
         pause_request = false;
@@ -167,6 +201,10 @@ static void childPayload(tunnel_t *t, line_t *l, sbuf_t *b)
 
 static void resetClient(tunnel_chain_t *chain)
 {
+    fallback_opens = init_action = child_pauses = 0;
+    in_fallback_init                            = false;
+    nested_payload[0] = nested_payload[1] = finish_response = false;
+    nested_bytes                                            = "NEW";
     pause_request = pause_response = delay_establishment = false;
     opens = closes = establishments = client_writes = request_writes = 0;
     received_len                                                     = 0;
@@ -195,6 +233,381 @@ static void childEof(void)
     httpproxyserverTunnelDownStreamFinish(proxy, l);
     require(! lineIsAlive(l), "EOF left owned child alive");
     lineUnref(l);
+}
+
+static void fallbackInit(tunnel_t *t, line_t *l)
+{
+    require(t == fallback, "wrong fallback entry");
+    ++fallback_opens;
+    require(! addresscontextHasPort(lineGetDestinationAddressContext(l)), "failed authority escaped to fallback");
+    require(lineGetUserAuthCount(l) == lineGetUserAuthCount(client), "rejected identity escaped to fallback");
+    in_fallback_init = true;
+    childInit(t, l);
+    if (lineIsAlive(l))
+    {
+        if (init_action == 1 || init_action == 3)
+            httpproxyserverTunnelUpStreamResume(proxy, client);
+        if (init_action == 2 || init_action == 3)
+            httpproxyserverTunnelUpStreamPause(proxy, client);
+        if (init_action == 2)
+            httpproxyserverTunnelUpStreamResume(proxy, client);
+        if (init_action == 6)
+        {
+            httpproxyserverTunnelDownStreamPause(proxy, l);
+            httpproxyserverTunnelUpStreamResume(proxy, client);
+        }
+        if (init_action == 4)
+            sendBytes(client, false, "nested-input");
+        if (init_action == 5)
+        {
+            sendBytes(l, true, "raw local reply\r\n");
+            childEof();
+        }
+    }
+    in_fallback_init = false;
+}
+
+static void fallbackStart(tunnel_chain_t *chain)
+{
+    resetClient(chain);
+    automatic_response  = false;
+    delay_establishment = true;
+}
+
+static tunnel_t *localConfig(const char *json, bool valid);
+
+static void responseOrdering(tunnel_chain_t *chain, const char *request, bool fallback_mode, bool http)
+{
+    const size_t n    = kHpsDeliveryHeadroomBytes + 32768;
+    char        *wire = memoryAllocate(n + 1);
+    memorySet(wire, 'x', n);
+    wire[n] = 0;
+    for (unsigned event = 0; event < 7; ++event)
+    {
+        resetClient(chain);
+        automatic_response  = false;
+        delay_establishment = fallback_mode;
+        sendBytes(client, false, request);
+        if (http)
+        {
+            char header[128];
+            stringNPrintf(header, sizeof(header), "HTTP/1.1 200 OK\r\nContent-Length: %zu\r\n\r\n", n + 3);
+            sendBytes(child, true, header);
+        }
+        received_len      = 0;
+        nested_payload[1] = true;
+        finish_response   = event == 1 || event == 3;
+        pause_response    = event == 2 || event == 3;
+        if (event == 4)
+            nested_bytes = wire; /* Active remainder and nested input share D. */
+        else if (event == 5)
+            close_on = 3;
+        else if (event == 6)
+            nested_bytes = "";
+        sendBytes(child, true, wire);
+        if (event == 4 || event == 5)
+        {
+            require(! lineIsAlive(client) && ! child && closes == 1, "active response overflow/close failed to settle");
+            lineUnref(client);
+            continue;
+        }
+        if (event == 2 || event == 3)
+        {
+            require(lineIsAlive(client) && received_len < n, "Pause lost active response retention");
+            httpproxyserverTunnelUpStreamResume(proxy, client);
+        }
+        size_t extra = event == 6 ? 0 : 3;
+        require(received_len == n + extra && ! memoryCompare(received, wire, n) &&
+                    ! stringCompare(received + n, extra ? "NEW" : ""),
+                "nested response overtook active delivery");
+        if (! http && finish_response)
+            require(! lineIsAlive(client) && ! child && ! closes, "raw EOF failed to drain active response");
+        clientClose();
+        lineUnref(client);
+    }
+    memoryFree(wire);
+}
+
+static void requestOrdering(tunnel_chain_t *chain, const char *request, bool fallback_mode)
+{
+    const size_t n    = kHpsDeliveryHeadroomBytes + 32768;
+    char        *wire = memoryAllocate(n + 1);
+    memorySet(wire, 'x', n);
+    wire[n] = 0;
+    resetClient(chain);
+    automatic_response  = false;
+    delay_establishment = fallback_mode;
+    sendBytes(client, false, request);
+    sent_len          = 0;
+    nested_payload[0] = true;
+    sendBytes(client, false, wire);
+    require(sent_len == n + 3 && ! memoryCompare(sent, wire, n) && ! stringCompare(sent + n, "NEW"),
+            "nested request overtook active delivery");
+    clientClose();
+    lineUnref(client);
+    memoryFree(wire);
+}
+
+static void fallbackCases(tunnel_chain_t *chain)
+{
+    tunnel_t *saved = proxy;
+    proxy           = localConfig("{\"users\":[{\"username\":\"alice\",\"password\":\"one\"}]}", true);
+    proxy->chain    = chain;
+    tunnelBind(prev, proxy);
+    tunnelBind(proxy, next);
+    hps_tstate_t *ts   = tunnelGetState(proxy);
+    ts->fallback       = fallback;
+    ts->max_pending    = 65536;
+    const char *raw    = "POST http://untrusted.invalid:19/a HTTP/1.1\r\nhoST: unchanged\r\n"
+                         "pRoXy-Authorization: Basic !!!\r\nConnection: X-Hop\r\nX-Hop:  value \t\r\n"
+                         "Transfer-Encoding: chunked\r\nExpect: 100-continue\r\n\r\n3;x=y\r\nabc\r\n0\r\n\r\npipeline";
+    size_t      length = stringLength(raw);
+    responseOrdering(chain, raw, true, false);
+    responseOrdering(
+        chain, "CONNECT a:443 HTTP/1.1\r\nHost: a\r\nProxy-Authorization: Basic YWxpY2U6b25l\r\n\r\n", false, false);
+    responseOrdering(
+        chain, "GET http://a/ HTTP/1.1\r\nHost: a\r\nProxy-Authorization: Basic YWxpY2U6b25l\r\n\r\n", false, true);
+    requestOrdering(chain, raw, true);
+    requestOrdering(
+        chain, "CONNECT a:443 HTTP/1.1\r\nHost: a\r\nProxy-Authorization: Basic YWxpY2U6b25l\r\n\r\n", false);
+    char post[256];
+    stringNPrintf(post,
+                  sizeof(post),
+                  "POST http://a/ HTTP/1.1\r\nHost: a\r\n"
+                  "Proxy-Authorization: Basic YWxpY2U6b25l\r\nContent-Length: %u\r\n\r\n",
+                  kHpsDeliveryHeadroomBytes + 32768 + 3);
+    requestOrdering(chain, post, false);
+    for (size_t split = 0; split <= length; ++split)
+    {
+        fallbackStart(chain);
+        char prefix[512];
+        memoryCopy(prefix, raw, split);
+        prefix[split] = 0;
+        sendBytes(client, false, prefix);
+        sendBytes(client, false, raw + split);
+        require(fallback_opens == 1 && opens == 1 && ! received_len && sent_len == length &&
+                    ! memoryCompare(sent, raw, length),
+                "split exact replay");
+        sendBytes(client, false, "GET http://a/ HTTP/1.1\r\nProxy-Authorization: Basic YWxpY2U6b25l\r\n\r\n");
+        require(fallback_opens == 1 && opens == 1 && strstr(sent, "http://a/"), "fallback was not permanent");
+        sendBytes(child, true, "arbitrary non-HTTP response");
+        require(! stringCompare(received, "arbitrary non-HTTP response") && ! establishments, "early raw reply");
+        httpproxyserverTunnelUpStreamPause(proxy, client);
+        httpproxyserverTunnelDownStreamEst(proxy, child);
+        httpproxyserverTunnelDownStreamEst(proxy, child);
+        require(establishments == 1, "paused fallback Est latch");
+        clientClose();
+        require(closes == 1, "fallback Finish branch");
+        lineUnref(client);
+    }
+    const char *denials[] = {"GET http://a/ HTTP/1.1\r\nHost: a\r\n\r\n",
+                             "GET http://a/ HTTP/1.1\r\nHost: a\r\nProxy-Authorization: Digest a\r\n\r\n",
+                             "GET http://a/ HTTP/1.1\r\nHost: a\r\nProxy-Authorization: Basic Ym9iOnR3bw==\r\n\r\n",
+                             "CONNECT a:443 HTTP/1.1\r\nHost: a\r\n\r\ncoalesced",
+                             "OPTIONS * HTTP/1.1\r\nHost: a\r\n\r\n",
+                             "POST http://a/ HTTP/1.1\r\nHost: a\r\nContent-Length: 3\r\n\r\nabcTAIL"};
+    for (unsigned i = 0; i < ARRAY_SIZE(denials); ++i)
+    {
+        fallbackStart(chain);
+        sendBytes(client, false, denials[i]);
+        require(fallback_opens == 1 && ! received_len && ! stringCompare(sent, denials[i]), "auth denial replay");
+        clientClose();
+        lineUnref(client);
+    }
+    /* Current receiver permission wins, regardless of when selection/Init occurs. */
+    for (unsigned action = 0; action <= 3; ++action)
+        for (unsigned before = 0; before <= 2; ++before)
+        {
+            fallbackStart(chain);
+            if (before)
+                httpproxyserverTunnelUpStreamPause(proxy, client);
+            if (before == 2)
+                httpproxyserverTunnelUpStreamResume(proxy, client);
+            init_action = action;
+            sendBytes(client, false, raw);
+            bool want = action == 3 || (action == 0 && before == 1);
+            require(producer_paused[1] == want && child_pauses == (unsigned) want, "stale or lost Init pressure");
+            sendBytes(child, true, "reply");
+            require(received_len == (want ? 0 : 5), "receiver permission ignored");
+            childEof();
+            if (want)
+            {
+                require(lineIsAlive(client), "paused EOF discarded reply");
+                httpproxyserverTunnelUpStreamResume(proxy, client);
+            }
+            require(! lineIsAlive(client) && ! stringCompare(received, "reply") && ! closes, "EOF reply settlement");
+            lineUnref(client);
+        }
+    for (unsigned paused = 0; paused < 2; ++paused)
+    {
+        fallbackStart(chain);
+        if (paused)
+            httpproxyserverTunnelUpStreamPause(proxy, client);
+        init_action = 5;
+        sendBytes(client, false, raw);
+        require(! sent_len && ! closes && ! establishments, "Init EOF reflected or emitted replay/Est");
+        if (paused)
+        {
+            require(lineIsAlive(client) && ! received_len, "Init EOF lost paused output");
+            httpproxyserverTunnelUpStreamResume(proxy, client);
+        }
+        require(! lineIsAlive(client) && ! stringCompare(received, "raw local reply\r\n"), "Init reply disappeared");
+        lineUnref(client);
+    }
+    /* Larger than D: the outer Payload owns a suffix when parsing selects fallback. */
+    fallbackStart(chain);
+    init_action       = 4;
+    size_t big_length = kHpsDeliveryHeadroomBytes + 32768;
+    char  *big        = memoryAllocate(big_length + 1);
+    memoryCopy(big, raw, length);
+    memorySet(big + length, 'x', big_length - length);
+    big[big_length] = 0;
+    sendBytes(client, false, big);
+    require(lineIsAlive(client) && sent_len == big_length + 12 && ! memoryCompare(sent, big, big_length) &&
+                ! stringCompare(sent + big_length, "nested-input"),
+            "outer remainder overtaken by Init reentry");
+    memoryFree(big);
+    clientClose();
+    lineUnref(client);
+
+    fallbackStart(chain);
+    init_action = 6;
+    sendBytes(client, false, raw);
+    require(! sent_len && producer_paused[0], "independent request pressure was released");
+    httpproxyserverTunnelDownStreamResume(proxy, child);
+    require(sent_len == length && ! stringCompare(sent, raw) && ! producer_paused[0], "paused replay lost");
+    clientClose();
+    lineUnref(client);
+
+    /* First handoff at the full P+D boundary remains charged, including the header. */
+    fallbackStart(chain);
+    init_action            = 6;
+    size_t boundary_length = kHpsDeliveryHeadroomBytes + ts->max_pending;
+    char  *boundary        = memoryAllocate(boundary_length + 2);
+    memoryCopy(boundary, raw, length);
+    memorySet(boundary + length, 'x', boundary_length - length);
+    boundary[boundary_length] = 0;
+    sendBytes(client, false, boundary);
+    require(lineIsAlive(client) && child && ! sent_len, "P+D fallback admission failed");
+    sendBytes(child, true, "raw reply while request is paused");
+    require(! stringCompare(received, "raw reply while request is paused") && ! producer_paused[1],
+            "full request budget blocked unpaused response");
+    received_len = 0;
+    httpproxyserverTunnelDownStreamResume(proxy, child);
+    require(sent_len == boundary_length && ! memoryCompare(sent, boundary, boundary_length), "P+D replay bytes");
+    boundary[boundary_length]     = 'x';
+    boundary[boundary_length + 1] = 0;
+    sendBytes(client, false, boundary);
+    require(! lineIsAlive(client) && ! received_len, "raw overflow invented HTTP error");
+    memoryFree(boundary);
+    lineUnref(client);
+
+    const char *valid = "GET http://a/ HTTP/1.1\r\nHost: a\r\nProxy-Authorization: Basic YWxpY2U6b25l\r\n\r\n";
+    resetClient(chain);
+    sendBytes(client, false, valid);
+    sendBytes(client, false, denials[0]);
+    require(! lineIsAlive(client) && ! fallback_opens && opens == 1 && strstr(received, "407"),
+            "later failure fell back");
+    lineUnref(client);
+    resetClient(chain);
+    ts->auth_mode = kHpsAuthNone;
+    sendBytes(client, false, denials[0]);
+    require(opens == 1 && ! fallback_opens && strstr(received, "200"), "no-auth fallback was active");
+    clientClose();
+    lineUnref(client);
+    ts->auth_mode = kHpsAuthLocal;
+    resetClient(chain);
+    httpproxyserverTunnelUpStreamPause(proxy, client);
+    sendBytes(client,
+              false,
+              "OPTIONS * HTTP/1.1\r\nHost: a\r\n"
+              "Proxy-Authorization: Basic YWxpY2U6b25l\r\n\r\n");
+    hps_session_t *options_session = ((hps_lstate_t *) lineGetState(client, proxy))->session;
+    require(options_session && options_session->protected_committed && ! opens, "OPTIONS commitment");
+    httpproxyserverTunnelUpStreamResume(proxy, client);
+    require(! lineIsAlive(client) && ! fallback_opens && strstr(received, "200"), "OPTIONS local response");
+    lineUnref(client);
+    resetClient(chain);
+    automatic_response = false;
+    sendBytes(client,
+              false,
+              "CONNECT a:443 HTTP/1.1\r\nHost: a\r\n"
+              "Proxy-Authorization: Basic YWxpY2U6b25l\r\n\r\n");
+    sendBytes(client, false, denials[0]);
+    require(opens == 1 && ! fallback_opens && ! stringCompare(sent, denials[0]), "CONNECT commitment");
+    clientClose();
+    lineUnref(client);
+    const char *malformed[] = {
+        "GET http://a/ HTTP/1.1\r\nHost: a\r\nProxy-Authorization: x\r\nProxy-Authorization: y\r\n\r\n",
+        "GET http://a/ HTTP/1.1\r\nHost: a\r\nContent-Length: 1\r\nContent-Length: 2\r\n\r\n",
+        "TRACE http://a/ HTTP/1.1\r\nHost: a\r\n\r\n"};
+    for (unsigned i = 0; i < ARRAY_SIZE(malformed); ++i)
+    {
+        fallbackStart(chain);
+        sendBytes(client, false, malformed[i]);
+        require(! lineIsAlive(client) && ! opens && ! fallback_opens && received_len, "malformed input fell back");
+        lineUnref(client);
+    }
+    fallbackStart(chain);
+    for (unsigned i = 0; i < kLineMaxUsers; ++i)
+        lineAddAuthenticatedCredentials(client, "inherited", "value");
+    sendBytes(client, false, valid);
+    require(! lineIsAlive(client) && ! opens && strstr(received, "503"), "post-auth local failure fell back");
+    lineUnref(client);
+    for (unsigned event = 1; event <= 8; ++event)
+    {
+        fallbackStart(chain);
+        close_on = event;
+        if (event == 6 || event == 7)
+            httpproxyserverTunnelUpStreamPause(proxy, client);
+        sendBytes(client, false, raw);
+        if (event == 2)
+            httpproxyserverTunnelDownStreamEst(proxy, child);
+        else if (event == 3)
+            sendBytes(child, true, "reply");
+        else if (event == 4 || event == 5)
+        {
+            httpproxyserverTunnelDownStreamPause(proxy, child);
+            if (event == 5)
+                httpproxyserverTunnelDownStreamResume(proxy, child);
+        }
+        else if (event == 7)
+            httpproxyserverTunnelUpStreamResume(proxy, client);
+        require(! lineIsAlive(client) && ! child && closes == 1, "fallback callback close lifetime");
+        lineUnref(client);
+    }
+    for (unsigned idle = 0; idle < 2; ++idle)
+    {
+        fallbackStart(chain);
+        sendBytes(client, false, raw);
+        hps_session_t *session = ((hps_lstate_t *) lineGetState(client, proxy))->session;
+        require(! session->header_at[0] && ! session->header_at[1], "fallback retained HTTP deadline");
+        if (idle)
+        {
+            httpproxyserverTunnelDownStreamEst(proxy, child);
+            session->progress_at = getHRTimeUs() / 1000 - ts->idle_timeout;
+        }
+        else
+            session->connect_at = getHRTimeUs() / 1000 - ts->connect_timeout;
+        session->timer->cb((wevent_t *) session->timer);
+        require(! lineIsAlive(client) && ! child && ! received_len && closes == 1, "raw timeout settlement");
+        lineUnref(client);
+    }
+    fallbackStart(chain);
+    sendBytes(client, false, raw);
+    httpproxyserverTunnelUpStreamPause(proxy, client);
+    sendBytes(child, true, "pending");
+    httpproxyserverTunnelOnWorkerStop(proxy, 0, NULL);
+    require(! child && lineIsAlive(client) && ! ts->workers[0].timers, "fallback worker inventory");
+    sendBytes(client, false, raw);
+    require(opens == 1, "quiescent fallback reopened");
+    clientClose();
+    lineUnref(client);
+    require(masterpoolGetCheckedOut(chain->masterpool_line_pool) == 0, "fallback line leak");
+    httpproxyserverTunnelDestroy(proxy, NULL);
+    proxy = saved;
+    tunnelBind(prev, proxy);
+    tunnelBind(proxy, next);
 }
 
 static void pipelinePressure(tunnel_chain_t *chain, const char *get)
@@ -587,7 +1000,14 @@ static void runSuite(uint32_t large_size, uint32_t splice_limit)
     require(tunnelchainTryComputeLineItemSize(proxy->lstate_size, &item_size), "item size");
     chain->line_pools[0] =
         genericpoolCreateWithDefaultCacheAlignedAllocatorAndCapacity(chain->masterpool_line_pool, item_size, 4);
-    proxy->chain = chain;
+    proxy->chain         = chain;
+    fallback             = tunnelCreate(NULL, 0, 0);
+    fallback->fnInitU    = fallbackInit;
+    fallback->fnPayloadU = childPayload;
+    fallback->fnFinU     = childFinish;
+    fallback->fnPauseU   = childPause;
+    fallback->fnResumeU  = childResume;
+    fallbackCases(chain);
     localAuthentication(chain);
 
     const char *get      = "GET http://127.0.0.1:80/a HTTP/1.1\r\nHost: ignored.test\r\n\r\n";
@@ -752,8 +1172,35 @@ static void runSuite(uint32_t large_size, uint32_t splice_limit)
     sendBytes(client, false, authenticated_get);
     require(! lineIsAlive(client) && opens == 0 && strstr(received, "503"), "marker capacity did not refuse locally");
     lineUnref(client);
-    pts->auth_mode = kHpsAuthNone;
-    pts->auth      = NULL;
+    /* Exercise real tracked lookup outcomes without replacing AuthenticationClient. */
+    pts->fallback   = fallback;
+    user_t *account = usersLookupByIdentifier(&users, 1001);
+    for (unsigned failure = 0; failure < 7; ++failure)
+    {
+        fallbackStart(chain);
+        ats->authenticated = failure != 0;
+        ats->users         = failure == 1 ? NULL : &users;
+        userSetEnabled(account, failure != 2);
+        userSetClientViewExpiry(account, 1, failure == 3);
+        account->limit.traffic.total = failure == 4 ? 1 : 0;
+        if (failure == 4)
+            userAddTraffic(account, 2, 0);
+        userSetId(account, failure == 5 ? 0 : 1001);
+        const char *wire = failure == 6 ? "GET http://a/ HTTP/1.1\r\nHost: a\r\n"
+                                          "Proxy-Authorization: Basic Ym9iOnR3bw==\r\n\r\n"
+                                        : authenticated_get;
+        sendBytes(client, false, wire);
+        require(fallback_opens == 1 && opens == 1 && ! received_len && ! stringCompare(sent, wire),
+                "tracked denial did not select exact fallback");
+        clientClose();
+        lineUnref(client);
+    }
+    userSetId(account, 1001);
+    userSetClientViewExpiry(account, 0, false);
+    account->limit.traffic.total = 0;
+    pts->fallback                = NULL;
+    pts->auth_mode               = kHpsAuthNone;
+    pts->auth                    = NULL;
     usersDestroy(&users);
     rwlockDestroy(&ats->users_lock);
     mutexDestroy(&ats->control_mutex);
@@ -781,6 +1228,7 @@ static void runSuite(uint32_t large_size, uint32_t splice_limit)
     httpproxyserverTunnelDestroy(proxy, NULL);
     tunnelDestroy(prev);
     tunnelDestroy(next);
+    tunnelDestroy(fallback);
     tunnelchainDestroy(chain);
     cJSON_Delete(node.node_settings_json);
     wloopDestroy(&loop);

@@ -17,6 +17,7 @@ Listener address and port belong to `TcpListener`. Ordinary requests require an 
 | `no-auth` | false; set true for unauthenticated access, omitting both other selectors |
 | `users` | Nonempty array of `{ "username": "...", "password": "..." }`; unlimited, untracked access (warning below) |
 | `auth-client-node-name` | Existing AuthenticationClient for tracked accounts; exclusive with users and no-auth true |
+| `fallback-node-name` | Optional nonempty name of a distinct L4 service; first-request authentication failure only; receives original credential bytes |
 | `sweep-interval-ms` | 1000; tracked-mode UserController enforcement interval |
 | `max-header-bytes` | 32768; 1024–65536, per request/response header block |
 | `max-pending-bytes` | 262144; 65536–1048576, at least the header limit |
@@ -47,13 +48,47 @@ Base64 must be canonical and valid. Username and password must each contain 1–
 
 Only tracked mode inserts an internal UserController. Do not insert another controller manually for this authentication layer. Each new outbound child carries inherited user markers, the validated value handle and credentials, and original source/listener metadata. Tracked admission, accounting, supported limits, and active revocation use the existing controller. CONNECT authenticates once before relay; tracked controller enforcement continues during relay. Local mode follows the configured chain directly and adds exactly one credentials-only marker to each new child, without creating a user handle, account record, usage report, reservation, or per-user enforcement timer. Inherited identities and independently configured policies remain in effect. Neither mode appends repeated markers to the borrowed client or a reused child.
 
+## Authentication fallback
+
+`fallback-node-name` optionally names a distinct L4 service branch in the same configuration. It is selected only when authentication of the **first request** fails: missing credentials, an unsupported scheme or rejected Basic encoding, a local pair mismatch, an unavailable AuthenticationClient/users table, or an account lookup rejection (unknown, mismatched, disabled, expired, over limit, or missing required account ID). With no fallback configured, existing 407/503 behavior remains. In `no-auth` mode the setting is inert.
+
+Malformed HTTP, duplicate authorization fields, invalid authority/framing, unsupported features, header limits/timeouts, internal authentication failures and local storage failures do not select fallback. Successful authentication permanently commits the connection to the protected path, including local OPTIONS and CONNECT. Later authentication failures retain the existing error/close behavior. UserController admission, routing, DNS and origin failures after authentication never trigger fallback.
+
+Handoff creates one owned child through the configured fallback branch, bypassing this proxy's private UserController. It sends the original header, body and pipelined tail byte-for-byte, including the original request target, whitespace, hop-by-hop fields and **rejected Proxy-Authorization credential bytes**. Configure a service trusted to receive those bytes; they are never logged by the proxy. The connection then remains an opaque bidirectional stream, even if later bytes contain valid credentials. No local authentication error, CONNECT success, Continue or OPTIONS response is generated. The fallback service decides its own response.
+
+The fallback branch chooses its destination; the failed request's authority is not installed as its endpoint. A protected `next` is still required. Targets that reuse another owner's previous edge, the protected branch, this proxy or its private controller are rejected. This is a configured service handoff, not protocol translation or a retry of the requested origin. For example, these nodes can follow a TcpListener:
+
+```json
+[
+  {
+    "name": "proxy", "type": "HttpProxyServer", "next": "protected",
+    "settings": {
+      "users": [{ "username": "alice", "password": "replace-me" }],
+      "fallback-node-name": "fallback-service"
+    }
+  },
+  {
+    "name": "protected", "type": "TcpConnector",
+    "settings": { "address": "dest_context->address", "port": "dest_context->port" }
+  },
+  {
+    "name": "fallback-service", "type": "TcpConnector",
+    "settings": { "address": "127.0.0.1", "port": 8081 }
+  }
+]
+```
+
+There is no intentional delay. The connect deadline still runs from child Init to Est, and the idle deadline applies to raw relay; HTTP header deadlines end at handoff. Early replies do not manufacture Est. Failure after selection closes without an HTTP error or another branch attempt. Accepted replies drain before child EOF closes the client, subject to receiver Pause. Client Finish discards local retention immediately. Worker shutdown drains fallback children through the same inventory as protected children.
+
+Existing `P`/`D` logical and allocation bounds remain unchanged. The temporary immutable first-header snapshot is bounded by `max-header-bytes + 1`; it is wiped on commitment or refusal. Once selected, its replay bytes enter the existing working/output budget before branch Init. Bodies and tails are not copied into a separate transcript. This remains an ordinary-buffer-only proxy, regardless of the fallback branch's capabilities.
+
 ## Streaming, reuse, and routing
 
 Fixed-length and chunked uploads and downloads stream incrementally. Close-delimited responses, HEAD/bodyless responses, informational responses, Expect: 100-continue, and early final responses are supported. An early final response stops upload and closes the client after delivering the response. Hop-by-hop fields are filtered and Via is appended. Origin status, redirects, cookies, challenges, and content are preserved; the proxy does not follow redirects.
 
 Duplicate/list Content-Length, CL with Transfer-Encoding, unsupported transfer coding stacks, folded fields, invalid authority, malformed chunk framing, and prohibited trailers are refused. Full request headers, authority, and authentication are validated before creating a destination. A later body error closes the exchange; an already forwarded prefix cannot be undone. After final response commitment, errors close the connection without appending another response.
 
-One client has at most one live outbound child. Requests execute sequentially, including pipelined input. A completed eligible exchange can reuse its child only for the same requested host/port and authentication mode. Local mode also requires the same complete credential pair; tracked mode requires credential bytes plus user ID/generation. Hostnames compare case-insensitively, IP literals by address; distinct hostnames and trailing DNS dots are not coalesced. A changed destination or identity replaces the child. No failed request is automatically replayed.
+One client has at most one live outbound child. Requests execute sequentially, including pipelined input. A completed eligible exchange can reuse its child only for the same requested host/port and authentication mode. Local mode also requires the same complete credential pair; tracked mode requires credential bytes plus user ID/generation. Hostnames compare case-insensitively, IP literals by address; distinct hostnames and trailing DNS dots are not coalesced. A changed destination or identity replaces the child. Protected requests are not retried.
 
 Domains are passed into the configured chain; the proxy has no private DNS or socket path. IPv4 literals must be strict dotted decimal, IPv6 literals bracketed, and domain names ASCII/A-labels. Userinfo, fragments, encoded authorities, zone identifiers, ambiguous numeric addresses, and invalid ports are rejected. Escaped path/query bytes retain their meaning.
 
