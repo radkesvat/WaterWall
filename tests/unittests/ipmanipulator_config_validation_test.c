@@ -584,8 +584,48 @@ static void testNodeLayerMetadata(void)
     memoryFree(node.type);
 }
 
+static void testMtuSettings(void)
+{
+    const uint16_t saved = CORE_DEFAULT_MTU;
+    CORE_DEFAULT_MTU     = 1420;
+    node_t first         = makeNode("mtu-first", cJSON_Parse("{\"protoswap-tcp\":143}"));
+    first.instance       = ipmanipulatorCreate(&first);
+    require(first.instance != NULL, "inherited MTU construction failed");
+    ipmanipulator_tstate_t *state = tunnelGetState(first.instance);
+    require(state->mtu == 1420, "MTU default was not snapshotted");
+    static const char *values[] = {"68",
+                                   "65535",
+                                   "1500",
+                                   "67",
+                                   "65536",
+                                   "70000",
+                                   "0",
+                                   "-1",
+                                   "null",
+                                   "true",
+                                   "false",
+                                   "[]",
+                                   "{}",
+                                   "\"1500\"",
+                                   "1500.5",
+                                   "9223372036854775807"};
+    CORE_DEFAULT_MTU            = 0;
+    for (unsigned i = 0; i < ARRAY_SIZE(values); ++i)
+    {
+        char json[160];
+        snprintf(json, sizeof(json), "{\"protoswap-tcp\":143,\"mtu\":%s}", values[i]);
+        require(createSucceeds(cJSON_Parse(json), "mtu-override") == (i < 3), "MTU boundary/type validation failed");
+        require(state->mtu == 1420, "another node or core default changed existing instance MTU");
+    }
+    require(! createSucceeds(cJSON_Parse("{\"protoswap-tcp\":143}"), "bad-inherited-mtu"),
+            "invalid inherited MTU accepted");
+    destroyNode(&first);
+    CORE_DEFAULT_MTU = saved;
+}
+
 int main(void)
 {
+    CORE_DEFAULT_MTU                   = 1500;
     const uint32_t saved_workers_count = GSTATE.workers_count;
 
     GSTATE.workers_count = 2;
@@ -595,6 +635,7 @@ int main(void)
     require(frandGlobalInit(), "fast random initialization failed");
     frandInit();
 
+    testMtuSettings();
     testStatefulSniRejectsUpstreamActions(false);
     testStatefulSniRejectsUpstreamActions(true);
     testStatefulSniAcceptsDownstreamOnlyActions();

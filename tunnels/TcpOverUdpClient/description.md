@@ -1,5 +1,5 @@
 <!--
-Documentation version: 153
+Documentation version: 154
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/TcpOverUdpClient.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/TcpOverUdpClient.mdx, and all files must keep the same documentation version.
 -->
 
@@ -163,11 +163,37 @@ The implementation exposes KCP tuning in JSON. The higher-throughput defaults ar
 - `ping-interval-ms = 10000`
 - `no-recv-timeout-ms = 30000`
 
-The code also sets KCP MTU from `GLOBAL_MTU_SIZE` and uses an effective write payload size of roughly:
+### Instance MTU
 
-- `GLOBAL_MTU_SIZE - 20 - 8 - 24 - 1`
+Optional integer `mtu` inherits core `misc.mtu` at construction (the core fallback
+is 1500). The supported range is **78..65535 without FEC**, or **86..65535 with
+FEC**. It is an IPv4-based packet budget in bytes. Invalid explicit or inherited
+values reject construction; an explicit supported override can replace an
+unsupported core default. Null, wrong types, fractions, zero, negatives and
+out-of-range numbers are errors. Each instance keeps its validated MTU unchanged.
 
-If FEC is enabled, the tunnel subtracts the FEC wire overhead from the outer KCP/UDP packet budget so the transport stays within the same path MTU envelope.
+With `F = 0` without FEC or `F = 8` with FEC:
+
+```text
+KCP MTU = min(mtu - 20 - 8 - F, 64000)
+application chunk = KCP MTU - 24 - 1
+```
+
+The 20-byte IPv4 and 8-byte UDP allowances are fixed. The 64,000-byte decimal cap
+covers the complete KCP packet, including its 24-byte header. The one-byte frame
+flag occupies KCP payload space; `required_padding_left = 1` provides room for it.
+The effective KCP MTU governs data and aggregated acknowledgement/control output.
+FEC adds at most 8 bytes to that output, including parity packets.
+
+At `mtu: 1500`, KCP MTU/application chunk are **1472/1447** without FEC and
+**1464/1439** with FEC. Budgets of 64028 without FEC or 64036 with FEC reach the
+cap; larger valid settings, including 65535, retain KCP MTU 64000 and application
+chunk 63975. The configured budget itself is not capped to 64000.
+
+This is not path-MTU discovery or negotiation. An ordinary IPv6 header needs 20
+more bytes than the fixed IPv4 allowance, so a 1500 budget can permit a 1520-byte
+IPv6 packet. IPv4 options, IPv6 extension headers and later wrappers need extra
+operator headroom. No family-dependent adjustment occurs.
 
 ### Optional FEC layer
 

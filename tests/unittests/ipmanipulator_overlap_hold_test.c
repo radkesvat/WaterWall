@@ -354,6 +354,7 @@ static void setupEnv(test_env_t *env)
     env->sink->fnPayloadU = captureUpstream;
 
     ipmanipulator_tstate_t *state = tunnelGetState(env->t);
+    state->mtu                    = 1500;
     atomicLogRateLimiterInitialize(&state->worker_mismatch_guidance_limiter);
     state->trick_stateful_flow_limit         = kIpManipulatorFlowLimitMin;
     state->trick_overlap_sni                 = true;

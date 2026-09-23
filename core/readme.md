@@ -1,5 +1,5 @@
 <!--
-Documentation version: 153
+Documentation version: 154
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/01-getting-started/tutorial-part1.mdx, and both English files must keep the same documentation version. User-facing behavior changes should also update WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/01-getting-started/tutorial-part1.mdx.
 -->
 
@@ -241,10 +241,16 @@ setting nobody chose. This applies to every field in the table, not only to
 | --- | --- | --- | --- |
 | `workers` | integer | CPU core count | Number of worker threads. Must be a whole number in the signed 32-bit range when present. Within that range, values less than or equal to `0` mean "as many as this machine has" and values above `254` are reduced to `254`. |
 | `ram-profile` | string or integer | `"server"` | Memory sizing profile for pools and profile-aware node defaults. A number must be a whole number in `0..6`; `0` and `1` are legacy aliases for the smallest profile. |
-| `mtu` | integer | `1500` | Global MTU, inherited by nodes that do not carry their own. Must be a whole number in `68..65535` - RFC 791's minimum IPv4 MTU up to what the field can hold. |
+| `mtu` | integer | `1500` | Construction-time default for per-node MTUs. Must be a whole number in `68..65535` - RFC 791's minimum IPv4 MTU up to what the field can hold. |
 | `splice` | boolean | `true` | Allow splice on eligible stream chains. `false` disables splice for every chain. Platform support and support from every node are still required; packet chains remain ineligible. |
 | `try-enabling-bbr` | boolean | `true` on Linux; `false` otherwise | Linux-only best-effort startup attempt to enable TCP BBR. |
 | `libs-path` | string | `"libs/"` | Directory used when loading external tunnel libraries. |
+
+Core `misc.mtu` is only a construction-time seed. Each MTU-consuming node validates
+and stores its own immutable value. Node overrides do not change core state or
+other nodes, and this default is neither one enforced MTU for all nodes nor a
+measured path MTU.
+
 
 On Linux, automatic worker sizing uses the online logical CPU count from
 `get_nprocs()`, excluding configured CPUs that are offline.

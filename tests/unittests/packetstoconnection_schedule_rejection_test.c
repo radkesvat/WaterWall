@@ -139,6 +139,7 @@ static void ptcFixtureSetup(ptc_fixture_t *fixture)
                "PacketsToConnection fixture has no live packet line");
 
     ptc_tstate_t *state        = tunnelGetState(fixture->ptc);
+    state->mtu                 = 1500;
     state->owned_worker_count  = 1;
     state->owned_lines         = memoryAllocateZero(sizeof(*state->owned_lines));
     state->max_pending_bytes   = kPtcDefaultMaxPendingBytes;

@@ -1,5 +1,5 @@
 <!--
-Documentation version: 155
+Documentation version: 156
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/ConnectionToPackets.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/ConnectionToPackets.mdx, and all files must keep the same documentation version.
 -->
 
@@ -19,6 +19,10 @@ return IPv4 packets
         -> ConnectionToPackets
         -> downstream data/events on the original connection line
 ```
+
+`mtu` is resolved and validated once at construction. Each instance keeps
+its own MTU; other node overrides do not change it. An invalid inherited core
+`misc.mtu` requires a supported explicit node override.
 
 ## What It Is
 

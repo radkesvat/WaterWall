@@ -1,5 +1,5 @@
 <!--
-Documentation version: 153
+Documentation version: 154
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/IpManipulator.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/IpManipulator.mdx, and all files must keep the same documentation version.
 -->
 
@@ -22,6 +22,17 @@ The current implementation provides these classes of tricks:
 - TCP flag bit rewriting
 - source and destination port ghost tailing with transport-port remapping
 - final-packet duplication
+
+## Instance MTU
+
+Optional integer `mtu` defaults to core `misc.mtu` at construction (core fallback
+1500). Its range is **68..65535 bytes**: complete IPv4 packet length, including applicable trailers, used by its existing egress and trick paths.
+Each instance stores its validated value immutably; other instances and later core
+changes do not change its behavior. Null, wrong types, fractions, zero, negative
+or out-of-range values reject construction. An unsupported inherited default also
+fails; supply a supported node override. This is not measured path MTU or MTU negotiation.
+A valid enabled trick is still required. This setting is not a universal ingress
+filter and does not add generic UDP fragmentation.
 
 ## What It Does
 
@@ -659,7 +670,7 @@ Supported values are:
 
   Before final egress, eligible whole IPv4 TCP data packets are segmented when
   this byte, port-ghost bytes, or both would make the result exceed
-  `GLOBAL_MTU_SIZE`. Each segment carries independently derived live and saved
+  `mtu`. Each segment carries independently derived live and saved
   flags, its own complete trailers, continuous SYN-aware sequence space, and a
   valid per-segment IPv4 length. A 1500-byte TCP input can therefore be used
   with a 1500-byte WaterWall MTU without reserving operator headroom merely for
@@ -961,7 +972,7 @@ segment starting at the first segment's sequence number instead of the client's
 original segment pattern, and that coalesced packet carries the first segment's
 TCP flags, window and acknowledgement number. Byte content and sequence
 continuity are preserved. If the assembled packet, or a decoy built from it,
-exceeds `GLOBAL_MTU_SIZE`, final egress transport-segments it again into
+exceeds `mtu`, final egress transport-segments it again into
 MTU-sized segments with continuous sequence numbers.
 
 A sequence gap, an out-of-order or retransmitted segment, exceeding the packet
@@ -1766,7 +1777,7 @@ it closes, is replaced, or expires after 20 minutes of inactivity.
 - A normal top-level `next` is required. `IpManipulator` must see the opening
   `SYN`, and the first non-empty client payload must begin the supported
   one-record ClientHello layout.
-- The decoy plus copied IP/TCP headers must fit `GLOBAL_MTU_SIZE`. An oversized
+- The decoy plus copied IP/TCP headers must fit `mtu`. An oversized
   decoy fails open rather than being split by the ECH trick. A longer configured
   SNI can enlarge both the outer record and this packet.
 - The flow table is bounded by `stateful-flow-limit`; an unadmitted flow passes
@@ -2022,7 +2033,7 @@ held buffer is disposed rather than injected into the new connection.
   real SNI offset must satisfy the `G`, `R`, and `O` constraints above.
 - The original two packet boundaries and the completing packet's IPv4
   identification are discarded. Rebuilt large TCP packets may be segmented by
-  final egress to respect `GLOBAL_MTU_SIZE`, further changing the nominal five-
+  final egress to respect `mtu`, further changing the nominal five-
   to-seven-packet transcript.
 - Valid close or SYN packets on an established connection are protocol-invasive
   and can be normalized, challenged, rate-limited, or treated as an attack by
@@ -2343,7 +2354,7 @@ When `source-port-ghost` and/or `dest-port-ghost` are enabled:
 - ordinary and crafted whole TCP data packets are segmented before final
   trailer-bearing egress whenever necessary; every segment carries exactly one
   complete port-ghost trailer and, when configured, one independently
-  restorable saved-flags byte, and remains within `GLOBAL_MTU_SIZE`
+  restorable saved-flags byte, and remains within `mtu`
 - `SYN` and `CWR` are placed only on the first segment, `FIN` and `PSH` only on
   the final segment, and `ACK`/applicable `ECE` on every segment; later sequence
   numbers account for SYN consuming one sequence number

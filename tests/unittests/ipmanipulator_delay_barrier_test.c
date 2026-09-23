@@ -179,6 +179,7 @@ static void testKind(ipmanipulator_delay_barrier_kind_e kind)
 
     require(t != NULL, "failed to allocate delay-barrier tunnel");
     t->tstate_size = sizeof(ipmanipulator_tstate_t);
+    ((ipmanipulator_tstate_t *) tunnelGetState(t))->mtu = 1500;
     t->next        = &next;
 
     atomicStoreU32Relaxed(&line.refc, 1);

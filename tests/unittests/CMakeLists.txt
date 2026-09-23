@@ -2363,6 +2363,14 @@ if(TARGET ConnectionToPackets)
 endif()
 
 if(TARGET PacketsToConnection)
+  add_executable(packetstoconnection_netif_contract_test packetstoconnection_netif_contract_test.c)
+  target_link_libraries(packetstoconnection_netif_contract_test PRIVATE PacketsToConnection ww)
+  add_dependencies(waterwall_unit_tests packetstoconnection_netif_contract_test)
+  add_waterwall_unit_test(
+    waterwall.packetstoconnection_netif_contract_unit
+    packetstoconnection_netif_contract_test
+    "unit;tunnels;packetstoconnection;netif;mtu;fragment"
+  )
   add_executable(packetstoconnection_fake_dns_fragment_test packetstoconnection_fake_dns_fragment_test.c)
   target_include_directories(packetstoconnection_fake_dns_fragment_test PRIVATE
     ${CMAKE_SOURCE_DIR}/tunnels/PacketsToConnection/include

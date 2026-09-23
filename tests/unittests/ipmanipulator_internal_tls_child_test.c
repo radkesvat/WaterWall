@@ -72,6 +72,7 @@ static void requirePrivateChild(tunnel_t *t, const char *expected_name, const ch
 
 int main(void)
 {
+    CORE_DEFAULT_MTU                      = 1500;
     static const char special_sni[]       = "quote\"-slash\\-line\n.example";
     const uint32_t    saved_workers_count = GSTATE.workers_count;
     node_t            first               = {0};

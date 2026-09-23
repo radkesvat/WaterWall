@@ -1286,14 +1286,14 @@ static void echsnitrickProcessCompletedCapture(tunnel_t *t, const echsnitrick_fl
     }
 
     uint32_t packet_len = (uint32_t) template_info.headers_len + inner_len;
-    if (packet_len > GLOBAL_MTU_SIZE)
+    if (packet_len > state->mtu)
     {
         LOGW("IpManipulator: ech-sni-trick failed open because the fake inner ClientHello for \"%s\" is %u bytes and "
-             "would create a %u-byte TCP packet, exceeding GLOBAL_MTU_SIZE %u",
+             "would create a %u-byte TCP packet, exceeding instance MTU %u",
              sni_name,
              inner_len,
              packet_len,
-             GLOBAL_MTU_SIZE);
+             state->mtu);
         ipmanipulatorReleaseCapturedPacketsNormal(t, slot);
         return;
     }

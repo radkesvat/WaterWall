@@ -89,15 +89,15 @@ static bool appendGhostBytes(ipmanipulator_tstate_t *state, line_t *l, sbuf_t **
     }
 
     uint32_t new_len = (uint32_t) ip_total_len + tail_len;
-    if (GLOBAL_MTU_SIZE != 0 && new_len > GLOBAL_MTU_SIZE)
+    if (new_len > state->mtu)
     {
         if (ipmanipulatorShouldLogEgressWarning(state))
         {
             LOGW("portghosttrick: dropping unsegmented packet because the %u-byte ghost trailer would make IPv4 "
-                 "length %u exceed GLOBAL_MTU_SIZE %u",
+                 "length %u exceed instance MTU %u",
                  (unsigned int) tail_len,
                  (unsigned int) new_len,
-                 (unsigned int) GLOBAL_MTU_SIZE);
+                 (unsigned int) state->mtu);
         }
         return dropGhostedPacket(l, buf_ptr);
     }

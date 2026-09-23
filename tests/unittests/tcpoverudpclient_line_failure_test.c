@@ -200,7 +200,7 @@ static void requireNoLiveKcpResources(void)
 
 enum
 {
-    kTestLargeBufferSize = 8192,
+    kTestLargeBufferSize = 262144,
     kTestMtu             = 1500
 };
 
@@ -217,8 +217,6 @@ static void fixtureSetup(tcpoverudp_fixture_t *fixture, bool fec_enabled)
 {
     memoryZero(&fixture->trace, sizeof(fixture->trace));
     twfWorkerEnvSetup(&fixture->env, kTestLargeBufferSize, kFrameHeaderLength);
-
-    GLOBAL_MTU_SIZE = kTestMtu;
 
     g_live_kcp_handles  = 0;
     g_live_timers       = 0;
@@ -237,6 +235,7 @@ static void fixtureSetup(tcpoverudp_fixture_t *fixture, bool fec_enabled)
 
     tcpoverudpclient_tstate_t *ts = tunnelGetState(fixture->kcp);
 
+    ts->mtu                       = kTestMtu;
     ts->kcp_nodelay               = true;
     ts->kcp_no_congestion_control = true;
     ts->kcp_interval_ms           = kTcpOverUdpClientKcpIntervalDefault;
@@ -256,9 +255,9 @@ static void fixtureSetup(tcpoverudp_fixture_t *fixture, bool fec_enabled)
 static void fixtureTeardown(tcpoverudp_fixture_t *fixture)
 {
     twfRequireNoLeakedBuffers();
-    memoryFree(fixture->prev);
-    memoryFree(fixture->kcp);
-    memoryFree(fixture->next);
+    tunnelDestroy(fixture->prev);
+    tunnelDestroy(fixture->kcp);
+    tunnelDestroy(fixture->next);
 }
 
 static void caseInitializationFails(tcpoverudp_injection_t injection, bool fec_enabled, const char *case_name)
@@ -387,8 +386,147 @@ static void caseRejectedPauseFallsBackInlineAcrossReentrantLineDeath(void)
     fixtureTeardown(&fixture);
 }
 
+static uint32_t g_mtu_output_count;
+static uint32_t g_mtu_max_output;
+static uint32_t g_mtu_budget;
+static uint32_t g_mtu_effective;
+static uint32_t g_mtu_fec;
+
+static void captureMtuOutput(tunnel_t *t, line_t *line, sbuf_t *buf)
+{
+    discard        t;
+    const uint32_t length = sbufGetLength(buf);
+    twfRequire(length <= g_mtu_effective + g_mtu_fec, "KCP/FEC output exceeds effective limit");
+    twfRequire(length + 28 <= g_mtu_budget, "output exceeds configured IPv4 packet budget");
+    g_mtu_max_output = max(g_mtu_max_output, length);
+    ++g_mtu_output_count;
+    lineReuseBuffer(line, buf);
+}
+
+static tunnel_t *createMtuTunnel(const char *json)
+{
+    cJSON        *settings = json != NULL ? cJSON_Parse(json) : NULL;
+    static node_t node;
+    node.node_settings_json = settings;
+    tunnel_t *t             = tcpoverudpclientTunnelCreate(&node);
+    cJSON_Delete(settings);
+    return t;
+}
+
+static void caseMtuConfigurationAndOutput(void)
+{
+    twfSetCase("instance MTU settings, lazy KCP handles and output bounds");
+    const uint16_t saved_default = CORE_DEFAULT_MTU;
+    CORE_DEFAULT_MTU             = 1420;
+    tunnel_t *inherited          = createMtuTunnel(NULL);
+    twfRequire(inherited != NULL, "missing settings rejected valid default");
+    const tcpoverudpclient_tstate_t *inherited_state = tunnelGetState(inherited);
+    twfRequire(inherited_state->mtu == 1420, "missing MTU did not inherit core default");
+    static const char *invalid[] = {
+        "null", "true", "false", "\"1500\"", "[]", "{}", "1500.5", "0", "-1", "65536", "70000", "9223372036854775807"};
+    char json[256];
+    for (uint32_t i = 0; i < ARRAY_SIZE(invalid); ++i)
+    {
+        snprintf(json, sizeof(json), "{\"mtu\":%s}", invalid[i]);
+        twfRequire(createMtuTunnel(json) == NULL, "invalid MTU accepted");
+    }
+    CORE_DEFAULT_MTU = 68;
+    twfRequire(createMtuTunnel(NULL) == NULL, "absent settings bypassed inherited MTU validation");
+    twfRequire(createMtuTunnel("{}") == NULL, "empty settings bypassed inherited MTU validation");
+    for (unsigned fec = 0; fec < 2; ++fec)
+    {
+        const unsigned minimum = fec ? 86 : 78;
+        snprintf(json, sizeof(json), "{\"mtu\":%u,\"fec\":%s}", minimum - 1, fec ? "true" : "false");
+        twfRequire(createMtuTunnel(json) == NULL, "below-minimum MTU accepted");
+        const unsigned budgets[] = {
+            minimum, 1420, 1500, fec ? 64035 : 64027, fec ? 64036 : 64028, fec ? 64037 : 64029, 65535};
+        for (unsigned i = 0; i < ARRAY_SIZE(budgets); ++i)
+        {
+            snprintf(json,
+                     sizeof(json),
+                     "{\"mtu\":%u,\"fec\":%s,\"fec-data-shards\":2,\"fec-parity-shards\":1}",
+                     budgets[i],
+                     fec ? "true" : "false");
+            if (budgets[i] == 1420)
+            {
+                CORE_DEFAULT_MTU = 1420;
+                snprintf(json,
+                         sizeof(json),
+                         "{\"fec\":%s,\"fec-data-shards\":2,\"fec-parity-shards\":1}",
+                         fec ? "true" : "false");
+            }
+            tunnel_t *configured = createMtuTunnel(json);
+            twfRequire(configured != NULL, "valid override of unusable inherited MTU failed");
+            tcpoverudpclient_tstate_t *ts        = tunnelGetState(configured);
+            const unsigned             effective = min(budgets[i] - 28 - 8 * fec, 64000U);
+            twfRequire(ts->mtu == budgets[i], "configured budget was narrowed or capped");
+            twfRequire(tcpoverudpclientGetKcpMtu(ts) == (int) effective, "effective KCP MTU is incorrect");
+            twfRequire(tcpoverudpclientGetKcpWriteMtu(ts) == (int) effective - 25, "application chunk is incorrect");
+            twfRequire(tcpoverudpclientGetKcpMtu(inherited_state) == 1392, "another instance changed inherited MTU");
+
+            tcpoverudp_fixture_t fixture;
+            fixtureSetup(&fixture, fec != 0);
+            master_pool_t  *context_master = masterpoolCreateWithCapacity(8);
+            generic_pool_t *contexts =
+                genericpoolCreateWithDefaultAllocatorAndCapacity(context_master, sizeof(context_t), 8);
+            twfRequire(contexts != NULL, "context pool allocation failed");
+            GSTATE.shortcut_context_pools = &contexts;
+
+            tunnelDestroy(fixture.kcp);
+            fixture.kcp = configured;
+            tunnelBind(fixture.prev, fixture.kcp);
+            tunnelBind(fixture.kcp, fixture.next);
+            fixture.prev->fnPayloadD        = captureMtuOutput;
+            fixture.next->fnPayloadU        = captureMtuOutput;
+            CORE_DEFAULT_MTU                = 1000;
+            line_t                    *line = twfLineCreate(configured->lstate_size);
+            tcpoverudpclient_lstate_t *ls   = lineGetState(line, configured);
+            twfRequire(tcpoverudpclientLinestateInitialize(ls, line, configured), "KCP line initialization failed");
+            twfRequire(ls->k_handle->mtu == effective, "lazy KCP handle read global MTU or omitted outer headers");
+            twfRequire(ls->k_handle->mss == effective - 24, "KCP MSS is incorrect");
+            g_mtu_budget       = budgets[i];
+            g_mtu_effective    = effective;
+            g_mtu_fec          = fec * 8;
+            g_mtu_output_count = g_mtu_max_output = 0;
+            sbuf_t *input                         = bufferpoolGetLargeBuffer(fixture.env.pool);
+            sbufSetLength(input, 2 * (effective - 25) + 1);
+            memoryZero(sbufGetMutablePtr(input), sbufGetLength(input));
+            tcpoverudpclientTunnelUpStreamPayload(configured, line, input);
+            twfRequire(tcpoverudpclientUpdateKcp(ls, true), "data flush killed borrowed line");
+            twfRequire(g_mtu_output_count >= (fec ? 4U : 3U), "data/parity output missing");
+            twfRequire(g_mtu_max_output == effective + fec * 8, "full application chunk did not fill KCP packet");
+
+            /* Feed many empty PUSH records: ACK aggregation must obey the same packet limit. */
+            g_mtu_output_count = g_mtu_max_output = 0;
+            for (unsigned seq = 0; seq < 100; ++seq)
+            {
+                uint8_t push[24] = {0};
+                push[4]          = 81;
+                push[6]          = 128;
+                push[12]         = (uint8_t) seq;
+                twfRequire(ikcp_input(ls->k_handle, (const char *) push, sizeof(push)) == 0, "ACK fixture rejected");
+            }
+            twfRequire(tcpoverudpclientUpdateKcp(ls, true), "ACK flush killed borrowed line");
+            twfRequire(g_mtu_output_count > 0 && g_mtu_max_output > 24 + fec * 8, "aggregated ACK output missing");
+            tcpoverudpclientLinestateDestroy(ls);
+            twfLineDestroy(line);
+            requireNoLiveKcpResources();
+            GSTATE.shortcut_context_pools = NULL;
+            genericpoolDestroy(contexts);
+            masterpoolMakeEmpty(context_master);
+            masterpoolDestroy(context_master);
+            twfWorkerEnvTeardown(&fixture.env);
+            fixtureTeardown(&fixture);
+            CORE_DEFAULT_MTU = 68;
+        }
+    }
+    tunnelDestroy(inherited);
+    CORE_DEFAULT_MTU = saved_default;
+}
+
 int main(void)
 {
+    caseMtuConfigurationAndOutput();
     caseInitializationFails(kInjectKcpHandle, false, "KCP handle allocation fails");
     caseInitializationFails(kInjectKcpBuffer, false, "ikcp_setmtu reports an allocation failure");
     caseInitializationFails(kInjectKcpTimer, false, "KCP interval timer creation fails");

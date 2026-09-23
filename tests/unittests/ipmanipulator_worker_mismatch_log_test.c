@@ -58,6 +58,7 @@ int main(void)
     tunnel_t *t = memoryAllocateAlignedZero(sizeof(*t) + sizeof(ipmanipulator_tstate_t), kCpuLineCacheSize);
     require(t != NULL, "failed to allocate IpManipulator test tunnel");
     t->tstate_size = sizeof(ipmanipulator_tstate_t);
+    ((ipmanipulator_tstate_t *) tunnelGetState(t))->mtu = 1500;
 
     ipmanipulator_tstate_t *state = tunnelGetState(t);
     atomicLogRateLimiterInitialize(&state->worker_mismatch_guidance_limiter);

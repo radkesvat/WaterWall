@@ -23,6 +23,7 @@ static tunnel_t *createTestTunnel(void)
     require(t != NULL, "failed to allocate test tunnel");
 
     t->tstate_size = sizeof(ipmanipulator_tstate_t);
+    ((ipmanipulator_tstate_t *) tunnelGetState(t))->mtu = 1500;
     return t;
 }
 

@@ -320,6 +320,18 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
     ipmanipulator_tstate_t *state    = tunnelGetState(t);
     const cJSON            *settings = node->node_settings_json;
 
+    int64_t                   mtu        = CORE_DEFAULT_MTU;
+    const json_value_status_t mtu_status = jsonGetObjectIntegerInRange(settings, "mtu", 68, UINT16_MAX, &mtu);
+    if (mtu_status == kJsonValueInvalid || mtu < 68 || mtu > UINT16_MAX)
+    {
+        LOGF("JSON Error: IpManipulator->settings->mtu must be an integer between 68 and 65535%s",
+             mtu_status == kJsonValueMissing ? "; inherited core misc.mtu is unsupported; set an explicit node mtu"
+                                             : "");
+        tunnelDestroy(t);
+        return NULL;
+    }
+    state->mtu = (uint16_t) mtu;
+
     state->trick_proto_swap_tcp_number           = -1;
     state->trick_proto_swap_udp_number           = -1;
     state->trick_overlap_sni_syn_ttl             = -1;

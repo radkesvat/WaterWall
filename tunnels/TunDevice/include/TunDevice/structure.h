@@ -26,7 +26,7 @@ typedef struct tundevice_tstate_s
     char    *ip_subnet;   // ip/subnet
     char    *ip_present;  //  only ip
     int      subnet_mask; // only subnet mask
-    uint16_t mtu;         // device mtu, default is GLOBAL_MTU_SIZE
+    uint16_t mtu;         // device mtu, default is CORE_DEFAULT_MTU
 
     bool   system_route_enabled;
     char  *route_table;

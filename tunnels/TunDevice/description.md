@@ -1,5 +1,5 @@
 <!--
-Documentation version: 154
+Documentation version: 155
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/TunDevice.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/TunDevice.mdx, and all files must keep the same documentation version.
 -->
 
@@ -8,6 +8,10 @@ Sync note: Any change to this file must also be applied to WaterWall/WaterWall-D
 `TunDevice` attaches WaterWall to a TUN interface. It reads IP packets from the virtual network device and forwards them into the chain, and it can also write IP packets from the chain back into the TUN device.
 
 This node is a layer-3 adapter rather than a connection-oriented tunnel.
+
+`device-mtu` is resolved and validated once at construction. Each instance keeps
+its own MTU; other node overrides do not change it. An invalid inherited core
+`misc.mtu` requires a supported explicit node override.
 
 ## What It Does
 

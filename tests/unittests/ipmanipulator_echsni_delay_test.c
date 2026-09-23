@@ -305,6 +305,7 @@ static test_fixture_t fixtureCreateWithSni(test_env_t *env, const char *configur
     require(t != NULL && next != NULL, "failed to allocate the test tunnels");
 
     t->tstate_size   = sizeof(ipmanipulator_tstate_t);
+    ((ipmanipulator_tstate_t *) tunnelGetState(t))->mtu = 1500;
     t->next          = next;
     next->fnPayloadU = recordForwardedPacket;
 
@@ -828,6 +829,38 @@ static void drainRelease(uint16_t hello_len, uint32_t segments)
     }
 
     require(offset == hello_len, "the released originals did not cover the whole ClientHello");
+}
+
+static void testInstanceMtuAdmission(test_env_t *env)
+{
+    resetCaptures();
+    test_fixture_t small                                      = fixtureCreate(env);
+    test_fixture_t large                                      = fixtureCreate(env);
+    ((ipmanipulator_tstate_t *) tunnelGetState(small.t))->mtu = 68;
+    const uint16_t saved                                      = CORE_DEFAULT_MTU;
+    CORE_DEFAULT_MTU                                          = 65535;
+    uint8_t  hello[1024];
+    uint16_t hello_len = buildMatchingClientHello(hello, sizeof(hello));
+    openFlow(&small, TCP_SYN);
+    feedClientHelloSegments(&small, hello, hello_len, 16, false);
+    require(timed_message_count == 0, "oversized fake inner packet scheduled a release");
+    uint32_t offset = 0;
+    for (unsigned i = 0; i < forwarded_count; ++i)
+    {
+        require(forwarded_packets[i].seq == kClientHelloSeq + offset, "MTU rejection changed normal replay order");
+        offset += forwarded_packets[i].payload_len;
+    }
+    require(offset == hello_len, "MTU rejection lost original stream bytes");
+    require(activeCaptureSlots(&small) == 0, "MTU rejection leaked capture state");
+    resetCaptures();
+    CORE_DEFAULT_MTU = 68;
+    openFlow(&large, TCP_SYN);
+    feedClientHelloSegments(&large, hello, hello_len, 2, false);
+    requireSuccessfulCapture(&large, hello_len, 2);
+    drainRelease(hello_len, 2);
+    fixtureDestroy(&large);
+    fixtureDestroy(&small);
+    CORE_DEFAULT_MTU = saved;
 }
 
 static void testSegmentationMatrix(test_env_t *env)
@@ -1962,6 +1995,7 @@ int main(void)
     test_env_t env;
     envSetup(&env);
 
+    testInstanceMtuAdmission(&env);
     testSegmentationMatrix(&env);
     testBoundarySplits(&env);
     testExactRetransmissionDuringIncompleteCapture(&env);

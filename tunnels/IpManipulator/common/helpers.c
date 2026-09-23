@@ -1328,29 +1328,22 @@ static bool ipmanipulatorSendEgressMaybeSegmented(tunnel_t *t, line_t *l, sbuf_t
         return ipmanipulatorForwardSingleEgressPacket(t, l, buf, forward, upstream, apply_portghost);
     }
 
-    /* Unit fixtures and pre-start construction may not have installed the
-     * runtime MTU yet. Zero means no final-MTU shaping is available. */
-    if (GLOBAL_MTU_SIZE == 0)
-    {
-        return ipmanipulatorForwardSingleEgressPacket(t, l, buf, forward, upstream, apply_portghost);
-    }
-
     uint32_t prospective_len = (uint32_t) ip_total_len + portghost_tail_len;
-    if (prospective_len <= GLOBAL_MTU_SIZE)
+    if (prospective_len <= state->mtu)
     {
         return ipmanipulatorForwardSingleEgressPacket(t, l, buf, forward, upstream, apply_portghost);
     }
 
     if (transport_protocol != IPPROTO_TCP)
     {
-        if (portghost_tail_len > 0 && (uint32_t) ip_total_len + portghost_tail_len > GLOBAL_MTU_SIZE)
+        if (portghost_tail_len > 0 && (uint32_t) ip_total_len + portghost_tail_len > state->mtu)
         {
             if (ipmanipulatorShouldLogEgressWarning(state))
             {
                 LOGW("IpManipulator: dropping non-TCP IPv4 packet because its %u-byte trailer would exceed "
-                     "GLOBAL_MTU_SIZE %u; IPv4 fragmentation is not supported",
+                     "instance MTU %u; IPv4 fragmentation is not supported",
                      (unsigned int) portghost_tail_len,
-                     (unsigned int) GLOBAL_MTU_SIZE);
+                     (unsigned int) state->mtu);
             }
             reuseBuffer(buf);
             return lineIsAlive(l);
@@ -1411,20 +1404,20 @@ static bool ipmanipulatorSendEgressMaybeSegmented(tunnel_t *t, line_t *l, sbuf_t
 
     uint32_t total_payload_len = (uint32_t) ip_total_len - headers_len - flag_metadata_len;
     uint32_t segment_overhead  = portghost_tail_len + flag_metadata_len;
-    if (total_payload_len == 0 || headers_len + segment_overhead >= GLOBAL_MTU_SIZE)
+    if (total_payload_len == 0 || headers_len + segment_overhead >= state->mtu)
     {
         if (ipmanipulatorShouldLogEgressWarning(state))
         {
             LOGW("IpManipulator: dropping oversized TCP packet because IPv4/TCP headers and configured trailers "
-                 "leave no segmentable payload within GLOBAL_MTU_SIZE %u",
-                 (unsigned int) GLOBAL_MTU_SIZE);
+                 "leave no segmentable payload within instance MTU %u",
+                 (unsigned int) state->mtu);
         }
         reuseBuffer(buf);
         return lineIsAlive(l);
     }
 
     const uint8_t *source_payload      = packet + headers_len;
-    uint32_t       max_segment_payload = (uint32_t) GLOBAL_MTU_SIZE - headers_len - segment_overhead;
+    uint32_t       max_segment_payload = (uint32_t) state->mtu - headers_len - segment_overhead;
     uint32_t       payload_offset      = 0;
     uint32_t       segment_index       = 0;
     uint32_t       base_seq            = lwip_ntohl(tcp_header->seqno);
@@ -1438,7 +1431,7 @@ static bool ipmanipulatorSendEgressMaybeSegmented(tunnel_t *t, line_t *l, sbuf_t
     LOGD("IpManipulator: segmenting TCP packet ip-len=%u payload=%u mtu=%u segment-payload=%u",
          ip_total_len,
          total_payload_len,
-         GLOBAL_MTU_SIZE,
+         state->mtu,
          max_segment_payload);
 
     lineRef(l);

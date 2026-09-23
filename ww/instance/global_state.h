@@ -127,7 +127,8 @@ typedef struct
 extern ww_global_state_t global_ww_state;
 
 #define GSTATE               global_ww_state
-#define GLOBAL_MTU_SIZE      global_ww_state.mtu_size
+// Runtime core misc.mtu: the configurable default exposed to nodes.
+#define CORE_DEFAULT_MTU     global_ww_state.mtu_size
 #define RAM_PROFILE          global_ww_state.ram_profile
 #define WORKERS              global_ww_state.workers
 #define WORKERS_COUNT        global_ww_state.workers_count

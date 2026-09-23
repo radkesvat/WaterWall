@@ -25,7 +25,7 @@ static bool tcpoverudpserverParseSettings(tcpoverudpserver_tstate_t *ts, node_t 
 
     if (! cJSON_IsObject(settings))
     {
-        return true;
+        goto validate_mtu;
     }
 
     getBoolFromJsonObjectOrDefault(&ts->fec_enabled, settings, "fec", false);
@@ -120,11 +120,25 @@ static bool tcpoverudpserverParseSettings(tcpoverudpserver_tstate_t *ts, node_t 
         ts->fec_parity_shards = (uint8_t) parity_shards;
     }
 
+validate_mtu:;
+    int64_t       mtu     = CORE_DEFAULT_MTU;
+    const int64_t minimum = kTcpOverUdpServerKcpMinimumMtu + kTcpOverUdpServerIpv4HeaderSize +
+                            kTcpOverUdpServerUdpHeaderSize + (int64_t) tcpoverudpserverGetOuterFecOverhead(ts);
+    const json_value_status_t status = jsonGetObjectIntegerInRange(settings, "mtu", minimum, UINT16_MAX, &mtu);
+    if (status == kJsonValueInvalid || mtu < minimum || mtu > UINT16_MAX)
+    {
+        LOGF("JSON Error: TcpOverUdpServer->settings->mtu must be an integer between %lld and 65535%s",
+             (long long) minimum,
+             status == kJsonValueMissing ? "; inherited core misc.mtu is unsupported; set an explicit node mtu" : "");
+        return false;
+    }
+    ts->mtu = (uint16_t) mtu;
+
     // the KCP MTU must clear ikcp_setmtu()'s own minimum here, so a runtime rejection can only ever mean the
     // validated tunnel state was corrupted
     if (tcpoverudpserverGetKcpMtu(ts) < kTcpOverUdpServerKcpMinimumMtu || tcpoverudpserverGetKcpWriteMtu(ts) <= 0)
     {
-        LOGF("TcpOverUdpServer: GLOBAL_MTU_SIZE is too small for KCP + FEC overhead");
+        LOGF("TcpOverUdpServer: instance mtu is too small for IPv4/UDP/KCP/FEC overhead");
         return false;
     }
 

@@ -52,7 +52,9 @@ static void testProductionSettingsReachProductionNetif(void)
     };
     static const uint32_t expected_mtu[] = {1420, 1280};
 
-    GLOBAL_MTU_SIZE = 1420;
+    const uint16_t saved_default = CORE_DEFAULT_MTU;
+    tunnel_t      *instances[2];
+    CORE_DEFAULT_MTU = 1420;
 
     for (uint32_t i = 0; i < ARRAY_SIZE(expected_mtu); ++i)
     {
@@ -71,6 +73,7 @@ static void testProductionSettingsReachProductionNetif(void)
         ts->netifs       = memoryAllocateZero(sizeof(*ts->netifs));
         require(ts->netifs != NULL, "failed to allocate the netif table");
 
+        CORE_DEFAULT_MTU     = 68;
         ctp_netif_ctx_t *ctx = ctpEnsureNetifLocked(t, 0);
         require(ctx != NULL, "production netif creation failed");
         require(ctx->netif.mtu == expected_mtu[i], "production netif did not apply the effective MTU");
@@ -80,8 +83,13 @@ static void testProductionSettingsReachProductionNetif(void)
         memoryFree(ctx);
         memoryFree(ts->netifs);
         cJSON_Delete(settings);
-        tunnelDestroy(t);
+        instances[i]     = t;
+        CORE_DEFAULT_MTU = 1420;
     }
+    require(((ctp_tstate_t *) tunnelGetState(instances[0]))->mtu == 1420, "second instance changed first MTU");
+    tunnelDestroy(instances[1]);
+    tunnelDestroy(instances[0]);
+    CORE_DEFAULT_MTU = saved_default;
 }
 
 static void testFragmentOutputFailureStopsAndPropagates(void)

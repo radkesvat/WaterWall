@@ -111,29 +111,9 @@ static err_t interfaceInit(struct netif *netif)
     netif->flags |= NETIF_FLAG_PRETEND;
     netif->output = ptcNetifOutput;
 
-    /*
-     * A netif with mtu 0 makes lwIP skip ip4_frag() entirely, so this interface
-     * would answer a fragmented request with one oversized raw packet that the
-     * far side has no way to carry. Inheriting the core MTU keeps the return
-     * direction bound by the same limit the packet topology was configured for.
-     *
-     * The floor is defensive rather than expected: core settings already refuse
-     * anything below the IPv4 minimum, but lwIP derives its fragment size from
-     * `(mtu - IP_HLEN) / 8`, and a value that made that zero would leave
-     * ip4_frag() looping without progress while holding the global core lock.
-     * A netif is not the place to discover that.
-     */
-    if (UNLIKELY(GLOBAL_MTU_SIZE < kPtcMinNetifMtu))
-    {
-        LOGW("PacketsToConnection: core mtu %u is below the IPv4 minimum, using %u for the virtual netif",
-             (unsigned int) GLOBAL_MTU_SIZE,
-             (unsigned int) kPtcMinNetifMtu);
-        netif->mtu = kPtcMinNetifMtu;
-    }
-    else
-    {
-        netif->mtu = GLOBAL_MTU_SIZE;
-    }
+    const interface_route_context_t *route = netif->state;
+    const ptc_tstate_t              *state = tunnelGetState(route->tunnel);
+    netif->mtu                             = state->mtu;
 
     return ERR_OK;
 }

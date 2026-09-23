@@ -180,7 +180,7 @@ bool ctpLoadSettings(ctp_tstate_t *ts, const cJSON *settings)
      * validated too: a core MTU this node cannot honour is a configuration
      * error, not something to silently round into range.
      */
-    int64_t mtu = (int64_t) GLOBAL_MTU_SIZE;
+    int64_t mtu = (int64_t) CORE_DEFAULT_MTU;
     if (! ctpLoadOptionalInteger(settings, "mtu", (int64_t) kCtpMinMtu, (int64_t) kCtpMaxMtu, &mtu))
     {
         return false;
@@ -256,7 +256,7 @@ tunnel_t *ctpTunnelCreate(node_t *node)
     initializeTunnelCallbacks(t);
 
     *ts = (ctp_tstate_t) {
-        .mtu                = GLOBAL_MTU_SIZE,
+        .mtu                = CORE_DEFAULT_MTU,
         .connect_timeout_ms = kCtpDefaultConnectTimeoutMs,
         .max_pending_bytes  = kCtpDefaultMaxPendingBytes,
         .domain_strategy    = (int) kDsOnlyIpV4,

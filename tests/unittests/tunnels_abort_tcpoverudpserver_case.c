@@ -25,7 +25,7 @@ int tunnelsAbortTcpOverUdpServerMtuCase(void)
     ts->kcp_recv_window = kTcpOverUdpServerKcpRecvWindowDefault;
 
     // Below kTcpOverUdpServerKcpMinimumMtu, which tcpoverudpserverTunnelCreate() would have rejected.
-    GLOBAL_MTU_SIZE = 10;
+    ts->mtu = 10;
 
     line_t *l = memoryAllocateCacheAlignedZero(sizeof(line_t) + t->lstate_size);
     if (l == NULL)

@@ -190,6 +190,7 @@ typedef struct ptc_fake_dns_result_s
 
 typedef struct ptc_tstate_s
 {
+    uint16_t                    mtu; // Immutable configured packet budget.
     interface_route_context_t **routes_v4;
     uint32_t                    route_worker_count;
     uint32_t                    max_pending_bytes;

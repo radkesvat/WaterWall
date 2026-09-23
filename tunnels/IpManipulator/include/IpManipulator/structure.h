@@ -423,6 +423,7 @@ typedef struct ipmanipulator_smuggle_fin_worker_pause_s
 
 typedef struct ipmanipulator_tstate_s
 {
+    uint16_t mtu; // Immutable configured packet budget.
     uint64_t trick_proto_swap : 1;
     uint64_t trick_sni_blender : 1;
     uint64_t trick_first_sni : 1;

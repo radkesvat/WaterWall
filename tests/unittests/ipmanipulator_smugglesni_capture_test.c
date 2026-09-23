@@ -474,6 +474,7 @@ static tunnel_t *createTestTunnel(tunnel_t *normal, tunnel_t *real)
     require(t != NULL, "failed to allocate test tunnel");
 
     t->tstate_size                = sizeof(ipmanipulator_tstate_t);
+    ((ipmanipulator_tstate_t *) tunnelGetState(t))->mtu = 1500;
     t->next                       = normal;
     normal->fnPayloadU            = receiveNormal;
     real->fnPayloadU              = receiveReal;

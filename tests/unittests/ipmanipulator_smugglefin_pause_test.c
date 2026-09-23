@@ -373,6 +373,7 @@ static tunnel_t *createTestTunnel(tunnel_t *normal_upstream, tunnel_t *normal_do
     require(t != NULL, "failed to allocate test tunnel");
 
     t->tstate_size                            = sizeof(ipmanipulator_tstate_t);
+    ((ipmanipulator_tstate_t *) tunnelGetState(t))->mtu = 1500;
     t->next                                   = normal_upstream;
     t->prev                                   = normal_downstream;
     fin_branch->fnPayloadU                    = receiveMirroredFin;

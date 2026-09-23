@@ -4,6 +4,17 @@
 
 static bool ptcLoadSettings(ptc_tstate_t *ts, const cJSON *settings)
 {
+    int64_t                   mtu        = CORE_DEFAULT_MTU;
+    const json_value_status_t mtu_status = jsonGetObjectIntegerInRange(settings, "mtu", 68, UINT16_MAX, &mtu);
+    if (mtu_status == kJsonValueInvalid || mtu < 68 || mtu > UINT16_MAX)
+    {
+        LOGF("JSON Error: PacketsToConnection->settings->mtu must be an integer between 68 and 65535%s",
+             mtu_status == kJsonValueMissing ? "; inherited core misc.mtu is unsupported; set an explicit node mtu"
+                                             : "");
+        return false;
+    }
+    ts->mtu = (uint16_t) mtu;
+
     /*
      * Present but invalid is an error, not a default. getIntFromJsonObjectOrDefault()
      * cannot separate the two, so `"udp-idle-timeout-ms": "60000"` silently
@@ -82,7 +93,7 @@ tunnel_t *ptcTunnelCreate(node_t *node)
         return NULL;
     }
 
-    if (settings != NULL && ! ptcLoadSettings(ts, settings))
+    if (! ptcLoadSettings(ts, settings))
     {
         tunnelDestroy(t);
         return NULL;

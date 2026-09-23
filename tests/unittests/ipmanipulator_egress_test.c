@@ -66,6 +66,7 @@ static tunnel_t *createTestTunnel(void)
     require(t != NULL, "failed to allocate test tunnel");
 
     t->tstate_size = sizeof(ipmanipulator_tstate_t);
+    ((ipmanipulator_tstate_t *) tunnelGetState(t))->mtu = 1500;
 
     ipmanipulator_tstate_t *state      = tunnelGetState(t);
     state->trick_proto_swap_tcp_number = -1;
@@ -104,8 +105,8 @@ static void envSetup(test_env_t *env)
     GSTATE.masterpool_buffer_pools_splice = env->splice_master;
     GSTATE.workers_count                 = 2;
     testWorkerRegistryInstall(&g_test_worker_registry);
-    env->original_mtu = GLOBAL_MTU_SIZE;
-    GLOBAL_MTU_SIZE   = 1500;
+    env->original_mtu = CORE_DEFAULT_MTU;
+    CORE_DEFAULT_MTU  = 1500;
     testWorkerBindWID(0);
 
     env->line = memoryAllocateZero(sizeof(line_t));
@@ -139,7 +140,7 @@ static void envTeardown(test_env_t *env)
     GSTATE.masterpool_buffer_pools_splice = NULL;
     GSTATE.workers_count                 = 0;
     testWorkerRegistryRestore(&g_test_worker_registry);
-    GLOBAL_MTU_SIZE = env->original_mtu;
+    CORE_DEFAULT_MTU = env->original_mtu;
 
     memoryFree(env->line);
     bufferpoolDestroy(env->buffer_pool);
@@ -420,17 +421,17 @@ static void testPendingRequestsAndDuplicateDirections(test_env_t *env)
     /* Oversized downstream native TCP is shaped before encoding, then duplicated. */
     state->trick_proto_swap_tcp_number = 1;
     state->trick_proto_swap_udp_number = -1;
-    uint16_t saved_mtu                 = GLOBAL_MTU_SIZE;
-    GLOBAL_MTU_SIZE                    = 80;
+    uint16_t saved_mtu                 = state->mtu;
+    state->mtu                         = 80;
     ipmanipulatorDownStreamPayload(t, env->line, makeTcpPacket(env, 137));
     require(captured_count == 6, "downstream encoding skipped segmentation or duplication");
     for (unsigned i = 0; i < captured_count; ++i)
     {
         requireTcpChecksumMatchesRealProtocol(captured[i]);
-        require(sbufGetLength(captured[i]) <= GLOBAL_MTU_SIZE, "encoded downstream segment exceeded MTU");
+        require(sbufGetLength(captured[i]) <= state->mtu, "encoded downstream segment exceeded MTU");
     }
     recycleCaptured(env);
-    GLOBAL_MTU_SIZE = saved_mtu;
+    state->mtu = saved_mtu;
     destroyTestTunnel(t);
 }
 
@@ -618,6 +619,7 @@ static void runPortghostSegmentationCase(test_env_t *env, bool ghost_dest)
 {
     tunnel_t               *t      = createTestTunnel();
     ipmanipulator_tstate_t *state  = tunnelGetState(t);
+    state->mtu                     = 100;
     state->trick_source_port_ghost = true;
     state->trick_dest_port_ghost   = ghost_dest;
 
@@ -644,7 +646,7 @@ static void runPortghostSegmentationCase(test_env_t *env, bool ghost_dest)
         sbuf_t              *segment = captured[i];
         const struct ip_hdr *ip      = (const struct ip_hdr *) sbufGetRawPtr(segment);
 
-        require(sbufGetLength(segment) <= GLOBAL_MTU_SIZE, "portghost segment exceeded GLOBAL_MTU_SIZE");
+        require(sbufGetLength(segment) <= state->mtu, "portghost segment exceeded state->mtu");
         require(lwip_ntohs(IPH_LEN(ip)) == sbufGetLength(segment),
                 "segment IPv4 total length does not match its buffer");
         require((lwip_ntohs(IPH_OFFSET(ip)) & (IP_RF | IP_DF)) == (IP_RF | IP_DF),
@@ -680,8 +682,6 @@ static void runPortghostSegmentationCase(test_env_t *env, bool ghost_dest)
 
 static void testPortghostSegmentation(test_env_t *env)
 {
-    uint16_t original_mtu = GLOBAL_MTU_SIZE;
-    GLOBAL_MTU_SIZE       = 100;
 
     runPortghostSegmentationCase(env, false);
     runPortghostSegmentationCase(env, true);
@@ -691,30 +691,30 @@ static void testPortghostSegmentation(test_env_t *env)
     state->trick_source_port_ghost = true;
     state->trick_dest_port_ghost   = true;
 
-    GLOBAL_MTU_SIZE = sizeof(struct ip_hdr) + sizeof(struct tcp_hdr) + 4U;
+    /* Deliberately corrupt constructed state to exercise subtraction safety. */
+    state->mtu      = sizeof(struct ip_hdr) + sizeof(struct tcp_hdr) + 4U;
     sbuf_t *buf     = makeTcpPacket(env, 80);
     require(ipmanipulatorSendWithForwardMaybeSegmented(t, env->line, buf, capturePacket),
             "header/trailer boundary unexpectedly killed the packet line");
     require(captured_count == 0, "header/trailer boundary did not bail before underflow");
 
     destroyTestTunnel(t);
-    GLOBAL_MTU_SIZE = original_mtu;
 }
 
 static void testTrailerBoundaryAndExactFitGrowth(test_env_t *env)
 {
     tunnel_t               *t         = createTestTunnel();
     ipmanipulator_tstate_t *state     = tunnelGetState(t);
-    uint16_t                saved_mtu = GLOBAL_MTU_SIZE;
+    uint16_t                saved_mtu = state->mtu;
 
     state->trick_source_port_ghost = true;
     state->trick_dest_port_ghost   = true;
 
-    GLOBAL_MTU_SIZE  = 100;
+    state->mtu       = 100;
     sbuf_t *boundary = makeTcpPacket(env, 96);
     require(ipmanipulatorSendWithForwardMaybeSegmented(t, env->line, boundary, capturePacket),
             "prospective-MTU boundary unexpectedly killed the line");
-    require(captured_count == 1 && sbufGetLength(captured[0]) == GLOBAL_MTU_SIZE,
+    require(captured_count == 1 && sbufGetLength(captured[0]) == state->mtu,
             "prospective-MTU boundary was not emitted as one exact-MTU packet");
     recycleCaptured(env);
 
@@ -739,7 +739,7 @@ static void testTrailerBoundaryAndExactFitGrowth(test_env_t *env)
             "exact-fit portghost round trip changed the packet length");
     sbufDestroy(exact_fit);
 
-    GLOBAL_MTU_SIZE = saved_mtu;
+    state->mtu = saved_mtu;
     destroyTestTunnel(t);
 }
 
@@ -750,14 +750,14 @@ static void testPreservedFlagsAndPortghostSegmentTogether(test_env_t *env)
     t->prev        = &prev;
 
     ipmanipulator_tstate_t *state      = tunnelGetState(t);
-    uint16_t                saved_mtu  = GLOBAL_MTU_SIZE;
+    uint16_t                saved_mtu  = state->mtu;
     state->trick_source_port_ghost     = true;
     state->trick_dest_port_ghost       = true;
     state->trick_preserve_tcp_bitflags = true;
     state->trick_tcp_bit_changes       = true;
     state->up_tcp_bit_syn_action       = kDvsOff;
 
-    GLOBAL_MTU_SIZE              = 100;
+    state->mtu                   = 100;
     const uint8_t original_flags = TCP_SYN | TCP_CWR | TCP_ECE | TCP_ACK | TCP_PSH | TCP_FIN;
     sbuf_t       *buf            = makeTcpPacket(env, 160);
     setTcpFlags(buf, original_flags);
@@ -783,7 +783,7 @@ static void testPreservedFlagsAndPortghostSegmentTogether(test_env_t *env)
         const uint8_t        *packet = sbufGetRawPtr(captured[i]);
         const struct ip_hdr  *ip     = (const struct ip_hdr *) packet;
         const struct tcp_hdr *tcp    = (const struct tcp_hdr *) (packet + sizeof(struct ip_hdr));
-        require(sbufGetLength(captured[i]) <= GLOBAL_MTU_SIZE, "combined trailer segment exceeded the MTU");
+        require(sbufGetLength(captured[i]) <= state->mtu, "combined trailer segment exceeded the MTU");
         require(lwip_ntohl(tcp->seqno) == 1000U + expected_offsets[i] + (i == 0 ? 0U : 1U),
                 "combined trailer segment has discontinuous SYN-aware sequence space");
         require(getTcpFlags(tcp) == expected_live_flags[i], "live TCP flags were placed on the wrong segment");
@@ -822,7 +822,7 @@ static void testPreservedFlagsAndPortghostSegmentTogether(test_env_t *env)
 
     recycleCaptured(env);
     lineSetRecalculateChecksum(env->line, false);
-    GLOBAL_MTU_SIZE = saved_mtu;
+    state->mtu = saved_mtu;
     destroyTestTunnel(t);
 }
 
@@ -831,12 +831,12 @@ static void testUnsupportedOversizedPacketsDrop(test_env_t *env)
     tunnel_t                prev      = {.fnPayloadD = capturePacket};
     tunnel_t               *t         = createTestTunnel();
     ipmanipulator_tstate_t *state     = tunnelGetState(t);
-    uint16_t                saved_mtu = GLOBAL_MTU_SIZE;
+    uint16_t                saved_mtu = state->mtu;
     t->prev                           = &prev;
 
     state->trick_source_port_ghost = true;
     state->trick_dest_port_ghost   = true;
-    GLOBAL_MTU_SIZE                = 80;
+    state->mtu                     = 80;
 
     sbuf_t *rst = makeTcpPacket(env, 100);
     setTcpFlags(rst, TCP_RST | TCP_ACK);
@@ -902,7 +902,7 @@ static void testUnsupportedOversizedPacketsDrop(test_env_t *env)
             "oversized UDP drop unexpectedly killed the line");
     require(captured_count == 0, "oversized UDP packet was emitted instead of dropped");
 
-    GLOBAL_MTU_SIZE = saved_mtu;
+    state->mtu = saved_mtu;
     destroyTestTunnel(t);
 }
 
@@ -915,10 +915,10 @@ static void testDownstreamEncoderAndPostSegmentationDuplication(test_env_t *env)
     t->next        = &next;
 
     ipmanipulator_tstate_t *state      = tunnelGetState(t);
-    uint16_t                saved_mtu  = GLOBAL_MTU_SIZE;
+    uint16_t                saved_mtu  = state->mtu;
     state->trick_preserve_tcp_bitflags = true;
     state->down_tcp_bit_syn_action     = kDvsOff;
-    GLOBAL_MTU_SIZE                    = 80;
+    state->mtu                         = 80;
 
     sbuf_t *downstream = makeTcpPacket(env, 120);
     setTcpFlags(downstream, TCP_SYN | TCP_ACK | TCP_PSH);
@@ -932,7 +932,7 @@ static void testDownstreamEncoderAndPostSegmentationDuplication(test_env_t *env)
     require(captured_count == 3, "downstream preserved-flags encoder did not use final segmentation");
     for (uint32_t i = 0; i < captured_count; ++i)
     {
-        require(sbufGetLength(captured[i]) <= GLOBAL_MTU_SIZE, "downstream segment exceeded the MTU");
+        require(sbufGetLength(captured[i]) <= state->mtu, "downstream segment exceeded the MTU");
         const struct ip_hdr *segment_ip = (const struct ip_hdr *) sbufGetRawPtr(captured[i]);
         require((lwip_ntohs(IPH_OFFSET(segment_ip)) & (IP_RF | IP_DF)) == (IP_RF | IP_DF),
                 "downstream segmentation cleared a non-fragment IPv4 flag");
@@ -946,7 +946,7 @@ static void testDownstreamEncoderAndPostSegmentationDuplication(test_env_t *env)
     state->trick_source_port_ghost      = true;
     state->trick_packet_duplicate       = true;
     state->trick_packet_duplicate_count = 2;
-    GLOBAL_MTU_SIZE                     = 80;
+    state->mtu                          = 80;
 
     sbuf_t *upstream = makeTcpPacket(env, 120);
     ipmanipulatorSendUpstreamFinal(t, env->line, upstream);
@@ -965,7 +965,7 @@ static void testDownstreamEncoderAndPostSegmentationDuplication(test_env_t *env)
     }
     recycleCaptured(env);
 
-    GLOBAL_MTU_SIZE = saved_mtu;
+    state->mtu = saved_mtu;
     destroyTestTunnel(t);
 }
 
@@ -973,10 +973,10 @@ static void testSegmentSendStopsWhenLineDies(test_env_t *env)
 {
     tunnel_t               *t         = createTestTunnel();
     ipmanipulator_tstate_t *state     = tunnelGetState(t);
-    uint16_t                saved_mtu = GLOBAL_MTU_SIZE;
+    uint16_t                saved_mtu = state->mtu;
 
     state->trick_source_port_ghost = true;
-    GLOBAL_MTU_SIZE                = 80;
+    state->mtu                     = 80;
 
     sbuf_t *buf = makeTcpPacket(env, 180);
     require(! ipmanipulatorSendWithForwardMaybeSegmented(t, env->line, buf, captureFirstThenKillLine),
@@ -985,7 +985,7 @@ static void testSegmentSendStopsWhenLineDies(test_env_t *env)
 
     env->line->alive = true;
     recycleCaptured(env);
-    GLOBAL_MTU_SIZE = saved_mtu;
+    state->mtu = saved_mtu;
     destroyTestTunnel(t);
 }
 
@@ -1156,6 +1156,7 @@ static void testProtocolSwapConfigurationValidation(void)
 
 int main(void)
 {
+    CORE_DEFAULT_MTU = 1500;
     require(globalstateInitializeSecureRandom(), "secure random initialization failed");
     require(frandGlobalInit(), "random initialization failed");
     frandInit();

@@ -103,11 +103,14 @@ tunnel_t *tundeviceTunnelCreate(node_t *node)
 
     state->subnet_mask = (int) parsed_prefix;
 
-    int64_t             dev_mtu    = GLOBAL_MTU_SIZE;
+    int64_t             dev_mtu    = CORE_DEFAULT_MTU;
     json_value_status_t mtu_status = jsonGetObjectIntegerInRange(settings, "device-mtu", 68, UINT16_MAX, &dev_mtu);
     if (mtu_status == kJsonValueInvalid || dev_mtu < 68 || dev_mtu > UINT16_MAX)
     {
-        LOGF("JSON Error: TunDevice->settings->device-mtu must be an integer between 68 and %u", UINT16_MAX);
+        LOGF("JSON Error: TunDevice->settings->device-mtu must be an integer between 68 and %u%s",
+             UINT16_MAX,
+             mtu_status == kJsonValueMissing ? "; inherited core misc.mtu is unsupported; set an explicit device-mtu"
+                                             : "");
         return tundeviceTunnelCreateFail(t);
     }
 

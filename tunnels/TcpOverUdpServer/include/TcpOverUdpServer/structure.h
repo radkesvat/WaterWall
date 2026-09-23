@@ -7,6 +7,7 @@
 
 typedef struct tcpoverudpserver_tstate_s
 {
+    uint16_t    mtu; // Immutable configured packet budget.
     atomic_bool stopping;
     bool        fec_enabled;
     uint8_t     fec_data_shards;
@@ -54,6 +55,10 @@ enum
     kTcpOverUdpServerFecDefaultParityShards = 3,
     // the smallest MTU ikcp_setmtu() accepts; anything below it is rejected with -1
     kTcpOverUdpServerKcpMinimumMtu = 50,
+    kTcpOverUdpServerIpv4HeaderSize = 20,
+    kTcpOverUdpServerUdpHeaderSize  = 8,
+    kTcpOverUdpServerKcpHeaderSize  = 24,
+    kTcpOverUdpServerKcpMaximumMtu  = 64000,
 };
 
 enum tcpoverudpserver_kcpsettings_e
@@ -82,12 +87,14 @@ static inline uint32_t tcpoverudpserverGetOuterFecOverhead(const tcpoverudpserve
 
 static inline int tcpoverudpserverGetKcpMtu(const tcpoverudpserver_tstate_t *ts)
 {
-    return (int) (GLOBAL_MTU_SIZE - tcpoverudpserverGetOuterFecOverhead(ts));
+    const int budget = (int) ts->mtu - kTcpOverUdpServerIpv4HeaderSize - kTcpOverUdpServerUdpHeaderSize -
+                       (int) tcpoverudpserverGetOuterFecOverhead(ts);
+    return min(budget, kTcpOverUdpServerKcpMaximumMtu);
 }
 
 static inline int tcpoverudpserverGetKcpWriteMtu(const tcpoverudpserver_tstate_t *ts)
 {
-    return (int) (GLOBAL_MTU_SIZE - 20 - 8 - 24 - kFrameHeaderLength - tcpoverudpserverGetOuterFecOverhead(ts));
+    return tcpoverudpserverGetKcpMtu(ts) - kTcpOverUdpServerKcpHeaderSize - kFrameHeaderLength;
 }
 
 static inline int tcpoverudpserverGetKcpSendBufferLimit(const tcpoverudpserver_lstate_t *ls)

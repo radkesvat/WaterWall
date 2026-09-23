@@ -1,5 +1,5 @@
 <!--
-Documentation version: 156
+Documentation version: 157
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/PacketsToConnection.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/PacketsToConnection.mdx, and all files must keep the same documentation version.
 -->
 
@@ -8,6 +8,16 @@ Sync note: Any change to this file must also be applied to WaterWall/WaterWall-D
 `PacketsToConnection` is a packet-to-transport bridge built on lwIP.
 
 It accepts raw IPv4 packets on the packet side, injects them into lwIP, and exposes the resulting transport flows as normal Waterwall `line_t` connections toward the next tunnel.
+
+## Instance MTU
+
+Optional integer `mtu` defaults to core `misc.mtu` at construction (core fallback
+1500). Its range is **68..65535 bytes**: raw IPv4 MTU installed on every lazy worker-local virtual interface.
+Each instance stores its validated value immutably; other instances and later core
+changes do not change its behavior. Null, wrong types, fractions, zero, negative
+or out-of-range values reject construction. An unsupported inherited default also
+fails; supply a supported node override. This is not measured path MTU or MTU negotiation.
+Existing lwIP IPv4 fragmentation follows this interface MTU.
 
 ## What It Is
 
@@ -133,7 +143,7 @@ Important internal rules:
 - UDP idle close uses one cancellable owner-worker timer. The timer owns exactly one line reference while armed,
   activity resets the same timer, and close cancels it and drops the reference before line state is zeroed
 - packets emitted back to the packet side use the worker packet line for that packet worker
-- the worker-local netifs inherit the core `misc.mtu`, so a response larger than it leaves as IPv4 fragments
+- the worker-local netifs use the instance `mtu`, so a response larger than it leaves as IPv4 fragments
   rather than as one oversized raw packet the packet topology could not carry. Fake-DNS replies go out through that
   same netif rather than straight at the neighbour: a maximum multi-question answer is around 776 bytes, past common
   small IPv4 MTUs. PTC accepts the core's legal minimum MTU of 68 bytes. The reply is submitted as a UDP datagram

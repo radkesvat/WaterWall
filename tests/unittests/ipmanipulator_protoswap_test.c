@@ -18,6 +18,7 @@ static tunnel_t *createTestTunnel(void)
     require(t != NULL, "failed to allocate test tunnel");
 
     t->tstate_size                     = sizeof(ipmanipulator_tstate_t);
+    ((ipmanipulator_tstate_t *) tunnelGetState(t))->mtu = 1500;
     ipmanipulator_tstate_t *state      = tunnelGetState(t);
     state->trick_proto_swap_tcp_number = -1;
     state->trick_proto_swap_udp_number = -1;
