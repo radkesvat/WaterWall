@@ -341,7 +341,7 @@ static bool tlsserverTryRetireShaping(tunnel_t *t, line_t *l, tlsserver_lstate_t
         LOGD("TlsServer: configured TLS 1.3 record shaping scope drained; output shaper retired");
     }
 
-    if (release_producer_pause && ! ls->shaping_wire_paused && ! ls->upstream_finished && ! ls->downstream_finishing)
+    if (release_producer_pause && ! ls->wire_paused && ! ls->upstream_finished && ! ls->downstream_finishing)
     {
         if (! lineCallWithRef(l, tunnelNextUpStreamResume, t))
         {
@@ -376,7 +376,7 @@ static bool tlsserverUpdateShapingBackpressure(tunnel_t *t, line_t *l, tlsserver
         if (! ls->shaping_producer_paused)
         {
             ls->shaping_producer_paused = true;
-            if (! ls->shaping_wire_paused && ! ls->upstream_finished && ! ls->downstream_finishing)
+            if (! ls->wire_paused && ! ls->upstream_finished && ! ls->downstream_finishing)
             {
                 if (! lineCallWithRef(l, tunnelNextUpStreamPause, t))
                 {
@@ -391,7 +391,7 @@ static bool tlsserverUpdateShapingBackpressure(tunnel_t *t, line_t *l, tlsserver
     if (! ls->shaping_producer_paused && queued >= kTlsRecordShapingQueueHighWatermark)
     {
         ls->shaping_producer_paused = true;
-        if (! ls->shaping_wire_paused && ! ls->upstream_finished && ! ls->downstream_finishing)
+        if (! ls->wire_paused && ! ls->upstream_finished && ! ls->downstream_finishing)
         {
             if (! lineCallWithRef(l, tunnelNextUpStreamPause, t))
             {
@@ -405,7 +405,7 @@ static bool tlsserverUpdateShapingBackpressure(tunnel_t *t, line_t *l, tlsserver
     if (ls->shaping_producer_paused && queued <= kTlsRecordShapingQueueLowWatermark)
     {
         ls->shaping_producer_paused = false;
-        if (! ls->shaping_wire_paused && ! ls->upstream_finished && ! ls->downstream_finishing)
+        if (! ls->wire_paused && ! ls->upstream_finished && ! ls->downstream_finishing)
         {
             if (! lineCallWithRef(l, tunnelNextUpStreamResume, t))
             {
@@ -428,13 +428,13 @@ bool tlsserverDrainShapedOutput(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls, 
         return false;
     }
 
-    if (ls->shaping_wire_paused)
+    if (ls->wire_paused)
     {
         return tlsserverUpdateShapingBackpressure(t, l, ls);
     }
 
     uint64_t now_ms = wloopNowMS(getWorkerLoop(lineGetWID(l)));
-    while (! ls->shaping_wire_paused)
+    while (! ls->wire_paused)
     {
         sbuf_t *record = tlsrecordshapingOutputQueuePopReady(&ls->shaping_output, now_ms, force);
         if (record == NULL)
@@ -535,8 +535,7 @@ bool tlsserverScheduleShapedOutput(tunnel_t *t, line_t *l, tlsserver_lstate_t *l
         return tlsserverTryRetireShaping(t, l, ls);
     }
 
-    if (ls->shaping_output_timer != NULL || ls->shaping_wire_paused ||
-        tlsrecordshapingOutputQueueIsEmpty(&ls->shaping_output))
+    if (ls->shaping_output_timer != NULL || ls->wire_paused || tlsrecordshapingOutputQueueIsEmpty(&ls->shaping_output))
     {
         return true;
     }
@@ -598,7 +597,7 @@ bool tlsserverFlushSslOutput(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls)
     bool shape_output = ts->record_shaping.enabled && ! ls->shaping_retired && ls->handshake_completed &&
                         SSL_version(ls->ssl) == TLS1_3_VERSION;
 
-    if (ls->shaping_retired && ls->shaping_wire_paused)
+    if (ls->shaping_retired && ls->wire_paused)
     {
         return true;
     }
@@ -639,7 +638,7 @@ bool tlsserverFlushSslOutput(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls)
             {
                 return false;
             }
-            if (ls->shaping_retired && ls->shaping_wire_paused)
+            if (ls->shaping_retired && ls->wire_paused)
             {
                 return true;
             }
@@ -681,7 +680,7 @@ bool tlsserverFlushSslOutput(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls)
     }
 
     bool force = queued >= kTlsRecordShapingQueueHardLimit;
-    if (force && ls->shaping_wire_paused)
+    if (force && ls->wire_paused)
     {
         LOGW("TlsServer: record shaping queue exceeded 8 MiB while the wire side was paused");
         return false;
@@ -803,7 +802,18 @@ bool tlsserverStartProtectedBranch(tunnel_t *t, line_t *l, tlsserver_lstate_t *l
     }
 
     ls->protected_init_sent = true;
-    return lineCallWithRef(l, tunnelNextUpStreamInit, t);
+    if (! lineCallWithRef(l, tunnelNextUpStreamInit, t))
+    {
+        return false;
+    }
+    /* Init can change receiver permission or close this borrowed line. */
+    ls = lineGetState(l, t);
+    if (ls->tunnel == t && ls->wire_paused && ! ls->upstream_finished && ! ls->downstream_finishing &&
+        ! lineCallWithRef(l, tunnelNextUpStreamPause, t))
+    {
+        return false;
+    }
+    return ls->tunnel == t && ! ls->resources_released;
 }
 
 static size_t tlsserverFallbackPendingCount(const tlsserver_lstate_t *ls)
@@ -1095,6 +1105,11 @@ bool tlsserverStartFallback(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls)
     {
         ls->fallback_init_sent = true;
         tunnelUpStreamInit(ts->fallback_tunnel, l);
+    }
+
+    if (lineIsAlive(l) && ls->fallback_mode && ls->wire_paused)
+    {
+        tunnelUpStreamPause(ts->fallback_tunnel, l);
     }
 
     if (lineIsAlive(l) && ls->fallback_mode)

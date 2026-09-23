@@ -7,6 +7,8 @@ void tlsserverTunnelUpStreamResume(tunnel_t *t, line_t *l)
     tlsserver_tstate_t *ts = tunnelGetState(t);
     tlsserver_lstate_t *ls = lineGetState(l, t);
 
+    ls->wire_paused = false;
+
     if (ls->fallback_mode)
     {
         tunnel_t *fallback = ts->fallback_tunnel;
@@ -20,11 +22,6 @@ void tlsserverTunnelUpStreamResume(tunnel_t *t, line_t *l)
     if (! ls->protected_init_sent)
     {
         return;
-    }
-
-    if (ts->record_shaping.enabled)
-    {
-        ls->shaping_wire_paused = false;
     }
 
     if (ts->record_shaping.enabled && ls->handshake_completed && SSL_version(ls->ssl) == TLS1_3_VERSION)
@@ -73,8 +70,8 @@ void tlsserverTunnelUpStreamResume(tunnel_t *t, line_t *l)
         }
 
         ls = lineGetState(l, t);
-        if (shaping_pause_was_active || ls->shaping_producer_paused || ls->shaping_wire_paused ||
-            ls->upstream_finished || ls->downstream_finishing)
+        if (shaping_pause_was_active || ls->shaping_producer_paused || ls->wire_paused || ls->upstream_finished ||
+            ls->downstream_finishing)
         {
             lineUnref(l);
             return;

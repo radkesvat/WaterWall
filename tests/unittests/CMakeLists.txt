@@ -3736,6 +3736,27 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND TARGET TrojanServer)
   endforeach()
 endif()
 
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND TARGET VlessServer)
+  foreach(mode IN ITEMS splice no_splice)
+    set(vless_server_test vlessserver_${mode}_test)
+    add_executable(${vless_server_test} vlessserver_splice_test.c ${WATERWALL_LINE_FAILURE_WW_SOURCES})
+    waterwall_line_failure_test_use_tunnel(${vless_server_test} VlessServer)
+    target_link_libraries(${vless_server_test} PRIVATE ww)
+    target_link_options(${vless_server_test} PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS}
+      "-Wl,--wrap=bufferqueueTryPushBack" "-Wl,--wrap=lineScheduleDelayedTask"
+      "-Wl,--wrap=authenticationclientGetState" "-Wl,--wrap=authenticationclientGetUserByUUIDWithProfile")
+    if(mode STREQUAL "no_splice")
+      target_compile_definitions(${vless_server_test} PRIVATE WW_HAVE_SPLICE=0)
+    else()
+      target_link_options(${vless_server_test} PRIVATE "-Wl,--wrap=pipe2" "-Wl,--wrap=fcntl"
+        "-Wl,--wrap=read" "-Wl,--wrap=splice")
+    endif()
+    add_dependencies(waterwall_unit_tests ${vless_server_test})
+    add_waterwall_unit_test(waterwall.vlessserver_${mode}_unit ${vless_server_test}
+      "unit;tunnels;vlessserver;splice;authentication;fallback;framing;lifetime")
+  endforeach()
+endif()
+
 if(TARGET VlessClient AND UNIX AND NOT APPLE)
   foreach(mode IN ITEMS splice no_splice)
     set(vless_test vlessclient_${mode}_test)

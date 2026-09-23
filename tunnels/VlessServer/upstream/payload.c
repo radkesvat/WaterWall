@@ -1,68 +1,59 @@
 #include "structure.h"
 
-#include "loggers/network_logger.h"
-
 void vlessserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     vlessserver_lstate_t *ls = lineGetState(l, t);
-
-    if (UNLIKELY(ls->phase == kVlessServerPhaseClosing))
+    if (ls->phase == kVlessServerPhaseClosing || ls->line_kind == kVlessServerLineKindUdpRemote)
     {
         lineReuseBuffer(l, buf);
         return;
     }
-
-    if (ls->line_kind == kVlessServerLineKindUdpRemote)
+    if (ls->phase == kVlessServerPhaseFallback)
     {
-        lineReuseBuffer(l, buf);
-        return;
-    }
-
-    if (ls->initial_forwarding)
-    {
-        if (UNLIKELY(sbufGetLength(buf) > kVlessServerMaxPendingBytes - bufferqueueGetBufLen(&ls->initial_reentry) ||
-                     bufferqueueGetBufCount(&ls->initial_reentry) >= kVlessServerMaxPendingBuffers ||
-                     ! bufferqueueTryPushBack(&ls->initial_reentry, &buf)))
-        {
-            lineReuseBuffer(l, buf);
-            vlessserverCloseLineBidirectional(t, l);
-        }
-        return;
-    }
-
-    if (UNLIKELY(ls->phase == kVlessServerPhaseFallback))
-    {
-        tunnel_t *fallback = ((vlessserver_tstate_t *) tunnelGetState(t))->fallback_tunnel;
-        if (UNLIKELY(fallback == NULL))
-        {
-            lineReuseBuffer(l, buf);
-            vlessserverCloseLineBidirectional(t, l);
-            return;
-        }
         discard vlessserverSendFallbackPayload(t, l, ls, buf);
         return;
     }
-
-    if (ls->phase == kVlessServerPhaseTcpConnecting || ls->phase == kVlessServerPhaseTcpEstablished)
+    bool tcp = ls->phase == kVlessServerPhaseTcpConnecting || ls->phase == kVlessServerPhaseTcpEstablished;
+    if (tcp && ! ls->input_dispatching)
     {
         tunnelNextUpStreamPayload(t, l, buf);
         return;
     }
-
-    bool reject_short_password = ls->phase == kVlessServerPhaseWaitInitial && bufferstreamIsEmpty(&ls->in_stream);
-
-    bufferstreamPush(&ls->in_stream, buf);
-
-    if (UNLIKELY((ls->phase == kVlessServerPhaseUdpWaitPacket || ls->phase == kVlessServerPhaseUdpConnecting ||
-                  ls->phase == kVlessServerPhaseUdpEstablished) &&
-                 bufferstreamGetBufLen(&ls->in_stream) > kVlessServerMaxBufferedBytes))
+    bool first             = ! ls->first_payload_seen;
+    bool short_uuid        = first && sbufGetLength(buf) < 17;
+    ls->first_payload_seen = true;
+    if (! tcp && sbufGetLength(buf) > kVlessServerMaxBufferedBytes - ls->input_bytes)
+        goto refused;
+    /* Empty parser input owns no bytes, but an empty first callback still
+     * selects fallback. Output/reentry queues account even empty entries. */
+    if (! tcp && sbufGetLength(buf) == 0)
+        lineReuseBuffer(l, buf);
+    else
     {
-        LOGE("VlessServer: UDP input buffer overflow, size=%zu limit=%u",
-             bufferstreamGetBufLen(&ls->in_stream),
-             (unsigned int) kVlessServerMaxBufferedBytes);
-        vlessserverCloseLineBidirectional(t, l);
-        return;
+        uint32_t bytes = sbufGetLength(buf);
+        if (! bufferqueueTryPushBack(&ls->pending_up, &buf))
+            goto refused;
+        if (! tcp)
+            ls->input_bytes += bytes;
     }
-
-    discard vlessserverDrainInput(t, l, ls, reject_short_password);
+    if (ls->input_dispatching)
+        return;
+    lineRef(l);
+    ls->input_dispatching = true;
+    bool ok               = vlessserverDrainInput(t, l, ls, short_uuid);
+    if (ok && lineIsAlive(l))
+    {
+        ls = lineGetState(l, t);
+        if (ls->tunnel == t && ls->phase != kVlessServerPhaseClosing)
+        {
+            ls->input_dispatching = false;
+            if (ls->phase == kVlessServerPhaseFallback && ! vlessserverScheduleFallbackPayloadDrain(t, l, ls))
+                vlessserverCloseLineBidirectional(t, l);
+        }
+    }
+    lineUnref(l);
+    return;
+refused:
+    lineReuseBuffer(l, buf);
+    vlessserverCloseLineBidirectional(t, l);
 }

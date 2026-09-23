@@ -14,6 +14,8 @@ void vlessserverTunnelUpStreamPause(tunnel_t *t, line_t *l)
         return;
     }
 
+    ls->response_paused = true;
+
     if (UNLIKELY(ls->phase == kVlessServerPhaseFallback))
     {
         tunnel_t *fallback = ((vlessserver_tstate_t *) tunnelGetState(t))->fallback_tunnel;
@@ -23,8 +25,6 @@ void vlessserverTunnelUpStreamPause(tunnel_t *t, line_t *l)
         }
         return;
     }
-
-    ls->response_paused = true;
 
     if (ls->phase == kVlessServerPhaseTcpConnecting || ls->phase == kVlessServerPhaseTcpEstablished)
     {

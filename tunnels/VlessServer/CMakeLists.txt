@@ -5,6 +5,8 @@ add_library(VlessServer STATIC
     instance/node.c
     instance/chain.c
     instance/prepair.c
+    common/input.c
+    common/fallback.c
     common/helpers.c
     common/line_state.c
     upstream/init.c

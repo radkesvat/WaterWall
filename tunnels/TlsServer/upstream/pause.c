@@ -7,6 +7,9 @@ void tlsserverTunnelUpStreamPause(tunnel_t *t, line_t *l)
     tlsserver_tstate_t *ts = tunnelGetState(t);
     tlsserver_lstate_t *ls = lineGetState(l, t);
 
+    /* Preserve receiver pressure while choosing a branch and across its Init. */
+    ls->wire_paused = true;
+
     if (ls->fallback_mode)
     {
         tunnel_t *fallback = ts->fallback_tunnel;
@@ -24,7 +27,6 @@ void tlsserverTunnelUpStreamPause(tunnel_t *t, line_t *l)
 
     if (ts->record_shaping.enabled)
     {
-        ls->shaping_wire_paused = true;
         if (! ls->shaping_retired)
         {
             tlsserverCancelShapedOutputTimer(ls);

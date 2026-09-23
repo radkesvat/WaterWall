@@ -528,7 +528,7 @@ static void testServerRetirementSurvivesReentrantFinalPause(void)
     fixture.context.pause_on_prev_payload = true;
     tlsserverTunnelUpStreamResume(fixture.tls, fixture.line);
     ls = lineGetState(fixture.line, fixture.tls);
-    requireServer(ls->shaping_retired && ls->shaping_wire_paused && ! ls->shaping_output.initialized &&
+    requireServer(ls->shaping_retired && ls->wire_paused && ! ls->shaping_output.initialized &&
                       fixture.context.prev_payload == 1 && fixture.context.next_resume == 0,
                   "server did not retire safely behind a re-entrant final Pause");
 
@@ -596,7 +596,7 @@ static void testServerPausedWatermarksEmitOnePauseResumePair(void)
     tlsserver_lstate_t *ls = lineGetState(fixture.line, fixture.tls);
 
     tlsserverTunnelUpStreamPause(fixture.tls, fixture.line);
-    requireServer(ls->shaping_wire_paused && fixture.context.next_pause == 1,
+    requireServer(ls->wire_paused && fixture.context.next_pause == 1,
                   "server external Pause was not forwarded exactly once");
 
     while (tlsrecordshapingOutputQueueBytes(&ls->shaping_output) < kTlsRecordShapingQueueHighWatermark)
@@ -609,7 +609,7 @@ static void testServerPausedWatermarksEmitOnePauseResumePair(void)
 
     tlsserverTunnelUpStreamResume(fixture.tls, fixture.line);
     ls = lineGetState(fixture.line, fixture.tls);
-    requireServer(! ls->shaping_wire_paused && ls->shaping_producer_paused && fixture.context.next_pause == 1 &&
+    requireServer(! ls->wire_paused && ls->shaping_producer_paused && fixture.context.next_pause == 1 &&
                       fixture.context.next_resume == 0,
                   "server external Resume broke the shaping Pause transition");
 
@@ -677,13 +677,13 @@ static void testServerReentrantPauseSuppressesStaleResume(void)
     tlsserverTunnelUpStreamResume(fixture.tls, fixture.line);
 
     ls = lineGetState(fixture.line, fixture.tls);
-    requireServer(ls->shaping_wire_paused && tlsrecordshapingOutputQueueCount(&ls->shaping_output) == 1 &&
+    requireServer(ls->wire_paused && tlsrecordshapingOutputQueueCount(&ls->shaping_output) == 1 &&
                       fixture.context.prev_payload == 1 && fixture.context.next_pause == 2 &&
                       fixture.context.next_resume == 0,
                   "server forwarded a stale Resume after a re-entrant wire Pause");
 
     tlsserverTunnelUpStreamResume(fixture.tls, fixture.line);
-    requireServer(! ls->shaping_wire_paused && tlsrecordshapingOutputQueueIsEmpty(&ls->shaping_output) &&
+    requireServer(! ls->wire_paused && tlsrecordshapingOutputQueueIsEmpty(&ls->shaping_output) &&
                       fixture.context.prev_payload == 2 && fixture.context.next_resume == 1,
                   "server did not forward Resume after the later genuine wire Resume");
 
@@ -714,9 +714,9 @@ static void testServerPeerFinishSuppressesBackpressureCallbacks(void)
                       fixture.context.next_resume == 0,
                   "server sent shaping Resume toward the peer-finished side");
 
-    ls->shaping_wire_paused = true;
+    ls->wire_paused = true;
     tlsserverTunnelUpStreamResume(fixture.tls, fixture.line);
-    requireServer(! ls->shaping_wire_paused && fixture.context.next_resume == 0,
+    requireServer(! ls->wire_paused && fixture.context.next_resume == 0,
                   "server forwarded wire Resume toward the peer-finished side");
 
     tlsserverLinestateDestroy(ls);

@@ -304,9 +304,7 @@ bool vlessserverForwardResponse(tunnel_t *t, line_t *l, sbuf_t *buf)
     {
         return lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, buf);
     }
-    if (UNLIKELY(sbufGetLength(buf) > kVlessServerMaxPendingBytes - bufferqueueGetBufLen(&ls->pending_down) ||
-                 bufferqueueGetBufCount(&ls->pending_down) >= kVlessServerMaxPendingBuffers ||
-                 ! bufferqueueTryPushBack(&ls->pending_down, &buf)))
+    if (UNLIKELY(! bufferqueueTryPushBack(&ls->pending_down, &buf)))
     {
         lineReuseBuffer(l, buf);
         vlessserverCloseLineBidirectional(t, l);
@@ -317,271 +315,34 @@ bool vlessserverForwardResponse(tunnel_t *t, line_t *l, sbuf_t *buf)
     return vlessserverDrainResponse(t, l, ! has_older);
 }
 
-static bool vlessserverForwardInitial(tunnel_t *t, line_t *l, tunnel_t *branch, vlessserver_phase_t phase,
-                                      bool fallback)
+static bool vlessserverForwardInitial(tunnel_t *t, line_t *l)
 {
-    vlessserver_lstate_t *ls    = lineGetState(l, t);
-    buffer_pool_t        *pool  = lineGetBufferPool(l);
-    sbuf_t               *first = bufferstreamFullRead(&ls->in_stream);
-    ls->phase                   = phase;
-    ls->initial_forwarding      = true;
-    lineRef(l);
-    tunnelUpStreamInit(branch, l);
-    if (! fallback && lineIsAlive(l))
-    {
-        ls = lineGetState(l, t);
-        if (ls->tunnel == t && ls->phase != kVlessServerPhaseClosing && ls->response_paused)
-        {
-            tunnelNextUpStreamPause(t, l);
-        }
-    }
-    bool completed = false;
-    while (lineIsAlive(l))
-    {
-        ls = lineGetState(l, t);
-        if (UNLIKELY(ls->tunnel != t || ls->phase == kVlessServerPhaseClosing))
-        {
-            break;
-        }
-        sbuf_t *out = first != NULL ? first : bufferqueuePopFront(&ls->initial_reentry);
-        first       = NULL;
-        if (out == NULL)
-        {
-            ls->initial_forwarding = false;
-            completed              = true;
-            break;
-        }
-        if (fallback)
-        {
-            if (UNLIKELY(! vlessserverSendFallbackPayload(t, l, ls, out)))
-            {
-                break;
-            }
-        }
-        else
-        {
-            tunnelNextUpStreamPayload(t, l, out);
-        }
-    }
-    if (first != NULL)
-    {
-        bufferpoolReuseBuffer(pool, first);
-    }
-    lineUnref(l);
-    return completed;
-}
-
-static size_t vlessserverFallbackPendingCount(const vlessserver_lstate_t *ls)
-{
-    return ls->fallback_pending_up != NULL ? bufferqueueGetBufCount(ls->fallback_pending_up) : 0;
-}
-
-static buffer_queue_t *vlessserverEnsureFallbackPendingQueue(vlessserver_lstate_t *ls)
-{
-    if (ls->fallback_pending_up == NULL)
-    {
-        ls->fallback_pending_up = memoryAllocate(sizeof(*ls->fallback_pending_up));
-        if (UNLIKELY(ls->fallback_pending_up == NULL))
-        {
-            return NULL;
-        }
-        *ls->fallback_pending_up = bufferqueueCreate(kVlessServerBufferQueueCap);
-    }
-
-    return ls->fallback_pending_up;
-}
-
-static void vlessserverRecycleFallbackPendingQueue(buffer_queue_t *pending, buffer_pool_t *pool)
-{
-    while (bufferqueueGetBufCount(pending) > 0)
-    {
-        bufferpoolReuseBuffer(pool, bufferqueuePopFront(pending));
-    }
-
-    bufferqueueDestroy(pending);
-    memoryFree(pending);
-}
-
-static void vlessserverDiscardFallbackPendingPayload(vlessserver_lstate_t *ls, buffer_pool_t *pool)
-{
-    buffer_queue_t *pending = ls->fallback_pending_up;
-    ls->fallback_pending_up = NULL;
-    if (pending != NULL)
-    {
-        vlessserverRecycleFallbackPendingQueue(pending, pool);
-    }
-}
-
-static bool vlessserverDetachFallbackPendingPayload(vlessserver_lstate_t *ls, buffer_pool_t *pool, sbuf_t **out)
-{
-    *out = NULL;
-
-    buffer_queue_t *pending = ls->fallback_pending_up;
-    ls->fallback_pending_up = NULL;
-    if (pending == NULL)
-    {
-        return true;
-    }
-
-    const size_t total = bufferqueueGetBufLen(pending);
-    if (UNLIKELY(total > kVlessServerMaxPendingBytes || total > UINT32_MAX))
-    {
-        LOGE("VlessServer: invalid fallback payload batch size=%zu", total);
-        vlessserverRecycleFallbackPendingQueue(pending, pool);
-        return false;
-    }
-
-    sbuf_t *merged = bufferqueuePopFront(pending);
-    if (merged != NULL)
-    {
-        merged = sbufReserveSpace(merged, (uint32_t) total);
-        while (bufferqueueGetBufCount(pending) > 0)
-        {
-            sbuf_t *part = bufferqueuePopFront(pending);
-            sbufConcatNoCheck(merged, part);
-            bufferpoolReuseBuffer(pool, part);
-        }
-    }
-
-    bufferqueueDestroy(pending);
-    memoryFree(pending);
-    *out = merged;
-    return true;
-}
-
-static void vlessserverDelayedFallbackPayloadTask(tunnel_t *t, line_t *l);
-
-bool vlessserverScheduleFallbackPayloadDrain(tunnel_t *t, line_t *l, vlessserver_lstate_t *ls)
-{
-    if (ls->phase != kVlessServerPhaseFallback || ls->fallback_close_draining || ls->fallback_payload_paused ||
-        vlessserverFallbackPendingCount(ls) == 0 || ls->fallback_delay_scheduled)
-    {
-        return true;
-    }
-
-    vlessserver_tstate_t *ts = tunnelGetState(t);
-    uint32_t              delay_ms =
-        ts->fallback_intentional_delay_ms == 0
-                         ? 0
-                         : fastRandJittered32(ts->fallback_intentional_delay_ms, ts->fallback_intentional_delay_jitter_ms);
-
-    ls->fallback_delay_scheduled = true;
-    const line_task_submit_result_e result =
-        lineScheduleDelayedTask(l, vlessserverDelayedFallbackPayloadTask, delay_ms, t, NULL);
-    if (UNLIKELY(result == kLineTaskSubmitRejectedSettled))
-    {
-        ls->fallback_delay_scheduled = false;
-        return false;
-    }
-    assert((delay_ms == 0 && result == kLineTaskSubmitAcceptedAsync) ||
-           (delay_ms > 0 && result == kLineTaskSubmitTimerArmed));
-    return true;
-}
-
-static void vlessserverDelayedFallbackPayloadTask(tunnel_t *t, line_t *l)
-{
-    vlessserver_tstate_t *ts = tunnelGetState(t);
     vlessserver_lstate_t *ls = lineGetState(l, t);
-
-    ls->fallback_delay_scheduled = false;
-
-    if (ls->phase != kVlessServerPhaseFallback || ls->fallback_close_draining || ls->fallback_payload_paused)
-    {
-        return;
-    }
-
-    buffer_pool_t *pool     = lineGetBufferPool(l);
-    tunnel_t      *fallback = ts->fallback_tunnel;
-    sbuf_t        *buf      = NULL;
-    if (UNLIKELY(! vlessserverDetachFallbackPendingPayload(ls, pool, &buf)))
+    if (! vlessserverRetainActiveHead(ls) || ! bufferqueueTryAttachBudget(&ls->pending_up, &ls->upstream_budget))
     {
         vlessserverCloseLineBidirectional(t, l);
-        return;
+        return false;
     }
-
-    if (buf == NULL)
-    {
-        return;
-    }
-    if (UNLIKELY(fallback == NULL))
-    {
-        bufferpoolReuseBuffer(pool, buf);
-        vlessserverCloseLineBidirectional(t, l);
-        return;
-    }
-
-    tunnelUpStreamPayload(fallback, l, buf);
-    if (! lineIsAlive(l))
-    {
-        return;
-    }
-
+    ls->input_bytes         = 0;
+    ls->phase               = kVlessServerPhaseTcpConnecting;
+    ls->branch_initializing = true;
+    if (! lineCallWithRef(l, tunnelNextUpStreamInit, t))
+        return false;
     ls = lineGetState(l, t);
-    if (ls->phase != kVlessServerPhaseFallback || ls->fallback_close_draining || ls->fallback_payload_paused)
-    {
-        return;
-    }
-    if (UNLIKELY(! vlessserverScheduleFallbackPayloadDrain(t, l, ls)))
-    {
-        vlessserverCloseLineBidirectional(t, l);
-    }
-}
-
-bool vlessserverSendFallbackPayload(tunnel_t *t, line_t *l, vlessserver_lstate_t *ls, sbuf_t *buf)
-{
-    vlessserver_tstate_t *ts       = tunnelGetState(t);
-    tunnel_t             *fallback = ts->fallback_tunnel;
-
-    if (fallback == NULL || ls->phase != kVlessServerPhaseFallback || ls->fallback_close_draining)
-    {
-        lineReuseBuffer(l, buf);
+    if (ls->tunnel != t)
         return false;
-    }
-
-    if (ts->fallback_intentional_delay_ms == 0 && ! ls->fallback_payload_paused &&
-        vlessserverFallbackPendingCount(ls) == 0 && ! ls->fallback_delay_scheduled)
-    {
-        return lineCallWithRefWithBuf(l, tunnelUpStreamPayload, fallback, buf);
-    }
-
-    buffer_queue_t *pending = vlessserverEnsureFallbackPendingQueue(ls);
-    if (UNLIKELY(pending == NULL))
-    {
-        lineReuseBuffer(l, buf);
-        vlessserverCloseLineBidirectional(t, l);
+    ls->branch_initializing = false;
+    if (ls->response_paused && ! lineCallWithRef(l, tunnelNextUpStreamPause, t))
         return false;
-    }
-
-    bufferqueuePushBack(pending, buf);
-    if (UNLIKELY(bufferqueueGetBufLen(pending) > kVlessServerMaxPendingBytes))
+    while (ls->tunnel == t && ls->phase != kVlessServerPhaseClosing)
     {
-        LOGE("VlessServer: fallback payload queue overflow, size=%zu limit=%u",
-             bufferqueueGetBufLen(pending),
-             (unsigned int) kVlessServerMaxPendingBytes);
-        vlessserverCloseLineBidirectional(t, l);
-        return false;
+        sbuf_t *out = bufferqueuePopFront(&ls->pending_up);
+        if (out == NULL)
+            return true;
+        if (! lineCallWithRefWithBuf(l, tunnelNextUpStreamPayload, t, out))
+            return false;
     }
-
-    if (UNLIKELY(! vlessserverScheduleFallbackPayloadDrain(t, l, ls)))
-    {
-        vlessserverCloseLineBidirectional(t, l);
-        return false;
-    }
-
-    return true;
-}
-
-static bool vlessserverStartFallback(tunnel_t *t, line_t *l)
-{
-    vlessserver_tstate_t *ts = tunnelGetState(t);
-
-    if (UNLIKELY(ts->fallback_tunnel == NULL))
-    {
-        vlessserverCloseLineBidirectional(t, l);
-        return false;
-    }
-
-    return vlessserverForwardInitial(t, l, ts->fallback_tunnel, kVlessServerPhaseFallback, true);
+    return false;
 }
 
 static void vlessserverDetachRemoteFromClient(vlessserver_lstate_t *remote_ls)
@@ -654,6 +415,8 @@ static line_t *vlessserverGetOrCreateUdpRemoteLine(tunnel_t *t, line_t *client_l
     {
         return NULL;
     }
+    if (! lineIsAlive(client_l) || client_ls->tunnel != t || client_ls->udp_remote_line != remote_l)
+        return NULL;
     return remote_l;
 }
 
@@ -677,7 +440,7 @@ static bool vlessserverInitialCommandIsAllowed(tunnel_t *t, uint8_t cmd)
 static bool vlessserverStartTcpBranch(tunnel_t *t, line_t *l, const address_context_t *target)
 {
     vlessserverApplyDestinationContext(l, target, false);
-    return vlessserverForwardInitial(t, l, t->next, kVlessServerPhaseTcpConnecting, false);
+    return vlessserverForwardInitial(t, l);
 }
 
 static bool vlessserverStartUdpBranch(tunnel_t *t, line_t *l, vlessserver_lstate_t *ls, const address_context_t *target)
@@ -690,7 +453,7 @@ static bool vlessserverStartUdpBranch(tunnel_t *t, line_t *l, vlessserver_lstate
     bool    client_alive = lineIsAlive(l);
     lineUnref(l);
 
-    if (UNLIKELY(! client_alive))
+    if (UNLIKELY(! client_alive || ls->tunnel != t))
     {
         return false;
     }
@@ -701,120 +464,70 @@ static bool vlessserverStartUdpBranch(tunnel_t *t, line_t *l, vlessserver_lstate
         return false;
     }
 
-    return vlessserverDrainInput(t, l, ls, false);
+    return true;
 }
 
 static bool vlessserverHandleInitialRequest(tunnel_t *t, line_t *l, vlessserver_lstate_t *ls,
                                             bool reject_short_password)
 {
-    size_t available = bufferstreamGetBufLen(&ls->in_stream);
-
-    if (UNLIKELY(available < 1))
+    if (reject_short_password)
     {
-        if (UNLIKELY(reject_short_password))
-        {
-            // Not verbose-gated by design: a split credential in the very first payload is a
-            // probe-resistance/hardening signal we always surface, unlike the per-attempt
-            // auth-failure logs (see description.md).
-            LOGW("VlessServer: rejected segmented UUID authentication on worker %u", (unsigned int) lineGetWID(l));
-            return vlessserverStartFallback(t, l);
-        }
-        return true;
-    }
-
-    if (UNLIKELY(bufferstreamViewByteAt(&ls->in_stream, 0) != kVlessVersion))
-    {
+        LOGW("VlessServer: rejected segmented UUID authentication on worker %u", (unsigned int) lineGetWID(l));
         return vlessserverStartFallback(t, l);
     }
-
-    if (UNLIKELY(available < 1 + kVlessServerUuidLen))
-    {
-        if (UNLIKELY(reject_short_password))
-        {
-            // Not verbose-gated by design (see note above and description.md).
-            LOGW("VlessServer: rejected segmented UUID authentication on worker %u", (unsigned int) lineGetWID(l));
-            return vlessserverStartFallback(t, l);
-        }
+    if (! vlessserverGatherHeader(ls, 1))
         return true;
-    }
-
-    if (! vlessserverLineAuthenticated(ls))
-    {
-        uint8_t user_id[kVlessServerUuidLen] = {0};
-        bufferstreamViewBytesAt(&ls->in_stream, 1, user_id, sizeof(user_id));
-        if (UNLIKELY(! vlessserverAuthenticateUuid(t, l, ls, user_id)))
-        {
-            return vlessserverStartFallback(t, l);
-        }
-    }
-
-    if (UNLIKELY(available < 1 + kVlessServerUuidLen + 1))
-    {
+    if (ls->header[0] != kVlessVersion)
+        return vlessserverStartFallback(t, l);
+    if (! vlessserverGatherHeader(ls, 17))
         return true;
-    }
-
-    uint8_t addons_len = bufferstreamViewByteAt(&ls->in_stream, 1 + kVlessServerUuidLen);
-    size_t  command_at = 1U + kVlessServerUuidLen + 1U + addons_len;
-
-    if (UNLIKELY(available < command_at))
-    {
-        if (UNLIKELY(available > kVlessServerMaxInitialBytes))
-        {
-            vlessserverCloseLineBidirectional(t, l);
-            return false;
-        }
+    if (! vlessserverLineAuthenticated(ls) && ! vlessserverAuthenticateUuid(t, l, ls, ls->header + 1))
+        return vlessserverStartFallback(t, l);
+    if (! vlessserverGatherHeader(ls, 18))
         return true;
-    }
-
-    if (UNLIKELY(addons_len != 0))
-    {
-        vlessserverCloseLineBidirectional(t, l);
-        return false;
-    }
-
-    if (UNLIKELY(available < command_at + 1U))
-    {
+    uint8_t addons = ls->header[17];
+    if (! vlessserverGatherHeader(ls, 18U + addons))
         return true;
-    }
-
-    uint8_t request_buf[kVlessServerInitialMaxReqLen] = {0};
-    size_t  copy_len                                  = min(sizeof(request_buf), available);
-    bufferstreamViewBytesAt(&ls->in_stream, 0, request_buf, copy_len);
-
-    uint8_t cmd = request_buf[command_at];
-    if (UNLIKELY(! vlessserverInitialCommandIsAllowed(t, cmd)))
+    if (addons != 0)
+        goto malformed;
+    if (! vlessserverGatherHeader(ls, 19))
+        return true;
+    uint8_t cmd = ls->header[18];
+    if (! vlessserverInitialCommandIsAllowed(t, cmd))
+        goto malformed;
+    if (! vlessserverGatherHeader(ls, 22))
+        return true;
+    uint16_t needed;
+    switch (ls->header[21])
     {
-        vlessserverCloseLineBidirectional(t, l);
-        return false;
+    case kVlessAtypIpv4:
+        needed = 26;
+        break;
+    case kVlessAtypIpv6:
+        needed = 38;
+        break;
+    case kVlessAtypDomain:
+        if (! vlessserverGatherHeader(ls, 23))
+            return true;
+        if (ls->header[22] == 0)
+            goto malformed;
+        needed = 23U + ls->header[22];
+        break;
+    default:
+        goto malformed;
     }
-
-    address_context_t target    = {0};
-    size_t            dest_len  = 0;
-    int               parse_res = vlessserverParseDestination(request_buf + command_at + 1U,
-                                                copy_len > command_at + 1U ? copy_len - command_at - 1U : 0U,
-                                                &target,
-                                                &dest_len);
-
-    if (UNLIKELY(parse_res == 0))
+    if (! vlessserverGatherHeader(ls, needed))
+        return true;
+    address_context_t target   = {0};
+    size_t            dest_len = 0;
+    int               parsed   = vlessserverParseDestination(ls->header + 19, needed - 19, &target, &dest_len);
+    if (parsed != 1 || ! addresscontextHasPort(&target))
     {
         addresscontextReset(&target);
-        if (UNLIKELY(available > kVlessServerMaxInitialBytes))
-        {
-            vlessserverCloseLineBidirectional(t, l);
-            return false;
-        }
-        return true;
+        goto malformed;
     }
-
-    if (UNLIKELY(parse_res < 0 || ! addresscontextHasPort(&target)))
-    {
-        addresscontextReset(&target);
-        vlessserverCloseLineBidirectional(t, l);
-        return false;
-    }
-
-    size_t request_len = command_at + 1U + dest_len;
-    lineReuseBuffer(l, bufferstreamReadExact(&ls->in_stream, request_len));
+    ls->input_bytes -= ls->header_filled;
+    ls->header_filled = 0;
 
     vlessserverRecordLineUser(l, ls);
 
@@ -822,54 +535,34 @@ static bool vlessserverHandleInitialRequest(tunnel_t *t, line_t *l, vlessserver_
         cmd == kVlessCmdTcp ? vlessserverStartTcpBranch(t, l, &target) : vlessserverStartUdpBranch(t, l, ls, &target);
     addresscontextReset(&target);
     return ok;
-}
-
-static bool vlessserverUdpFrameHeader(buffer_stream_t *stream, uint16_t *packet_size, uint32_t *full_len)
-{
-    assert(bufferstreamGetBufLen(stream) >= kVlessServerUdpHeaderLen);
-
-    *packet_size = ((uint16_t) bufferstreamViewByteAt(stream, 0) << 8U) | bufferstreamViewByteAt(stream, 1);
-    if (UNLIKELY(*packet_size == 0 || *packet_size > kVlessServerUdpMaxPacket))
-    {
-        return false;
-    }
-
-    *full_len = (uint32_t) kVlessServerUdpHeaderLen + *packet_size;
-    return true;
+malformed:
+    vlessserverCloseLineBidirectional(t, l);
+    return false;
 }
 
 static bool vlessserverDrainUdpPackets(tunnel_t *t, line_t *l, vlessserver_lstate_t *ls)
 {
-    while (! bufferstreamIsEmpty(&ls->in_stream))
+    while (ls->input_bytes != 0)
     {
-        if (bufferstreamGetBufLen(&ls->in_stream) < kVlessServerUdpHeaderLen)
-        {
+        if (! vlessserverGatherHeader(ls, 2))
             return true;
-        }
-        uint16_t packet_size = 0;
-        uint32_t full_len    = 0;
-
-        if (UNLIKELY(! vlessserverUdpFrameHeader(&ls->in_stream, &packet_size, &full_len)))
+        uint16_t packet_size = ((uint16_t) ls->header[0] << 8U) | ls->header[1];
+        if (packet_size == 0)
         {
             vlessserverCloseLineBidirectional(t, l);
             return false;
         }
-
-        if (UNLIKELY(bufferstreamGetBufLen(&ls->in_stream) < full_len))
-        {
+        if (ls->input_bytes - 2U < packet_size)
             return true;
-        }
-
         buffer_pool_t *pool   = lineGetBufferPool(l);
-        sbuf_t        *packet = bufferstreamReadExact(&ls->in_stream, full_len);
-        sbufShiftRight(packet, kVlessServerUdpHeaderLen);
+        sbuf_t        *packet = vlessserverExtractUdpBody(ls, packet_size);
 
         lineRef(l);
         line_t *remote_l     = vlessserverGetOrCreateUdpRemoteLine(t, l, ls);
         bool    client_alive = lineIsAlive(l);
         lineUnref(l);
 
-        if (UNLIKELY(! client_alive))
+        if (UNLIKELY(! client_alive || ls->tunnel != t))
         {
             bufferpoolReuseBuffer(pool, packet);
             return false;
@@ -892,7 +585,7 @@ static bool vlessserverDrainUdpPackets(tunnel_t *t, line_t *l, vlessserver_lstat
         client_alive      = lineIsAlive(l);
         lineUnref(l);
 
-        if (UNLIKELY(! client_alive))
+        if (UNLIKELY(! client_alive || ls->tunnel != t))
         {
             return false;
         }
@@ -910,7 +603,13 @@ bool vlessserverDrainInput(tunnel_t *t, line_t *l, vlessserver_lstate_t *ls, boo
 {
     if (ls->phase == kVlessServerPhaseWaitInitial)
     {
-        return vlessserverHandleInitialRequest(t, l, ls, reject_short_password);
+        if (! vlessserverHandleInitialRequest(t, l, ls, reject_short_password))
+            return false;
+        if (ls->phase == kVlessServerPhaseWaitInitial && ls->input_bytes > kVlessServerMaxInitialBytes)
+        {
+            vlessserverCloseLineBidirectional(t, l);
+            return false;
+        }
     }
 
     if (ls->phase == kVlessServerPhaseUdpWaitPacket || ls->phase == kVlessServerPhaseUdpConnecting ||
@@ -967,48 +666,6 @@ static void vlessserverCloseOwnedUdpRemoteLine(tunnel_t *t, vlessserver_lstate_t
     }
 
     vlessserverCloseUdpRemoteLineInternal(t, remote_l, close_next);
-}
-
-static void vlessserverCloseFallbackFromUpstream(tunnel_t *t, line_t *l, vlessserver_lstate_t *ls, tunnel_t *fallback)
-{
-    /* The previous owner may destroy this borrowed line on return, so publish the
-     * close gate before the final re-entrant fallback Payload. */
-    buffer_pool_t *pool = lineGetBufferPool(l);
-    sbuf_t        *buf  = NULL;
-
-    lineRef(l);
-    ls->phase                                 = kVlessServerPhaseClosing;
-    ls->fallback_close_draining               = true;
-    ls->fallback_branch_finished_during_drain = false;
-
-    if (ls->fallback_payload_paused)
-    {
-        vlessserverDiscardFallbackPendingPayload(ls, pool);
-    }
-    else if (! vlessserverDetachFallbackPendingPayload(ls, pool, &buf))
-    {
-        buf = NULL;
-    }
-
-    if (buf != NULL)
-    {
-        tunnelUpStreamPayload(fallback, l, buf);
-        if (! lineIsAlive(l))
-        {
-            lineUnref(l);
-            return;
-        }
-    }
-
-    const bool branch_finished = ls->fallback_branch_finished_during_drain;
-    vlessserverCloseOwnedUdpRemoteLine(t, ls, true);
-    vlessserverLinestateDestroy(ls);
-
-    if (! branch_finished)
-    {
-        tunnelUpStreamFin(fallback, l);
-    }
-    lineUnref(l);
 }
 
 static void vlessserverCloseLine(tunnel_t *t, line_t *l, vlessserver_close_origin_t origin)
@@ -1129,16 +786,19 @@ bool vlessserverWrapUdpPayload(line_t *l, sbuf_t **buf_io)
 
     if (UNLIKELY(sbufGetLeftCapacity(buf) < kVlessServerUdpHeaderLen))
     {
-        sbuf_t  *wrapped = vlessserverAllocBuffer(l, payload + kVlessServerUdpHeaderLen);
-        uint8_t *dst     = sbufGetMutablePtr(wrapped);
-        memoryCopy(dst + kVlessServerUdpHeaderLen, sbufGetRawPtr(buf), payload);
+        buffer_pool_t *pool    = lineGetBufferPool(l);
+        uint16_t       padding = max(bufferpoolGetLargeBufferPadding(pool), kVlessServerUdpHeaderLen);
+        sbuf_t        *wrapped = sbufIsSplice(buf) ? bufferpoolGetSpliceBuffer(pool) : NULL;
+        if (wrapped != NULL && sbufGetLeftCapacity(wrapped) < padding)
+        {
+            bufferpoolReuseBuffer(pool, wrapped);
+            wrapped = NULL;
+        }
+        wrapped = sbufMoveRangeTo(pool, buf, wrapped, payload, payload, padding);
         lineReuseBuffer(l, buf);
         buf = wrapped;
     }
-    else
-    {
-        sbufShiftLeft(buf, kVlessServerUdpHeaderLen);
-    }
+    sbufShiftLeft(buf, kVlessServerUdpHeaderLen);
 
     *buf_io = buf;
 

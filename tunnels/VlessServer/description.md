@@ -1,5 +1,5 @@
 <!--
-Documentation version: 153
+Documentation version: 154
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/VlessServer.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/VlessServer.mdx, and all files must keep the same documentation version.
 -->
 
@@ -28,10 +28,35 @@ transport-specific wrapping.
 - Supports VLESS UDP command `0x02`.
 - Rejects non-empty addons, including Vision flow addons.
 - Rejects mux, reverse, unknown commands, malformed destinations, empty domain names, and zero ports.
-- Sends the base VLESS response header `00 00` after the selected upstream side is established.
+- Relays transport Est promptly and sends `00 00` before backend data, including a valid pre-Est reply.
 - Preserves any TCP body bytes that arrive in the same payload as the request header.
 - Uses VLESS UDP length framing: `uint16_be length` followed by one UDP payload.
 - Creates one internal backend UDP line for the UDP destination carried by the initial VLESS request.
+
+## Splice and retention
+
+VlessServer supports ordinary and splice payloads in both directions. Splice runs only on supported Linux builds with
+`misc.splice` enabled and every node in the expanded chain capable, including UserController, connector/DomainResolver
+helpers and merged fallback branches. TLS and ordinary-only fallback nodes still block the whole chain.
+
+Request parsing reads only the required metadata into a cache of at most 278 bytes. The first Payload callback must
+contain the version and all 16 UUID bytes in its **logical** length, including bytes in a private pipe; fewer than 17
+bytes, including an empty callback, takes fallback/rejection. Successful authentication is cached. Unsupported addons
+and other malformed authenticated requests close the protected flow. Accepted metadata is removed before body budgeting.
+Opaque TCP bodies retain their representation where possible. UDP uses one fixed request destination and exact two-byte
+length framing, with bodies of 1..65,535 bytes. Pipe allocation or transfer pressure uses complete ordinary fallback;
+not every frame is guaranteed zero-copy.
+
+| Retained obligation | Inclusive limit |
+| --- | --- |
+| Upstream Init/reentry and fallback backlog, shared | 2,097,152 logical bytes and 1,024 buffers |
+| Downstream response-header/reentry backlog | 2,097,152 logical bytes and 1,024 buffers |
+| Request/UDP parser, including cached metadata and active input | 2,162,689 logical bytes (2 MiB + 65,537) |
+| Incomplete initial request | 4,096 bytes; complete headers with body are not incomplete requests |
+
+Empty retained output buffers consume entries; incomplete UDP fragments have no 1,024-entry output cap. Equality is
+accepted; overflow or queue refusal closes the affected association and releases locally owned data. These are retention
+limits, not RSS/kernel-pipe-memory limits or size limits on an already-ready synchronous TCP handoff.
 
 ## Typical Placement
 
@@ -248,7 +273,7 @@ At least one of `connect` or `udp` must be enabled.
 
   The fallback branch still receives `Init` immediately. Only payload is delayed. This small delay exists to reduce
   timing-based active-probe fingerprints where a detector compares how quickly an invalid probe is handed to fallback.
-  Set to `0` to disable the intentional delay. At delay zero, an active unpaused fallback with no older queued bytes or
+  Set to `0` to disable the intentional delay. At delay zero, an active fallback with no older queued bytes or
   scheduled drain receives payload inline. Paused fallback bytes, and bytes behind an older FIFO batch, stay FIFO and
   Resume schedules that retained drain before later payload can overtake it.
 
@@ -298,7 +323,7 @@ Transport Est is forwarded once on the correct client association, independently
 Pause. The response header precedes every backend reply, including a valid reply received before transport Est. An
 Est-triggered header or retained reply drain waits while the client output is paused; an admitted first reply may complete
 its required header and body synchronously. Header/Est reentry cannot reorder older replies. The retained response FIFO
-is bounded to the existing 1 MiB byte limit plus 1,024 buffers, with transactional admission and per-association close on
+is bounded to 2 MiB logical bytes plus 1,024 buffers, with transactional admission and per-association close on
 overflow. Client receiver Pause recorded before branch Init is replayed onto the initialized TCP backend and every new
 or recreated owned UDP backend. Nested application input during branch Init/replay stays behind the original input in a temporary FIFO with
 the same limits. Authentication, fallback selection and the exact owned UDP backend remain unchanged.
@@ -323,13 +348,13 @@ fallback branch with the original buffered bytes preserved. `VlessServer` does n
 doing this.
 
 The fallback branch receives `Init` immediately. During normal live operation, nonzero delay uses the configured delay
-and jitter. At delay zero, an active unpaused fallback with no older FIFO batch or scheduled drain receives payload
-inline; paused or older bytes remain FIFO and Resume schedules their drain before later payload can overtake them. The
-delayed FIFO is bounded to 1 MiB per line. Downstream responses from fallback are not intentionally delayed.
+and jitter. At delay zero, an active fallback with no older FIFO batch or scheduled drain completes admitted payload
+inline, including through Pause; independently retained bytes remain FIFO and Resume schedules their drain before later payload can overtake them. The
+delayed FIFO is bounded to the shared upstream 2 MiB / 1,024-buffer budget. Downstream responses from fallback are not intentionally delayed.
 
-An upstream `Finish` does not keep the remaining intentional delay alive. If fallback can still accept payload, accepted
+An upstream `Finish` does not keep the remaining intentional delay alive. Outside branch Init, if fallback is unpaused, accepted
 queued bytes are synchronously flushed in FIFO order before fallback `Finish`. If fallback has already paused payload, the
-still-local delayed batch is discarded and fallback is closed instead of bypassing backpressure. Delay and jitter are only
+still-local delayed batch is discarded (also during branch Init) and fallback is closed instead of bypassing backpressure. Delay and jitter are only
 mitigations; they do not prove timing indistinguishability. Measure the deployment path and choose values that match the
 service being impersonated.
 

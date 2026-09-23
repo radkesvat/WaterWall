@@ -266,12 +266,15 @@ static void caseZeroDelayIsInlineAndRetainedBytesDoNotOvertake(void)
     twfRequire(((vlessserver_lstate_t *) lineGetState(fixture.line, fixture.node))->fallback_payload_paused,
                "inline fallback Pause was not published before returning");
 
+    /* Input retained by an active dispatch is an independent backlog after return. */
+    ls->input_dispatching = true;
     twfRequire(vlessserverSendFallbackPayload(
                    fixture.node, fixture.line, ls, fallbackFinishMakePayload(fixture.env.pool, "-held")),
                "paused zero-delay fallback payload was rejected instead of retained");
     twfRequire(! g_fallback_finish_task.pending, "paused zero-delay fallback scheduled payload");
     twfRequireEqualU32(fixture.fallback.payload_calls, 1, "paused zero-delay fallback delivered retained bytes early");
 
+    ls->input_dispatching = false;
     vlessserverTunnelDownStreamResume(fixture.node, fixture.line);
     twfRequireEqualText(fixture.trace.seq, "ur", "zero-delay fallback Resume was not forwarded");
     twfRequire(g_fallback_finish_task.pending, "zero-delay Resume did not schedule retained bytes");

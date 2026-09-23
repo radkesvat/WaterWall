@@ -14,6 +14,8 @@ void vlessserverTunnelUpStreamResume(tunnel_t *t, line_t *l)
         return;
     }
 
+    ls->response_paused = false;
+
     if (UNLIKELY(ls->phase == kVlessServerPhaseFallback))
     {
         tunnel_t *fallback = ((vlessserver_tstate_t *) tunnelGetState(t))->fallback_tunnel;
@@ -24,7 +26,6 @@ void vlessserverTunnelUpStreamResume(tunnel_t *t, line_t *l)
         return;
     }
 
-    ls->response_paused = false;
     if ((ls->transport_est_sent || bufferqueueGetBufCount(&ls->pending_down) != 0) &&
         ! vlessserverDrainResponse(t, l, false))
     {

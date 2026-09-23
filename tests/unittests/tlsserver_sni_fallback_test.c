@@ -169,6 +169,81 @@ static void sendBytes(fixture_t *f, const uint8_t *bytes, size_t length)
     tlsserverTunnelUpStreamPayload(f->tls, f->line, buf);
 }
 
+enum receiver_pressure_action
+{
+    kReceiverUnchanged,
+    kReceiverResume,
+    kReceiverPause,
+    kReceiverPauseResume,
+    kReceiverResumePause
+};
+
+static enum receiver_pressure_action receiver_action;
+
+static void receiverPressureInit(tunnel_t *t, line_t *l)
+{
+    twfNextInit(t, l);
+    if (receiver_action == kReceiverResume || receiver_action == kReceiverResumePause)
+        tlsserverTunnelUpStreamResume(t->prev, l);
+    if (receiver_action == kReceiverPause || receiver_action == kReceiverPauseResume ||
+        receiver_action == kReceiverResumePause)
+        tlsserverTunnelUpStreamPause(t->prev, l);
+    if (receiver_action == kReceiverPauseResume)
+        tlsserverTunnelUpStreamResume(t->prev, l);
+}
+
+static void receiverPauseClosesOwner(tunnel_t *t, line_t *l)
+{
+    twfNextPause(t, l);
+    tlsserverTunnelUpStreamFinish(t->prev, l);
+    lineDestroy(l);
+}
+
+static void receiverPressureCase(bool fallback, bool paused, enum receiver_pressure_action action, bool close)
+{
+    twfSetCase("receiver pressure follows TLS branch selection and Init reentry");
+    fixture_t f;
+    setup(&f, fallback ? "cover.integration.test" : expected_sni, TLS1_3_VERSION, true);
+    receiver_action     = action;
+    tunnel_t    *branch = fallback ? f.cover : f.next;
+    twf_trace_t *trace  = fallback ? &f.fallback : &f.protected;
+    branch->fnInitU     = receiverPressureInit;
+    if (close)
+        branch->fnPauseU = receiverPauseClosesOwner;
+    if (paused)
+        tlsserverTunnelUpStreamPause(f.tls, f.line);
+    twfRequire(trace->len == 0, "receiver pressure escaped before branch Init");
+    uint8_t bytes[8192];
+    size_t  n = hello(&f, bytes, sizeof(bytes), false);
+    sendBytes(&f, bytes, n);
+    twfRequire(trace->next_init == 1, "receiver pressure prevented branch selection");
+    if (close)
+    {
+        twfRequire(! lineIsAlive(f.line) && trace->next_finish == 1 && trace->next_payload == 0,
+                   "branch continued after replayed receiver Pause closed its owner");
+    }
+    else
+    {
+        bool expected =
+            action == kReceiverPause || action == kReceiverResumePause || (action == kReceiverUnchanged && paused);
+        bool actual = false;
+        for (uint32_t i = 0; i < trace->len; ++i)
+        {
+            if (trace->seq[i] == 'U')
+                actual = true;
+            else if (trace->seq[i] == 'R')
+                actual = false;
+        }
+        twfRequire(actual == expected, "selected branch received stale or missing receiver pressure");
+        if (expected)
+        {
+            tlsserverTunnelUpStreamResume(f.tls, f.line);
+            twfRequire(trace->seq[trace->len - 1] == 'R', "selected branch did not receive receiver Resume");
+        }
+    }
+    teardown(&f);
+}
+
 static void replayCase(const char *sni, int version, bool fragmented, int action)
 {
     twfSetCase("SNI fallback wire replay");
@@ -401,6 +476,13 @@ static void transcriptLimitCase(bool overflow)
 
 int main(void)
 {
+    for (unsigned fallback = 0; fallback < 2; ++fallback)
+    {
+        for (unsigned paused = 0; paused < 2; ++paused)
+            for (int action = kReceiverUnchanged; action <= kReceiverResumePause; ++action)
+                receiverPressureCase(fallback, paused, action, false);
+        receiverPressureCase(fallback, true, kReceiverUnchanged, true);
+    }
     compactTranscriptCase();
     for (uint32_t delay = 0; delay <= 7; delay += 7)
     {

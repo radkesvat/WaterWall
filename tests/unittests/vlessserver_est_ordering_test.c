@@ -267,7 +267,7 @@ static void testUdpSplitLengthPrefix(bool malformed)
     const uint8_t prefix[] = {0};
     vlessserverTunnelUpStreamPayload(f.node, f.line, estBytes(f.line, prefix, sizeof(prefix)));
     vlessserver_lstate_t *ls = lineGetState(f.line, f.node);
-    twfRequire(lineIsAlive(f.line) && f.up_len == 1 && bufferstreamGetBufLen(&ls->in_stream) == 1,
+    twfRequire(lineIsAlive(f.line) && f.up_len == 1 && ls->input_bytes == 1,
                "VlessServer did not retain an incomplete UDP length prefix");
     if (malformed)
     {
@@ -280,16 +280,15 @@ static void testUdpSplitLengthPrefix(bool malformed)
     }
     const uint8_t partial_body[] = {2, 'B'};
     vlessserverTunnelUpStreamPayload(f.node, f.line, estBytes(f.line, partial_body, sizeof(partial_body)));
-    twfRequire(f.up_len == 1 && bufferstreamGetBufLen(&ls->in_stream) == 3,
+    twfRequire(f.up_len == 1 && ls->input_bytes == 3,
                "VlessServer released a split UDP frame before its body completed");
     const uint8_t completed_batch[] = {'C', 0, 1, 'D', 0};
     vlessserverTunnelUpStreamPayload(f.node, f.line, estBytes(f.line, completed_batch, sizeof(completed_batch)));
-    twfRequire(lineIsAlive(f.line) && f.up_len == 4 && memoryCompare(f.up, "ABCD", 4) == 0 &&
-                   bufferstreamGetBufLen(&ls->in_stream) == 1,
+    twfRequire(lineIsAlive(f.line) && f.up_len == 4 && memoryCompare(f.up, "ABCD", 4) == 0 && ls->input_bytes == 1,
                "VlessServer lost complete UDP records or their incomplete suffix");
     const uint8_t final_frame[] = {1, 'E'};
     vlessserverTunnelUpStreamPayload(f.node, f.line, estBytes(f.line, final_frame, sizeof(final_frame)));
-    twfRequire(f.up_len == 5 && memoryCompare(f.up, "ABCDE", 5) == 0 && bufferstreamIsEmpty(&ls->in_stream),
+    twfRequire(f.up_len == 5 && memoryCompare(f.up, "ABCDE", 5) == 0 && ls->input_bytes == 0,
                "VlessServer failed to resume the retained UDP prefix");
     closeFixture(&f);
 }

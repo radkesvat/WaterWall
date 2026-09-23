@@ -1,5 +1,6 @@
 #pragma once
 
+#include "splice_buffer.h"
 #include "wwapi.h"
 
 typedef enum vlessserver_line_kind_e
@@ -62,10 +63,18 @@ typedef struct vlessserver_lstate_s
     line_t           *client_line;
     line_t           *udp_remote_line;
     address_context_t udp_target;
-    buffer_stream_t   in_stream;
+    buffer_queue_t    pending_up;
+    sbuf_t           *input_head;
+    size_t            input_bytes;
+    uint8_t           header[278];
+    uint16_t          header_filled;
+    bool              first_payload_seen;
+    bool              input_dispatching;
+    bool              branch_initializing;
+    buffer_budget_t   upstream_budget;
+    buffer_budget_t   response_budget;
     /* Response-header/reentry ordering only; direct ready replies are forwarded. */
     buffer_queue_t          pending_down;
-    buffer_queue_t          initial_reentry;
     buffer_queue_t         *fallback_pending_up;
     user_handle_t           user_handle;
     char                   *auth_username; // resolved account name, owned (NULL if none)
@@ -77,7 +86,6 @@ typedef struct vlessserver_lstate_s
     bool                    transport_est_sent;
     bool                    response_dispatching;
     bool                    response_paused;
-    bool                    initial_forwarding;
     bool                    user_handle_recorded;
     bool                    fallback_close_draining;
     bool                    fallback_branch_finished_during_drain;
@@ -97,10 +105,10 @@ enum
     kVlessServerUdpMaxPacket           = UINT16_MAX,
     kVlessServerBufferQueueCap         = 8,
     kVlessServerMaxInitialBytes        = 4096,
-    kVlessServerMaxBufferedBytes       = 1024 * 1024,
-    kVlessServerMaxPendingBytes        = 1024 * 1024,
+    kVlessServerMaxBufferedBytes       = 2 * 1024 * 1024 + 65537,
+    kVlessServerMaxPendingBytes        = 2 * 1024 * 1024,
     kVlessServerMaxPendingBuffers      = 1024,
-    kVlessServerInitialMaxReqLen       = 1 + kVlessServerUuidLen + 1 + UINT8_MAX + 1 + 2 + 1 + 1 + UINT8_MAX
+    kVlessServerInitialMaxReqLen       = 23 + UINT8_MAX
 };
 
 WW_EXPORT void         vlessserverTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context);
@@ -136,3 +144,9 @@ void vlessserverOnSelectedEstablished(tunnel_t *t, line_t *l, vlessserver_lstate
 bool vlessserverWrapUdpPayload(line_t *l, sbuf_t **buf_io);
 bool vlessserverSendFallbackPayload(tunnel_t *t, line_t *l, vlessserver_lstate_t *ls, sbuf_t *buf);
 bool vlessserverScheduleFallbackPayloadDrain(tunnel_t *t, line_t *l, vlessserver_lstate_t *ls);
+
+bool    vlessserverGatherHeader(vlessserver_lstate_t *ls, uint16_t needed);
+bool    vlessserverRetainActiveHead(vlessserver_lstate_t *ls);
+sbuf_t *vlessserverExtractUdpBody(vlessserver_lstate_t *ls, uint16_t bytes);
+bool    vlessserverStartFallback(tunnel_t *t, line_t *l);
+void    vlessserverCloseFallbackFromUpstream(tunnel_t *t, line_t *l, vlessserver_lstate_t *ls, tunnel_t *fallback);

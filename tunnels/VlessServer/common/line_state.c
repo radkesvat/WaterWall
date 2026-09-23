@@ -3,40 +3,36 @@
 void vlessserverLinestateInitialize(vlessserver_lstate_t *ls, tunnel_t *t, line_t *l, vlessserver_line_kind_t kind)
 {
     *ls = (vlessserver_lstate_t) {
-        .tunnel                                = t,
-        .line                                  = l,
-        .client_line                           = NULL,
-        .udp_remote_line                       = NULL,
-        .in_stream                             = bufferstreamCreate(lineGetBufferPool(l), 0),
-        .initial_reentry                       = bufferqueueCreate(2),
-        .pending_down                          = bufferqueueCreate(kVlessServerBufferQueueCap),
-        .fallback_pending_up                   = NULL,
-        .user_handle                           = userHandleEmpty(),
-        .auth_username                         = NULL,
-        .auth_password                         = NULL,
-        .phase                                 = kVlessServerPhaseWaitInitial,
-        .line_kind                             = kind,
-        .client_line_ref_held                  = false,
-        .response_sent                         = false,
-        .user_handle_recorded                  = false,
-        .fallback_close_draining               = false,
-        .fallback_branch_finished_during_drain = false,
-        .fallback_payload_paused               = false,
-        .fallback_delay_scheduled              = false,
+        .tunnel      = t,
+        .line        = l,
+        .user_handle = userHandleEmpty(),
+        .phase       = kVlessServerPhaseWaitInitial,
+        .line_kind   = kind,
     };
+    bufferqueueInitEmpty(&ls->pending_up);
+    bufferqueueInitEmpty(&ls->pending_down);
+    buffer_budget_cost_t limits = {kVlessServerMaxPendingBytes, SIZE_MAX, kVlessServerMaxPendingBuffers};
+    bufferbudgetInit(&ls->upstream_budget, limits);
+    bufferbudgetInit(&ls->response_budget, limits);
+    bool attached = bufferqueueTryAttachBudget(&ls->pending_down, &ls->response_budget);
+    assert(attached);
+    discard attached;
 }
 
 void vlessserverLinestateDestroy(vlessserver_lstate_t *ls)
 {
     addresscontextReset(&ls->udp_target);
-    bufferstreamDestroy(&ls->in_stream);
+    if (ls->input_head != NULL)
+        lineReuseBuffer(ls->line, ls->input_head);
+    bufferqueueDestroy(&ls->pending_up);
     bufferqueueDestroy(&ls->pending_down);
-    bufferqueueDestroy(&ls->initial_reentry);
     if (ls->fallback_pending_up != NULL)
     {
         bufferqueueDestroy(ls->fallback_pending_up);
         memoryFree(ls->fallback_pending_up);
     }
+    bufferbudgetAssertEmpty(&ls->upstream_budget);
+    bufferbudgetAssertEmpty(&ls->response_budget);
     if (ls->auth_username != NULL)
     {
         memoryFree(ls->auth_username);

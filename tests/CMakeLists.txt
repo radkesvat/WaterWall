@@ -735,6 +735,18 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING)
     endforeach()
   endforeach()
 endif()
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING)
+  foreach(protocol IN ITEMS tcp tcp_db udp fallback fallback_http)
+    foreach(splice_mode IN ITEMS true false)
+      add_waterwall_isolated_test(waterwall.vlessserver_${protocol}_splice_${splice_mode}
+        "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/vlessserver_splice_integration.py"
+        "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>" "${protocol}" "${splice_mode}")
+      set_tests_properties(waterwall.vlessserver_${protocol}_splice_${splice_mode} PROPERTIES TIMEOUT 60)
+      add_waterwall_test_labels(waterwall.vlessserver_${protocol}_splice_${splice_mode} "integration" "tunnels")
+      add_waterwall_case_resource_lock(waterwall.vlessserver_${protocol}_splice_${splice_mode} vlessserver_splice)
+    endforeach()
+  endforeach()
+endif()
 add_waterwall_integration_test(waterwall.trojan_password_tcp_loopback trojan_password_tcp_loopback)
 add_waterwall_integration_test(waterwall.trojan_local_password_router_tcp_loopback trojan_local_password_router_tcp_loopback)
 add_waterwall_expected_failure_integration_test(
