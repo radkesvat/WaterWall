@@ -19,6 +19,13 @@ typedef struct connectionfisherclient_lstate_s
     connectionfisherclient_role_e role;
     bool                          main_est_forwarded;
     bool                          child_handshake_complete;
+    bool                          child_initializing;
+    bool                          ping_sent;
+    bool                          next_paused;     // Per child transport permission.
+    bool                          prev_paused;     // Main reply-source permission after selection.
+    bool                          prev_pause_sent; // Aggregate protocol-backlog and selected-transport source pressure.
+    bool                          selecting_child; // Orders coalesced reply bytes before application-triggered replies.
+    bool                          pumping_up;      // Protocol backlog drain serializes nested application input.
     uint32_t                      child_slot;
     uint32_t                      child_count;
     uint32_t                      open_child_count;
@@ -64,6 +71,7 @@ void connectionfisherclientLinestateDestroyChild(connectionfisherclient_lstate_t
 
 bool connectionfisherclientSendPing(tunnel_t *t, line_t *child_l);
 bool connectionfisherclientSelectChild(tunnel_t *t, line_t *child_l);
+bool connectionfisherclientSyncMainSource(tunnel_t *t, line_t *main_l);
 bool connectionfisherclientFlushPendingToSelected(tunnel_t *t, line_t *main_l, line_t *child_l);
 void connectionfisherclientCloseMainLine(tunnel_t *t, line_t *main_l);
 void connectionfisherclientCloseMainLineFromUpstream(tunnel_t *t, line_t *main_l);

@@ -12,6 +12,8 @@ ECHO_ADDRESS = ("127.0.0.1", 26781)
 HEADER = struct.Struct("!II")
 OPEN = 0
 CLOSE = 1
+FLOW_PAUSE = 2
+FLOW_RESUME = 3
 DATA = 4
 
 
@@ -112,9 +114,12 @@ def await_frames(
     expected_close: set[int],
     expected_data: dict[int, bytes],
     timeout: float,
+    active: set[int],
+    paused: set[int],
 ) -> None:
     deadline = time.monotonic() + timeout
-    while expected_close or expected_data:
+    data_children = set(expected_data)
+    while expected_close or expected_data or data_children & paused:
         if time.monotonic() >= deadline:
             raise AssertionError(
                 f"timed out waiting for Close={sorted(expected_close)} Data={sorted(expected_data)}"
@@ -125,6 +130,14 @@ def await_frames(
             continue
         if flags == CLOSE and cid in expected_close and not payload:
             expected_close.remove(cid)
+            active.discard(cid)
+            paused.discard(cid)
+            continue
+        if flags == FLOW_PAUSE and cid in active and not payload and cid not in paused:
+            paused.add(cid)
+            continue
+        if flags == FLOW_RESUME and cid in paused and not payload:
+            paused.remove(cid)
             continue
         if flags == DATA and cid in expected_data and payload == expected_data[cid]:
             del expected_data[cid]
@@ -139,29 +152,33 @@ def main() -> None:
 
     sock = connect_with_retry()
     pending = bytearray()
+    active: set[int] = {1}
+    paused: set[int] = set()
     try:
         send_frame(sock, 1, OPEN)
         send_frame(sock, 1, DATA, b"first-before-cap")
-        await_frames(sock, pending, set(), {1: b"first-before-cap"}, 2.0)
+        await_frames(sock, pending, set(), {1: b"first-before-cap"}, 2.0, active, paused)
 
+        active.update({2, 3})
         send_frame(sock, 2, OPEN)
         rejected_at = time.monotonic()
         send_frame(sock, 3, OPEN)
-        await_frames(sock, pending, {3}, {}, 0.75)
+        await_frames(sock, pending, {3}, {}, 0.75, active, paused)
         if time.monotonic() - rejected_at > 0.75:
             raise AssertionError("resource-rejected Open did not receive a prompt Close")
 
         send_frame(sock, 1, DATA, b"first-after-cap")
-        await_frames(sock, pending, set(), {1: b"first-after-cap"}, 2.0)
+        await_frames(sock, pending, set(), {1: b"first-after-cap"}, 2.0, active, paused)
 
         # Child 1's nonempty traffic promoted it to the longer active timeout.
         # Socket receive blocks until the silent child alone reaches its
         # initial-idle deadline; no sleep drives the state transition.
-        await_frames(sock, pending, {2}, {}, 2.0)
+        await_frames(sock, pending, {2}, {}, 2.0, active, paused)
 
+        active.add(4)
         send_frame(sock, 4, OPEN)
         send_frame(sock, 4, DATA, b"fourth-used-reclaimed-slot")
-        await_frames(sock, pending, set(), {4: b"fourth-used-reclaimed-slot"}, 2.0)
+        await_frames(sock, pending, set(), {4: b"fourth-used-reclaimed-slot"}, 2.0, active, paused)
 
         send_frame(sock, 1, CLOSE)
         send_frame(sock, 4, CLOSE)

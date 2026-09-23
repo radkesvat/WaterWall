@@ -80,32 +80,6 @@ static bool trojanserverWriteAddress(uint8_t *ptr, const address_context_t *ctx,
     return true;
 }
 
-void trojanserverSettleRemoteReplies(trojanserver_lstate_t *client, line_t *remote, bool established)
-{
-    trojanserver_reply_t **cursor = &client->reply_head;
-    client->reply_tail            = NULL;
-    while (*cursor != NULL)
-    {
-        trojanserver_reply_t *entry = *cursor;
-        if (entry->waiter == remote)
-        {
-            if (established)
-                entry->waiter = NULL;
-            else
-            {
-                *cursor = entry->next;
-                client->reply_bytes -= sbufGetLength(entry->buf);
-                --client->reply_count;
-                lineReuseBuffer(client->line, entry->buf);
-                memoryFree(entry);
-                continue;
-            }
-        }
-        client->reply_tail = entry;
-        cursor             = &entry->next;
-    }
-}
-
 void trojanserverCloseUdpRemoteLineInternal(tunnel_t *t, line_t *remote_l, bool close_next)
 {
     trojanserver_lstate_t *remote = lineGetState(remote_l, t);
@@ -124,7 +98,6 @@ void trojanserverCloseUdpRemoteLineInternal(tunnel_t *t, line_t *remote_l, bool 
     }
     if (client->selected_remote == remote_l)
         client->selected_remote = NULL;
-    trojanserverSettleRemoteReplies(client, remote_l, false);
     remote->client_line = NULL;
     trojanserverLinestateDestroy(remote);
     if (close_next && next_initialized)

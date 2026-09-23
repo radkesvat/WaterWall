@@ -57,13 +57,15 @@ typedef struct vlessserver_tstate_s
 
 typedef struct vlessserver_lstate_s
 {
-    tunnel_t               *tunnel;
-    line_t                 *line;
-    line_t                 *client_line;
-    line_t                 *udp_remote_line;
-    address_context_t       udp_target;
-    buffer_stream_t         in_stream;
+    tunnel_t         *tunnel;
+    line_t           *line;
+    line_t           *client_line;
+    line_t           *udp_remote_line;
+    address_context_t udp_target;
+    buffer_stream_t   in_stream;
+    /* Response-header/reentry ordering only; direct ready replies are forwarded. */
     buffer_queue_t          pending_down;
+    buffer_queue_t          initial_reentry;
     buffer_queue_t         *fallback_pending_up;
     user_handle_t           user_handle;
     char                   *auth_username; // resolved account name, owned (NULL if none)
@@ -72,6 +74,10 @@ typedef struct vlessserver_lstate_s
     vlessserver_line_kind_t line_kind;
     bool                    client_line_ref_held;
     bool                    response_sent;
+    bool                    transport_est_sent;
+    bool                    response_dispatching;
+    bool                    response_paused;
+    bool                    initial_forwarding;
     bool                    user_handle_recorded;
     bool                    fallback_close_draining;
     bool                    fallback_branch_finished_during_drain;
@@ -93,6 +99,7 @@ enum
     kVlessServerMaxInitialBytes        = 4096,
     kVlessServerMaxBufferedBytes       = 1024 * 1024,
     kVlessServerMaxPendingBytes        = 1024 * 1024,
+    kVlessServerMaxPendingBuffers      = 1024,
     kVlessServerInitialMaxReqLen       = 1 + kVlessServerUuidLen + 1 + UINT8_MAX + 1 + 2 + 1 + 1 + UINT8_MAX
 };
 
@@ -123,6 +130,8 @@ bool vlessserverDrainInput(tunnel_t *t, line_t *l, vlessserver_lstate_t *ls, boo
 void vlessserverCloseLineFromUpstream(tunnel_t *t, line_t *l);
 void vlessserverCloseLineFromDownstream(tunnel_t *t, line_t *l);
 void vlessserverCloseLineBidirectional(tunnel_t *t, line_t *l);
+bool vlessserverForwardResponse(tunnel_t *t, line_t *l, sbuf_t *buf);
+bool vlessserverDrainResponse(tunnel_t *t, line_t *l, bool admitted);
 void vlessserverOnSelectedEstablished(tunnel_t *t, line_t *l, vlessserver_lstate_t *ls);
 bool vlessserverWrapUdpPayload(line_t *l, sbuf_t **buf_io);
 bool vlessserverSendFallbackPayload(tunnel_t *t, line_t *l, vlessserver_lstate_t *ls, sbuf_t *buf);

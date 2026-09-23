@@ -251,9 +251,8 @@ At least one of `connect` or `udp` must be enabled.
 
   The fallback branch still receives `Init` immediately. Only payload is delayed. This small delay exists to reduce
   timing-based active-probe fingerprints where a detector compares how quickly an invalid probe is handed to fallback.
-  Set to `0` to disable the intentional delay. At delay zero, an active unpaused fallback with no older queued bytes or
-  scheduled drain receives payload inline. Paused fallback bytes, and bytes behind an older FIFO batch, stay FIFO and
-  Resume schedules that retained drain before later payload can overtake it.
+  Set to `0` to disable the intentional delay. Accepted input then forwards synchronously, including completion after
+  Pause. Temporary Init/reentry storage preserves order; it does not create an independent delayed drain.
 
   This value must be calibrated against the public behavior the fallback should resemble. The important question is
   whether the fallback branch would answer faster or slower than that behavior, not whether it is co-located or remote.
@@ -331,9 +330,8 @@ fallback branch with the original buffered bytes preserved. `TrojanServer` does 
 doing this.
 
 The fallback branch receives `Init` immediately. During normal live operation, nonzero delay uses the configured delay
-and jitter. At delay zero, an active unpaused fallback with no older FIFO batch or scheduled drain receives payload
-inline; paused or older bytes remain FIFO and Resume schedules their drain before later payload can overtake them. The
-delayed FIFO is bounded to 1 MiB and 1,024 buffers per line. Downstream responses from fallback are not intentionally delayed.
+and jitter. At delay zero, accepted payload forwards synchronously, including completion under Pause. Branch Init and reentry preserve
+FIFO before newer input. The delayed FIFO is bounded to 2 MiB and 1,024 buffers per line. Downstream responses from fallback are not intentionally delayed.
 
 An upstream `Finish` does not keep the remaining intentional delay alive. If fallback can still accept payload, accepted
 queued bytes are synchronously flushed in FIFO order before fallback `Finish`. If fallback has already paused payload, the
@@ -432,10 +430,10 @@ a hash accepted before a later CRLF arrives is authenticated only once. Invalid
 bytes arriving after authentication close the protected flow, without fallback.
 Credentials and database handles are recorded before protected branch Init.
 
-TCP bodies remain opaque after the request. Init and Est callbacks retain an
-authoritative FIFO, so reentrant input cannot overtake older accepted bytes.
-TCP payload can be submitted after onward Init returns, even before the connector
-establishes, subject to Pause. Est is sent downstream once.
+TCP bodies remain opaque after the request. Initial parsing, branch Init and
+reentrant input retain an authoritative FIFO so older accepted bytes cannot be
+overtaken. Valid input forwards after onward Init without waiting for transport
+Est or Resume. Est is forwarded promptly once, including from inside Init.
 
 Fallback replays the inspected resident prefix and untouched input tail exactly
 once before newer input. Init remains immediate, with the configured payload
@@ -447,10 +445,9 @@ discards the pending replay. No final callback reflects toward the finished side
 
 A fallback may generate a local response without outbound `Est`, including a
 response immediately followed by `Finish` inside its Init or Payload callback.
-While the client is writable, replies drain independently of upstream work, so
-that response reaches the client before Finish. Paused or reentrant replies stay
-in downstream FIFO order; Resume does not require Est. Source-Finish cleanup still
-absorbs replies from the final fallback batch instead of reflecting them.
+Replies are forwarded synchronously even if Pause was received, so an admitted
+response reaches the client before Finish. Source-Finish cleanup still absorbs
+replies from the final fallback batch instead of reflecting them.
 
 UDP reads only each 11-byte IPv4, 23-byte IPv6 or `8 + domain_length` header, then
 extracts exactly one body, including empty datagrams. Every backend is an owned
@@ -458,35 +455,37 @@ normal line on the client worker. It carries the authenticated credentials and
 is initialized only after its association membership and destination are ready.
 TrojanServer borrows the client line and destroys only its own backends.
 
-UDP input backpressure is association-wide: any paused backend stops carrier
-payload delivery and further decoding until every paused backend resumes or
-closes. This deliberately permits head-of-line blocking across destinations.
-Client reply Pause propagates to all initialized backend reply producers; newly
-created backends inherit the current permission. Resume drains ready older work
-before releasing producers. Incomplete input never withholds a Resume needed to
-complete it.
+UDP input pressure is association-wide: each paused backend contributes once to
+stopping new carrier-source work. Resume occurs only after all contributions clear.
+The currently admitted input still completes every complete datagram in FIFO order,
+including more than 1,024 tiny or empty datagrams. Nested input is serialized behind
+older bytes; only an incomplete suffix remains after the dispatch. Client reply
+Pause propagates to every initialized backend source, including newly created
+backends. Callback-driven close stops processing and releases local ownership.
 
-Replies share one association-owned FIFO in arrival order. Replies received before
-backend Est wait for that backend; later replies cannot overtake them. On backend
-close, already eligible encoded replies survive, while its pre-Est replies are
-discarded. Encoding captures the response address while the backend is valid.
+Backend replies are framed and forwarded inline, before or after backend Est and
+under Pause, with no decoded-output queue or Est waiter. The first backend transport
+Est maps once to the client association; later backend Est does not repeat it.
+Receivers own finite in-flight headroom and their hard-limit close policy. If a
+selected backend closes during Init, permission notification or current delivery,
+the carrier association closes so an admitted datagram is not silently discarded.
+Backend-local errors outside decoding retain their local scope.
 
 | Retained work | Fixed limit |
 | --- | --- |
-| UDP carrier input, including cached headers and a selected frame waiting for permission | 1,057,031 wire bytes (1 MiB plus an 8,455-byte maximum frame) |
-| Pending TCP data, each direction | 1 MiB and 1,024 buffers |
-| Pending fallback data, each direction, including replayed prefix bytes | 1 MiB and 1,024 buffers |
-| UDP replies, association-wide, including pre-Est replies | 1 MiB of encoded wire bytes and 1,024 datagrams |
+| Initial/UDP wire input, including active head and cached headers | 2,105,607 bytes (2 MiB plus an 8,455-byte maximum frame) |
+| Temporary TCP Init/reentry ordering | 2 MiB and 1,024 buffers |
+| Delayed fallback backlog and temporary replay ordering | 2 MiB and 1,024 buffers |
 | Initial header cache | 320 actual bytes; the separate incomplete-initial limit remains 4,096 bytes |
 | Incoming UDP body | 8,192 bytes |
 | Backend reply body | 65,535 bytes |
 
-Initial assembly uses the UDP wire allowance so a partial request followed by a
-full 1 MiB delivery can fit. Once the header completes, only the selected path's
-retained work is charged. Empty output datagrams consume slots; incoming UDP
-fragments have no 1,024-entry cap. Limits do not depend on RAM profile, pool size
-or actual pipe capacity. Overflow closes the affected flow; aggregate reply
-overflow closes the association. Backend-local errors retain their local scope.
+Initial assembly permits a partial request followed by a full 2 MiB delivery.
+Consumed headers are removed before applying the selected path's body budget.
+Input fragmentation and synchronously consumed output have no 1,024-record cap.
+Equality passes; retained-state overflow closes the affected association. Direct
+opaque paths have no queue merely to impose a byte limit. These logical limits
+are independent of RAM profile, buffer geometry and pipe capacity.
 
 UDP prepend stays within the advertised 263-byte headroom and preserves resident
 prefix bytes as payload. Insufficient padding and private-pipe resource refusal

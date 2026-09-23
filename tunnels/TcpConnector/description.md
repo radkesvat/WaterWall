@@ -288,9 +288,18 @@ While the connection is still being established, or while the socket is temporar
 
 Current thresholds:
 
-- above `1 KB` queued data, the previous node is paused
+- at `1 KiB` of retained bytes or capacity charge, the previous node is paused
 - when pending writes finish, the previous node is resumed
-- above `16 MB` queued data, the connection is closed and the line is finished
+- above `16 MiB` retained bytes or capacity charge, the connection is closed and the line is finished
+
+Queue admission publishes the buffer, accounting and Pause latch before notifying
+the producer, preserving FIFO under reentrant callbacks. Retention has separate
+16 MiB ceilings for logical bytes and buffer-capacity charge (including sbuf,
+padding and alignment); equality is accepted. Pressure starts when either measure
+reaches 1 KiB. Empty queued buffers consume capacity charge.
+The TCP budget includes both adapter backlog and the active WIO buffer. Partial
+writes retain the active allocation charge until completion. Overflow closes this
+connection through its line owner.
 
 This prevents unlimited buffering when the remote side is slow or the connection is not ready yet.
 

@@ -82,6 +82,10 @@ typedef struct tcpconnector_lstate_s
     tcpconnector_socket_options_t socket_options;
     // These fields are used internally for the queue implementation for TCP
     buffer_queue_t pause_queue;
+    // Combined adapter/WIO retention: active allocation remains charged until write completion.
+    buffer_budget_t             write_budget;
+    buffer_budget_reservation_t active_write;
+    bool           queue_pause_sent;
     buffer_pool_t *buffer_pool;
     bool           write_paused : 1;
     bool           read_paused : 1;
@@ -144,8 +148,7 @@ void tcpconnectorTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void tcpconnectorTunnelUpStreamPause(tunnel_t *t, line_t *l);
 void tcpconnectorTunnelUpStreamResume(tunnel_t *t, line_t *l);
 
-bool tcpconnectorDomainResolverPrepare(tunnel_t *resolver, tunnel_t *connector, line_t *l,
-                                       domainresolver_direction_t direction, void *user_lstate);
+bool tcpconnectorDomainResolverPrepare(tunnel_t *resolver, tunnel_t *connector, line_t *l, void *user_lstate);
 
 void                tcpconnectorLinestateInitialize(tcpconnector_lstate_t *ls);
 void                tcpconnectorLinestateDestroy(tcpconnector_lstate_t *ls);
@@ -159,3 +162,5 @@ void tcpconnectorOnWriteComplete(wio_t *io);
 void tcpconnectorOnClose(wio_t *io);
 void tcpconnectorOnIdleConnectionExpire(local_idle_item_t *idle_tcp);
 void tcpconnectorTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);
+
+void tcpconnectorRefreshWriteBudget(tcpconnector_lstate_t *ls);

@@ -11,12 +11,11 @@ void connectionfisherclientTunnelDownStreamPause(tunnel_t *t, line_t *l)
         return;
     }
 
+    ls->next_paused = true;
     if (ls->child_handshake_complete && ls->main_line != NULL && lineIsAlive(ls->main_line))
     {
         connectionfisherclient_lstate_t *main_ls = lineGetState(ls->main_line, t);
         if (main_ls->role == kConnectionFisherClientRoleMain && main_ls->selected_child == l)
-        {
-            discard lineCallWithRef(ls->main_line, tunnelPrevDownStreamPause, t);
-        }
+            discard connectionfisherclientSyncMainSource(t, ls->main_line);
     }
 }

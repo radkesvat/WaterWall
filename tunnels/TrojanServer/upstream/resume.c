@@ -7,10 +7,5 @@ void trojanserverTunnelUpStreamResume(tunnel_t *t, line_t *l)
         return;
     assert(ls->line_kind != kTrojanServerLineKindUdpRemote);
     ls->prev_paused = false;
-    if (ls->branch == kTrojanServerBranchFallback)
-    {
-        trojanserverPumpFallbackReplies(t, l, NULL);
-        return;
-    }
     trojanserverPump(t, l);
 }

@@ -24,6 +24,18 @@ void vlessserverTunnelUpStreamResume(tunnel_t *t, line_t *l)
         return;
     }
 
+    ls->response_paused = false;
+    if ((ls->transport_est_sent || bufferqueueGetBufCount(&ls->pending_down) != 0) &&
+        ! vlessserverDrainResponse(t, l, false))
+    {
+        return;
+    }
+    ls = lineGetState(l, t);
+    if (ls->response_paused)
+    {
+        return;
+    }
+
     if (ls->phase == kVlessServerPhaseTcpConnecting || ls->phase == kVlessServerPhaseTcpEstablished)
     {
         tunnelNextUpStreamResume(t, l);

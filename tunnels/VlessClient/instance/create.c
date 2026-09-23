@@ -272,6 +272,19 @@ static bool parseDomainStrategy(vlessclient_tstate_t *ts, const cJSON *settings)
     return false;
 }
 
+static bool parseFirstPayloadTimeout(vlessclient_tstate_t *ts, const cJSON *settings)
+{
+    const cJSON *value   = cJSON_GetObjectItemCaseSensitive(settings, "first-payload-timeout-ms");
+    int64_t      timeout = 400;
+    if (value != NULL && ! jsonGetIntegerInRange(value, 0, UINT32_MAX, &timeout))
+    {
+        LOGF("JSON Error: VlessClient->settings->first-payload-timeout-ms must be an integer in [0, 4294967295]");
+        return false;
+    }
+    ts->first_payload_timeout_ms = (uint32_t) timeout;
+    return true;
+}
+
 tunnel_t *vlessclientTunnelCreate(node_t *node)
 {
     tunnel_t *t = tunnelCreate(node, sizeof(vlessclient_tstate_t), sizeof(vlessclient_lstate_t));
@@ -307,7 +320,8 @@ tunnel_t *vlessclientTunnelCreate(node_t *node)
     getBoolFromJsonObjectOrDefault(&ts->verbose, settings, "verbose", false);
 
     if (! parseUuid(ts, settings) || ! parseTargetAddress(ts, settings) || ! parseTargetPort(ts, settings) ||
-        ! parseProtocol(ts, settings) || ! parseDomainStrategy(ts, settings))
+        ! parseProtocol(ts, settings) || ! parseDomainStrategy(ts, settings) ||
+        ! parseFirstPayloadTimeout(ts, settings))
     {
         vlessclientTunnelstateDestroy(ts);
         tunnelDestroy(t);

@@ -21,9 +21,17 @@ typedef enum tlsclient_post_handshake_result_e
 
 WW_EXPORT node_t    nodeTlsClientGet(void);
 WW_EXPORT tunnel_t *tlsclientTunnelCreate(node_t *node);
-WW_EXPORT bool      tlsclientTunnelEnableHandshakeTakeover(tunnel_t *t);
-WW_EXPORT bool      tlsclientTunnelIsHandshakeCompleted(tunnel_t *t, line_t *l);
-WW_EXPORT bool      tlsclientTunnelGetHandshakeBinding(tunnel_t *t, line_t *l, tlsclient_handshake_binding_t *binding);
+/* Internal binding/takeover helpers require non-null tunnel/line arguments and required
+ * outputs. Refusal reports protocol/state or operational failure, not invalid
+ * pointers. Optional arguments are documented on their individual functions. */
+/* Internal owner registration. Called once at the validated handshake record
+ * boundary, separately from transport Est. The callback must begin/complete
+ * takeover or close the exact line. The owner remains alive with this tunnel. */
+typedef void (*tlsclient_handshake_ready_fn)(tunnel_t *owner, line_t *line);
+WW_EXPORT bool tlsclientTunnelEnableHandshakeTakeover(tunnel_t *t, tunnel_t *owner,
+                                                      tlsclient_handshake_ready_fn handshake_ready);
+WW_EXPORT bool tlsclientTunnelIsHandshakeCompleted(tunnel_t *t, line_t *l);
+WW_EXPORT bool tlsclientTunnelGetHandshakeBinding(tunnel_t *t, line_t *l, tlsclient_handshake_binding_t *binding);
 /*
  * Generate a ClientHello using this tunnel's configured fingerprint, ALPN, and
  * ECH GREASE settings. Hostname bytes need not be NUL-terminated and must not
@@ -34,7 +42,8 @@ WW_EXPORT bool      tlsclientTunnelGetHandshakeBinding(tunnel_t *t, line_t *l, t
  */
 WW_EXPORT sbuf_t *tlsclientTunnelGenerateClientHello(tunnel_t *t, line_t *caller_line, const uint8_t *hostname,
                                                      uint32_t hostname_length);
-/* TLS 1.2-only immediate takeover. TLS 1.3 callers must use the phased APIs below. */
+/* TLS 1.2-only immediate takeover. pending_raw may be NULL when the caller does
+ * not request trailing bytes. TLS 1.3 callers must use the phased APIs below. */
 WW_EXPORT bool tlsclientTunnelDeinitAfterHandshake(tunnel_t *t, line_t *l, sbuf_t **pending_raw);
 /*
  * Enters TLS 1.3 drain mode while retaining BoringSSL. All bytes accumulated

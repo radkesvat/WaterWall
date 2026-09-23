@@ -301,11 +301,9 @@ fail:
     return false;
 }
 
-bool tcpconnectorDomainResolverPrepare(tunnel_t *resolver, tunnel_t *connector, line_t *l,
-                                       domainresolver_direction_t direction, void *user_lstate)
+bool tcpconnectorDomainResolverPrepare(tunnel_t *resolver, tunnel_t *connector, line_t *l, void *user_lstate)
 {
     discard resolver;
-    discard direction;
 
     tcpconnector_tstate_t                 *ts = tunnelGetState(connector);
     tcpconnector_domain_resolver_lstate_t *ls = user_lstate;

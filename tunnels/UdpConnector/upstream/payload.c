@@ -13,32 +13,30 @@ typedef enum udpconnector_packet_peer_result_e
 static void handleQueueOverflow(tunnel_t *t, line_t *l, udpconnector_tstate_t *ts, udpconnector_lstate_t *ls)
 {
     discard ts;
-    LOGE("UdpConnector: upstream write queue overflow, size: %d, limit: %d",
-         (int) udpconnectorQueuedWriteBytes(ls),
-         (int) kUdpMaxPauseQueueSize);
+    LOGE("UdpConnector: write retention overflow, bytes: %zu, capacity charge: %zu, limit: %u",
+         bufferbudgetGetUsage(&ls->write_budget).bytes,
+         bufferbudgetGetUsage(&ls->write_budget).charge,
+         (unsigned) kUdpMaxPauseQueueSize);
 
     udpconnectorLineDetach(t, l, ls, kUdpConnectorDetachQueueOverflow);
 }
 
-static void handleQueuedWrite(tunnel_t *t, line_t *l, udpconnector_tstate_t *ts, udpconnector_lstate_t *ls, sbuf_t *buf)
+static bool queueWrite(tunnel_t *t, line_t *l, udpconnector_tstate_t *ts, udpconnector_lstate_t *ls,
+                       buffer_queue_t *queue, sbuf_t *buf)
 {
-    if (! ls->queue_pause_sent && udpconnectorQueuedWriteBytes(ls) > kUdpMinPauseQueueSize)
+    if (UNLIKELY(! udpconnectorQueueWrite(ls, queue, &buf)))
     {
-        buffer_pool_t *pool = lineGetBufferPool(l);
-        if (! lineCallWithRef(l, tunnelPrevDownStreamPause, t))
-        {
-            bufferpoolReuseBuffer(pool, buf);
-            return;
-        }
-        ls->queue_pause_sent = true;
-    }
-
-    bufferqueuePushBack(&ls->pause_queue, buf);
-
-    if (udpconnectorQueuedWriteBytes(ls) > kUdpMaxPauseQueueSize)
-    {
+        lineReuseBuffer(l, buf);
         handleQueueOverflow(t, l, ts, ls);
+        return false;
     }
+    if (! ls->queue_pause_sent && (bufferbudgetGetUsage(&ls->write_budget).bytes >= kUdpMinPauseQueueSize ||
+                                   bufferbudgetGetUsage(&ls->write_budget).charge >= kUdpMinPauseQueueSize))
+    {
+        ls->queue_pause_sent = true;
+        return lineCallWithRef(l, tunnelPrevDownStreamPause, t);
+    }
+    return true;
 }
 
 static void udpconnectorPacketDnsRequestDestroy(udpconnector_packet_dns_request_t *request)
@@ -124,7 +122,7 @@ static void udpconnectorWriteToPeer(tunnel_t *t, line_t *l, udpconnector_tstate_
 
 static bool udpconnectorMaybeResumeQueuedSender(tunnel_t *t, line_t *l, udpconnector_lstate_t *ls)
 {
-    if (! ls->queue_pause_sent || ls->write_paused || udpconnectorQueuedWriteBytes(ls) > 0)
+    if (! ls->queue_pause_sent || ls->write_paused || bufferbudgetGetUsage(&ls->write_budget).charge > 0)
     {
         return true;
     }
@@ -133,10 +131,16 @@ static bool udpconnectorMaybeResumeQueuedSender(tunnel_t *t, line_t *l, udpconne
     return lineCallWithRef(l, tunnelPrevDownStreamResume, t);
 }
 
-static void udpconnectorPacketDestinationDropPending(udpconnector_packet_destination_t *cache)
+static void udpconnectorPacketDestinationDropPending(udpconnector_lstate_t             *ls,
+                                                     udpconnector_packet_destination_t *cache)
 {
+    while (bufferqueueGetBufCount(&cache->pending_queue) > 0)
+        lineReuseBuffer(ls->line, udpconnectorPopWrite(ls, &cache->pending_queue));
     bufferqueueDestroy(&cache->pending_queue);
     cache->pending_queue = bufferqueueCreate(kUdpPauseQueueCapacity);
+    const bool attached  = bufferqueueTryAttachBudget(&cache->pending_queue, &ls->write_budget);
+    assert(attached);
+    discard attached;
 }
 
 static bool udpconnectorPacketDestinationFail(tunnel_t *t, line_t *l, udpconnector_lstate_t *ls,
@@ -145,7 +149,7 @@ static bool udpconnectorPacketDestinationFail(tunnel_t *t, line_t *l, udpconnect
     cache->resolving   = false;
     cache->has_context = false;
     addresscontextReset(&cache->dest_ctx);
-    udpconnectorPacketDestinationDropPending(cache);
+    udpconnectorPacketDestinationDropPending(ls, cache);
     return udpconnectorMaybeResumeQueuedSender(t, l, ls);
 }
 
@@ -162,7 +166,7 @@ static bool udpconnectorFlushPacketDestinationQueue(tunnel_t *t, line_t *l, udpc
 
     while (bufferqueueGetBufCount(&cache->pending_queue) > 0)
     {
-        sbuf_t *buf = bufferqueuePopFront(&cache->pending_queue);
+        sbuf_t *buf = udpconnectorPopWrite(ls, &cache->pending_queue);
         udpconnectorWriteUsingBinding(l, ts, ls, binding, buf);
         if (! lineIsAlive(l))
             return false;
@@ -175,26 +179,7 @@ static bool udpconnectorQueuePacketForDestination(tunnel_t *t, line_t *l, udpcon
                                                   udpconnector_lstate_t *ls, udpconnector_packet_destination_t *cache,
                                                   sbuf_t *buf)
 {
-    if (! ls->queue_pause_sent && udpconnectorQueuedWriteBytes(ls) > kUdpMinPauseQueueSize)
-    {
-        buffer_pool_t *pool = lineGetBufferPool(l);
-        if (! lineCallWithRef(l, tunnelPrevDownStreamPause, t))
-        {
-            bufferpoolReuseBuffer(pool, buf);
-            return false;
-        }
-        ls->queue_pause_sent = true;
-    }
-
-    bufferqueuePushBack(&cache->pending_queue, buf);
-
-    if (udpconnectorQueuedWriteBytes(ls) > kUdpMaxPauseQueueSize)
-    {
-        handleQueueOverflow(t, l, ts, ls);
-        return false;
-    }
-
-    return true;
+    return queueWrite(t, l, ts, ls, &cache->pending_queue, buf);
 }
 
 static void udpconnectorOnPacketDnsResolved(void *userdata, int status, const char *error,
@@ -514,7 +499,7 @@ void udpconnectorTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     if (ls->write_paused)
     {
-        handleQueuedWrite(t, l, ts, ls, buf);
+        discard queueWrite(t, l, ts, ls, &ls->pause_queue, buf);
         return;
     }
 

@@ -1,5 +1,5 @@
 <!--
-Documentation version: 152
+Documentation version: 159
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/HalfDuplexClient.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/HalfDuplexClient.mdx, and all files must keep the same documentation version.
 -->
 
@@ -110,28 +110,26 @@ The upload line is used for normal client-to-server data.
 
 The download line exists mainly so the remote side has a dedicated return path for server-to-client data.
 
-### Establishment behavior
+### Establishment, ordering and close
 
-If either half-connection becomes established through the next node, `HalfDuplexClient` marks the original main line established toward the previous node.
+Transport Est from either child is forwarded to the main application exactly once,
+using this node's notification latch. A synchronous Est inside the first child's
+Init waits only until both adjacent child Init calls have admitted their identities;
+there is no pairing-handshake gate. Valid payload after that Init can proceed before
+Est. An Est callback can safely submit the first payload or close the pair.
 
-That means the local side sees one logical line even though the tunnel has created two transport-side lines behind it.
+Only temporary Init/intro ordering input is retained, with a 2 MiB / 1,024-buffer
+inclusive bound. First-intro publication precedes callbacks, and input nested during
+the download intro follows the older upload intro with the same pair ID. An admitted
+input can finish through Pause. A later release of Init backlog respects aggregate
+child pressure; one child Resume cannot clear another child's outstanding Pause.
+Application read Pause received before the download child exists is applied after
+its Init. Ready payload otherwise forwards directly without a transport queue.
 
-### Pause and resume behavior
-
-When the previous node pauses or resumes the logical line, `HalfDuplexClient` forwards that control to the download line.
-
-When downstream pause or resume comes back from the remote side, `HalfDuplexClient` forwards it to the original main line.
-
-This matches the intended data ownership:
-
-- upload line mainly carries upstream data
-- download line mainly carries downstream data
-
-### Finish behavior
-
-If the original main line finishes, `HalfDuplexClient` closes both transport-side half-connections.
-
-If either transport-side half-connection finishes first, `HalfDuplexClient` also finishes the original main line and schedules the other half-connection to close.
+Before any outward Finish, all pair links and local state are detached. The client
+synchronously closes both owned children, retaining exact lines across callbacks;
+received Finish is never reflected toward its sender. The borrowed main line is
+finished through its owner. No detached child waits on a cancelable close task.
 
 ## Notes And Caveats
 

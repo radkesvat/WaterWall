@@ -22,8 +22,10 @@ typedef struct tlsclient_tstate_s
     tlsrecordshaping_config_t record_shaping;
 
     // state
-    SSL_CTX **threadlocal_ssl_contexts;
-    SSL_CTX **threadlocal_ech_grease_inner_ssl_contexts;
+    tunnel_t                    *handshake_owner;
+    tlsclient_handshake_ready_fn handshake_ready;
+    SSL_CTX                    **threadlocal_ssl_contexts;
+    SSL_CTX                    **threadlocal_ech_grease_inner_ssl_contexts;
 } tlsclient_tstate_t;
 
 typedef enum tlsclient_takeover_phase_e
@@ -40,6 +42,8 @@ typedef struct tlsclient_lstate_s
     SSL                            *ssl;
     BIO                            *rbio;
     BIO                            *wbio;
+    buffer_budget_t                 pending_budget;
+    buffer_budget_reservation_t     pending_reservation;
     buffer_queue_t                  bq;
     buffer_stream_t                 takeover_stream;
     tlsrecordshaping_output_queue_t shaping_output;
@@ -47,23 +51,33 @@ typedef struct tlsclient_lstate_s
     wtimer_t                       *shaping_output_timer;
     tlsclient_takeover_phase_t      takeover_phase;
     bool                            handshake_completed;
-    bool                            handshake_est_sent;
+    bool                            handshake_ready_sent;
     bool                            resources_released;
     bool                            post_handshake_consume_in_progress;
     bool                            upstream_finished;
     bool                            shaping_wire_paused;
     bool                            shaping_producer_paused;
     /* Monotonic: once true, an uninitialized shaping_output is intentional. */
-    bool                            shaping_retired;
-    bool                            shaping_timer_failure_logged;
-    bool                            shaping_metadata_error;
-    bool                            verbose;
+    bool shaping_retired;
+    bool shaping_timer_failure_logged;
+    bool shaping_metadata_error;
+    bool verbose;
+    bool transport_est_sent;
+    /* Protocol/order backlog pressure is independent of wire and shaping pressure. */
+    bool plaintext_producer_paused;
+    bool source_paused;
+    bool plaintext_write_in_progress;
+    /* Plaintext awaiting TLS readiness or older reentrant output. The active
+     * head remains charged and owned here across wire callbacks. */
+    sbuf_t *pending_plaintext;
 } tlsclient_lstate_t;
 
 enum
 {
-    kTlsClientTunnelStateSize = sizeof(tlsclient_tstate_t),
-    kTlsClientLineStateSize   = sizeof(tlsclient_lstate_t)
+    kTlsClientTunnelStateSize         = sizeof(tlsclient_tstate_t),
+    kTlsClientLineStateSize           = sizeof(tlsclient_lstate_t),
+    kTlsClientPendingPlaintextBytes   = 2U * 1024U * 1024U,
+    kTlsClientPendingPlaintextBuffers = 1024U
 };
 
 enum sslstatus
@@ -106,8 +120,8 @@ static enum sslstatus getSslStatus(SSL *ssl, int n)
 WW_EXPORT void         tlsclientTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context);
 WW_EXPORT tunnel_t    *tlsclientTunnelCreate(node_t *node);
 WW_EXPORT api_result_t tlsclientTunnelApi(tunnel_t *instance, sbuf_t *message);
-WW_EXPORT bool         tlsclientTunnelEnableHandshakeTakeover(tunnel_t *t);
-WW_EXPORT bool         tlsclientTunnelIsHandshakeCompleted(tunnel_t *t, line_t *l);
+
+WW_EXPORT bool tlsclientTunnelIsHandshakeCompleted(tunnel_t *t, line_t *l);
 WW_EXPORT bool tlsclientTunnelGetHandshakeBinding(tunnel_t *t, line_t *l, tlsclient_handshake_binding_t *binding);
 WW_EXPORT bool tlsclientTunnelDeinitAfterHandshake(tunnel_t *t, line_t *l, sbuf_t **pending_raw);
 WW_EXPORT bool tlsclientTunnelBeginTakeoverDrain(tunnel_t *t, line_t *l, sbuf_t **pending_raw);
@@ -118,6 +132,8 @@ WW_EXPORT bool                              tlsclientTunnelCompleteTakeover(tunn
 void tlsclientTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void tlsclientTunnelUpStreamFinish(tunnel_t *t, line_t *l);
 void tlsclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
+bool tlsclientDrainPendingPlaintext(tunnel_t *t, line_t *l);
+bool tlsclientUpdateSourcePressure(tunnel_t *t, line_t *l);
 
 void tlsclientTunnelDownStreamEst(tunnel_t *t, line_t *l);
 void tlsclientTunnelDownStreamFinish(tunnel_t *t, line_t *l);

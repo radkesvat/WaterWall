@@ -1006,7 +1006,11 @@ static void casePooledRetainedFrames(bool separate)
     for (uint32_t i = 0; i < 48; ++i)
     {
         if (! batch)
-            batch = bufferpoolGetLargeBuffer(fixture.env.pool);
+        {
+            // The coalesced 48-frame input exceeds the configured large pool tier.
+            const uint32_t length = separate ? 4097 + kMuxFrameLength : 48 * (4097 + kMuxFrameLength);
+            batch = bufferpoolGetBestFit(fixture.env.pool, max(g_pool_size, length), kMuxFrameLength * 2);
+        }
         const uint32_t offset = sbufGetLength(batch);
         uint8_t       *p      = sbufGetMutablePtr(batch) + offset;
         writeFrameHeader(p, 4097, kMuxFlagData, kTestChildCid);

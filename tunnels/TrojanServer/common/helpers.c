@@ -153,6 +153,6 @@ tunnel_t *trojanserverSelectedUpstream(tunnel_t *t, const trojanserver_lstate_t 
 
 bool trojanserverQueuePayload(buffer_queue_t *queue, sbuf_t **buf)
 {
-    return sbufGetLength(*buf) <= kTrojanServerMaxPendingBytes - bufferqueueGetBufLen(queue) &&
-           bufferqueueGetBufCount(queue) < kTrojanServerMaxQueuedBuffers && bufferqueueTryPushBack(queue, buf);
+    assert(queue->budget != NULL);
+    return bufferqueueTryPushBack(queue, buf);
 }

@@ -268,12 +268,14 @@ struct udpconnector_lstate_s
     address_context_t                  packet_base_dest_ctx;
     sockaddr_u                         peer_addr; // initial/selected remote peer for this line
     buffer_queue_t                     pause_queue;
-    bool                               read_paused : 1;      // whether the read is paused
-    bool                               established : 1;      // whether downstream est was sent
-    bool                               write_paused : 1;     // whether upstream writes are queued
-    bool                               queue_pause_sent : 1; // whether downstream pause was sent for the queue
-    bool                               route_destination_pinned : 1;
-    bool                               finishing : 1; // Close-time flush owns cleanup; never reflect Finish.
+    // Aggregate DNS/initialization retention; socket datagram writes do not retain buffers.
+    buffer_budget_t write_budget;
+    bool   read_paused : 1;      // whether the read is paused
+    bool   established : 1;      // whether downstream est was sent
+    bool   write_paused : 1;     // whether upstream writes are queued
+    bool   queue_pause_sent : 1; // whether downstream pause was sent for the queue
+    bool   route_destination_pinned : 1;
+    bool   finishing : 1; // Close-time flush owns cleanup; never reflect Finish.
 };
 
 enum
@@ -318,16 +320,17 @@ void udpconnectorTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void udpconnectorTunnelUpStreamPause(tunnel_t *t, line_t *l);
 void udpconnectorTunnelUpStreamResume(tunnel_t *t, line_t *l);
 
-bool udpconnectorDomainResolverPrepare(tunnel_t *resolver, tunnel_t *connector, line_t *l,
-                                       domainresolver_direction_t direction, void *user_lstate);
+bool udpconnectorDomainResolverPrepare(tunnel_t *resolver, tunnel_t *connector, line_t *l, void *user_lstate);
 void udpconnectorDomainResolverUserStateDestroy(tunnel_t *resolver, tunnel_t *connector, line_t *l, void *user_lstate);
 
-bool   udpconnectorLinestateInitialize(udpconnector_lstate_t *ls, tunnel_t *t, line_t *l);
-void   udpconnectorLinestateDestroy(udpconnector_lstate_t *ls);
-void   udpconnectorCancelPacketDnsRequests(udpconnector_lstate_t *ls);
-size_t udpconnectorQueuedWriteBytes(udpconnector_lstate_t *ls);
-bool   udpconnectorFlushWriteQueue(udpconnector_lstate_t *ls);
-bool   udpconnectorReplayWriteQueue(udpconnector_lstate_t *ls);
+bool    udpconnectorLinestateInitialize(udpconnector_lstate_t *ls, tunnel_t *t, line_t *l);
+void    udpconnectorLinestateDestroy(udpconnector_lstate_t *ls);
+void    udpconnectorCancelPacketDnsRequests(udpconnector_lstate_t *ls);
+bool    udpconnectorQueueWrite(udpconnector_lstate_t *ls, buffer_queue_t *queue, sbuf_t **buf);
+sbuf_t *udpconnectorPopWrite(udpconnector_lstate_t *ls, buffer_queue_t *queue);
+size_t  udpconnectorQueuedWriteBytes(udpconnector_lstate_t *ls);
+bool    udpconnectorFlushWriteQueue(udpconnector_lstate_t *ls);
+bool    udpconnectorReplayWriteQueue(udpconnector_lstate_t *ls);
 
 local_idle_table_t         *udpconnectorGetWorkerIdleTable(udpconnector_tstate_t *ts);
 local_idle_table_t         *udpconnectorGetLineIdleTable(udpconnector_tstate_t *ts, line_t *l);

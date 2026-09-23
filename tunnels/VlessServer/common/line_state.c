@@ -8,6 +8,7 @@ void vlessserverLinestateInitialize(vlessserver_lstate_t *ls, tunnel_t *t, line_
         .client_line                           = NULL,
         .udp_remote_line                       = NULL,
         .in_stream                             = bufferstreamCreate(lineGetBufferPool(l), 0),
+        .initial_reentry                       = bufferqueueCreate(2),
         .pending_down                          = bufferqueueCreate(kVlessServerBufferQueueCap),
         .fallback_pending_up                   = NULL,
         .user_handle                           = userHandleEmpty(),
@@ -30,6 +31,7 @@ void vlessserverLinestateDestroy(vlessserver_lstate_t *ls)
     addresscontextReset(&ls->udp_target);
     bufferstreamDestroy(&ls->in_stream);
     bufferqueueDestroy(&ls->pending_down);
+    bufferqueueDestroy(&ls->initial_reentry);
     if (ls->fallback_pending_up != NULL)
     {
         bufferqueueDestroy(ls->fallback_pending_up);

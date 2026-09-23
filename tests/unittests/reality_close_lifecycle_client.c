@@ -57,7 +57,7 @@ enum client_tls_fixture_e
     kClientTls13Version        = 0x0304,
     kClientSslFiletypePem      = 1,
     kClientTlsTunnelStateSize  = 1024,
-    kClientTlsLineStateSize    = 512,
+    kClientTlsLineStateSize    = 1024,
     kClientKeyUpdateRequested  = 1,
     kClientTlsRecordHeaderSize = 5,
 };
@@ -72,6 +72,8 @@ typedef struct client_tls_lstate_view_s
     void                           *ssl;
     void                           *rbio;
     void                           *wbio;
+    buffer_budget_t                 pending_budget;
+    buffer_budget_reservation_t     pending_reservation;
     buffer_queue_t                  bq;
     buffer_stream_t                 takeover_stream;
     tlsrecordshaping_output_queue_t shaping_output;
@@ -79,7 +81,7 @@ typedef struct client_tls_lstate_view_s
     wtimer_t                       *shaping_output_timer;
     uint32_t                        takeover_phase;
     bool                            handshake_completed;
-    bool                            handshake_est_sent;
+    bool                            handshake_ready_sent;
     bool                            resources_released;
     bool                            post_handshake_consume_in_progress;
 } client_tls_lstate_view_t;
@@ -96,7 +98,17 @@ typedef struct client_lifecycle_context_s
     bool           send_data_after_close;
     bool           advance_kind_after_confirm;
     bool           kill_on_est;
+    bool           enqueue_on_source_pause;
+    bool           finish_on_source_pause;
+    bool           finish_on_source_resume;
+    bool           repause_on_source_resume;
+    uint32_t       source_pause_count;
+    uint32_t       source_resume_count;
     bool           kill_on_application_payload;
+    bool           pause_and_reenter_application;
+    const uint8_t *expected_application;
+    size_t         expected_application_length;
+    size_t         received_application_length;
     bool           record_tls_output_event;
     uint32_t       tls_output_count;
     uint32_t       tls_finish_count;
@@ -105,6 +117,7 @@ typedef struct client_lifecycle_context_s
     uint16_t       expected_alert_body_len;
     uint8_t        observed_alert;
     void          *tls_peer_rbio;
+    sbuf_t        *nested_wire;
 } client_lifecycle_context_t;
 
 typedef struct client_lifecycle_fixture_s
@@ -172,14 +185,39 @@ static void clientPrevPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
 static void clientPrevPause(tunnel_t *t, line_t *l)
 {
-    discard l;
-    clientEvent(clientContext(t), 'p');
+    client_lifecycle_context_t *context = clientContext(t);
+    ++context->source_pause_count;
+    if (context->enqueue_on_source_pause)
+    {
+        context->enqueue_on_source_pause = false;
+        sbuf_t *nested                   = bufferpoolGetSmallBuffer(context->pool);
+        sbufSetLength(nested, 1);
+        sbufWriteUI8(nested, 'B');
+        realityclientTunnelUpStreamPayload(context->reality, l, nested);
+        realityclientTunnelDownStreamPause(context->reality, l);
+        realityclientTunnelDownStreamResume(context->reality, l);
+    }
+    if (context->finish_on_source_pause)
+    {
+        realityclientTunnelUpStreamFinish(context->reality, l);
+        l->alive = false;
+    }
 }
 
 static void clientPrevResume(tunnel_t *t, line_t *l)
 {
-    discard l;
-    clientEvent(clientContext(t), 'r');
+    client_lifecycle_context_t *context = clientContext(t);
+    ++context->source_resume_count;
+    if (context->repause_on_source_resume)
+    {
+        context->repause_on_source_resume = false;
+        realityclientTunnelDownStreamPause(context->reality, l);
+    }
+    if (context->finish_on_source_resume)
+    {
+        realityclientTunnelUpStreamFinish(context->reality, l);
+        l->alive = false;
+    }
 }
 
 static void clientPrevEst(tunnel_t *t, line_t *l)
@@ -231,9 +269,9 @@ static void clientNextHandoffPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     uint8_t                     expected_kind =
         context->expected_control_kind != 0 ? context->expected_control_kind : kRealityV2RecordKindApplicationData;
     reality_v2_record_descriptor_t descriptor;
-    uint8_t                        plaintext[kRealityV2ControlMaxInnerPlaintext] = {0};
-    uint32_t                       payload_offset                                = 0;
-    uint32_t                       payload_len                                   = 0;
+    uint8_t                        plaintext[kRealityV2MaxPlaintextFragment + 32] = {0};
+    uint32_t                       payload_offset                                 = 0;
+    uint32_t                       payload_len                                    = 0;
     requireClient(realityV2BuildRecordDescriptor(ls->tls_version, &ls->record_profile, expected_kind, &descriptor) &&
                       realityV2TryDecryptExpectedRecord(&descriptor,
                                                         kRealityV2DirectionClientToServer,
@@ -263,13 +301,34 @@ static void clientNextHandoffPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     }
     else
     {
-        requireClient(payload_len == 1 && plaintext[payload_offset] == 0x5a,
-                      "client handoff pending flush changed application payload");
+        if (context->expected_application != NULL)
+        {
+            requireClient(payload_len <= context->expected_application_length - context->received_application_length &&
+                              memoryCompare(plaintext + payload_offset,
+                                            context->expected_application + context->received_application_length,
+                                            payload_len) == 0,
+                          "Reality early-data FIFO changed or reordered plaintext");
+            context->received_application_length += payload_len;
+        }
+        else
+        {
+            requireClient(payload_len == 1 && plaintext[payload_offset] == 0x5a,
+                          "client handoff pending flush changed application payload");
+        }
         clientEvent(context, 'Q');
     }
     memoryZero(plaintext, sizeof(plaintext));
     bufferpoolReuseBuffer(context->pool, buf);
 
+    if (expected_kind == kRealityV2RecordKindApplicationData && context->pause_and_reenter_application)
+    {
+        context->pause_and_reenter_application = false;
+        realityclientTunnelDownStreamPause(context->reality, l);
+        sbuf_t *nested = bufferpoolGetSmallBuffer(context->pool);
+        sbufSetLength(nested, 1);
+        sbufWriteUI8(nested, 'C');
+        realityclientTunnelUpStreamPayload(context->reality, l, nested);
+    }
     if (context->kill_on_payload ||
         (expected_kind == kRealityV2RecordKindApplicationData && context->kill_on_application_payload))
     {
@@ -639,7 +698,8 @@ static uint32_t clientTransferTlsBytes(void *from, void *to)
     }
 }
 
-static void clientFixtureEnableTls13TakeoverWithTickets(client_lifecycle_fixture_t *fixture, size_t ticket_count)
+static void clientFixtureEnableTlsTakeover(client_lifecycle_fixture_t *fixture, size_t ticket_count,
+                                           uint16_t tls_version)
 {
     char certificate[1024];
     char private_key[1024];
@@ -651,26 +711,26 @@ static void clientFixtureEnableTls13TakeoverWithTickets(client_lifecycle_fixture
     requireClient(fixture->tls_client_ctx != NULL && fixture->tls_server_ctx != NULL,
                   "client TLS fixture failed to create contexts");
     requireClient(
-        WW_BSSL_SSL_CTX_set_min_proto_version(fixture->tls_client_ctx, kClientTls13Version) == 1 &&
-            WW_BSSL_SSL_CTX_set_max_proto_version(fixture->tls_client_ctx, kClientTls13Version) == 1 &&
-            WW_BSSL_SSL_CTX_set_min_proto_version(fixture->tls_server_ctx, kClientTls13Version) == 1 &&
-            WW_BSSL_SSL_CTX_set_max_proto_version(fixture->tls_server_ctx, kClientTls13Version) == 1 &&
+        WW_BSSL_SSL_CTX_set_min_proto_version(fixture->tls_client_ctx, tls_version) == 1 &&
+            WW_BSSL_SSL_CTX_set_max_proto_version(fixture->tls_client_ctx, tls_version) == 1 &&
+            WW_BSSL_SSL_CTX_set_min_proto_version(fixture->tls_server_ctx, tls_version) == 1 &&
+            WW_BSSL_SSL_CTX_set_max_proto_version(fixture->tls_server_ctx, tls_version) == 1 &&
             WW_BSSL_SSL_CTX_set_num_tickets(fixture->tls_server_ctx, ticket_count) == 1 &&
             WW_BSSL_SSL_CTX_use_certificate_chain_file(fixture->tls_server_ctx, certificate) == 1 &&
             WW_BSSL_SSL_CTX_use_PrivateKey_file(fixture->tls_server_ctx, private_key, kClientSslFiletypePem) == 1 &&
             WW_BSSL_SSL_CTX_check_private_key(fixture->tls_server_ctx) == 1,
-        "client TLS fixture failed to configure TLS 1.3 credentials");
+        "client TLS fixture failed to configure credentials");
 
     client_tls_lstate_view_t *tls_ls = lineGetState(fixture->line, fixture->tls);
     requireClient(tlsclientLinestateInitialize(
                       (struct tlsclient_lstate_s *) tls_ls, fixture->tls_client_ctx, fixture->pool, NULL, 0),
                   "client TLS fixture failed to initialize the TlsClient line state");
     fixture->tls_state_initialized = true;
-    tls_ls->tunnel                  = fixture->tls;
-    tls_ls->line                    = fixture->line;
+    tls_ls->tunnel                 = fixture->tls;
+    tls_ls->line                   = fixture->line;
     requireClient(tlsclientConfigureSslForConnect(tls_ls->ssl, tls_ls->rbio, tls_ls->wbio, "example.com", NULL, 0),
                   "client TLS fixture failed to configure the retained client");
-    requireClient(tlsclientTunnelEnableHandshakeTakeover(fixture->tls),
+    requireClient(tlsclientTunnelEnableHandshakeTakeover(fixture->tls, fixture->reality, realityclientHandshakeReady),
                   "client TLS fixture failed to enable handshake takeover");
 
     fixture->tls_server_ssl  = WW_BSSL_SSL_new(fixture->tls_server_ctx);
@@ -705,11 +765,16 @@ static void clientFixtureEnableTls13TakeoverWithTickets(client_lifecycle_fixture
         moved += clientTransferTlsBytes(fixture->tls_server_wbio, tls_ls->rbio);
         requireClient(moved > 0, "client TLS fixture handshake stalled before completion");
     }
-    requireClient(completed, "client TLS fixture did not complete its TLS 1.3 handshake");
+    requireClient(completed, "client TLS fixture did not complete its handshake");
 
     tls_ls->handshake_completed = true;
-    sbuf_t *pending_raw         = NULL;
-    bool    began_drain         = tlsclientTunnelBeginTakeoverDrain(fixture->tls, fixture->line, &pending_raw);
+    if (((realityclient_lstate_t *) lineGetState(fixture->line, fixture->reality))->phase ==
+        kRealityClientPhaseTlsHandshake)
+    {
+        return; /* The completion-callback regression owns the handoff below. */
+    }
+    sbuf_t *pending_raw = NULL;
+    bool    began_drain = tlsclientTunnelBeginTakeoverDrain(fixture->tls, fixture->line, &pending_raw);
     if (! began_drain)
     {
         fprintf(
@@ -725,6 +790,11 @@ static void clientFixtureEnableTls13TakeoverWithTickets(client_lifecycle_fixture
     }
     requireClient(began_drain && pending_raw == NULL,
                   "client TLS fixture failed to enter retained drain mode at a clean boundary");
+}
+
+static void clientFixtureEnableTls13TakeoverWithTickets(client_lifecycle_fixture_t *fixture, size_t ticket_count)
+{
+    clientFixtureEnableTlsTakeover(fixture, ticket_count, kClientTls13Version);
 }
 
 static void clientFixtureEnableTls13Takeover(client_lifecycle_fixture_t *fixture)
@@ -1000,6 +1070,12 @@ static void configureClientAwaitAck(client_lifecycle_fixture_t *fixture, bool re
     ls->downstream_est_sent               = false;
     ls->c2s_send_seq                      = request_already_sent ? 1 : 0;
     ls->s2c_recv_seq                      = 0;
+    realityclientTunnelDownStreamEst(fixture->reality, fixture->line);
+    realityclientTunnelDownStreamEst(fixture->reality, fixture->line);
+    requireClient(strcmp(fixture->context.events, "E") == 0 && ls->downstream_est_sent,
+                  "Reality did not forward transport Est exactly once before ACK");
+    fixture->context.events_len = 0;
+    fixture->context.events[0]  = '\0';
 }
 
 static sbuf_t *clientOneBytePayload(client_lifecycle_fixture_t *fixture)
@@ -1047,9 +1123,10 @@ static void testClientConfirmEstAndFlushOrdering(void)
     ls->handoff_confirm_sent           = false;
     ls->handoff_completion_in_progress = true;
     ls->downstream_est_sent            = false;
-    ls->c2s_send_seq                   = 1;
-    ls->s2c_recv_seq                   = 1;
-    fixture.next->fnPayloadU           = clientNextHandoffPayload;
+    realityclientTunnelDownStreamEst(fixture.reality, fixture.line);
+    ls->c2s_send_seq         = 1;
+    ls->s2c_recv_seq         = 1;
+    fixture.next->fnPayloadU = clientNextHandoffPayload;
 
     realityclientTunnelUpStreamPayload(fixture.reality, fixture.line, clientOneBytePayload(&fixture));
     requireClient(bufferqueueGetBufCount(&ls->pending_up) == 1,
@@ -1059,22 +1136,21 @@ static void testClientConfirmEstAndFlushOrdering(void)
     requireClient(realityclientSendHandoffControl(fixture.reality, fixture.line, kRealityV2RecordKindHandoffConfirm),
                   "client failed to send handoff confirmation");
     ls = lineGetState(fixture.line, fixture.reality);
-    requireClient(ls->handoff_confirm_sent && ls->c2s_send_seq == 2 && strcmp(fixture.context.events, "C") == 0,
+    requireClient(ls->handoff_confirm_sent && ls->c2s_send_seq == 2 && strcmp(fixture.context.events, "EC") == 0,
                   "client confirmation did not consume c2s sequence one");
 
-    ls->downstream_est_sent = true;
-    tunnelPrevDownStreamEst(fixture.reality, fixture.line);
+    ls->handoff_completion_in_progress    = false;
     fixture.context.expected_control_kind = 0;
     requireClient(realityclientFlushPendingUpstream(fixture.reality, fixture.line),
                   "client failed to flush queued application after confirmation");
     ls                                 = lineGetState(fixture.line, fixture.reality);
     ls->handoff_completion_in_progress = false;
-    requireClient(strcmp(fixture.context.events, "CEQ") == 0 && ls->c2s_send_seq == 3 &&
+    requireClient(strcmp(fixture.context.events, "ECQ") == 0 && ls->c2s_send_seq == 3 &&
                       bufferqueueGetBufCount(&ls->pending_up) == 0,
-                  "client did not preserve CONFIRM -> Est -> queued-application order");
+                  "client did not preserve Est -> CONFIRM -> queued-application order");
 
     realityclientHandleUpstreamFinish(fixture.reality, fixture.line);
-    requireClient(strcmp(fixture.context.events, "CEQU") == 0, "client handoff ordering fixture did not close cleanly");
+    requireClient(strcmp(fixture.context.events, "ECQU") == 0, "client handoff ordering fixture did not close cleanly");
     clientFixtureDestroy(&fixture);
 }
 
@@ -1172,14 +1248,14 @@ static void testClientRequestedKeyUpdateResponsePrecedesConfirm(void)
 
     realityclient_lstate_t   *ls     = lineGetState(fixture.line, fixture.reality);
     client_tls_lstate_view_t *tls_ls = lineGetState(fixture.line, fixture.tls);
-    requireClient(strcmp(fixture.context.events, "KCE") == 0 && fixture.context.tls_output_count == 1 &&
+    requireClient(strcmp(fixture.context.events, "KC") == 0 && fixture.context.tls_output_count == 1 &&
                       ls->phase == kRealityClientPhaseRealityActive && ls->handoff_ack_authenticated &&
                       ls->handoff_confirm_sent && ls->downstream_est_sent && ls->c2s_send_seq == 2 &&
                       ls->s2c_recv_seq == 1 && tls_ls->resources_released && tls_ls->ssl == NULL,
                   "requested KeyUpdate response was not forwarded before HANDOFF_CONFIRM");
 
     realityclientHandleUpstreamFinish(fixture.reality, fixture.line);
-    requireClient(strcmp(fixture.context.events, "KCEU") == 0,
+    requireClient(strcmp(fixture.context.events, "KCU") == 0,
                   "requested-KeyUpdate ordering fixture did not close cleanly");
     clientFixtureDestroy(&fixture);
 }
@@ -1224,15 +1300,14 @@ static void testClientFragmentedTicketsThenCoalescedAck(void)
 
     ls                               = lineGetState(fixture.line, fixture.reality);
     client_tls_lstate_view_t *tls_ls = lineGetState(fixture.line, fixture.tls);
-    requireClient(strcmp(fixture.context.events, "CE") == 0 && fixture.context.tls_output_count == 0 &&
+    requireClient(strcmp(fixture.context.events, "C") == 0 && fixture.context.tls_output_count == 0 &&
                       ls->phase == kRealityClientPhaseRealityActive && ls->handoff_ack_authenticated &&
                       ls->handoff_confirm_sent && ls->c2s_send_seq == 2 && ls->s2c_recv_seq == 1 &&
                       bufferstreamIsEmpty(&ls->handoff_stream) && tls_ls->resources_released && tls_ls->ssl == NULL,
                   "multiple fragmented tickets plus coalesced ACK did not complete handoff once");
 
     realityclientHandleUpstreamFinish(fixture.reality, fixture.line);
-    requireClient(strcmp(fixture.context.events, "CEU") == 0,
-                  "fragmented-ticket handoff fixture did not close cleanly");
+    requireClient(strcmp(fixture.context.events, "CU") == 0, "fragmented-ticket handoff fixture did not close cleanly");
     clientFixtureDestroy(&fixture);
 }
 
@@ -1264,18 +1339,18 @@ static void testClientAckCoalescedApplicationCompletesHandoff(void)
 
     ls                               = lineGetState(fixture.line, fixture.reality);
     client_tls_lstate_view_t *tls_ls = lineGetState(fixture.line, fixture.tls);
-    requireClient(strcmp(fixture.context.events, "CEQA") == 0 && ls->phase == kRealityClientPhaseRealityActive &&
+    requireClient(strcmp(fixture.context.events, "CQA") == 0 && ls->phase == kRealityClientPhaseRealityActive &&
                       ls->handoff_ack_authenticated && ls->handoff_confirm_sent && ls->downstream_est_sent &&
                       ! ls->handoff_completion_in_progress && ls->c2s_send_seq == 3 && ls->s2c_recv_seq == 2 &&
                       bufferqueueGetBufCount(&ls->pending_up) == 0 && bufferstreamIsEmpty(&ls->handoff_stream) &&
                       bufferstreamIsEmpty(&ls->read_stream),
-                  "encrypted ACK did not preserve CONFIRM -> Est -> queued-up -> coalesced-down ordering");
+                  "encrypted ACK did not preserve CONFIRM -> queued-up -> coalesced-down ordering");
     requireClient(tls_ls->resources_released && tls_ls->takeover_phase == 2U && tls_ls->ssl == NULL &&
                       fixture.context.tls_finish_count == 0,
                   "authenticated ACK did not release retained TLS exactly once");
 
     realityclientHandleUpstreamFinish(fixture.reality, fixture.line);
-    requireClient(strcmp(fixture.context.events, "CEQAU") == 0,
+    requireClient(strcmp(fixture.context.events, "CQAU") == 0,
                   "client authenticated handoff fixture did not close cleanly");
     clientFixtureDestroy(&fixture);
 }
@@ -1283,7 +1358,6 @@ static void testClientAckCoalescedApplicationCompletesHandoff(void)
 typedef enum client_ack_death_point_e
 {
     kClientAckDeathDuringConfirm = 0,
-    kClientAckDeathDuringEst,
     kClientAckDeathDuringPendingFlush,
 } client_ack_death_point_t;
 
@@ -1299,10 +1373,6 @@ static void runClientAckTransitionLineDeath(client_ack_death_point_t death_point
     if (death_point == kClientAckDeathDuringConfirm)
     {
         fixture.context.kill_on_payload = true;
-    }
-    else if (death_point == kClientAckDeathDuringEst)
-    {
-        fixture.context.kill_on_est = true;
     }
     else
     {
@@ -1320,8 +1390,8 @@ static void runClientAckTransitionLineDeath(client_ack_death_point_t death_point
 static void testClientAckTransitionLineDeath(void)
 {
     runClientAckTransitionLineDeath(kClientAckDeathDuringConfirm, "CD");
-    runClientAckTransitionLineDeath(kClientAckDeathDuringEst, "CEU");
-    runClientAckTransitionLineDeath(kClientAckDeathDuringPendingFlush, "CEQD");
+
+    runClientAckTransitionLineDeath(kClientAckDeathDuringPendingFlush, "CQD");
 }
 
 static void testClientPreAckSilentFailures(void)
@@ -1356,8 +1426,260 @@ static void testClientRequestLineDeath(void)
     clientFixtureDestroy(&fixture);
 }
 
+static sbuf_t *clientRepeatedPayload(client_lifecycle_fixture_t *fixture, uint32_t length)
+{
+    sbuf_t *buf = bufferpoolGetBestFit(fixture->pool, length, 0);
+    sbufSetLength(buf, length);
+    memorySet(sbufGetMutablePtr(buf), 0x5a, length);
+    return buf;
+}
+
+static void testClientEarlyPlaintextBounds(void)
+{
+    for (unsigned by_entries = 0; by_entries < 2; ++by_entries)
+    {
+        client_lifecycle_fixture_t fixture;
+        clientFixtureInitialize(&fixture);
+        realityclient_lstate_t *ls = lineGetState(fixture.line, fixture.reality);
+        ls->phase                  = kRealityClientPhaseTlsHandshake;
+        ls->downstream_est_sent    = false;
+        ls->session_keys_ready     = false;
+        if (by_entries)
+        {
+            for (unsigned i = 0; i < kRealityClientPendingBuffers; ++i)
+            {
+                realityclientTunnelUpStreamPayload(fixture.reality, fixture.line, clientRepeatedPayload(&fixture, 0));
+            }
+            requireClient(bufferqueueGetBufCount(&ls->pending_up) == kRealityClientPendingBuffers,
+                          "Reality exact early entry limit was refused");
+        }
+        else
+        {
+            realityclientTunnelUpStreamPayload(
+                fixture.reality, fixture.line, clientRepeatedPayload(&fixture, kRealityClientPendingBytes));
+            requireClient(bufferqueueGetBufLen(&ls->pending_up) == kRealityClientPendingBytes,
+                          "Reality exact early byte limit was refused");
+        }
+        requireClient(fixture.context.events_len == 0, "Reality sent early plaintext before TLS completion");
+        realityclientTunnelDownStreamEst(fixture.reality, fixture.line);
+        realityclientTunnelDownStreamEst(fixture.reality, fixture.line);
+        requireClient(strcmp(fixture.context.events, "E") == 0 && ls->phase == kRealityClientPhaseTlsHandshake,
+                      "Reality transport Est performed handshake takeover or repeated notification");
+        realityclientTunnelUpStreamPayload(fixture.reality, fixture.line, clientOneBytePayload(&fixture));
+        requireClient(strcmp(fixture.context.events, "EUD") == 0,
+                      "Reality early plaintext overflow did not settle both directions");
+        clientFixtureDestroy(&fixture);
+    }
+}
+
+static void testClientTransportEstClose(void)
+{
+    client_lifecycle_fixture_t fixture;
+    clientFixtureInitialize(&fixture);
+    realityclient_lstate_t *ls  = lineGetState(fixture.line, fixture.reality);
+    ls->phase                   = kRealityClientPhaseTlsHandshake;
+    ls->downstream_est_sent     = false;
+    ls->session_keys_ready      = false;
+    fixture.context.kill_on_est = true;
+    realityclientTunnelDownStreamEst(fixture.reality, fixture.line);
+    requireClient(! lineIsAlive(fixture.line) && strcmp(fixture.context.events, "EU") == 0,
+                  "Reality transport Est close waited for ACK or emitted a final alert");
+    clientFixtureDestroy(&fixture);
+}
+
+static void testClientCompletionKeepsPausedEarlyData(unsigned mode)
+{
+    client_lifecycle_fixture_t fixture;
+    clientFixtureInitialize(&fixture);
+    realityclient_lstate_t *ls = lineGetState(fixture.line, fixture.reality);
+    ls->phase                  = kRealityClientPhaseTlsHandshake;
+    ls->downstream_est_sent    = false;
+    ls->session_keys_ready     = false;
+    ls->handoff_confirm_sent   = false;
+    ls->c2s_send_seq           = 0;
+    ls->s2c_recv_seq           = 0;
+    uint8_t expected[32770];
+    memorySet(expected, 'A', 32768);
+    expected[32768]                             = 'B';
+    expected[32769]                             = 'C';
+    fixture.context.expected_application        = expected;
+    fixture.context.expected_application_length = sizeof(expected);
+    sbuf_t *head                                = bufferpoolGetBestFit(fixture.pool, 32768, 0);
+    sbufSetLength(head, 32768);
+    sbufWrite(head, expected, 32768);
+    bool close_during_drain                 = mode == 1;
+    fixture.context.enqueue_on_source_pause = true;
+    realityclientTunnelUpStreamPayload(fixture.reality, fixture.line, head);
+    realityclientTunnelDownStreamEst(fixture.reality, fixture.line);
+    realityclientTunnelDownStreamPause(fixture.reality, fixture.line);
+    requireClient(strcmp(fixture.context.events, "E") == 0 && bufferqueueGetBufCount(&ls->pending_up) == 2 &&
+                      fixture.context.source_pause_count == 1 && fixture.context.source_resume_count == 0,
+                  "Reality did not expose early transport readiness with plaintext still private");
+
+    clientFixtureEnableTls13Takeover(&fixture);
+    fixture.next->fnPayloadU              = clientNextHandoffPayload;
+    fixture.context.expected_control_kind = kRealityV2RecordKindHandoffRequest;
+    realityclientHandshakeReady(fixture.reality, fixture.line);
+    requireClient(ls->phase == kRealityClientPhaseTls13AwaitAck && ls->session_keys_ready &&
+                      strcmp(fixture.context.events, "ER") == 0 && bufferqueueGetBufCount(&ls->pending_up) == 2,
+                  "Reality completion hook failed to bind TLS or released pre-ACK plaintext");
+    fixture.context.expected_control_kind      = kRealityV2RecordKindHandoffConfirm;
+    fixture.context.advance_kind_after_confirm = true;
+    realityclientTunnelDownStreamPayload(fixture.reality, fixture.line, clientBuildHandoffAck(&fixture));
+    requireClient(ls->phase == kRealityClientPhaseRealityActive && strcmp(fixture.context.events, "ERC") == 0 &&
+                      bufferqueueGetBufCount(&ls->pending_up) == 2,
+                  "Reality ACK repeated Est or drained plaintext through wire Pause");
+    fixture.context.pause_and_reenter_application = ! close_during_drain;
+    fixture.context.kill_on_application_payload   = close_during_drain;
+    realityclientTunnelDownStreamResume(fixture.reality, fixture.line);
+    if (close_during_drain)
+    {
+        requireClient(! lineIsAlive(fixture.line) && strcmp(fixture.context.events, "ERCQD") == 0,
+                      "Reality callback close during active plaintext drain leaked callbacks");
+    }
+    else
+    {
+        requireClient(strcmp(fixture.context.events, "ERCQ") == 0 && ls->pending_active != NULL &&
+                          sbufGetLength(ls->pending_active) == 16384 && bufferqueueGetBufCount(&ls->pending_up) == 2,
+                      "Reality resumed another plaintext record after Pause or lost the active head");
+        requireClient(
+            ls->pending_reservation.budget == &ls->pending_budget && ls->pending_reservation.cost.bytes == 16384 &&
+                bufferbudgetGetUsage(&ls->pending_budget).bytes == 16384 + bufferqueueGetBufLen(&ls->pending_up) &&
+                bufferbudgetGetUsage(&ls->pending_budget).entries == 1 + bufferqueueGetBufCount(&ls->pending_up),
+            "active plaintext consumption was not published before reentrant wire output");
+        requireClient(fixture.context.source_pause_count == 1 && fixture.context.source_resume_count == 0,
+                      "Reality wire Resume released source before older plaintext drained");
+        if (mode >= 4)
+        {
+            if (mode == 4)
+            {
+                uint32_t allowance =
+                    (uint32_t) (kRealityClientPendingBytes - bufferbudgetGetUsage(&ls->pending_budget).bytes);
+                realityclientTunnelUpStreamPayload(
+                    fixture.reality, fixture.line, clientRepeatedPayload(&fixture, allowance));
+                requireClient(bufferbudgetGetUsage(&ls->pending_budget).bytes == kRealityClientPendingBytes,
+                              "Reality queue plus active exact byte cap refused");
+            }
+            else
+            {
+                while (bufferbudgetGetUsage(&ls->pending_budget).entries < kRealityClientPendingBuffers)
+                    realityclientTunnelUpStreamPayload(
+                        fixture.reality, fixture.line, clientRepeatedPayload(&fixture, 0));
+                requireClient(bufferqueueGetBufCount(&ls->pending_up) == kRealityClientPendingBuffers - 1,
+                              "Reality active entry was not charged at equality");
+            }
+            realityclientTunnelUpStreamPayload(fixture.reality, fixture.line, clientOneBytePayload(&fixture));
+            requireClient(ls->pending_active == NULL && ls->pending_reservation.budget == NULL &&
+                              bufferbudgetGetUsage(&ls->pending_budget).entries == 0 &&
+                              strcmp(fixture.context.events, "ERCQUD") == 0,
+                          "Reality active overflow did not settle reservation and queued input");
+            clientFixtureDestroy(&fixture);
+            return;
+        }
+        fixture.context.finish_on_source_resume  = mode == 2;
+        fixture.context.repause_on_source_resume = mode == 3;
+        realityclientTunnelDownStreamResume(fixture.reality, fixture.line);
+        if (mode == 2)
+        {
+            requireClient(! lineIsAlive(fixture.line) && fixture.context.source_resume_count == 1 &&
+                              strcmp(fixture.context.events, "ERCQQQQU") == 0,
+                          "Reality source Resume close accessed destroyed state");
+            clientFixtureDestroy(&fixture);
+            return;
+        }
+        if (mode == 3)
+        {
+            requireClient(ls->wire_paused && fixture.context.source_pause_count == 2 &&
+                              fixture.context.source_resume_count == 1,
+                          "Reality nested source Resume/Pause lost aggregate pressure");
+            realityclientTunnelDownStreamResume(fixture.reality, fixture.line);
+        }
+        requireClient(fixture.context.source_resume_count == (mode == 3 ? 2U : 1U) && ! ls->plaintext_producer_paused &&
+                          ! ls->source_paused,
+                      "Reality did not release source after authenticated FIFO completion");
+        requireClient(strcmp(fixture.context.events, "ERCQQQQ") == 0 &&
+                          fixture.context.received_application_length == sizeof(expected) &&
+                          bufferqueueGetBufCount(&ls->pending_up) == 0 && ls->pending_active == NULL,
+                      "Reality Resume lost early-data FIFO order or repeated Est");
+        realityclientHandleUpstreamFinish(fixture.reality, fixture.line);
+    }
+    clientFixtureDestroy(&fixture);
+}
+
+static void testClientSourcePauseClose(void)
+{
+    client_lifecycle_fixture_t fixture;
+    clientFixtureInitialize(&fixture);
+    realityclient_lstate_t *ls             = lineGetState(fixture.line, fixture.reality);
+    ls->phase                              = kRealityClientPhaseTlsHandshake;
+    fixture.context.finish_on_source_pause = true;
+    realityclientTunnelUpStreamPayload(fixture.reality, fixture.line, clientOneBytePayload(&fixture));
+    requireClient(! lineIsAlive(fixture.line) && fixture.context.source_pause_count == 1 &&
+                      fixture.context.source_resume_count == 0 && strcmp(fixture.context.events, "U") == 0,
+                  "Reality source Pause close retained plaintext or reflected Resume");
+    clientFixtureDestroy(&fixture);
+}
+
+static void clientNextNestedWire(tunnel_t *t, line_t *l, sbuf_t *buf)
+{
+    client_lifecycle_context_t *context = clientContext(t);
+    clientEvent(context, 'Q');
+    lineReuseBuffer(l, buf);
+    sbuf_t *nested       = context->nested_wire;
+    context->nested_wire = NULL;
+    if (nested != NULL)
+        realityclientTunnelDownStreamPayload(context->reality, l, nested);
+}
+
+static void testClientTls12CoalescedWireBeforeReentrantReply(void)
+{
+    client_lifecycle_fixture_t fixture;
+    clientFixtureInitialize(&fixture);
+    realityclient_lstate_t *ls = lineGetState(fixture.line, fixture.reality);
+    ls->phase                  = kRealityClientPhaseTlsHandshake;
+    ls->session_keys_ready     = false;
+    ls->downstream_est_sent    = false;
+    realityclientTunnelDownStreamEst(fixture.reality, fixture.line);
+    realityclientTunnelUpStreamPayload(fixture.reality, fixture.line, clientOneBytePayload(&fixture));
+    clientFixtureEnableTlsTakeover(&fixture, 0, kRealityV2Tls12);
+
+    tlsclient_handshake_binding_t binding = {0};
+    requireClient(tlsclientTunnelGetHandshakeBinding(fixture.tls, fixture.line, &binding) &&
+                      binding.tls_version == kRealityV2Tls12 && binding.tls12_sequences_valid,
+                  "TLS 1.2 handoff fixture has no validated binding");
+    reality_v2_handshake_binding_t reality_binding = {0};
+    memoryCopy(reality_binding.client_random, binding.client_random, sizeof(binding.client_random));
+    memoryCopy(reality_binding.server_random, binding.server_random, sizeof(binding.server_random));
+    reality_binding.tls_version            = binding.tls_version;
+    reality_binding.cipher_suite           = binding.cipher_suite;
+    reality_v2_session_material_t material = {0};
+    realityclient_tstate_t       *ts       = tunnelGetState(fixture.reality);
+    requireClient(realityV2SelectRecordProfile(binding.tls_version, binding.cipher_suite, &ls->record_profile) &&
+                      realityV2DeriveSessionMaterial(ts->root_key, &reality_binding, &material),
+                  "TLS 1.2 handoff fixture could not prepare peer records");
+    memoryCopy(ls->session_id, material.session_id, sizeof(ls->session_id));
+    memoryCopy(ls->s2c_key, material.s2c_key, sizeof(ls->s2c_key));
+    memoryCopy(ls->s2c_iv, material.s2c_iv, sizeof(ls->s2c_iv));
+    const uint8_t application = 0x5a;
+    sbuf_t       *older       = buildClientInboundRecord(
+        &fixture, kRealityV2Tls12, &ls->record_profile, kRealityV2RecordKindApplicationData, &application, 1, 0);
+    fixture.context.nested_wire = buildClientInboundRecord(
+        &fixture, kRealityV2Tls12, &ls->record_profile, kRealityV2RecordKindApplicationData, &application, 1, 1);
+    client_tls_lstate_view_t *tls_ls = lineGetState(fixture.line, fixture.tls);
+    bufferstreamPush(&tls_ls->takeover_stream, older);
+    fixture.next->fnPayloadU = clientNextNestedWire;
+    realityclientHandshakeReady(fixture.reality, fixture.line);
+    requireClient(lineIsAlive(fixture.line) && ls->phase == kRealityClientPhaseRealityActive && ls->s2c_recv_seq == 2 &&
+                      strcmp(fixture.context.events, "EQAA") == 0 && bufferstreamIsEmpty(&ls->read_stream) &&
+                      fixture.context.nested_wire == NULL,
+                  "TLS 1.2 handoff let a reentrant reply overtake coalesced wire input");
+    realityclientHandleUpstreamFinish(fixture.reality, fixture.line);
+    clientFixtureDestroy(&fixture);
+}
+
 void realityTestClientCloseLifecycle(void)
 {
+    testClientTls12CoalescedWireBeforeReentrantReply();
     runClientScenario(realityclientHandleUpstreamFinish, "U", false, false);
     runClientScenario(clientPeerClose, "UD", false, false);
     runClientScenario(clientPeerClose, "U", false, true);
@@ -1385,6 +1707,15 @@ void realityTestClientCloseLifecycle(void)
         testClientCoalescedRecords(versions[i], &profiles[i], false);
         testClientCoalescedRecords(versions[i], &profiles[i], true);
     }
+    testClientEarlyPlaintextBounds();
+    testClientTransportEstClose();
+    testClientSourcePauseClose();
+    testClientCompletionKeepsPausedEarlyData(0);
+    testClientCompletionKeepsPausedEarlyData(1);
+    testClientCompletionKeepsPausedEarlyData(2);
+    testClientCompletionKeepsPausedEarlyData(3);
+    testClientCompletionKeepsPausedEarlyData(4);
+    testClientCompletionKeepsPausedEarlyData(5);
     testClientTerminalReentry();
     testClientFastRandomIsIndependentOfOsProvider();
     testClientHandoffRequestAndQueue();
@@ -1483,8 +1814,8 @@ static void clientSizingCapture(tunnel_t *t, line_t *l, sbuf_t *buf)
 static void runClientSizingCase(uint16_t tls_version, const reality_v2_record_profile_t *profile, uint32_t input_len,
                                 bool kill_after_first_record)
 {
-    master_pool_t *large_master = masterpoolCreateWithCapacity(8);
-    master_pool_t *small_master = masterpoolCreateWithCapacity(8);
+    master_pool_t *large_master  = masterpoolCreateWithCapacity(8);
+    master_pool_t *small_master  = masterpoolCreateWithCapacity(8);
     master_pool_t *medium_master = masterpoolCreateWithCapacity(8);
     master_pool_t *splice_master = masterpoolCreateWithCapacity(8);
     buffer_pool_t *pool          = bufferpoolCreate(large_master,

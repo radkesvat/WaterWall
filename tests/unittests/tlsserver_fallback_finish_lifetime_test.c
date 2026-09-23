@@ -451,8 +451,24 @@ static void caseFallbackPendingCeilingClosesLine(void)
     fixtureDestroyClosedLine(&fixture);
 }
 
+static void caseEstablishedLineStillForwardsTransportEst(void)
+{
+    twfSetCase("TlsServer relays marked continuing-line Est exactly once");
+    tlsserver_fallback_fixture_t fixture;
+    fixtureSetup(&fixture);
+    // A mapped downstream endpoint (for example Fisher) may mark before forwarding.
+    lineMarkEstablished(fixture.line);
+    tlsserverTunnelDownStreamEst(fixture.node, fixture.line);
+    tlsserverTunnelDownStreamEst(fixture.node, fixture.line);
+    twfRequireEqualU32(fixture.trace.prev_est, 1, "shared line marker suppressed or duplicated transport Est");
+    closeFromPreviousOwner(&fixture);
+    releaseOwnerReference(&fixture);
+    fixtureDestroyClosedLine(&fixture);
+}
+
 int main(void)
 {
+    caseEstablishedLineStillForwardsTransportEst();
     caseNoPendingPayload();
     casePendingFifoFlushAndDeadTask();
     caseReentrantNonterminalCallbacksAreAbsorbed();

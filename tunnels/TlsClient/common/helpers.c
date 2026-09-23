@@ -96,12 +96,8 @@ bool tlsclientDrainBioToBuffer(buffer_pool_t *pool, BIO *bio, sbuf_t **out)
 
 static bool tlsclientDrainPendingRawBytes(line_t *l, BIO *bio, sbuf_t **pending_raw)
 {
-    if (pending_raw != NULL)
-    {
-        *pending_raw = NULL;
-    }
-
-    if (bio == NULL || pending_raw == NULL)
+    assert(l != NULL && bio != NULL);
+    if (pending_raw == NULL)
     {
         return true;
     }
@@ -128,7 +124,8 @@ static bool tlsclientRecordHeader(const uint8_t header[kTlsClientRecordHeaderSiz
 
 static bool tlsclientRawRecordIsComplete(const sbuf_t *record)
 {
-    if (record == NULL || sbufGetLength(record) < kTlsClientRecordHeaderSize)
+    assert(record != NULL);
+    if (sbufGetLength(record) < kTlsClientRecordHeaderSize)
     {
         return false;
     }
@@ -185,12 +182,14 @@ bool tlsclientSslReadBoundaryIsClean(tlsclient_lstate_t *ls)
 size_t tlsclientRecordPaddingCallback(SSL *ssl, uint8_t type, size_t plaintext_len, size_t max_padding, void *arg)
 {
     tlsclient_lstate_t *ls = arg;
-    if (ls == NULL || ls->ssl != ssl || ls->resources_released || ls->shaping_retired ||
-        ! ls->handshake_completed || ls->tunnel == NULL || SSL_version(ssl) != TLS1_3_VERSION)
+    assert(ssl != NULL && ls != NULL && ls->ssl == ssl);
+    if (ls->resources_released || ls->shaping_retired || ! ls->handshake_completed ||
+        SSL_version(ssl) != TLS1_3_VERSION)
     {
         return 0;
     }
 
+    assert(ls->tunnel != NULL);
     tlsclient_tstate_t         *ts                = tunnelGetState(ls->tunnel);
     tlsrecordshaping_decision_t decision          = {0};
     uint32_t                    effective_padding = 0;
@@ -225,8 +224,29 @@ void tlsclientCancelShapedOutputTimer(tlsclient_lstate_t *ls)
 static bool tlsclientShapingStateIsActive(tunnel_t *t, line_t *l)
 {
     tlsclient_lstate_t *ls = lineGetState(l, t);
-    return ls->tunnel == t && ! ls->resources_released &&
-           (ls->shaping_retired || ls->shaping_output.initialized);
+    return ls->tunnel == t && ! ls->resources_released && (ls->shaping_retired || ls->shaping_output.initialized);
+}
+
+bool tlsclientUpdateSourcePressure(tunnel_t *t, line_t *l)
+{
+    tlsclient_lstate_t *ls = lineGetState(l, t);
+    if (ls->upstream_finished)
+    {
+        return true;
+    }
+    bool paused = ls->shaping_wire_paused || ls->shaping_producer_paused || ls->plaintext_producer_paused;
+    if (paused == ls->source_paused)
+    {
+        return true;
+    }
+    ls->source_paused = paused;
+    if (UNLIKELY(paused ? ! lineCallWithRef(l, tunnelPrevDownStreamPause, t)
+                        : ! lineCallWithRef(l, tunnelPrevDownStreamResume, t)))
+    {
+        return false;
+    }
+    ls = lineGetState(l, t);
+    return ls->tunnel == t && ! ls->upstream_finished;
 }
 
 static bool tlsclientTryRetireShaping(tunnel_t *t, line_t *l, tlsclient_lstate_t *ls)
@@ -252,13 +272,11 @@ static bool tlsclientTryRetireShaping(tunnel_t *t, line_t *l, tlsclient_lstate_t
 
     tlsclientCancelShapedOutputTimer(ls);
 
-    bool release_producer_pause = ls->shaping_producer_paused;
     ls->shaping_retired         = true;
     ls->shaping_producer_paused = false;
     tlsrecordshapingOutputQueueDestroy(&ls->shaping_output);
 
-    if (ls->ssl != NULL &&
-        ! SSL_set_tls13_record_padding_callback(ls->ssl, NULL, NULL, 0) && ls->verbose)
+    if (ls->ssl != NULL && ! SSL_set_tls13_record_padding_callback(ls->ssl, NULL, NULL, 0) && ls->verbose)
     {
         LOGW("TlsClient: could not clear the retired TLS 1.3 record padding callback");
     }
@@ -267,15 +285,7 @@ static bool tlsclientTryRetireShaping(tunnel_t *t, line_t *l, tlsclient_lstate_t
         LOGD("TlsClient: configured TLS 1.3 record shaping scope drained; output shaper retired");
     }
 
-    if (release_producer_pause && ! ls->shaping_wire_paused && ! ls->upstream_finished)
-    {
-        if (! lineCallWithRef(l, tunnelPrevDownStreamResume, t))
-        {
-            return false;
-        }
-        return tlsclientShapingStateIsActive(t, l);
-    }
-    return true;
+    return tlsclientUpdateSourcePressure(t, l);
 }
 
 static bool tlsclientUpdateShapingBackpressure(tunnel_t *t, line_t *l, tlsclient_lstate_t *ls)
@@ -298,49 +308,17 @@ static bool tlsclientUpdateShapingBackpressure(tunnel_t *t, line_t *l, tlsclient
         {
             return tlsclientTryRetireShaping(t, l, ls);
         }
-
-        if (! ls->shaping_producer_paused)
-        {
-            ls->shaping_producer_paused = true;
-            if (! ls->shaping_wire_paused && ! ls->upstream_finished)
-            {
-                if (! lineCallWithRef(l, tunnelPrevDownStreamPause, t))
-                {
-                    return false;
-                }
-                return tlsclientShapingStateIsActive(t, l);
-            }
-        }
-        return true;
+        ls->shaping_producer_paused = true;
     }
-
-    if (! ls->shaping_producer_paused && queued >= kTlsRecordShapingQueueHighWatermark)
+    else if (! ls->shaping_producer_paused && queued >= kTlsRecordShapingQueueHighWatermark)
     {
         ls->shaping_producer_paused = true;
-        if (! ls->shaping_wire_paused && ! ls->upstream_finished)
-        {
-            if (! lineCallWithRef(l, tunnelPrevDownStreamPause, t))
-            {
-                return false;
-            }
-            return tlsclientShapingStateIsActive(t, l);
-        }
-        return true;
     }
-
-    if (ls->shaping_producer_paused && queued <= kTlsRecordShapingQueueLowWatermark)
+    else if (ls->shaping_producer_paused && queued <= kTlsRecordShapingQueueLowWatermark)
     {
         ls->shaping_producer_paused = false;
-        if (! ls->shaping_wire_paused && ! ls->upstream_finished)
-        {
-            if (! lineCallWithRef(l, tunnelPrevDownStreamResume, t))
-            {
-                return false;
-            }
-            return tlsclientShapingStateIsActive(t, l);
-        }
     }
-    return true;
+    return tlsclientUpdateSourcePressure(t, l);
 }
 
 bool tlsclientDrainShapedOutput(tunnel_t *t, line_t *l, tlsclient_lstate_t *ls, bool force)
@@ -419,6 +397,11 @@ static void tlsclientShapingOutputTimerCallback(wtimer_t *timer)
         return;
     }
 
+    if (UNLIKELY(! tlsclientDrainPendingPlaintext(t, l)))
+    {
+        lineUnref(l);
+        return;
+    }
     ls = lineGetState(l, t);
     if (! tlsclientScheduleShapedOutput(t, l, ls))
     {
@@ -489,11 +472,8 @@ bool tlsclientScheduleShapedOutput(tunnel_t *t, line_t *l, tlsclient_lstate_t *l
 
 bool tlsclientFlushSslOutput(tunnel_t *t, line_t *l, tlsclient_lstate_t *ls)
 {
-    BIO *wbio = ls != NULL ? ls->wbio : NULL;
-    if (t == NULL || l == NULL || wbio == NULL)
-    {
-        return false;
-    }
+    assert(t != NULL && l != NULL && ls != NULL && ls->wbio != NULL);
+    BIO *wbio = ls->wbio;
 
     tlsclient_tstate_t *ts           = tunnelGetState(t);
     bool                shape_output = ts->record_shaping.enabled && ! ls->shaping_retired && ls->handshake_completed &&
@@ -626,7 +606,7 @@ static bool tlsclientFlushPostHandshakeProtocolOutput(tunnel_t *t, line_t *l, tl
     return tlsclientFlushSslOutput(t, l, ls);
 }
 
-bool tlsclientTunnelEnableHandshakeTakeover(tunnel_t *t)
+bool tlsclientTunnelEnableHandshakeTakeover(tunnel_t *t, tunnel_t *owner, tlsclient_handshake_ready_fn handshake_ready)
 {
     tlsclient_tstate_t *ts = tunnelGetState(t);
     if (tlsrecordshapingConfigCanDelay(&ts->record_shaping))
@@ -634,6 +614,9 @@ bool tlsclientTunnelEnableHandshakeTakeover(tunnel_t *t)
         LOGF("TlsClient: handshake takeover cannot be combined with tls13-record-shaping delay");
         return false;
     }
+    assert(owner != NULL && handshake_ready != NULL);
+    ts->handshake_owner            = owner;
+    ts->handshake_ready            = handshake_ready;
     ts->handshake_takeover_enabled = true;
     return true;
 }
@@ -646,10 +629,7 @@ bool tlsclientTunnelIsHandshakeCompleted(tunnel_t *t, line_t *l)
 
 bool tlsclientTunnelGetHandshakeBinding(tunnel_t *t, line_t *l, tlsclient_handshake_binding_t *binding)
 {
-    if (t == NULL || l == NULL || binding == NULL)
-    {
-        return false;
-    }
+    assert(t != NULL && l != NULL && binding != NULL);
 
     tlsclient_lstate_t *ls = lineGetState(l, t);
     if (! ls->handshake_completed || ls->ssl == NULL || ls->resources_released ||
@@ -738,15 +718,8 @@ bool tlsclientTunnelDeinitAfterHandshake(tunnel_t *t, line_t *l, sbuf_t **pendin
 
 bool tlsclientTunnelBeginTakeoverDrain(tunnel_t *t, line_t *l, sbuf_t **pending_raw)
 {
-    if (pending_raw != NULL)
-    {
-        *pending_raw = NULL;
-    }
-
-    if (t == NULL || l == NULL || pending_raw == NULL)
-    {
-        return false;
-    }
+    assert(t != NULL && l != NULL && pending_raw != NULL);
+    *pending_raw = NULL;
 
     tlsclient_tstate_t *ts = tunnelGetState(t);
     tlsclient_lstate_t *ls = lineGetState(l, t);
@@ -779,20 +752,14 @@ static tlsclient_post_handshake_result_t tlsclientPostHandshakeClose(tunnel_t *t
 
 static bool tlsclientPostHandshakeConsumeStateIsLive(const tlsclient_lstate_t *ls)
 {
-    return ls != NULL && ls->post_handshake_consume_in_progress && ! ls->resources_released &&
+    assert(ls != NULL);
+    return ls->post_handshake_consume_in_progress && ! ls->resources_released &&
            ls->takeover_phase == kTlsClientTakeoverDrain && ls->ssl != NULL && ls->rbio != NULL && ls->wbio != NULL;
 }
 
 tlsclient_post_handshake_result_t tlsclientTunnelConsumePostHandshakeRecord(tunnel_t *t, line_t *l, sbuf_t *record)
 {
-    if (l == NULL || t == NULL || record == NULL)
-    {
-        if (record != NULL)
-        {
-            reuseBuffer(record);
-        }
-        return kTlsClientPostHandshakeFatal;
-    }
+    assert(t != NULL && l != NULL && record != NULL);
 
     if (! lineIsAlive(l))
     {
@@ -924,10 +891,7 @@ tlsclient_post_handshake_result_t tlsclientTunnelConsumePostHandshakeRecord(tunn
 
 bool tlsclientTunnelCompleteTakeover(tunnel_t *t, line_t *l)
 {
-    if (t == NULL || l == NULL)
-    {
-        return false;
-    }
+    assert(t != NULL && l != NULL);
 
     tlsclient_tstate_t *ts = tunnelGetState(t);
     tlsclient_lstate_t *ls = lineGetState(l, t);
@@ -989,10 +953,7 @@ bool tlsclientCreateClientHelloFromContext(SSL_CTX *ssl_ctx, const char *sni,
                                            size_t ech_grease_override_payload_len, const uint8_t *alpn_wire,
                                            size_t alpn_wire_len, sbuf_t **out)
 {
-    if (ssl_ctx == NULL || sni == NULL || out == NULL)
-    {
-        return false;
-    }
+    assert(ssl_ctx != NULL && sni != NULL && out != NULL);
 
     *out = NULL;
 
@@ -1047,10 +1008,7 @@ bool tlsclientCreateClientHelloFromContext(SSL_CTX *ssl_ctx, const char *sni,
 
 bool tlsclientCreateEchGreaseInnerClientHello(tlsclient_tstate_t *ts, wid_t wid, sbuf_t **out)
 {
-    if (ts == NULL || out == NULL)
-    {
-        return false;
-    }
+    assert(ts != NULL && out != NULL);
 
     *out = NULL;
 
@@ -1083,7 +1041,8 @@ bool tlsclientCreateEchGreaseInnerClientHello(tlsclient_tstate_t *ts, wid_t wid,
 
 static void tlsclientFreeSslContextPool(SSL_CTX ***contexts)
 {
-    if (contexts == NULL || *contexts == NULL)
+    assert(contexts != NULL);
+    if (*contexts == NULL)
     {
         return;
     }

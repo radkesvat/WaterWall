@@ -4,9 +4,9 @@
 
 void trojanclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
 {
-    trojanclient_tstate_t  *ts       = tunnelGetState(t);
-    trojanclient_lstate_t  *ls       = lineGetState(l, t);
-    address_context_t      *target   = lineGetDestinationAddressContext(l);
+    trojanclient_tstate_t *ts     = tunnelGetState(t);
+    trojanclient_lstate_t *ls     = lineGetState(l, t);
+    address_context_t     *target = lineGetDestinationAddressContext(l);
 
     /* With local DNS, the prepare hook already applied the target before resolution. */
     if (! ts->resolve_domains && UNLIKELY(! trojanclientApplyTargetContext(t, l)))
@@ -17,6 +17,7 @@ void trojanclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
     assert(target->proto_tcp != target->proto_udp);
 
     trojanclientLinestateInitialize(ls, l);
+    ls->tunnel   = t;
     ls->protocol = target->proto_udp ? kTrojanClientProtocolUdp : kTrojanClientProtocolTcp;
     ls->kind     = ls->protocol == kTrojanClientProtocolUdp ? kTrojanClientLineKindUdpApp : kTrojanClientLineKindDirect;
     addresscontextCopy(&ls->target_addr, target);
@@ -38,11 +39,9 @@ void trojanclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
     tunnelNextUpStreamInit(t, l);
 }
 
-bool trojanclientDomainResolverPrepare(tunnel_t *resolver, tunnel_t *client, line_t *l,
-                                       domainresolver_direction_t direction, void *user_lstate)
+bool trojanclientDomainResolverPrepare(tunnel_t *resolver, tunnel_t *client, line_t *l, void *user_lstate)
 {
     discard resolver;
-    discard direction;
 
     discard user_lstate;
     return trojanclientApplyTargetContext(client, l);

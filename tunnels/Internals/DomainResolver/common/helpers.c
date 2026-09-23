@@ -3,36 +3,6 @@
 #include "loggers/dns_logger.h"
 #include "loggers/network_logger.h"
 
-static void domainresolverMovePending(buffer_queue_t *dest, buffer_queue_t *source)
-{
-    while (bufferqueueGetBufCount(source) > 0)
-    {
-        bufferqueuePushBack(dest, bufferqueuePopFront(source));
-    }
-}
-
-static void domainresolverForwardInit(tunnel_t *t, line_t *l, domainresolver_direction_t direction)
-{
-    if (direction == kDomainResolverDirectionUpstream)
-    {
-        tunnelNextUpStreamInit(t, l);
-        return;
-    }
-
-    tunnelPrevDownStreamInit(t, l);
-}
-
-static void domainresolverForwardPayload(tunnel_t *t, line_t *l, domainresolver_direction_t direction, sbuf_t *buf)
-{
-    if (direction == kDomainResolverDirectionUpstream)
-    {
-        tunnelNextUpStreamPayload(t, l, buf);
-        return;
-    }
-
-    tunnelPrevDownStreamPayload(t, l, buf);
-}
-
 static const char *domainresolverCopyDomainForLog(const address_context_t *dest_ctx, char domain[256])
 {
     if (! addresscontextIsDomain(dest_ctx))
@@ -44,16 +14,61 @@ static const char *domainresolverCopyDomainForLog(const address_context_t *dest_
     return domain;
 }
 
-static void domainresolverDrainPending(tunnel_t *t, line_t *l, domainresolver_direction_t direction,
-                                       buffer_queue_t *pending)
+bool domainresolverUpdateSourcePressure(tunnel_t *t, line_t *l)
 {
-    while (lineIsAlive(l) && bufferqueueGetBufCount(pending) > 0)
-    {
-        sbuf_t *buf = bufferqueuePopFront(pending);
-        domainresolverForwardPayload(t, l, direction, buf);
-    }
+    domainresolver_lstate_t *ls     = lineGetState(l, t);
+    const bool               paused = ls->pending_source_hold || ls->next_paused;
+    if (ls->source_paused == paused)
+        return true;
+    // Ownership, received permission and emitted state are all authoritative
+    // before a source callback can admit nested input or finish the line.
+    ls->source_paused = paused;
+    return lineCallWithRef(l, paused ? tunnelPrevDownStreamPause : tunnelPrevDownStreamResume, t);
+}
 
-    bufferqueueDestroy(pending);
+bool domainresolverDrainPending(tunnel_t *t, line_t *l)
+{
+    domainresolver_lstate_t *ls = lineGetState(l, t);
+    if (ls->phase != kDomainResolverPhaseOpen || ls->init_dispatching || ls->draining)
+        return true;
+    lineRef(l);
+    ls->draining = true;
+    while (lineIsAlive(l) && ! ls->next_paused && bufferqueueGetBufCount(&ls->pending) != 0)
+    {
+        sbuf_t *buf = bufferqueuePopFront(&ls->pending);
+        tunnelNextUpStreamPayload(t, l, buf);
+    }
+    bool alive = lineIsAlive(l);
+    if (alive)
+    {
+        ls->draining = false;
+        if (bufferqueueGetBufCount(&ls->pending) == 0)
+            ls->pending_source_hold = false;
+        alive = domainresolverUpdateSourcePressure(t, l);
+    }
+    lineUnref(l);
+    return alive;
+}
+
+void domainresolverOpenPath(tunnel_t *t, line_t *l)
+{
+    domainresolver_lstate_t *ls = lineGetState(l, t);
+    lineRef(l);
+    ls->phase            = kDomainResolverPhaseOpen;
+    ls->init_dispatching = true;
+    tunnelNextUpStreamInit(t, l);
+    if (lineIsAlive(l))
+    {
+        ls->init_dispatching = false;
+        if (ls->prev_paused && ! ls->read_pause_sent)
+        {
+            ls->read_pause_sent = true;
+            tunnelNextUpStreamPause(t, l);
+        }
+        if (lineIsAlive(l))
+            discard domainresolverDrainPending(t, l);
+    }
+    lineUnref(l);
 }
 
 static void domainresolverLogResolved(const char *domain, const address_context_t *dest_ctx)
@@ -87,7 +102,6 @@ static void domainresolverOnDnsResolved(tunnel_t *t, line_t *l, void *userdata, 
     }
 
     domainresolver_tstate_t   *ts        = tunnelGetState(t);
-    domainresolver_direction_t direction = ls->init_direction;
     address_context_t         *dest_ctx  = lineGetDestinationAddressContext(l);
     char                       domain_buf[256];
     const char                *domain = domainresolverCopyDomainForLog(dest_ctx, domain_buf);
@@ -99,7 +113,7 @@ static void domainresolverOnDnsResolved(tunnel_t *t, line_t *l, void *userdata, 
                     "DomainResolver: async dns resolve failed for %s: %s",
                     domain,
                     error != NULL ? error : ares_strerror(status));
-        domainresolverCloseBeforeInit(t, l, direction);
+        domainresolverCloseLine(t, l);
         return;
     }
 
@@ -111,31 +125,15 @@ static void domainresolverOnDnsResolved(tunnel_t *t, line_t *l, void *userdata, 
                     LOG_LEVEL_ERROR,
                     "DomainResolver: async dns resolve returned no usable address for %s",
                     domain);
-        domainresolverCloseBeforeInit(t, l, direction);
+        domainresolverCloseLine(t, l);
         return;
     }
 
-    buffer_queue_t pending_local = bufferqueueCreate(kDomainResolverPendingQueueInitialCapacity);
-    domainresolverMovePending(&pending_local, &ls->pending);
-
-    ls->phase          = kDomainResolverPhaseOpen;
-    ls->init_direction = direction;
-
     domainresolverLogResolved(domain, dest_ctx);
-
-    domainresolverForwardInit(t, l, direction);
-    if (lineIsAlive(l))
-    {
-        domainresolverDrainPending(t, l, direction, &pending_local);
-    }
-    else
-    {
-        bufferqueueDestroy(&pending_local);
-    }
+    domainresolverOpenPath(t, l);
 }
 
-bool domainresolverStartResolveIfNeeded(tunnel_t *t, line_t *l, domainresolver_lstate_t *ls,
-                                        domainresolver_direction_t direction, bool *started_out)
+bool domainresolverStartResolveIfNeeded(tunnel_t *t, line_t *l, domainresolver_lstate_t *ls, bool *started_out)
 {
     domainresolver_tstate_t *ts       = tunnelGetState(t);
     address_context_t       *dest_ctx = lineGetDestinationAddressContext(l);
@@ -144,15 +142,13 @@ bool domainresolverStartResolveIfNeeded(tunnel_t *t, line_t *l, domainresolver_l
 
     if (addresscontextIsIpType(dest_ctx) || addresscontextIsDomainResolved(dest_ctx))
     {
-        ls->phase          = kDomainResolverPhaseOpen;
-        ls->init_direction = direction;
+        ls->phase = kDomainResolverPhaseOpen;
         return true;
     }
 
     if (ts->allow_missing_destination && ! addresscontextIsDomain(dest_ctx))
     {
-        ls->phase          = kDomainResolverPhaseOpen;
-        ls->init_direction = direction;
+        ls->phase = kDomainResolverPhaseOpen;
         return true;
     }
 
@@ -172,16 +168,14 @@ bool domainresolverStartResolveIfNeeded(tunnel_t *t, line_t *l, domainresolver_l
         loggerPrint(getDnsLogger(), LOG_LEVEL_DEBUG, "DomainResolver: resolving %s", domain);
     }
 
-    ls->phase          = kDomainResolverPhaseResolving;
-    ls->init_direction = direction;
+    ls->phase = kDomainResolverPhaseResolving;
 
     *started_out = true;
     int rc       = lineResolveDomainServiceAsync(l, domain, NULL, socktype, domainresolverOnDnsResolved, t, NULL);
     if (UNLIKELY(rc != ARES_SUCCESS))
     {
-        *started_out       = false;
-        ls->phase          = kDomainResolverPhaseIdle;
-        ls->init_direction = kDomainResolverDirectionNone;
+        *started_out = false;
+        ls->phase    = kDomainResolverPhaseIdle;
         loggerPrint(getDnsLogger(),
                     LOG_LEVEL_ERROR,
                     "DomainResolver: failed to start async dns resolve for %s: %s",
@@ -193,69 +187,32 @@ bool domainresolverStartResolveIfNeeded(tunnel_t *t, line_t *l, domainresolver_l
     return true;
 }
 
-bool domainresolverQueueResolvingPayload(tunnel_t *t, line_t *l, domainresolver_lstate_t *ls, sbuf_t *buf,
-                                         domainresolver_direction_t direction)
+bool domainresolverQueuePayload(tunnel_t *t, line_t *l, domainresolver_lstate_t *ls, sbuf_t *buf)
 {
-    if (ls->phase != kDomainResolverPhaseResolving || ls->init_direction != direction)
+    if (LIKELY(bufferqueueTryPushBack(&ls->pending, &buf)))
     {
-        lineReuseBuffer(l, buf);
-        return true;
+        ls->pending_source_hold = true;
+        return domainresolverUpdateSourcePressure(t, l);
     }
-
-    /*
-     * The byte limit is checked after enqueue so ownership stays simple: this
-     * can exceed the limit by one buffer before the line is closed.
-     */
-    bufferqueuePushBack(&ls->pending, buf);
-    if (bufferqueueGetBufLen(&ls->pending) <= kDomainResolverMaxPendingBytes)
-    {
-        return true;
-    }
-
-    loggerPrint(getDnsLogger(), LOG_LEVEL_ERROR, "DomainResolver: pending payload queue overflow while resolving");
-    domainresolverCloseBeforeInit(t, l, direction);
+    lineReuseBuffer(l, buf);
+    loggerPrint(getDnsLogger(), LOG_LEVEL_ERROR, "DomainResolver: pending payload retention overflow");
+    domainresolverCloseLine(t, l);
     return false;
 }
 
-void domainresolverCloseBeforeInit(tunnel_t *t, line_t *l, domainresolver_direction_t direction)
+/* Internal failure closes only initialized neighbours. The normal line creator
+ * is reached through prev; this borrowed line is never destroyed here. */
+void domainresolverCloseLine(tunnel_t *t, line_t *l)
 {
     domainresolver_lstate_t *ls = lineGetState(l, t);
-
-    lineRef(l);
-
-    domainresolverLinestateDestroy(t, l, ls);
-
-    if (direction == kDomainResolverDirectionUpstream && lineIsAlive(l))
-    {
-        tunnelPrevDownStreamFinish(t, l);
-    }
-    else if (direction == kDomainResolverDirectionDownstream && lineIsAlive(l))
-    {
-        tunnelNextUpStreamFinish(t, l);
-    }
-
-    lineUnref(l);
-}
-
-void domainresolverCloseLine(tunnel_t *t, line_t *l, domainresolver_direction_t direction)
-{
-    domainresolver_lstate_t *ls       = lineGetState(l, t);
     bool                     was_open = ls->phase == kDomainResolverPhaseOpen;
     lineRef(l);
-
     domainresolverLinestateDestroy(t, l, ls);
-
-    if (! was_open)
-    {
-        lineUnref(l);
-        return;
-    }
-
-    if (direction == kDomainResolverDirectionUpstream && lineIsAlive(l))
+    if (was_open && lineIsAlive(l))
     {
         tunnelNextUpStreamFinish(t, l);
     }
-    else if (direction == kDomainResolverDirectionDownstream && lineIsAlive(l))
+    if (lineIsAlive(l))
     {
         tunnelPrevDownStreamFinish(t, l);
     }

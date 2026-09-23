@@ -110,12 +110,18 @@ typedef struct softiplimiter_lstate_s
     bool                   admitted;
     bool                   next_init_sent;
     bool                   ip_key_valid;
+    /* Nested input received while next Init/initial replay is on the stack. */
+    buffer_queue_t initial_reentry;
+    bool           initial_forwarding;
+    bool           transport_est_sent;
 } softiplimiter_lstate_t;
 
 enum
 {
-    kTunnelStateSize = sizeof(softiplimiter_tstate_t),
-    kLineStateSize   = sizeof(softiplimiter_lstate_t)
+    kSoftIpLimiterMaxReentryBytes   = 2U * 1024U * 1024U,
+    kSoftIpLimiterMaxReentryBuffers = 1024U,
+    kTunnelStateSize                = sizeof(softiplimiter_tstate_t),
+    kLineStateSize                  = sizeof(softiplimiter_lstate_t)
 };
 
 WW_EXPORT void         softiplimiterTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context);

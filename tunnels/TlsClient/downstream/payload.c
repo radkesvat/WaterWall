@@ -2,19 +2,6 @@
 
 #include "loggers/network_logger.h"
 
-static inline bool flushWriteQueue(tunnel_t *t, line_t *l, tlsclient_lstate_t *ls)
-{
-    while (bufferqueueGetBufCount(&(ls->bq)) > 0)
-    {
-        sbuf_t *buf = bufferqueuePopFront(&(ls->bq));
-        if (! lineCallWithRefWithBuf(l, tunnelUpStreamPayload, t, buf))
-        {
-            return false;
-        }
-    }
-    return true;
-}
-
 static inline bool flushSSLOutput(tunnel_t *t, line_t *l, tlsclient_lstate_t *ls)
 {
     return tlsclientFlushSslOutput(t, l, ls);
@@ -92,7 +79,7 @@ static inline int performHandshake(tunnel_t *t, line_t *l, tlsclient_lstate_t *l
 
         // write the data that we previously wanted to encrypt and send
         // yes, after the handshake is complete we can safely call SSL_write
-        if (! flushWriteQueue(t, l, ls))
+        if (UNLIKELY(! tlsclientDrainPendingPlaintext(t, l)))
         {
             return -1; // Error (includes line not alive)
         }
@@ -143,11 +130,17 @@ static int performTakeoverHandshake(tunnel_t *t, line_t *l, tlsclient_lstate_t *
 
             logHandshakeComplete(l, ls);
             ls->handshake_completed = true;
-            if (! ls->handshake_est_sent)
+            if (! ls->handshake_ready_sent)
             {
-                ls->handshake_est_sent = true;
-                tunnelPrevDownStreamEst(t, l);
+                tlsclient_tstate_t *ts   = tunnelGetState(t);
+                ls->handshake_ready_sent = true;
+                ts->handshake_ready(ts->handshake_owner, l);
                 if (! lineIsAlive(l))
+                {
+                    return -2;
+                }
+                ls = lineGetState(l, t);
+                if (UNLIKELY(ls->tunnel != t || ! ls->handshake_completed))
                 {
                     return -2;
                 }
@@ -232,6 +225,12 @@ failed:
         lineUnref(l);
         return;
     }
+    ls = lineGetState(l, t);
+    if (ls->tunnel != t || ls->resources_released)
+    {
+        lineUnref(l);
+        return;
+    }
     LOGW("TlsClient: downstream takeover handshake failed: boringssl state is printed below");
     if (ls->ssl != NULL)
     {
@@ -265,6 +264,11 @@ static inline bool readDecryptedData(tunnel_t *t, line_t *l, tlsclient_lstate_t 
             sbufSetLength(data_buf, n);
             tunnelPrevDownStreamPayload(t, l, data_buf);
             if (! lineIsAlive(l))
+            {
+                return false;
+            }
+            ls = lineGetState(l, t);
+            if (UNLIKELY(ls->tunnel != t || ls->resources_released))
             {
                 return false;
             }
@@ -390,6 +394,12 @@ failed:
         return;
     }
 
+    ls = lineGetState(l, t);
+    if (ls->tunnel != t || ls->resources_released)
+    {
+        lineUnref(l);
+        return;
+    }
     LOGW("TlsClient: downstream payload failed: boringssl state is printed below");
     if (ls->ssl != NULL)
     {

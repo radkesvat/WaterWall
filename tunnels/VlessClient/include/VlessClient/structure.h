@@ -1,6 +1,7 @@
 #pragma once
 
 #include "DomainResolver/interface.h"
+#include "splice_buffer.h"
 #include "wwapi.h"
 
 typedef enum vlessclient_protocol_e
@@ -12,10 +13,9 @@ typedef enum vlessclient_protocol_e
 
 typedef enum vlessclient_phase_e
 {
-    kVlessClientPhaseIdle = 0,
-    kVlessClientPhaseWaitResponse,
-    kVlessClientPhaseEstablished,
-    kVlessClientPhaseClosing
+    kVlessClientPhaseClosed = 0,
+    kVlessClientPhaseIdle,
+    kVlessClientPhaseEstablished // Transport Est published; protocol readiness is independent.
 } vlessclient_phase_t;
 
 typedef enum vlessclient_line_kind_e
@@ -34,13 +34,14 @@ typedef enum vlessclient_close_origin_e
 
 enum
 {
-    kVlessClientUuidLen          = 16,
-    kVlessClientResponseLen      = 2,
-    kVlessClientUdpHeaderLen     = 2,
-    kVlessClientUdpMaxPacket     = UINT16_MAX,
-    kVlessClientPendingQueueCap  = 8,
-    kVlessClientMaxPendingBytes  = 1024 * 1024,
-    kVlessClientMaxBufferedBytes = 1024 * 1024
+    kVlessClientMaxOrderBytes       = 2 * 1024 * 1024,
+    kVlessClientUuidLen             = 16,
+    kVlessClientResponseLen         = 2,
+    kVlessClientUdpHeaderLen        = 2,
+    kVlessClientUdpMaxPacket        = UINT16_MAX,
+    kVlessClientResponseMaxLen      = 257,
+    kVlessClientMaxTcpWireBytes     = 2097409,
+    kVlessClientMaxUdpBufferedBytes = 2162689,
 };
 
 typedef struct vlessclient_tstate_s
@@ -55,22 +56,50 @@ typedef struct vlessclient_tstate_s
     uint32_t               target_addr_source;
     uint32_t               target_port_source;
     vlessclient_protocol_t protocol;
+    uint32_t               first_payload_timeout_ms;
     bool                   verbose;
     bool                   resolve_domains;
 } vlessclient_tstate_t;
 
 typedef struct vlessclient_lstate_s
 {
-    tunnel_t               *tunnel;
+    /* This state belongs to line. Direct/application lines are borrowed;
+     * VlessClient owns each UDP carrier. Both association links detach on close. */
     line_t                 *line;
-    line_t                 *app_line;
-    line_t                 *carrier_line;
-    address_context_t       target_addr;
-    buffer_stream_t         in_stream;
-    buffer_queue_t          pending_up;
+    line_t                 *app_line;     // Carrier's borrowed application line.
+    line_t                 *carrier_line; // Application's dependent TCP carrier.
+    vlessclient_line_kind_t kind;
     vlessclient_protocol_t  protocol;
     vlessclient_phase_t     phase;
-    vlessclient_line_kind_t kind;
+    address_context_t       target_addr;
+
+    /* Est is transport notification, independent of request and parser readiness. */
+    tunnel_t *tunnel;
+    bool      next_started;
+    bool      next_established;
+    bool      request_sent;
+    bool      est_notifying;
+    bool      next_paused; // Permission for the independent idle-header producer only.
+    bool      prev_paused; // Forwarded source permission, never a parser batch gate.
+    wtimer_t *first_payload_timer;
+    uint64_t  first_payload_deadline_us;
+    bool      first_payload_due;
+    bool      response_complete;
+
+    /* Each FIFO entry is one admitted nested input batch. The outer parser
+     * completes these in order and retains only an incomplete wire suffix.
+     * No ready output or application payload is queued for Pause or Est. */
+    bool           receiving;
+    buffer_queue_t pending_down;
+
+    /* Response decoder on direct/carrier lines, then UDP decoder on the carrier. The popped head is still owned here;
+     * receive_bytes includes queued bytes, this head and the cached header. */
+    sbuf_t  *receive_head;
+    size_t   receive_bytes;
+    uint8_t  header[kVlessClientResponseMaxLen];
+    uint16_t header_filled;
+    uint16_t header_needed;
+    uint16_t body_length;
 } vlessclient_lstate_t;
 
 enum
@@ -96,18 +125,29 @@ void vlessclientTunnelDownStreamFinish(tunnel_t *t, line_t *l);
 void vlessclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void vlessclientTunnelDownStreamPause(tunnel_t *t, line_t *l);
 void vlessclientTunnelDownStreamResume(tunnel_t *t, line_t *l);
-bool vlessclientDomainResolverPrepare(tunnel_t *resolver, tunnel_t *client, line_t *l,
-                                      domainresolver_direction_t direction, void *user_lstate);
+bool vlessclientDomainResolverPrepare(tunnel_t *resolver, tunnel_t *client, line_t *l, void *user_lstate);
 
-void vlessclientLinestateInitialize(vlessclient_lstate_t *ls, tunnel_t *t, line_t *l);
+void vlessclientLinestateInitialize(vlessclient_lstate_t *ls, line_t *l);
 void vlessclientLinestateDestroy(vlessclient_lstate_t *ls);
 
 void vlessclientTunnelstateDestroy(vlessclient_tstate_t *ts);
 bool vlessclientApplyTargetContext(tunnel_t *t, line_t *l);
-bool vlessclientStartUdpCarrier(tunnel_t *t, line_t *l, vlessclient_lstate_t *ls, bool *line_alive_out);
-bool vlessclientForwardUdpAppPayload(tunnel_t *t, line_t *l, vlessclient_lstate_t *ls, sbuf_t *buf);
-bool vlessclientHandleUdpCarrierPayload(tunnel_t *t, line_t *l, vlessclient_lstate_t *ls, sbuf_t *buf);
-bool vlessclientHandleDirectPayload(tunnel_t *t, line_t *l, vlessclient_lstate_t *ls, sbuf_t *buf);
-bool vlessclientOnTransportEstablished(tunnel_t *t, line_t *l, vlessclient_lstate_t *ls);
-void vlessclientCloseOwnedLine(tunnel_t *t, line_t *owned_l);
+void vlessclientStartUdpCarrier(tunnel_t *t, line_t *l, vlessclient_lstate_t *ls);
+void vlessclientOnNextEstablished(tunnel_t *t, line_t *l, vlessclient_lstate_t *ls);
 void vlessclientCloseLine(tunnel_t *t, line_t *l, vlessclient_close_origin_t origin);
+
+bool vlessclientAssociationAlive(tunnel_t *t, line_t *next_line, line_t *prev_line);
+void vlessclientSendDueRequest(tunnel_t *t, line_t *l);
+void vlessclientCancelFirstPayloadTimer(vlessclient_lstate_t *ls);
+void vlessclientSetNextPaused(tunnel_t *t, line_t *l, bool paused);
+
+void vlessclientSetPrevPaused(tunnel_t *t, line_t *l, bool paused);
+
+/* Shared implementation helpers; callbacks retain their directional admission. */
+bool    vlessclientSendInitialRequest(tunnel_t *t, line_t *l, vlessclient_lstate_t *ls, sbuf_t *body);
+void    vlessclientWrapUdpPayload(line_t *l, sbuf_t **buf_io);
+int     vlessclientReadUdpHeader(vlessclient_lstate_t *ls);
+sbuf_t *vlessclientExtractUdpBody(vlessclient_lstate_t *ls);
+
+int     vlessclientReadResponse(vlessclient_lstate_t *ls);
+sbuf_t *vlessclientTakeTcpBody(vlessclient_lstate_t *ls);

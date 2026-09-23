@@ -4,6 +4,7 @@
 
 typedef enum connectionfisherserver_phase_e
 {
+    kConnectionFisherServerPhaseClosing = 0,
     kConnectionFisherServerPhaseWaitPing,
     kConnectionFisherServerPhaseWaitPayload,
     kConnectionFisherServerPhaseEstablished
@@ -18,13 +19,19 @@ typedef struct connectionfisherserver_lstate_s
 {
     connectionfisherserver_phase_e phase;
     bool                           next_init_sent;
-    buffer_stream_t                in_stream;
+    bool                           est_forwarded;
+    bool                           dispatching;
+    /* Holds older coalesced body across reply/Init and serializes nested input. */
+    buffer_queue_t  pending_up;
+    size_t          init_payload_bytes;
+    buffer_stream_t in_stream;
 } connectionfisherserver_lstate_t;
 
 enum
 {
     kConnectionFisherServerHandshakeLength   = 5,
     kConnectionFisherServerMaxHandshakeBytes = 4096,
+    kConnectionFisherServerMaxPendingBytes   = 1024 * 1024,
     kTunnelStateSize                         = sizeof(connectionfisherserver_tstate_t),
     kLineStateSize                           = sizeof(connectionfisherserver_lstate_t)
 };

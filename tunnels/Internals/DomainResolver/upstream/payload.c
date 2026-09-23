@@ -4,9 +4,11 @@ void domainresolverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     domainresolver_lstate_t *ls = lineGetState(l, t);
 
-    if (ls->phase == kDomainResolverPhaseResolving)
+    if (ls->phase == kDomainResolverPhaseResolving || ls->init_dispatching || ls->draining ||
+        bufferqueueGetBufCount(&ls->pending) != 0)
     {
-        discard domainresolverQueueResolvingPayload(t, l, ls, buf, kDomainResolverDirectionUpstream);
+        if (LIKELY(domainresolverQueuePayload(t, l, ls, buf)))
+            discard domainresolverDrainPending(t, l);
         return;
     }
 

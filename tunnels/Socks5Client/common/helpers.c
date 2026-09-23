@@ -32,38 +32,6 @@ static bool sendBufferUpstream(tunnel_t *t, line_t *l, sbuf_t *buf)
     return lineCallWithRefWithBuf(l, tunnelNextUpStreamPayload, t, buf);
 }
 
-static bool flushQueueToNext(tunnel_t *t, line_t *l, buffer_queue_t *queue)
-{
-    while (bufferqueueGetBufCount(queue) > 0)
-    {
-        sbuf_t *buf = bufferqueuePopFront(queue);
-        if (! lineCallWithRefWithBuf(l, tunnelNextUpStreamPayload, t, buf))
-        {
-            bufferqueueDestroy(queue);
-            return false;
-        }
-    }
-
-    bufferqueueDestroy(queue);
-    return true;
-}
-
-static bool flushQueueToPrev(tunnel_t *t, line_t *l, buffer_queue_t *queue)
-{
-    while (bufferqueueGetBufCount(queue) > 0)
-    {
-        sbuf_t *buf = bufferqueuePopFront(queue);
-        if (! lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, buf))
-        {
-            bufferqueueDestroy(queue);
-            return false;
-        }
-    }
-
-    bufferqueueDestroy(queue);
-    return true;
-}
-
 static int getCommandReplyLength(buffer_stream_t *stream)
 {
     size_t available = bufferstreamGetBufLen(stream);
@@ -373,6 +341,15 @@ bool socks5clientApplyTargetContext(tunnel_t *t, line_t *l)
     return true;
 }
 
+bool socks5clientMaybeSendGreeting(tunnel_t *t, line_t *l)
+{
+    socks5client_lstate_t *ls = lineGetState(l, t);
+    if (! ls->greeting_due || ls->next_paused)
+        return true;
+    ls->greeting_due = false;
+    return socks5clientSendGreeting(t, l, ls);
+}
+
 bool socks5clientSendGreeting(tunnel_t *t, line_t *l, socks5client_lstate_t *ls)
 {
     socks5client_tstate_t *ts        = tunnelGetState(t);
@@ -557,43 +534,90 @@ static bool forwardUdpPayloadToRelay(tunnel_t *t, line_t *app_l, socks5client_ls
     return lineCallWithRefWithBuf(app_ls->udp_line, tunnelNextUpStreamPayload, t, buf);
 }
 
-static bool tryEstablishUdpApp(tunnel_t *t, line_t *app_l, socks5client_lstate_t *app_ls)
+static bool updateSourcePressure(tunnel_t *t, line_t *l)
 {
-    if (app_ls->phase == kSocks5ClientPhaseEstablished)
-    {
+    socks5client_lstate_t *ls     = lineGetState(l, t);
+    const bool             paused = ls->next_paused || ls->draining_up || bufferqueueGetBufCount(&ls->pending_up) != 0;
+    if (ls->source_pause_sent == paused)
         return true;
-    }
+    ls->source_pause_sent = paused;
+    return paused ? lineCallWithRef(l, tunnelPrevDownStreamPause, t)
+                  : lineCallWithRef(l, tunnelPrevDownStreamResume, t);
+}
 
-    if (! app_ls->udp_control_ready || ! app_ls->udp_relay_ready)
+bool socks5clientQueuePayload(tunnel_t *t, line_t *l, sbuf_t *buf)
+{
+    socks5client_lstate_t *ls     = lineGetState(l, t);
+    if (UNLIKELY(! bufferqueueTryPushBack(&ls->pending_up, &buf)))
     {
-        return true;
-    }
-
-    buffer_queue_t pending_local = bufferqueueCreate(kSocks5ClientPendingQueueCap);
-    while (bufferqueueGetBufCount(&app_ls->pending_up) > 0)
-    {
-        bufferqueuePushBack(&pending_local, bufferqueuePopFront(&app_ls->pending_up));
-    }
-
-    app_ls->phase = kSocks5ClientPhaseEstablished;
-
-    if (! lineCallWithRef(app_l, tunnelPrevDownStreamEst, t))
-    {
-        bufferqueueDestroy(&pending_local);
+        lineReuseBuffer(l, buf);
+        socks5clientCloseLineBidirectional(t, l);
         return false;
     }
+    return updateSourcePressure(t, l);
+}
 
-    while (bufferqueueGetBufCount(&pending_local) > 0)
+bool socks5clientDrainPending(tunnel_t *t, line_t *l)
+{
+    socks5client_lstate_t *ls = lineGetState(l, t);
+    if (ls->draining_up || ls->phase != kSocks5ClientPhaseEstablished)
+        return true;
+    lineRef(l);
+    ls->draining_up = true;
+    while (lineIsAlive(l) && ! ls->next_paused && bufferqueueGetBufCount(&ls->pending_up) != 0)
     {
-        if (! forwardUdpPayloadToRelay(t, app_l, app_ls, bufferqueuePopFront(&pending_local)))
+        sbuf_t *buf = bufferqueuePopFront(&ls->pending_up);
+        if (ls->kind == kSocks5ClientLineKindUdpApp)
         {
-            bufferqueueDestroy(&pending_local);
-            return false;
+            if (UNLIKELY(! forwardUdpPayloadToRelay(t, l, ls, buf)))
+                break;
         }
+        else
+            tunnelNextUpStreamPayload(t, l, buf);
     }
+    bool alive = lineIsAlive(l);
+    if (alive)
+    {
+        ls->draining_up = false;
+        alive           = updateSourcePressure(t, l);
+    }
+    lineUnref(l);
+    return alive;
+}
 
-    bufferqueueDestroy(&pending_local);
-    return true;
+void socks5clientSetNextPaused(tunnel_t *t, line_t *l, bool paused)
+{
+    socks5client_lstate_t *ls = lineGetState(l, t);
+    ls->next_paused           = paused;
+    if (! paused && ! socks5clientMaybeSendGreeting(t, l))
+        return;
+    line_t *app =
+        (ls->kind == kSocks5ClientLineKindUdpControl || ls->kind == kSocks5ClientLineKindUdpRelay) ? ls->app_line : l;
+    if (app == NULL)
+        return;
+    socks5client_lstate_t *app_ls = lineGetState(app, t);
+    if (app != l)
+    {
+        socks5client_lstate_t *control = app_ls->control_line ? lineGetState(app_ls->control_line, t) : NULL;
+        socks5client_lstate_t *relay   = app_ls->udp_line ? lineGetState(app_ls->udp_line, t) : NULL;
+        app_ls->next_paused            = (control && control->next_paused) || (relay && relay->next_paused);
+    }
+    if (app_ls->next_paused)
+    {
+        discard updateSourcePressure(t, app);
+        return;
+    }
+    if (UNLIKELY(! socks5clientDrainPending(t, app)))
+        return;
+    discard updateSourcePressure(t, app);
+}
+
+static bool tryEstablishUdpApp(tunnel_t *t, line_t *app_l, socks5client_lstate_t *app_ls)
+{
+    if (! app_ls->udp_control_ready || ! app_ls->udp_relay_ready)
+        return true;
+    app_ls->phase = kSocks5ClientPhaseEstablished;
+    return socks5clientDrainPending(t, app_l);
 }
 
 static bool startUdpRelayLine(tunnel_t *t, line_t *control_l, socks5client_lstate_t *control_ls,
@@ -628,6 +652,15 @@ static bool startUdpRelayLine(tunnel_t *t, line_t *control_l, socks5client_lstat
         {
             app_ls->udp_line = NULL;
         }
+        *control_alive_out = lineIsAlive(control_l);
+        lineUnref(app_l);
+        lineUnref(control_l);
+        return false;
+    }
+
+    if (lineIsAlive(app_l) && app_ls->prev_paused && ! lineCallWithRef(udp_l, tunnelNextUpStreamPause, t))
+    {
+        // The callback may have reclaimed udp_l; only our retained app/control remain accessible.
         *control_alive_out = lineIsAlive(control_l);
         lineUnref(app_l);
         lineUnref(control_l);
@@ -688,23 +721,9 @@ bool socks5clientStartUdpAssociation(tunnel_t *t, line_t *l, socks5client_lstate
 
 bool socks5clientForwardUdpAppPayload(tunnel_t *t, line_t *l, socks5client_lstate_t *ls, sbuf_t *buf)
 {
-    if (ls->phase == kSocks5ClientPhaseEstablished)
-    {
+    if (ls->phase == kSocks5ClientPhaseEstablished && ! ls->draining_up && bufferqueueGetBufCount(&ls->pending_up) == 0)
         return forwardUdpPayloadToRelay(t, l, ls, buf);
-    }
-
-    bufferqueuePushBack(&ls->pending_up, buf);
-
-    if (bufferqueueGetBufLen(&ls->pending_up) > kSocks5ClientMaxPendingUpBytes)
-    {
-        LOGE("Socks5Client: UDP association queue overflow, size=%zu limit=%u",
-             bufferqueueGetBufLen(&ls->pending_up),
-             (unsigned int) kSocks5ClientMaxPendingUpBytes);
-        socks5clientCloseLineBidirectional(t, l);
-        return false;
-    }
-
-    return true;
+    return socks5clientQueuePayload(t, l, buf) && socks5clientDrainPending(t, l);
 }
 
 bool socks5clientHandleUdpRelayPayload(tunnel_t *t, line_t *l, socks5client_lstate_t *ls, sbuf_t *buf)
@@ -1026,46 +1045,22 @@ bool socks5clientDrainHandshakeInput(tunnel_t *t, line_t *l, socks5client_lstate
                 return tryEstablishUdpApp(t, app_l, app_ls);
             }
 
-            buffer_queue_t pending_local = bufferqueueCreate(kSocks5ClientPendingQueueCap);
-            buffer_queue_t down_local    = bufferqueueCreate(kSocks5ClientPendingQueueCap);
-
-            while (bufferqueueGetBufCount(&ls->pending_up) > 0)
-            {
-                bufferqueuePushBack(&pending_local, bufferqueuePopFront(&ls->pending_up));
-            }
-
-            while (! bufferstreamIsEmpty(&ls->in_stream))
-            {
-                bufferqueuePushBack(&down_local, bufferstreamIdealRead(&ls->in_stream));
-            }
-
             lineReuseBuffer(l, reply_buf);
             ls->phase = kSocks5ClientPhaseEstablished;
-
-            if (ts->verbose)
-            {
-                LOGD("Socks5Client: SOCKS5 handshake completed");
-            }
-
-            if (! lineCallWithRef(l, tunnelPrevDownStreamEst, t))
-            {
-                bufferqueueDestroy(&pending_local);
-                bufferqueueDestroy(&down_local);
+            // This tail belongs to the accepted reply batch. Publish its consumption
+            // before callbacks; the older application FIFO stays authoritative in ls.
+            sbuf_t *tail = bufferstreamIsEmpty(&ls->in_stream)
+                               ? NULL
+                               : bufferstreamReadExact(&ls->in_stream, bufferstreamGetBufLen(&ls->in_stream));
+            if (UNLIKELY(tail != NULL && ! lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, tail)))
                 return false;
-            }
-
-            if (! flushQueueToNext(t, l, &pending_local))
+            if (ls->prev_paused && ! ls->read_pause_sent)
             {
-                bufferqueueDestroy(&down_local);
-                return false;
+                ls->read_pause_sent = true;
+                if (UNLIKELY(! lineCallWithRef(l, tunnelNextUpStreamPause, t)))
+                    return false;
             }
-
-            if (! flushQueueToPrev(t, l, &down_local))
-            {
-                return false;
-            }
-
-            return true;
+            return socks5clientDrainPending(t, l);
         }
 
         return true;

@@ -38,8 +38,15 @@ or any other server-side stream chain where the first `5` bytes are reserved for
 
 - upstream `Init` only initializes local line state
 - upstream `Init` is intentionally delayed toward `next`
-- downstream `Est` is forwarded only after the probe has completed and the line is in normal forwarding mode
+- the continuing path is published before next Init, and transport `Est` is forwarded promptly once, including synchronous Est from Init
 - upstream and downstream `Pause` / `Resume` are forwarded only after the probe has completed
+
+The body coalesced with FISH? and the first post-probe payload retain their FIFO
+position across the FISH! reply, onward Init and nested Est callbacks. Temporary
+input ordering is bounded to 1 MiB, including the body held across Init. It drains
+within the admitted dispatch and does not queue ready data merely for Pause or
+Est. The existing 4,096-byte probe assembly limit remains unchanged. Close during
+Init or Est releases older local input before returning.
 
 ## Finish And Safety Behavior
 

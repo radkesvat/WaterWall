@@ -1,5 +1,5 @@
 <!--
-Documentation version: 152
+Documentation version: 159
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/VlessClient.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/VlessClient.mdx, and all files must keep the same documentation version.
 -->
 
@@ -138,6 +138,9 @@ back to IPv6.
 
 ## Optional JSON Fields
 
+- `settings.first-payload-timeout-ms`
+  Integer milliseconds from 0 through 4,294,967,295; default 400. Zero disables deliberate waiting.
+
 - `settings.protocol`
   Selects the VLESS command and the protocol placed in `line->dest_ctx`.
 
@@ -212,9 +215,36 @@ Response format:
 00 00
 ```
 
-`VlessClient` forwards downstream `Est` when the downstream transport establishes. Upstream payload emitted by that `Est`
-callback is queued until the VLESS request header is sent, then flushed immediately after the header without waiting for
-the VLESS response header. Downstream body bytes are still held until the response header is parsed and validated.
+## First payload and transport establishment
+
+`Init` prepares the destination and starts the next node without emitting a request.
+The first eligible application payload may arrive before transport `Est`, during its
+callback, or while Pause is recorded. It is sent immediately with the complete request
+in one ordinary buffer, including one UDP frame header when applicable. The source's
+resident prefix and private-pipe body are fully materialized into that first output.
+Empty TCP input does not trigger a request. Empty VLESS UDP datagrams are dropped locally.
+
+Transport `Est` reaches the live application once, independently of protocol data and
+Pause. If the request remains unsent, its first-payload deadline starts at that Est.
+`settings.first-payload-timeout-ms` defaults to **400**, accepts integers from **0** to
+**4,294,967,295**, and rejects other types and ranges. Zero disables deliberate waiting.
+Paused time counts. Expiry sends one header-only request when transport output is
+writable; while paused it retains only a due obligation until Resume. An eligible
+payload arriving first cancels that timer and sends the combined output. Duplicate
+Est/Resume cannot repeat the request or reset its deadline. Finish cancels the timer.
+One ordinary output does not promise one syscall, TCP packet, or TLS record.
+
+Direct TCP and per-datagram upstream forwarding do not wait for Est or Resume and do
+not keep application output queues. VLESS downstream parsing validates version 0 and consumes exactly the response header and its addons, at most 257 bytes. Nonempty addons are skipped with a warning. Outbound input never waits for this response.
+
+UDP application lines remain borrowed UDP-facing lines. The client creates one dependent,
+owned TCP carrier on the application's worker and maps Est, Pause/Resume and Finish to
+that association. The request carries the fixed target; each frame has a two-byte big-endian length.
+The UDP decoder finishes every complete datagram in an admitted input even when an earlier
+delivery causes Pause. Nested input joins the guarded parser FIFO behind older input;
+only incomplete framing/order state remains. Finish, malformed input or receiver refusal
+stops delivery and closes the affected association. Only this node's owned carrier is
+destroyed here; the application owner drains it during shutdown.
 
 ## Notes And Caveats
 
@@ -225,13 +255,39 @@ the VLESS response header. Downstream body bytes are still held until the respon
 - Malformed downstream response headers or UDP frames close the affected line safely.
 - `required_padding_left` is `2`, enough for the VLESS UDP length prefix.
 
+## Splice and retention
+
+The first request plus payload is ordinary; the request itself is at most 278 bytes.
+Later opaque TCP preserves its original ordinary or splice representation. UDP sends
+prepend within the advertised 2-byte padding budget. Header parsing and exact body
+movement preserve boundaries and use complete ordinary fallback when padding or pipe
+capacity requires it. Receive extraction preserves full onward padding.
+
+| Retained parser input | Inclusive logical limit |
+| --- | --- |
+| TCP body input retained only for parser reentry ordering | 2,097,152 bytes (2 MiB) |
+| TCP response assembly, including active head and cached metadata | 2,097,409 bytes (2 MiB plus 257 bytes) |
+| UDP wire assembly, including active head and cached headers | 2,162,689 bytes (2 MiB plus 65,537 bytes) |
+| UDP body | 1 through 65,535 bytes |
+
+Equality passes; overflow or parser queue refusal closes the association. There is no
+retained decoded-output queue or 1,024-record limit on a synchronous batch. Fragment
+counts do not consume output slots. These are logical protocol limits, independent
+of buffer-pool size, RAM profile, and pipe capacity. Oversized local datagrams are
+dropped; malformed received frames close the association. A received zero-length UDP frame is malformed.
+
+Splice requires `misc.splice`, a supported build and support from every node in the
+final chain, including internal helpers. `DomainResolver` supports splice. `TlsClient`
+still blocks splice for its entire chain. Keep TLS in ordinary deployment configurations;
+splice capability does not guarantee zero-copy or a measured speed increase.
+
 ## Node Metadata
 
 Source-backed metadata:
 
 | Property | Value |
 | --- | --- |
-| node flags | `kNodeFlagNone` |
+| node flags | `kNodeFlagSupportsSplice` |
 | `can_have_prev` | `true` |
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayer4` |

@@ -47,11 +47,8 @@ enum
     kTrojanClientPasswordHexLen      = SHA224_DIGEST_SIZE * 2,
     kTrojanClientCrlfLen             = 2,
     kTrojanClientUdpMaxPacket        = 8192,
-    kTrojanClientMaxQueuedBuffers    = 1024,
-    kTrojanClientMaxPendingBytes     = 1024 * 1024,
-    kTrojanClientMaxBufferedBytes    = 1024 * 1024,
     kTrojanClientUdpHeaderMaxLen     = 1 + 1 + UINT8_MAX + 2 + 2 + 2,
-    kTrojanClientMaxUdpBufferedBytes = 1024 * 1024 + kTrojanClientUdpHeaderMaxLen + kTrojanClientUdpMaxPacket
+    kTrojanClientMaxUdpBufferedBytes = 2 * 1024 * 1024 + kTrojanClientUdpHeaderMaxLen + kTrojanClientUdpMaxPacket
 };
 
 typedef struct trojanclient_tstate_s
@@ -66,6 +63,7 @@ typedef struct trojanclient_tstate_s
     uint32_t                target_addr_source;
     uint32_t                target_port_source;
     trojanclient_protocol_t protocol;
+    uint32_t                first_payload_timeout_ms;
     bool                    verbose;
     bool                    resolve_domains;
 } trojanclient_tstate_t;
@@ -82,24 +80,22 @@ typedef struct trojanclient_lstate_s
     trojanclient_phase_t     phase;
     address_context_t        target_addr;
 
-    /* Request/Est ordering and reentrancy, on the direct line or UDP carrier. */
-    bool next_started;
-    bool next_established;
-    bool request_sent;
-    bool pumping;
+    /* Est is transport notification, independent of request and parser readiness. */
+    tunnel_t *tunnel;
+    bool      next_started;
+    bool      next_established;
+    bool      request_sent;
+    bool      est_notifying;
+    bool      next_paused; // Permission for the independent idle-header producer only.
+    bool      prev_paused; // Forwarded source permission, never a parser batch gate.
+    wtimer_t *first_payload_timer;
+    uint64_t  first_payload_deadline_us;
+    bool      first_payload_due;
 
-    /* Consumer permission and producer notifications are separate state. In UDP
-     * mode these flags live on the carrier and govern both associated lines. */
-    bool next_paused;     // Next asked us to stop sending upstream payload.
-    bool prev_paused;     // Prev asked us to stop sending downstream payload.
-    bool prev_pause_sent; // We told prev to pause its upstream producer.
-    bool next_pause_sent; // We told next to pause its downstream producer.
-
-    /* Owned upstream FIFO on the direct/application line; UDP datagrams stay
-     * unwrapped until forwardQueuedUpstream() sends them on the carrier. */
-    buffer_queue_t pending_up;
-
-    /* Owned downstream FIFO: opaque TCP on a direct line, UDP wire input on a carrier. */
+    /* Each FIFO entry is one admitted nested input batch. The outer parser
+     * completes these in order and retains only an incomplete wire suffix.
+     * No ready output or application payload is queued for Pause or Est. */
+    bool           receiving;
     buffer_queue_t pending_down;
 
     /* UDP decoder on the carrier. The popped head is still owned here;
@@ -136,8 +132,7 @@ void trojanclientTunnelDownStreamFinish(tunnel_t *t, line_t *l);
 void trojanclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void trojanclientTunnelDownStreamPause(tunnel_t *t, line_t *l);
 void trojanclientTunnelDownStreamResume(tunnel_t *t, line_t *l);
-bool trojanclientDomainResolverPrepare(tunnel_t *resolver, tunnel_t *client, line_t *l,
-                                       domainresolver_direction_t direction, void *user_lstate);
+bool trojanclientDomainResolverPrepare(tunnel_t *resolver, tunnel_t *client, line_t *l, void *user_lstate);
 
 void trojanclientLinestateInitialize(trojanclient_lstate_t *ls, line_t *l);
 void trojanclientLinestateDestroy(trojanclient_lstate_t *ls);
@@ -148,12 +143,15 @@ void trojanclientStartUdpCarrier(tunnel_t *t, line_t *l, trojanclient_lstate_t *
 void trojanclientOnNextEstablished(tunnel_t *t, line_t *l, trojanclient_lstate_t *ls);
 void trojanclientCloseLine(tunnel_t *t, line_t *l, trojanclient_close_origin_t origin);
 
-void trojanclientPump(tunnel_t *t, line_t *next_line);
+bool trojanclientAssociationAlive(tunnel_t *t, line_t *next_line, line_t *prev_line);
+void trojanclientSendDueRequest(tunnel_t *t, line_t *l);
+void trojanclientCancelFirstPayloadTimer(trojanclient_lstate_t *ls);
+void trojanclientSetNextPaused(tunnel_t *t, line_t *l, bool paused);
 
 void trojanclientSetPrevPaused(tunnel_t *t, line_t *l, bool paused);
 
 /* Shared implementation helpers; callbacks retain their directional admission. */
-bool    trojanclientSendInitialRequest(tunnel_t *t, line_t *l, trojanclient_lstate_t *ls);
+bool    trojanclientSendInitialRequest(tunnel_t *t, line_t *l, trojanclient_lstate_t *ls, sbuf_t *body);
 bool    trojanclientWrapUdpPayload(line_t *l, sbuf_t **buf_io, const address_context_t *target);
 int     trojanclientReadUdpHeader(trojanclient_lstate_t *ls);
 sbuf_t *trojanclientExtractUdpBody(trojanclient_lstate_t *ls);

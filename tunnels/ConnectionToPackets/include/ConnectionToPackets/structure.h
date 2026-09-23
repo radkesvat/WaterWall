@@ -794,8 +794,7 @@ void ctpInjectMessageDestroy(void *payload);
 // ---------------------------------------------------------------------------
 
 bool ctpSelectProtocol(tunnel_t *t, line_t *l, uint8_t *out_protocol);
-bool ctpDomainResolverPrepare(tunnel_t *resolver, tunnel_t *owner, line_t *l, domainresolver_direction_t direction,
-                              void *user_lstate);
+bool ctpDomainResolverPrepare(tunnel_t *resolver, tunnel_t *owner, line_t *l, void *user_lstate);
 /* Returns true only when this transition called tcp_abort(). */
 bool ctpDetachFlowLocked(tunnel_t *t, ctp_lstate_t *ls, bool graceful);
 void ctpCloseLineTowardPrev(tunnel_t *t, line_t *l);

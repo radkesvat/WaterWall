@@ -112,9 +112,9 @@ These guardrails do not replace the mandatory guide reading:
 9. Every autonomous normal-line owner must inventory and drain its lines while the
    required loops, chains, tunnel state, and pools remain alive. Termination has one
    coordinator; a shutdown request is not cleanup.
-10. After `Pause`, initiate no new payload toward that consumer until `Resume`.
-    Deliberate tolerance is bounded, FIFO-preserving, accounted, and has a resume or
-    overflow/close path.
+10. Pause stops new source work and backlog drains. Transforms relay it and may
+    complete bounded admitted input. Follow Part 2 for FIFO admission, receiver
+    tolerance and protocol-storage bounds.
 11. Tunnel constructors may return `NULL`; check before assigning callbacks or
     accessing state. External callback roots must close admission and quiesce before
     their reachable state is reclaimed.
@@ -122,12 +122,11 @@ These guardrails do not replace the mandatory guide reading:
     callback is task-XOR-cancel and may run synchronously, on a foreign or teardown
     thread, or with the line logically dead. Treat cancellation as notification only;
     never access owner-only state without an independent context proof.
-13. Avoid speculative sanity checks in added functions; callers own preconditions.
-    Use `assert()` for debug-only invariants. For release invariants, choose
-    `LOGF`/`LOGE`/`LOGW` by severity and use `abortProgramNow()` or
-    `requestProgramShutdown()` when appropriate; see Part 7. Use ordinary checks only for
-    expected or fallible inputs, including valid nulls; reserve `LIKELY`/`UNLIKELY`
-    for meaningful branch expectations.
+13. Callers own preconditions; use Debug `assert()`, not silent error returns, for
+    programmer errors. Critical runtime invariants require `LOGF` and
+    `abortProgramNow()`. Keep checks for expected failure, external input, valid nulls
+    and callback-driven changes. See Part 5 "Caller preconditions and failure handling"
+    and Part 7. Reserve `LIKELY`/`UNLIKELY` for meaningful branch expectations.
 
 ## 4. Implementation Workflow
 

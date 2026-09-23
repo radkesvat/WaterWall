@@ -336,17 +336,6 @@ static headerserver_header_parse_result_t headerserverReadConfiguredHeader(tunne
     }
 }
 
-static void headerserverForwardBufferedPayload(tunnel_t *t, line_t *l)
-{
-    headerserver_lstate_t *ls  = lineGetState(l, t);
-    sbuf_t                *buf = bufferstreamFullRead(&ls->read_stream);
-
-    if (buf != NULL)
-    {
-        discard lineCallWithRefWithBuf(l, tunnelNextUpStreamPayload, t, buf);
-    }
-}
-
 void headerserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     headerserver_lstate_t *ls = lineGetState(l, t);
@@ -359,6 +348,18 @@ void headerserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     if (ls->phase == kHeaderServerPhaseEstablished)
     {
+        if (ls->initial_forwarding)
+        {
+            if (UNLIKELY(sbufGetLength(buf) >
+                             kHeaderServerMaxReentryBytes - bufferqueueGetBufLen(&ls->initial_reentry) ||
+                         bufferqueueGetBufCount(&ls->initial_reentry) >= kHeaderServerMaxReentryBuffers ||
+                         ! bufferqueueTryPushBack(&ls->initial_reentry, &buf)))
+            {
+                lineReuseBuffer(l, buf);
+                headerserverCloseLineFromProtocolError(t, l);
+            }
+            return;
+        }
         tunnelNextUpStreamPayload(t, l, buf);
         return;
     }
@@ -377,12 +378,31 @@ void headerserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
-    ls->phase = kHeaderServerPhaseEstablished;
-
-    if (! lineCallWithRef(l, tunnelNextUpStreamInit, t))
+    buffer_pool_t *pool    = lineGetBufferPool(l);
+    sbuf_t        *first   = bufferstreamFullRead(&ls->read_stream);
+    ls->phase              = kHeaderServerPhaseEstablished;
+    ls->initial_forwarding = true;
+    lineRef(l);
+    tunnelNextUpStreamInit(t, l);
+    while (lineIsAlive(l))
     {
-        return;
+        ls = lineGetState(l, t);
+        if (UNLIKELY(ls->phase != kHeaderServerPhaseEstablished))
+        {
+            break;
+        }
+        sbuf_t *out = first != NULL ? first : bufferqueuePopFront(&ls->initial_reentry);
+        first       = NULL;
+        if (out == NULL)
+        {
+            ls->initial_forwarding = false;
+            break;
+        }
+        tunnelNextUpStreamPayload(t, l, out);
     }
-
-    headerserverForwardBufferedPayload(t, l);
+    if (first != NULL)
+    {
+        bufferpoolReuseBuffer(pool, first);
+    }
+    lineUnref(l);
 }

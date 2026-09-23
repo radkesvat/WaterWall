@@ -215,6 +215,10 @@ typedef struct connectionfisher_timeout_fixture_s
     uint32_t         main_finish_count;
     uint32_t         reentrant_target_refcount;
     bool             reentered;
+    unsigned         transport_mode;
+    unsigned         main_est_count;
+    unsigned         application_count;
+    bool             close_at_est;
 } connectionfisher_timeout_fixture_t;
 
 static connectionfisher_timeout_fixture_t *timeoutFixtureFromTunnel(tunnel_t *t)
@@ -242,14 +246,34 @@ static void timeoutNextInit(tunnel_t *t, line_t *line)
     twfRequire(fixture->child_init_count < kConnectionFisherSelectionChildCount,
                "ConnectionFisher created too many timeout candidates");
     fixture->children[fixture->child_init_count++] = line;
+    if (fixture->transport_mode == 1)
+        connectionfisherclientTunnelDownStreamEst(fixture->fisher, line);
+    else if (fixture->transport_mode == 2)
+        lineMarkEstablished(line);
 }
 
 static void timeoutNextPayload(tunnel_t *t, line_t *line, sbuf_t *buf)
 {
     connectionfisher_timeout_fixture_t *fixture = timeoutFixtureFromTunnel(t);
     discard                             timeoutChildIndex(fixture, line);
-    ++fixture->child_ping_count;
+    bool                                ping = sbufGetLength(buf) == 5 && memcmp(sbufGetRawPtr(buf), "FISH?", 5) == 0;
+    if (ping)
+    {
+        ++fixture->child_ping_count;
+        if (fixture->transport_mode != 0)
+            twfRequire(fixture->main_est_count == 1 && fixture->application_count == 0,
+                       "transport Est waited for probe completion or application bypassed probe");
+    }
+    else
+        ++fixture->application_count;
     lineReuseBuffer(line, buf);
+    if (ping && fixture->transport_mode != 0)
+    {
+        sbuf_t *reply = bufferpoolGetSmallBuffer(fixture->env.pool);
+        sbufWrite(reply, "FISH!", 5);
+        sbufSetLength(reply, 5);
+        connectionfisherclientTunnelDownStreamPayload(fixture->fisher, line, reply);
+    }
 }
 
 static void timeoutNextFinish(tunnel_t *t, line_t *line)
@@ -258,7 +282,7 @@ static void timeoutNextFinish(tunnel_t *t, line_t *line)
     const uint32_t                      index   = timeoutChildIndex(fixture, line);
     ++fixture->child_finish_count[index];
 
-    if (index == 0 && ! fixture->reentered)
+    if (index == 0 && fixture->child_init_count > 1 && ! fixture->reentered)
     {
         fixture->reentered                 = true;
         fixture->reentrant_target_refcount = twfLineRefCount(fixture->children[1]);
@@ -274,6 +298,29 @@ static void timeoutMainOwnerFinish(tunnel_t *t, line_t *line)
     connectionfisher_timeout_fixture_t *fixture = timeoutFixtureFromTunnel(t);
     ++fixture->main_finish_count;
     lineDestroy(line);
+}
+
+static void timeoutMainEst(tunnel_t *t, line_t *line)
+{
+    connectionfisher_timeout_fixture_t *fixture = timeoutFixtureFromTunnel(t);
+    ++fixture->main_est_count;
+    if (fixture->close_at_est)
+    {
+        connectionfisherclientTunnelUpStreamFinish(fixture->fisher, line);
+        lineDestroy(line);
+        return;
+    }
+    sbuf_t *buf = bufferpoolGetSmallBuffer(fixture->env.pool);
+    sbufWrite(buf, "A", 1);
+    sbufSetLength(buf, 1);
+    connectionfisherclientTunnelUpStreamPayload(fixture->fisher, line, buf);
+}
+
+static void timeoutSourcePermission(tunnel_t *t, line_t *line)
+{
+    connectionfisher_timeout_fixture_t *fixture = timeoutFixtureFromTunnel(t);
+    connectionfisherclient_lstate_t    *ls      = lineGetState(line, fixture->fisher);
+    twfRequire(ls->role == kConnectionFisherClientRoleMain, "source permission targeted a child");
 }
 
 static void timeoutFixtureSetup(connectionfisher_timeout_fixture_t *fixture, line_t **main_line)
@@ -299,10 +346,12 @@ static void timeoutFixtureSetup(connectionfisher_timeout_fixture_t *fixture, lin
     *(connectionfisher_timeout_fixture_t **) tunnelGetState(fixture->prev) = fixture;
     *(connectionfisher_timeout_fixture_t **) tunnelGetState(fixture->next) = fixture;
     fixture->prev->fnFinD                                                  = timeoutMainOwnerFinish;
-    fixture->next->fnInitU                                                 = timeoutNextInit;
-    fixture->next->fnPayloadU                                              = timeoutNextPayload;
-    fixture->next->fnFinU                                                  = timeoutNextFinish;
-    fixture->fisher->fnFinD = connectionfisherclientTunnelDownStreamFinish;
+    fixture->prev->fnEstD                                                  = timeoutMainEst;
+    fixture->prev->fnPauseD = fixture->prev->fnResumeD = timeoutSourcePermission;
+    fixture->next->fnInitU                             = timeoutNextInit;
+    fixture->next->fnPayloadU                          = timeoutNextPayload;
+    fixture->next->fnFinU                              = timeoutNextFinish;
+    fixture->fisher->fnFinD                            = connectionfisherclientTunnelDownStreamFinish;
     tunnelBind(fixture->prev, fixture->fisher);
     tunnelBind(fixture->fisher, fixture->next);
 
@@ -369,12 +418,267 @@ static void caseTimeoutAdmissionClosureClosesEveryRoleOnce(void)
     timeoutFixtureTeardown(&fixture);
 }
 
+static void caseSynchronousTransportAndAlreadyEstablishedChild(void)
+{
+    twfSetCase("Fisher synchronous and already-established child transports emit Est before selection");
+    for (unsigned mode = 1; mode <= 2; ++mode)
+    {
+        for (unsigned close = 0; close < 2; ++close)
+        {
+            connectionfisher_timeout_fixture_t fixture;
+            line_t                            *main_line;
+            timeoutFixtureSetup(&fixture, &main_line);
+            fixture.transport_mode = mode;
+            fixture.close_at_est   = close != 0;
+            connectionfisherclientTunnelUpStreamInit(fixture.fisher, main_line);
+            twfRequire(fixture.main_est_count == 1 && fixture.child_init_count == 1,
+                       "synchronous selected/closed transport spawned more children or repeated Est");
+            twfRequire(fixture.application_count == (close ? 0U : 1U) && fixture.child_ping_count == (close ? 0U : 1U),
+                       "early Est lost queued input or sent after callback close");
+            twfRequire(fixture.env.loop->ntimers == 0, "completed/closed selection retained a timeout");
+            if (! close)
+            {
+                connectionfisherclientTunnelUpStreamFinish(fixture.fisher, main_line);
+                lineDestroy(main_line);
+            }
+            timeoutFixtureTeardown(&fixture);
+        }
+    }
+}
+
+static connectionfisher_selection_fixture_t *active_flow;
+static unsigned                              flow_ests, flow_calls;
+static char                                  flow_output[16];
+static bool                                  flow_inject_pause;
+static unsigned                              flow_pauses, flow_resumes, flow_pressure_action;
+
+static bool   flow_send_reply;
+static char   flow_down[16];
+static size_t flow_down_len;
+
+static sbuf_t *flowPayload(const char *text)
+{
+    sbuf_t *buf = bufferpoolGetSmallBuffer(active_flow->env.pool);
+    sbufWrite(buf, text, (uint32_t) strlen(text));
+    sbufSetLength(buf, (uint32_t) strlen(text));
+    return buf;
+}
+static void flowEst(tunnel_t *t, line_t *l)
+{
+    discard t;
+    ++flow_ests;
+    connectionfisherclient_lstate_t *ls = lineGetState(l, active_flow->fisher);
+    twfRequire(ls->selected_child == NULL, "transport Est waited for FISH selection");
+    connectionfisherclientTunnelUpStreamPayload(active_flow->fisher, l, flowPayload("A"));
+}
+static void flowCapture(tunnel_t *t, line_t *l, sbuf_t *buf)
+{
+    discard                          t;
+    connectionfisherclient_lstate_t *ls = lineGetState(l, active_flow->fisher);
+    twfRequire(! ls->next_paused, "independent FISH backlog drain crossed transport Pause");
+    twfRequire(sbufGetLength(buf) == 1 && flow_calls < sizeof(flow_output), "flow fixture received unexpected bytes");
+    flow_output[flow_calls++] = *(const char *) sbufGetRawPtr(buf);
+    lineReuseBuffer(l, buf);
+    if (flow_send_reply)
+        connectionfisherclientTunnelDownStreamPayload(active_flow->fisher, l, flowPayload("Y"));
+    if (flow_inject_pause)
+    {
+        flow_inject_pause = false;
+        connectionfisherclientTunnelUpStreamPayload(active_flow->fisher, active_flow->main_line, flowPayload("C"));
+        connectionfisherclientTunnelDownStreamPause(active_flow->fisher, l);
+    }
+}
+static void flowSourcePause(tunnel_t *t, line_t *l)
+{
+    discard t;
+    ++flow_pauses;
+    connectionfisherclient_lstate_t *main_ls = lineGetState(l, active_flow->fisher);
+    twfRequire(main_ls->prev_pause_sent, "Fisher source Pause preceded notification latch");
+    if (flow_pressure_action == 1)
+    {
+        flow_pressure_action = 0;
+        twfRequire(bufferqueueGetBufCount(&main_ls->pending_up) == 1,
+                   "protocol Pause preceded older payload admission");
+        connectionfisherclientTunnelUpStreamPayload(active_flow->fisher, l, flowPayload("B"));
+        connectionfisherclientTunnelDownStreamResume(active_flow->fisher, active_flow->selected_child);
+    }
+    else if (flow_pressure_action == 2)
+    {
+        flow_pressure_action = 0;
+        connectionfisherclientTunnelUpStreamFinish(active_flow->fisher, l);
+        lineDestroy(l);
+    }
+}
+static void flowSourceResume(tunnel_t *t, line_t *l)
+{
+    discard t;
+    ++flow_resumes;
+    connectionfisherclient_lstate_t *main_ls = lineGetState(l, active_flow->fisher);
+    twfRequire(! main_ls->prev_pause_sent && ! main_ls->pumping_up && bufferqueueGetBufCount(&main_ls->pending_up) == 0,
+               "Fisher source Resume preceded independent backlog settlement");
+    if (flow_pressure_action == 3)
+    {
+        flow_pressure_action = 0;
+        connectionfisherclientTunnelUpStreamPayload(active_flow->fisher, l, flowPayload("C"));
+        connectionfisherclientTunnelDownStreamPause(active_flow->fisher, active_flow->selected_child);
+    }
+    else if (flow_pressure_action == 4)
+    {
+        flow_pressure_action = 0;
+        connectionfisherclientTunnelUpStreamFinish(active_flow->fisher, l);
+        lineDestroy(l);
+    }
+}
+
+static void caseEarlyEstAndPauseAwareSelectionBacklog(void)
+{
+    twfSetCase("Fisher transport Est precedes selection and independent backlog keeps FIFO through Pause/reentry");
+    connectionfisher_selection_fixture_t fixture;
+    fixtureSetup(&fixture);
+    active_flow = &fixture;
+    flow_ests = flow_calls = 0;
+    flow_pauses = flow_resumes = flow_pressure_action = 0;
+    fixture.prev->fnPauseD                            = flowSourcePause;
+    fixture.prev->fnResumeD                           = flowSourceResume;
+    memoryZero(flow_output, sizeof(flow_output));
+    fixture.prev->fnEstD                   = flowEst;
+    fixture.next->fnPayloadU               = flowCapture;
+    connectionfisherclient_lstate_t *child = lineGetState(fixture.selected_child, fixture.fisher);
+    child->ping_sent                       = true;
+    connectionfisherclientTunnelDownStreamEst(fixture.fisher, fixture.selected_child);
+    connectionfisherclientTunnelDownStreamEst(fixture.fisher, fixture.first_loser);
+    twfRequire(flow_ests == 1 && flow_calls == 0, "Est repeated or pending bytes escaped the FISH gate");
+    connectionfisherclientTunnelDownStreamPause(fixture.fisher, fixture.selected_child);
+    child->child_handshake_complete = true;
+    twfRequire(connectionfisherclientSelectChild(fixture.fisher, fixture.selected_child), "child selection failed");
+    twfRequire(flow_calls == 0 && flow_ests == 1, "selection drained through Pause or repeated Est");
+    twfRequire(flow_pauses == 1 && flow_resumes == 0, "selection lost aggregate protocol/transport pressure");
+    connectionfisherclientTunnelUpStreamPayload(fixture.fisher, fixture.main_line, flowPayload("B"));
+    flow_inject_pause = true;
+    connectionfisherclientTunnelDownStreamResume(fixture.fisher, fixture.selected_child);
+    twfRequire(flow_calls == 1 && flow_output[0] == 'A', "Resume drained past nested Pause");
+    twfRequire(flow_pauses == 1 && flow_resumes == 0, "transport Resume released a retained protocol backlog");
+    connectionfisherclientTunnelDownStreamResume(fixture.fisher, fixture.selected_child);
+    twfRequire(flow_calls == 3 && memcmp(flow_output, "ABC", 3) == 0, "nested payload overtook older backlog");
+    twfRequire(flow_pauses == 1 && flow_resumes == 1, "final drain did not release source exactly once");
+    fixtureTeardown(&fixture);
+}
+
+static void flowCaptureReply(tunnel_t *t, line_t *l, sbuf_t *buf)
+{
+    discard t;
+    size_t  n = sbufGetLength(buf);
+    twfRequire(flow_down_len + n < sizeof(flow_down), "reply fixture overflow");
+    memoryCopy(flow_down + flow_down_len, sbufGetRawPtr(buf), n);
+    flow_down_len += n;
+    lineReuseBuffer(l, buf);
+}
+static void caseCoalescedReplyPrecedesNewResponse(void)
+{
+    twfSetCase("Fisher coalesced reply precedes responses induced by the older application backlog");
+    connectionfisher_selection_fixture_t fixture;
+    fixtureSetup(&fixture);
+    active_flow = &fixture;
+    flow_ests = flow_calls   = 0;
+    flow_down_len            = 0;
+    flow_inject_pause        = false;
+    flow_send_reply          = true;
+    fixture.prev->fnEstD     = flowEst;
+    fixture.prev->fnPayloadD = flowCaptureReply;
+    fixture.next->fnPayloadU = flowCapture;
+    connectionfisherclientTunnelDownStreamEst(fixture.fisher, fixture.selected_child);
+    connectionfisherclientTunnelDownStreamPayload(fixture.fisher, fixture.selected_child, flowPayload("FISH!X"));
+    twfRequire(flow_down_len == 2 && memcmp(flow_down, "XY", 2) == 0,
+               "new application response overtook the body coalesced with FISH!");
+    flow_send_reply = false;
+    fixtureTeardown(&fixture);
+}
+static void casePendingBudgetBeforeSelection(void)
+{
+    twfSetCase("Fisher early application input retains the exact 1 MiB pending bound");
+    connectionfisher_selection_fixture_t fixture;
+    fixtureSetup(&fixture);
+    active_flow          = &fixture;
+    fixture.prev->fnFinD = ownerPrevFinish;
+    lineRef(fixture.main_line);
+    sbuf_t *buf = bufferpoolGetBestFit(fixture.env.pool, kConnectionFisherMaxPendingUpBytes, 0);
+    sbufSetLength(buf, kConnectionFisherMaxPendingUpBytes);
+    memoryZero(sbufGetMutablePtr(buf), kConnectionFisherMaxPendingUpBytes);
+    connectionfisherclientTunnelUpStreamPayload(fixture.fisher, fixture.main_line, buf);
+    twfRequire(lineIsAlive(fixture.main_line), "exact pending byte limit rejected");
+    connectionfisherclientTunnelUpStreamPayload(fixture.fisher, fixture.main_line, flowPayload("X"));
+    twfRequire(! lineIsAlive(fixture.main_line), "pending overflow left main line alive");
+    twfRequireLineStateZeroed(fixture.main_line, fixture.fisher, "pending overflow retained local state");
+    lineUnref(fixture.main_line);
+    fixture.main_line = NULL;
+    fixtureTeardown(&fixture);
+}
+
+static void caseProtocolPressureReentryAndClose(void)
+{
+    twfSetCase("Fisher protocol-wait source pressure publishes FIFO and aggregates transport reentry");
+    for (unsigned close_mode = 0; close_mode < 3; ++close_mode)
+    {
+        connectionfisher_selection_fixture_t fixture;
+        fixtureSetup(&fixture);
+        active_flow = &fixture;
+        flow_ests = flow_calls = flow_pauses = flow_resumes = 0;
+        flow_inject_pause = flow_send_reply    = false;
+        flow_pressure_action                   = close_mode == 1 ? 2 : 1;
+        fixture.prev->fnEstD                   = flowEst;
+        fixture.prev->fnPauseD                 = flowSourcePause;
+        fixture.prev->fnResumeD                = flowSourceResume;
+        fixture.next->fnPayloadU               = flowCapture;
+        connectionfisherclient_lstate_t *child = lineGetState(fixture.selected_child, fixture.fisher);
+        child->ping_sent                       = true;
+        lineRef(fixture.main_line);
+        connectionfisherclientTunnelDownStreamEst(fixture.fisher, fixture.selected_child);
+        if (close_mode == 1)
+        {
+            twfRequire(! lineIsAlive(fixture.main_line) && flow_calls == 0 && flow_pauses == 1 && flow_resumes == 0,
+                       "source Finish during protocol Pause failed to settle queued bytes");
+        }
+        else
+        {
+            twfRequire(flow_pauses == 1 && flow_resumes == 0 && flow_calls == 0,
+                       "preselection transport Resume released application pressure");
+            flow_pressure_action = close_mode == 2 ? 4 : 3;
+            connectionfisherclientTunnelDownStreamPayload(fixture.fisher, fixture.selected_child, flowPayload("FISH!"));
+            if (close_mode == 2)
+                twfRequire(! lineIsAlive(fixture.main_line) && flow_calls == 2 && flow_resumes == 1,
+                           "source Finish during backlog Resume left main/child alive");
+            else
+            {
+                twfRequire(flow_calls == 3 && memcmp(flow_output, "ABC", 3) == 0 && flow_pauses == 2 &&
+                               flow_resumes == 1,
+                           "Resume reentry lost FIFO or new selected-transport pressure");
+                connectionfisherclientTunnelDownStreamResume(fixture.fisher, fixture.selected_child);
+                twfRequire(flow_resumes == 2, "remaining selected-transport pressure did not release");
+            }
+        }
+        if (! lineIsAlive(fixture.main_line))
+        {
+            twfRequireLineStateZeroed(fixture.main_line, fixture.fisher, "source callback close retained state");
+            lineUnref(fixture.main_line);
+            fixture.main_line = NULL;
+        }
+        else
+            lineUnref(fixture.main_line);
+        fixtureTeardown(&fixture);
+    }
+}
+
 int main(void)
 {
     caseReentrantSiblingFinishKeepsSnapshotValid();
     caseReentrantSiblingFinishKeepsMainCloseSnapshotValid();
     caseSelectedChildFinishClosesDetachedLosers();
     caseTimeoutAdmissionClosureClosesEveryRoleOnce();
+    caseEarlyEstAndPauseAwareSelectionBacklog();
+    caseSynchronousTransportAndAlreadyEstablishedChild();
+    caseCoalescedReplyPrecedesNewResponse();
+    casePendingBudgetBeforeSelection();
+    caseProtocolPressureReentryAndClose();
     puts("connectionfisherclient_reentrant_selection_test: all cases passed");
     return 0;
 }

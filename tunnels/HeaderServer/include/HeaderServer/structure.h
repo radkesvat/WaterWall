@@ -27,6 +27,10 @@ typedef struct headerserver_lstate_s
 {
     headerserver_phase_e phase;
     buffer_stream_t      read_stream;
+    /* Nested input received while next Init/initial replay is on the stack. */
+    buffer_queue_t initial_reentry;
+    bool           initial_forwarding;
+    bool           transport_est_sent;
 } headerserver_lstate_t;
 
 enum
@@ -37,6 +41,8 @@ enum
     kHeaderServerProxyProtocolV2SignatureSize   = 12,
     kHeaderServerProxyProtocolV2BaseHeaderSize  = 16,
     kHeaderServerProxyProtocolV2Ipv4AddressSize = 12,
+    kHeaderServerMaxReentryBytes                = 2U * 1024U * 1024U,
+    kHeaderServerMaxReentryBuffers              = 1024U,
     kTunnelStateSize                            = sizeof(headerserver_tstate_t),
     kLineStateSize                              = sizeof(headerserver_lstate_t)
 };

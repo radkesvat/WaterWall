@@ -236,9 +236,9 @@ void trojanserverParseInitial(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls)
     }
     trojanserverRecordLineUser(l, ls, &ls->user_handle);
     ls->input_bytes -= ls->header_filled;
-    ls->branch = kTrojanServerBranchTrojan;
     if (command == kTrojanCmdUdpAssociate)
     {
+        ls->branch = kTrojanServerBranchTrojan;
         ls->phase = kTrojanServerPhaseUdpWaitPacket;
         trojanserverResetHeader(ls);
         return;
@@ -246,11 +246,12 @@ void trojanserverParseInitial(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls)
     trojanserverApplyDestinationContext(l, &ls->frame_target, false);
     trojanserverResetHeader(ls);
     if (! trojanserverRetainActiveHead(ls) || ls->input_bytes > kTrojanServerMaxPendingBytes ||
-        bufferqueueGetBufCount(&ls->pending_up) > kTrojanServerMaxQueuedBuffers)
+        ! bufferqueueTryAttachBudget(&ls->pending_up, &ls->output_budget))
     {
         trojanserverCloseLineBidirectional(t, l);
         return;
     }
+    ls->branch              = kTrojanServerBranchTrojan;
     ls->input_bytes         = 0;
     ls->phase               = kTrojanServerPhaseTcpConnecting;
     ls->next_initialized    = true;
@@ -335,21 +336,34 @@ bool trojanserverDecodeUdp(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls)
     {
         ls->frame_selected = true;
         line_t *remote     = trojanserverGetOrCreateUdpRemoteLine(t, l, ls, &ls->frame_target);
-        if (! lineIsAlive(l))
+        if (UNLIKELY(! lineIsAlive(l)))
             return false;
+        if (UNLIKELY(remote == NULL))
+        {
+            /* The current datagram was never transferred. Losing its backend
+             * during Init cannot silently discard it and continue this batch. */
+            trojanserverCloseLineBidirectional(t, l);
+            return false;
+        }
         ls->selected_remote = remote;
         return true; // Reconcile newly initialized backend permission first.
     }
     line_t *remote = ls->selected_remote;
-    if (remote == NULL)
+    if (UNLIKELY(remote == NULL))
     {
-        lineReuseBuffer(l, trojanserverExtractBody(ls));
-        return true;
+        trojanserverCloseLineBidirectional(t, l);
+        return false;
     }
     lineRef(remote);
     sbuf_t *body = trojanserverExtractBody(ls);
     ls->phase    = kTrojanServerPhaseUdpEstablished;
     tunnelNextUpStreamPayload(t, remote, body);
+    bool remote_alive = lineIsAlive(remote);
     lineUnref(remote);
+    if (UNLIKELY(lineIsAlive(l) && ! remote_alive))
+    {
+        trojanserverCloseLineBidirectional(t, l);
+        return false;
+    }
     return true;
 }

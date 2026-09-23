@@ -28,7 +28,7 @@ def udp_frame(payload):
     return b"\x01\x7f\x00\x00\x01\x01\xbb" + len(payload).to_bytes(2, "big") + b"\r\n" + payload
 
 
-def run(binary, udp, enabled):
+def run(binary, udp, enabled, timeout=None, nested=False, waiting=False):
     # strace observes successful runtime transfers without adding product hooks.
     tracer = shutil.which("strace")
     if tracer is None:
@@ -46,6 +46,16 @@ def run(binary, udp, enabled):
             {"name": "connect", "type": "TcpConnector",
              "settings": {"address": "127.0.0.1", "port": 27952, "nodelay": True, "fastopen": False}},
         ]
+        if timeout is not None:
+            nodes[1]["settings"]["first-payload-timeout-ms"] = timeout
+        if nested:
+            # Both transforms must materialize their own first header/body and
+            # preserve later opaque traffic. Native tests assert one callback.
+            nodes[1]["next"] = "nested"
+            inner = json.loads(json.dumps(nodes[1]))
+            inner.update(name="nested", next="connect")
+            inner["settings"]["protocol"] = "tcp"
+            nodes.insert(2, inner)
         (root / "config.json").write_text(json.dumps({"name": "trojan-splice", "nodes": nodes}))
         (root / "core.json").write_text(json.dumps({
             "log": {"path": "log/", **{name: {"loglevel": "DEBUG", "file": name + ".log", "console": True}
@@ -90,13 +100,33 @@ def run(binary, udp, enabled):
                     request = hashlib.sha224(b"test").hexdigest().encode() + b"\r\n" + (b"\x03" if udp else b"\x01")
                     request += b"\x01" + (b"\x00" * 6 if udp else b"\x7f\x00\x00\x01\x01\xbb") + b"\r\n"
                     data = bytes(range(256)) * 4096
+                    if nested:
+                        request = request + request
+                    early = data if nested else b"early"
+                    trace_boundary = 0
+                    if waiting:
+                        with listener.accept()[0] as waiting_peer:
+                            waiting_peer.settimeout(0.1)
+                            try:
+                                unexpected = waiting_peer.recv(1)
+                            except socket.timeout:
+                                pass
+                            else:
+                                raise AssertionError(f"waiting carrier unexpectedly produced {unexpected!r}")
+                            waiting_peer.settimeout(10)
+                            # A maximum deadline must remain cancellable, without
+                            # holding a dead connection until that deadline.
+                            process.send_signal(signal.SIGTERM)
+                            assert process.wait(timeout=10) == 128 + signal.SIGTERM
+                            assert waiting_peer.recv(1) == b"", "shutdown emitted an idle header"
+                        return
 
                     def peer():
                         with listener.accept()[0] as conn:
                             conn.settimeout(15)
                             assert exact(conn, len(request)) == request, "request encoding/command changed"
                             if udp:
-                                for payload in payloads:
+                                for index, payload in enumerate(payloads):
                                     wire = udp_frame(payload)
                                     assert exact(conn, len(wire)) == wire, "UDP framing or boundary changed"
                                     conn.sendall(wire[:1])
@@ -105,6 +135,7 @@ def run(binary, udp, enabled):
                                 conn.sendall(udp_frame(b"one") + udp_frame(b"") + udp_frame(b"three"))
                                 assert conn.recv(1) == b"", "unexpected carrier bytes during shutdown"
                             else:
+                                assert exact(conn, len(early)) == early, "first TCP payload changed"
                                 conn.sendall(b"server-first")
                                 assert exact(conn, len(data)) == data, "upstream TCP bytes changed"
                                 conn.sendall(data[::-1])
@@ -113,25 +144,40 @@ def run(binary, udp, enabled):
                     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
                         result = executor.submit(peer)
                         if udp:
-                            for payload in payloads:
+                            for index, payload in enumerate(payloads):
                                 assert client.send(payload) == len(payload)
                                 assert client.recv(9000) == payload, "UDP payload/empty datagram changed"
+                                if index == 0:
+                                    trace_boundary = len((root / "splice.log").read_text())
                             assert [client.recv(9000) for _ in range(3)] == [b"one", b"", b"three"]
                             # The association is still live: shutdown must drain its owned carrier.
                             process.send_signal(signal.SIGTERM)
                             assert process.wait(timeout=10) == 128 + signal.SIGTERM, "unclean UDP shutdown"
                         else:
+                            client.sendall(early)
                             assert exact(client, 12) == b"server-first", "request waited for application data"
+                            trace_boundary = len((root / "splice.log").read_text())
                             client.sendall(data)
                             assert exact(client, len(data)) == data[::-1], "downstream TCP bytes changed"
                             client.shutdown(socket.SHUT_RDWR)
                         result.result(timeout=20)
+                if not udp:
+                    # No application input: the configured idle deadline must
+                    # eventually emit the request and let a server-first peer reply.
+                    with socket.create_connection(("127.0.0.1", 27951), timeout=15) as first_client:
+                        with listener.accept()[0] as first_peer:
+                            first_peer.settimeout(15)
+                            assert exact(first_peer, len(request)) == request
+                            first_peer.sendall(b"server-first")
+                            assert exact(first_client, 12) == b"server-first"
+                            first_client.shutdown(socket.SHUT_RDWR)
+                            assert first_peer.recv(1) == b""
                 if process.poll() is None:
                     process.send_signal(signal.SIGTERM)
                     assert process.wait(timeout=10) == 128 + signal.SIGTERM, "unclean shutdown"
-                trace = (root / "splice.log").read_text()
+                trace = (root / "splice.log").read_text()[trace_boundary:]
                 successful = re.findall(r"(?:splice\(.*|<\.\.\. splice resumed>.*)\s= ([1-9][0-9]*)", trace)
-                assert bool(successful) == enabled, f"actual splice transfer evidence disagrees with enabled={enabled}"
+                assert bool(successful) == enabled, f"later traffic splice evidence disagrees with enabled={enabled}"
             except BaseException:
                 log.flush()
                 print((root / "stdout.log").read_text(), file=sys.stderr)
@@ -143,5 +189,12 @@ def run(binary, udp, enabled):
 
 
 if __name__ == "__main__":
-    run(str(Path(sys.argv[1]).resolve()), sys.argv[2] == "udp", sys.argv[3] == "true")
-    print("TrojanClient socket integrity, splice selection and orderly shutdown passed")
+    binary = str(Path(sys.argv[1]).resolve())
+    udp, enabled = sys.argv[2] == "udp", sys.argv[3] == "true"
+    run(binary, udp, enabled)
+    if not udp:
+        for timeout in (23, 0):
+            run(binary, False, enabled, timeout=timeout)
+        run(binary, False, enabled, nested=True)
+        run(binary, False, enabled, timeout=4294967295, waiting=True)
+    print("TrojanClient combined bytes, idle deadlines, nested traffic, splice and shutdown passed")

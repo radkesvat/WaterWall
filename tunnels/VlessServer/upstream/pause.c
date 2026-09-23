@@ -24,6 +24,8 @@ void vlessserverTunnelUpStreamPause(tunnel_t *t, line_t *l)
         return;
     }
 
+    ls->response_paused = true;
+
     if (ls->phase == kVlessServerPhaseTcpConnecting || ls->phase == kVlessServerPhaseTcpEstablished)
     {
         tunnelNextUpStreamPause(t, l);

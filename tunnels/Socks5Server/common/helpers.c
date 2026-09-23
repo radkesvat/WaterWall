@@ -82,38 +82,6 @@ static sbuf_t *socks5serverAllocBuffer(line_t *l, uint32_t len)
     return buf;
 }
 
-static bool socks5serverFlushQueueToNext(tunnel_t *t, line_t *l, buffer_queue_t *queue)
-{
-    while (bufferqueueGetBufCount(queue) > 0)
-    {
-        sbuf_t *buf = bufferqueuePopFront(queue);
-        if (! lineCallWithRefWithBuf(l, tunnelNextUpStreamPayload, t, buf))
-        {
-            bufferqueueDestroy(queue);
-            return false;
-        }
-    }
-
-    bufferqueueDestroy(queue);
-    return true;
-}
-
-static bool socks5serverFlushQueueToPrev(tunnel_t *t, line_t *l, buffer_queue_t *queue)
-{
-    while (bufferqueueGetBufCount(queue) > 0)
-    {
-        sbuf_t *buf = bufferqueuePopFront(queue);
-        if (! lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, buf))
-        {
-            bufferqueueDestroy(queue);
-            return false;
-        }
-    }
-
-    bufferqueueDestroy(queue);
-    return true;
-}
-
 static bool socks5serverWriteAddress(uint8_t *ptr, const address_context_t *ctx, size_t *offset)
 {
     if (addresscontextIsIpType(ctx))
@@ -475,7 +443,8 @@ void socks5serverRequireCurrentLineWorker(const line_t *l, const char *callback_
 
 socks5server_assoc_entry_t *socks5serverFindWorkerAssociation(tunnel_t *t, wid_t wid, uint64_t generation)
 {
-    if (t == NULL || generation == 0)
+    assert(t != NULL);
+    if (generation == 0)
     {
         return NULL;
     }
@@ -525,10 +494,7 @@ bool socks5serverAssociationIsActive(tunnel_t *t, wid_t wid, udplistener_dynamic
 bool socks5serverValidateUdpClientAssociation(tunnel_t *t, line_t *l, socks5server_lstate_t *ls,
                                               bool validate_provider_metadata)
 {
-    if (t == NULL || l == NULL || ls == NULL || ! lineIsOnCurrentEventWorker(l))
-    {
-        return false;
-    }
+    assert(t != NULL && l != NULL && ls != NULL && lineIsOnCurrentEventWorker(l));
 
     const wid_t    wid        = lineGetWID(l);
     const uint16_t local_port = lineGetRoutingContext(l)->local_listener_port;
@@ -563,11 +529,12 @@ bool socks5serverValidateUdpClientAssociation(tunnel_t *t, line_t *l, socks5serv
 static bool socks5serverRegisterUdpAssociation(tunnel_t *t, line_t *l, const user_handle_t *user_handle,
                                                const address_context_t *udp_peer_hint, uint16_t *assigned_port_out)
 {
+    assert(assigned_port_out != NULL);
     socks5server_tstate_t *ts  = tunnelGetState(t);
     wid_t                  wid = lineGetWID(l);
 
-    if (assigned_port_out == NULL || ts->worker_associations == NULL || wid >= ts->workers_count ||
-        ! currentThreadIsEventWorkerWID(wid) || ! lineIsAuthenticated(l) || ! lineIsAlive(l))
+    if (ts->worker_associations == NULL || wid >= ts->workers_count || ! currentThreadIsEventWorkerWID(wid) ||
+        ! lineIsAuthenticated(l) || ! lineIsAlive(l))
     {
         return false;
     }
@@ -927,7 +894,8 @@ void socks5serverCloseControlLineBidirectional(tunnel_t *t, line_t *l)
  */
 static bool socks5serverDrainUdpClientRemoteLines(tunnel_t *t, line_t *client_l, socks5server_lstate_t *client_ls)
 {
-    if (UNLIKELY(client_l == NULL || client_ls == NULL || ! lineIsAlive(client_l)))
+    assert(client_l != NULL && client_ls != NULL);
+    if (UNLIKELY(! lineIsAlive(client_l)))
     {
         return false;
     }
@@ -1055,59 +1023,70 @@ void socks5serverCloseUdpRemoteLine(tunnel_t *t, line_t *remote_l)
     lineUnref(remote_l);
 }
 
+bool socks5serverQueueControl(tunnel_t *t, line_t *l, sbuf_t *buf, bool upstream)
+{
+    socks5server_lstate_t *ls     = lineGetState(l, t);
+    buffer_queue_t        *queue  = upstream ? &ls->pending_up : &ls->pending_down;
+    const size_t           prefix = upstream ? bufferstreamGetBufLen(&ls->in_stream) : 0;
+    const size_t           length = sbufGetLength(buf);
+    if (UNLIKELY(length > kSocks5ServerMaxPendingBytes ||
+                 prefix + bufferqueueGetBufLen(queue) > kSocks5ServerMaxPendingBytes - length ||
+                 bufferqueueGetBufCount(queue) >= kSocks5ServerMaxPendingBuffers ||
+                 ! bufferqueueTryPushBack(queue, &buf)))
+    {
+        lineReuseBuffer(l, buf);
+        socks5serverCloseControlLineBidirectional(t, l);
+        return false;
+    }
+    return true;
+}
+
+bool socks5serverDrainControl(tunnel_t *t, line_t *l)
+{
+    socks5server_lstate_t *ls = lineGetState(l, t);
+    if (ls->control_draining)
+        return true;
+    ls->control_draining = true;
+    if (ls->transport_est_forwarded && ! ls->connect_reply_sent && ! ls->prev_paused)
+    {
+        sbuf_t *reply = socks5serverCreateCommandReply(l, kSocks5ReplySucceeded, NULL);
+        if (UNLIKELY(reply == NULL))
+        {
+            socks5serverCloseControlLineBidirectional(t, l);
+            return false;
+        }
+        ls->phase              = kSocks5ServerPhaseTcpEstablished;
+        ls->connect_reply_sent = true;
+        if (UNLIKELY(! lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, reply)))
+            return false;
+    }
+    // The original request tail precedes any input nested in Init or Est.
+    while (! ls->next_initializing && ! ls->next_paused &&
+           (! bufferstreamIsEmpty(&ls->in_stream) || bufferqueueGetBufCount(&ls->pending_up)))
+    {
+        sbuf_t *buf = ! bufferstreamIsEmpty(&ls->in_stream) ? bufferstreamIdealRead(&ls->in_stream)
+                                                            : bufferqueuePopFront(&ls->pending_up);
+        if (UNLIKELY(! lineCallWithRefWithBuf(l, tunnelNextUpStreamPayload, t, buf)))
+            return false;
+    }
+    while (ls->connect_reply_sent && ! ls->prev_paused && bufferqueueGetBufCount(&ls->pending_down))
+    {
+        sbuf_t *buf = bufferqueuePopFront(&ls->pending_down);
+        if (UNLIKELY(! lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, buf)))
+            return false;
+    }
+    ls->control_draining = false;
+    return true;
+}
+
 void socks5serverOnControlEstablished(tunnel_t *t, line_t *l, socks5server_lstate_t *ls)
 {
-    buffer_queue_t up_local   = bufferqueueCreate(kSocks5ServerBufferQueueCap);
-    buffer_queue_t down_local = bufferqueueCreate(kSocks5ServerBufferQueueCap);
-    sbuf_t        *reply      = socks5serverCreateCommandReply(l, kSocks5ReplySucceeded, NULL);
-
-    if (reply == NULL)
-    {
-        bufferqueueDestroy(&up_local);
-        bufferqueueDestroy(&down_local);
-        socks5serverCloseControlLineBidirectional(t, l);
+    if (ls->transport_est_forwarded)
         return;
-    }
-
-    while (! bufferstreamIsEmpty(&ls->in_stream))
-    {
-        bufferqueuePushBack(&up_local, bufferstreamIdealRead(&ls->in_stream));
-    }
-
-    while (bufferqueueGetBufCount(&ls->pending_up) > 0)
-    {
-        bufferqueuePushBack(&up_local, bufferqueuePopFront(&ls->pending_up));
-    }
-
-    while (bufferqueueGetBufCount(&ls->pending_down) > 0)
-    {
-        bufferqueuePushBack(&down_local, bufferqueuePopFront(&ls->pending_down));
-    }
-
-    ls->phase              = kSocks5ServerPhaseTcpEstablished;
-    ls->connect_reply_sent = true;
-
-    if (! lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, reply))
-    {
-        bufferqueueDestroy(&up_local);
-        bufferqueueDestroy(&down_local);
-        return;
-    }
-
+    ls->transport_est_forwarded = true;
     if (! lineCallWithRef(l, tunnelPrevDownStreamEst, t))
-    {
-        bufferqueueDestroy(&up_local);
-        bufferqueueDestroy(&down_local);
         return;
-    }
-
-    if (! socks5serverFlushQueueToNext(t, l, &up_local))
-    {
-        bufferqueueDestroy(&down_local);
-        return;
-    }
-
-    socks5serverFlushQueueToPrev(t, l, &down_local);
+    discard socks5serverDrainControl(t, l);
 }
 
 bool socks5serverWrapUdpPayloadForClient(line_t *l, sbuf_t **buf_io, const address_context_t *addr_ctx)
@@ -1444,11 +1423,19 @@ bool socks5serverControlDrainInput(tunnel_t *t, line_t *l, socks5server_lstate_t
                 socks5serverApplyDestinationContext(l, &target, false);
                 addresscontextReset(&target);
                 ls->phase = kSocks5ServerPhaseConnectWaitEst;
+                ls->next_initializing = true;
                 if (! lineCallWithRef(l, tunnelNextUpStreamInit, t))
                 {
                     return false;
                 }
-                return true;
+                ls->next_initializing = false;
+                if (ls->prev_paused && ! ls->next_read_paused)
+                {
+                    ls->next_read_paused = true;
+                    if (UNLIKELY(! lineCallWithRef(l, tunnelNextUpStreamPause, t)))
+                        return false;
+                }
+                return socks5serverDrainControl(t, l);
             }
 
             if (head[1] == kSocks5CommandUdpAssoc)

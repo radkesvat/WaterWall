@@ -709,6 +709,20 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING)
     endforeach()
   endforeach()
 endif()
+# The protocol peer is socket-connected, so ordinary server/TLS nodes cannot
+# mask VlessClient capability. strace checks actual positive splice transfers.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING)
+  foreach(protocol IN ITEMS tcp udp)
+    foreach(splice_mode IN ITEMS true false)
+      add_waterwall_isolated_test(waterwall.vlessclient_${protocol}_splice_${splice_mode}
+        "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/vlessclient_splice_integration.py"
+        "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>" "${protocol}" "${splice_mode}")
+      set_tests_properties(waterwall.vlessclient_${protocol}_splice_${splice_mode} PROPERTIES TIMEOUT 60)
+      add_waterwall_test_labels(waterwall.vlessclient_${protocol}_splice_${splice_mode} "integration" "tunnels")
+      add_waterwall_case_resource_lock(waterwall.vlessclient_${protocol}_splice_${splice_mode} vlessclient_splice)
+    endforeach()
+  endforeach()
+endif()
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING)
   foreach(protocol IN ITEMS tcp tcp_db udp fallback fallback_http)
     foreach(splice_mode IN ITEMS true false)

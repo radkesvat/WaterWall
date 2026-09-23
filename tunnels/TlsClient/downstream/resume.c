@@ -7,10 +7,7 @@ void tlsclientTunnelDownStreamResume(tunnel_t *t, line_t *l)
     tlsclient_tstate_t *ts = tunnelGetState(t);
     tlsclient_lstate_t *ls = lineGetState(l, t);
 
-    if (ts->record_shaping.enabled)
-    {
-        ls->shaping_wire_paused = false;
-    }
+    ls->shaping_wire_paused = false;
 
     if (ls->upstream_finished)
     {
@@ -21,9 +18,8 @@ void tlsclientTunnelDownStreamResume(tunnel_t *t, line_t *l)
         SSL_version(ls->ssl) == TLS1_3_VERSION)
     {
         lineRef(l);
-        bool shaping_pause_was_active = ls->shaping_producer_paused;
-        bool output_ok = ls->shaping_retired ? tlsclientFlushSslOutput(t, l, ls)
-                                             : tlsclientDrainShapedOutput(t, l, ls, false);
+        bool output_ok =
+            ls->shaping_retired ? tlsclientFlushSslOutput(t, l, ls) : tlsclientDrainShapedOutput(t, l, ls, false);
         if (! output_ok)
         {
             if (lineIsAlive(l))
@@ -57,16 +53,18 @@ void tlsclientTunnelDownStreamResume(tunnel_t *t, line_t *l)
             return;
         }
 
-        ls = lineGetState(l, t);
-        if (shaping_pause_was_active || ls->shaping_producer_paused || ls->shaping_wire_paused || ls->upstream_finished)
+        if (UNLIKELY(! tlsclientDrainPendingPlaintext(t, l)))
         {
             lineUnref(l);
             return;
         }
-
-        tunnelPrevDownStreamResume(t, l);
+        discard tlsclientUpdateSourcePressure(t, l);
         lineUnref(l);
         return;
     }
-    tunnelPrevDownStreamResume(t, l);
+    if (UNLIKELY(! tlsclientDrainPendingPlaintext(t, l)))
+    {
+        return;
+    }
+    discard tlsclientUpdateSourcePressure(t, l);
 }

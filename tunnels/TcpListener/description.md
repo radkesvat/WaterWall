@@ -185,9 +185,18 @@ That means the next node should expect to receive traffic from accepted clients 
 `TcpListener` implements backpressure for slow client sockets:
 
 - if a write cannot complete immediately, outgoing buffers are queued
-- once the queue grows beyond `1 KB`, the next node is paused
+- once retained bytes or capacity charge reaches `1 KiB`, the next node is paused
 - when the socket becomes writable again, the node resumes the next node
-- if the queued data grows beyond `16 MB`, the connection is closed
+- if retained bytes or capacity charge exceeds `16 MiB`, the connection is closed
+
+Queue admission publishes the buffer, accounting and Pause latch before notifying
+the producer, preserving FIFO under reentrant callbacks. Retention has separate
+16 MiB ceilings for logical bytes and buffer-capacity charge (including sbuf,
+padding and alignment); equality is accepted. Pressure starts when either measure
+reaches 1 KiB. Empty queued buffers consume capacity charge.
+The TCP budget includes both adapter backlog and the active WIO buffer. Partial
+writes retain the active allocation charge until completion. Overflow closes this
+connection through its line owner.
 
 This protects the process from unbounded buffering when the client is slow or stalled.
 

@@ -51,11 +51,9 @@ void socks5clientTunnelUpStreamInit(tunnel_t *t, line_t *l)
     tunnelNextUpStreamInit(t, l);
 }
 
-bool socks5clientDomainResolverPrepare(tunnel_t *resolver, tunnel_t *client, line_t *l,
-                                       domainresolver_direction_t direction, void *user_lstate)
+bool socks5clientDomainResolverPrepare(tunnel_t *resolver, tunnel_t *client, line_t *l, void *user_lstate)
 {
     discard resolver;
-    discard direction;
 
     discard user_lstate;
     return socks5clientApplyTargetContext(client, l);

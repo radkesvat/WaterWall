@@ -583,7 +583,7 @@ void udpconnectorLineDetach(tunnel_t *t, line_t *l, udpconnector_lstate_t *ls,
         ls->finishing = true;
         while (bufferqueueGetBufCount(&ls->pause_queue) > 0)
         {
-            sbuf_t                 *buf     = bufferqueuePopFront(&ls->pause_queue);
+            sbuf_t                 *buf     = udpconnectorPopWrite(ls, &ls->pause_queue);
             udpconnector_binding_t *binding = ls->last_send_binding;
             if (binding != NULL && udpconnectorBindingCanSend(binding))
             {

@@ -264,11 +264,9 @@ bool ctpSelectProtocol(tunnel_t *t, line_t *l, uint8_t *out_protocol)
     return false;
 }
 
-bool ctpDomainResolverPrepare(tunnel_t *resolver, tunnel_t *owner, line_t *l, domainresolver_direction_t direction,
-                              void *user_lstate)
+bool ctpDomainResolverPrepare(tunnel_t *resolver, tunnel_t *owner, line_t *l, void *user_lstate)
 {
     discard resolver;
-    discard direction;
 
     ctp_tstate_t                 *ts       = tunnelGetState(owner);
     ctp_domain_resolver_lstate_t *ls       = user_lstate;

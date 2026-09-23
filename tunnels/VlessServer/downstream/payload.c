@@ -29,23 +29,9 @@ void vlessserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             return;
         }
 
-        if (ls->phase == kVlessServerPhaseUdpConnecting)
-        {
-            bufferqueuePushBack(&ls->pending_down, buf);
-            if (UNLIKELY(bufferqueueGetBufLen(&ls->pending_down) > kVlessServerMaxPendingBytes))
-            {
-                LOGE("VlessServer: UDP downstream queue overflow, size=%zu limit=%u",
-                     bufferqueueGetBufLen(&ls->pending_down),
-                     (unsigned int) kVlessServerMaxPendingBytes);
-                vlessserverCloseLineBidirectional(t, l);
-            }
-            return;
-        }
-
-        if (UNLIKELY(! lineCallWithRefWithBuf(client_l, tunnelPrevDownStreamPayload, t, buf)))
-        {
-            return;
-        }
+        lineRef(l);
+        discard vlessserverForwardResponse(t, client_l, buf);
+        lineUnref(l);
         return;
     }
 
@@ -56,18 +42,10 @@ void vlessserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
-    if (ls->phase == kVlessServerPhaseTcpConnecting)
+    if (ls->phase == kVlessServerPhaseFallback)
     {
-        bufferqueuePushBack(&ls->pending_down, buf);
-        if (UNLIKELY(bufferqueueGetBufLen(&ls->pending_down) > kVlessServerMaxPendingBytes))
-        {
-            LOGE("VlessServer: TCP downstream queue overflow, size=%zu limit=%u",
-                 bufferqueueGetBufLen(&ls->pending_down),
-                 (unsigned int) kVlessServerMaxPendingBytes);
-            vlessserverCloseLineBidirectional(t, l);
-        }
+        tunnelPrevDownStreamPayload(t, l, buf);
         return;
     }
-
-    tunnelPrevDownStreamPayload(t, l, buf);
+    discard vlessserverForwardResponse(t, l, buf);
 }

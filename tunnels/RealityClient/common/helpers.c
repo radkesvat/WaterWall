@@ -233,27 +233,93 @@ bool realityclientSendHandoffControl(tunnel_t *t, line_t *l, uint8_t record_kind
     return lineCallWithRefWithBuf(l, tunnelNextUpStreamPayload, t, frame);
 }
 
+bool realityclientUpdateSourcePressure(tunnel_t *t, line_t *l)
+{
+    realityclient_lstate_t *ls = lineGetState(l, t);
+    if (ls->terminal_closing || ls->prev_finished)
+    {
+        return false;
+    }
+    bool paused = ls->wire_paused || ls->plaintext_producer_paused;
+    if (paused == ls->source_paused)
+    {
+        return true;
+    }
+    ls->source_paused = paused;
+    if (UNLIKELY(paused ? ! lineCallWithRef(l, tunnelPrevDownStreamPause, t)
+                        : ! lineCallWithRef(l, tunnelPrevDownStreamResume, t)))
+    {
+        return false;
+    }
+    ls = lineGetState(l, t);
+    return ! ls->terminal_closing && ! ls->prev_finished && ls->read_stream.pool != NULL;
+}
+
 bool realityclientFlushPendingUpstream(tunnel_t *t, line_t *l)
 {
-    while (lineIsAlive(l))
+    realityclient_lstate_t *ls = lineGetState(l, t);
+    if (ls->upstream_send_in_progress || ls->handoff_completion_in_progress ||
+        ls->phase != kRealityClientPhaseRealityActive)
     {
-        realityclient_lstate_t *ls = lineGetState(l, t);
-        if (ls->terminal_closing || ls->phase == kRealityClientPhaseTerminal)
+        return ! ls->terminal_closing;
+    }
+    realityclient_tstate_t *ts = tunnelGetState(t);
+    lineRef(l);
+    ls->upstream_send_in_progress = true;
+    while (! ls->wire_paused)
+    {
+        if (ls->pending_active == NULL)
         {
+            ls->pending_active = bufferqueuePopFrontReserved(&ls->pending_up, &ls->pending_reservation);
+            if (ls->pending_active == NULL)
+            {
+                break;
+            }
+        }
+        uint32_t length = sbufGetLength(ls->pending_active);
+        if (length == 0)
+        {
+            lineReuseBuffer(l, ls->pending_active);
+            ls->pending_active = NULL;
+            bufferbudgetReservationRelease(&ls->pending_reservation);
+            continue;
+        }
+        uint32_t chunk = min(length, (uint32_t) kRealityV2MaxPlaintextFragment);
+        sbuf_t  *frame = NULL;
+        if (UNLIKELY(! realityclientEncryptFrame(ts,
+                                                 ls,
+                                                 lineGetBufferPool(l),
+                                                 kRealityV2RecordKindApplicationData,
+                                                 sbufGetRawPtr(ls->pending_active),
+                                                 chunk,
+                                                 &frame)))
+        {
+            realityclientCloseLineBidirectional(t, l);
+            lineUnref(l);
             return false;
         }
-        if (bufferqueueGetBufCount(&ls->pending_up) == 0)
+        sbufShiftRight(ls->pending_active, chunk);
+        bufferbudgetReservationSetBytes(&ls->pending_reservation, sbufGetLength(ls->pending_active));
+        if (UNLIKELY(! lineCallWithRefWithBuf(l, tunnelNextUpStreamPayload, t, frame)))
         {
-            return true;
+            lineUnref(l);
+            return false;
         }
-
-        sbuf_t *buf = bufferqueuePopFront(&ls->pending_up);
-        if (! realityclientEncryptAndSend(t, l, buf))
+        ls = lineGetState(l, t);
+        if (UNLIKELY(ls->terminal_closing || ls->phase != kRealityClientPhaseRealityActive))
         {
+            lineUnref(l);
             return false;
         }
     }
-    return false;
+    ls->upstream_send_in_progress = false;
+    if (ls->pending_active == NULL && bufferqueueGetBufCount(&ls->pending_up) == 0)
+    {
+        ls->plaintext_producer_paused = false;
+    }
+    bool active = realityclientUpdateSourcePressure(t, l);
+    lineUnref(l);
+    return active;
 }
 
 static bool realityclientCompleteTls13Handoff(tunnel_t *t, line_t *l)
@@ -302,17 +368,7 @@ static bool realityclientCompleteTls13Handoff(tunnel_t *t, line_t *l)
         return false;
     }
 
-    ls->downstream_est_sent = true;
-    if (! lineCallWithRef(l, tunnelPrevDownStreamEst, t))
-    {
-        return false;
-    }
-
-    ls = lineGetState(l, t);
-    if (ls->terminal_closing || ls->phase != kRealityClientPhaseRealityActive)
-    {
-        return false;
-    }
+    ls->handoff_completion_in_progress = false;
     if (! realityclientFlushPendingUpstream(t, l))
     {
         return false;

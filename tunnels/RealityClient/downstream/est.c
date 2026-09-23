@@ -13,6 +13,17 @@ static void realityclientClearHandshakeTemporaries(tlsclient_handshake_binding_t
 
 void realityclientTunnelDownStreamEst(tunnel_t *t, line_t *l)
 {
+    realityclient_lstate_t *ls = lineGetState(l, t);
+    if (ls->terminal_closing || ls->prev_finished || ls->downstream_est_sent)
+    {
+        return;
+    }
+    ls->downstream_est_sent = true;
+    tunnelPrevDownStreamEst(t, l);
+}
+
+void realityclientHandshakeReady(tunnel_t *t, line_t *l)
+{
     realityclient_tstate_t        *ts               = tunnelGetState(t);
     tlsclient_handshake_binding_t  tls_binding      = {0};
     reality_v2_handshake_binding_t reality_binding  = {0};
@@ -79,41 +90,25 @@ void realityclientTunnelDownStreamEst(tunnel_t *t, line_t *l)
         }
 
         ls->phase = kRealityClientPhaseRealityActive;
-        if (! realityclientFlushPendingUpstream(t, l))
+        /* Publish older coalesced wire bytes before releasing early plaintext:
+         * an output callback may synchronously deliver the next peer record. */
+        if (pending_raw != NULL)
         {
-            if (pending_raw != NULL)
-            {
-                bufferpoolReuseBuffer(pool, pending_raw);
-            }
+            bufferstreamPush(&ls->read_stream, pending_raw);
+            pending_raw = NULL;
+        }
+        if (UNLIKELY(! realityclientFlushPendingUpstream(t, l)))
+        {
             lineUnref(l);
             return;
         }
         if (! lineIsAlive(l))
         {
-            if (pending_raw != NULL)
-            {
-                bufferpoolReuseBuffer(pool, pending_raw);
-            }
             lineUnref(l);
             return;
         }
 
-        ls                      = lineGetState(l, t);
-        ls->downstream_est_sent = true;
-        tunnelPrevDownStreamEst(t, l);
-        if (! lineIsAlive(l))
-        {
-            if (pending_raw != NULL)
-            {
-                bufferpoolReuseBuffer(pool, pending_raw);
-            }
-            lineUnref(l);
-            return;
-        }
-        if (pending_raw != NULL)
-        {
-            realityclientProcessDownstream(t, l, pending_raw);
-        }
+        realityclientProcessDownstream(t, l, NULL);
         lineUnref(l);
         return;
     }

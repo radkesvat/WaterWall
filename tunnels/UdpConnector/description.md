@@ -303,6 +303,16 @@ With `"packet"` balance mode, a `random(x,y)` port is selected when that destina
   UDP adapter when direct packet-line routing semantics are required.
 - Downstream `est` is triggered after the local UDP path is ready.
 
+Queue admission publishes the buffer, accounting and Pause latch before notifying
+the producer, preserving FIFO under reentrant callbacks. Retention has separate
+16 MiB ceilings for logical bytes and buffer-capacity charge (including sbuf,
+padding and alignment); equality is accepted. Pressure starts when either measure
+reaches 1 KiB. Empty queued buffers consume capacity charge.
+Initialization and per-destination DNS queues share one incremental budget per
+line. Overflow finishes only that association; other associations sharing its
+socket remain usable. Datagram socket writes retain the existing send/drop policy
+without a retry queue.
+
 ## Node Metadata
 
 Source-backed metadata:

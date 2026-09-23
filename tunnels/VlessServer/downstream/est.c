@@ -24,7 +24,11 @@ void vlessserverTunnelDownStreamEst(tunnel_t *t, line_t *l)
 
     if (ls->phase == kVlessServerPhaseFallback)
     {
-        tunnelPrevDownStreamEst(t, l);
+        if (! ls->transport_est_sent)
+        {
+            ls->transport_est_sent = true;
+            tunnelPrevDownStreamEst(t, l);
+        }
         return;
     }
 

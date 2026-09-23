@@ -17,7 +17,11 @@ static bool connectionfisherclientReadMatches(const sbuf_t *buf, const uint8_t *
 
 bool connectionfisherclientSendPing(tunnel_t *t, line_t *child_l)
 {
-    sbuf_t *buf = bufferpoolGetSmallBuffer(lineGetBufferPool(child_l));
+    connectionfisherclient_lstate_t *child_ls = lineGetState(child_l, t);
+    if (child_ls->ping_sent || child_ls->next_paused || child_ls->child_initializing)
+        return true;
+    child_ls->ping_sent = true;
+    sbuf_t *buf         = bufferpoolGetSmallBuffer(lineGetBufferPool(child_l));
 
     sbufSetLength(buf, kConnectionFisherHandshakeLength);
     memoryCopy(sbufGetMutablePtr(buf), kConnectionFisherClientPing, kConnectionFisherHandshakeLength);
@@ -25,25 +29,51 @@ bool connectionfisherclientSendPing(tunnel_t *t, line_t *child_l)
     return lineCallWithRefWithBuf(child_l, tunnelNextUpStreamPayload, t, buf);
 }
 
+bool connectionfisherclientSyncMainSource(tunnel_t *t, line_t *main_l)
+{
+    connectionfisherclient_lstate_t *main_ls = lineGetState(main_l, t);
+    bool                             paused  = main_ls->pumping_up || bufferqueueGetBufCount(&main_ls->pending_up) != 0;
+    if (main_ls->selected_child != NULL)
+    {
+        connectionfisherclient_lstate_t *child_ls = lineGetState(main_ls->selected_child, t);
+        paused |= child_ls->next_paused;
+    }
+    if (main_ls->prev_pause_sent == paused)
+        return true;
+    // The FIFO owns admitted data before source notification. Protocol pressure
+    // targets only the application source; child probes/replies stay runnable.
+    main_ls->prev_pause_sent = paused;
+    return paused ? lineCallWithRef(main_l, tunnelPrevDownStreamPause, t)
+                  : lineCallWithRef(main_l, tunnelPrevDownStreamResume, t);
+}
+
 bool connectionfisherclientFlushPendingToSelected(tunnel_t *t, line_t *main_l, line_t *child_l)
 {
     connectionfisherclient_lstate_t *main_ls = lineGetState(main_l, t);
-
-    while (bufferqueueGetBufCount(&main_ls->pending_up) > 0)
+    if (main_ls->pumping_up || main_ls->selecting_child)
+        return true;
+    lineRef(main_l);
+    lineRef(child_l);
+    main_ls->pumping_up = true;
+    while (lineIsAlive(main_l) && lineIsAlive(child_l) && main_ls->role == kConnectionFisherClientRoleMain &&
+           main_ls->selected_child == child_l)
     {
+        connectionfisherclient_lstate_t *child_ls = lineGetState(child_l, t);
+        if (child_ls->next_paused || bufferqueueGetBufCount(&main_ls->pending_up) == 0)
+            break;
         sbuf_t *buf = bufferqueuePopFront(&main_ls->pending_up);
-        if (! lineCallWithRefWithBuf(child_l, tunnelNextUpStreamPayload, t, buf))
-        {
-            return false;
-        }
-
-        if (! lineIsAlive(main_l))
-        {
-            return false;
-        }
+        tunnelNextUpStreamPayload(t, child_l, buf);
     }
-
-    return true;
+    bool alive = lineIsAlive(main_l) && lineIsAlive(child_l) && main_ls->role == kConnectionFisherClientRoleMain &&
+                 main_ls->selected_child == child_l;
+    if (alive)
+    {
+        main_ls->pumping_up = false;
+        alive               = connectionfisherclientSyncMainSource(t, main_l) && lineIsAlive(child_l);
+    }
+    lineUnref(child_l);
+    lineUnref(main_l);
+    return alive;
 }
 
 static void connectionfisherclientCloseMainLineInternal(tunnel_t *t, line_t *main_l, bool send_downstream_finish)
@@ -260,7 +290,8 @@ bool connectionfisherclientSelectChild(tunnel_t *t, line_t *child_l)
             }
         }
 
-        main_ls->selected_child = child_l;
+        main_ls->selecting_child = true;
+        main_ls->selected_child  = child_l;
 
         for (uint32_t i = 0; i < main_ls->child_count; ++i)
         {
@@ -278,14 +309,23 @@ bool connectionfisherclientSelectChild(tunnel_t *t, line_t *child_l)
 
         main_ls->open_child_count = 1;
 
-        if (lineIsEstablished(child_l) && ! main_ls->main_est_forwarded)
+        if (lineIsEstablished(child_l))
         {
-            main_ls->main_est_forwarded = true;
-
-            if (! lineCallWithRef(main_l, tunnelPrevDownStreamEst, t))
-            {
+            connectionfisherclientTunnelDownStreamEst(t, child_l);
+            if (! lineIsAlive(main_l) || ! lineIsAlive(child_l))
                 goto cleanup;
-            }
+        }
+        if (child_ls->next_paused)
+        {
+            connectionfisherclientTunnelDownStreamPause(t, child_l);
+            if (! lineIsAlive(main_l) || ! lineIsAlive(child_l))
+                goto cleanup;
+        }
+        if (main_ls->prev_paused)
+        {
+            tunnelNextUpStreamPause(t, child_l);
+            if (! lineIsAlive(main_l) || ! lineIsAlive(child_l))
+                goto cleanup;
         }
     }
 
@@ -307,23 +347,13 @@ bool connectionfisherclientSelectChild(tunnel_t *t, line_t *child_l)
         goto cleanup;
     }
 
-    if (! connectionfisherclientFlushPendingToSelected(t, main_l, child_l))
-    {
-        goto cleanup;
-    }
-
-    if (! lineIsAlive(main_l) || ! lineIsAlive(child_l))
-    {
-        goto cleanup;
-    }
-
     child_ls = lineGetState(child_l, t);
     if (child_ls->role != kConnectionFisherClientRoleChild)
     {
         goto cleanup;
     }
 
-    if (! bufferstreamIsEmpty(&child_ls->read_stream))
+    while (! bufferstreamIsEmpty(&child_ls->read_stream))
     {
         sbuf_t *extra = bufferstreamFullRead(&child_ls->read_stream);
 
@@ -331,7 +361,12 @@ bool connectionfisherclientSelectChild(tunnel_t *t, line_t *child_l)
         {
             goto cleanup;
         }
+        if (! lineIsAlive(child_l))
+            goto cleanup;
     }
+    main_ls->selecting_child = false;
+    if (! connectionfisherclientFlushPendingToSelected(t, main_l, child_l))
+        goto cleanup;
 
     selected = lineIsAlive(main_l) && lineIsAlive(child_l);
 

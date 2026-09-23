@@ -6,10 +6,20 @@ typedef struct tlsclient_lifecycle_context_s
     size_t    events_len;
     bool      kill_on_next_finish;
     bool      saw_payload;
-    bool      begin_takeover_on_est;
+    bool      pause_on_upstream_payload;
+    bool      enqueue_on_upstream_payload;
+    bool      finish_on_est;
+    bool      enqueue_on_source_pause;
+    bool      finish_on_source_pause;
+    bool      finish_on_source_resume;
+    bool      repause_on_source_resume;
+    uint32_t  source_pause_count;
+    uint32_t  source_resume_count;
+    bool      begin_takeover_on_ready;
     bool      begin_takeover_succeeded;
     bool      finish_downstream_on_next_payload;
     uint32_t  downstream_est_count;
+    uint32_t  handshake_ready_count;
     uint32_t  upstream_payload_count;
     BIO      *upstream_capture;
     sbuf_t   *pending_raw;
@@ -98,9 +108,20 @@ static void fakePrevEst(tunnel_t *t, line_t *l)
 {
     tlsclient_lifecycle_context_t *context = testContext(t);
     ++context->downstream_est_count;
-    if (context->begin_takeover_on_est)
+    if (context->finish_on_est)
     {
-        requireTlsClient(context->pending_raw == NULL, "TlsClient owner received duplicate takeover Est");
+        tlsclientTunnelUpStreamFinish(t->next, l);
+        l->alive = false;
+    }
+}
+
+static void fakeHandshakeReady(tunnel_t *t, line_t *l)
+{
+    tlsclient_lifecycle_context_t *context = testContext(t);
+    ++context->handshake_ready_count;
+    if (context->begin_takeover_on_ready)
+    {
+        requireTlsClient(context->pending_raw == NULL, "TlsClient owner received duplicate completion");
         context->begin_takeover_succeeded = tlsclientTunnelBeginTakeoverDrain(t->next, l, &context->pending_raw);
     }
 }
@@ -125,7 +146,7 @@ static void fakePayload(tunnel_t *t, line_t *l, sbuf_t *buf)
          * handshake flight followed by tickets that become available while
          * the client Finished is synchronously delivered. Appending here is
          * equivalent to those bytes already being the unread suffix of the
-         * callback: the takeover loop must publish Est at the Finished record
+         * callback: the takeover loop must publish completion at the Finished record
          * boundary and return the distinct ticket records through BeginDrain.
          */
         if (context->append_coalesced_tickets)
@@ -154,10 +175,60 @@ static void fakePayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         }
     }
     lineReuseBuffer(l, buf);
+    if (is_upstream && context->pause_on_upstream_payload)
+    {
+        context->pause_on_upstream_payload = false;
+        tlsclientTunnelDownStreamPause(t->prev, l);
+    }
+    if (is_upstream && context->enqueue_on_upstream_payload)
+    {
+        context->enqueue_on_upstream_payload = false;
+        sbuf_t *nested                       = bufferpoolGetSmallBuffer(lineGetBufferPool(l));
+        sbufSetLength(nested, 1);
+        sbufWriteUI8(nested, 'C');
+        tlsclientTunnelUpStreamPayload(t->prev, l, nested);
+    }
     if (is_upstream && context->finish_downstream_on_next_payload)
     {
         context->finish_downstream_on_next_payload = false;
         tlsclientTunnelDownStreamFinish(t->prev, l);
+    }
+}
+
+static void fakeSourcePause(tunnel_t *t, line_t *l)
+{
+    tlsclient_lifecycle_context_t *context = testContext(t);
+    ++context->source_pause_count;
+    if (context->enqueue_on_source_pause)
+    {
+        context->enqueue_on_source_pause = false;
+        sbuf_t *nested                   = bufferpoolGetSmallBuffer(lineGetBufferPool(l));
+        sbufSetLength(nested, 1);
+        sbufWriteUI8(nested, 'B');
+        tlsclientTunnelUpStreamPayload(t->next, l, nested);
+        tlsclientTunnelDownStreamPause(t->next, l);
+        tlsclientTunnelDownStreamResume(t->next, l);
+    }
+    if (context->finish_on_source_pause)
+    {
+        tlsclientTunnelUpStreamFinish(t->next, l);
+        l->alive = false;
+    }
+}
+
+static void fakeSourceResume(tunnel_t *t, line_t *l)
+{
+    tlsclient_lifecycle_context_t *context = testContext(t);
+    ++context->source_resume_count;
+    if (context->repause_on_source_resume)
+    {
+        context->repause_on_source_resume = false;
+        tlsclientTunnelDownStreamPause(t->next, l);
+    }
+    if (context->finish_on_source_resume)
+    {
+        tlsclientTunnelUpStreamFinish(t->next, l);
+        l->alive = false;
     }
 }
 
@@ -207,11 +278,13 @@ static void fixtureInitialize(tlsclient_lifecycle_fixture_t *fixture)
     fixture->prev->fnFinD            = fakePrevFinish;
     fixture->prev->fnEstD            = fakePrevEst;
     fixture->prev->fnPayloadD        = fakePayload;
+    fixture->prev->fnPauseD          = fakeSourcePause;
+    fixture->prev->fnResumeD         = fakeSourceResume;
     fixture->next->fnFinU            = fakeNextFinish;
     fixture->next->fnPayloadU        = fakePayload;
     fixture->context.upstream_tunnel = fixture->next;
     fixture->context.takeover_tls    = fixture->tls;
-    tlsclientTunnelEnableHandshakeTakeover(fixture->tls);
+    tlsclientTunnelEnableHandshakeTakeover(fixture->tls, fixture->prev, fakeHandshakeReady);
 
     uint32_t line_size = sizeof(line_t) + fixture->tls->lstate_size;
     fixture->line      = memoryAllocateCacheAlignedZero(line_size);
@@ -755,14 +828,19 @@ static void testServerFinishedAndRealTicketsShareOneCallback(void)
                                                      sbufGetLength(server_finished_flight)) > 1,
                          "coalesced TlsClient fixture did not retain distinct handshake records");
 
-        fixture.context.begin_takeover_on_est    = true;
+        tlsclientTunnelDownStreamEst(fixture.tls, fixture.line);
+        tlsclientTunnelDownStreamEst(fixture.tls, fixture.line);
+        requireTlsClient(fixture.context.downstream_est_count == 1 && fixture.context.handshake_ready_count == 0,
+                         "takeover did not forward transport Est before TLS completion");
+        fixture.context.begin_takeover_on_ready  = true;
         fixture.context.upstream_capture         = SSL_get_rbio(server);
         fixture.context.coalesced_ticket_server  = server;
         fixture.context.append_coalesced_tickets = true;
         tlsclientTunnelDownStreamPayload(fixture.tls, fixture.line, server_finished_flight);
 
-        requireTlsClient(lineIsAlive(fixture.line) && fixture.context.downstream_est_count == 1 &&
-                             fixture.context.begin_takeover_succeeded && ! fixture.context.append_coalesced_tickets,
+        requireTlsClient(lineIsAlive(fixture.line) && fixture.context.handshake_ready_count == 1 &&
+                             fixture.context.downstream_est_count == 1 && fixture.context.begin_takeover_succeeded &&
+                             ! fixture.context.append_coalesced_tickets,
                          "TlsClient did not publish one takeover boundary for the coalesced callback");
         requireTlsClient(fixture.context.coalesced_ticket_records == (ticket_count == 1 ? 1U : 2U),
                          "TlsClient coalesced fixture did not generate the expected distinct ticket records");
@@ -945,8 +1023,11 @@ static void testTakeoverDownstreamPathStopsAtRealTls13RecordBoundary(void)
     memoryCopy(flight_bytes, sbufGetRawPtr(server_flight), flight_len);
     lineReuseBuffer(fixture.line, server_flight);
 
-    fixture.context.begin_takeover_on_est = true;
-    fixture.context.upstream_capture      = SSL_get_rbio(server);
+    tlsclientTunnelDownStreamEst(fixture.tls, fixture.line);
+    requireTlsClient(fixture.context.downstream_est_count == 1 && fixture.context.handshake_ready_count == 0,
+                     "takeover transport Est waited for TLS completion");
+    fixture.context.begin_takeover_on_ready = true;
+    fixture.context.upstream_capture        = SSL_get_rbio(server);
 
     /* Every byte boundary in the genuine server flight is also a transport
      * callback boundary. The final callback additionally contains the first
@@ -964,9 +1045,10 @@ static void testTakeoverDownstreamPathStopsAtRealTls13RecordBoundary(void)
         fixture.tls, fixture.line, makeBytes(&fixture, final_callback, sizeof(final_callback)));
     free(flight_bytes);
 
-    requireTlsClient(lineIsAlive(fixture.line) && fixture.context.downstream_est_count == 1 &&
-                         fixture.context.begin_takeover_succeeded && ls->handshake_completed &&
-                         ls->takeover_phase == kTlsClientTakeoverDrain && tlsclientSslReadBoundaryIsClean(ls),
+    requireTlsClient(lineIsAlive(fixture.line) && fixture.context.handshake_ready_count == 1 &&
+                         fixture.context.downstream_est_count == 1 && fixture.context.begin_takeover_succeeded &&
+                         ls->handshake_completed && ls->takeover_phase == kTlsClientTakeoverDrain &&
+                         tlsclientSslReadBoundaryIsClean(ls),
                      "TlsClient did not publish one clean callback-driven takeover boundary");
     requireTlsClient(fixture.context.pending_raw != NULL &&
                          sbufGetLength(fixture.context.pending_raw) == sizeof(trailing_owner_record) &&
@@ -1177,8 +1259,222 @@ static void testRealTicketsAndKeyUpdatesAtEveryByteBoundary(void)
     fixtureDestroy(&fixture);
 }
 
+static sbuf_t *makeRepeatedPlaintext(tlsclient_lifecycle_fixture_t *fixture, uint32_t length, uint8_t byte)
+{
+    sbuf_t *buf = bufferpoolGetBestFit(fixture->pool, length, 0);
+    sbufSetLength(buf, length);
+    memorySet(sbufGetMutablePtr(buf), byte, length);
+    return buf;
+}
+
+static void testPendingPlaintextLimits(void)
+{
+    for (unsigned by_entries = 0; by_entries < 2; ++by_entries)
+    {
+        tlsclient_lifecycle_fixture_t fixture;
+        fixtureInitialize(&fixture);
+        ((tlsclient_tstate_t *) tunnelGetState(fixture.tls))->handshake_takeover_enabled = false;
+        tlsclient_lstate_t *ls = lineGetState(fixture.line, fixture.tls);
+        if (by_entries)
+        {
+            for (unsigned i = 0; i < kTlsClientPendingPlaintextBuffers; ++i)
+            {
+                tlsclientTunnelUpStreamPayload(fixture.tls, fixture.line, makeRepeatedPlaintext(&fixture, 0, 0));
+            }
+            requireTlsClient(bufferqueueGetBufCount(&ls->bq) == kTlsClientPendingPlaintextBuffers,
+                             "TLS exact plaintext entry limit was refused");
+        }
+        else
+        {
+            tlsclientTunnelUpStreamPayload(
+                fixture.tls, fixture.line, makeRepeatedPlaintext(&fixture, kTlsClientPendingPlaintextBytes, 'A'));
+            requireTlsClient(bufferqueueGetBufLen(&ls->bq) == kTlsClientPendingPlaintextBytes,
+                             "TLS exact plaintext byte limit was refused");
+        }
+        requireTlsClient(! fixture.context.saw_payload && ! ls->handshake_completed,
+                         "TLS early plaintext escaped before transport Est or handshake");
+        tlsclientTunnelDownStreamEst(fixture.tls, fixture.line);
+        requireTlsClient(fixture.context.downstream_est_count == 1 && ! fixture.context.saw_payload,
+                         "TLS transport Est released unencrypted early data");
+        tlsclientTunnelUpStreamPayload(fixture.tls, fixture.line, makeRepeatedPlaintext(&fixture, 1, 'B'));
+        requireScenario(&fixture, "UD");
+        fixtureDestroy(&fixture);
+    }
+}
+
+static void testTransportEstCanCloseBeforeHandshake(void)
+{
+    tlsclient_lifecycle_fixture_t fixture;
+    fixtureInitialize(&fixture);
+    fixture.context.finish_on_est = true;
+    tlsclientTunnelDownStreamEst(fixture.tls, fixture.line);
+    requireTlsClient(! lineIsAlive(fixture.line) && fixture.context.downstream_est_count == 1 &&
+                         fixture.context.handshake_ready_count == 0 && strcmp(fixture.context.events, "U") == 0,
+                     "TLS takeover transport Est could not close before handshake");
+    fixtureDestroy(&fixture);
+}
+
+static void testOrdinaryHandshakePendingDrain(unsigned mode)
+{
+    tlsclient_lifecycle_fixture_t fixture;
+    fixtureInitialize(&fixture);
+    ((tlsclient_tstate_t *) tunnelGetState(fixture.tls))->handshake_takeover_enabled = false;
+    tlsclient_lstate_t *ls         = lineGetState(fixture.line, fixture.tls);
+    SSL_CTX            *server_ctx = NULL;
+    SSL                *server     = createTls13Server(&server_ctx, 0);
+    BIO_set_mem_eof_return(ls->rbio, -1);
+    BIO_set_mem_eof_return(ls->wbio, -1);
+    fixture.context.upstream_capture = SSL_get_rbio(server);
+
+    bool close_during_drain                 = mode == 1;
+    fixture.context.enqueue_on_source_pause = true;
+    tlsclientTunnelUpStreamPayload(fixture.tls, fixture.line, makeRepeatedPlaintext(&fixture, 32768, 'A'));
+    requireTlsClient(fixture.context.source_pause_count == 1 && fixture.context.source_resume_count == 0 &&
+                         bufferqueueGetBufLen(&ls->bq) == 32769 && ls->plaintext_producer_paused,
+                     "TLS retained plaintext was not published before aggregated source Pause");
+    tlsclientTunnelDownStreamEst(fixture.tls, fixture.line);
+    tlsclientTunnelDownStreamEst(fixture.tls, fixture.line);
+    tlsclientTunnelDownStreamPause(fixture.tls, fixture.line);
+    int n = SSL_connect(ls->ssl);
+    requireTlsClient(n < 0 && SSL_get_error(ls->ssl, n) == SSL_ERROR_WANT_READ &&
+                         transferBio(ls->wbio, SSL_get_rbio(server)),
+                     "ordinary TLS fixture did not send ClientHello");
+    n = SSL_accept(server);
+    requireTlsClient(n < 0 && SSL_get_error(server, n) == SSL_ERROR_WANT_READ,
+                     "ordinary TLS server did not produce handshake flight");
+    sbuf_t *flight = drainBioToBuffer(&fixture, SSL_get_wbio(server));
+    requireTlsClient(flight != NULL, "ordinary TLS server flight missing");
+    tlsclientTunnelDownStreamPayload(fixture.tls, fixture.line, flight);
+    requireTlsClient(ls->handshake_completed && ls->shaping_wire_paused && bufferqueueGetBufLen(&ls->bq) == 32769 &&
+                         ls->pending_plaintext == NULL && fixture.context.downstream_est_count == 1 &&
+                         fixture.context.handshake_ready_count == 0 && fixture.context.source_pause_count == 1 &&
+                         fixture.context.source_resume_count == 0,
+                     "ordinary TLS handshake drained early plaintext through Pause or repeated Est");
+    requireTlsClient(completeServerHandshake(server), "ordinary TLS server failed to complete handshake");
+    uint8_t plaintext[32770];
+    n = SSL_read(server, plaintext, sizeof(plaintext));
+    requireTlsClient(n < 0 && SSL_get_error(server, n) == SSL_ERROR_WANT_READ,
+                     "paused ordinary TLS handshake leaked queued plaintext");
+
+    uint32_t sends_before                             = fixture.context.upstream_payload_count;
+    fixture.context.pause_on_upstream_payload         = ! close_during_drain;
+    fixture.context.enqueue_on_upstream_payload       = ! close_during_drain;
+    fixture.context.finish_downstream_on_next_payload = close_during_drain;
+    tlsclientTunnelDownStreamResume(fixture.tls, fixture.line);
+    requireTlsClient(fixture.context.upstream_payload_count == sends_before + 1,
+                     "TLS pending drain sent another record after callback Pause or Finish");
+    if (close_during_drain)
+    {
+        requireTlsClient(strcmp(fixture.context.events, "D") == 0,
+                         "TLS callback close during plaintext drain duplicated Finish");
+    }
+    else
+    {
+        requireTlsClient(ls->pending_plaintext != NULL && sbufGetLength(ls->pending_plaintext) == 16384 &&
+                             bufferqueueGetBufLen(&ls->bq) == 2,
+                         "TLS did not retain its active head ahead of nested plaintext");
+        requireTlsClient(ls->pending_reservation.budget == &ls->pending_budget &&
+                             ls->pending_reservation.cost.bytes == 16384 &&
+                             bufferbudgetGetUsage(&ls->pending_budget).bytes == 16384 + bufferqueueGetBufLen(&ls->bq) &&
+                             bufferbudgetGetUsage(&ls->pending_budget).entries == 1 + bufferqueueGetBufCount(&ls->bq),
+                         "active plaintext consumption was not published before reentrant wire output");
+        requireTlsClient(fixture.context.source_pause_count == 1 && fixture.context.source_resume_count == 0,
+                         "TLS wire Resume released source while older plaintext remained");
+        if (mode >= 4)
+        {
+            if (mode == 4)
+            {
+                uint32_t allowance =
+                    (uint32_t) (kTlsClientPendingPlaintextBytes - bufferbudgetGetUsage(&ls->pending_budget).bytes);
+                tlsclientTunnelUpStreamPayload(
+                    fixture.tls, fixture.line, makeRepeatedPlaintext(&fixture, allowance, 'X'));
+                requireTlsClient(bufferbudgetGetUsage(&ls->pending_budget).bytes == kTlsClientPendingPlaintextBytes,
+                                 "TLS queue plus active exact byte cap refused");
+            }
+            else
+            {
+                while (bufferbudgetGetUsage(&ls->pending_budget).entries < kTlsClientPendingPlaintextBuffers)
+                    tlsclientTunnelUpStreamPayload(fixture.tls, fixture.line, makeRepeatedPlaintext(&fixture, 0, 0));
+                requireTlsClient(bufferqueueGetBufCount(&ls->bq) == kTlsClientPendingPlaintextBuffers - 1,
+                                 "TLS active entry was not charged at equality");
+            }
+            tlsclientTunnelUpStreamPayload(fixture.tls, fixture.line, makeRepeatedPlaintext(&fixture, 1, 'X'));
+            requireTlsClient(ls->pending_plaintext == NULL && ls->pending_reservation.budget == NULL &&
+                                 bufferbudgetGetUsage(&ls->pending_budget).entries == 0 &&
+                                 strcmp(fixture.context.events, "UD") == 0,
+                             "TLS active overflow did not settle reservation and queued input");
+            SSL_free(server);
+            SSL_CTX_free(server_ctx);
+            fixtureDestroy(&fixture);
+            return;
+        }
+        fixture.context.finish_on_source_resume  = mode == 2;
+        fixture.context.repause_on_source_resume = mode == 3;
+        tlsclientTunnelDownStreamResume(fixture.tls, fixture.line);
+        if (mode == 2)
+        {
+            requireTlsClient(! lineIsAlive(fixture.line) && fixture.context.source_resume_count == 1 &&
+                                 strcmp(fixture.context.events, "U") == 0,
+                             "TLS source Resume close continued touching retired state");
+            SSL_free(server);
+            SSL_CTX_free(server_ctx);
+            fixtureDestroy(&fixture);
+            return;
+        }
+        if (mode == 3)
+        {
+            requireTlsClient(ls->shaping_wire_paused && fixture.context.source_pause_count == 2 &&
+                                 fixture.context.source_resume_count == 1,
+                             "TLS nested Pause from source Resume was lost or duplicated");
+            tlsclientTunnelDownStreamResume(fixture.tls, fixture.line);
+        }
+        requireTlsClient(fixture.context.source_resume_count == (mode == 3 ? 2U : 1U) &&
+                             ! ls->plaintext_producer_paused && ! ls->source_paused,
+                         "TLS did not release source pressure after readiness and FIFO completion");
+        size_t received = 0;
+        while (received < sizeof(plaintext))
+        {
+            n = SSL_read(server, plaintext + received, (int) (sizeof(plaintext) - received));
+            requireTlsClient(n > 0, "TLS resumed plaintext was lost at the peer");
+            received += (size_t) n;
+        }
+        for (size_t i = 0; i < 32768; ++i)
+        {
+            requireTlsClient(plaintext[i] == 'A', "TLS reentry reordered the active plaintext head");
+        }
+        requireTlsClient(plaintext[32768] == 'B' && plaintext[32769] == 'C' && ls->pending_plaintext == NULL &&
+                             bufferqueueGetBufCount(&ls->bq) == 0,
+                         "TLS pending FIFO lost/reordered older or nested plaintext");
+        tlsclientTunnelUpStreamFinish(fixture.tls, fixture.line);
+    }
+    SSL_free(server);
+    SSL_CTX_free(server_ctx);
+    fixtureDestroy(&fixture);
+}
+
+static void testSourcePauseCanCloseQueuedPlaintext(void)
+{
+    tlsclient_lifecycle_fixture_t fixture;
+    fixtureInitialize(&fixture);
+    fixture.context.finish_on_source_pause = true;
+    tlsclientTunnelUpStreamPayload(fixture.tls, fixture.line, makeRepeatedPlaintext(&fixture, 1, 'A'));
+    requireTlsClient(! lineIsAlive(fixture.line) && fixture.context.source_pause_count == 1 &&
+                         fixture.context.source_resume_count == 0 && strcmp(fixture.context.events, "U") == 0,
+                     "TLS source Pause close leaked queued plaintext or emitted Resume");
+    fixtureDestroy(&fixture);
+}
+
 int main(void)
 {
+    testPendingPlaintextLimits();
+    testTransportEstCanCloseBeforeHandshake();
+    testSourcePauseCanCloseQueuedPlaintext();
+    testOrdinaryHandshakePendingDrain(0);
+    testOrdinaryHandshakePendingDrain(1);
+    testOrdinaryHandshakePendingDrain(2);
+    testOrdinaryHandshakePendingDrain(3);
+    testOrdinaryHandshakePendingDrain(4);
+    testOrdinaryHandshakePendingDrain(5);
     testUpstreamFinishIsDirectional();
     testDownstreamFinishIsDirectional();
     testFatalCloseFinishesUpstreamThenDownstream();

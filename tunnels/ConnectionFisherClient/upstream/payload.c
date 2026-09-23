@@ -8,19 +8,31 @@ void connectionfisherclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t 
 
     if (ls->role == kConnectionFisherClientRoleMain)
     {
-        if (ls->selected_child != NULL)
+        if (ls->selected_child != NULL && ! ls->selecting_child && ! ls->pumping_up &&
+            bufferqueueGetBufCount(&ls->pending_up) == 0)
         {
             discard lineCallWithRefWithBuf(ls->selected_child, tunnelNextUpStreamPayload, t, buf);
             return;
         }
 
-        bufferqueuePushBack(&ls->pending_up, buf);
-        if (bufferqueueGetBufLen(&ls->pending_up) > kConnectionFisherMaxPendingUpBytes)
+        if (UNLIKELY(sbufGetLength(buf) == 0))
         {
-            LOGW("ConnectionFisherClient: pending upstream payload exceeded %u bytes while waiting for a fished child line",
-                 (unsigned int) kConnectionFisherMaxPendingUpBytes);
-            connectionfisherclientCloseMainLine(t, l);
+            lineReuseBuffer(l, buf);
+            return;
         }
+        if (UNLIKELY(sbufGetLength(buf) > kConnectionFisherMaxPendingUpBytes - bufferqueueGetBufLen(&ls->pending_up) ||
+                     ! bufferqueueTryPushBack(&ls->pending_up, &buf)))
+        {
+            lineReuseBuffer(l, buf);
+            LOGW(
+                "ConnectionFisherClient: pending upstream payload exceeded its 1 MiB budget or queue admission failed");
+            connectionfisherclientCloseMainLine(t, l);
+            return;
+        }
+        if (UNLIKELY(! connectionfisherclientSyncMainSource(t, l)))
+            return;
+        if (ls->selected_child != NULL)
+            discard connectionfisherclientFlushPendingToSelected(t, l, ls->selected_child);
         return;
     }
 

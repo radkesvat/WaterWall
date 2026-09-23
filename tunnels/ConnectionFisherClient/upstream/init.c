@@ -35,37 +35,38 @@ void connectionfisherclientTunnelUpStreamInit(tunnel_t *t, line_t *main_l)
         main_ls->child_lines[i] = child_l;
         main_ls->open_child_count += 1;
 
-        if (! lineCallWithRef(child_l, tunnelNextUpStreamInit, t))
+        lineRef(child_l);
+        child_ls->child_initializing = true;
+        tunnelNextUpStreamInit(t, child_l);
+        if (lineIsAlive(child_l) && connectionfisherclientMainLineStillOpen(t, main_l))
         {
-            if (! connectionfisherclientMainLineStillOpen(t, main_l))
-            {
-                lineUnref(main_l);
-                return;
-            }
-
-            continue;
+            child_ls->child_initializing = false;
+            /* Onward pooling may return a transport already marked established. */
+            if (lineIsEstablished(child_l))
+                connectionfisherclientTunnelDownStreamEst(t, child_l);
+            if (lineIsAlive(child_l) && connectionfisherclientMainLineStillOpen(t, main_l))
+                discard connectionfisherclientSendPing(t, child_l);
         }
-
-        if (! connectionfisherclientSendPing(t, child_l))
-        {
-            if (! connectionfisherclientMainLineStillOpen(t, main_l))
-            {
-                lineUnref(main_l);
-                return;
-            }
-        }
-
+        lineUnref(child_l);
         if (! connectionfisherclientMainLineStillOpen(t, main_l))
         {
             lineUnref(main_l);
             return;
         }
+        if (main_ls->selected_child != NULL)
+            break;
     }
 
     main_ls = lineGetState(main_l, t);
     if (main_ls->open_child_count == 0)
     {
         connectionfisherclientCloseMainLine(t, main_l);
+        lineUnref(main_l);
+        return;
+    }
+
+    if (main_ls->selected_child != NULL)
+    {
         lineUnref(main_l);
         return;
     }

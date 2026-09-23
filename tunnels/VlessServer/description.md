@@ -294,8 +294,16 @@ Response format:
 00 00
 ```
 
-The response header is sent only after the selected upstream path establishes. For TCP this means the outbound
-connection has established. For UDP this means the backend UDP line has initialized through the next node.
+Transport Est is forwarded once on the correct client association, independently of the response header and output
+Pause. The response header precedes every backend reply, including a valid reply received before transport Est. An
+Est-triggered header or retained reply drain waits while the client output is paused; an admitted first reply may complete
+its required header and body synchronously. Header/Est reentry cannot reorder older replies. The retained response FIFO
+is bounded to the existing 1 MiB byte limit plus 1,024 buffers, with transactional admission and per-association close on
+overflow. Client receiver Pause recorded before branch Init is replayed onto the initialized TCP backend and every new
+or recreated owned UDP backend. Nested application input during branch Init/replay stays behind the original input in a temporary FIFO with
+the same limits. Authentication, fallback selection and the exact owned UDP backend remain unchanged.
+
+Partial two-byte UDP length prefixes and datagram bodies wait for later input.
 
 UDP packets after the request header use:
 

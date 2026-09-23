@@ -8,8 +8,9 @@ void headerserverLinestateInitialize(headerserver_lstate_t *ls, line_t *l, heade
                             ts->override_mode == kHeaderServerOverrideModeProxyProtocolSourceFields;
 
     *ls = (headerserver_lstate_t) {
-        .phase       = waits_for_header ? kHeaderServerPhaseWaitHeader : kHeaderServerPhaseEstablished,
-        .read_stream = bufferstreamCreate(lineGetBufferPool(l), 0),
+        .initial_reentry = bufferqueueCreate(2),
+        .phase           = waits_for_header ? kHeaderServerPhaseWaitHeader : kHeaderServerPhaseEstablished,
+        .read_stream     = bufferstreamCreate(lineGetBufferPool(l), 0),
     };
 }
 
@@ -20,6 +21,7 @@ void headerserverLinestateDestroy(headerserver_lstate_t *ls)
         return;
     }
 
+    bufferqueueDestroy(&ls->initial_reentry);
     bufferstreamDestroy(&ls->read_stream);
     memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(*ls)));
 }

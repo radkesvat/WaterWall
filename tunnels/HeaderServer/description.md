@@ -5,6 +5,11 @@ Sync note: Any change to this file must also be applied to WaterWall/WaterWall-D
 
 # HeaderServer
 
+`HeaderServer` publishes its continuing-path state before calling the next Init, so a synchronous transport Est is
+forwarded promptly and once. Input submitted reentrantly from Init, Est or initial replay stays behind the original
+accepted bytes. This temporary ordering FIFO is bounded to 2 MiB / 1,024 buffers and is drained within the current
+synchronous dispatch; it is empty on the ordinary direct path. Overflow closes the borrowed line through its owner.
+
 `HeaderServer` is the server-side reader for small connection metadata headers.
 It can do three different jobs:
 

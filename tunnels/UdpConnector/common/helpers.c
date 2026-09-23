@@ -46,16 +46,23 @@ void udpconnectorOnIdleConnectionExpire(local_idle_item_t *idle_udp)
     udpconnectorLineDetach(t, l, ls, worker_drain ? kUdpConnectorDetachWorkerDrain : kUdpConnectorDetachIdleExpire);
 }
 
+bool udpconnectorQueueWrite(udpconnector_lstate_t *ls, buffer_queue_t *queue, sbuf_t **buf)
+{
+    assert(queue->budget == &ls->write_budget);
+    discard ls;
+    return bufferqueueTryPushBack(queue, buf);
+}
+
+sbuf_t *udpconnectorPopWrite(udpconnector_lstate_t *ls, buffer_queue_t *queue)
+{
+    assert(queue->budget == &ls->write_budget);
+    discard ls;
+    return bufferqueuePopFront(queue);
+}
+
 size_t udpconnectorQueuedWriteBytes(udpconnector_lstate_t *ls)
 {
-    size_t total = bufferqueueGetBufLen(&ls->pause_queue);
-
-    for (uint32_t i = 0; i < ls->packet_destinations_count; ++i)
-    {
-        total += bufferqueueGetBufLen(&ls->packet_destinations[i].pending_queue);
-    }
-
-    return total;
+    return bufferbudgetGetUsage(&ls->write_budget).bytes;
 }
 
 bool udpconnectorFlushWriteQueue(udpconnector_lstate_t *ls)
@@ -66,7 +73,7 @@ bool udpconnectorFlushWriteQueue(udpconnector_lstate_t *ls)
 
     while (bufferqueueGetBufCount(&ls->pause_queue) > 0)
     {
-        sbuf_t *buf = bufferqueuePopFront(&ls->pause_queue);
+        sbuf_t *buf = udpconnectorPopWrite(ls, &ls->pause_queue);
         if (! udpconnectorBindingCanSend(binding))
         {
             lineReuseBuffer(line, buf);
@@ -86,7 +93,7 @@ bool udpconnectorReplayWriteQueue(udpconnector_lstate_t *ls)
 
     while (bufferqueueGetBufCount(&ls->pause_queue) > 0)
     {
-        sbuf_t *buf = bufferqueuePopFront(&ls->pause_queue);
+        sbuf_t *buf = udpconnectorPopWrite(ls, &ls->pause_queue);
         udpconnectorTunnelUpStreamPayload(t, l, buf);
 
         if (! lineIsAlive(l))

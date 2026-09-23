@@ -104,6 +104,9 @@ void headerserverCloseLineFromProtocolError(tunnel_t *t, line_t *l)
         tunnelNextUpStreamFinish(t, l);
     }
 
-    tunnelPrevDownStreamFinish(t, l);
+    if (lineIsAlive(l))
+    {
+        tunnelPrevDownStreamFinish(t, l);
+    }
     lineUnref(l);
 }

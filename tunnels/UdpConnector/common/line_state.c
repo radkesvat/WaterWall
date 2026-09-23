@@ -26,6 +26,11 @@ bool udpconnectorLinestateInitialize(udpconnector_lstate_t *ls, tunnel_t *t, lin
         .route_destination_pinned         = false,
     };
 
+    bufferbudgetInit(&ls->write_budget,
+                     (buffer_budget_cost_t) {kUdpMaxPauseQueueSize, kUdpMaxPauseQueueSize, SIZE_MAX});
+    const bool attached = bufferqueueTryAttachBudget(&ls->pause_queue, &ls->write_budget);
+    assert(attached);
+    discard                attached;
     udpconnector_tstate_t *ts = tunnelGetState(t);
     if (ts->balance_mode == kUdpConnectorBalanceModePacket)
     {
@@ -49,6 +54,10 @@ bool udpconnectorLinestateInitialize(udpconnector_lstate_t *ls, tunnel_t *t, lin
         for (uint32_t i = 0; i < count; ++i)
         {
             ls->packet_destinations[i].pending_queue = bufferqueueCreate(kUdpPauseQueueCapacity);
+            const bool destination_attached =
+                bufferqueueTryAttachBudget(&ls->packet_destinations[i].pending_queue, &ls->write_budget);
+            assert(destination_attached);
+            discard destination_attached;
         }
     }
 
@@ -102,6 +111,7 @@ void udpconnectorLinestateDestroy(udpconnector_lstate_t *ls)
     udpconnectorCancelPacketDnsRequests(ls);
     udpconnectorPacketDestinationCachesDestroy(ls);
     bufferqueueDestroy(&ls->pause_queue);
+    bufferbudgetAssertEmpty(&ls->write_budget);
     udpconnector_peer_binding_map_drop(&ls->peer_bindings);
     memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(udpconnector_lstate_t)));
 }

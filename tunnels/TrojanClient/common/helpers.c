@@ -2,14 +2,6 @@
 
 #include "loggers/network_logger.h"
 
-static sbuf_t *allocProtocolBuffer(line_t *l, uint32_t len)
-{
-    buffer_pool_t *pool = lineGetBufferPool(l);
-    sbuf_t        *buf  = bufferpoolGetBestFit(pool, len, bufferpoolGetLargeBufferPadding(pool));
-    sbufSetLength(buf, len);
-    return buf;
-}
-
 static bool trojanclientWriteAddress(uint8_t *ptr, const address_context_t *ctx, size_t *offset)
 {
     if (addresscontextIsIpType(ctx))
@@ -197,55 +189,73 @@ bool trojanclientApplyTargetContext(tunnel_t *t, line_t *l)
     return true;
 }
 
-bool trojanclientSendInitialRequest(tunnel_t *t, line_t *l, trojanclient_lstate_t *ls)
+/* Takes ownership of body on every result. No callback occurs until the whole
+ * request and eligible first payload occupy one ordinary, onward-padded buffer. */
+bool trojanclientSendInitialRequest(tunnel_t *t, line_t *l, trojanclient_lstate_t *ls, sbuf_t *body)
 {
     trojanclient_tstate_t   *ts           = tunnelGetState(t);
     address_context_t        assoc_target = {0};
     const address_context_t *target       = &ls->target_addr;
-    uint8_t                  cmd          = protocolToCommand(ls->protocol);
-    uint32_t                 addr_len     = 0;
-
+    uint32_t                 addr_len = 0, udp_addr_len = 0;
     if (ls->protocol == kTrojanClientProtocolUdp)
     {
         fillUdpAssociateRequestTarget(&assoc_target);
         target = &assoc_target;
     }
-
-    if (UNLIKELY(! trojanclientAddressLength(target, &addr_len)))
+    if (UNLIKELY(! trojanclientAddressLength(target, &addr_len) ||
+                 (body != NULL && ls->protocol == kTrojanClientProtocolUdp &&
+                  ! trojanclientAddressLength(&ls->target_addr, &udp_addr_len))))
     {
-        LOGE("TrojanClient: target settings are not populated");
         addresscontextReset(&assoc_target);
+        if (body != NULL)
+            lineReuseBuffer(l, body);
         return false;
     }
-
-    uint32_t len = kTrojanClientPasswordHexLen + kTrojanClientCrlfLen + 1U + addr_len + kTrojanClientCrlfLen;
-    sbuf_t  *buf = allocProtocolBuffer(l, len);
+    uint32_t       body_len       = body == NULL ? 0 : sbufGetLength(body);
+    uint32_t       header_len     = kTrojanClientPasswordHexLen + 5U + addr_len;
+    uint32_t       udp_header_len = udp_addr_len == 0 ? 0 : udp_addr_len + 4U;
+    uint64_t       total          = (uint64_t) header_len + udp_header_len + body_len;
+    buffer_pool_t *pool           = lineGetBufferPool(l);
+    uint16_t       padding        = bufferpoolGetLargeBufferPadding(pool);
+    sbuf_t        *buf            = bufferpoolTryGetBestFit(pool, total, padding);
+    if (UNLIKELY(buf == NULL))
+    {
+        addresscontextReset(&assoc_target);
+        if (body != NULL)
+            lineReuseBuffer(l, body);
+        return false;
+    }
     uint8_t *ptr = sbufGetMutablePtr(buf);
     size_t   off = 0;
-
-    memoryCopy(ptr + off, ts->password_hex, kTrojanClientPasswordHexLen);
+    memoryCopy(ptr, ts->password_hex, kTrojanClientPasswordHexLen);
     off += kTrojanClientPasswordHexLen;
+    ptr[off++]   = '\r';
+    ptr[off++]   = '\n';
+    ptr[off++]   = protocolToCommand(ls->protocol);
+    bool written = trojanclientWriteAddress(ptr, target, &off);
+    assert(written);
+    discard written;
     ptr[off++] = '\r';
     ptr[off++] = '\n';
-    ptr[off++] = cmd;
-
-    if (UNLIKELY(! trojanclientWriteAddress(ptr, target, &off)))
+    if (udp_header_len != 0)
     {
-        lineReuseBuffer(l, buf);
-        addresscontextReset(&assoc_target);
-        return false;
+        written = trojanclientWriteAddress(ptr, &ls->target_addr, &off);
+        assert(written);
+        uint16_t length = htobe16((uint16_t) body_len);
+        memoryCopy(ptr + off, &length, sizeof(length));
+        off += sizeof(length);
+        ptr[off++] = '\r';
+        ptr[off++] = '\n';
     }
-
-    ptr[off++] = '\r';
-    ptr[off++] = '\n';
-
-    if (ts->verbose)
-    {
-        LOGD("TrojanClient: sending command %u for target port %u", (unsigned int) cmd, (unsigned int) target->port);
-    }
-
     addresscontextReset(&assoc_target);
-    /* The pump already retains both the transport and its application line. */
+    sbufSetLength(buf, (uint32_t) off);
+    if (body != NULL)
+    {
+        buf = sbufMoveRangeTo(pool, body, buf, body_len, (uint32_t) total, padding);
+        lineReuseBuffer(l, body);
+    }
+    trojanclientCancelFirstPayloadTimer(ls);
+    ls->request_sent = true;
     tunnelNextUpStreamPayload(t, l, buf);
     return true;
 }

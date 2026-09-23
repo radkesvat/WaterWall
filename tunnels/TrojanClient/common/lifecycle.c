@@ -12,6 +12,7 @@ static line_t *createInternalLine(tunnel_t *t, line_t *app_l, trojanclient_line_
 
     trojanclient_lstate_t *inner_ls = lineGetState(inner_l, t);
     trojanclientLinestateInitialize(inner_ls, inner_l);
+    inner_ls->tunnel   = t;
     inner_ls->kind     = kind;
     inner_ls->app_line = app_l;
 

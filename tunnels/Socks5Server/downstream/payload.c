@@ -9,19 +9,17 @@ void socks5serverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     if (ls->kind == kSocks5ServerLineKindControlTcp)
     {
-        if (ls->phase == kSocks5ServerPhaseTcpEstablished)
+        if (ls->phase == kSocks5ServerPhaseTcpEstablished && ! ls->control_draining &&
+            bufferqueueGetBufCount(&ls->pending_down) == 0)
         {
             tunnelPrevDownStreamPayload(t, l, buf);
             return;
         }
 
-        if (ls->phase == kSocks5ServerPhaseConnectWaitEst)
+        if (ls->phase == kSocks5ServerPhaseConnectWaitEst || ls->phase == kSocks5ServerPhaseTcpEstablished)
         {
-            bufferqueuePushBack(&ls->pending_down, buf);
-            if (bufferqueueGetBufLen(&ls->pending_down) > kSocks5ServerMaxPendingBytes)
-            {
-                socks5serverCloseControlLineBidirectional(t, l);
-            }
+            if (LIKELY(socks5serverQueueControl(t, l, buf, false)))
+                discard socks5serverDrainControl(t, l);
             return;
         }
 

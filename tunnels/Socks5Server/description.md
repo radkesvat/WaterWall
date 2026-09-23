@@ -206,8 +206,8 @@ For `CONNECT`:
 - the requested destination is copied into `line->routing_context.dest_ctx`
 - the transport protocol is set to TCP
 - upstream `Init` is sent to the next tunnel
-- payload is buffered until downstream `Est` arrives
-- only then does the tunnel send the SOCKS5 success reply and emit downstream `Est` toward the previous node
+- authenticated upstream payload can proceed after adjacent Init, including before Est
+- downstream Est is forwarded immediately; the SOCKS5 success reply then precedes backend response bytes
 
 For `UDP ASSOCIATE`:
 
@@ -313,3 +313,8 @@ Source-backed metadata:
 | `layer_group_prev_node` | `kNodeLayer4` |
 | `layer_group_next_node` | `kNodeLayer4` |
 | `required_padding_left` | `262` bytes |
+
+Transport Est and the SOCKS reply are separate obligations. Init/Est reentry cannot overtake older request bytes.
+A paused client delays the success reply and response-body backlog, while Est still propagates promptly.
+Necessary request/reply ordering queues retain at most 1 MiB and 1,024 buffers per direction; ready direct payloads
+remain synchronous. Reply admission is published before callbacks so nested data cannot precede the reply.

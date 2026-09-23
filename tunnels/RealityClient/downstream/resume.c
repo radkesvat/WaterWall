@@ -7,5 +7,10 @@ void realityclientTunnelDownStreamResume(tunnel_t *t, line_t *l)
     {
         return;
     }
-    tunnelPrevDownStreamResume(t, l);
+    ls->wire_paused = false;
+    if (UNLIKELY(! realityclientFlushPendingUpstream(t, l)))
+    {
+        return;
+    }
+    discard realityclientUpdateSourcePressure(t, l);
 }

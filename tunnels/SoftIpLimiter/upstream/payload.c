@@ -10,26 +10,33 @@ void softiplimiterTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
-    if (ls->phase != kSoftIpLimiterPhaseEstablished)
+    if (! softiplimiterPhaseForwards(ls->phase))
     {
-        if (ls->phase == kSoftIpLimiterPhasePassthrough)
-        {
-            tunnelNextUpStreamPayload(t, l, buf);
-            return;
-        }
-
         softiplimiterHandleInitialPayload(t, l, buf);
         return;
     }
 
-    softiplimiter_table_result_t result = {0};
-    if (UNLIKELY(! softiplimiterTouchLine(t, ls, softiplimiterNowMs(), &result)))
+    if (ls->phase == kSoftIpLimiterPhaseEstablished)
     {
-        lineReuseBuffer(l, buf);
-        softiplimiterLogActiveClose(t, l, ls, NULL, &result);
-        softiplimiterCloseLine(t, l, kSoftIpLimiterCloseInternal);
+        softiplimiter_table_result_t result = {0};
+        if (UNLIKELY(! softiplimiterTouchLine(t, ls, softiplimiterNowMs(), &result)))
+        {
+            lineReuseBuffer(l, buf);
+            softiplimiterLogActiveClose(t, l, ls, NULL, &result);
+            softiplimiterCloseLine(t, l, kSoftIpLimiterCloseInternal);
+            return;
+        }
+    }
+    if (ls->initial_forwarding)
+    {
+        if (UNLIKELY(sbufGetLength(buf) > kSoftIpLimiterMaxReentryBytes - bufferqueueGetBufLen(&ls->initial_reentry) ||
+                     bufferqueueGetBufCount(&ls->initial_reentry) >= kSoftIpLimiterMaxReentryBuffers ||
+                     ! bufferqueueTryPushBack(&ls->initial_reentry, &buf)))
+        {
+            lineReuseBuffer(l, buf);
+            softiplimiterCloseLine(t, l, kSoftIpLimiterCloseInternal);
+        }
         return;
     }
-
     tunnelNextUpStreamPayload(t, l, buf);
 }

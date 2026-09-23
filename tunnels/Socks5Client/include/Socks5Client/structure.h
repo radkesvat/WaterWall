@@ -56,10 +56,19 @@ typedef struct socks5client_lstate_s
     address_context_t        target_addr;
     address_context_t        relay_addr;
     buffer_stream_t          in_stream;
+    // Application FIFO retained only for SOCKS negotiation or an older deferred drain.
+    buffer_budget_t          pending_budget;
     buffer_queue_t           pending_up;
     socks5client_protocol_t  protocol;
     socks5client_phase_t     phase;
     socks5client_line_kind_t kind;
+    bool                     transport_est_forwarded;
+    bool                     greeting_due;
+    bool                     read_pause_sent;
+    bool                     next_paused;
+    bool                     prev_paused;
+    bool                     source_pause_sent;
+    bool                     draining_up;
     bool                     udp_control_ready;
     bool                     udp_relay_ready;
 } socks5client_lstate_t;
@@ -69,7 +78,8 @@ enum
     kTunnelStateSize               = sizeof(socks5client_tstate_t),
     kLineStateSize                 = sizeof(socks5client_lstate_t),
     kSocks5ClientPendingQueueCap   = 8,
-    kSocks5ClientMaxPendingUpBytes = 1024 * 1024,
+    kSocks5ClientMaxPendingUpBytes = 2U * 1024U * 1024U,
+    kSocks5ClientMaxPendingBuffers = 1024,
     kSocks5ClientMaxHandshakeBytes = 4096,
     kSocks5ClientUdpHeaderMaxLen   = 4 + 1 + UINT8_MAX + 2
 };
@@ -91,8 +101,7 @@ void socks5clientTunnelDownStreamFinish(tunnel_t *t, line_t *l);
 void socks5clientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void socks5clientTunnelDownStreamPause(tunnel_t *t, line_t *l);
 void socks5clientTunnelDownStreamResume(tunnel_t *t, line_t *l);
-bool socks5clientDomainResolverPrepare(tunnel_t *resolver, tunnel_t *client, line_t *l,
-                                       domainresolver_direction_t direction, void *user_lstate);
+bool socks5clientDomainResolverPrepare(tunnel_t *resolver, tunnel_t *client, line_t *l, void *user_lstate);
 
 void socks5clientLinestateInitialize(socks5client_lstate_t *ls, tunnel_t *t, line_t *l);
 void socks5clientLinestateDestroy(socks5client_lstate_t *ls);
@@ -109,3 +118,9 @@ bool socks5clientHandleUdpRelayPayload(tunnel_t *t, line_t *l, socks5client_lsta
 void socks5clientOnUdpRelayEstablished(tunnel_t *t, line_t *l, socks5client_lstate_t *ls);
 void socks5clientCloseOwnedLine(tunnel_t *t, line_t *owned_l);
 void socks5clientCloseLineBidirectional(tunnel_t *t, line_t *l);
+
+bool socks5clientDrainPending(tunnel_t *t, line_t *l);
+bool socks5clientQueuePayload(tunnel_t *t, line_t *l, sbuf_t *buf);
+void socks5clientSetNextPaused(tunnel_t *t, line_t *l, bool paused);
+
+bool socks5clientMaybeSendGreeting(tunnel_t *t, line_t *l);

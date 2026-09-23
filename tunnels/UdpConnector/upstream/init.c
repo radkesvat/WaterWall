@@ -109,11 +109,9 @@ static void udpconnectorSeedPacketDestinationCache(udpconnector_tstate_t *ts, ud
     }
 }
 
-bool udpconnectorDomainResolverPrepare(tunnel_t *resolver, tunnel_t *connector, line_t *l,
-                                       domainresolver_direction_t direction, void *user_lstate)
+bool udpconnectorDomainResolverPrepare(tunnel_t *resolver, tunnel_t *connector, line_t *l, void *user_lstate)
 {
     discard resolver;
-    discard direction;
 
     udpconnector_tstate_t                 *ts                         = tunnelGetState(connector);
     udpconnector_domain_resolver_lstate_t *ls                         = user_lstate;
@@ -268,10 +266,9 @@ void udpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
     ls->last_send_binding = binding;
     udpconnectorSeedPacketDestinationCache(ts, ls, dest_ctx);
 
-    const bool resume_prev = ls->queue_pause_sent;
     const bool replay_packet_queue =
         ! ls->route_destination_pinned && ts->balance_mode == kUdpConnectorBalanceModePacket;
-    ls->write_paused = false;
+    ls->write_paused = true;
 
     lineRef(l);
     bool alive = true;
@@ -284,6 +281,7 @@ void udpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
 
     if (alive)
     {
+        ls->write_paused = false;
         if (replay_packet_queue)
         {
             alive = udpconnectorReplayWriteQueue(ls);
@@ -294,7 +292,7 @@ void udpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
         }
     }
 
-    if (alive && resume_prev && udpconnectorQueuedWriteBytes(ls) == 0 && ! ls->write_paused)
+    if (alive && ls->queue_pause_sent && bufferbudgetGetUsage(&ls->write_budget).charge == 0 && ! ls->write_paused)
     {
         ls->queue_pause_sent = false;
         tunnelPrevDownStreamResume(t, l);

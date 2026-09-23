@@ -18,6 +18,18 @@ void vlessserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
+    if (ls->initial_forwarding)
+    {
+        if (UNLIKELY(sbufGetLength(buf) > kVlessServerMaxPendingBytes - bufferqueueGetBufLen(&ls->initial_reentry) ||
+                     bufferqueueGetBufCount(&ls->initial_reentry) >= kVlessServerMaxPendingBuffers ||
+                     ! bufferqueueTryPushBack(&ls->initial_reentry, &buf)))
+        {
+            lineReuseBuffer(l, buf);
+            vlessserverCloseLineBidirectional(t, l);
+        }
+        return;
+    }
+
     if (UNLIKELY(ls->phase == kVlessServerPhaseFallback))
     {
         tunnel_t *fallback = ((vlessserver_tstate_t *) tunnelGetState(t))->fallback_tunnel;
@@ -37,8 +49,7 @@ void vlessserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
-    bool reject_short_password =
-        ls->phase == kVlessServerPhaseWaitInitial && bufferstreamIsEmpty(&ls->in_stream);
+    bool reject_short_password = ls->phase == kVlessServerPhaseWaitInitial && bufferstreamIsEmpty(&ls->in_stream);
 
     bufferstreamPush(&ls->in_stream, buf);
 

@@ -5,28 +5,6 @@
 static const uint8_t kConnectionFisherServerPing[kConnectionFisherServerHandshakeLength]  = {'F', 'I', 'S', 'H', '?'};
 static const uint8_t kConnectionFisherServerReply[kConnectionFisherServerHandshakeLength] = {'F', 'I', 'S', 'H', '!'};
 
-static bool connectionfisherserverEnsureNextInit(tunnel_t *t, line_t *l, connectionfisherserver_lstate_t *ls)
-{
-    if (ls->next_init_sent)
-    {
-        return true;
-    }
-
-    ls->next_init_sent = true;
-    if (! lineCallWithRef(l, tunnelNextUpStreamInit, t))
-    {
-        return false;
-    }
-
-    ls = lineGetState(l, t);
-    if (ls->phase == kConnectionFisherServerPhaseWaitPayload)
-    {
-        ls->phase = kConnectionFisherServerPhaseEstablished;
-    }
-
-    return true;
-}
-
 static bool connectionfisherserverReadMatches(const sbuf_t *buf, const uint8_t *expected)
 {
     if (sbufGetLength(buf) != kConnectionFisherServerHandshakeLength)
@@ -52,6 +30,8 @@ void connectionfisherserverCloseLineFromUpstream(tunnel_t *t, line_t *l)
     connectionfisherserver_lstate_t *ls         = lineGetState(l, t);
     bool                             close_next = ls->next_init_sent;
 
+    if (ls->phase == kConnectionFisherServerPhaseClosing)
+        return;
     connectionfisherserverLinestateDestroy(ls);
 
     if (close_next)
@@ -62,24 +42,26 @@ void connectionfisherserverCloseLineFromUpstream(tunnel_t *t, line_t *l)
 
 void connectionfisherserverCloseLineFromDownstream(tunnel_t *t, line_t *l)
 {
-    connectionfisherserverLinestateDestroy(lineGetState(l, t));
-
+    connectionfisherserver_lstate_t *ls = lineGetState(l, t);
+    if (ls->phase == kConnectionFisherServerPhaseClosing)
+        return;
+    connectionfisherserverLinestateDestroy(ls);
     tunnelPrevDownStreamFinish(t, l);
 }
 
 void connectionfisherserverCloseLineFromProtocolError(tunnel_t *t, line_t *l)
 {
-    connectionfisherserver_lstate_t *ls         = lineGetState(l, t);
-    bool                             close_next = ls->next_init_sent;
-
+    connectionfisherserver_lstate_t *ls = lineGetState(l, t);
+    if (ls->phase == kConnectionFisherServerPhaseClosing)
+        return;
+    bool close_next = ls->next_init_sent;
+    lineRef(l);
     connectionfisherserverLinestateDestroy(ls);
-
     if (close_next)
-    {
         tunnelNextUpStreamFinish(t, l);
-    }
-
-    tunnelPrevDownStreamFinish(t, l);
+    if (lineIsAlive(l))
+        tunnelPrevDownStreamFinish(t, l);
+    lineUnref(l);
 }
 
 void connectionfisherserverHandleHandshakePayload(tunnel_t *t, line_t *l, sbuf_t *buf)
@@ -113,25 +95,18 @@ void connectionfisherserverHandleHandshakePayload(tunnel_t *t, line_t *l, sbuf_t
         return;
     }
 
-    ls->phase = kConnectionFisherServerPhaseWaitPayload;
-
-    if (! lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, connectionfisherserverMakeReply(l)))
-    {
-        return;
-    }
-
+    /* Publish the older body before replying: FISH! may synchronously cause
+     * application input, and next Init may emit Est with more nested input. */
     if (! bufferstreamIsEmpty(&ls->in_stream))
     {
-        if (! connectionfisherserverEnsureNextInit(t, l, ls))
-        {
-            return;
-        }
-
-        ls            = lineGetState(l, t);
         sbuf_t *extra = bufferstreamFullRead(&ls->in_stream);
-        if (extra != NULL && ! lineCallWithRefWithBuf(l, tunnelNextUpStreamPayload, t, extra))
+        if (UNLIKELY(! bufferqueueTryPushFront(&ls->pending_up, &extra)))
         {
+            lineReuseBuffer(l, extra);
+            connectionfisherserverCloseLineFromProtocolError(t, l);
             return;
         }
     }
+    ls->phase = kConnectionFisherServerPhaseWaitPayload;
+    tunnelPrevDownStreamPayload(t, l, connectionfisherserverMakeReply(l));
 }

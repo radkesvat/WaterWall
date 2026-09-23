@@ -6,6 +6,9 @@ void connectionfisherclientTunnelUpStreamResume(tunnel_t *t, line_t *l)
 {
     connectionfisherclient_lstate_t *ls = lineGetState(l, t);
 
+    if (ls->role == kConnectionFisherClientRoleMain)
+        ls->prev_paused = false;
+
     if (ls->role == kConnectionFisherClientRoleMain && ls->selected_child != NULL)
     {
         discard lineCallWithRef(ls->selected_child, tunnelNextUpStreamResume, t);

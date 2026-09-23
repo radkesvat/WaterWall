@@ -7,18 +7,16 @@ void domainresolverTunnelUpStreamInit(tunnel_t *t, line_t *l)
     domainresolverLinestateInitialize(t, ls);
 
     domainresolver_tstate_t *ts = tunnelGetState(t);
-    if (ts->prepare != NULL &&
-        UNLIKELY(! ts->prepare(
-            t, ts->prepare_owner, l, kDomainResolverDirectionUpstream, domainresolverGetUserLineState(ts, ls))))
+    if (ts->prepare != NULL && UNLIKELY(! ts->prepare(t, ts->prepare_owner, l, domainresolverGetUserLineState(ts, ls))))
     {
-        domainresolverCloseBeforeInit(t, l, kDomainResolverDirectionUpstream);
+        domainresolverCloseLine(t, l);
         return;
     }
 
     bool resolving = false;
-    if (UNLIKELY(! domainresolverStartResolveIfNeeded(t, l, ls, kDomainResolverDirectionUpstream, &resolving)))
+    if (UNLIKELY(! domainresolverStartResolveIfNeeded(t, l, ls, &resolving)))
     {
-        domainresolverCloseBeforeInit(t, l, kDomainResolverDirectionUpstream);
+        domainresolverCloseLine(t, l);
         return;
     }
 
@@ -27,5 +25,5 @@ void domainresolverTunnelUpStreamInit(tunnel_t *t, line_t *l)
         return;
     }
 
-    tunnelNextUpStreamInit(t, l);
+    domainresolverOpenPath(t, l);
 }

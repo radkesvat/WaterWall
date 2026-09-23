@@ -12,7 +12,7 @@ void tlsserverTunnelDownStreamEst(tunnel_t *t, line_t *l)
         return;
     }
 
-    if (ls->prev_est_sent || lineIsEstablished(l))
+    if (ls->prev_est_sent)
     {
         return;
     }

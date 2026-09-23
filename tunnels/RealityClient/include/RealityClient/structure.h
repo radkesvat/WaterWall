@@ -27,6 +27,8 @@ typedef struct realityclient_lstate_s
 {
     buffer_stream_t             read_stream;
     buffer_stream_t             handoff_stream;
+    buffer_budget_t             pending_budget;
+    buffer_budget_reservation_t pending_reservation;
     buffer_queue_t              pending_up;
     uint8_t                     session_id[kRealityV2SessionIdSize];
     uint8_t                     c2s_key[kRealityV2KeySize];
@@ -52,6 +54,13 @@ typedef struct realityclient_lstate_s
     bool                        next_finished;
     bool                        terminal_closing;
     bool                        wire_alert_sent;
+    bool                        wire_paused;
+    bool                        plaintext_producer_paused;
+    bool                        source_paused;
+    bool                        upstream_send_in_progress;
+    /* Early plaintext and reentrant input wait behind this owned active head.
+     * Completion/Resume drains are independent producers and honor wire Pause. */
+    sbuf_t *pending_active;
 } realityclient_lstate_t;
 
 enum realityclient_algorithm_e
@@ -70,6 +79,8 @@ enum realityclient_frame_e
     kRealityClientMaxFramePrefixSize   = kRealityClientTlsHeaderSize + kRealityV2MaxVisiblePrefixSize,
     kRealityClientMaxTlsRecordBody     = kRealityV2MaxTlsRecordBody,
     kRealityClientDefaultKdfIterations = 12000,
+    kRealityClientPendingBytes         = 2U * 1024U * 1024U,
+    kRealityClientPendingBuffers       = 1024U,
 };
 
 enum
@@ -93,6 +104,7 @@ void realityclientTunnelUpStreamResume(tunnel_t *t, line_t *l);
 
 void realityclientTunnelDownStreamInit(tunnel_t *t, line_t *l);
 void realityclientTunnelDownStreamEst(tunnel_t *t, line_t *l);
+void realityclientHandshakeReady(tunnel_t *t, line_t *l);
 void realityclientTunnelDownStreamFinish(tunnel_t *t, line_t *l);
 void realityclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void realityclientTunnelDownStreamPause(tunnel_t *t, line_t *l);
@@ -115,6 +127,7 @@ bool                              realityclientProcessDownstream(tunnel_t *t, li
 bool                              realityclientSendHandoffControl(tunnel_t *t, line_t *l, uint8_t record_kind);
 bool                              realityclientProcessHandoffDownstream(tunnel_t *t, line_t *l, sbuf_t *buf);
 bool                              realityclientFlushPendingUpstream(tunnel_t *t, line_t *l);
+bool                              realityclientUpdateSourcePressure(tunnel_t *t, line_t *l);
 void                              realityclientCloseLineBidirectional(tunnel_t *t, line_t *l);
 void                              realityclientFailAuthenticated(tunnel_t *t, line_t *l);
 void                              realityclientHandlePeerAlert(tunnel_t *t, line_t *l, uint8_t alert);

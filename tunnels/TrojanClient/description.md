@@ -1,5 +1,5 @@
 <!--
-Documentation version: 154
+Documentation version: 159
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/TrojanClient.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/TrojanClient.mdx, and all files must keep the same documentation version.
 -->
 
@@ -145,6 +145,9 @@ In UDP mode:
 
 ## Optional JSON Fields
 
+- `settings.first-payload-timeout-ms`
+  Integer milliseconds from 0 through 4,294,967,295; default 400. Zero disables deliberate waiting.
+
 - `settings.protocol`
   Selects the Trojan command and the protocol placed in `line->dest_ctx`.
 
@@ -194,60 +197,60 @@ In UDP mode:
   `"dest_context->address"`. Literal IP addresses are left unchanged. While DNS is pending, the internal resolver queues
   payloads before the Trojan request starts.
 
-## Behavior
+## First payload and transport establishment
 
-- the final Trojan target is prepared before the protocol core starts, either by the internal resolver prepare hook or
-  directly during client init when local DNS resolution is disabled.
-- if `domain-strategy` enables resolution and the target is a domain, DNS resolution happens before the Trojan request
-  is sent by the internal `DomainResolver`.
-- for TCP, `Init` forwards the same line to the next node.
-- for UDP, `Init` creates an internal TCP carrier line and forwards that carrier to the next node.
-- `DownStreamEst` on the transport sends the Trojan request header.
-- `TrojanClient` does not wait for a Trojan response; the protocol has no success reply.
-- upstream payload is buffered until the request header has been sent.
-- TCP downstream payload is forwarded unchanged after the request header is sent.
-- UDP downstream payload is parsed as Trojan UDP packets before being forwarded to the previous UDP-facing line.
-- malformed or oversized Trojan UDP frames from the carrier close the affected line safely.
-- oversized local UDP payloads are dropped without closing the UDP association.
-- invalid targets and queue overflows close the affected line safely.
+`Init` prepares the destination and starts the next node without emitting a request.
+The first eligible application payload may arrive before transport `Est`, during its
+callback, or while Pause is recorded. It is sent immediately with the complete request
+in one ordinary buffer, including one UDP frame header when applicable. The source's
+resident prefix and private-pipe body are fully materialized into that first output.
+Empty TCP input does not trigger a request. Empty Trojan UDP datagrams are valid.
 
-## Splice and buffering
+Transport `Est` reaches the live application once, independently of protocol data and
+Pause. If the request remains unsent, its first-payload deadline starts at that Est.
+`settings.first-payload-timeout-ms` defaults to **400**, accepts integers from **0** to
+**4,294,967,295**, and rejects other types and ranges. Zero disables deliberate waiting.
+Paused time counts. Expiry sends one header-only request when transport output is
+writable; while paused it retains only a due obligation until Resume. An eligible
+payload arriving first cancels that timer and sends the combined output. Duplicate
+Est/Resume cannot repeat the request or reset its deadline. Finish cancels the timer.
+One ordinary output does not promise one syscall, TCP packet, or TLS record.
 
-`TrojanClient` accepts ordinary buffers, private-pipe splice buffers, and mixed
-input in TCP, UDP, and destination-context modes. TCP has no response header:
-application bytes are forwarded opaquely. UDP decoding reads only the current
-variable-length header (11 bytes for IPv4, 23 for IPv6, or 8 plus the domain
-length) and extracts exactly one body per datagram, including an empty body.
-Received source addresses are validated without retargeting the association.
-UDP sends prepend within the advertised 263-byte padding; insufficient headroom
-or pipe pressure uses the existing representation-aware movement and fallback.
+Direct TCP and per-datagram upstream forwarding do not wait for Est or Resume and do
+not keep application output queues. Trojan has no success response; downstream TCP is opaque from Init.
 
-The initial request is a separate ordinary buffer, at most 320 bytes. Transport
-establishment sends it once, without waiting for application data. If transport
-output is paused, the request waits for Resume. Request submission precedes app
-`Est`; data accepted during that callback stays behind older queued data.
-Both directions retain FIFO order and stop delivery at consumer Pause.
+UDP application lines remain borrowed UDP-facing lines. The client creates one dependent,
+owned TCP carrier on the application's worker and maps Est, Pause/Resume and Finish to
+that association. The request uses `0.0.0.0:0`; each frame encodes its destination, length and CRLF.
+The UDP decoder finishes every complete datagram in an admitted input even when an earlier
+delivery causes Pause. Nested input joins the guarded parser FIFO behind older input;
+only incomplete framing/order state remains. Finish, malformed input or receiver refusal
+stops delivery and closes the affected association. Only this node's owned carrier is
+destroyed here; the application owner drains it during shutdown.
 
-| Retained data | Fixed limit |
+## Splice and retention
+
+The first request plus payload is ordinary; the request itself is at most 320 bytes.
+Later opaque TCP preserves its original ordinary or splice representation. UDP sends
+prepend within the advertised 263-byte padding budget. Header parsing and exact body
+movement preserve boundaries and use complete ordinary fallback when padding or pipe
+capacity requires it. Receive extraction preserves full onward padding.
+
+| Retained parser input | Inclusive logical limit |
 | --- | --- |
-| Pending upstream TCP or UDP application data | 1 MiB and 1,024 buffers; empty datagrams count as entries |
-| Direct TCP downstream data awaiting establishment or Resume | 1 MiB and 1,024 buffers |
-| UDP carrier input, including cached headers and active input | 1,057,031 bytes (1 MiB plus one maximum frame) |
-| One UDP payload | 8,192 bytes |
+| UDP wire input, including active head and cached header | 2,105,607 bytes (2 MiB plus one maximum frame) |
+| UDP body | 8,192 bytes; empty bodies are valid |
 
-The request is separate bounded control state. Queued outbound UDP data remains
-unframed until submission. Receive fragments have no 1,024-entry cap. These
-limits do not depend on buffer pool sizes, RAM profile, or kernel pipe capacity.
-Malformed carrier frames or retention overflow close only the affected flow;
-oversized local datagrams are dropped without closing the association.
+Equality passes; overflow or parser queue refusal closes the association. There is no
+retained decoded-output queue or 1,024-record limit on a synchronous batch. Fragment
+counts do not consume output slots. These are logical protocol limits, independent
+of buffer-pool size, RAM profile, and pipe capacity. Oversized local datagrams are
+dropped; malformed received frames close the association. Received source addresses are validated without changing the application destination.
 
-Splice eligibility is evaluated after internal `DomainResolver` insertion and
-requires every node in the final chain to support it, a supported platform, and
-`misc.splice` enabled. `TlsClient` still blocks splice for the whole chain. `TrojanServer` also supports
-splice across authentication, TCP, UDP and fallback; its final chain must include
-only eligible payload branches. Ordinary peers remain interoperable. This capability promises
-safe representations, not guaranteed zero-copy or a measured speed increase.
-Keep `TlsClient` in ordinary Trojan deployment configurations.
+Splice requires `misc.splice`, a supported build and support from every node in the
+final chain, including internal helpers. `DomainResolver` supports splice. `TlsClient`
+still blocks splice for its entire chain. Keep TLS in ordinary deployment configurations;
+splice capability does not guarantee zero-copy or a measured speed increase.
 
 ## Notes And Caveats
 

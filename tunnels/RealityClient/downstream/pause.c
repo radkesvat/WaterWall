@@ -7,5 +7,6 @@ void realityclientTunnelDownStreamPause(tunnel_t *t, line_t *l)
     {
         return;
     }
-    tunnelPrevDownStreamPause(t, l);
+    ls->wire_paused = true;
+    discard realityclientUpdateSourcePressure(t, l);
 }

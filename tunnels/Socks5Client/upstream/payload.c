@@ -18,19 +18,17 @@ void socks5clientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
-    if (ls->phase == kSocks5ClientPhaseEstablished)
+    if (ls->phase == kSocks5ClientPhaseEstablished && ! ls->draining_up && bufferqueueGetBufCount(&ls->pending_up) == 0)
     {
         tunnelNextUpStreamPayload(t, l, buf);
         return;
     }
 
-    bufferqueuePushBack(&ls->pending_up, buf);
-
-    if (bufferqueueGetBufLen(&ls->pending_up) > kSocks5ClientMaxPendingUpBytes)
+    if (UNLIKELY(sbufGetLength(buf) == 0))
     {
-        LOGE("Socks5Client: upstream handshake queue overflow, size=%zu limit=%u",
-             bufferqueueGetBufLen(&ls->pending_up),
-             (unsigned int) kSocks5ClientMaxPendingUpBytes);
-        socks5clientCloseLineBidirectional(t, l);
+        lineReuseBuffer(l, buf);
+        return;
     }
+    if (LIKELY(socks5clientQueuePayload(t, l, buf)))
+        discard socks5clientDrainPending(t, l);
 }

@@ -238,21 +238,30 @@ In Waterwall terms, downstream `Est` still represents the underlying transport b
 
 Current implementation detail:
 
-- `tlsclientTunnelDownStreamEst()` simply forwards downstream `Est`
-- TLS handshake completion happens later, inside downstream payload processing
+- `tlsclientTunnelDownStreamEst()` forwards transport `Est` once, including for the internal Reality takeover path
+- TLS handshake completion uses a separate owner callback registered with `tlsclientTunnelEnableHandshakeTakeover()`;
+  it runs once at the validated TLS record boundary and never emits another `Est`
 
 So `Est` does not mean application data is already safe to send immediately on the wire as cleartext.
-If the previous tunnel sends payload early, `TlsClient` buffers it until the handshake finishes.
+Payload is valid after adjacent Init, including before transport Est. Plaintext waiting for TLS readiness or older
+reentrant output is bounded to 2 MiB and 1,024 buffers, including the active retained head. Equality is accepted;
+transactional admission refusal closes the borrowed line through its owner and frees queued data. Handshake completion
+and Resume drain this FIFO as independent producers: wire Pause stops the drain before the next plaintext record.
+New input cannot overtake an older retained head. The separate ciphertext-shaping budgets are unchanged.
+The first retained plaintext buffer is published before notifying the cleartext source with Pause. Protocol/order wait,
+wire pressure and ciphertext-shaping pressure share one source notification latch. Resume is emitted only after TLS is
+ready, the older plaintext FIFO is empty and wire/shaping pressure has cleared. This source pressure does not pause
+incoming TLS handshake records.
 
 ### Upstream payload behavior
 
 Before handshake completion:
 
-- upstream payload is queued in a small buffer queue
+- upstream plaintext joins the bounded protocol-wait FIFO
 
 After handshake completion:
 
-- queued payload is flushed through `SSL_write()`
+- queued payload is flushed through `SSL_write()` in FIFO order while wire output is not paused
 - new upstream payload is encrypted immediately
 - resulting TLS records are read from the write BIO and forwarded upstream
 - a debug log records the negotiated TLS version, cipher, and ALPN value; it uses `alpn=<none>` when no protocol was

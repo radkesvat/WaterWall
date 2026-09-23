@@ -87,6 +87,13 @@ typedef struct socks5server_lstate_s
     udplistener_dynamic_endpoint_handle_t dynamic_handle;
     socks5server_phase_t                  phase;
     socks5server_line_kind_t              kind;
+    // CONNECT reply and deferred application FIFO are independent of transport Est.
+    bool                                  transport_est_forwarded;
+    bool                                  control_draining;
+    bool                                  next_initializing;
+    bool                                  prev_paused;
+    bool                                  next_paused;
+    bool                                  next_read_paused;
     bool                                  connect_reply_sent;
     bool                                  client_line_ref_held;
     bool                                  user_handle_recorded;
@@ -103,6 +110,7 @@ enum
     kSocks5ServerRemoteMapCap      = 8,
     kSocks5ServerMaxHandshakeBytes = 4096,
     kSocks5ServerMaxPendingBytes   = 1024 * 1024,
+    kSocks5ServerMaxPendingBuffers = 1024,
     kSocks5ServerUdpHeaderMaxLen   = 4 + 1 + UINT8_MAX + 2
 };
 
@@ -154,3 +162,6 @@ sbuf_t *socks5serverCreateCommandReply(line_t *l, uint8_t rep, const address_con
 void    socks5serverAssocEntryFreeCreds(socks5server_assoc_entry_t *entry);
 void    socks5serverRecordLineUser(line_t *l, socks5server_lstate_t *ls, const user_handle_t *user_handle);
 void    socks5serverRequireCurrentLineWorker(const line_t *l, const char *callback_name);
+
+bool socks5serverDrainControl(tunnel_t *t, line_t *l);
+bool socks5serverQueueControl(tunnel_t *t, line_t *l, sbuf_t *buf, bool upstream);

@@ -33,8 +33,12 @@ typedef struct tcplistener_lstate_s
 
     // These fields are used internally for the queue implementation for TCP
     buffer_queue_t pause_queue;
-    bool           write_paused : 1;
-    bool           read_paused : 1;
+    // Combined adapter/WIO retention: active allocation remains charged until write completion.
+    buffer_budget_t             write_budget;
+    buffer_budget_reservation_t active_write;
+    bool   queue_pause_sent;
+    bool   write_paused : 1;
+    bool   read_paused : 1;
 
 } tcplistener_lstate_t;
 
@@ -81,3 +85,5 @@ void                tcplistenerOnInboundConnected(wevent_t *ev);
 void                tcplistenerOnWriteComplete(wio_t *io);
 
 void tcplistenerOnIdleConnectionExpire(local_idle_item_t *idle_tcp);
+
+void tcplistenerRefreshWriteBudget(tcplistener_lstate_t *ls);

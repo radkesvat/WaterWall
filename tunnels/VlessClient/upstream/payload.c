@@ -1,42 +1,29 @@
 #include "structure.h"
 
-#include "loggers/network_logger.h"
-
+/* Each accepted payload completes synchronously, including through Pause.
+ * There is no application FIFO or Est gate: the transport owns connecting writes. */
 void vlessclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    vlessclient_lstate_t *ls = lineGetState(l, t);
-
-    if (UNLIKELY(ls->phase == kVlessClientPhaseClosing))
+    vlessclient_lstate_t *ls     = lineGetState(l, t);
+    uint32_t              length = sbufGetLength(buf);
+    if (UNLIKELY(ls->phase == kVlessClientPhaseClosed || ls->kind == kVlessClientLineKindUdpCarrier ||
+                 (ls->kind == kVlessClientLineKindUdpApp && (length > kVlessClientUdpMaxPacket || length == 0)) ||
+                 (ls->kind == kVlessClientLineKindDirect && ! ls->request_sent && length == 0)))
     {
         lineReuseBuffer(l, buf);
         return;
     }
-
+    line_t               *next    = ls->kind == kVlessClientLineKindUdpApp ? ls->carrier_line : l;
+    vlessclient_lstate_t *next_ls = lineGetState(next, t);
+    if (! next_ls->request_sent)
+    {
+        if (UNLIKELY(! vlessclientSendInitialRequest(t, next, next_ls, buf)))
+            vlessclientCloseLine(t, next, kVlessClientCloseInternal);
+        return;
+    }
     if (ls->kind == kVlessClientLineKindUdpApp)
     {
-        discard vlessclientForwardUdpAppPayload(t, l, ls, buf);
-        return;
+        vlessclientWrapUdpPayload(l, &buf);
     }
-
-    if (UNLIKELY(ls->kind == kVlessClientLineKindUdpCarrier))
-    {
-        lineReuseBuffer(l, buf);
-        return;
-    }
-
-    if (ls->phase == kVlessClientPhaseWaitResponse || ls->phase == kVlessClientPhaseEstablished)
-    {
-        tunnelNextUpStreamPayload(t, l, buf);
-        return;
-    }
-
-    bufferqueuePushBack(&ls->pending_up, buf);
-
-    if (UNLIKELY(bufferqueueGetBufLen(&ls->pending_up) > kVlessClientMaxPendingBytes))
-    {
-        LOGE("VlessClient: upstream queue overflow, size=%zu limit=%u",
-             bufferqueueGetBufLen(&ls->pending_up),
-             (unsigned int) kVlessClientMaxPendingBytes);
-        vlessclientCloseLine(t, l, kVlessClientCloseInternal);
-    }
+    tunnelNextUpStreamPayload(t, next, buf);
 }

@@ -1,8 +1,8 @@
 #include "structure.h"
 
 /* Client -> selected branch: initial/UDP bytes enter the owned pending_up FIFO
- * for trojanserverPump() to parse through common/input.c. After CONNECT, writable
- * TCP transfers buf directly; queued TCP drains through processPendingInput() in
+ * for trojanserverPump() to parse through common/input.c. After CONNECT, synchronous
+ * TCP transfers buf directly; reentrant TCP drains through processPendingInput() in
  * common/flow.c. Fallback transfers ownership to trojanserverSendFallbackPayload()
  * in common/fallback.c for immediate delivery or retention behind older replay. */
 void trojanserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
@@ -45,7 +45,7 @@ void trojanserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
     buffer_queue_t *queue = &ls->pending_up;
-    if (! ls->pumping && ! ls->branch_initializing && ! ls->next_paused && bufferqueueGetBufCount(queue) == 0)
+    if (! ls->pumping && ! ls->branch_initializing && bufferqueueGetBufCount(queue) == 0)
     {
         lineRef(l);
         ls->pumping = true;

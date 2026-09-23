@@ -626,29 +626,40 @@ void softiplimiterCloseLine(tunnel_t *t, line_t *l, softiplimiter_close_origin_t
 static bool softiplimiterEnsureNextInitAndFlushAs(tunnel_t *t, line_t *l, softiplimiter_lstate_t *ls,
                                                   softiplimiter_phase_t phase)
 {
+    buffer_pool_t *pool    = lineGetBufferPool(l);
+    sbuf_t        *first   = bufferstreamFullRead(&ls->in_stream);
+    ls->phase              = phase;
+    ls->initial_forwarding = true;
+    lineRef(l);
     if (! ls->next_init_sent)
     {
         ls->next_init_sent = true;
-        if (! lineCallWithRef(l, tunnelNextUpStreamInit, t))
+        tunnelNextUpStreamInit(t, l);
+    }
+    bool completed = false;
+    while (lineIsAlive(l))
+    {
+        ls = lineGetState(l, t);
+        if (UNLIKELY(! ls->next_init_sent || ! softiplimiterPhaseForwards(ls->phase)))
         {
-            return false;
+            break;
         }
+        sbuf_t *out = first != NULL ? first : bufferqueuePopFront(&ls->initial_reentry);
+        first       = NULL;
+        if (out == NULL)
+        {
+            ls->initial_forwarding = false;
+            completed              = true;
+            break;
+        }
+        tunnelNextUpStreamPayload(t, l, out);
     }
-
-    ls = lineGetState(l, t);
-    if (UNLIKELY(! ls->next_init_sent || ls->closing || ls->phase == kSoftIpLimiterPhaseClosing))
+    if (first != NULL)
     {
-        return false;
+        bufferpoolReuseBuffer(pool, first);
     }
-    ls->phase = phase;
-
-    sbuf_t *replay = bufferstreamFullRead(&ls->in_stream);
-    if (replay != NULL && ! lineCallWithRefWithBuf(l, tunnelNextUpStreamPayload, t, replay))
-    {
-        return false;
-    }
-
-    return true;
+    lineUnref(l);
+    return completed;
 }
 
 void softiplimiterHandleInitialPayload(tunnel_t *t, line_t *l, sbuf_t *buf)

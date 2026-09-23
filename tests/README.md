@@ -822,3 +822,43 @@ The `fallback_http` cases check local HTTP replies immediately followed by Finis
 without Est, with zero and nonzero fallback delay. HttpProxyServer disables splice
 for these chains even when requested; native tests cover the same callback order
 with ordinary and real-pipe replies.
+
+### VlessClient splice coverage
+
+`waterwall.vlessclient_splice_unit` and `waterwall.vlessclient_no_splice_unit`
+compile the actual node and range helpers with splice enabled/disabled. Run both
+with `ctest --preset linux-unit-debug -R '^waterwall\.vlessclient_(splice|no_splice)_unit$'`
+and repeat with `linux-unit-release`. Coverage includes early Est/request ordering,
+pre-response sends, response splits/addons, opaque TCP identity, UDP length bounds,
+mixed private pipes, fallback after partial movement, padding, reentrant pressure,
+logical queue bounds, and exact-line cleanup. Syscall wrappers distinguish parser
+metadata reads from receiver inspection; preserved pipe bodies must not be read.
+
+`waterwall.vlessclient_{tcp,udp}_splice_{true,false}` uses
+`vlessclient_splice_integration.py` through the network-namespace harness. A loopback
+socket VLESS peer verifies exact requests, outbound progress before response,
+response addons, server-first TCP, UDP boundaries, and shutdown with a live carrier.
+`strace` is required: enabled cases require positive splice transfers and disabled
+cases require ordinary operation. The real chain includes the internal resolver;
+no VlessServer or TLS node masks capability. Existing VLESS roundtrips remain the
+ordinary server-interoperability coverage. These tests make no throughput claim.
+
+The TCP adapter pause/close fixtures cover FIFO admission before reentrant Pause,
+capacity refusal for empty buffers, and nested Resume/Finish during write completion.
+Real socketpair writes verify retained allocation charge across partial progress, the
+combined active/queued ceiling, FIFO suffix release and asynchronous write failure.
+A resolver/connector composition covers DNS and literal payload admission before Est;
+DNS completion and socket-connect timing are controlled while writes use real sockets.
+The UdpConnector socket-pool fixture also covers queue publication before Pause and
+an exact shared initialization/DNS capacity ceiling with empty datagrams.
+
+Protocol flow-control regressions cover ordinary combined first requests, client timeout
+configuration and cancellation, pre-Est input, UDP batches that finish through Pause,
+and exact protocol retention limits. TLS/Reality lifecycle fixtures distinguish early
+transport Est from the one-shot handshake-completion hook and verify bounded plaintext
+FIFO release, authentication, key/sequence handling and callback-driven close.
+The SOCKS and DNS flow fixtures exercise Init/Est reentry, Pause-aware protocol backlog
+release, reply-before-body ordering, and byte/entry refusal. Fisher and continuing-path
+Est fixtures cover synchronous transport notification, selection/header barriers and
+exact-line teardown. Socket cases test later TCP splice traffic after the deliberately
+materialized first request, timer fallback and shutdown while waiting.

@@ -38,13 +38,11 @@ tunnel_t *domainresolverTunnelCreate(node_t *node)
     }
 
     t->fnInitU    = &domainresolverTunnelUpStreamInit;
-    t->fnEstU     = &domainresolverTunnelUpStreamEst;
     t->fnFinU     = &domainresolverTunnelUpStreamFinish;
     t->fnPayloadU = &domainresolverTunnelUpStreamPayload;
     t->fnPauseU   = &domainresolverTunnelUpStreamPause;
     t->fnResumeU  = &domainresolverTunnelUpStreamResume;
 
-    t->fnInitD    = &domainresolverTunnelDownStreamInit;
     t->fnEstD     = &domainresolverTunnelDownStreamEst;
     t->fnFinD     = &domainresolverTunnelDownStreamFinish;
     t->fnPayloadD = &domainresolverTunnelDownStreamPayload;

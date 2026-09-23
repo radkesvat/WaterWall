@@ -40,5 +40,23 @@ void connectionfisherclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_
         return;
     }
 
+    if (main_ls->selecting_child)
+    {
+        if (UNLIKELY(sbufGetLength(buf) == 0))
+        {
+            lineReuseBuffer(l, buf);
+            return;
+        }
+        /* Older bytes coalesced with FISH! precede reentrant replies during
+         * selection callbacks. This is a protocol ordering barrier, not Pause. */
+        if (UNLIKELY(sbufGetLength(buf) > kConnectionFisherMaxPendingUpBytes - bufferstreamGetBufLen(&ls->read_stream)))
+        {
+            lineReuseBuffer(l, buf);
+            connectionfisherclientCloseChildLine(t, l, true);
+            return;
+        }
+        bufferstreamPush(&ls->read_stream, buf);
+        return;
+    }
     discard lineCallWithRefWithBuf(ls->main_line, tunnelPrevDownStreamPayload, t, buf);
 }

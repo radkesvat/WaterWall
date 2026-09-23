@@ -108,12 +108,12 @@ static void clientPrevResume(tunnel_t *t, line_t *l)
 
     if (context->write_direct_on_prev_resume)
     {
-        static const uint8_t direct_bytes[] = {0x7d, 0x01, 0x02, 0x03};
+        static const uint8_t direct_bytes[]  = {0x7d, 0x01, 0x02, 0x03};
         context->write_direct_on_prev_resume = false;
-        tlsclient_lstate_t *ls = lineGetState(l, context->tls);
-        context->direct_flush_ok = BIO_write(ls->wbio, direct_bytes, (int) sizeof(direct_bytes)) ==
-                                       (int) sizeof(direct_bytes) &&
-                                   tlsclientFlushSslOutput(context->tls, l, ls);
+        tlsclient_lstate_t *ls               = lineGetState(l, context->tls);
+        context->direct_flush_ok =
+            BIO_write(ls->wbio, direct_bytes, (int) sizeof(direct_bytes)) == (int) sizeof(direct_bytes) &&
+            tlsclientFlushSslOutput(context->tls, l, ls);
     }
 }
 
@@ -192,8 +192,8 @@ static void clientFixtureSetup(client_delay_fixture_t *fixture)
     GSTATE.workers_count         = 1;
     testWorkerRegistryInstall(&g_test_worker_registry);
 
-    fixture->large_master = masterpoolCreateWithCapacity(64);
-    fixture->small_master = masterpoolCreateWithCapacity(8);
+    fixture->large_master  = masterpoolCreateWithCapacity(64);
+    fixture->small_master  = masterpoolCreateWithCapacity(8);
     fixture->medium_master = masterpoolCreateWithCapacity(8);
     fixture->splice_master = masterpoolCreateWithCapacity(8);
     fixture->pool          = bufferpoolCreate(fixture->large_master,
@@ -300,8 +300,8 @@ static void clientFixtureTeardown(client_delay_fixture_t *fixture)
     GSTATE.shortcut_loops        = fixture->saved_loops;
 }
 
-static void clientQueueRecordWithDelayAndFill(client_delay_fixture_t *fixture, uint32_t body_length,
-                                              uint32_t delay_ms, uint8_t fill)
+static void clientQueueRecordWithDelayAndFill(client_delay_fixture_t *fixture, uint32_t body_length, uint32_t delay_ms,
+                                              uint8_t fill)
 {
     requireClient(body_length > 0 && body_length <= kTlsRecordShapingMaxRecordBody,
                   "invalid client lifecycle record length");
@@ -337,8 +337,8 @@ static void clientQueueRecord(client_delay_fixture_t *fixture, uint32_t body_len
 
 static void clientUseSingleRecordScope(client_delay_fixture_t *fixture)
 {
-    tlsclient_tstate_t *ts                     = tunnelGetState(fixture->tls);
-    tlsclient_lstate_t *ls                     = lineGetState(fixture->line, fixture->tls);
+    tlsclient_tstate_t *ts                       = tunnelGetState(fixture->tls);
+    tlsclient_lstate_t *ls                       = lineGetState(fixture->line, fixture->tls);
     ts->record_shaping.first_application_records = 1;
     ls->shaping_state.application_records_seen   = 1;
 }
@@ -400,12 +400,11 @@ static void testClientDrainBarrierHoldsUntilRetirement(void)
     clientQueueRecordWithDelayAndFill(&fixture, 32, 1000, 0x22);
 
     tlsclient_lstate_t *ls = lineGetState(fixture.line, fixture.tls);
-    requireClient(tlsclientDrainShapedOutput(fixture.tls, fixture.line, ls, false) &&
-                      ls->shaping_producer_paused && fixture.context.next_payload == 1 &&
-                      fixture.context.prev_pause == 1 && fixture.context.prev_resume == 0,
+    requireClient(tlsclientDrainShapedOutput(fixture.tls, fixture.line, ls, false) && ls->shaping_producer_paused &&
+                      fixture.context.next_payload == 1 && fixture.context.prev_pause == 1 &&
+                      fixture.context.prev_resume == 0,
                   "client draining scope did not establish its below-watermark barrier");
-    requireClient(tlsclientScheduleShapedOutput(fixture.tls, fixture.line, ls) &&
-                      ls->shaping_output_timer != NULL,
+    requireClient(tlsclientScheduleShapedOutput(fixture.tls, fixture.line, ls) && ls->shaping_output_timer != NULL,
                   "client draining scope did not retain its final release timer");
 
     requireClient(tlsclientDrainShapedOutput(fixture.tls, fixture.line, ls, true),
@@ -431,8 +430,8 @@ static void testClientRetiresBeforeReentrantProducerResume(void)
 
     tlsclient_lstate_t *ls = lineGetState(fixture.line, fixture.tls);
     tlsclientTunnelDownStreamPause(fixture.tls, fixture.line);
-    requireClient(tlsclientDrainShapedOutput(fixture.tls, fixture.line, ls, false) &&
-                      ls->shaping_producer_paused && fixture.context.prev_pause == 1,
+    requireClient(tlsclientDrainShapedOutput(fixture.tls, fixture.line, ls, false) && ls->shaping_producer_paused &&
+                      fixture.context.prev_pause == 1,
                   "client wire-paused drain did not establish its barrier");
 
     fixture.context.write_direct_on_prev_resume = true;
@@ -456,8 +455,7 @@ static void testClientRetirementSurvivesReentrantFinalPause(void)
 
     tlsclient_lstate_t *ls = lineGetState(fixture.line, fixture.tls);
     tlsclientTunnelDownStreamPause(fixture.tls, fixture.line);
-    requireClient(tlsclientDrainShapedOutput(fixture.tls, fixture.line, ls, false) &&
-                      ls->shaping_producer_paused,
+    requireClient(tlsclientDrainShapedOutput(fixture.tls, fixture.line, ls, false) && ls->shaping_producer_paused,
                   "client re-entrant Pause fixture did not establish its barrier");
 
     fixture.context.pause_on_next_payload = true;
@@ -469,8 +467,8 @@ static void testClientRetirementSurvivesReentrantFinalPause(void)
 
     tlsclientTunnelDownStreamResume(fixture.tls, fixture.line);
     ls = lineGetState(fixture.line, fixture.tls);
-    requireClient(ls->shaping_retired && fixture.context.next_payload == 1 &&
-                      fixture.context.prev_pause == 1 && fixture.context.prev_resume == 1,
+    requireClient(ls->shaping_retired && fixture.context.next_payload == 1 && fixture.context.prev_pause == 1 &&
+                      fixture.context.prev_resume == 1,
                   "client did not balance the drain barrier on the later genuine wire Resume");
 
     tlsclientLinestateDestroy(ls);
@@ -564,7 +562,7 @@ static void testClientReentrantPauseSuppressesStaleResume(void)
 
     ls = lineGetState(fixture.line, fixture.tls);
     requireClient(ls->shaping_wire_paused && tlsrecordshapingOutputQueueCount(&ls->shaping_output) == 1 &&
-                      fixture.context.next_payload == 1 && fixture.context.prev_pause == 2 &&
+                      fixture.context.next_payload == 1 && fixture.context.prev_pause == 1 &&
                       fixture.context.prev_resume == 0,
                   "client forwarded a stale Resume after a re-entrant wire Pause");
 

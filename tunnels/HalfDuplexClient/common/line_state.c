@@ -6,9 +6,11 @@ void halfduplexclientLinestateInitialize(halfduplexclient_lstate_t *ls, line_t *
 {
     *ls = (halfduplexclient_lstate_t) {
         .download_line = NULL, .upload_line = NULL, .main_line = main_line, .first_packet_sent = false};
+    bufferqueueInitEmpty(&ls->pending_up);
 }
 
 void halfduplexclientLinestateDestroy(halfduplexclient_lstate_t *ls)
 {
+    bufferqueueDestroy(&ls->pending_up);
     memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(halfduplexclient_lstate_t)));
 }

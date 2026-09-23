@@ -2,5 +2,6 @@
 
 void domainresolverTunnelDownStreamFinish(tunnel_t *t, line_t *l)
 {
-    domainresolverCloseLine(t, l, kDomainResolverDirectionDownstream);
+    domainresolverLinestateDestroy(t, l, lineGetState(l, t));
+    tunnelPrevDownStreamFinish(t, l);
 }

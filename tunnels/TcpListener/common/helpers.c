@@ -184,54 +184,68 @@ void tcplistenerFlushWriteQueue(tcplistener_lstate_t *lstate)
     while (bufferqueueGetBufCount(&lstate->pause_queue) > 0)
     {
         sbuf_t *buf = bufferqueuePopFront(&lstate->pause_queue);
+        if (UNLIKELY(sbufGetLength(buf) == 0))
+        {
+            lineReuseBuffer(lstate->line, buf);
+            continue;
+        }
         wioWrite(lstate->io, buf);
     }
 }
 
 static bool resumeWriteQueue(tcplistener_lstate_t *lstate)
 {
-    buffer_queue_t *pause_queue = &lstate->pause_queue;
-    wio_t          *io          = lstate->io;
-    while (bufferqueueGetBufCount(pause_queue) > 0)
+    line_t *line = lstate->line;
+    wio_t  *io   = lstate->io;
+    // Suppress synchronous WIO completion reentry until this FIFO drain yields.
+    wioSetCallBackWrite(io, NULL);
+    bufferbudgetReservationRelease(&lstate->active_write);
+    while (bufferqueueGetBufCount(&lstate->pause_queue) > 0)
     {
-        sbuf_t *buf    = bufferqueuePopFront(pause_queue);
-        int     bytes  = (int) sbufGetLength(buf);
-        int     nwrite = wioWrite(io, buf);
-
+        sbuf_t   *buf         = bufferqueuePopFrontReserved(&lstate->pause_queue, &lstate->active_write);
+        const int bytes       = (int) sbufGetLength(buf);
+        if (UNLIKELY(bytes == 0))
+        {
+            lineReuseBuffer(line, buf);
+            bufferbudgetReservationRelease(&lstate->active_write);
+            continue;
+        }
+        const int nwrite = wioWrite(io, buf);
+        if (UNLIKELY(! lineIsAlive(line)))
+            return false;
+        tcplistenerRefreshWriteBudget(lstate);
+        if (UNLIKELY(nwrite < 0))
+            return false;
         if (nwrite < bytes)
         {
-            return false; // write pending
+            wioSetCallBackWrite(io, tcplistenerOnWriteComplete);
+            return false;
         }
+        bufferbudgetReservationRelease(&lstate->active_write);
     }
-
     return true;
 }
 
 void tcplistenerOnWriteComplete(wio_t *io)
 {
-    // resume the read on other end of the connection
-    tcplistener_lstate_t *lstate = (tcplistener_lstate_t *) (weventGetUserdata(io));
-    if (UNLIKELY(lstate == NULL))
-    {
-        // assert(false);
+    tcplistener_lstate_t *ls = weventGetUserdata(io);
+    if (ls == NULL)
         return;
-    }
+    tcplistenerRefreshWriteBudget(ls);
     if (! wioCheckWriteComplete(io))
-    {
-        wioSetCallBackWrite(lstate->io, tcplistenerOnWriteComplete);
         return;
-    }
-
-    wioSetCallBackWrite(lstate->io, NULL);
-
-    if (! resumeWriteQueue(lstate))
+    line_t   *line = ls->line;
+    tunnel_t *t    = ls->tunnel;
+    lineRef(line);
+    if (resumeWriteQueue(ls) && lineIsAlive(line))
     {
-        wioSetCallBackWrite(lstate->io, tcplistenerOnWriteComplete);
-        return;
+        ls->write_paused     = false;
+        const bool notify    = ls->queue_pause_sent;
+        ls->queue_pause_sent = false;
+        if (notify)
+            tunnelNextUpStreamResume(t, line);
     }
-    lstate->write_paused = false;
-
-    tunnelNextUpStreamResume(lstate->tunnel, lstate->line);
+    lineUnref(line);
 }
 
 void tcplistenerOnIdleConnectionExpire(local_idle_item_t *idle_tcp)
@@ -253,4 +267,13 @@ void tcplistenerOnIdleConnectionExpire(local_idle_item_t *idle_tcp)
     tcplistenerLinestateDestroy(ls);
     tunnelNextUpStreamFinish(t, l);
     lineDestroy(l);
+}
+
+void tcplistenerRefreshWriteBudget(tcplistener_lstate_t *ls)
+{
+    if (ls->active_write.budget != NULL)
+    {
+        // WIO owns the buffer, possibly already freed; only inspect its byte counter.
+        bufferbudgetReservationSetBytes(&ls->active_write, wioGetWriteBufSize(ls->io));
+    }
 }

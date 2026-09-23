@@ -102,11 +102,18 @@ typedef struct test_fixture_s
     bool             close_reentrant_on_est;
     bool             pause_reentrant_on_est;
     bool             destroy_on_finish;
+    bool             inject_on_pause;
+    bool             finish_on_pause;
     void (*on_finish)(struct test_fixture_s *, line_t *);
     line_t  *retirement_lines[2];
     unsigned retirement_path;
     unsigned sibling_actions;
 } test_fixture_t;
+
+static void testQueueWrite(udpconnector_lstate_t *ls, buffer_queue_t *queue, sbuf_t *buf)
+{
+    twfRequire(udpconnectorQueueWrite(ls, queue, &buf), "fixture queue admission failed");
+}
 
 static void prevDownStreamEst(tunnel_t *t, line_t *l)
 {
@@ -160,8 +167,24 @@ static void prevDownStreamFinish(tunnel_t *t, line_t *l)
 static void prevDownStreamPause(tunnel_t *t, line_t *l)
 {
     test_fixture_t *fixture = *(test_fixture_t **) tunnelGetState(t);
-    discard         l;
     ++fixture->pause_calls;
+    if (fixture->inject_on_pause || fixture->finish_on_pause)
+    {
+        udpconnector_lstate_t *ls = lineGetState(l, fixture->connector);
+        twfRequire(ls->queue_pause_sent && bufferqueueGetBufCount(&ls->pause_queue) == 1,
+                   "UDP Pause preceded FIFO/latch publication");
+        if (fixture->finish_on_pause)
+        {
+            udpconnectorTunnelUpStreamFinish(fixture->connector, l);
+            lineDestroy(l);
+            return;
+        }
+        fixture->inject_on_pause = false;
+        sbuf_t *buf              = sbufCreate(1);
+        sbufSetLength(buf, 1);
+        sbufWrite(buf, "B", 1);
+        udpconnectorTunnelUpStreamPayload(fixture->connector, l, buf);
+    }
 }
 
 static void prevDownStreamResume(tunnel_t *t, line_t *l)
@@ -1125,9 +1148,11 @@ static void testCase21_PacketDnsFailurePreservesExistingBindings(void)
     addresscontextFromSockAddr(&cache->dest_ctx, &addr2);
     addresscontextSetOnlyProtocol(&cache->dest_ctx, IP_PROTO_UDP);
     cache->has_context = true;
-    bufferqueuePushBack(&cache->pending_queue, makeDatagram(&fixture, "dns_pending_1"));
-    bufferqueuePushBack(&cache->pending_queue, makeDatagram(&fixture, "dns_pending_2"));
+    testQueueWrite(ls, &cache->pending_queue, makeDatagram(&fixture, "dns_pending_1"));
+    testQueueWrite(ls, &cache->pending_queue, makeDatagram(&fixture, "dns_pending_2"));
 
+    testQueueWrite(ls, &ls->pause_queue, makeDatagram(&fixture, "sibling"));
+    const size_t sibling_charge                 = bufferqueueGetCharge(&ls->pause_queue);
     g_udpconnector_pool_test_fail_binding_alloc = true;
     twfRequire(udpconnectorTestFlushPacketDestinationQueue(fixture.connector, l, 0),
                "queue settlement unexpectedly destroyed the line");
@@ -1136,6 +1161,15 @@ static void testCase21_PacketDnsFailurePreservesExistingBindings(void)
     twfRequireEqualU32(ls->bindings_count, 1, "existing binding must be preserved");
     twfRequireEqualU32(bufferqueueGetBufCount(&cache->pending_queue), 0, "failed peer queue must be dropped in full");
     twfRequire(! cache->has_context && ! cache->resolving, "failed peer cache must return to unresolved state");
+    twfRequire(cache->pending_queue.budget == &ls->write_budget &&
+                   bufferbudgetGetUsage(&ls->write_budget).charge == sibling_charge &&
+                   bufferbudgetGetUsage(&ls->write_budget).entries == 1,
+               "DNS failure/recreation lost the sibling budget or queue binding");
+    testQueueWrite(ls, &cache->pending_queue, makeDatagram(&fixture, "recreated"));
+    twfRequire(bufferbudgetGetUsage(&ls->write_budget).entries == 2, "recreated DNS queue bypassed budget");
+    lineReuseBuffer(l, udpconnectorPopWrite(ls, &cache->pending_queue));
+    lineReuseBuffer(l, udpconnectorPopWrite(ls, &ls->pause_queue));
+    bufferbudgetAssertEmpty(&ls->write_budget);
 
     sockaddr_u addr3 = {0};
     sockaddrSetIpAddressPort(&addr3, "127.0.0.1", 20003);
@@ -1330,7 +1364,7 @@ static void testCase24_UpstreamFinishFlushesLastSendBinding(void)
     static const char queued_data[] = "queued_pkt";
 
     sbuf_t *buf = makeDatagram(&fixture, queued_data);
-    bufferqueuePushBack(&ls->pause_queue, buf);
+    testQueueWrite(ls, &ls->pause_queue, buf);
 
 #if defined(OS_LINUX)
     wio_t                  *expected_io  = second_binding->socket->io;
@@ -1650,15 +1684,15 @@ static void sendOnRetiringSibling(test_fixture_t *f, line_t *notified)
     else if (f->retirement_path == 4)
     {
         udpconnector_packet_destination_t *cache = ls->packet_destinations;
-        bufferqueuePushBack(&cache->pending_queue, makeDatagram(f, "rejected DNS queue"));
-        bufferqueuePushBack(&cache->pending_queue, udpTestSplicePayload(f->env.pool));
+        testQueueWrite(ls, &cache->pending_queue, makeDatagram(f, "rejected DNS queue"));
+        testQueueWrite(ls, &cache->pending_queue, udpTestSplicePayload(f->env.pool));
         twfRequire(udpconnectorTestFlushPacketDestinationQueue(f->connector, sibling, 0),
                    "refused destination queue must report live sibling");
     }
     else
     {
-        bufferqueuePushBack(&ls->pause_queue, makeDatagram(f, "rejected cached queue"));
-        bufferqueuePushBack(&ls->pause_queue, udpTestSplicePayload(f->env.pool));
+        testQueueWrite(ls, &ls->pause_queue, makeDatagram(f, "rejected cached queue"));
+        testQueueWrite(ls, &ls->pause_queue, udpTestSplicePayload(f->env.pool));
         twfRequire(f->retirement_path == 2 ? udpconnectorFlushWriteQueue(ls) : udpconnectorReplayWriteQueue(ls),
                    "refused queue must report live sibling");
     }
@@ -1775,19 +1809,21 @@ static void testSpliceSocketRetirement(void)
                     ls->packet_destinations_count = 1;
                     ls->packet_destinations       = memoryAllocateZero(sizeof(*ls->packet_destinations));
                     twfRequire(bufferqueueInit(&ls->packet_destinations[0].pending_queue, 2), "DNS fixture queue");
+                    twfRequire(bufferqueueTryAttachBudget(&ls->packet_destinations[0].pending_queue, &ls->write_budget),
+                               "DNS fixture budget attachment");
                 }
                 udpconnector_packet_destination_t *cache = ls->packet_destinations;
                 addresscontextSetIpAddressPortProtocol(&cache->dest_ctx, "127.0.0.1", 20001, IP_PROTO_UDP);
                 cache->has_context = true;
-                bufferqueuePushBack(&cache->pending_queue, udpTestSplicePayload(f.env.pool));
-                bufferqueuePushBack(&cache->pending_queue, udpTestSplicePayload(f.env.pool));
+                testQueueWrite(ls, &cache->pending_queue, udpTestSplicePayload(f.env.pool));
+                testQueueWrite(ls, &cache->pending_queue, udpTestSplicePayload(f.env.pool));
                 twfRequire(! udpconnectorTestFlushPacketDestinationQueue(f.connector, a, 0),
                            "DNS queue continued after owner death");
             }
             else
             {
-                bufferqueuePushBack(&ls->pause_queue, udpTestSplicePayload(f.env.pool));
-                bufferqueuePushBack(&ls->pause_queue, udpTestSplicePayload(f.env.pool));
+                testQueueWrite(ls, &ls->pause_queue, udpTestSplicePayload(f.env.pool));
+                testQueueWrite(ls, &ls->pause_queue, udpTestSplicePayload(f.env.pool));
                 if (path == 1)
                     twfRequire(! udpconnectorFlushWriteQueue(ls), "pause queue continued after owner death");
                 else
@@ -1809,8 +1845,69 @@ static void testSpliceSocketRetirement(void)
 }
 #endif
 
+static void testQueueAdmission(void)
+{
+    for (unsigned close_on_pause = 0; close_on_pause < 2; ++close_on_pause)
+    {
+        twfSetCase("UDP queue publishes older input before reentrant Pause");
+        test_fixture_t fixture;
+        setupFixtureMode(&fixture, kUdpConnectorBalanceModeConnection);
+        line_t *line = createAndInitLineIpv4(&fixture, "127.0.0.1", 20001);
+        lineRef(line);
+        udpconnector_lstate_t *ls = lineGetState(line, fixture.connector);
+        ls->write_paused          = true;
+        fixture.inject_on_pause   = ! close_on_pause;
+        fixture.finish_on_pause   = close_on_pause;
+        sbuf_t *buf               = sbufCreate(kUdpMinPauseQueueSize);
+        sbufSetLength(buf, 1);
+        sbufWrite(buf, "A", 1);
+        udpconnectorTunnelUpStreamPayload(fixture.connector, line, buf);
+        twfRequireEqualU32(fixture.pause_calls, 1, "UDP Pause was duplicated by reentry");
+        if (! close_on_pause)
+        {
+            twfRequire(bufferqueueGetBufCount(&ls->pause_queue) == 2, "nested UDP input was lost");
+            sbuf_t *first  = udpconnectorPopWrite(ls, &ls->pause_queue);
+            sbuf_t *second = udpconnectorPopWrite(ls, &ls->pause_queue);
+            twfRequire(memoryEqual(sbufGetRawPtr(first), "A", 1) && memoryEqual(sbufGetRawPtr(second), "B", 1),
+                       "nested UDP input overtook older input");
+            lineReuseBuffer(line, first);
+            lineReuseBuffer(line, second);
+            twfRequire(bufferbudgetGetUsage(&ls->write_budget).bytes == 0 &&
+                           bufferbudgetGetUsage(&ls->write_budget).charge == 0,
+                       "UDP pop leaked accounting");
+            udpconnectorTunnelUpStreamFinish(fixture.connector, line);
+            lineDestroy(line);
+        }
+        twfRequire(! lineIsAlive(line), "UDP Pause Finish left owned line alive");
+        lineUnref(line);
+        teardownFixture(&fixture);
+    }
+
+    twfSetCase("UDP empty datagrams share one finite initialization and DNS budget");
+    test_fixture_t fixture;
+    setupFixtureMode(&fixture, kUdpConnectorBalanceModePacket);
+    line_t *line = createAndInitLineIpv4(&fixture, "127.0.0.1", 20001);
+    lineRef(line);
+    udpconnector_lstate_t *ls = lineGetState(line, fixture.connector);
+    ls->write_paused          = true;
+    const size_t capacity     = kUdpMaxPauseQueueSize / 2 - sizeof(sbuf_t) - kSbufAllocationAlignment;
+    sbuf_t      *first        = sbufCreate((uint32_t) capacity);
+    sbuf_t      *second       = sbufCreate((uint32_t) capacity);
+    testQueueWrite(ls, &ls->packet_destinations[0].pending_queue, first);
+    udpconnectorTunnelUpStreamPayload(fixture.connector, line, second);
+    twfRequire(bufferbudgetGetUsage(&ls->write_budget).charge == kUdpMaxPauseQueueSize &&
+                   bufferbudgetGetUsage(&ls->write_budget).bytes == 0,
+               "UDP exact capacity ceiling was not admitted");
+    fixture.destroy_on_finish = true;
+    udpconnectorTunnelUpStreamPayload(fixture.connector, line, sbufCreate(0));
+    twfRequire(! lineIsAlive(line) && fixture.finish_calls == 1, "UDP capacity overflow did not settle owner");
+    lineUnref(line);
+    teardownFixture(&fixture);
+}
+
 int main(int argc, char **argv)
 {
+    testQueueAdmission();
     (void) argc;
     (void) argv;
 

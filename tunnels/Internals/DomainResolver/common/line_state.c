@@ -15,10 +15,15 @@ void domainresolverLinestateInitialize(tunnel_t *t, domainresolver_lstate_t *ls)
     domainresolver_tstate_t *ts = tunnelGetState(t);
 
     *ls = (domainresolver_lstate_t) {
-        .pending        = bufferqueueCreate(kDomainResolverPendingQueueInitialCapacity),
-        .phase          = kDomainResolverPhaseIdle,
-        .init_direction = kDomainResolverDirectionNone,
+        .pending = bufferqueueCreate(kDomainResolverPendingQueueInitialCapacity),
+        .phase   = kDomainResolverPhaseIdle,
     };
+
+    bufferbudgetInit(&ls->pending_budget,
+                     (buffer_budget_cost_t) {kDomainResolverMaxPendingBytes, kDomainResolverMaxPendingBytes, SIZE_MAX});
+    const bool attached = bufferqueueTryAttachBudget(&ls->pending, &ls->pending_budget);
+    assert(attached);
+    discard attached;
 
     if (ts->user_lstate_size > 0)
     {
@@ -36,5 +41,6 @@ void domainresolverLinestateDestroy(tunnel_t *t, line_t *l, domainresolver_lstat
     }
 
     bufferqueueDestroy(&ls->pending);
+    bufferbudgetAssertEmpty(&ls->pending_budget);
     memoryZeroAligned32(ls, t->lstate_size);
 }

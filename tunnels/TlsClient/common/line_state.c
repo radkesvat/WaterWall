@@ -43,7 +43,8 @@ static bool tlsclientAddConfiguredApplicationSettings(SSL *ssl, const uint8_t *a
 
 bool tlsclientConfigureClientHelloExtensions(SSL *ssl, const uint8_t *alpn_wire, size_t alpn_wire_len)
 {
-    if (ssl == NULL || ! tlsclientAddConfiguredApplicationSettings(ssl, alpn_wire, alpn_wire_len))
+    assert(ssl != NULL);
+    if (! tlsclientAddConfiguredApplicationSettings(ssl, alpn_wire, alpn_wire_len))
     {
         return false;
     }
@@ -70,6 +71,8 @@ static void tlsclientLinestateReleasePartial(tlsclient_lstate_t *ls)
     BIO_free(ls->rbio);
     BIO_free(ls->wbio);
     bufferqueueDestroy(&(ls->bq));
+    bufferbudgetReservationRelease(&ls->pending_reservation);
+    bufferbudgetAssertEmpty(&ls->pending_budget);
     bufferstreamDestroy(&(ls->takeover_stream));
     memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(tlsclient_lstate_t)));
 }
@@ -89,6 +92,12 @@ bool tlsclientLinestateInitializeWithShaping(tlsclient_lstate_t *ls, SSL_CTX *sc
         .shaping_retired = false,
         .verbose         = verbose,
     };
+    bufferbudgetInit(
+        &ls->pending_budget,
+        (buffer_budget_cost_t) {kTlsClientPendingPlaintextBytes, SIZE_MAX, kTlsClientPendingPlaintextBuffers});
+    const bool attached = bufferqueueTryAttachBudget(&ls->bq, &ls->pending_budget);
+    assert(attached);
+    discard attached;
 
     if (record_shaping->enabled)
     {
@@ -161,7 +170,14 @@ void tlsclientLinestateRelease(tlsclient_lstate_t *ls)
     ls->ssl  = NULL;
     ls->rbio = NULL;
     ls->wbio = NULL;
+    if (ls->pending_plaintext != NULL)
+    {
+        lineReuseBuffer(ls->line, ls->pending_plaintext);
+        ls->pending_plaintext = NULL;
+    }
     bufferqueueDestroy(&(ls->bq));
+    bufferbudgetReservationRelease(&ls->pending_reservation);
+    bufferbudgetAssertEmpty(&ls->pending_budget);
     bufferstreamDestroy(&(ls->takeover_stream));
 }
 

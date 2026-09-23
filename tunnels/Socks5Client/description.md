@@ -161,10 +161,10 @@ through `abortProgramNow(1)`. Downstream `Est` and payload callbacks remain supp
 - if `address` and/or `port` use `dest_context`, the incoming line destination is used as the SOCKS target source
 - if `protocol` uses `dest_context->protocol`, the incoming destination protocol is read before any configured
   address/port rewrite
-- `DownStreamEst` starts the SOCKS5 method negotiation.
+- `DownStreamEst` forwards transport readiness immediately, then starts SOCKS5 method negotiation.
 - `DownStreamPayload` consumes method, auth, and command replies from the proxy.
 - `UpStreamPayload` is buffered until the SOCKS5 command succeeds.
-- only after a successful proxy reply does the tunnel emit `tunnelPrevDownStreamEst()` and release buffered payload
+- a successful proxy reply releases the bounded application FIFO while the consumer is writable; Est has already been forwarded
 - on handshake failure it destroys local state first, then closes both directions
 - in UDP mode, upstream payload is wrapped in a SOCKS5 UDP request header and sent through the UDP relay line
 - in UDP mode, downstream relay datagrams have the SOCKS5 UDP header stripped before payload is forwarded back
@@ -197,3 +197,11 @@ Source-backed metadata:
 | `layer_group_prev_node` | `kNodeLayer4` |
 | `layer_group_next_node` | `kNodeLayer4` |
 | `required_padding_left` | `262` bytes |
+
+Transport `Est` does not mean SOCKS negotiation has succeeded. Application payload can be accepted after Init;
+the real protocol backlog is bounded at 2 MiB and 1,024 buffers. Its later release honors consumer Pause and FIFO,
+including reentrant input. The first retained application input pauses its source; the source resumes only after
+the older FIFO drains and transport pressure clears. This protocol hold does not stop handshake traffic.
+Application receive Pause does not stop the handshake's own input before readiness.
+For UDP, control and relay write pressure combine; one Resume cannot clear the other's outstanding Pause.
+The separate handshake-input buffer remains limited to 4,096 bytes.

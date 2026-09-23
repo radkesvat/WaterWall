@@ -12,7 +12,7 @@ It is meant for stream chains. The original line stays on the previous side of t
 ## What It Does
 
 - reads `settings.simultaneous-tries-perline`
-- creates that many child lines on every upstream `Init`
+- creates up to that many child lines on every upstream `Init`; synchronous selection stops further attempts
 - sends upstream `Init` on every child line immediately
 - sends the `5`-byte client probe `FISH?` on every child line
 - waits for the `5`-byte server reply `FISH!`
@@ -56,9 +56,22 @@ The matching server side is:
 
 - upstream `Init` on the original line allocates per-line bridge state and spawns the child lines
 - child lines are initialized before any buffered payload is released
-- the original line does not emit downstream `Est` until a child is both validated and transport-established
+- the first eligible associated child transport emits downstream `Est` on the original line once, before probe validation
 - upstream payload received before selection is queued in a normal `buffer_queue_t`
-- once a winner is selected, queued payload is flushed in order onto that child line
+- once a winner is selected, the independent queued-payload drain preserves FIFO and honors child transport Pause
+
+The application backlog remains bounded to 1 MiB and admits buffers transactionally.
+Its first retained payload publishes source Pause after FIFO ownership is settled.
+This hold combines with selected-child transport pressure; neither an unrelated
+child Resume nor selection alone releases it. It affects the application source,
+so FISH probes and replies can still complete.
+Selection and Resume release it as an independent producer: Pause stops the drain,
+and nested application input appends behind older retained bytes. Empty stream
+buffers need no retained entry. Main-side reply Pause is recorded before selection
+and applied to the chosen backend after its handshake, so it cannot stall FISH!.
+Temporary downstream ordering during selection also has a 1 MiB bound and keeps
+coalesced reply bytes before reentrant replies. Close settles all retained bytes
+and exact child/main references.
 
 ## Finish And Safety Behavior
 

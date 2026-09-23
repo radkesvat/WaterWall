@@ -273,22 +273,19 @@ static void caseZeroDelayIsInlineAndRetainedBytesDoNotOvertake(void)
 
     twfRequire(trojanserverSendFallbackPayload(
                    fixture.node, fixture.line, ls, fallbackFinishMakePayload(fixture.env.pool, "-held")),
-               "paused zero-delay fallback payload was rejected instead of retained");
+               "admitted zero-delay fallback payload was rejected");
     twfRequire(! g_fallback_finish_task.pending, "paused zero-delay fallback scheduled payload");
-    twfRequireEqualU32(fixture.fallback.payload_calls, 1, "paused zero-delay fallback delivered retained bytes early");
+    twfRequireEqualU32(fixture.fallback.payload_calls, 2, "paused zero-delay fallback stranded admitted bytes");
 
     trojanserverTunnelDownStreamResume(fixture.node, fixture.line);
     twfRequireEqualText(fixture.trace.seq, "ur", "zero-delay fallback Resume was not forwarded");
-    twfRequire(g_fallback_finish_task.pending, "zero-delay Resume did not schedule retained bytes");
-    twfRequireEqualU32(g_fallback_finish_task.delay_ms, 0, "zero-delay retained drain did not use zero delay");
+    twfRequire(! g_fallback_finish_task.pending, "zero-delay Resume created an unnecessary drain");
 
     twfRequire(trojanserverSendFallbackPayload(
                    fixture.node, fixture.line, ls, fallbackFinishMakePayload(fixture.env.pool, "-later")),
                "new zero-delay fallback payload was rejected");
-    twfRequireEqualU32(fixture.fallback.payload_calls, 1, "new zero-delay payload overtook retained bytes");
-    twfRequire(g_fallback_finish_task.pending, "retained zero-delay drain was lost before task drive");
-    fallbackFinishDriveDelayedTask();
-    twfRequireEqualU32(fixture.fallback.payload_calls, 2, "retained zero-delay FIFO was not delivered once");
+    twfRequireEqualU32(fixture.fallback.payload_calls, 3, "new zero-delay payload was not delivered inline");
+    twfRequire(! g_fallback_finish_task.pending, "zero-delay callback left an independent drain");
     twfRequireEqualText(
         (const char *) fixture.fallback.received, "inline-held-later", "zero-delay retained FIFO order changed");
 

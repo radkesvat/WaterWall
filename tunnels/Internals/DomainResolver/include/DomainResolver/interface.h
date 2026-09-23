@@ -2,15 +2,8 @@
 
 #include "wwapi.h"
 
-typedef enum domainresolver_direction_e
-{
-    kDomainResolverDirectionNone = 0,
-    kDomainResolverDirectionUpstream,
-    kDomainResolverDirectionDownstream
-} domainresolver_direction_t;
-
-typedef bool (*domainresolver_prepare_fn)(tunnel_t *resolver, tunnel_t *owner, line_t *line,
-                                          domainresolver_direction_t direction, void *user_lstate);
+/* Runs during upstream Init, before resolving the line's destination. */
+typedef bool (*domainresolver_prepare_fn)(tunnel_t *resolver, tunnel_t *owner, line_t *line, void *user_lstate);
 typedef void (*domainresolver_user_lstate_destroy_fn)(tunnel_t *resolver, tunnel_t *owner, line_t *line,
                                                       void *user_lstate);
 

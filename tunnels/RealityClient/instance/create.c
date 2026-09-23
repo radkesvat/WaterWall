@@ -18,7 +18,7 @@ static void configureTunnelCallbacks(tunnel_t *t)
     t->fnPauseD   = &realityclientTunnelDownStreamPause;
     t->fnResumeD  = &realityclientTunnelDownStreamResume;
 
-    t->onChain   = &realityclientTunnelOnChain;
+    t->onChain = &realityclientTunnelOnChain;
 
     t->onDestroy = &realityclientTunnelDestroy;
 }
@@ -112,7 +112,7 @@ static bool initializeInternalTlsClient(tunnel_t *t, node_t *node)
         return false;
     }
 
-    if (! tlsclientTunnelEnableHandshakeTakeover(ts->tls_tunnel))
+    if (! tlsclientTunnelEnableHandshakeTakeover(ts->tls_tunnel, t, realityclientHandshakeReady))
     {
         LOGF("RealityClient: internal TlsClient rejected handshake takeover configuration");
         return false;

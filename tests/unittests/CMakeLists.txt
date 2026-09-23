@@ -2230,7 +2230,7 @@ set(WATERWALL_LINE_FAILURE_WW_SOURCES
   ${CMAKE_SOURCE_DIR}/ww/bufio/splice_stream.c
   ${CMAKE_SOURCE_DIR}/ww/bufio/splice_buffer.c
   ${CMAKE_SOURCE_DIR}/ww/bufio/buffer_budget.c
-  ${CMAKE_SOURCE_DIR}/ww/bufio/buffer_queue.c
+        ${CMAKE_SOURCE_DIR}/ww/bufio/buffer_queue.c
   ${CMAKE_SOURCE_DIR}/ww/bufio/buffer_stream.c
 )
 
@@ -2590,17 +2590,14 @@ if(TARGET HalfDuplexClient)
     ${WATERWALL_LINE_FAILURE_WW_SOURCES}
   )
   waterwall_line_failure_test_use_tunnel(halfduplexclient_reentrant_close_test HalfDuplexClient)
-  target_link_options(halfduplexclient_reentrant_close_test PRIVATE
-    ${WATERWALL_LINE_FAILURE_WRAPS}
-    "-Wl,--wrap=lineScheduleTask"
-  )
+  target_link_options(halfduplexclient_reentrant_close_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS})
   target_link_libraries(halfduplexclient_reentrant_close_test PRIVATE ww)
   add_dependencies(waterwall_unit_tests halfduplexclient_reentrant_close_test)
 
   add_waterwall_unit_test(
     waterwall.halfduplexclient_reentrant_close_unit
     halfduplexclient_reentrant_close_test
-    "unit;tunnels;halfduplexclient;scheduling;reentrant;finish;lifetime;ownership"
+    "unit;tunnels;halfduplexclient;flow;reentrant;finish;lifetime;ownership"
   )
 endif()
 
@@ -2888,6 +2885,8 @@ if(LINUX)
       if(tcp_side STREQUAL "Listener")
         target_compile_definitions(${tcp_pause_target} PRIVATE TCP_PAUSE_TEST_LISTENER=1)
         target_link_options(${tcp_pause_target} PRIVATE "-Wl,--wrap=socketacceptresultDestroy")
+      else()
+        target_link_options(${tcp_pause_target} PRIVATE "-Wl,--wrap=lineResolveDomainServiceAsync")
       endif()
       target_link_options(${tcp_pause_target} PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS})
       target_link_libraries(${tcp_pause_target} PRIVATE Tcp${tcp_side} ww)
@@ -3726,5 +3725,78 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND TARGET TrojanServer)
     add_dependencies(waterwall_unit_tests ${trojan_server_test})
     add_waterwall_unit_test(waterwall.trojanserver_${mode}_unit ${trojan_server_test}
       "unit;tunnels;trojanserver;splice;authentication;fallback;framing;lifetime")
+  endforeach()
+endif()
+
+if(TARGET VlessClient AND UNIX AND NOT APPLE)
+  foreach(mode IN ITEMS splice no_splice)
+    set(vless_test vlessclient_${mode}_test)
+    add_executable(${vless_test} vlessclient_splice_test.c ${WATERWALL_LINE_FAILURE_WW_SOURCES})
+    waterwall_line_failure_test_use_tunnel(${vless_test} VlessClient)
+    target_link_libraries(${vless_test} PRIVATE ww)
+    target_link_options(${vless_test} PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS}
+      "-Wl,--wrap=bufferqueueTryPushBack")
+    if(mode STREQUAL "no_splice")
+      target_compile_definitions(${vless_test} PRIVATE WW_HAVE_SPLICE=0)
+    else()
+      target_link_options(${vless_test} PRIVATE "-Wl,--wrap=pipe2" "-Wl,--wrap=fcntl"
+        "-Wl,--wrap=read" "-Wl,--wrap=splice")
+    endif()
+    add_dependencies(waterwall_unit_tests ${vless_test})
+    add_waterwall_unit_test(waterwall.vlessclient_${mode}_unit ${vless_test}
+      "unit;tunnels;vless;splice;framing;lifetime")
+  endforeach()
+endif()
+
+if(LINUX)
+  foreach(socks_side Client Server)
+    if(TARGET Socks5${socks_side})
+      string(TOLOWER "${socks_side}" socks_lower)
+      set(socks_est_target "socks5${socks_lower}_est_flow_test")
+      add_executable(${socks_est_target} socks_est_flow_test.c)
+      if(socks_side STREQUAL "Server")
+        target_compile_definitions(${socks_est_target} PRIVATE SOCKS_EST_SERVER=1)
+        target_include_directories(${socks_est_target} PRIVATE
+          ${CMAKE_SOURCE_DIR}/tunnels/TcpUdpListener/include
+          ${CMAKE_SOURCE_DIR}/tunnels/UdpListener/include)
+
+      endif()
+      target_link_options(${socks_est_target} PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS})
+      target_link_libraries(${socks_est_target} PRIVATE Socks5${socks_side} ww)
+      add_dependencies(waterwall_unit_tests ${socks_est_target})
+      add_waterwall_unit_test(waterwall.socks5${socks_lower}_est_flow_unit ${socks_est_target} "unit;tunnels;socks;flow;lifetime")
+    endif()
+  endforeach()
+endif()
+
+if(LINUX AND TARGET DomainResolver)
+  add_executable(domainresolver_flow_test domainresolver_flow_test.c)
+  target_link_options(domainresolver_flow_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS} "-Wl,--wrap=lineResolveDomainServiceAsync")
+  target_link_libraries(domainresolver_flow_test PRIVATE DomainResolver ww)
+  add_dependencies(waterwall_unit_tests domainresolver_flow_test)
+  add_waterwall_unit_test(waterwall.domainresolver_flow_unit domainresolver_flow_test "unit;tunnels;dns;flow;lifetime")
+endif()
+
+if(LINUX AND TARGET ConnectionFisherServer)
+  add_executable(connectionfisherserver_est_reentry_test connectionfisherserver_est_reentry_test.c ${WATERWALL_LINE_FAILURE_WW_SOURCES})
+  waterwall_line_failure_test_use_tunnel(connectionfisherserver_est_reentry_test ConnectionFisherServer)
+  target_link_options(connectionfisherserver_est_reentry_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS})
+  target_link_libraries(connectionfisherserver_est_reentry_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests connectionfisherserver_est_reentry_test)
+  add_waterwall_unit_test(waterwall.connectionfisherserver_est_reentry_unit connectionfisherserver_est_reentry_test "unit;tunnels;connectionfisherserver;est;reentrant;lifetime;ownership")
+endif()
+
+if(LINUX)
+  foreach(est_node HeaderServer SoftIpLimiter VlessServer)
+    if(TARGET ${est_node})
+      string(TOLOWER "${est_node}" est_lower)
+      set(est_target "${est_lower}_est_ordering_test")
+      add_executable(${est_target} ${est_target}.c ${WATERWALL_LINE_FAILURE_WW_SOURCES})
+      waterwall_line_failure_test_use_tunnel(${est_target} ${est_node})
+      target_link_options(${est_target} PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS})
+      target_link_libraries(${est_target} PRIVATE ww)
+      add_dependencies(waterwall_unit_tests ${est_target})
+      add_waterwall_unit_test(waterwall.${est_lower}_est_ordering_unit ${est_target} "unit;tunnels;${est_lower};lifecycle;reentry")
+    endif()
   endforeach()
 endif()
