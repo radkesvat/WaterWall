@@ -36,9 +36,9 @@ static int rejectUdpInit(socks5client_line_kind_t kind)
     return 0;
 }
 
-int tunnelsAbortSocks5ClientUdpAppInitCase(void)
+int tunnelsAbortSocks5ClientUdpApplicationInitCase(void)
 {
-    return rejectUdpInit(kSocks5ClientLineKindUdpApp);
+    return rejectUdpInit(kSocks5ClientLineKindUdpApplication);
 }
 
 int tunnelsAbortSocks5ClientUdpControlInitCase(void)

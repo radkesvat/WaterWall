@@ -6,15 +6,15 @@ static void setLineProtocol(line_t *l, uint8_t protocol)
     addresscontextSetOnlyProtocol(lineGetSourceAddressContext(l), protocol);
 }
 
-static line_t *createInternalLine(tunnel_t *t, line_t *app_l, trojanclient_line_kind_t kind)
+static line_t *createInternalLine(tunnel_t *t, line_t *application_l, trojanclient_line_kind_t kind)
 {
-    line_t *inner_l = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), lineGetWID(app_l));
+    line_t *inner_l = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), lineGetWID(application_l));
 
     trojanclient_lstate_t *inner_ls = lineGetState(inner_l, t);
     trojanclientLinestateInitialize(inner_ls, inner_l);
     inner_ls->tunnel   = t;
     inner_ls->kind     = kind;
-    inner_ls->app_line = app_l;
+    inner_ls->application_line = application_l;
 
     return inner_l;
 }
@@ -57,24 +57,24 @@ void trojanclientCloseLine(tunnel_t *t, line_t *l, trojanclient_close_origin_t o
         lineUnref(l);
         return;
     }
-    bool    from_app = ls->kind == kTrojanClientLineKindUdpApp;
-    line_t *app      = from_app ? l : ls->app_line;
-    line_t *carrier  = from_app ? ls->carrier_line : l;
-    lineRef(app);
+    bool    from_application = ls->kind == kTrojanClientLineKindUdpApplication;
+    line_t *application      = from_application ? l : ls->application_line;
+    line_t *carrier          = from_application ? ls->carrier_line : l;
+    lineRef(application);
     lineRef(carrier);
-    trojanclient_lstate_t *app_ls       = lineGetState(app, t);
+    trojanclient_lstate_t *application_ls = lineGetState(application, t);
     trojanclient_lstate_t *carrier_ls   = lineGetState(carrier, t);
     bool                   next_started = carrier_ls->next_started;
-    app_ls->carrier_line                = NULL;
-    carrier_ls->app_line                = NULL;
-    trojanclientLinestateDestroy(app_ls);
+    application_ls->carrier_line          = NULL;
+    carrier_ls->application_line          = NULL;
+    trojanclientLinestateDestroy(application_ls);
     trojanclientLinestateDestroy(carrier_ls);
-    if (next_started && (from_app || origin != kTrojanClientCloseFromNext))
+    if (next_started && (from_application || origin != kTrojanClientCloseFromNext))
         tunnelNextUpStreamFinish(t, carrier);
     if (lineIsAlive(carrier))
         lineDestroy(carrier);
-    if (lineIsAlive(app) && (! from_app || origin != kTrojanClientCloseFromPrev))
-        tunnelPrevDownStreamFinish(t, app);
+    if (lineIsAlive(application) && (! from_application || origin != kTrojanClientCloseFromPrev))
+        tunnelPrevDownStreamFinish(t, application);
     lineUnref(carrier);
-    lineUnref(app);
+    lineUnref(application);
 }

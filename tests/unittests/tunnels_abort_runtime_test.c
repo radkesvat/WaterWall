@@ -221,7 +221,7 @@ static const abort_case_t kAbortCases[] = {
     {"tlsserver_draining_downstream_init", tunnelsAbortTlsServerDrainingInitCase},
 #endif
 #if defined(WATERWALL_ABORT_TEST_HAS_SOCKS5CLIENT)
-    {"socks5client_udp_app_downstream_init", tunnelsAbortSocks5ClientUdpAppInitCase},
+    {"socks5client_udp_application_downstream_init", tunnelsAbortSocks5ClientUdpApplicationInitCase},
     {"socks5client_udp_control_downstream_init", tunnelsAbortSocks5ClientUdpControlInitCase},
     {"socks5client_udp_relay_downstream_init", tunnelsAbortSocks5ClientUdpRelayInitCase},
 #endif

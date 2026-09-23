@@ -3,7 +3,7 @@
 void trojanclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     trojanclient_lstate_t *ls = lineGetState(l, t);
-    if (UNLIKELY(ls->phase == kTrojanClientPhaseClosed || ls->kind == kTrojanClientLineKindUdpApp))
+    if (UNLIKELY(ls->phase == kTrojanClientPhaseClosed || ls->kind == kTrojanClientLineKindUdpApplication))
     {
         lineReuseBuffer(l, buf);
         return;
@@ -29,15 +29,15 @@ void trojanclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     ls->receive_bytes += length;
     if (ls->receiving)
         return;
-    line_t *app = ls->kind == kTrojanClientLineKindUdpCarrier ? ls->app_line : l;
+    line_t *application = ls->kind == kTrojanClientLineKindUdpCarrier ? ls->application_line : l;
     lineRef(l);
-    if (app != l)
-        lineRef(app);
+    if (application != l)
+        lineRef(application);
     ls->receiving = true;
     /* A nested call publishes its separately bounded FIFO entry before returning.
      * All admitted batches complete here; Pause never converts ready frames into
      * an independent output backlog. Only an incomplete suffix survives return. */
-    while (trojanclientAssociationAlive(t, l, app))
+    while (trojanclientAssociationAlive(t, l, application))
     {
 
         int header = trojanclientReadUdpHeader(ls);
@@ -50,11 +50,11 @@ void trojanclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             break;
         sbuf_t *body = trojanclientExtractUdpBody(ls);
         /* Parser cursor and accounting are committed before any reentrant callback. */
-        tunnelPrevDownStreamPayload(t, app, body);
+        tunnelPrevDownStreamPayload(t, application, body);
     }
-    if (trojanclientAssociationAlive(t, l, app))
+    if (trojanclientAssociationAlive(t, l, application))
         ls->receiving = false;
-    if (app != l)
-        lineUnref(app);
+    if (application != l)
+        lineUnref(application);
     lineUnref(l);
 }

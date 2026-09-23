@@ -18,7 +18,8 @@ void socks5clientTunnelUpStreamInit(tunnel_t *t, line_t *l)
 
     socks5clientLinestateInitialize(ls, t, l);
     ls->protocol = target->proto_udp ? kSocks5ClientProtocolUdp : kSocks5ClientProtocolTcp;
-    ls->kind     = ls->protocol == kSocks5ClientProtocolUdp ? kSocks5ClientLineKindUdpApp : kSocks5ClientLineKindDirect;
+    ls->kind =
+        ls->protocol == kSocks5ClientProtocolUdp ? kSocks5ClientLineKindUdpApplication : kSocks5ClientLineKindDirect;
     addresscontextCopy(&ls->target_addr, target);
 
     if (ts->verbose)

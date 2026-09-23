@@ -28,7 +28,7 @@
 #include "tunnel_line_failure_harness.h"
 
 static tunnel_t *node, *prev, *next;
-static line_t   *app, *transport;
+static line_t   *application, *transport;
 static char      upstream[32], downstream[32];
 static size_t    up_len, down_len;
 static unsigned  est_count, greeting_count, command_count, reply_count, read_pause_count;
@@ -72,7 +72,7 @@ static void readPause(tunnel_t *t, line_t *l)
 static void sourcePause(tunnel_t *t, line_t *l)
 {
     discard t;
-    twfRequire(l == app, "source Pause escaped on an internal SOCKS line");
+    twfRequire(l == application, "source Pause escaped on an internal SOCKS line");
     ++source_pauses;
     socksLstate *ls = lineGetState(l, node);
     twfRequire(ls->source_pause_sent, "source Pause preceded notification publication");
@@ -93,7 +93,7 @@ static void sourcePause(tunnel_t *t, line_t *l)
 static void sourceResume(tunnel_t *t, line_t *l)
 {
     discard t;
-    twfRequire(l == app, "source Resume escaped on an internal SOCKS line");
+    twfRequire(l == application, "source Resume escaped on an internal SOCKS line");
     socksLstate *ls = lineGetState(l, node);
     twfRequire(! ls->source_pause_sent && ! ls->next_paused && ! ls->draining_up &&
                    bufferqueueGetBufCount(&ls->pending_up) == 0 && ls->phase == kSocks5ClientPhaseEstablished,
@@ -132,7 +132,7 @@ static void upstreamData(tunnel_t *t, line_t *l, sbuf_t *buf)
     if (reenter_data)
     {
         reenter_data = false;
-        socksUp(node, app, bytes(app, "C", 1));
+        socksUp(node, application, bytes(application, "C", 1));
         socksPause(node, l);
     }
 }
@@ -164,7 +164,7 @@ static void downstreamData(tunnel_t *t, line_t *l, sbuf_t *buf)
 static void established(tunnel_t *t, line_t *l)
 {
     discard t;
-    twfRequire(l == app, "Est escaped on an internal line");
+    twfRequire(l == application, "Est escaped on an internal line");
     ++est_count;
     if (close_in_est)
     {
@@ -173,8 +173,8 @@ static void established(tunnel_t *t, line_t *l)
         return;
     }
     if (pause_in_est)
-        socksReceivePause(node, app);
-    socksUp(node, app, bytes(app, "B", 1));
+        socksReceivePause(node, application);
+    socksUp(node, application, bytes(application, "B", 1));
 }
 
 static void initializeNext(tunnel_t *t, line_t *l)
@@ -220,9 +220,9 @@ static void run(bool close_now, bool udp)
     node->chain = chain;
     twf_line_pool_t lines;
     twfLinePoolSetup(&lines, node->lstate_size, 1);
-    app = twfLinePoolCreateLine(&lines);
-    lineRef(app);
-    addresscontextSetOnlyProtocol(lineGetSourceAddressContext(app), IP_PROTO_TCP);
+    application = twfLinePoolCreateLine(&lines);
+    lineRef(application);
+    addresscontextSetOnlyProtocol(lineGetSourceAddressContext(application), IP_PROTO_TCP);
     up_len = down_len = est_count = greeting_count = command_count = reply_count = read_pause_count = 0;
     close_in_est                                                                                    = close_now;
     pause_in_est                                                                                    = true;
@@ -232,18 +232,18 @@ static void run(bool close_now, bool udp)
 #ifdef SOCKS_EST_SERVER
     ts->no_auth       = true;
     ts->allow_connect = true;
-    socksInit(node, app);
+    socksInit(node, application);
     const uint8_t method[] = {5, 1, 0};
-    socksUp(node, app, bytes(app, method, sizeof(method)));
+    socksUp(node, application, bytes(application, method, sizeof(method)));
     const uint8_t request[] = {5, 1, 0, 1, 127, 0, 0, 1, 0, 80, 'A'};
-    socksUp(node, app, bytes(app, request, sizeof(request)));
+    socksUp(node, application, bytes(application, request, sizeof(request)));
     if (! close_now)
     {
         twfRequire(est_count == 1 && reply_count == 0 && down_len == 0, "paused Est emitted command reply/body");
         twfRequire(up_len == 2 && memoryEqual(upstream, "AB", 2), "Init/Est reentry overtook original request tail");
-        socksEst(node, app);
+        socksEst(node, application);
         twfRequire(est_count == 1, "duplicate backend Est escaped");
-        socksReceiveResume(node, app);
+        socksReceiveResume(node, application);
         twfRequire(reply_count == 1 && down_len == 1 && downstream[0] == 'D', "Resume lost reply/body order");
     }
 #else
@@ -252,12 +252,12 @@ static void run(bool close_now, bool udp)
     ip_addr_t ip;
     twfRequire(ipaddr_aton("127.0.0.1", &ip), "fixture address");
     addresscontextSetIpPort(&ts->target_addr, &ip, 80);
-    socksInit(node, app);
+    socksInit(node, application);
     line_t *control = transport;
-    socksUp(node, app, bytes(app, "A", 1));
+    socksUp(node, application, bytes(application, "A", 1));
     if (close_in_source_pause)
     {
-        twfRequire(! lineIsAlive(app) && source_pauses == 1 && est_count == 0,
+        twfRequire(! lineIsAlive(application) && source_pauses == 1 && est_count == 0,
                    "source Pause close did not settle exact association");
         goto client_done;
     }
@@ -277,7 +277,7 @@ static void run(bool close_now, bool udp)
         socksDown(node, control, bytes(control, response, sizeof(response)));
         if (close_in_relay_pause)
         {
-            twfRequire(! lineIsAlive(app), "relay Pause Finish did not close the association");
+            twfRequire(! lineIsAlive(application), "relay Pause Finish did not close the association");
             goto client_done;
         }
         twfRequire(up_len == 0 && est_count == 1, "protocol completion drained through Pause or repeated Est");
@@ -293,13 +293,13 @@ static void run(bool close_now, bool udp)
 client_done:
     addresscontextReset(&ts->target_addr);
 #endif
-    if (lineIsAlive(app))
+    if (lineIsAlive(application))
     {
-        socksFinish(node, app);
-        lineDestroy(app);
+        socksFinish(node, application);
+        lineDestroy(application);
     }
-    twfRequire(! lineIsAlive(app), "Est callback close left line alive");
-    lineUnref(app);
+    twfRequire(! lineIsAlive(application), "Est callback close left line alive");
+    lineUnref(application);
     twfRequireNoLeakedBuffers();
     twfLinePoolTeardown(&lines);
     tunnelchainDestroy(chain);
@@ -331,18 +331,18 @@ static void pendingBoundary(bool entries)
     next->fnFinU                     = noop;
     twf_line_pool_t lines;
     twfLinePoolSetup(&lines, node->lstate_size, 1);
-    app = twfLinePoolCreateLine(&lines);
-    lineRef(app);
-    socksLstate *ls = lineGetState(app, node);
+    application = twfLinePoolCreateLine(&lines);
+    lineRef(application);
+    socksLstate *ls = lineGetState(application, node);
 #ifdef SOCKS_EST_SERVER
-    socks5serverLinestateInitialize(ls, node, app, kSocks5ServerLineKindControlTcp);
+    socks5serverLinestateInitialize(ls, node, application, kSocks5ServerLineKindControlTcp);
     ls->phase             = kSocks5ServerPhaseConnectWaitEst;
     ls->next_initializing = true;
     const uint32_t byte_limit = 1024U * 1024U;
 #else
-    socks5clientLinestateInitialize(ls, node, app);
+    socks5clientLinestateInitialize(ls, node, application);
     // Empty UDP is valid and must consume an entry even though its byte cost is zero.
-    ls->kind = entries ? kSocks5ClientLineKindUdpApp : kSocks5ClientLineKindDirect;
+    ls->kind                  = entries ? kSocks5ClientLineKindUdpApplication : kSocks5ClientLineKindDirect;
     const uint32_t byte_limit = 2U * 1024U * 1024U;
 #endif
     const unsigned count = entries ? 1024 : 1;
@@ -350,16 +350,16 @@ static void pendingBoundary(bool entries)
     {
         sbuf_t *buf = bufferpoolGetBestFit(env.pool, entries ? 0 : byte_limit, 300);
         sbufSetLength(buf, entries ? 0 : byte_limit);
-        socksUp(node, app, buf);
+        socksUp(node, application, buf);
     }
-    twfRequire(lineIsAlive(app) && bufferqueueGetBufCount(&ls->pending_up) == count,
+    twfRequire(lineIsAlive(application) && bufferqueueGetBufCount(&ls->pending_up) == count,
                "SOCKS refused exact pending boundary");
     twfRequire(bufferqueueGetBufLen(&ls->pending_up) == (entries ? 0 : byte_limit),
                "SOCKS pending byte accounting changed");
-    socksUp(node, app, bytes(app, "X", 1));
-    twfRequire(! lineIsAlive(app), "SOCKS overflow left borrowed owner alive");
-    twfRequireLineStateZeroed(app, node, "SOCKS overflow left protocol state alive");
-    lineUnref(app);
+    socksUp(node, application, bytes(application, "X", 1));
+    twfRequire(! lineIsAlive(application), "SOCKS overflow left borrowed owner alive");
+    twfRequireLineStateZeroed(application, node, "SOCKS overflow left protocol state alive");
+    lineUnref(application);
     twfRequireNoLeakedBuffers();
     twfLinePoolTeardown(&lines);
     tunnelDestroy(next);

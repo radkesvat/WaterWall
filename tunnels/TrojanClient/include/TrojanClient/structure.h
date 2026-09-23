@@ -31,7 +31,7 @@ typedef enum trojanclient_phase_e
 typedef enum trojanclient_line_kind_e
 {
     kTrojanClientLineKindDirect = 0,
-    kTrojanClientLineKindUdpApp,
+    kTrojanClientLineKindUdpApplication,
     kTrojanClientLineKindUdpCarrier
 } trojanclient_line_kind_t;
 
@@ -73,7 +73,7 @@ typedef struct trojanclient_lstate_s
     /* This state belongs to line. Direct/application lines are borrowed;
      * TrojanClient owns each UDP carrier. Both association links detach on close. */
     line_t                  *line;
-    line_t                  *app_line;     // Carrier's borrowed application line.
+    line_t                  *application_line; // Carrier's borrowed application line.
     line_t                  *carrier_line; // Application's dependent TCP carrier.
     trojanclient_line_kind_t kind;
     trojanclient_protocol_t  protocol;

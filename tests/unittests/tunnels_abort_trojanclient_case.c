@@ -20,7 +20,7 @@ int tunnelsAbortTrojanClientUdpInitCase(void)
     l->alive                  = true;
     l->wid                    = 0;
     trojanclient_lstate_t *ls = lineGetState(l, t);
-    ls->kind                  = kTrojanClientLineKindUdpApp;
+    ls->kind                  = kTrojanClientLineKindUdpApplication;
     t->fnInitD(t, l);
 
     memoryFreeAligned(l);

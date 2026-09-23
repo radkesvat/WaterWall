@@ -22,7 +22,7 @@ typedef enum socks5client_phase_e
 typedef enum socks5client_line_kind_e
 {
     kSocks5ClientLineKindDirect = 0,
-    kSocks5ClientLineKindUdpApp,
+    kSocks5ClientLineKindUdpApplication,
     kSocks5ClientLineKindUdpControl,
     kSocks5ClientLineKindUdpRelay
 } socks5client_line_kind_t;
@@ -50,7 +50,7 @@ typedef struct socks5client_lstate_s
 {
     tunnel_t                *tunnel;
     line_t                  *line;
-    line_t                  *app_line;
+    line_t                  *application_line;
     line_t                  *control_line;
     line_t                  *udp_line;
     address_context_t        target_addr;
@@ -113,7 +113,7 @@ bool socks5clientSendAuthRequest(tunnel_t *t, line_t *l, socks5client_lstate_t *
 bool socks5clientSendConnectRequest(tunnel_t *t, line_t *l, socks5client_lstate_t *ls);
 bool socks5clientDrainHandshakeInput(tunnel_t *t, line_t *l, socks5client_lstate_t *ls);
 bool socks5clientStartUdpAssociation(tunnel_t *t, line_t *l, socks5client_lstate_t *ls, bool *line_alive_out);
-bool socks5clientForwardUdpAppPayload(tunnel_t *t, line_t *l, socks5client_lstate_t *ls, sbuf_t *buf);
+bool socks5clientForwardUdpApplicationPayload(tunnel_t *t, line_t *l, socks5client_lstate_t *ls, sbuf_t *buf);
 bool socks5clientHandleUdpRelayPayload(tunnel_t *t, line_t *l, socks5client_lstate_t *ls, sbuf_t *buf);
 void socks5clientOnUdpRelayEstablished(tunnel_t *t, line_t *l, socks5client_lstate_t *ls);
 void socks5clientCloseOwnedLine(tunnel_t *t, line_t *owned_l);

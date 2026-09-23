@@ -7,7 +7,7 @@ bool vlessclientAssociationAlive(tunnel_t *t, line_t *next_line, line_t *prev_li
     vlessclient_lstate_t *ls      = lineGetState(next_line, t);
     vlessclient_lstate_t *prev_ls = lineGetState(prev_line, t);
     return ls->phase != kVlessClientPhaseClosed && prev_ls->phase != kVlessClientPhaseClosed &&
-           (next_line == prev_line || (ls->app_line == prev_line && prev_ls->carrier_line == next_line));
+           (next_line == prev_line || (ls->application_line == prev_line && prev_ls->carrier_line == next_line));
 }
 
 void vlessclientCancelFirstPayloadTimer(vlessclient_lstate_t *ls)
@@ -57,10 +57,10 @@ void vlessclientOnNextEstablished(tunnel_t *t, line_t *l, vlessclient_lstate_t *
 {
     if (ls->phase == kVlessClientPhaseClosed || ls->next_established)
         return;
-    line_t *app = ls->kind == kVlessClientLineKindUdpCarrier ? ls->app_line : l;
+    line_t *application = ls->kind == kVlessClientLineKindUdpCarrier ? ls->application_line : l;
     lineRef(l);
-    if (app != l)
-        lineRef(app);
+    if (application != l)
+        lineRef(application);
     ls->next_established = true;
     ls->phase            = kVlessClientPhaseEstablished;
     ls->est_notifying    = true;
@@ -69,8 +69,8 @@ void vlessclientOnNextEstablished(tunnel_t *t, line_t *l, vlessclient_lstate_t *
         vlessclient_tstate_t *ts      = tunnelGetState(t);
         ls->first_payload_deadline_us = getHRTimeUs() + (uint64_t) ts->first_payload_timeout_ms * 1000;
     }
-    tunnelPrevDownStreamEst(t, app);
-    if (vlessclientAssociationAlive(t, l, app))
+    tunnelPrevDownStreamEst(t, application);
+    if (vlessclientAssociationAlive(t, l, application))
     {
         ls->est_notifying = false;
         if (! ls->request_sent)
@@ -92,8 +92,8 @@ void vlessclientOnNextEstablished(tunnel_t *t, line_t *l, vlessclient_lstate_t *
             }
         }
     }
-    if (app != l)
-        lineUnref(app);
+    if (application != l)
+        lineUnref(application);
     lineUnref(l);
 }
 
@@ -102,7 +102,7 @@ void vlessclientSetPrevPaused(tunnel_t *t, line_t *l, bool paused)
     vlessclient_lstate_t *ls = lineGetState(l, t);
     if (ls->phase == kVlessClientPhaseClosed)
         return;
-    line_t               *next    = ls->kind == kVlessClientLineKindUdpApp ? ls->carrier_line : l;
+    line_t               *next    = ls->kind == kVlessClientLineKindUdpApplication ? ls->carrier_line : l;
     vlessclient_lstate_t *next_ls = lineGetState(next, t);
     if (next_ls->prev_paused == paused)
         return;
@@ -116,22 +116,23 @@ void vlessclientSetPrevPaused(tunnel_t *t, line_t *l, bool paused)
 void vlessclientSetNextPaused(tunnel_t *t, line_t *l, bool paused)
 {
     vlessclient_lstate_t *ls = lineGetState(l, t);
-    if (ls->phase == kVlessClientPhaseClosed || ls->kind == kVlessClientLineKindUdpApp || ls->next_paused == paused)
+    if (ls->phase == kVlessClientPhaseClosed || ls->kind == kVlessClientLineKindUdpApplication ||
+        ls->next_paused == paused)
         return;
-    line_t *app     = ls->kind == kVlessClientLineKindUdpCarrier ? ls->app_line : l;
+    line_t *application = ls->kind == kVlessClientLineKindUdpCarrier ? ls->application_line : l;
     ls->next_paused = paused;
     if (paused)
     {
-        tunnelPrevDownStreamPause(t, app);
+        tunnelPrevDownStreamPause(t, application);
         return;
     }
     lineRef(l);
-    if (app != l)
-        lineRef(app);
-    tunnelPrevDownStreamResume(t, app);
-    if (vlessclientAssociationAlive(t, l, app))
+    if (application != l)
+        lineRef(application);
+    tunnelPrevDownStreamResume(t, application);
+    if (vlessclientAssociationAlive(t, l, application))
         vlessclientSendDueRequest(t, l);
-    if (app != l)
-        lineUnref(app);
+    if (application != l)
+        lineUnref(application);
     lineUnref(l);
 }

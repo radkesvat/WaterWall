@@ -6,14 +6,15 @@ void vlessclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     vlessclient_lstate_t *ls     = lineGetState(l, t);
     uint32_t              length = sbufGetLength(buf);
-    if (UNLIKELY(ls->phase == kVlessClientPhaseClosed || ls->kind == kVlessClientLineKindUdpCarrier ||
-                 (ls->kind == kVlessClientLineKindUdpApp && (length > kVlessClientUdpMaxPacket || length == 0)) ||
-                 (ls->kind == kVlessClientLineKindDirect && ! ls->request_sent && length == 0)))
+    if (UNLIKELY(
+            ls->phase == kVlessClientPhaseClosed || ls->kind == kVlessClientLineKindUdpCarrier ||
+            (ls->kind == kVlessClientLineKindUdpApplication && (length > kVlessClientUdpMaxPacket || length == 0)) ||
+            (ls->kind == kVlessClientLineKindDirect && ! ls->request_sent && length == 0)))
     {
         lineReuseBuffer(l, buf);
         return;
     }
-    line_t               *next    = ls->kind == kVlessClientLineKindUdpApp ? ls->carrier_line : l;
+    line_t               *next    = ls->kind == kVlessClientLineKindUdpApplication ? ls->carrier_line : l;
     vlessclient_lstate_t *next_ls = lineGetState(next, t);
     if (! next_ls->request_sent)
     {
@@ -21,7 +22,7 @@ void vlessclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             vlessclientCloseLine(t, next, kVlessClientCloseInternal);
         return;
     }
-    if (ls->kind == kVlessClientLineKindUdpApp)
+    if (ls->kind == kVlessClientLineKindUdpApplication)
     {
         vlessclientWrapUdpPayload(l, &buf);
     }

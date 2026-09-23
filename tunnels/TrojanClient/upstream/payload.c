@@ -7,13 +7,13 @@ void trojanclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     trojanclient_lstate_t *ls     = lineGetState(l, t);
     uint32_t               length = sbufGetLength(buf);
     if (UNLIKELY(ls->phase == kTrojanClientPhaseClosed || ls->kind == kTrojanClientLineKindUdpCarrier ||
-                 (ls->kind == kTrojanClientLineKindUdpApp && (length > kTrojanClientUdpMaxPacket)) ||
+                 (ls->kind == kTrojanClientLineKindUdpApplication && (length > kTrojanClientUdpMaxPacket)) ||
                  (ls->kind == kTrojanClientLineKindDirect && ! ls->request_sent && length == 0)))
     {
         lineReuseBuffer(l, buf);
         return;
     }
-    line_t                *next    = ls->kind == kTrojanClientLineKindUdpApp ? ls->carrier_line : l;
+    line_t                *next    = ls->kind == kTrojanClientLineKindUdpApplication ? ls->carrier_line : l;
     trojanclient_lstate_t *next_ls = lineGetState(next, t);
     if (! next_ls->request_sent)
     {
@@ -21,7 +21,7 @@ void trojanclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             trojanclientCloseLine(t, next, kTrojanClientCloseInternal);
         return;
     }
-    if (ls->kind == kTrojanClientLineKindUdpApp)
+    if (ls->kind == kTrojanClientLineKindUdpApplication)
     {
         if (UNLIKELY(! trojanclientWrapUdpPayload(l, &buf, &ls->target_addr)))
         {

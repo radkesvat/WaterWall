@@ -44,7 +44,7 @@ if(TARGET ww)
     list(APPEND tunnels_abort_runtime_libraries Socks5Client)
     list(APPEND tunnels_abort_runtime_definitions WATERWALL_ABORT_TEST_HAS_SOCKS5CLIENT=1)
     list(APPEND tunnels_abort_runtime_cases
-      socks5client_udp_app_downstream_init
+      socks5client_udp_application_downstream_init
       socks5client_udp_control_downstream_init
       socks5client_udp_relay_downstream_init
     )

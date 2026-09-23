@@ -21,7 +21,7 @@ void socks5clientTunnelUpStreamFinish(tunnel_t *t, line_t *l)
 {
     socks5client_lstate_t *ls = lineGetState(l, t);
 
-    if (ls->kind == kSocks5ClientLineKindUdpApp)
+    if (ls->kind == kSocks5ClientLineKindUdpApplication)
     {
         line_t *control_l = ls->control_line;
         line_t *udp_l     = ls->udp_line;

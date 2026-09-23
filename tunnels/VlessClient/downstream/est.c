@@ -11,7 +11,7 @@ void vlessclientTunnelDownStreamEst(tunnel_t *t, line_t *l)
         return;
     }
 
-    if (ls->kind == kVlessClientLineKindUdpApp)
+    if (ls->kind == kVlessClientLineKindUdpApplication)
     {
         return;
     }

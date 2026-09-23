@@ -12,7 +12,7 @@ void socks5clientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
-    if (ls->kind == kSocks5ClientLineKindUdpApp)
+    if (ls->kind == kSocks5ClientLineKindUdpApplication)
     {
         lineReuseBuffer(l, buf);
         return;

@@ -11,7 +11,7 @@ void trojanclientTunnelDownStreamEst(tunnel_t *t, line_t *l)
         return;
     }
 
-    if (ls->kind == kTrojanClientLineKindUdpApp)
+    if (ls->kind == kTrojanClientLineKindUdpApplication)
     {
         return;
     }

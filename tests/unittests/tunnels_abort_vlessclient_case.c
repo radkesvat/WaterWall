@@ -20,7 +20,7 @@ int tunnelsAbortVlessClientUdpInitCase(void)
     l->alive                 = true;
     l->wid                   = 0;
     vlessclient_lstate_t *ls = lineGetState(l, t);
-    ls->kind                 = kVlessClientLineKindUdpApp;
+    ls->kind                 = kVlessClientLineKindUdpApplication;
     t->fnInitD(t, l);
 
     memoryFreeAligned(l);

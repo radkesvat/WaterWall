@@ -6,9 +6,9 @@ void socks5clientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     socks5client_lstate_t *ls = lineGetState(l, t);
 
-    if (ls->kind == kSocks5ClientLineKindUdpApp)
+    if (ls->kind == kSocks5ClientLineKindUdpApplication)
     {
-        discard socks5clientForwardUdpAppPayload(t, l, ls, buf);
+        discard socks5clientForwardUdpApplicationPayload(t, l, ls, buf);
         return;
     }
 

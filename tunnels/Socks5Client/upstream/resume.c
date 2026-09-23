@@ -8,7 +8,7 @@ void socks5clientTunnelUpStreamResume(tunnel_t *t, line_t *l)
 
     ls->prev_paused = false;
 
-    if (ls->kind == kSocks5ClientLineKindUdpApp)
+    if (ls->kind == kSocks5ClientLineKindUdpApplication)
     {
         line_t *udp_l = ls->udp_line;
         if (udp_l != NULL && lineIsAlive(udp_l))

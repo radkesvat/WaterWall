@@ -8,21 +8,21 @@ void socks5clientTunnelDownStreamEst(tunnel_t *t, line_t *l)
         socks5clientOnUdpRelayEstablished(t, l, ls);
         return;
     }
-    if (ls->kind == kSocks5ClientLineKindUdpApp || ls->transport_est_forwarded)
+    if (ls->kind == kSocks5ClientLineKindUdpApplication || ls->transport_est_forwarded)
         return;
 
-    line_t *app                 = ls->kind == kSocks5ClientLineKindUdpControl ? ls->app_line : l;
+    line_t *application         = ls->kind == kSocks5ClientLineKindUdpControl ? ls->application_line : l;
     ls->transport_est_forwarded = true;
     ls->greeting_due            = true;
     lineRef(l);
-    if (app != l)
-        lineRef(app);
-    socks5client_lstate_t *app_ls   = lineGetState(app, t);
-    app_ls->transport_est_forwarded = true;
-    tunnelPrevDownStreamEst(t, app);
-    if (lineIsAlive(l) && lineIsAlive(app))
+    if (application != l)
+        lineRef(application);
+    socks5client_lstate_t *application_ls   = lineGetState(application, t);
+    application_ls->transport_est_forwarded = true;
+    tunnelPrevDownStreamEst(t, application);
+    if (lineIsAlive(l) && lineIsAlive(application))
         discard socks5clientMaybeSendGreeting(t, l);
-    if (app != l)
-        lineUnref(app);
+    if (application != l)
+        lineUnref(application);
     lineUnref(l);
 }

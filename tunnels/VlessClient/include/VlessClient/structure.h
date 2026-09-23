@@ -21,7 +21,7 @@ typedef enum vlessclient_phase_e
 typedef enum vlessclient_line_kind_e
 {
     kVlessClientLineKindDirect = 0,
-    kVlessClientLineKindUdpApp,
+    kVlessClientLineKindUdpApplication,
     kVlessClientLineKindUdpCarrier
 } vlessclient_line_kind_t;
 
@@ -66,7 +66,7 @@ typedef struct vlessclient_lstate_s
     /* This state belongs to line. Direct/application lines are borrowed;
      * VlessClient owns each UDP carrier. Both association links detach on close. */
     line_t                 *line;
-    line_t                 *app_line;     // Carrier's borrowed application line.
+    line_t                 *application_line; // Carrier's borrowed application line.
     line_t                 *carrier_line; // Application's dependent TCP carrier.
     vlessclient_line_kind_t kind;
     vlessclient_protocol_t  protocol;

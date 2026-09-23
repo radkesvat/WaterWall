@@ -3,7 +3,7 @@
 void vlessclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     vlessclient_lstate_t *ls = lineGetState(l, t);
-    if (UNLIKELY(ls->phase == kVlessClientPhaseClosed || ls->kind == kVlessClientLineKindUdpApp))
+    if (UNLIKELY(ls->phase == kVlessClientPhaseClosed || ls->kind == kVlessClientLineKindUdpApplication))
     {
         lineReuseBuffer(l, buf);
         return;
@@ -31,15 +31,15 @@ void vlessclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     ls->receive_bytes += length;
     if (ls->receiving)
         return;
-    line_t *app = ls->kind == kVlessClientLineKindUdpCarrier ? ls->app_line : l;
+    line_t *application = ls->kind == kVlessClientLineKindUdpCarrier ? ls->application_line : l;
     lineRef(l);
-    if (app != l)
-        lineRef(app);
+    if (application != l)
+        lineRef(application);
     ls->receiving = true;
     /* A nested call publishes its separately bounded FIFO entry before returning.
      * All admitted batches complete here; Pause never converts ready frames into
      * an independent output backlog. Only an incomplete suffix survives return. */
-    while (vlessclientAssociationAlive(t, l, app))
+    while (vlessclientAssociationAlive(t, l, application))
     {
         if (! ls->response_complete)
         {
@@ -57,7 +57,7 @@ void vlessclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             sbuf_t *body = vlessclientTakeTcpBody(ls);
             if (body == NULL)
                 break;
-            tunnelPrevDownStreamPayload(t, app, body);
+            tunnelPrevDownStreamPayload(t, application, body);
             continue;
         }
         int header = vlessclientReadUdpHeader(ls);
@@ -70,11 +70,11 @@ void vlessclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             break;
         sbuf_t *body = vlessclientExtractUdpBody(ls);
         /* Parser cursor and accounting are committed before any reentrant callback. */
-        tunnelPrevDownStreamPayload(t, app, body);
+        tunnelPrevDownStreamPayload(t, application, body);
     }
-    if (vlessclientAssociationAlive(t, l, app))
+    if (vlessclientAssociationAlive(t, l, application))
         ls->receiving = false;
-    if (app != l)
-        lineUnref(app);
+    if (application != l)
+        lineUnref(application);
     lineUnref(l);
 }

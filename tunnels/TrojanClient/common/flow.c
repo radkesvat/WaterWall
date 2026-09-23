@@ -7,7 +7,7 @@ bool trojanclientAssociationAlive(tunnel_t *t, line_t *next_line, line_t *prev_l
     trojanclient_lstate_t *ls      = lineGetState(next_line, t);
     trojanclient_lstate_t *prev_ls = lineGetState(prev_line, t);
     return ls->phase != kTrojanClientPhaseClosed && prev_ls->phase != kTrojanClientPhaseClosed &&
-           (next_line == prev_line || (ls->app_line == prev_line && prev_ls->carrier_line == next_line));
+           (next_line == prev_line || (ls->application_line == prev_line && prev_ls->carrier_line == next_line));
 }
 
 void trojanclientCancelFirstPayloadTimer(trojanclient_lstate_t *ls)
@@ -57,10 +57,10 @@ void trojanclientOnNextEstablished(tunnel_t *t, line_t *l, trojanclient_lstate_t
 {
     if (ls->phase == kTrojanClientPhaseClosed || ls->next_established)
         return;
-    line_t *app = ls->kind == kTrojanClientLineKindUdpCarrier ? ls->app_line : l;
+    line_t *application = ls->kind == kTrojanClientLineKindUdpCarrier ? ls->application_line : l;
     lineRef(l);
-    if (app != l)
-        lineRef(app);
+    if (application != l)
+        lineRef(application);
     ls->next_established = true;
     ls->phase            = kTrojanClientPhaseEstablished;
     ls->est_notifying    = true;
@@ -69,8 +69,8 @@ void trojanclientOnNextEstablished(tunnel_t *t, line_t *l, trojanclient_lstate_t
         trojanclient_tstate_t *ts     = tunnelGetState(t);
         ls->first_payload_deadline_us = getHRTimeUs() + (uint64_t) ts->first_payload_timeout_ms * 1000;
     }
-    tunnelPrevDownStreamEst(t, app);
-    if (trojanclientAssociationAlive(t, l, app))
+    tunnelPrevDownStreamEst(t, application);
+    if (trojanclientAssociationAlive(t, l, application))
     {
         ls->est_notifying = false;
         if (! ls->request_sent)
@@ -92,8 +92,8 @@ void trojanclientOnNextEstablished(tunnel_t *t, line_t *l, trojanclient_lstate_t
             }
         }
     }
-    if (app != l)
-        lineUnref(app);
+    if (application != l)
+        lineUnref(application);
     lineUnref(l);
 }
 
@@ -102,7 +102,7 @@ void trojanclientSetPrevPaused(tunnel_t *t, line_t *l, bool paused)
     trojanclient_lstate_t *ls = lineGetState(l, t);
     if (ls->phase == kTrojanClientPhaseClosed)
         return;
-    line_t                *next    = ls->kind == kTrojanClientLineKindUdpApp ? ls->carrier_line : l;
+    line_t                *next    = ls->kind == kTrojanClientLineKindUdpApplication ? ls->carrier_line : l;
     trojanclient_lstate_t *next_ls = lineGetState(next, t);
     if (next_ls->prev_paused == paused)
         return;
@@ -116,22 +116,23 @@ void trojanclientSetPrevPaused(tunnel_t *t, line_t *l, bool paused)
 void trojanclientSetNextPaused(tunnel_t *t, line_t *l, bool paused)
 {
     trojanclient_lstate_t *ls = lineGetState(l, t);
-    if (ls->phase == kTrojanClientPhaseClosed || ls->kind == kTrojanClientLineKindUdpApp || ls->next_paused == paused)
+    if (ls->phase == kTrojanClientPhaseClosed || ls->kind == kTrojanClientLineKindUdpApplication ||
+        ls->next_paused == paused)
         return;
-    line_t *app     = ls->kind == kTrojanClientLineKindUdpCarrier ? ls->app_line : l;
+    line_t *application = ls->kind == kTrojanClientLineKindUdpCarrier ? ls->application_line : l;
     ls->next_paused = paused;
     if (paused)
     {
-        tunnelPrevDownStreamPause(t, app);
+        tunnelPrevDownStreamPause(t, application);
         return;
     }
     lineRef(l);
-    if (app != l)
-        lineRef(app);
-    tunnelPrevDownStreamResume(t, app);
-    if (trojanclientAssociationAlive(t, l, app))
+    if (application != l)
+        lineRef(application);
+    tunnelPrevDownStreamResume(t, application);
+    if (trojanclientAssociationAlive(t, l, application))
         trojanclientSendDueRequest(t, l);
-    if (app != l)
-        lineUnref(app);
+    if (application != l)
+        lineUnref(application);
     lineUnref(l);
 }
