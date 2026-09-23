@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "buffer_budget.h"
 #include "context.h"
 #include "tunnel.h"
 #include "wlibc.h"
@@ -36,8 +37,10 @@ typedef struct buffer_queue_s buffer_queue_t;
  */
 struct buffer_queue_s
 {
-    ww_sbuffer_queue_t q;         // The internal queue data structure (internal)
-    size_t             total_len; // Total length of all buffers in the queue (optional, can be used for optimization)
+    buffer_budget_t   *budget;       // Borrowed, stable owner-worker budget; NULL is unbound.
+    ww_sbuffer_queue_t q;            // The internal queue data structure (internal)
+    size_t             total_len;    // Sum of queued logical payload lengths.
+    size_t             total_charge; // Sum of sbufGetQueueCharge() for queued entries.
 };
 
 /**
@@ -80,8 +83,9 @@ bool bufferqueueInit(buffer_queue_t *self, int init_capacity);
  * @brief Reserves room for @p extra more entries without inserting anything.
  *
  * This is what makes an insertion transactional: reserve first, and the matching
- * push cannot fail afterwards. Reserving is also the only way to make a
- * reinsert-after-pop path provably allocation-free.
+ * push cannot fail for storage afterwards. Byte and charge totals must still be
+ * representable and the attached budget must admit the entry. This reserves only
+ * deque storage, never budget allowance.
  *
  * @param self A pointer to the buffer queue.
  * @param extra Number of additional entries the queue must be able to hold.
@@ -93,8 +97,9 @@ bool bufferqueueReserveExtra(buffer_queue_t *self, size_t extra);
  * @brief Transactionally pushes an sbuf_t onto the back of the queue.
  *
  * Either the queue takes ownership and `*b` is updated to the exact retained
- * buffer, or nothing at all happened: the queue, its total length, `*b` and the
+ * buffer, or nothing at all happened: entries, byte/charge totals, `*b` and the
  * buffer's lifetime are untouched and the caller still owns the buffer.
+ * Unrepresentable byte/charge totals are refused before ownership transfers.
  *
  * Ordering matters here. Debug builds replace ordinary allocations to expose stale
  * aliases, which destroys the caller's original; that replacement must therefore
@@ -121,6 +126,8 @@ bool bufferqueueTryPushFront(buffer_queue_t *self, sbuf_t **b);
  * It discards queued splice payloads by draining their private pipes, closing a
  * pair on drain failure. Healthy empty pipes survive pool reuse. Nonempty queues
  * must be destroyed on their owning event worker; empty queues need no worker.
+ * Releases only this queue's budget contribution. Leaves a valid empty, unbound
+ * queue with zero byte and charge totals.
  *
  * @param self A pointer to the buffer queue to be destroyed.
  */
@@ -130,7 +137,7 @@ void bufferqueueDestroy(buffer_queue_t *self);
  * @brief Pushes an sbuf_t pointer onto the back of the queue.
  *
  * Fail-fast wrapper over bufferqueueTryPushBack() for callers that have no
- * per-flow recovery path. A refused reservation terminates the process rather
+ * per-flow recovery path. Refused storage or accounting terminates the process rather
  * than reporting a transfer that did not happen; a node that can reset one flow
  * instead should call the try form directly.
  *
@@ -154,7 +161,7 @@ sbuf_t *bufferqueuePushBack(buffer_queue_t *self, sbuf_t *b);
 sbuf_t *bufferqueuePushFront(buffer_queue_t *self, sbuf_t *b);
 
 /**
- * @brief Pops an sbuf_t pointer from the front of the queue.
+ * @brief Pops an sbuf_t pointer and releases its attached budget cost.
  *
  * @param self A pointer to the buffer queue.
  * @return A pointer to the sbuf_t at the front of the queue, or NULL if the queue is empty.
@@ -184,3 +191,25 @@ size_t bufferqueueGetBufCount(buffer_queue_t *self);
  * @return The total length of the sbuf_t pointers currently in the queue.
  */
 size_t bufferqueueGetBufLen(buffer_queue_t *self);
+
+/** O(1) sum of sbufGetQueueCharge() for the entries still owned by this queue.
+ * Counts capacity, padding and sbuf overhead independently of logical length;
+ * empty entries still contribute. This is the queue-capacity policy, not RSS or
+ * kernel pipe memory. Popped/active buffers and cross-queue budgets belong to
+ * their owners. Attached budgets enforce admission; callers choose limits and flow-control policy. */
+size_t bufferqueueGetCharge(const buffer_queue_t *self);
+
+/** Requires an unbound queue and a live budget. Atomically admits all existing
+ * entries; refusal leaves both objects unchanged. Empty attachment cannot fail. */
+bool bufferqueueTryAttachBudget(buffer_queue_t *self, buffer_budget_t *budget);
+/** Requires a bound queue and an empty reservation. Moves accounting to the
+ * active owner without releasing usage or allocating; empty pop stays empty. */
+sbuf_t *bufferqueuePopFrontReserved(buffer_queue_t *self, buffer_budget_reservation_t *reservation);
+/** Requires the same budget and reservation cost matching the actual buffer.
+ * Reserve destination storage before transferring; failure preserves both owners.
+ * Reconcile any consumption before calling. Success clears the reservation. */
+bool bufferqueueTryPushBackReserved(buffer_queue_t *self, sbuf_t **buf, buffer_budget_reservation_t *reservation);
+bool bufferqueueTryPushFrontReserved(buffer_queue_t *self, sbuf_t **buf, buffer_budget_reservation_t *reservation);
+/** Move whole queues by assignment, then InitEmpty the relinquished source.
+ * The destination must own no storage; destroy an empty destination first.
+ * The budget pointer and cached totals travel together, without re-admission. */

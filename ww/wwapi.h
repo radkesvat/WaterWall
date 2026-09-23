@@ -12,6 +12,7 @@
 
 #include "event/wevent.h"
 
+#include "bufio/buffer_budget.h"
 #include "bufio/buffer_pool.h"
 #include "bufio/buffer_queue.h"
 #include "bufio/context_queue.h"

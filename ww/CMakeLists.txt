@@ -89,6 +89,7 @@ add_library(ww STATIC
     bufio/buffer_pool.c
     bufio/buffer_stream.c
     bufio/context_queue.c
+    bufio/buffer_budget.c
     bufio/buffer_queue.c
     bufio/generic_pool.c
     bufio/threadsafe_generic_pool.c
@@ -1610,6 +1611,7 @@ if(BUILD_TESTING)
         base/wproc.c
         base/wchan.c
         bufio/buffer_pool.c
+        bufio/buffer_budget.c
         bufio/buffer_queue.c
         bufio/buffer_stream.c
         libc/wfrand.c

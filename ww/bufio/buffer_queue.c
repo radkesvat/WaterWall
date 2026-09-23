@@ -15,8 +15,10 @@ enum
 
 void bufferqueueInitEmpty(buffer_queue_t *self)
 {
-    self->q         = ww_sbuffer_queue_t_init();
-    self->total_len = 0;
+    self->q            = ww_sbuffer_queue_t_init();
+    self->total_len    = 0;
+    self->total_charge = 0;
+    self->budget       = NULL;
 }
 
 /*
@@ -77,7 +79,11 @@ void bufferqueueDestroy(buffer_queue_t *self)
         }
     }
 
+    if (self->budget != NULL)
+        bufferbudgetRelease(self->budget,
+                            (buffer_budget_cost_t) {self->total_len, self->total_charge, bufferqueueGetBufCount(self)});
     ww_sbuffer_queue_t_drop(&self->q);
+    bufferqueueInitEmpty(self);
 }
 
 /*
@@ -109,40 +115,76 @@ static sbuf_t *bufferqueueTakeBuffer(sbuf_t *buf)
     return buf;
 }
 
-bool bufferqueueTryPushBack(buffer_queue_t *self, sbuf_t **b)
+bool bufferqueueTryAttachBudget(buffer_queue_t *self, buffer_budget_t *budget)
 {
-    if (UNLIKELY(! bufferqueueReserveExtra(self, 1)))
+    assert(self->budget == NULL && budget != NULL);
+    if (! bufferbudgetTryAcquire(
+            budget, (buffer_budget_cost_t) {self->total_len, self->total_charge, bufferqueueGetBufCount(self)}))
+        return false;
+    self->budget = budget;
+    return true;
+}
+
+static bool bufferqueueTryInsert(buffer_queue_t *self, sbuf_t **b, bool front, buffer_budget_reservation_t *reservation)
+{
+    buffer_budget_cost_t cost;
+    if (! bufferbudgetTryGetCost(*b, &cost) || self->total_charge > SIZE_MAX - cost.charge ||
+        self->total_len > SIZE_MAX - cost.bytes)
+        return false;
+    if (reservation != NULL)
     {
+        assert(self->budget != NULL && reservation->budget == self->budget);
+        assert(reservation->cost.bytes == cost.bytes && reservation->cost.charge == cost.charge &&
+               reservation->cost.entries == cost.entries);
+    }
+    else if (self->budget != NULL && ! bufferbudgetTryAcquire(self->budget, cost))
+        return false;
+
+    if (! bufferqueueReserveExtra(self, 1))
+    {
+        if (self->budget != NULL && reservation == NULL)
+            bufferbudgetRelease(self->budget, cost);
         return false;
     }
-
-    // Only after reservation: ordinary Debug buffers may be replaced, splice wrappers retain their identity.
+    // All fallible steps precede Debug allocation replacement.
     sbuf_t *entry = bufferqueueTakeBuffer(*b);
-    bufferqueueInsertReserved((sbuf_t *) ww_sbuffer_queue_t_push_back(&self->q, entry), "push back");
-    self->total_len += sbufGetLength(entry);
+    assert(sbufGetQueueCharge(entry) == cost.charge);
+    sbuf_t **slot =
+        front ? ww_sbuffer_queue_t_push_front(&self->q, entry) : ww_sbuffer_queue_t_push_back(&self->q, entry);
+    bufferqueueInsertReserved((sbuf_t *) slot, "insert");
+    self->total_len += cost.bytes;
+    self->total_charge += cost.charge;
+    if (reservation != NULL)
+        *reservation = (buffer_budget_reservation_t) {0};
     *b = entry;
     return true;
 }
 
+bool bufferqueueTryPushBack(buffer_queue_t *self, sbuf_t **b)
+{
+    return bufferqueueTryInsert(self, b, false, NULL);
+}
+
 bool bufferqueueTryPushFront(buffer_queue_t *self, sbuf_t **b)
 {
-    if (UNLIKELY(! bufferqueueReserveExtra(self, 1)))
-    {
-        return false;
-    }
+    return bufferqueueTryInsert(self, b, true, NULL);
+}
 
-    sbuf_t *entry = bufferqueueTakeBuffer(*b);
-    bufferqueueInsertReserved((sbuf_t *) ww_sbuffer_queue_t_push_front(&self->q, entry), "push front");
-    self->total_len += sbufGetLength(entry);
-    *b = entry;
-    return true;
+bool bufferqueueTryPushBackReserved(buffer_queue_t *self, sbuf_t **b, buffer_budget_reservation_t *reservation)
+{
+    return bufferqueueTryInsert(self, b, false, reservation);
+}
+
+bool bufferqueueTryPushFrontReserved(buffer_queue_t *self, sbuf_t **b, buffer_budget_reservation_t *reservation)
+{
+    return bufferqueueTryInsert(self, b, true, reservation);
 }
 
 sbuf_t *bufferqueuePushBack(buffer_queue_t *self, sbuf_t *b)
 {
     if (UNLIKELY(! bufferqueueTryPushBack(self, &b)))
     {
-        printError("buffer queue: out of memory queueing %u byte(s) with no per-flow recovery path",
+        printError("buffer queue: failed to admit %u byte(s) with no per-flow recovery path",
                    (unsigned int) sbufGetLength(b));
         abortProgramNow(1);
     }
@@ -153,22 +195,44 @@ sbuf_t *bufferqueuePushFront(buffer_queue_t *self, sbuf_t *b)
 {
     if (UNLIKELY(! bufferqueueTryPushFront(self, &b)))
     {
-        printError("buffer queue: out of memory requeueing %u byte(s) with no per-flow recovery path",
+        printError("buffer queue: failed to readmit %u byte(s) with no per-flow recovery path",
                    (unsigned int) sbufGetLength(b));
         abortProgramNow(1);
     }
     return b;
 }
 
-sbuf_t *bufferqueuePopFront(buffer_queue_t *self)
+static sbuf_t *bufferqueuePop(buffer_queue_t *self, buffer_budget_reservation_t *reservation)
 {
     if (UNLIKELY(ww_sbuffer_queue_t_size(&self->q) == 0))
     {
         return NULL;
     }
-    sbuf_t *b = ww_sbuffer_queue_t_pull_front(&self->q);
+    sbuf_t      *b      = ww_sbuffer_queue_t_pull_front(&self->q);
+    const size_t charge = sbufGetQueueCharge(b);
+    assert(self->total_len >= sbufGetLength(b) && self->total_charge >= charge);
     self->total_len -= sbufGetLength(b);
+    self->total_charge -= charge;
+    if (self->budget != NULL)
+    {
+        buffer_budget_cost_t cost = {sbufGetLength(b), charge, 1};
+        if (reservation != NULL)
+            *reservation = (buffer_budget_reservation_t) {self->budget, cost};
+        else
+            bufferbudgetRelease(self->budget, cost);
+    }
     return b;
+}
+
+sbuf_t *bufferqueuePopFront(buffer_queue_t *self)
+{
+    return bufferqueuePop(self, NULL);
+}
+
+sbuf_t *bufferqueuePopFrontReserved(buffer_queue_t *self, buffer_budget_reservation_t *reservation)
+{
+    assert(self->budget != NULL && reservation->budget == NULL);
+    return bufferqueuePop(self, reservation);
 }
 
 const sbuf_t *bufferqueueFront(buffer_queue_t *self)
@@ -188,4 +252,9 @@ size_t bufferqueueGetBufCount(buffer_queue_t *self)
 size_t bufferqueueGetBufLen(buffer_queue_t *self)
 {
     return self->total_len;
+}
+
+size_t bufferqueueGetCharge(const buffer_queue_t *self)
+{
+    return self->total_charge;
 }

@@ -493,6 +493,7 @@ if(TARGET ww)
       add_executable(
         ping_flow_test
         ping_flow_test.c
+        ${CMAKE_SOURCE_DIR}/ww/bufio/buffer_budget.c
         ${CMAKE_SOURCE_DIR}/ww/bufio/buffer_queue.c
         ${CMAKE_SOURCE_DIR}/ww/bufio/buffer_stream.c
       )
@@ -2228,6 +2229,7 @@ endif()
 set(WATERWALL_LINE_FAILURE_WW_SOURCES
   ${CMAKE_SOURCE_DIR}/ww/bufio/splice_stream.c
   ${CMAKE_SOURCE_DIR}/ww/bufio/splice_buffer.c
+  ${CMAKE_SOURCE_DIR}/ww/bufio/buffer_budget.c
   ${CMAKE_SOURCE_DIR}/ww/bufio/buffer_queue.c
   ${CMAKE_SOURCE_DIR}/ww/bufio/buffer_stream.c
 )
@@ -2880,6 +2882,7 @@ if(LINUX)
       set(tcp_pause_target "tcp${tcp_side_lower}_pause_close_test")
       add_executable(${tcp_pause_target}
         tcp_adapter_pause_close_test.c
+        ${CMAKE_SOURCE_DIR}/ww/bufio/buffer_budget.c
         ${CMAKE_SOURCE_DIR}/ww/bufio/buffer_queue.c
       )
       if(tcp_side STREQUAL "Listener")

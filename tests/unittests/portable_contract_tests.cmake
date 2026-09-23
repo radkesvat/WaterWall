@@ -35,6 +35,11 @@ function(_waterwall_register_portable_contract test_name target_name labels)
   endif()
 endfunction()
 
+add_executable(buffer_budget_test EXCLUDE_FROM_ALL "${_waterwall_portable_unit_dir}/buffer_budget_test.c")
+target_link_libraries(buffer_budget_test PRIVATE ww)
+set_target_properties(buffer_budget_test PROPERTIES DISABLE_PRECOMPILE_HEADERS ON)
+_waterwall_register_portable_contract(waterwall.buffer_budget_unit buffer_budget_test "unit;buffer;portable")
+
 add_executable(atomic_u32_test EXCLUDE_FROM_ALL "${_waterwall_portable_unit_dir}/atomic_u32_test.c")
 target_link_libraries(atomic_u32_test PRIVATE ww)
 set_target_properties(atomic_u32_test PROPERTIES DISABLE_PRECOMPILE_HEADERS ON)

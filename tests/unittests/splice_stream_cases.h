@@ -63,8 +63,10 @@ static void streamCheckBytes(buffer_pool_t *pool, sbuf_t *b, const void *expecte
 
 static void streamCheckCharge(const splice_stream_t *s)
 {
-    size_t charge = s->head == NULL ? 0 : sbufGetQueueCharge(s->head);
-    c_foreach(entry, ww_sbuffer_queue_t, s->pending.q) charge += sbufGetQueueCharge(*entry.ref);
+    size_t pending_charge = 0;
+    c_foreach(entry, ww_sbuffer_queue_t, s->pending.q) pending_charge += sbufGetQueueCharge(*entry.ref);
+    require(bufferqueueGetCharge(&s->pending) == pending_charge, "stream mutation left stale pending queue charge");
+    size_t charge = (s->head == NULL ? 0 : sbufGetQueueCharge(s->head)) + pending_charge;
     require(charge == splicestreamCharge(s), "active-head mutation left stale stream charge");
 }
 
