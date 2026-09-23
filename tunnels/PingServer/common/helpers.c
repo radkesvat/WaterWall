@@ -139,10 +139,11 @@ void pingserverHandleUpstreamPacket(tunnel_t *t, line_t *l, sbuf_t *buf)
                  "acknowledgement");
         }
     }
-    else if (! pingwireBuildEchoReply(reply,
-                                      &state->wire,
-                                      &envelope,
-                                      pingwireReplyIdGeneratorNext(&state->reply_ids, getHRTimeUs() / 1000U)))
+    else if (! pingwireBuildEchoReply(
+                 reply,
+                 &state->wire,
+                 &envelope,
+                 pingwireReplyIdGeneratorNext(&state->reply_ids, wloopNowMonotonicMS(getWorkerLoop(lineGetWID(l))))))
     {
         lineReuseBuffer(l, reply);
         reply = NULL;

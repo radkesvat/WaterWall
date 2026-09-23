@@ -582,16 +582,18 @@ static void fallbackCases(tunnel_chain_t *chain)
         sendBytes(client, false, raw);
         hps_session_t *session = ((hps_lstate_t *) lineGetState(client, proxy))->session;
         require(! session->header_at[0] && ! session->header_at[1], "fallback retained HTTP deadline");
+        wloop_t *loop = getWorkerLoop(lineGetWID(client));
         if (idle)
         {
             httpproxyserverTunnelDownStreamEst(proxy, child);
-            session->progress_at = getHRTimeUs() / 1000 - ts->idle_timeout;
+            loop->cur_hrtime = (session->progress_at + ts->idle_timeout) * 1000;
         }
         else
-            session->connect_at = getHRTimeUs() / 1000 - ts->connect_timeout;
+            loop->cur_hrtime = (session->connect_at + ts->connect_timeout) * 1000;
         session->timer->cb((wevent_t *) session->timer);
         require(! lineIsAlive(client) && ! child && ! received_len && closes == 1, "raw timeout settlement");
         lineUnref(client);
+        wloopUpdateTime(loop);
     }
     fallbackStart(chain);
     sendBytes(client, false, raw);
@@ -935,6 +937,60 @@ static void largeDeliveries(tunnel_chain_t *chain, bool delayed, bool close_reta
     memoryFree(text);
 }
 
+static void cachedTimeoutClock(tunnel_chain_t *chain, const char *get)
+{
+    wloop_t       *loop     = getWorkerLoop(0);
+    hps_tstate_t  *ts       = tunnelGetState(proxy);
+    const uint64_t start_ms = UINT64_C(5000000000); /* Exercise more than 32 bits. */
+    for (unsigned mode = 0; mode < 4; ++mode)
+    {
+        loop->cur_hrtime = start_ms * 1000 + 789;
+        resetClient(chain);
+        hps_session_t *s = ((hps_lstate_t *) lineGetState(client, proxy))->session;
+        require(s->progress_at == start_ms, "Init sampled a fresh clock instead of the cached loop clock");
+        /* Adding the session timer refreshes the real loop clock. Subsequent
+         * callbacks below use a controlled cached timestamp, without sleeping. */
+        loop->cur_hrtime   = start_ms * 1000 + 789;
+        automatic_response = false;
+        uint32_t duration  = ts->idle_timeout;
+        if (mode == 0)
+        {
+            sendBytes(client, false, "GET http://a/ HTTP/1.1\r\nHost:");
+            require(s->header_at[0] == start_ms, "request header used a different clock");
+            duration = ts->header_timeout;
+        }
+        else if (mode == 1)
+        {
+            delay_establishment = true;
+            sendBytes(client, false, get);
+            require(s->connect_at == start_ms, "child connection used a different clock");
+            duration = ts->connect_timeout;
+        }
+        else if (mode == 2)
+        {
+            sendBytes(client, false, get);
+            sendBytes(child, true, "HTTP/1.1 200");
+            require(! s->connect_at && s->header_at[1] == start_ms, "response header used a different clock");
+            duration = ts->header_timeout;
+        }
+        require(s->progress_at == start_ms, "payload or Est sampled a fresh clock");
+        loop->cur_hrtime = (start_ms + duration - 1) * 1000 + 999;
+        for (unsigned backwards = 0; backwards < 2; ++backwards)
+        {
+            loop->cur_time_ms = backwards ? start_ms - 3600000 : start_ms + 3600000;
+            s->timer->cb((wevent_t *) s->timer);
+            require(lineIsAlive(client), "wall-clock adjustment or rounding expired an early deadline");
+        }
+        loop->cur_hrtime = (start_ms + duration) * 1000;
+        s->timer->cb((wevent_t *) s->timer);
+        require(! lineIsAlive(client) && ! child, "cached monotonic deadline did not expire");
+        require(mode == 3 ? ! received_len : strstr(received, mode == 0 ? "408" : "504") != NULL,
+                "cached deadline changed HTTP timeout behavior");
+        lineUnref(client);
+        wloopUpdateTime(loop);
+    }
+}
+
 static void runSuite(uint32_t large_size, uint32_t splice_limit)
 {
     GSTATE.flag_initialized = true;
@@ -1011,6 +1067,7 @@ static void runSuite(uint32_t large_size, uint32_t splice_limit)
     localAuthentication(chain);
 
     const char *get      = "GET http://127.0.0.1:80/a HTTP/1.1\r\nHost: ignored.test\r\n\r\n";
+    cachedTimeoutClock(chain, get);
     const char *fix_case = getenv("HPS_FIX_CASE");
     if (! fix_case || ! stringCompare(fix_case, "R1"))
     {

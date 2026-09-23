@@ -8,7 +8,7 @@ void httpproxyserverTunnelDownStreamEst(tunnel_t *t, line_t *l)
     lineRef(l);
     s->child_established = true;
     s->connect_at        = 0;
-    s->progress_at       = hpsNowMs();
+    s->progress_at       = hpsNowMs(s);
     if (! s->established)
     {
         s->established = true;

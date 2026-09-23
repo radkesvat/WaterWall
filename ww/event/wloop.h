@@ -206,6 +206,11 @@ WW_EXPORT uint64_t wloopNowMS(wloop_t *loop);          // ms
 WW_EXPORT uint64_t wloopNowUS(wloop_t *loop);          // us
 WW_EXPORT uint64_t wloopNowLoopRunTime(wloop_t *loop); // us
 
+/** Cached monotonic milliseconds, in the same clock domain as getHRTimeUs().
+ * Read on the loop's owning thread. This does not sample the clock or refresh
+ * the cache; wloopUpdateTime() updates it during event-loop processing. */
+WW_EXPORT uint64_t wloopNowMonotonicMS(wloop_t *loop);
+
 // export some hloop's members
 // @return pid of wloopRun
 WW_EXPORT long wloopPID(wloop_t *loop);

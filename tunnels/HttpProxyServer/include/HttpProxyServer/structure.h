@@ -153,9 +153,9 @@ void httpproxyserverTunnelDownStreamPause(tunnel_t *t, line_t *l);
 void httpproxyserverTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
 /* Small shared state accessors; callers own session/line lifetime. */
-static inline uint64_t hpsNowMs(void)
+static inline uint64_t hpsNowMs(const hps_session_t *s)
 {
-    return getHRTimeUs() / 1000;
+    return wloopNowMonotonicMS(getWorkerLoop(lineGetWID(s->client)));
 }
 
 static inline hps_tstate_t *hpsSettings(hps_session_t *s)

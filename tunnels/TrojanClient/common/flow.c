@@ -37,7 +37,7 @@ static void firstPayloadExpired(wtimer_t *timer)
     assert(ls->first_payload_timer == timer);
     tunnel_t *t   = ls->tunnel;
     line_t   *l   = ls->line;
-    uint64_t  now = getHRTimeUs();
+    uint64_t  now = wloopNowLoopRunTime(weventGetLoop(timer));
     /* One-shot reclamation belongs to the dispatch loop, even if close reenters. */
     ls->first_payload_timer = NULL;
     if (now < ls->first_payload_deadline_us)
@@ -67,7 +67,8 @@ void trojanclientOnNextEstablished(tunnel_t *t, line_t *l, trojanclient_lstate_t
     if (! ls->request_sent)
     {
         trojanclient_tstate_t *ts     = tunnelGetState(t);
-        ls->first_payload_deadline_us = getHRTimeUs() + (uint64_t) ts->first_payload_timeout_ms * 1000;
+        ls->first_payload_deadline_us =
+            wloopNowLoopRunTime(getWorkerLoop(lineGetWID(l))) + (uint64_t) ts->first_payload_timeout_ms * 1000;
     }
     tunnelPrevDownStreamEst(t, application);
     if (trojanclientAssociationAlive(t, l, application))
@@ -75,7 +76,7 @@ void trojanclientOnNextEstablished(tunnel_t *t, line_t *l, trojanclient_lstate_t
         ls->est_notifying = false;
         if (! ls->request_sent)
         {
-            uint64_t now = getHRTimeUs();
+            uint64_t now = wloopNowLoopRunTime(getWorkerLoop(lineGetWID(l)));
             if (now >= ls->first_payload_deadline_us)
             {
                 ls->first_payload_due = true;

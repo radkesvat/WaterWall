@@ -399,18 +399,31 @@ static void casePeerRequestReplay(flow_fixture_t *fixture)
     twfSetCase(fixture->server ? "PingServer cross-worker peer replay" : "PingClient cross-worker peer replay");
     resetSinks(fixture);
 
+    ping_wire_reply_id_generator_t *reply_ids =
+        fixture->server ? &((pingserver_tstate_t *) tunnelGetState(fixture->endpoint))->reply_ids
+                        : &((pingclient_tstate_t *) tunnelGetState(fixture->endpoint))->reply_ids;
+    const uint64_t cached_ms = UINT64_C(5000000000);
+    atomicStoreU64Relaxed(&reply_ids->last_reply_ms, cached_ms - 1);
+    fixture->env.loops[1]->cur_hrtime = cached_ms * 1000 + 789;
+    /* Another worker may have an older cache; reply IDs must still advance. */
+    fixture->env.loops[2]->cur_hrtime = (cached_ms - 100) * 1000;
+
     sbuf_t           *request = peerRequest(fixture, fixture->packet_lines[1], 77);
     captured_packet_t wire_request;
     wire_request.length = sbufGetLength(request);
     memoryCopy(wire_request.bytes, sbufGetRawPtr(request), wire_request.length);
 
     sendInbound(fixture, 1, request);
+    twfRequire(atomicLoadU64Relaxed(&reply_ids->last_reply_ms) == cached_ms,
+               "reply idle timing did not use the packet line's cached owner clock");
     const char *first_order = fixture->server ? "PN" : "NP";
     twfRequireEqualText(fixture->events, first_order, "peer request reply/delivery callback order is wrong");
     twfRequireEqualU32(generatedReplySink(fixture)->count, 1, "peer request did not receive one reply");
     twfRequireEqualU32(decodedInnerSink(fixture)->count, 1, "peer request did not deliver one inner packet");
 
     sendInbound(fixture, 2, bufferFromCapture(fixture->packet_lines[2], &wire_request));
+    twfRequire(atomicLoadU64Relaxed(&reply_ids->last_reply_ms) == cached_ms,
+               "older worker cache moved shared reply time backwards");
     const char *duplicate_order = fixture->server ? "PNP" : "NPN";
     twfRequireEqualText(fixture->events, duplicate_order, "duplicate request callback direction is wrong");
     twfRequireEqualU32(generatedReplySink(fixture)->count, 2, "duplicate request was not acknowledged again");
@@ -427,6 +440,8 @@ static void casePeerRequestReplay(flow_fixture_t *fixture)
     const ping_wire_config_t peer = peerConfig(fixture);
     twfRequire(pingwireParseInbound(reply1->bytes, reply1->length, &peer, &reply_view) == kPingWireInboundEchoReply,
                "generated first reply was not exact peer-facing Echo Reply traffic");
+    wloopUpdateTime(fixture->env.loops[1]);
+    wloopUpdateTime(fixture->env.loops[2]);
 }
 
 typedef struct fatal_case_s

@@ -142,7 +142,7 @@ int hpsReadHeader(hps_session_t *s, hps_direction_t d, char **block)
     if (! b)
         return 0;
     if (! s->header_at[d])
-        s->header_at[d] = hpsNowMs();
+        s->header_at[d] = hpsNowMs(s);
     size_t               len = sbufGetLength(b), n = 0;
     const unsigned char *p = sbufGetRawPtr(b);
     for (size_t i = 0; i + 3 < len; ++i)
@@ -224,7 +224,7 @@ hps_step_t hpsProcessBody(hps_session_t *s, hps_direction_t d)
         sbufSetLength(out, (uint32_t) used);
     }
     hpsConsumeInput(s, d, used);
-    s->progress_at = hpsNowMs();
+    s->progress_at = hpsNowMs(s);
     if (out)
         hpsDeliverPayload(s, d, out);
     return kHpsStepProgress;

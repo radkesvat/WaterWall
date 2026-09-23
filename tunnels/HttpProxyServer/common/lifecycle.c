@@ -101,7 +101,7 @@ void hpsCreateChild(hps_session_t *s, const char *username, const char *password
     s->child       = l;
     s->child_entry = s->phase == kHpsFallback ? hpsSettings(s)->fallback : s->t->next;
     s->child_eof   = false;
-    s->connect_at  = hpsNowMs();
+    s->connect_at  = hpsNowMs(s);
     addresscontextCopy(lineGetSourceAddressContext(l), lineGetSourceAddressContext(s->client));
     lineGetRoutingContext(l)->local_listener_port = lineGetRoutingContext(s->client)->local_listener_port;
     lineGetRoutingContext(l)->peer_source_port    = lineGetRoutingContext(s->client)->peer_source_port;

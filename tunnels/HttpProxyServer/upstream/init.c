@@ -4,7 +4,7 @@ static void timeout(wtimer_t *timer)
 {
     hps_session_t *s = weventGetUserdata(timer);
     hpsRetain(s);
-    uint64_t now   = hpsNowMs();
+    uint64_t now   = hpsNowMs(s);
     unsigned error = 0;
     if (s->header_at[kHpsUpstream] && now - s->header_at[kHpsUpstream] >= hpsSettings(s)->header_timeout)
         error = 408;
@@ -43,12 +43,12 @@ void httpproxyserverTunnelUpStreamInit(tunnel_t *t, line_t *l)
     s->t           = t;
     s->client      = l;
     s->references  = 1;
-    s->progress_at = hpsNowMs();
+    s->progress_at = hpsNowMs(s);
     lineRef(l);
     ls->session = s;
     hpsRetain(s);
     uint32_t interval = min(1000, min(ts->header_timeout, min(ts->connect_timeout, ts->idle_timeout)));
-    s->timer          = wtimerAdd(getCurrentEventWorkerLoop(), timeout, interval, INFINITE);
+    s->timer          = wtimerAdd(getWorkerLoop(lineGetWID(l)), timeout, interval, INFINITE);
     if (! s->timer)
         hpsClose(s, false);
     else

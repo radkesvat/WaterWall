@@ -137,7 +137,7 @@ bool hpsDeliverPayload(hps_session_t *s, hps_direction_t d, sbuf_t *b)
 {
     line_t *line = d == kHpsUpstream ? s->child : s->client;
     lineRef(line);
-    s->progress_at = hpsNowMs();
+    s->progress_at = hpsNowMs(s);
     if (d == kHpsUpstream)
         s->child_entry->fnPayloadU(s->child_entry, line, b);
     else
@@ -184,7 +184,7 @@ static bool admitDeferred(hps_session_t *s, hps_direction_t d)
         hpsDiscardBuffer(s, &s->deferred[d]);
     else
         sbufShiftRight(s->deferred[d], (uint32_t) n);
-    s->progress_at = hpsNowMs();
+    s->progress_at = hpsNowMs(s);
     return true;
 }
 

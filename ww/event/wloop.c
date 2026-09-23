@@ -1492,6 +1492,11 @@ uint64_t wloopNowLoopRunTime(wloop_t *loop)
     return loop->cur_hrtime;
 }
 
+uint64_t wloopNowMonotonicMS(wloop_t *loop)
+{
+    return loop->cur_hrtime / 1000U;
+}
+
 uint64_t wioGetLastReadTime(wio_t *io)
 {
     wloop_t *loop = io->loop;

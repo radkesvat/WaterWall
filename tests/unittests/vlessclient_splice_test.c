@@ -950,6 +950,20 @@ static void testTimeoutConfiguration(void)
 
 static void testTimers(void)
 {
+    twfSetCase("first-payload deadline uses the cached owner clock");
+    for (unsigned udp = 0; udp < 2; ++udp)
+    {
+        begin(udp, "127.0.0.1", 128, 0, false);
+        ((vlessclient_tstate_t *) tunnelGetState(f.t))->first_payload_timeout_ms = 400;
+        const uint64_t cached_us                                                 = UINT64_C(5000000000789);
+        f.env.loop->cur_hrtime                                                   = cached_us;
+        establish();
+        vlessclient_lstate_t *ls = lineGetState(f.carrier, f.t);
+        twfRequire(ls->first_payload_deadline_us == cached_us + 400000,
+                   "first-payload deadline sampled a fresh clock or lost microsecond precision");
+        end();
+    }
+
     twfSetCase("deadline cancellation, paused due work, early dispatch and quiescence");
     begin(false, "127.0.0.1", 128, 1, false);
     establish();
