@@ -756,6 +756,87 @@ static void runResolverPreEstCase(bool literal)
                "connector completion left pending accounting");
     progressTeardown(&fixture);
 }
+
+static unsigned late_init_finishes;
+
+static bool prepareLateInit(tunnel_t *resolver, tunnel_t *owner, line_t *line, void *user_lstate)
+{
+    discard                                resolver;
+    discard                                owner;
+    discard                                line;
+    tcpconnector_domain_resolver_lstate_t *ls = user_lstate;
+    ls->socket_options.fwmark                 = kFwMarkInvalid;
+    return true;
+}
+
+static void lateInitFinish(tunnel_t *t, line_t *line)
+{
+    twfRequire(t == neighbor, "late Init finished the wrong neighbor");
+    twfRequireLineStateZeroed(line, adapter, "late Init notified its owner before cleanup");
+    ++late_init_finishes;
+    lineDestroy(line);
+}
+
+static void runLateInitCase(void)
+{
+    twfSetCase("TcpConnector refuses late resolver Init before and after worker drain");
+    for (unsigned stage = 0; stage < 3; ++stage)
+    {
+        twf_worker_env_t env;
+        twfWorkerEnvSetup(&env, 4096, 64);
+        adapter                 = tunnelCreate(NULL, sizeof(adapter_tstate_t), sizeof(adapter_lstate_t));
+        neighbor                = tunnelCreate(NULL, 0, 0);
+        node_t    resolver_node = nodeDomainResolverGet();
+        tunnel_t *resolver      = resolver_node.createHandle(&resolver_node);
+        twfRequire(adapter != NULL && neighbor != NULL && resolver != NULL, "late Init fixture creation failed");
+        domainresolverTunnelSetPrepareHook(
+            resolver, adapter, sizeof(tcpconnector_domain_resolver_lstate_t), prepareLateInit, NULL);
+        tunnelBind(neighbor, resolver);
+        tunnelBind(resolver, adapter);
+        adapter->fnInitU              = tcpconnectorTunnelUpStreamInit;
+        neighbor->fnFinD              = lateInitFinish;
+        adapter_tstate_t   *ts        = tunnelGetState(adapter);
+        local_idle_table_t *tables[1] = {stage == 2 ? NULL : localIdleTableCreate(env.loop)};
+        ts->idle_tables               = tables;
+        ts->domain_resolver_tunnel    = resolver;
+        adapter->lstate_offset        = resolver->lstate_size;
+        tunnel_chain_t *chain         = tunnelchainCreate(1);
+        chain->sum_line_state_size    = resolver->lstate_size + adapter->lstate_size;
+        tunnelchainFinalize(chain);
+        adapter->chain = resolver->chain = chain;
+        line_t *line                     = lineCreate(tunnelchainGetLinePools(chain), 0);
+        lineRef(line);
+        address_context_t *dest = lineGetDestinationAddressContext(line);
+        addresscontextSetIpAddress(dest, "127.0.0.1");
+        addresscontextSetPort(dest, 443);
+        addresscontextSetOnlyProtocol(dest, IP_PROTO_TCP);
+
+        wloopCloseNormalAdmission(env.loop);
+        tcpconnectorTunnelOnWorkerQuiesce(adapter, 0, wwLifecycleOwnedChildStop());
+        wloopQuiesceNormalWork(env.loop);
+        if (stage == 0)
+            tcpconnectorTunnelOnWorkerStop(adapter, 0, wwLifecycleOwnedChildStop());
+        local_idle_table_t *old_table = tables[0];
+        uint32_t            ios       = wloopNIOS(env.loop);
+        late_init_finishes            = 0;
+        // A final protocol replay can initialize this resolver prefix during drain.
+        resolver->fnInitU(resolver, line);
+        twfRequire(! lineIsAlive(line) && late_init_finishes == 1 && twfLineRefCount(line) == 1,
+                   "late Init did not finish its borrowed line exactly once");
+        twfRequireLineStateZeroed(line, resolver, "late Init left resolver state alive");
+        twfRequire(tables[0] == old_table && (old_table == NULL || localidletableGetItemCount(old_table) == 0) &&
+                       wloopNIOS(env.loop) == ios,
+                   "late Init created an idle table, item or socket");
+        lineUnref(line);
+        tcpconnectorTunnelOnWorkerStop(adapter, 0, wwLifecycleOwnedChildStop());
+        tunnelchainDestroy(chain);
+        resolver->onDestroy(resolver, wwLifecycleStartupRollback());
+        memoryFree(resolver_node.type);
+        tunnelDestroy(adapter);
+        tunnelDestroy(neighbor);
+        twfWorkerEnvTeardown(&env);
+    }
+}
 #endif
 
 #ifdef TCP_PAUSE_TEST_LISTENER
@@ -830,6 +911,7 @@ int main(void)
     runActiveWriteChargeCase(true);
     runQueuedWriteFailureCase();
 #ifndef TCP_PAUSE_TEST_LISTENER
+    runLateInitCase();
     runResolverPreEstCase(false);
     runResolverPreEstCase(true);
 #endif

@@ -982,11 +982,57 @@ static void testRepresentationsAndPipePressure(void)
     twfRequire(f.calls_fallback == 0, "source Finish bypassed paused pipe backlog");
 }
 
+static void testShutdownAdmission(void)
+{
+    twfSetCase("shutdown refuses new protocol branches but preserves existing forwarding");
+    for (unsigned mode = 0; mode < 3; ++mode)
+    {
+        begin(true, false, 128);
+        uint8_t  wire[320];
+        uint32_t n = request(wire, 0, mode == 1);
+        if (mode == 2)
+            wire[0] = 1; // An unsupported version would normally select fallback.
+        wloopCloseNormalAdmission(f.env.loop);
+        wloopQuiesceNormalWork(f.env.loop);
+        f.t->fnPayloadU(f.t, f.line, bytes(wire, n, true, 320));
+        twfRequire(! lineIsAlive(f.line) && f.finishes == 1 && f.inits == 0 && f.fallback_inits == 0 &&
+                       f.branch_finishes == 0 && f.remote_count == 0,
+                   "late request started or finished an unopened branch");
+        end();
+    }
+
+    begin(false, false, 128);
+    uint8_t  wire[320];
+    uint32_t n = request(wire, 0, false);
+    f.t->fnPayloadU(f.t, f.line, bytes(wire, n, true, 320));
+    wloopCloseNormalAdmission(f.env.loop);
+    wloopQuiesceNormalWork(f.env.loop);
+    f.t->fnPayloadU(f.t, f.line, bytes("final", 5, true, 320));
+    f.t->fnPayloadD(f.t, f.line, bytes("reply", 5, true, 320));
+    twfRequire(lineIsAlive(f.line) && f.up_len == 5 && f.down_len == 7 && f.inits == 1,
+               "shutdown suppressed existing TCP forwarding or its response header");
+    end();
+
+    begin(false, false, 128);
+    startUdp();
+    datagram(1001, "A", 1, true);
+    wloopCloseNormalAdmission(f.env.loop);
+    wloopQuiesceNormalWork(f.env.loop);
+    datagram(1001, "B", 1, true);
+    twfRequire(lineIsAlive(f.line) && f.calls_up == 2 && f.inits == 1, "shutdown suppressed an existing UDP backend");
+    f.t->fnFinD(f.t, f.remotes[0]);
+    twfRequire(lineIsAlive(f.line) && ! lineIsAlive(f.remotes[0]), "backend Finish lost ownership");
+    datagram(1001, "C", 1, true);
+    twfRequire(! lineIsAlive(f.line) && f.inits == 1 && f.remote_count == 1, "shutdown recreated a closed UDP backend");
+    end();
+}
+
 int main(void)
 {
     twfRequire(wCryptoGlobalInit() == kWCryptoOk, "crypto init failed");
     twfRequire(globalstateInitializeSecureRandom(), "secure random initialization failed");
     twfRequire(frandGlobalInit(), "random initialization failed");
+    testShutdownAdmission();
     testFallbackReceiverPressure();
     testRepresentationsAndPipePressure();
     testRequests();

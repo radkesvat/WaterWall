@@ -238,6 +238,8 @@ CREATION_SITES = [
      "the borrowed upload and download lines used by the protocol-framing fixture"),
     ("tests/unittests/tcp_adapter_pause_close_test.c", "progressSetup", TEST_ONLY,
      "the connector borrowed line used for partial-write and DNS admission fixtures"),
+    ("tests/unittests/tcp_adapter_pause_close_test.c", "runLateInitCase", TEST_ONLY,
+     "the owner-controlled borrowed line used to reject connector Init during worker drain"),
     ("tests/unittests/halfduplexclient_reentrant_close_test.c", "runRuntimeCase", TEST_ONLY,
      "the borrowed main line for real client pair Init and reentrant flow cases"),
     ("tests/unittests/halfduplexclient_framing_random_test.c", "initializePair", TEST_ONLY,

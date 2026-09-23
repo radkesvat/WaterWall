@@ -374,6 +374,10 @@ static line_t *vlessserverGetOrCreateUdpRemoteLine(tunnel_t *t, line_t *client_l
         return client_ls->udp_remote_line;
     }
 
+    /* Existing backends may receive final bytes; shutdown must not recreate them. */
+    if (UNLIKELY(! wloopNormalDispatchAllowed(getWorkerLoop(lineGetWID(client_l)))))
+        return NULL;
+
     if (UNLIKELY(! addresscontextHasPort(&client_ls->udp_target)))
     {
         return NULL;
@@ -470,6 +474,12 @@ static bool vlessserverStartUdpBranch(tunnel_t *t, line_t *l, vlessserver_lstate
 static bool vlessserverHandleInitialRequest(tunnel_t *t, line_t *l, vlessserver_lstate_t *ls,
                                             bool reject_short_password)
 {
+    /* Final replay during drain may reach a server whose branch is still unopened. */
+    if (UNLIKELY(! wloopNormalDispatchAllowed(getWorkerLoop(lineGetWID(l)))))
+    {
+        vlessserverCloseLineBidirectional(t, l);
+        return false;
+    }
     if (reject_short_password)
     {
         LOGW("VlessServer: rejected segmented UUID authentication on worker %u", (unsigned int) lineGetWID(l));

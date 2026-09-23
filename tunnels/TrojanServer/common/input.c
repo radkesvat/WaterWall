@@ -176,6 +176,12 @@ bool trojanserverRetainActiveHead(trojanserver_lstate_t *ls)
 
 void trojanserverParseInitial(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls)
 {
+    /* Final replay during drain may reach a server whose branch is still unopened. */
+    if (UNLIKELY(! wloopNormalDispatchAllowed(getWorkerLoop(lineGetWID(l)))))
+    {
+        trojanserverCloseLineBidirectional(t, l);
+        return;
+    }
     if (ls->short_password)
     {
         LOGW("TrojanServer: rejected segmented password authentication on worker %u", (unsigned int) lineGetWID(l));

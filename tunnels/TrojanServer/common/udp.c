@@ -189,6 +189,9 @@ line_t *trojanserverGetOrCreateUdpRemoteLine(tunnel_t *t, line_t *client_l, troj
     trojanserver_remote_map_t_iter it  = trojanserver_remote_map_t_find(&client->udp_remote_lines, key);
     if (it.ref != NULL)
         return it.ref->second;
+    /* Existing backends may receive final bytes; shutdown must not create new ones. */
+    if (UNLIKELY(! wloopNormalDispatchAllowed(getWorkerLoop(lineGetWID(client_l)))))
+        return NULL;
     line_t                *line   = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), lineGetWID(client_l));
     trojanserver_lstate_t *remote = lineGetState(line, t);
     trojanserverLinestateInitialize(remote, t, line, kTrojanServerLineKindUdpRemote);

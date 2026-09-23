@@ -358,6 +358,10 @@ void tcpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
     address_context_t *dest_ctx = lineGetDestinationAddressContext(l);
 
     tcpconnectorLinestateInitialize(ls);
+    /* A neighbour may flush a final request before Finish during worker drain.
+     * Refuse its late Init before recreating sockets or the worker idle table. */
+    if (UNLIKELY(! wloopNormalDispatchAllowed(getWorkerLoop(lineGetWID(l)))))
+        goto fail;
     if (UNLIKELY(resolver_ls == NULL))
     {
         LOGF("TcpConnector: internal DomainResolver prepare state is missing");
