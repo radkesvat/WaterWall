@@ -1,6 +1,11 @@
 #include "AuthenticationClient/structure.h"
 #include "HttpProxyServer/structure.h"
+#include "splice_buffer.h"
 #include "wevent.h"
+
+#if WW_HAVE_SPLICE
+#include <unistd.h>
+#endif
 
 /* Real pool-backed lines and callbacks, with no sockets or linker wrapping. */
 static tunnel_t *proxy, *prev, *next, *fallback;
@@ -17,6 +22,29 @@ static size_t    sent_len;
 static bool      producer_paused[2];
 static bool        nested_payload[2], finish_response;
 static const char *nested_bytes;
+/* Replay the existing HTTP/auth/lifetime cases with real pipe input as well. */
+static unsigned  representation;
+static uintptr_t last_wrapper[2];
+static unsigned  splice_writes[2];
+static bool      nested_resume, finish_request;
+
+static void requireOrdinarySlots(void)
+{
+    hps_session_t *s = ((hps_lstate_t *) lineGetState(client, proxy))->session;
+    if (! s)
+        return;
+    for (unsigned d = 0; d < 2; ++d)
+    {
+        const hps_direction_state_t *dir     = &s->directions[d];
+        sbuf_t                      *slots[] = {dir->input, dir->output, dir->deferred, dir->incoming};
+        for (unsigned i = 0; i < ARRAY_SIZE(slots); ++i)
+            if (slots[i] && sbufIsSplice(slots[i]))
+            {
+                fprintf(stderr, "splice wrapper retained in HTTP session\n");
+                exit(1);
+            }
+    }
+}
 
 static void sendBytes(line_t *l, bool downstream, const char *bytes);
 static void childEof(void);
@@ -61,7 +89,10 @@ static void previousPayload(tunnel_t *t, line_t *l, sbuf_t *b)
     require(l == client, "Payload identity");
     size_t n = sbufGetLength(b);
     require(n < sizeof(received) - received_len, "test output capacity");
-    memoryCopy(received + received_len, sbufGetRawPtr(b), n);
+    requireOrdinarySlots();
+    last_wrapper[1] = (uintptr_t) b;
+    splice_writes[1] += sbufIsSplice(b);
+    sbufReadRangeToMemory(b, received + received_len, (uint32_t) n);
     received_len += n;
     received[received_len] = 0;
     ++client_writes;
@@ -69,7 +100,14 @@ static void previousPayload(tunnel_t *t, line_t *l, sbuf_t *b)
     if (nested_payload[1])
     {
         nested_payload[1] = false;
+        unsigned before   = client_writes;
         sendBytes(child, true, nested_bytes);
+        if (nested_resume)
+        {
+            httpproxyserverTunnelUpStreamPause(proxy, client);
+            httpproxyserverTunnelUpStreamResume(proxy, client);
+            require(client_writes == before, "nested response bypassed active dispatch");
+        }
         if (finish_response)
             childEof();
     }
@@ -154,16 +192,43 @@ static void childInit(tunnel_t *t, line_t *l)
         httpproxyserverTunnelDownStreamEst(proxy, l);
 }
 
-static void sendBytes(line_t *l, bool downstream, const char *bytes)
+static sbuf_t *makeInput(line_t *l, const char *bytes, unsigned mode)
 {
-    size_t  n = stringLength(bytes);
+    const size_t n = stringLength(bytes);
+#if WW_HAVE_SPLICE
+    /* One page fits even the smallest Linux pipe. Large callback regressions
+     * remain ordinary; their nested inputs still exercise splice admission. */
+    const size_t prefix = mode == 2 ? min(n > 4096 ? n - 4096 : n / 2, (size_t) 60000) : 0;
+    if (mode && n - prefix <= 4096)
+    {
+        sbuf_t *b = sbufCreateSplice((uint16_t) (prefix + 64));
+        require(sbufSpliceInitPipe(b, 0) == 0, "real test pipe");
+        const splice_buffer_metadata_t metadata = sbufSpliceMetadata(b);
+        if (n != prefix)
+            require(write(metadata.pipefd[1], bytes + prefix, n - prefix) == (ssize_t) (n - prefix), "fill real pipe");
+        b->capacity = b->l_pad + (uint32_t) (n - prefix);
+        sbufSetLength(b, (uint32_t) (n - prefix));
+        sbufShiftLeft(b, (uint32_t) prefix);
+        memoryCopy(sbufGetMutablePtr(b), bytes, prefix);
+        return b;
+    }
+#else
+    discard mode;
+#endif
     sbuf_t *b = bufferpoolGetBestFit(lineGetBufferPool(l), (uint32_t) n, 64);
     memoryCopy(sbufGetMutablePtr(b), bytes, n);
     sbufSetLength(b, (uint32_t) n);
+    return b;
+}
+
+static void sendBytes(line_t *l, bool downstream, const char *bytes)
+{
+    sbuf_t *b = makeInput(l, bytes, representation);
     if (downstream)
         httpproxyserverTunnelDownStreamPayload(proxy, l, b);
     else
         httpproxyserverTunnelUpStreamPayload(proxy, l, b);
+    requireOrdinarySlots();
 }
 
 static void childPayload(tunnel_t *t, line_t *l, sbuf_t *b)
@@ -175,7 +240,10 @@ static void childPayload(tunnel_t *t, line_t *l, sbuf_t *b)
     require(sbufGetLeftCapacity(b) >= 64, "rewritten buffer lost chain padding");
     size_t n = sbufGetLength(b);
     require(n < sizeof(sent) - sent_len, "test request capacity");
-    memoryCopy(sent + sent_len, sbufGetRawPtr(b), n);
+    requireOrdinarySlots();
+    last_wrapper[0] = (uintptr_t) b;
+    splice_writes[0] += sbufIsSplice(b);
+    sbufReadRangeToMemory(b, sent + sent_len, (uint32_t) n);
     sent_len += n;
     sent[sent_len] = 0;
     ++request_writes;
@@ -183,7 +251,19 @@ static void childPayload(tunnel_t *t, line_t *l, sbuf_t *b)
     if (nested_payload[0])
     {
         nested_payload[0] = false;
+        unsigned before   = request_writes;
         sendBytes(client, false, nested_bytes);
+        if (nested_resume)
+        {
+            httpproxyserverTunnelDownStreamPause(proxy, child);
+            httpproxyserverTunnelDownStreamResume(proxy, child);
+            require(request_writes == before, "nested request bypassed active dispatch");
+        }
+    }
+    if (finish_request)
+    {
+        childEof();
+        return;
     }
     if (close_on == 8)
     {
@@ -202,7 +282,10 @@ static void childPayload(tunnel_t *t, line_t *l, sbuf_t *b)
 static void resetClient(tunnel_chain_t *chain)
 {
     fallback_opens = init_action = child_pauses = 0;
+    last_wrapper[0] = last_wrapper[1] = 0;
+    splice_writes[0] = splice_writes[1]         = 0;
     in_fallback_init                            = false;
+    nested_resume = finish_request = false;
     nested_payload[0] = nested_payload[1] = finish_response = false;
     nested_bytes                                            = "NEW";
     pause_request = pause_response = delay_establishment = false;
@@ -581,7 +664,8 @@ static void fallbackCases(tunnel_chain_t *chain)
         fallbackStart(chain);
         sendBytes(client, false, raw);
         hps_session_t *session = ((hps_lstate_t *) lineGetState(client, proxy))->session;
-        require(! session->header_at[0] && ! session->header_at[1], "fallback retained HTTP deadline");
+        require(! session->directions[kHpsUpstream].header_at && ! session->directions[kHpsDownstream].header_at,
+                "fallback retained HTTP deadline");
         wloop_t *loop = getWorkerLoop(lineGetWID(client));
         if (idle)
         {
@@ -866,19 +950,20 @@ static void requireRetainedBounds(hps_session_t *session)
             "test remainder bound geometry");
     for (unsigned direction = 0; direction < 2; ++direction)
     {
-        sbuf_t *buffers[] = {session->input[direction], session->output[direction]};
+        const hps_direction_state_t *dir       = &session->directions[direction];
+        sbuf_t                      *buffers[] = {dir->input, dir->output};
         for (unsigned i = 0; i < 2; ++i)
             if (buffers[i])
             {
                 working += sbufGetLength(buffers[i]);
                 charge += sbufGetTotalCapacity(buffers[i]) + sizeof(sbuf_t) + kSbufAllocationAlignment;
             }
-        if (session->deferred[direction])
+        if (dir->deferred)
         {
-            require(sbufGetLength(session->deferred[direction]) <= d, "remainder exceeded logical allowance");
-            require(sbufGetTotalCapacity(session->deferred[direction]) <= remainder_capacity,
+            require(sbufGetLength(dir->deferred) <= d, "remainder exceeded logical allowance");
+            require(sbufGetTotalCapacity(dir->deferred) <= remainder_capacity,
                     "remainder exceeded allocation allowance");
-            total += sbufGetLength(session->deferred[direction]);
+            total += sbufGetLength(dir->deferred);
         }
     }
     require(working <= p && charge <= 4 * p && total + working <= p + 2 * d, "retained budgets exceeded");
@@ -905,7 +990,8 @@ static void largeDeliveries(tunnel_chain_t *chain, bool delayed, bool close_reta
     text[prefix + n] = 0;
     sendBytes(client, false, text);
     hps_session_t *session = ((hps_lstate_t *) lineGetState(client, proxy))->session;
-    require(lineIsAlive(client) && session && session->deferred[0], "large request lost its deferred remainder");
+    require(lineIsAlive(client) && session && session->directions[kHpsUpstream].deferred,
+            "large request lost its deferred remainder");
     requireRetainedBounds(session);
     require(producer_paused[0] && ! strstr(received, "503"), "large request did not use bounded headroom");
     if (close_retained)
@@ -926,12 +1012,14 @@ static void largeDeliveries(tunnel_chain_t *chain, bool delayed, bool close_reta
     text[prefix + n] = 0;
     pause_response   = true;
     sendBytes(child, true, text);
-    require(session->deferred[1] && producer_paused[1], "large response lost its deferred remainder");
+    require(session->directions[kHpsDownstream].deferred && producer_paused[1],
+            "large response lost its deferred remainder");
     requireRetainedBounds(session);
     httpproxyserverTunnelUpStreamResume(proxy, client);
     body = strstr(received, "\r\n\r\n");
     require(body && strlen(body + 4) == n && strspn(body + 4, "r") == n, "large response bytes changed");
-    require(! session->deferred[0] && ! session->deferred[1], "large delivery failed to drain");
+    require(! session->directions[kHpsUpstream].deferred && ! session->directions[kHpsDownstream].deferred,
+            "large delivery failed to drain");
     clientClose();
     lineUnref(client);
     memoryFree(text);
@@ -956,7 +1044,7 @@ static void cachedTimeoutClock(tunnel_chain_t *chain, const char *get)
         if (mode == 0)
         {
             sendBytes(client, false, "GET http://a/ HTTP/1.1\r\nHost:");
-            require(s->header_at[0] == start_ms, "request header used a different clock");
+            require(s->directions[kHpsUpstream].header_at == start_ms, "request header used a different clock");
             duration = ts->header_timeout;
         }
         else if (mode == 1)
@@ -970,7 +1058,8 @@ static void cachedTimeoutClock(tunnel_chain_t *chain, const char *get)
         {
             sendBytes(client, false, get);
             sendBytes(child, true, "HTTP/1.1 200");
-            require(! s->connect_at && s->header_at[1] == start_ms, "response header used a different clock");
+            require(! s->connect_at && s->directions[kHpsDownstream].header_at == start_ms,
+                    "response header used a different clock");
             duration = ts->header_timeout;
         }
         require(s->progress_at == start_ms, "payload or Est sampled a fresh clock");
@@ -990,6 +1079,151 @@ static void cachedTimeoutClock(tunnel_chain_t *chain, const char *get)
         wloopUpdateTime(loop);
     }
 }
+
+static void httpBodyCases(tunnel_chain_t *chain)
+{
+    for (unsigned http10 = 0; http10 < 2; ++http10)
+    {
+        resetClient(chain);
+        automatic_response = false;
+        sendBytes(client,
+                  false,
+                  http10 ? "GET http://a/ HTTP/1.0\r\nHost: a\r\n\r\n"
+                         : "POST http://a/ HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n"
+                           "Trailer: X-End\r\n\r\n3;x=y\r\nabc\r\n0\r\nX-End: yes\r\n\r\n");
+        if (! http10)
+            require(strstr(sent, "3;x=y\r\nabc\r\n0\r\nX-End: yes\r\n\r\n") != NULL,
+                    "materialized chunked upload/trailer");
+        sendBytes(child,
+                  true,
+                  "HTTP/1.1 103 Early Hints\r\n\r\nHTTP/1.1 200 OK\r\n"
+                  "Transfer-Encoding: chunked\r\nTrailer: X-End\r\n\r\n"
+                  "3\r\nxyz\r\n0\r\nX-End: yes\r\n\r\n");
+        require(! splice_writes[0] && ! splice_writes[1], "HTTP body escaped as splice");
+        if (http10)
+            require(! lineIsAlive(client) && ! strstr(received, "103") && ! strstr(received, "Transfer-Encoding") &&
+                        strstr(received, "\r\n\r\nxyz") != NULL && ! strstr(received, "X-End"),
+                    "HTTP/1.0 dechunking/informational/trailer policy");
+        else
+            require(strstr(received, "103 Early Hints") && strstr(received, "3\r\nxyz\r\n0\r\nX-End: yes\r\n\r\n"),
+                    "chunked response/trailer policy");
+        clientClose();
+        lineUnref(client);
+    }
+    resetClient(chain);
+    automatic_response = false;
+    sendBytes(client, false, "POST http://a/ HTTP/1.1\r\nHost: a\r\nContent-Length: 100\r\n\r\nfirst");
+    httpproxyserverTunnelDownStreamPause(proxy, child);
+    sendBytes(client, false, "held-upload");
+    sendBytes(child, true, "HTTP/1.1 413 Content Too Large\r\nContent-Length: 4\r\n\r\nstop");
+    require(! lineIsAlive(client) && ! child && ! strstr(sent, "held-upload") && strstr(received, "\r\n\r\nstop"),
+            "early response did not cancel materialized upload");
+    lineUnref(client);
+}
+
+#if WW_HAVE_SPLICE
+static void spliceRelayCases(tunnel_chain_t *chain, unsigned mode)
+{
+    hps_tstate_t  *ts                   = tunnelGetState(proxy);
+    const unsigned saved_representation = representation;
+    representation                      = mode;
+    for (unsigned raw_fallback = 0; raw_fallback < 2; ++raw_fallback)
+    {
+        hps_local_user_t user = {.username = "alice", .password = "one"};
+        ts->auth_mode         = raw_fallback ? kHpsAuthLocal : kHpsAuthNone;
+        ts->users             = raw_fallback ? &user : NULL;
+        ts->user_count        = raw_fallback;
+        ts->fallback          = raw_fallback ? fallback : NULL;
+        const char *request   = raw_fallback ? "GET http://a/ HTTP/1.1\r\nHost: a\r\n\r\nreplay"
+                                             : "CONNECT a:443 HTTP/1.1\r\nHost: a\r\n\r\nearly";
+        for (unsigned d = 0; d < 2; ++d)
+            for (unsigned event = 0; event < 6; ++event)
+            {
+                resetClient(chain);
+                automatic_response  = false;
+                delay_establishment = true;
+                sendBytes(client, false, request);
+                sendBytes(child, true, "banner");
+                if (! raw_fallback)
+                {
+                    require(! sent_len && ! received_len, "CONNECT bytes escaped before Est");
+                    httpproxyserverTunnelDownStreamEst(proxy, child);
+                    require(! stringCompare(sent, "early") &&
+                                ! stringCompare(received, "HTTP/1.1 200 Connection Established\r\n\r\nbanner"),
+                            "CONNECT success barrier");
+                }
+                else
+                    require(! establishments && ! stringCompare(sent, request) && ! stringCompare(received, "banner"),
+                            "pre-Est fallback replay/reply");
+                sent_len = received_len = 0;
+                sent[0] = received[0] = 0;
+                splice_writes[0] = splice_writes[1] = 0;
+                if (event == 1)
+                {
+                    if (d)
+                        httpproxyserverTunnelUpStreamPause(proxy, client);
+                    else
+                        httpproxyserverTunnelDownStreamPause(proxy, child);
+                }
+                nested_payload[d] = event == 2 || event == 3;
+                nested_resume     = event == 2;
+                finish_response   = d && event == 3;
+                finish_request    = ! d && event == 3;
+                if (event == 4)
+                    close_on = d ? 3 : 8;
+                pause_request      = ! d && event == 5;
+                pause_response     = d && event == 5;
+                line_t   *source   = d ? child : client;
+                sbuf_t   *b        = makeInput(source, "prefix-body", mode);
+                uintptr_t identity = (uintptr_t) b;
+                if (d)
+                    httpproxyserverTunnelDownStreamPayload(proxy, source, b);
+                else
+                    httpproxyserverTunnelUpStreamPayload(proxy, source, b);
+                if (event == 1)
+                {
+                    require(! splice_writes[d] && ! (d ? received_len : sent_len), "paused splice escaped");
+                    requireOrdinarySlots();
+                    if (d)
+                        httpproxyserverTunnelUpStreamResume(proxy, client);
+                    else
+                        httpproxyserverTunnelDownStreamResume(proxy, child);
+                    require(! splice_writes[d], "retained splice did not materialize");
+                }
+                else
+                {
+                    require(splice_writes[d] == 1, "ready splice was materialized or nested splice escaped");
+                    if (event != 2 && ! (d && event == 3))
+                        require(last_wrapper[d] == identity, "ready relay replaced the wrapper");
+                }
+                const char *expected = event == 2 || (d && event == 3) ? "prefix-bodyNEW" : "prefix-body";
+                require(! stringCompare(d ? received : sent, expected), "direct relay bytes/order");
+                if (event == 5)
+                {
+                    sendBytes(d ? child : client, d != 0, "held");
+                    require(splice_writes[d] == 1 && ! stringCompare(d ? received : sent, expected),
+                            "Pause after direct handoff did not hold next input");
+                    requireOrdinarySlots();
+                    if (d)
+                        httpproxyserverTunnelUpStreamResume(proxy, client);
+                    else
+                        httpproxyserverTunnelDownStreamResume(proxy, child);
+                    require(! stringCompare(d ? received : sent, "prefix-bodyheld"), "paused suffix lost");
+                }
+                if (event == 3 || event == 4)
+                    require(! lineIsAlive(client) && ! child, "direct callback close leaked association");
+                clientClose();
+                lineUnref(client);
+                require(masterpoolGetCheckedOut(chain->masterpool_line_pool) == 0, "direct relay reference leak");
+            }
+        ts->users      = NULL;
+        ts->user_count = 0;
+    }
+    ts->auth_mode  = kHpsAuthNone;
+    ts->fallback   = NULL;
+    representation = saved_representation;
+}
+#endif
 
 static void runSuite(uint32_t large_size, uint32_t splice_limit)
 {
@@ -1063,8 +1297,13 @@ static void runSuite(uint32_t large_size, uint32_t splice_limit)
     fallback->fnFinU     = childFinish;
     fallback->fnPauseU   = childPause;
     fallback->fnResumeU  = childResume;
+#if WW_HAVE_SPLICE
+    spliceRelayCases(chain, 1);
+    spliceRelayCases(chain, 2);
+#endif
     fallbackCases(chain);
     localAuthentication(chain);
+    httpBodyCases(chain);
 
     const char *get      = "GET http://127.0.0.1:80/a HTTP/1.1\r\nHost: ignored.test\r\n\r\n";
     cachedTimeoutClock(chain, get);
@@ -1310,5 +1549,9 @@ int main(void)
     runSuite(32768, 32768);
     runSuite(LARGE_BUFFER_SIZE_RAM_HIGH, SPLICE_PAYLOAD_LIMIT);
     runSuite(65536, 4U * 1024U * 1024U);
+#if WW_HAVE_SPLICE
+    for (representation = 1; representation <= 2; ++representation)
+        runSuite(32768, 32768);
+#endif
     return 0;
 }

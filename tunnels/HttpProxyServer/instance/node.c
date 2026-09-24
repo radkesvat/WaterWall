@@ -8,7 +8,7 @@ node_t nodeHttpProxyServerGet(void)
                      .hash_type             = calcHashBytes(name, stringLength(name)),
                      .version               = 1,
                      .createHandle          = httpproxyserverTunnelCreate,
-                     .flags                 = kNodeFlagNone,
+                     .flags                 = kNodeFlagSupportsSplice,
                      .required_padding_left = 0,
                      .layer_group           = kNodeLayer4,
                      .layer_group_next_node = kNodeLayer4,

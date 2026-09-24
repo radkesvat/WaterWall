@@ -6,7 +6,7 @@ void httpproxyserverTunnelUpStreamPause(tunnel_t *t, line_t *l)
     hps_session_t *s  = ls->session;
     hpsRetain(s);
     lineRef(l);
-    s->paused[kHpsDownstream] = true;
+    s->directions[kHpsDownstream].paused = true;
     hpsUpdatePressure(s);
     hpsPump(s);
     lineUnref(l);

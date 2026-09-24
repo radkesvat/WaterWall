@@ -12,11 +12,12 @@ void httpproxyserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         lineReuseBuffer(l, buf);
         return;
     }
+    hps_direction_state_t *down = &s->directions[kHpsDownstream];
     hpsRetain(s);
     lineRef(l);
-    ++s->receiving_down;
+    ++down->receiving;
     hpsAcceptPayload(s, l, buf, kHpsDownstream);
-    --s->receiving_down;
+    --down->receiving;
     if (hpsIsActive(s))
         hpsPump(s);
     lineUnref(l);
@@ -25,6 +26,9 @@ void httpproxyserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
 bool hpsProcessResponse(hps_session_t *s)
 {
+    hps_direction_state_t *up   = &s->directions[kHpsUpstream];
+    hps_direction_state_t *down = &s->directions[kHpsDownstream];
+
     char *block = NULL;
     int   n     = hpsReadHeader(s, kHpsDownstream, &block);
     if (! n)
@@ -43,18 +47,18 @@ bool hpsProcessResponse(hps_session_t *s)
         if (h.status >= 200)
         {
             s->response_header = false;
-            s->response_body   = h.body;
+            down->body         = h.body;
             s->child_reusable  = ! h.close && h.body.kind != kHpsBodyEof;
             s->close_after |= h.close || h.body.kind == kHpsBodyEof;
-            if (s->request_body.kind != kHpsBodyDone)
+            if (up->body.kind != kHpsBodyDone)
             {
                 s->upload_stopped = true;
                 s->close_after    = true;
                 s->child_reusable = false;
-                hpsDiscardBuffer(s, &s->input[kHpsUpstream]);
-                hpsDiscardBuffer(s, &s->output[kHpsUpstream]);
-                hpsDiscardBuffer(s, &s->deferred[kHpsUpstream]);
-                hpsDiscardBuffer(s, &s->incoming[kHpsUpstream]);
+                hpsDiscardBuffer(s, &up->input);
+                hpsDiscardBuffer(s, &up->output);
+                hpsDiscardBuffer(s, &up->deferred);
+                hpsDiscardBuffer(s, &up->incoming);
             }
         }
         if (! (s->http10 && h.status < 200) && ! hpsRewriteHeaderOutput(s, &h, kHpsDownstream))
@@ -62,10 +66,10 @@ bool hpsProcessResponse(hps_session_t *s)
         if (! error && h.chunked && h.status >= 200)
         {
             hpsClearHeader(s, kHpsDownstream);
-            s->trailer_context[kHpsDownstream] = h;
-            s->header_storage[kHpsDownstream]  = block;
-            s->header_length[kHpsDownstream]   = (size_t) n;
-            block                              = NULL;
+            down->trailer_context = h;
+            down->header_storage  = block;
+            down->header_length   = (size_t) n;
+            block                 = NULL;
         }
     }
     memoryFree(block);

@@ -51,8 +51,9 @@ void hpsCloseChild(hps_session_t *s, bool from_child)
     s->child                       = NULL;
     s->child_established           = false;
     s->connect_at                  = 0;
-    s->paused[kHpsUpstream]        = false;
-    s->read_paused[kHpsDownstream] = false;
+
+    s->directions[kHpsUpstream].paused        = false;
+    s->directions[kHpsDownstream].read_paused = false;
     if (ls->prev)
         ls->prev->next = ls->next;
     else
@@ -77,10 +78,11 @@ void hpsClose(hps_session_t *s, bool from_client)
     hpsCloseChild(s, false);
     for (unsigned i = 0; i < 2; ++i)
     {
-        hpsDiscardBuffer(s, &s->input[i]);
-        hpsDiscardBuffer(s, &s->output[i]);
-        hpsDiscardBuffer(s, &s->deferred[i]);
-        hpsDiscardBuffer(s, &s->incoming[i]);
+        hps_direction_state_t *dir = &s->directions[i];
+        hpsDiscardBuffer(s, &dir->input);
+        hpsDiscardBuffer(s, &dir->output);
+        hpsDiscardBuffer(s, &dir->deferred);
+        hpsDiscardBuffer(s, &dir->incoming);
         hpsClearHeader(s, i);
     }
     if (! from_client)

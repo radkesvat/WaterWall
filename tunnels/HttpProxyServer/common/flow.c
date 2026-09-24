@@ -8,10 +8,11 @@ static uint64_t retained(hps_session_t *s)
     uint64_t n = hpsPendingBytes(s);
     for (unsigned d = 0; d < 2; ++d)
     {
-        if (s->deferred[d])
-            n += sbufGetLength(s->deferred[d]);
-        if (s->incoming[d])
-            n += sbufGetLength(s->incoming[d]);
+        const hps_direction_state_t *dir = &s->directions[d];
+        if (dir->deferred)
+            n += sbufGetLength(dir->deferred);
+        if (dir->incoming)
+            n += sbufGetLength(dir->incoming);
     }
     return n;
 }
@@ -29,10 +30,11 @@ void hpsFail(hps_session_t *s, unsigned status)
     hpsCloseChild(s, false);
     for (unsigned i = 0; i < 2; ++i)
     {
-        hpsDiscardBuffer(s, &s->input[i]);
-        hpsDiscardBuffer(s, &s->output[i]);
-        hpsDiscardBuffer(s, &s->deferred[i]);
-        hpsDiscardBuffer(s, &s->incoming[i]);
+        hps_direction_state_t *dir = &s->directions[i];
+        hpsDiscardBuffer(s, &dir->input);
+        hpsDiscardBuffer(s, &dir->output);
+        hpsDiscardBuffer(s, &dir->deferred);
+        hpsDiscardBuffer(s, &dir->incoming);
     }
     const char *reason = "Bad Request";
     switch (status)
@@ -91,27 +93,27 @@ void hpsUpdatePressure(hps_session_t *s)
         return;
     /* No outward notification may overtake the active first-request remainder,
      * or enter a branch whose Init has not returned. */
-    if ((s->receiving_up && ! s->protected_committed) || s->child_initializing)
+    if ((s->directions[kHpsUpstream].receiving && ! s->protected_committed) || s->child_initializing)
         return;
     for (unsigned d = 0; d < 2 && hpsIsActive(s); ++d)
     {
+        hps_direction_state_t *dir = &s->directions[d];
         /* Future requests cannot drain until the current response arrives. Reserve
          * headroom by stopping client input, without stopping that response producer.
          * Recompute after each callback: a Resume can synchronously drain buffers. */
-        uint64_t n    = d == kHpsUpstream
-                            ? retained(s)
-                            : (uint64_t) (s->input[kHpsDownstream] ? sbufGetLength(s->input[kHpsDownstream]) : 0) +
-                               (s->output[kHpsDownstream] ? sbufGetLength(s->output[kHpsDownstream]) : 0) +
-                               (s->deferred[kHpsDownstream] ? sbufGetLength(s->deferred[kHpsDownstream]) : 0) +
-                               (s->incoming[kHpsDownstream] ? sbufGetLength(s->incoming[kHpsDownstream]) : 0);
-        bool     want = s->paused[d] || s->deferred[d] != NULL || n >= hpsSettings(s)->max_pending * 3 / 4 ||
+        uint64_t n    = d == kHpsUpstream ? retained(s)
+                                          : (uint64_t) (dir->input ? sbufGetLength(dir->input) : 0) +
+                                             (dir->output ? sbufGetLength(dir->output) : 0) +
+                                             (dir->deferred ? sbufGetLength(dir->deferred) : 0) +
+                                             (dir->incoming ? sbufGetLength(dir->incoming) : 0);
+        bool     want = dir->paused || dir->deferred != NULL || n >= hpsSettings(s)->max_pending * 3 / 4 ||
                     (d == kHpsUpstream && (s->upload_stopped || s->phase == kHpsError));
-        if (! want && n > hpsSettings(s)->max_pending / 2 && s->read_paused[d])
+        if (! want && n > hpsSettings(s)->max_pending / 2 && dir->read_paused)
             want = true;
-        if (want == s->read_paused[d] ||
+        if (want == dir->read_paused ||
             (d == kHpsDownstream && (! s->child || (s->phase != kHpsFallback && ! s->child_established))))
             continue;
-        s->read_paused[d] = want;
+        dir->read_paused  = want;
         line_t *line      = d == kHpsUpstream ? s->client : s->child;
         lineRef(line);
         if (d == kHpsUpstream)
@@ -149,12 +151,13 @@ bool hpsDeliverPayload(hps_session_t *s, hps_direction_t d, sbuf_t *b)
 
 static bool flush(hps_session_t *s, hps_direction_t d)
 {
-    if (! s->output[d] || s->paused[d] ||
+    hps_direction_state_t *dir = &s->directions[d];
+    if (! dir->output || dir->paused ||
         (d == kHpsUpstream &&
          (! s->child || s->child_initializing || (s->phase != kHpsFallback && ! s->child_established))))
         return false;
-    sbuf_t *b    = s->output[d];
-    s->output[d] = NULL;
+    sbuf_t *b   = dir->output;
+    dir->output = NULL;
     if (d == kHpsDownstream && (s->phase == kHpsError || s->phase == kHpsRelay || ! s->response_header))
         s->final_committed = true;
     hpsDeliverPayload(s, d, b);
@@ -163,38 +166,39 @@ static bool flush(hps_session_t *s, hps_direction_t d)
 
 static bool admitDeferred(hps_session_t *s, hps_direction_t d)
 {
-    if (! s->deferred[d] || s->paused[d] || s->phase == kHpsError || s->phase == kHpsFallback || s->phase == kHpsRelay)
+    hps_direction_state_t *dir = &s->directions[d];
+    if (! dir->deferred || dir->paused || s->phase == kHpsError || s->phase == kHpsFallback || s->phase == kHpsRelay)
         return false;
-    if (d == kHpsUpstream &&
-        (s->upload_stopped || s->phase == kHpsConnect ||
-         (s->phase == kHpsExchange && (! s->child_established || s->request_body.kind == kHpsBodyDone))))
+    if (d == kHpsUpstream && (s->upload_stopped || s->phase == kHpsConnect ||
+                              (s->phase == kHpsExchange && (! s->child_established || dir->body.kind == kHpsBodyDone))))
         return false;
     size_t room = hpsSettings(s)->max_pending - hpsPendingBytes(s);
     if ((d == kHpsUpstream ? s->phase == kHpsRequest : s->response_header) && room > 1024)
         room -= 1024;
-    size_t n = min(min((size_t) 16384, sbufGetLength(s->deferred[d])), room);
+    size_t n = min(min((size_t) 16384, sbufGetLength(dir->deferred)), room);
     if (! n)
         return false;
-    if (! hpsAppendInput(s, d, sbufGetRawPtr(s->deferred[d]), n))
+    if (! hpsAppendInput(s, d, sbufGetRawPtr(dir->deferred), n))
     {
         hpsFail(s, 503);
         return true;
     }
-    if (n == sbufGetLength(s->deferred[d]))
-        hpsDiscardBuffer(s, &s->deferred[d]);
+    if (n == sbufGetLength(dir->deferred))
+        hpsDiscardBuffer(s, &dir->deferred);
     else
-        sbufShiftRight(s->deferred[d], (uint32_t) n);
+        sbufShiftRight(dir->deferred, (uint32_t) n);
     s->progress_at = hpsNowMs(s);
     return true;
 }
 
 static bool drainRaw(hps_session_t *s, hps_direction_t d)
 {
-    if (s->paused[d] || s->output[d] || (d == kHpsUpstream && (! s->child || s->child_initializing)))
+    hps_direction_state_t *dir = &s->directions[d];
+    if (dir->paused || dir->output || (d == kHpsUpstream && (! s->child || s->child_initializing)))
         return false;
     /* Raw bytes need no working copy. Drain older working input first, then
      * hand off the charged remainder even if the other direction fills P. */
-    sbuf_t **slot = s->input[d] ? &s->input[d] : &s->deferred[d];
+    sbuf_t **slot = dir->input ? &dir->input : &dir->deferred;
     if (! *slot)
         return false;
     sbuf_t *b = *slot;
@@ -205,13 +209,15 @@ static bool drainRaw(hps_session_t *s, hps_direction_t d)
 
 static void finishRaw(hps_session_t *s)
 {
-    if (hpsIsActive(s) && s->child_eof && ! s->input[kHpsDownstream] && ! s->output[kHpsDownstream] &&
-        ! s->deferred[kHpsDownstream] && ! s->incoming[kHpsDownstream])
+    const hps_direction_state_t *down = &s->directions[kHpsDownstream];
+    if (hpsIsActive(s) && s->child_eof && ! down->input && ! down->output && ! down->deferred && ! down->incoming)
         hpsClose(s, false);
 }
 
 void hpsPump(hps_session_t *s)
 {
+    hps_direction_state_t *up   = &s->directions[kHpsUpstream];
+    hps_direction_state_t *down = &s->directions[kHpsDownstream];
     if (s->pumping)
     {
         s->again = true;
@@ -235,13 +241,13 @@ void hpsPump(hps_session_t *s)
             break;
         if (s->phase == kHpsError)
         {
-            if (! s->output[kHpsDownstream])
+            if (! down->output)
                 hpsClose(s, false);
             break;
         }
         if (s->phase == kHpsRequest)
         {
-            if (s->input[kHpsDownstream])
+            if (down->input)
             {
                 hpsFail(s, 502);
                 s->again = true;
@@ -254,7 +260,7 @@ void hpsPump(hps_session_t *s)
             break;
         if (s->phase == kHpsFallback)
         {
-            if (! s->receiving_up && ! s->child_initializing)
+            if (! up->receiving && ! s->child_initializing)
             {
                 if (! s->child && ! s->child_eof)
                     hpsCreateChild(s, NULL, NULL);
@@ -282,7 +288,7 @@ void hpsPump(hps_session_t *s)
         }
         if (! hpsIsActive(s))
             break;
-        if (s->phase == kHpsRelay && ! s->output[kHpsDownstream])
+        if (s->phase == kHpsRelay && ! down->output)
         {
             for (unsigned d = 0; d < 2 && hpsIsActive(s); ++d)
                 if (drainRaw(s, d))
@@ -294,7 +300,7 @@ void hpsPump(hps_session_t *s)
         if (s->phase == kHpsExchange)
         {
             bool needs_input = false;
-            if (s->response_header && ! s->output[kHpsDownstream])
+            if (s->response_header && ! down->output)
             {
                 if (hpsProcessResponse(s))
                     s->again = true;
@@ -320,19 +326,18 @@ void hpsPump(hps_session_t *s)
             }
             if (! hpsIsActive(s) || s->phase != kHpsExchange)
                 continue;
-            if (s->child_eof && s->response_body.kind == kHpsBodyEof && ! s->input[kHpsDownstream] &&
-                ! s->deferred[kHpsDownstream] && ! s->incoming[kHpsDownstream])
-                s->response_body.kind = kHpsBodyDone;
-            if (s->child_eof && ! s->deferred[kHpsDownstream] && ! s->incoming[kHpsDownstream] && needs_input &&
-                ! s->again && (s->response_header || s->response_body.kind != kHpsBodyDone))
+            if (s->child_eof && down->body.kind == kHpsBodyEof && ! down->input && ! down->deferred && ! down->incoming)
+                down->body.kind = kHpsBodyDone;
+            if (s->child_eof && ! down->deferred && ! down->incoming && needs_input && ! s->again &&
+                (s->response_header || down->body.kind != kHpsBodyDone))
             {
                 hpsFail(s, 502);
                 s->again = true;
                 continue;
             }
-            if (! s->response_header && s->response_body.kind == kHpsBodyDone && ! s->output[kHpsDownstream])
+            if (! s->response_header && down->body.kind == kHpsBodyDone && ! down->output)
             {
-                if (s->input[kHpsDownstream] || s->deferred[kHpsDownstream])
+                if (down->input || down->deferred)
                 {
                     hpsFail(s, 502);
                     s->again = true;
@@ -343,7 +348,7 @@ void hpsPump(hps_session_t *s)
                     hpsClose(s, false);
                     break;
                 }
-                if (s->request_body.kind == kHpsBodyDone && ! s->output[kHpsUpstream] && ! s->receiving_down)
+                if (up->body.kind == kHpsBodyDone && ! up->output && ! down->receiving)
                 {
                     if (! s->child_reusable)
                         hpsCloseChild(s, false);

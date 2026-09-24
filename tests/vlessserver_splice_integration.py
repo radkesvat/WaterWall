@@ -176,8 +176,8 @@ def run(binary, mode, enabled, fallback_delay=7):
                             assert client.recv(1) == b"", "carrier survived server shutdown"
                     trace = (root / "splice.log").read_text()
                     successful = re.findall(r"(?:splice\(.*|<\.\.\. splice resumed>.*)\s= ([1-9][0-9]*)", trace)
-                    # HttpProxyServer remains ordinary-only and disables splice for its chain.
-                    assert bool(successful) == (enabled and not local_fallback), "server chain used unexpected splice mode"
+                    # HttpProxyServer materializes its local OPTIONS input on the splice-capable chain.
+                    assert bool(successful) == enabled, "server chain used unexpected splice mode"
                 except BaseException:
                     log.flush(); print((root / "stdout.log").read_text(), file=sys.stderr)
                     raise

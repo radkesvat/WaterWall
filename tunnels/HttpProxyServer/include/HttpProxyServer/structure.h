@@ -85,53 +85,60 @@ typedef enum hps_phase_e
     kHpsClosed
 } hps_phase_t;
 
+/* Directional data bookkeeping, embedded in the worker-affine session. No independent lifetime. */
+typedef struct hps_direction_state_s
+{
+    /* All retained/active buffer slots are ordinary; splice is settled at admission. */
+    sbuf_t *input;
+    sbuf_t *output;
+    sbuf_t *deferred; /* One bounded already-delivered remainder. */
+    sbuf_t *incoming; /* Active Payload remainder; nested input appends here in FIFO order. */
+
+    hps_body_t body;
+    char      *header_storage; /* Owns the copied header borrowed by trailer_context. */
+    size_t     header_length;
+    uint64_t   header_at;
+    unsigned   receiving;
+    bool       paused : 1;
+    bool       read_paused : 1;
+
+    hps_header_t trailer_context;
+} hps_direction_state_t;
+
 /* Worker-affine session storage survives re-entrant destruction while a pump/callback holds a reference. */
 struct hps_session_s
 {
-    tunnel_t       *t;
-    line_t         *client;
-    line_t         *child;
-    tunnel_t       *child_entry;
-    hps_session_t  *timer_prev;
-    hps_session_t  *timer_next;
-    wtimer_t       *timer;
-    unsigned        references;
-    hps_phase_t     phase;
-    sbuf_t         *input[2];
-    sbuf_t         *output[2];
-    sbuf_t         *deferred[2]; /* One bounded already-delivered remainder per direction. */
-    sbuf_t         *incoming[2]; /* Active Payload remainder; nested input appends here in FIFO order. */
-    hps_body_t      request_body;
-    hps_body_t      response_body;
-    hps_header_t    trailer_context[2];
-    char           *header_storage[2];
-    size_t          header_length[2];
-    hps_authority_t authority;
-    user_handle_t   identity;
-    hps_auth_mode_t auth_mode;
-    char            credentials[512];
-    uint64_t        progress_at;
-    uint64_t        header_at[2];
-    uint64_t        connect_at;
-    unsigned        informationals;
-    unsigned        receiving_down;
-    unsigned        receiving_up;
-    bool            protected_committed : 1;
-    bool            child_initializing : 1;
-    bool            pumping : 1;
-    bool            again : 1;
-    bool            established : 1;
-    bool            child_established : 1;
-    bool            child_eof : 1;
-    bool            paused[2];
-    bool            read_paused[2];
-    bool            http10 : 1;
-    bool            head : 1;
-    bool            response_header : 1;
-    bool            final_committed : 1;
-    bool            close_after : 1;
-    bool            child_reusable : 1;
-    bool            upload_stopped : 1;
+    tunnel_t             *t;
+    line_t               *client;
+    line_t               *child;
+    tunnel_t             *child_entry;
+    hps_session_t        *timer_prev;
+    hps_session_t        *timer_next;
+    wtimer_t             *timer;
+    unsigned              references;
+    hps_phase_t           phase;
+    hps_direction_state_t directions[2];
+    hps_authority_t       authority;
+    user_handle_t         identity;
+    hps_auth_mode_t       auth_mode;
+    char                  credentials[512];
+    uint64_t              progress_at;
+    uint64_t              connect_at;
+    unsigned              informationals;
+    bool                  protected_committed : 1;
+    bool                  child_initializing : 1;
+    bool                  pumping : 1;
+    bool                  again : 1;
+    bool                  established : 1;
+    bool                  child_established : 1;
+    bool                  child_eof : 1;
+    bool                  http10 : 1;
+    bool                  head : 1;
+    bool                  response_header : 1;
+    bool                  final_committed : 1;
+    bool                  close_after : 1;
+    bool                  child_reusable : 1;
+    bool                  upload_stopped : 1;
 };
 
 WW_EXPORT tunnel_t    *httpproxyserverTunnelCreate(node_t *node);

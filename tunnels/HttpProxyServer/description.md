@@ -80,7 +80,28 @@ The fallback branch chooses its destination; the failed request's authority is n
 
 There is no intentional delay. The connect deadline still runs from child Init to Est, and the idle deadline applies to raw relay; HTTP header deadlines end at handoff. Early replies do not manufacture Est. Failure after selection closes without an HTTP error or another branch attempt. Accepted replies drain before child EOF closes the client, subject to receiver Pause. Client Finish discards local retention immediately. Worker shutdown drains fallback children through the same inventory as protected children.
 
-Existing `P`/`D` logical and allocation bounds remain unchanged. The temporary immutable first-header snapshot is bounded by `max-header-bytes + 1`; it is wiped on commitment or refusal. Once selected, its replay bytes enter the existing working/output budget before branch Init. Bodies and tails are not copied into a separate transcript. This remains an ordinary-buffer-only proxy, regardless of the fallback branch's capabilities.
+Existing `P`/`D` logical and allocation bounds remain unchanged. The temporary immutable first-header snapshot is bounded by `max-header-bytes + 1`; it is wiped on commitment or refusal. Once selected, its replay bytes enter the existing working/output budget before branch Init. Bodies and tails are not copied into a separate transcript. Ready fallback relay can preserve splice buffers under the same conditions as CONNECT below.
+
+## Splice buffers
+
+On eligible Linux chains, HttpProxyServer accepts splice input in both directions.
+HTTP requests and responses, including bodies and trailers, are fully materialized
+for parsing. CONNECT transition data, fallback replay, paused input and reentrant
+input also become ordinary buffers before entering session storage. Once CONNECT
+success has been handed off, or fallback Init and older directional replay have
+completed, a complete new splice buffer can pass intact to an unpaused receiver.
+Ordinary HTTP never becomes opaque merely because a destination was selected.
+
+Conversion temporarily allocates one ordinary input of at most `P + D` logical
+bytes, with the existing remainder allocation bound: `max(small capacity, 2 * D)`
+plus alignment, onward padding and buffer header overhead. Existing admission
+still bounds retained bytes; this is neither an RSS bound nor a promise of no
+copying. All retained session buffers remain ordinary.
+
+Core `misc.splice`, platform support and every node in the expanded chain,
+including UserController, DomainResolver and fallback branches, determine
+eligibility. Disabled or unsupported chains retain ordinary behavior. No new
+proxy setting is required; HttpClient and HttpServer remain ordinary-only.
 
 ## Streaming, reuse, and routing
 

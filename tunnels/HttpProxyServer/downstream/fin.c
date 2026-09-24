@@ -10,11 +10,12 @@ void httpproxyserverTunnelDownStreamFinish(tunnel_t *t, line_t *l)
     s->child_eof = true;
     if (s->phase == kHpsFallback || s->phase == kHpsRelay)
     {
+        hps_direction_state_t *up = &s->directions[kHpsUpstream];
         s->upload_stopped = true;
-        hpsDiscardBuffer(s, &s->input[kHpsUpstream]);
-        hpsDiscardBuffer(s, &s->output[kHpsUpstream]);
-        hpsDiscardBuffer(s, &s->deferred[kHpsUpstream]);
-        hpsDiscardBuffer(s, &s->incoming[kHpsUpstream]);
+        hpsDiscardBuffer(s, &up->input);
+        hpsDiscardBuffer(s, &up->output);
+        hpsDiscardBuffer(s, &up->deferred);
+        hpsDiscardBuffer(s, &up->incoming);
     }
     else if (s->phase == kHpsConnect)
         hpsFail(s, 502);

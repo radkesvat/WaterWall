@@ -14,14 +14,15 @@ void hpsDiscardBuffer(hps_session_t *s, sbuf_t **slot)
 
 void hpsClearHeader(hps_session_t *s, hps_direction_t d)
 {
-    if (s->header_storage[d])
+    hps_direction_state_t *dir = &s->directions[d];
+    if (dir->header_storage)
     {
-        memoryZero(s->header_storage[d], s->header_length[d]);
-        memoryFree(s->header_storage[d]);
-        s->header_storage[d] = NULL;
+        memoryZero(dir->header_storage, dir->header_length);
+        memoryFree(dir->header_storage);
+        dir->header_storage = NULL;
     }
-    s->trailer_context[d] = (hps_header_t) {0};
-    s->header_length[d]   = 0;
+    dir->trailer_context = (hps_header_t) {0};
+    dir->header_length   = 0;
 }
 
 size_t hpsPendingBytes(hps_session_t *s)
@@ -29,10 +30,11 @@ size_t hpsPendingBytes(hps_session_t *s)
     size_t n = 0;
     for (unsigned i = 0; i < 2; ++i)
     {
-        if (s->input[i])
-            n += sbufGetLength(s->input[i]);
-        if (s->output[i])
-            n += sbufGetLength(s->output[i]);
+        const hps_direction_state_t *dir = &s->directions[i];
+        if (dir->input)
+            n += sbufGetLength(dir->input);
+        if (dir->output)
+            n += sbufGetLength(dir->output);
     }
     return n;
 }
@@ -59,7 +61,8 @@ static bool allocationFits(hps_session_t *s, const sbuf_t *replace, const sbuf_t
     uint64_t charge = bufferCharge(candidate);
     for (unsigned i = 0; i < 2; ++i)
     {
-        const sbuf_t *buffers[] = {s->input[i], s->output[i]};
+        const hps_direction_state_t *dir       = &s->directions[i];
+        const sbuf_t                *buffers[] = {dir->input, dir->output};
         for (unsigned j = 0; j < 2; ++j)
             if (buffers[j] && buffers[j] != replace)
                 charge += bufferCharge(buffers[j]);
@@ -83,9 +86,10 @@ static sbuf_t *hpsMakeBuffer(hps_session_t *s, size_t n)
 
 bool hpsAppendInput(hps_session_t *s, hps_direction_t direction, const unsigned char *data, size_t n)
 {
+    hps_direction_state_t *dir = &s->directions[direction];
     if (n > hpsSettings(s)->max_pending - hpsPendingBytes(s))
         return false;
-    sbuf_t *old    = s->input[direction];
+    sbuf_t *old    = dir->input;
     size_t  length = old ? sbufGetLength(old) : 0;
     if (! old || sbufGetMaximumWriteableSize(old) < length + n)
     {
@@ -99,8 +103,8 @@ bool hpsAppendInput(hps_session_t *s, hps_direction_t direction, const unsigned 
         }
         if (length)
             memoryCopy(sbufGetMutablePtr(b), sbufGetRawPtr(old), length);
-        hpsDiscardBuffer(s, &s->input[direction]);
-        s->input[direction] = old = b;
+        hpsDiscardBuffer(s, &dir->input);
+        dir->input = old = b;
     }
     memoryCopy(sbufGetMutablePtr(old) + length, data, n);
     sbufSetLength(old, (uint32_t) (length + n));
@@ -109,16 +113,18 @@ bool hpsAppendInput(hps_session_t *s, hps_direction_t direction, const unsigned 
 
 static void hpsConsumeInput(hps_session_t *s, hps_direction_t d, size_t n)
 {
-    sbuf_t *b = s->input[d];
+    hps_direction_state_t *dir = &s->directions[d];
+    sbuf_t                *b   = dir->input;
     if (n == sbufGetLength(b))
-        hpsDiscardBuffer(s, &s->input[d]);
+        hpsDiscardBuffer(s, &dir->input);
     else
         sbufShiftRight(b, (uint32_t) n);
 }
 
 bool hpsQueueOutput(hps_session_t *s, hps_direction_t d, const char *data, size_t n)
 {
-    assert(! s->output[d]);
+    hps_direction_state_t *dir = &s->directions[d];
+    assert(! dir->output);
     if (n > hpsSettings(s)->max_pending - hpsPendingBytes(s))
         return false;
     sbuf_t *b = hpsMakeBuffer(s, n);
@@ -131,18 +137,19 @@ bool hpsQueueOutput(hps_session_t *s, hps_direction_t d, const char *data, size_
     }
     memoryCopy(sbufGetMutablePtr(b), data, n);
     sbufSetLength(b, (uint32_t) n);
-    s->output[d] = b;
+    dir->output = b;
     return true;
 }
 
 /* Copy only the complete header; body and pipelined bytes stay in their FIFO. */
 int hpsReadHeader(hps_session_t *s, hps_direction_t d, char **block)
 {
-    sbuf_t *b = s->input[d];
+    hps_direction_state_t *dir = &s->directions[d];
+    sbuf_t                *b   = dir->input;
     if (! b)
         return 0;
-    if (! s->header_at[d])
-        s->header_at[d] = hpsNowMs(s);
+    if (! dir->header_at)
+        dir->header_at = hpsNowMs(s);
     size_t               len = sbufGetLength(b), n = 0;
     const unsigned char *p = sbufGetRawPtr(b);
     for (size_t i = 0; i + 3 < len; ++i)
@@ -166,7 +173,7 @@ int hpsReadHeader(hps_session_t *s, hps_direction_t d, char **block)
     memoryCopy(*block, p, n);
     (*block)[n] = 0;
     hpsConsumeInput(s, d, n);
-    s->header_at[d] = 0;
+    dir->header_at = 0;
     return (int) n;
 }
 
@@ -186,20 +193,21 @@ bool hpsRewriteHeaderOutput(hps_session_t *s, const hps_header_t *h, hps_directi
 
 hps_step_t hpsProcessBody(hps_session_t *s, hps_direction_t d)
 {
-    hps_body_t *b = d == kHpsUpstream ? &s->request_body : &s->response_body;
+    hps_direction_state_t *dir = &s->directions[d];
+    hps_body_t            *b   = &dir->body;
     if (b->kind == kHpsBodyDone)
         return kHpsStepDone;
-    if (s->paused[d] || s->output[d])
+    if (dir->paused || dir->output)
         return kHpsStepBlocked;
-    if (! s->input[d])
+    if (! dir->input)
         return kHpsStepNeedInput;
     size_t used;
     bool   emit;
     int    result = hpsBodyStep(b,
-                             sbufGetRawPtr(s->input[d]),
-                             sbufGetLength(s->input[d]),
+                             sbufGetRawPtr(dir->input),
+                             sbufGetLength(dir->input),
                              d == kHpsDownstream && s->http10,
-                             &s->trailer_context[d],
+                             &dir->trailer_context,
                              &used,
                              &emit);
     if (result < 0)
@@ -220,7 +228,7 @@ hps_step_t hpsProcessBody(hps_session_t *s, hps_direction_t d)
             hpsFail(s, 503);
             return kHpsStepProgress;
         }
-        memoryCopy(sbufGetMutablePtr(out), sbufGetRawPtr(s->input[d]), used);
+        memoryCopy(sbufGetMutablePtr(out), sbufGetRawPtr(dir->input), used);
         sbufSetLength(out, (uint32_t) used);
     }
     hpsConsumeInput(s, d, used);
@@ -230,23 +238,81 @@ hps_step_t hpsProcessBody(hps_session_t *s, hps_direction_t d)
     return kHpsStepProgress;
 }
 
+static bool canRelaySplice(hps_session_t *s, hps_direction_t d)
+{
+    const hps_direction_state_t *dir = &s->directions[d];
+    if ((s->phase != kHpsRelay && s->phase != kHpsFallback) || dir->paused || dir->input || dir->output ||
+        dir->deferred || dir->incoming || s->pumping || s->child_initializing)
+        return false;
+    const hps_direction_state_t *opposite = &s->directions[d == kHpsUpstream ? kHpsDownstream : kHpsUpstream];
+    if (dir->receiving != 1 || opposite->receiving != 0)
+        return false;
+    if (s->phase == kHpsRelay && (! s->final_committed || s->directions[kHpsDownstream].output))
+        return false; /* CONNECT success must already have been handed off. */
+    if (! s->child || ! s->child_entry || ! lineIsAlive(s->child))
+        return false;
+    return d != kHpsUpstream || ! s->upload_stopped;
+}
+
 /* Takes buf on every path. The callback holds the session and exact-line
  * references, and publishes its receive counter across this admission. */
 void hpsAcceptPayload(hps_session_t *s, line_t *l, sbuf_t *buf, hps_direction_t d)
 {
+    hps_direction_state_t *dir = &s->directions[d];
+    assert(l == (d == kHpsUpstream ? s->client : s->child));
     const uint64_t allowance = kHpsDeliveryHeadroomBytes;
     if (! sbufGetLength(buf))
     {
         lineReuseBuffer(l, buf);
         return;
     }
-    if (s->incoming[d])
+    if (sbufIsSplice(buf))
+    {
+        const uint64_t length = sbufGetLength(buf);
+        if (! hpsIsActive(s) || (d == kHpsUpstream && s->upload_stopped) || s->phase == kHpsError)
+        {
+            lineReuseBuffer(l, buf);
+            return;
+        }
+        if (length > allowance + hpsSettings(s)->max_pending)
+        {
+            lineReuseBuffer(l, buf);
+            hpsFail(s, 503);
+            return;
+        }
+        if (canRelaySplice(s, d))
+        {
+            s->pumping = true;
+            /* Delivery consumes buf even if reentry closes either line. Nested
+             * input materializes behind this dispatch; the callback pumps next. */
+            hpsDeliverPayload(s, d, buf);
+            s->pumping = false;
+            return;
+        }
+        /* Every session slot is ordinary. The complete conversion is a bounded
+         * temporary input (at most P+D), subject to the remainder allocation
+         * bound; existing admission still decides what may survive this call. */
+        sbuf_t *ordinary = hpsMakeBuffer(s, (size_t) length);
+        if (! ordinary || ! remainderAllocationFits(s, ordinary))
+        {
+            if (ordinary)
+                lineReuseBuffer(l, ordinary);
+            lineReuseBuffer(l, buf);
+            hpsFail(s, 503);
+            return;
+        }
+        sbufSpliceReadToBuffer(buf, ordinary, (uint32_t) length);
+        lineReuseBuffer(l, buf);
+        buf = ordinary;
+    }
+    assert(! sbufIsSplice(buf));
+    if (dir->incoming)
     {
         /* The outer callback still owns older bytes. Append after them, not to
          * the deferred slot which its pump could consume ahead of that suffix.
          * Nested input shares the existing D allowance; it gets no new budget. */
-        const uint64_t length = (uint64_t) sbufGetLength(s->incoming[d]) + sbufGetLength(buf);
-        const uint64_t older  = s->deferred[d] ? sbufGetLength(s->deferred[d]) : 0;
+        const uint64_t length = (uint64_t) sbufGetLength(dir->incoming) + sbufGetLength(buf);
+        const uint64_t older  = dir->deferred ? sbufGetLength(dir->deferred) : 0;
         sbuf_t        *merged = length + older <= allowance ? hpsMakeBuffer(s, (size_t) length) : NULL;
         if (! merged || ! remainderAllocationFits(s, merged))
         {
@@ -257,39 +323,39 @@ void hpsAcceptPayload(hps_session_t *s, line_t *l, sbuf_t *buf, hps_direction_t 
         }
         else
         {
-            sbufMoveTo(merged, s->incoming[d], sbufGetLength(s->incoming[d]));
+            sbufMoveTo(merged, dir->incoming, sbufGetLength(dir->incoming));
             sbufMoveTo(merged, buf, sbufGetLength(buf));
-            hpsDiscardBuffer(s, &s->incoming[d]);
+            hpsDiscardBuffer(s, &dir->incoming);
             lineReuseBuffer(l, buf);
-            s->incoming[d] = merged;
+            dir->incoming = merged;
         }
         return;
     }
-    s->incoming[d]       = buf;
+    dir->incoming        = buf;
     const bool oversized = (uint64_t) sbufGetLength(buf) > allowance + hpsSettings(s)->max_pending;
     /* Preserve streaming of larger callbacks when their prefix can make immediate
      * progress. Only the retained remainder consumes delivery headroom. */
-    while (hpsIsActive(s) && s->incoming[d] && ! oversized && sbufGetLength(s->incoming[d]) > allowance &&
-           ! s->deferred[d] && ! s->paused[d] && s->phase != kHpsError &&
+    while (hpsIsActive(s) && dir->incoming && ! oversized && sbufGetLength(dir->incoming) > allowance &&
+           ! dir->deferred && ! dir->paused && s->phase != kHpsError &&
            ! (d == kHpsUpstream &&
               (s->upload_stopped || s->phase == kHpsConnect ||
-               (s->phase == kHpsExchange && (! s->child_established || s->request_body.kind == kHpsBodyDone)))))
+               (s->phase == kHpsExchange && (! s->child_established || dir->body.kind == kHpsBodyDone)))))
     {
         size_t room = hpsSettings(s)->max_pending - hpsPendingBytes(s);
         if ((d == kHpsUpstream ? s->phase == kHpsRequest : s->response_header) && room > 1024)
             room -= 1024;
-        size_t n = min((size_t) sbufGetLength(s->incoming[d]), room);
-        if (! n || ! hpsAppendInput(s, d, sbufGetRawPtr(s->incoming[d]), n))
+        size_t n = min((size_t) sbufGetLength(dir->incoming), room);
+        if (! n || ! hpsAppendInput(s, d, sbufGetRawPtr(dir->incoming), n))
             break;
-        sbufShiftRight(s->incoming[d], (uint32_t) n);
+        sbufShiftRight(dir->incoming, (uint32_t) n);
         hpsPump(s);
     }
-    buf            = s->incoming[d];
-    s->incoming[d] = NULL;
+    buf           = dir->incoming;
+    dir->incoming = NULL;
     if (! buf)
         return; /* Reentrant close or an early final response settled it. */
     const uint64_t length = sbufGetLength(buf);
-    const uint64_t older  = s->deferred[d] ? sbufGetLength(s->deferred[d]) : 0;
+    const uint64_t older  = dir->deferred ? sbufGetLength(dir->deferred) : 0;
     if (! hpsIsActive(s) || (d == kHpsUpstream && s->upload_stopped) || s->phase == kHpsError)
         lineReuseBuffer(l, buf);
     else if (oversized || length + older > allowance)
@@ -313,11 +379,11 @@ void hpsAcceptPayload(hps_session_t *s, line_t *l, sbuf_t *buf, hps_direction_t 
         else
         {
             if (older)
-                sbufMoveTo(remainder, s->deferred[d], (uint32_t) older);
+                sbufMoveTo(remainder, dir->deferred, (uint32_t) older);
             sbufMoveTo(remainder, buf, (uint32_t) length);
             lineReuseBuffer(l, buf);
-            hpsDiscardBuffer(s, &s->deferred[d]);
-            s->deferred[d] = remainder;
+            hpsDiscardBuffer(s, &dir->deferred);
+            dir->deferred = remainder;
         }
     }
     else

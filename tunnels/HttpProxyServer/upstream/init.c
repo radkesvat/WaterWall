@@ -4,17 +4,19 @@ static void timeout(wtimer_t *timer)
 {
     hps_session_t *s = weventGetUserdata(timer);
     hpsRetain(s);
+    const hps_direction_state_t *up    = &s->directions[kHpsUpstream];
+    const hps_direction_state_t *down  = &s->directions[kHpsDownstream];
     uint64_t now   = hpsNowMs(s);
     unsigned error = 0;
-    if (s->header_at[kHpsUpstream] && now - s->header_at[kHpsUpstream] >= hpsSettings(s)->header_timeout)
+    if (up->header_at && now - up->header_at >= hpsSettings(s)->header_timeout)
         error = 408;
-    else if (s->header_at[kHpsDownstream] && now - s->header_at[kHpsDownstream] >= hpsSettings(s)->header_timeout)
+    else if (down->header_at && now - down->header_at >= hpsSettings(s)->header_timeout)
         error = 504;
     else if (s->connect_at && now - s->connect_at >= hpsSettings(s)->connect_timeout)
         error = 504;
     else if (now - s->progress_at >= hpsSettings(s)->idle_timeout)
     {
-        if (s->phase == kHpsRequest && ! s->input[kHpsUpstream])
+        if (s->phase == kHpsRequest && ! up->input)
             hpsClose(s, false);
         else
             error = 504;

@@ -13,11 +13,12 @@ void httpproxyserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         lineReuseBuffer(l, buf);
         return;
     }
+    hps_direction_state_t *up = &s->directions[kHpsUpstream];
     hpsRetain(s);
     lineRef(l);
-    ++s->receiving_up;
+    ++up->receiving;
     hpsAcceptPayload(s, l, buf, kHpsUpstream);
-    --s->receiving_up;
+    --up->receiving;
     if (hpsIsActive(s))
         hpsPump(s);
     lineUnref(l);
@@ -26,6 +27,9 @@ void httpproxyserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
 bool hpsProcessRequest(hps_session_t *s)
 {
+    hps_direction_state_t *up   = &s->directions[kHpsUpstream];
+    hps_direction_state_t *down = &s->directions[kHpsDownstream];
+
     char *block = NULL;
     int   n     = hpsReadHeader(s, kHpsUpstream, &block);
     if (! n)
@@ -116,8 +120,8 @@ bool hpsProcessRequest(hps_session_t *s)
     }
     if (auth_rejected && original)
     {
-        s->phase                   = kHpsFallback;
-        s->header_at[kHpsUpstream] = s->header_at[kHpsDownstream] = 0;
+        s->phase      = kHpsFallback;
+        up->header_at = down->header_at = 0;
         if (! hpsQueueOutput(s, kHpsUpstream, original, (size_t) n))
             hpsClose(s, false);
         error = 0;
@@ -146,8 +150,8 @@ bool hpsProcessRequest(hps_session_t *s)
         s->final_committed = false;
         s->informationals  = 0;
         s->response_header = true;
-        s->request_body    = h.body;
-        s->response_body   = (hps_body_t) {0};
+        up->body           = h.body;
+        down->body         = (hps_body_t) {0};
         hpsClearHeader(s, kHpsUpstream);
         hpsClearHeader(s, kHpsDownstream);
         s->authority = h.authority;
@@ -170,10 +174,10 @@ bool hpsProcessRequest(hps_session_t *s)
                 error = 503;
             if (! error && h.chunked)
             {
-                s->trailer_context[kHpsUpstream] = h;
-                s->header_storage[kHpsUpstream]  = block;
-                s->header_length[kHpsUpstream]   = (size_t) n;
-                block                            = NULL;
+                up->trailer_context = h;
+                up->header_storage  = block;
+                up->header_length   = (size_t) n;
+                block               = NULL;
             }
             if (! error && ! reuse)
                 hpsCreateChild(s, username, password);
