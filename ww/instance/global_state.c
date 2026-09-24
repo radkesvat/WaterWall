@@ -76,9 +76,10 @@ static err_t wwDefaultInternalLwipIpv4Hook(struct pbuf *p, struct netif *inp)
 
 static bool initializeMasterPools(void)
 {
-    master_pool_t *large    = masterpoolCreateWithCapacity(2 * RAM_PROFILE);
-    master_pool_t *small    = masterpoolCreateWithCapacity(2 * RAM_PROFILE);
-    master_pool_t *medium   = masterpoolCreateWithCapacity(2 * RAM_PROFILE);
+    master_pool_t *large  = masterpoolCreateWithCapacity(2 * PROPER_BUFFER_POOL_WIDTH(RAM_PROFILE));
+    master_pool_t *small  = masterpoolCreateWithCapacity(2 * PROPER_BUFFER_POOL_WIDTH(RAM_PROFILE));
+    master_pool_t *medium = masterpoolCreateWithCapacity(2 * PROPER_BUFFER_POOL_WIDTH(RAM_PROFILE));
+    /* Preserve reusable pipes at the full profile capacity. */
     master_pool_t *splice   = masterpoolCreateWithCapacity(2 * RAM_PROFILE);
     master_pool_t *wios     = masterpoolCreateWithCapacity(2 * RAM_PROFILE);
     master_pool_t *contexts = masterpoolCreateWithCapacity(2 * RAM_PROFILE);

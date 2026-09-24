@@ -177,6 +177,11 @@ enum ram_profiles_e
     kRamProfileL2Memory = 32 * 8
 };
 
+/* Local buffer caches and ordinary buffer masters use this width. Other pools
+ * and the splice master retain the full profile width. */
+#define PROPER_BUFFER_POOL_WIDTH(ram_profile)                                                                          \
+    ((ram_profile) >= kRamProfileL1Memory ? (ram_profile) / 2U : (ram_profile))
+
 /*
 
     small buffer size is used for small buffers that are allocated for Udp and Raw Ip packets

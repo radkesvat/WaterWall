@@ -1,4 +1,5 @@
 #include "buffer_pool_internal.h"
+#include "worker.h"
 #include "wwapi.h"
 
 static void require(bool condition, const char *message)
@@ -266,11 +267,84 @@ static void testLowProfilePoolWidths(void)
     }
 }
 
+static void testWorkerCacheRetention(void)
+{
+    const struct
+    {
+        uint32_t profile;
+        uint32_t local_width;
+        uint32_t splice_master_capacity;
+    } cases[] = {{kRamProfileS1Memory, 1, 4},
+                 {kRamProfileS2Memory, 4, 16},
+                 {kRamProfileM1Memory, 8, 32},
+                 {kRamProfileM2Memory, 32, 128},
+                 {kRamProfileL1Memory, 64, 512},
+                 {kRamProfileL2Memory, 128, 1024}};
+
+    for (size_t c = 0; c < ARRAY_SIZE(cases); ++c)
+    {
+        GSTATE.ram_profile = cases[c].profile;
+        master_pool_t *masters[4];
+        for (size_t i = 0; i < ARRAY_SIZE(masters); ++i)
+        {
+            const uint32_t width = i == 3 ? RAM_PROFILE : PROPER_BUFFER_POOL_WIDTH(RAM_PROFILE);
+            masters[i]           = masterpoolCreateWithCapacity(2 * width);
+            require(masters[i] != NULL, "profile master construction failed");
+            require(masters[i]->cap == (i == 3 ? cases[c].splice_master_capacity : 4 * cases[c].local_width),
+                    "profile master retained the wrong cache capacity");
+        }
+        GSTATE.masterpool_buffer_pools_large  = masters[0];
+        GSTATE.masterpool_buffer_pools_medium = masters[1];
+        GSTATE.masterpool_buffer_pools_small  = masters[2];
+        GSTATE.masterpool_buffer_pools_splice = masters[3];
+        worker_t worker                       = {0};
+        require(workerTryCreateBufferPool(&worker), "worker buffer pool construction failed");
+        buffer_pool_t *pool = worker.buffer_pool;
+        const bool     low  = cases[c].profile < kRamProfileM1Memory;
+        require(bufferpoolGetLargeBufferSize(pool) == (low ? 65536 : 131072) &&
+                    bufferpoolGetMediumBufferSize(pool) == (low ? 32768 : 65536) &&
+                    bufferpoolGetSmallBufferSize(pool) == 4096 && bufferpoolGetSplicePayloadLimit(pool) == 1048576 &&
+                    bufferpoolGetWaitingBudgetBasis(pool) == (low ? 65536 : 1048576),
+                "worker cache sizing changed buffer sizes or independent limits");
+
+        /* Exceed both caches, then repeat to exercise refill after master overflow. */
+        sbuf_t        *buffers[1024];
+        const uint32_t count = 8 * cases[c].local_width;
+        for (unsigned int burst = 0; burst < 2; ++burst)
+        {
+            for (uint32_t i = 0; i < count; ++i)
+                buffers[i] = bufferpoolGetSmallBuffer(pool);
+            for (uint32_t i = 0; i < count; ++i)
+                bufferpoolReuseBuffer(pool, buffers[i]);
+
+            uint32_t large, medium, small, splice;
+            bufferpoolCachedTierCountsForTest(pool, &large, &small, &splice, &medium);
+            require(small > 0 && small <= 4 * cases[c].local_width / 3 + 1,
+                    "worker retained more idle buffers than its profile permits");
+            require(large == 0 && medium == 0 && splice == 0, "small-buffer burst populated another tier");
+            require(atomicLoadRelaxed(&masters[2]->len) == 4 * cases[c].local_width,
+                    "burst did not fill the ordinary master to its profile limit");
+        }
+        bufferpoolDestroy(pool);
+        for (size_t i = 0; i < ARRAY_SIZE(masters); ++i)
+        {
+            masterpoolMakeEmpty(masters[i]);
+            masterpoolDestroy(masters[i]);
+        }
+    }
+    GSTATE.ram_profile                    = kRamProfileInvalid;
+    GSTATE.masterpool_buffer_pools_large  = NULL;
+    GSTATE.masterpool_buffer_pools_medium = NULL;
+    GSTATE.masterpool_buffer_pools_small  = NULL;
+    GSTATE.masterpool_buffer_pools_splice = NULL;
+}
+
 int main(void)
 {
     testIndependentSizing();
     testBestFitQuery();
     testLowProfilePoolWidths();
+    testWorkerCacheRetention();
     const uint32_t profiles[] = {kRamProfileS1Memory,
                                  kRamProfileS2Memory,
                                  kRamProfileM1Memory,

@@ -439,7 +439,7 @@ bool workerTryCreateBufferPool(worker_t *worker)
                                            GSTATE.masterpool_buffer_pools_medium,
                                            GSTATE.masterpool_buffer_pools_small,
                                            GSTATE.masterpool_buffer_pools_splice,
-                                           RAM_PROFILE,
+                                           PROPER_BUFFER_POOL_WIDTH(RAM_PROFILE),
                                            PROPER_LARGE_BUFFER_SIZE(RAM_PROFILE),
                                            PROPER_MEDIUM_BUFFER_SIZE(RAM_PROFILE),
                                            SMALL_BUFFER_SIZE,

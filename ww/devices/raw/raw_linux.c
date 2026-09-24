@@ -588,7 +588,7 @@ raw_device_t *rawdeviceCreate(const char *name, uint32_t mark, bool bypass_connt
                                                    GSTATE.masterpool_buffer_pools_medium,
                                                    GSTATE.masterpool_buffer_pools_small,
                                                    GSTATE.masterpool_buffer_pools_splice,
-                                                   RAM_PROFILE,
+                                                   PROPER_BUFFER_POOL_WIDTH(RAM_PROFILE),
                                                    bufferpoolGetLargeBufferSize(worker_pool),
                                                    bufferpoolGetMediumBufferSize(worker_pool),
                                                    bufferpoolGetSmallBufferSize(worker_pool),
