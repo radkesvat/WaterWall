@@ -1,7 +1,6 @@
 #ifndef MUX_COMMON_MUX_LIMITS_H_
 #define MUX_COMMON_MUX_LIMITS_H_
 
-#include "splice_buffer.h"
 #include "wwapi.h"
 
 /* Discard locally owned queue entries. The caller settles its scalar aggregate using the returned charge. */

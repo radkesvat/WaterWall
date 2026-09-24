@@ -1,6 +1,5 @@
 #pragma once
 
-#include "splice_buffer.h"
 #include "wwapi.h"
 
 #define i_type trojanserver_remote_map_t // NOLINT

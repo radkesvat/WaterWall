@@ -1,6 +1,5 @@
 #pragma once
 
-#include "splice_buffer.h"
 #include "wwapi.h"
 
 typedef enum vlessserver_line_kind_e

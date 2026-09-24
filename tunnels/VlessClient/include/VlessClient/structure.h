@@ -1,7 +1,6 @@
 #pragma once
 
 #include "DomainResolver/interface.h"
-#include "splice_buffer.h"
 #include "wwapi.h"
 
 typedef enum vlessclient_protocol_e

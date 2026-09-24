@@ -16,6 +16,7 @@
 #include "bufio/buffer_pool.h"
 #include "bufio/buffer_queue.h"
 #include "bufio/context_queue.h"
+#include "bufio/splice_buffer.h"
 
 #include "instance/global_state.h"
 #include "instance/worker.h"

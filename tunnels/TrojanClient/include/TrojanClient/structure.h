@@ -1,7 +1,6 @@
 #pragma once
 
 #include "DomainResolver/interface.h"
-#include "splice_buffer.h"
 #include "wwapi.h"
 
 /* Wire command and address tags shared by encoding and parsing. */
