@@ -10,6 +10,7 @@ void tcplistenerTunnelDownStreamResume(tunnel_t *t, line_t *l)
     {
         // LOGD("TcpListener: Resuming read on line FD: %x", wioGetFD(lstate->io));
         lstate->read_paused = false;
+        tcplistenerApplyReadPreference(lstate);
         if (UNLIKELY(wioRead(lstate->io) != 0))
         {
             return;

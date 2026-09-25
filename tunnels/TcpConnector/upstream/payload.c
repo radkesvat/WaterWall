@@ -102,6 +102,7 @@ void tcpconnectorTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         abortProgramNow(1);
     }
 
+    tcpconnectorApplyReadPreference(ls);
     if (ls->write_paused)
     {
         handlePausedWrite(t, l, ts, ls, buf);

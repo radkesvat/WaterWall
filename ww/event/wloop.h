@@ -341,9 +341,10 @@ WW_EXPORT bool wioExists(wloop_t *loop, int fd);
 // NOTE: fd cannot be used as unique identifier, so we provide an id.
 WW_EXPORT uint32_t         wioGetID(wio_t *io);
 WW_EXPORT int              wioGetFD(const wio_t *io);
-// Owner-thread mode selection, initially disabled for each newly adopted descriptor.
-// Enabling requires an open WIO whose read interest has never been registered;
-// stopping reads does not reset this precondition. Checked by debug assertions.
+// Owner-thread mode selection on an open WIO, initially disabled for each newly
+// adopted descriptor. May change before or after reads start, including from a
+// read callback. The next read observes the mode; delivered buffers and queued
+// writes retain their representations and ownership. Read stop/restart is not required.
 // Creates no pipe; returns 0 when supported or -1 with ENOSYS otherwise.
 // Supported NIO TCP reads fill a private pipe before delivery. Buffer length is
 // the actual splice result; delivered wrappers have no dependency on the source WIO.

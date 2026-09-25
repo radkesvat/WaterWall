@@ -74,6 +74,7 @@ static void onRecv(wio_t *io, sbuf_t *buf)
     line_t                *l  = lstate->line;
     tcpconnector_tstate_t *ts = tunnelGetState(t);
     tcpconnector_lstate_t *ls = lineGetState(l, t);
+    tcpconnectorApplyReadPreference(ls);
     localidletableKeepIdleItemForAtleast(tcpconnectorGetLineIdleTable(ts, l), ls->idle_handle, kReadWriteTimeoutMs);
 
     tunnelPrevDownStreamPayload(t, l, buf);
@@ -136,6 +137,7 @@ void tcpconnectorOnOutBoundConnected(wio_t *upstream_io)
              SOCKADDR_STR(wioGetPeerAddr(upstream_io), peeraddrstr));
     }
 
+    tcpconnectorApplyReadPreference(lstate);
     if (! lstate->read_paused)
     {
         if (UNLIKELY(wioRead(lstate->io) != 0))
@@ -182,6 +184,7 @@ void tcpconnectorOnWriteComplete(wio_t *io)
     tcpconnector_lstate_t *ls = weventGetUserdata(io);
     if (ls == NULL)
         return;
+    tcpconnectorApplyReadPreference(ls);
     tcpconnectorRefreshWriteBudget(ls);
     if (! wioCheckWriteComplete(io))
         return;

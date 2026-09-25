@@ -92,6 +92,12 @@ typedef struct tcpconnector_lstate_s
 
 } tcpconnector_lstate_t;
 
+static inline void tcpconnectorApplyReadPreference(const tcpconnector_lstate_t *ls)
+{
+    if (UNLIKELY(wioIsSpliceEnabled(ls->io) && linePrefersOrdinaryReadDownstream(ls->line)))
+        wioDisableSplice(ls->io);
+}
+
 enum
 {
     kTunnelStateSize    = sizeof(tcpconnector_tstate_t),

@@ -251,7 +251,7 @@ static bool tcpconnectorBeginConnect(tunnel_t *t, line_t *l, tcpconnector_lstate
     }
     sockfd = -1;
 
-    if (tunnelGetChain(t)->supports_splice)
+    if (tunnelGetChain(t)->supports_splice && ! linePrefersOrdinaryReadDownstream(l))
     {
         if (UNLIKELY(wioEnableSplice(io) != 0))
         {

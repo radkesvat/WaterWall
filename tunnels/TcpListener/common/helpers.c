@@ -45,6 +45,7 @@ static void onRecv(wio_t *io, sbuf_t *buf)
     tcplistener_lstate_t *ls = lineGetState(l, t);
     tcplistener_tstate_t *ts = tunnelGetState(t);
 
+    tcplistenerApplyReadPreference(ls);
     localidletableKeepIdleItemForAtleast(
         tcplistenerGetLineIdleTable(ts, l), ls->idle_handle, ts->active_idle_timeout_ms);
 
@@ -171,6 +172,7 @@ void tcplistenerOnInboundConnected(wevent_t *ev)
     }
 
     // Init may attach this source to an already backpressured Mux parent.
+    tcplistenerApplyReadPreference(ls);
     if (! ls->read_paused && UNLIKELY(wioRead(io) != 0))
     {
         return;
@@ -231,6 +233,7 @@ void tcplistenerOnWriteComplete(wio_t *io)
     tcplistener_lstate_t *ls = weventGetUserdata(io);
     if (ls == NULL)
         return;
+    tcplistenerApplyReadPreference(ls);
     tcplistenerRefreshWriteBudget(ls);
     if (! wioCheckWriteComplete(io))
         return;

@@ -94,6 +94,7 @@ void tcplistenerTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     tcplistener_tstate_t *ts = tunnelGetState(t);
     tcplistener_lstate_t *ls = lineGetState(l, t);
 
+    tcplistenerApplyReadPreference(ls);
     if (ls->write_paused)
     {
         handlePausedWrite(t, l, ts, ls, buf);

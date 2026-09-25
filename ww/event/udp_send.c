@@ -96,7 +96,10 @@ udp_send_result_t udpSendBuffer(int fd, sbuf_t *buf, const sockaddr_u *peer, boo
     }
     splice_buffer_metadata_t metadata = sbufSpliceMetadata(buf);
     assert(metadata.pipefd[0] >= 0 && metadata.pipefd[1] >= 0);
-    if (udpSpliceNeedsMaterialization(metadata, body, prefix))
+    // Temporarily route splice-backed UDP datagrams through materialization and ordinary writes.
+    // TODO: Remove this guard once the kernel UDP splice fix is mature and widely deployed.
+    const bool force_materialization = true;
+    if (force_materialization || udpSpliceNeedsMaterialization(metadata, body, prefix))
     {
         sbuf_t *ordinary = sbufCreate(length);
         sbufSpliceReadToBuffer(buf, ordinary, length);

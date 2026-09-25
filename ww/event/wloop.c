@@ -2173,11 +2173,6 @@ static int wioAddWithNormalAuthority(wio_t *io, wio_cb cb, int events, bool alre
         io->events |= events;
     }
 
-    if (events & WW_READ)
-    {
-        io->read_started = 1;
-    }
-
     if (! io->active)
     {
         EVENT_ADD(loop, io, cb);

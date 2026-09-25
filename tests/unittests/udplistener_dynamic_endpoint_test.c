@@ -962,7 +962,7 @@ static void testStaticSpliceRetirement(void)
                 udpsockGetWorkerIdleTable(&socket), 1, ls, udplistenerOnConnectionExpire, 30000);
         }
         discard tosSetCurrentWorker(0);
-        udp_test_short_splice = true;
+        udp_test_retire_send = true;
         twfRequire(wioWriteDatagram(io, udpTestSplicePayload(env.pools[0]), &peer) == -1,
                    "static retirement injection");
         twfRequire(io == NULL && socket.io == NULL && udpsockIsRetired(&socket),
@@ -1025,7 +1025,7 @@ static void testDynamicSpliceRetirement(void)
     udplistenerOnDynamicEndpointRead(ep->wio, input);
     line_t *line = ep->line;
     lineRef(line);
-    udp_test_short_splice = true;
+    udp_test_retire_send = true;
     udplistenerTunnelDownStreamPayload(f.listener, line, udpTestSplicePayload(f.env.pool));
     twfRequire(! lineIsAlive(line) && udplistenerFindDynamicEndpoint(f.listener, result.handle) == NULL,
                "splice failure retained endpoint or owned line");

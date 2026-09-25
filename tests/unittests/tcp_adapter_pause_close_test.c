@@ -142,6 +142,14 @@ static void runPauseCase(bool splice_input, bool close_line)
     ls->write_paused = true;
     weventSetUserData(io, ls);
 
+#if WW_HAVE_SPLICE
+    twfRequire(wioEnableSplice(io) == 0, "failed to enable reads before queued preference check");
+#ifdef TCP_PAUSE_TEST_LISTENER
+    linePreferOrdinaryReadUpstream(line);
+#else
+    linePreferOrdinaryReadDownstream(line);
+#endif
+#endif
     sbuf_t *queued = bufferpoolGetLargeBuffer(env.pool);
     sbufSetLength(queued, kMinPauseQueueSize + 1);
     memorySet(sbufGetMutablePtr(queued), 'Q', sbufGetLength(queued));
@@ -175,6 +183,7 @@ static void runPauseCase(bool splice_input, bool close_line)
     }
     else
     {
+        twfRequire(! wioIsSpliceEnabled(io), "queued payload did not apply read preference");
         twfRequire(lineIsAlive(line) && twfLineRefCount(line) == 2, "surviving Pause leaked a line reference");
         twfRequire(bufferqueueGetBufCount(&ls->pause_queue) == 3 &&
                        bufferqueueGetBufLen(&ls->pause_queue) == kMinPauseQueueSize + 18,
@@ -850,6 +859,7 @@ static void pauseDuringInit(tunnel_t *t, line_t *line)
 {
     discard t;
     expected_line = line;
+    linePreferOrdinaryReadUpstream(line);
     tcplistenerTunnelDownStreamPause(adapter, line);
 }
 
@@ -871,6 +881,7 @@ static void runAcceptedInitPauseCase(void)
     chain->sum_line_state_size    = adapter->lstate_size;
     tunnelchainFinalize(chain);
     adapter->chain = chain;
+    chain->supports_splice = WW_HAVE_SPLICE;
     int sockets[2];
     twfRequire(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) == 0, "accept socketpair failed");
     wio_t             *io   = wioGet(env.loop, sockets[0]);
@@ -890,6 +901,7 @@ static void runAcceptedInitPauseCase(void)
     twfRequire(expected_line != NULL, "accepted line did not receive Init");
     adapter_lstate_t *ls = lineGetState(expected_line, adapter);
     twfRequire(ls->read_paused && ! (io->events & WW_READ), "accept restarted reads after Init Pause");
+    twfRequire(! wioIsSpliceEnabled(io), "Init preference was not applied before starting reads");
     tcplistenerTunnelDownStreamResume(adapter, expected_line);
     twfRequire(! ls->read_paused && (io->events & WW_READ), "genuine Resume did not enable reads");
     finishLine(expected_line);
@@ -900,6 +912,82 @@ static void runAcceptedInitPauseCase(void)
     tunnelDestroy(adapter);
     tunnelDestroy(neighbor);
     twfWorkerEnvTeardown(&env);
+}
+#endif
+
+#if WW_HAVE_SPLICE
+static unsigned preference_reads;
+
+static void preferSourceReads(line_t *line)
+{
+#ifdef TCP_PAUSE_TEST_LISTENER
+    linePreferOrdinaryReadUpstream(line);
+#else
+    linePreferOrdinaryReadDownstream(line);
+#endif
+}
+
+static void preferencePayload(tunnel_t *t, line_t *line, sbuf_t *buf)
+{
+    twfRequire(t == neighbor && line == progress_fixture->line, "preference read reached the wrong line");
+    twfRequire(sbufIsSplice(buf) == (preference_reads < 2), "receive boundary changed the wrong representation");
+    sbuf_t *ordinary = buf;
+    if (sbufIsSplice(buf))
+        ordinary = sbufSpliceMaterializeToBuffer(
+            buf, bufferpoolGetLargeBuffer(lineGetBufferPool(line)), lineGetBufferPool(line));
+    twfRequire(sbufGetLength(ordinary) == 3 && memoryEqual(sbufGetRawPtr(ordinary), "abc", 3),
+               "read preference changed payload bytes");
+    lineReuseBuffer(line, ordinary);
+    ++preference_reads;
+    // No write follows this request: the next receive must observe it itself.
+    preferSourceReads(line);
+    preferSourceReads(line);
+}
+
+static void runReadPreferenceCase(void)
+{
+    twfSetCase("directional ordinary-read preference without socket writes");
+    tcp_progress_fixture_t fixture;
+    progressSetup(&fixture, false);
+    twfRequire(! linePrefersOrdinaryReadUpstream(fixture.line) && ! linePrefersOrdinaryReadDownstream(fixture.line),
+               "new line inherited a read preference");
+    twfRequire(wioEnableSplice(fixture.io) == 0, "could not enable splice after adapter read registration");
+#ifdef TCP_PAUSE_TEST_LISTENER
+    neighbor->fnPayloadU = preferencePayload;
+    linePreferOrdinaryReadDownstream(fixture.line);
+    twfRequire(wioRead(fixture.io) == 0, "could not start listener preference reads");
+#else
+    neighbor->fnPayloadD = preferencePayload;
+    neighbor->fnEstD     = connectorEst;
+    linePreferOrdinaryReadUpstream(fixture.line);
+    tcpconnectorOnOutBoundConnected(fixture.io);
+#endif
+    sbuf_t *empty = bufferpoolGetSmallBuffer(fixture.env.pool);
+    submit(fixture.line, empty);
+    twfRequire(wioIsSpliceEnabled(fixture.io), "opposite-direction preference changed this socket");
+    preference_reads = 0;
+    for (unsigned i = 0; i < 3; ++i)
+    {
+        twfRequire(send(fixture.peer, "abc", 3, 0) == 3, "failed to feed adapter preference test");
+        for (unsigned attempt = 0; attempt < 32 && preference_reads == i; ++attempt)
+            discard wloopProcessEvents(fixture.env.loop, 0);
+        twfRequire(preference_reads == i + 1, "adapter did not deliver preference input");
+        twfRequire(wioIsSpliceEnabled(fixture.io) == (i == 0), "receive did not apply ordinary-read preference");
+    }
+    // Resume observes a request made while reads are stopped, before another read.
+#ifdef TCP_PAUSE_TEST_LISTENER
+    tcplistenerTunnelDownStreamPause(adapter, fixture.line);
+#else
+    tcpconnectorTunnelUpStreamPause(adapter, fixture.line);
+#endif
+    twfRequire(wioEnableSplice(fixture.io) == 0, "could not switch stopped WIO mode");
+#ifdef TCP_PAUSE_TEST_LISTENER
+    tcplistenerTunnelDownStreamResume(adapter, fixture.line);
+#else
+    tcpconnectorTunnelUpStreamResume(adapter, fixture.line);
+#endif
+    twfRequire(! wioIsSpliceEnabled(fixture.io), "Resume did not reapply the persistent preference");
+    progressTeardown(&fixture);
 }
 #endif
 
@@ -919,6 +1007,7 @@ int main(void)
     runAcceptedInitPauseCase();
 #endif
 #if WW_HAVE_SPLICE
+    runReadPreferenceCase();
     runPauseCase(true, true);
     runPauseCase(true, false);
 #endif

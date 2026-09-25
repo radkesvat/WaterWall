@@ -12,6 +12,7 @@ void tcpconnectorTunnelUpStreamResume(tunnel_t *t, line_t *l)
         lstate->read_paused = false;
         if (lstate->io != NULL)
         {
+            tcpconnectorApplyReadPreference(lstate);
             if (UNLIKELY(wioRead(lstate->io) != 0))
             {
                 return;

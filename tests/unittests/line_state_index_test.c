@@ -93,6 +93,8 @@ static void testDenseSlots(void)
     for (unsigned int iteration = 0; iteration < 3; ++iteration)
     {
         line_t *line = lineCreateForWorker(0, pools, 0);
+        require(! linePrefersOrdinaryReadUpstream(line) && ! linePrefersOrdinaryReadDownstream(line),
+                "new or recycled line inherited ordinary-read preferences");
         require(sizeof(line->refc) == sizeof(uint32_t) && atomicLoadU32Relaxed(&line->refc) == 1,
                 "new line did not start with one 32-bit reference");
         lineRef(line);
@@ -127,6 +129,10 @@ static void testDenseSlots(void)
             }
             require(lineIsAlive(line) && lineGetWID(line) == 0, "slot clearing damaged the line header");
         }
+        // This fixture has no event-worker binding; seed old pooled storage to
+        // prove creation clears both flags without invoking owner-only setters.
+        line->prefer_ordinary_read_u = true;
+        line->prefer_ordinary_read_d = true;
         lineDestroy(line);
         require(masterpoolGetCheckedOut(master) == 0, "dense line was not returned to its pool");
     }

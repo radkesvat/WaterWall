@@ -1742,9 +1742,9 @@ static void testRetiringSibling(unsigned mode, unsigned path)
     f.retirement_lines[1] = b;
     f.retirement_path     = path;
     f.on_finish           = sendOnRetiringSibling;
-    udp_test_short_splice = true;
+    udp_test_retire_send  = true;
     udpconnectorTunnelUpStreamPayload(f.connector, a, udpTestSplicePayload(f.env.pool));
-    twfRequire(! udp_test_short_splice, "retirement must follow a real positive-short splice");
+    twfRequire(! udp_test_retire_send, "retirement injection did not reach the shared sender");
     twfRequireEqualU32(f.sibling_actions, 1, "nested sibling action did not execute exactly once");
     twfRequireEqualU32(f.finish_calls, 2, "retirement reflected or duplicated Finish");
     twfRequire(! lineIsAlive(a) && ! lineIsAlive(b), "affected owners must destroy both normal lines");
@@ -1797,7 +1797,7 @@ static void testSpliceSocketRetirement(void)
                 addresscontextCopy(&ls->packet_destinations[0].dest_ctx, lineGetDestinationAddressContext(a));
                 ls->packet_destinations[0].has_context = true;
             }
-            udp_test_short_splice = true;
+            udp_test_retire_send = true;
             if (path == 0)
             {
                 udpconnectorTunnelUpStreamPayload(f.connector, a, udpTestSplicePayload(f.env.pool));

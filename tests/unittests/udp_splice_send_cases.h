@@ -1,24 +1,7 @@
 /* Real private pipes and socket failure effects for udp_datagram_write_test.c. */
 #if WW_HAVE_SPLICE
-static int probe_pipe_error;
-int        __real_pipe2(int pipefd[2], int flags);
-int        __wrap_pipe2(int pipefd[2], int flags);
-int        __wrap_pipe2(int pipefd[2], int flags)
-{
-    if (probe_pipe_error != 0)
-    {
-        errno            = probe_pipe_error;
-        probe_pipe_error = 0;
-        return -1;
-    }
-    return __real_pipe2(pipefd, flags);
-}
-
-static int        splice_error;
-static bool       splice_short, discard_cork;
-static int        observed_pipe = -1;
-static unsigned   pipe_reads, splice_calls;
-static sockaddr_u failure_peer;
+static int      observed_pipe = -1;
+static unsigned pipe_reads, splice_calls;
 
 ssize_t __real_splice(int in, loff_t *off_in, int out, loff_t *off_out, size_t length, unsigned flags);
 ssize_t __wrap_splice(int in, loff_t *off_in, int out, loff_t *off_out, size_t length, unsigned flags);
@@ -33,31 +16,6 @@ ssize_t __wrap_read(int fd, void *buffer, size_t length)
 ssize_t __wrap_splice(int in, loff_t *off_in, int out, loff_t *off_out, size_t length, unsigned flags)
 {
     ++splice_calls;
-    require((flags & SPLICE_F_MORE) != 0, "UDP splice must retain every internal chunk until commit");
-    if (splice_error)
-    {
-        errno        = splice_error;
-        splice_error = 0;
-        return -1;
-    }
-    if (splice_short)
-    {
-        splice_short  = false;
-        ssize_t moved = __real_splice(in, off_in, out, off_out, length / 2, flags);
-        require(moved > 0, "failure injection must actually consume pipe bytes");
-        if (discard_cork)
-        {
-            /* Induce a real append overflow after partial consumption. The kernel
-             * discards pending assembly; the writer cannot infer this from a
-             * positive short splice result. No malformed datagram is published. */
-            static char overflow[65507];
-            require(__real_sendto(
-                        out, overflow, sizeof(overflow), MSG_MORE, &failure_peer.sa, SOCKADDR_LEN(&failure_peer)) < 0 &&
-                        errno == EMSGSIZE,
-                    "kernel did not discard overflowing assembly");
-        }
-        return moved;
-    }
     return __real_splice(in, off_in, out, off_out, length, flags);
 }
 
@@ -77,7 +35,7 @@ static sbuf_t *makePipePayload(buffer_pool_t *pool, uint32_t body, const char *p
     sbufShiftLeft(buf, prefix_len);
     sbufWrite(buf, prefix, prefix_len);
     observed_pipe = meta.pipefd[0];
-    pipe_reads = splice_calls = 0;
+    pipe_reads = splice_calls = udp_sendto_calls = 0;
     return buf;
 }
 static int boundPeer(int family, const char *host, sockaddr_u *addr)
@@ -100,34 +58,6 @@ static void expectPipeDatagram(int fd, uint32_t body, const char *prefix)
         require(bytes[i] == 'B', "UDP pipe body changed");
     require(recv(fd, bytes, sizeof(bytes), 0) < 0 && errno == EAGAIN, "extra UDP datagram emitted");
 }
-static void runProbeAllocationRefusalChecks(wloop_t *loop, buffer_pool_t *pool)
-{
-    sockaddr_u peer;
-    int        receiver = boundPeer(AF_INET, "127.0.0.1", &peer);
-    wio_t     *io       = wloopCreateUdpServer(loop, "127.0.0.1", 0);
-    require(io != NULL, "probe refusal sender");
-    const int errors[] = {EMFILE, ENFILE, ENOMEM};
-    for (unsigned i = 0; i < ARRAY_SIZE(errors); ++i)
-    {
-        sbuf_t                  *buf  = makePipePayload(pool, 1400, "prefix");
-        splice_buffer_metadata_t meta = sbufSpliceMetadata(buf);
-        /* Unknown capacity must probe even on hosts that refuse source-pipe growth. */
-        meta.pipe_capacity = 0;
-        sbufSpliceSetMetadata(buf, meta);
-        probe_pipe_error = errors[i];
-        require(wioWriteDatagram(io, buf, &peer) == 1406, "probe refusal lost complete datagram");
-        require(probe_pipe_error == 0 && pipe_reads > 0 && splice_calls == 0,
-                "probe refusal must materialize before priming the socket");
-        require(! wioIsClosed(io), "probe refusal retired an untouched socket");
-        expectPipeDatagram(receiver, 1400, "prefix");
-    }
-    /* The same socket remains usable after every refused probe. */
-    require(wioWriteDatagram(io, makePipePayload(pool, 17, ""), &peer) == 17, "post-refusal send");
-    expectPipeDatagram(receiver, 17, "");
-    wioClose(io);
-    close(receiver);
-}
-
 static void runSegmentedAndTcpPipeChecks(wloop_t *loop, buffer_pool_t *pool)
 {
     sockaddr_u peer;
@@ -161,14 +91,10 @@ static void runSegmentedAndTcpPipeChecks(wloop_t *loop, buffer_pool_t *pool)
     observed_pipe = meta.pipefd[0];
     pipe_reads = splice_calls = 0;
     require(wioWriteDatagram(io, buf, &peer) == (int) length, "segmented pipe send");
-    if (segments > 65536U / (unsigned) sysconf(_SC_PAGESIZE))
-        require(pipe_reads > 0 && splice_calls == 0,
-                "unsupported fragment layout must fall back before socket assembly");
-    else
-        require(pipe_reads == 0, "supported fragment layout unexpectedly materialized");
+    require(pipe_reads > 0 && splice_calls == 0, "segmented UDP body was not materialized");
     expectPipeDatagram(receiver, length, "");
 
-    /* A large resident prefix also spends the kernel skb fragment budget. */
+    /* Materialization includes the complete resident prefix and every pipe range. */
     char large_prefix[60001];
     memset(large_prefix, 'P', sizeof(large_prefix) - 1);
     large_prefix[60000] = 0;
@@ -195,8 +121,13 @@ static void runSegmentedAndTcpPipeChecks(wloop_t *loop, buffer_pool_t *pool)
     sbufSetLength(buf, length);
     sbufShiftLeft(buf, 60000);
     sbufWrite(buf, large_prefix, 60000);
-    udp_send_result_t sent = udpSendBuffer(wioGetFD(io), buf, &peer, false);
-    require(sent.bytes == (int) (60000 + length) && ! sent.retire, "prefix fragment budget retired a valid datagram");
+    observed_pipe = meta.pipefd[0];
+    pipe_reads = splice_calls = udp_sendto_calls = 0;
+    udp_send_result_t sent                       = udpSendBuffer(wioGetFD(io), buf, &peer, false);
+    require(sent.bytes == (int) (60000 + length) && ! sent.retire, "large-prefix datagram send failed");
+    require(pipe_reads > 0 && splice_calls == 0 && udp_sendto_calls == 1 && udp_sendto_flags == 0 &&
+                udp_sendto_length == 60000 + length && sbufGetLength(buf) == 0,
+            "large-prefix materialization changed send geometry or ownership");
     expectPipeDatagram(receiver, length, large_prefix);
     sbufDestroy(buf);
 
@@ -222,13 +153,44 @@ static void runSegmentedAndTcpPipeChecks(wloop_t *loop, buffer_pool_t *pool)
     sbufSetLength(buf, sizeof(bytes));
     observed_pipe = meta.pipefd[0];
     pipe_reads = splice_calls = 0;
-    require(wioWriteDatagram(io, buf, &peer) == sizeof(bytes) && pipe_reads == 0, "TCP-origin pipe UDP send");
+    require(wioWriteDatagram(io, buf, &peer) == sizeof(bytes) && pipe_reads > 0 && splice_calls == 0,
+            "TCP-origin pipe UDP send did not materialize");
     expectPipeDatagram(receiver, sizeof(bytes), "");
     close(server);
     close(client);
     close(listener);
     close(receiver);
     wioClose(io);
+}
+
+static void checkOddFragmentDatagram(wio_t *io, buffer_pool_t *pool, const sockaddr_u *peer, int receiver)
+{
+    // Distinct short fragments must remain one intact datagram.
+    const char *parts[] = {"abc", "DEFGH"};
+    sbuf_t     *buf     = bufferpoolGetSpliceBuffer(pool);
+    require(buf != NULL, "odd-fragment private pipe");
+    splice_buffer_metadata_t meta = sbufSpliceMetadata(buf);
+    for (unsigned i = 0; i < ARRAY_SIZE(parts); ++i)
+    {
+        int    pipefd[2];
+        size_t length = strlen(parts[i]);
+        require(pipe2(pipefd, O_NONBLOCK | O_CLOEXEC) == 0, "odd fragment source pipe");
+        require(write(pipefd[1], parts[i], length) == (ssize_t) length, "odd fragment source bytes");
+        require(__real_splice(pipefd[0], NULL, meta.pipefd[1], NULL, length, SPLICE_F_NONBLOCK) == (ssize_t) length,
+                "odd fragment assembly");
+        close(pipefd[0]);
+        close(pipefd[1]);
+    }
+    buf->capacity = buf->l_pad + 8;
+    sbufSetLength(buf, 8);
+    observed_pipe = meta.pipefd[0];
+    pipe_reads = splice_calls = udp_sendto_calls = 0;
+    require(wioWriteDatagram(io, buf, peer) == 8, "odd-fragment UDP send failed");
+    require(pipe_reads > 0 && splice_calls == 0 && udp_sendto_calls == 1 && udp_sendto_length == 8 &&
+                udp_sendto_flags == 0,
+            "UDP pipe body must materialize before one ordinary socket send");
+    expectDatagram(receiver, "abcDEFGH", "odd-fragment UDP bytes/checksum changed");
+    expectNoDatagram(receiver, "odd-fragment send emitted extra datagrams");
 }
 
 static void runSpliceUdpChecks(wloop_t *loop, buffer_pool_t *pool)
@@ -254,6 +216,7 @@ static void runSpliceUdpChecks(wloop_t *loop, buffer_pool_t *pool)
         {
             if (connected)
                 require(connect(wioGetFD(io), &addr_a.sa, SOCKADDR_LEN(&addr_a)) == 0, "connect UDP sender");
+            checkOddFragmentDatagram(io, pool, &addr_a, a);
             const uint32_t bodies[]   = {0, 0, 4, 4000};
             const char    *prefixes[] = {"", "head", "", "head"};
             for (unsigned i = 0; i < 4; ++i)
@@ -261,8 +224,9 @@ static void runSpliceUdpChecks(wloop_t *loop, buffer_pool_t *pool)
                 sbuf_t *buf = makePipePayload(pool, bodies[i], prefixes[i]);
                 require(wioWriteDatagram(io, buf, &addr_a) == (int) (bodies[i] + strlen(prefixes[i])),
                         "full UDP splice send");
-                require(pipe_reads == 0 && splice_calls == (bodies[i] ? 1U : 0U),
-                        "fast path read/materialized pipe body");
+                require((pipe_reads > 0) == (bodies[i] != 0) && splice_calls == 0 && udp_sendto_calls == 1 &&
+                            udp_sendto_flags == 0 && udp_sendto_length == bodies[i] + strlen(prefixes[i]),
+                        "UDP input did not use one complete ordinary send");
                 expectPipeDatagram(a, bodies[i], prefixes[i]);
                 buf = makePipePayload(pool, 4, "B-peer");
                 wioSetPeerAddr(io, &addr_b.sa, SOCKADDR_LEN(&addr_b));
@@ -282,56 +246,65 @@ static void runSpliceUdpChecks(wloop_t *loop, buffer_pool_t *pool)
         sbufSetLength(oversize, sizeof(body));
         sbufShiftLeft(oversize, 65504);
         memset(sbufGetMutablePtr(oversize), 0, 65504);
-        splice_calls               = 0;
-        udp_send_result_t rejected = udpSendBuffer(wioGetFD(io), oversize, &addr_a, false);
-        require(rejected.error == EMSGSIZE && ! rejected.retire && splice_calls == 0, "oversize touched socket");
+        observed_pipe = sbufSpliceMetadata(oversize).pipefd[0];
+        pipe_reads = splice_calls = udp_sendto_calls = 0;
+        udp_send_result_t rejected                   = udpSendBuffer(wioGetFD(io), oversize, &addr_a, false);
+        require(rejected.error == EMSGSIZE && ! rejected.retire && splice_calls == 0 && pipe_reads == 0 &&
+                    udp_sendto_calls == 0 && sbufGetLength(oversize) == 65528,
+                "oversize touched socket or consumed input");
         sbufDestroy(oversize);
         wioClose(io);
         close(a);
         close(b);
     }
     runSegmentedAndTcpPipeChecks(loop, pool);
-    runProbeAllocationRefusalChecks(loop, pool);
     sockaddr_u peer;
     int        receiver = boundPeer(AF_INET, "127.0.0.1", &peer);
     const int  errors[] = {EINTR, EAGAIN, ENOBUFS, EMSGSIZE, EHOSTUNREACH};
-    for (unsigned stage = 0; stage < 5; ++stage)
-        for (unsigned e = 0; e < sizeof(errors) / sizeof(errors[0]); ++e)
-        {
-            wio_t *io = wloopCreateUdpServer(loop, "127.0.0.1", 0);
-            require(io != NULL, "failure socket");
-            sbuf_t *buf    = makePipePayload(pool, 4000, "head");
-            int     reader = dup(sbufSpliceMetadata(buf).pipefd[0]);
-            require(reader >= 0, "observe discarded pipe");
-            if (stage == 0)
-                force_sendto_errno = errors[e];
-            if (stage == 1)
-                splice_error = errors[e];
-            if (stage == 2 || stage == 3)
-            {
-                splice_short = true;
-                discard_cork = stage == 3;
-                failure_peer = peer;
-            }
-            if (stage == 4)
-                commit_error = errors[e];
-            int sent = wioWriteDatagram(io, buf, &peer);
-            require(sent <= 0, "partial UDP send reported success");
-            require(wioIsClosed(io) == (stage != 0), "wrong retirement policy");
-            char    byte;
-            ssize_t n = read(reader, &byte, 1);
-            require(n == 0 || (n < 0 && errno == EAGAIN), "failure leaked pipe bytes");
-            close(reader);
-            expectNoDatagram(receiver, "failed assembly leaked prefix/suffix");
-            if (stage != 0)
-            {
-                require(wioWriteDatagram(io, makePayload(pool, "stale"), &peer) == -1, "retired WIO accepted write");
-                io = wloopCreateUdpServer(loop, "127.0.0.1", 0);
-            }
-            require(wioWriteDatagram(io, makePayload(pool, "clean"), &peer) == 5, "safe next send failed");
-            expectDatagram(receiver, "clean", "pending assembly contaminated next send");
-            wioClose(io);
-        }
+    for (unsigned e = 0; e < ARRAY_SIZE(errors); ++e)
+    {
+        wio_t *io = wloopCreateUdpServer(loop, "127.0.0.1", 0);
+        require(io != NULL, "failure socket");
+        sbuf_t *buf    = makePipePayload(pool, 4000, "head");
+        int     reader = dup(sbufSpliceMetadata(buf).pipefd[0]);
+        require(reader >= 0, "observe discarded pipe");
+        force_sendto_errno   = errors[e];
+        int        sent      = wioWriteDatagram(io, buf, &peer);
+        const bool transient = errors[e] == EINTR || errors[e] == EAGAIN || errors[e] == ENOBUFS;
+        require(sent == (transient ? 0 : -1) && ! wioIsClosed(io), "materialized send changed error policy");
+        require(wioGetWriteBufSize(io) == 0 && ! (wioGetEvents(io) & WW_WRITE), "failed UDP write was queued");
+        require(pipe_reads > 0 && splice_calls == 0 && udp_sendto_calls == 1 && udp_sendto_length == 4004 &&
+                    udp_sendto_flags == 0,
+                "failed send did not materialize the complete datagram");
+        char    byte;
+        ssize_t n = read(reader, &byte, 1);
+        require(n == 0 || (n < 0 && errno == EAGAIN), "failure leaked pipe bytes");
+        close(reader);
+        expectNoDatagram(receiver, "failed send leaked a datagram");
+        require(wioWriteDatagram(io, makePayload(pool, "clean"), &peer) == 5, "safe next send failed");
+        expectDatagram(receiver, "clean", "failed send contaminated next send");
+        wioClose(io);
+    }
+    /* Retrying EINTR reuses the materialized bytes, never the consumed pipe. */
+    wio_t *io = wloopCreateUdpServer(loop, "127.0.0.1", 0);
+    require(io != NULL, "EINTR policy socket");
+    for (unsigned retry = 0; retry < 2; ++retry)
+    {
+        sbuf_t *buf              = makePipePayload(pool, 4000, "head");
+        force_sendto_errno       = EINTR;
+        udp_send_result_t result = udpSendBuffer(wioGetFD(io), buf, &peer, retry != 0);
+        require(result.bytes == (retry ? 4004 : -1) && result.error == (retry ? 0 : EINTR) && ! result.retire,
+                "materialized send changed EINTR retry policy");
+        require(sbufGetLength(buf) == 0 && pipe_reads > 0 && splice_calls == 0 && udp_sendto_calls == retry + 1 &&
+                    udp_sendto_length == 4004 && udp_sendto_flags == 0,
+                "EINTR retry lost source ownership or datagram bytes");
+        bufferpoolReuseBuffer(pool, buf);
+        if (retry)
+            expectPipeDatagram(receiver, 4000, "head");
+        else
+            expectNoDatagram(receiver, "non-retried EINTR sent a datagram");
+    }
+    wioClose(io);
     observed_pipe = -1;
     close(receiver);
 }

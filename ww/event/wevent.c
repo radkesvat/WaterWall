@@ -143,7 +143,6 @@ void wioReady(wio_t *io)
     io->close                 = 0;
     io->release_no_close      = 0;
     io->splice_enabled        = 0;
-    io->read_started          = 0;
 #ifndef EVENT_IOCP
     io->close_in_progress = 0;
 #endif
@@ -369,7 +368,6 @@ int wioGetFD(const wio_t *io)
 int wioEnableSplice(wio_t *io)
 {
     assert(io->ready && ! io->closed);
-    assert(! io->read_started && "Splice must be enabled before starting WIO reads");
 #if WW_HAVE_SPLICE
     io->splice_enabled = 1;
     return 0;

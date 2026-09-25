@@ -1,25 +1,26 @@
 #pragma once
 #include "splice_buffer.h"
-#if WW_HAVE_SPLICE
-/* Adapter fixtures retain their existing runtime/ownership harness. Inject a
- * short UDP write only after the real syscall has removed private-pipe bytes. */
-static bool udp_test_short_splice;
-static void (*udp_test_splice_observer)(void);
-ssize_t __real_splice(int in, loff_t *off_in, int out, loff_t *off_out, size_t length, unsigned flags);
-ssize_t __wrap_splice(int in, loff_t *off_in, int out, loff_t *off_out, size_t length, unsigned flags);
-ssize_t __wrap_splice(int in, loff_t *off_in, int out, loff_t *off_out, size_t length, unsigned flags)
+#include "udp_send.h"
+#if defined(OS_LINUX)
+/* Exercise owner cleanup independently of the sender's current implementation. */
+static bool udp_test_retire_send;
+static void (*udp_test_send_observer)(void);
+udp_send_result_t __real_udpSendBuffer(int fd, sbuf_t *buf, const sockaddr_u *peer, bool retry_eintr);
+udp_send_result_t __wrap_udpSendBuffer(int fd, sbuf_t *buf, const sockaddr_u *peer, bool retry_eintr);
+udp_send_result_t __wrap_udpSendBuffer(int fd, sbuf_t *buf, const sockaddr_u *peer, bool retry_eintr)
 {
-    if (udp_test_splice_observer != NULL)
-        udp_test_splice_observer();
-    if (udp_test_short_splice)
+    if (udp_test_send_observer != NULL)
+        udp_test_send_observer();
+    if (udp_test_retire_send)
     {
-        udp_test_short_splice = false;
-        ssize_t moved         = __real_splice(in, off_in, out, off_out, length / 2, flags);
-        twfRequire(moved > 0, "splice failure fixture must actually consume pipe bytes");
-        return moved;
+        udp_test_retire_send = false;
+        return (udp_send_result_t) {.bytes = -1, .error = EIO, .retire = true};
     }
-    return __real_splice(in, off_in, out, off_out, length, flags);
+    return __real_udpSendBuffer(fd, buf, peer, retry_eintr);
 }
+#endif
+
+#if WW_HAVE_SPLICE
 static sbuf_t *udpTestSplicePayload(buffer_pool_t *pool)
 {
     sbuf_t *buf = bufferpoolGetSpliceBuffer(pool);

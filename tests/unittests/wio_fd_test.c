@@ -2242,6 +2242,72 @@ static void testSharedBudget(void)
     teardown(&env);
 }
 
+#if WW_HAVE_SPLICE
+typedef struct splice_switch_probe_s
+{
+    unsigned calls;
+    sbuf_t  *held;
+} splice_switch_probe_t;
+
+static void switchReadMode(wio_t *io, sbuf_t *buf)
+{
+    splice_switch_probe_t *probe = weventGetUserdata(io);
+    const unsigned         step  = probe->calls++;
+    require(step < 4 && sbufGetLength(buf) == 3 && sbufIsSplice(buf) == (step % 2 != 0),
+            "read did not observe the selected representation");
+    if (step == 1)
+    {
+        // Retain a private body across mode changes and subsequent reads.
+        probe->held = buf;
+        wioDisableSplice(io);
+        return;
+    }
+    if (sbufIsSplice(buf))
+        buf = sbufSpliceMaterializeToBuffer(buf, bufferpoolGetLargeBuffer(io->loop->bufpool), io->loop->bufpool);
+    const char *expected[] = {"AAA", "BBB", "CCC", "DDD"};
+    require(memoryEqual(sbufGetRawPtr(buf), expected[step], 3), "mode switch changed stream bytes");
+    bufferpoolReuseBuffer(io->loop->bufpool, buf);
+    if (step == 0)
+        require(wioEnableSplice(io) == 0, "could not enable splice from an ordinary read callback");
+    else if (step == 2)
+    {
+        wioReadStop(io);
+        require(wioEnableSplice(io) == 0 && wioRead(io) == 0, "could not re-enable splice across read restart");
+    }
+    else
+        wioDisableSplice(io);
+}
+
+static void testSpliceModeSwitch(void)
+{
+    test_env_t env;
+    setup(&env);
+    int                   sockets[2];
+    wio_t                *io    = socketIO(&env, sockets);
+    splice_switch_probe_t probe = {0};
+    weventSetUserData(io, &probe);
+    wioSetCallBackRead(io, switchReadMode);
+    require(wioRead(io) == 0, "failed to start ordinary reads for mode switching");
+    const char *bytes[] = {"AAA", "BBB", "CCC", "DDD"};
+    for (unsigned step = 0; step < ARRAY_SIZE(bytes); ++step)
+    {
+        require(send(sockets[1], bytes[step], 3, 0) == 3, "failed to feed mode-switch input");
+        for (unsigned attempt = 0; attempt < 32 && probe.calls == step; ++attempt)
+            require(wloopProcessEvents(env.loop, 0) >= 0, "mode-switch dispatch failed");
+        require(probe.calls == step + 1, "mode-switch input was not delivered");
+    }
+    require(! wioIsSpliceEnabled(io) && probe.held != NULL, "mode switch lost retained splice input");
+    // The read preference must not change how a retained splice buffer is written.
+    require(wioWrite(io, probe.held) == 3, "ordinary read mode rejected a splice write");
+    char reply[3];
+    require(recv(sockets[1], reply, sizeof(reply), MSG_DONTWAIT) == 3 && memoryEqual(reply, "BBB", 3),
+            "retained body changed while switching modes");
+    wioFree(io);
+    close(sockets[1]);
+    teardown(&env);
+}
+#endif
+
 int main(void)
 {
     testSharedBudget();
@@ -2252,6 +2318,7 @@ int main(void)
     testPendingDescriptorReuse();
     testPendingDetachRejected();
 #if WW_HAVE_SPLICE
+    testSpliceModeSwitch();
     testDirectSpliceRead();
     testSpliceUrgentRead();
     testPipeCapacityPreference();

@@ -161,7 +161,6 @@ struct wio_s
 #ifdef OS_WIN
     unsigned fd_is_socket : 1; // Capture the native close kind when the descriptor is adopted.
 #endif
-    unsigned read_started : 1; // Sticky until descriptor reuse, including across wioReadStop().
 #ifndef EVENT_IOCP
     unsigned close_in_progress : 1; // Defer callback-driven wioFree until the close frame returns.
 #endif

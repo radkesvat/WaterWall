@@ -204,11 +204,11 @@ static void caseBorrowedLineFinishDoesNotDestroy(void)
 
 #if WW_HAVE_SPLICE
 static line_t  *splice_peer_line;
-static unsigned owner_splice_calls, owner_close_calls;
-static void     observeOwnerSplice(void)
+static unsigned owner_send_calls, owner_close_calls;
+static void     observeOwnerSend(void)
 {
     twfRequire(currentThreadIsEventWorkerWID(0), "adapter sent on a foreign worker");
-    ++owner_splice_calls;
+    ++owner_send_calls;
 }
 static void observeOwnerClose(wio_t *io)
 {
@@ -245,8 +245,8 @@ static void caseSpliceOwnerDispatch(bool cancel_drain)
     udpstatelesssocketTunnelOnPrepair(t);
     udpstatelesssocket_tstate_t *ts = tunnelGetState(t);
     twfRequire(ts->socket.io != NULL, "stateless socket prepare");
-    owner_splice_calls = owner_close_calls = 0;
-    udp_test_splice_observer               = observeOwnerSplice;
+    owner_send_calls = owner_close_calls = 0;
+    udp_test_send_observer               = observeOwnerSend;
     wioSetCallBackClose(ts->socket.io, observeOwnerClose);
     int        receiver = socket(AF_INET, SOCK_DGRAM, 0);
     sockaddr_u peer;
@@ -280,7 +280,7 @@ static void caseSpliceOwnerDispatch(bool cancel_drain)
     discard tosSetCurrentWorker(1);
     udpstatelesssocketDispatchToPeer(t, udpTestSplicePayload(env.pools[1]), &peer);
     udpstatelesssocketDispatchToPeer(t, udpTestSplicePayload(env.pools[1]), &peer);
-    udp_test_short_splice = true;
+    udp_test_retire_send = true;
     if (cancel_drain)
     {
         discard tosSetCurrentWorker(0);
@@ -300,8 +300,8 @@ static void caseSpliceOwnerDispatch(bool cancel_drain)
     tosPumpWorker(&env, 1);
     discard tosSetCurrentWorker(0);
     twfRequire(ts->socket.io == NULL && udpsockIsRetired(&ts->socket), "retirement retained stateless WIO");
-    twfRequire(owner_splice_calls == 3 && owner_close_calls == 1, "owner send/close count mismatch");
-    udp_test_splice_observer = NULL;
+    twfRequire(owner_send_calls == 3 && owner_close_calls == 1, "owner send/close count mismatch");
+    udp_test_send_observer = NULL;
     twfRequire(! lineIsAlive(splice_peer_line) && trace.next_finish == 1, "retirement retained owned peer line");
     lineUnref(splice_peer_line);
     splice_peer_line = NULL;

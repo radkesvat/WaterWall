@@ -33,7 +33,9 @@
 static test_worker_registry_t g_test_worker_registry;
 
 #if WW_HAVE_SPLICE
-static int commit_error;
+static unsigned udp_sendto_calls;
+static size_t   udp_sendto_length;
+static int      udp_sendto_flags;
 #endif
 static int force_sendto_errno = 0;
 static int force_send_errno   = 0;
@@ -46,12 +48,9 @@ ssize_t __wrap_send(int fd, const void *buf, size_t len, int flags);
 ssize_t __wrap_sendto(int fd, const void *buf, size_t len, int flags, const struct sockaddr *addr, socklen_t addrlen)
 {
 #if WW_HAVE_SPLICE
-    if (commit_error != 0 && len == 0 && flags == 0)
-    {
-        errno        = commit_error;
-        commit_error = 0;
-        return -1;
-    }
+    ++udp_sendto_calls;
+    udp_sendto_length = len;
+    udp_sendto_flags  = flags;
 #endif
     if (force_sendto_errno != 0)
     {

@@ -76,6 +76,8 @@ typedef struct line_s
     uint8_t           user_count;
     uint8_t           established : 1;
     uint8_t           recalculate_checksum : 1; // used for packet tunnels
+    uint8_t           prefer_ordinary_read_u : 1;
+    uint8_t           prefer_ordinary_read_d : 1;
     routing_context_t routing_context;
 
     generic_pool_t **pools;
@@ -103,14 +105,16 @@ static inline line_t *lineCreateForWorker(wid_t current, generic_pool_t **pools,
 {
     line_t *l = genericpoolGetItem(pools[current]);
 
-    *l = (line_t) {.refc                 = 1,
-                   .user_auths           = {0},
-                   .user_count           = 0,
-                   .wid                  = wid,
-                   .alive                = true,
-                   .pools                = pools,
-                   .established          = false,
-                   .recalculate_checksum = false,
+    *l = (line_t) {.refc                   = 1,
+                   .user_auths             = {0},
+                   .user_count             = 0,
+                   .wid                    = wid,
+                   .alive                  = true,
+                   .pools                  = pools,
+                   .established            = false,
+                   .recalculate_checksum   = false,
+                   .prefer_ordinary_read_u = false,
+                   .prefer_ordinary_read_d = false,
                    // to set a port we need to know the AF family, default v4
                    .routing_context =
                        (routing_context_t) {.dest_ctx = (address_context_t) {.ip_address.type = IPADDR_TYPE_V4},
@@ -429,6 +433,36 @@ static inline void lineMarkEstablished(line_t *const line)
 static inline bool lineIsEstablished(const line_t *const line)
 {
     return line->established;
+}
+
+/**
+ * Prefer ordinary source reads producing upstream/downstream payload on this
+ * exact line. Owner-worker requests are idempotent and last until line teardown;
+ * no caller may clear another node's preference. They do not change already
+ * delivered buffers or propagate to associated lines. Splice-capable nodes must
+ * still accept both representations. Adapters observe these flags at their next
+ * read-start, receive, or payload/write boundary, not synchronously here.
+ */
+static inline void linePreferOrdinaryReadUpstream(line_t *line)
+{
+    assert(lineIsAlive(line) && lineIsOnCurrentEventWorker(line));
+    line->prefer_ordinary_read_u = true;
+}
+
+static inline void linePreferOrdinaryReadDownstream(line_t *line)
+{
+    assert(lineIsAlive(line) && lineIsOnCurrentEventWorker(line));
+    line->prefer_ordinary_read_d = true;
+}
+
+static inline bool linePrefersOrdinaryReadUpstream(const line_t *line)
+{
+    return line->prefer_ordinary_read_u;
+}
+
+static inline bool linePrefersOrdinaryReadDownstream(const line_t *line)
+{
+    return line->prefer_ordinary_read_d;
 }
 
 /**
