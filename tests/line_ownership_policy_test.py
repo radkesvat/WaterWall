@@ -89,6 +89,8 @@ PAIRED_LINE_ALLOCATION = ("ww/net/pipe_tunnel.c", "pipeTo")
 # a tunnel routinely owns one role while borrowing another.
 
 CREATION_SITES = [
+    ("tests/unittests/tlsclient_fragment_test.c", "openLine", TEST_ONLY,
+     "fixture-owned source line; TlsClient and its fragment helper borrow it"),
     ("tests/unittests/streamfragmenter_test.c", "openLine", TEST_ONLY,
      "fixture-owned source line; StreamFragmenter only borrows it"),
     ("tests/unittests/streamfragmenter_test.c", "boundaries", TEST_ONLY,

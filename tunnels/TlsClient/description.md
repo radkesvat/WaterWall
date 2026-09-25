@@ -110,12 +110,61 @@ That arrangement lets:
 - `verbose` `(boolean, default: false)`
   Enables extra TLS state logging.
 
+- `fragment` `(object, default: absent)`
+  Inserts a private StreamFragmenter after TLS encoding; see TLS Stream Fragmentation below.
+
 - `tls13-record-shaping` `(object, default: absent/disabled)`
   Enables the experimental sender-side TLS 1.3 record shaping described below.
 
 Optional defaults apply only when their keys are absent. If `alpns` is absent, the Chrome-like default
 `["h2", "http/1.1"]` is used. If `verify`, `x25519mlkem768`, or `verbose` is present, it must be a JSON boolean. Any other
 type is a startup error.
+
+## TLS Stream Fragmentation
+
+An optional `fragment` object creates a private StreamFragmenter immediately after
+TlsClient:
+
+```text
+previous -> TlsClient -> internal StreamFragmenter -> configured next
+```
+
+```json
+"fragment": {
+  "mode": "counter",
+  "count": 1,
+  "cuts": [[250, 2, 100], [300, 5, 100]]
+}
+```
+
+The object uses the same settings and validation as StreamFragmenter: `mode`,
+`count` or `duration-ms`, `cuts`, optional `bypass_chance`, and optional
+`wait-for-est`. Omit `fragment` to omit the helper. A present value must be an
+object with valid StreamFragmenter settings; `null`, booleans, empty objects,
+and duplicate `fragment` keys are rejected.
+
+Fragmentation operates on outgoing TLS bytes after encryption. The complete
+initial ClientHello flight is submitted as one payload, so `count: 1` selects
+that first flight. Counts and cut offsets refer to payload callbacks, not TLS
+record or TCP packet boundaries. The helper preserves every byte and does not
+rewrite TLS record headers. Downstream TLS input is unchanged.
+
+`wait-for-est` defaults to `true`: the helper retains TLS output until transport
+Est has been forwarded, then starts fragment delays. Timed eligibility also
+starts at that first Est. Explicit `false` permits scheduling before Est; use it
+when the following path needs TLS bytes before it can emit Est. Later downstream
+buffering may still combine deliveries or change wire spacing.
+
+The helper shares the borrowed line and uses its existing bounded FIFO: 8 MiB
+logical bytes, 8 MiB capacity charge, and 1,024 jobs. Pause, reentry, Finish and
+shutdown use StreamFragmenter's normal ordering and cleanup. Its budget is
+separate from TLS plaintext and ciphertext-shaping storage. TlsClient continues
+to block whole-chain splice eligibility.
+
+`tls13-record-shaping` may be used together with `fragment`. Record padding and
+record delays run first; stream cuts and their delays run afterward. The raw
+ClientHello-generation API returns its normal buffer without running this
+per-line fragment helper.
 
 ## Experimental TLS 1.3 Record Shaping
 

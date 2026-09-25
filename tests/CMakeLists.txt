@@ -507,6 +507,23 @@ if(TARGET StreamFragmenter AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_
   endforeach()
 endif()
 add_waterwall_integration_test(waterwall.tls_roundtrip tls_roundtrip)
+if(TARGET TlsClient AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING)
+  set(tls_fragment_modes tls12 tls13 timed no_wait shaped pending)
+  if(TARGET Router)
+    list(APPEND tls_fragment_modes branch)
+  endif()
+  if(TARGET RealityClient AND TARGET RealityServer AND TARGET TlsServer AND TARGET TesterClient AND TARGET TesterServer)
+    list(APPEND tls_fragment_modes reality)
+  endif()
+  foreach(fragment_mode IN LISTS tls_fragment_modes)
+    set(fragment_case waterwall.tlsclient_fragment_${fragment_mode})
+    add_waterwall_isolated_test(${fragment_case}
+      "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tlsclient_fragment_integration.py"
+      "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>" "${fragment_mode}")
+    set_tests_properties(${fragment_case} PROPERTIES TIMEOUT 60)
+    add_waterwall_test_labels(${fragment_case} "integration" "tunnels" "tlsclient" "fragmenter")
+  endforeach()
+endif()
 add_waterwall_integration_test_with_timeout(
   waterwall.tls13_record_shaping_roundtrip
   tls13_record_shaping_roundtrip

@@ -26,6 +26,9 @@ typedef struct tlsclient_tstate_s
     tlsclient_handshake_ready_fn handshake_ready;
     SSL_CTX                    **threadlocal_ssl_contexts;
     SSL_CTX                    **threadlocal_ech_grease_inner_ssl_contexts;
+    tunnel_t                    *fragment_tunnel;
+    node_t                       fragment_node;
+    cJSON                       *fragment_settings;
 } tlsclient_tstate_t;
 
 typedef enum tlsclient_takeover_phase_e
@@ -120,6 +123,7 @@ static enum sslstatus getSslStatus(SSL *ssl, int n)
 WW_EXPORT void         tlsclientTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context);
 WW_EXPORT tunnel_t    *tlsclientTunnelCreate(node_t *node);
 WW_EXPORT api_result_t tlsclientTunnelApi(tunnel_t *instance, sbuf_t *message);
+void                   tlsclientTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 
 WW_EXPORT bool tlsclientTunnelIsHandshakeCompleted(tunnel_t *t, line_t *l);
 WW_EXPORT bool tlsclientTunnelGetHandshakeBinding(tunnel_t *t, line_t *l, tlsclient_handshake_binding_t *binding);

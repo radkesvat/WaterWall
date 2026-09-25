@@ -88,6 +88,7 @@ target_include_directories(DecompressBrotli PRIVATE
 #==============================================================================
 
 add_library(TlsClient STATIC
+    instance/chain.c
     instance/create.c
     instance/destroy.c
     instance/api.c
@@ -210,7 +211,7 @@ endif()
 #==============================================================================
 
 target_link_libraries(TlsClient PUBLIC TlsRecordShapingCommon)
-target_link_libraries(TlsClient PRIVATE ww BrotliDec DecompressBrotli crypto ssl)
+target_link_libraries(TlsClient PRIVATE StreamFragmenter ww BrotliDec DecompressBrotli crypto ssl)
 if(NOT APPLE)
     target_precompile_headers(TlsClient REUSE_FROM ww)
 endif()

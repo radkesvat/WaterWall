@@ -2937,7 +2937,7 @@ if(TARGET TlsClient)
     "-Wl,--wrap=WW_BSSL_SSL_new"
     "-Wl,--wrap=WW_BSSL_SSL_add_application_settings"
   )
-  target_link_libraries(tlsclient_line_failure_test PRIVATE ww ssl crypto)
+  target_link_libraries(tlsclient_line_failure_test PRIVATE StreamFragmenter ww ssl crypto)
   add_dependencies(waterwall_unit_tests tlsclient_line_failure_test)
 
   add_waterwall_unit_test(
@@ -2945,6 +2945,20 @@ if(TARGET TlsClient)
     tlsclient_line_failure_test
     "unit;tunnels;tlsclient;failure;line"
   )
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING)
+    add_executable(tlsclient_fragment_test tlsclient_fragment_test.c)
+    waterwall_line_failure_test_use_tunnel(tlsclient_fragment_test TlsClient)
+    target_include_directories(tlsclient_fragment_test BEFORE PRIVATE
+      ${CMAKE_SOURCE_DIR}/tunnels/TlsClient/boringssl/include
+      ${CMAKE_BINARY_DIR}/tunnels/TlsClient/boringssl/symbol_prefix_include)
+    target_link_options(tlsclient_fragment_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS}
+      "-Wl,--wrap=nodemanagerGetConfigNodeByHash" "-Wl,--wrap=nodemanagerCreateTunnelInstance"
+      "-Wl,--wrap=WW_BSSL_SSL_CTX_new")
+    target_link_libraries(tlsclient_fragment_test PRIVATE StreamFragmenter ww ssl crypto)
+    add_dependencies(waterwall_unit_tests tlsclient_fragment_test)
+    add_waterwall_unit_test(waterwall.tlsclient_fragment_unit tlsclient_fragment_test
+      "unit;tunnels;tlsclient;fragmenter;configuration;lifetime")
+  endif()
 endif()
 
 if(LINUX)

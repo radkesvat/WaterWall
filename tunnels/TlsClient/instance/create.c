@@ -1,3 +1,4 @@
+#include "StreamFragmenter/interface.h"
 #include "structure.h"
 
 #include "utils/cacert.h"
@@ -488,6 +489,43 @@ static bool tlsclientPreflightConfiguredClientHello(const tlsclient_tstate_t *ts
     return success;
 }
 
+static bool createFragmenter(tunnel_t *t, node_t *node)
+{
+    const cJSON *fragment = NULL, *item;
+    cJSON_ArrayForEach(item, node->node_settings_json)
+    {
+        if (stringCompare(item->string, "fragment") != 0)
+            continue;
+        if (fragment != NULL || ! cJSON_IsObject(item))
+        {
+            LOGF("TlsClient: fragment must be a single StreamFragmenter settings object");
+            return false;
+        }
+        fragment = item;
+    }
+    if (fragment == NULL)
+        return true;
+
+    tlsclient_tstate_t *ts = tunnelGetState(t);
+    ts->fragment_settings  = cJSON_Duplicate(fragment, true);
+    if (ts->fragment_settings == NULL || ! nodeConfigureChild(&ts->fragment_node,
+                                                              nodeStreamFragmenterGet(),
+                                                              node,
+                                                              ".stream-fragmenter",
+                                                              kNodeChildLinkOwnerNext,
+                                                              ts->fragment_settings))
+        return false;
+    ts->fragment_tunnel = nodemanagerCreateTunnelInstance(&ts->fragment_node);
+    if (ts->fragment_tunnel == NULL)
+    {
+        LOGF("TlsClient: failed to construct fragment helper");
+        return false;
+    }
+    ts->fragment_node.instance = ts->fragment_tunnel;
+    t->onChain                 = tlsclientTunnelOnChain;
+    return true;
+}
+
 tunnel_t *tlsclientTunnelCreate(node_t *node)
 {
     tunnel_t *t = tunnelCreate(node, sizeof(tlsclient_tstate_t), sizeof(tlsclient_lstate_t));
@@ -502,7 +540,7 @@ tunnel_t *tlsclientTunnelCreate(node_t *node)
     tlsclient_tstate_t *ts           = tunnelGetState(t);
     const cJSON        *settings     = node->node_settings_json;
 
-    if (! getandvalidateSniSetting(ts, settings))
+    if (! getandvalidateSniSetting(ts, settings) || ! createFragmenter(t, node))
     {
         goto fail;
     }

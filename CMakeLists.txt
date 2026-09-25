@@ -286,6 +286,11 @@ option(INCLUDE_DOMAIN_RESOLVER          "link DomainResolver staticly to the cor
 option(INCLUDE_STREAM_FRAGMENTER        "link StreamFragmenter statically to the core"                              TRUE)
 option(INCLUDE_USER_CONTROLLER          "link UserController staticly to the core"                                  TRUE)
 
+if(INCLUDE_TLS_CLIENT AND NOT INCLUDE_STREAM_FRAGMENTER)
+  message(STATUS "Forcing StreamFragmenter because TlsClient uses it internally")
+  set(INCLUDE_STREAM_FRAGMENTER TRUE CACHE BOOL "link StreamFragmenter statically to the core" FORCE)
+endif()
+
 if((INCLUDE_HTTP_PROXY_CLIENT OR INCLUDE_TCPCONNECTOR OR INCLUDE_UDP_CONNECTOR OR INCLUDE_SOCKS5_CLIENT OR INCLUDE_VLESS_CLIENT OR INCLUDE_TROJAN_CLIENT OR INCLUDE_ROUTER OR INCLUDE_CONNECTION_TO_PACKETS) AND NOT INCLUDE_DOMAIN_RESOLVER)
   message(STATUS "Forcing DomainResolver because connector/client/router tunnels use it internally")
   set(INCLUDE_DOMAIN_RESOLVER TRUE CACHE BOOL "link DomainResolver staticly to the core" FORCE)

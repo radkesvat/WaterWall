@@ -1064,6 +1064,18 @@ void tlsclientTunnelstateDestroy(tlsclient_tstate_t *ts)
 {
     assert(ts != NULL);
 
+    if (ts->fragment_tunnel != NULL)
+    {
+        tunnelOwnedChildDestroy(ts->fragment_tunnel);
+        ts->fragment_tunnel = NULL;
+    }
+    cJSON_Delete(ts->fragment_settings);
+    ts->fragment_settings = NULL;
+    memoryFree(ts->fragment_node.name);
+    memoryFree(ts->fragment_node.type);
+    memoryFree(ts->fragment_node.next);
+    memoryZero(&ts->fragment_node, sizeof(ts->fragment_node));
+
     tlsclientFreeSslContextPool(&ts->threadlocal_ssl_contexts);
     tlsclientFreeSslContextPool(&ts->threadlocal_ech_grease_inner_ssl_contexts);
 
