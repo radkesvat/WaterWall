@@ -1098,3 +1098,54 @@ add_waterwall_privileged_probe_integration_test(
   waterwall.device_fragment_normalized_roundtrip device_fragment_normalized_roundtrip 25)
 add_waterwall_privileged_probe_integration_test(
   waterwall.device_fragment_raw_forward device_fragment_raw_forward 20)
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING AND TARGET HttpProxyClient)
+  add_waterwall_isolated_test(waterwall.httpproxyclient_pending_dns_shutdown
+    "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/httpproxyclient_splice_integration.py"
+    "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>" pending_shutdown)
+  set_tests_properties(waterwall.httpproxyclient_pending_dns_shutdown PROPERTIES TIMEOUT 30)
+  add_waterwall_test_labels(waterwall.httpproxyclient_pending_dns_shutdown "integration" "http" "proxy" "lifetime")
+  add_waterwall_case_resource_lock(waterwall.httpproxyclient_pending_dns_shutdown httpproxyclient_splice)
+  set(_hpc_modes connect fixed chunked response_chunked response_eof resolve_fixed)
+  if(TARGET HttpProxyServer)
+    list(APPEND _hpc_modes resolve_dynamic)
+  endif()
+  if(TARGET Router)
+    list(APPEND _hpc_modes resolve_branch)
+  endif()
+  foreach(mode IN LISTS _hpc_modes)
+    foreach(splice_mode IN ITEMS true false)
+      add_waterwall_isolated_test(waterwall.httpproxyclient_${mode}_splice_${splice_mode}
+        "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/httpproxyclient_splice_integration.py"
+        "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>" "${mode}" "${splice_mode}" direct)
+      set_tests_properties(waterwall.httpproxyclient_${mode}_splice_${splice_mode} PROPERTIES TIMEOUT 60)
+      add_waterwall_test_labels(waterwall.httpproxyclient_${mode}_splice_${splice_mode} "integration" "http" "proxy")
+      add_waterwall_case_resource_lock(waterwall.httpproxyclient_${mode}_splice_${splice_mode} httpproxyclient_splice)
+    endforeach()
+  endforeach()
+  if(TARGET HttpProxyServer)
+    foreach(auth IN ITEMS noauth local tracked)
+      foreach(mode IN ITEMS connect fixed chunked)
+        foreach(splice_mode IN ITEMS true false)
+          add_waterwall_isolated_test(waterwall.httpproxyclient_${auth}_${mode}_${splice_mode}
+            "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/httpproxyclient_splice_integration.py"
+            "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>" "${mode}" "${splice_mode}" "${auth}")
+          set_tests_properties(waterwall.httpproxyclient_${auth}_${mode}_${splice_mode} PROPERTIES TIMEOUT 60)
+          add_waterwall_test_labels(waterwall.httpproxyclient_${auth}_${mode}_${splice_mode} "integration" "http" "proxy")
+          add_waterwall_case_resource_lock(waterwall.httpproxyclient_${auth}_${mode}_${splice_mode} httpproxyclient_splice)
+        endforeach()
+      endforeach()
+    endforeach()
+  endif()
+endif()
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING AND TARGET HttpProxyClient AND TARGET TlsClient AND TARGET TlsServer)
+  foreach(splice_mode IN ITEMS true false)
+    add_waterwall_isolated_test(waterwall.httpproxyclient_tls_splice_${splice_mode}
+      "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/httpproxyclient_splice_integration.py"
+      "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>" connect "${splice_mode}" tls)
+    set_tests_properties(waterwall.httpproxyclient_tls_splice_${splice_mode} PROPERTIES TIMEOUT 60)
+    add_waterwall_test_labels(waterwall.httpproxyclient_tls_splice_${splice_mode} "integration" "http" "proxy")
+    add_waterwall_case_resource_lock(waterwall.httpproxyclient_tls_splice_${splice_mode} httpproxyclient_splice)
+  endforeach()
+endif()

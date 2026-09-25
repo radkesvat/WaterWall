@@ -1,0 +1,8 @@
+{
+  "name": "http-proxy-download",
+  "nodes": [
+    {"name": "listen", "type": "TcpListener", "next": "proxy", "settings": {"address": "127.0.0.1", "port": 8081}},
+    {"name": "proxy", "type": "HttpProxyClient", "next": "transport", "settings": {"mode": "http", "target-address": "origin.example", "port": 80, "method": "GET", "path": "/download", "body-mode": "none"}},
+    {"name": "transport", "type": "TcpConnector", "settings": {"address": "127.0.0.1", "port": 8080}}
+  ]
+}

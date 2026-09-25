@@ -248,6 +248,7 @@ option(INCLUDE_TROJAN_SERVER            "link TrojanServer staticly to the core"
 option(INCLUDE_VLESS_CLIENT             "link VlessClient staticly to the core"                                     TRUE)
 option(INCLUDE_VLESS_SERVER             "link VlessServer staticly to the core"                                     TRUE)
 option(INCLUDE_HTTP_SERVER              "link HttpServer staticly to the core"                                      TRUE)
+option(INCLUDE_HTTP_PROXY_CLIENT "link HttpProxyClient statically to the core" TRUE)
 option(INCLUDE_HTTP_PROXY_SERVER        "link HttpProxyServer statically to the core"                                TRUE)
 option(INCLUDE_HTTP_CLIENT              "link HttpClient staticly to the core"                                      TRUE)
 option(INCLUDE_SOCKS5_CLIENT            "link Socks5Client staticly to the core"                                    TRUE)
@@ -284,7 +285,7 @@ option(INCLUDE_SOFT_IP_LIMITER          "link SoftIpLimiter staticly to the core
 option(INCLUDE_DOMAIN_RESOLVER          "link DomainResolver staticly to the core"                                  TRUE)
 option(INCLUDE_USER_CONTROLLER          "link UserController staticly to the core"                                  TRUE)
 
-if((INCLUDE_TCPCONNECTOR OR INCLUDE_UDP_CONNECTOR OR INCLUDE_SOCKS5_CLIENT OR INCLUDE_VLESS_CLIENT OR INCLUDE_TROJAN_CLIENT OR INCLUDE_ROUTER OR INCLUDE_CONNECTION_TO_PACKETS) AND NOT INCLUDE_DOMAIN_RESOLVER)
+if((INCLUDE_HTTP_PROXY_CLIENT OR INCLUDE_TCPCONNECTOR OR INCLUDE_UDP_CONNECTOR OR INCLUDE_SOCKS5_CLIENT OR INCLUDE_VLESS_CLIENT OR INCLUDE_TROJAN_CLIENT OR INCLUDE_ROUTER OR INCLUDE_CONNECTION_TO_PACKETS) AND NOT INCLUDE_DOMAIN_RESOLVER)
   message(STATUS "Forcing DomainResolver because connector/client/router tunnels use it internally")
   set(INCLUDE_DOMAIN_RESOLVER TRUE CACHE BOOL "link DomainResolver staticly to the core" FORCE)
 endif()
@@ -932,6 +933,17 @@ if(INCLUDE_ROUTER)
   add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/Router)
   target_link_directories(${WATERWALL_APPLICATION_TARGET} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/Router)
   target_link_libraries(${WATERWALL_APPLICATION_TARGET} Router)
+endif()
+
+# Shared pure HTTP proxy parsing, before its consumers.
+if(INCLUDE_HTTP_PROXY_SERVER OR INCLUDE_HTTP_PROXY_CLIENT)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/Internals/HttpProxyCommon)
+endif()
+
+if(INCLUDE_HTTP_PROXY_CLIENT)
+  target_compile_definitions(${WATERWALL_APPLICATION_TARGET} PUBLIC INCLUDE_HTTP_PROXY_CLIENT=1)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/HttpProxyClient)
+  target_link_libraries(${WATERWALL_APPLICATION_TARGET} HttpProxyClient)
 endif()
 
 #http server

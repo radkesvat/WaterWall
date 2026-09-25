@@ -89,6 +89,8 @@ PAIRED_LINE_ALLOCATION = ("ww/net/pipe_tunnel.c", "pipeTo")
 # a tunnel routinely owns one role while borrowing another.
 
 CREATION_SITES = [
+    ("tests/unittests/http_proxy_client_lifecycle_test.c", "openLine", TEST_ONLY,
+     "fixture-owned source line; HttpProxyClient only borrows it"),
     ("tests/unittests/http_proxy_server_lifecycle_test.c", "resetClient", TEST_ONLY,
      "fixture-owned incoming client; production proxy owns its separate child"),
     ("tunnels/HttpProxyServer/common/lifecycle.c", "hpsCreateChild", NORMAL_OWNER,

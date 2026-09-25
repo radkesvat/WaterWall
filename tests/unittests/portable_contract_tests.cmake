@@ -59,6 +59,22 @@ if(WIN32)
     waterwall.atomic_u32_fallback_unit atomic_u32_fallback_test "unit;atomic;windows")
 endif()
 
+if(TARGET HttpProxyClient AND NOT TARGET http_proxy_client_lifecycle_test)
+  add_executable(http_proxy_client_lifecycle_test EXCLUDE_FROM_ALL
+    "${_waterwall_portable_unit_dir}/http_proxy_client_lifecycle_test.c")
+  target_link_libraries(http_proxy_client_lifecycle_test PRIVATE HttpProxyClient ww)
+  _waterwall_register_portable_contract(
+    waterwall.http_proxy_client_lifecycle_unit http_proxy_client_lifecycle_test "unit;http;proxy;portable;lifetime")
+endif()
+
+if(TARGET HttpProxyCommon AND NOT TARGET http_proxy_common_parser_test)
+  add_executable(http_proxy_common_parser_test EXCLUDE_FROM_ALL
+    "${_waterwall_portable_unit_dir}/http_proxy_common_parser_test.c")
+  target_link_libraries(http_proxy_common_parser_test PRIVATE HttpProxyCommon ww)
+  _waterwall_register_portable_contract(
+    waterwall.http_proxy_common_parser_unit http_proxy_common_parser_test "unit;http;proxy;portable")
+endif()
+
 if(TARGET HttpProxyServer AND NOT TARGET http_proxy_server_parser_test)
   foreach(kind IN ITEMS parser lifecycle)
     add_executable(http_proxy_server_${kind}_test EXCLUDE_FROM_ALL

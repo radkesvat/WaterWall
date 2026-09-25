@@ -232,6 +232,10 @@ static IMPORTED_TUNNEL_REGISTRATION_BOUNDARY void registerImportedTunnel(node_t 
 #include "tunnels/client/wolfssl/wolfssl_client.h"
 #endif
 
+#ifdef INCLUDE_HTTP_PROXY_CLIENT
+#include "HttpProxyClient/interface.h"
+#endif
+
 #ifdef INCLUDE_HTTP_PROXY_SERVER
 #include "HttpProxyServer/interface.h"
 #endif
@@ -579,6 +583,10 @@ ww_startup_result_t loadImportedTunnelsIntoCore(void)
 
 #ifdef INCLUDE_HTTP_SERVER
     USING(HttpServer);
+#endif
+
+#ifdef INCLUDE_HTTP_PROXY_CLIENT
+    USING(HttpProxyClient);
 #endif
 
 #ifdef INCLUDE_HTTP_PROXY_SERVER

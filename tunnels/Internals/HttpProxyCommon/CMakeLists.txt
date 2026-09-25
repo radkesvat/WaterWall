@@ -1,0 +1,6 @@
+add_library(HttpProxyCommon STATIC src/parser.c)
+target_include_directories(HttpProxyCommon PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(HttpProxyCommon PRIVATE ww)
+if(NOT APPLE)
+    target_precompile_headers(HttpProxyCommon REUSE_FROM ww)
+endif()

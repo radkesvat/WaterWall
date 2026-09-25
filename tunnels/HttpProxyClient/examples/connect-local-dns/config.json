@@ -1,0 +1,32 @@
+{
+  "name": "http-proxy-connect-local-dns",
+  "nodes": [
+    {
+      "name": "listen",
+      "type": "TcpListener",
+      "next": "proxy",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 8443
+      }
+    },
+    {
+      "name": "proxy",
+      "type": "HttpProxyClient",
+      "next": "transport",
+      "settings": {
+        "target-address": "origin.example",
+        "port": 443,
+        "domain-strategy": "resolve-domains-and-prefer-ipv4"
+      }
+    },
+    {
+      "name": "transport",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 8080
+      }
+    }
+  ]
+}
