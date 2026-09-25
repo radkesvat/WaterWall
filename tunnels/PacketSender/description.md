@@ -1,5 +1,5 @@
 <!--
-Documentation version: 152
+Documentation version: 153
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/PacketSender.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/PacketSender.mdx, and all files must keep the same documentation version.
 -->
 
@@ -54,6 +54,11 @@ packet lines during the configured duration.
 When `protocol-number` is `ALL`, the total packets per source IP become `packets-per-ip * 255`.
 PacketSender materializes its packet store before sending, so large ranges and high repeat counts must fit under the
 `8 GiB` safety cap.
+
+For a matching PacketReceiver, set `protocol-number` to the expected protocol selection and
+`expected-packets-per-ip` to sender `packets-per-ip`, including in `ALL` mode. PacketReceiver
+calculates its per-IP total and reports each protocol separately. Its protocol selection also
+accepts arrays such as `[6, 17]` or `["TCP", "UDP"]`.
 
 ## Node Metadata
 

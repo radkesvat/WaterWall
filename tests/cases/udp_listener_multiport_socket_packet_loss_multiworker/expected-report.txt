@@ -1,6 +1,8 @@
 source-ip-count: 8
 expected-packets-per-ip: 8
+selected-protocol-count: 1
 expected-total-packets: 64
 received-total-packets: 64
 lost-total-packets: 0
 unexpected-packets: 0
+198.51.112.0 | 17 | 8 | 8 | 0

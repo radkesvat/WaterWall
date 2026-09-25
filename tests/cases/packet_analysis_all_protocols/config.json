@@ -1,0 +1,30 @@
+{
+  "name": "packet-analysis-all-protocols",
+  "nodes": [
+    {
+      "name": "sender",
+      "type": "PacketSender",
+      "settings": {
+        "source-ipv4-range": "198.51.102.10/32",
+        "dest-ipv4": "203.0.113.10",
+        "protocol-number": "ALL",
+        "duration-ms": 100,
+        "packets-per-ip": 1,
+        "src-port": 26000,
+        "dest-port": 26001
+      },
+      "next": "receiver"
+    },
+    {
+      "name": "receiver",
+      "type": "PacketReceiver",
+      "settings": {
+        "source-ipv4-range": "198.51.102.10/32",
+        "protocol-number": "ALL",
+        "expected-packets-per-ip": 1,
+        "report-after-ms": 1200,
+        "output-file": "packet-receiver-report.txt"
+      }
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+source-ip-count: 1
+expected-packets-per-ip: 1
+selected-protocol-count: 255
+expected-total-packets: 255
+received-total-packets: 255
+lost-total-packets: 0
+unexpected-packets: 0
+198.51.102.10 | total | 255 | 255 | 0
+198.51.102.10 | 0 | 1 | 1 | 0
+198.51.102.10 | 254 | 1 | 1 | 0

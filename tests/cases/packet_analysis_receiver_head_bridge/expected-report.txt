@@ -1,5 +1,9 @@
 received-total-packets: 22
-lost-total-packets: 0
-198.51.101.10 | 22 | 22 | 0
-source-ip | expected | received | lost | loss-percent | histogram
+expected-total-packets: 30
+lost-total-packets: 20
+198.51.101.10 | total | 30 | 22 | 20
+198.51.101.10 | 6 | 10 | 0 | 10
+198.51.101.10 | 17 | 10 | 0 | 10
+198.51.101.10 | 253 | 10 | 22 | 0
+source-ip | protocol-number | expected | received | lost | loss-percent | histogram
 | [################################]

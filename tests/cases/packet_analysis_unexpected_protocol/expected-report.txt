@@ -1,0 +1,8 @@
+source-ip-count: 1
+selected-protocol-count: 1
+expected-total-packets: 10
+received-total-packets: 0
+lost-total-packets: 10
+unexpected-packets: 22
+198.51.101.10 | total | 10 | 0 | 10
+198.51.101.10 | 6 | 10 | 0 | 10

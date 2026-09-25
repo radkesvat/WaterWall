@@ -28,6 +28,7 @@
       "type": "PacketReceiver",
       "settings": {
         "source-ipv4-range": "198.51.100.0/31",
+        "protocol-number": "ICMP",
         "expected-packets-per-ip": 3,
         "report-after-ms": 700,
         "output-file": "packet-receiver-report.txt"

@@ -3667,6 +3667,17 @@ if(TARGET UdpConnector AND TARGET PacketsToStream AND TARGET PacketSender)
   )
 endif()
 
+if(TARGET PacketReceiver)
+  add_executable(packetreceiver_protocol_settings_test packetreceiver_protocol_settings_test.c)
+  target_link_libraries(packetreceiver_protocol_settings_test PRIVATE PacketReceiver ww)
+  add_dependencies(waterwall_unit_tests packetreceiver_protocol_settings_test)
+  add_waterwall_unit_test(
+    waterwall.packetreceiver_protocol_settings_unit
+    packetreceiver_protocol_settings_test
+    "unit;tunnels;packetreceiver;packet-analysis;configuration"
+  )
+endif()
+
 add_executable(local_idle_table_indexed_test local_idle_table_indexed_test.c)
 target_link_libraries(local_idle_table_indexed_test PRIVATE ww)
 add_dependencies(waterwall_unit_tests local_idle_table_indexed_test)

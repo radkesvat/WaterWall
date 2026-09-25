@@ -1,12 +1,12 @@
 {
-  "name": "packet-analysis-receiver-head-bridge",
+  "name": "packet-analysis-unexpected-protocol",
   "nodes": [
     {
       "name": "receiver",
       "type": "PacketReceiver",
       "settings": {
         "source-ipv4-range": "198.51.101.10/32",
-        "protocol-number": ["TCP", "UDP", 253],
+        "protocol-number": "TCP",
         "expected-packets-per-ip": 10,
         "report-after-ms": 700,
         "output-file": "packet-receiver-report.txt"

@@ -17,6 +17,9 @@ typedef struct packetreceiver_tstate_s
     uint32_t                       source_range_count;
     uint64_t                       source_count;
     uint32_t                       expected_packets_per_ip;
+    uint16_t                       protocol_count;
+    uint8_t                        protocol_numbers[256];
+    uint16_t                       protocol_slots[256];
     uint64_t                       total_expected_packets;
     uint64_t                       total_received_packets;
     uint64_t                       total_lost_packets;

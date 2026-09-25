@@ -64,6 +64,7 @@
       "type": "PacketReceiver",
       "settings": {
         "source-ipv4-range": "198.51.111.0/29",
+        "protocol-number": "UDP",
         "expected-packets-per-ip": 8,
         "report-after-ms": 1200,
         "output-file": "packet-receiver-report.txt"

@@ -150,6 +150,99 @@ static bool packetreceiverLoadExpectedPacketsPerIp(packetreceiver_tstate_t *stat
     return true;
 }
 
+static bool packetreceiverAddProtocol(packetreceiver_tstate_t *state, const cJSON *item, const char *path)
+{
+    uint8_t protocol;
+
+    if (cJSON_IsNumber(item) && item->valuedouble >= 0 && item->valuedouble <= 255 &&
+        item->valuedouble == (double) item->valueint)
+    {
+        protocol = (uint8_t) item->valueint;
+    }
+    else if (cJSON_IsString(item) && item->valuestring != NULL)
+    {
+        if (stricmp(item->valuestring, "TCP") == 0)
+        {
+            protocol = IP_PROTO_TCP;
+        }
+        else if (stricmp(item->valuestring, "UDP") == 0)
+        {
+            protocol = IP_PROTO_UDP;
+        }
+        else if (stricmp(item->valuestring, "ICMP") == 0)
+        {
+            protocol = IP_PROTO_ICMP;
+        }
+        else
+        {
+            LOGF("JSON Error: %s : expected TCP, UDP, ICMP, or an integer from 0 to 255", path);
+            return false;
+        }
+    }
+    else
+    {
+        LOGF("JSON Error: %s : expected TCP, UDP, ICMP, or an integer from 0 to 255", path);
+        return false;
+    }
+
+    if (state->protocol_slots[protocol] != 0)
+    {
+        LOGF("JSON Error: %s : duplicate protocol number %u", path, (unsigned int) protocol);
+        return false;
+    }
+
+    state->protocol_numbers[state->protocol_count] = protocol;
+    state->protocol_slots[protocol]                = state->protocol_count + 1U;
+    state->protocol_count += 1U;
+    return true;
+}
+
+static bool packetreceiverLoadProtocols(packetreceiver_tstate_t *state, const cJSON *settings)
+{
+    const cJSON *setting = cJSON_GetObjectItemCaseSensitive(settings, "protocol-number");
+    const char  *path    = "PacketReceiver->settings->protocol-number";
+
+    if (cJSON_IsString(setting) && setting->valuestring != NULL && stricmp(setting->valuestring, "ALL") == 0)
+    {
+        for (uint16_t protocol = 0; protocol < 255; ++protocol)
+        {
+            state->protocol_numbers[protocol] = (uint8_t) protocol;
+            state->protocol_slots[protocol]   = protocol + 1U;
+        }
+        state->protocol_count = 255;
+        return true;
+    }
+
+    if (cJSON_IsArray(setting))
+    {
+        const int count = cJSON_GetArraySize(setting);
+        if (count <= 0 || count > 256)
+        {
+            LOGF("JSON Error: %s : expected 1 to 256 distinct protocols", path);
+            return false;
+        }
+
+        for (int index = 0; index < count; ++index)
+        {
+            char item_path[128];
+            stringNPrintf(item_path, sizeof(item_path), "%s[%d]", path, index);
+            if (! packetreceiverAddProtocol(state, cJSON_GetArrayItem(setting, index), item_path))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    if (setting == NULL)
+    {
+        LOGF("JSON Error: %s : required protocol selection is missing", path);
+        return false;
+    }
+
+    return packetreceiverAddProtocol(state, setting, path);
+}
+
 static bool packetreceiverLoadOutputFile(packetreceiver_tstate_t *state, const cJSON *settings)
 {
     getStringFromJsonObjectOrDefault(&state->output_file, settings, "output-file", "packet-receiver-report.txt");
@@ -226,7 +319,7 @@ tunnel_t *packetreceiverTunnelCreate(node_t *node)
     }
     state->expected_packets_per_ip = 1;
 
-    if (! packetreceiverLoadSourceRanges(state, settings) ||
+    if (! packetreceiverLoadSourceRanges(state, settings) || ! packetreceiverLoadProtocols(state, settings) ||
         ! packetreceiverLoadExpectedPacketsPerIp(state, settings) || ! packetreceiverLoadOutputFile(state, settings) ||
         ! packetreceiverLoadReportAfterMs(state, settings))
     {
@@ -234,6 +327,5 @@ tunnel_t *packetreceiverTunnelCreate(node_t *node)
         return NULL;
     }
 
-    state->total_expected_packets = state->source_count * (uint64_t) state->expected_packets_per_ip;
     return t;
 }

@@ -90,6 +90,26 @@ static void packetreceiverBuildHistogramBar(char *bar, size_t bar_size, uint64_t
     bar[width] = '\0';
 }
 
+static void packetreceiverSourceTotals(const packetreceiver_tstate_t *state, uint64_t source_index,
+                                       uint64_t *received_out, uint64_t *lost_out)
+{
+    uint64_t received = 0;
+    uint64_t lost     = 0;
+
+    for (uint16_t slot = 0; slot < state->protocol_count; ++slot)
+    {
+        const uint64_t count = state->received_counts[source_index * state->protocol_count + slot];
+        received += count;
+        if (count < state->expected_packets_per_ip)
+        {
+            lost += (uint64_t) state->expected_packets_per_ip - count;
+        }
+    }
+
+    *received_out = received;
+    *lost_out     = lost;
+}
+
 static bool packetreceiverWriteReport(tunnel_t *t)
 {
     packetreceiver_tstate_t *state = tunnelGetState(t);
@@ -114,9 +134,9 @@ static bool packetreceiverWriteReport(tunnel_t *t)
         for (uint64_t i = 0; i < range->count; ++i)
         {
             const uint64_t source_index = index++;
-            const uint64_t received     = state->received_counts[source_index];
-            const uint64_t expected     = (uint64_t) state->expected_packets_per_ip;
-            const uint64_t lost         = (expected > received) ? (expected - received) : 0ULL;
+            uint64_t       received;
+            uint64_t       lost;
+            packetreceiverSourceTotals(state, source_index, &received, &lost);
 
             total_received += received;
             total_lost += lost;
@@ -132,6 +152,7 @@ static bool packetreceiverWriteReport(tunnel_t *t)
     ok = ok && packetreceiverWriteFormat(file, "source-ip-count: %llu\n", (unsigned long long) state->source_count);
     ok = ok && packetreceiverWriteFormat(
                    file, "expected-packets-per-ip: %u\n", (unsigned int) state->expected_packets_per_ip);
+    ok = ok && packetreceiverWriteFormat(file, "selected-protocol-count: %u\n", (unsigned int) state->protocol_count);
     ok = ok && packetreceiverWriteFormat(
                    file, "expected-total-packets: %llu\n", (unsigned long long) state->total_expected_packets);
     ok = ok && packetreceiverWriteFormat(
@@ -140,7 +161,8 @@ static bool packetreceiverWriteReport(tunnel_t *t)
          packetreceiverWriteFormat(file, "lost-total-packets: %llu\n", (unsigned long long) state->total_lost_packets);
     ok = ok &&
          packetreceiverWriteFormat(file, "unexpected-packets: %llu\n", (unsigned long long) state->unexpected_packets);
-    ok = ok && packetreceiverWriteFormat(file, "\nsource-ip | expected | received | lost | loss-percent | histogram\n");
+    ok = ok && packetreceiverWriteFormat(
+                   file, "\nsource-ip | protocol-number | expected | received | lost | loss-percent | histogram\n");
 
     index = 0;
     for (uint32_t ri = 0; ok && ri < state->source_range_count; ++ri)
@@ -150,9 +172,10 @@ static bool packetreceiverWriteReport(tunnel_t *t)
         for (uint64_t i = 0; ok && i < range->count; ++i)
         {
             const uint64_t source_index = index++;
-            const uint64_t received     = state->received_counts[source_index];
-            const uint64_t expected     = (uint64_t) state->expected_packets_per_ip;
-            const uint64_t lost         = (expected > received) ? (expected - received) : 0ULL;
+            uint64_t       received;
+            uint64_t       lost;
+            packetreceiverSourceTotals(state, source_index, &received, &lost);
+            const uint64_t expected     = (uint64_t) state->expected_packets_per_ip * state->protocol_count;
             const double   loss_percent = (expected > 0) ? ((double) lost * 100.0 / (double) expected) : 0.0;
             char           ipbuf[32];
             char           bar[kPacketReceiverHistogramWidth + 1U];
@@ -161,13 +184,32 @@ static bool packetreceiverWriteReport(tunnel_t *t)
             packetreceiverBuildHistogramBar(bar, sizeof(bar), expected, received);
 
             ok = packetreceiverWriteFormat(file,
-                                           "%s | %llu | %llu | %llu | %.2f%% | [%s]\n",
+                                           "%s | total | %llu | %llu | %llu | %.2f%% | [%s]\n",
                                            ipbuf,
                                            (unsigned long long) expected,
                                            (unsigned long long) received,
                                            (unsigned long long) lost,
                                            loss_percent,
                                            bar);
+
+            for (uint16_t slot = 0; ok && slot < state->protocol_count; ++slot)
+            {
+                const uint64_t protocol_received = state->received_counts[source_index * state->protocol_count + slot];
+                const uint64_t protocol_expected = state->expected_packets_per_ip;
+                const uint64_t protocol_lost =
+                    (protocol_received < protocol_expected) ? (protocol_expected - protocol_received) : 0ULL;
+                const double protocol_loss_percent = (double) protocol_lost * 100.0 / (double) protocol_expected;
+                packetreceiverBuildHistogramBar(bar, sizeof(bar), protocol_expected, protocol_received);
+                ok = packetreceiverWriteFormat(file,
+                                               "%s | %u | %llu | %llu | %llu | %.2f%% | [%s]\n",
+                                               ipbuf,
+                                               (unsigned int) state->protocol_numbers[slot],
+                                               (unsigned long long) protocol_expected,
+                                               (unsigned long long) protocol_received,
+                                               (unsigned long long) protocol_lost,
+                                               protocol_loss_percent,
+                                               bar);
+            }
         }
     }
 
@@ -205,21 +247,23 @@ void packetreceiverPrepareRuntime(tunnel_t *t)
 
     state->workers_count = chain->workers_count;
 
-    if (state->source_count > (UINT64_MAX / (uint64_t) state->expected_packets_per_ip))
+    const uint64_t expected_per_source = (uint64_t) state->expected_packets_per_ip * state->protocol_count;
+    if (state->source_count > (UINT64_MAX / expected_per_source))
     {
         LOGF("PacketReceiver: total expected packet count would overflow");
         startupFailureRecord(1);
         return;
     }
 
-    if (state->source_count > (SIZE_MAX / (uint64_t) sizeof(uint64_t)))
+    if (state->source_count > (SIZE_MAX / sizeof(uint64_t) / state->protocol_count))
     {
         LOGF("PacketReceiver: expected source count exceeds addressable memory");
         startupFailureRecord(1);
         return;
     }
 
-    state->received_counts = memoryAllocateZero((size_t) state->source_count * sizeof(uint64_t));
+    state->received_counts =
+        memoryAllocateZero((size_t) state->source_count * state->protocol_count * sizeof(uint64_t));
     if (UNLIKELY(state->received_counts == NULL))
     {
         LOGF("PacketReceiver: failed to allocate received-packet counters");
@@ -227,16 +271,17 @@ void packetreceiverPrepareRuntime(tunnel_t *t)
         return;
     }
 
-    state->total_expected_packets = state->source_count * (uint64_t) state->expected_packets_per_ip;
+    state->total_expected_packets = state->source_count * expected_per_source;
     state->report_written         = false;
     state->report_in_progress     = false;
 }
 
 void packetreceiverHandlePacket(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    packetreceiver_tstate_t *state        = tunnelGetState(t);
-    bool                     match        = false;
-    uint64_t                 source_index = 0;
+    packetreceiver_tstate_t *state         = tunnelGetState(t);
+    bool                     match         = false;
+    uint64_t                 source_index  = 0;
+    uint16_t                 protocol_slot = 0;
 
     if (sbufGetLength(buf) >= sizeof(struct ip_hdr))
     {
@@ -244,7 +289,8 @@ void packetreceiverHandlePacket(tunnel_t *t, line_t *l, sbuf_t *buf)
         if ((raw[0] >> 4U) == 4U)
         {
             const struct ip_hdr *ipheader = (const struct ip_hdr *) raw;
-            match                         = packetreceiverResolveSourceIndex(state, ipheader->src.addr, &source_index);
+            protocol_slot                 = state->protocol_slots[IPH_PROTO(ipheader)];
+            match = protocol_slot != 0 && packetreceiverResolveSourceIndex(state, ipheader->src.addr, &source_index);
         }
     }
 
@@ -253,7 +299,7 @@ void packetreceiverHandlePacket(tunnel_t *t, line_t *l, sbuf_t *buf)
     {
         if (match)
         {
-            state->received_counts[source_index] += 1ULL;
+            state->received_counts[source_index * state->protocol_count + (protocol_slot - 1U)] += 1ULL;
             state->total_received_packets += 1ULL;
         }
         else
