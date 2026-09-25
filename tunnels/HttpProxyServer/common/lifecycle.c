@@ -124,6 +124,8 @@ void hpsCreateChild(hps_session_t *s, const char *username, const char *password
         addresscontextSetPort(dest, s->authority.port);
         addresscontextSetOnlyProtocol(dest, IP_PROTO_TCP);
     }
+    if (s->phase == kHpsExchange)
+        linePreferOrdinaryReadDownstream(l);
     lineRef(l);
     s->child_initializing = true;
     s->child_entry->fnInitU(s->child_entry, l);

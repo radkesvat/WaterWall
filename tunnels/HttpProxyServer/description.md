@@ -92,6 +92,13 @@ success has been handed off, or fallback Init and older directional replay have
 completed, a complete new splice buffer can pass intact to an unpaused receiver.
 Ordinary HTTP never becomes opaque merely because a destination was selected.
 
+After authentication and normal HTTP selection, the proxy requests ordinary
+upstream reads on the incoming line and ordinary downstream reads on each HTTP
+child before its Init. CONNECT and fallback do not request these preferences.
+An incoming preference persists if an earlier HTTP exchange is followed by
+CONNECT on the same connection. Splice buffers remain valid input, including
+already-delivered data and input arriving through Mux associations.
+
 Conversion temporarily allocates one ordinary input of at most `P + D` logical
 bytes, with the existing remainder allocation bound: `max(small capacity, 2 * D)`
 plus alignment, onward padding and buffer header overhead. Existing admission

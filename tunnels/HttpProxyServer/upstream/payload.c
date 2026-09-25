@@ -170,8 +170,12 @@ bool hpsProcessRequest(hps_session_t *s)
         else
         {
             s->phase = h.connect ? kHpsConnect : kHpsExchange;
-            if (! h.connect && ! hpsRewriteHeaderOutput(s, &h, kHpsUpstream))
-                error = 503;
+            if (! h.connect)
+            {
+                linePreferOrdinaryReadUpstream(s->client);
+                if (! hpsRewriteHeaderOutput(s, &h, kHpsUpstream))
+                    error = 503;
+            }
             if (! error && h.chunked)
             {
                 up->trailer_context = h;

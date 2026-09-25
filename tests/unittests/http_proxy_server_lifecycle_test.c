@@ -173,6 +173,11 @@ static void childInit(tunnel_t *t, line_t *l)
     discard t;
     child = l;
     ++opens;
+    hps_session_t *s = ((hps_lstate_t *) lineGetState(l, proxy))->session;
+    require(! linePrefersOrdinaryReadUpstream(l) && linePrefersOrdinaryReadDownstream(l) == (s->phase == kHpsExchange),
+            "child read preference was not selected before Init");
+    require(s->phase != kHpsExchange || linePrefersOrdinaryReadUpstream(client),
+            "HTTP client read preference was not selected before child Init");
     require(lineGetRoutingContext(l)->local_listener_port == 8080, "listener metadata");
     require(lineGetRoutingContext(l)->peer_source_port == 54321, "peer metadata");
     require(lineGetSourceAddressContext(l)->proto_tcp, "source protocol");
@@ -306,6 +311,8 @@ static void resetClient(tunnel_chain_t *chain)
     require(addresscontextSetIpAddress(lineGetSourceAddressContext(client), "127.0.0.2"), "source address");
     addresscontextSetOnlyProtocol(lineGetSourceAddressContext(client), IP_PROTO_TCP);
     httpproxyserverTunnelUpStreamInit(proxy, client);
+    require(! linePrefersOrdinaryReadUpstream(client) && ! linePrefersOrdinaryReadDownstream(client),
+            "server chose read preferences before request selection");
 }
 
 static void childEof(void)
@@ -321,6 +328,8 @@ static void childEof(void)
 static void fallbackInit(tunnel_t *t, line_t *l)
 {
     require(t == fallback, "wrong fallback entry");
+    require(! linePrefersOrdinaryReadUpstream(client) && ! linePrefersOrdinaryReadDownstream(client),
+            "authentication fallback inherited an HTTP read preference");
     ++fallback_opens;
     require(! addresscontextHasPort(lineGetDestinationAddressContext(l)), "failed authority escaped to fallback");
     require(lineGetUserAuthCount(l) == lineGetUserAuthCount(client), "rejected identity escaped to fallback");
@@ -1121,6 +1130,59 @@ static void httpBodyCases(tunnel_chain_t *chain)
     lineUnref(client);
 }
 
+static void readPreferenceCases(tunnel_chain_t *chain)
+{
+    const unsigned saved_representation = representation;
+    resetClient(chain);
+    automatic_response = false;
+    sendBytes(client, false, "POST http://a/ HTTP/1.1\r\nHost: a\r\nContent-Length: 9\r\n");
+    require(! child && ! linePrefersOrdinaryReadUpstream(client), "partial HTTP header selected ordinary reads");
+    sendBytes(client, false, "\r\n");
+    require(linePrefersOrdinaryReadUpstream(client) && ! linePrefersOrdinaryReadDownstream(client),
+            "HTTP preference used the wrong incoming direction");
+    for (unsigned mode = 0; mode < 3; ++mode)
+    {
+        representation = mode;
+        sendBytes(client, false, "abc");
+    }
+    require(strstr(sent, "\r\n\r\nabcabcabc") != NULL, "HTTP preference rejected mixed upload representations");
+    sendBytes(child, true, "HTTP/1.1 200 OK\r\nContent-Length: 9\r\n\r\n");
+    for (unsigned mode = 0; mode < 3; ++mode)
+    {
+        representation = mode;
+        sendBytes(child, true, "xyz");
+    }
+    require(strstr(received, "\r\n\r\nxyzxyzxyz") != NULL, "HTTP preference rejected mixed response representations");
+    sendBytes(client, false, "GET http://a/ HTTP/1.1\r\nHost: a\r\n\r\n");
+    require(opens == 1 && linePrefersOrdinaryReadDownstream(child), "reused HTTP child lost its read preference");
+    sendBytes(child, true, "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
+    sendBytes(client, false, "CONNECT a:443 HTTP/1.1\r\nHost: a\r\n\r\n");
+    require(opens == 2 && closes == 1 && linePrefersOrdinaryReadUpstream(client) &&
+                ! linePrefersOrdinaryReadUpstream(child) && ! linePrefersOrdinaryReadDownstream(child),
+            "HTTP-to-CONNECT transition reset the client preference or copied it to a new child");
+    for (unsigned d = 0; d < 2; ++d)
+    {
+        line_t   *source   = d ? child : client;
+        sbuf_t   *b        = makeInput(source, "opaque", 2);
+        uintptr_t identity = (uintptr_t) b;
+        if (d)
+            httpproxyserverTunnelDownStreamPayload(proxy, source, b);
+        else
+            httpproxyserverTunnelUpStreamPayload(proxy, source, b);
+        require(last_wrapper[d] == identity, "persistent preference changed CONNECT buffer forwarding");
+    }
+    clientClose();
+    lineUnref(client);
+    resetClient(chain);
+    automatic_response = false;
+    sendBytes(client, false, "CONNECT a:443 HTTP/1.1\r\nHost: a\r\n\r\n");
+    require(! linePrefersOrdinaryReadUpstream(client) && ! linePrefersOrdinaryReadDownstream(client),
+            "fresh CONNECT selected ordinary reads");
+    clientClose();
+    lineUnref(client);
+    representation = saved_representation;
+}
+
 #if WW_HAVE_SPLICE
 static void spliceRelayCases(tunnel_chain_t *chain, unsigned mode)
 {
@@ -1304,6 +1366,7 @@ static void runSuite(uint32_t large_size, uint32_t splice_limit)
     fallbackCases(chain);
     localAuthentication(chain);
     httpBodyCases(chain);
+    readPreferenceCases(chain);
 
     const char *get      = "GET http://127.0.0.1:80/a HTTP/1.1\r\nHost: ignored.test\r\n\r\n";
     cachedTimeoutClock(chain, get);

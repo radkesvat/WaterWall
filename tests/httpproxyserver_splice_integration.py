@@ -24,11 +24,9 @@ def header(sock):
     return bytes(result)
 
 
-def splice_outputs(trace):
-    """Join strace's per-thread resumed calls before checking pipe -> TCP endpoints."""
+def successful_calls(trace):
+    """Join strace's per-thread resumed calls before checking socket endpoints."""
     pending = {}
-    outputs = set()
-    positive = False
     for line in trace.splitlines():
         match = re.match(r"\s*(\d+)\s+(.*)", line)
         if not match:
@@ -37,9 +35,18 @@ def splice_outputs(trace):
         if call.endswith("<unfinished ...>"):
             pending[tid] = call.removesuffix("<unfinished ...>")
             continue
-        if call.startswith("<... splice resumed>"):
-            call = pending.pop(tid, "") + call.removeprefix("<... splice resumed>")
-        if not re.search(r"\)\s+= [1-9]\d*", call) or not call.startswith("splice("):
+        resumed = re.match(r"<\.\.\. \w+ resumed>(.*)", call)
+        if resumed:
+            call = pending.pop(tid, "") + resumed.group(1)
+        if re.search(r"\)\s+= [1-9]\d*", call):
+            yield call
+
+
+def splice_outputs(trace):
+    outputs = set()
+    positive = False
+    for call in successful_calls(trace):
+        if not call.startswith("splice("):
             continue
         positive = True
         match = re.match(r"splice\(\d+<pipe:\[\d+\]>, NULL, \d+<TCP:\[([^]]+)\]>, NULL,", call)
@@ -50,6 +57,22 @@ def splice_outputs(trace):
             if endpoints.startswith("127.0.0.1:27971->"):
                 outputs.add("down")
     return positive, outputs
+
+
+def check_http_reads(trace, client_port, origin_port):
+    endpoints = {f"127.0.0.1:27971->127.0.0.1:{client_port}": "up",
+                 f"127.0.0.1:{origin_port}->127.0.0.1:27972": "down"}
+    ordinary = set()
+    for call in successful_calls(trace):
+        match = re.match(r"(recvfrom|splice)\(\d+<TCP:\[([^]]+)\]>,", call)
+        if not match or match.group(2) not in endpoints:
+            continue
+        direction = endpoints[match.group(2)]
+        if match.group(1) == "recvfrom":
+            ordinary.add(direction)
+        else:
+            assert direction != "down", "HTTP child started pipe reads before applying its preference"
+    assert ordinary == {"up", "down"}, ("HTTP read preferences did not reach both sockets", ordinary)
 
 
 def run(binary, mode, enabled):
@@ -100,7 +123,7 @@ def run(binary, mode, enabled):
             backend.bind(("127.0.0.1", 27972))
             backend.listen()
             backend.settimeout(10)
-            process = subprocess.Popen([tracer, "-D", "-f", "-yy", "-e", "trace=splice", "-o", str(root / "splice.log"), binary],
+            process = subprocess.Popen([tracer, "-D", "-f", "-yy", "-e", "trace=splice,recvfrom", "-o", str(root / "splice.log"), binary],
                                        cwd=root, stdout=log, stderr=subprocess.STDOUT)
             try:
                 deadline = time.monotonic() + 10
@@ -152,18 +175,22 @@ def run(binary, mode, enabled):
                         assert exact(client, len(data)) == data[::-1], "downstream opaque bytes changed"
                         client.shutdown(socket.SHUT_RDWR)
                         result.result(timeout=15)
-                # Ordinary HTTP is parsed on the same enabled topology, including a
-                # coalesced fixed body and a chunked response with a trailer.
+                # Separate body deliveries exercise the listener's next receive
+                # boundary after request selection, plus the child's initial mode.
                 if not fallback:
                     with socket.create_connection(("127.0.0.1", 27971), timeout=5) as http:
                         http.settimeout(10)
+                        http_client_port = http.getsockname()[1]
                         upload = b"body" * 16384
                         http.sendall(b"POST http://127.0.0.1:27972/a HTTP/1.0\r\nHost: ignored\r\n" + credentials +
-                                     f"Content-Length: {len(upload)}\r\n\r\n".encode() + upload)
+                                     f"Content-Length: {len(upload)}\r\n\r\n".encode())
                         with backend.accept()[0] as conn:
                             conn.settimeout(10)
+                            http_origin_port = conn.getpeername()[1]
                             assert header(conn).startswith(b"POST /a HTTP/1.1\r\n")
-                            assert exact(conn, len(upload)) == upload
+                            for part in (upload[:32768], upload[32768:]):
+                                http.sendall(part)
+                                assert exact(conn, len(part)) == part
                             conn.sendall(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nTrailer: X-End\r\n\r\n"
                                          b"4\r\ndone\r\n0\r\nX-End: yes\r\n\r\n")
                             response = header(http)
@@ -172,6 +199,8 @@ def run(binary, mode, enabled):
                 process.send_signal(signal.SIGTERM)
                 assert process.wait(timeout=10) == 128 + signal.SIGTERM, "unclean shutdown"
                 trace = (root / "splice.log").read_text()
+                if not fallback:
+                    check_http_reads(trace, http_client_port, http_origin_port)
                 positive, outputs = splice_outputs(trace)
                 expect = enabled and not blocked
                 assert positive == expect, ("unexpected chain eligibility", trace)

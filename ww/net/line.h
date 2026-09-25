@@ -455,6 +455,12 @@ static inline void linePreferOrdinaryReadDownstream(line_t *line)
     line->prefer_ordinary_read_d = true;
 }
 
+static inline void linePreferOrdinaryReadBoth(line_t *line)
+{
+    linePreferOrdinaryReadUpstream(line);
+    linePreferOrdinaryReadDownstream(line);
+}
+
 static inline bool linePrefersOrdinaryReadUpstream(const line_t *line)
 {
     return line->prefer_ordinary_read_u;
