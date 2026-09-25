@@ -187,3 +187,15 @@ Only one timer is published per line, for either assembly or fragment delay. All
 recycling belong to that line's event worker. Callback continuations hold a line
 reference and stop after logical death. Generic worker quiescence detaches timers
 before owner-line drain releases retained buffers and timer handles.
+
+## Acknowledgements
+
+WaterWall's fragmentation features draw inspiration from:
+
+- **[GFW-knocker](https://github.com/GFW-knocker/gfw_resist_tls_proxy)** — for practical work on splitting TLS
+  ClientHello traffic into smaller TCP stream writes with delays, which inspired our stream fragmentation approach.
+- **[patterniha](https://github.com/XTLS/Xray-core/issues/4370)** — for explaining and exploring TLS record
+  fragmentation and its distinction from TCP fragmentation, which informed our TLS ClientHello record fragmentation
+  feature.
+
+We thank both developers for sharing their work with the community.
