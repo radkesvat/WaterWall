@@ -363,8 +363,8 @@ static void configuration(void)
                          "{\"target-address\":\"x\",\"port\":80,\"headers\":{\"X\":\"a\\r\\nb\"}}",
                          "{\"mode\":\"http\",\"target-address\":\"x\",\"port\":80,\"content-length\":1}",
                          "{\"mode\":\"http\",\"target-address\":\"x\",\"port\":80,\"body-mode\":\"fixed\"}",
-                         "{\"mode\":\"http\",\"target-address\":\"x\",\"port\":80,\"body-mode\":\"fixed\",\"content-"
-                         "length\":9007199254740992}",
+                         ("{\"mode\":\"http\",\"target-address\":\"x\",\"port\":80,\"body-mode\":\"fixed\",\"content-"
+                          "length\":9007199254740992}"),
                          "{\"mode\":\"http\",\"target-address\":\"x\",\"port\":80,\"method\":\"HEAD\"}",
                          "{\"mode\":\"http\",\"target-address\":\"x\",\"port\":80,\"path\":\"/%zz\"}",
                          "{\"mode\":\"http\",\"target-address\":\"x\",\"port\":80,\"path\":\"/#fragment\"}",

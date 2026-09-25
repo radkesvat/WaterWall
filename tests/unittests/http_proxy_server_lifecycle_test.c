@@ -1161,16 +1161,24 @@ static void readPreferenceCases(tunnel_chain_t *chain)
                 ! linePrefersOrdinaryReadUpstream(child) && ! linePrefersOrdinaryReadDownstream(child),
             "HTTP-to-CONNECT transition reset the client preference or copied it to a new child");
     for (unsigned d = 0; d < 2; ++d)
-    {
-        line_t   *source   = d ? child : client;
-        sbuf_t   *b        = makeInput(source, "opaque", 2);
-        uintptr_t identity = (uintptr_t) b;
-        if (d)
-            httpproxyserverTunnelDownStreamPayload(proxy, source, b);
-        else
-            httpproxyserverTunnelUpStreamPayload(proxy, source, b);
-        require(last_wrapper[d] == identity, "persistent preference changed CONNECT buffer forwarding");
-    }
+        for (unsigned mode = 0; mode < 3; ++mode)
+        {
+            line_t      *source       = d ? child : client;
+            sbuf_t      *b            = makeInput(source, "opaque", mode);
+            const bool   splice_input = sbufIsSplice(b);
+            uintptr_t    identity     = (uintptr_t) b;
+            const size_t before       = d ? received_len : sent_len;
+            if (d)
+                httpproxyserverTunnelDownStreamPayload(proxy, source, b);
+            else
+                httpproxyserverTunnelUpStreamPayload(proxy, source, b);
+            require((d ? received_len : sent_len) == before + 6 &&
+                        ! stringCompare((d ? received : sent) + before, "opaque"),
+                    "persistent preference changed CONNECT payload");
+            /* Ordinary admission may copy; only actual splice input uses the intact relay path. */
+            if (splice_input)
+                require(last_wrapper[d] == identity, "persistent preference changed CONNECT buffer forwarding");
+        }
     clientClose();
     lineUnref(client);
     resetClient(chain);
