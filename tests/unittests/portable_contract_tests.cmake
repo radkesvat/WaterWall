@@ -67,6 +67,16 @@ if(TARGET HttpProxyClient AND NOT TARGET http_proxy_client_lifecycle_test)
     waterwall.http_proxy_client_lifecycle_unit http_proxy_client_lifecycle_test "unit;http;proxy;portable;lifetime")
 endif()
 
+if(TARGET StreamFragmenter)
+  add_executable(streamfragmenter_tls_hello_test EXCLUDE_FROM_ALL
+    "${_waterwall_portable_unit_dir}/streamfragmenter_tls_hello_test.c")
+  target_include_directories(streamfragmenter_tls_hello_test PRIVATE
+    "${CMAKE_SOURCE_DIR}/tunnels/Internals/StreamFragmenter/include")
+  target_link_libraries(streamfragmenter_tls_hello_test PRIVATE StreamFragmenter ww)
+  _waterwall_register_portable_contract(
+    waterwall.streamfragmenter_tls_hello_unit streamfragmenter_tls_hello_test "unit;tunnels;fragmenter;portable")
+endif()
+
 if(TARGET HttpProxyCommon AND NOT TARGET http_proxy_common_parser_test)
   add_executable(http_proxy_common_parser_test EXCLUDE_FROM_ALL
     "${_waterwall_portable_unit_dir}/http_proxy_common_parser_test.c")

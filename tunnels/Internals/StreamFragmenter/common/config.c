@@ -3,7 +3,14 @@
 
 bool streamfragmenterLoadSettings(streamfragmenter_tstate_t *ts, const cJSON *settings)
 {
-    static const char *const keys[] = {"mode", "count", "duration-ms", "bypass_chance", "cuts", "wait-for-est"};
+    static const char *const keys[] = {"mode",
+                                       "count",
+                                       "duration-ms",
+                                       "bypass_chance",
+                                       "cuts",
+                                       "wait-for-est",
+                                       "tls-hello-fragment",
+                                       "tls-hello-timeout-ms"};
     if (! cJSON_IsObject(settings))
     {
         LOGF("JSON Error: StreamFragmenter->settings must be an object");
@@ -47,7 +54,26 @@ bool streamfragmenterLoadSettings(streamfragmenter_tstate_t *ts, const cJSON *se
         LOGF("JSON Error: StreamFragmenter->settings->wait-for-est must be a boolean");
         return false;
     }
-    ts->wait_for_est  = item == NULL || cJSON_IsTrue(item);
+    ts->wait_for_est = item == NULL || cJSON_IsTrue(item);
+    item             = cJSON_GetObjectItemCaseSensitive(settings, "tls-hello-fragment");
+    if (item != NULL && ! cJSON_IsBool(item))
+    {
+        LOGF("JSON Error: StreamFragmenter->settings->tls-hello-fragment must be a boolean");
+        return false;
+    }
+    ts->tls_hello_fragment   = cJSON_IsTrue(item);
+    item                     = cJSON_GetObjectItemCaseSensitive(settings, "tls-hello-timeout-ms");
+    ts->tls_hello_timeout_ms = 1000;
+    if (item != NULL)
+    {
+        if (! ts->tls_hello_fragment || ! jsonGetIntegerInRange(item, 1, UINT32_MAX, &value))
+        {
+            LOGF("JSON Error: StreamFragmenter->settings->tls-hello-timeout-ms requires TLS mode and an integer in "
+                 "[1, 4294967295]");
+            return false;
+        }
+        ts->tls_hello_timeout_ms = (uint32_t) value;
+    }
     ts->bypass_chance = 0;
     item              = cJSON_GetObjectItemCaseSensitive(settings, "bypass_chance");
     if (item != NULL)

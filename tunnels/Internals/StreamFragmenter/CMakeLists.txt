@@ -5,6 +5,7 @@ add_library(StreamFragmenter STATIC
     common/config.c
     common/line_state.c
     common/flow.c
+    common/tls_hello.c
     upstream/init.c
     upstream/payload.c
     upstream/fin.c

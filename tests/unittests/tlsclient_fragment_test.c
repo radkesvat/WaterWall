@@ -199,6 +199,8 @@ int main(void)
                          "{}",
                          "{\"mode\":\"counter\",\"count\":1,\"cuts\":[[0,0,100]]}",
                          "{\"mode\":\"counter\",\"count\":1,\"cuts\":[],\"wait-for-est\":null}",
+                         "{\"mode\":\"counter\",\"count\":1,\"cuts\":[],\"tls-hello-fragment\":1}",
+                         "{\"mode\":\"counter\",\"count\":1,\"cuts\":[],\"tls-hello-timeout-ms\":1000}",
                          "{},\"fragment\":{}"};
     for (size_t i = 0; i < ARRAY_SIZE(bad); ++i)
     {
@@ -241,6 +243,38 @@ int main(void)
     twfRequire(writes == 3 && lengths[0] == 250 && lengths[1] == 50 && wire_size == expected_size &&
                    memoryCompare(wire, expected, expected_size) == 0,
                "fragmented ClientHello bytes changed");
+    closeLine();
+
+    stringNPrintf(json,
+                  sizeof(json),
+                  "%s,\"fragment\":{\"mode\":\"counter\",\"count\":1,\"tls-hello-fragment\":true,"
+                  "\"tls-hello-timeout-ms\":1000,\"cuts\":[[250,0,100],[300,0,100]]}}",
+                  prefix);
+    openLine(json);
+    fragment                                     = tls->next;
+    fs                                           = lineGetState(line, fragment);
+    streamfragmenter_tstate_t *fragment_settings = tunnelGetState(fragment);
+    twfRequire(fragment_settings->tls_hello_fragment && fragment_settings->tls_hello_timeout_ms == 1000 &&
+                   fs->head != NULL && fs->head->kind == kStreamFragmenterJobHello && ! fs->timer,
+               "TlsClient nested TLS hello settings or collection");
+    tunnelPrevDownStreamEst(backend, line);
+    twfRequire(writes == 3 && lengths[0] == 255 && lengths[1] == 55 && wire_size > 310,
+               "nested TLS record cut endpoints");
+    uint32_t offset = 0, handshake_size = 0;
+    for (unsigned i = 0; i < 3; ++i)
+    {
+        twfRequire(offset + 5 <= wire_size && wire[offset] == 22 && wire[offset + 1] == 3 && wire[offset + 2] >= 1 &&
+                       wire[offset + 2] <= 3,
+                   "nested rewritten TLS record header");
+        const uint32_t record_size = ((uint32_t) wire[offset + 3] << 8) | wire[offset + 4];
+        twfRequire(record_size > 0 && record_size <= 16384 && offset + 5 + record_size <= wire_size,
+                   "nested rewritten TLS record length");
+        handshake_size += record_size;
+        offset += record_size + 5;
+    }
+    const uint32_t declared_hello = 4 + ((uint32_t) wire[6] << 16) + ((uint32_t) wire[7] << 8) + wire[8];
+    twfRequire(wire[5] == 1 && handshake_size == declared_hello && handshake_size > 300 && offset <= wire_size,
+               "nested ClientHello framing incomplete");
     closeLine();
 
     for (unsigned event = 0; event < 3; ++event)

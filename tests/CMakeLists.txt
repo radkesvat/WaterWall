@@ -505,6 +505,16 @@ if(TARGET StreamFragmenter AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_
       endforeach()
     endforeach()
   endforeach()
+  foreach(splice_mode IN ITEMS true false)
+    foreach(tls_case IN ITEMS roundtrip deadline pending)
+      set(fragmenter_case waterwall.streamfragmenter_tls_${tls_case}_splice_${splice_mode})
+      add_waterwall_isolated_test(${fragmenter_case}
+        "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/streamfragmenter_integration.py"
+        "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>" "${splice_mode}" "tls_${tls_case}")
+      set_tests_properties(${fragmenter_case} PROPERTIES TIMEOUT 60)
+      add_waterwall_test_labels(${fragmenter_case} "integration" "tunnels" "tls")
+    endforeach()
+  endforeach()
 endif()
 add_waterwall_integration_test(waterwall.tls_roundtrip tls_roundtrip)
 if(TARGET TlsClient AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING)
