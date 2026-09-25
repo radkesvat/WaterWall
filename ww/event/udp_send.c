@@ -71,7 +71,7 @@ static bool udpSpliceNeedsMaterialization(splice_buffer_metadata_t metadata, uin
 }
 #endif
 
-udp_send_result_t udpSendBuffer(int fd, sbuf_t *buf, const sockaddr_u *peer, bool retry_eintr)
+udp_send_result_t udpSendBuffer(int fd, buffer_pool_t *pool, sbuf_t *buf, const sockaddr_u *peer, bool retry_eintr)
 {
     const uint32_t length = sbufGetLength(buf);
     if (! sbufIsSplice(buf))
@@ -101,11 +101,11 @@ udp_send_result_t udpSendBuffer(int fd, sbuf_t *buf, const sockaddr_u *peer, boo
     const bool force_materialization = true;
     if (force_materialization || udpSpliceNeedsMaterialization(metadata, body, prefix))
     {
-        sbuf_t *ordinary = sbufCreate(length);
+        sbuf_t *ordinary = bufferpoolGetBestFit(pool, length, 0);
         sbufSpliceReadToBuffer(buf, ordinary, length);
         int sent  = udpSendResident(fd, sbufGetRawPtr(ordinary), length, 0, peer, retry_eintr);
         int error = sent < 0 ? socketERRNO() : 0;
-        sbufDestroy(ordinary);
+        bufferpoolReuseBuffer(pool, ordinary);
         return sent < 0 ? udpSendFailure(error, false) : (udp_send_result_t) {.bytes = sent};
     }
     int primed = udpSendResident(fd, sbufGetRawPtr(buf), prefix, MSG_MORE, peer, retry_eintr);
@@ -132,6 +132,7 @@ udp_send_result_t udpSendBuffer(int fd, sbuf_t *buf, const sockaddr_u *peer, boo
     return (udp_send_result_t) {.bytes = (int) length};
 #else
     discard fd;
+    discard pool;
     discard peer;
     discard retry_eintr;
     return udpSendFailure(ENOSYS, false);

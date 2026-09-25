@@ -243,7 +243,8 @@ static void udpstatelesssocketWriteOwnerPeer(tunnel_t *t, sbuf_t *buf, const soc
     }
 
     const uint32_t          length = sbufGetLength(buf);
-    const udp_send_result_t result = udpSendBuffer(wioGetFD(io), buf, peer_addr, true);
+    const udp_send_result_t result =
+        udpSendBuffer(wioGetFD(io), wloopGetBufferPool(weventGetLoop(io)), buf, peer_addr, true);
     const int               nwrite = result.bytes;
     if (result.retire)
     {

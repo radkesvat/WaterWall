@@ -774,7 +774,7 @@ int wioWriteDatagram(wio_t *io, sbuf_t *buf, const sockaddr_u *peer_addr)
     int len = (int) sbufGetLength(buf);
     udp_send_result_t result;
     if (io->io_type == WIO_TYPE_UDP)
-        result = udpSendBuffer(wioGetFD(io), buf, peer_addr, false);
+        result = udpSendBuffer(wioGetFD(io), io->loop->bufpool, buf, peer_addr, false);
     else
     {
         int sent = sendto(wioGetFD(io), sbufGetRawPtr(buf), (size_t) len, 0, &peer_addr->sa, SOCKADDR_LEN(peer_addr));

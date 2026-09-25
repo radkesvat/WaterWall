@@ -36,6 +36,7 @@ static test_worker_registry_t g_test_worker_registry;
 static unsigned udp_sendto_calls;
 static size_t   udp_sendto_length;
 static int      udp_sendto_flags;
+static uintptr_t udp_sendto_data;
 #endif
 static int force_sendto_errno = 0;
 static int force_send_errno   = 0;
@@ -51,6 +52,7 @@ ssize_t __wrap_sendto(int fd, const void *buf, size_t len, int flags, const stru
     ++udp_sendto_calls;
     udp_sendto_length = len;
     udp_sendto_flags  = flags;
+    udp_sendto_data   = (uintptr_t) buf;
 #endif
     if (force_sendto_errno != 0)
     {
@@ -324,16 +326,8 @@ int main(void)
     master_pool_t             *medium_master = masterpoolCreateWithCapacity(16);
     master_pool_t             *splice_master = masterpoolCreateWithCapacity(16);
     master_pool_t             *wio_master   = masterpoolCreateWithCapacity(16);
-    buffer_pool_t             *buffer_pool   = bufferpoolCreate(large_master,
-                                                  medium_master,
-                                                  small_master,
-                                                  splice_master,
-                                                  16,
-                                                  8192,
-                                                  MEDIUM_BUFFER_SIZE_RAM_HIGH,
-                                                  1024,
-                                                  8192,
-                                                  8192);
+    buffer_pool_t             *buffer_pool =
+        bufferpoolCreate(large_master, medium_master, small_master, splice_master, 16, 8192, 2048, 1024, 8192, 8192);
     threadsafe_generic_pool_t *wio_pool =
         threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(wio_master, sizeof(wio_t), 16);
     threadsafe_generic_pool_t *wio_pools[] = {wio_pool};

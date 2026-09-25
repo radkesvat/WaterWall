@@ -123,7 +123,7 @@ static void runSegmentedAndTcpPipeChecks(wloop_t *loop, buffer_pool_t *pool)
     sbufWrite(buf, large_prefix, 60000);
     observed_pipe = meta.pipefd[0];
     pipe_reads = splice_calls = udp_sendto_calls = 0;
-    udp_send_result_t sent                       = udpSendBuffer(wioGetFD(io), buf, &peer, false);
+    udp_send_result_t sent                       = udpSendBuffer(wioGetFD(io), pool, buf, &peer, false);
     require(sent.bytes == (int) (60000 + length) && ! sent.retire, "large-prefix datagram send failed");
     require(pipe_reads > 0 && splice_calls == 0 && udp_sendto_calls == 1 && udp_sendto_flags == 0 &&
                 udp_sendto_length == 60000 + length && sbufGetLength(buf) == 0,
@@ -193,6 +193,45 @@ static void checkOddFragmentDatagram(wio_t *io, buffer_pool_t *pool, const socka
     expectNoDatagram(receiver, "odd-fragment send emitted extra datagrams");
 }
 
+static void runPooledMaterializationChecks(wloop_t *loop, buffer_pool_t *pool)
+{
+    sockaddr_u peer;
+    int        receiver = boundPeer(AF_INET, "127.0.0.1", &peer);
+    wio_t     *io       = wloopCreateUdpServer(loop, "127.0.0.1", 0);
+    require(io != NULL, "pooled materialization socket");
+    const uint32_t bodies[] = {17, 1400, 4000};
+    for (unsigned i = 0; i < ARRAY_SIZE(bodies); ++i)
+        for (unsigned fail = 0; fail < 2; ++fail)
+        {
+            sbuf_t        *buf    = makePipePayload(pool, bodies[i], "head");
+            const uint32_t length = sbufGetLength(buf);
+#if BYPASS_BUFFERPOOL != 1
+            sbuf_t   *cached   = bufferpoolGetBestFit(pool, length, 0);
+            uintptr_t expected = (uintptr_t) sbufGetRawPtr(cached);
+            bufferpoolReuseBuffer(pool, cached);
+#endif
+            force_sendto_errno       = fail ? EAGAIN : 0;
+            udp_send_result_t result = udpSendBuffer(wioGetFD(io), pool, buf, &peer, false);
+            require(result.bytes == (fail ? -1 : (int) length) && result.error == (fail ? EAGAIN : 0) &&
+                        ! result.retire && sbufGetLength(buf) == 0,
+                    "pooled materialization changed send results or input ownership");
+#if BYPASS_BUFFERPOOL != 1
+            require(udp_sendto_data == expected, "materialization did not borrow the best-fit cached buffer");
+            cached = bufferpoolGetBestFit(pool, length, 0);
+            require((uintptr_t) sbufGetRawPtr(cached) == expected && sbufGetLength(cached) == 0,
+                    "materialization did not return its temporary buffer on success or failure");
+            bufferpoolReuseBuffer(pool, cached);
+#endif
+            bufferpoolReuseBuffer(pool, buf);
+            if (fail)
+                expectNoDatagram(receiver, "failed pooled send emitted a datagram");
+            else
+                expectPipeDatagram(receiver, bodies[i], "head");
+        }
+    wioClose(io);
+    close(receiver);
+}
+
 static void runSpliceUdpChecks(wloop_t *loop, buffer_pool_t *pool)
 {
     bufferpoolUpdateAllocationPaddings(pool, 64, 64, 64, 64);
@@ -248,7 +287,7 @@ static void runSpliceUdpChecks(wloop_t *loop, buffer_pool_t *pool)
         memset(sbufGetMutablePtr(oversize), 0, 65504);
         observed_pipe = sbufSpliceMetadata(oversize).pipefd[0];
         pipe_reads = splice_calls = udp_sendto_calls = 0;
-        udp_send_result_t rejected                   = udpSendBuffer(wioGetFD(io), oversize, &addr_a, false);
+        udp_send_result_t rejected                   = udpSendBuffer(wioGetFD(io), pool, oversize, &addr_a, false);
         require(rejected.error == EMSGSIZE && ! rejected.retire && splice_calls == 0 && pipe_reads == 0 &&
                     udp_sendto_calls == 0 && sbufGetLength(oversize) == 65528,
                 "oversize touched socket or consumed input");
@@ -258,6 +297,7 @@ static void runSpliceUdpChecks(wloop_t *loop, buffer_pool_t *pool)
         close(b);
     }
     runSegmentedAndTcpPipeChecks(loop, pool);
+    runPooledMaterializationChecks(loop, pool);
     sockaddr_u peer;
     int        receiver = boundPeer(AF_INET, "127.0.0.1", &peer);
     const int  errors[] = {EINTR, EAGAIN, ENOBUFS, EMSGSIZE, EHOSTUNREACH};
@@ -292,7 +332,7 @@ static void runSpliceUdpChecks(wloop_t *loop, buffer_pool_t *pool)
     {
         sbuf_t *buf              = makePipePayload(pool, 4000, "head");
         force_sendto_errno       = EINTR;
-        udp_send_result_t result = udpSendBuffer(wioGetFD(io), buf, &peer, retry != 0);
+        udp_send_result_t result = udpSendBuffer(wioGetFD(io), pool, buf, &peer, retry != 0);
         require(result.bytes == (retry ? 4004 : -1) && result.error == (retry ? 0 : EINTR) && ! result.retire,
                 "materialized send changed EINTR retry policy");
         require(sbufGetLength(buf) == 0 && pipe_reads > 0 && splice_calls == 0 && udp_sendto_calls == retry + 1 &&

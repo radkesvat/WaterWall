@@ -203,11 +203,13 @@ static void caseBorrowedLineFinishDoesNotDestroy(void)
 }
 
 #if WW_HAVE_SPLICE
-static line_t  *splice_peer_line;
-static unsigned owner_send_calls, owner_close_calls;
-static void     observeOwnerSend(void)
+static line_t        *splice_peer_line;
+static buffer_pool_t *owner_send_pool;
+static unsigned       owner_send_calls, owner_close_calls;
+static void           observeOwnerSend(buffer_pool_t *pool)
 {
     twfRequire(currentThreadIsEventWorkerWID(0), "adapter sent on a foreign worker");
+    twfRequire(pool == owner_send_pool, "adapter borrowed a pool other than its socket owner's");
     ++owner_send_calls;
 }
 static void observeOwnerClose(wio_t *io)
@@ -246,6 +248,7 @@ static void caseSpliceOwnerDispatch(bool cancel_drain)
     udpstatelesssocket_tstate_t *ts = tunnelGetState(t);
     twfRequire(ts->socket.io != NULL, "stateless socket prepare");
     owner_send_calls = owner_close_calls = 0;
+    owner_send_pool                      = env.pools[0];
     udp_test_send_observer               = observeOwnerSend;
     wioSetCallBackClose(ts->socket.io, observeOwnerClose);
     int        receiver = socket(AF_INET, SOCK_DGRAM, 0);
@@ -302,6 +305,7 @@ static void caseSpliceOwnerDispatch(bool cancel_drain)
     twfRequire(ts->socket.io == NULL && udpsockIsRetired(&ts->socket), "retirement retained stateless WIO");
     twfRequire(owner_send_calls == 3 && owner_close_calls == 1, "owner send/close count mismatch");
     udp_test_send_observer = NULL;
+    owner_send_pool        = NULL;
     twfRequire(! lineIsAlive(splice_peer_line) && trace.next_finish == 1, "retirement retained owned peer line");
     lineUnref(splice_peer_line);
     splice_peer_line = NULL;

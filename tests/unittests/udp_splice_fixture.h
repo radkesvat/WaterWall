@@ -4,19 +4,22 @@
 #if defined(OS_LINUX)
 /* Exercise owner cleanup independently of the sender's current implementation. */
 static bool udp_test_retire_send;
-static void (*udp_test_send_observer)(void);
-udp_send_result_t __real_udpSendBuffer(int fd, sbuf_t *buf, const sockaddr_u *peer, bool retry_eintr);
-udp_send_result_t __wrap_udpSendBuffer(int fd, sbuf_t *buf, const sockaddr_u *peer, bool retry_eintr);
-udp_send_result_t __wrap_udpSendBuffer(int fd, sbuf_t *buf, const sockaddr_u *peer, bool retry_eintr)
+static void (*udp_test_send_observer)(buffer_pool_t *pool);
+udp_send_result_t __real_udpSendBuffer(int fd, buffer_pool_t *pool, sbuf_t *buf, const sockaddr_u *peer,
+                                       bool retry_eintr);
+udp_send_result_t __wrap_udpSendBuffer(int fd, buffer_pool_t *pool, sbuf_t *buf, const sockaddr_u *peer,
+                                       bool retry_eintr);
+udp_send_result_t __wrap_udpSendBuffer(int fd, buffer_pool_t *pool, sbuf_t *buf, const sockaddr_u *peer,
+                                       bool retry_eintr)
 {
     if (udp_test_send_observer != NULL)
-        udp_test_send_observer();
+        udp_test_send_observer(pool);
     if (udp_test_retire_send)
     {
         udp_test_retire_send = false;
         return (udp_send_result_t) {.bytes = -1, .error = EIO, .retire = true};
     }
-    return __real_udpSendBuffer(fd, buf, peer, retry_eintr);
+    return __real_udpSendBuffer(fd, pool, buf, peer, retry_eintr);
 }
 #endif
 
