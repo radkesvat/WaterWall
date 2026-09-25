@@ -360,6 +360,10 @@ static IMPORTED_TUNNEL_REGISTRATION_BOUNDARY void registerImportedTunnel(node_t 
 #include "DomainResolver/interface.h"
 #endif
 
+#ifdef INCLUDE_STREAM_FRAGMENTER
+#include "StreamFragmenter/interface.h"
+#endif
+
 #ifdef INCLUDE_USER_CONTROLLER
 #include "UserController/interface.h"
 #endif
@@ -707,6 +711,10 @@ ww_startup_result_t loadImportedTunnelsIntoCore(void)
 
 #ifdef INCLUDE_DOMAIN_RESOLVER
     USING(DomainResolver);
+#endif
+
+#ifdef INCLUDE_STREAM_FRAGMENTER
+    USING(StreamFragmenter);
 #endif
 
 #ifdef INCLUDE_USER_CONTROLLER

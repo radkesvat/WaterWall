@@ -489,6 +489,18 @@ set_tests_properties(waterwall.bgp4_tcp_splice_roundtrip PROPERTIES ENVIRONMENT 
 add_waterwall_integration_test(waterwall.bgp4_tcp_no_splice_roundtrip bgp4_tcp_splice_roundtrip)
 set_tests_properties(waterwall.bgp4_tcp_no_splice_roundtrip PROPERTIES ENVIRONMENT "WATERWALL_TEST_SPLICE=false")
 add_waterwall_integration_test(waterwall.keepalive_roundtrip keepalive_roundtrip)
+if(TARGET StreamFragmenter AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING)
+  foreach(fragmenter_mode IN ITEMS counter timed)
+    foreach(splice_mode IN ITEMS true false)
+      set(fragmenter_case waterwall.streamfragmenter_${fragmenter_mode}_splice_${splice_mode})
+      add_waterwall_isolated_test(${fragmenter_case}
+        "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/streamfragmenter_integration.py"
+        "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>" "${splice_mode}" "${fragmenter_mode}")
+      set_tests_properties(${fragmenter_case} PROPERTIES TIMEOUT 60)
+      add_waterwall_test_labels(${fragmenter_case} "integration" "tunnels")
+    endforeach()
+  endforeach()
+endif()
 add_waterwall_integration_test(waterwall.tls_roundtrip tls_roundtrip)
 add_waterwall_integration_test_with_timeout(
   waterwall.tls13_record_shaping_roundtrip

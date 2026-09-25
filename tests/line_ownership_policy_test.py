@@ -89,6 +89,10 @@ PAIRED_LINE_ALLOCATION = ("ww/net/pipe_tunnel.c", "pipeTo")
 # a tunnel routinely owns one role while borrowing another.
 
 CREATION_SITES = [
+    ("tests/unittests/streamfragmenter_test.c", "openLine", TEST_ONLY,
+     "fixture-owned source line; StreamFragmenter only borrows it"),
+    ("tests/unittests/streamfragmenter_test.c", "boundaries", TEST_ONLY,
+     "second fixture-owned source line proving independent fragmentation scope"),
     ("tests/unittests/http_proxy_client_lifecycle_test.c", "openLine", TEST_ONLY,
      "fixture-owned source line; HttpProxyClient only borrows it"),
     ("tests/unittests/http_proxy_server_lifecycle_test.c", "resetClient", TEST_ONLY,

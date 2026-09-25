@@ -283,6 +283,7 @@ option(INCLUDE_BLACKHOLE                "link BlackHole staticly to the core"   
 option(INCLUDE_SPEEDLIMIT               "link SpeedLimit staticly to the core"                                      TRUE)
 option(INCLUDE_SOFT_IP_LIMITER          "link SoftIpLimiter staticly to the core"                                   TRUE)
 option(INCLUDE_DOMAIN_RESOLVER          "link DomainResolver staticly to the core"                                  TRUE)
+option(INCLUDE_STREAM_FRAGMENTER        "link StreamFragmenter statically to the core"                              TRUE)
 option(INCLUDE_USER_CONTROLLER          "link UserController staticly to the core"                                  TRUE)
 
 if((INCLUDE_HTTP_PROXY_CLIENT OR INCLUDE_TCPCONNECTOR OR INCLUDE_UDP_CONNECTOR OR INCLUDE_SOCKS5_CLIENT OR INCLUDE_VLESS_CLIENT OR INCLUDE_TROJAN_CLIENT OR INCLUDE_ROUTER OR INCLUDE_CONNECTION_TO_PACKETS) AND NOT INCLUDE_DOMAIN_RESOLVER)
@@ -634,6 +635,13 @@ if(INCLUDE_DOMAIN_RESOLVER)
   add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/Internals/DomainResolver)
   target_link_directories(${WATERWALL_APPLICATION_TARGET} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/Internals/DomainResolver)
   target_link_libraries(${WATERWALL_APPLICATION_TARGET} DomainResolver)
+endif()
+
+#stream fragmenter
+if(INCLUDE_STREAM_FRAGMENTER)
+  target_compile_definitions(${WATERWALL_APPLICATION_TARGET} PUBLIC INCLUDE_STREAM_FRAGMENTER=1)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/Internals/StreamFragmenter)
+  target_link_libraries(${WATERWALL_APPLICATION_TARGET} StreamFragmenter)
 endif()
 
 #tun device
