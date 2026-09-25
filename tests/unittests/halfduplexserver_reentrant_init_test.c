@@ -8,7 +8,36 @@
  */
 #include "HalfDuplexServer/structure.h"
 
-#include "tunnel_line_failure_harness.h"
+#define __wrap_bufferpoolTryGetBestFit trackedTryGetBestFit
+#include "halfduplex_splice_fixture.h"
+#undef __wrap_bufferpoolTryGetBestFit
+
+static bool fail_queue;
+bool        __real_bufferqueueTryPushBack(buffer_queue_t *queue, sbuf_t **buf);
+bool        __wrap_bufferqueueTryPushBack(buffer_queue_t *queue, sbuf_t **buf);
+bool        __wrap_bufferqueueTryPushBack(buffer_queue_t *queue, sbuf_t **buf)
+{
+    if (fail_queue)
+    {
+        fail_queue = false;
+        return false;
+    }
+    return __real_bufferqueueTryPushBack(queue, buf);
+}
+
+static bool fail_allocation;
+sbuf_t     *__wrap_bufferpoolTryGetBestFit(buffer_pool_t *pool, uint64_t size, uint16_t padding);
+sbuf_t     *__wrap_bufferpoolTryGetBestFit(buffer_pool_t *pool, uint64_t size, uint16_t padding)
+{
+    if (fail_allocation)
+    {
+        fail_allocation = false;
+        return NULL;
+    }
+    return trackedTryGetBestFit(pool, size, padding);
+}
+
+static bool splice_inputs;
 #include "wthread.h"
 
 enum
@@ -277,10 +306,7 @@ static sbuf_t *createIntroBuffer(halfduplexserver_fixture_t *fixture, bool uploa
     };
     memoryCopy(intro + kHLFDPairIdOffset, pair_id, sizeof(pair_id));
 
-    sbuf_t *buf = bufferpoolGetLargeBuffer(fixture->env.pool);
-    sbufSetLength(buf, sizeof(intro));
-    sbufWrite(buf, intro, sizeof(intro));
-    return buf;
+    return halfduplexTestBytes(fixture->env.pool, intro, sizeof(intro), splice_inputs, 3);
 }
 
 static void sendIntro(halfduplexserver_fixture_t *fixture, line_t *line, bool upload)
@@ -364,7 +390,9 @@ static void runRejectedPairingCase(bool upload_first, bool refuse_scheduled_clos
                        refuse_scheduled_close ? 2 : 1,
                        "the required transports were not synchronously finished exactly once");
     twfRequireEqualU32(fixture.scheduled_closes, 1, "the upload transport close was not scheduled exactly once");
-    twfRequireEqualU32(twfRecycleCount(), 2, "the two intro buffers were not recycled exactly once");
+    twfRequireEqualU32(twfRecycleCount(),
+                       splice_inputs && WW_HAVE_SPLICE ? 4 : 2,
+                       "intro buffers and materialized outputs were not recycled exactly once");
     twfRequire(lineIsAlive(fixture.upload_line) != refuse_scheduled_close,
                "the upload transport had the wrong logical-life result after task admission");
     twfRequireEqualU32(twfLineRefCount(fixture.upload_line),
@@ -430,6 +458,8 @@ static void protocolMainPayload(tunnel_t *next, line_t *line, sbuf_t *buf)
     twfRequire(sbufGetLength(buf) <= sizeof(fixture->forwarded_payload),
                "protocol fixture payload exceeded the capture buffer");
 
+    buf = halfduplexTestMaterialize(fixture->env.pool, buf);
+    twfRequire(sbufGetLeftCapacity(buf) >= 64, "server output lost onward padding");
     fixture->forwarded_length = sbufGetLength(buf);
     memoryCopy(fixture->forwarded_payload, sbufGetRawPtr(buf), fixture->forwarded_length);
     lineReuseBuffer(line, buf);
@@ -441,7 +471,7 @@ static void protocolFixtureSetup(halfduplexserver_protocol_fixture_t *fixture)
     twfWorkerEnvSetupWithBufferSizes(&fixture->env,
                                      min(g_protocol_pool_size, (uint32_t) LARGE_BUFFER_SIZE_RAM_HIGH),
                                      min(g_protocol_pool_size, (uint32_t) LARGE_BUFFER_SIZE_RAM_HIGH),
-                                     0,
+                                     64,
                                      SPLICE_PAYLOAD_LIMIT,
                                      g_protocol_pool_size);
 
@@ -490,10 +520,11 @@ static line_t *protocolCreateTransport(halfduplexserver_protocol_fixture_t *fixt
 static void protocolSendBytes(halfduplexserver_protocol_fixture_t *fixture, line_t *line, const uint8_t *bytes,
                               uint32_t length)
 {
-    sbuf_t *buf = bufferpoolGetLargeBuffer(fixture->env.pool);
-    buf         = sbufReserveSpace(buf, length);
-    sbufSetLength(buf, length);
-    sbufWrite(buf, bytes, length);
+    sbuf_t *buf = halfduplexTestBytes(fixture->env.pool,
+                                      bytes,
+                                      length,
+                                      splice_inputs && length <= 64000,
+                                      (uint16_t) (length > 4096 ? length - 1000 : length / 2));
     halfduplexserverTunnelUpStreamPayload(fixture->halfduplex, line, buf);
 }
 
@@ -783,13 +814,14 @@ static uint32_t waiting_expected;
 static void     waitingPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     discard t;
+    twfRequire(! sbufIsSplice(buf) && sbufGetLeftCapacity(buf) >= 64, "waiting replay representation/padding changed");
     twfRequire(sbufGetLength(buf) == waiting_expected, "waiting HalfDuplex body length changed");
     for (uint32_t i = 0; i < waiting_expected; ++i)
         twfRequire(sbufGetMutablePtr(buf)[i] == 0x71, "waiting HalfDuplex body bytes changed");
     g_protocol_fixture->forwarded_length = waiting_expected;
     lineReuseBuffer(l, buf);
 }
-static void caseWaitingBoundary(uint32_t large, uint32_t total, bool append)
+static void caseWaitingBoundary(uint32_t large, uint32_t total, bool append, bool available)
 {
     g_protocol_pool_size = large;
     halfduplexserver_protocol_fixture_t fixture;
@@ -801,6 +833,13 @@ static void caseWaitingBoundary(uint32_t large, uint32_t total, bool append)
     memorySet(data, 0x71, total);
     uint8_t id[kHLFDPairIdSize] = {7};
     protocolBuildIntro(data, kHLFDCmdUpload, id);
+    waiting_expected = total - kHLFDIntroSize;
+    if (available)
+    {
+        uint8_t intro[kHLFDIntroSize];
+        protocolBuildIntro(intro, kHLFDCmdDownload, id);
+        protocolSendBytes(&fixture, protocolCreateTransport(&fixture), intro, sizeof(intro));
+    }
     if (append)
     {
         protocolSendBytes(&fixture, upload, data, kHLFDIntroSize);
@@ -808,7 +847,9 @@ static void caseWaitingBoundary(uint32_t large, uint32_t total, bool append)
     }
     else
         protocolSendBytes(&fixture, upload, data, total);
-    if (total >= limit)
+    if (available)
+        twfRequire(fixture.forwarded_length == waiting_expected, "available peer was limited as waiting input");
+    else if (total >= limit)
         twfRequire(fixture.transport_finish_count == 1, "HalfDuplex waiting overflow survived");
     else
     {
@@ -824,18 +865,432 @@ static void caseWaitingBoundary(uint32_t large, uint32_t total, bool append)
     g_protocol_pool_size = kTestLargeBufferSize;
 }
 
+static sbuf_t *expected_direct;
+static void    protocolDirect(tunnel_t *t, line_t *line, sbuf_t *buf)
+{
+    discard t;
+    twfRequire(buf == expected_direct && sbufIsSplice(buf), "server direct path replaced splice wrapper");
+    buf = halfduplexTestMaterialize(lineGetBufferPool(line), buf);
+    twfRequire(sbufGetLength(buf) == 5 && memoryEqual(sbufGetRawPtr(buf), "later", 5), "direct body changed");
+    lineReuseBuffer(line, buf);
+}
+
+static void caseSpliceFragments(void)
+{
+    for (unsigned split = 0; split <= kHLFDIntroSize; ++split)
+        for (unsigned download_first = 0; download_first < 2; ++download_first)
+        {
+            halfduplexserver_protocol_fixture_t fixture;
+            protocolFixtureSetup(&fixture);
+            uint8_t id[16] = {4}, upload[21], download[17];
+            protocolBuildIntro(upload, kHLFDCmdUpload, id);
+            memoryCopy(upload + 17, "body", 4);
+            protocolBuildIntro(download, kHLFDCmdDownload, id);
+            line_t *up   = protocolCreateTransport(&fixture);
+            line_t *down = protocolCreateTransport(&fixture);
+            if (download_first)
+                protocolSendBytes(&fixture, down, download, 17);
+            halfduplexserverTunnelUpStreamPayload(
+                fixture.halfduplex,
+                up,
+                halfduplexTestBytes(fixture.env.pool, upload, split, split % 2 == 0, split / 2));
+            halfduplexserver_lstate_t *ls = lineGetState(up, fixture.halfduplex);
+            twfRequire(ls->buffering == NULL || ! sbufIsSplice(ls->buffering), "partial intro retained splice");
+            protocolSendBytes(&fixture, up, upload + split, sizeof(upload) - split);
+            if (! download_first)
+            {
+                twfRequire(ls->buffering && ! sbufIsSplice(ls->buffering), "waiting upload retained splice");
+                protocolSendBytes(&fixture, up, (const uint8_t *) "tail", 4);
+                protocolSendBytes(&fixture, down, download, 17);
+            }
+            twfRequire(fixture.forwarded_length == (download_first ? 4 : 8) &&
+                           memoryEqual(fixture.forwarded_payload,
+                                       download_first ? "body" : "bodytail",
+                                       fixture.forwarded_length),
+                       "fragmented splice replay changed");
+#if WW_HAVE_SPLICE
+            fixture.next->fnPayloadU = protocolDirect;
+            fixture.prev->fnPayloadD = protocolDirect;
+            expected_direct          = halfduplexTestBytes(fixture.env.pool, "later", 5, true, 2);
+            halfduplexserverTunnelUpStreamPayload(fixture.halfduplex, up, expected_direct);
+            expected_direct = halfduplexTestBytes(fixture.env.pool, "later", 5, true, 2);
+            halfduplexserverTunnelDownStreamPayload(fixture.halfduplex, fixture.main_line, expected_direct);
+            halfduplexserverTunnelUpStreamPayload(
+                fixture.halfduplex, down, halfduplexTestBytes(fixture.env.pool, "ignored", 7, true, 0));
+#endif
+            protocolFixtureTeardown(&fixture);
+        }
+}
+
+static void caseSetupClosureAndRefusal(void)
+{
+    for (unsigned waiting = 0; waiting < 2; ++waiting)
+        for (unsigned failure = 0; failure < 3; ++failure)
+        {
+            halfduplexserver_protocol_fixture_t fixture;
+            protocolFixtureSetup(&fixture);
+            line_t *up = protocolCreateTransport(&fixture);
+            uint8_t data[64000];
+            memorySet(data, 0x71, sizeof(data));
+            uint8_t id[16] = {7};
+            protocolBuildIntro(data, kHLFDCmdUpload, id);
+            protocolSendBytes(&fixture, up, data, waiting ? 17 : 3);
+            if (failure != 0)
+            {
+                sbuf_t *buf = halfduplexTestBytes(fixture.env.pool, data, sizeof(data), true, 63000);
+                if (failure == 1)
+                    fail_allocation = true;
+                else
+                {
+                    buf      = halfduplexTestMaterialize(fixture.env.pool, buf);
+                    buf->len = UINT32_MAX;
+                }
+                halfduplexserverTunnelUpStreamPayload(fixture.halfduplex, up, buf);
+                twfRequire(fixture.transport_finish_count == 1, "setup refusal did not close borrowed input");
+                halfduplexserver_tstate_t *ts = tunnelGetState(fixture.halfduplex);
+                twfRequire(hmap_cons_t_size(&ts->upload_line_map) == 0, "setup refusal left waiting entry");
+            }
+            protocolFixtureTeardown(&fixture);
+        }
+}
+
+typedef struct startup_order_test_s
+{
+    line_t  *upload, *download;
+    bool     in_init, replayed, tail_seen, empty, fragmented;
+    unsigned mode, callbacks, pauses, resumes, next_finishes;
+    unsigned close_stage, close_side;
+    sbuf_t  *direct;
+} startup_order_test_t;
+static startup_order_test_t order;
+
+static void orderClose(unsigned side)
+{
+    halfduplexserver_protocol_fixture_t *f = g_protocol_fixture;
+    if (side == 0)
+        protocolCloseMain(f);
+    else
+    {
+        line_t *half = side == 1 ? order.upload : order.download;
+        halfduplexserverTunnelUpStreamFinish(f->halfduplex, half);
+        // A received Finish must not have been reflected to its sender.
+        twfRequire(lineIsAlive(half), "received Finish reflected toward half owner");
+        protocolTransportFinish(f->prev, half);
+    }
+}
+static void orderNextFinish(tunnel_t *t, line_t *line)
+{
+    discard t;
+    twfRequire(g_protocol_fixture->main_line == line, "next Finish used wrong main");
+    g_protocol_fixture->main_line = NULL;
+    ++order.next_finishes;
+}
+static void orderSend(const char *data)
+{
+    protocolSendBytes(g_protocol_fixture, order.upload, (const uint8_t *) data, (uint32_t) strlen(data));
+}
+static void orderPause(tunnel_t *t, line_t *line)
+{
+    discard t;
+    twfRequire(line == order.upload, "source Pause targeted wrong half");
+    ++order.pauses;
+    if (order.close_stage == 4)
+        orderClose(order.close_side);
+}
+static void orderResume(tunnel_t *t, line_t *line)
+{
+    discard t;
+    twfRequire(line == order.upload && ! order.in_init, "source Resume escaped Init barrier");
+    halfduplexserver_protocol_fixture_t *f = g_protocol_fixture;
+    twfRequire(! ((halfduplexserver_lstate_t *) lineGetState(f->main_line, f->halfduplex))->startup_active,
+               "source Resume escaped before older startup bytes");
+    ++order.resumes;
+    if (order.close_stage == 3)
+        orderClose(order.close_side);
+    else
+    {
+        order.direct = halfduplexTestBytes(f->env.pool, order.resumes == 2 ? "F" : "E", 1, true, 0);
+        halfduplexserverTunnelUpStreamPayload(f->halfduplex, order.upload, order.direct);
+        if (order.mode == 6 && order.resumes == 1)
+        {
+            halfduplexserverTunnelDownStreamPause(f->halfduplex, f->main_line);
+            halfduplexserverTunnelDownStreamResume(f->halfduplex, f->main_line);
+        }
+    }
+}
+static void orderPayload(tunnel_t *t, line_t *line, sbuf_t *buf)
+{
+    discard t;
+    twfRequire(! order.in_init, "upload Payload entered next before Init returned");
+    halfduplexserver_protocol_fixture_t *f = g_protocol_fixture;
+    if (order.direct)
+    {
+        twfRequire(buf == order.direct && sbufIsSplice(buf) == (bool) WW_HAVE_SPLICE,
+                   "ready input lost identity/representation");
+        order.direct = NULL;
+    }
+    else
+        twfRequire(! sbufIsSplice(buf), "startup retention was not ordinary");
+    ++order.callbacks;
+    uint32_t length = sbufGetLength(buf);
+    buf             = halfduplexTestMaterialize(f->env.pool, buf);
+    twfRequire(f->forwarded_length + length <= sizeof(f->forwarded_payload), "order capture overflow");
+    memoryCopy(f->forwarded_payload + f->forwarded_length, sbufGetRawPtr(buf), length);
+    f->forwarded_length += length;
+    lineReuseBuffer(line, buf);
+    if (order.close_stage == 2)
+    {
+        orderClose(order.close_side);
+        return;
+    }
+    if (order.mode != 0 && ! order.empty && ! order.replayed)
+    {
+        order.replayed = true;
+        orderSend("D");
+        if (order.mode == 3)
+            halfduplexserverTunnelDownStreamPause(f->halfduplex, line);
+        if (order.mode == 5)
+            fail_allocation = true; // Final combined tail allocation.
+    }
+    else if (order.mode == 1 && ! order.tail_seen)
+    {
+        order.tail_seen = true;
+        order.direct    = halfduplexTestBytes(f->env.pool, "E", 1, true, 0);
+        halfduplexserverTunnelUpStreamPayload(f->halfduplex, order.upload, order.direct);
+    }
+}
+static void orderInit(tunnel_t *t, line_t *line)
+{
+    protocolMainInit(t, line);
+    order.in_init = true;
+    if (order.mode != 7)
+        orderSend(order.mode == 0 ? "NEW" : "B");
+    if (order.mode != 0 && order.mode != 7)
+        orderSend("C");
+    if (order.close_stage == 1)
+        orderClose(order.close_side);
+    else if (order.mode == 2 || order.mode == 4 || order.mode == 6 || order.close_stage == 4)
+    {
+        halfduplexserverTunnelDownStreamPause(g_protocol_fixture->halfduplex, line);
+        if (order.close_stage != 4)
+            halfduplexserverTunnelDownStreamResume(g_protocol_fixture->halfduplex, line);
+        if (order.mode == 2)
+            halfduplexserverTunnelDownStreamPause(g_protocol_fixture->halfduplex, line);
+    }
+    order.in_init = false;
+}
+static void orderSetup(halfduplexserver_protocol_fixture_t *f, unsigned mode, unsigned stage, unsigned side)
+{
+    protocolFixtureSetup(f);
+    order               = (startup_order_test_t) {.mode = mode, .close_stage = stage, .close_side = side};
+    f->next->fnInitU    = orderInit;
+    f->next->fnPayloadU = orderPayload;
+    f->next->fnFinU     = orderNextFinish;
+    f->prev->fnPauseD   = orderPause;
+    f->prev->fnResumeD  = orderResume;
+    order.upload        = protocolCreateTransport(f);
+    order.download      = protocolCreateTransport(f);
+}
+static void orderPair(halfduplexserver_protocol_fixture_t *f, bool download_first, bool empty, bool fragmented)
+{
+    order.empty    = empty;
+    uint8_t id[16] = {9}, up[20], down[17];
+    protocolBuildIntro(up, kHLFDCmdUpload, id);
+    memoryCopy(up + 17, order.mode == 0 ? "OLD" : "A", order.mode == 0 ? 3 : 1);
+    protocolBuildIntro(down, kHLFDCmdDownload, id);
+    if (download_first)
+        protocolSendBytes(f, order.download, down, sizeof(down));
+    unsigned length = 17 + (empty ? 0 : order.mode == 0 ? 3 : 1);
+    if (fragmented)
+    {
+        // Mix an ordinary partial intro with a potentially splice-backed tail.
+        halfduplexserverTunnelUpStreamPayload(
+            f->halfduplex, order.upload, halfduplexTestBytes(f->env.pool, up, 7, false, 0));
+        protocolSendBytes(f, order.upload, up + 7, length - 7);
+    }
+    else
+        protocolSendBytes(f, order.upload, up, length);
+    if (! download_first)
+        protocolSendBytes(f, order.download, down, sizeof(down));
+}
+static void casePairingOrder(void)
+{
+    twfSetCase("HalfDuplexServer startup FIFO and permission reentry");
+    for (unsigned first = 0; first < 2; ++first)
+        for (unsigned mode = 0; mode < 8; ++mode)
+            for (unsigned empty = 0; empty < 2; ++empty)
+            {
+                if ((mode == 5 && empty) || (mode == 7 && ! empty))
+                    continue;
+                halfduplexserver_protocol_fixture_t f;
+                orderSetup(&f, mode, 0, 0);
+                orderPair(&f, first, empty, true);
+                if (mode == 5)
+                {
+                    twfRequire(f.main_line == NULL && f.transport_finish_count == 2 && order.next_finishes == 1,
+                               "tail allocation refusal did not close all initialized sides");
+                }
+                else
+                {
+                    if (mode == 2 || (mode == 3 && ! empty))
+                    {
+                        twfRequire(order.resumes == 0, "source resumed with older startup obligation");
+                        twfRequire(f.forwarded_length == (mode == 2 ? 0 : 1), "Pause did not hold startup backlog");
+                        halfduplexserverTunnelDownStreamResume(f.halfduplex, f.main_line);
+                    }
+                    const char *expected = mode == 7            ? ""
+                                           : mode == 6          ? (empty ? "BCEF" : "ABCDEF")
+                                           : mode == 0          ? (empty ? "NEW" : "OLDNEW")
+                                           : mode == 1          ? (empty ? "BCE" : "ABCDE")
+                                           : mode == 3 && empty ? "BC"
+                                           : empty              ? "BCE"
+                                                                : "ABCDE";
+                    twfRequire(f.forwarded_length == strlen(expected) &&
+                                   memoryEqual(f.forwarded_payload, expected, strlen(expected)),
+                               "startup FIFO violated");
+                    if (mode == 7)
+                        twfRequire(order.callbacks == 0, "empty startup synthesized Payload");
+                    if (mode == 6)
+                        twfRequire(order.resumes == 2, "nested source permission was stranded");
+                    if (mode == 2 || mode == 4 || (mode == 3 && ! empty))
+                        twfRequire(order.resumes == 1, "source Resume duplicated or missing");
+                    order.direct = halfduplexTestBytes(f.env.pool, "Z", 1, true, 0);
+                    halfduplexserverTunnelUpStreamPayload(f.halfduplex, order.upload, order.direct);
+                }
+                protocolFixtureTeardown(&f);
+            }
+    for (unsigned stage = 1; stage <= 4; ++stage)
+        for (unsigned side = 0; side < 3; ++side)
+        {
+            halfduplexserver_protocol_fixture_t f;
+            orderSetup(&f, 4, stage, side);
+            orderPair(&f, false, false, false);
+            twfRequire(f.main_line == NULL && f.transport_finish_count == 2,
+                       "close during startup callback leaked association");
+            twfRequire(order.next_finishes == (side == 0 ? 0 : 1), "Finish reflected toward next or missed next");
+            protocolFixtureTeardown(&f);
+        }
+}
+
+static unsigned budget_dimension;
+static bool     budget_overflow;
+static size_t   budget_delivered;
+static void     budgetPayload(tunnel_t *t, line_t *line, sbuf_t *buf)
+{
+    discard t;
+    twfRequire(! order.in_init && ! sbufIsSplice(buf), "budget replay bypassed Init or materialization");
+    budget_delivered += sbufGetLength(buf);
+    lineReuseBuffer(line, buf);
+}
+static void budgetInit(tunnel_t *t, line_t *line)
+{
+    protocolMainInit(t, line);
+    order.in_init                               = true;
+    halfduplexserver_protocol_fixture_t *f      = g_protocol_fixture;
+    halfduplexserver_lstate_t           *ls     = lineGetState(line, f->halfduplex);
+    buffer_budget_cost_t                 limits = bufferbudgetGetLimits(&ls->startup_budget);
+    twfRequire(limits.bytes == 2 * 1024 * 1024 && limits.charge == 2 * 1024 * 1024 && limits.entries == 1024,
+               "startup policy limits changed");
+    if (budget_dimension == 0)
+    {
+        // Isolate the configured byte limit before any admission. In production
+        // an ordinary 2 MiB body necessarily hits charge first (case 3).
+        limits.charge = SIZE_MAX;
+        bufferbudgetInit(&ls->startup_budget, limits);
+    }
+    unsigned count = budget_dimension == 2 ? 1024 : 1;
+    for (unsigned i = 0; i < count; ++i)
+    {
+        uint32_t size = budget_dimension == 0 || budget_dimension == 3 ? 2 * 1024 * 1024
+                        : budget_dimension == 1                        ? 2 * 1024 * 1024 - 128
+                                                                       : 0;
+        sbuf_t  *buf  = twfTrackAcquired(sbufCreateWithPadding(size, 64));
+        sbufSetLength(buf, size);
+        memorySet(sbufGetMutablePtr(buf), 0x71, size);
+        if (budget_dimension == 1)
+            twfRequire(sbufGetQueueCharge(buf) == 2 * 1024 * 1024, "charge equality fixture geometry changed");
+        halfduplexserverTunnelUpStreamPayload(f->halfduplex, order.upload, buf);
+    }
+    if (budget_dimension != 3)
+    {
+        twfRequire(f->main_line != NULL && f->forwarded_length == 0, "equality refused or replayed during Init");
+        buffer_budget_cost_t used = bufferbudgetGetUsage(&ls->startup_budget);
+        twfRequire((budget_dimension != 0 || used.bytes == limits.bytes) &&
+                       (budget_dimension != 1 || used.charge == limits.charge) &&
+                       (budget_dimension != 2 || used.entries == limits.entries),
+                   "equality accounting mismatch");
+        if (budget_overflow)
+        {
+            sbuf_t *buf = twfTrackAcquired(sbufCreateWithPadding(budget_dimension == 0 ? 1 : 0, 64));
+            sbufSetLength(buf, budget_dimension == 0 ? 1 : 0);
+            halfduplexserverTunnelUpStreamPayload(f->halfduplex, order.upload, buf);
+        }
+    }
+    order.in_init = false;
+}
+static void refusalInit(tunnel_t *t, line_t *line)
+{
+    protocolMainInit(t, line);
+    halfduplexserver_protocol_fixture_t *f = g_protocol_fixture;
+    orderSend("B");
+    sbuf_t *buf = halfduplexTestBytes(f->env.pool, "failure", 7, true, 3);
+    if (budget_dimension == 0 && WW_HAVE_SPLICE)
+        fail_allocation = true;
+    else
+        fail_queue = true;
+    halfduplexserverTunnelUpStreamPayload(f->halfduplex, order.upload, buf);
+}
+static void caseStartupBudget(void)
+{
+    twfSetCase("HalfDuplexServer independent startup byte/charge/entry admission and refusal");
+    for (budget_dimension = 0; budget_dimension < 4; ++budget_dimension)
+        for (unsigned overflow = 0; overflow < 2; ++overflow)
+        {
+            halfduplexserver_protocol_fixture_t f;
+            orderSetup(&f, 0, 0, 0);
+            f.next->fnInitU    = budgetInit;
+            f.next->fnPayloadU = budgetPayload;
+            budget_overflow    = overflow != 0;
+            budget_delivered   = 0;
+            orderPair(&f, overflow != 0, false, false);
+            bool refused = overflow || budget_dimension == 3;
+            twfRequire((f.main_line == NULL) == refused, "startup budget acceptance/overflow changed");
+            if (refused)
+                twfRequire(f.transport_finish_count == 2 && order.next_finishes == 1 && budget_delivered == 0,
+                           "budget refusal failed to settle initialized association");
+            else
+                twfRequire(budget_delivered == 3 + (budget_dimension == 0   ? 2 * 1024 * 1024
+                                                    : budget_dimension == 1 ? 2 * 1024 * 1024 - 128
+                                                                            : 0),
+                           "budget replay truncated bytes");
+            protocolFixtureTeardown(&f);
+        }
+    for (budget_dimension = 0; budget_dimension < 2; ++budget_dimension)
+    {
+        halfduplexserver_protocol_fixture_t f;
+        orderSetup(&f, 0, 0, 0);
+        f.next->fnInitU = refusalInit;
+        orderPair(&f, false, false, false);
+        twfRequire(f.main_line == NULL && f.transport_finish_count == 2 && order.next_finishes == 1,
+                   "startup storage refusal leaked association");
+        protocolFixtureTeardown(&f);
+    }
+}
+
 int main(void)
 {
+    casePairingOrder();
+    caseStartupBudget();
     const uint32_t sizes[] = {32768, 64 * 1024, SPLICE_PAYLOAD_LIMIT};
-    for (unsigned i = 0; i < 2; ++i)
+    for (unsigned i = 0; i < ARRAY_SIZE(sizes); ++i)
         for (unsigned append = 0; append < 2; ++append)
         {
             uint32_t limit = 131070 * (sizes[i] / 32768);
-            caseWaitingBoundary(sizes[i], limit - 1, append);
-            caseWaitingBoundary(sizes[i], limit, append);
-            caseWaitingBoundary(sizes[i], limit + 1, append);
+            caseWaitingBoundary(sizes[i], limit - 1, append, false);
+            caseWaitingBoundary(sizes[i], limit, append, false);
+            caseWaitingBoundary(sizes[i], limit + 1, append, false);
         }
-    caseWaitingBoundary(SPLICE_PAYLOAD_LIMIT, SPLICE_PAYLOAD_LIMIT + kHLFDIntroSize, false);
+    caseWaitingBoundary(SPLICE_PAYLOAD_LIMIT, SPLICE_PAYLOAD_LIMIT + kHLFDIntroSize, false, false);
     caseSimultaneousOppositeRolesCannotBothMiss();
     runRejectedPairingCase(true, false);
     runRejectedPairingCase(false, false);
@@ -845,6 +1300,22 @@ int main(void)
     caseSecondHalfOfPairIdParticipatesInMatching();
     caseInvalidAndDuplicateRolesCloseLocally();
 
+    splice_inputs = true;
+    casePairingOrder();
+    caseStartupBudget();
+    runRejectedPairingCase(true, false);
+    runRejectedPairingCase(false, false);
+    runRejectedPairingCase(true, true);
+    runRejectedPairingCase(false, true);
+    caseSpliceFragments();
+    caseSetupClosureAndRefusal();
+    caseWaitingBoundary(4096, 64000, false, false);
+    caseWaitingBoundary(4096, 64000, true, false);
+    caseWaitingBoundary(65536, 262141, false, true);
+    caseWaitingBoundary(SPLICE_PAYLOAD_LIMIT, kHalfDuplexServerStartupBytes + 18, false, true);
+    caseFragmentedIntroPairsAndStripsCompletePrefix();
+    caseSecondHalfOfPairIdParticipatesInMatching();
+    caseInvalidAndDuplicateRolesCloseLocally();
     printf("halfduplexserver_reentrant_init_test: all cases passed\n");
     return 0;
 }

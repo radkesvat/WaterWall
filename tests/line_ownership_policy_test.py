@@ -224,6 +224,8 @@ CREATION_SITES = [
      "testPipePublicationIsLinearizedWithPreStop",
      TEST_ONLY,
      "the borrowed source lines used across pipe publication, refusal, Finish, and drain cases"),
+    ("tests/unittests/halfduplex_worker_cases.h", "halfWorkerCreate", TEST_ONLY,
+     "transport half owned by its exact worker fixture; server and PipeTunnel borrow it"),
     ("tests/unittests/worker_context_helpers_test.c", "pipeMessageCaseSetup", TEST_ONLY,
      "the borrowed source line for queued pipe-message settlement cases"),
     ("tests/unittests/wireguarddevice_orderly_shutdown_test.c", "fixtureSetup", TEST_ONLY,

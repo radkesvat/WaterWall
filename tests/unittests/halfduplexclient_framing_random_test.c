@@ -1,5 +1,6 @@
 #include "HalfDuplexClient/structure.h"
 
+#include "halfduplex_splice_fixture.h"
 #include "tunnel_line_failure_harness.h"
 
 enum
@@ -7,7 +8,7 @@ enum
     kPairCount         = 2,
     kTestPayloadSize   = 5,
     kTestBufferSize    = 4096,
-    kCapturedFrameSize = kHLFDIntroSize + kTestPayloadSize
+    kCapturedFrameSize = kHLFDIntroSize + 64000
 };
 
 typedef struct client_pair_s
@@ -64,6 +65,8 @@ static void captureFramedPayload(tunnel_t *next, line_t *line, sbuf_t *buf)
     client_pair_t *pair      = findPair(line, &is_upload);
     twfRequire(pair != NULL, "HalfDuplexClient framed an unknown child line");
 
+    twfRequire(! sbufIsSplice(buf), "combined intro must be ordinary");
+    twfRequire(sbufGetLeftCapacity(buf) >= 64, "output lost onward padding");
     const uint32_t length = sbufGetLength(buf);
     if (is_upload)
     {
@@ -104,7 +107,7 @@ static void initializePair(client_framing_fixture_t *fixture, client_pair_t *pai
 static void fixtureSetup(client_framing_fixture_t *fixture)
 {
     memoryZero(fixture, sizeof(*fixture));
-    twfWorkerEnvSetup(&fixture->env, kTestBufferSize, 0);
+    twfWorkerEnvSetup(&fixture->env, kTestBufferSize, 64);
 
     fixture->halfduplex = tunnelCreate(NULL, kTunnelStateSize, kLineStateSize);
     fixture->next       = tunnelCreate(NULL, 0, 0);
@@ -162,8 +165,9 @@ static void sendFirstPayload(client_framing_fixture_t *fixture, size_t pair_inde
 static void requirePairFrame(const client_pair_t *pair, const uint8_t expected_id[kHLFDPairIdSize], uint8_t marker)
 {
     twfRequireEqualU32(pair->download_length, kHLFDIntroSize, "download intro length was not exactly 17 bytes");
-    twfRequireEqualU32(
-        pair->upload_length, kCapturedFrameSize, "upload intro and first payload had the wrong framed length");
+    twfRequireEqualU32(pair->upload_length,
+                       kHLFDIntroSize + kTestPayloadSize,
+                       "upload intro and first payload had the wrong framed length");
     twfRequire(pair->download_intro[kHLFDCommandOffset] == kHLFDCmdDownload,
                "download intro did not use the exact download command");
     twfRequire(pair->upload_frame[kHLFDCommandOffset] == kHLFDCmdUpload,
@@ -230,12 +234,59 @@ static void caseSeparatePairsUseIndependentCSPRNGIds(void)
     fixtureTeardown(&fixture);
 }
 
+static sbuf_t *expected_direct;
+static void    captureDirect(tunnel_t *t, line_t *line, sbuf_t *buf)
+{
+    discard t;
+    twfRequire(buf == expected_direct, "direct path replaced wrapper");
+    twfRequire(sbufIsSplice(buf), "direct path materialized input");
+    buf = halfduplexTestMaterialize(lineGetBufferPool(line), buf);
+    twfRequire(sbufGetLength(buf) == 5 && memoryEqual(sbufGetRawPtr(buf), "later", 5), "direct bytes changed");
+    lineReuseBuffer(line, buf);
+}
+
+static void caseRepresentations(void)
+{
+    const uint32_t lengths[]  = {5, 5, 5, 0, 64000};
+    const uint16_t prefixes[] = {0, 2, 5, 0, 63000};
+    for (unsigned i = 0; i < ARRAY_SIZE(lengths); ++i)
+    {
+        client_framing_fixture_t fixture;
+        fixtureSetup(&fixture);
+        uint8_t data[64000];
+        for (unsigned j = 0; j < sizeof(data); ++j)
+            data[j] = (uint8_t) j;
+        halfduplexclientTunnelUpStreamPayload(
+            fixture.halfduplex,
+            fixture.pairs[0].main_line,
+            halfduplexTestBytes(fixture.env.pool, data, lengths[i], true, prefixes[i]));
+        client_pair_t *pair = &fixture.pairs[0];
+        twfRequire(pair->upload_length == kHLFDIntroSize + lengths[i] &&
+                       memoryEqual(pair->upload_frame + kHLFDIntroSize, data, lengths[i]),
+                   "splice first body changed");
+        twfRequire(pair->download_length == kHLFDIntroSize &&
+                       memoryEqual(pair->upload_frame + 1, pair->download_intro + 1, 16),
+                   "splice IDs differ");
+#if WW_HAVE_SPLICE
+        fixture.next->fnPayloadU = captureDirect;
+        expected_direct          = halfduplexTestBytes(fixture.env.pool, "later", 5, true, 2);
+        halfduplexclientTunnelUpStreamPayload(fixture.halfduplex, pair->main_line, expected_direct);
+        fixture.next->fnPayloadD = captureDirect;
+        fixture.halfduplex->prev = fixture.next;
+        expected_direct          = halfduplexTestBytes(fixture.env.pool, "later", 5, true, 2);
+        halfduplexclientTunnelDownStreamPayload(fixture.halfduplex, pair->download_line, expected_direct);
+#endif
+        fixtureTeardown(&fixture);
+    }
+}
+
 int main(void)
 {
     twfRequire(globalstateInitializeSecureRandom(), "secure random provider initialization failed");
     twfRequire(frandGlobalInit(), "fast random global initialization failed");
     frandInit();
 
+    caseRepresentations();
     caseOnePairConsumesExactlyTwoSecureWords();
     caseSeparatePairsUseIndependentCSPRNGIds();
 

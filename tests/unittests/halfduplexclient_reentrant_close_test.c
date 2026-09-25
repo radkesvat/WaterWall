@@ -2,7 +2,20 @@
 
 #include "HalfDuplexClient/structure.h"
 
-#include "tunnel_line_failure_harness.h"
+#define __wrap_bufferpoolTryGetBestFit trackedTryGetBestFit
+#include "halfduplex_splice_fixture.h"
+#undef __wrap_bufferpoolTryGetBestFit
+
+static unsigned allocation_countdown;
+sbuf_t         *__wrap_bufferpoolTryGetBestFit(buffer_pool_t *pool, uint64_t size, uint16_t padding);
+sbuf_t         *__wrap_bufferpoolTryGetBestFit(buffer_pool_t *pool, uint64_t size, uint16_t padding)
+{
+    if (allocation_countdown && --allocation_countdown == 0)
+        return NULL;
+    return trackedTryGetBestFit(pool, size, padding);
+}
+
+static bool splice_inputs;
 
 typedef struct halfduplexclient_fixture_s
 {
@@ -120,11 +133,7 @@ static runtime_fixture_t r;
 
 static sbuf_t *runtimePayload(const void *data, uint32_t length)
 {
-    sbuf_t *buf = bufferpoolGetBestFit(r.env.pool, length, 64);
-    sbufSetLength(buf, length);
-    if (length != 0)
-        memoryCopyLarge(sbufGetMutablePtr(buf), data, length);
-    return buf;
+    return halfduplexTestBytes(r.env.pool, data, length, splice_inputs && length <= 4096, length ? 1 : 0);
 }
 
 static void runtimeOwnerFinish(tunnel_t *t, line_t *l)
@@ -217,6 +226,9 @@ static void runtimeReceive(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     discard t;
     twfRequire(r.init_count == 2, "pair intro sent before adjacent Init");
+    if (r.upload_callbacks == 0 || l == r.download)
+        twfRequire(! sbufIsSplice(buf), "intro output must be ordinary");
+    buf             = halfduplexTestMaterialize(r.env.pool, buf);
     uint32_t length = sbufGetLength(buf);
     if (l == r.download)
     {
@@ -277,7 +289,21 @@ static void runRuntimeCase(unsigned mode)
     r.main          = lineCreate(tunnelchainGetLinePools(r.chain), 0);
     lineRef(r.main);
     halfduplexclientTunnelUpStreamInit(r.client, r.main);
-    bool closes = (mode >= 2 && mode <= 6) || mode == 11 || mode == 13;
+    if (mode >= 15)
+    {
+        sbuf_t *input = runtimePayload("failure", 7);
+        if (mode == 17)
+        {
+            // Ordinary synthetic length exercises refusal before any body read.
+            if (sbufIsSplice(input))
+                input = halfduplexTestMaterialize(r.env.pool, input);
+            input->len = UINT32_MAX;
+        }
+        else
+            allocation_countdown = mode - 14;
+        halfduplexclientTunnelUpStreamPayload(r.client, r.main, input);
+    }
+    bool closes = (mode >= 2 && mode <= 6) || mode == 11 || mode == 13 || mode >= 15;
     if (closes)
     {
         twfRequire(! lineIsAlive(r.main) && ! lineIsAlive(r.upload) &&
@@ -354,8 +380,13 @@ int main(void)
     twfRequire(globalstateInitializeSecureRandom(), "secure random provider initialization failed");
     twfRequire(frandGlobalInit(), "fast random global initialization failed");
     frandInit();
-    for (unsigned mode = 0; mode < 15; ++mode)
+    for (unsigned mode = 0; mode < 18; ++mode)
         runRuntimeCase(mode);
+#if WW_HAVE_SPLICE
+    splice_inputs = true;
+    for (unsigned mode = 0; mode < 18; ++mode)
+        runRuntimeCase(mode);
+#endif
     caseSynchronousSiblingCloseSurvivesReentrantMainFinish();
     frandThreadCleanup();
     frandGlobalCleanup();

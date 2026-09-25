@@ -4,6 +4,10 @@
  */
 
 #include "wwapi.h"
+#ifdef WW_TEST_HALFDUPLEX_SPLICE_NODES
+#include "HalfDuplexClient/interface.h"
+#include "HalfDuplexServer/interface.h"
+#endif
 
 #ifdef WW_TEST_REAL_TCP_MUX_NODES
 #include "MuxClient/interface.h"
@@ -1634,6 +1638,41 @@ static void testRealTcpMuxSpliceCapability(void)
 
 #endif
 
+#ifdef WW_TEST_HALFDUPLEX_SPLICE_NODES
+static void testHalfDuplexSpliceCapability(void)
+{
+    node_t nodes[] = {nodeHalfDuplexClientGet(), nodeHalfDuplexServerGet()};
+    for (unsigned i = 0; i < ARRAY_SIZE(nodes); ++i)
+    {
+        require(nodes[i].flags == kNodeFlagSupportsSplice && nodes[i].required_padding_left == 0,
+                "HalfDuplex metadata changed");
+        for (unsigned blocked = 0; blocked < 2; ++blocked)
+        {
+            tunnel_t *child    = tunnelCreate(&nodes[i], 0, 0);
+            tunnel_t *entry    = i == 1 ? pipetunnelCreate(child) : child;
+            node_t    neighbor = {.type  = (char *) "neighbor",
+                                  .flags = blocked ? kNodeFlagBlocksSplice : kNodeFlagSupportsSplice};
+            tunnel_t *next     = tunnelCreate(&neighbor, 0, 0);
+            tunnelBind(child, next);
+            tunnel_chain_t *chain = tunnelchainCreate(0);
+            entry->onChain(entry, chain);
+            tunnelchainInsert(chain, next);
+            require(chain->tunnels.len == (i == 1 ? 3 : 2), "server wrapper missing from expanded chain");
+            tunnelchainFinalize(chain);
+            require(chain->supports_splice == (WW_HAVE_SPLICE && ! GSTATE.splice_disabled && ! blocked),
+                    "HalfDuplex expanded chain ignored splice gates");
+            tunnelchainDestroy(chain);
+            if (i == 1)
+                pipetunnelDestroy(entry, wwLifecycleStartupRollback());
+            else
+                tunnelDestroy(child);
+            tunnelDestroy(next);
+        }
+        memoryFree(nodes[i].type);
+    }
+}
+#endif
+
 #ifdef WW_TEST_EASY_SPLICE_NODES
 static void testEasyNodeSpliceCapability(void)
 {
@@ -1850,6 +1889,13 @@ int main(void)
         testRealTcpMuxSpliceCapability();
 #endif
     }
+#ifdef WW_TEST_HALFDUPLEX_SPLICE_NODES
+    for (unsigned disabled = 0; disabled < 2; ++disabled)
+    {
+        GSTATE.splice_disabled = disabled != 0;
+        testHalfDuplexSpliceCapability();
+    }
+#endif
     GSTATE.splice_disabled = saved_splice_disabled;
     testNodeManagerPreFinalizationChainCleanup();
 

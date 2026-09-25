@@ -5,7 +5,7 @@
 
 node_t nodeHalfDuplexServerGet(void)
 {
-    const char *type_name     = "HalfDuplexServer";
+    const char *type_name             = "HalfDuplexServer";
     node_t      node_halfduplexserver = {
              .name                  = NULL,
              .type                  = stringDuplicate(type_name),
@@ -19,7 +19,7 @@ node_t nodeHalfDuplexServerGet(void)
              .node_settings_json    = NULL,
              .node_manager_config   = NULL,
              .instance              = NULL,
-             .flags                 = kNodeFlagNone,
+             .flags                 = kNodeFlagSupportsSplice,
              .required_padding_left = 0,
              .layer_group           = kNodeLayer4,
              .layer_group_next_node = kNodeLayer4,

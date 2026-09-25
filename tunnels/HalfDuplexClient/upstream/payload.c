@@ -14,15 +14,21 @@ bool halfduplexclientForwardPayload(tunnel_t *t, line_t *main, sbuf_t *buf)
     buffer_pool_t *pool    = lineGetBufferPool(main);
     const uint16_t padding = bufferpoolGetLargeBufferPadding(pool);
     uint32_t       length  = sbufGetLength(buf);
-    sbuf_t        *framed  = bufferpoolTryGetBestFit(pool, (uint64_t) length + kHLFDIntroSize, padding);
-    if (UNLIKELY(framed == NULL))
+    const uint64_t total   = (uint64_t) length + kHLFDIntroSize;
+    sbuf_t        *framed  = bufferpoolTryGetBestFit(pool, total, padding);
+    sbuf_t        *intro   = bufferpoolTryGetBestFit(pool, kHLFDIntroSize, padding);
+    if (framed == NULL || intro == NULL || total > sbufGetMaximumWriteableSize(framed) ||
+        kHLFDIntroSize > sbufGetMaximumWriteableSize(intro))
     {
-        lineReuseBuffer(main, buf);
+        if (framed != NULL)
+            bufferpoolReuseBuffer(pool, framed);
+        if (intro != NULL)
+            bufferpoolReuseBuffer(pool, intro);
+        bufferpoolReuseBuffer(pool, buf);
         halfduplexclientClosePair(t, main, false, false);
     }
     else
     {
-        sbuf_t *intro = bufferpoolGetBestFit(pool, kHLFDIntroSize, padding);
         uint8_t pair_id[kHLFDPairIdSize];
         PUT_BE64(pair_id, fastRand64());
         PUT_BE64(pair_id + kHLFDPairIdSize / 2, fastRand64());
@@ -33,8 +39,14 @@ bool halfduplexclientForwardPayload(tunnel_t *t, line_t *main, sbuf_t *buf)
         wire    = sbufGetMutablePtr(framed);
         wire[0] = kHLFDCmdUpload;
         memoryCopy(wire + kHLFDPairIdOffset, pair_id, kHLFDPairIdSize);
-        memoryCopyLarge(wire + kHLFDIntroSize, sbufGetRawPtr(buf), length);
-        sbufSetLength(framed, length + kHLFDIntroSize);
+        sbufSetLength(framed, kHLFDIntroSize);
+        if (sbufIsSplice(buf))
+            sbufSpliceReadToBuffer(buf, framed, length);
+        else
+        {
+            memoryCopyLarge(wire + kHLFDIntroSize, sbufGetRawPtr(buf), length);
+            sbufSetLength(framed, (uint32_t) total);
+        }
         lineReuseBuffer(main, buf);
         // Both intros exist before callbacks. Nested input queues behind the
         // older upload intro until this admitted first input has been submitted.
@@ -48,7 +60,7 @@ bool halfduplexclientForwardPayload(tunnel_t *t, line_t *main, sbuf_t *buf)
                 ls->intro_dispatching = false;
         }
         else
-            lineReuseBuffer(main, framed);
+            bufferpoolReuseBuffer(pool, framed);
     }
     bool alive = halfduplexclientPairAlive(t, main, upload, download);
     lineUnref(download);

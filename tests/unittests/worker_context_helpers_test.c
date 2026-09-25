@@ -213,6 +213,9 @@ static _Atomic(line_t *) g_pipe_owned_line;
 void        pipeTunnelAfterFastStopCheckTestSeam(tunnel_t *wrapper, line_t *source_line);
 static void testPipePublicationIsLinearizedWithPreStop(void);
 static void testPipePayloadFinishLateAndRefused(void);
+#ifdef WW_TEST_HALFDUPLEX_WORKERS
+static void testHalfDuplexWorkers(void);
+#endif
 static void waitForAtomicBool(const atomic_bool *value, const char *message);
 
 void pipeTunnelAfterFastStopCheckTestSeam(tunnel_t *wrapper, line_t *source_line)
@@ -242,17 +245,45 @@ static sbuf_t *pipeTestPayload(pipe_payload_lifetime_t *lifetime)
 {
     *lifetime = (pipe_payload_lifetime_t) {0};
     atomic_init(&lifetime->releases, 0);
+#if WW_HAVE_SPLICE
+    sbuf_t *buf = sbufCreateSplice(64);
+    require(sbufSpliceInitPipe(buf, 0) == 0, "failed to create payload private pipe");
+    uint8_t data[32];
+    for (unsigned i = 0; i < sizeof(data); ++i)
+        data[i] = (uint8_t) i;
+    require(write(sbufSpliceMetadata(buf).pipefd[1], data + 8, 24) == 24, "pipe payload write failed");
+    buf->capacity += 24;
+    sbufSetLength(buf, 24);
+    sbufShiftLeft(buf, 8);
+    memoryCopy(sbufGetMutablePtr(buf), data, 8);
+#else
     sbuf_t *buf = sbufCreate(32);
-    require(buf != NULL, "failed to allocate a pipe payload");
     sbufSetLength(buf, 32);
+#endif
     watchBufferDisposal(buf, &lifetime->releases);
     return buf;
+}
+
+static void pipeCheckPayload(sbuf_t *buf)
+{
+#if WW_HAVE_SPLICE
+    require(sbufIsSplice(buf) && sbufGetLength(buf) == 32 && sbufGetResidentPrefixLength(buf) == 8,
+            "worker message changed splice representation");
+    sbuf_t *ordinary = sbufCreate(32);
+    sbufSpliceReadToBuffer(buf, ordinary, 32);
+    for (unsigned i = 0; i < 32; ++i)
+        require(sbufGetMutablePtr(ordinary)[i] == i, "worker message changed splice byte order");
+    sbufDestroy(ordinary);
+#else
+    discard buf;
+#endif
 }
 
 static void pipeTestOwnedPayload(tunnel_t *t, line_t *line, sbuf_t *buf)
 {
     discard t;
     require(currentThreadIsEventWorkerWID(lineGetWID(line)), "pipe owned Payload ran outside its target worker");
+    pipeCheckPayload(buf);
     atomicAddExplicit(&g_pipe_owned_payload_count, 1, memory_order_relaxed);
     sbufDestroy(buf);
 }
@@ -261,6 +292,7 @@ static void pipeTestBorrowedPayload(tunnel_t *t, line_t *line, sbuf_t *buf)
 {
     discard t;
     require(currentThreadIsEventWorkerWID(lineGetWID(line)), "pipe borrowed Payload ran outside its owner worker");
+    pipeCheckPayload(buf);
     atomicAddExplicit(&g_pipe_borrowed_payload_count, 1, memory_order_relaxed);
     sbufDestroy(buf);
 }
@@ -1624,6 +1656,9 @@ static void testMessageAdmissionRacesWorkerTeardown(void)
      * cannot race global allocation-padding construction. */
     testPipePublicationIsLinearizedWithPreStop();
     testPipePayloadFinishLateAndRefused();
+#ifdef WW_TEST_HALFDUPLEX_WORKERS
+    testHalfDuplexWorkers();
+#endif
     testWorkerMessageBatchOrderingAndFairness();
     testWorkerMessageFullBatchFifoAndFairness();
 #ifdef WW_WORKER_MESSAGE_LINK_WRAP
@@ -2695,8 +2730,44 @@ static void pipeRunAdmittedLateCase(bool upstream, bool finish)
     pipeMessageCaseDrainAndDestroy(&fixture);
 }
 
+static void pipeRunQueuedSourceClose(void)
+{
+    pipe_message_case_fixture_t fixture;
+    pipeMessageCaseSetup(&fixture);
+    pipe_blocking_barrier_t barrier = {0};
+    atomic_init(&barrier.entered, false);
+    atomic_init(&barrier.release, false);
+    atomic_init(&barrier.done, false);
+    require(sendWorkerMessageForceQueueWithCleanup(
+                1, (WorkerMessageCallback) pipeBlockingBarrier, NULL, &barrier, NULL, NULL),
+            "source-close barrier refused");
+    waitForAtomicBool(&barrier.entered, "source-close barrier not entered");
+    pipe_payload_lifetime_t lifetime;
+    fixture.wrapper->fnPayloadU(fixture.wrapper, fixture.borrowed, pipeTestPayload(&lifetime));
+    lineRef(fixture.borrowed);
+    fixture.wrapper->fnFinU(fixture.wrapper, fixture.borrowed);
+    lineDestroy(fixture.borrowed);
+    atomicStoreExplicit(&barrier.release, true, memory_order_release);
+    waitForAtomicBool(&barrier.done, "source-close barrier not released");
+    atomic_bool done;
+    atomic_init(&done, false);
+    require(
+        sendWorkerMessageForceQueueWithCleanup(1, (WorkerMessageCallback) pipeQueueBarrier, NULL, &done, NULL, NULL),
+        "source-close completion refused");
+    waitForAtomicBool(&done, "source-close completion missing");
+    require(atomicLoadRelaxed(&lifetime.releases) == 1 && atomicLoadRelaxed(&g_pipe_owned_payload_count) == 1 &&
+                atomicLoadRelaxed(&g_pipe_owned_finish_count) == 1,
+            "source closure lost queued private-pipe bytes or Finish ordering");
+    lineUnref(fixture.borrowed);
+    require(masterpoolGetCheckedOut(fixture.chain->masterpool_line_pool) == 0, "queued source close leaked lines");
+    tunnelchainDestroy(fixture.chain);
+    pipetunnelDestroy(fixture.wrapper, testShutdownContext());
+    tunnelDestroy(fixture.previous);
+}
+
 static void testPipePayloadFinishLateAndRefused(void)
 {
+    pipeRunQueuedSourceClose();
 #ifdef WW_WORKER_MESSAGE_LINK_WRAP
     const worker_message_enqueue_test_failure_e failures[] = {
         kWorkerMessageEnqueueFailDequeGrowth,
@@ -2837,3 +2908,5 @@ int main(int argc, char **argv)
 
     return 0;
 }
+
+#include "halfduplex_worker_cases.h"

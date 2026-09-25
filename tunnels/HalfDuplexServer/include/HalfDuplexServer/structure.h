@@ -4,14 +4,17 @@
 
 enum
 {
-    kHLFDCmdUpload     = 127,
-    kHLFDCmdDownload   = 128,
-    kHLFDCommandOffset = 0,
-    kHLFDPairIdOffset  = 1,
-    kHLFDPairIdSize    = 16,
-    kHLFDIntroSize     = kHLFDPairIdOffset + kHLFDPairIdSize,
-    kHmapCap           = 16 * 4,
-    kMaxBuffering      = (65535 * 2)
+    kHLFDCmdUpload                  = 127,
+    kHLFDCmdDownload                = 128,
+    kHLFDCommandOffset              = 0,
+    kHLFDPairIdOffset               = 1,
+    kHLFDPairIdSize                 = 16,
+    kHLFDIntroSize                  = kHLFDPairIdOffset + kHLFDPairIdSize,
+    kHmapCap                        = 16 * 4,
+    kMaxBuffering                   = (65535 * 2),
+    kHalfDuplexServerStartupBytes   = 2 * 1024 * 1024,
+    kHalfDuplexServerStartupCharge  = 2 * 1024 * 1024,
+    kHalfDuplexServerStartupEntries = 1024
 };
 
 typedef struct halfduplex_pair_id_s
@@ -67,6 +70,17 @@ typedef struct halfduplexserver_lstate_s
     enum connection_status state;
 
     halfduplex_pair_id_t pair_id;
+    // Only the owned main line attaches/owns startup resources.
+    sbuf_t         *startup_initial;
+    buffer_pool_t  *startup_pool;
+    buffer_budget_t startup_budget;
+    buffer_queue_t  startup_pending;
+    bool            startup_active;
+    bool            startup_initializing;
+    bool            startup_dispatching;
+    bool            next_started;
+    bool            next_paused;
+    bool            source_paused;
 } halfduplexserver_lstate_t;
 
 typedef enum halfduplexserver_pending_result_e
@@ -124,3 +138,8 @@ static inline uint64_t halfduplexserverWaitingLimit(line_t *line)
     const uint64_t basis = bufferpoolGetWaitingBudgetBasis(lineGetBufferPool(line));
     return (uint64_t) kMaxBuffering * max(UINT64_C(1), (basis + 32767) / 32768);
 }
+
+bool    halfduplexserverPairAlive(tunnel_t *t, line_t *main, line_t *upload, line_t *download);
+void    halfduplexserverReplayStartup(tunnel_t *t, line_t *main);
+void    halfduplexserverAbortPair(tunnel_t *t, line_t *main);
+sbuf_t *halfduplexserverMaterialize(line_t *line, sbuf_t *buf);

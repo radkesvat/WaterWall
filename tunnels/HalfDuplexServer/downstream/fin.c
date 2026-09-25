@@ -10,7 +10,9 @@ static void localAsyncCloseLineDownStream(tunnel_t *t, line_t *l)
     assert(ls->upload_line != NULL);
     if (ls->buffering)
     {
-        lineReuseBuffer(l, ls->buffering);
+        sbuf_t *buffer = ls->buffering;
+        ls->buffering  = NULL;
+        lineReuseBuffer(l, buffer);
     }
     halfduplexserverLinestateDestroy(ls);
     tunnelPrevDownStreamFinish(t, l);

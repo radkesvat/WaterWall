@@ -798,6 +798,17 @@ add_waterwall_integration_test(waterwall.tcp_over_udp_fec_roundtrip tcp_over_udp
 add_waterwall_integration_test(waterwall.tcp_over_udp_disturber_roundtrip tcp_over_udp_disturber_roundtrip)
 add_waterwall_integration_test(waterwall.tcp_over_udp_fec_disturber_roundtrip tcp_over_udp_fec_disturber_roundtrip)
 add_waterwall_integration_test(waterwall.halfduplex_roundtrip halfduplex_roundtrip)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING)
+  foreach(splice_mode IN ITEMS true false)
+    add_waterwall_isolated_test(waterwall.halfduplex_tcp_splice_${splice_mode}
+      "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/halfduplex_splice_integration.py"
+      "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>" "${splice_mode}")
+    set_tests_properties(waterwall.halfduplex_tcp_splice_${splice_mode} PROPERTIES TIMEOUT 60)
+    add_waterwall_test_labels(waterwall.halfduplex_tcp_splice_${splice_mode} "integration" "tunnels")
+    add_waterwall_case_resource_lock(waterwall.halfduplex_tcp_splice_${splice_mode} halfduplex_splice)
+  endforeach()
+endif()
+
 add_waterwall_integration_test(waterwall.http1_bidirectional_roundtrip http1_bidirectional_roundtrip)
 add_waterwall_integration_test(waterwall.http1_bidirectional_tcp_loopback http1_bidirectional_tcp_loopback)
 add_waterwall_integration_test(waterwall.http1_split_roundtrip http1_split_roundtrip)

@@ -177,7 +177,7 @@ Source-backed metadata:
 
 | Property | Value |
 | --- | --- |
-| node flags | `kNodeFlagNone` |
+| node flags | `kNodeFlagSupportsSplice` |
 | `can_have_prev` | `true` |
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayer4` |
@@ -186,3 +186,52 @@ Source-backed metadata:
 | `required_padding_left` | `0` bytes |
 
 The waiting bound applies at initial publication and on later appends. Close occurs at or above 262,140 bytes in S1/S2 or 4,194,240 bytes in higher profiles; available peers pair before waiting limits apply.
+
+## Splice and setup storage
+
+Any delivery used to parse an intro or extend a waiting upload is materialized
+completely, including body bytes accompanying the intro. Retained setup buffers
+are ordinary. Pairing strips exactly 17 bytes and replays the retained body before
+later direct traffic. After startup replay completes, upload and return traffic preserve ordinary
+or splice wrappers, including across workers. Download-side input after its intro
+is discarded without materializing its body.
+
+The waiting-upload limit remains `131070 * max(1, ceil(basis / 32768))`, including
+the retained intro: close at or above 262,140 bytes in S1/S2 or 4,194,240 bytes in
+higher profiles. An available peer pairs before this waiting-limit check. These
+are logical waiting limits, not a cap on ready deliveries or total physical memory.
+Fresh materialization and grown waiting buffers retain onward padding.
+
+Both nodes advertise `kNodeFlagSupportsSplice` with zero required left padding.
+Actual splice reads require platform/build support, `misc.splice` enabled, and
+support from every node in the expanded chain, including the server's PipeTunnel
+wrapper and all neighbors. Ordinary buffers remain valid in every state. No new
+settings, wire fields, or read-preference requests are introduced.
+
+### Ordering during main-line startup
+
+Pairing publishes a temporary startup barrier before invoking next Init. The
+server-owned main line owns the initial ordinary body separately from later
+upload input. Input received reentrantly during Init or initial replay cannot
+overtake that body. An empty initial body still preserves the Init barrier.
+
+Later input retained by this barrier has independent inclusive limits of 2 MiB
+logical bytes, 2 MiB canonical allocation charge, and 1,024 entries. Empty entries
+consume charge and an entry; allocation capacity may exhaust the charge limit
+before the byte limit. Refusal closes the association rather than dropping TCP
+bytes. The initial body is outside this new budget: its existing admission and
+waiting-upload limits remain unchanged, including immediately pairable large
+inputs.
+
+All startup retention is ordinary. Splice deliveries joining the FIFO are fully
+materialized with onward padding. Replay sends the initial body first, then hands
+off the queued tail in order, coalescing multiple entries into one checked ordinary
+buffer without callbacks during preparation. Temporary materialization/coalescing
+storage is bounded scratch, not a promise about aggregate physical memory.
+
+Replay waits for next-side permission. A Resume during Init only records that
+permission; source Resume follows older startup output and is withheld while next
+is paused. The barrier ends immediately before the final tail handoff, allowing
+later reentrant data to follow all older bytes. Ready forwarding remains queue-free
+and preserves ordinary/splice wrappers. Every close path releases main-owned
+startup data and its budget before notifying adjacent sides.
