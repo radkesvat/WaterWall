@@ -9,6 +9,7 @@ add_library(StreamFragmenter STATIC
     upstream/payload.c
     upstream/fin.c
     downstream/fin.c
+    downstream/est.c
     downstream/pause.c
     downstream/resume.c
 )

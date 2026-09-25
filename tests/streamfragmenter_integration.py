@@ -16,11 +16,12 @@ from httpproxyserver_splice_integration import successful_calls
 from trojanclient_splice_integration import exact
 
 
-def run(binary, enabled, mode):
+def run(binary, enabled, mode, wait_for_est=False):
     tracer = shutil.which("strace")
     if tracer is None:
         raise RuntimeError("inconclusive: strace required for splice evidence")
-    settings = {"mode": mode, "bypass_chance": 0, "cuts": [[2, 2, 100], [4, 5, 100]]}
+    settings = {"mode": mode, "bypass_chance": 0, "cuts": [[2, 2, 100], [4, 5, 100]],
+                "wait-for-est": wait_for_est}
     settings.update({"count": 1} if mode == "counter" else {"duration-ms": 1000})
     with tempfile.TemporaryDirectory(prefix="waterwall-streamfragmenter-") as directory:
         root = Path(directory)
@@ -101,5 +102,6 @@ def run(binary, enabled, mode):
 
 
 if __name__ == "__main__":
-    run(str(Path(sys.argv[1]).resolve()), sys.argv[2] == "true", sys.argv[3])
+    run(str(Path(sys.argv[1]).resolve()), sys.argv[2] == "true", sys.argv[3],
+        len(sys.argv) > 4 and sys.argv[4] == "true")
     print("StreamFragmenter socket roundtrip passed")

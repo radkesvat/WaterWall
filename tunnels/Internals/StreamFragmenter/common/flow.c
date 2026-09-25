@@ -40,7 +40,7 @@ void streamfragmenterDrain(tunnel_t *t, line_t *l)
             break;
         /* Pressure callbacks can append work or destroy the complete FIFO. */
         streamfragmenter_job_t *job = ls->head;
-        if (job == NULL || ls->timer != NULL)
+        if (job == NULL || ls->timer != NULL || ls->waiting_for_est)
             break;
         while (job->next_cut < ts->cut_count && ! (job->cuts & (UINT64_C(1) << job->next_cut)))
             ++job->next_cut;

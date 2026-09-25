@@ -3,7 +3,7 @@
 
 bool streamfragmenterLoadSettings(streamfragmenter_tstate_t *ts, const cJSON *settings)
 {
-    static const char *const keys[] = {"mode", "count", "duration-ms", "bypass_chance", "cuts"};
+    static const char *const keys[] = {"mode", "count", "duration-ms", "bypass_chance", "cuts", "wait-for-est"};
     if (! cJSON_IsObject(settings))
     {
         LOGF("JSON Error: StreamFragmenter->settings must be an object");
@@ -40,7 +40,14 @@ bool streamfragmenterLoadSettings(streamfragmenter_tstate_t *ts, const cJSON *se
         LOGF("JSON Error: StreamFragmenter requires %s as an integer in [0, 4294967295] and forbids %s", scope, other);
         return false;
     }
-    ts->scope         = (uint32_t) value;
+    ts->scope = (uint32_t) value;
+    item      = cJSON_GetObjectItemCaseSensitive(settings, "wait-for-est");
+    if (item != NULL && ! cJSON_IsBool(item))
+    {
+        LOGF("JSON Error: StreamFragmenter->settings->wait-for-est must be a boolean");
+        return false;
+    }
+    ts->wait_for_est  = item == NULL || cJSON_IsTrue(item);
     ts->bypass_chance = 0;
     item              = cJSON_GetObjectItemCaseSensitive(settings, "bypass_chance");
     if (item != NULL)

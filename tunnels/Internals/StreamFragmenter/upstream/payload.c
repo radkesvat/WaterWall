@@ -10,7 +10,7 @@ void streamfragmenterTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     {
         if (ts->timed)
         {
-            ls->exhausted = getHRTimeUs() >= ls->deadline_us;
+            ls->exhausted = (! ts->wait_for_est || ls->est_received) && getHRTimeUs() >= ls->deadline_us;
             eligible      = ! ls->exhausted;
         }
         else
@@ -23,7 +23,7 @@ void streamfragmenterTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             if (roll100(ts->cuts[i].chance))
                 cuts |= UINT64_C(1) << i;
     }
-    if (cuts == 0 && ls->head == NULL && ! ls->draining && ! ls->consumer_paused)
+    if (cuts == 0 && ls->head == NULL && ! ls->draining && ! ls->consumer_paused && ! ls->waiting_for_est)
     {
         tunnelNextUpStreamPayload(t, l, buf);
         return;

@@ -8,6 +8,7 @@
 
 static uint64_t        now_us = UINT64_C(1000123456);
 static bool            refuse_timer, refuse_pipe, refuse_job;
+static bool            defer_est;
 static unsigned        representation;
 static tunnel_t       *fragmenter, *previous, *next;
 static node_t          node;
@@ -176,7 +177,8 @@ static void previousEst(tunnel_t *t, line_t *l)
 static void nextInit(tunnel_t *t, line_t *l)
 {
     discard t;
-    fragmenter->fnEstD(fragmenter, l);
+    if (! defer_est)
+        fragmenter->fnEstD(fragmenter, l);
 }
 static void capture(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
@@ -237,7 +239,7 @@ static void openLine(const char *settings)
     line = lineCreate(chain->line_pools, 0);
     lineRef(line);
     fragmenter->fnInitU(fragmenter, line);
-    require(establishments == 1, "Est was held by fragmenter");
+    require(establishments == (defer_est ? 0U : 1U), "Est was held by fragmenter");
 }
 static void closeLine(void)
 {
@@ -256,6 +258,7 @@ static void closeLine(void)
     cJSON_Delete(node.node_settings_json);
     memoryFree(node.type);
     on_payload = on_pause = on_resume = on_est = NULL;
+    defer_est                                  = false;
 }
 static void configuration(void)
 {
@@ -276,6 +279,10 @@ static void configuration(void)
         "{\"mode\":\"counter\",\"count\":1,\"cuts\":[],\"bypass_chance\":101}",
         "{\"mode\":\"counter\",\"count\":1,\"cuts\":[],\"bypass_chance\":0.5}",
         "{\"mode\":\"counter\",\"count\":1,\"cuts\":[],\"extra\":0}",
+        "{\"mode\":\"counter\",\"count\":1,\"cuts\":[],\"wait-for-est\":null}",
+        "{\"mode\":\"counter\",\"count\":1,\"cuts\":[],\"wait-for-est\":1}",
+        "{\"mode\":\"counter\",\"count\":1,\"cuts\":[],\"wait-for-est\":\"true\"}",
+        "{\"mode\":\"counter\",\"count\":1,\"cuts\":[],\"wait-for-est\":true,\"wait-for-est\":false}",
         "{\"mode\":\"counter\",\"count\":1,\"count\":2,\"cuts\":[]}",
         "{\"mode\":\"counter\",\"count\":1,\"cuts\":[[1,0]]}",
         "{\"mode\":\"counter\",\"count\":1,\"cuts\":[[1,0,100,0]]}",
@@ -576,6 +583,178 @@ static void limitsAndCleanup(void)
     require(! lineIsAlive(line), "Resume reentrant close");
     closeLine();
 }
+static void injectDuringEst(void)
+{
+    inject();
+    fragmenter->fnResumeD(fragmenter, line);
+    require(! writes && ! state()->timer, "nested input/Resume escaped Est forwarding");
+}
+
+static void injectAndRepeatEst(void)
+{
+    injectDuringEst();
+    fragmenter->fnEstD(fragmenter, line);
+    require(! writes && ! state()->timer, "nested input/Resume/Est escaped outer Est forwarding");
+}
+
+static void injectAfterEstWindow(void)
+{
+    now_us += 10000;
+    inject();
+    require(! writes && ! state()->timer && ! state()->tail->cuts, "timed window started after Est forwarding");
+}
+
+static void delayedEst(void)
+{
+    /* Explicit false retains Init-relative eligibility and pre-Est delivery. */
+    defer_est = true;
+    openLine("{\"mode\":\"timed\",\"duration-ms\":10,\"cuts\":[[2,5,100]],\"wait-for-est\":false}");
+    advance(10000);
+    sendText("abcd");
+    require(writes == 1 && ! establishments && ! state()->timer, "explicit false did not preserve pre-Est delivery");
+    closeLine();
+
+    /* Est can arrive synchronously in Init with no older payload queued. */
+    on_est = injectDuringEst;
+    openLine("{\"mode\":\"counter\",\"count\":1,\"cuts\":[[2,0,100]],\"wait-for-est\":true}");
+    require(writes == 2 && ! strcmp(output, "NEW") && ! state()->timer, "Init/Est input escaped or remained stuck");
+    closeLine();
+
+    defer_est = true;
+    openLine("{\"mode\":\"timed\",\"duration-ms\":10,\"cuts\":[[2,5,100]],\"wait-for-est\":true}");
+    sendText("abcd");
+    on_est = injectAfterEstWindow;
+    fragmenter->fnEstD(fragmenter, line);
+    advance(4999);
+    require(! writes, "Est callback time consumed the first fragment delay");
+    advance(1);
+    require(writes == 3 && ! strcmp(output, "abcdNEW"), "timed Est reentry lost selection or FIFO");
+    closeLine();
+
+    defer_est = true;
+    openLine("{\"mode\":\"counter\",\"count\":2,\"cuts\":[[2,5,100]]}");
+    sendText("abcd");
+    sendText("EFGH");
+    sendText("IJKL");
+    require(state()->exhausted && ! writes && ! state()->timer && ! state()->head->delay_started,
+            "pre-Est counter or scheduling");
+    advance(1000000);
+    consumerPause();
+    fragmenter->fnResumeD(fragmenter, line);
+    require(pauses == 1 && resumes == 1 && ! source_paused && ! writes && ! state()->timer,
+            "pre-Est pressure forwarding or Resume opened the gate");
+    on_est = injectAndRepeatEst;
+    fragmenter->fnEstD(fragmenter, line);
+    require(establishments == 2 && ! writes && state()->timer, "Est not forwarded before scheduling");
+    advance(4999);
+    require(! writes, "connection wait consumed first delay");
+    advance(1);
+    require(writes == 2 && ! strcmp(output, "abcd"), "first delayed payload");
+    advance(5000);
+    require(writes == 6 && ! strcmp(output, "abcdEFGHIJKLNEW"), "Est reentry or exhausted input broke FIFO");
+    sbuf_t         *buf      = input("PASS", 4);
+    const uintptr_t identity = (uintptr_t) buf;
+    fragmenter->fnPayloadU(fragmenter, line, buf);
+    require(last_buffer == identity && ! state()->head && ! state()->timer, "gate did not retire to direct output");
+    closeLine();
+
+    defer_est = true;
+    openLine("{\"mode\":\"timed\",\"duration-ms\":10,\"cuts\":[[2,20,100]]}");
+    sendText("abcd");
+    advance(50000);
+    fragmenter->fnEstD(fragmenter, line);
+    advance(9999);
+    sendText("EFGH");
+    advance(1);
+    const uint64_t deadline = state()->deadline_us;
+    fragmenter->fnEstD(fragmenter, line);
+    sendText("IJKL");
+    require(state()->deadline_us == deadline && state()->exhausted && ! state()->tail->cuts,
+            "timed scope must start once at Est and exclude its deadline");
+    advance(10000);
+    require(writes == 2 && ! strcmp(output, "abcd"), "pre-Est timed input was not selected");
+    advance(20000);
+    require(writes == 5 && ! strcmp(output, "abcdEFGHIJKL"), "timed selections changed while queued");
+    closeLine();
+
+    defer_est = true;
+    openLine("{\"mode\":\"counter\",\"count\":1,\"cuts\":[[2,5,100]],\"wait-for-est\":true}");
+    sendText("abcd");
+    consumerPause();
+    fragmenter->fnEstD(fragmenter, line);
+    require(establishments == 1 && source_paused && state()->timer && ! writes, "Pause held Est or allowed output");
+    advance(20000);
+    require(! writes && ! state()->timer, "paused due work emitted or polled");
+    fragmenter->fnResumeD(fragmenter, line);
+    require(writes == 2 && ! strcmp(output, "abcd") && ! source_paused, "Resume restarted elapsed delay");
+    closeLine();
+
+    /* Empty and bypassed input still consumes counter scope before Est. */
+    defer_est = true;
+    openLine("{\"mode\":\"counter\",\"count\":1,\"cuts\":[[2,5,100]],\"wait-for-est\":true}");
+    sendText("");
+    sendText("abcd");
+    fragmenter->fnEstD(fragmenter, line);
+    require(writes == 2 && lengths[0] == 0 && lengths[1] == 4 && ! state()->timer, "empty arrival lost counter scope");
+    closeLine();
+
+    const char *disabled[] = {
+        "{\"mode\":\"counter\",\"count\":0,\"cuts\":[[2,5,100]],\"wait-for-est\":true}",
+        "{\"mode\":\"timed\",\"duration-ms\":0,\"cuts\":[[2,5,100]],\"wait-for-est\":true}",
+        "{\"mode\":\"counter\",\"count\":1,\"cuts\":[],\"wait-for-est\":true}",
+        "{\"mode\":\"counter\",\"count\":1,\"bypass_chance\":100,\"cuts\":[[2,5,100]],\"wait-for-est\":true}",
+    };
+    for (size_t i = 0; i < ARRAY_SIZE(disabled); ++i)
+    {
+        defer_est = true;
+        openLine(disabled[i]);
+        sendText("abcd");
+        require(! writes && ! state()->timer, "disabled shaping bypassed startup wait");
+        fragmenter->fnEstD(fragmenter, line);
+        require(writes == 1 && lengths[0] == 4 && ! state()->timer, "disabled shaping gained cuts");
+        closeLine();
+    }
+
+    for (unsigned during_est = 0; during_est < 2; ++during_est)
+        for (unsigned direction = 0; direction < 2; ++direction)
+        {
+            defer_est = true;
+            openLine("{\"mode\":\"counter\",\"count\":1,\"cuts\":[[2,5,100]],\"wait-for-est\":true}");
+            sendText("abcd");
+            sendText("later");
+            void (*finish)(void) = direction ? consumerClose : sourceClose;
+            if (during_est)
+            {
+                on_est = finish;
+                fragmenter->fnEstD(fragmenter, line);
+            }
+            else
+                finish();
+            advance(20000);
+            require(! lineIsAlive(line) && ! writes && finish_count == 1, "pre-Est/Est Finish continued or reflected");
+            closeLine();
+        }
+
+    defer_est = true;
+    openLine("{\"mode\":\"counter\",\"count\":1,\"cuts\":[[2,5,100]],\"wait-for-est\":true}");
+    sendText("abcd");
+    for (unsigned i = 1; i < kStreamFragmenterHardJobs; ++i)
+        sendText("");
+    require(lineIsAlive(line) && source_paused && ! state()->timer, "pre-Est budget equality/pressure");
+    sendText("");
+    require(! lineIsAlive(line) && ! writes && finish_count == 2, "pre-Est queue escaped its hard bound");
+    closeLine();
+
+    defer_est = true;
+    openLine("{\"mode\":\"counter\",\"count\":1,\"cuts\":[[2,5,100]],\"wait-for-est\":true}");
+    sendText("abcd");
+    refuse_timer = true;
+    fragmenter->fnEstD(fragmenter, line);
+    refuse_timer = false;
+    require(establishments == 1 && ! lineIsAlive(line) && ! writes && finish_count == 2, "timer refusal after Est");
+    closeLine();
+}
+
 static void shutdownCleanup(void)
 {
     openLine("{\"mode\":\"counter\",\"count\":1,\"cuts\":[[2,2,100]]}");
@@ -612,6 +791,7 @@ int main(void)
     timersAndFifo();
     pauseAndReentry();
     limitsAndCleanup();
+    delayedEst();
 #if WW_HAVE_SPLICE
     for (representation = 1; representation <= 2; ++representation)
     {
@@ -619,6 +799,7 @@ int main(void)
         timersAndFifo();
         pauseAndReentry();
         limitsAndCleanup();
+        delayedEst();
         openLine("{\"mode\":\"counter\",\"count\":1,\"cuts\":[[2,0,100],[4,0,100]]}");
         sendText("abcdef");
         require(spliced[0] && spliced[1] && spliced[2], "fragmentation unnecessarily materialized pipe bodies");

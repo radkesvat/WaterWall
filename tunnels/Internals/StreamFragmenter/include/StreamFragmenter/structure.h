@@ -28,6 +28,7 @@ typedef struct streamfragmenter_tstate_s
     uint8_t                cut_count;
     uint8_t                bypass_chance;
     bool                   timed;
+    bool                   wait_for_est;
 } streamfragmenter_tstate_t;
 
 /* Each job retains the original payload boundary and its arrival-time decisions.
@@ -59,6 +60,8 @@ typedef struct streamfragmenter_lstate_s
     bool                    consumer_paused;
     bool                    locally_paused;
     bool                    source_paused;
+    bool                    waiting_for_est;
+    bool                    est_received;
 } streamfragmenter_lstate_t;
 
 bool streamfragmenterLoadSettings(streamfragmenter_tstate_t *ts, const cJSON *settings);
@@ -71,5 +74,6 @@ void streamfragmenterTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void streamfragmenterTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void streamfragmenterTunnelUpStreamFinish(tunnel_t *t, line_t *l);
 void streamfragmenterTunnelDownStreamFinish(tunnel_t *t, line_t *l);
+void streamfragmenterTunnelDownStreamEst(tunnel_t *t, line_t *l);
 void streamfragmenterTunnelDownStreamPause(tunnel_t *t, line_t *l);
 void streamfragmenterTunnelDownStreamResume(tunnel_t *t, line_t *l);

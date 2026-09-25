@@ -38,6 +38,7 @@ For timed eligibility, replace `"mode": "counter", "count": 3` with
 | `count` | Required in counter mode, forbidden in timed mode; integer `0..4294967295`. |
 | `duration-ms` | Required in timed mode, forbidden in counter mode; integer `0..4294967295`, in milliseconds. |
 | `bypass_chance` | Optional integer `0..100`, default `0`. |
+| `wait-for-est` | Optional boolean, default `true`; hold upstream payloads until the first downstream transport Est has been forwarded. |
 | `cuts` | Required array of at most 64 entries, each exactly `[offset, delay_ms, chance_percent]`. |
 
 Offsets are strictly increasing integers in `1..4294967295`. Delays are integers
@@ -45,15 +46,17 @@ in `0..4294967295` milliseconds; chances are integers in `0..100`. Invalid types
 unknown or duplicate settings, and invalid ordering reject construction. There
 are no string duration formats. Zero count, zero duration, or an empty cut array
 disables shaping immediately. All settings are validated even when shaping is
-disabled.
+disabled. An enabled `wait-for-est` still holds input when shaping is disabled.
 
 ## Selection and timing
 
 Each line has independent eligibility. Counter mode counts every upstream
 Payload arrival, including empty, bypassed, too-short, and uncut payloads. Timed
-mode starts at this node's upstream Init and accepts arrivals strictly before its
-monotonic deadline. Eligibility and random selections are fixed at arrival,
-even if a job waits beyond that deadline.
+mode starts at the first downstream Est by default, or at this node's upstream
+Init when `wait-for-est` is `false`, and accepts arrivals strictly before its monotonic
+deadline. Pre-Est arrivals remain eligible in timed mode with the startup wait;
+counter mode still counts those arrivals normally. Eligibility and random
+selections are fixed at arrival, even if a job waits beyond that deadline.
 
 For each eligible payload, bypass is evaluated first. Otherwise every applicable
 cut receives an independent percentage roll. A cut applies only when its offset
@@ -68,12 +71,36 @@ wait 5 ms; send [250,300)
            send [300,1000)
 ```
 
-A job's first delay starts when it becomes the active FIFO head. Later delays
+A job's first delay starts when it becomes the active FIFO head and the startup
+gate is open. Later delays
 start after the previous fragment's actual handoff. Time spent behind older jobs
 does not satisfy a later job's delay. Zero-delay fragments and the final suffix
 are sent immediately when the consumer permits. Scheduling can make delivery
 late, but the node checks monotonic deadlines so timer rounding cannot shorten
 the configured delay.
+
+### Waiting for transport establishment
+
+By default (`wait-for-est: true`), all upstream input enters the existing bounded FIFO
+before Est, including empty, bypassed and no-longer-eligible payloads. No fragment
+delay starts and no upstream output is sent yet. Downstream data and pressure
+signals continue through their normal paths.
+
+Set `wait-for-est: false` to allow scheduling and upstream delivery before Est.
+
+The first downstream Est starts the timed eligibility window and is forwarded
+immediately, including while paused. The startup gate remains closed during
+that notification: nested Payload, Resume or Est cannot release data or start a
+timer. After forwarding returns on the live line, scheduling begins at the FIFO
+head. Duplicate Est notifications still forward but do not restart either the
+eligibility window or fragment delays. Subsequent Pause/Resume retains the usual
+elapsed-delay behavior.
+
+This can keep configured delays from being consumed while a following TCP
+transport connects. It requires a genuine downstream Est to release input; no
+Est is synthesized and no separate startup timeout is added. Finish before Est
+discards the FIFO. Further downstream buffering can still combine deliveries,
+so this setting does not guarantee packet boundaries or spacing on the wire.
 
 ## FIFO, pressure, and shutdown
 
