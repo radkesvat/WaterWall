@@ -913,6 +913,7 @@ if(TARGET ww)
       "-Wl,--wrap=writev"
       "-Wl,--wrap=poll"
       "-Wl,--wrap=tunLinuxGsoMaxSegmentsConfigure"
+      "-Wl,--wrap=tunLinuxOffloadPrepareSegment"
       "-Wl,--wrap=sbufTryCreateWithPadding"
       "-Wl,--wrap=sbufDestroy"
       "-Wl,--wrap=pthread_create"

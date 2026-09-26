@@ -113,9 +113,12 @@ Full-route example with local ranges excluded:
   mode, startup logs the reason and continues with ordinary TUN framing.
   The configured device MTU still limits each packet emitted by segmentation.
   Linux's TCPv4 GSO ECN modifier is supported when it appears in a record.
-  On Linux, requested GSO requires a new interface with the configured name;
-  a name already in use fails startup. `"gso": false` retains the existing
-  ordinary TUN attach behavior.
+
+  > **Pre-created Linux interfaces:** Requested GSO requires a new interface
+  > name. Deployments that attach to a pre-created TUN must explicitly set
+  > `"gso": false` to retain ordinary attachment behavior, including when the
+  > setting was previously omitted. Automatic fallback for unavailable offload
+  > facilities does not silently accept an interface-name conflict.
 
 - `route-table` `(string)`
   Controls native system route installation.
@@ -212,10 +215,13 @@ When the TUN device produces a packet:
   for ordinary records and keeps their fragment handling in the reader;
   `GSO_NONE` records, including IPv6, retain the existing ordinary reader path
   without an IPv4-only preflight
-- for TCPv4 GSO, the reader builds independent MTU-sized IPv4 packets with
-  completed IPv4 checksums and adjusted TCP pseudoheader seeds; the destination
-  worker finishes each TCP checksum through a private completion callback
-  before normal TunDevice delivery, logging, or packet publication
+- for TCPv4 GSO, the reader validates the aggregate and transfers its buffer
+  to the flow's worker; that worker allocates independent MTU-sized packets,
+  copies their headers and payload, and completes IPv4 and TCP checksums before
+  normal TunDevice delivery, logging, or packet publication
+- ordinary batches and GSO aggregates share a bounded FIFO for each worker;
+  unfinished segmentation stays ahead of later packets and continues in bounded
+  callbacks, preserving flow order without blocking the worker for queue capacity
 - with ordinary TUN framing, unfragmented kernel-produced packets remain
   trusted at this adapter boundary and are validated by their downstream
   consumer; fragmented IPv4 packets pass the common fragment parser, which
@@ -339,7 +345,11 @@ Source-backed metadata:
 | `layer_group` | `kNodeLayer3` |
 | `layer_group_prev_node` | `kNodeLayer3` |
 | `layer_group_next_node` | `kNodeLayer3` |
-| `required_padding_left` | `0` bytes |
+| `required_padding_left` | 10 bytes on Linux; 0 bytes on other supported platforms |
+
+This is the node's logical advertised left-padding requirement. Linux advertises
+it even when `"gso": false`. Allocation alignment is separate, so it does not
+mean every allocation grows by exactly ten bytes.
 
 ### `fragment-policy` (optional, default: `reassemble`)
 

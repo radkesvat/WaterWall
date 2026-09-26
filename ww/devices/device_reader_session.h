@@ -22,7 +22,27 @@ typedef void (*DeviceReaderDeliverFn)(void *device, sbuf_t *buf, wid_t wid);
  * It is never invoked for refused, cancelled, or stale-generation messages. */
 typedef void (*DeviceReaderPrepareFn)(sbuf_t *buf);
 
-typedef struct device_reader_session_s
+typedef struct device_reader_session_s device_reader_session_t;
+struct device_reader_worker_queue_s;
+
+/* Remaining delivery work for this FIFO callback, shared across aggregates. */
+typedef struct device_reader_work_budget_s
+{
+    unsigned int packets;
+    uint32_t     bytes;
+} device_reader_work_budget_t;
+
+/* One bounded step of privately owned work on its selected event worker. Return
+ * true when finished; false retains the FIFO head for a later callback. The
+ * step consumes the supplied packet/byte budget; completed small work can share
+ * this callback with later FIFO entries. The session's delivery gate is held,
+ * so the step may call session->deliver. */
+typedef bool (*DeviceReaderWorkFn)(device_reader_session_t *session, void *context, wid_t wid,
+                                   device_reader_work_budget_t *budget);
+/* Frees only context-owned storage; may run on any thread, without admission. */
+typedef void (*DeviceReaderWorkCleanupFn)(void *context);
+
+struct device_reader_session_s
 {
     atomic_uint           refcount;
     atomic_uint           generation;
@@ -43,11 +63,16 @@ typedef struct device_reader_session_s
     uint32_t      output_packet_limit;
     int           output_wake_fd;
 
+    /* Optional ordered worker dispatch. Each scheduled lane token owns a
+     * session reference until its entire FIFO is drained or cancelled. */
+    struct device_reader_worker_queue_s *worker_queues;
+    uint16_t                             worker_queue_count;
+
     /* Reader-owned assembly/raw staging. The mutex serializes generation
      * transitions; only the reader (or the joined-reader lifecycle owner) may
      * access its pool and release retained storage. */
     device_frag_affinity_table_t *frag_affinity;
-} device_reader_session_t;
+};
 
 device_reader_session_t *deviceReaderSessionCreate(uint32_t pool_capacity, uint16_t batch_capacity, void *device,
                                                    DeviceReaderDeliverFn deliver, buffer_pool_t *reader_buffer_pool,
@@ -100,6 +125,25 @@ bool deviceReaderSessionPost(device_reader_session_t *session, wid_t target_wid,
  * accommodate at least one largest possible output allocation. */
 bool deviceReaderSessionConfigureOutputBudget(device_reader_session_t *session, size_t max_charge,
                                               uint32_t max_packets);
+
+/* Configure once after OutputBudget and before Begin. Failure leaves the
+ * session usable without ordered dispatch. Ordinary Post calls then reserve
+ * their actual charges and may wait for capacity on the reader thread. */
+bool deviceReaderSessionEnableWorkerQueue(device_reader_session_t *session);
+
+/* Reader-only reservation of storage and packet slots for a complete work
+ * item, including any output allowance needed for progress. Release may run
+ * on any thread. A successful reservation must be settled exactly once. */
+bool deviceReaderSessionTryReserveWork(device_reader_session_t *session, size_t charge, unsigned int packets);
+void deviceReaderSessionReleaseWork(device_reader_session_t *session, size_t charge, unsigned int packets);
+
+/* Transfers context and its reservation on every result. Step runs only on
+ * its admitted, matching-generation destination worker; cleanup always frees
+ * context after completion, refusal, cancellation, or stale-generation discard.
+ * Each step must bound its own work and must not release the reservation. */
+bool deviceReaderSessionPostWork(device_reader_session_t *session, wid_t target_wid, void *context,
+                                 DeviceReaderWorkFn step, DeviceReaderWorkCleanupFn cleanup, size_t charge,
+                                 unsigned int packets);
 
 /* Reserve exact allocation charge before creating each offload output packet.
  * One successful reservation represents one packet. False means capacity is

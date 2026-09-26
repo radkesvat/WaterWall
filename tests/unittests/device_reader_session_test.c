@@ -22,11 +22,12 @@ static test_worker_registry_t g_test_worker_registry;
 
 enum
 {
-    kCapturedMessageMax = 8
+    kCapturedMessageMax = 128
 };
 
 typedef struct captured_message_s
 {
+    wid_t                        wid;
     WorkerMessageCallback        callback;
     WorkerMessageCleanupCallback cleanup;
     void                        *arg1;
@@ -36,13 +37,15 @@ typedef struct captured_message_s
 
 typedef struct reader_probe_s
 {
-    unsigned int delivered;
-    unsigned int prepared;
-    sbuf_t      *last_prepared;
-    bool         check_prepare_order;
-    atomic_bool  block_delivery;
-    atomic_bool  delivery_entered;
-    atomic_bool  release_delivery;
+    unsigned int        delivered;
+    unsigned int        prepared;
+    sbuf_t             *last_prepared;
+    bool                check_prepare_order;
+    const unsigned int *required_work_steps;
+    unsigned int        expected_work_steps;
+    atomic_bool         block_delivery;
+    atomic_bool         delivery_entered;
+    atomic_bool         release_delivery;
 } reader_probe_t;
 
 typedef struct end_wait_probe_s
@@ -63,22 +66,23 @@ typedef struct test_env_s
     master_pool_t *medium_master;
     master_pool_t *splice_master;
     buffer_pool_t *worker_buffer_pool;
-    buffer_pool_t *buffer_pools[1];
-    wloop_t       *loops[1];
+    buffer_pool_t *second_worker_buffer_pool;
+    buffer_pool_t *buffer_pools[2];
+    wloop_t       *loops[2];
 } test_env_t;
 
-static captured_message_t                 captured_messages[kCapturedMessageMax];
-static unsigned int                       captured_message_count;
-static bool                               fail_post;
-static device_reader_session_t           *tracked_session;
-static master_pool_t                     *tracked_message_pool;
-static unsigned int                       tracked_session_free_count;
-static unsigned int                       tracked_pool_destroy_count;
-static buffer_pool_t                     *tracked_reuse_pool;
-static sbuf_t                            *tracked_reuse_buffer;
-static unsigned int                       tracked_reuse_count;
-static reader_probe_t                    *active_prepare_probe;
-static device_reader_session_t           *active_prepare_session;
+static captured_message_t       captured_messages[kCapturedMessageMax];
+static unsigned int             captured_message_count;
+static bool                     fail_post;
+static device_reader_session_t *tracked_session;
+static master_pool_t           *tracked_message_pool;
+static unsigned int             tracked_session_free_count;
+static unsigned int             tracked_pool_destroy_count;
+static buffer_pool_t           *tracked_reuse_pool;
+static sbuf_t                  *tracked_reuse_buffer;
+static unsigned int             tracked_reuse_count;
+static reader_probe_t          *active_prepare_probe;
+static device_reader_session_t *active_prepare_session;
 
 worker_message_submit_result_e __wrap_sendWorkerMessageForceQueueWithCleanup(wid_t wid, WorkerMessageCallback callback,
                                                                              WorkerMessageCleanupCallback cleanup,
@@ -103,7 +107,6 @@ worker_message_submit_result_e __wrap_sendWorkerMessageForceQueueWithCleanup(wid
                                                                              WorkerMessageCleanupCallback cleanup,
                                                                              void *arg1, void *arg2, void *arg3)
 {
-    discard wid;
     if (fail_post)
     {
         cleanup(arg1, arg2, arg3, kWorkerMessageCancelEnqueueFailure);
@@ -112,6 +115,7 @@ worker_message_submit_result_e __wrap_sendWorkerMessageForceQueueWithCleanup(wid
 
     require(captured_message_count < kCapturedMessageMax, "captured-message queue overflow");
     captured_messages[captured_message_count++] = (captured_message_t) {
+        .wid      = wid,
         .callback = callback,
         .cleanup  = cleanup,
         .arg1     = arg1,
@@ -123,7 +127,7 @@ worker_message_submit_result_e __wrap_sendWorkerMessageForceQueueWithCleanup(wid
 
 void __wrap_memoryFree(void *ptr)
 {
-    if (ptr == tracked_session)
+    if (tracked_session != NULL && ptr == tracked_session)
     {
         require(atomic_load_explicit(&tracked_session->output_charge, memory_order_acquire) == 0,
                 "reader session was destroyed with output allocation charge reserved");
@@ -155,6 +159,11 @@ void __wrap_bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *buf)
 static void deliverPacket(void *device, sbuf_t *buf, wid_t wid)
 {
     reader_probe_t *probe = device;
+    if (probe->required_work_steps != NULL)
+    {
+        require(*probe->required_work_steps == probe->expected_work_steps,
+                "ordinary packet overtook unfinished worker work");
+    }
     if (probe->check_prepare_order)
     {
         require(currentThreadIsEventWorkerWID(wid), "prepared output did not reach its selected event worker");
@@ -234,11 +243,11 @@ static sbuf_t *makeCompletePacket(device_reader_session_t *session, buffer_pool_
 static void envSetup(test_env_t *env)
 {
     memoryZero(env, sizeof(*env));
-    env->large_master       = masterpoolCreateWithCapacity(16);
-    env->small_master       = masterpoolCreateWithCapacity(16);
-    env->medium_master      = masterpoolCreateWithCapacity(16);
-    env->splice_master      = masterpoolCreateWithCapacity(16);
-    env->worker_buffer_pool = bufferpoolCreate(env->large_master,
+    env->large_master              = masterpoolCreateWithCapacity(16);
+    env->small_master              = masterpoolCreateWithCapacity(16);
+    env->medium_master             = masterpoolCreateWithCapacity(16);
+    env->splice_master             = masterpoolCreateWithCapacity(16);
+    env->worker_buffer_pool        = bufferpoolCreate(env->large_master,
                                                env->medium_master,
                                                env->small_master,
                                                env->splice_master,
@@ -248,32 +257,45 @@ static void envSetup(test_env_t *env)
                                                4096,
                                                8192,
                                                8192);
-    env->buffer_pools[0]    = env->worker_buffer_pool;
-    env->loops[0]           = (wloop_t *) (void *) env;
+    env->second_worker_buffer_pool = bufferpoolCreate(env->large_master,
+                                                      env->medium_master,
+                                                      env->small_master,
+                                                      env->splice_master,
+                                                      16,
+                                                      8192,
+                                                      MEDIUM_BUFFER_SIZE_RAM_HIGH,
+                                                      4096,
+                                                      8192,
+                                                      8192);
+    env->buffer_pools[0]           = env->worker_buffer_pool;
+    env->buffer_pools[1]           = env->second_worker_buffer_pool;
+    env->loops[0]                  = (wloop_t *) (void *) env;
+    env->loops[1]                  = (wloop_t *) (void *) env;
 
-    GSTATE.shortcut_buffer_pools         = env->buffer_pools;
-    GSTATE.shortcut_loops                = env->loops;
-    GSTATE.masterpool_buffer_pools_large = env->large_master;
-    GSTATE.masterpool_buffer_pools_small = env->small_master;
+    GSTATE.shortcut_buffer_pools          = env->buffer_pools;
+    GSTATE.shortcut_loops                 = env->loops;
+    GSTATE.masterpool_buffer_pools_large  = env->large_master;
+    GSTATE.masterpool_buffer_pools_small  = env->small_master;
     GSTATE.masterpool_buffer_pools_medium = env->medium_master;
     GSTATE.masterpool_buffer_pools_splice = env->splice_master;
-    GSTATE.workers_count                 = 2;
+    GSTATE.workers_count                  = 3;
     testWorkerRegistryInstall(&g_test_worker_registry);
     testWorkerBindWID(0);
 }
 
 static void envTeardown(test_env_t *env)
 {
-    GSTATE.shortcut_buffer_pools         = NULL;
-    GSTATE.shortcut_loops                = NULL;
-    GSTATE.masterpool_buffer_pools_large = NULL;
-    GSTATE.masterpool_buffer_pools_small = NULL;
+    GSTATE.shortcut_buffer_pools          = NULL;
+    GSTATE.shortcut_loops                 = NULL;
+    GSTATE.masterpool_buffer_pools_large  = NULL;
+    GSTATE.masterpool_buffer_pools_small  = NULL;
     GSTATE.masterpool_buffer_pools_medium = NULL;
     GSTATE.masterpool_buffer_pools_splice = NULL;
-    GSTATE.workers_count                 = 0;
+    GSTATE.workers_count                  = 0;
     testWorkerRegistryRestore(&g_test_worker_registry);
 
     bufferpoolDestroy(env->worker_buffer_pool);
+    bufferpoolDestroy(env->second_worker_buffer_pool);
     masterpoolMakeEmpty(env->large_master);
     masterpoolMakeEmpty(env->small_master);
     masterpoolMakeEmpty(env->medium_master);
@@ -293,11 +315,11 @@ static device_reader_session_t *createSession(test_env_t *env, reader_probe_t *p
 static void resetCapturedMessages(void)
 {
     memoryZero(captured_messages, sizeof(captured_messages));
-    captured_message_count            = 0;
-    fail_post                         = false;
-    tracked_reuse_pool                = NULL;
-    tracked_reuse_buffer              = NULL;
-    tracked_reuse_count               = 0;
+    captured_message_count = 0;
+    fail_post              = false;
+    tracked_reuse_pool     = NULL;
+    tracked_reuse_buffer   = NULL;
+    tracked_reuse_count    = 0;
 }
 
 static void deliverMessage(unsigned int index)
@@ -811,6 +833,298 @@ static void testPreparedOutputRunsOnlyOnLiveWorkerDelivery(test_env_t *env)
     deviceReaderSessionUnref(session);
 }
 
+/* Generic work models an aggregate that stays at the queue head while its
+ * bounded worker steps execute. TUN-specific segment bytes are checked by the
+ * Linux lifetime fixture; this fixture exercises FIFO and ownership settlement. */
+typedef struct worker_work_probe_s
+{
+    unsigned int steps;
+    unsigned int target_steps;
+    unsigned int cleanups;
+    uint32_t     step_bytes;
+    wid_t        target_wid;
+} worker_work_probe_t;
+
+static bool stepWorkerWork(device_reader_session_t *session, void *context, wid_t wid,
+                           device_reader_work_budget_t *budget)
+{
+    worker_work_probe_t *probe = context;
+    require(wid == probe->target_wid && currentThreadIsEventWorkerWID(wid),
+            "aggregate work ran outside its selected event worker");
+    require(atomic_load_explicit(&session->output_charge, memory_order_acquire) > 0 &&
+                atomic_load_explicit(&session->output_packets, memory_order_acquire) >= 2,
+            "aggregate work ran without its retained input and output allowance");
+    require(probe->steps < probe->target_steps && probe->cleanups == 0,
+            "aggregate work ran after completion or cleanup");
+    const uint32_t bytes = probe->step_bytes != 0 ? probe->step_bytes : 1;
+    if (budget->bytes < bytes)
+    {
+        return false;
+    }
+    require(budget->packets > 0, "aggregate work ran without callback packet capacity");
+    --budget->packets;
+    budget->bytes -= bytes;
+    return ++probe->steps == probe->target_steps;
+}
+
+static void cleanupWorkerWork(void *context)
+{
+    worker_work_probe_t *probe = context;
+    require(++probe->cleanups == 1, "aggregate work cleanup ran more than once");
+}
+
+static device_reader_session_t *createWorkerQueueSession(test_env_t *env, reader_probe_t *probe)
+{
+    device_reader_session_t *session = createSession(env, probe, 4);
+    require(deviceReaderSessionConfigureOutputBudget(session, 1024 * 1024, 8),
+            "failed to configure worker-queue budget");
+    require(deviceReaderSessionEnableWorkerQueue(session), "failed to enable ordered worker queue");
+    require(deviceReaderSessionBegin(session) != 0, "failed to begin ordered worker queue");
+    return session;
+}
+
+static bool postWorkerWork(device_reader_session_t *session, worker_work_probe_t *probe)
+{
+    const size_t charge = 256;
+    require(deviceReaderSessionTryReserveWork(session, charge, 2), "failed to reserve aggregate work");
+    return deviceReaderSessionPostWork(session, probe->target_wid, probe, stepWorkerWork, cleanupWorkerWork, charge, 2);
+}
+
+static void deliverWorkerQueueMessage(unsigned int index)
+{
+    captured_message_t *message = &captured_messages[index];
+    testWorkerBindWID(message->wid);
+    worker_t receiver = {.wid = message->wid};
+    message->callback(&receiver, message->arg1, message->arg2, message->arg3);
+    testWorkerBindWID(0);
+}
+
+static void testWorkerQueueContinuationAndOrdinaryFifo(test_env_t *env)
+{
+    resetCapturedMessages();
+    worker_work_probe_t      first   = {.target_steps = 3, .target_wid = 0};
+    worker_work_probe_t      other   = {.target_steps = 1, .target_wid = 1};
+    reader_probe_t           probe   = {.required_work_steps = &first.steps, .expected_work_steps = 3};
+    device_reader_session_t *session = createWorkerQueueSession(env, &probe);
+    require(postWorkerWork(session, &first), "first aggregate work was refused");
+    require(postWorkerWork(session, &other), "other-worker aggregate work was refused");
+    sbuf_t *ordinary = bufferpoolGetSmallBuffer(env->worker_buffer_pool);
+    require(deviceReaderSessionPost(session, 0, &ordinary, 1), "ordinary packet behind aggregate was refused");
+    require(captured_message_count == 2 && first.steps == 0 && other.steps == 0,
+            "posting expanded work or scheduled duplicate FIFO drain tokens");
+    const size_t retained_charge = atomic_load_explicit(&session->output_charge, memory_order_acquire);
+    require(retained_charge > 512 && atomic_load_explicit(&session->output_packets, memory_order_acquire) == 5,
+            "ordinary backlog was not included in the aggregate queue budget");
+    require(! deviceReaderSessionTryReserveWork(session, 128, 4),
+            "stalled workers exceeded the aggregate packet budget");
+
+    deliverWorkerQueueMessage(0);
+    require(first.steps == 1 && first.cleanups == 0 && probe.delivered == 0,
+            "one drain callback did not yield after one bounded aggregate step");
+    require(atomic_load_explicit(&session->output_charge, memory_order_acquire) == retained_charge,
+            "partial aggregate released its ownership reservation");
+    deliverWorkerQueueMessage(1);
+    require(other.steps == 1 && other.cleanups == 1 && first.steps == 1,
+            "unfinished aggregate prevented another worker from progressing");
+    for (unsigned int i = 2; i < captured_message_count; ++i)
+    {
+        deliverWorkerQueueMessage(i);
+    }
+    require(first.steps == 3 && first.cleanups == 1 && probe.delivered == 1,
+            "continuation failed to finish aggregate and its following ordinary packet");
+    requireOutputBudgetEmpty(session);
+    deviceReaderSessionEnd(session);
+    deviceReaderSessionUnref(session);
+}
+
+static void testWorkerQueueBatchesCompletedAggregates(test_env_t *env)
+{
+    /* Small records share one callback, but combined packet and byte limits
+     * still force a continuation. This also catches yielding once per record. */
+    const unsigned int counts[]          = {3, 65, 2};
+    const uint32_t     sizes[]           = {100, 100, 40000};
+    const unsigned int first_completed[] = {3, 64, 1};
+    for (unsigned int test = 0; test < ARRAY_SIZE(counts); ++test)
+    {
+        resetCapturedMessages();
+        reader_probe_t           probe   = {0};
+        device_reader_session_t *session = createSession(env, &probe, 4);
+        require(deviceReaderSessionConfigureOutputBudget(session, 1024 * 1024, 256) &&
+                    deviceReaderSessionEnableWorkerQueue(session) && deviceReaderSessionBegin(session) != 0,
+                "failed to initialize aggregate batching fixture");
+        worker_work_probe_t work[65] = {0};
+        for (unsigned int i = 0; i < counts[test]; ++i)
+        {
+            work[i].target_steps = 1;
+            work[i].step_bytes   = sizes[test];
+            require(postWorkerWork(session, &work[i]), "small aggregate admission failed");
+        }
+        sbuf_t *ordinary = bufferpoolGetSmallBuffer(env->worker_buffer_pool);
+        sbufSetLength(ordinary, 100);
+        require(deviceReaderSessionPost(session, 0, &ordinary, 1), "trailing ordinary admission failed");
+        require(captured_message_count == 1, "aggregate admission scheduled duplicate drain tokens");
+        deliverWorkerQueueMessage(0);
+        for (unsigned int i = 0; i < counts[test]; ++i)
+        {
+            const unsigned int expected = i < first_completed[test] ? 1 : 0;
+            require(work[i].steps == expected && work[i].cleanups == expected,
+                    "callback failed to batch small work or exceeded its combined quantum");
+        }
+        require(probe.delivered == (test == 0 ? 1U : 0U),
+                "ordinary packet overtook work or failed to share remaining callback capacity");
+        require(captured_message_count == (test == 0 ? 1U : 2U),
+                "FIFO scheduled an unnecessary continuation or failed to yield at its bound");
+        if (test != 0)
+        {
+            deliverWorkerQueueMessage(1);
+        }
+        require(probe.delivered == 1 && captured_message_count == (test == 0 ? 1U : 2U),
+                "continuation failed to drain the remaining aggregate and ordinary packet");
+        requireOutputBudgetEmpty(session);
+        deviceReaderSessionEnd(session);
+        deviceReaderSessionUnref(session);
+    }
+}
+
+static void testWorkerQueueStaleContinuationAndRefusal(test_env_t *env)
+{
+    resetCapturedMessages();
+    reader_probe_t           probe   = {0};
+    device_reader_session_t *session = createWorkerQueueSession(env, &probe);
+    worker_work_probe_t      stale   = {.target_steps = 3};
+    require(postWorkerWork(session, &stale), "stale aggregate setup failed");
+    deliverWorkerQueueMessage(0);
+    require(stale.steps == 1 && captured_message_count == 2, "aggregate failed to retain continuation");
+    deviceReaderSessionEnd(session);
+    require(deviceReaderSessionBegin(session) != 0, "failed to reopen queue with stale continuation");
+    worker_work_probe_t fresh = {.target_steps = 1};
+    require(postWorkerWork(session, &fresh), "fresh generation aggregate was refused");
+    for (unsigned int i = 1; i < captured_message_count; ++i)
+    {
+        deliverWorkerQueueMessage(i);
+    }
+    require(stale.steps == 1 && stale.cleanups == 1 && fresh.steps == 1 && fresh.cleanups == 1,
+            "stale continuation reached new generation or blocked new work");
+    requireOutputBudgetEmpty(session);
+
+    worker_work_probe_t refused = {.target_steps = 1};
+    fail_post                   = true;
+    require(! postWorkerWork(session, &refused), "initial queue refusal reported acceptance");
+    fail_post = false;
+    require(refused.steps == 0 && refused.cleanups == 1, "refused work ran or lost its cleanup");
+    requireOutputBudgetEmpty(session);
+
+    worker_work_probe_t cancelled = {.target_steps = 3};
+    const unsigned int  next      = captured_message_count;
+    require(postWorkerWork(session, &cancelled), "continuation-refusal setup failed");
+    sbuf_t *ordinary = bufferpoolGetSmallBuffer(env->worker_buffer_pool);
+    require(deviceReaderSessionPost(session, 0, &ordinary, 1), "continuation-refusal ordinary setup failed");
+    fail_post = true;
+    deliverWorkerQueueMessage(next);
+    fail_post = false;
+    require(cancelled.steps == 1 && cancelled.cleanups == 1 && probe.delivered == 0,
+            "refused continuation ran later output or leaked pending FIFO ownership");
+    requireOutputBudgetEmpty(session);
+    deviceReaderSessionEnd(session);
+    deviceReaderSessionUnref(session);
+}
+
+static void testWorkerQueueCancellationOutlivesDevice(test_env_t *env)
+{
+    resetCapturedMessages();
+    reader_probe_t           probe   = {0};
+    device_reader_session_t *session = createWorkerQueueSession(env, &probe);
+    worker_work_probe_t      work    = {.target_steps = 3};
+    require(postWorkerWork(session, &work), "retained aggregate setup failed");
+    deliverWorkerQueueMessage(0);
+    sbuf_t *ordinary = bufferpoolGetSmallBuffer(env->worker_buffer_pool);
+    require(deviceReaderSessionPost(session, 0, &ordinary, 1), "retained ordinary setup failed");
+    tracked_session            = session;
+    tracked_message_pool       = session->message_pool;
+    tracked_session_free_count = 0;
+    tracked_pool_destroy_count = 0;
+    deviceReaderSessionEnd(session);
+    deviceReaderSessionRetireProducerBuffers(session);
+    deviceReaderSessionUnref(session);
+    require(tracked_session_free_count == 0, "partial aggregate failed to retain its session");
+    testWorkerUnbindWID();
+    cleanupMessage(1);
+    testWorkerBindWID(0);
+    require(work.steps == 1 && work.cleanups == 1 && probe.delivered == 0,
+            "foreign cancellation delivered work or failed to settle retained input");
+    require(tracked_session_free_count == 1 && tracked_pool_destroy_count == 1,
+            "foreign cancellation failed to destroy the retired session exactly once");
+    tracked_session      = NULL;
+    tracked_message_pool = NULL;
+}
+
+typedef struct ordinary_wait_probe_s
+{
+    device_reader_session_t *session;
+    buffer_pool_t           *reader_pool;
+    atomic_bool              completed;
+    bool                     accepted;
+} ordinary_wait_probe_t;
+
+static void *postOrdinaryWhileFull(void *context)
+{
+    ordinary_wait_probe_t *probe = context;
+    require(! currentThreadIsEventWorker(), "ordinary producer fixture unexpectedly owns an event worker");
+    sbuf_t *buf = bufferpoolGetSmallBuffer(probe->reader_pool);
+    sbufSetLength(buf, 64);
+    probe->accepted = deviceReaderSessionPost(probe->session, 0, &buf, 1);
+    atomic_store_explicit(&probe->completed, true, memory_order_release);
+    return NULL;
+}
+
+static void testWorkerQueueStopWakesOrdinaryCapacityWait(test_env_t *env)
+{
+    resetCapturedMessages();
+    reader_probe_t           delivered   = {0};
+    buffer_pool_t           *reader_pool = bufferpoolCreate(env->large_master,
+                                                  env->medium_master,
+                                                  env->small_master,
+                                                  env->splice_master,
+                                                  4,
+                                                  8192,
+                                                  MEDIUM_BUFFER_SIZE_RAM_HIGH,
+                                                  4096,
+                                                  8192,
+                                                  8192);
+    device_reader_session_t *session =
+        deviceReaderSessionCreate(4, 1, &delivered, deliverPacket, reader_pool, kDeviceFragmentReassemble);
+    require(deviceReaderSessionConfigureOutputBudget(session, 1024 * 1024, 2) &&
+                deviceReaderSessionEnableWorkerQueue(session) && deviceReaderSessionBegin(session) != 0,
+            "failed to initialize ordinary capacity-wait fixture");
+    worker_work_probe_t aggregate = {.target_steps = 3};
+    require(postWorkerWork(session, &aggregate), "failed to fill ordinary capacity-wait budget");
+    tracked_reuse_pool             = reader_pool;
+    ordinary_wait_probe_t producer = {.session = session, .reader_pool = reader_pool};
+    pthread_t             thread;
+    require(pthread_create(&thread, NULL, postOrdinaryWhileFull, &producer) == 0,
+            "failed to start blocked ordinary producer");
+    waitForEndWaitFlag(&session->output_waiting, "ordinary producer never waited for aggregate capacity");
+    require(! atomic_load_explicit(&producer.completed, memory_order_acquire) && captured_message_count == 1 &&
+                atomic_load_explicit(&session->output_packets, memory_order_acquire) == 2,
+            "ordinary producer exceeded budget instead of waiting behind stalled worker");
+
+    deviceReaderSessionEndRequest(session);
+    waitForEndWaitFlag(&producer.completed, "stop did not wake ordinary capacity waiter");
+    require(pthread_join(thread, NULL) == 0, "failed to join stopped ordinary producer");
+    deviceReaderSessionEndWait(session);
+    require(! producer.accepted && tracked_reuse_count == 1 && delivered.delivered == 0,
+            "stopped ordinary post was accepted, delivered, or failed to recycle exactly once");
+    tracked_reuse_pool = NULL;
+    cleanupMessage(0);
+    require(aggregate.steps == 0 && aggregate.cleanups == 1,
+            "stopping ordinary capacity wait incorrectly ran or lost retained aggregate");
+    requireOutputBudgetEmpty(session);
+    bufferpoolResetThreadOwnership(reader_pool);
+    deviceReaderSessionRetireProducerBuffers(session);
+    deviceReaderSessionUnref(session);
+    bufferpoolDestroy(reader_pool);
+}
+
 int main(void)
 {
     test_env_t env;
@@ -828,6 +1142,11 @@ int main(void)
     testOutputBudgetLocalAndRejectedSettlement(&env);
     testOutputBudgetCancellationOutlivesDevice(&env);
     testPreparedOutputRunsOnlyOnLiveWorkerDelivery(&env);
+    testWorkerQueueContinuationAndOrdinaryFifo(&env);
+    testWorkerQueueBatchesCompletedAggregates(&env);
+    testWorkerQueueStaleContinuationAndRefusal(&env);
+    testWorkerQueueCancellationOutlivesDevice(&env);
+    testWorkerQueueStopWakesOrdinaryCapacityWait(&env);
     envTeardown(&env);
     puts("device reader session tests passed");
     return 0;

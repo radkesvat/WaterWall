@@ -88,6 +88,10 @@ struct tun_device_s
 #ifdef OS_LINUX
     /* Allocated before publication so unavailable GSO storage can fall back. */
     sbuf_t *gso_scratch;
+    /* Output allowance and this chain's padding, captured before publication. */
+    size_t               gso_output_charge[UINT8_MAX + 1U];
+    uint16_t             gso_output_padding[UINT8_MAX + 1U];
+    atomic_uint_fast64_t gso_generated_segments;
 #endif
 
     atomic_int lifecycle;
@@ -792,12 +796,10 @@ typedef struct tun_offload_reader_s
 {
     sbuf_t                  *scratch;
     tun_linux_offload_plan_t pending_plan;
-    uint32_t                 next_payload_offset;
     bool                     pending;
     bool                     waiting_for_capacity;
     uint64_t                 ordinary_records;
     uint64_t                 gso_aggregates;
-    uint64_t                 generated_segments;
     uint64_t                 checksum_completions;
     uint64_t                 malformed_records;
     uint64_t                 unsupported_records;
@@ -847,6 +849,7 @@ static void tunOffloadCountReject(tun_device_t *tdev, tun_offload_reader_t *read
 static void tunOffloadReaderInit(tun_device_t *tdev, tun_offload_reader_t *reader)
 {
     reader->scratch = tdev->gso_scratch;
+    atomic_store_explicit(&tdev->gso_generated_segments, 0, memory_order_relaxed);
     if (UNLIKELY(reader->scratch == NULL))
     {
         LOGF("TunDevice: GSO reader started without its receive scratch");
@@ -871,101 +874,144 @@ static void tunOffloadReaderCleanup(tun_device_t *tdev, tun_offload_reader_t *re
          tdev->name,
          (unsigned long long) reader->ordinary_records,
          (unsigned long long) reader->gso_aggregates,
-         (unsigned long long) reader->generated_segments,
+         (unsigned long long) atomic_load_explicit(&tdev->gso_generated_segments, memory_order_relaxed),
          (unsigned long long) reader->checksum_completions,
          (unsigned long long) reader->malformed_records,
          (unsigned long long) reader->unsupported_records,
          (unsigned long long) reader->oversized_records);
 }
 
-static void tunCompletePreparedGsoSegment(sbuf_t *buf)
+typedef struct tun_gso_work_s
 {
-    tunLinuxOffloadCompleteSegment(sbufGetMutablePtr(buf), sbufGetLength(buf));
+    sbuf_t                  *aggregate;
+    tun_linux_offload_plan_t plan;
+    uint32_t                 next_payload_offset;
+    size_t                   output_charge;
+    uint16_t                 padding;
+} tun_gso_work_t;
+
+static void tunGsoWorkCleanup(void *context)
+{
+    tun_gso_work_t *work = context;
+    if (work->aggregate != NULL)
+    {
+        sbufDestroy(work->aggregate);
+    }
+    memoryFree(work);
 }
 
-/* A pending aggregate keeps the scratch buffer until every segment has either
- * been submitted or stop closes producer admission. Capacity is reserved before
- * each allocation; an exhausted budget leaves the remainder in scratch. */
-static void tunOffloadEmitPending(tun_device_t *tdev, tun_offload_reader_t *reader)
+/* The session admits this callback on the selected event worker and keeps the
+ * aggregate at its FIFO head across continuations. One prepaid output allowance
+ * is sufficient because delivery transfers each segment before the next one is
+ * allocated; downstream retention follows the ordinary packet-chain contract. */
+static bool tunGsoWorkStep(device_reader_session_t *session, void *context, wid_t wid,
+                           device_reader_work_budget_t *budget)
 {
-    sbuf_t        *bufs[kMaxReadDistributeQueueSize];
-    size_t         charges[kMaxReadDistributeQueueSize];
-    uint16_t       queued_count  = 0;
-    const uint32_t output_budget = min((uint32_t) RAM_PROFILE, (uint32_t) kMaxReadDistributeQueueSize);
-    const uint8_t *aggregate     = sbufGetRawPtr(reader->scratch);
-
-    reader->waiting_for_capacity = false;
-    while (reader->pending && queued_count < output_budget && tunLifecycleIsActive(tunLifecycleLoad(&tdev->lifecycle)))
+    tun_gso_work_t *work = context;
+    assert(currentThreadIsEventWorkerWID(wid));
+    buffer_pool_t *pool    = getWorkerBufferPool(wid);
+    uint32_t       emitted = 0;
+    while (work->next_payload_offset < work->plan.payload_length && budget->packets > 0)
     {
-        const uint32_t    remaining      = reader->pending_plan.payload_length - reader->next_payload_offset;
-        const uint32_t    payload_length = min(reader->pending_plan.gso_size, remaining);
-        const uint32_t    segment_length = reader->pending_plan.header_length + payload_length;
-        const uint16_t    padding        = bufferpoolGetSmallBufferPadding(tdev->reader_buffer_pool);
-        buffer_pool_fit_t fit;
-        if (UNLIKELY(! bufferpoolQueryBestFit(tdev->reader_buffer_pool, segment_length, padding, &fit)))
+        const uint32_t payload_length = min(work->plan.gso_size, work->plan.payload_length - work->next_payload_offset);
+        const uint32_t segment_length = work->plan.header_length + payload_length;
+        if (segment_length > budget->bytes)
         {
-            LOGF("TunDevice: preflighted GSO segment has unrepresentable buffer geometry");
-            abortProgramNow(1);
-        }
-        if (! deviceReaderSessionTryReserveOutput(tdev->reader_session, fit.allocation_charge))
-        {
-            reader->waiting_for_capacity = true;
             break;
         }
-
-        sbuf_t *output = bufferpoolGetBestFit(tdev->reader_buffer_pool, segment_length, padding);
-        if (UNLIKELY(output == NULL))
+        buffer_pool_fit_t fit;
+        if (UNLIKELY(! bufferpoolQueryBestFit(pool, segment_length, work->padding, &fit)))
         {
-            deviceReaderSessionReleaseOutput(tdev->reader_session, fit.allocation_charge);
-            LOGF("TunDevice: failed to allocate reserved GSO output storage");
+            LOGF("TunDevice: GSO worker output has unrepresentable buffer geometry");
             abortProgramNow(1);
         }
-        if (UNLIKELY(sbufGetAllocationCharge(output) != fit.allocation_charge))
+        /* A later startup config can increase the shared worker pool's padding.
+         * Keep this chain's prepaid bound with an exact-sized ordinary buffer
+         * when the current pool tier no longer fits that allowance. */
+        sbuf_t *output = fit.allocation_charge <= work->output_charge
+                             ? bufferpoolGetBestFit(pool, segment_length, work->padding)
+                             : sbufCreateWithPadding(segment_length, work->padding);
+        if (UNLIKELY(output == NULL || sbufGetAllocationCharge(output) > work->output_charge))
         {
-            LOGF("TunDevice: GSO output allocation differs from its budget reservation");
+            LOGF("TunDevice: GSO output allocation violated its prepaid worker allowance");
             abortProgramNow(1);
         }
         uint32_t built_length = 0;
-        if (UNLIKELY(! tunLinuxOffloadPrepareSegment(aggregate,
-                                                     &reader->pending_plan,
-                                                     reader->next_payload_offset,
+        if (UNLIKELY(! tunLinuxOffloadPrepareSegment(sbufGetRawPtr(work->aggregate),
+                                                     &work->plan,
+                                                     work->next_payload_offset,
                                                      sbufGetMutablePtr(output),
                                                      sbufGetMaximumWriteableSize(output),
                                                      &built_length) ||
                      built_length != segment_length))
         {
-            LOGF("TunDevice: GSO segment generation violated successful aggregate preflight");
+            LOGF("TunDevice: GSO worker segmentation violated successful aggregate preflight");
             abortProgramNow(1);
         }
         sbufSetLength(output, built_length);
-        bufs[queued_count]    = output;
-        charges[queued_count] = fit.allocation_charge;
-        queued_count++;
-        reader->generated_segments++;
-        reader->next_payload_offset += payload_length;
-        reader->pending = reader->next_payload_offset < reader->pending_plan.payload_length;
+        tunLinuxOffloadCompleteSegment(sbufGetMutablePtr(output), built_length);
+        session->deliver(session->device, output, wid);
+        work->next_payload_offset += payload_length;
+        budget->bytes -= segment_length;
+        --budget->packets;
+        emitted++;
     }
-
-    if (queued_count > 0)
+    tun_device_t *tdev = session->device;
+    atomic_fetch_add_explicit(&tdev->gso_generated_segments, emitted, memory_order_relaxed);
+    if (work->next_payload_offset != work->plan.payload_length)
     {
-        if (tunLifecycleIsActive(tunLifecycleLoad(&tdev->lifecycle)))
-        {
-            deviceFlowAffinityPostGsoBatch(
-                tdev->reader_session, bufs, charges, queued_count, tunCompletePreparedGsoSegment);
-        }
-        else
-        {
-            for (uint16_t i = 0; i < queued_count; ++i)
-            {
-                bufferpoolReuseBuffer(tdev->reader_buffer_pool, bufs[i]);
-                deviceReaderSessionReleaseOutput(tdev->reader_session, charges[i]);
-            }
-        }
+        return false;
     }
+    bufferpoolReuseBuffer(pool, work->aggregate);
+    work->aggregate = NULL;
+    return true;
 }
 
-/* One bounded read drain. A GSO record stops further reads; the outer reader
- * loop emits its pending segments before polling or reading another record. */
+/* Preserve one unadmitted record in scratch when the input budget is full.
+ * Successful admission transfers scratch itself, avoiding an aggregate copy;
+ * the replacement stays device-owned through reader join/restart. */
+static void tunOffloadPostPending(tun_device_t *tdev, tun_offload_reader_t *reader)
+{
+    wid_t wid;
+    if (UNLIKELY(! deviceFlowAffineWID(sbufGetRawPtr(reader->scratch), sbufGetLength(reader->scratch), &wid)))
+    {
+        LOGF("TunDevice: preflighted TCPv4 aggregate has no flow identity");
+        abortProgramNow(1);
+    }
+    const size_t output_charge   = tdev->gso_output_charge[wid];
+    const size_t charge          = sbufGetAllocationCharge(reader->scratch) + sizeof(tun_gso_work_t) + output_charge;
+    reader->waiting_for_capacity = false;
+    if (! deviceReaderSessionTryReserveWork(tdev->reader_session, charge, 2))
+    {
+        reader->waiting_for_capacity = true;
+        return;
+    }
+    tun_gso_work_t *work = memoryAllocate(sizeof(*work));
+    if (UNLIKELY(work == NULL))
+    {
+        deviceReaderSessionReleaseWork(tdev->reader_session, charge, 2);
+        LOGF("TunDevice: failed to allocate reserved GSO work metadata");
+        abortProgramNow(1);
+    }
+    *work = (tun_gso_work_t) {.aggregate     = reader->scratch,
+                              .plan          = reader->pending_plan,
+                              .output_charge = output_charge,
+                              .padding       = tdev->gso_output_padding[wid]};
+    const uint16_t padding =
+        max(bufferpoolGetLargeBufferPadding(tdev->reader_buffer_pool), (uint16_t) kTunVirtioHeaderSize);
+    reader->scratch = bufferpoolGetBestFit(tdev->reader_buffer_pool, kTunGsoPacketStorageCapacity, padding);
+    if (UNLIKELY(reader->scratch == NULL))
+    {
+        LOGF("TunDevice: failed to replace handed-off GSO receive storage");
+        abortProgramNow(1);
+    }
+    tdev->gso_scratch = reader->scratch;
+    reader->pending   = false;
+    discard deviceReaderSessionPostWork(tdev->reader_session, wid, work, tunGsoWorkStep, tunGsoWorkCleanup, charge, 2);
+}
+
+/* One bounded read drain. A GSO record stops this batch; the outer reader
+ * loop admits the aggregate before polling or reading another record. */
 static tun_drain_result_t tunDrainOffloadPackets(tun_device_t *tdev, tun_offload_reader_t *reader)
 {
     sbuf_t            *bufs[kMaxReadDistributeQueueSize];
@@ -1035,9 +1081,8 @@ static tun_drain_result_t tunDrainOffloadPackets(tun_device_t *tdev, tun_offload
         }
         if (plan.action == kTunLinuxOffloadSegment)
         {
-            reader->pending_plan        = plan;
-            reader->next_payload_offset = 0;
-            reader->pending             = true;
+            reader->pending_plan = plan;
+            reader->pending      = true;
             reader->gso_aggregates++;
             break;
         }
@@ -1213,7 +1258,7 @@ static WTHREAD_ROUTINE(routineReadFromTun)
 #ifdef OS_LINUX
         if (tdev->gso_enabled && offload_reader.pending && ! offload_reader.waiting_for_capacity)
         {
-            tunOffloadEmitPending(tdev, &offload_reader);
+            tunOffloadPostPending(tdev, &offload_reader);
             if (! offload_reader.pending || ! offload_reader.waiting_for_capacity)
             {
                 continue;
@@ -2233,6 +2278,42 @@ bool tundeviceBringDown(tun_device_t *tdev)
 }
 
 #ifdef OS_LINUX
+/* Best-fit choices change only at a tier's payload limit. Sampling those
+ * limits and the MTU bounds every possible segment allocation, including tiers
+ * with different padding. Later configurations may increase pool padding; the
+ * worker then uses exact-sized storage if a tier exceeds this allowance. */
+static bool tunConfigureWorkerGso(tun_device_t *tdev)
+{
+    for (wid_t wid = 0; wid < getWorkersCount(); ++wid)
+    {
+        buffer_pool_t *pool           = getWorkerBufferPool(wid);
+        const uint16_t padding        = bufferpoolGetSmallBufferPadding(pool);
+        const uint32_t lengths[]      = {1,
+                                         tdev->mtu,
+                                         min(bufferpoolGetSmallBufferSize(pool), (uint32_t) tdev->mtu),
+                                         min(bufferpoolGetMediumBufferSize(pool), (uint32_t) tdev->mtu),
+                                         min(bufferpoolGetLargeBufferSize(pool), (uint32_t) tdev->mtu)};
+        size_t         maximum_charge = 0;
+        for (unsigned int i = 0; i < sizeof(lengths) / sizeof(lengths[0]); ++i)
+        {
+            buffer_pool_fit_t fit;
+            if (! bufferpoolQueryBestFit(pool, lengths[i], padding, &fit))
+            {
+                return false;
+            }
+            maximum_charge = max(maximum_charge, fit.allocation_charge);
+        }
+        if (maximum_charge + sbufGetAllocationCharge(tdev->gso_scratch) + sizeof(tun_gso_work_t) >
+            kTunGsoPendingChargeLimit)
+        {
+            return false;
+        }
+        tdev->gso_output_charge[wid]  = maximum_charge;
+        tdev->gso_output_padding[wid] = padding;
+    }
+    return deviceReaderSessionEnableWorkerQueue(tdev->reader_session);
+}
+
 typedef enum tun_linux_open_result_e
 {
     kTunLinuxOpenOk = 0,
@@ -2532,6 +2613,9 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void
 #endif
     };
     atomic_init(&tdev->lifecycle, kTunLifecycleDown);
+#ifdef OS_LINUX
+    atomic_init(&tdev->gso_generated_segments, 0);
+#endif
     deviceWriterChannelInit(&tdev->writer_channel);
     tdev->reader_session = deviceReaderSessionCreate(
         RAM_PROFILE * 2, kMaxReadDistributeQueueSize, tdev, tunDeliverPacket, reader_bpool, fragment_policy);
@@ -2574,7 +2658,8 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void
             abortProgramNow(1);
         }
         else if (! deviceReaderSessionConfigureOutputBudget(
-                     tdev->reader_session, kTunGsoPendingChargeLimit, kTunGsoPendingPacketLimit))
+                     tdev->reader_session, kTunGsoPendingChargeLimit, kTunGsoPendingPacketLimit) ||
+                 ! tunConfigureWorkerGso(tdev))
         {
             const int budget_errno = errno;
             LOGW("TunDevice: GSO output-budget setup failed for %s (errno %d: %s); falling back to raw-IP TUN",

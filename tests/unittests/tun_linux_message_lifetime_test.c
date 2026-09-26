@@ -8,6 +8,7 @@
 
 #include "devices/tun/tun_linux_gso_limits.h"
 #include "devices/tun/tun_linux_internal.h"
+#include "devices/tun/tun_linux_offload.h"
 #include "loggers/internal_logger.h"
 #include "wchecksum.h"
 #include "worker_messages.h"
@@ -34,7 +35,7 @@ static test_worker_registry_t g_test_worker_registry;
 
 enum
 {
-    kMaxCapturedMessages = 8
+    kMaxCapturedMessages = 128
 };
 
 typedef struct captured_message_s
@@ -221,7 +222,11 @@ static unsigned int             gso_budget_wake_polls;
 static unsigned int             gso_device_ready_polls;
 static unsigned int             gso_messages_delivered;
 static unsigned int             gso_deliver_after_read_calls;
-static bool                     verify_gso_scratch_overwrite;
+static bool                     verify_gso_aggregate_transfer;
+static const void              *first_gso_read_storage;
+static unsigned int             prepared_gso_segments;
+static unsigned int             prepared_gso_bytes;
+static unsigned int             gso_expected_segments = 3;
 static unsigned int             ordinary_after_gso_deliveries;
 static device_reader_session_t *gso_probe_session;
 static sbuf_t                  *gso_scratch_buffer;
@@ -240,6 +245,23 @@ static void require(bool condition, const char *message)
         fprintf(stderr, "FAIL: %s\n", message);
         exit(1);
     }
+}
+
+bool __wrap_tunLinuxOffloadPrepareSegment(const uint8_t *ip, const tun_linux_offload_plan_t *plan, uint32_t offset,
+                                          uint8_t *destination, uint32_t capacity, uint32_t *length);
+bool __real_tunLinuxOffloadPrepareSegment(const uint8_t *ip, const tun_linux_offload_plan_t *plan, uint32_t offset,
+                                          uint8_t *destination, uint32_t capacity, uint32_t *length);
+bool __wrap_tunLinuxOffloadPrepareSegment(const uint8_t *ip, const tun_linux_offload_plan_t *plan, uint32_t offset,
+                                          uint8_t *destination, uint32_t capacity, uint32_t *length)
+{
+    require(currentThreadIsEventWorkerWID(0), "GSO segmentation or payload copying ran on the reader thread");
+    prepared_gso_segments++;
+    const bool prepared = __real_tunLinuxOffloadPrepareSegment(ip, plan, offset, destination, capacity, length);
+    if (prepared)
+    {
+        prepared_gso_bytes += *length;
+    }
+    return prepared;
 }
 
 static void captureTunLog(int log_level, const char *buf, int len)
@@ -449,10 +471,15 @@ ssize_t __wrap_read(int fd, void *buf, size_t count)
                     "injected packet too large");
             memoryCopy(buf, injected_reads[index].bytes, (size_t) injected_reads[index].result);
         }
-        if (verify_gso_scratch_overwrite && index == 1)
+        if (verify_gso_aggregate_transfer && index == 0)
         {
-            require(gso_messages_delivered == 0 && captured_message_count == 3,
-                    "GSO output reached a worker before the next TUN record overwrote scratch");
+            first_gso_read_storage = buf;
+        }
+        if (verify_gso_aggregate_transfer && index == 1)
+        {
+            require(gso_messages_delivered == 0 && captured_message_count == 1 && prepared_gso_segments == 0,
+                    "reader expanded an aggregate before its worker ran");
+            require(buf != first_gso_read_storage, "reader reused aggregate storage after transferring it");
         }
         if (deliver_fragment_batch && index == 3)
         {
@@ -509,9 +536,13 @@ static void deliverNextGsoMessage(void)
 {
     require(gso_messages_delivered < captured_message_count, "no queued GSO message to settle");
     testWorkerBindWID(0);
-    worker_t            worker  = {.wid = 0};
-    captured_message_t *message = &captured_messages[gso_messages_delivered++];
+    worker_t            worker       = {.wid = 0};
+    captured_message_t *message      = &captured_messages[gso_messages_delivered++];
+    const unsigned int  bytes_before = prepared_gso_bytes;
+    const unsigned int  before       = prepared_gso_segments;
     message->callback(&worker, message->arg1, message->arg2, message->arg3);
+    require(prepared_gso_segments - before <= 64, "worker segmented more than 64 packets in one callback");
+    require(prepared_gso_bytes - bytes_before <= 65536, "worker segmented more than64 KiB in one callback");
     testWorkerUnbindWID();
 }
 
@@ -522,7 +553,7 @@ int __wrap_poll(struct pollfd *fds, nfds_t nfds, int timeout)
         if ((fds[2].events & POLLIN) != 0)
         {
             require(gso_probe_session != NULL &&
-                        atomic_load_explicit(&gso_probe_session->output_packets, memory_order_acquire) == 1 &&
+                        atomic_load_explicit(&gso_probe_session->output_packets, memory_order_acquire) == 2 &&
                         atomic_load_explicit(&gso_probe_session->output_charge, memory_order_acquire) <=
                             gso_probe_session->output_charge_limit,
                     "pending GSO output exceeded its packet or allocation budget");
@@ -643,7 +674,7 @@ worker_message_submit_result_e __wrap_sendWorkerMessageForceQueueWithCleanup(wid
 
 void __wrap_memoryFree(void *ptr)
 {
-    if (ptr == tracked_session)
+    if (tracked_session != NULL && ptr == tracked_session)
     {
         require(atomic_load_explicit(&tracked_session->output_packets, memory_order_acquire) == 0 &&
                     atomic_load_explicit(&tracked_session->output_charge, memory_order_acquire) == 0,
@@ -756,7 +787,11 @@ static void resetIoInjection(void)
     gso_device_ready_polls         = 0;
     gso_messages_delivered         = 0;
     gso_deliver_after_read_calls   = 1;
-    verify_gso_scratch_overwrite   = false;
+    verify_gso_aggregate_transfer  = false;
+    first_gso_read_storage         = NULL;
+    prepared_gso_segments          = 0;
+    prepared_gso_bytes             = 0;
+    gso_expected_segments          = 3;
     ordinary_after_gso_deliveries  = 0;
     gso_probe_session              = NULL;
     gso_scratch_buffer             = NULL;
@@ -823,13 +858,13 @@ static void envSetup(test_env_t *env)
     env->buffer_pools[0]    = env->worker_buffer_pool;
     env->loops[0]           = (wloop_t *) (void *) env;
 
-    GSTATE.masterpool_buffer_pools_large = env->large_master;
-    GSTATE.masterpool_buffer_pools_small = env->small_master;
+    GSTATE.masterpool_buffer_pools_large  = env->large_master;
+    GSTATE.masterpool_buffer_pools_small  = env->small_master;
     GSTATE.masterpool_buffer_pools_medium = env->medium_master;
     GSTATE.masterpool_buffer_pools_splice = env->splice_master;
-    GSTATE.shortcut_buffer_pools         = env->buffer_pools;
-    GSTATE.shortcut_loops                = env->loops;
-    GSTATE.workers_count                 = 2;
+    GSTATE.shortcut_buffer_pools          = env->buffer_pools;
+    GSTATE.shortcut_loops                 = env->loops;
+    GSTATE.workers_count                  = 2;
     testWorkerRegistryInstall(&g_test_worker_registry);
     GSTATE.ram_profile = 1;
     testWorkerBindWID(0);
@@ -837,13 +872,13 @@ static void envSetup(test_env_t *env)
 
 static void envTeardown(test_env_t *env)
 {
-    GSTATE.masterpool_buffer_pools_large = NULL;
-    GSTATE.masterpool_buffer_pools_small = NULL;
+    GSTATE.masterpool_buffer_pools_large  = NULL;
+    GSTATE.masterpool_buffer_pools_small  = NULL;
     GSTATE.masterpool_buffer_pools_medium = NULL;
     GSTATE.masterpool_buffer_pools_splice = NULL;
-    GSTATE.shortcut_buffer_pools         = NULL;
-    GSTATE.shortcut_loops                = NULL;
-    GSTATE.workers_count                 = 0;
+    GSTATE.shortcut_buffer_pools          = NULL;
+    GSTATE.shortcut_loops                 = NULL;
+    GSTATE.workers_count                  = 0;
     testWorkerRegistryRestore(&g_test_worker_registry);
 
     bufferpoolDestroy(env->worker_buffer_pool);
@@ -1868,7 +1903,7 @@ static void testReaderFragmentPolicy(bool normalized)
 
 enum
 {
-    kGsoFixtureIpLength = 43,
+    kGsoFixtureIpLength     = 43,
     kGsoFixtureRecordLength = 10 + kGsoFixtureIpLength
 };
 
@@ -1944,11 +1979,13 @@ static void observeGsoSegment(tun_device_t *tdev, void *userdata, sbuf_t *buf, u
     require(gso_probe_session != NULL &&
                 atomic_load_explicit(&gso_probe_session->output_packets, memory_order_acquire) > 0,
             "GSO output reservation was released before worker publication");
-    require(callback_count < 3 && sbufGetLength(buf) == 41, "GSO reader emitted a wrong-sized segment");
-    require(GET_BE16(ip + 2) == 41 && GET_BE16(ip + 4) == 0x1234U + callback_count &&
-                GET_BE32(ip + 24) == 1000U + callback_count && ip[40] == (uint8_t) ('A' + callback_count),
+    const unsigned int segment = callback_count % 3;
+    require(callback_count < gso_expected_segments && sbufGetLength(buf) == 41,
+            "GSO worker emitted a wrong-sized segment");
+    require(GET_BE16(ip + 2) == 41 && GET_BE16(ip + 4) == 0x1234U + segment && GET_BE32(ip + 24) == 1000U + segment &&
+                ip[40] == (uint8_t) ('A' + segment),
             "GSO reader lost sequence, IP ID, or payload order");
-    require((ip[33] & 0x19) == (callback_count == 2 ? 0x19 : 0x10), "GSO reader placed FIN/PSH on a non-final segment");
+    require((ip[33] & 0x19) == (segment == 2 ? 0x19 : 0x10), "GSO reader placed FIN/PSH on a non-final segment");
     require(gsoSegmentChecksumsValid(ip, sbufGetLength(buf)),
             "GSO output reached the packet chain before worker-side checksum completion");
     callback_count++;
@@ -1972,7 +2009,7 @@ static void observeGsoThenOrdinary(tun_device_t *tdev, void *userdata, sbuf_t *b
     bufferpoolReuseBuffer(getWorkerBufferPool(wid), buf);
 }
 
-static void testGsoWorkerCompletionSurvivesScratchOverwrite(void)
+static void testGsoWorkerSegmentationOwnsAggregate(void)
 {
     resetShutdownRequests();
     resetIoInjection();
@@ -1987,21 +2024,21 @@ static void testGsoWorkerCompletionSurvivesScratchOverwrite(void)
                                           {.result = kGsoFixtureRecordLength, .bytes = ordinary},
                                           {.result = -1, .error = EIO}};
     armDeviceReads(reads, ARRAY_SIZE(reads));
-    inject_gso_reader_poll       = true;
-    verify_gso_scratch_overwrite = true;
-    gso_deliver_after_read_calls = 2;
-    gso_probe_session            = tunLinuxReaderSession(tdev);
-    callback_count               = 0;
+    inject_gso_reader_poll        = true;
+    verify_gso_aggregate_transfer = true;
+    gso_deliver_after_read_calls  = 2;
+    gso_probe_session             = tunLinuxReaderSession(tdev);
+    callback_count                = 0;
 
     runCapturedThreadBody(kCapturedReaderThread);
 
-    require(callback_count == 3 && ordinary_after_gso_deliveries == 1 && gso_messages_delivered == 4,
-            "deferred GSO output was not prepared and delivered after scratch reuse");
+    require(callback_count == 3 && prepared_gso_segments == 3 && ordinary_after_gso_deliveries == 1,
+            "worker did not segment and deliver its owned aggregate before ordinary traffic");
     require(observed_read_calls == 3 && gso_device_ready_polls == 3 && gso_budget_wake_polls == 0,
             "scratch-overwrite fixture did not defer worker delivery until after the second read");
     require(atomic_load_explicit(&gso_probe_session->output_packets, memory_order_acquire) == 0 &&
                 atomic_load_explicit(&gso_probe_session->output_charge, memory_order_acquire) == 0,
-            "worker checksum completion leaked GSO output reservations");
+            "worker segmentation leaked aggregate reservations");
     resetIoInjection();
     require(tundeviceBringDown(tdev), "GSO scratch-overwrite device did not stop");
     tundeviceDestroy(tdev);
@@ -2015,30 +2052,244 @@ static void testGsoReaderResumesPendingWithoutTunReadiness(void)
     resetCapturedMessages();
     tun_device_t            *tdev    = createRunningGsoReaderDevice(observeGsoSegment);
     device_reader_session_t *session = tunLinuxReaderSession(tdev);
-    session->output_packet_limit     = 1; /* Force a real pending-budget wait after each generated segment. */
+    session->output_packet_limit     = 2; /* One input plus its reusable output allowance. */
     uint8_t record[kGsoFixtureRecordLength];
     makeSmallGsoRecord(record);
     const injected_io_result_t reads[] = {{.result = -1, .error = EINTR},
                                           {.result = kGsoFixtureRecordLength, .bytes = record},
+                                          {.result = kGsoFixtureRecordLength, .bytes = record},
                                           {.result = -1, .error = EIO}};
     armDeviceReads(reads, ARRAY_SIZE(reads));
-    inject_gso_reader_poll = true;
-    gso_probe_session      = session;
-    callback_count         = 0;
+    inject_gso_reader_poll       = true;
+    gso_probe_session            = session;
+    gso_deliver_after_read_calls = 3;
+    gso_expected_segments        = 6;
+    callback_count               = 0;
 
     runCapturedThreadBody(kCapturedReaderThread);
 
-    require(callback_count == 3 && observed_read_calls == 3,
-            "GSO reader did not retry EINTR or complete its pending aggregate");
-    require(gso_budget_wake_polls == 2 && gso_device_ready_polls == 2,
-            "GSO pending output required a new TUN readability event to resume");
+    require(callback_count == 6 && prepared_gso_segments == 6 && observed_read_calls == 4,
+            "GSO reader did not retry EINTR or finish repeated aggregates");
+    require(gso_budget_wake_polls == 1, "pending aggregate required new TUN readiness after capacity returned");
     require(atomic_load_explicit(&session->output_packets, memory_order_acquire) == 0 &&
                 atomic_load_explicit(&session->output_charge, memory_order_acquire) == 0,
-            "GSO delivery did not return every output reservation");
+            "aggregate delivery did not return every reservation");
     require(shutdown_request_calls == 1, "terminal GSO reader error did not request orderly shutdown");
     resetIoInjection();
     require(tundeviceBringDown(tdev), "GSO reader did not bring down after terminal error");
     tundeviceDestroy(tdev);
+    resetCapturedMessages();
+}
+
+enum
+{
+    kSmallMssSegments     = 2051,
+    kSmallMss             = 8,
+    kSmallMssIpLength     = 40 + kSmallMssSegments * kSmallMss,
+    kSmallMssRecordLength = 10 + kSmallMssIpLength
+};
+
+static void observeSmallMssThenOrdinary(tun_device_t *tdev, void *userdata, sbuf_t *buf, uint8_t wid)
+{
+    discard        tdev;
+    discard        userdata;
+    const uint8_t *ip = sbufGetRawPtr(buf);
+    require(currentThreadIsEventWorkerWID(wid), "small-MSS output ran outside its flow worker");
+    if (sbufGetLength(buf) == kGsoFixtureIpLength)
+    {
+        require(callback_count == kSmallMssSegments && ordinary_after_gso_deliveries == 0,
+                "ordinary packet overtook a partially segmented aggregate");
+        ordinary_after_gso_deliveries++;
+    }
+    else
+    {
+        require(callback_count < kSmallMssSegments && sbufGetLength(buf) == 40 + kSmallMss,
+                "small-MSS output had an unexpected size or expansion count");
+        require(GET_BE32(ip + 24) == 1000 + callback_count * kSmallMss && GET_BE16(ip + 4) == 0x1234 + callback_count,
+                "small-MSS continuation lost TCP sequence or IP ID order");
+        for (unsigned int i = 0; i < kSmallMss; ++i)
+        {
+            require(ip[40 + i] == (uint8_t) (callback_count * kSmallMss + i),
+                    "small-MSS continuation lost aggregate payload bytes");
+        }
+        require((ip[33] & 0x19) == (callback_count + 1 == kSmallMssSegments ? 0x19 : 0x10),
+                "small-MSS continuation moved FIN/PSH off the final segment");
+        require(gsoSegmentChecksumsValid(ip, sbufGetLength(buf)),
+                "small-MSS worker published an incomplete IP or TCP checksum");
+        require(atomic_load_explicit(&gso_probe_session->output_packets, memory_order_acquire) >= 2 &&
+                    atomic_load_explicit(&gso_probe_session->output_charge, memory_order_acquire) <=
+                        gso_probe_session->output_charge_limit,
+                "small-MSS worker lost aggregate/output reservations or exceeded charge limit");
+        callback_count++;
+    }
+    bufferpoolReuseBuffer(getWorkerBufferPool(wid), buf);
+}
+
+static void testGsoSmallMssContinuationPreservesOrdinaryFifo(void)
+{
+    resetShutdownRequests();
+    resetIoInjection();
+    resetCapturedMessages();
+    tun_device_t *tdev = createRunningGsoReaderDevice(observeSmallMssThenOrdinary);
+    uint8_t       aggregate[kSmallMssRecordLength];
+    uint8_t       ordinary[kGsoFixtureRecordLength];
+    makeSmallGsoRecord(ordinary);
+    memoryZero(aggregate, sizeof(aggregate));
+    memoryCopy(aggregate, ordinary, 50);
+    aggregate[4] = kSmallMss;
+    uint8_t *ip  = aggregate + 10;
+    PUT_BE16(ip + 2, kSmallMssIpLength);
+    PUT_BE16(ip + 10, 0);
+    PUT_BE16(ip + 10, (uint16_t) ~gsoChecksumWords(ip, 20, 0));
+    for (unsigned int i = 0; i < kSmallMssSegments * kSmallMss; ++i)
+    {
+        ip[40 + i] = (uint8_t) i;
+    }
+    memoryZero(ordinary, 10);
+    const injected_io_result_t reads[] = {{.result = sizeof(aggregate), .bytes = aggregate},
+                                          {.result = sizeof(ordinary), .bytes = ordinary},
+                                          {.result = -1, .error = EIO}};
+    armDeviceReads(reads, ARRAY_SIZE(reads));
+    inject_gso_reader_poll        = true;
+    verify_gso_aggregate_transfer = true;
+    gso_deliver_after_read_calls  = 2;
+    gso_probe_session             = tunLinuxReaderSession(tdev);
+    callback_count                = 0;
+    runCapturedThreadBody(kCapturedReaderThread);
+    require(callback_count == kSmallMssSegments && prepared_gso_segments == kSmallMssSegments &&
+                ordinary_after_gso_deliveries == 1,
+            "worker did not finish an aggregate above2048 segments followed by ordinary input");
+    require(gso_messages_delivered >= (kSmallMssSegments + 63) / 64,
+            "large aggregate did not yield bounded worker continuations");
+    require(atomic_load_explicit(&gso_probe_session->output_charge, memory_order_acquire) == 0 &&
+                atomic_load_explicit(&gso_probe_session->output_packets, memory_order_acquire) == 0,
+            "small-MSS worker continuation leaked retained aggregate or output capacity");
+    resetIoInjection();
+    require(tundeviceBringDown(tdev), "small-MSS continuation device failed to stop");
+    tundeviceDestroy(tdev);
+    resetCapturedMessages();
+}
+
+static void observeGsoByteQuantum(tun_device_t *tdev, void *userdata, sbuf_t *buf, uint8_t wid)
+{
+    discard            tdev;
+    discard            userdata;
+    const uint8_t     *ip        = sbufGetRawPtr(buf);
+    const unsigned int offset    = callback_count * 1460;
+    const unsigned int remaining = 65535 - 40 - offset;
+    const unsigned int payload   = min(remaining, 1460U);
+    require(callback_count < 45 && sbufGetLength(buf) == 40 + payload && GET_BE32(ip + 24) == 1000 + offset &&
+                gsoSegmentChecksumsValid(ip, sbufGetLength(buf)),
+            "byte-quantum continuation lost packet geometry, order, or checksum");
+    for (unsigned int i = 0; i < payload; ++i)
+    {
+        require(ip[40 + i] == (uint8_t) (offset + i), "byte-quantum continuation corrupted payload");
+    }
+    callback_count++;
+    bufferpoolReuseBuffer(getWorkerBufferPool(wid), buf);
+}
+
+static void testGsoWorkerYieldsAtByteQuantum(void)
+{
+    resetShutdownRequests();
+    resetIoInjection();
+    resetCapturedMessages();
+    tun_device_t *tdev = createRunningGsoReaderDevice(observeGsoByteQuantum);
+    uint8_t       record[10 + 65535];
+    makeSmallGsoRecord(record);
+    PUT_LE16(record + 4, 1460);
+    uint8_t *ip = record + 10;
+    PUT_BE16(ip + 2, 65535);
+    PUT_BE16(ip + 10, 0);
+    PUT_BE16(ip + 10, (uint16_t) ~gsoChecksumWords(ip, 20, 0));
+    for (unsigned int i = 0; i < 65535 - 40; ++i)
+    {
+        ip[40 + i] = (uint8_t) i;
+    }
+    const injected_io_result_t reads[] = {{.result = sizeof(record), .bytes = record}, {.result = -1, .error = EIO}};
+    armDeviceReads(reads, ARRAY_SIZE(reads));
+    inject_gso_reader_poll = true;
+    gso_probe_session      = tunLinuxReaderSession(tdev);
+    callback_count         = 0;
+    runCapturedThreadBody(kCapturedReaderThread);
+    require(callback_count == 45 && prepared_gso_segments == 45 && gso_messages_delivered >= 2,
+            "worker failed to yield a full-size aggregate at its byte quantum");
+    require(atomic_load_explicit(&gso_probe_session->output_charge, memory_order_acquire) == 0 &&
+                atomic_load_explicit(&gso_probe_session->output_packets, memory_order_acquire) == 0,
+            "byte-quantum continuation leaked retained work");
+    resetIoInjection();
+    require(tundeviceBringDown(tdev), "byte-quantum device failed to stop");
+    tundeviceDestroy(tdev);
+    resetCapturedMessages();
+}
+
+static size_t padding_growth_output_allowance;
+
+static void observeGsoAfterPaddingGrowth(tun_device_t *tdev, void *userdata, sbuf_t *buf, uint8_t wid)
+{
+    require(sbufGetLeftCapacity(buf) >= 64, "later pool padding change removed original chain headroom");
+    require(sbufGetAllocationCharge(buf) <= padding_growth_output_allowance,
+            "later pool padding change exceeded prepaid output allocation allowance");
+    buffer_pool_fit_t grown_fit;
+    require(bufferpoolQueryBestFit(getWorkerBufferPool(wid), sbufGetLength(buf), 64, &grown_fit) &&
+                grown_fit.allocation_charge > padding_growth_output_allowance,
+            "padding-growth fixture did not exercise dedicated output fallback");
+    observeGsoSegment(tdev, userdata, buf, wid);
+}
+
+static void testGsoWorkerPoolPaddingGrowth(test_env_t *env)
+{
+    resetShutdownRequests();
+    resetIoInjection();
+    resetCapturedMessages();
+    master_pool_t *large  = masterpoolCreateWithCapacity(4);
+    master_pool_t *medium = masterpoolCreateWithCapacity(4);
+    master_pool_t *small  = masterpoolCreateWithCapacity(4);
+    master_pool_t *splice = masterpoolCreateWithCapacity(4);
+    buffer_pool_t *isolated =
+        bufferpoolCreate(large, medium, small, splice, 4, 8192, MEDIUM_BUFFER_SIZE_RAM_HIGH, 4096, 8192, 8192);
+    bufferpoolUpdateAllocationPaddings(isolated, 64, 64, 64, 64);
+    GSTATE.masterpool_buffer_pools_large  = large;
+    GSTATE.masterpool_buffer_pools_medium = medium;
+    GSTATE.masterpool_buffer_pools_small  = small;
+    GSTATE.masterpool_buffer_pools_splice = splice;
+    env->buffer_pools[0]                  = isolated;
+    buffer_pool_fit_t initial_fit;
+    require(bufferpoolQueryBestFit(isolated, 1500, 64, &initial_fit), "initial output allowance query failed");
+    padding_growth_output_allowance = initial_fit.allocation_charge;
+    tun_device_t *tdev              = createRunningGsoReaderDevice(observeGsoAfterPaddingGrowth);
+    /* No allocations have populated this isolated worker pool. A later chain
+     * may increase its padding after the TUN cached its own output allowance. */
+    bufferpoolUpdateAllocationPaddings(isolated, 8192, 8192, 8192, 8192);
+    uint8_t record[kGsoFixtureRecordLength];
+    makeSmallGsoRecord(record);
+    const injected_io_result_t reads[] = {{.result = sizeof(record), .bytes = record}, {.result = -1, .error = EIO}};
+    armDeviceReads(reads, ARRAY_SIZE(reads));
+    inject_gso_reader_poll = true;
+    gso_probe_session      = tunLinuxReaderSession(tdev);
+    callback_count         = 0;
+    runCapturedThreadBody(kCapturedReaderThread);
+    require(callback_count == 3 && prepared_gso_segments == 3 &&
+                atomic_load_explicit(&gso_probe_session->output_charge, memory_order_acquire) == 0 &&
+                atomic_load_explicit(&gso_probe_session->output_packets, memory_order_acquire) == 0,
+            "later pool padding change lost GSO output or leaked its reservation");
+    resetIoInjection();
+    require(tundeviceBringDown(tdev), "padding-growth device failed to stop");
+    tundeviceDestroy(tdev);
+    env->buffer_pools[0]                  = env->worker_buffer_pool;
+    GSTATE.masterpool_buffer_pools_large  = env->large_master;
+    GSTATE.masterpool_buffer_pools_medium = env->medium_master;
+    GSTATE.masterpool_buffer_pools_small  = env->small_master;
+    GSTATE.masterpool_buffer_pools_splice = env->splice_master;
+    bufferpoolDestroy(isolated);
+    masterpoolMakeEmpty(large);
+    masterpoolMakeEmpty(medium);
+    masterpoolMakeEmpty(small);
+    masterpoolMakeEmpty(splice);
+    masterpoolDestroy(large);
+    masterpoolDestroy(medium);
+    masterpoolDestroy(small);
+    masterpoolDestroy(splice);
     resetCapturedMessages();
 }
 
@@ -2083,23 +2334,26 @@ static void testGsoPendingAggregateSettlesOnReaderExit(void)
     resetCapturedMessages();
     tun_device_t            *tdev    = createRunningGsoReaderDevice(observeGsoSegment);
     device_reader_session_t *session = tunLinuxReaderSession(tdev);
-    session->output_packet_limit     = 1;
+    session->output_packet_limit     = 2;
     uint8_t record[kGsoFixtureRecordLength];
     makeSmallGsoRecord(record);
-    const injected_io_result_t reads[] = {{.result = kGsoFixtureRecordLength, .bytes = record}};
+    const injected_io_result_t reads[] = {{.result = kGsoFixtureRecordLength, .bytes = record},
+                                          {.result = kGsoFixtureRecordLength, .bytes = record}};
     armDeviceReads(reads, ARRAY_SIZE(reads));
     inject_gso_reader_poll         = true;
     stop_gso_reader_on_budget_wait = true;
+    gso_deliver_after_read_calls   = 2;
     gso_probe_session              = session;
     require(gso_scratch_buffer != NULL, "GSO device did not preallocate direct scratch storage");
     callback_count = 0;
 
     runCapturedThreadBody(kCapturedReaderThread);
 
-    require(observed_read_calls == 1 && callback_count == 0 && captured_message_count == 1,
+    require(observed_read_calls == 2 && callback_count == 0 && prepared_gso_segments == 0 &&
+                captured_message_count == 1,
             "reader stop did not retain exactly one queued GSO output");
     require(gso_scratch_destroy_count == 0, "reader exit destroyed device-owned GSO scratch before restart");
-    require(atomic_load_explicit(&session->output_packets, memory_order_acquire) == 1 &&
+    require(atomic_load_explicit(&session->output_packets, memory_order_acquire) == 2 &&
                 atomic_load_explicit(&session->output_charge, memory_order_acquire) > 0,
             "reader exit prematurely settled a worker-owned GSO output");
 
@@ -2112,9 +2366,10 @@ static void testGsoPendingAggregateSettlesOnReaderExit(void)
     require(gso_scratch_destroy_count == 0, "GSO scratch was destroyed before the restarted device stopped");
     require(tundeviceBringDown(tdev), "restarted GSO device did not stop");
     tundeviceDestroy(tdev);
-    require(gso_scratch_destroy_count == 1, "device destroy did not release GSO scratch exactly once");
+    require(gso_scratch_destroy_count == 0, "device destroy released worker-owned aggregate storage");
     require(tracked_session_free_count == 0, "device destroyed a session with queued GSO output");
     cleanupMessage(0);
+    require(gso_scratch_destroy_count == 1, "queued cancellation did not destroy its aggregate exactly once");
     require(tracked_session_free_count == 1 && tracked_pool_destroy_count == 1,
             "queued GSO output cancellation did not settle its session exactly once");
     tracked_session      = NULL;
@@ -2135,7 +2390,10 @@ int main(void)
     testGsoNegotiationAndRawFallback();
     testGsoScratchAllocationFallsBackToRaw();
     testGsoReaderResumesPendingWithoutTunReadiness();
-    testGsoWorkerCompletionSurvivesScratchOverwrite();
+    testGsoWorkerSegmentationOwnsAggregate();
+    testGsoSmallMssContinuationPreservesOrdinaryFifo();
+    testGsoWorkerYieldsAtByteQuantum();
+    testGsoWorkerPoolPaddingGrowth(&env);
     testGsoWriterFramingAndPacketOutcomes();
     testGsoPendingAggregateSettlesOnReaderExit();
     testReaderFragmentPolicy(true);
