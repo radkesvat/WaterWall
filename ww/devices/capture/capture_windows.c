@@ -260,6 +260,9 @@ static void capturedeviceNoteUnexpectedReaderExit(capture_device_t *cdev)
         return;
     }
 
+    // If the CAS observed UP, pair with BringUp's release fence so its up=true
+    // precedes the up=false below. The lifecycle helpers themselves are relaxed.
+    atomicThreadFence(memory_order_acquire);
     atomicStoreRelaxed(&cdev->running, false);
     atomicStoreRelaxed(&cdev->up, false);
     LOGE("CaptureDevice: reader thread for device %s exited unexpectedly; the device is no longer usable", cdev->name);
@@ -501,9 +504,11 @@ bool caputredeviceBringUp(capture_device_t *cdev)
     /*
      * Publish the compatibility status before the lifecycle CAS. If the reader
      * wins STARTING -> FAILED, both it and this rollback clear `up`; if this CAS
-     * wins, any later UP -> FAILED reader exit clears it after publication.
+     * wins, the release fence pairs through the lifecycle CAS with the reader's
+     * acquire fence, ordering this store before the reader clears `up`.
      */
     atomicStoreRelaxed(&cdev->up, true);
+    atomicThreadFence(memory_order_release);
     if (! captureLifecycleTransitionStartingToUp(&cdev->lifecycle))
     {
         atomicStoreRelaxed(&cdev->up, false);
