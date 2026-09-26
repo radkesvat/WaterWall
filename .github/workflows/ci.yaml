@@ -333,6 +333,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ninja-build ccache iproute2 util-linux strace
 
+      - name: Install TUN TCP benchmark dependency
+        if: matrix.preset == 'linux-gcc-x64'
+        run: sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y iperf3
+
       - name: Install cross-compiler
         if: matrix.preset == 'linux-gcc-arm64' || matrix.preset == 'linux-gcc-arm64-old-cpu'
         run: |
@@ -346,6 +350,7 @@ jobs:
           cmake --preset ${{ matrix.preset }}
           -DWW_PACK_RUNTIME=${{ matrix.pack_runtime }}
           -DBUILD_TESTING=ON
+          -DWATERWALL_ENABLE_TUN_TCP_SPEEDTEST=${{ matrix.preset == 'linux-gcc-x64' && 'ON' || 'OFF' }}
           -DCPM_SOURCE_CACHE="${{ env.cpm-path }}"
       - name: Build
         run: cmake --build --preset ${{ matrix.preset }}
@@ -367,7 +372,7 @@ jobs:
         run: bash tests/run_test_lane.sh external build/${{ matrix.preset }} Release --no-tests=error
       - name: Speed tests
         if: matrix.preset == 'linux-gcc-x64'
-        run: bash tests/run_test_lane.sh speed build/${{ matrix.preset }} Release --no-tests=error
+        run: bash tests/run_test_lane.sh speed build/${{ matrix.preset }} Release --no-tests=error -LE privileged
       - name: Privileged network namespace preflight
         if: matrix.preset == 'linux-gcc-x64'
         run: sudo -E bash tests/run_test_lane.sh preflight build/${{ matrix.preset }}
