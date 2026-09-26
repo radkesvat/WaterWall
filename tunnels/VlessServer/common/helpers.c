@@ -14,17 +14,6 @@ enum
     kVlessAtypIpv6   = 0x03
 };
 
-static sbuf_t *vlessserverAllocBuffer(line_t *l, uint32_t len)
-{
-    buffer_pool_t *pool = lineGetBufferPool(l);
-    sbuf_t        *buf =
-        len <= bufferpoolGetSmallBufferSize(pool) ? bufferpoolGetSmallBuffer(pool) : bufferpoolGetLargeBuffer(pool);
-
-    buf = sbufReserveSpace(buf, len);
-    sbufSetLength(buf, len);
-    return buf;
-}
-
 static const char *vlessserverAuthClientStateName(authenticationclient_state_t state)
 {
     switch (state)
@@ -261,22 +250,46 @@ bool vlessserverDrainResponse(tunnel_t *t, line_t *l, bool admitted)
     ls->response_dispatching = true;
     while (admitted || ! ls->response_paused)
     {
-        sbuf_t *out = NULL;
+        sbuf_t *out = bufferqueuePopFront(&ls->pending_down);
+        if (out == NULL)
+        {
+            break;
+        }
         if (! ls->response_sent)
         {
-            out               = vlessserverAllocBuffer(l, kVlessServerResponseLen);
+            uint32_t body_len = sbufGetLength(out);
+            if (UNLIKELY(body_len == 0))
+            {
+                lineReuseBuffer(l, out);
+                continue;
+            }
+            /* Keep the header and complete first reply in one ordinary buffer.
+             * Reuse its advertised headroom when no materialization is needed. */
+            if (! sbufIsSplice(out) && sbufGetLeftCapacity(out) >= kVlessServerResponseLen)
+            {
+                sbufShiftLeft(out, kVlessServerResponseLen);
+            }
+            else
+            {
+                buffer_pool_t *pool  = lineGetBufferPool(l);
+                uint64_t       total = (uint64_t) kVlessServerResponseLen + body_len;
+                sbuf_t        *first = bufferpoolTryGetBestFit(pool, total, bufferpoolGetLargeBufferPadding(pool));
+                if (UNLIKELY(first == NULL))
+                {
+                    lineReuseBuffer(l, out);
+                    vlessserverCloseLineBidirectional(t, l);
+                    lineUnref(l);
+                    return false;
+                }
+                sbufReadRangeToMemory(out, sbufGetMutablePtr(first) + kVlessServerResponseLen, body_len);
+                sbufSetLength(first, (uint32_t) total);
+                lineReuseBuffer(l, out);
+                out = first;
+            }
             uint8_t *bytes    = sbufGetMutablePtr(out);
             bytes[0]          = kVlessVersion;
             bytes[1]          = 0;
             ls->response_sent = true;
-        }
-        else
-        {
-            out = bufferqueuePopFront(&ls->pending_down);
-            if (out == NULL)
-            {
-                break;
-            }
         }
         tunnelPrevDownStreamPayload(t, l, out);
         if (UNLIKELY(! lineIsAlive(l)))

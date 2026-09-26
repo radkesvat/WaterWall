@@ -28,7 +28,7 @@ transport-specific wrapping.
 - Supports VLESS UDP command `0x02`.
 - Rejects non-empty addons, including Vision flow addons.
 - Rejects mux, reverse, unknown commands, malformed destinations, empty domain names, and zero ports.
-- Relays transport Est promptly and sends `00 00` before backend data, including a valid pre-Est reply.
+- Relays transport Est promptly and combines `00 00` with the first nonempty backend reply, including a valid pre-Est reply.
 - Preserves any TCP body bytes that arrive in the same payload as the request header.
 - Uses VLESS UDP length framing: `uint16_be length` followed by one UDP payload.
 - Creates one internal backend UDP line for the UDP destination carried by the initial VLESS request.
@@ -43,7 +43,9 @@ Request parsing reads only the required metadata into a cache of at most 278 byt
 contain the version and all 16 UUID bytes in its **logical** length, including bytes in a private pipe; fewer than 17
 bytes, including an empty callback, takes fallback/rejection. Successful authentication is cached. Unsupported addons
 and other malformed authenticated requests close the protected flow. Accepted metadata is removed before body budgeting.
-Opaque TCP bodies retain their representation where possible. UDP uses one fixed request destination and exact two-byte
+The first nonempty backend reply shares one ordinary buffer with the `00 00` response header. Ordinary input with
+enough headroom is reused in place; splice-backed input or insufficient headroom uses a best-fit ordinary buffer.
+Later opaque TCP replies retain their representation where possible. UDP uses one fixed request destination and exact two-byte
 length framing, with bodies of 1..65,535 bytes. Pipe allocation or transfer pressure uses complete ordinary fallback;
 not every frame is guaranteed zero-copy.
 
@@ -320,9 +322,14 @@ Response format:
 ```
 
 Transport Est is forwarded once on the correct client association, independently of the response header and output
-Pause. The response header precedes every backend reply, including a valid reply received before transport Est. An
-Est-triggered header or retained reply drain waits while the client output is paused; an admitted first reply may complete
-its required header and body synchronously. Header/Est reentry cannot reorder older replies. The retained response FIFO
+Pause. The `00 00` header is sent exactly once, together with the complete first nonempty backend reply in one ordinary
+buffer, including a valid reply received before Est. For UDP, that buffer includes the datagram's two-byte length prefix.
+Est, Resume and empty replies never send a standalone header; there is no header-only timer. A connection that closes
+without a backend reply sends no VLESS response bytes. Later replies keep the normal splice-capable forwarding path.
+This avoids a deliberate header-only write, but does not guarantee TCP packet or TLS record boundaries.
+
+An independent retained reply drain waits while the client output is paused; an admitted first reply may complete its
+combined header and body synchronously. Response/Est reentry cannot reorder older replies. The retained response FIFO
 is bounded to 2 MiB logical bytes plus 1,024 buffers, with transactional admission and per-association close on
 overflow. Client receiver Pause recorded before branch Init is replayed onto the initialized TCP backend and every new
 or recreated owned UDP backend. Nested application input during branch Init/replay stays behind the original input in a temporary FIFO with
@@ -406,4 +413,4 @@ Source-backed metadata:
 | `layer_group` | `kNodeLayer4` |
 | `layer_group_prev_node` | `kNodeLayer4` |
 | `layer_group_next_node` | `kNodeLayer4` |
-| `required_padding_left` | `2` bytes |
+| `required_padding_left` | `4` bytes: response header plus UDP length prefix |

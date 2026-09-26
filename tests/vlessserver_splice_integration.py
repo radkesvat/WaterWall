@@ -116,13 +116,14 @@ def run(binary, mode, enabled, fallback_delay=7):
                             assert client.recv(1) == b"", "fallback did not finish after its response"
                         elif udp:
                             client.sendall(header)
-                            assert exact(client, 2) == b"\x00\x00", "missing VLESS response"
                             payloads = [b"a", bytes(range(256)) * 32, b"last"]
-                            for data in payloads:
+                            for index, data in enumerate(payloads):
                                 client.sendall(frame(data))
                                 received, origin = backend.recvfrom(9000)
                                 assert received == data, "UDP request boundary changed"
                                 backend.sendto(data[::-1], origin)
+                                if index == 0:
+                                    assert exact(client, 2) == b"\x00\x00", "missing VLESS response"
                                 assert receive_frame(client) == data[::-1], "UDP reply framing changed"
                             client.sendall(frame(b"one") + frame(b"two"))
                             for expected in (b"one", b"two"):

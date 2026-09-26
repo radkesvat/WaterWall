@@ -451,6 +451,141 @@ static void datagram(uint16_t port, const void *data, uint32_t n, bool pipe)
     f.t->fnPayloadU(f.t, f.line, bytes(wire, len, pipe && len <= 4096, 320));
 }
 
+static void testFirstResponse(void)
+{
+    twfSetCase("first TCP/UDP reply combines the response header without gating Est or later splice");
+    for (unsigned udp = 0; udp < 2; ++udp)
+        for (unsigned early = 0; early < 2; ++early)
+            for (unsigned mode = 0; mode < 3; ++mode)
+            {
+                begin(false, false, 128);
+                f.auto_est = ! early;
+                uint8_t  wire[320];
+                uint32_t n = request(wire, 0, udp);
+                if (udp)
+                    n += frame(wire + n, "A", 1);
+                f.t->fnPayloadU(f.t, f.line, bytes(wire, n, false, 320));
+                line_t *backend = udp ? f.remotes[0] : f.line;
+                twfRequire(f.ests == ! early && f.calls_down == 0, "Est emitted a standalone response header");
+                f.t->fnPauseU(f.t, f.line);
+                f.t->fnResumeU(f.t, f.line);
+                f.t->fnPayloadD(f.t, backend, bytes("", 0, mode != 0, 320));
+                twfRequire(f.calls_down == 0, "Resume or empty input emitted a standalone response header");
+
+                sbuf_t *first = bytes(mode == 2 ? "ply" : "reply", mode == 2 ? 3 : 5, mode != 0, mode == 0 ? 0 : 320);
+                if (mode == 2)
+                {
+                    sbufShiftLeft(first, 2);
+                    sbufWrite(first, "re", 2);
+                }
+                /* A synchronous admitted reply can complete after receiver Pause. */
+                f.t->fnPauseU(f.t, f.line);
+                f.t->fnPayloadD(f.t, backend, first);
+                const uint8_t  tcp_expected[] = {0, 0, 'r', 'e', 'p', 'l', 'y'};
+                const uint8_t  udp_expected[] = {0, 0, 0, 5, 'r', 'e', 'p', 'l', 'y'};
+                const uint8_t *expected       = udp ? udp_expected : tcp_expected;
+                size_t         length         = udp ? sizeof(udp_expected) : sizeof(tcp_expected);
+                uint16_t       minimum_padding =
+                    320 - kVlessServerResponseLen - kVlessServerUdpHeaderLen - (mode == 2 ? 2 : 0);
+                twfRequire(f.calls_down == 1 && f.down_len == length && ! f.last_splice &&
+                               memoryCompare(f.down, expected, length) == 0 && f.headroom >= minimum_padding,
+                           "first response was split, corrupted, pipe-backed, or lost onward padding");
+                f.t->fnEstD(f.t, backend);
+                f.t->fnEstD(f.t, backend);
+                f.t->fnResumeU(f.t, f.line);
+                twfRequire(f.ests == 1 && f.calls_down == 1, "late or duplicate Est repeated the header");
+                sbuf_t *later = bytes("tail", 4, true, 320);
+                f.t->fnPayloadD(f.t, backend, later);
+                twfRequire(f.calls_down == 2 && f.last == later && f.last_splice == (WW_HAVE_SPLICE != 0) &&
+                               f.down_len == length + (udp ? 6 : 4) &&
+                               memoryCompare(f.down + length, udp ? "\0\4tail" : "tail", udp ? 6 : 4) == 0,
+                           "later reply lost its representation, repeated the header, or changed bytes");
+                end();
+            }
+}
+
+static void testOrdinaryResponsePadding(void)
+{
+    twfSetCase("ordinary first replies reuse available padding for both response and UDP headers");
+    for (unsigned udp = 0; udp < 2; ++udp)
+        for (unsigned padding = 0; padding <= 4; ++padding)
+        {
+            begin(false, false, 128);
+            uint8_t  wire[320];
+            uint32_t n = request(wire, 0, udp);
+            if (udp)
+                n += frame(wire + n, "A", 1);
+            f.t->fnPayloadU(f.t, f.line, bytes(wire, n, false, 320));
+            sbuf_t *first = bytes("reply", 5, false, 320);
+            /* Leave exact headroom, including values smaller than buffer alignment. */
+            sbufShiftLeft(first, sbufGetLeftCapacity(first) - padding);
+            sbufSetLength(first, 5);
+            sbufWrite(first, "reply", 5);
+            f.t->fnPayloadD(f.t, udp ? f.remotes[0] : f.line, first);
+            const uint8_t tcp_expected[] = {0, 0, 'r', 'e', 'p', 'l', 'y'};
+            const uint8_t udp_expected[] = {0, 0, 0, 5, 'r', 'e', 'p', 'l', 'y'};
+            size_t        length         = udp ? sizeof(udp_expected) : sizeof(tcp_expected);
+            unsigned      headers        = udp ? 4 : 2;
+            twfRequire(f.calls_down == 1 && f.down_len == length && ! f.last_splice &&
+                           memoryCompare(f.down, udp ? udp_expected : tcp_expected, length) == 0,
+                       "ordinary first reply changed bytes or was split");
+            if (padding >= headers)
+            {
+                twfRequire(f.headroom == padding - headers, "ordinary first reply did not use its reserved headroom");
+#ifndef DEBUG
+                /* Debug queue admission deliberately duplicates ordinary buffers. */
+                twfRequire(f.last == first, "ordinary first reply was copied despite sufficient headroom");
+#endif
+            }
+            else
+                twfRequire(f.headroom >= 320 - 4, "replacement response lost onward padding");
+            twfRequire(f.metadata.required_padding_left == 4, "VlessServer did not advertise both first UDP headers");
+            end();
+        }
+}
+
+static void testResponseOrdering(void)
+{
+    twfSetCase("combined first response preserves reentry order, full-sized bodies and silent close");
+    uint8_t wire[320];
+    begin(false, false, 128);
+    uint32_t n = request(wire, 0, false);
+    f.t->fnPayloadU(f.t, f.line, bytes(wire, n, false, 320));
+    f.boundary = 4;
+    f.action   = 6;
+    f.t->fnPayloadD(f.t, f.line, bytes("X", 1, true, 320));
+    const uint8_t expected[] = {0, 0, 'X', 'Z'};
+    twfRequire(f.calls_down == 2 && f.down_len == sizeof(expected) &&
+                   memoryCompare(f.down, expected, sizeof(expected)) == 0,
+               "reentrant reply split or repeated the response header, or overtook the first body");
+    end();
+
+    begin(false, false, 128);
+    f.t->fnPayloadU(f.t, f.line, bytes(wire, n, false, 320));
+    uint8_t *body = memoryAllocate(kVlessServerMaxPendingBytes);
+    memorySet(body, 'L', kVlessServerMaxPendingBytes);
+    f.t->fnPayloadD(f.t, f.line, bytes(body, kVlessServerMaxPendingBytes, false, 320));
+    twfRequire(lineIsAlive(f.line) && f.calls_down == 1 && f.down_len == kVlessServerMaxPendingBytes + 2 &&
+                   f.down[0] == 0 && f.down[1] == 0 &&
+                   memoryCompare(f.down + 2, body, kVlessServerMaxPendingBytes) == 0,
+               "full-sized first reply was split, truncated or rejected");
+    memoryFree(body);
+    end();
+
+    for (unsigned udp = 0; udp < 2; ++udp)
+    {
+        begin(false, false, 128);
+        n = request(wire, 0, udp);
+        if (udp)
+            n += frame(wire + n, "A", 1);
+        f.t->fnPayloadU(f.t, f.line, bytes(wire, n, false, 320));
+        f.t->fnFinD(f.t, udp ? f.remotes[0] : f.line);
+        twfRequire(f.ests == 1 && f.calls_down == 0, "backend Finish sent a header without a reply");
+        end();
+        twfRequire(f.calls_down == 0, "source Finish flushed a standalone response header");
+    }
+}
+
 static void testRequests(void)
 {
     twfSetCase("initial request splits, auth caching, exact header consumption and TCP identity");
@@ -468,6 +603,7 @@ static void testRequests(void)
             twfRequire(f.inits == 1 && f.ests == 1 && auth_calls == 1, "request repeated authentication or Init/Est");
             twfRequire(f.up_len == 2 && memcmp(f.up, "AB", 2) == 0, "TCP request consumed body");
             twfRequire(f.parser_reads == (WW_HAVE_SPLICE ? n : 0), "TCP parser read body bytes");
+            f.t->fnPayloadD(f.t, f.line, bytes("first", 5, true, 320));
             for (unsigned dir = 0; dir < 2; ++dir)
             {
                 sbuf_t *b = bytes("opaque", 6, true, 320);
@@ -768,6 +904,8 @@ static void testReentry(void)
             if (boundary == 5)
                 f.t->fnPauseU(f.t, f.line);
             f.t->fnPayloadU(f.t, f.line, bytes(wire, n, true, 320));
+            if (boundary == 4)
+                f.t->fnPayloadD(f.t, udp ? f.remotes[0] : f.line, bytes("reply", 5, true, 320));
             twfRequire(! lineIsAlive(f.line), "callback close left client alive");
             end();
         }
@@ -1032,6 +1170,9 @@ int main(void)
     twfRequire(wCryptoGlobalInit() == kWCryptoOk, "crypto init failed");
     twfRequire(globalstateInitializeSecureRandom(), "secure random initialization failed");
     twfRequire(frandGlobalInit(), "random initialization failed");
+    testOrdinaryResponsePadding();
+    testFirstResponse();
+    testResponseOrdering();
     testShutdownAdmission();
     testFallbackReceiverPressure();
     testRepresentationsAndPipePressure();

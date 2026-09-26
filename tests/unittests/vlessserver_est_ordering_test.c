@@ -251,8 +251,13 @@ static void testPauseBeforeBranchInit(bool udp, bool close)
                        "VlessServer recreated backend lost Pause, input, or client Est identity");
         }
         vlessserverTunnelUpStreamResume(f.node, f.line);
-        twfRequire(f.down_len == 2 && f.down[0] == 0 && f.down[1] == 0,
-                   "VlessServer Resume lost the pending response header");
+        twfRequire(f.down_len == 0, "VlessServer Resume emitted a standalone response header");
+        vlessserverTunnelDownStreamPayload(f.node, backendLine(&f), estBytes(f.line, "X", 1));
+        const uint8_t expected_tcp[] = {0, 0, 'X'};
+        const uint8_t expected_udp[] = {0, 0, 0, 1, 'X'};
+        twfRequire(f.down_len == (udp ? sizeof(expected_udp) : sizeof(expected_tcp)) &&
+                       memoryCompare(f.down, udp ? expected_udp : expected_tcp, f.down_len) == 0,
+                   "VlessServer lost the first response after Resume");
         closeFixture(&f);
     }
 }

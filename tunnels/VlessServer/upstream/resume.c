@@ -26,8 +26,7 @@ void vlessserverTunnelUpStreamResume(tunnel_t *t, line_t *l)
         return;
     }
 
-    if ((ls->transport_est_sent || bufferqueueGetBufCount(&ls->pending_down) != 0) &&
-        ! vlessserverDrainResponse(t, l, false))
+    if (bufferqueueGetBufCount(&ls->pending_down) != 0 && ! vlessserverDrainResponse(t, l, false))
     {
         return;
     }
