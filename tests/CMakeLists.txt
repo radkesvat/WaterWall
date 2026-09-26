@@ -9,6 +9,12 @@ option(
   ON
 )
 
+option(
+  WATERWALL_ENABLE_TUN_TCP_SPEEDTEST
+  "Enable the optional iperf3 TunDevice TCP chain GSO comparison"
+  OFF
+)
+
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING)
   set(WATERWALL_DEFAULT_INTEGRATION_TEST_NETNS ON)
 else()
@@ -1174,6 +1180,38 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING)
       "privileged TUN GSO integration requires enabled Linux privileged tests")
   endif()
 
+  if(WATERWALL_ENABLE_PRIVILEGED_INTEGRATION_TESTS)
+    add_test(NAME waterwall.tundevice_tcp_chain
+      COMMAND "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tun_tcp_chain.py"
+        --binary "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>" --mode integration)
+    set_tests_properties(waterwall.tundevice_tcp_chain PROPERTIES
+      TIMEOUT 90
+      SKIP_RETURN_CODE 77)
+    add_waterwall_case_resource_lock(waterwall.tundevice_tcp_chain tun_tcp_chain)
+  else()
+    add_waterwall_skipped_integration_test(waterwall.tundevice_tcp_chain
+      "TUN TCP chain integration requires -DWATERWALL_ENABLE_PRIVILEGED_INTEGRATION_TESTS=ON")
+  endif()
+  add_waterwall_test_labels(waterwall.tundevice_tcp_chain
+    "integration" "linux" "privileged" "tundevice" "gso" "tcp-chain"
+    "network-isolated" "self-managed-network-namespace")
+
+  if(WATERWALL_ENABLE_PRIVILEGED_INTEGRATION_TESTS AND WATERWALL_ENABLE_TUN_TCP_SPEEDTEST)
+    add_test(NAME waterwall.speedtest_tundevice_tcp_chain
+      COMMAND "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tun_tcp_chain.py"
+        --binary "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>" --mode speed)
+    set_tests_properties(waterwall.speedtest_tundevice_tcp_chain PROPERTIES
+      TIMEOUT 360
+      SKIP_RETURN_CODE 77
+      RUN_SERIAL TRUE)
+    add_waterwall_case_resource_lock(waterwall.speedtest_tundevice_tcp_chain tun_tcp_chain)
+  else()
+    add_waterwall_skipped_integration_test(waterwall.speedtest_tundevice_tcp_chain
+      "TUN TCP chain speed test requires -DWATERWALL_ENABLE_PRIVILEGED_INTEGRATION_TESTS=ON and -DWATERWALL_ENABLE_TUN_TCP_SPEEDTEST=ON")
+  endif()
+  add_waterwall_test_labels(waterwall.speedtest_tundevice_tcp_chain
+    "integration" "linux" "privileged" "speedtest" "tundevice" "gso"
+    "network-isolated" "self-managed-network-namespace")
 endif()
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING AND TARGET HttpProxyClient)

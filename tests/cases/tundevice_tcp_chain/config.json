@@ -1,0 +1,35 @@
+{
+  "name": "tundevice-tcp-chain",
+  "nodes": [
+    {
+      "name": "tun",
+      "type": "TunDevice",
+      "next": "stack",
+      "settings": {
+        "device-name": "wwtcp0",
+        "device-ip": "198.19.0.1/24",
+        "device-mtu": 1500,
+        "fragment-policy": "reassemble",
+        "route-table": "off",
+        "gso": true
+      }
+    },
+    {
+      "name": "stack",
+      "type": "PacketsToConnection",
+      "next": "out",
+      "settings": { "mtu": 1500, "fake-dns": false }
+    },
+    {
+      "name": "out",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "dest_context->address",
+        "port": "dest_context->port",
+        "fwmark": 99,
+        "nodelay": true,
+        "fastopen": false
+      }
+    }
+  ]
+}
