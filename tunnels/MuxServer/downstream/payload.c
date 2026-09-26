@@ -6,7 +6,7 @@ void muxserverTunnelDownStreamPayload(tunnel_t *t, line_t *child_l, sbuf_t *buf)
 {
     muxserver_tstate_t *ts = tunnelGetState(t);
     // Neighbours may flush final bytes before Finish while this worker is draining.
-    if (ts->worker_states[lineGetWID(child_l)].quiescing)
+    if (UNLIKELY(ts->worker_states[lineGetWID(child_l)].quiescing))
     {
         lineReuseBuffer(child_l, buf);
         return;
@@ -15,14 +15,14 @@ void muxserverTunnelDownStreamPayload(tunnel_t *t, line_t *child_l, sbuf_t *buf)
 
     assert(child_ls->is_child);
 
-    if (child_ls->close_state != kMuxServerChildCloseOpen)
+    if (UNLIKELY(child_ls->close_state != kMuxServerChildCloseOpen))
     {
         lineReuseBuffer(child_l, buf);
         return;
     }
 
     assert(child_ls->parent != NULL);
-    if (child_ls->parent->parent_finishing)
+    if (UNLIKELY(child_ls->parent->parent_finishing))
     {
         lineReuseBuffer(child_l, buf);
         return;

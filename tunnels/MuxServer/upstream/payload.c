@@ -106,7 +106,7 @@ static bool processFrameForChild(tunnel_t *t, line_t *parent_l, mux_frame_t *fra
 {
     line_t *child_l = child_ls->l;
 
-    if (child_ls->close_state != kMuxServerChildCloseOpen)
+    if (UNLIKELY(child_ls->close_state != kMuxServerChildCloseOpen))
     {
         lineReuseBuffer(parent_l, frame_buffer);
         return true;
@@ -188,7 +188,7 @@ static void processParentPayload(tunnel_t *t, line_t *parent_l, sbuf_t *buf)
     muxserver_lstate_t *parent_ls = lineGetState(parent_l, t);
 
     // Parent storage may coalesce; exact frame reads below restore the wire boundaries, including empty Data.
-    if (! splicestreamPush(parent_ls->parent_state->read_stream, buf))
+    if (UNLIKELY(! splicestreamPush(parent_ls->parent_state->read_stream, buf)))
     {
         handleOverFlow(t, parent_l);
         return;
@@ -197,9 +197,9 @@ static void processParentPayload(tunnel_t *t, line_t *parent_l, sbuf_t *buf)
     while (parent_ls->parent_state != NULL && ! parent_ls->parent_finishing &&
            ! ts->worker_states[lineGetWID(parent_l)].quiescing)
     {
-        mux_frame_t frame = {0};
+        mux_frame_t             frame  = {0};
         const mux_peek_result_t result = muxPeekCompleteFrame(parent_ls->parent_state->read_stream, &frame);
-        if (result == kMuxPeekInvalidLength)
+        if (UNLIKELY(result == kMuxPeekInvalidLength))
         {
             LOGW("MuxServer: invalid frame payload length %u (maximum %u)",
                  (unsigned int) frame.length,
@@ -267,7 +267,7 @@ void muxserverTunnelUpStreamPayload(tunnel_t *t, line_t *parent_l, sbuf_t *buf)
 {
     muxserver_tstate_t *ts     = tunnelGetState(t);
     muxserver_lstate_t *parent = lineGetState(parent_l, t);
-    if (ts->worker_states[lineGetWID(parent_l)].quiescing || parent->parent_finishing)
+    if (UNLIKELY(ts->worker_states[lineGetWID(parent_l)].quiescing || parent->parent_finishing))
     {
         lineReuseBuffer(parent_l, buf);
         return;

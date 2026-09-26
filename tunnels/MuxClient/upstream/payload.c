@@ -33,7 +33,7 @@ void muxclientTunnelUpStreamPayload(tunnel_t *t, line_t *child_l, sbuf_t *buf)
 {
     muxclient_tstate_t *ts = tunnelGetState(t);
     // Neighbours may flush final bytes before Finish, even after MUX worker drain.
-    if (ts->worker_states[lineGetWID(child_l)].quiescing)
+    if (UNLIKELY(ts->worker_states[lineGetWID(child_l)].quiescing))
     {
         lineReuseBuffer(child_l, buf);
         return;
@@ -42,14 +42,14 @@ void muxclientTunnelUpStreamPayload(tunnel_t *t, line_t *child_l, sbuf_t *buf)
 
     assert(child_ls->is_child);
 
-    if (child_ls->close_state != kMuxClientChildCloseOpen)
+    if (UNLIKELY(child_ls->close_state != kMuxClientChildCloseOpen))
     {
         lineReuseBuffer(child_l, buf);
         return;
     }
 
     assert(child_ls->parent != NULL);
-    if (child_ls->parent->parent_finishing)
+    if (UNLIKELY(child_ls->parent->parent_finishing))
     {
         lineReuseBuffer(child_l, buf);
         return;

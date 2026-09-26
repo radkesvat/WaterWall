@@ -38,8 +38,8 @@ static inline uint64_t muxParentOutputThrottleMS(const mux_parent_output_t *outp
 static inline bool muxParentOutputEnqueue(mux_parent_output_t *output, sbuf_t **buf, size_t limit)
 {
     size_t cost;
-    if (! sbufTryGetQueueCharge(*buf, &cost) || output->charge > limit || cost > limit - output->charge ||
-        ! bufferqueueTryPushBack(&output->pending, buf))
+    if (UNLIKELY(! sbufTryGetQueueCharge(*buf, &cost) || output->charge > limit || cost > limit - output->charge ||
+                 ! bufferqueueTryPushBack(&output->pending, buf)))
         return false;
 
     assert(sbufGetQueueCharge(*buf) == cost);
