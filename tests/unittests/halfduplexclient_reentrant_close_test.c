@@ -299,6 +299,17 @@ static void runRuntimeCase(unsigned mode)
                 input = halfduplexTestMaterialize(r.env.pool, input);
             input->len = UINT32_MAX;
         }
+        else if (mode == 16 && ! sbufIsSplice(input))
+        {
+            // Keep both allocation-failure sites covered: ordinary headroom
+            // otherwise reuses the input and allocates only the download intro.
+            sbuf_t *unpadded = twfTrackAcquired(sbufCreateWithPadding(7, 0));
+            sbufWrite(unpadded, sbufGetRawPtr(input), 7);
+            sbufSetLength(unpadded, 7);
+            lineReuseBuffer(r.main, input);
+            input                = unpadded;
+            allocation_countdown = mode - 14;
+        }
         else
             allocation_countdown = mode - 14;
         halfduplexclientTunnelUpStreamPayload(r.client, r.main, input);

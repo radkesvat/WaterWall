@@ -202,8 +202,9 @@ In UDP mode:
 `Init` prepares the destination and starts the next node without emitting a request.
 The first eligible application payload may arrive before transport `Est`, during its
 callback, or while Pause is recorded. It is sent immediately with the complete request
-in one ordinary buffer, including one UDP frame header when applicable. The source's
-resident prefix and private-pipe body are fully materialized into that first output.
+in one ordinary buffer, including one UDP frame header when applicable. Ordinary input
+is reused in place when its headroom fits all headers. Otherwise a best-fit ordinary
+buffer is allocated; any resident prefix and private-pipe body are copied in order.
 Empty TCP input does not trigger a request. Empty Trojan UDP datagrams are valid.
 
 Transport `Est` reaches the live application once, independently of protocol data and
@@ -232,7 +233,7 @@ destroyed here; the application owner drains it during shutdown.
 
 The first request plus payload is ordinary; the request itself is at most 320 bytes.
 Later opaque TCP preserves its original ordinary or splice representation. UDP sends
-prepend within the advertised 263-byte padding budget. Header parsing and exact body
+prepend at most 263 bytes within the advertised 331-byte padding budget. Header parsing and exact body
 movement preserve boundaries and use complete ordinary fallback when padding or pipe
 capacity requires it. Receive extraction preserves full onward padding.
 
@@ -259,8 +260,8 @@ splice capability does not guarantee zero-copy or a measured speed increase.
 - outbound UDP payloads larger than 8192 bytes are dropped to match the current `TrojanServer` packet limit without
   killing the whole local association.
 - inbound Trojan UDP frames larger than 8192 bytes are treated as invalid protocol input.
-- `required_padding_left` is set for the worst-case Trojan UDP header so UDP mode can prepend packet headers without
-  breaking Waterwall buffer-padding assumptions.
+- `required_padding_left` is 331 bytes, covering the initial UDP association request plus its first datagram header.
+  Later datagrams prepend only their frame header, at most 263 bytes.
 
 ## Node Metadata
 
@@ -274,4 +275,4 @@ Source-backed metadata:
 | `layer_group` | `kNodeLayer4` |
 | `layer_group_prev_node` | `kNodeLayer4` |
 | `layer_group_next_node` | `kNodeLayer4` |
-| `required_padding_left` | `263` bytes |
+| `required_padding_left` | `331` bytes |

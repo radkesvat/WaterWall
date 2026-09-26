@@ -62,7 +62,7 @@ static void receive(tunnel_t *t, line_t *l, sbuf_t *buf)
     }
 }
 
-static void runCase(bool reverse, uint32_t length, uint32_t fragment)
+static void runCase(bool reverse, uint32_t length, uint32_t fragment, uint32_t headroom)
 {
     twf_worker_env_t  env;
     twfWorkerEnvSetupWithBufferSizes(
@@ -98,22 +98,35 @@ static void runCase(bool reverse, uint32_t length, uint32_t fragment)
     {
         sbuf_t *input = bufferpoolGetLargeBuffer(env.pool);
         input         = sbufReserveSpace(input, length);
+        twfRequire(headroom <= sbufGetLeftCapacity(input), "fixture headroom exceeds allocation");
+        input->curpos = headroom;
         sbufSetLength(input, length);
         for (uint32_t i = 0; i < length; ++i)
             sbufGetMutablePtr(input)[i] = pattern(i);
+        const uintptr_t input_identity = (uintptr_t) input;
         if (reverse)
             server->fnPayloadU(server, sl, input);
         else
             client->fnPayloadU(client, cl, input);
         twfRequire(wire != NULL, "encoder dropped input");
-        uint32_t       offset = 0;
-        const uint8_t *p      = sbufGetRawPtr(wire);
+        if (length <= UINT16_MAX && headroom >= 5)
+            twfRequire((uintptr_t) wire == input_identity, "single record copied despite sufficient headroom");
+        else
+            twfRequire((uintptr_t) wire != input_identity, "encoder reused input without room for every record header");
+        uint32_t       offset           = 0;
+        uint32_t       plaintext_offset = 0;
+        const uint8_t *p                = sbufGetRawPtr(wire);
         while (offset < sbufGetLength(wire))
         {
             twfRequire(sbufGetLength(wire) - offset >= 5, "truncated record header");
             twfRequire(p[offset] == 23 && p[offset + 1] == 3 && p[offset + 2] == 3, "invalid TLS-like header");
             uint32_t body = ((uint32_t) p[offset + 3] << 8) | p[offset + 4];
             twfRequire(body <= sbufGetLength(wire) - offset - 5, "invalid record length");
+            const uint32_t skip = body >= 40 ? 40 : body >= 20 ? 20 : 0;
+            for (uint32_t i = 0; i < body; ++i)
+                twfRequire(p[offset + 5 + i] == (uint8_t) (pattern(plaintext_offset + i) ^ (i < skip ? 0 : 90)),
+                           "record changed XOR skip semantics");
+            plaintext_offset += body;
             offset += 5 + body;
         }
         received = calls  = 0;
@@ -260,19 +273,25 @@ int main(void)
     for (unsigned direction = 0; direction < 2; ++direction)
         for (unsigned i = 0; i < 4; ++i)
         {
-            runCase(direction != 0, lengths[i], 0);
-            runCase(direction != 0, lengths[i], 65521);
+            runCase(direction != 0, lengths[i], 0, 128);
+            runCase(direction != 0, lengths[i], 65521, 128);
         }
     for (unsigned direction = 0; direction < 2; ++direction)
     {
-        runCase(direction != 0, 128, 1);
+        const uint32_t short_lengths[] = {0, 1, 39, 40, 128, UINT16_MAX};
+        for (unsigned i = 0; i < ARRAY_SIZE(short_lengths); ++i)
+        {
+            runCase(direction != 0, short_lengths[i], 0, 5);
+            runCase(direction != 0, short_lengths[i], 0, 4);
+        }
+        runCase(direction != 0, 128, 1, 128);
         for (interruption = 1; interruption <= 4; ++interruption)
-            runCase(direction != 0, SPLICE_PAYLOAD_LIMIT, 0);
+            runCase(direction != 0, SPLICE_PAYLOAD_LIMIT, 0, 128);
         interruption = 0;
     }
     pool_size = 32768;
-    runCase(false, SPLICE_PAYLOAD_LIMIT, 65521);
-    runCase(true, SPLICE_PAYLOAD_LIMIT, 65521);
+    runCase(false, SPLICE_PAYLOAD_LIMIT, 65521, 128);
+    runCase(true, SPLICE_PAYLOAD_LIMIT, 65521, 128);
     for (unsigned server = 0; server < 2; ++server)
     {
         testFixedRetention(server != 0, 8192, 4096);

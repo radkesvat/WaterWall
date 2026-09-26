@@ -15,12 +15,13 @@ bool halfduplexclientForwardPayload(tunnel_t *t, line_t *main, sbuf_t *buf)
     const uint16_t padding = bufferpoolGetLargeBufferPadding(pool);
     uint32_t       length  = sbufGetLength(buf);
     const uint64_t total   = (uint64_t) length + kHLFDIntroSize;
-    sbuf_t        *framed  = bufferpoolTryGetBestFit(pool, total, padding);
+    const bool     reuse   = ! sbufIsSplice(buf) && sbufGetLeftCapacity(buf) >= kHLFDIntroSize && total <= UINT32_MAX;
+    sbuf_t        *framed  = reuse ? buf : bufferpoolTryGetBestFit(pool, total, padding);
     sbuf_t        *intro   = bufferpoolTryGetBestFit(pool, kHLFDIntroSize, padding);
-    if (framed == NULL || intro == NULL || total > sbufGetMaximumWriteableSize(framed) ||
+    if (framed == NULL || intro == NULL || (! reuse && total > sbufGetMaximumWriteableSize(framed)) ||
         kHLFDIntroSize > sbufGetMaximumWriteableSize(intro))
     {
-        if (framed != NULL)
+        if (framed != NULL && framed != buf)
             bufferpoolReuseBuffer(pool, framed);
         if (intro != NULL)
             bufferpoolReuseBuffer(pool, intro);
@@ -36,18 +37,23 @@ bool halfduplexclientForwardPayload(tunnel_t *t, line_t *main, sbuf_t *buf)
         wire[0]       = kHLFDCmdDownload;
         memoryCopy(wire + kHLFDPairIdOffset, pair_id, kHLFDPairIdSize);
         sbufSetLength(intro, kHLFDIntroSize);
+        if (reuse)
+            sbufShiftLeft(framed, kHLFDIntroSize);
         wire    = sbufGetMutablePtr(framed);
         wire[0] = kHLFDCmdUpload;
         memoryCopy(wire + kHLFDPairIdOffset, pair_id, kHLFDPairIdSize);
-        sbufSetLength(framed, kHLFDIntroSize);
-        if (sbufIsSplice(buf))
-            sbufSpliceReadToBuffer(buf, framed, length);
-        else
+        if (! reuse)
         {
-            memoryCopyLarge(wire + kHLFDIntroSize, sbufGetRawPtr(buf), length);
-            sbufSetLength(framed, (uint32_t) total);
+            sbufSetLength(framed, kHLFDIntroSize);
+            if (sbufIsSplice(buf))
+                sbufSpliceReadToBuffer(buf, framed, length);
+            else
+            {
+                memoryCopyLarge(wire + kHLFDIntroSize, sbufGetRawPtr(buf), length);
+                sbufSetLength(framed, (uint32_t) total);
+            }
+            lineReuseBuffer(main, buf);
         }
-        lineReuseBuffer(main, buf);
         // Both intros exist before callbacks. Nested input queues behind the
         // older upload intro until this admitted first input has been submitted.
         ls->first_packet_sent = true;

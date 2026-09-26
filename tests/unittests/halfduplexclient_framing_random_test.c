@@ -16,10 +16,12 @@ typedef struct client_pair_s
     line_t  *main_line;
     line_t  *upload_line;
     line_t  *download_line;
+    sbuf_t  *expected_upload;
     uint8_t  upload_frame[kCapturedFrameSize];
     uint8_t  download_intro[kHLFDIntroSize];
     uint32_t upload_length;
     uint32_t download_length;
+    uint32_t minimum_upload_padding;
 } client_pair_t;
 
 typedef struct client_framing_fixture_s
@@ -66,10 +68,13 @@ static void captureFramedPayload(tunnel_t *next, line_t *line, sbuf_t *buf)
     twfRequire(pair != NULL, "HalfDuplexClient framed an unknown child line");
 
     twfRequire(! sbufIsSplice(buf), "combined intro must be ordinary");
-    twfRequire(sbufGetLeftCapacity(buf) >= 64, "output lost onward padding");
+    twfRequire(sbufGetLeftCapacity(buf) >= (is_upload ? pair->minimum_upload_padding : 64),
+               "output lost onward padding");
     const uint32_t length = sbufGetLength(buf);
     if (is_upload)
     {
+        if (pair->expected_upload != NULL)
+            twfRequire(buf == pair->expected_upload, "ordinary first payload was unnecessarily copied");
         twfRequire(length <= sizeof(pair->upload_frame), "upload frame exceeded the capture buffer");
         memoryCopy(pair->upload_frame, sbufGetRawPtr(buf), length);
         pair->upload_length = length;
@@ -85,9 +90,10 @@ static void captureFramedPayload(tunnel_t *next, line_t *line, sbuf_t *buf)
 
 static void initializePair(client_framing_fixture_t *fixture, client_pair_t *pair)
 {
-    pair->main_line     = lineCreate(tunnelchainGetLinePools(fixture->chain), 0);
-    pair->upload_line   = lineCreate(tunnelchainGetLinePools(fixture->chain), 0);
-    pair->download_line = lineCreate(tunnelchainGetLinePools(fixture->chain), 0);
+    pair->minimum_upload_padding = 64;
+    pair->main_line              = lineCreate(tunnelchainGetLinePools(fixture->chain), 0);
+    pair->upload_line            = lineCreate(tunnelchainGetLinePools(fixture->chain), 0);
+    pair->download_line          = lineCreate(tunnelchainGetLinePools(fixture->chain), 0);
 
     halfduplexclient_lstate_t *main_ls     = lineGetState(pair->main_line, fixture->halfduplex);
     halfduplexclient_lstate_t *upload_ls   = lineGetState(pair->upload_line, fixture->halfduplex);
@@ -107,7 +113,7 @@ static void initializePair(client_framing_fixture_t *fixture, client_pair_t *pai
 static void fixtureSetup(client_framing_fixture_t *fixture)
 {
     memoryZero(fixture, sizeof(*fixture));
-    twfWorkerEnvSetup(&fixture->env, kTestBufferSize, 64);
+    twfWorkerEnvSetup(&fixture->env, kTestBufferSize, 64 + kHLFDIntroSize);
 
     fixture->halfduplex = tunnelCreate(NULL, kTunnelStateSize, kLineStateSize);
     fixture->next       = tunnelCreate(NULL, 0, 0);
@@ -159,7 +165,45 @@ static void sendFirstPayload(client_framing_fixture_t *fixture, size_t pair_inde
     {
         sbufGetMutablePtr(payload)[index] = (uint8_t) (marker + index);
     }
+    fixture->pairs[pair_index].expected_upload = payload;
     halfduplexclientTunnelUpStreamPayload(fixture->halfduplex, fixture->pairs[pair_index].main_line, payload);
+}
+
+static void caseOrdinaryHeadroom(void)
+{
+    twfSetCase("HalfDuplexClient reuses ordinary first payload only with enough intro headroom");
+    const uint16_t paddings[] = {0, kHLFDIntroSize - 1, kHLFDIntroSize, kHLFDIntroSize + 64};
+    const uint32_t lengths[]  = {0, 5, 64000};
+    uint8_t        data[64000];
+    for (unsigned i = 0; i < sizeof(data); ++i)
+        data[i] = (uint8_t) i;
+    for (unsigned i = 0; i < ARRAY_SIZE(paddings); ++i)
+    {
+        for (unsigned j = 0; j < ARRAY_SIZE(lengths); ++j)
+        {
+            client_framing_fixture_t fixture;
+            fixtureSetup(&fixture);
+            client_pair_t *pair  = &fixture.pairs[0];
+            sbuf_t        *input = twfTrackAcquired(sbufCreateWithPadding(lengths[j], paddings[i]));
+            input->curpos        = paddings[i]; // Exercise exact headroom despite allocation padding alignment.
+            sbufSetLength(input, lengths[j]);
+            memoryCopyLarge(sbufGetMutablePtr(input), data, lengths[j]);
+            if (paddings[i] >= kHLFDIntroSize)
+            {
+                pair->expected_upload        = input;
+                pair->minimum_upload_padding = paddings[i] - kHLFDIntroSize;
+            }
+            halfduplexclientTunnelUpStreamPayload(fixture.halfduplex, pair->main_line, input);
+            twfRequire(pair->upload_length == kHLFDIntroSize + lengths[j] &&
+                           memoryEqual(pair->upload_frame + kHLFDIntroSize, data, lengths[j]),
+                       "ordinary first body changed");
+            twfRequire(pair->upload_frame[0] == kHLFDCmdUpload && pair->download_intro[0] == kHLFDCmdDownload &&
+                           pair->download_length == kHLFDIntroSize &&
+                           memoryEqual(pair->upload_frame + 1, pair->download_intro + 1, kHLFDPairIdSize),
+                       "ordinary first intros disagree");
+            fixtureTeardown(&fixture);
+        }
+    }
 }
 
 static void requirePairFrame(const client_pair_t *pair, const uint8_t expected_id[kHLFDPairIdSize], uint8_t marker)
@@ -287,6 +331,7 @@ int main(void)
     frandInit();
 
     caseRepresentations();
+    caseOrdinaryHeadroom();
     caseOnePairConsumesExactlyTwoSecureWords();
     caseSeparatePairsUseIndependentCSPRNGIds();
 

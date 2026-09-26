@@ -47,6 +47,8 @@ enum
     kTrojanClientCrlfLen             = 2,
     kTrojanClientUdpMaxPacket        = 8192,
     kTrojanClientUdpHeaderMaxLen     = 1 + 1 + UINT8_MAX + 2 + 2 + 2,
+    /* IPv4 UDP association request plus the largest first datagram header. */
+    kTrojanClientInitialPadding      = 68 + kTrojanClientUdpHeaderMaxLen,
     kTrojanClientMaxUdpBufferedBytes = 2 * 1024 * 1024 + kTrojanClientUdpHeaderMaxLen + kTrojanClientUdpMaxPacket
 };
 

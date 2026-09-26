@@ -202,7 +202,8 @@ higher profiles. An available peer pairs before this waiting-limit check. These
 are logical waiting limits, not a cap on ready deliveries or total physical memory.
 Fresh materialization and grown waiting buffers retain onward padding.
 
-Both nodes advertise `kNodeFlagSupportsSplice` with zero required left padding.
+Both nodes advertise `kNodeFlagSupportsSplice`. The client requires 17 bytes of
+left padding for its upload intro; the server requires zero.
 Actual splice reads require platform/build support, `misc.splice` enabled, and
 support from every node in the expanded chain, including the server's PipeTunnel
 wrapper and all neighbors. Ordinary buffers remain valid in every state. No new

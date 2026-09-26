@@ -37,6 +37,8 @@ enum
     kVlessClientUuidLen             = 16,
     kVlessClientResponseLen         = 2,
     kVlessClientUdpHeaderLen        = 2,
+    /* Maximum domain request plus the first datagram's length prefix. */
+    kVlessClientInitialPadding      = 23 + UINT8_MAX + kVlessClientUdpHeaderLen,
     kVlessClientUdpMaxPacket        = UINT16_MAX,
     kVlessClientResponseMaxLen      = 257,
     kVlessClientMaxTcpWireBytes     = 2097409,

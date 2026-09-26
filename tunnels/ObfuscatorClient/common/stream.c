@@ -9,8 +9,23 @@ static void closeStream(tunnel_t *t, line_t *l)
 
 void obfuscatorclientEncodeStream(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
+    const uint32_t length = sbufGetLength(buf);
+    if (length <= UINT16_MAX && sbufGetLeftCapacity(buf) >= kObfuscatorTlsRecordHeaderSize)
+    {
+        /* Compute the skip against plaintext, before adding the record header. */
+        obfuscatorclientApplyXor(t, l, buf);
+        sbufShiftLeft(buf, kObfuscatorTlsRecordHeaderSize);
+        uint8_t *header = sbufGetMutablePtr(buf);
+        header[0]       = 23;
+        header[1]       = 3;
+        header[2]       = 3;
+        header[3]       = (uint8_t) (length >> 8);
+        header[4]       = (uint8_t) length;
+        tunnelNextUpStreamPayload(t, l, buf);
+        return;
+    }
+
     buffer_pool_t *pool    = lineGetBufferPool(l);
-    const uint32_t length  = sbufGetLength(buf);
     const uint64_t records = max(UINT64_C(1), ((uint64_t) length + 65534) / 65535);
     const uint64_t total   = length + 5 * records;
     sbuf_t        *out     = bufferpoolTryGetBestFit(pool, total, bufferpoolGetLargeBufferPadding(pool));

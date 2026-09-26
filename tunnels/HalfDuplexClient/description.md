@@ -152,20 +152,23 @@ Source-backed metadata:
 | `layer_group` | `kNodeLayer4` |
 | `layer_group_prev_node` | `kNodeLayer4` |
 | `layer_group_next_node` | `kNodeLayer4` |
-| `required_padding_left` | `0` bytes |
+| `required_padding_left` | `17` bytes |
 
 ## Splice and setup storage
 
 The first upstream delivery, including an empty delivery, triggers both 17-byte
 intros with the same 128-bit pair ID. The upload intro and the entire first body
-are combined into one ordinary buffer; any resident prefix and private-pipe body
-are copied in order. The download intro is ordinary too. Later upstream and
+are combined into one ordinary buffer. Ordinary input with enough advertised
+headroom is reused in place; insufficient headroom uses a new buffer. Splice
+input is fully materialized, preserving its resident prefix and private-pipe
+body in order. The download intro is ordinary too. Later upstream and
 downstream deliveries preserve their original ordinary or splice representation.
 The temporary Init/intro FIFO can retain splice wrappers without materializing
 them; its inclusive 2 MiB and 1,024-buffer limits are unchanged and do not cap
 every ready delivery. Allocated outputs retain onward padding.
 
-Both nodes advertise `kNodeFlagSupportsSplice` with zero required left padding.
+Both nodes advertise `kNodeFlagSupportsSplice`. The client requires 17 bytes of
+left padding for its upload intro; the server requires zero.
 Actual splice reads require platform/build support, `misc.splice` enabled, and
 support from every node in the expanded chain, including the server's PipeTunnel
 wrapper and all neighbors. Ordinary buffers remain valid in every state. No new

@@ -217,7 +217,8 @@ bool trojanclientSendInitialRequest(tunnel_t *t, line_t *l, trojanclient_lstate_
     uint64_t       total          = (uint64_t) header_len + udp_header_len + body_len;
     buffer_pool_t *pool           = lineGetBufferPool(l);
     uint16_t       padding        = bufferpoolGetLargeBufferPadding(pool);
-    sbuf_t        *buf            = bufferpoolTryGetBestFit(pool, total, padding);
+    bool reuse_body = body != NULL && ! sbufIsSplice(body) && sbufGetLeftCapacity(body) >= header_len + udp_header_len;
+    sbuf_t *buf     = reuse_body ? body : bufferpoolTryGetBestFit(pool, total, padding);
     if (UNLIKELY(buf == NULL))
     {
         addresscontextReset(&assoc_target);
@@ -225,6 +226,8 @@ bool trojanclientSendInitialRequest(tunnel_t *t, line_t *l, trojanclient_lstate_
             lineReuseBuffer(l, body);
         return false;
     }
+    if (reuse_body)
+        sbufShiftLeft(buf, header_len + udp_header_len);
     uint8_t *ptr = sbufGetMutablePtr(buf);
     size_t   off = 0;
     memoryCopy(ptr, ts->password_hex, kTrojanClientPasswordHexLen);
@@ -248,11 +251,14 @@ bool trojanclientSendInitialRequest(tunnel_t *t, line_t *l, trojanclient_lstate_
         ptr[off++] = '\n';
     }
     addresscontextReset(&assoc_target);
-    sbufSetLength(buf, (uint32_t) off);
-    if (body != NULL)
+    if (! reuse_body)
     {
-        buf = sbufMoveRangeTo(pool, body, buf, body_len, (uint32_t) total, padding);
-        lineReuseBuffer(l, body);
+        sbufSetLength(buf, (uint32_t) off);
+        if (body != NULL)
+        {
+            buf = sbufMoveRangeTo(pool, body, buf, body_len, (uint32_t) total, padding);
+            lineReuseBuffer(l, body);
+        }
     }
     trojanclientCancelFirstPayloadTimer(ls);
     ls->request_sent = true;

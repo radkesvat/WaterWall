@@ -1644,7 +1644,7 @@ static void testHalfDuplexSpliceCapability(void)
     node_t nodes[] = {nodeHalfDuplexClientGet(), nodeHalfDuplexServerGet()};
     for (unsigned i = 0; i < ARRAY_SIZE(nodes); ++i)
     {
-        require(nodes[i].flags == kNodeFlagSupportsSplice && nodes[i].required_padding_left == 0,
+        require(nodes[i].flags == kNodeFlagSupportsSplice && nodes[i].required_padding_left == (i == 0 ? 17 : 0),
                 "HalfDuplex metadata changed");
         for (unsigned blocked = 0; blocked < 2; ++blocked)
         {

@@ -216,13 +216,16 @@ bool vlessclientSendInitialRequest(tunnel_t *t, line_t *l, vlessclient_lstate_t 
     uint64_t       total          = (uint64_t) header_len + udp_header_len + body_len;
     buffer_pool_t *pool           = lineGetBufferPool(l);
     uint16_t       padding        = bufferpoolGetLargeBufferPadding(pool);
-    sbuf_t        *buf            = bufferpoolTryGetBestFit(pool, total, padding);
+    bool reuse_body = body != NULL && ! sbufIsSplice(body) && sbufGetLeftCapacity(body) >= header_len + udp_header_len;
+    sbuf_t *buf     = reuse_body ? body : bufferpoolTryGetBestFit(pool, total, padding);
     if (UNLIKELY(buf == NULL))
     {
         if (body != NULL)
             lineReuseBuffer(l, body);
         return false;
     }
+    if (reuse_body)
+        sbufShiftLeft(buf, header_len + udp_header_len);
     uint8_t *ptr = sbufGetMutablePtr(buf);
     size_t   off = 0;
     ptr[off++]   = kVlessVersion;
@@ -239,11 +242,14 @@ bool vlessclientSendInitialRequest(tunnel_t *t, line_t *l, vlessclient_lstate_t 
         memoryCopy(ptr + off, &length, sizeof(length));
         off += sizeof(length);
     }
-    sbufSetLength(buf, (uint32_t) off);
-    if (body != NULL)
+    if (! reuse_body)
     {
-        buf = sbufMoveRangeTo(pool, body, buf, body_len, (uint32_t) total, padding);
-        lineReuseBuffer(l, body);
+        sbufSetLength(buf, (uint32_t) off);
+        if (body != NULL)
+        {
+            buf = sbufMoveRangeTo(pool, body, buf, body_len, (uint32_t) total, padding);
+            lineReuseBuffer(l, body);
+        }
     }
     vlessclientCancelFirstPayloadTimer(ls);
     ls->request_sent = true;

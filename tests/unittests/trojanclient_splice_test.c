@@ -265,7 +265,7 @@ static void begin(bool udp, const char *target, uint32_t pool_size, unsigned ini
     fail_pipe = pressure = fail_queue = reject_growth = false;
     reads = moves = pipe_refusals = growth_refusals = 0;
     f.udp                                           = udp;
-    twfWorkerEnvSetupWithBufferSizes(&f.env, pool_size, 512, 320, 8192, pool_size);
+    twfWorkerEnvSetupWithBufferSizes(&f.env, pool_size, 512, 352, 8192, pool_size);
     if (test_wid != 0)
     {
         GSTATE.workers_count         = 3;
@@ -281,7 +281,7 @@ static void begin(bool udp, const char *target, uint32_t pool_size, unsigned ini
         testWorkerBindWID(test_wid);
     }
     f.node = nodeTrojanClientGet();
-    twfRequire(f.node.flags == kNodeFlagSupportsSplice && f.node.required_padding_left == 263 &&
+    twfRequire(f.node.flags == kNodeFlagSupportsSplice && f.node.required_padding_left == 331 &&
                    f.node.layer_group == kNodeLayer4 && f.node.layer_group_next_node == kNodeLayer4 &&
                    f.node.layer_group_prev_node == kNodeLayer4,
                "client capability or layer metadata changed");
@@ -809,8 +809,12 @@ static void testFirstPayload(void)
                 sbufWrite(body, "pre", 3);
             }
             unsigned length = representation == 2 ? 7 : 4;
+            bool     ordinary         = ! sbufIsSplice(body);
+            uint32_t expected_padding = ordinary ? sbufGetLeftCapacity(body) - 68 - (udp ? 11 : 0)
+                                                 : bufferpoolGetLargeBufferPadding(f.env.pool);
             f.t->fnPayloadU(f.t, f.application, body);
-            twfRequire(f.requests == 1 && f.deliveries_up == 0 && ! f.last_splice && f.headroom >= 320,
+            twfRequire(f.requests == 1 && f.deliveries_up == 0 && ! f.last_splice && f.headroom == expected_padding &&
+                           (! ordinary || f.last == body),
                        "initial output split, splice-backed or missing padding");
             twfRequire(f.up_len == 68 + (udp ? 11 : 0) + length &&
                            memcmp(f.up + f.up_len - length, representation == 2 ? "prebody" : "body", length) == 0,
@@ -829,6 +833,49 @@ static void testFirstPayload(void)
     end();
 }
 
+static void testFirstPayloadReuse(void)
+{
+    twfSetCase("initial ordinary request reuses exact header padding and preserves the complete wire output");
+    char domain[256];
+    memorySet(domain, 'a', 255);
+    domain[255]                  = 0;
+    const char    *targets[]     = {"127.0.0.1", "::1", domain};
+    const uint32_t tcp_headers[] = {68, 80, 320};
+    const uint32_t udp_headers[] = {11, 23, 263};
+    for (unsigned udp = 0; udp < 2; ++udp)
+        for (unsigned form = 0; form < 3; ++form)
+        {
+            uint32_t headers = udp ? 68 + udp_headers[form] : tcp_headers[form];
+            uint8_t  expected[512];
+            for (unsigned space = 0; space < 3; ++space)
+            {
+                begin(udp, targets[form], 128, 0, false);
+                uint32_t padding = space == 0 ? headers - 1 : headers + (space == 2 ? 19 : 0);
+                sbuf_t  *body    = bytes("payload", 7, false, 512);
+                sbufShiftLeft(body, sbufGetLeftCapacity(body) - padding);
+                sbufSetLength(body, 7);
+                sbufWrite(body, "payload", 7);
+                f.t->fnPayloadU(f.t, f.application, body);
+                twfRequire(f.requests == 1 && f.up_len == headers + 7 && ! f.last_splice &&
+                               memoryCompare(f.up + headers, "payload", 7) == 0,
+                           "initial request split or corrupted the first body");
+                if (space == 0)
+                {
+                    twfRequire(f.last != body && f.headroom >= bufferpoolGetLargeBufferPadding(f.env.pool),
+                               "insufficient headroom did not use a padded replacement");
+                    memoryCopy(expected, f.up, f.up_len);
+                }
+                else
+                {
+                    twfRequire(f.last == body && f.headroom == padding - headers &&
+                                   memoryCompare(f.up, expected, f.up_len) == 0,
+                               "ordinary prepend copied the payload or changed the wire encoding");
+                }
+                end();
+            }
+        }
+}
+
 static void testInitialAllocationRefusal(void)
 {
     twfSetCase("unrepresentable first-output refusal settles source and waiting timer");
@@ -837,7 +884,7 @@ static void testInitialAllocationRefusal(void)
         begin(udp, "127.0.0.1", 128, 0, false);
         ((trojanclient_tstate_t *) tunnelGetState(f.t))->first_payload_timeout_ms = 400;
         establish();
-        sbuf_t *body            = bytes("owned", 5, true, 320);
+        sbuf_t *body            = bytes("owned", 5, true, 0);
         fail_initial_allocation = true;
         f.t->fnPayloadU(f.t, f.application, body);
         twfRequire(! lineIsAlive(f.application) && f.requests == 0 && wloopNTimers(f.env.loop) == 0,
@@ -1043,6 +1090,7 @@ int main(void)
 {
     twfRequire(wCryptoGlobalInit() == kWCryptoOk, "crypto initialization failed");
     testFirstPayload();
+    testFirstPayloadReuse();
     testInitialAllocationRefusal();
     testTimeoutConfiguration();
     testTimers();

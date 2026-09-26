@@ -220,8 +220,9 @@ Response format:
 `Init` prepares the destination and starts the next node without emitting a request.
 The first eligible application payload may arrive before transport `Est`, during its
 callback, or while Pause is recorded. It is sent immediately with the complete request
-in one ordinary buffer, including one UDP frame header when applicable. The source's
-resident prefix and private-pipe body are fully materialized into that first output.
+in one ordinary buffer, including one UDP frame header when applicable. Ordinary input
+is reused in place when its headroom fits all headers. Otherwise a best-fit ordinary
+buffer is allocated; any resident prefix and private-pipe body are copied in order.
 Empty TCP input does not trigger a request. Empty VLESS UDP datagrams are dropped locally.
 
 Transport `Est` reaches the live application once, independently of protocol data and
@@ -253,13 +254,13 @@ destroyed here; the application owner drains it during shutdown.
 - Unsupported VLESS features include flow, XTLS Vision, mux, reverse, XUDP, and transport-specific wrappers.
 - UDP payloads with length `0` or greater than `65535` are dropped locally.
 - Malformed downstream response headers or UDP frames close the affected line safely.
-- `required_padding_left` is `2`, enough for the VLESS UDP length prefix.
+- `required_padding_left` is `280`, covering the largest initial request plus a UDP length prefix.
 
 ## Splice and retention
 
 The first request plus payload is ordinary; the request itself is at most 278 bytes.
 Later opaque TCP preserves its original ordinary or splice representation. UDP sends
-prepend within the advertised 2-byte padding budget. Header parsing and exact body
+prepend two bytes within the advertised 280-byte padding budget. Header parsing and exact body
 movement preserve boundaries and use complete ordinary fallback when padding or pipe
 capacity requires it. Receive extraction preserves full onward padding.
 
@@ -293,4 +294,4 @@ Source-backed metadata:
 | `layer_group` | `kNodeLayer4` |
 | `layer_group_prev_node` | `kNodeLayer4` |
 | `layer_group_next_node` | `kNodeLayer4` |
-| `required_padding_left` | `2` bytes |
+| `required_padding_left` | `280` bytes |
