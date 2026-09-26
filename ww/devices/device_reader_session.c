@@ -85,6 +85,7 @@ bool deviceReaderSessionConfigureOutputBudget(device_reader_session_t *session, 
     session->output_wake_fd      = fd;
     return true;
 #else
+    discard session;
     discard max_charge;
     discard max_packets;
     return false;
@@ -107,7 +108,7 @@ bool deviceReaderSessionTryReserveOutput(device_reader_session_t *session, size_
      * before it, so stale credit loads cannot strand an unnotified waiter. */
     discard atomic_exchange_explicit(&session->output_waiting, true, memory_order_acq_rel);
 
-    unsigned int count = atomic_load_explicit(&session->output_packets, memory_order_relaxed);
+    w_atomic_uint_value_t count = atomic_load_explicit(&session->output_packets, memory_order_relaxed);
     for (;;)
     {
         if (count >= session->output_packet_limit)
@@ -121,7 +122,13 @@ bool deviceReaderSessionTryReserveOutput(device_reader_session_t *session, size_
         }
     }
 
+    /* The Windows fallback's atomic_size_t stores intptr_t; its CAS expected
+     * pointer must match that type as well as its width. C11 uses size_t. */
+#if WW_HAVE_C11_ATOMICS
     size_t charge = atomic_load_explicit(&session->output_charge, memory_order_relaxed);
+#else
+    w_atomic_uint_value_t charge = atomic_load_explicit(&session->output_charge, memory_order_relaxed);
+#endif
     for (;;)
     {
         if (exact_charge > session->output_charge_limit - charge)
