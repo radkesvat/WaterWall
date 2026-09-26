@@ -4,6 +4,7 @@
 
 #include "worker_messages.h"
 
+#include <poll.h>
 #include <pthread.h>
 
 #if defined(OS_UNIX)
@@ -36,6 +37,9 @@ typedef struct captured_message_s
 typedef struct reader_probe_s
 {
     unsigned int delivered;
+    unsigned int prepared;
+    sbuf_t      *last_prepared;
+    bool         check_prepare_order;
     atomic_bool  block_delivery;
     atomic_bool  delivery_entered;
     atomic_bool  release_delivery;
@@ -73,6 +77,8 @@ static unsigned int                       tracked_pool_destroy_count;
 static buffer_pool_t                     *tracked_reuse_pool;
 static sbuf_t                            *tracked_reuse_buffer;
 static unsigned int                       tracked_reuse_count;
+static reader_probe_t                    *active_prepare_probe;
+static device_reader_session_t           *active_prepare_session;
 
 worker_message_submit_result_e __wrap_sendWorkerMessageForceQueueWithCleanup(wid_t wid, WorkerMessageCallback callback,
                                                                              WorkerMessageCleanupCallback cleanup,
@@ -119,6 +125,10 @@ void __wrap_memoryFree(void *ptr)
 {
     if (ptr == tracked_session)
     {
+        require(atomic_load_explicit(&tracked_session->output_charge, memory_order_acquire) == 0,
+                "reader session was destroyed with output allocation charge reserved");
+        require(atomic_load_explicit(&tracked_session->output_packets, memory_order_acquire) == 0,
+                "reader session was destroyed with output packet reservations");
         tracked_session_free_count++;
     }
     __real_memoryFree(ptr);
@@ -145,6 +155,13 @@ void __wrap_bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *buf)
 static void deliverPacket(void *device, sbuf_t *buf, wid_t wid)
 {
     reader_probe_t *probe = device;
+    if (probe->check_prepare_order)
+    {
+        require(currentThreadIsEventWorkerWID(wid), "prepared output did not reach its selected event worker");
+        require(probe->last_prepared == buf && probe->prepared == probe->delivered + 1 &&
+                    ((const uint8_t *) sbufGetRawPtr(buf))[0] == 0xA5,
+                "output reached the device before its worker-side prepare callback");
+    }
     probe->delivered++;
 
     if (atomicLoadRelaxed(&probe->block_delivery))
@@ -158,6 +175,20 @@ static void deliverPacket(void *device, sbuf_t *buf, wid_t wid)
         return;
     }
     bufferpoolReuseBuffer(getWorkerBufferPool(wid), buf);
+}
+
+static void prepareReaderOutput(sbuf_t *buf)
+{
+    require(active_prepare_probe != NULL && active_prepare_session != NULL, "prepare callback lost its test owner");
+    require(currentThreadIsEventWorkerWID(0), "prepare callback ran outside the receiving event worker");
+    require(atomic_load_explicit(&active_prepare_session->output_packets, memory_order_acquire) > 0 &&
+                atomic_load_explicit(&active_prepare_session->output_charge, memory_order_acquire) > 0,
+            "prepare callback ran after its output reservation was released");
+    require(((const uint8_t *) sbufGetRawPtr(buf))[0] == 0x5A,
+            "prepare callback saw changed reader-owned output bytes");
+    ((uint8_t *) sbufGetMutablePtr(buf))[0] = 0xA5;
+    active_prepare_probe->last_prepared     = buf;
+    active_prepare_probe->prepared++;
 }
 
 static void writeIpv4Checksum(uint8_t *packet)
@@ -582,6 +613,204 @@ static void testReferenceOverflowFailsBeforeWrap(test_env_t *env)
 #endif
 }
 
+static void requireOutputBudgetEmpty(const device_reader_session_t *session)
+{
+    require(atomic_load_explicit(&session->output_charge, memory_order_acquire) == 0,
+            "output budget leaked allocation charge");
+    require(atomic_load_explicit(&session->output_packets, memory_order_acquire) == 0,
+            "output budget leaked packet count");
+}
+
+static void requireOutputWake(device_reader_session_t *session)
+{
+    const int fd = deviceReaderSessionOutputWakeFd(session);
+    require(fd >= 0, "configured output budget lacks a wake descriptor");
+    struct pollfd pfd = {.fd = fd, .events = POLLIN};
+    require(poll(&pfd, 1, 0) == 1 && (pfd.revents & POLLIN), "settlement did not wake the blocked reader");
+    deviceReaderSessionDrainOutputWake(session);
+    pfd.revents = 0;
+    require(poll(&pfd, 1, 0) == 0, "output wake was not fully drained");
+}
+
+static void testOutputBudgetStalledDeliveryAndCancellation(test_env_t *env)
+{
+    resetCapturedMessages();
+    reader_probe_t           probe   = {0};
+    device_reader_session_t *session = createSession(env, &probe, 1);
+    buffer_pool_fit_t        fit;
+    require(bufferpoolQueryBestFit(env->worker_buffer_pool, 64, 0, &fit), "failed to query output packet charge");
+    const size_t charge = fit.allocation_charge;
+    require(deviceReaderSessionConfigureOutputBudget(session, 2 * charge, 2), "failed to configure output budget");
+    require(deviceReaderSessionBegin(session) != 0, "failed to begin budgeted reader session");
+
+    for (unsigned int i = 0; i < 2; ++i)
+    {
+        require(deviceReaderSessionTryReserveOutput(session, charge), "failed to reserve initial output packet");
+        sbuf_t *buf = bufferpoolGetBestFit(env->worker_buffer_pool, 64, 0);
+        require(sbufGetAllocationCharge(buf) == charge, "pre-allocation charge did not match actual buffer");
+        require(deviceReaderSessionPostReserved(session, 0, &buf, &charge, 1, NULL), "initial budgeted post failed");
+    }
+    require(atomic_load_explicit(&session->output_charge, memory_order_acquire) == 2 * charge,
+            "stalled messages exceeded or lost the output charge budget");
+    require(atomic_load_explicit(&session->output_packets, memory_order_acquire) == 2,
+            "stalled messages exceeded or lost the output packet budget");
+    require(! deviceReaderSessionTryReserveOutput(session, charge), "stalled worker did not backpressure the reader");
+
+    cleanupMessage(0);
+    requireOutputWake(session);
+    require(deviceReaderSessionTryReserveOutput(session, charge), "cancelled delivery did not return one credit");
+    sbuf_t *third = bufferpoolGetBestFit(env->worker_buffer_pool, 64, 0);
+    require(deviceReaderSessionPostReserved(session, 0, &third, &charge, 1, NULL), "post after credit return failed");
+    require(! deviceReaderSessionTryReserveOutput(session, charge), "repeated output exceeded the bounded budget");
+
+    deliverMessage(1);
+    requireOutputWake(session);
+    deliverMessage(2);
+    require(probe.delivered == 2, "budgeted delivery count was incorrect");
+    requireOutputBudgetEmpty(session);
+    deviceReaderSessionEnd(session);
+    deviceReaderSessionUnref(session);
+}
+
+static void testOutputBudgetLocalAndRejectedSettlement(test_env_t *env)
+{
+    resetCapturedMessages();
+    reader_probe_t           probe   = {0};
+    device_reader_session_t *session = createSession(env, &probe, 1);
+    buffer_pool_fit_t        fit;
+    require(bufferpoolQueryBestFit(env->worker_buffer_pool, 64, 0, &fit), "failed to query output packet charge");
+    const size_t charge = fit.allocation_charge;
+    require(deviceReaderSessionConfigureOutputBudget(session, 3 * charge, 1),
+            "failed to configure packet-count budget");
+    require(deviceReaderSessionBegin(session) != 0, "failed to begin packet-count budget session");
+    require(deviceReaderSessionTryReserveOutput(session, charge), "failed to reserve local output");
+    require(! deviceReaderSessionTryReserveOutput(session, charge), "packet-count budget allowed a second output");
+    deviceReaderSessionReleaseOutput(session, charge);
+    requireOutputWake(session);
+    requireOutputBudgetEmpty(session);
+
+    require(deviceReaderSessionTryReserveOutput(session, charge), "failed to reserve refused-post output");
+    sbuf_t *buf = bufferpoolGetBestFit(env->worker_buffer_pool, 64, 0);
+    fail_post   = true;
+    require(! deviceReaderSessionPostReserved(session, 0, &buf, &charge, 1, NULL),
+            "refused budgeted post reported acceptance");
+    fail_post = false;
+    requireOutputBudgetEmpty(session);
+    require(atomic_load_explicit(&session->refcount, memory_order_acquire) == 1,
+            "refused budgeted post leaked the session reference");
+
+    require(deviceReaderSessionTryReserveOutput(session, charge), "failed to reserve stale-generation output");
+    buf = bufferpoolGetBestFit(env->worker_buffer_pool, 64, 0);
+    require(deviceReaderSessionPostReserved(session, 0, &buf, &charge, 1, NULL), "stale-generation setup post failed");
+    deviceReaderSessionEnd(session);
+    require(deviceReaderSessionBegin(session) != 0, "failed to reopen budgeted session");
+    deliverMessage(0);
+    require(probe.delivered == 0, "stale budgeted delivery reached the device");
+    requireOutputBudgetEmpty(session);
+    deviceReaderSessionEnd(session);
+    deviceReaderSessionUnref(session);
+}
+
+static void testOutputBudgetCancellationOutlivesDevice(test_env_t *env)
+{
+    resetCapturedMessages();
+    reader_probe_t           probe   = {0};
+    device_reader_session_t *session = createSession(env, &probe, 1);
+    buffer_pool_fit_t        fit;
+    require(bufferpoolQueryBestFit(env->worker_buffer_pool, 64, 0, &fit), "failed to query output packet charge");
+    const size_t charge = fit.allocation_charge;
+    require(deviceReaderSessionConfigureOutputBudget(session, charge, 1), "failed to configure retained budget");
+    require(deviceReaderSessionBegin(session) != 0, "failed to begin retained budget session");
+    require(deviceReaderSessionTryReserveOutput(session, charge), "failed to reserve retained output");
+    sbuf_t *buf = bufferpoolGetBestFit(env->worker_buffer_pool, 64, 0);
+    require(deviceReaderSessionPostReserved(session, 0, &buf, &charge, 1, NULL), "failed to queue retained output");
+
+    tracked_session            = session;
+    tracked_message_pool       = session->message_pool;
+    tracked_session_free_count = 0;
+    tracked_pool_destroy_count = 0;
+    deviceReaderSessionEnd(session);
+    deviceReaderSessionRetireProducerBuffers(session);
+    deviceReaderSessionUnref(session);
+    require(tracked_session_free_count == 0, "queued output did not retain its budget and session");
+    cleanupMessage(0);
+    require(tracked_session_free_count == 1 && tracked_pool_destroy_count == 1,
+            "queued output cancellation did not settle and destroy its session once");
+    tracked_session      = NULL;
+    tracked_message_pool = NULL;
+}
+
+static void testPreparedOutputRunsOnlyOnLiveWorkerDelivery(test_env_t *env)
+{
+    resetCapturedMessages();
+    reader_probe_t           probe   = {.check_prepare_order = true};
+    device_reader_session_t *session = createSession(env, &probe, 2);
+    buffer_pool_fit_t        fit;
+    require(bufferpoolQueryBestFit(env->worker_buffer_pool, 64, 0, &fit), "failed to query prepared output charge");
+    const size_t charge = fit.allocation_charge;
+    require(deviceReaderSessionConfigureOutputBudget(session, 2 * charge, 2),
+            "failed to configure prepared output budget");
+    require(deviceReaderSessionBegin(session) != 0, "failed to begin prepared output session");
+    active_prepare_probe   = &probe;
+    active_prepare_session = session;
+
+    sbuf_t      *bufs[2];
+    const size_t charges[2] = {charge, charge};
+    for (unsigned int i = 0; i < ARRAY_SIZE(bufs); ++i)
+    {
+        require(deviceReaderSessionTryReserveOutput(session, charge), "failed to reserve prepared output");
+        bufs[i] = bufferpoolGetBestFit(env->worker_buffer_pool, 64, 0);
+        sbufSetLength(bufs[i], 1);
+        ((uint8_t *) sbufGetMutablePtr(bufs[i]))[0] = 0x5A;
+    }
+    testWorkerUnbindWID();
+    require(deviceReaderSessionPostReserved(session, 0, bufs, charges, 2, prepareReaderOutput),
+            "prepared output batch was refused");
+    require(probe.prepared == 0 && probe.delivered == 0, "prepared output ran during producer-side posting");
+    testWorkerBindWID(0);
+    deliverMessage(0);
+    require(probe.prepared == 2 && probe.delivered == 2, "worker did not prepare both batched outputs in order");
+    requireOutputBudgetEmpty(session);
+
+    require(deviceReaderSessionTryReserveOutput(session, charge), "failed to reserve stale prepared output");
+    sbuf_t *buf = bufferpoolGetBestFit(env->worker_buffer_pool, 64, 0);
+    sbufSetLength(buf, 1);
+    ((uint8_t *) sbufGetMutablePtr(buf))[0] = 0x5A;
+    require(deviceReaderSessionPostReserved(session, 0, &buf, &charge, 1, prepareReaderOutput),
+            "failed to queue stale prepared output");
+    deviceReaderSessionEnd(session);
+    require(deviceReaderSessionBegin(session) != 0, "failed to reopen prepared output session");
+    deliverMessage(1);
+    require(probe.prepared == 2 && probe.delivered == 2, "stale generation ran output preparation");
+    requireOutputBudgetEmpty(session);
+
+    require(deviceReaderSessionTryReserveOutput(session, charge), "failed to reserve cancelled prepared output");
+    buf = bufferpoolGetBestFit(env->worker_buffer_pool, 64, 0);
+    sbufSetLength(buf, 1);
+    ((uint8_t *) sbufGetMutablePtr(buf))[0] = 0x5A;
+    require(deviceReaderSessionPostReserved(session, 0, &buf, &charge, 1, prepareReaderOutput),
+            "failed to queue cancelled prepared output");
+    cleanupMessage(2);
+    require(probe.prepared == 2 && probe.delivered == 2, "cancelled output ran preparation");
+    requireOutputBudgetEmpty(session);
+
+    require(deviceReaderSessionTryReserveOutput(session, charge), "failed to reserve refused prepared output");
+    buf = bufferpoolGetBestFit(env->worker_buffer_pool, 64, 0);
+    sbufSetLength(buf, 1);
+    ((uint8_t *) sbufGetMutablePtr(buf))[0] = 0x5A;
+    fail_post                               = true;
+    require(! deviceReaderSessionPostReserved(session, 0, &buf, &charge, 1, prepareReaderOutput),
+            "refused prepared output reported acceptance");
+    fail_post = false;
+    require(probe.prepared == 2 && probe.delivered == 2, "refused output ran preparation");
+    requireOutputBudgetEmpty(session);
+
+    active_prepare_probe   = NULL;
+    active_prepare_session = NULL;
+    deviceReaderSessionEnd(session);
+    deviceReaderSessionUnref(session);
+}
+
 int main(void)
 {
     test_env_t env;
@@ -595,6 +824,10 @@ int main(void)
     testEndWaitsForEnteredDelivery(&env);
     testTrackedEnvelopeStaleAfterReopenIsRejected(&env);
     testReferenceOverflowFailsBeforeWrap(&env);
+    testOutputBudgetStalledDeliveryAndCancellation(&env);
+    testOutputBudgetLocalAndRejectedSettlement(&env);
+    testOutputBudgetCancellationOutlivesDevice(&env);
+    testPreparedOutputRunsOnlyOnLiveWorkerDelivery(&env);
     envTeardown(&env);
     puts("device reader session tests passed");
     return 0;

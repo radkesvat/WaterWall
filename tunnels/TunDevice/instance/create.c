@@ -116,6 +116,13 @@ tunnel_t *tundeviceTunnelCreate(node_t *node)
 
     state->mtu = (uint16_t) dev_mtu;
 
+    state->gso_requested = true;
+    if (jsonGetObjectBoolean(settings, "gso", &state->gso_requested) == kJsonValueInvalid)
+    {
+        LOGF("JSON Error: TunDevice->settings->gso must be a boolean");
+        return tundeviceTunnelCreateFail(t);
+    }
+
     if (! tundeviceLoadRouteSettings(state, settings))
     {
         return tundeviceTunnelCreateFail(t);

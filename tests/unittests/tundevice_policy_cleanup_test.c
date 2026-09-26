@@ -16,6 +16,7 @@ static bool         dns_cancelled;
 static bool         bring_down_ok;
 static bool         partial_dns;
 static bool         dns_helper_started;
+static bool         last_offload_requested;
 static char         route_values[][16] = {"1.0.0.0/8", "2.0.0.0/8", "3.0.0.0/8"};
 static char         dns_values[][8]    = {"1.1.1.1", "2.2.2.2"};
 static char         inert_script[]     = "inert fixture script";
@@ -93,7 +94,7 @@ static tun_device_t *fakeCreate(const char *name, bool offload, uint16_t mtu, vo
                                 device_fragment_policy_t fragment_policy)
 {
     (void) name;
-    (void) offload;
+    last_offload_requested = offload;
     (void) mtu;
     (void) userdata;
     (void) cb;
@@ -162,6 +163,7 @@ static void resetProbe(void)
     selected_exit                                                                   = 0;
     dns_set_ok = dns_clear_ok = bring_down_ok = dns_helper_started = true;
     dns_cancelled = partial_dns = false;
+    last_offload_requested      = false;
 }
 
 static void testRouteInventory(void)
@@ -233,12 +235,13 @@ static void testOwnerCleanup(void)
     tunnelDestroy(tunnel);
 }
 
-static void testStartupRollback(bool cancelled, bool cleanup_ok, bool helper_started)
+static void testStartupRollback(bool gso_requested, bool cancelled, bool cleanup_ok, bool helper_started)
 {
     resetProbe();
     tunnel_t *tunnel = tunnelCreate(NULL, sizeof(tundevice_tstate_t), 0);
     require(tunnel != NULL, "startup tunnel allocation");
     tundevice_tstate_t *state    = tunnelGetState(tunnel);
+    state->gso_requested         = gso_requested;
     state->dns_servers[0]        = dns_values[0];
     state->dns_servers[1]        = dns_values[1];
     state->dns_server_count      = 2;
@@ -251,6 +254,11 @@ static void testStartupRollback(bool cancelled, bool cleanup_ok, bool helper_sta
     wwStartupContextBegin(&context);
     tundeviceTunnelOnStart(tunnel);
     ww_startup_result_t result = wwStartupContextEnd(&context);
+#ifdef OS_LINUX
+    require(last_offload_requested == gso_requested, "Linux GSO request was not forwarded to the TUN backend");
+#else
+    require(! last_offload_requested, "unsupported platform requested TUN GSO");
+#endif
     require(wwStartupSucceeded(result) == (cancelled && (cleanup_ok || ! helper_started)),
             "wrong cancellation/failure startup result");
     require(state->tdev != NULL && clear_calls == (helper_started ? 1U : 0U) && bring_down_calls == 1,
@@ -271,10 +279,10 @@ int main(void)
     testRouteInventory();
     testDnsInventory();
     testOwnerCleanup();
-    testStartupRollback(false, false, true);
-    testStartupRollback(true, true, true);
-    testStartupRollback(true, false, true);
-    testStartupRollback(true, false, false);
+    testStartupRollback(true, false, false, true);
+    testStartupRollback(false, true, true, true);
+    testStartupRollback(true, true, false, true);
+    testStartupRollback(false, true, false, false);
     networkloggerDestroy();
     puts("TunDevice policy cleanup tests passed");
     return 0;

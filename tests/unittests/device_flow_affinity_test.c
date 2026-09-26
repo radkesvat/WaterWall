@@ -21,15 +21,20 @@ enum
 
 typedef struct captured_post_s
 {
-    wid_t                              wid;
-    unsigned int                       count;
-    sbuf_t                            *bufs[kMaxCapturedBuffers];
+    wid_t        wid;
+    unsigned int          count;
+    sbuf_t               *bufs[kMaxCapturedBuffers];
+    size_t                charges[kMaxCapturedBuffers];
+    bool                  reserved;
+    DeviceReaderPrepareFn prepare;
 } captured_post_t;
 
 static captured_post_t captured_posts[kMaxCapturedPosts];
 static unsigned int    captured_post_count;
 static int             refused_post_index = -1;
 static unsigned int    post_attempt_count;
+static size_t          released_reserved_charge;
+static unsigned int    released_reserved_packets;
 
 #ifdef DEVICE_FLOW_AFFINITY_TEST_TRACKING
 typedef struct tracked_resource_s
@@ -158,6 +163,43 @@ bool deviceReaderSessionPost(device_reader_session_t *session, wid_t target_wid,
         return false;
     }
     return capturePost(target_wid, bufs, count);
+}
+
+void deviceReaderSessionReleaseOutput(device_reader_session_t *session, size_t exact_charge)
+{
+    discard session;
+    released_reserved_charge += exact_charge;
+    released_reserved_packets++;
+}
+
+bool deviceReaderSessionPostReserved(device_reader_session_t *session, wid_t target_wid, sbuf_t **bufs,
+                                     const size_t *charges, unsigned int count, DeviceReaderPrepareFn prepare)
+{
+    for (unsigned int i = 0; i < count; ++i)
+    {
+        require(charges[i] == sbufGetAllocationCharge(bufs[i]), "GSO dispatch changed a packet's reservation charge");
+    }
+    if (! deviceReaderSessionPost(session, target_wid, bufs, count))
+    {
+        for (unsigned int i = 0; i < count; ++i)
+        {
+            deviceReaderSessionReleaseOutput(session, charges[i]);
+        }
+        return false;
+    }
+    captured_post_t *post = &captured_posts[captured_post_count - 1];
+    post->reserved        = true;
+    post->prepare         = prepare;
+    for (unsigned int i = 0; i < count; ++i)
+    {
+        post->charges[i] = charges[i];
+    }
+    return true;
+}
+
+static void prepareGsoProbe(sbuf_t *buf)
+{
+    discard buf;
 }
 
 void deviceReaderSessionEnd(device_reader_session_t *session)
@@ -740,6 +782,131 @@ static void testBucketedDispatch(void)
     }
 }
 
+static void testGsoDispatchPreservesAffinityAndReservations(void)
+{
+    enum
+    {
+        kPacketCount = 513
+    };
+    sbuf_t *packets[kPacketCount];
+    size_t  charges[kPacketCount];
+    wid_t   expected[kPacketCount];
+    bool    seen[kPacketCount]    = {0};
+    int     last_source_by_wid[5] = {-1, -1, -1, -1, -1};
+    memoryZero(captured_posts, sizeof(captured_posts));
+    captured_post_count = 0;
+    refused_post_index  = -1;
+
+    for (unsigned int i = 0; i < kPacketCount; ++i)
+    {
+        packets[i]  = makeIpv4Packet(0x0A000001U + i, (uint16_t) (2000U + i), 0xC0000201U, 443, 6, 0);
+        charges[i]  = sbufGetAllocationCharge(packets[i]);
+        expected[i] = affinityOf(packets[i]);
+    }
+
+    device_reader_session_t session;
+    memoryZero(&session, sizeof(session));
+    session.batch_capacity = kMaxCapturedBuffers;
+    deviceFlowAffinityPostGsoBatch(&session, packets, charges, kPacketCount, prepareGsoProbe);
+
+    unsigned int delivered = 0;
+    for (unsigned int pi = 0; pi < captured_post_count; ++pi)
+    {
+        captured_post_t *post = &captured_posts[pi];
+        require(post->reserved && post->prepare == prepareGsoProbe,
+                "GSO dispatch omitted reserved posting or worker preparation");
+        delivered += post->count;
+        for (unsigned int bi = 0; bi < post->count; ++bi)
+        {
+            bool found = false;
+            for (unsigned int source = 0; source < kPacketCount; ++source)
+            {
+                if (packets[source] != post->bufs[bi])
+                {
+                    continue;
+                }
+                require(! seen[source], "GSO dispatch posted a packet more than once");
+                require(post->wid == expected[source], "GSO dispatch changed the packet's worker");
+                require((int) source > last_source_by_wid[post->wid], "GSO dispatch reordered one worker's packets");
+                require(post->charges[bi] == charges[source], "GSO dispatch detached a reservation from its packet");
+                last_source_by_wid[post->wid] = (int) source;
+                seen[source]                  = true;
+                found                         = true;
+                break;
+            }
+            require(found, "GSO dispatch posted a packet outside the source batch");
+        }
+    }
+    require(delivered == kPacketCount, "GSO dispatch lost a packet across the 512 boundary");
+    for (unsigned int i = 0; i < kPacketCount; ++i)
+    {
+        require(seen[i], "GSO dispatch did not post every packet");
+        sbufDestroy(packets[i]);
+    }
+}
+
+static void testGsoRefusalSettlesEveryUnpostedReservation(void)
+{
+    enum
+    {
+        kPacketCount = 5
+    };
+    master_pool_t *large_master  = masterpoolCreateWithCapacity(8);
+    master_pool_t *small_master  = masterpoolCreateWithCapacity(8);
+    master_pool_t *medium_master = masterpoolCreateWithCapacity(8);
+    master_pool_t *splice_master = masterpoolCreateWithCapacity(8);
+    buffer_pool_t *pool          = bufferpoolCreate(
+        large_master, medium_master, small_master, splice_master, 8, 256, MEDIUM_BUFFER_SIZE_RAM_HIGH, 64, 256, 256);
+    require(pool != NULL, "failed to create GSO dispatch-refusal pool");
+
+    sbuf_t *template = makeIpv4Packet(0x0A000001U, 2000, 0xC0000201U, 443, 6, 0);
+    sbuf_t *packets[kPacketCount];
+    size_t  charges[kPacketCount];
+    for (unsigned int i = 0; i < kPacketCount; ++i)
+    {
+        packets[i] = bufferpoolGetSmallBuffer(pool);
+        sbufSetLength(packets[i], sbufGetLength(template));
+        memoryCopy(sbufGetMutablePtr(packets[i]), sbufGetRawPtr(template), sbufGetLength(template));
+        charges[i] = sbufGetAllocationCharge(packets[i]);
+    }
+    sbufDestroy(template);
+
+    device_reader_session_t session;
+    memoryZero(&session, sizeof(session));
+    session.batch_capacity     = 2;
+    session.reader_buffer_pool = pool;
+    memoryZero(captured_posts, sizeof(captured_posts));
+    captured_post_count       = 0;
+    post_attempt_count        = 0;
+    refused_post_index        = 1;
+    released_reserved_charge  = 0;
+    released_reserved_packets = 0;
+
+    deviceFlowAffinityPostGsoBatch(&session, packets, charges, kPacketCount, prepareGsoProbe);
+    require(captured_post_count == 1 && captured_posts[0].count == 2,
+            "GSO dispatch continued posting after a refused chunk");
+    require(released_reserved_packets == 3 && released_reserved_charge == 3 * charges[0],
+            "GSO refusal did not settle refused and later reservations exactly once");
+    for (unsigned int i = 0; i < captured_posts[0].count; ++i)
+    {
+        bufferpoolReuseBuffer(pool, captured_posts[0].bufs[i]);
+        deviceReaderSessionReleaseOutput(&session, captured_posts[0].charges[i]);
+    }
+    require(released_reserved_packets == kPacketCount && released_reserved_charge == 5 * charges[0],
+            "GSO accepted and refused outputs did not balance reservations");
+    refused_post_index = -1;
+
+    bufferpoolDestroy(pool);
+    masterpoolMakeEmpty(large_master);
+    masterpoolMakeEmpty(small_master);
+    masterpoolMakeEmpty(medium_master);
+    masterpoolMakeEmpty(splice_master);
+    masterpoolDestroy(large_master);
+    masterpoolDestroy(small_master);
+    masterpoolDestroy(medium_master);
+    masterpoolDestroy(splice_master);
+}
+
 static void testEmptyAndSingletonDispatch(void)
 {
     sbuf_t                 *no_buffers[1] = {NULL};
@@ -834,8 +1001,8 @@ static void testSameTargetRefusalCleansLaterChunks(void)
         kChunkSize   = 2,
     };
 
-    master_pool_t *large_master = masterpoolCreateWithCapacity(8);
-    master_pool_t *small_master = masterpoolCreateWithCapacity(8);
+    master_pool_t *large_master  = masterpoolCreateWithCapacity(8);
+    master_pool_t *small_master  = masterpoolCreateWithCapacity(8);
     master_pool_t *medium_master = masterpoolCreateWithCapacity(8);
     master_pool_t *splice_master = masterpoolCreateWithCapacity(8);
     buffer_pool_t *pool          = bufferpoolCreate(
@@ -918,8 +1085,8 @@ static void testMixedWorkerRefusalCleansTrackedPublications(void)
     static const wid_t source_bucket[kPacketCount] = {1, 0, 2, 1, 0, 2, 1};
     static const int   refused_attempts[]          = {0, 2};
 
-    master_pool_t *large_master = masterpoolCreateWithCapacity(16);
-    master_pool_t *small_master = masterpoolCreateWithCapacity(16);
+    master_pool_t *large_master  = masterpoolCreateWithCapacity(16);
+    master_pool_t *small_master  = masterpoolCreateWithCapacity(16);
     master_pool_t *medium_master = masterpoolCreateWithCapacity(16);
     master_pool_t *splice_master = masterpoolCreateWithCapacity(16);
     buffer_pool_t *pool          = bufferpoolCreate(
@@ -1018,6 +1185,8 @@ int main(void)
     testBalancedDistribution();
     testEmptyAndSingletonDispatch();
     testBucketedDispatch();
+    testGsoDispatchPreservesAffinityAndReservations();
+    testGsoRefusalSettlesEveryUnpostedReservation();
     testDispatchBucketsAreSplitAtSessionCapacity();
     testLargeDispatchBoundaries();
     testSameTargetRefusalCleansLaterChunks();

@@ -9,7 +9,8 @@
 
 enum
 {
-    kTunDeviceMaxDnsServers = 2
+    kTunDeviceMaxDnsServers = 2,
+    kTunVirtioHeaderSize    = 10
 };
 
 typedef struct sbuf_s       sbuf_t;
@@ -26,6 +27,7 @@ typedef struct tun_default_route_s
     char     ifname[64];
 } tun_default_route_t;
 
+/* offload requests Linux TCPv4 GSO; unsupported setup uses ordinary TUN framing. */
 tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void *userdata, TunReadEventHandle cb,
                               device_fragment_policy_t fragment_policy);
 void          tundeviceDestroy(tun_device_t *tdev);

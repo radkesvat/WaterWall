@@ -272,6 +272,10 @@ static inline void sbufReset(sbuf_t *b)
  */
 sbuf_t *sbufCreateWithPadding(uint32_t minimum_capacity, uint16_t pad_left);
 
+/* Same buffer layout as sbufCreateWithPadding, but returns NULL when geometry
+ * or allocation is unavailable. Use for optional facilities with a fallback. */
+sbuf_t *sbufTryCreateWithPadding(uint32_t minimum_capacity, uint16_t pad_left);
+
 /**
  * @brief Create a new buffer with zero left padding.
  *

@@ -16,6 +16,12 @@
  */
 typedef void (*DeviceReaderDeliverFn)(void *device, sbuf_t *buf, wid_t wid);
 
+/* Finishes a privately prepared packet on the admitted destination worker,
+ * immediately before delivery. It may modify bytes but must not transfer or
+ * retain the buffer, call the packet chain, or depend on reader-owned state.
+ * It is never invoked for refused, cancelled, or stale-generation messages. */
+typedef void (*DeviceReaderPrepareFn)(sbuf_t *buf);
+
 typedef struct device_reader_session_s
 {
     atomic_uint           refcount;
@@ -27,6 +33,15 @@ typedef struct device_reader_session_s
     void                 *device;
     DeviceReaderDeliverFn deliver;
     buffer_pool_t        *reader_buffer_pool;
+
+    /* Optional Linux TUN offload-output budget. The reader alone reserves;
+     * queued worker deliveries and cancellation may settle on any thread. */
+    atomic_size_t output_charge;
+    atomic_uint   output_packets;
+    atomic_bool   output_waiting;
+    size_t        output_charge_limit;
+    uint32_t      output_packet_limit;
+    int           output_wake_fd;
 
     /* Reader-owned assembly/raw staging. The mutex serializes generation
      * transitions; only the reader (or the joined-reader lifecycle owner) may
@@ -79,3 +94,28 @@ void deviceReaderSessionRetireProducerBuffers(device_reader_session_t *session);
  * cleanup.
  */
 bool deviceReaderSessionPost(device_reader_session_t *session, wid_t target_wid, sbuf_t **bufs, unsigned int count);
+
+/* Configure once before Begin. A failed configuration leaves the ordinary
+ * session usable so optional TUN offload can fall back. The charge limit must
+ * accommodate at least one largest possible output allocation. */
+bool deviceReaderSessionConfigureOutputBudget(device_reader_session_t *session, size_t max_charge,
+                                              uint32_t max_packets);
+
+/* Reserve exact allocation charge before creating each offload output packet.
+ * One successful reservation represents one packet. False means capacity is
+ * currently exhausted; the reader may poll OutputWakeFd and retry. */
+bool deviceReaderSessionTryReserveOutput(device_reader_session_t *session, size_t exact_charge);
+void deviceReaderSessionReleaseOutput(device_reader_session_t *session, size_t exact_charge);
+
+/* Takes both buffers and their previously acquired reservations on every
+ * result. Charges must equal the buffers' actual allocation charges. Optional
+ * prepare runs before delivery while the output reservation is still held;
+ * its function must remain valid until message delivery or cleanup. */
+bool deviceReaderSessionPostReserved(device_reader_session_t *session, wid_t target_wid, sbuf_t **bufs,
+                                     const size_t *charges, unsigned int count, DeviceReaderPrepareFn prepare);
+
+/* Linux-only notification for a reader blocked on output capacity. The fd
+ * remains owned by the refcounted session, including after the device joins
+ * its reader. Drain only from that reader thread. */
+int  deviceReaderSessionOutputWakeFd(const device_reader_session_t *session);
+void deviceReaderSessionDrainOutputWake(device_reader_session_t *session);

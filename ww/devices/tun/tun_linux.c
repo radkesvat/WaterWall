@@ -3,9 +3,14 @@
 #include "devices/device_writer_channel.h"
 #include "devices/tun/tun_io_error.h"
 #include "devices/tun/tun_lifecycle.h"
+#ifdef OS_LINUX
+#include "devices/tun/tun_linux_gso_limits.h"
+#include "devices/tun/tun_linux_offload.h"
+#endif
 #include "generic_pool.h"
 #include "global_state.h"
 #include "loggers/internal_logger.h"
+#include "loggers/log_rate_limiter.h"
 #include "tun.h"
 #include "tun_linux_internal.h"
 #include "watomic.h"
@@ -18,6 +23,7 @@
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <sys/socket.h>
+#include <sys/uio.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -39,14 +45,23 @@
 
 enum
 {
-    kTunWriteChannelQueueMax    = 128 * 1024,
-    kMaxReadDistributeQueueSize = 512,
-    kTunReaderStopPollMs        = 100,
-    kLinuxRouteFlagUp           = 0x1,
-    kLinuxRouteFlagGateway      = 0x2
+    kTunWriteChannelQueueMax       = 128 * 1024,
+    kMaxReadDistributeQueueSize    = 512,
+    kTunReaderStopPollMs           = 100,
+    kTunPacketFailureLogIntervalMs = 5000,
+#ifdef OS_LINUX
+    kTunGsoPacketStorageCapacity = 65536,
+    kTunGsoPendingPacketLimit    = 512,
+    kTunGsoPendingChargeLimit    = 8 * 1024 * 1024,
+    kTunGsoLogIntervalMs         = 5000,
+#endif
+    kLinuxRouteFlagUp      = 0x1,
+    kLinuxRouteFlagGateway = 0x2
 };
 
 static_assert(kMaxReadDistributeQueueSize <= UINT16_MAX, "TUN read batch count must fit in the reader session");
+
+static atomic_log_rate_limiter_t tun_write_packet_failure_log;
 
 struct tun_device_s
 {
@@ -69,6 +84,11 @@ struct tun_device_s
 
     device_writer_channel_t writer_channel;
     uint16_t                mtu;
+    bool                    gso_enabled;
+#ifdef OS_LINUX
+    /* Allocated before publication so unavailable GSO storage can fall back. */
+    sbuf_t *gso_scratch;
+#endif
 
     atomic_int lifecycle;
 
@@ -767,6 +787,298 @@ static void tunFlushReadBatch(tun_device_t *tdev, sbuf_t **bufs, uint16_t queued
     }
 }
 
+#ifdef OS_LINUX
+typedef struct tun_offload_reader_s
+{
+    sbuf_t                  *scratch;
+    tun_linux_offload_plan_t pending_plan;
+    uint32_t                 next_payload_offset;
+    bool                     pending;
+    bool                     waiting_for_capacity;
+    uint64_t                 ordinary_records;
+    uint64_t                 gso_aggregates;
+    uint64_t                 generated_segments;
+    uint64_t                 checksum_completions;
+    uint64_t                 malformed_records;
+    uint64_t                 unsupported_records;
+    uint64_t                 oversized_records;
+} tun_offload_reader_t;
+
+static atomic_log_rate_limiter_t tun_offload_reject_log;
+
+static const char *tunOffloadRejectName(tun_linux_offload_reject_t reject)
+{
+    switch (reject)
+    {
+    case kTunLinuxOffloadMalformed:
+        return "malformed";
+    case kTunLinuxOffloadUnsupported:
+        return "unsupported offload metadata";
+    case kTunLinuxOffloadOversized:
+        return "oversized";
+    case kTunLinuxOffloadAccept:
+        break;
+    }
+    return "unexpected";
+}
+
+static void tunOffloadCountReject(tun_device_t *tdev, tun_offload_reader_t *reader, tun_linux_offload_reject_t reject)
+{
+    switch (reject)
+    {
+    case kTunLinuxOffloadMalformed:
+        reader->malformed_records++;
+        break;
+    case kTunLinuxOffloadUnsupported:
+        reader->unsupported_records++;
+        break;
+    case kTunLinuxOffloadOversized:
+        reader->oversized_records++;
+        break;
+    case kTunLinuxOffloadAccept:
+        return;
+    }
+    if (atomicLogRateLimiterShouldLog(&tun_offload_reject_log, kTunGsoLogIntervalMs))
+    {
+        LOGW("TunDevice: dropping %s TUN offload record on %s", tunOffloadRejectName(reject), tdev->name);
+    }
+}
+
+static void tunOffloadReaderInit(tun_device_t *tdev, tun_offload_reader_t *reader)
+{
+    reader->scratch = tdev->gso_scratch;
+    if (UNLIKELY(reader->scratch == NULL))
+    {
+        LOGF("TunDevice: GSO reader started without its receive scratch");
+        abortProgramNow(1);
+    }
+    sbufReset(reader->scratch);
+    if (UNLIKELY(sbufGetLeftCapacity(reader->scratch) < kTunVirtioHeaderSize ||
+                 sbufGetMaximumWriteableSize(reader->scratch) < kTunGsoPacketStorageCapacity))
+    {
+        LOGF("TunDevice: published GSO scratch violates required geometry");
+        abortProgramNow(1);
+    }
+}
+
+static void tunOffloadReaderCleanup(tun_device_t *tdev, tun_offload_reader_t *reader)
+{
+    /* The device retains scratch through a later BringUp; the reader has
+     * exclusive access only while its thread is running. */
+    reader->scratch = NULL;
+    LOGI("TunDevice: %s GSO reader summary: ordinary=%llu aggregates=%llu generated=%llu deferred-checksum=%llu "
+         "malformed=%llu unsupported=%llu oversized=%llu",
+         tdev->name,
+         (unsigned long long) reader->ordinary_records,
+         (unsigned long long) reader->gso_aggregates,
+         (unsigned long long) reader->generated_segments,
+         (unsigned long long) reader->checksum_completions,
+         (unsigned long long) reader->malformed_records,
+         (unsigned long long) reader->unsupported_records,
+         (unsigned long long) reader->oversized_records);
+}
+
+static void tunCompletePreparedGsoSegment(sbuf_t *buf)
+{
+    tunLinuxOffloadCompleteSegment(sbufGetMutablePtr(buf), sbufGetLength(buf));
+}
+
+/* A pending aggregate keeps the scratch buffer until every segment has either
+ * been submitted or stop closes producer admission. Capacity is reserved before
+ * each allocation; an exhausted budget leaves the remainder in scratch. */
+static void tunOffloadEmitPending(tun_device_t *tdev, tun_offload_reader_t *reader)
+{
+    sbuf_t        *bufs[kMaxReadDistributeQueueSize];
+    size_t         charges[kMaxReadDistributeQueueSize];
+    uint16_t       queued_count  = 0;
+    const uint32_t output_budget = min((uint32_t) RAM_PROFILE, (uint32_t) kMaxReadDistributeQueueSize);
+    const uint8_t *aggregate     = sbufGetRawPtr(reader->scratch);
+
+    reader->waiting_for_capacity = false;
+    while (reader->pending && queued_count < output_budget && tunLifecycleIsActive(tunLifecycleLoad(&tdev->lifecycle)))
+    {
+        const uint32_t    remaining      = reader->pending_plan.payload_length - reader->next_payload_offset;
+        const uint32_t    payload_length = min(reader->pending_plan.gso_size, remaining);
+        const uint32_t    segment_length = reader->pending_plan.header_length + payload_length;
+        const uint16_t    padding        = bufferpoolGetSmallBufferPadding(tdev->reader_buffer_pool);
+        buffer_pool_fit_t fit;
+        if (UNLIKELY(! bufferpoolQueryBestFit(tdev->reader_buffer_pool, segment_length, padding, &fit)))
+        {
+            LOGF("TunDevice: preflighted GSO segment has unrepresentable buffer geometry");
+            abortProgramNow(1);
+        }
+        if (! deviceReaderSessionTryReserveOutput(tdev->reader_session, fit.allocation_charge))
+        {
+            reader->waiting_for_capacity = true;
+            break;
+        }
+
+        sbuf_t *output = bufferpoolGetBestFit(tdev->reader_buffer_pool, segment_length, padding);
+        if (UNLIKELY(output == NULL))
+        {
+            deviceReaderSessionReleaseOutput(tdev->reader_session, fit.allocation_charge);
+            LOGF("TunDevice: failed to allocate reserved GSO output storage");
+            abortProgramNow(1);
+        }
+        if (UNLIKELY(sbufGetAllocationCharge(output) != fit.allocation_charge))
+        {
+            LOGF("TunDevice: GSO output allocation differs from its budget reservation");
+            abortProgramNow(1);
+        }
+        uint32_t built_length = 0;
+        if (UNLIKELY(! tunLinuxOffloadPrepareSegment(aggregate,
+                                                     &reader->pending_plan,
+                                                     reader->next_payload_offset,
+                                                     sbufGetMutablePtr(output),
+                                                     sbufGetMaximumWriteableSize(output),
+                                                     &built_length) ||
+                     built_length != segment_length))
+        {
+            LOGF("TunDevice: GSO segment generation violated successful aggregate preflight");
+            abortProgramNow(1);
+        }
+        sbufSetLength(output, built_length);
+        bufs[queued_count]    = output;
+        charges[queued_count] = fit.allocation_charge;
+        queued_count++;
+        reader->generated_segments++;
+        reader->next_payload_offset += payload_length;
+        reader->pending = reader->next_payload_offset < reader->pending_plan.payload_length;
+    }
+
+    if (queued_count > 0)
+    {
+        if (tunLifecycleIsActive(tunLifecycleLoad(&tdev->lifecycle)))
+        {
+            deviceFlowAffinityPostGsoBatch(
+                tdev->reader_session, bufs, charges, queued_count, tunCompletePreparedGsoSegment);
+        }
+        else
+        {
+            for (uint16_t i = 0; i < queued_count; ++i)
+            {
+                bufferpoolReuseBuffer(tdev->reader_buffer_pool, bufs[i]);
+                deviceReaderSessionReleaseOutput(tdev->reader_session, charges[i]);
+            }
+        }
+    }
+}
+
+/* One bounded read drain. A GSO record stops further reads; the outer reader
+ * loop emits its pending segments before polling or reading another record. */
+static tun_drain_result_t tunDrainOffloadPackets(tun_device_t *tdev, tun_offload_reader_t *reader)
+{
+    sbuf_t            *bufs[kMaxReadDistributeQueueSize];
+    uint16_t           queued_count  = 0;
+    const uint32_t     output_budget = min((uint32_t) RAM_PROFILE, (uint32_t) kMaxReadDistributeQueueSize);
+    tun_drain_result_t result        = kTunDrainAgain;
+
+    for (uint32_t attempt = 0; attempt < RAM_PROFILE && queued_count < output_budget; ++attempt)
+    {
+        if (! tunLifecycleIsActive(tunLifecycleLoad(&tdev->lifecycle)))
+        {
+            break;
+        }
+
+        sbufReset(reader->scratch);
+        sbufShiftLeft(reader->scratch, kTunVirtioHeaderSize);
+        uint8_t *record = sbufGetMutablePtr(reader->scratch);
+        assert(sbufGetMaximumWriteableSize(reader->scratch) >= kTunVirtioHeaderSize + kTunGsoPacketStorageCapacity);
+
+        ssize_t nread;
+        for (;;)
+        {
+            nread = read(tdev->handle, record, kTunVirtioHeaderSize + kTunGsoPacketStorageCapacity);
+            if (nread < 0 && errno == EINTR)
+            {
+                continue;
+            }
+            break;
+        }
+        if (nread == 0)
+        {
+            result = kTunDrainEndOfStream;
+            break;
+        }
+        if (nread < 0)
+        {
+            const int saved_errno = errno;
+            if (! tunIoErrnoIsTransient(saved_errno))
+            {
+                LOGE("TunDevice: unrecoverable GSO read error on %s, errno %d (%s)",
+                     tdev->name,
+                     saved_errno,
+                     strerror(saved_errno));
+                result = kTunDrainDeviceError;
+            }
+            break;
+        }
+        if (nread < kTunVirtioHeaderSize)
+        {
+            tunOffloadCountReject(tdev, reader, kTunLinuxOffloadMalformed);
+            continue;
+        }
+
+        uint8_t metadata[kTunVirtioHeaderSize];
+        memoryCopy(metadata, record, sizeof(metadata));
+        sbufSetLength(reader->scratch, (uint32_t) nread);
+        sbufShiftRight(reader->scratch, kTunVirtioHeaderSize);
+        uint8_t       *ip        = sbufGetMutablePtr(reader->scratch);
+        const uint32_t ip_length = sbufGetLength(reader->scratch);
+
+        tun_linux_offload_plan_t         plan   = {0};
+        const tun_linux_offload_reject_t reject = tunLinuxOffloadPreflight(metadata, ip, ip_length, tdev->mtu, &plan);
+        if (reject != kTunLinuxOffloadAccept)
+        {
+            tunOffloadCountReject(tdev, reader, reject);
+            continue;
+        }
+        if (plan.action == kTunLinuxOffloadSegment)
+        {
+            reader->pending_plan        = plan;
+            reader->next_payload_offset = 0;
+            reader->pending             = true;
+            reader->gso_aggregates++;
+            break;
+        }
+
+        if (plan.action == kTunLinuxOffloadChecksum)
+        {
+            tunLinuxOffloadCompleteChecksum(ip, &plan);
+            reader->checksum_completions++;
+        }
+        sbuf_t *output = bufferpoolGetBestFit(
+            tdev->reader_buffer_pool, ip_length, bufferpoolGetSmallBufferPadding(tdev->reader_buffer_pool));
+        if (UNLIKELY(output == NULL))
+        {
+            LOGE("TunDevice: failed to allocate ordinary offload-framed packet");
+            result = kTunDrainDeviceError;
+            break;
+        }
+        memoryCopy(sbufGetMutablePtr(output), ip, ip_length);
+        sbufSetLength(output, ip_length);
+        bufs[queued_count++] = output;
+        reader->ordinary_records++;
+    }
+
+    if (queued_count > 0)
+    {
+        if (tunLifecycleIsActive(tunLifecycleLoad(&tdev->lifecycle)))
+        {
+            tunFlushReadBatch(tdev, bufs, queued_count);
+        }
+        else
+        {
+            for (uint16_t i = 0; i < queued_count; ++i)
+            {
+                bufferpoolReuseBuffer(tdev->reader_buffer_pool, bufs[i]);
+            }
+        }
+    }
+    return result;
+}
+#endif
+
 // Drains packets from the TUN device after POLLIN. Every accumulated buffer is
 // handed to the reader session before returning, on every path.
 static tun_drain_result_t tunDrainPackets(tun_device_t *tdev)
@@ -879,15 +1191,41 @@ static WTHREAD_ROUTINE(routineReadFromTun)
 {
     tun_device_t *tdev = userdata;
 
-    struct pollfd fds[2];
-    fds[0].fd     = tdev->handle;
-    fds[1].fd     = tdev->linux_pipe_fds[0];
-    fds[0].events = POLLIN;
-    fds[1].events = POLLIN;
+    struct pollfd fds[3];
+    fds[0].fd         = tdev->handle;
+    fds[1].fd         = tdev->linux_pipe_fds[0];
+    fds[0].events     = POLLIN;
+    fds[1].events     = POLLIN;
+    nfds_t poll_count = 2;
+
+#ifdef OS_LINUX
+    tun_offload_reader_t offload_reader = {0};
+    if (tdev->gso_enabled)
+    {
+        tunOffloadReaderInit(tdev, &offload_reader);
+        fds[2].fd  = deviceReaderSessionOutputWakeFd(tdev->reader_session);
+        poll_count = 3;
+    }
+#endif
 
     while (tunLifecycleIsActive(tunLifecycleLoad(&tdev->lifecycle)))
     {
-        int ret = poll(fds, 2, kTunReaderStopPollMs);
+#ifdef OS_LINUX
+        if (tdev->gso_enabled && offload_reader.pending && ! offload_reader.waiting_for_capacity)
+        {
+            tunOffloadEmitPending(tdev, &offload_reader);
+            if (! offload_reader.pending || ! offload_reader.waiting_for_capacity)
+            {
+                continue;
+            }
+        }
+        fds[0].events = tdev->gso_enabled && offload_reader.waiting_for_capacity ? 0 : POLLIN;
+        if (tdev->gso_enabled)
+        {
+            fds[2].events = offload_reader.waiting_for_capacity ? POLLIN : 0;
+        }
+#endif
+        int ret = poll(fds, poll_count, kTunReaderStopPollMs);
 
         if (ret < 0)
         {
@@ -913,6 +1251,20 @@ static WTHREAD_ROUTINE(routineReadFromTun)
             break;
         }
 
+#ifdef OS_LINUX
+        if (tdev->gso_enabled && offload_reader.waiting_for_capacity && (fds[2].revents & POLLIN))
+        {
+            deviceReaderSessionDrainOutputWake(tdev->reader_session);
+            offload_reader.waiting_for_capacity = false;
+            continue;
+        }
+        if (tdev->gso_enabled && (fds[2].revents & (POLLERR | POLLHUP | POLLNVAL)))
+        {
+            LOGE("TunDevice: GSO output-capacity notification failed");
+            break;
+        }
+#endif
+
         // Check for socket errors
         if (fds[0].revents & (POLLERR | POLLHUP | POLLNVAL))
         {
@@ -922,25 +1274,43 @@ static WTHREAD_ROUTINE(routineReadFromTun)
 
         if (fds[0].revents & POLLIN)
         {
-            const tun_drain_result_t drain_res = tunDrainPackets(tdev);
+            tun_drain_result_t drain_res;
+#ifdef OS_LINUX
+            drain_res = tdev->gso_enabled ? tunDrainOffloadPackets(tdev, &offload_reader) : tunDrainPackets(tdev);
+#else
+            drain_res = tunDrainPackets(tdev);
+#endif
             if (drain_res != kTunDrainAgain)
             {
                 // The device is gone. Leaving the loop is what lets the thread
                 // wrapper publish FAILED and request the orderly shutdown.
                 LOGE("TunDevice: Exit read routine due to %s",
                      drain_res == kTunDrainEndOfStream ? "End Of File" : "an unrecoverable device read error");
-                return 0;
+                break;
             }
             continue;
         }
+
+#ifdef OS_LINUX
+        if (tdev->gso_enabled && offload_reader.waiting_for_capacity)
+        {
+            continue;
+        }
+#endif
 
         // If we get here, poll returned > 0 but none of our expected events occurred
         LOGE("TunDevice: Exit read routine due to unexpected poll events - fd[0].revents=0x%x, fd[1].revents=0x%x",
              fds[0].revents,
              fds[1].revents);
-        return 0;
+        break;
     }
 
+#ifdef OS_LINUX
+    if (tdev->gso_enabled)
+    {
+        tunOffloadReaderCleanup(tdev, &offload_reader);
+    }
+#endif
     return 0;
 }
 
@@ -962,19 +1332,48 @@ static WTHREAD_ROUTINE(routineWriteToTun)
 
         if (UNLIKELY(tunDeviceMtu(tdev) < sbufGetLength(buf)))
         {
-            LOGW("TunDevice: WriteThread: discarded a packet -> size %d exceeds device MTU %u",
-                 sbufGetLength(buf),
-                 tunDeviceMtu(tdev));
+            if (atomicLogRateLimiterShouldLog(&tun_write_packet_failure_log, kTunPacketFailureLogIntervalMs))
+            {
+                LOGW("TunDevice: WriteThread: discarded a packet -> size %d exceeds device MTU %u",
+                     sbufGetLength(buf), tunDeviceMtu(tdev));
+            }
 
             bufferpoolReuseBuffer(tdev->writer_buffer_pool, buf);
             continue;
         }
 
-        nwrite = write(tdev->handle, sbufGetRawPtr(buf), sbufGetLength(buf));
+        const size_t packet_length   = sbufGetLength(buf);
+        const size_t expected_length = packet_length + (tdev->gso_enabled ? kTunVirtioHeaderSize : 0U);
+        if (tdev->gso_enabled)
+        {
+            const uint8_t virtio_header[kTunVirtioHeaderSize] = {0};
+            struct iovec  iov[2]                              = {
+                {.iov_base = (void *) virtio_header, .iov_len = sizeof(virtio_header)},
+                {.iov_base = (void *) sbufGetRawPtr(buf), .iov_len = packet_length},
+            };
+            do
+            {
+                nwrite = writev(tdev->handle, iov, 2);
+            } while (nwrite < 0 && errno == EINTR);
+        }
+        else
+        {
+            nwrite = write(tdev->handle, sbufGetRawPtr(buf), packet_length);
+        }
         // errno is only meaningful right here. Recycling the buffer and every
         // logger below may overwrite it, so classification must read this copy.
         const int write_errno = (nwrite < 0) ? errno : 0;
         bufferpoolReuseBuffer(tdev->writer_buffer_pool, buf);
+
+        if (nwrite > 0 && (size_t) nwrite != expected_length)
+        {
+            if (atomicLogRateLimiterShouldLog(&tun_write_packet_failure_log, kTunPacketFailureLogIntervalMs))
+            {
+                LOGW("TunDevice: discarded a packet after a short device write (%zd of %zu bytes)", nwrite,
+                     expected_length);
+            }
+            continue;
+        }
 
         if (nwrite == 0)
         {
@@ -986,10 +1385,11 @@ static WTHREAD_ROUTINE(routineWriteToTun)
         {
             if (tunIoErrnoIsTransient(write_errno) || tunWriteErrnoIsPacketLocal(write_errno))
             {
-                LOGW("TunDevice: discarded a packet, writing to device %s failed with errno %d (%s)",
-                     tdev->name,
-                     write_errno,
-                     strerror(write_errno));
+                if (atomicLogRateLimiterShouldLog(&tun_write_packet_failure_log, kTunPacketFailureLogIntervalMs))
+                {
+                    LOGW("TunDevice: discarded a packet, writing to device %s failed with errno %d (%s)",
+                         tdev->name, write_errno, strerror(write_errno));
+                }
                 continue;
             }
 
@@ -1832,11 +2232,130 @@ bool tundeviceBringDown(tun_device_t *tdev)
     return bring_down_ok;
 }
 
+#ifdef OS_LINUX
+typedef enum tun_linux_open_result_e
+{
+    kTunLinuxOpenOk = 0,
+    kTunLinuxOpenOffloadUnavailable,
+    kTunLinuxOpenNameConflict,
+    kTunLinuxOpenFailure
+} tun_linux_open_result_t;
+
+static tun_linux_open_result_t tunLinuxOpenAttempt(const char *name, bool offload, bool exclusive, uint16_t mtu,
+                                                   int *out_fd, struct ifreq *out_ifr, const char **out_reason,
+                                                   int *out_errno)
+{
+    int fd = open("/dev/net/tun", O_RDWR);
+    if (fd < 0)
+    {
+        *out_reason = "opening /dev/net/tun";
+        *out_errno  = errno;
+        return kTunLinuxOpenFailure;
+    }
+
+    if (offload)
+    {
+        unsigned int features       = 0;
+        const int    feature_result = ioctl(fd, TUNGETFEATURES, &features);
+        if (feature_result < 0 || (features & IFF_VNET_HDR) == 0)
+        {
+            *out_reason = "IFF_VNET_HDR capability check";
+            *out_errno  = feature_result < 0 ? errno : EOPNOTSUPP;
+            close(fd);
+            return kTunLinuxOpenOffloadUnavailable;
+        }
+    }
+
+    struct ifreq ifr;
+    memoryZero(&ifr, sizeof(ifr));
+    ifr.ifr_flags = IFF_TUN | IFF_NO_PI | (offload ? IFF_VNET_HDR : 0) | (exclusive ? IFF_TUN_EXCL : 0);
+    if (*name)
+    {
+        stringCopyN(ifr.ifr_name, name, IFNAMSIZ);
+        ifr.ifr_name[IFNAMSIZ - 1] = '\0';
+    }
+
+    if (ioctl(fd, TUNSETIFF, (void *) &ifr) < 0)
+    {
+        const int saved_errno = errno;
+        *out_reason           = "TUNSETIFF";
+        *out_errno            = saved_errno;
+        close(fd);
+        if (saved_errno == EBUSY || saved_errno == EEXIST)
+        {
+            return kTunLinuxOpenNameConflict;
+        }
+        return offload ? kTunLinuxOpenOffloadUnavailable : kTunLinuxOpenFailure;
+    }
+
+    if (offload)
+    {
+        int header_size   = kTunVirtioHeaderSize;
+        int little_endian = 1;
+        if (ioctl(fd, TUNSETVNETHDRSZ, &header_size) < 0)
+        {
+            *out_reason = "TUNSETVNETHDRSZ";
+            *out_errno  = errno;
+            close(fd);
+            return kTunLinuxOpenOffloadUnavailable;
+        }
+        if (ioctl(fd, TUNSETVNETLE, &little_endian) < 0)
+        {
+            *out_reason = "TUNSETVNETLE";
+            *out_errno  = errno;
+            close(fd);
+            return kTunLinuxOpenOffloadUnavailable;
+        }
+        if (ioctl(fd, TUNSETOFFLOAD, (unsigned long) (TUN_F_CSUM | TUN_F_TSO4)) < 0)
+        {
+            *out_reason = "TUNSETOFFLOAD(CSUM|TSO4)";
+            *out_errno  = errno;
+            close(fd);
+            return kTunLinuxOpenOffloadUnavailable;
+        }
+
+        uint32_t active_max_segments = 0;
+        if (tunLinuxGsoMaxSegmentsConfigure(ifr.ifr_name, kTunLinuxRequestedGsoMaxSegments, &active_max_segments))
+        {
+            LOGI("TunDevice: %s kernel GSO max segments set to %u", ifr.ifr_name, active_max_segments);
+        }
+        else
+        {
+            const int limit_errno = errno;
+            LOGW("TunDevice: %s could not set/verify kernel GSO max segments %u (active %u; errno %d: %s); "
+                 "continuing with bounded reader output",
+                 ifr.ifr_name,
+                 kTunLinuxRequestedGsoMaxSegments,
+                 active_max_segments,
+                 limit_errno,
+                 strerror(limit_errno));
+        }
+    }
+
+    if (! tunSetMtuByName(ifr.ifr_name, mtu))
+    {
+        *out_reason = "setting MTU";
+        *out_errno  = errno;
+        close(fd);
+        return kTunLinuxOpenFailure;
+    }
+    if (! tunSetNonBlocking(fd))
+    {
+        *out_reason = "setting nonblocking I/O";
+        *out_errno  = errno;
+        close(fd);
+        return kTunLinuxOpenFailure;
+    }
+
+    *out_fd  = fd;
+    *out_ifr = ifr;
+    return kTunLinuxOpenOk;
+}
+#endif
+
 tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void *userdata, TunReadEventHandle cb,
                               device_fragment_policy_t fragment_policy)
 {
-    discard offload; // todo (send/receive offloading)
-
     if (mtu <= 16)
     {
         LOGE("TunDevice: Invalid MTU size: %u", mtu);
@@ -1845,7 +2364,8 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void
 
     struct ifreq ifr;
 #ifdef OS_BSD
-    int fd = -1;
+    discard offload;
+    int     fd = -1;
 
     // Open the TUN device
     char tun_path[64];
@@ -1887,42 +2407,44 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void
     }
 
 #else
-
-    int fd = open("/dev/net/tun", O_RDWR);
-    if (fd < 0)
+    int                     fd            = -1;
+    bool                    gso_enabled   = false;
+    const char             *reason        = NULL;
+    int                     failure_errno = 0;
+    tun_linux_open_result_t result        = kTunLinuxOpenFailure;
+    if (offload)
     {
-        LOGE("TunDevice: opening /dev/net/tun failed");
-        return NULL;
+        result = tunLinuxOpenAttempt(name, true, true, mtu, &fd, &ifr, &reason, &failure_errno);
+        if (result == kTunLinuxOpenOk)
+        {
+            gso_enabled = true;
+        }
+        else if (result == kTunLinuxOpenOffloadUnavailable)
+        {
+            LOGW("TunDevice: GSO setup unavailable for %s at %s (errno %d: %s); falling back to raw-IP TUN",
+                 name,
+                 reason,
+                 failure_errno,
+                 strerror(failure_errno));
+        }
     }
-
-    memoryZero(&ifr, sizeof(ifr));
-    ifr.ifr_flags = IFF_TUN | IFF_NO_PI; // TUN device, no packet information
-    if (*name)
+    if (! gso_enabled)
     {
-        stringCopyN(ifr.ifr_name, name, IFNAMSIZ);
-        ifr.ifr_name[IFNAMSIZ - 1] = '\0';
-    }
-
-    int err = ioctl(fd, TUNSETIFF, (void *) &ifr);
-    if (err < 0)
-    {
-        LOGE("TunDevice: ioctl(TUNSETIFF) failed");
-        close(fd);
-        return NULL;
-    }
-
-    if (! tunSetMtuByName(ifr.ifr_name, mtu))
-    {
-        close(fd);
-        return NULL;
-    }
-
-    // The reader drains until EAGAIN after every readiness notification, so a
-    // blocking descriptor cannot be published safely.
-    if (! tunSetNonBlocking(fd))
-    {
-        close(fd);
-        return NULL;
+        if (result == kTunLinuxOpenNameConflict || (offload && result == kTunLinuxOpenFailure))
+        {
+            LOGE("TunDevice: cannot open %s: %s (errno %d: %s)", name, reason, failure_errno, strerror(failure_errno));
+            return NULL;
+        }
+        result = tunLinuxOpenAttempt(name, false, offload, mtu, &fd, &ifr, &reason, &failure_errno);
+        if (result != kTunLinuxOpenOk)
+        {
+            LOGE("TunDevice: raw-IP TUN setup failed for %s at %s (errno %d: %s)",
+                 name,
+                 reason,
+                 failure_errno,
+                 strerror(failure_errno));
+            return NULL;
+        }
     }
 #endif
 
@@ -2001,7 +2523,14 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void
                             .reader_session      = NULL,
                             .reader_buffer_pool  = reader_bpool,
                             .writer_buffer_pool  = writer_bpool,
-                            .mtu                 = mtu};
+                            .mtu                 = mtu,
+#ifdef OS_LINUX
+                            .gso_enabled = gso_enabled,
+                            .gso_scratch = NULL
+#else
+                            .gso_enabled = false
+#endif
+    };
     atomic_init(&tdev->lifecycle, kTunLifecycleDown);
     deviceWriterChannelInit(&tdev->writer_channel);
     tdev->reader_session = deviceReaderSessionCreate(
@@ -2018,20 +2547,103 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void
         return NULL;
     }
 
+#ifdef OS_LINUX
+    bool gso_fallback = false;
+    if (tdev->gso_enabled)
+    {
+        const uint16_t    padding = bufferpoolGetLargeBufferPadding(tdev->reader_buffer_pool);
+        buffer_pool_fit_t scratch_fit;
+        if (! bufferpoolQueryBestFit(tdev->reader_buffer_pool,
+                                     kTunGsoPacketStorageCapacity,
+                                     max(padding, (uint16_t) kTunVirtioHeaderSize),
+                                     &scratch_fit))
+        {
+            LOGW("TunDevice: GSO receive scratch geometry unavailable for %s; falling back to raw-IP TUN", tdev->name);
+            gso_fallback = true;
+        }
+        else if ((tdev->gso_scratch =
+                      sbufTryCreateWithPadding(scratch_fit.payload_capacity, scratch_fit.left_padding)) == NULL)
+        {
+            LOGW("TunDevice: GSO receive scratch unavailable for %s; falling back to raw-IP TUN", tdev->name);
+            gso_fallback = true;
+        }
+        else if (UNLIKELY(sbufGetLeftCapacity(tdev->gso_scratch) < kTunVirtioHeaderSize ||
+                          sbufGetMaximumWriteableSize(tdev->gso_scratch) < kTunGsoPacketStorageCapacity))
+        {
+            LOGF("TunDevice: GSO scratch allocation violates required geometry");
+            abortProgramNow(1);
+        }
+        else if (! deviceReaderSessionConfigureOutputBudget(
+                     tdev->reader_session, kTunGsoPendingChargeLimit, kTunGsoPendingPacketLimit))
+        {
+            const int budget_errno = errno;
+            LOGW("TunDevice: GSO output-budget setup failed for %s (errno %d: %s); falling back to raw-IP TUN",
+                 tdev->name,
+                 budget_errno,
+                 strerror(budget_errno));
+            gso_fallback = true;
+        }
+    }
+    if (gso_fallback)
+    {
+        if (tdev->gso_scratch != NULL)
+        {
+            sbufDestroy(tdev->gso_scratch);
+            tdev->gso_scratch = NULL;
+        }
+        close(tdev->handle);
+        tdev->handle        = -1;
+        int          raw_fd = -1;
+        struct ifreq raw_ifr;
+        result = tunLinuxOpenAttempt(name, false, true, mtu, &raw_fd, &raw_ifr, &reason, &failure_errno);
+        if (result != kTunLinuxOpenOk)
+        {
+            LOGE("TunDevice: raw-IP fallback failed for %s at %s (errno %d: %s)",
+                 name,
+                 reason,
+                 failure_errno,
+                 strerror(failure_errno));
+            goto fail_after_session;
+        }
+        tdev->handle      = raw_fd;
+        tdev->gso_enabled = false;
+        LOGI("TunDevice: %s opened with raw IP after GSO setup fallback", tdev->name);
+    }
+#endif
+
     if (! tunCreateStopPipe(tdev->linux_pipe_fds))
     {
         LOGE("TunDevice: failed to create pipe for linux_pipe_fds");
-        memoryFree(tdev->name);
-        deviceReaderSessionRetireProducerBuffers(tdev->reader_session);
-        bufferpoolDestroy(tdev->reader_buffer_pool);
-        bufferpoolDestroy(tdev->writer_buffer_pool);
-        deviceReaderSessionUnref(tdev->reader_session);
-        close(tdev->handle);
-        memoryFree(tdev);
-        return NULL;
+        goto fail_after_session;
     }
 
+#ifdef OS_LINUX
+    LOGI("TunDevice: %s configured framing: %s (GSO requested: %s)",
+         tdev->name,
+         tdev->gso_enabled ? "TCPv4 GSO" : "raw IP",
+         offload ? "yes" : "no");
+#endif
+
     return tdev;
+
+fail_after_session:
+    memoryFree(tdev->name);
+#ifdef OS_LINUX
+    if (tdev->gso_scratch != NULL)
+    {
+        sbufDestroy(tdev->gso_scratch);
+    }
+#endif
+    deviceReaderSessionRetireProducerBuffers(tdev->reader_session);
+    bufferpoolDestroy(tdev->reader_buffer_pool);
+    bufferpoolDestroy(tdev->writer_buffer_pool);
+    deviceReaderSessionUnref(tdev->reader_session);
+    if (tdev->handle >= 0)
+    {
+        close(tdev->handle);
+    }
+    memoryFree(tdev);
+    return NULL;
 }
 // Destroy TUN device
 void tundeviceDestroy(tun_device_t *tdev)
@@ -2059,6 +2671,12 @@ void tundeviceDestroy(tun_device_t *tdev)
         abortProgramNow(1);
     }
     memoryFree(tdev->name);
+#ifdef OS_LINUX
+    if (tdev->gso_scratch != NULL)
+    {
+        sbufDestroy(tdev->gso_scratch);
+    }
+#endif
     deviceReaderSessionRetireProducerBuffers(tdev->reader_session);
     bufferpoolDestroy(tdev->reader_buffer_pool);
     bufferpoolDestroy(tdev->writer_buffer_pool);

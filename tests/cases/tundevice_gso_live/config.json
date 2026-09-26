@@ -1,0 +1,26 @@
+{
+  "name": "tundevice-gso-live",
+  "nodes": [
+    {
+      "name": "tun",
+      "type": "TunDevice",
+      "next": "raw",
+      "settings": {
+        "fragment-policy": "preserve-fragments",
+        "device-name": "wwgsolive0",
+        "device-ip": "10.253.82.1/24",
+        "device-mtu": 1500,
+        "route-table": "off"
+      }
+    },
+    {
+      "name": "raw",
+      "type": "RawSocket",
+      "settings": {
+        "fragment-policy": "preserve-fragments",
+        "bypass-conntrack": false,
+        "mark": 99
+      }
+    }
+  ]
+}

@@ -187,6 +187,17 @@ static void testIndependentSizing(void)
                     bufferpoolGetWaitingBudgetBasis(pool) == (low ? 65536 : 1048576),
                 "ordinary tiers, uniform splice target or independent waiting basis differ from profile table");
         bufferpoolUpdateAllocationPaddings(pool, 64, 64, 64, 64);
+        /* The Linux TUN GSO reader keeps one 64 KiB record with header bytes
+         * in reserved padding: large on S1/S2, medium on higher profiles. */
+        checkBestFitQuery(pool, 65536, 64, 65536, 64, true);
+        buffer_pool_fit_t scratch_fit;
+        require(bufferpoolQueryBestFit(pool, 65536, 64, &scratch_fit), "GSO scratch fit query failed");
+        sbuf_t *scratch = sbufTryCreateWithPadding(scratch_fit.payload_capacity, scratch_fit.left_padding);
+        require(scratch != NULL && sbufGetTotalCapacityNoPadding(scratch) == scratch_fit.payload_capacity &&
+                    sbufGetLeftPadding(scratch) == scratch_fit.left_padding &&
+                    sbufGetAllocationCharge(scratch) == scratch_fit.allocation_charge,
+                "direct GSO scratch allocation disagreed with the six-profile best-fit geometry");
+        sbufDestroy(scratch);
         uint32_t before[4], after[4];
         bufferpoolCachedTierCountsForTest(pool, &before[0], &before[1], &before[2], &before[3]);
         checkBestFitQuery(pool, 600 * 1024, 64, 600 * 1024, 64, false);

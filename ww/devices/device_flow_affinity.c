@@ -275,12 +275,14 @@ static unsigned int deviceFlowAffinityAppend(device_reader_session_t *session, s
  * of one flow, and each worker's queue is touched once.
  */
 static bool deviceFlowAffinityPostSorted(device_reader_session_t *session, sbuf_t **dispatch, const uint8_t *wids,
-                                         unsigned int dispatch_count)
+                                         const size_t *charges, unsigned int dispatch_count,
+                                         DeviceReaderPrepareFn prepare)
 {
-    uint16_t                           counts[kDeviceFlowAffinityBuckets]  = {0};
-    uint16_t                           offsets[kDeviceFlowAffinityBuckets] = {0};
-    uint16_t                           positions[kDeviceFlowAffinityBuckets];
-    sbuf_t                            *sorted[kDeviceFlowAffinityMaxDispatch];
+    uint16_t counts[kDeviceFlowAffinityBuckets]  = {0};
+    uint16_t offsets[kDeviceFlowAffinityBuckets] = {0};
+    uint16_t positions[kDeviceFlowAffinityBuckets];
+    sbuf_t  *sorted[kDeviceFlowAffinityMaxDispatch];
+    size_t   sorted_charges[kDeviceFlowAffinityMaxDispatch];
 
     for (unsigned int i = 0; i < dispatch_count; ++i)
     {
@@ -298,8 +300,12 @@ static bool deviceFlowAffinityPostSorted(device_reader_session_t *session, sbuf_
 
     for (unsigned int i = 0; i < dispatch_count; ++i)
     {
-        const uint16_t position       = positions[wids[i]]++;
-        sorted[position]              = dispatch[i];
+        const uint16_t position = positions[wids[i]]++;
+        sorted[position]        = dispatch[i];
+        if (charges != NULL)
+        {
+            sorted_charges[position] = charges[i];
+        }
     }
 
     for (unsigned int wid = 0; wid < kDeviceFlowAffinityBuckets; ++wid)
@@ -308,14 +314,29 @@ static bool deviceFlowAffinityPostSorted(device_reader_session_t *session, sbuf_
         uint16_t posted    = 0;
         while (remaining > 0)
         {
-            const uint16_t chunk = min(remaining, session->batch_capacity);
-            if (! deviceReaderSessionPost(session, (wid_t) wid, &sorted[offsets[wid] + posted], chunk))
+            const uint16_t     chunk = min(remaining, session->batch_capacity);
+            const unsigned int first = (unsigned int) offsets[wid] + posted;
+            bool               accepted;
+            if (charges == NULL)
+            {
+                accepted = deviceReaderSessionPost(session, (wid_t) wid, &sorted[first], chunk);
+            }
+            else
+            {
+                accepted = deviceReaderSessionPostReserved(
+                    session, (wid_t) wid, &sorted[first], &sorted_charges[first], chunk, prepare);
+            }
+            if (! accepted)
             {
                 /* The refused chunk was consumed by message cleanup; these were never posted. */
                 const unsigned int first_unposted = (unsigned int) offsets[wid] + posted + chunk;
                 for (unsigned int i = first_unposted; i < dispatch_count; ++i)
                 {
                     bufferpoolReuseBuffer(session->reader_buffer_pool, sorted[i]);
+                    if (charges != NULL)
+                    {
+                        deviceReaderSessionReleaseOutput(session, sorted_charges[i]);
+                    }
                 }
                 return false;
             }
@@ -333,17 +354,17 @@ void deviceFlowAffinityPostBatch(device_reader_session_t *session, sbuf_t **bufs
 
     while (count > 0)
     {
-        const unsigned int                 chunk_count = min(count, (unsigned int) kDeviceFlowAffinityMaxBatch);
-        uint8_t                            wids[kDeviceFlowAffinityMaxDispatch];
-        sbuf_t                            *dispatch[kDeviceFlowAffinityMaxDispatch];
-        unsigned int                       dispatch_count = 0;
+        const unsigned int chunk_count = min(count, (unsigned int) kDeviceFlowAffinityMaxBatch);
+        uint8_t            wids[kDeviceFlowAffinityMaxDispatch];
+        sbuf_t            *dispatch[kDeviceFlowAffinityMaxDispatch];
+        unsigned int       dispatch_count = 0;
 
         for (unsigned int i = 0; i < chunk_count; ++i)
         {
             dispatch_count = deviceFlowAffinityAppend(session, bufs[i], dispatch, wids, dispatch_count);
         }
 
-        const bool admitted = deviceFlowAffinityPostSorted(session, dispatch, wids, dispatch_count);
+        const bool admitted = deviceFlowAffinityPostSorted(session, dispatch, wids, NULL, dispatch_count, NULL);
 
         if (! admitted)
         {
@@ -358,6 +379,38 @@ void deviceFlowAffinityPostBatch(device_reader_session_t *session, sbuf_t **bufs
         }
 
         bufs += chunk_count;
+        count -= chunk_count;
+    }
+}
+
+void deviceFlowAffinityPostGsoBatch(device_reader_session_t *session, sbuf_t **bufs, const size_t *charges,
+                                    unsigned int count, DeviceReaderPrepareFn prepare)
+{
+    assert(session != NULL);
+    assert(bufs != NULL);
+    assert(charges != NULL);
+
+    while (count > 0)
+    {
+        const unsigned int chunk_count = min(count, (unsigned int) kDeviceFlowAffinityMaxBatch);
+        uint8_t            wids[kDeviceFlowAffinityMaxBatch];
+        for (unsigned int i = 0; i < chunk_count; ++i)
+        {
+            wids[i] = (uint8_t) deviceFlowAffinitySelectWID(bufs[i]);
+        }
+
+        if (! deviceFlowAffinityPostSorted(session, bufs, wids, charges, chunk_count, prepare))
+        {
+            for (unsigned int i = chunk_count; i < count; ++i)
+            {
+                bufferpoolReuseBuffer(session->reader_buffer_pool, bufs[i]);
+                deviceReaderSessionReleaseOutput(session, charges[i]);
+            }
+            return;
+        }
+
+        bufs += chunk_count;
+        charges += chunk_count;
         count -= chunk_count;
     }
 }

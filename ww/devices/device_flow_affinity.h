@@ -53,3 +53,11 @@ bool deviceFlowAffineWID(const uint8_t *packet, uint32_t length, wid_t *out_wid)
  * queue pressure is not a process-wide failure.
  */
 void deviceFlowAffinityPostBatch(device_reader_session_t *session, sbuf_t **bufs, unsigned int count);
+
+/* TUN GSO output is already segmented into unfragmented IP packets.
+ * Post it with the ordinary flow hash and stable per-worker bucket ordering,
+ * transferring each buffer's pre-allocation budget reservation as well.
+ * Optional prepare completes private packet work on the destination worker
+ * before delivery; see DeviceReaderPrepareFn. */
+void deviceFlowAffinityPostGsoBatch(device_reader_session_t *session, sbuf_t **bufs, const size_t *charges,
+                                    unsigned int count, DeviceReaderPrepareFn prepare);

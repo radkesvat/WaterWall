@@ -6,18 +6,22 @@
 
 #include "wwapi.h"
 
+#include "devices/tun/tun_linux_gso_limits.h"
 #include "devices/tun/tun_linux_internal.h"
 #include "loggers/internal_logger.h"
+#include "wchecksum.h"
 #include "worker_messages.h"
 
 #include "worker_registry_fixture.h"
 #include <fcntl.h>
 #include <linux/if.h>
 #include <linux/if_tun.h>
+#include <linux/virtio_net.h>
 #include <poll.h>
 #include <pthread.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
+#include <sys/uio.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -64,6 +68,21 @@ static unsigned int       fail_fake_thread_join_on_call;
 static unsigned int       run_fake_thread_on_create_call;
 static unsigned int       fail_interface_down_calls;
 static unsigned int       interface_down_attempts;
+static unsigned int       gso_feature_checks;
+static unsigned int       gso_setiff_calls;
+static unsigned int       raw_setiff_calls;
+static unsigned int       gso_header_size_calls;
+static unsigned int       gso_byte_order_calls;
+static unsigned int       gso_offload_calls;
+static unsigned int       gso_limit_calls;
+static unsigned long      fail_gso_ioctl_request;
+static int                fail_gso_ioctl_errno;
+static bool               gso_feature_available;
+static bool               fail_gso_scratch_once;
+static unsigned int       gso_scratch_failures;
+static char               gso_attach_name[IFNAMSIZ];
+static char               raw_attach_name[IFNAMSIZ];
+static bool               raw_attach_exclusive;
 // Reader is created first, writer second, so index 0 is the reader body and
 // index 1 the writer body. Capturing both lets a test invoke either wrapper
 // independently.
@@ -115,6 +134,8 @@ ssize_t __real_read(int fd, void *buf, size_t count);
 ssize_t __wrap_read(int fd, void *buf, size_t count);
 ssize_t __real_write(int fd, const void *buf, size_t count);
 ssize_t __wrap_write(int fd, const void *buf, size_t count);
+ssize_t __real_writev(int fd, const struct iovec *iov, int iovcnt);
+ssize_t __wrap_writev(int fd, const struct iovec *iov, int iovcnt);
 int     __real_poll(struct pollfd *fds, nfds_t nfds, int timeout);
 int     __wrap_poll(struct pollfd *fds, nfds_t nfds, int timeout);
 int     __real_pthread_create(pthread_t *thread, const pthread_attr_t *attr, void *(*routine)(void *), void *arg);
@@ -135,6 +156,11 @@ void                           __real_masterpoolDestroy(master_pool_t *pool);
 void                           __wrap_masterpoolDestroy(master_pool_t *pool);
 void                           __real_bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *buf);
 void                           __wrap_bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *buf);
+sbuf_t                        *__real_sbufTryCreateWithPadding(uint32_t minimum_capacity, uint16_t pad_left);
+sbuf_t                        *__wrap_sbufTryCreateWithPadding(uint32_t minimum_capacity, uint16_t pad_left);
+void                           __real_sbufDestroy(sbuf_t *buf);
+void                           __wrap_sbufDestroy(sbuf_t *buf);
+bool __wrap_tunLinuxGsoMaxSegmentsConfigure(const char *ifname, uint32_t requested, uint32_t *active);
 
 /*
  * tun_linux.c is compiled directly into this test, so its shutdown request is
@@ -174,20 +200,33 @@ enum
 
 typedef struct injected_io_result_s
 {
-    ssize_t result; // Bytes to report; 0 for end of stream, -1 for an error.
-    int     error;  // errno to publish when result is -1.
+    ssize_t        result; // Bytes to report; 0 for end of stream, -1 for an error.
+    int            error;  // errno to publish when result is -1.
     const uint8_t *bytes;
 } injected_io_result_t;
 
-static int                  tun_handle_fd = -1;
-static injected_io_result_t injected_reads[kMaxInjectedIoResults];
-static unsigned int         injected_read_count;
-static unsigned int         observed_read_calls;
-static injected_io_result_t injected_writes[kMaxInjectedIoResults];
-static unsigned int         injected_write_count;
-static unsigned int         observed_write_calls;
-static bool                 inject_reader_pollin;
-static bool                 deliver_fragment_batch;
+static int                      tun_handle_fd = -1;
+static injected_io_result_t     injected_reads[kMaxInjectedIoResults];
+static unsigned int             injected_read_count;
+static unsigned int             observed_read_calls;
+static injected_io_result_t     injected_writes[kMaxInjectedIoResults];
+static unsigned int             injected_write_count;
+static unsigned int             observed_write_calls;
+static unsigned int             observed_writev_calls;
+static size_t                   largest_writev_packet;
+static bool                     inject_reader_pollin;
+static bool                     inject_gso_reader_poll;
+static bool                     stop_gso_reader_on_budget_wait;
+static unsigned int             gso_budget_wake_polls;
+static unsigned int             gso_device_ready_polls;
+static unsigned int             gso_messages_delivered;
+static unsigned int             gso_deliver_after_read_calls;
+static bool                     verify_gso_scratch_overwrite;
+static unsigned int             ordinary_after_gso_deliveries;
+static device_reader_session_t *gso_probe_session;
+static sbuf_t                  *gso_scratch_buffer;
+static unsigned int             gso_scratch_destroy_count;
+static bool                     deliver_fragment_batch;
 // Observed from inside the I/O loop, before the routine has returned, so a
 // recoverable error can be checked while the device is still meant to be up.
 static tun_device_t *in_flight_device;
@@ -301,14 +340,59 @@ int __wrap_ioctl(int fd, unsigned long request, ...)
 
     va_list args;
     va_start(args, request);
+    if (request == TUNSETOFFLOAD)
+    {
+        const unsigned long flags = va_arg(args, unsigned long);
+        va_end(args);
+        gso_offload_calls++;
+        require(flags == (TUN_F_CSUM | TUN_F_TSO4), "GSO setup advertised unexpected offload flags");
+        if (fail_gso_ioctl_request == request)
+        {
+            errno = fail_gso_ioctl_errno;
+            return -1;
+        }
+        return 0;
+    }
     void *argument = va_arg(args, void *);
     va_end(args);
 
-    if (request == TUNSETIFF)
+    if (request == TUNGETFEATURES)
+    {
+        gso_feature_checks++;
+        *(unsigned int *) argument = gso_feature_available ? IFF_VNET_HDR : 0;
+    }
+    else if (request == TUNSETIFF)
     {
         struct ifreq *ifr = argument;
+        if ((ifr->ifr_flags & IFF_VNET_HDR) != 0)
+        {
+            gso_setiff_calls++;
+            memoryCopy(gso_attach_name, ifr->ifr_name, IFNAMSIZ);
+            require((ifr->ifr_flags & IFF_TUN_EXCL) != 0, "GSO setup omitted exclusive TUN attach");
+        }
+        else
+        {
+            raw_setiff_calls++;
+            memoryCopy(raw_attach_name, ifr->ifr_name, IFNAMSIZ);
+            raw_attach_exclusive = (ifr->ifr_flags & IFF_TUN_EXCL) != 0;
+        }
+        if (fail_gso_ioctl_request == request && (ifr->ifr_flags & IFF_VNET_HDR) != 0)
+        {
+            errno = fail_gso_ioctl_errno;
+            return -1;
+        }
         stringCopyN(ifr->ifr_name, "ww-lifetime-test", IFNAMSIZ);
         ifr->ifr_name[IFNAMSIZ - 1] = '\0';
+    }
+    else if (request == TUNSETVNETHDRSZ)
+    {
+        gso_header_size_calls++;
+        require(*(int *) argument == 10, "GSO setup selected an unexpected virtio header size");
+    }
+    else if (request == TUNSETVNETLE)
+    {
+        gso_byte_order_calls++;
+        require(*(int *) argument == 1, "GSO setup did not select little-endian metadata");
     }
     else if (request == SIOCGIFFLAGS)
     {
@@ -329,7 +413,21 @@ int __wrap_ioctl(int fd, unsigned long request, ...)
             }
         }
     }
+    if (fail_gso_ioctl_request == request && request != TUNSETIFF)
+    {
+        errno = fail_gso_ioctl_errno;
+        return -1;
+    }
     return 0;
+}
+
+bool __wrap_tunLinuxGsoMaxSegmentsConfigure(const char *ifname, uint32_t requested, uint32_t *active)
+{
+    require(strncmp(ifname, "ww-lifetime-test", IFNAMSIZ - 1) == 0, "GSO limit targeted the wrong interface");
+    require(requested == kTunLinuxRequestedGsoMaxSegments, "GSO limit request changed unexpectedly");
+    gso_limit_calls++;
+    *active = requested;
+    return true;
 }
 
 int __wrap_socket(int domain, int type, int protocol)
@@ -350,6 +448,11 @@ ssize_t __wrap_read(int fd, void *buf, size_t count)
             require(injected_reads[index].result > 0 && (size_t) injected_reads[index].result <= count,
                     "injected packet too large");
             memoryCopy(buf, injected_reads[index].bytes, (size_t) injected_reads[index].result);
+        }
+        if (verify_gso_scratch_overwrite && index == 1)
+        {
+            require(gso_messages_delivered == 0 && captured_message_count == 3,
+                    "GSO output reached a worker before the next TUN record overwrote scratch");
         }
         if (deliver_fragment_batch && index == 3)
         {
@@ -379,8 +482,77 @@ ssize_t __wrap_write(int fd, const void *buf, size_t count)
     return __real_write(fd, buf, count);
 }
 
+ssize_t __wrap_writev(int fd, const struct iovec *iov, int iovcnt)
+{
+    if (fd == tun_handle_fd)
+    {
+        require(iovcnt == 2 && iov[0].iov_len == 10, "GSO writer did not use one virtio-framed writev");
+        const uint8_t *header = iov[0].iov_base;
+        for (unsigned int i = 0; i < 10; ++i)
+        {
+            require(header[i] == 0, "GSO writer emitted nonzero metadata for an ordinary packet");
+        }
+        largest_writev_packet = max(largest_writev_packet, iov[1].iov_len);
+        if (injected_write_count > 0)
+        {
+            require(observed_writev_calls < injected_write_count,
+                    "the GSO writer continued after a permanent descriptor error");
+            const unsigned int index = observed_writev_calls++;
+            checkInFlightExpectations(index + 1);
+            return applyInjectedIoResult(&injected_writes[index]);
+        }
+    }
+    return __real_writev(fd, iov, iovcnt);
+}
+
+static void deliverNextGsoMessage(void)
+{
+    require(gso_messages_delivered < captured_message_count, "no queued GSO message to settle");
+    testWorkerBindWID(0);
+    worker_t            worker  = {.wid = 0};
+    captured_message_t *message = &captured_messages[gso_messages_delivered++];
+    message->callback(&worker, message->arg1, message->arg2, message->arg3);
+    testWorkerUnbindWID();
+}
+
 int __wrap_poll(struct pollfd *fds, nfds_t nfds, int timeout)
 {
+    if (inject_gso_reader_poll && nfds == 3)
+    {
+        if ((fds[2].events & POLLIN) != 0)
+        {
+            require(gso_probe_session != NULL &&
+                        atomic_load_explicit(&gso_probe_session->output_packets, memory_order_acquire) == 1 &&
+                        atomic_load_explicit(&gso_probe_session->output_charge, memory_order_acquire) <=
+                            gso_probe_session->output_charge_limit,
+                    "pending GSO output exceeded its packet or allocation budget");
+            if (stop_gso_reader_on_budget_wait)
+            {
+                fds[0].revents = 0;
+                fds[1].revents = POLLIN;
+                fds[2].revents = 0;
+                return 1;
+            }
+            deliverNextGsoMessage();
+            gso_budget_wake_polls++;
+            const int ready = __real_poll(fds, nfds, 0);
+            require(ready > 0 && (fds[2].revents & POLLIN), "budget release did not wake GSO reader via eventfd");
+            return ready;
+        }
+        require((fds[0].events & POLLIN) != 0, "GSO reader polled no descriptor while unblocked");
+        if (observed_read_calls >= gso_deliver_after_read_calls)
+        {
+            while (gso_messages_delivered < captured_message_count)
+            {
+                deliverNextGsoMessage();
+            }
+        }
+        fds[0].revents = POLLIN;
+        fds[1].revents = 0;
+        fds[2].revents = 0;
+        gso_device_ready_polls++;
+        return 1;
+    }
     if (inject_reader_pollin && nfds == 2)
     {
         // Report the device readable and the stop pipe idle, so the reader loop
@@ -473,6 +645,9 @@ void __wrap_memoryFree(void *ptr)
 {
     if (ptr == tracked_session)
     {
+        require(atomic_load_explicit(&tracked_session->output_packets, memory_order_acquire) == 0 &&
+                    atomic_load_explicit(&tracked_session->output_charge, memory_order_acquire) == 0,
+                "reader session was freed with outstanding GSO output reservations");
         tracked_session_free_count++;
     }
     __real_memoryFree(ptr);
@@ -509,6 +684,32 @@ void __wrap_bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *buf)
     }
 }
 
+sbuf_t *__wrap_sbufTryCreateWithPadding(uint32_t minimum_capacity, uint16_t pad_left)
+{
+    if (fail_gso_scratch_once && minimum_capacity == 65536 && pad_left >= 10)
+    {
+        fail_gso_scratch_once = false;
+        gso_scratch_failures++;
+        errno = ENOMEM;
+        return NULL;
+    }
+    sbuf_t *buf = __real_sbufTryCreateWithPadding(minimum_capacity, pad_left);
+    if (minimum_capacity == 65536 && pad_left >= 10)
+    {
+        gso_scratch_buffer = buf;
+    }
+    return buf;
+}
+
+void __wrap_sbufDestroy(sbuf_t *buf)
+{
+    if (buf == gso_scratch_buffer)
+    {
+        gso_scratch_destroy_count++;
+    }
+    __real_sbufDestroy(buf);
+}
+
 bool __wrap_requestProgramShutdown(int exit_code)
 {
     shutdown_request_calls++;
@@ -542,14 +743,48 @@ static void resetIoInjection(void)
 {
     memoryZero(injected_reads, sizeof(injected_reads));
     memoryZero(injected_writes, sizeof(injected_writes));
-    injected_read_count  = 0;
-    observed_read_calls  = 0;
-    injected_write_count = 0;
-    observed_write_calls = 0;
-    inject_reader_pollin = false;
-    in_flight_device     = NULL;
-    in_flight_check_call = 0;
-    in_flight_checks_run = 0;
+    injected_read_count            = 0;
+    observed_read_calls            = 0;
+    injected_write_count           = 0;
+    observed_write_calls           = 0;
+    observed_writev_calls          = 0;
+    largest_writev_packet          = 0;
+    inject_reader_pollin           = false;
+    inject_gso_reader_poll         = false;
+    stop_gso_reader_on_budget_wait = false;
+    gso_budget_wake_polls          = 0;
+    gso_device_ready_polls         = 0;
+    gso_messages_delivered         = 0;
+    gso_deliver_after_read_calls   = 1;
+    verify_gso_scratch_overwrite   = false;
+    ordinary_after_gso_deliveries  = 0;
+    gso_probe_session              = NULL;
+    gso_scratch_buffer             = NULL;
+    gso_scratch_destroy_count      = 0;
+    in_flight_device               = NULL;
+    in_flight_check_call           = 0;
+    in_flight_checks_run           = 0;
+}
+
+static void resetGsoSetup(void)
+{
+    gso_feature_checks     = 0;
+    gso_setiff_calls       = 0;
+    raw_setiff_calls       = 0;
+    gso_header_size_calls  = 0;
+    gso_byte_order_calls   = 0;
+    gso_offload_calls      = 0;
+    gso_limit_calls        = 0;
+    fail_gso_ioctl_request = 0;
+    fail_gso_ioctl_errno   = EOPNOTSUPP;
+    gso_feature_available  = true;
+    fail_gso_scratch_once  = false;
+    gso_scratch_failures   = 0;
+    memoryZero(gso_attach_name, sizeof(gso_attach_name));
+    memoryZero(raw_attach_name, sizeof(raw_attach_name));
+    raw_attach_exclusive      = false;
+    gso_scratch_buffer        = NULL;
+    gso_scratch_destroy_count = 0;
 }
 
 static void armDeviceReads(const injected_io_result_t *results, unsigned int count)
@@ -672,6 +907,84 @@ static tun_device_t *createRunningReaderDevice(void)
     require(tdev != NULL, "production reader-device create failed");
     require(tundeviceBringUp(tdev), "production reader-device bring-up failed");
     return tdev;
+}
+
+static tun_device_t *createRunningGsoReaderDevice(TunReadEventHandle callback)
+{
+    resetFakeThreads(0);
+    resetGsoSetup();
+    tun_device_t *tdev = tundeviceCreate("ww-lifetime-test", true, 1500, NULL, callback, kDeviceFragmentPreserve);
+    require(tdev != NULL, "GSO reader-device create failed");
+    require(deviceReaderSessionOutputWakeFd(tunLinuxReaderSession(tdev)) >= 0,
+            "GSO reader-device was not configured with output credits");
+    require(gso_feature_checks == 1 && gso_setiff_calls == 1 && raw_setiff_calls == 0 && gso_header_size_calls == 1 &&
+                gso_byte_order_calls == 1 && gso_offload_calls == 1 && gso_limit_calls == 1,
+            "GSO setup skipped or repeated one negotiated descriptor step");
+    require(tundeviceBringUp(tdev), "GSO reader-device bring-up failed");
+    return tdev;
+}
+
+static void testGsoNegotiationAndRawFallback(void)
+{
+    const unsigned long failing_requests[] = {TUNGETFEATURES, TUNSETIFF, TUNSETVNETHDRSZ, TUNSETVNETLE, TUNSETOFFLOAD};
+    for (unsigned int i = 0; i < ARRAY_SIZE(failing_requests); ++i)
+    {
+        resetFakeThreads(0);
+        resetGsoSetup();
+        resetTunLogCapture();
+        fail_gso_ioctl_request = failing_requests[i];
+        tun_device_t *tdev     = tundeviceCreate("ww-lifetime-test", true, 1500, NULL, NULL, kDeviceFragmentPreserve);
+        require(tdev != NULL, "GSO setup failure did not fall back to a raw-IP descriptor");
+        require(deviceReaderSessionOutputWakeFd(tunLinuxReaderSession(tdev)) < 0,
+                "raw-IP fallback incorrectly configured GSO output credits");
+        require(raw_setiff_calls == 1 && gso_feature_checks == 1,
+                "GSO fallback did not retry exactly one raw descriptor");
+        require(countTunLogSubstring("falling back to raw-IP TUN") == 1,
+                "GSO setup fallback did not emit one runtime diagnostic");
+        tundeviceDestroy(tdev);
+    }
+
+    resetFakeThreads(0);
+    resetGsoSetup();
+    fail_gso_ioctl_request = TUNSETIFF;
+    fail_gso_ioctl_errno   = EBUSY;
+    tun_device_t *conflict = tundeviceCreate("ww-lifetime-test", true, 1500, NULL, NULL, kDeviceFragmentPreserve);
+    require(conflict == NULL && raw_setiff_calls == 0,
+            "exclusive GSO name conflict unexpectedly fell back onto the same TUN name");
+
+    resetGsoSetup();
+    resetFakeThreads(0);
+    tun_device_t *active = tundeviceCreate("ww-lifetime-test", true, 1500, NULL, NULL, kDeviceFragmentPreserve);
+    require(active != NULL && deviceReaderSessionOutputWakeFd(tunLinuxReaderSession(active)) >= 0,
+            "supported GSO descriptor did not activate offload mode");
+    require(gso_feature_checks == 1 && gso_setiff_calls == 1 && raw_setiff_calls == 0 && gso_header_size_calls == 1 &&
+                gso_byte_order_calls == 1 && gso_offload_calls == 1 && gso_limit_calls == 1,
+            "supported GSO setup did not complete every descriptor step exactly once");
+    tundeviceDestroy(active);
+}
+
+static void testGsoScratchAllocationFallsBackToRaw(void)
+{
+    resetFakeThreads(0);
+    resetGsoSetup();
+    resetTunLogCapture();
+    fail_gso_scratch_once = true;
+
+    tun_device_t *tdev = tundeviceCreate("ww-lifetime-test", true, 1500, NULL, NULL, kDeviceFragmentPreserve);
+    require(tdev != NULL, "GSO scratch-allocation failure did not fall back to raw TUN");
+    require(gso_scratch_failures == 1 && ! fail_gso_scratch_once,
+            "GSO scratch-allocation injection did not hit exactly one scratch request");
+    require(gso_setiff_calls == 1 && raw_setiff_calls == 1 && raw_attach_exclusive &&
+                memoryEqual(gso_attach_name, raw_attach_name, IFNAMSIZ),
+            "scratch failure did not reopen the same exclusive TUN name in raw mode");
+    require(deviceReaderSessionOutputWakeFd(tunLinuxReaderSession(tdev)) < 0,
+            "scratch failure left offload output credits active on raw TUN");
+    require(countTunLogSubstring("GSO receive scratch unavailable") == 1 &&
+                countTunLogSubstring("falling back to raw-IP TUN") == 1,
+            "scratch failure did not explain the one-time raw fallback");
+    require(tundeviceBringUp(tdev), "raw TUN fallback after scratch failure did not start");
+    require(tundeviceBringDown(tdev), "raw TUN fallback after scratch failure did not stop");
+    tundeviceDestroy(tdev);
 }
 
 static void *tunRefusalWriterRoutine(void *userdata)
@@ -1553,6 +1866,263 @@ static void testReaderFragmentPolicy(bool normalized)
     tundeviceDestroy(tdev);
 }
 
+enum
+{
+    kGsoFixtureIpLength = 43,
+    kGsoFixtureRecordLength = 10 + kGsoFixtureIpLength
+};
+
+static void makeSmallGsoRecord(uint8_t record[kGsoFixtureRecordLength])
+{
+    memoryZero(record, kGsoFixtureRecordLength);
+    record[1]   = VIRTIO_NET_HDR_GSO_TCPV4;
+    record[2]   = 40; /* IPv4 and TCP header bytes, little endian. */
+    record[4]   = 1;  /* One data byte per segment. */
+    uint8_t *ip = record + 10;
+    ip[0]       = 0x45;
+    PUT_BE16(ip + 2, kGsoFixtureIpLength);
+    PUT_BE16(ip + 4, 0x1234);
+    ip[8] = 64;
+    ip[9] = 6;
+    PUT_BE32(ip + 12, 0x0a000001);
+    PUT_BE32(ip + 16, 0x0a000002);
+    PUT_BE16(ip + 20, 1234);
+    PUT_BE16(ip + 22, 443);
+    PUT_BE32(ip + 24, 1000);
+    ip[32] = 0x50;
+    ip[33] = 0x19; /* ACK, PSH, FIN. */
+    PUT_BE16(ip + 34, 4096);
+    ip[40]       = 'A';
+    ip[41]       = 'B';
+    ip[42]       = 'C';
+    uint32_t sum = 0;
+    for (unsigned int i = 0; i < 20; i += 2)
+    {
+        sum += GET_BE16(ip + i);
+    }
+    while (sum >> 16)
+    {
+        sum = (sum & 0xffffU) + (sum >> 16);
+    }
+    PUT_BE16(ip + 10, (uint16_t) ~sum);
+}
+
+static uint32_t gsoChecksumWords(const uint8_t *bytes, size_t length, uint32_t sum)
+{
+    for (size_t i = 0; i < length; i += 2)
+    {
+        sum += (uint32_t) bytes[i] << 8U;
+        if (i + 1 < length)
+        {
+            sum += bytes[i + 1];
+        }
+    }
+    while ((sum >> 16U) != 0)
+    {
+        sum = (sum & UINT32_C(0xFFFF)) + (sum >> 16U);
+    }
+    return sum;
+}
+
+static bool gsoSegmentChecksumsValid(const uint8_t *ip, size_t length)
+{
+    if (length < 40 || gsoChecksumWords(ip, 20, 0) != UINT16_MAX)
+    {
+        return false;
+    }
+    uint32_t sum = gsoChecksumWords(ip + 12, 8, 0);
+    sum += 6U + (uint32_t) (length - 20);
+    return gsoChecksumWords(ip + 20, length - 20, sum) == UINT16_MAX;
+}
+
+static void observeGsoSegment(tun_device_t *tdev, void *userdata, sbuf_t *buf, uint8_t wid)
+{
+    discard        tdev;
+    discard        userdata;
+    const uint8_t *ip = sbufGetRawPtr(buf);
+    require(currentThreadIsEventWorkerWID(wid), "GSO checksum completion was not published on the event worker");
+    require(gso_probe_session != NULL &&
+                atomic_load_explicit(&gso_probe_session->output_packets, memory_order_acquire) > 0,
+            "GSO output reservation was released before worker publication");
+    require(callback_count < 3 && sbufGetLength(buf) == 41, "GSO reader emitted a wrong-sized segment");
+    require(GET_BE16(ip + 2) == 41 && GET_BE16(ip + 4) == 0x1234U + callback_count &&
+                GET_BE32(ip + 24) == 1000U + callback_count && ip[40] == (uint8_t) ('A' + callback_count),
+            "GSO reader lost sequence, IP ID, or payload order");
+    require((ip[33] & 0x19) == (callback_count == 2 ? 0x19 : 0x10), "GSO reader placed FIN/PSH on a non-final segment");
+    require(gsoSegmentChecksumsValid(ip, sbufGetLength(buf)),
+            "GSO output reached the packet chain before worker-side checksum completion");
+    callback_count++;
+    bufferpoolReuseBuffer(getWorkerBufferPool(wid), buf);
+}
+
+static void observeGsoThenOrdinary(tun_device_t *tdev, void *userdata, sbuf_t *buf, uint8_t wid)
+{
+    if (callback_count < 3)
+    {
+        observeGsoSegment(tdev, userdata, buf, wid);
+        return;
+    }
+    discard        tdev;
+    discard        userdata;
+    const uint8_t *ip = sbufGetRawPtr(buf);
+    require(ordinary_after_gso_deliveries == 0 && sbufGetLength(buf) == kGsoFixtureIpLength && ip[40] == 'A' &&
+                ip[41] == 'B' && ip[42] == 'C',
+            "ordinary packet overtook or corrupted deferred GSO segments");
+    ordinary_after_gso_deliveries++;
+    bufferpoolReuseBuffer(getWorkerBufferPool(wid), buf);
+}
+
+static void testGsoWorkerCompletionSurvivesScratchOverwrite(void)
+{
+    resetShutdownRequests();
+    resetIoInjection();
+    resetCapturedMessages();
+    tun_device_t *tdev = createRunningGsoReaderDevice(observeGsoThenOrdinary);
+    uint8_t       aggregate[kGsoFixtureRecordLength];
+    uint8_t       ordinary[kGsoFixtureRecordLength];
+    makeSmallGsoRecord(aggregate);
+    memoryCopy(ordinary, aggregate, sizeof(ordinary));
+    memoryZero(ordinary, 10); /* GSO_NONE, no deferred checksum request. */
+    const injected_io_result_t reads[] = {{.result = kGsoFixtureRecordLength, .bytes = aggregate},
+                                          {.result = kGsoFixtureRecordLength, .bytes = ordinary},
+                                          {.result = -1, .error = EIO}};
+    armDeviceReads(reads, ARRAY_SIZE(reads));
+    inject_gso_reader_poll       = true;
+    verify_gso_scratch_overwrite = true;
+    gso_deliver_after_read_calls = 2;
+    gso_probe_session            = tunLinuxReaderSession(tdev);
+    callback_count               = 0;
+
+    runCapturedThreadBody(kCapturedReaderThread);
+
+    require(callback_count == 3 && ordinary_after_gso_deliveries == 1 && gso_messages_delivered == 4,
+            "deferred GSO output was not prepared and delivered after scratch reuse");
+    require(observed_read_calls == 3 && gso_device_ready_polls == 3 && gso_budget_wake_polls == 0,
+            "scratch-overwrite fixture did not defer worker delivery until after the second read");
+    require(atomic_load_explicit(&gso_probe_session->output_packets, memory_order_acquire) == 0 &&
+                atomic_load_explicit(&gso_probe_session->output_charge, memory_order_acquire) == 0,
+            "worker checksum completion leaked GSO output reservations");
+    resetIoInjection();
+    require(tundeviceBringDown(tdev), "GSO scratch-overwrite device did not stop");
+    tundeviceDestroy(tdev);
+    resetCapturedMessages();
+}
+
+static void testGsoReaderResumesPendingWithoutTunReadiness(void)
+{
+    resetShutdownRequests();
+    resetIoInjection();
+    resetCapturedMessages();
+    tun_device_t            *tdev    = createRunningGsoReaderDevice(observeGsoSegment);
+    device_reader_session_t *session = tunLinuxReaderSession(tdev);
+    session->output_packet_limit     = 1; /* Force a real pending-budget wait after each generated segment. */
+    uint8_t record[kGsoFixtureRecordLength];
+    makeSmallGsoRecord(record);
+    const injected_io_result_t reads[] = {{.result = -1, .error = EINTR},
+                                          {.result = kGsoFixtureRecordLength, .bytes = record},
+                                          {.result = -1, .error = EIO}};
+    armDeviceReads(reads, ARRAY_SIZE(reads));
+    inject_gso_reader_poll = true;
+    gso_probe_session      = session;
+    callback_count         = 0;
+
+    runCapturedThreadBody(kCapturedReaderThread);
+
+    require(callback_count == 3 && observed_read_calls == 3,
+            "GSO reader did not retry EINTR or complete its pending aggregate");
+    require(gso_budget_wake_polls == 2 && gso_device_ready_polls == 2,
+            "GSO pending output required a new TUN readability event to resume");
+    require(atomic_load_explicit(&session->output_packets, memory_order_acquire) == 0 &&
+                atomic_load_explicit(&session->output_charge, memory_order_acquire) == 0,
+            "GSO delivery did not return every output reservation");
+    require(shutdown_request_calls == 1, "terminal GSO reader error did not request orderly shutdown");
+    resetIoInjection();
+    require(tundeviceBringDown(tdev), "GSO reader did not bring down after terminal error");
+    tundeviceDestroy(tdev);
+    resetCapturedMessages();
+}
+
+static void testGsoWriterFramingAndPacketOutcomes(void)
+{
+    resetShutdownRequests();
+    resetIoInjection();
+    resetTunLogCapture();
+    tun_device_t  *tdev      = createRunningGsoReaderDevice(observeReadCallback);
+    const uint16_t lengths[] = {1500, 64, 64, 64};
+    for (unsigned int i = 0; i < ARRAY_SIZE(lengths); ++i)
+    {
+        sbuf_t *buf = bufferpoolGetSmallBuffer(getWorkerBufferPool(0));
+        sbufSetLength(buf, lengths[i]);
+        memorySet(sbufGetMutablePtr(buf), (int) ('a' + i), lengths[i]);
+        require(tundeviceWrite(tdev, buf), "failed to queue a GSO-writer packet");
+    }
+    const injected_io_result_t writes[] = {{.result = -1, .error = EINTR},
+                                           {.result = 1510},
+                                           {.result = 73},
+                                           {.result = -1, .error = EAGAIN},
+                                           {.result = -1, .error = EIO}};
+    armDeviceWrites(writes, ARRAY_SIZE(writes));
+
+    runCapturedThreadBody(kCapturedWriterThread);
+
+    require(observed_writev_calls == 5 && observed_write_calls == 0 && largest_writev_packet == 1500,
+            "GSO writer did not frame, retry, and bound writes as packet operations");
+    require(countTunLogSubstring("short device write") == 1,
+            "GSO writer did not diagnose its positive short packet write");
+    require(shutdown_request_calls == 1 && tunLinuxLifecycleState(tdev) == kTunLifecycleFailed,
+            "GSO writer did not end on a permanent descriptor error");
+    resetIoInjection();
+    require(tundeviceBringDown(tdev), "GSO writer did not bring down after terminal error");
+    tundeviceDestroy(tdev);
+}
+
+static void testGsoPendingAggregateSettlesOnReaderExit(void)
+{
+    resetShutdownRequests();
+    resetIoInjection();
+    resetCapturedMessages();
+    tun_device_t            *tdev    = createRunningGsoReaderDevice(observeGsoSegment);
+    device_reader_session_t *session = tunLinuxReaderSession(tdev);
+    session->output_packet_limit     = 1;
+    uint8_t record[kGsoFixtureRecordLength];
+    makeSmallGsoRecord(record);
+    const injected_io_result_t reads[] = {{.result = kGsoFixtureRecordLength, .bytes = record}};
+    armDeviceReads(reads, ARRAY_SIZE(reads));
+    inject_gso_reader_poll         = true;
+    stop_gso_reader_on_budget_wait = true;
+    gso_probe_session              = session;
+    require(gso_scratch_buffer != NULL, "GSO device did not preallocate direct scratch storage");
+    callback_count = 0;
+
+    runCapturedThreadBody(kCapturedReaderThread);
+
+    require(observed_read_calls == 1 && callback_count == 0 && captured_message_count == 1,
+            "reader stop did not retain exactly one queued GSO output");
+    require(gso_scratch_destroy_count == 0, "reader exit destroyed device-owned GSO scratch before restart");
+    require(atomic_load_explicit(&session->output_packets, memory_order_acquire) == 1 &&
+                atomic_load_explicit(&session->output_charge, memory_order_acquire) > 0,
+            "reader exit prematurely settled a worker-owned GSO output");
+
+    tracked_session            = session;
+    tracked_message_pool       = session->message_pool;
+    tracked_session_free_count = 0;
+    tracked_pool_destroy_count = 0;
+    require(tundeviceBringDown(tdev), "pending GSO reader did not bring down after exit");
+    require(tundeviceBringUp(tdev), "GSO device did not restart with its retained scratch allocation");
+    require(gso_scratch_destroy_count == 0, "GSO scratch was destroyed before the restarted device stopped");
+    require(tundeviceBringDown(tdev), "restarted GSO device did not stop");
+    tundeviceDestroy(tdev);
+    require(gso_scratch_destroy_count == 1, "device destroy did not release GSO scratch exactly once");
+    require(tracked_session_free_count == 0, "device destroyed a session with queued GSO output");
+    cleanupMessage(0);
+    require(tracked_session_free_count == 1 && tracked_pool_destroy_count == 1,
+            "queued GSO output cancellation did not settle its session exactly once");
+    tracked_session      = NULL;
+    tracked_message_pool = NULL;
+    resetIoInjection();
+    resetCapturedMessages();
+}
+
 int main(void)
 {
     test_env_t env;
@@ -1561,6 +2131,13 @@ int main(void)
     require(logger != NULL, "failed to create TUN writer log-capture logger");
     loggerSetHandler(logger, captureTunLog);
     setInternalLogger(logger);
+    checkSumInit();
+    testGsoNegotiationAndRawFallback();
+    testGsoScratchAllocationFallsBackToRaw();
+    testGsoReaderResumesPendingWithoutTunReadiness();
+    testGsoWorkerCompletionSurvivesScratchOverwrite();
+    testGsoWriterFramingAndPacketOutcomes();
+    testGsoPendingAggregateSettlesOnReaderExit();
     testReaderFragmentPolicy(true);
     testReaderFragmentPolicy(false);
     testQueuedCleanupOutlivesDevice();

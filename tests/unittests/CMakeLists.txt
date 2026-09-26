@@ -360,6 +360,7 @@ if(TARGET ww)
   )
 
   add_executable(sbuf_capacity_test sbuf_capacity_test.c)
+  target_link_options(sbuf_capacity_test PRIVATE "-Wl,--wrap=memoryAllocateAligned")
   target_link_libraries(sbuf_capacity_test PRIVATE ww)
   add_dependencies(waterwall_unit_tests sbuf_capacity_test)
 
@@ -909,7 +910,11 @@ if(TARGET ww)
       "-Wl,--wrap=socket"
       "-Wl,--wrap=read"
       "-Wl,--wrap=write"
+      "-Wl,--wrap=writev"
       "-Wl,--wrap=poll"
+      "-Wl,--wrap=tunLinuxGsoMaxSegmentsConfigure"
+      "-Wl,--wrap=sbufTryCreateWithPadding"
+      "-Wl,--wrap=sbufDestroy"
       "-Wl,--wrap=pthread_create"
       "-Wl,--wrap=pthread_join"
       "-Wl,--wrap=fork"
@@ -933,7 +938,25 @@ if(TARGET ww)
       "unit;net;tun;linux;lifetime"
     )
 
+    add_executable(tun_linux_offload_test tun_linux_offload_test.c)
+    target_link_libraries(tun_linux_offload_test PRIVATE ww)
+    add_dependencies(waterwall_unit_tests tun_linux_offload_test)
+    add_waterwall_unit_test(
+      waterwall.tun_linux_offload_unit
+      tun_linux_offload_test
+      "unit;net;tun;linux;offload"
+    )
+
     if(TARGET TunDevice)
+      add_executable(tundevice_gso_configuration_test tundevice_gso_configuration_test.c)
+      target_link_libraries(tundevice_gso_configuration_test PRIVATE TunDevice)
+      add_dependencies(waterwall_unit_tests tundevice_gso_configuration_test)
+      add_waterwall_unit_test(
+        waterwall.tundevice_gso_configuration_unit
+        tundevice_gso_configuration_test
+        "unit;net;tun;linux;configuration"
+      )
+
       # Compile the small tunnel wrapper directly so the test can inject one
       # lower-layer refusal and verify it does not add a duplicate diagnostic.
       add_executable(tundevice_writer_refusal_log_test

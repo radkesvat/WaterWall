@@ -3,6 +3,18 @@
 
 #include "loggers/network_logger.h"
 
+#ifdef OS_LINUX
+enum
+{
+    kTunDeviceRequiredLeftPadding = kTunVirtioHeaderSize
+};
+#else
+enum
+{
+    kTunDeviceRequiredLeftPadding = 0
+};
+#endif
+
 node_t nodeTunDeviceGet(void)
 {
     const char *type_name      = "TunDevice";
@@ -20,7 +32,7 @@ node_t nodeTunDeviceGet(void)
              .node_manager_config   = NULL,
              .instance              = NULL,
              .flags                 = kNodeFlagChainHead | kNodeFlagChainEnd,
-             .required_padding_left = 0,
+             .required_padding_left = kTunDeviceRequiredLeftPadding,
              .layer_group           = kNodeLayer3,
              .layer_group_next_node = kNodeLayer3,
              .layer_group_prev_node = kNodeLayer3,

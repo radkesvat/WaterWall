@@ -5,16 +5,181 @@
 #include "loggers/internal_logger.h"
 #include "worker_messages.h"
 
+#ifdef OS_LINUX
+#include <sys/eventfd.h>
+#include <unistd.h>
+#endif
+
 typedef struct device_reader_message_s
 {
     device_reader_session_t *session;
+    DeviceReaderPrepareFn    prepare;
     uint32_t                 generation;
     uint16_t                 count;
-    struct
-    {
-        sbuf_t *buf;
-    } items[];
+    sbuf_t                  *bufs[];
 } device_reader_message_t;
+
+/* Raw readers need only pointers. A budgeted session allocates a parallel
+ * charge array after those pointers; configuration is fixed before first Post. */
+static size_t *deviceReaderMessageCharges(device_reader_message_t *message)
+{
+    assert(message->session->output_wake_fd >= 0);
+    return (size_t *) (message->bufs + message->session->batch_capacity);
+}
+
+static void deviceReaderSessionSignalOutputCapacity(device_reader_session_t *session)
+{
+#ifdef OS_LINUX
+    if (session->output_wake_fd >= 0 && atomic_exchange_explicit(&session->output_waiting, false, memory_order_acq_rel))
+    {
+        const uint64_t one = 1;
+        for (;;)
+        {
+            const ssize_t written = write(session->output_wake_fd, &one, sizeof(one));
+            if (written == (ssize_t) sizeof(one) || (written < 0 && errno == EAGAIN))
+            {
+                return;
+            }
+            if (written < 0 && errno == EINTR)
+            {
+                continue;
+            }
+            LOGF("DeviceReaderSession: failed to signal output capacity: %s", strerror(errno));
+            abortProgramNow(1);
+        }
+    }
+#else
+    discard session;
+#endif
+}
+
+void deviceReaderSessionReleaseOutput(device_reader_session_t *session, size_t exact_charge)
+{
+    assert(session != NULL);
+    assert(exact_charge > 0);
+    const size_t previous_charge =
+        atomic_fetch_sub_explicit(&session->output_charge, exact_charge, memory_order_acq_rel);
+    const unsigned int previous_count = atomic_fetch_sub_explicit(&session->output_packets, 1, memory_order_acq_rel);
+    if (UNLIKELY(previous_charge < exact_charge || previous_count == 0))
+    {
+        LOGF("DeviceReaderSession: output-budget reservation underflow");
+        abortProgramNow(1);
+    }
+    deviceReaderSessionSignalOutputCapacity(session);
+}
+
+bool deviceReaderSessionConfigureOutputBudget(device_reader_session_t *session, size_t max_charge, uint32_t max_packets)
+{
+    assert(session != NULL);
+    assert(max_charge > 0 && max_packets > 0);
+    assert(session->output_wake_fd < 0);
+    assert(atomic_load_explicit(&session->generation, memory_order_relaxed) == 0);
+#ifdef OS_LINUX
+    const int fd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
+    if (fd < 0)
+    {
+        return false;
+    }
+    session->output_charge_limit = max_charge;
+    session->output_packet_limit = max_packets;
+    session->output_wake_fd      = fd;
+    return true;
+#else
+    discard max_charge;
+    discard max_packets;
+    return false;
+#endif
+}
+
+bool deviceReaderSessionTryReserveOutput(device_reader_session_t *session, size_t exact_charge)
+{
+    assert(session != NULL);
+    assert(session->output_wake_fd >= 0);
+    assert(exact_charge > 0 && exact_charge <= session->output_charge_limit);
+    if (UNLIKELY(! atomic_load_explicit(&session->producer_admission, memory_order_acquire)))
+    {
+        return false;
+    }
+
+    /* Publish the waiter before observing credits; a foreign-thread release
+     * between this point and a failed reservation must leave a wake event.
+     * The exchange's acquire half observes a release that completed just
+     * before it, so stale credit loads cannot strand an unnotified waiter. */
+    discard atomic_exchange_explicit(&session->output_waiting, true, memory_order_acq_rel);
+
+    unsigned int count = atomic_load_explicit(&session->output_packets, memory_order_relaxed);
+    for (;;)
+    {
+        if (count >= session->output_packet_limit)
+        {
+            return false;
+        }
+        if (atomic_compare_exchange_weak_explicit(
+                &session->output_packets, &count, count + 1, memory_order_acq_rel, memory_order_relaxed))
+        {
+            break;
+        }
+    }
+
+    size_t charge = atomic_load_explicit(&session->output_charge, memory_order_relaxed);
+    for (;;)
+    {
+        if (exact_charge > session->output_charge_limit - charge)
+        {
+            const unsigned int previous = atomic_fetch_sub_explicit(&session->output_packets, 1, memory_order_acq_rel);
+            if (UNLIKELY(previous == 0))
+            {
+                LOGF("DeviceReaderSession: output-budget packet reservation underflow");
+                abortProgramNow(1);
+            }
+            return false;
+        }
+        if (atomic_compare_exchange_weak_explicit(
+                &session->output_charge, &charge, charge + exact_charge, memory_order_acq_rel, memory_order_relaxed))
+        {
+            atomic_store_explicit(&session->output_waiting, false, memory_order_release);
+            return true;
+        }
+    }
+}
+
+int deviceReaderSessionOutputWakeFd(const device_reader_session_t *session)
+{
+    assert(session != NULL);
+    return session->output_wake_fd;
+}
+
+void deviceReaderSessionDrainOutputWake(device_reader_session_t *session)
+{
+    assert(session != NULL);
+#ifdef OS_LINUX
+    if (session->output_wake_fd < 0)
+    {
+        return;
+    }
+    uint64_t count;
+    for (;;)
+    {
+        const ssize_t nread = read(session->output_wake_fd, &count, sizeof(count));
+        if (nread == (ssize_t) sizeof(count))
+        {
+            continue;
+        }
+        if (nread < 0 && errno == EINTR)
+        {
+            continue;
+        }
+        if (nread < 0 && errno == EAGAIN)
+        {
+            return;
+        }
+        LOGF("DeviceReaderSession: failed to drain output-capacity notification: %s", strerror(errno));
+        abortProgramNow(1);
+    }
+#else
+    discard session;
+#endif
+}
 
 #ifdef DEVICE_READER_SESSION_TEST_HOOKS
 static DeviceReaderSessionEndWaitYieldHook device_reader_session_end_wait_yield_hook;
@@ -40,8 +205,8 @@ static void deviceReaderSessionEndWaitYield(void *context)
 static master_pool_item_t *deviceReaderMessageCreate(void *userdata)
 {
     const device_reader_session_t *session = userdata;
-    const size_t                   size    = sizeof(device_reader_message_t) +
-                        (size_t) session->batch_capacity * sizeof(((device_reader_message_t *) NULL)->items[0]);
+    const size_t                   slot    = sizeof(sbuf_t *) + (session->output_wake_fd >= 0 ? sizeof(size_t) : 0);
+    const size_t                   size    = sizeof(device_reader_message_t) + (size_t) session->batch_capacity * slot;
     return memoryAllocate(size);
 }
 
@@ -58,6 +223,16 @@ static void deviceReaderSessionReuseReaderBuffers(device_reader_session_t *sessi
     }
 }
 
+static void deviceReaderSessionReuseReservedBuffers(device_reader_session_t *session, sbuf_t **bufs,
+                                                    const size_t *charges, unsigned int count)
+{
+    for (unsigned int i = 0; i < count; i++)
+    {
+        bufferpoolReuseBuffer(session->reader_buffer_pool, bufs[i]);
+        deviceReaderSessionReleaseOutput(session, charges[i]);
+    }
+}
+
 static void deviceReaderSessionCleanupMessage(device_reader_message_t *message)
 {
     if (message == NULL)
@@ -66,9 +241,14 @@ static void deviceReaderSessionCleanupMessage(device_reader_message_t *message)
     }
 
     device_reader_session_t *session = message->session;
+    size_t                  *charges = session->output_wake_fd >= 0 ? deviceReaderMessageCharges(message) : NULL;
     for (unsigned int i = 0; i < message->count; i++)
     {
-        sbufDestroy(message->items[i].buf);
+        sbufDestroy(message->bufs[i]);
+        if (charges != NULL && charges[i] != 0)
+        {
+            deviceReaderSessionReleaseOutput(session, charges[i]);
+        }
     }
     masterpoolReuseItems(session->message_pool, (void **) &message, 1);
     deviceReaderSessionUnref(session);
@@ -112,9 +292,13 @@ device_reader_session_t *deviceReaderSessionCreate(uint32_t pool_capacity, uint1
         .device             = device,
         .deliver            = deliver,
         .reader_buffer_pool = reader_buffer_pool,
+        .output_wake_fd     = -1,
         .frag_affinity      = frag_affinity,
     };
     atomic_init(&session->producer_admission, false);
+    atomic_init(&session->output_charge, 0);
+    atomic_init(&session->output_packets, 0);
+    atomic_init(&session->output_waiting, false);
     quiescenceGateInit(&session->delivery_gate);
     masterpoolInstallCallBacks(session->message_pool, deviceReaderMessageCreate, deviceReaderMessageDestroy);
     return session;
@@ -147,6 +331,12 @@ static void deviceReaderSessionDestroyInternal(device_reader_session_t *session)
     session->frag_affinity = NULL;
     masterpoolMakeEmpty(session->message_pool);
     masterpoolDestroy(session->message_pool);
+#ifdef OS_LINUX
+    if (session->output_wake_fd >= 0)
+    {
+        close(session->output_wake_fd);
+    }
+#endif
     memoryFree(session);
 }
 
@@ -264,6 +454,7 @@ static void deviceReaderSessionMessageReceived(void *worker, void *arg1, void *a
     device_reader_session_t *session    = message->session;
     const uint32_t           generation = message->generation;
     const wid_t              wid        = ((worker_t *) worker)->wid;
+    size_t                  *charges    = session->output_wake_fd >= 0 ? deviceReaderMessageCharges(message) : NULL;
     discard                  arg2;
     discard                  arg3;
 
@@ -272,7 +463,15 @@ static void deviceReaderSessionMessageReceived(void *worker, void *arg1, void *a
     {
         for (unsigned int i = 0; i < message->count; i++)
         {
-            session->deliver(session->device, message->items[i].buf, wid);
+            if (message->prepare != NULL)
+            {
+                message->prepare(message->bufs[i]);
+            }
+            session->deliver(session->device, message->bufs[i], wid);
+            if (charges != NULL && charges[i] != 0)
+            {
+                deviceReaderSessionReleaseOutput(session, charges[i]);
+            }
         }
         quiescenceGateLeave(&session->delivery_gate);
     }
@@ -284,7 +483,11 @@ static void deviceReaderSessionMessageReceived(void *worker, void *arg1, void *a
         }
         for (unsigned int i = 0; i < message->count; i++)
         {
-            bufferpoolReuseBuffer(getWorkerBufferPool(wid), message->items[i].buf);
+            bufferpoolReuseBuffer(getWorkerBufferPool(wid), message->bufs[i]);
+            if (charges != NULL && charges[i] != 0)
+            {
+                deviceReaderSessionReleaseOutput(session, charges[i]);
+            }
         }
     }
 
@@ -303,7 +506,8 @@ static void deviceReaderSessionCleanupPostedMessage(void *arg1, void *arg2, void
     deviceReaderSessionCleanupMessage(message);
 }
 
-bool deviceReaderSessionPost(device_reader_session_t *session, wid_t target_wid, sbuf_t **bufs, unsigned int count)
+static bool deviceReaderSessionPostInternal(device_reader_session_t *session, wid_t target_wid, sbuf_t **bufs,
+                                            const size_t *charges, unsigned int count, DeviceReaderPrepareFn prepare)
 {
     assert(session->reader_buffer_pool != NULL);
     if (UNLIKELY(count == 0 || count > session->batch_capacity))
@@ -311,7 +515,14 @@ bool deviceReaderSessionPost(device_reader_session_t *session, wid_t target_wid,
         LOGE("DeviceReaderSession: refusing to post %u buffer(s); batch capacity is %u",
              count,
              (unsigned int) session->batch_capacity);
-        deviceReaderSessionReuseReaderBuffers(session, bufs, count);
+        if (charges != NULL)
+        {
+            deviceReaderSessionReuseReservedBuffers(session, bufs, charges, count);
+        }
+        else
+        {
+            deviceReaderSessionReuseReaderBuffers(session, bufs, count);
+        }
         return false;
     }
 
@@ -322,7 +533,14 @@ bool deviceReaderSessionPost(device_reader_session_t *session, wid_t target_wid,
     if (UNLIKELY(! atomicLoadExplicit(&session->producer_admission, memory_order_acquire) ||
                  GSTATE.shortcut_loops == NULL))
     {
-        deviceReaderSessionReuseReaderBuffers(session, bufs, count);
+        if (charges != NULL)
+        {
+            deviceReaderSessionReuseReservedBuffers(session, bufs, charges, count);
+        }
+        else
+        {
+            deviceReaderSessionReuseReaderBuffers(session, bufs, count);
+        }
         return false;
     }
 
@@ -331,12 +549,18 @@ bool deviceReaderSessionPost(device_reader_session_t *session, wid_t target_wid,
     masterpoolGetItems(session->message_pool, &pool_item, 1, session);
     message = pool_item;
 
-    message->session    = session;
-    message->generation = deviceReaderSessionGeneration(session);
-    message->count      = (uint16_t) count;
+    message->session        = session;
+    message->prepare        = prepare;
+    message->generation     = deviceReaderSessionGeneration(session);
+    message->count          = (uint16_t) count;
+    size_t *message_charges = session->output_wake_fd >= 0 ? deviceReaderMessageCharges(message) : NULL;
     for (unsigned int i = 0; i < count; i++)
     {
-        message->items[i].buf = bufs[i];
+        message->bufs[i] = bufs[i];
+        if (message_charges != NULL)
+        {
+            message_charges[i] = charges == NULL ? 0 : charges[i];
+        }
     }
 
     deviceReaderSessionRef(session);
@@ -346,4 +570,25 @@ bool deviceReaderSessionPost(device_reader_session_t *session, wid_t target_wid,
                                                   message,
                                                   NULL,
                                                   NULL) == kWorkerMessageSubmitAccepted;
+}
+
+bool deviceReaderSessionPost(device_reader_session_t *session, wid_t target_wid, sbuf_t **bufs, unsigned int count)
+{
+    return deviceReaderSessionPostInternal(session, target_wid, bufs, NULL, count, NULL);
+}
+
+bool deviceReaderSessionPostReserved(device_reader_session_t *session, wid_t target_wid, sbuf_t **bufs,
+                                     const size_t *charges, unsigned int count, DeviceReaderPrepareFn prepare)
+{
+    assert(charges != NULL);
+    assert(session->output_wake_fd >= 0);
+    for (unsigned int i = 0; i < count; i++)
+    {
+        if (UNLIKELY(charges[i] != sbufGetAllocationCharge(bufs[i])))
+        {
+            LOGF("DeviceReaderSession: output reservation does not match packet allocation charge");
+            abortProgramNow(1);
+        }
+    }
+    return deviceReaderSessionPostInternal(session, target_wid, bufs, charges, count, prepare);
 }

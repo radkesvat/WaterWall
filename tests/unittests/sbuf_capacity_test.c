@@ -37,6 +37,40 @@ static void require(bool condition, const char *message)
     }
 }
 
+static bool         fail_next_aligned_allocation;
+static unsigned int injected_aligned_failures;
+
+void *__real_memoryAllocateAligned(size_t size, size_t alignment);
+void *__wrap_memoryAllocateAligned(size_t size, size_t alignment);
+void *__wrap_memoryAllocateAligned(size_t size, size_t alignment)
+{
+    if (fail_next_aligned_allocation)
+    {
+        fail_next_aligned_allocation = false;
+        injected_aligned_failures++;
+        require(alignment == kSbufAllocationAlignment, "nullable sbuf used unexpected allocation alignment");
+        return NULL;
+    }
+    return __real_memoryAllocateAligned(size, alignment);
+}
+
+static void testNullablePaddedAllocation(void)
+{
+    sbuf_t *normal = sbufTryCreateWithPadding(65536, 10);
+    require(normal != NULL && sbufGetTotalCapacityNoPadding(normal) >= 65536 && sbufGetLeftPadding(normal) >= 10,
+            "nullable sbuf did not provide the requested scratch geometry");
+    sbufDestroy(normal);
+
+    fail_next_aligned_allocation = true;
+    sbuf_t *rejected             = sbufTryCreateWithPadding(65536, 10);
+    require(rejected == NULL && ! fail_next_aligned_allocation && injected_aligned_failures == 1,
+            "nullable sbuf did not return NULL on a real aligned-allocation failure");
+
+    sbuf_t *retry = sbufTryCreateWithPadding(65536, 10);
+    require(retry != NULL, "nullable sbuf did not recover after the injected allocation failure");
+    sbufDestroy(retry);
+}
+
 // Cache-line size is 64 or 128 depending on the target, so every expectation is
 // derived from kCpuLineCacheSize rather than hard-coded.
 static const uint64_t kLine = (uint64_t) kCpuLineCacheSize;
@@ -403,6 +437,7 @@ int main(void)
 {
     testRoundsUpToCacheLines();
     testPaddingIsAlignedAndAdded();
+    testNullablePaddedAllocation();
     testSpliceCapacityAndPadding();
     testUnrepresentableRequestsAreRejected();
     testFullAllocationMustFitInSizeT();

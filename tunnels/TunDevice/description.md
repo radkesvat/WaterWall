@@ -1,5 +1,5 @@
 <!--
-Documentation version: 155
+Documentation version: 157
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/TunDevice.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/TunDevice.mdx, and all files must keep the same documentation version.
 -->
 
@@ -44,6 +44,7 @@ Payload coming from either side and reaching `TunDevice` is written into the TUN
     "device-name": "tun0",
     "device-ip": "10.10.0.1/24",
     "device-mtu": 1500,
+    "gso": true,
     "dns": ["1.1.1.1", "8.8.8.8"],
     "route-table": "off"
   },
@@ -104,6 +105,17 @@ Full-route example with local ranges excluded:
   Fractional numbers, strings, booleans, and `null` are rejected.
 
   Default: global MTU size used by WaterWall.
+
+- `gso` `(boolean)`
+  Request Linux TCPv4 GSO reception and software segmentation. The default is
+  `true`; `false` uses ordinary TUN framing. Invalid types, including `null`,
+  are rejected. If the platform or kernel cannot enable the complete offload
+  mode, startup logs the reason and continues with ordinary TUN framing.
+  The configured device MTU still limits each packet emitted by segmentation.
+  Linux's TCPv4 GSO ECN modifier is supported when it appears in a record.
+  On Linux, requested GSO requires a new interface with the configured name;
+  a name already in use fails startup. `"gso": false` retains the existing
+  ordinary TUN attach behavior.
 
 - `route-table` `(string)`
   Controls native system route installation.
@@ -181,6 +193,8 @@ During `onStart`, `TunDevice`:
 
 - decides which adjacent tunnel should receive packets read from the device
 - creates the TUN device
+- attempts Linux TCPv4 GSO when requested, and logs whether it is active or
+  ordinary TUN framing is used
 - assigns the configured IP/subnet
 - brings the device up
 - on Linux, disables IPv4 reverse-path filtering for `all` and the TUN interface, always, and holds the interface value down until it sticks
@@ -194,10 +208,20 @@ The actual device creation is deferred until start time because the tunnel needs
 When the TUN device produces a packet:
 
 - the packet is received on a worker
-- the kernel TUN contract supplies packet bytes without checksum-offload provenance. Unfragmented kernel-produced
-  packets are trusted at this adapter boundary and are validated by their downstream consumer; fragmented IPv4
-  packets pass the common fragment parser, which validates their structure and header checksum before association
-- only IPv4 packets are currently accepted by this path
+- when Linux GSO is active, the reader completes requested deferred checksums
+  for ordinary records and keeps their fragment handling in the reader;
+  `GSO_NONE` records, including IPv6, retain the existing ordinary reader path
+  without an IPv4-only preflight
+- for TCPv4 GSO, the reader builds independent MTU-sized IPv4 packets with
+  completed IPv4 checksums and adjusted TCP pseudoheader seeds; the destination
+  worker finishes each TCP checksum through a private completion callback
+  before normal TunDevice delivery, logging, or packet publication
+- with ordinary TUN framing, unfragmented kernel-produced packets remain
+  trusted at this adapter boundary and are validated by their downstream
+  consumer; fragmented IPv4 packets pass the common fragment parser, which
+  validates their structure and header checksum before association
+- the TunDevice packet callback still forwards only exact IPv4 packets; ordinary
+  IPv6 records reach that existing callback and follow its existing rejection
 - the packet is forwarded through the chosen adjacent tunnel using the worker's packet line
 
 If the device is down, the packet is dropped.

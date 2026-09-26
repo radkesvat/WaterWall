@@ -1156,6 +1156,26 @@ add_waterwall_privileged_probe_integration_test(
 add_waterwall_privileged_probe_integration_test(
   waterwall.device_fragment_raw_forward device_fragment_raw_forward 20)
 
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING)
+  if(WATERWALL_ENABLE_PRIVILEGED_INTEGRATION_TESTS)
+    add_waterwall_isolated_test(waterwall.tundevice_gso_live
+      "${BASH_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/cases/tundevice_gso_live/run.sh"
+      "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>"
+      "${CMAKE_CURRENT_SOURCE_DIR}/cases/tundevice_gso_live"
+      "${PYTHON3_EXECUTABLE}")
+    set_tests_properties(waterwall.tundevice_gso_live PROPERTIES
+      TIMEOUT 180
+      SKIP_RETURN_CODE 77
+      LABELS "integration;linux;privileged;tundevice;gso")
+    add_waterwall_case_resource_lock(waterwall.tundevice_gso_live tundevice_gso_live)
+  else()
+    add_waterwall_skipped_integration_test(waterwall.tundevice_gso_live
+      "privileged TUN GSO integration requires enabled Linux privileged tests")
+  endif()
+
+endif()
+
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING AND TARGET HttpProxyClient)
   add_waterwall_isolated_test(waterwall.httpproxyclient_pending_dns_shutdown
     "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/httpproxyclient_splice_integration.py"

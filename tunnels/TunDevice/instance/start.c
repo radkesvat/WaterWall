@@ -20,6 +20,10 @@ void tundeviceTunnelOnStart(tunnel_t *t)
     }
 
 #ifdef OS_WIN
+    if (state->gso_requested)
+    {
+        LOGW("TunDevice: GSO requested but unavailable on this platform; using ordinary TUN framing");
+    }
     state->tdev = tundeviceCreateOwned(state->name,
                                        false,
                                        state->mtu,
@@ -27,7 +31,14 @@ void tundeviceTunnelOnStart(tunnel_t *t)
                                        tundeviceOnIPPacketReceived,
                                        state->fragment_policy,
                                        &state->windows_ownership);
+#elif defined(OS_LINUX)
+    state->tdev = tundeviceCreate(
+        state->name, state->gso_requested, state->mtu, t, tundeviceOnIPPacketReceived, state->fragment_policy);
 #else
+    if (state->gso_requested)
+    {
+        LOGW("TunDevice: GSO requested but unavailable on this platform; using ordinary TUN framing");
+    }
     state->tdev =
         tundeviceCreate(state->name, false, state->mtu, t, tundeviceOnIPPacketReceived, state->fragment_policy);
 #endif
