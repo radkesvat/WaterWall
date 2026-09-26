@@ -100,6 +100,16 @@ bool updateIpv4TransportChecksumAddresses(uint8_t *buf, size_t available_len, ui
 uint16_t calcGenericChecksum(const uint8_t *data, uint16_t len, uint32_t initial);
 
 /**
+ * lwIP raw Internet sum: removes the backend's final complement, without a
+ * byte swap or zero normalization. length must be nonnegative and data must
+ * provide that many readable bytes. Zero length permits NULL and returns zero.
+ * Spans larger than UINT16_MAX are combined at even word boundaries.
+ * Uses the portable backend before checkSumInit(); never re-enters lwIP.
+ */
+uint16_t wwLwipChecksum(const void *data, int length);
+
+/**
  * @brief Select and initialize the best checksum backend for this CPU.
+ * Startup only: call before publishing concurrent checksum users.
  */
 void checkSumInit(void);

@@ -35,6 +35,15 @@ function(_waterwall_register_portable_contract test_name target_name labels)
   endif()
 endfunction()
 
+add_executable(lwip_checksum_link_test EXCLUDE_FROM_ALL
+  "${_waterwall_portable_unit_dir}/lwip_checksum_link_test.c")
+# Start from the standalone archive to exercise its hook dependency. Borrow only
+# its lwIP configuration headers; ww's headers and PCH stay out of this consumer.
+target_include_directories(lwip_checksum_link_test PRIVATE "$<TARGET_PROPERTY:lwipcore,INCLUDE_DIRECTORIES>")
+target_link_libraries(lwip_checksum_link_test PRIVATE lwipcore)
+set_target_properties(lwip_checksum_link_test PROPERTIES DISABLE_PRECOMPILE_HEADERS ON)
+_waterwall_register_portable_contract(waterwall.lwip_checksum_link_unit lwip_checksum_link_test "unit;net;checksum;portable")
+
 add_executable(buffer_budget_test EXCLUDE_FROM_ALL "${_waterwall_portable_unit_dir}/buffer_budget_test.c")
 target_link_libraries(buffer_budget_test PRIVATE ww)
 set_target_properties(buffer_budget_test PROPERTIES DISABLE_PRECOMPILE_HEADERS ON)

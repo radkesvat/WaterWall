@@ -13,7 +13,8 @@ extern uint16_t checksumSSE3(const uint8_t *data, uint16_t len, uint32_t initial
 extern uint16_t checksumDefault(const uint8_t *data, uint16_t len, uint32_t initial);
 
 typedef uint16_t (*cksum_fn)(const uint8_t *, uint16_t, uint32_t);
-static cksum_fn checksum = NULL;
+/* Startup selects a faster backend before concurrent users are published. */
+static cksum_fn checksum = checksumDefault;
 
 /** Sum the pseudo‑header (src, dst, proto, length) in host order */
 static inline uint32_t checksumPseudoHeader(const struct ip4_addr_packed *src, const struct ip4_addr_packed *dst,
@@ -436,6 +437,35 @@ bool updateIpv4TransportChecksum16(uint8_t *buf, size_t available_len, uint16_t 
 uint16_t calcGenericChecksum(const uint8_t *data, uint16_t len, uint32_t initial)
 {
     return checksum(data, len, initial);
+}
+
+uint16_t wwLwipChecksum(const void *data, int length)
+{
+    assert(length >= 0);
+    assert(data != NULL || length == 0);
+    if (UNLIKELY(length == 0))
+    {
+        return 0;
+    }
+    if (LIKELY(length <= UINT16_MAX))
+    {
+        return (uint16_t) ~calcGenericChecksum(data, (uint16_t) length, 0);
+    }
+
+    const uint8_t *bytes = data;
+    uint32_t       sum   = 0;
+    /* Even boundaries preserve word parity without interpreting backend seeds. */
+    while (length > UINT16_MAX)
+    {
+        sum += (uint16_t) ~calcGenericChecksum(bytes, UINT16_MAX - 1, 0);
+        sum = (sum & UINT16_MAX) + (sum >> 16);
+        bytes += UINT16_MAX - 1;
+        length -= UINT16_MAX - 1;
+    }
+    /* lwIP expects the raw sum in the same byte representation, without a swap. */
+    sum += (uint16_t) ~calcGenericChecksum(bytes, (uint16_t) length, 0);
+    sum = (sum & UINT16_MAX) + (sum >> 16);
+    return (uint16_t) sum;
 }
 
 void checkSumInit(void)

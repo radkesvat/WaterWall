@@ -106,18 +106,19 @@ static inline uint32_t checksumBuffer(const uint8_t *data, size_t len)
         addWithCarry(&sum, &carry, (uint64_t)data[0] << 8);
     }
 
-    // Fold the 64-bit sum with carry into a 32-bit result
-    sum += carry;
+    /* Reduce before adding saved carries: sum + carry can overflow uint64_t.
+     * For a UINT16_MAX-byte span, both 32-bit halves plus carry fit in 64 bits. */
+    sum = (sum & UINT32_MAX) + (sum >> 32) + carry;
     while (sum >> 32)
     {
         sum = (sum & 0xFFFFFFFF) + (sum >> 32);
     }
 
-    return (uint32_t)sum;
+    return (uint32_t) sum;
 }
 
 /** Fold carries and return the one's‑complement result */
-static inline uint16_t finalizeChecksum(uint32_t sum)
+static inline uint16_t finalizeChecksum(uint64_t sum)
 {
     while (sum >> 16)
     {
@@ -138,8 +139,8 @@ static inline uint16_t finalizeChecksum(uint32_t sum)
 // returns checksum in big endian
 static uint16_t cChecksum(const uint8_t *data, uint16_t len, uint32_t initial)
 {
-    // simple C fallback: sum data and finalize with initial seed
-    uint32_t sum = initial;
+    /* Preserve carry when combining the 32-bit payload sum and seed. */
+    uint64_t sum = initial;
     sum += checksumBuffer(data, len);
     return lwip_htons(finalizeChecksum(sum));
 }

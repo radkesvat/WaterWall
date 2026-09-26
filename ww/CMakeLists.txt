@@ -1561,11 +1561,13 @@ foreach(runtime_component IN ITEMS ww_lwip libuuid FREERS_EH)
     endif()
 endforeach()
 
-# ww calls into lwIP, while lwIP calls the WaterWall assert, random, and TCP
-# ISN hooks. Declare that reverse edge so CMake repeats the two static archives
+# ww calls into lwIP, while lwIP calls the WaterWall assert, random, checksum,
+# and TCP ISN hooks. Declare that reverse edge so CMake repeats the static archives
 # for consumers whose first ww scan does not pull in the hook implementations.
 # LINK_ONLY keeps ww's headers and precompiled header out of lwIP compilation.
 target_link_libraries(ww_lwip PRIVATE "$<LINK_ONLY:ww>")
+# The upstream standalone core archive uses the same project lwipopts.h.
+target_link_libraries(lwipcore PRIVATE "$<LINK_ONLY:ww>")
 
 # Symbol stripping for release builds
 if(MSVC)

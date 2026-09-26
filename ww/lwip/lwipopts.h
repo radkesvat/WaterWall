@@ -41,6 +41,7 @@ extern "C"
 {
 #endif
     struct ip_addr;
+    uint16_t wwLwipChecksum(const void *data, int length);
     uint32_t wwLwipTcpIsn(const struct ip_addr *local_ip, uint16_t local_port, const struct ip_addr *remote_ip,
                           uint16_t remote_port);
 #ifdef __cplusplus
@@ -509,7 +510,7 @@ void lwip_example_app_platform_assert(const char *msg, int line, const char *fil
 #define MEMP_USE_CUSTOM_POOLS         1
 #define MEM_USE_POOLS                 1
 #define MEM_USE_POOLS_TRY_BIGGER_POOL 1
-#define LWIP_CHKSUM_ALGORITHM         3
+#define LWIP_CHKSUM                   wwLwipChecksum
 #define LWIP_CHECKSUM_ON_COPY         1
 #define TCP_OVERSIZE                  TCP_MSS
 
