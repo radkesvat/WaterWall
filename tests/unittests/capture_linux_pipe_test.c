@@ -1,3 +1,4 @@
+#include "devices/capture/capture_private.h"
 // Stop-pipe lifecycle coverage for the Linux capture device.
 //
 // The stop pipe outlives every BringUp/BringDown cycle, so a wake token left in
@@ -1355,7 +1356,7 @@ static void testPartialRollbackFailureIsRetriedByDestroy(test_env_t *env)
     require(! caputredeviceBringUp(cdev), "a failed insertion with failed rollback must fail bring-up");
     require(countQueueRuleState(cdev, kCaptureRuleInstalled) == 1,
             "failed rollback did not retain the confirmed installed rule");
-    require(! cdev->up && ! cdev->running, "failed startup rollback left the device operational");
+    require(! capturedeviceIsUp(cdev) && ! cdev->running, "failed startup rollback left the device operational");
     require(atomicLoadExplicit(&probe.started, memory_order_relaxed) == 1,
             "failed startup rollback did not start its reader before insertion");
     require(atomicLoadExplicit(&probe.exited, memory_order_relaxed) == 1,
@@ -1388,11 +1389,12 @@ static void testReverseDeletionPreservesPerRuleState(test_env_t *env)
     atomicStoreExplicit(&probe.verify_queue_fd_lifetime, true, memory_order_relaxed);
 
     require(caputredeviceBringUp(cdev), "initial bring-up for reverse deletion failed");
+    require(capturedeviceIsUp(cdev), "accessor did not observe successful activation");
     require(! caputredeviceBringDown(cdev), "a scripted middle deletion failure must fail bring-down");
     require(cdev->rule_states[0].queue == kCaptureRuleInstalled &&
                 cdev->rule_states[1].queue == kCaptureRuleInstalled && cdev->rule_states[2].queue == kCaptureRuleAbsent,
             "reverse cleanup did not preserve exact per-rule state after a middle failure");
-    require(! cdev->up && ! cdev->running, "failed bring-down left the device operational");
+    require(! capturedeviceIsUp(cdev) && ! cdev->running, "failed bring-down left the device operational");
     require(! cdev->queue_restartable, "failed rule cleanup left the queue restartable");
     require(atomicLoadExplicit(&probe.exited, memory_order_relaxed) == 1, "failed bring-down did not join its reader");
     require(! atomicLoadExplicit(&probe.queue_fd_changed_before_exit, memory_order_relaxed),

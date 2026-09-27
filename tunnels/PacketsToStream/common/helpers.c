@@ -2,10 +2,7 @@
 
 #include "loggers/network_logger.h"
 
-// Kept in its own block below the logger: device_flow_affinity.h pulls in the
-// internal logger, and whichever logger a translation unit sees first is the
-// one every LOGx in it reports to.
-#include "devices/device_flow_affinity.h"
+#include "devices/device_flow_hash.h"
 
 // Builds a self-contained, fully valid IPv4 heartbeat packet. Because the on-wire format is
 // now a raw concatenation of IPv4 packets (no length prefix), control frames must themselves be

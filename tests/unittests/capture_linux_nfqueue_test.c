@@ -2,7 +2,7 @@
 
 #include "devices/capture/capture_linux_checksum.h"
 #include "devices/capture/capture_linux_internal.h"
-#include "devices/device_frag_affinity.h"
+#include "devices/device_packet_checksum.h"
 
 #include <arpa/inet.h>
 #include <linux/netfilter/nfnetlink.h>

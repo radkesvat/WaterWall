@@ -271,6 +271,8 @@ if(TARGET ww)
     add_executable(device_reader_session_test
       device_reader_session_test.c
       ${CMAKE_SOURCE_DIR}/ww/devices/device_reader_session.c
+      ${CMAKE_SOURCE_DIR}/ww/devices/device_reader_budget.c
+      ${CMAKE_SOURCE_DIR}/ww/devices/device_reader_dispatch.c
     )
     target_link_options(device_reader_session_test PRIVATE
       "-Wl,--wrap=sendWorkerMessageForceQueueWithCleanup"
@@ -868,6 +870,9 @@ if(TARGET ww)
     add_executable(capture_linux_command_test
       capture_linux_command_test.c
       ${CMAKE_SOURCE_DIR}/ww/devices/capture/capture_linux.c
+      ${CMAKE_SOURCE_DIR}/ww/devices/capture/capture_linux_io.c
+      ${CMAKE_SOURCE_DIR}/ww/devices/capture/capture_linux_nfqueue.c
+      ${CMAKE_SOURCE_DIR}/ww/devices/capture/capture_linux_rules.c
     )
     target_link_options(capture_linux_command_test PRIVATE
       "-Wl,--wrap=procRunArgvWithDeadline"
@@ -882,12 +887,60 @@ if(TARGET ww)
       "unit;net;capture;process;deadline"
     )
 
+    add_executable(tun_linux_command_test
+      tun_linux_command_test.c
+      ${CMAKE_SOURCE_DIR}/ww/devices/tun/tun_linux.c
+      ${CMAKE_SOURCE_DIR}/ww/devices/tun/tun_linux_config.c
+      ${CMAKE_SOURCE_DIR}/ww/devices/tun/tun_linux_io.c
+    )
+    target_link_options(tun_linux_command_test PRIVATE
+      "-Wl,--wrap=procRunArgvWithDeadline"
+      "-Wl,--wrap=procCommandResultDrop"
+    )
+    target_link_libraries(tun_linux_command_test PRIVATE ww)
+    add_dependencies(waterwall_unit_tests tun_linux_command_test)
+    add_waterwall_unit_test(waterwall.tun_linux_command_unit tun_linux_command_test
+      "unit;net;tun;process;deadline")
+
+    add_executable(tun_linux_dns_test
+      tun_linux_dns_test.c
+      ${CMAKE_SOURCE_DIR}/ww/devices/tun/tun_linux_config.c)
+    target_link_options(tun_linux_dns_test PRIVATE
+      "-Wl,--wrap=procRunArgvWithDeadline"
+      "-Wl,--wrap=procCommandResultDrop"
+      "-Wl,--wrap=ioctl")
+    target_link_libraries(tun_linux_dns_test PRIVATE ww)
+    add_dependencies(waterwall_unit_tests tun_linux_dns_test)
+    add_waterwall_unit_test(waterwall.tun_linux_dns_unit tun_linux_dns_test
+      "unit;net;tun;dns;shutdown")
+
+    if(PYTHON3_EXECUTABLE)
+      add_test(NAME waterwall.tun_linux_dns_bus_unit
+        COMMAND "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tun_linux_dns_bus_test.py"
+          --build-dir "${CMAKE_BINARY_DIR}" --config "$<CONFIG>" "$<TARGET_FILE:tun_linux_dns_test>")
+      set_tests_properties(waterwall.tun_linux_dns_bus_unit PROPERTIES
+        TIMEOUT 120 SKIP_RETURN_CODE 77 LABELS "unit;net;tun;dns;process"
+        RESOURCE_LOCK waterwall_unit_test_build)
+    endif()
+
+    add_executable(tundevice_policy_cleanup_test tundevice_policy_cleanup_test.c)
+    target_include_directories(tundevice_policy_cleanup_test PRIVATE
+      "${PROJECT_SOURCE_DIR}/tunnels/TunDevice/include/TunDevice")
+    target_link_libraries(tundevice_policy_cleanup_test PRIVATE ww)
+    set_target_properties(tundevice_policy_cleanup_test PROPERTIES DISABLE_PRECOMPILE_HEADERS ON UNITY_BUILD OFF)
+    add_dependencies(waterwall_unit_tests tundevice_policy_cleanup_test)
+    add_waterwall_unit_test(waterwall.tundevice_policy_cleanup_unit tundevice_policy_cleanup_test
+      "unit;tunnels;tun;shutdown")
+
     # Capture stop-pipe lifecycle. capture_linux.c is compiled directly and the
     # generic runner is wrapped, so BringUp/BringDown run for real while no
     # iptables rule, sysctl, NFQUEUE socket or root privilege is involved.
     add_executable(capture_linux_pipe_test
       capture_linux_pipe_test.c
       ${CMAKE_SOURCE_DIR}/ww/devices/capture/capture_linux.c
+      ${CMAKE_SOURCE_DIR}/ww/devices/capture/capture_linux_io.c
+      ${CMAKE_SOURCE_DIR}/ww/devices/capture/capture_linux_nfqueue.c
+      ${CMAKE_SOURCE_DIR}/ww/devices/capture/capture_linux_rules.c
     )
     target_link_options(capture_linux_pipe_test PRIVATE
       "-Wl,--wrap=procRunArgvWithDeadline"
@@ -914,11 +967,16 @@ if(TARGET ww)
     add_executable(tun_linux_message_lifetime_test
       tun_linux_message_lifetime_test.c
       ${CMAKE_SOURCE_DIR}/ww/devices/device_reader_session.c
+      ${CMAKE_SOURCE_DIR}/ww/devices/device_reader_budget.c
+      ${CMAKE_SOURCE_DIR}/ww/devices/device_reader_dispatch.c
       ${CMAKE_SOURCE_DIR}/ww/devices/device_writer_channel.c
       ${CMAKE_SOURCE_DIR}/ww/devices/tun/tun_linux.c
+      ${CMAKE_SOURCE_DIR}/ww/devices/tun/tun_linux_config.c
+      ${CMAKE_SOURCE_DIR}/ww/devices/tun/tun_linux_io.c
     )
     target_compile_definitions(tun_linux_message_lifetime_test PRIVATE DEVICE_WRITER_CHANNEL_TEST_HOOKS=1)
     target_link_options(tun_linux_message_lifetime_test PRIVATE
+      "-Wl,--wrap=procRunArgvWithDeadline"
       "-Wl,--wrap=open"
       "-Wl,--wrap=ioctl"
       "-Wl,--wrap=socket"
@@ -995,7 +1053,12 @@ if(TARGET ww)
     add_executable(capture_linux_message_lifetime_test
       capture_linux_message_lifetime_test.c
       ${CMAKE_SOURCE_DIR}/ww/devices/device_reader_session.c
+      ${CMAKE_SOURCE_DIR}/ww/devices/device_reader_budget.c
+      ${CMAKE_SOURCE_DIR}/ww/devices/device_reader_dispatch.c
       ${CMAKE_SOURCE_DIR}/ww/devices/capture/capture_linux.c
+      ${CMAKE_SOURCE_DIR}/ww/devices/capture/capture_linux_io.c
+      ${CMAKE_SOURCE_DIR}/ww/devices/capture/capture_linux_nfqueue.c
+      ${CMAKE_SOURCE_DIR}/ww/devices/capture/capture_linux_rules.c
     )
     target_link_options(capture_linux_message_lifetime_test PRIVATE
       "-Wl,--wrap=procRunArgvWithDeadline"

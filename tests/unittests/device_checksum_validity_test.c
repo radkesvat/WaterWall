@@ -13,7 +13,7 @@
  * is tested here against real packets.
  */
 
-#include "devices/device_frag_affinity.h"
+#include "devices/device_packet_checksum.h"
 #include "wwapi.h"
 
 #include "lwip/inet_chksum.h"

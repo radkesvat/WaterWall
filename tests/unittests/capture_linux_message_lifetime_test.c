@@ -1,3 +1,4 @@
+#include "devices/capture/capture_private.h"
 #include "wwapi.h"
 
 #include "devices/capture/capture.h"

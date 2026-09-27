@@ -82,6 +82,8 @@ bool tundeviceApplyDnsSettings(tundevice_tstate_t *state)
      * Pre-launch cancellation owns no DNS
      * effect and needs no clearing. */
     state->dns_servers_installed = tundeviceWindowsDnsNeedsCleanup(state->tdev);
+#elif defined(OS_LINUX)
+    state->dns_servers_installed = tundeviceDnsNeedsCleanup(state->tdev);
 #endif
     if (! installed)
     {

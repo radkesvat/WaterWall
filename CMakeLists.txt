@@ -1618,7 +1618,10 @@ if(TARGET waterwall_platform_unit_tests AND WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 
   # when the compiler normally selects C11. Never link this diagnostic object
   # into the runtime, whose atomic representation may differ.
   add_library(device_reader_session_windows_fallback_compile OBJECT EXCLUDE_FROM_ALL
-    tests/unittests/device_reader_session_windows_fallback_compile.c)
+    tests/unittests/device_reader_session_windows_fallback_compile.c
+    ww/devices/device_reader_session.c
+    ww/devices/device_reader_budget.c
+    ww/devices/device_reader_dispatch.c)
   target_link_libraries(device_reader_session_windows_fallback_compile PRIVATE ww)
   target_compile_definitions(device_reader_session_windows_fallback_compile PRIVATE WW_HAVE_C11_ATOMICS=0)
   set_target_properties(device_reader_session_windows_fallback_compile PROPERTIES

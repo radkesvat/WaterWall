@@ -1,3 +1,5 @@
+#include "devices/capture/capture_private.h"
+#include "devices/raw/raw_private.h"
 #include "tunnel_line_failure_harness.h"
 
 #include "RawSocket/structure.h"

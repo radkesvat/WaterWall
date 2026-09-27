@@ -1,0 +1,1462 @@
+#include "devices/device_flow_affinity.h"
+#include "devices/device_reader_session.h"
+#include "devices/device_writer_channel.h"
+#include "devices/tun/tun_io_error.h"
+#include "devices/tun/tun_lifecycle.h"
+#ifdef OS_LINUX
+#include "devices/tun/tun_linux_gso_limits.h"
+#include "devices/tun/tun_linux_offload.h"
+#endif
+#include "generic_pool.h"
+#include "global_state.h"
+#include "loggers/internal_logger.h"
+#include "loggers/log_rate_limiter.h"
+#include "tun.h"
+#include "tun_linux_internal.h"
+#include "watomic.h"
+#include "wchan.h"
+#include "wplatform.h"
+#include "wproc.h"
+#include "wthread.h"
+#include "wtime.h"
+
+#include <arpa/inet.h>
+#include <fcntl.h>
+#include <net/if.h>
+#include <sys/socket.h>
+#include <sys/uio.h>
+#include <unistd.h>
+
+#include <netinet/in.h>
+#include <netinet/ip.h>
+#include <poll.h>
+#include <sys/ioctl.h>
+
+#ifdef OS_LINUX
+#include <linux/if.h>
+#include <linux/if_tun.h>
+#include <linux/ipv6.h>
+#elif defined(OS_BSD)
+#include <net/if.h>
+#include <net/if_tun.h>
+#else
+#error "Unsupported OS"
+#endif
+
+#include "cJSON.h"
+#include "tun_linux_private.h"
+
+static uint32_t ipv4PrefixToMask(unsigned int prefix)
+{
+    assert(prefix <= 32);
+
+    if (prefix == 0)
+    {
+        return 0;
+    }
+
+    return htonl(UINT32_MAX << (32U - prefix));
+}
+
+bool tunSetMtuByName(const char *name, uint16_t mtu)
+{
+    int sock_fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock_fd < 0)
+    {
+        LOGE("TunDevice: failed to create socket for MTU setting");
+        return false;
+    }
+
+    struct ifreq ifr;
+    memoryZero(&ifr, sizeof(ifr));
+    stringCopyN(ifr.ifr_name, name, IFNAMSIZ);
+    ifr.ifr_name[IFNAMSIZ - 1] = '\0';
+    ifr.ifr_mtu                = mtu;
+
+    bool ok = true;
+    if (ioctl(sock_fd, SIOCSIFMTU, &ifr) < 0)
+    {
+        LOGE("TunDevice: failed to set MTU to %u for %s: %s", mtu, ifr.ifr_name, strerror(errno));
+        ok = false;
+    }
+
+    close(sock_fd);
+    return ok;
+}
+
+bool tunSetStateByName(const char *name, bool up)
+{
+    int sock_fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock_fd < 0)
+    {
+        LOGE("TunDevice: failed to create socket for interface state setting");
+        return false;
+    }
+
+    struct ifreq ifr;
+    memoryZero(&ifr, sizeof(ifr));
+    stringCopyN(ifr.ifr_name, name, IFNAMSIZ);
+    ifr.ifr_name[IFNAMSIZ - 1] = '\0';
+
+    bool ok = true;
+    if (ioctl(sock_fd, SIOCGIFFLAGS, &ifr) < 0)
+    {
+        LOGE("TunDevice: failed to get interface flags for %s: %s", name, strerror(errno));
+        ok = false;
+        goto done;
+    }
+
+    if (up)
+    {
+        ifr.ifr_flags |= IFF_UP;
+    }
+    else
+    {
+        ifr.ifr_flags &= (short) ~IFF_UP;
+    }
+
+    if (ioctl(sock_fd, SIOCSIFFLAGS, &ifr) < 0)
+    {
+        LOGE("TunDevice: failed to set interface flags for %s: %s", name, strerror(errno));
+        ok = false;
+    }
+
+done:
+    close(sock_fd);
+    return ok;
+}
+
+#ifdef OS_LINUX
+static bool tunDefaultRouteHexIsZero(const char *hex)
+{
+    for (const char *p = hex; *p != '\0'; ++p)
+    {
+        if (*p != '0')
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool tunGetIfIndexByName(const char *name, uint32_t *out_index)
+{
+    int fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (fd < 0)
+    {
+        return false;
+    }
+
+    struct ifreq ifr;
+    memoryZero(&ifr, sizeof(ifr));
+    stringCopyN(ifr.ifr_name, name, IFNAMSIZ);
+    ifr.ifr_name[IFNAMSIZ - 1] = '\0';
+
+    bool ok = ioctl(fd, SIOCGIFINDEX, &ifr) == 0 && ifr.ifr_ifindex > 0;
+    if (ok)
+    {
+        *out_index = (uint32_t) ifr.ifr_ifindex;
+    }
+
+    close(fd);
+    return ok;
+}
+
+static bool tunDetectDefaultRouteV4(char *ifname, size_t ifname_len)
+{
+    FILE *fp = fopen("/proc/net/route", "r");
+    if (fp == NULL)
+    {
+        return false;
+    }
+
+    char line[512];
+    if (fgets(line, sizeof(line), fp) == NULL)
+    {
+        fclose(fp);
+        return false;
+    }
+
+    char         best_iface[64] = {0};
+    unsigned int best_metric    = UINT32_MAX;
+    bool         found          = false;
+    while (fgets(line, sizeof(line), fp) != NULL)
+    {
+        char          iface[64];
+        unsigned long destination = 0;
+        unsigned long gateway     = 0;
+        unsigned int  flags       = 0;
+        unsigned int  refcnt      = 0;
+        unsigned int  use         = 0;
+        unsigned int  metric      = 0;
+        unsigned long mask        = 0;
+
+        int fields = sscanf(
+            line, "%63s %lx %lx %x %u %u %u %lx", iface, &destination, &gateway, &flags, &refcnt, &use, &metric, &mask);
+        discard gateway;
+        discard refcnt;
+        discard use;
+
+        if (fields == 8 && destination == 0 && mask == 0 &&
+            (flags & (kLinuxRouteFlagUp | kLinuxRouteFlagGateway)) == (kLinuxRouteFlagUp | kLinuxRouteFlagGateway) &&
+            metric < best_metric)
+        {
+            stringCopyN(best_iface, iface, sizeof(best_iface));
+            best_metric = metric;
+            found       = true;
+        }
+    }
+
+    if (found)
+    {
+        stringCopyN(ifname, best_iface, ifname_len);
+    }
+
+    fclose(fp);
+    return found;
+}
+
+static bool tunDetectDefaultRouteV6(char *ifname, size_t ifname_len)
+{
+    FILE *fp = fopen("/proc/net/ipv6_route", "r");
+    if (fp == NULL)
+    {
+        return false;
+    }
+
+    char         line[512];
+    char         best_iface[64] = {0};
+    unsigned int best_metric    = UINT32_MAX;
+    bool         found          = false;
+    while (fgets(line, sizeof(line), fp) != NULL)
+    {
+        char         destination[33];
+        unsigned int destination_prefix = 0;
+        char         source[33];
+        unsigned int source_prefix = 0;
+        char         next_hop[33];
+        unsigned int metric = 0;
+        unsigned int refcnt = 0;
+        unsigned int use    = 0;
+        unsigned int flags  = 0;
+        char         iface[64];
+
+        int     fields = sscanf(line,
+                            "%32s %x %32s %x %32s %x %x %x %x %63s",
+                            destination,
+                            &destination_prefix,
+                            source,
+                            &source_prefix,
+                            next_hop,
+                            &metric,
+                            &refcnt,
+                            &use,
+                            &flags,
+                            iface);
+        discard source;
+        discard source_prefix;
+        discard next_hop;
+        discard refcnt;
+        discard use;
+
+        if (fields == 10 && destination_prefix == 0 && tunDefaultRouteHexIsZero(destination) &&
+            (flags & (kLinuxRouteFlagUp | kLinuxRouteFlagGateway)) == (kLinuxRouteFlagUp | kLinuxRouteFlagGateway) &&
+            metric < best_metric)
+        {
+            stringCopyN(best_iface, iface, sizeof(best_iface));
+            best_metric = metric;
+            found       = true;
+        }
+    }
+
+    if (found)
+    {
+        stringCopyN(ifname, best_iface, ifname_len);
+    }
+
+    fclose(fp);
+    return found;
+}
+
+bool tundeviceDetectDefaultInterface(tun_default_route_t *out)
+{
+    memoryZero(out, sizeof(*out));
+
+    char ifname_v4[64] = {0};
+    char ifname_v6[64] = {0};
+
+    if (tunDetectDefaultRouteV4(ifname_v4, sizeof(ifname_v4)))
+    {
+        out->have_v4 = tunGetIfIndexByName(ifname_v4, &out->ifindex_v4);
+    }
+
+    if (tunDetectDefaultRouteV6(ifname_v6, sizeof(ifname_v6)))
+    {
+        out->have_v6 = tunGetIfIndexByName(ifname_v6, &out->ifindex_v6);
+    }
+
+    if (out->have_v4)
+    {
+        stringCopyN(out->ifname, ifname_v4, sizeof(out->ifname));
+    }
+    else if (out->have_v6)
+    {
+        stringCopyN(out->ifname, ifname_v6, sizeof(out->ifname));
+    }
+
+    return out->have_v4 || out->have_v6;
+}
+#else
+bool tundeviceDetectDefaultInterface(tun_default_route_t *out)
+{
+    memoryZero(out, sizeof(*out));
+    return false;
+}
+#endif
+
+#ifdef OS_LINUX
+enum
+{
+    kTunRpFilterPollMs   = 10,
+    kTunRpFilterStableMs = 300,
+    kTunRpFilterBudgetMs = 2000
+};
+
+static bool tunReversePathFilterScopeIsSafe(const char *scope)
+{
+    if (scope == NULL || scope[0] == '\0' || stringCompare(scope, ".") == 0 || stringCompare(scope, "..") == 0)
+    {
+        return false;
+    }
+
+    for (const char *p = scope; *p != '\0'; ++p)
+    {
+        if (! (isalnum((unsigned char) *p) || *p == '_' || *p == '-' || *p == '.' || *p == ':'))
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+static bool tunReversePathFilterPath(const char *scope, char *path, size_t path_size)
+{
+    static const char proc_conf_dir[] = "/proc/sys/net/ipv4/conf";
+
+    if (! tunReversePathFilterScopeIsSafe(scope))
+    {
+        LOGE("TunDevice: invalid reverse path filter interface scope %s", scope != NULL ? scope : "<null>");
+        return false;
+    }
+
+    int written = stringNPrintf(path, path_size, "%s/%s/rp_filter", proc_conf_dir, scope);
+    if (written < 0 || (size_t) written >= path_size)
+    {
+        LOGE("TunDevice: reverse path filter path is too long for interface scope %s", scope);
+        return false;
+    }
+
+    return true;
+}
+
+static bool tunWriteReversePathFilterValue(const char *path, int value)
+{
+    int fd;
+    do
+    {
+        fd = open(path, O_WRONLY | O_CLOEXEC);
+    } while (fd < 0 && errno == EINTR);
+
+    if (fd < 0)
+    {
+        if (errno == ENOENT)
+        {
+            return true;
+        }
+        LOGE("TunDevice: failed to open %s for reverse path filter update: %s", path, strerror(errno));
+        return false;
+    }
+
+    char value_buf[16];
+    int  written = stringNPrintf(value_buf, sizeof(value_buf), "%d\n", value);
+    if (written < 0 || (size_t) written >= sizeof(value_buf))
+    {
+        LOGE("TunDevice: reverse path filter value is too large for %s", path);
+        close(fd);
+        return false;
+    }
+
+    const char *cursor = value_buf;
+    size_t      left   = (size_t) written;
+    bool        ok     = true;
+
+    while (left > 0)
+    {
+        ssize_t nwrite = write(fd, cursor, left);
+        if (nwrite < 0)
+        {
+            if (errno == EINTR)
+            {
+                continue;
+            }
+            LOGE("TunDevice: failed to write %s: %s", path, strerror(errno));
+            ok = false;
+            break;
+        }
+
+        if (nwrite == 0)
+        {
+            LOGE("TunDevice: short write while updating %s", path);
+            ok = false;
+            break;
+        }
+
+        cursor += nwrite;
+        left -= (size_t) nwrite;
+    }
+
+    if (close(fd) != 0)
+    {
+        LOGE("TunDevice: failed to close %s after reverse path filter update: %s", path, strerror(errno));
+        ok = false;
+    }
+
+    return ok;
+}
+
+static int tunReadReversePathFilterValue(const char *path)
+{
+    int fd;
+    do
+    {
+        fd = open(path, O_RDONLY | O_CLOEXEC);
+    } while (fd < 0 && errno == EINTR);
+
+    if (fd < 0)
+    {
+        return -1;
+    }
+
+    char    value_buf[16];
+    ssize_t nread;
+    do
+    {
+        nread = read(fd, value_buf, sizeof(value_buf) - 1);
+    } while (nread < 0 && errno == EINTR);
+
+    close(fd);
+
+    if (nread <= 0)
+    {
+        return -1;
+    }
+
+    value_buf[nread] = '\0';
+    return (int) strtol(value_buf, NULL, 10);
+}
+
+/*
+ * Writing the per-interface entry once is not enough on a freshly created
+ * device. udev fires an "add" event for every new interface, and the systemd
+ * rule that ships with 99-systemd.rules answers it by running
+ *
+ *     systemd-sysctl --prefix=/net/ipv4/conf/<ifname> ...
+ *
+ * which re-applies the "net.ipv4.conf.*.rp_filter" pattern from sysctl.d and
+ * puts the distribution default straight back. That pass lands a few
+ * milliseconds after the interface appears, so it reliably lands after the
+ * write here. It is a one-shot per device, so re-apply the value until it has
+ * survived untouched for kTunRpFilterStableMs and the udev pass is provably
+ * over.
+ */
+static bool tunHoldReversePathFilterValue(const char *path, int value)
+{
+    if (! tunWriteReversePathFilterValue(path, value))
+    {
+        return false;
+    }
+
+    const unsigned int started_at   = getTickMS();
+    unsigned int       stable_since = started_at;
+
+    for (;;)
+    {
+        unsigned int now = getTickMS();
+        if (now - stable_since >= kTunRpFilterStableMs)
+        {
+            return true;
+        }
+
+        if (now - started_at >= kTunRpFilterBudgetMs)
+        {
+            LOGE("TunDevice: %s keeps being reset by the system; reverse path filtering stays enabled", path);
+            return false;
+        }
+
+        wwSleepMS(kTunRpFilterPollMs);
+
+        int current = tunReadReversePathFilterValue(path);
+        if (current < 0)
+        {
+            // The entry went away with the interface; nothing left to hold down.
+            return true;
+        }
+
+        if (current != value)
+        {
+            if (! tunWriteReversePathFilterValue(path, value))
+            {
+                return false;
+            }
+            stable_since = getTickMS();
+        }
+    }
+}
+
+static bool tunDisableReversePathFilterScope(const char *scope, bool hold)
+{
+    char path[256];
+    if (! tunReversePathFilterPath(scope, path, sizeof(path)))
+    {
+        return false;
+    }
+
+    if (hold)
+    {
+        return tunHoldReversePathFilterValue(path, 0);
+    }
+
+    return tunWriteReversePathFilterValue(path, 0);
+}
+
+bool tundeviceDisableReversePathFiltering(const char *ifname)
+{
+    bool ok = true;
+
+    /*
+     * The kernel filters on max(conf.all.rp_filter, conf.<ifname>.rp_filter),
+     * so both scopes have to reach 0 before packets arriving on the TUN stop
+     * being dropped. Only the per-interface entry races the udev pass described
+     * above, so only that one is held down.
+     */
+    ok = tunDisableReversePathFilterScope("all", false) && ok;
+    ok = tunDisableReversePathFilterScope(ifname, true) && ok;
+    if (ok)
+    {
+        LOGI("TunDevice: disabled Linux reverse path filtering for all and %s", ifname);
+    }
+
+    return ok;
+}
+#else
+bool tundeviceDisableReversePathFiltering(const char *ifname)
+{
+    discard ifname;
+    return true;
+}
+#endif
+
+static bool routeCommandArgIsSafe(const char *arg)
+{
+    if (arg == NULL || arg[0] == '\0')
+    {
+        return false;
+    }
+
+    for (const char *p = arg; *p != '\0'; ++p)
+    {
+        if (! (isalnum((unsigned char) *p) || *p == '_' || *p == '-' || *p == '.' || *p == ':' || *p == '/'))
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+static bool routeTableIsMain(const char *route_table)
+{
+    return route_table == NULL || stringCompare(route_table, "main") == 0 || stringCompare(route_table, "auto") == 0;
+}
+
+static bool routeTableArgIsSafe(const char *route_table)
+{
+    if (route_table == NULL)
+    {
+        return true;
+    }
+
+    if (route_table[0] == '\0')
+    {
+        return false;
+    }
+
+    for (const char *p = route_table; *p != '\0'; ++p)
+    {
+        if (! (isalnum((unsigned char) *p) || *p == '_' || *p == '-' || *p == '.'))
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+static int tunRunCommandCapture(const char *command_name, const char *const argv[], char **output)
+{
+    const proc_command_options_t options = {.timeout_ms         = kTunCommandTimeoutMs,
+                                            .terminate_grace_ms = kTunCommandTerminateGraceMs,
+                                            .max_output_bytes   = kTunCommandMaxOutputBytes};
+    proc_command_result_t        result;
+    bool                         ok     = procRunArgvWithDeadline(command_name, argv, &options, &result);
+    int                          status = ok ? 0 : -1;
+    if (result.timed_out)
+    {
+        LOGE("TunDevice: %s exceeded its %u ms deadline", command_name, (unsigned int) kTunCommandTimeoutMs);
+        status = -2;
+    }
+    else if (result.output_too_large)
+    {
+        LOGE("TunDevice: %s exceeded its %u-byte output limit", command_name, (unsigned int) kTunCommandMaxOutputBytes);
+        status = -2;
+    }
+    else if (result.spawn_failed)
+    {
+        LOGE("TunDevice: supervisor failed while running %s", command_name);
+        status = -2;
+    }
+    else if (! ok)
+    {
+        LOGE("TunDevice: %s exited with status %d", command_name, result.exit_code);
+        if (result.exit_code < 0 || result.exit_code >= 128)
+        {
+            status = -2;
+        }
+    }
+    if (output != NULL)
+    {
+        *output = NULL;
+        if (status == 0 && result.output != NULL && strlen(result.output) == result.output_len)
+        {
+            *output       = result.output;
+            result.output = NULL;
+        }
+    }
+    procCommandResultDrop(&result);
+    return status;
+}
+
+static int tunRunCommand(const char *command_name, const char *const argv[])
+{
+    return tunRunCommandCapture(command_name, argv, NULL);
+}
+
+#ifdef OS_LINUX
+int tunLinuxRunCommandForTest(const char *command_name, const char *const argv[])
+{
+    return tunRunCommand(command_name, argv);
+}
+#endif
+
+bool tundeviceLastCommandOutcomeUnknown(const tun_device_t *tdev)
+{
+    return tdev->command_outcome_unknown;
+}
+
+bool tundeviceDnsNeedsCleanup(const tun_device_t *tdev)
+{
+    return tdev->dns_cleanup_needed;
+}
+
+static int tunRunDeviceCommand(tun_device_t *tdev, const char *command_name, const char *const argv[])
+{
+    int status                    = tunRunCommand(command_name, argv);
+    tdev->command_outcome_unknown = status == -2;
+    return status;
+}
+
+#ifndef OS_LINUX
+static bool tunFormatIpPrefixArg(char *buffer, size_t buffer_size, const char *ip_presentation, unsigned int subnet)
+{
+    int written = stringNPrintf(buffer, buffer_size, "%s/%u", ip_presentation, subnet);
+    return written >= 0 && (size_t) written < buffer_size;
+}
+#endif
+
+bool tundeviceUnAssignIP(tun_device_t *tdev, const char *ip_presentation, unsigned int subnet)
+{
+#ifdef OS_LINUX
+    int family = strchr(ip_presentation, ':') != NULL ? AF_INET6 : AF_INET;
+    int fd     = socket(family, SOCK_DGRAM, 0);
+    if (fd < 0)
+    {
+        LOGE("TunDevice: failed to create socket for IP removal: %s", strerror(errno));
+        return false;
+    }
+
+    bool ok = true;
+    if (family == AF_INET)
+    {
+        struct ifreq ifr;
+        memoryZero(&ifr, sizeof(ifr));
+        stringCopyN(ifr.ifr_name, tdev->name, IFNAMSIZ);
+        ifr.ifr_name[IFNAMSIZ - 1] = '\0';
+
+        struct sockaddr_in *addr = (struct sockaddr_in *) &ifr.ifr_addr;
+        addr->sin_family         = AF_INET;
+        if (inet_pton(AF_INET, ip_presentation, &addr->sin_addr) != 1)
+        {
+            LOGE("TunDevice: Cannot unset IP -> Invalid IPv4 address: %s", ip_presentation);
+            ok = false;
+            goto linux_done;
+        }
+
+        if (ioctl(fd, SIOCDIFADDR, &ifr) < 0 && errno != EADDRNOTAVAIL)
+        {
+            LOGE("TunDevice: error unassigning IPv4 address from %s: %s", tdev->name, strerror(errno));
+            ok = false;
+        }
+    }
+    else
+    {
+        struct ifreq ifr;
+        memoryZero(&ifr, sizeof(ifr));
+        stringCopyN(ifr.ifr_name, tdev->name, IFNAMSIZ);
+        ifr.ifr_name[IFNAMSIZ - 1] = '\0';
+        if (ioctl(fd, SIOCGIFINDEX, &ifr) < 0)
+        {
+            LOGE("TunDevice: failed to get interface index for %s: %s", tdev->name, strerror(errno));
+            ok = false;
+            goto linux_done;
+        }
+
+        struct in6_ifreq ifr6;
+        memoryZero(&ifr6, sizeof(ifr6));
+        ifr6.ifr6_ifindex   = ifr.ifr_ifindex;
+        ifr6.ifr6_prefixlen = subnet;
+        if (inet_pton(AF_INET6, ip_presentation, &ifr6.ifr6_addr) != 1)
+        {
+            LOGE("TunDevice: Cannot unset IP -> Invalid IPv6 address: %s", ip_presentation);
+            ok = false;
+            goto linux_done;
+        }
+
+        if (ioctl(fd, SIOCDIFADDR, &ifr6) < 0 && errno != EADDRNOTAVAIL)
+        {
+            LOGE("TunDevice: error unassigning IPv6 address from %s: %s", tdev->name, strerror(errno));
+            ok = false;
+        }
+    }
+
+linux_done:
+    close(fd);
+    if (ok)
+    {
+        LOGD("TunDevice: ip address removed from %s", tdev->name);
+    }
+    return ok;
+#else
+    char ip_prefix[INET6_ADDRSTRLEN + 12];
+
+    if (! tunFormatIpPrefixArg(ip_prefix, sizeof(ip_prefix), ip_presentation, subnet))
+    {
+        LOGE("TunDevice: ip address argument is too long");
+        return false;
+    }
+
+    const char *const argv[] = {"ifconfig", tdev->name, "inet", ip_prefix, "-alias", NULL};
+    if (tunRunCommand("ifconfig", argv) != 0)
+    {
+        LOGE("TunDevice: error unassigning ip address");
+        return false;
+    }
+    LOGD("TunDevice: ip address removed from %s", tdev->name);
+    return true;
+#endif
+}
+
+// Assign IP address to TUN device
+bool tundeviceAssignIP(tun_device_t *tdev, const char *ip_presentation, unsigned int subnet)
+{
+#ifdef OS_LINUX
+    if (subnet <= 32)
+    {
+        struct ifreq ifr;
+        memoryZero(&ifr, sizeof(ifr));
+        stringCopyN(ifr.ifr_name, tdev->name, IFNAMSIZ);
+        ifr.ifr_name[IFNAMSIZ - 1] = '\0';
+
+        struct sockaddr_in *addr = (struct sockaddr_in *) &ifr.ifr_addr;
+        addr->sin_family         = AF_INET;
+        if (inet_pton(AF_INET, ip_presentation, &addr->sin_addr) == 1)
+        {
+            int fd = socket(AF_INET, SOCK_DGRAM, 0);
+            if (fd < 0)
+            {
+                LOGE("TunDevice: failed to create socket for IPv4 assignment: %s", strerror(errno));
+                return false;
+            }
+
+            bool ok = true;
+            if (ioctl(fd, SIOCSIFADDR, &ifr) < 0)
+            {
+                LOGE("TunDevice: error setting IPv4 address on %s: %s", tdev->name, strerror(errno));
+                ok = false;
+            }
+
+            if (ok)
+            {
+                struct sockaddr_in *mask = (struct sockaddr_in *) &ifr.ifr_netmask;
+                memoryZero(mask, sizeof(*mask));
+                mask->sin_family      = AF_INET;
+                mask->sin_addr.s_addr = ipv4PrefixToMask(subnet);
+                if (ioctl(fd, SIOCSIFNETMASK, &ifr) < 0)
+                {
+                    LOGE("TunDevice: error setting IPv4 netmask on %s: %s", tdev->name, strerror(errno));
+                    ok = false;
+                }
+            }
+
+            close(fd);
+            if (ok)
+            {
+                LOGD("TunDevice: ip address %s/%d assigned to dev %s", ip_presentation, subnet, tdev->name);
+            }
+            return ok;
+        }
+    }
+
+    if (subnet <= 128)
+    {
+        struct in6_addr in6_addr;
+        if (inet_pton(AF_INET6, ip_presentation, &in6_addr) == 1)
+        {
+            int fd = socket(AF_INET6, SOCK_DGRAM, 0);
+            if (fd < 0)
+            {
+                LOGE("TunDevice: failed to create socket for IPv6 assignment: %s", strerror(errno));
+                return false;
+            }
+
+            struct ifreq ifr;
+            memoryZero(&ifr, sizeof(ifr));
+            stringCopyN(ifr.ifr_name, tdev->name, IFNAMSIZ);
+            ifr.ifr_name[IFNAMSIZ - 1] = '\0';
+            if (ioctl(fd, SIOCGIFINDEX, &ifr) < 0)
+            {
+                LOGE("TunDevice: failed to get interface index for %s: %s", tdev->name, strerror(errno));
+                close(fd);
+                return false;
+            }
+
+            struct in6_ifreq ifr6;
+            memoryZero(&ifr6, sizeof(ifr6));
+            ifr6.ifr6_addr      = in6_addr;
+            ifr6.ifr6_prefixlen = subnet;
+            ifr6.ifr6_ifindex   = ifr.ifr_ifindex;
+
+            bool ok = true;
+            if (ioctl(fd, SIOCSIFADDR, &ifr6) < 0 && errno != EEXIST)
+            {
+                LOGE("TunDevice: error setting IPv6 address on %s: %s", tdev->name, strerror(errno));
+                ok = false;
+            }
+            close(fd);
+
+            if (ok)
+            {
+                LOGD("TunDevice: ip address %s/%d assigned to dev %s", ip_presentation, subnet, tdev->name);
+            }
+            return ok;
+        }
+    }
+
+    LOGE("TunDevice: Cannot set IP -> Invalid IP address or prefix: %s/%u", ip_presentation, subnet);
+    return false;
+#else
+    char ip_prefix[INET6_ADDRSTRLEN + 12];
+
+    if (! tunFormatIpPrefixArg(ip_prefix, sizeof(ip_prefix), ip_presentation, subnet))
+    {
+        LOGE("TunDevice: ip address argument is too long");
+        return false;
+    }
+
+    const char *const argv[] = {"ifconfig", tdev->name, "inet", ip_prefix, "-alias", NULL};
+    if (tunRunCommand("ifconfig", argv) != 0)
+    {
+        LOGE("TunDevice: error setting ip address");
+        return false;
+    }
+    LOGD("TunDevice: ip address %s/%d assigned to dev %s", ip_presentation, subnet, tdev->name);
+    return true;
+#endif
+}
+
+bool tundeviceAddRoute(tun_device_t *tdev, const char *cidr, const char *route_table)
+{
+    tdev->command_outcome_unknown = false;
+    if (! routeCommandArgIsSafe(tdev->name) || ! routeCommandArgIsSafe(cidr) || ! routeTableArgIsSafe(route_table))
+    {
+        LOGE("TunDevice: invalid route argument");
+        return false;
+    }
+
+#ifdef OS_LINUX
+    const char *family = stringChr(cidr, ':') != NULL ? "-6" : "-4";
+
+    if (routeTableIsMain(route_table))
+    {
+        const char *const argv[] = {"ip", family, "route", "add", cidr, "dev", tdev->name, NULL};
+        if (tunRunDeviceCommand(tdev, "ip", argv) != 0)
+        {
+            LOGE("TunDevice: failed to add system route %s on %s", cidr, tdev->name);
+            return false;
+        }
+    }
+    else
+    {
+        const char *const argv[] = {"ip", family, "route", "add", cidr, "dev", tdev->name, "table", route_table, NULL};
+        if (tunRunDeviceCommand(tdev, "ip", argv) != 0)
+        {
+            LOGE("TunDevice: failed to add system route %s on %s", cidr, tdev->name);
+            return false;
+        }
+    }
+
+    LOGI("TunDevice: added system route %s on %s", cidr, tdev->name);
+    return true;
+#elif defined(OS_BSD)
+    if (! routeTableIsMain(route_table))
+    {
+        LOGE("TunDevice: route-table '%s' is not supported on this platform", route_table);
+        return false;
+    }
+
+    const char       *family = stringChr(cidr, ':') != NULL ? "-inet6" : "-inet";
+    const char *const argv[] = {"route", "-n", "add", family, cidr, "-interface", tdev->name, NULL};
+    if (tunRunDeviceCommand(tdev, "route", argv) != 0)
+    {
+        LOGE("TunDevice: failed to add system route %s on %s", cidr, tdev->name);
+        return false;
+    }
+
+    LOGI("TunDevice: added system route %s on %s", cidr, tdev->name);
+    return true;
+#else
+#error "Unsupported OS"
+#endif
+}
+
+bool tundeviceRemoveRoute(tun_device_t *tdev, const char *cidr, const char *route_table)
+{
+    tdev->command_outcome_unknown = false;
+    if (! routeCommandArgIsSafe(tdev->name) || ! routeCommandArgIsSafe(cidr) || ! routeTableArgIsSafe(route_table))
+    {
+        LOGE("TunDevice: invalid route argument");
+        return false;
+    }
+
+#ifdef OS_LINUX
+    const char *family = stringChr(cidr, ':') != NULL ? "-6" : "-4";
+
+    if (routeTableIsMain(route_table))
+    {
+        const char *const argv[] = {"ip", family, "route", "del", cidr, "dev", tdev->name, NULL};
+        if (tunRunDeviceCommand(tdev, "ip", argv) != 0)
+        {
+            LOGE("TunDevice: failed to remove system route %s on %s", cidr, tdev->name);
+            return false;
+        }
+    }
+    else
+    {
+        const char *const argv[] = {"ip", family, "route", "del", cidr, "dev", tdev->name, "table", route_table, NULL};
+        if (tunRunDeviceCommand(tdev, "ip", argv) != 0)
+        {
+            LOGE("TunDevice: failed to remove system route %s on %s", cidr, tdev->name);
+            return false;
+        }
+    }
+
+    LOGI("TunDevice: removed system route %s on %s", cidr, tdev->name);
+    return true;
+#elif defined(OS_BSD)
+    if (! routeTableIsMain(route_table))
+    {
+        LOGE("TunDevice: route-table '%s' is not supported on this platform", route_table);
+        return false;
+    }
+
+    const char       *family = stringChr(cidr, ':') != NULL ? "-inet6" : "-inet";
+    const char *const argv[] = {"route", "-n", "delete", family, cidr, "-interface", tdev->name, NULL};
+    if (tunRunDeviceCommand(tdev, "route", argv) != 0)
+    {
+        LOGE("TunDevice: failed to remove system route %s on %s", cidr, tdev->name);
+        return false;
+    }
+
+    LOGI("TunDevice: removed system route %s on %s", cidr, tdev->name);
+    return true;
+#else
+#error "Unsupported OS"
+#endif
+}
+
+#ifdef OS_LINUX
+/* Only the lifecycle owner accesses this ledger. Each field is restored
+ * independently; no link-wide Revert operation is permitted on an attached TUN. */
+enum
+{
+    kTunDnsFields     = 2,
+    kTunDnsMaxEntries = 128,
+    kTunDnsMaxString  = 255
+};
+typedef struct tun_dns_snapshot_s
+{
+    uint32_t ifindex;
+    char     path[128];
+    cJSON   *baseline[kTunDnsFields];
+    cJSON   *wanted[kTunDnsFields];
+    bool     pending[kTunDnsFields];
+} tun_dns_snapshot_t;
+
+static const char *const tun_dns_properties[] = {"DNSEx", "Domains"};
+static const char *const tun_dns_signatures[] = {"a(iayqs)", "a(sb)"};
+static const char *const tun_dns_methods[]    = {"SetDNSEx", "SetDomains"};
+
+void tunLinuxDnsDropSnapshot(tun_device_t *tdev)
+{
+    tun_dns_snapshot_t *snapshot = tdev->dns_snapshot;
+    if (snapshot == NULL)
+        return;
+    for (unsigned int i = 0; i < kTunDnsFields; ++i)
+    {
+        cJSON_Delete(snapshot->baseline[i]);
+        cJSON_Delete(snapshot->wanted[i]);
+    }
+    memoryFree(snapshot);
+    tdev->dns_snapshot = NULL;
+}
+
+static bool tunDnsUnsigned(const cJSON *value, unsigned int maximum)
+{
+    return cJSON_IsNumber(value) && value->valuedouble >= 0 && value->valuedouble <= maximum &&
+           value->valuedouble == (unsigned int) value->valuedouble;
+}
+
+static bool tunDnsValuesValid(cJSON *values, unsigned int field)
+{
+    if (! cJSON_IsArray(values) || cJSON_GetArraySize(values) > kTunDnsMaxEntries)
+        return false;
+    cJSON *entry;
+    cJSON_ArrayForEach(entry, values)
+    {
+        if (! cJSON_IsArray(entry) || cJSON_GetArraySize(entry) != (field == 0 ? 4 : 2))
+            return false;
+        cJSON *name = cJSON_GetArrayItem(entry, field == 0 ? 3 : 0);
+        if (! cJSON_IsString(name) || strlen(name->valuestring) > kTunDnsMaxString)
+            return false;
+        if (field == 1)
+        {
+            if (name->valuestring[0] == '\0' || ! cJSON_IsBool(cJSON_GetArrayItem(entry, 1)))
+                return false;
+            continue;
+        }
+        cJSON *family  = cJSON_GetArrayItem(entry, 0);
+        cJSON *address = cJSON_GetArrayItem(entry, 1);
+        cJSON *port    = cJSON_GetArrayItem(entry, 2);
+        if (! tunDnsUnsigned(family, AF_INET6) || (family->valueint != AF_INET && family->valueint != AF_INET6) ||
+            ! cJSON_IsArray(address) || cJSON_GetArraySize(address) != (family->valueint == AF_INET ? 4 : 16) ||
+            ! tunDnsUnsigned(port, UINT16_MAX))
+            return false;
+        const cJSON *byte;
+        cJSON_ArrayForEach(byte, address) if (! tunDnsUnsigned(byte, UINT8_MAX)) return false;
+    }
+    return true;
+}
+
+static cJSON *tunDnsReadJson(const char *const argv[], const char *signature)
+{
+    char *output = NULL;
+    if (tunRunCommandCapture("busctl", argv, &output) != 0 || output == NULL)
+    {
+        memoryFree(output);
+        return NULL;
+    }
+    /* D-Bus strings cannot contain NUL. Reject truncated representations. */
+    cJSON *root = strstr(output, "\\u0000") == NULL ? cJSON_ParseWithOpts(output, NULL, true) : NULL;
+    memoryFree(output);
+    const cJSON *type  = cJSON_GetObjectItemCaseSensitive(root, "type");
+    cJSON       *data  = cJSON_GetObjectItemCaseSensitive(root, "data");
+    const bool   valid = cJSON_IsObject(root) && cJSON_GetArraySize(root) == 2 && cJSON_IsString(type) &&
+                       strcmp(type->valuestring, signature) == 0 && cJSON_IsArray(data);
+    data = valid ? cJSON_DetachItemFromObjectCaseSensitive(root, "data") : NULL;
+    cJSON_Delete(root);
+    return data;
+}
+
+static bool tunDnsSameInterface(const tun_device_t *tdev)
+{
+    uint32_t index;
+    return tunGetIfIndexByName(tdev->name, &index) && index == tdev->dns_snapshot->ifindex;
+}
+
+static cJSON *tunDnsReadField(const tun_device_t *tdev, unsigned int field)
+{
+    if (! tunDnsSameInterface(tdev))
+        return NULL;
+    const char *const argv[] = {"busctl",
+                                "--system",
+                                "--json=short",
+                                "--no-pager",
+                                "--",
+                                "get-property",
+                                "org.freedesktop.resolve1",
+                                tdev->dns_snapshot->path,
+                                "org.freedesktop.resolve1.Link",
+                                tun_dns_properties[field],
+                                NULL};
+    cJSON            *data   = tunDnsReadJson(argv, tun_dns_signatures[field]);
+    if (! tunDnsValuesValid(data, field))
+    {
+        cJSON_Delete(data);
+        return NULL;
+    }
+    return data;
+}
+
+static void tunDnsNumberArg(const char **argv, char (*numbers)[12], unsigned int *count, unsigned int value)
+{
+    snprintf(numbers[*count], sizeof(numbers[*count]), "%u", value);
+    argv[*count] = numbers[*count];
+    ++*count;
+}
+
+static bool tunDnsWriteField(tun_device_t *tdev, unsigned int field, const cJSON *values)
+{
+    if (! tunDnsSameInterface(tdev))
+        return false;
+    /* Each DNS tuple has at most family, length, 16 bytes, port and name. */
+    const size_t capacity = 13U + (size_t) cJSON_GetArraySize(values) * 20U;
+    const char **argv     = memoryCalloc(capacity, sizeof(*argv));
+    char(*numbers)[12]    = memoryAllocate(capacity * sizeof(*numbers));
+    if (argv == NULL || numbers == NULL)
+    {
+        memoryFree(argv);
+        memoryFree(numbers);
+        return false;
+    }
+    const char *const prefix[] = {"busctl",
+                                  "--system",
+                                  "--no-pager",
+                                  "--allow-interactive-authorization=no",
+                                  "--",
+                                  "call",
+                                  "org.freedesktop.resolve1",
+                                  tdev->dns_snapshot->path,
+                                  "org.freedesktop.resolve1.Link",
+                                  tun_dns_methods[field],
+                                  tun_dns_signatures[field]};
+    unsigned int      count    = sizeof(prefix) / sizeof(prefix[0]);
+    memoryCopy(argv, prefix, sizeof(prefix));
+    tunDnsNumberArg(argv, numbers, &count, (unsigned int) cJSON_GetArraySize(values));
+    const cJSON *entry;
+    cJSON_ArrayForEach(entry, values)
+    {
+        if (field == 1)
+        {
+            argv[count++] = cJSON_GetArrayItem(entry, 0)->valuestring;
+            argv[count++] = cJSON_IsTrue(cJSON_GetArrayItem(entry, 1)) ? "true" : "false";
+            continue;
+        }
+        tunDnsNumberArg(argv, numbers, &count, (unsigned int) cJSON_GetArrayItem(entry, 0)->valueint);
+        const cJSON *address = cJSON_GetArrayItem(entry, 1);
+        tunDnsNumberArg(argv, numbers, &count, (unsigned int) cJSON_GetArraySize(address));
+        const cJSON *byte;
+        cJSON_ArrayForEach(byte, address) tunDnsNumberArg(argv, numbers, &count, (unsigned int) byte->valueint);
+        tunDnsNumberArg(argv, numbers, &count, (unsigned int) cJSON_GetArrayItem(entry, 2)->valueint);
+        argv[count++] = cJSON_GetArrayItem(entry, 3)->valuestring;
+    }
+    assert(count < capacity);
+    int status = tunRunDeviceCommand(tdev, "busctl", argv);
+    memoryFree(numbers);
+    memoryFree(argv);
+    return status == 0;
+}
+
+static bool tunDnsAppend(cJSON *array, cJSON *item)
+{
+    if (item != NULL && cJSON_AddItemToArray(array, item))
+        return true;
+    cJSON_Delete(item);
+    return false;
+}
+
+static cJSON *tunDnsRequestedServers(const char *const *servers, size_t count)
+{
+    cJSON *values = cJSON_CreateArray();
+    if (values == NULL)
+        return NULL;
+    for (size_t i = 0; i < count; ++i)
+    {
+        uint8_t bytes[16];
+        int     family = AF_INET;
+        if (inet_pton(family, servers[i], bytes) != 1)
+        {
+            family = AF_INET6;
+            if (inet_pton(family, servers[i], bytes) != 1)
+                goto fail;
+        }
+        int address[16];
+        int length = family == AF_INET ? 4 : 16;
+        for (int j = 0; j < length; ++j)
+            address[j] = bytes[j];
+        cJSON *entry = cJSON_CreateArray();
+        if (entry == NULL || ! tunDnsAppend(entry, cJSON_CreateNumber(family)) ||
+            ! tunDnsAppend(entry, cJSON_CreateIntArray(address, length)) ||
+            ! tunDnsAppend(entry, cJSON_CreateNumber(0)) || ! tunDnsAppend(entry, cJSON_CreateString("")))
+        {
+            cJSON_Delete(entry);
+            goto fail;
+        }
+        bool         duplicate = false;
+        const cJSON *prior;
+        cJSON_ArrayForEach(prior, values) duplicate |= cJSON_Compare(prior, entry, true);
+        if (duplicate)
+            cJSON_Delete(entry);
+        else if (! tunDnsAppend(values, entry))
+            goto fail;
+    }
+    return values;
+fail:
+    cJSON_Delete(values);
+    return NULL;
+}
+
+static bool tunDnsCaptureBaseline(tun_device_t *tdev, const char *const *servers, size_t count)
+{
+    assert(tdev->dns_snapshot == NULL);
+    tun_dns_snapshot_t *snapshot = memoryCalloc(1, sizeof(*snapshot));
+    if (snapshot == NULL)
+        return false;
+    tdev->dns_snapshot = snapshot;
+    if (! tunGetIfIndexByName(tdev->name, &snapshot->ifindex))
+        goto fail;
+    char index[12];
+    snprintf(index, sizeof(index), "%u", snapshot->ifindex);
+    const char *const argv[] = {"busctl",
+                                "--system",
+                                "--json=short",
+                                "--no-pager",
+                                "--",
+                                "call",
+                                "org.freedesktop.resolve1",
+                                "/org/freedesktop/resolve1",
+                                "org.freedesktop.resolve1.Manager",
+                                "GetLink",
+                                "i",
+                                index,
+                                NULL};
+    cJSON            *link   = tunDnsReadJson(argv, "o");
+    const cJSON      *path   = cJSON_GetArrayItem(link, 0);
+    bool              valid =
+        cJSON_GetArraySize(link) == 1 && cJSON_IsString(path) && strlen(path->valuestring) < sizeof(snapshot->path) &&
+        strncmp(path->valuestring, "/org/freedesktop/resolve1/link/", sizeof("/org/freedesktop/resolve1/link/") - 1) ==
+            0;
+    if (valid)
+        stringCopyN(snapshot->path, path->valuestring, sizeof(snapshot->path));
+    cJSON_Delete(link);
+    if (! valid)
+        goto fail;
+    snapshot->wanted[0] = tunDnsRequestedServers(servers, count);
+    snapshot->wanted[1] = cJSON_Parse("[[\".\",true]]");
+    for (unsigned int i = 0; i < kTunDnsFields; ++i)
+    {
+        if (snapshot->wanted[i] == NULL || (snapshot->baseline[i] = tunDnsReadField(tdev, i)) == NULL)
+            goto fail;
+    }
+    return true;
+fail:
+    tunLinuxDnsDropSnapshot(tdev);
+    LOGE("TunDevice: cannot capture resolver baseline for %s; no DNS settings changed", tdev->name);
+    return false;
+}
+
+static bool tunDnsApplyAttached(tun_device_t *tdev, const char *const *servers, size_t count)
+{
+    if (tdev->dns_snapshot != NULL || ! tunDnsCaptureBaseline(tdev, servers, count))
+        return false;
+    tun_dns_snapshot_t *snapshot = tdev->dns_snapshot;
+    for (unsigned int i = 0; i < kTunDnsFields; ++i)
+    {
+        /* Detect changes since the snapshot before overwriting either field. */
+        cJSON *current = tunDnsReadField(tdev, i);
+        bool   same    = current != NULL && cJSON_Compare(current, snapshot->baseline[i], true);
+        cJSON_Delete(current);
+        if (! same)
+            goto fail;
+        if (cJSON_Compare(snapshot->baseline[i], snapshot->wanted[i], true))
+            continue;
+        snapshot->pending[i]     = true;
+        tdev->dns_cleanup_needed = true;
+        if (! tunDnsWriteField(tdev, i, snapshot->wanted[i]))
+            goto fail;
+    }
+    return true;
+fail:
+    if (! tdev->dns_cleanup_needed)
+        tunLinuxDnsDropSnapshot(tdev);
+    LOGE("TunDevice: could not apply attached-interface DNS on %s; retaining any pending restoration", tdev->name);
+    return false;
+}
+
+static bool tunDnsRestoreAttached(tun_device_t *tdev)
+{
+    tun_dns_snapshot_t *snapshot = tdev->dns_snapshot;
+    if (snapshot == NULL)
+        return true;
+    bool ok = true;
+    for (unsigned int i = kTunDnsFields; i-- > 0;)
+    {
+        if (! snapshot->pending[i])
+            continue;
+        cJSON *current  = tunDnsReadField(tdev, i);
+        bool   restored = current != NULL && cJSON_Compare(current, snapshot->baseline[i], true);
+        bool   owned    = current != NULL && cJSON_Compare(current, snapshot->wanted[i], true);
+        cJSON_Delete(current);
+        if (! restored && owned)
+        {
+            /* A failed command may already have restored the baseline. Read
+             * back once; retries re-check ownership instead of blindly writing. */
+            discard tunDnsWriteField(tdev, i, snapshot->baseline[i]);
+            current  = tunDnsReadField(tdev, i);
+            restored = current != NULL && cJSON_Compare(current, snapshot->baseline[i], true);
+            cJSON_Delete(current);
+        }
+        if (restored)
+            snapshot->pending[i] = false;
+        else
+        {
+            LOGE("TunDevice: %s restoration on %s remains unresolved", tun_dns_properties[i], tdev->name);
+            ok = false;
+        }
+    }
+    tdev->dns_cleanup_needed = ! ok;
+    if (ok)
+        tunLinuxDnsDropSnapshot(tdev);
+    return ok;
+}
+#endif
+
+bool tundeviceSetDnsServers(tun_device_t *tdev, const char *const *servers, size_t count)
+{
+    if (tdev->dns_cleanup_needed)
+    {
+        LOGE("TunDevice: unresolved DNS cleanup prevents another DNS mutation on %s", tdev->name);
+        return false;
+    }
+    if (count == 0)
+    {
+        return true;
+    }
+
+    if (count > kTunDeviceMaxDnsServers)
+    {
+        LOGE("TunDevice: at most %d DNS servers are supported", kTunDeviceMaxDnsServers);
+        return false;
+    }
+
+    if (! routeCommandArgIsSafe(tdev->name))
+    {
+        LOGE("TunDevice: invalid DNS interface argument");
+        return false;
+    }
+
+    for (size_t i = 0; i < count; ++i)
+    {
+        if (! routeCommandArgIsSafe(servers[i]))
+        {
+            LOGE("TunDevice: invalid DNS server argument");
+            return false;
+        }
+    }
+
+#ifdef OS_LINUX
+    if (tdev->interface_preexisting)
+    {
+        return tunDnsApplyAttached(tdev, servers, count);
+    }
+    const char *argv_dns[3 + kTunDeviceMaxDnsServers + 1] = {"resolvectl", "dns", tdev->name, NULL};
+    for (size_t i = 0; i < count; ++i)
+    {
+        argv_dns[3 + i] = servers[i];
+    }
+
+    tdev->dns_outcome_unknown = false;
+    tdev->dns_cleanup_needed  = false;
+    if (tunRunDeviceCommand(tdev, "resolvectl", argv_dns) != 0)
+    {
+        tdev->dns_outcome_unknown = tdev->command_outcome_unknown;
+        tdev->dns_cleanup_needed  = tdev->dns_outcome_unknown;
+        LOGE("TunDevice: failed to set DNS servers on %s with resolvectl", tdev->name);
+        return false;
+    }
+    tdev->dns_cleanup_needed = true;
+
+    const char *const argv_domain[] = {"resolvectl", "domain", tdev->name, "~.", NULL};
+    if (tunRunDeviceCommand(tdev, "resolvectl", argv_domain) != 0)
+    {
+        tdev->dns_outcome_unknown = tdev->command_outcome_unknown;
+        LOGE("TunDevice: failed to set DNS routing domain on %s with resolvectl", tdev->name);
+        return false;
+    }
+
+    LOGI("TunDevice: configured %zu DNS server(s) on %s", count, tdev->name);
+    return true;
+#elif defined(OS_BSD)
+    LOGE("TunDevice: DNS configuration is not supported on this platform");
+    return false;
+#else
+#error "Unsupported OS"
+#endif
+}
+
+bool tundeviceClearDnsServers(tun_device_t *tdev)
+{
+    if (! routeCommandArgIsSafe(tdev->name))
+    {
+        LOGE("TunDevice: invalid DNS interface argument");
+        return false;
+    }
+
+#ifdef OS_LINUX
+    if (tdev->interface_preexisting)
+    {
+        return tunDnsRestoreAttached(tdev);
+    }
+    if (tdev->dns_outcome_unknown)
+    {
+        LOGE("TunDevice: DNS outcome on %s is unknown; refusing to revert possibly pre-existing settings", tdev->name);
+        return false;
+    }
+    const char *const argv[] = {"resolvectl", "revert", tdev->name, NULL};
+    if (tunRunDeviceCommand(tdev, "resolvectl", argv) != 0)
+    {
+        tdev->dns_outcome_unknown = tdev->command_outcome_unknown;
+        LOGE("TunDevice: failed to clear DNS servers on %s with resolvectl", tdev->name);
+        return false;
+    }
+
+    tdev->dns_cleanup_needed = false;
+
+    LOGI("TunDevice: cleared DNS servers on %s", tdev->name);
+    return true;
+#elif defined(OS_BSD)
+    LOGE("TunDevice: DNS configuration is not supported on this platform");
+    return false;
+#else
+#error "Unsupported OS"
+#endif
+}

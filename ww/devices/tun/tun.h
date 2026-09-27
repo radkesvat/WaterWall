@@ -1,5 +1,5 @@
 #pragma once
-#include "devices/device_frag_affinity.h"
+#include "devices/device_fragment_policy.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -41,9 +41,14 @@ bool          tundeviceSetDnsServers(tun_device_t *tdev, const char *const *serv
 bool          tundeviceClearDnsServers(tun_device_t *tdev);
 bool          tundeviceAddRoute(tun_device_t *tdev, const char *cidr, const char *route_table);
 bool          tundeviceRemoveRoute(tun_device_t *tdev, const char *cidr, const char *route_table);
-bool          tundeviceWrite(tun_device_t *tdev, sbuf_t *buf);
-bool          tundeviceDetectDefaultInterface(tun_default_route_t *out);
-bool          tundeviceDisableReversePathFiltering(const char *ifname);
+#if defined(OS_LINUX) || defined(OS_BSD)
+/* Configuration outcome queries are consumed by the immediate policy owner. */
+bool tundeviceLastCommandOutcomeUnknown(const tun_device_t *tdev);
+bool tundeviceDnsNeedsCleanup(const tun_device_t *tdev);
+#endif
+bool tundeviceWrite(tun_device_t *tdev, sbuf_t *buf);
+bool tundeviceDetectDefaultInterface(tun_default_route_t *out);
+bool tundeviceDisableReversePathFiltering(const char *ifname);
 
 #if defined(OS_WIN)
 #include "tun_windows_ownership.h"

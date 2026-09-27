@@ -13,7 +13,7 @@
  */
 #include "PacketsToStream/structure.h"
 
-#include "devices/device_flow_affinity.h"
+#include "devices/device_flow_hash.h"
 #include "tunnel_orderly_shutdown_harness.h"
 
 enum

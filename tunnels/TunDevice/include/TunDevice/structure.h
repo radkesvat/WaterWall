@@ -34,6 +34,9 @@ typedef struct tundevice_tstate_s
     char **system_routes;
     size_t system_route_count;
     size_t system_routes_installed;
+    bool   system_route_outcome_unknown;
+    size_t system_route_deletes_unknown; /* Uncertain deletions lead the installed prefix. */
+    size_t system_route_unknown_index;
     char  *post_up_script;
     char  *pre_down_script;
 

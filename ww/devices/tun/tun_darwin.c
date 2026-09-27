@@ -1,4 +1,5 @@
 #include "devices/device_flow_affinity.h"
+#include "devices/device_pool.h"
 #include "devices/device_reader_session.h"
 #include "devices/device_writer_channel.h"
 #include "devices/tun/tun_io_error.h"
@@ -981,17 +982,9 @@ bool tundeviceBringUp(tun_device_t *tdev)
      */
     buffer_pool_t *worker_pool = getCurrentEventWorkerBufferPool();
 
-    bufferpoolUpdateAllocationPaddings(tdev->reader_buffer_pool,
-                                       bufferpoolGetLargeBufferPadding(worker_pool),
-                                       bufferpoolGetMediumBufferPadding(worker_pool),
-                                       bufferpoolGetSmallBufferPadding(worker_pool),
-                                       bufferpoolGetSpliceBufferPadding(worker_pool));
+    devicePoolUpdatePadding(tdev->reader_buffer_pool, worker_pool);
 
-    bufferpoolUpdateAllocationPaddings(tdev->writer_buffer_pool,
-                                       bufferpoolGetLargeBufferPadding(worker_pool),
-                                       bufferpoolGetMediumBufferPadding(worker_pool),
-                                       bufferpoolGetSmallBufferPadding(worker_pool),
-                                       bufferpoolGetSpliceBufferPadding(worker_pool));
+    devicePoolUpdatePadding(tdev->writer_buffer_pool, worker_pool);
 
     if (! deviceWriterChannelOpen(&tdev->writer_channel, kTunWriteChannelQueueMax))
     {
@@ -1284,20 +1277,7 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void
      */
     buffer_pool_t *worker_pool = getCurrentEventWorkerBufferPool();
 
-    uint32_t worker_large_buffer_size = bufferpoolGetLargeBufferSize(worker_pool);
-    uint32_t worker_small_buffer_size = bufferpoolGetSmallBufferSize(worker_pool);
-    worker_small_buffer_size          = max(worker_small_buffer_size, (uint32_t) mtu + sizeof(uint32_t));
-
-    buffer_pool_t *reader_bpool = bufferpoolCreate(GSTATE.masterpool_buffer_pools_large,
-                                                   GSTATE.masterpool_buffer_pools_medium,
-                                                   GSTATE.masterpool_buffer_pools_small,
-                                                   GSTATE.masterpool_buffer_pools_splice,
-                                                   PROPER_BUFFER_POOL_WIDTH(RAM_PROFILE),
-                                                   worker_large_buffer_size,
-                                                   bufferpoolGetMediumBufferSize(worker_pool),
-                                                   worker_small_buffer_size,
-                                                   bufferpoolGetSplicePayloadLimit(worker_pool),
-                                                   bufferpoolGetWaitingBudgetBasis(worker_pool));
+    buffer_pool_t *reader_bpool = devicePoolCreate(worker_pool, (uint32_t) mtu + sizeof(uint32_t));
     if (UNLIKELY(reader_bpool == NULL))
     {
         LOGE("TunDevice: failed to construct reader buffer pool");
@@ -1305,16 +1285,7 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void
         return NULL;
     }
 
-    buffer_pool_t *writer_bpool = bufferpoolCreate(GSTATE.masterpool_buffer_pools_large,
-                                                   GSTATE.masterpool_buffer_pools_medium,
-                                                   GSTATE.masterpool_buffer_pools_small,
-                                                   GSTATE.masterpool_buffer_pools_splice,
-                                                   PROPER_BUFFER_POOL_WIDTH(RAM_PROFILE),
-                                                   worker_large_buffer_size,
-                                                   bufferpoolGetMediumBufferSize(worker_pool),
-                                                   worker_small_buffer_size,
-                                                   bufferpoolGetSplicePayloadLimit(worker_pool),
-                                                   bufferpoolGetWaitingBudgetBasis(worker_pool));
+    buffer_pool_t *writer_bpool = devicePoolCreate(worker_pool, (uint32_t) mtu + sizeof(uint32_t));
     if (UNLIKELY(writer_bpool == NULL))
     {
         LOGE("TunDevice: failed to construct writer buffer pool");

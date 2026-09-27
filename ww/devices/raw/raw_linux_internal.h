@@ -1,6 +1,6 @@
 #pragma once
 
-#include "raw.h"
+#include "raw_private.h"
 
 #if defined(OS_LINUX)
 

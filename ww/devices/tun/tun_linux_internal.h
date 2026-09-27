@@ -8,6 +8,9 @@
 
 #if defined(OS_LINUX)
 
+/* Command adapter seam: runs an argv directly without opening a TUN device. */
+int tunLinuxRunCommandForTest(const char *command_name, const char *const argv[]);
+
 /* Test-only observations of Linux TUN lifetime-owned resources. */
 device_reader_session_t *tunLinuxReaderSession(tun_device_t *tdev);
 buffer_pool_t           *tunLinuxWriterBufferPool(tun_device_t *tdev);

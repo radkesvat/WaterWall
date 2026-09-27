@@ -1,10 +1,11 @@
+#include "devices/device_pool.h"
 #include "generic_pool.h"
 #include "global_state.h"
 #include "loggers/internal_logger.h"
 #include "net/ipv4_packet_view.h"
-#include "raw.h"
 #include "raw_linux_internal.h"
 #include "raw_linux_send_policy.h"
+#include "raw_private.h"
 #include "wchan.h"
 #include "worker.h"
 #include <arpa/inet.h>
@@ -442,11 +443,7 @@ bool rawdeviceBringUp(raw_device_t *rdev)
      */
     buffer_pool_t *worker_pool = getCurrentEventWorkerBufferPool();
 
-    bufferpoolUpdateAllocationPaddings(rdev->writer_buffer_pool,
-                                       bufferpoolGetLargeBufferPadding(worker_pool),
-                                       bufferpoolGetMediumBufferPadding(worker_pool),
-                                       bufferpoolGetSmallBufferPadding(worker_pool),
-                                       bufferpoolGetSpliceBufferPadding(worker_pool));
+    devicePoolUpdatePadding(rdev->writer_buffer_pool, worker_pool);
 
     if (! deviceWriterChannelOpen(&rdev->writer_channel, kRawWriteChannelQueueMax))
     {
@@ -584,16 +581,7 @@ raw_device_t *rawdeviceCreate(const char *name, uint32_t mark, bool bypass_connt
      */
     buffer_pool_t *worker_pool = getCurrentEventWorkerBufferPool();
 
-    buffer_pool_t *writer_bpool = bufferpoolCreate(GSTATE.masterpool_buffer_pools_large,
-                                                   GSTATE.masterpool_buffer_pools_medium,
-                                                   GSTATE.masterpool_buffer_pools_small,
-                                                   GSTATE.masterpool_buffer_pools_splice,
-                                                   PROPER_BUFFER_POOL_WIDTH(RAM_PROFILE),
-                                                   bufferpoolGetLargeBufferSize(worker_pool),
-                                                   bufferpoolGetMediumBufferSize(worker_pool),
-                                                   bufferpoolGetSmallBufferSize(worker_pool),
-                                                   bufferpoolGetSplicePayloadLimit(worker_pool),
-                                                   bufferpoolGetWaitingBudgetBasis(worker_pool));
+    buffer_pool_t *writer_bpool = devicePoolCreate(worker_pool, 0);
     if (UNLIKELY(writer_bpool == NULL))
     {
         LOGE("RawDevice: failed to construct writer buffer pool");

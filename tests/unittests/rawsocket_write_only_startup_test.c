@@ -1,4 +1,6 @@
 #include "RawSocket/structure.h"
+#include "devices/capture/capture_private.h"
+#include "devices/raw/raw_private.h"
 
 static capture_device_t fake_capture_device;
 static raw_device_t     fake_raw_device;

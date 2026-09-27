@@ -543,12 +543,28 @@ bool tundeviceApplySystemRoutes(tundevice_tstate_t *state)
     }
 
     assert(state->tdev != NULL);
+    if (state->system_routes_installed != 0 || state->system_route_outcome_unknown ||
+        state->system_route_deletes_unknown != 0)
+    {
+        LOGE("TunDevice: unresolved system route cleanup prevents another route installation");
+        return false;
+    }
     state->system_routes_installed = 0;
 
     for (size_t i = 0; i < state->system_route_count; ++i)
     {
         if (! tundeviceAddRoute(state->tdev, state->system_routes[i], state->route_table))
         {
+#if defined(OS_LINUX) || defined(OS_BSD)
+            if (tundeviceLastCommandOutcomeUnknown(state->tdev))
+            {
+                state->system_route_outcome_unknown = true;
+                state->system_route_unknown_index   = i;
+                state->policy_cleanup_failed        = true;
+                LOGE("TunDevice: route %s may have been added; ownership cannot be established safely",
+                     state->system_routes[i]);
+            }
+#endif
             LOGE("TunDevice: failed to install system route %s", state->system_routes[i]);
             tundeviceCleanupSystemRoutes(state);
             return false;
@@ -567,24 +583,47 @@ void tundeviceCleanupSystemRoutes(tundevice_tstate_t *state)
         return;
     }
 
-    size_t       remaining = 0;
+    /* Unknown deletions lead the installed prefix and are never retried: a
+     * replacement route may belong to another owner. Other failed deletions
+     * remain independently retryable. Swaps preserve the allocation inventory. */
+    size_t       remaining = state->system_route_deletes_unknown;
     const size_t installed = state->system_routes_installed;
-    for (size_t i = 0; i < installed; ++i)
+    for (size_t i = 0; i < state->system_route_deletes_unknown; ++i)
+    {
+        state->policy_cleanup_failed = true;
+        LOGE("TunDevice: route %s deletion outcome remains unknown; refusing an unsafe retry", state->system_routes[i]);
+    }
+    for (size_t i = remaining; i < installed; ++i)
     {
         const char *cidr = state->system_routes[i];
         if (! tundeviceRemoveRoute(state->tdev, cidr, state->route_table))
         {
+            bool unknown = false;
+#if defined(OS_LINUX) || defined(OS_BSD)
+            unknown = tundeviceLastCommandOutcomeUnknown(state->tdev);
+#endif
             LOGW("TunDevice: failed to remove system route %s", cidr);
-            state->policy_cleanup_failed = true;
-            /* Keep unresolved entries in the installed prefix. Successful
-             * entries remain in the
-             * allocation inventory for final freeing. */
-            char *removed                     = state->system_routes[remaining];
-            state->system_routes[remaining++] = state->system_routes[i];
-            state->system_routes[i]           = removed;
+            state->policy_cleanup_failed    = true;
+            char *removed                   = state->system_routes[remaining];
+            state->system_routes[remaining] = state->system_routes[i];
+            state->system_routes[i]         = removed;
+            if (unknown)
+            {
+                size_t first_known                = state->system_route_deletes_unknown++;
+                char  *known                      = state->system_routes[first_known];
+                state->system_routes[first_known] = state->system_routes[remaining];
+                state->system_routes[remaining]   = known;
+            }
+            ++remaining;
         }
     }
     state->system_routes_installed = remaining;
+    if (state->system_route_outcome_unknown)
+    {
+        state->policy_cleanup_failed = true;
+        LOGE("TunDevice: route %s has an uncertain add outcome; no unowned route was deleted",
+             state->system_routes[state->system_route_unknown_index]);
+    }
 }
 
 void tundeviceFreeRouteSettings(tundevice_tstate_t *state)
@@ -604,12 +643,14 @@ void tundeviceFreeRouteSettings(tundevice_tstate_t *state)
     memoryFree(state->post_up_script);
     memoryFree(state->pre_down_script);
 
-    state->system_routes           = NULL;
-    state->system_route_count      = 0;
-    state->system_routes_installed = 0;
-    state->route_table             = NULL;
-    state->post_up_script          = NULL;
-    state->pre_down_script         = NULL;
-    state->pre_down_pending        = false;
-    state->system_route_enabled    = false;
+    state->system_routes                = NULL;
+    state->system_route_count           = 0;
+    state->system_routes_installed      = 0;
+    state->system_route_outcome_unknown = false;
+    state->system_route_deletes_unknown = 0;
+    state->route_table                  = NULL;
+    state->post_up_script               = NULL;
+    state->pre_down_script              = NULL;
+    state->pre_down_pending             = false;
+    state->system_route_enabled         = false;
 }

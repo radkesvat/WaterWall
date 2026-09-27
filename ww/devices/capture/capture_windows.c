@@ -1,10 +1,11 @@
-#include "capture.h"
+#include "capture_private.h"
 #include "capture_windows_checksum.h"
 #include "capture_windows_lifetime.h"
+#include "devices/device_pool.h"
 
 #include "buffer_pool.h"
 #include "devices/device_flow_affinity.h"
-#include "devices/device_frag_affinity.h"
+#include "devices/device_packet_checksum.h"
 #include "global_state.h"
 #include "managers/windivert_manager.h"
 #include "master_pool.h"
@@ -432,6 +433,12 @@ static const capture_windows_lifetime_ops_t capture_lifetime_ops = {
     .close_handle          = capturedeviceCloseHandle,
 };
 
+bool capturedeviceIsUp(const capture_device_t *cdev)
+{
+    assert(cdev != NULL);
+    return atomicLoadExplicit(&cdev->up, memory_order_relaxed);
+}
+
 bool caputredeviceBringUp(capture_device_t *cdev)
 {
     if (capturedeviceHasLiveResources(cdev))
@@ -463,11 +470,7 @@ bool caputredeviceBringUp(capture_device_t *cdev)
      */
     buffer_pool_t *worker_pool = getCurrentEventWorkerBufferPool();
 
-    bufferpoolUpdateAllocationPaddings(cdev->reader_buffer_pool,
-                                       bufferpoolGetLargeBufferPadding(worker_pool),
-                                       bufferpoolGetMediumBufferPadding(worker_pool),
-                                       bufferpoolGetSmallBufferPadding(worker_pool),
-                                       bufferpoolGetSpliceBufferPadding(worker_pool));
+    devicePoolUpdatePadding(cdev->reader_buffer_pool, worker_pool);
 
     cdev->reader_exit_confirmed = false;
     if (deviceReaderSessionBegin(cdev->reader_session) == 0)
@@ -575,16 +578,7 @@ capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_
      */
     buffer_pool_t *worker_pool = getCurrentEventWorkerBufferPool();
 
-    buffer_pool_t *reader_bpool = bufferpoolCreate(GSTATE.masterpool_buffer_pools_large,
-                                                   GSTATE.masterpool_buffer_pools_medium,
-                                                   GSTATE.masterpool_buffer_pools_small,
-                                                   GSTATE.masterpool_buffer_pools_splice,
-                                                   PROPER_BUFFER_POOL_WIDTH(RAM_PROFILE),
-                                                   bufferpoolGetLargeBufferSize(worker_pool),
-                                                   bufferpoolGetMediumBufferSize(worker_pool),
-                                                   bufferpoolGetSmallBufferSize(worker_pool),
-                                                   bufferpoolGetSplicePayloadLimit(worker_pool),
-                                                   bufferpoolGetWaitingBudgetBasis(worker_pool));
+    buffer_pool_t *reader_bpool = devicePoolCreate(worker_pool, 0);
     if (UNLIKELY(reader_bpool == NULL))
     {
         LOGE("CaptureDevice: failed to construct reader buffer pool");

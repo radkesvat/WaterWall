@@ -81,8 +81,13 @@ add_library(ww STATIC
 
     # Device primitives
     devices/device_flow_affinity.c
+    devices/device_pool.c
+    devices/device_flow_hash.c
+    devices/device_packet_checksum.c
     devices/device_frag_affinity.c
     devices/device_reader_session.c
+    devices/device_reader_budget.c
+    devices/device_reader_dispatch.c
     devices/device_writer_channel.c
     
     # Buffer I/O
@@ -591,12 +596,17 @@ if(APPLE)
 elseif(UNIX AND NOT ANDROID)
     target_sources(ww PRIVATE
         devices/tun/tun_linux.c
+        devices/tun/tun_linux_config.c
+        devices/tun/tun_linux_io.c
     )
     if(LINUX)
         target_sources(ww PRIVATE
             devices/tun/tun_linux_gso_limits.c
             devices/tun/tun_linux_offload.c
             devices/capture/capture_linux.c
+            devices/capture/capture_linux_io.c
+            devices/capture/capture_linux_nfqueue.c
+            devices/capture/capture_linux_rules.c
             devices/raw/raw_linux.c
             devices/raw/raw_linux_notrack.c
         )
@@ -1590,7 +1600,12 @@ endif()
 set_target_properties(ww PROPERTIES UNITY_BUILD_BATCH_SIZE 500)
 
 set_source_files_properties(
+    devices/device_packet_checksum.c
+    devices/device_flow_hash.c
     devices/capture/capture_linux.c
+    devices/capture/capture_linux_io.c
+    devices/capture/capture_linux_nfqueue.c
+    devices/capture/capture_linux_rules.c
     devices/raw/raw_linux.c
     devices/raw/raw_linux_notrack.c
     devices/raw/raw_windows.c
@@ -1630,12 +1645,19 @@ if(BUILD_TESTING)
         net/wchecksum.c
         base/quiescence_gate.c
         devices/device_reader_session.c
+        devices/device_reader_budget.c
+        devices/device_reader_dispatch.c
         devices/device_writer_channel.c
         devices/tun/tun_linux.c
+        devices/tun/tun_linux_config.c
+        devices/tun/tun_linux_io.c
         devices/tun/tun_windows.c
         devices/windows_driver_artifacts.c
         devices/windows_session_effects.c
         devices/capture/capture_linux.c
+        devices/capture/capture_linux_io.c
+        devices/capture/capture_linux_nfqueue.c
+        devices/capture/capture_linux_rules.c
         devices/raw/raw_linux.c
         objects/user.c
         objects/users.c

@@ -6,4 +6,6 @@
 #error "This compile check requires Win64 with C11 atomics disabled"
 #endif
 
-#include "../../ww/devices/device_reader_session.c"
+/* CMake compiles session, budget and dispatch as separate real-source objects
+ * with the same fallback definition. None is linked into the runtime. */
+#include "devices/device_reader_session.h"

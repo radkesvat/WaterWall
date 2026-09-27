@@ -155,9 +155,19 @@ Full-route example with local ranges excluded:
 
   `null` is treated the same as leaving the field unset.
 
+  Linux supports DNS configuration on a pre-created interface with `gso: false`.
+  For these attachments, `busctl` reads the existing systemd-resolved DNS servers
+  and search/routing domains before any DNS mutation. Cleanup restores those
+  fields, including their original order, without resetting unrelated resolver
+  settings. If the baseline cannot be read, DNS setup fails without changing it.
+  Detected external changes are left untouched and reported as incomplete cleanup.
+  Coordinate per-interface DNS changes with other network managers; systemd's
+  read/compare/write operations are not an atomic transaction across processes.
+  Built-in commands retain their seven-second deadlines.
+
   On Linux this requires `systemd-resolved` / `resolvectl`; it sets DNS servers
-  with `resolvectl dns` and installs the `~.` routing domain so the configured
-  servers are used as the default resolver path while the device is active. On
+  and installs the `~.` routing domain so the configured servers are used as the
+  default resolver path while the device is active. On
   Windows this configures static IPv4 DNS servers on the Wintun adapter with
   `netsh`; DNS precedence still follows Windows interface metrics. macOS TUN DNS
   configuration is rejected during node creation; use `post-up-script` /

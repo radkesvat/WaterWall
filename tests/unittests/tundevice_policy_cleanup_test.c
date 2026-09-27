@@ -1,10 +1,17 @@
 /* Exercise actual tunnel policy/start/stop code with inert device operations. */
+#ifdef OS_WIN
 #include "devices/tun/tun_windows_dns.h"
+#endif
 #include "loggers/network_logger.h"
 #include "structure.h"
 
 static unsigned int deletes[3];
+static unsigned int adds[3];
 static unsigned int delete_failures;
+static unsigned int add_failures;
+static bool         route_outcome_unknown;
+static unsigned int delete_unknowns;
+static unsigned int last_deleted;
 static unsigned int clear_calls;
 static unsigned int bring_down_calls;
 static unsigned int script_calls;
@@ -38,7 +45,18 @@ static bool fakeRemoveRoute(tun_device_t *device, const char *cidr, const char *
     unsigned int index = (unsigned int) (cidr[0] - '1');
     require(index < 3, "unexpected route");
     ++deletes[index];
+    last_deleted = index;
     return (delete_failures & (1U << index)) == 0;
+}
+
+static bool fakeAddRoute(tun_device_t *device, const char *cidr, const char *table)
+{
+    (void) device;
+    (void) table;
+    unsigned int index = (unsigned int) (cidr[0] - '1');
+    require(index < 3, "unexpected route add");
+    ++adds[index];
+    return (add_failures & (1U << index)) == 0;
 }
 
 static bool fakeSetDns(tun_device_t *device, const char *const *servers, size_t count)
@@ -73,6 +91,18 @@ static bool fakeDnsNeedsCleanup(const tun_device_t *device)
     return partial_dns;
 }
 
+static bool fakeLinuxDnsNeedsCleanup(const tun_device_t *device)
+{
+    (void) device;
+    return partial_dns;
+}
+
+static bool fakeLinuxCommandUnknown(const tun_device_t *device)
+{
+    (void) device;
+    return route_outcome_unknown || (delete_unknowns & (1U << last_deleted)) != 0;
+}
+
 static bool fakeBringDown(tun_device_t *device)
 {
     (void) device;
@@ -98,6 +128,7 @@ static tun_device_t *fakeCreate(const char *name, bool offload, uint16_t mtu, vo
     (void) mtu;
     (void) userdata;
     (void) cb;
+    (void) fragment_policy;
     return (tun_device_t *) (uintptr_t) 1;
 }
 
@@ -112,6 +143,12 @@ static bool fakeAssignIp(tun_device_t *device, const char *ip, unsigned int subn
 static bool fakeDeviceSuccess(tun_device_t *device)
 {
     (void) device;
+    return true;
+}
+
+static bool fakeDisableReversePathFiltering(const char *name)
+{
+    (void) name;
     return true;
 }
 
@@ -136,21 +173,25 @@ void tundeviceOnIPPacketReceived(tun_device_t *device, void *userdata, sbuf_t *b
     (void) wid;
 }
 
-#define tundeviceRemoveRoute                                              fakeRemoveRoute
-#define tundeviceSetDnsServers                                            fakeSetDns
-#define tundeviceClearDnsServers                                          fakeClearDns
-#define tundeviceWindowsDnsWasCancelled                                   fakeDnsCancelled
-#define tundeviceWindowsDnsNeedsCleanup                                   fakeDnsNeedsCleanup
-#define tundeviceBringDown                                                fakeBringDown
-#define applicationShutdownRecordFailure                                  fakeRecordFailure
-#define tundeviceCreate                                                   fakeCreate
+#define tundeviceRemoveRoute               fakeRemoveRoute
+#define tundeviceAddRoute                  fakeAddRoute
+#define tundeviceSetDnsServers             fakeSetDns
+#define tundeviceClearDnsServers           fakeClearDns
+#define tundeviceWindowsDnsWasCancelled    fakeDnsCancelled
+#define tundeviceWindowsDnsNeedsCleanup    fakeDnsNeedsCleanup
+#define tundeviceDnsNeedsCleanup           fakeLinuxDnsNeedsCleanup
+#define tundeviceLastCommandOutcomeUnknown fakeLinuxCommandUnknown
+#define tundeviceBringDown                 fakeBringDown
+#define applicationShutdownRecordFailure   fakeRecordFailure
+#define tundeviceCreate                    fakeCreate
 #define tundeviceCreateOwned(name, offload, mtu, userdata, cb, policy, ownership)                                      \
     fakeCreate(name, offload, mtu, userdata, cb, policy)
-#define tundeviceAssignIP                                                 fakeAssignIp
-#define tundeviceBringUp                                                  fakeDeviceSuccess
-#define tundeviceRequestStop                                              fakeDeviceSuccess
-#define packettunnelLifecycleAnchorBind                                   fakeBind
-#define execCmd                                                           fakeExec
+#define tundeviceAssignIP                    fakeAssignIp
+#define tundeviceBringUp                     fakeDeviceSuccess
+#define tundeviceRequestStop                 fakeDeviceSuccess
+#define tundeviceDisableReversePathFiltering fakeDisableReversePathFiltering
+#define packettunnelLifecycleAnchorBind      fakeBind
+#define execCmd                              fakeExec
 #include "../../tunnels/TunDevice/common/dns.c"
 #include "../../tunnels/TunDevice/common/routes.c"
 #include "../../tunnels/TunDevice/instance/start.c"
@@ -159,8 +200,12 @@ void tundeviceOnIPPacketReceived(tun_device_t *device, void *userdata, sbuf_t *b
 static void resetProbe(void)
 {
     memset(deletes, 0, sizeof(deletes));
+    memset(adds, 0, sizeof(adds));
     delete_failures = clear_calls = bring_down_calls = script_calls = failure_calls = 0;
-    selected_exit                                                                   = 0;
+    add_failures                                                                    = 0;
+    route_outcome_unknown                                                           = false;
+    delete_unknowns = last_deleted = 0;
+    selected_exit                  = 0;
     dns_set_ok = dns_clear_ok = bring_down_ok = dns_helper_started = true;
     dns_cancelled = partial_dns = false;
     last_offload_requested      = false;
@@ -188,6 +233,83 @@ static void testRouteInventory(void)
             "retry did not settle exactly unresolved routes");
 }
 
+#if defined(OS_LINUX) || defined(OS_BSD)
+static void testUncertainRouteAddIsNotDeleted(void)
+{
+    resetProbe();
+    char              *routes[] = {route_values[0], route_values[1], route_values[2]};
+    tundevice_tstate_t state    = {.tdev                 = (tun_device_t *) (uintptr_t) 1,
+                                   .system_route_enabled = true,
+                                   .system_routes        = routes,
+                                   .system_route_count   = 3};
+    add_failures                = 1U << 1;
+    route_outcome_unknown       = true;
+    require(! tundeviceApplySystemRoutes(&state), "uncertain route add must fail startup");
+    require(adds[0] == 1 && adds[1] == 1 && adds[2] == 0, "startup continued after uncertain route add");
+    require(deletes[0] == 1 && deletes[1] == 0 && state.system_route_outcome_unknown && state.policy_cleanup_failed,
+            "uncertain route was deleted or forgotten");
+    require(! tundeviceApplySystemRoutes(&state) && adds[0] == 1 && adds[1] == 1,
+            "retry replaced an unresolved route record");
+}
+#endif
+
+static void testExistingRouteIsNotDeleted(void)
+{
+    resetProbe();
+    char              *routes[] = {route_values[0]};
+    tundevice_tstate_t state    = {.tdev                 = (tun_device_t *) (uintptr_t) 1,
+                                   .system_route_enabled = true,
+                                   .system_routes        = routes,
+                                   .system_route_count   = 1};
+    add_failures                = 1U;
+    require(! tundeviceApplySystemRoutes(&state), "existing route must fail add");
+    require(deletes[0] == 0 && ! state.system_route_outcome_unknown, "an unrelated pre-existing route entered cleanup");
+}
+
+#if defined(OS_LINUX) || defined(OS_BSD)
+
+static void testUncertainDeletesDoNotBlockOtherRetries(void)
+{
+    resetProbe();
+    char              *routes[] = {route_values[0], route_values[1], route_values[2]};
+    tundevice_tstate_t state    = {.tdev                    = (tun_device_t *) (uintptr_t) 1,
+                                   .system_route_enabled    = true,
+                                   .system_routes           = routes,
+                                   .system_route_count      = 3,
+                                   .system_routes_installed = 3};
+    delete_failures             = 7;
+    delete_unknowns             = 6;
+    tundeviceCleanupSystemRoutes(&state);
+    require(state.system_route_deletes_unknown == 2 && state.system_routes_installed == 3,
+            "multiple uncertain deletions lost their identities");
+    delete_failures = delete_unknowns = 0;
+    tundeviceCleanupSystemRoutes(&state);
+    tundeviceCleanupSystemRoutes(&state);
+    require(deletes[0] == 2 && deletes[1] == 1 && deletes[2] == 1 && state.system_routes_installed == 2,
+            "uncertain deletions blocked an independent retry or were retried themselves");
+}
+
+static void testUncertainRouteDeleteIsNotRetried(void)
+{
+    resetProbe();
+    char              *routes[] = {route_values[0], route_values[1]};
+    tundevice_tstate_t state    = {.tdev                    = (tun_device_t *) (uintptr_t) 1,
+                                   .system_route_enabled    = true,
+                                   .system_routes           = routes,
+                                   .system_route_count      = 2,
+                                   .system_routes_installed = 2};
+    delete_failures             = 1U;
+    route_outcome_unknown       = true;
+    tundeviceCleanupSystemRoutes(&state);
+    require(state.system_route_deletes_unknown == 1 && state.system_routes_installed == 1 && deletes[0] == 1 &&
+                deletes[1] == 1,
+            "uncertain deletion did not retain cleanup status");
+    delete_failures = 0;
+    tundeviceCleanupSystemRoutes(&state);
+    require(deletes[0] == 1, "uncertain deletion was retried against a potentially foreign route");
+}
+#endif
+
 static void testDnsInventory(void)
 {
     resetProbe();
@@ -202,6 +324,19 @@ static void testDnsInventory(void)
     tundeviceCleanupDnsSettings(&state);
     tundeviceCleanupDnsSettings(&state);
     require(! state.dns_servers_installed && ! partial_dns && clear_calls == 2, "DNS retry not idempotent");
+}
+
+static void testUnownedDnsIsNotReverted(void)
+{
+    resetProbe();
+    tundevice_tstate_t state = {
+        .tdev = (tun_device_t *) (uintptr_t) 1, .dns_servers = {dns_values[0], dns_values[1]}, .dns_server_count = 2};
+    dns_set_ok         = false;
+    dns_helper_started = false;
+    require(! tundeviceApplyDnsSettings(&state) && ! state.dns_servers_installed,
+            "unowned DNS was recorded for cleanup");
+    tundeviceCleanupDnsSettings(&state);
+    require(clear_calls == 0, "unrelated pre-existing DNS was reverted");
 }
 
 static void testOwnerCleanup(void)
@@ -259,8 +394,12 @@ static void testStartupRollback(bool gso_requested, bool cancelled, bool cleanup
 #else
     require(! last_offload_requested, "unsupported platform requested TUN GSO");
 #endif
+#ifdef OS_WIN
     require(wwStartupSucceeded(result) == (cancelled && (cleanup_ok || ! helper_started)),
             "wrong cancellation/failure startup result");
+#else
+    require(! wwStartupSucceeded(result), "failed DNS setup must fail startup");
+#endif
     require(state->tdev != NULL && clear_calls == (helper_started ? 1U : 0U) && bring_down_calls == 1,
             "startup partial policy skipped cleanup or lost device before owner teardown");
     require(state->dns_servers_installed == (helper_started && ! cleanup_ok) && failure_calls == 0,
@@ -277,7 +416,14 @@ int main(void)
     require(logger != NULL, "logger allocation");
     setNetworkLogger(logger);
     testRouteInventory();
+#if defined(OS_LINUX) || defined(OS_BSD)
+    testUncertainRouteAddIsNotDeleted();
+    testUncertainRouteDeleteIsNotRetried();
+    testUncertainDeletesDoNotBlockOtherRetries();
+#endif
+    testExistingRouteIsNotDeleted();
     testDnsInventory();
+    testUnownedDnsIsNotReverted();
     testOwnerCleanup();
     testStartupRollback(true, false, false, true);
     testStartupRollback(false, true, true, true);

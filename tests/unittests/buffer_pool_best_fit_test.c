@@ -1,4 +1,5 @@
 #include "buffer_pool_internal.h"
+#include "devices/device_pool.h"
 #include "worker.h"
 #include "wwapi.h"
 
@@ -350,8 +351,83 @@ static void testWorkerCacheRetention(void)
     GSTATE.masterpool_buffer_pools_splice = NULL;
 }
 
+static void testDevicePoolGeometry(void)
+{
+    const uint32_t profiles[] = {kRamProfileS1Memory,
+                                 kRamProfileS2Memory,
+                                 kRamProfileM1Memory,
+                                 kRamProfileM2Memory,
+                                 kRamProfileL1Memory,
+                                 kRamProfileL2Memory};
+    for (size_t i = 0; i < ARRAY_SIZE(profiles); ++i)
+    {
+        GSTATE.ram_profile = profiles[i];
+        master_pool_t *masters[4];
+        for (size_t j = 0; j < ARRAY_SIZE(masters); ++j)
+            masters[j] = masterpoolCreateWithCapacity(2 * PROPER_BUFFER_POOL_WIDTH(RAM_PROFILE));
+        GSTATE.masterpool_buffer_pools_large  = masters[0];
+        GSTATE.masterpool_buffer_pools_medium = masters[1];
+        GSTATE.masterpool_buffer_pools_small  = masters[2];
+        GSTATE.masterpool_buffer_pools_splice = masters[3];
+        const bool     low                    = profiles[i] < kRamProfileM1Memory;
+        const uint32_t large                  = low ? LARGE_BUFFER_SIZE_RAM_LOW : LARGE_BUFFER_SIZE_RAM_HIGH;
+        const uint32_t medium                 = low ? MEDIUM_BUFFER_SIZE_RAM_LOW : MEDIUM_BUFFER_SIZE_RAM_HIGH;
+        buffer_pool_t *worker                 = bufferpoolCreate(masters[0],
+                                                 masters[1],
+                                                 masters[2],
+                                                 masters[3],
+                                                 PROPER_BUFFER_POOL_WIDTH(RAM_PROFILE),
+                                                 large,
+                                                 medium,
+                                                 4096,
+                                                 123456,
+                                                 654321);
+        require(worker != NULL, "device geometry worker construction");
+        bufferpoolUpdateAllocationPaddings(worker, 32, 64, 96, 128);
+        for (uint32_t minimum = 0; minimum <= 9000; minimum += 9000)
+        {
+            uint32_t expected_small;
+            require(sbufTryComputeCapacity(max(4096U, minimum), 0, &expected_small), "MTU geometry");
+            buffer_pool_t *device = devicePoolCreate(worker, minimum);
+            require(device != NULL, "device pool construction");
+            require(bufferpoolGetLargeBufferSize(device) == large && bufferpoolGetMediumBufferSize(device) == medium &&
+                        bufferpoolGetSmallBufferSize(device) == expected_small &&
+                        bufferpoolGetSplicePayloadLimit(device) == 123456 &&
+                        bufferpoolGetWaitingBudgetBasis(device) == 654321,
+                    "device pool conflated tier sizes, MTU, splice limit or waiting budget");
+            require(bufferpoolGetSmallBufferPadding(device) == 0, "construction captured padding too early");
+            devicePoolUpdatePadding(device, worker);
+            require(bufferpoolGetLargeBufferPadding(device) == bufferpoolGetLargeBufferPadding(worker) &&
+                        bufferpoolGetMediumBufferPadding(device) == bufferpoolGetMediumBufferPadding(worker) &&
+                        bufferpoolGetSmallBufferPadding(device) == bufferpoolGetSmallBufferPadding(worker) &&
+                        bufferpoolGetSpliceBufferPadding(device) == bufferpoolGetSpliceBufferPadding(worker),
+                    "device padding did not copy all four tiers");
+            bufferpoolUpdateAllocationPaddings(worker, 160, 192, 224, 256);
+            devicePoolUpdatePadding(device, worker);
+            require(bufferpoolGetLargeBufferPadding(device) == 160 && bufferpoolGetMediumBufferPadding(device) == 192 &&
+                        bufferpoolGetSmallBufferPadding(device) == 224 &&
+                        bufferpoolGetSpliceBufferPadding(device) == 256,
+                    "late padding growth was lost");
+            bufferpoolDestroy(device);
+            bufferpoolUpdateAllocationPaddings(worker, 32, 64, 96, 128);
+        }
+        GSTATE.masterpool_buffer_pools_splice = NULL;
+        require(devicePoolCreate(worker, 0) == NULL, "device construction failure was hidden");
+        bufferpoolDestroy(worker);
+        for (size_t j = 0; j < ARRAY_SIZE(masters); ++j)
+        {
+            masterpoolMakeEmpty(masters[j]);
+            masterpoolDestroy(masters[j]);
+        }
+        GSTATE.masterpool_buffer_pools_large = GSTATE.masterpool_buffer_pools_medium = NULL;
+        GSTATE.masterpool_buffer_pools_small = GSTATE.masterpool_buffer_pools_splice = NULL;
+    }
+    GSTATE.ram_profile = kRamProfileInvalid;
+}
+
 int main(void)
 {
+    testDevicePoolGeometry();
     testIndependentSizing();
     testBestFitQuery();
     testLowProfilePoolWidths();

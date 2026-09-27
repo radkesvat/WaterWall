@@ -1,4 +1,5 @@
 #include "devices/raw/raw_linux_internal.h"
+#include "devices/raw/raw_private.h"
 #include "wproc.h"
 
 #include <sys/socket.h>

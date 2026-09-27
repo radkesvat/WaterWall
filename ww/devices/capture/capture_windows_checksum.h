@@ -1,6 +1,6 @@
 #pragma once
 
-#include "devices/device_frag_affinity.h"
+#include "devices/device_packet_checksum.h"
 
 static inline device_ipv4_checksum_provenance_t captureWindowsChecksumField(bool checksum_valid, bool trusted_offload)
 {

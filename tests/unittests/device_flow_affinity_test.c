@@ -668,11 +668,20 @@ static void testWidIsHashModuloWorkerCount(void)
     const uint64_t udp_hash      = fullHashOf(udp);
     const uint64_t fragment_hash = fullHashOf(fragment);
 
+    /* Fixed results from an independent integer reference, not this parser. */
+    require(tcp_hash == UINT64_C(0xBAA6D71CF72B3817) && udp_hash == UINT64_C(0xAA33EE0BE20E2A1F) &&
+                fragment_hash == UINT64_C(0xDD5DA16A06B78649),
+            "flow hash vectors changed");
+    const wid_t expected[][3] = {{0, 0, 0}, {1, 1, 1}, {3, 3, 1}, {4, 3, 2}};
+
     for (unsigned int i = 0; i < sizeof(worker_counts) / sizeof(worker_counts[0]); ++i)
     {
         GSTATE.workers_count = (uint32_t) worker_counts[i] + 1U;
         testWorkerRegistryInstall(&g_test_worker_registry);
         require(getWorkersCount() == worker_counts[i], "the fixture published the wrong worker count");
+        require(affinityOf(tcp) == expected[i][0] && affinityOf(udp) == expected[i][1] &&
+                    affinityOf(fragment) == expected[i][2],
+                "fixed worker mapping changed");
 
         requireWidIsHashModWorkers(tcp, "IPv4 TCP worker selection is not the full hash modulo the worker count");
         requireWidIsHashModWorkers(udp, "IPv4 UDP worker selection is not the full hash modulo the worker count");

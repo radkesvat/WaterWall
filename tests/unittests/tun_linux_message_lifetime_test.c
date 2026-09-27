@@ -177,6 +177,27 @@ enum
     kFallbackAbortExitStatus = 77
 };
 
+static int          command_outcomes[3];
+static unsigned int command_calls;
+static bool         existing_interface;
+
+bool __wrap_procRunArgvWithDeadline(const char *file, const char *const argv[], const proc_command_options_t *options,
+                                    proc_command_result_t *out);
+
+bool __wrap_procRunArgvWithDeadline(const char *file, const char *const argv[], const proc_command_options_t *options,
+                                    proc_command_result_t *out)
+{
+    discard options;
+    if (strcmp(file, "resolvectl") != 0 || command_calls >= 3 ||
+        (strcmp(argv[1], "dns") != 0 && strcmp(argv[1], "domain") != 0 && strcmp(argv[1], "revert") != 0))
+    {
+        abort();
+    }
+    int result = command_outcomes[command_calls++];
+    *out       = (proc_command_result_t) {.exit_code = result == 2 ? -1 : result, .timed_out = result == 2};
+    return result == 0;
+}
+
 static unsigned int shutdown_request_calls;
 static int          shutdown_request_last_code;
 static bool         shutdown_request_accepts = true;
@@ -397,6 +418,11 @@ int __wrap_ioctl(int fd, unsigned long request, ...)
             raw_setiff_calls++;
             memoryCopy(raw_attach_name, ifr->ifr_name, IFNAMSIZ);
             raw_attach_exclusive = (ifr->ifr_flags & IFF_TUN_EXCL) != 0;
+            if (existing_interface && raw_attach_exclusive)
+            {
+                errno = EBUSY;
+                return -1;
+            }
         }
         if (fail_gso_ioctl_request == request && (ifr->ifr_flags & IFF_VNET_HDR) != 0)
         {
@@ -2378,6 +2404,44 @@ static void testGsoPendingAggregateSettlesOnReaderExit(void)
     resetCapturedMessages();
 }
 
+static void testDnsMutationCleanup(void)
+{
+    const char *servers[] = {"1.1.1.1"};
+    for (unsigned int failure = 0; failure < 2; ++failure)
+    {
+        command_calls       = 0;
+        command_outcomes[0] = failure == 0 ? 0 : 2;
+        command_outcomes[1] = 1;
+        command_outcomes[2] = 0;
+        tun_device_t *tdev  = tundeviceCreate("ww-lifetime-test", false, 1500, NULL, NULL, kDeviceFragmentPreserve);
+        require(tdev != NULL, "DNS fixture create");
+        require(! tundeviceSetDnsServers(tdev, servers, 1) && tundeviceDnsNeedsCleanup(tdev),
+                "partial/uncertain DNS mutation lost cleanup responsibility");
+        if (failure == 0)
+        {
+            command_calls = 1; /* First revert fails, second succeeds. */
+            require(! tundeviceClearDnsServers(tdev) && tundeviceDnsNeedsCleanup(tdev), "failed revert lost ownership");
+            require(tundeviceClearDnsServers(tdev) && ! tundeviceDnsNeedsCleanup(tdev), "revert retry failed");
+        }
+        else
+        {
+            require(! tundeviceClearDnsServers(tdev) && command_calls == 1,
+                    "uncertain DNS result triggered unsafe blanket revert");
+        }
+        tundeviceDestroy(tdev);
+    }
+    existing_interface = true;
+    command_calls      = 0;
+    tun_device_t *tdev = tundeviceCreate("ww-lifetime-test", false, 1500, NULL, NULL, kDeviceFragmentPreserve);
+    require(tdev != NULL, "existing interface fixture");
+    require(! raw_attach_exclusive, "raw-IP attachment to an existing interface was lost");
+    /* Attached DNS snapshot/restore behavior has its own real-configuration
+     * fixture in tun_linux_dns_test.c. Creating an attachment itself is inert. */
+    require(command_calls == 0, "attachment changed DNS before policy setup");
+    tundeviceDestroy(tdev);
+    existing_interface = false;
+}
+
 int main(void)
 {
     test_env_t env;
@@ -2387,6 +2451,7 @@ int main(void)
     loggerSetHandler(logger, captureTunLog);
     setInternalLogger(logger);
     checkSumInit();
+    testDnsMutationCleanup();
     testGsoNegotiationAndRawFallback();
     testGsoScratchAllocationFallsBackToRaw();
     testGsoReaderResumesPendingWithoutTunReadiness();

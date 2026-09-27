@@ -1,58 +1,23 @@
 #pragma once
 
+#include "shiftbuffer.h"
 #include "wlibc.h"
 
-#include "buffer_pool.h"
-#include "devices/device_writer_channel.h"
-#include "loggers/log_rate_limiter.h"
-#include "raw_lifecycle.h"
-#include "wthread.h"
+typedef struct raw_device_s raw_device_t;
 
-struct raw_device_s;
-
-enum
-{
-    kRawDiscardReportIntervalMs = 1000
-};
-
-typedef struct raw_device_s
-{
-    char *name;
-#ifdef OS_WIN
-    HANDLE handle;
-#else
-    int socket;
-#endif
-#ifdef OS_LINUX
-    /* Lifecycle-owner state; never modified by the writer thread. */
-    bool bypass_conntrack;
-    bool notrack_rule_pending;
-    char notrack_comment[48];
-#endif
-    log_rate_limiter_t discard_log_limiter;
-    uint64_t           oversized_packet_total;
-    uint64_t           message_too_large_packet_total;
-    uint64_t           packet_local_send_error_total;
-    uint64_t           transient_send_error_total;
-    uint32_t           last_discard_error;
-    uint32_t           mark;
-    void              *userdata;
-    wthread_t          read_thread;
-    wthread_t          write_thread;
-
-    wthread_routine routine_writer;
-
-    buffer_pool_t          *writer_buffer_pool;
-    device_writer_channel_t writer_channel;
-    atomic_int              lifecycle;
-    bool                    writer_joinable;
-
-} raw_device_t;
+/* The caller owns a live handle until rawdeviceDestroy(). BringDown joins the
+ * writer and releases its resources; RequestStop only signals it to stop.
+ * Create/BringUp run on an event worker before publication. The lifecycle owner
+ * serializes stop, join and destruction; destruction follows producer quiescence.
+ * IsUp is a snapshot, not a lifetime reference or permission to race destruction. */
 
 bool rawdeviceIsUp(const raw_device_t *rdev);
 bool rawdeviceBringUp(raw_device_t *rdev);
 void rawdeviceRequestStop(raw_device_t *rdev);
 bool rawdeviceBringDown(raw_device_t *rdev);
+/* Called from an event worker with a live handle. True transfers the buffer to
+ * the device queue, not necessarily to the network. False leaves it with the
+ * caller. */
 bool rawdeviceWrite(raw_device_t *rdev, sbuf_t *buf);
 
 raw_device_t *rawdeviceCreate(const char *name, uint32_t mark, bool bypass_conntrack, void *userdata);

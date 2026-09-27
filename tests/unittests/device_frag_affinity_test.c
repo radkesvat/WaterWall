@@ -1,3 +1,4 @@
+#include "devices/device_flow_affinity.h"
 #include "devices/device_frag_affinity.c"
 #include "devices/device_frag_affinity.h"
 #include "wwapi.h"

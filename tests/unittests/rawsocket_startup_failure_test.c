@@ -1,4 +1,6 @@
 #include "RawSocket/structure.h"
+#include "devices/capture/capture_private.h"
+#include "devices/raw/raw_private.h"
 #include <unistd.h>
 
 static int notify_fd = -1;

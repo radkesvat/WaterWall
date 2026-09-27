@@ -1,3 +1,4 @@
+#include "devices/raw/raw_private.h"
 #include "wwapi.h"
 
 #include "devices/raw/raw.h"

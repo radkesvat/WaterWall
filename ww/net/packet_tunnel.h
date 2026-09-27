@@ -5,7 +5,7 @@
  */
 
 #include "cJSON.h"
-#include "devices/device_frag_affinity.h"
+#include "devices/device_fragment_policy.h"
 #include "tunnel.h"
 
 /**
