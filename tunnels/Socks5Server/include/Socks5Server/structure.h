@@ -112,20 +112,20 @@ typedef struct socks5server_lstate_s
     socks5server_phase_t                  phase;
     socks5server_line_kind_t              kind;
     // CONNECT reply and deferred application FIFO are independent of transport Est.
-    bool                                  transport_est_forwarded;
-    bool                                  control_draining;
-    bool                                  input_draining;
-    bool                                  next_initialized;
-    bool                                  next_initializing;
-    bool                                  prev_paused;
-    bool                                  next_paused;
-    bool                                  next_read_paused;
-    bool                                  connect_reply_sent;
-    bool                                  client_line_ref_held;
-    bool                                  user_handle_recorded;
-    bool                                  udp_first_payload_validated;
-    bool                                  prev_finished; // prev/downstream side already finished this control line
-    bool                                  next_finished; // next/upstream side already finished this control line
+    bool transport_est_forwarded : 1;
+    bool control_draining : 1;
+    bool input_draining : 1;
+    bool next_initialized : 1;
+    bool next_initializing : 1;
+    bool prev_paused : 1;
+    bool next_paused : 1;
+    bool next_read_paused : 1;
+    bool connect_reply_sent : 1;
+    bool client_line_ref_held : 1;
+    bool user_handle_recorded : 1;
+    bool udp_first_payload_validated : 1;
+    bool prev_finished : 1; // prev/downstream side already finished this control line
+    bool next_finished : 1; // next/upstream side already finished this control line
 } socks5server_lstate_t;
 
 enum

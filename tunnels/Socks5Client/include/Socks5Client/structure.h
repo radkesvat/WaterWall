@@ -60,19 +60,19 @@ typedef struct socks5client_lstate_s
     buffer_budget_t          pending_budget;
     buffer_queue_t           pending_up;
     buffer_queue_t           pending_down; // Nested proxy input / deferred response FIFO.
-    bool                     input_draining;
     socks5client_protocol_t  protocol;
     socks5client_phase_t     phase;
     socks5client_line_kind_t kind;
-    bool                     transport_est_forwarded;
-    bool                     greeting_due;
-    bool                     read_pause_sent;
-    bool                     next_paused;
-    bool                     prev_paused;
-    bool                     source_pause_sent;
-    bool                     draining_up;
-    bool                     udp_control_ready;
-    bool                     udp_relay_ready;
+    bool                     input_draining : 1;
+    bool                     transport_est_forwarded : 1;
+    bool                     greeting_due : 1;
+    bool                     read_pause_sent : 1;
+    bool                     next_paused : 1;
+    bool                     prev_paused : 1;
+    bool                     source_pause_sent : 1;
+    bool                     draining_up : 1;
+    bool                     udp_control_ready : 1;
+    bool                     udp_relay_ready : 1;
 } socks5client_lstate_t;
 
 enum
