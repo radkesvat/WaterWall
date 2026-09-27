@@ -1,4 +1,4 @@
-#include "structure.h"
+#include "internal.h"
 
 sbuf_t *hpcBuffer(line_t *l, size_t n)
 {

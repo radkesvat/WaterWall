@@ -1,4 +1,4 @@
-#include "structure.h"
+#include "internal.h"
 
 uint64_t hpcNow(line_t *l)
 {
@@ -27,6 +27,19 @@ void hpcDetachTimer(hpc_lstate_t *ls)
     weventSetUserData(timer, NULL);
     wtimerDelete(timer);
 }
+void hpcReleaseResponseStorage(hpc_lstate_t *ls)
+{
+    char *carry = ls->carry, *header = ls->saved_header;
+    ls->carry = ls->saved_header = NULL;
+    ls->response                 = (hps_header_t) {0};
+    ls->carry_length             = 0;
+    ls->header_started = ls->status_line_done = false;
+    ls->header_at                             = 0;
+    ls->informational                         = 0;
+    memoryFree(carry);
+    memoryFree(header);
+}
+
 void hpcDestroyState(tunnel_t *t, line_t *l)
 {
     hpc_lstate_t *ls = lineGetState(l, t);
@@ -46,8 +59,7 @@ void hpcDestroyState(tunnel_t *t, line_t *l)
         bufferqueueDestroy(&ls->pending[d]);
         bufferbudgetAssertEmpty(&ls->budgets[d]);
     }
-    memoryFree(ls->carry);
-    memoryFree(ls->saved_header);
+    hpcReleaseResponseStorage(ls);
     memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(*ls)));
 }
 void hpcClose(tunnel_t *t, line_t *l)

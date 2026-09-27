@@ -1,4 +1,4 @@
-#include "structure.h"
+#include "internal.h"
 
 /* Child input maps back to the borrowed client. HTTP responses are parsed
  * below; fallback and CONNECT remain opaque in the shared flow coordinator. */
@@ -59,17 +59,18 @@ bool hpsProcessResponse(hps_session_t *s)
                 hpsDiscardBuffer(s, &up->output);
                 hpsDiscardBuffer(s, &up->deferred);
                 hpsDiscardBuffer(s, &up->incoming);
+                hpsClearHeader(s, kHpsUpstream);
             }
         }
         if (! (s->http10 && h.status < 200) && ! hpsRewriteHeaderOutput(s, &h, kHpsDownstream))
             error = 503;
-        if (! error && h.chunked && h.status >= 200)
+        if (! error && h.body.kind == kHpsBodyChunked && h.status >= 200)
         {
             hpsClearHeader(s, kHpsDownstream);
-            down->trailer_context = h;
-            down->header_storage  = block;
-            down->header_length   = (size_t) n;
-            block                 = NULL;
+            if (! hpsRetainTrailer(s, kHpsDownstream, &h, block, (size_t) n))
+                error = 503;
+            else
+                block = NULL;
         }
     }
     memoryFree(block);

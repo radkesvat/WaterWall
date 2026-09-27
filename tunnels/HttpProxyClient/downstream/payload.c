@@ -1,4 +1,4 @@
-#include "structure.h"
+#include "internal.h"
 
 static bool bodyRange(const hpc_lstate_t *ls, size_t n)
 {
@@ -158,6 +158,8 @@ bool hpcResponse(tunnel_t *t, line_t *l, sbuf_t *b)
             }
             ls->accepted = true;
             ls->body     = ls->response.body;
+            if (ts->connect)
+                hpcReleaseResponseStorage(ls);
             if (! ts->connect && ls->body.kind == kHpsBodyDone)
             {
                 hpcClose(t, l);

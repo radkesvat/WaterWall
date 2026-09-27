@@ -1,4 +1,4 @@
-#include "structure.h"
+#include "internal.h"
 
 /* Shared bounded storage and HTTP framing for both Payload callbacks. */
 
@@ -14,15 +14,25 @@ void hpsDiscardBuffer(hps_session_t *s, sbuf_t **slot)
 
 void hpsClearHeader(hps_session_t *s, hps_direction_t d)
 {
-    hps_direction_state_t *dir = &s->directions[d];
-    if (dir->header_storage)
-    {
-        memoryZero(dir->header_storage, dir->header_length);
-        memoryFree(dir->header_storage);
-        dir->header_storage = NULL;
-    }
-    dir->trailer_context = (hps_header_t) {0};
-    dir->header_length   = 0;
+    hps_trailer_owner_t *owner = s->directions[d].trailer;
+    s->directions[d].trailer   = NULL;
+    if (! owner)
+        return;
+    memoryZero(owner->storage, owner->length);
+    memoryFree(owner->storage);
+    memoryZero(owner, sizeof(*owner));
+    memoryFree(owner);
+}
+
+bool hpsRetainTrailer(hps_session_t *s, hps_direction_t d, const hps_header_t *header, char *storage, size_t length)
+{
+    assert(header->body.kind == kHpsBodyChunked && s->directions[d].trailer == NULL);
+    hps_trailer_owner_t *owner = memoryAllocate(sizeof(*owner));
+    if (! owner)
+        return false;
+    *owner                   = (hps_trailer_owner_t) {.context = *header, .storage = storage, .length = length};
+    s->directions[d].trailer = owner;
+    return true;
 }
 
 size_t hpsPendingBytes(hps_session_t *s)
@@ -203,11 +213,12 @@ hps_step_t hpsProcessBody(hps_session_t *s, hps_direction_t d)
         return kHpsStepNeedInput;
     size_t used;
     bool   emit;
-    int    result = hpsBodyStep(b,
+    assert(b->kind != kHpsBodyChunked || dir->trailer != NULL);
+    int result = hpsBodyStep(b,
                              sbufGetRawPtr(dir->input),
                              sbufGetLength(dir->input),
                              d == kHpsDownstream && s->http10,
-                             &dir->trailer_context,
+                             dir->trailer ? &dir->trailer->context : NULL,
                              &used,
                              &emit);
     if (result < 0)

@@ -1,4 +1,4 @@
-#include "structure.h"
+#include "internal.h"
 
 api_result_t httpproxyserverTunnelApi(tunnel_t *t, sbuf_t *message)
 {

@@ -1,5 +1,5 @@
+#include "internal.h"
 #include "loggers/network_logger.h"
-#include "structure.h"
 void httpproxyclientTunnelDownStreamFinish(tunnel_t *t, line_t *l)
 {
     hpc_lstate_t *ls = lineGetState(l, t);

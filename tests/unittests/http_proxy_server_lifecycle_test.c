@@ -1,5 +1,5 @@
 #include "AuthenticationClient/structure.h"
-#include "HttpProxyServer/structure.h"
+#include "HttpProxyServer/internal.h"
 #include "splice_buffer.h"
 #include "wevent.h"
 
@@ -7,19 +7,19 @@
 #include <unistd.h>
 #endif
 
-/* Real pool-backed lines and callbacks, with no sockets or linker wrapping. */
-static tunnel_t *proxy, *prev, *next, *fallback;
-static unsigned  fallback_opens, init_action, child_pauses;
-static bool      in_fallback_init;
-static line_t   *client, *child;
-static unsigned  opens, closes, establishments, client_writes, request_writes;
-static unsigned  close_on; /* 1 Init, 2 Est, 3 Payload, 4 Pause, 5 Resume */
-static bool      refuse, automatic_response;
-static char      received[4 * 1024 * 1024], sent[4 * 1024 * 1024];
-static bool      pause_request, pause_response, delay_establishment;
-static size_t    received_len;
-static size_t    sent_len;
-static bool      producer_paused[2];
+/* Real pool-backed lines and callbacks; Linux tests can refuse optional trailer allocation. */
+static tunnel_t   *proxy, *prev, *next, *fallback;
+static unsigned    fallback_opens, init_action, child_pauses;
+static bool        in_fallback_init;
+static line_t     *client, *child;
+static unsigned    opens, closes, establishments, client_writes, request_writes;
+static unsigned    close_on; /* 1 Init, 2 Est, 3 Payload, 4 Pause, 5 Resume */
+static bool        refuse, automatic_response;
+static char        received[4 * 1024 * 1024], sent[4 * 1024 * 1024];
+static bool        pause_request, pause_response, delay_establishment;
+static size_t      received_len;
+static size_t      sent_len;
+static bool        producer_paused[2];
 static bool        nested_payload[2], finish_response;
 static const char *nested_bytes;
 /* Replay the existing HTTP/auth/lifetime cases with real pipe input as well. */
@@ -57,6 +57,80 @@ static void require(bool ok, const char *text)
         exit(1);
     }
 }
+
+#ifdef HPS_TRAILER_ALLOC_TEST
+static bool           track_trailers, refuse_trailer;
+static unsigned       trailer_allocations, trailer_frees;
+static hps_session_t *observed_session;
+static struct
+{
+    hps_trailer_owner_t *owner;
+    bool                 header_freed;
+} trailer_slots[4];
+void *__real_memoryAllocate(size_t size);
+void *__wrap_memoryAllocate(size_t size);
+void *__wrap_memoryAllocate(size_t size)
+{
+    if (track_trailers && size == sizeof(hps_trailer_owner_t))
+    {
+        if (refuse_trailer)
+        {
+            refuse_trailer = false;
+            return NULL;
+        }
+        hps_trailer_owner_t *owner = __real_memoryAllocate(size);
+        require(owner != NULL, "trailer allocation fixture");
+        for (unsigned i = 0; i < ARRAY_SIZE(trailer_slots); ++i)
+            if (! trailer_slots[i].owner)
+            {
+                trailer_slots[i].owner        = owner;
+                trailer_slots[i].header_freed = false;
+                ++trailer_allocations;
+                return owner;
+            }
+        require(false, "trailer ownership ledger full");
+    }
+    return __real_memoryAllocate(size);
+}
+void __real_memoryFree(void *ptr);
+void __wrap_memoryFree(void *ptr);
+void __wrap_memoryFree(void *ptr)
+{
+    if (track_trailers && ptr)
+        for (unsigned i = 0; i < ARRAY_SIZE(trailer_slots); ++i)
+        {
+            hps_trailer_owner_t *owner = trailer_slots[i].owner;
+            if (! owner)
+                continue;
+            if (ptr == owner->storage)
+            {
+                require(observed_session->directions[0].trailer != owner &&
+                            observed_session->directions[1].trailer != owner,
+                        "header freed before owner detachment");
+                for (size_t n = 0; n < owner->length; ++n)
+                    require(owner->storage[n] == 0, "saved header was not wiped before free");
+                require(! trailer_slots[i].header_freed, "saved header freed twice");
+                trailer_slots[i].header_freed = true;
+            }
+            if (ptr == owner)
+            {
+                require(trailer_slots[i].header_freed, "trailer owner lost its saved header");
+                trailer_slots[i].owner = NULL;
+                ++trailer_frees;
+            }
+        }
+    __real_memoryFree(ptr);
+}
+static void startTrailerTracking(void)
+{
+    require(! track_trailers, "nested allocation tracking");
+    trailer_allocations = trailer_frees = 0;
+    refuse_trailer                      = false;
+    observed_session                    = ((hps_lstate_t *) lineGetState(client, proxy))->session;
+    hpsRetain(observed_session);
+    track_trailers = true;
+}
+#endif
 
 static void clientClose(void)
 {
@@ -166,6 +240,8 @@ static void childFinish(tunnel_t *t, line_t *l)
     require(t == (fallback_opens ? fallback : next), "wrong Finish branch");
     ++closes;
     child = NULL;
+    if (close_on == 9)
+        clientClose();
 }
 
 static void childInit(tunnel_t *t, line_t *l)
@@ -288,8 +364,8 @@ static void resetClient(tunnel_chain_t *chain)
 {
     fallback_opens = init_action = child_pauses = 0;
     last_wrapper[0] = last_wrapper[1] = 0;
-    splice_writes[0] = splice_writes[1]         = 0;
-    in_fallback_init                            = false;
+    splice_writes[0] = splice_writes[1] = 0;
+    in_fallback_init                    = false;
     nested_resume = finish_request = false;
     nested_payload[0] = nested_payload[1] = finish_response = false;
     nested_bytes                                            = "NEW";
@@ -744,7 +820,7 @@ static void pipelinePressure(tunnel_chain_t *chain, const char *get)
     sendBytes(client, false, get);
     httpproxyserverTunnelUpStreamPause(proxy, client);
     const size_t overflow_length = UINT64_C(2) * 1024 * 1024 + 1;
-    char *overflow = memoryAllocate(overflow_length + 1);
+    char        *overflow        = memoryAllocate(overflow_length + 1);
     memorySet(overflow, 'x', overflow_length);
     overflow[overflow_length] = 0;
     sendBytes(client, false, overflow); /* True overflow of the fixed delivery allowance. */
@@ -1130,6 +1206,156 @@ static void httpBodyCases(tunnel_chain_t *chain)
     lineUnref(client);
 }
 
+#ifdef HPS_TRAILER_ALLOC_TEST
+static void finishTrailerTracking(void)
+{
+    clientClose();
+    require(! observed_session->directions[0].trailer && ! observed_session->directions[1].trailer &&
+                trailer_frees == trailer_allocations,
+            "trailer owners survived session cleanup");
+    track_trailers = false;
+    hpsRelease(observed_session);
+    observed_session = NULL;
+    lineUnref(client);
+}
+static void trailerOwnerCases(tunnel_chain_t *chain)
+{
+    require(sizeof(hps_session_t) < 2000, "base session still embeds two parsed headers");
+    const char *requests[] = {"CONNECT a:443 HTTP/1.1\r\nHost: a\r\n\r\n",
+                              "GET http://a/ HTTP/1.1\r\nHost: a\r\n\r\n",
+                              "POST http://a/ HTTP/1.1\r\nHost: a\r\nContent-Length: 1\r\n\r\na",
+                              "HEAD http://a/ HTTP/1.1\r\nHost: a\r\n\r\n",
+                              "GET http://a/ HTTP/1.1\r\nHost: a\r\n\r\n"};
+    for (unsigned i = 0; i < ARRAY_SIZE(requests); ++i)
+    {
+        resetClient(chain);
+        automatic_response = false;
+        startTrailerTracking();
+        sendBytes(client, false, requests[i]);
+        if (i)
+            sendBytes(child,
+                      true,
+                      i == 3   ? "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"
+                      : i == 4 ? "HTTP/1.1 304 Not Modified\r\nTransfer-Encoding: chunked\r\n\r\n"
+                               : "HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\nz");
+        require(trailer_allocations == 0, "non-chunked effective body allocated trailer ownership");
+        finishTrailerTracking();
+    }
+    hps_tstate_t *ts = tunnelGetState(proxy);
+    ts->auth_mode    = kHpsAuthLocal;
+    ts->fallback     = fallback;
+    fallbackStart(chain);
+    startTrailerTracking();
+    sendBytes(client, false, "GET http://a/ HTTP/1.1\r\nHost: a\r\nProxy-Authorization: Basic !!!\r\n\r\n");
+    require(fallback_opens == 1 && trailer_allocations == 0, "fallback allocated trailer context");
+    finishTrailerTracking();
+    ts->auth_mode = kHpsAuthNone;
+    ts->fallback  = NULL;
+
+    const char *chunk_request  = "POST http://a/ HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n"
+                                 "Connection: X-No\r\nTrailer: X-End\r\n\r\n1\r\na\r\n";
+    const char *chunk_response = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: X-No\r\n\r\n";
+    resetClient(chain);
+    automatic_response = false;
+    startTrailerTracking();
+    sendBytes(client, false, chunk_request);
+    require(trailer_allocations == 1 && observed_session->directions[0].trailer, "chunked request lacks its owner");
+    sendBytes(child, true, "HTTP/1.1 103 Early Hints\r\n\r\n");
+    sendBytes(client, false, "0\r\nX-End: yes\r\n");
+    require(observed_session->directions[0].trailer && trailer_frees == 0, "fragmented trailer lost context");
+    sendBytes(client, false, "\r\n");
+    require(! observed_session->directions[0].trailer && trailer_frees == 1, "completed request retained owner");
+    sendBytes(child, true, chunk_response);
+    require(trailer_allocations == 2 && observed_session->directions[1].trailer, "chunked response lacks its owner");
+    sendBytes(child, true, "1\r\nz\r\n0\r\nX-End: yes\r\n");
+    require(observed_session->directions[1].trailer, "fragmented response trailer lost context");
+    sendBytes(child, true, "\r\n");
+    require(trailer_frees == 2 && observed_session->phase == kHpsRequest, "completed exchange retained owner");
+    sendBytes(client, false, requests[1]);
+    sendBytes(child, true, "HTTP/1.1 204 No Content\r\n\r\n");
+    require(opens == 1 && trailer_allocations == 2, "sequential reuse retained or allocated trailer context");
+    finishTrailerTracking();
+
+    /* A final response cancels an unfinished upload, even when both sides use chunked framing. */
+    resetClient(chain);
+    automatic_response = false;
+    startTrailerTracking();
+    sendBytes(client, false, chunk_request);
+    sendBytes(child, true, chunk_response);
+    require(observed_session->upload_stopped && ! observed_session->directions[0].trailer &&
+                observed_session->directions[1].trailer && trailer_allocations == 2 && trailer_frees == 1,
+            "early final response retained canceled upload context or lost response context");
+    sendBytes(child, true, "0\r\n\r\n");
+    require(! lineIsAlive(client) && trailer_frees == 2, "early final completion leaked context");
+    finishTrailerTracking();
+
+    for (unsigned down = 0; down < 2; ++down)
+        for (unsigned nominated = 0; nominated < 2; ++nominated)
+        {
+            resetClient(chain);
+            automatic_response = false;
+            startTrailerTracking();
+            sendBytes(client, false, down ? requests[1] : chunk_request);
+            if (down)
+                sendBytes(child, true, chunk_response);
+            else
+                httpproxyserverTunnelUpStreamPause(proxy, client);
+            sendBytes(
+                down ? child : client, down, nominated ? "0\r\nX-No: bad\r\n\r\n" : "0\r\nContent-Type: bad\r\n\r\n");
+            require(! observed_session->directions[down].trailer && trailer_frees == trailer_allocations,
+                    "forbidden trailer error retained context");
+            if (! down)
+                httpproxyserverTunnelUpStreamResume(proxy, client);
+            require(! lineIsAlive(client), "forbidden trailer was accepted");
+            finishTrailerTracking();
+        }
+    for (unsigned down = 0; down < 2; ++down)
+    {
+        resetClient(chain);
+        automatic_response = false;
+        startTrailerTracking();
+        if (down)
+            sendBytes(client, false, requests[1]);
+        refuse_trailer = true;
+        sendBytes(down ? child : client, down, down ? chunk_response : chunk_request);
+        require(! refuse_trailer && ! lineIsAlive(client) && ! fallback_opens && opens == down &&
+                    trailer_allocations == 0 && strstr(received, down ? "502" : "503"),
+                "trailer refusal published a partial owner or changed refusal policy");
+        finishTrailerTracking();
+    }
+    resetClient(chain);
+    automatic_response = false;
+    startTrailerTracking();
+    sendBytes(client, false, requests[1]);
+    close_on       = 9;
+    refuse_trailer = true;
+    sendBytes(child, true, chunk_response);
+    require(! lineIsAlive(client) && ! observed_session->directions[1].output,
+            "error handling queued output after child Finish closed the client");
+    finishTrailerTracking();
+
+    const unsigned close_events[] = {1, 8, 3};
+    for (unsigned i = 0; i < ARRAY_SIZE(close_events); ++i)
+    {
+        resetClient(chain);
+        automatic_response = false;
+        startTrailerTracking();
+        if (i == 2)
+            sendBytes(client, false, requests[1]);
+        close_on = close_events[i];
+        sendBytes(i == 2 ? child : client, i == 2, i == 2 ? chunk_response : chunk_request);
+        require(! lineIsAlive(client) && trailer_allocations == 1 && trailer_frees == 1,
+                "callback close did not settle the trailer owner exactly once");
+        finishTrailerTracking();
+    }
+    printf("Trailer storage: session=%zu direction=%zu optional-owner=%zu; non-chunked=0, chunked=1 "
+           "allocation/direction\n",
+           sizeof(hps_session_t),
+           sizeof(hps_direction_state_t),
+           sizeof(hps_trailer_owner_t));
+}
+#endif
+
 static void readPreferenceCases(tunnel_chain_t *chain)
 {
     const unsigned saved_representation = representation;
@@ -1302,7 +1528,7 @@ static void runSuite(uint32_t large_size, uint32_t splice_limit)
     master_pool_t *large = masterpoolCreateWithCapacity(8), *small = masterpoolCreateWithCapacity(8);
     master_pool_t *medium = masterpoolCreateWithCapacity(8);
     master_pool_t *splice = masterpoolCreateWithCapacity(8);
-    master_pool_t *ios  = masterpoolCreateWithCapacity(8);
+    master_pool_t *ios    = masterpoolCreateWithCapacity(8);
     buffer_pool_t *pool   = bufferpoolCreate(large,
                                            medium,
                                            small,
@@ -1374,9 +1600,12 @@ static void runSuite(uint32_t large_size, uint32_t splice_limit)
     fallbackCases(chain);
     localAuthentication(chain);
     httpBodyCases(chain);
+#ifdef HPS_TRAILER_ALLOC_TEST
+    trailerOwnerCases(chain);
+#endif
     readPreferenceCases(chain);
 
-    const char *get      = "GET http://127.0.0.1:80/a HTTP/1.1\r\nHost: ignored.test\r\n\r\n";
+    const char *get = "GET http://127.0.0.1:80/a HTTP/1.1\r\nHost: ignored.test\r\n\r\n";
     cachedTimeoutClock(chain, get);
     const char *fix_case = getenv("HPS_FIX_CASE");
     if (! fix_case || ! stringCompare(fix_case, "R1"))

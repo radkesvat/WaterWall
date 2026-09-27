@@ -1,4 +1,4 @@
-#include "structure.h"
+#include "internal.h"
 
 static void timeout(wtimer_t *timer)
 {

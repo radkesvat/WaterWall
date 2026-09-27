@@ -1,5 +1,5 @@
+#include "internal.h"
 #include "loggers/network_logger.h"
-#include "structure.h"
 
 static void bindFallback(tunnel_t *t)
 {

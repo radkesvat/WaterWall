@@ -1,4 +1,4 @@
-#include "structure.h"
+#include "internal.h"
 
 void hpsRetain(hps_session_t *s)
 {

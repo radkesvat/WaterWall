@@ -1,4 +1,4 @@
-#include "structure.h"
+#include "internal.h"
 
 /* Shared request/response progress. Callers retain the session; pumping
  * serializes reentry while each callback publishes its own direction first. */
@@ -28,6 +28,8 @@ void hpsFail(hps_session_t *s, unsigned status)
     }
     s->phase = kHpsError;
     hpsCloseChild(s, false);
+    if (! hpsIsActive(s))
+        return;
     for (unsigned i = 0; i < 2; ++i)
     {
         hps_direction_state_t *dir = &s->directions[i];
@@ -35,6 +37,7 @@ void hpsFail(hps_session_t *s, unsigned status)
         hpsDiscardBuffer(s, &dir->output);
         hpsDiscardBuffer(s, &dir->deferred);
         hpsDiscardBuffer(s, &dir->incoming);
+        hpsClearHeader(s, i);
     }
     const char *reason = "Bad Request";
     switch (status)
@@ -113,8 +116,8 @@ void hpsUpdatePressure(hps_session_t *s)
         if (want == dir->read_paused ||
             (d == kHpsDownstream && (! s->child || (s->phase != kHpsFallback && ! s->child_established))))
             continue;
-        dir->read_paused  = want;
-        line_t *line      = d == kHpsUpstream ? s->client : s->child;
+        dir->read_paused = want;
+        line_t *line     = d == kHpsUpstream ? s->client : s->child;
         lineRef(line);
         if (d == kHpsUpstream)
         {

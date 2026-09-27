@@ -1,4 +1,4 @@
-#include "structure.h"
+#include "internal.h"
 void httpproxyclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
 {
     hpc_tstate_t *ts = tunnelGetState(t);

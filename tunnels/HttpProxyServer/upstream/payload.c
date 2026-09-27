@@ -1,5 +1,4 @@
-#include "AuthenticationClient/interface.h"
-#include "structure.h"
+#include "internal.h"
 
 /* Client input is admitted before authentication, branch selection and body
  * forwarding. The shared pump calls hpsProcessRequest() below when a header is ready. */
@@ -61,60 +60,10 @@ bool hpsProcessRequest(hps_session_t *s)
     hps_tstate_t *ts       = hpsSettings(s);
     if (! error && ts->auth_mode != kHpsAuthNone)
     {
-        if (! hpsDecodeBasic(h.credentials, username, password, key))
-        {
-            error         = 407;
-            auth_rejected = true;
-        }
-        else if (ts->auth_mode == kHpsAuthLocal)
-        {
-            bool matched = false;
-            for (size_t i = 0; i < ts->user_count; ++i)
-                if (! stringCompare(username, ts->users[i].username) &&
-                    ! stringCompare(password, ts->users[i].password))
-                {
-                    matched = true;
-                    break;
-                }
-            if (! matched)
-            {
-                error         = 407;
-                auth_rejected = true;
-            }
-        }
-        else if (! authenticationclientIsReady(ts->auth))
-        {
-            error         = 503;
-            auth_rejected = true;
-        }
-        else
-        {
-            authenticationclient_user_lookup_result_t result =
-                authenticationclientGetUserByPasswordWithResult(hpsSettings(s)->auth, key, &identity);
-            switch (result)
-            {
-            case kAuthenticationClientUserLookupOk:
-                break;
-            case kAuthenticationClientUserLookupUsersUnavailable:
-                auth_rejected = true;
-                error         = 503;
-                break;
-            case kAuthenticationClientUserLookupUserNotFound:
-            case kAuthenticationClientUserLookupPasswordMismatch:
-            case kAuthenticationClientUserLookupUserDisabled:
-            case kAuthenticationClientUserLookupUserExpired:
-            case kAuthenticationClientUserLookupUserLimitReached:
-            case kAuthenticationClientUserLookupUserIdRequired:
-                auth_rejected = true;
-                error         = 407;
-                break;
-            case kAuthenticationClientUserLookupInvalidArgument:
-            case kAuthenticationClientUserLookupHashFailed:
-            default:
-                error = 407;
-                break;
-            }
-        }
+        hps_auth_result_t result = hpsEvaluateAuth(ts, h.credentials, username, password, key, &identity);
+        auth_rejected            = result == kHpsAuthDenied || result == kHpsAuthUnavailable;
+        if (result != kHpsAuthAccepted)
+            error = result == kHpsAuthUnavailable ? 503 : 407;
         if (! error && lineGetUserAuthCount(s->client) >= kLineMaxUsers)
             error = 503;
     }
@@ -176,12 +125,12 @@ bool hpsProcessRequest(hps_session_t *s)
                 if (! hpsRewriteHeaderOutput(s, &h, kHpsUpstream))
                     error = 503;
             }
-            if (! error && h.chunked)
+            if (! error && h.body.kind == kHpsBodyChunked)
             {
-                up->trailer_context = h;
-                up->header_storage  = block;
-                up->header_length   = (size_t) n;
-                block               = NULL;
+                if (! hpsRetainTrailer(s, kHpsUpstream, &h, block, (size_t) n))
+                    error = 503;
+                else
+                    block = NULL;
             }
             if (! error && ! reuse)
                 hpsCreateChild(s, username, password);

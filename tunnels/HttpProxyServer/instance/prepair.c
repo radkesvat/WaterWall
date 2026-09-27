@@ -1,5 +1,5 @@
+#include "internal.h"
 #include "loggers/network_logger.h"
-#include "structure.h"
 
 void httpproxyserverTunnelOnPrepair(tunnel_t *t)
 {

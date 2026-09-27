@@ -1,5 +1,5 @@
+#include "internal.h"
 #include "loggers/network_logger.h"
-#include "structure.h"
 
 static bool integer(const cJSON *json, const char *name, int64_t def, int64_t low, int64_t high, uint32_t *out)
 {

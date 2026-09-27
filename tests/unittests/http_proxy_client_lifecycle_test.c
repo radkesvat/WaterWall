@@ -1,5 +1,5 @@
 #include "HttpProxyClient/interface.h"
-#include "HttpProxyClient/structure.h"
+#include "HttpProxyClient/internal.h"
 #include "wevent.h"
 #if WW_HAVE_SPLICE
 #include <unistd.h>
@@ -26,6 +26,23 @@ static void require(bool condition, const char *message)
         fprintf(stderr, "HttpProxyClient: %s\n", message);
         exit(1);
     }
+}
+static bool check_connect_retirement;
+static void requireParsingRetired(void)
+{
+    if (! check_connect_retirement)
+        return;
+    hpc_lstate_t *ls = lineGetState(line, proxy);
+    if (! ls->accepted)
+        return;
+    require(ls->carry == NULL && ls->saved_header == NULL && ls->carry_length == 0,
+            "accepted CONNECT retained response allocations at callback boundary");
+    require(! ls->response.count && ! ls->response.method && ! ls->response.target && ! ls->response.reason &&
+                ! ls->response.credentials,
+            "CONNECT retained borrowed parsed header pointers");
+    for (unsigned i = 0; i < kHpsFieldLimit; ++i)
+        require(! ls->response.fields[i].name && ! ls->response.fields[i].value, "CONNECT retained a field pointer");
+    require(ls->timer != NULL, "CONNECT parsing retirement canceled the idle/drain timer");
 }
 static sbuf_t *input(const void *bytes, size_t length)
 {
@@ -121,6 +138,7 @@ static void previousPause(tunnel_t *t, line_t *l)
 }
 static void previousResume(tunnel_t *t, line_t *l)
 {
+    requireParsingRetired();
     discard t;
     discard l;
     source_paused = false;
@@ -185,6 +203,7 @@ static void action(unsigned which)
 }
 static void nextPayload(tunnel_t *t, line_t *l, sbuf_t *b)
 {
+    requireParsingRetired();
     discard t;
     require(! in_init, "header/body entered unfinished Init");
     require(l == line, "upload identity");
@@ -207,6 +226,7 @@ static void nextPayload(tunnel_t *t, line_t *l, sbuf_t *b)
 }
 static void previousPayload(tunnel_t *t, line_t *l, sbuf_t *b)
 {
+    requireParsingRetired();
     discard t;
     size_t  n = sbufGetLength(b);
     require(n < sizeof(received) - received_length, "receive capacity");
@@ -431,6 +451,65 @@ static void startup(void)
     require(writes == 3 && strstr(sent, "\r\n\r\n3\r\nnew\r\n"), "nested header upload order");
     closeLine();
 }
+static void connectParserRetirement(void)
+{
+    const char *reply  = "HTTP/1.1 103 Early Hints\r\nLink: /hint\r\n\r\n"
+                         "HTTP/1.1 200 Accepted\r\nContent-Length: invalid\r\nX-Reply: yes\r\n\r\nold";
+    size_t      length = stringLength(reply);
+    for (size_t split = 1; split < length; ++split)
+    {
+        openLine(connect_settings);
+        hpc_lstate_t *ls = lineGetState(line, proxy);
+        hpc_tstate_t *ts = tunnelGetState(proxy);
+        require(ls->carry && ! ls->saved_header && ts->max_header == 32768,
+                "default CONNECT parsing allocation fixture changed");
+        sendText(false, "upload");
+        check_connect_retirement = true;
+        on_receive               = 1;
+        receive_action           = 9;
+        sendn(true, reply, split);
+        sendn(true, reply + split, length - split);
+        requireParsingRetired();
+        const char *expected = split == length - 2 ? "onewld" : split == length - 1 ? "olnewd" : "oldnew";
+        require(! stringCompare(received, expected), "CONNECT fragmented body/nested delivery changed FIFO");
+        require(strstr(sent, "\r\n\r\nupload") != NULL, "CONNECT lost queued upload");
+        closeLine();
+        check_connect_retirement = false;
+    }
+    for (unsigned close = 0; close < 3; ++close)
+    {
+        openLine(connect_settings);
+        sendText(false, "upload");
+        check_connect_retirement = true;
+        if (close == 0)
+        {
+            on_write     = 2;
+            write_action = 4;
+        }
+        else if (close == 1)
+            close_signal = 3;
+        else
+        {
+            on_receive     = 1;
+            receive_action = 5;
+        }
+        sendText(true, reply);
+        require(! lineIsAlive(line), "CONNECT transition callback close did not settle");
+        closeLine();
+        check_connect_retirement = false;
+    }
+    openLine(connect_settings);
+    sendText(true, "HTTP/1.1 200 OK\r\n\r\n");
+    check_connect_retirement = true;
+    requireParsingRetired();
+    hpc_lstate_t *ls = lineGetState(line, proxy);
+    ls->progress_at  = hpcNow(line) - 300000;
+    ls->timer->cb((wevent_t *) ls->timer);
+    require(! lineIsAlive(line), "accepted CONNECT lost idle timeout");
+    closeLine();
+    check_connect_retirement = false;
+}
+
 static void framing(void)
 {
     const char *response = "HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\nTransfer-Encoding: "
@@ -877,6 +956,7 @@ int main(void)
     dnsTests();
 #endif
     startup();
+    connectParserRetirement();
     framing();
     reentry();
     directBuffers();
@@ -887,6 +967,7 @@ int main(void)
     for (representation = 1; representation <= 2; ++representation)
     {
         startup();
+        connectParserRetirement();
         framing();
         reentry();
         directBuffers();

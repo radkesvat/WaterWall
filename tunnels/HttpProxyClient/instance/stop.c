@@ -1,4 +1,4 @@
-#include "structure.h"
+#include "internal.h"
 void httpproxyclientTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context)
 {
     discard context;

@@ -1,5 +1,5 @@
 #include "interface.h"
-#include "structure.h"
+#include "internal.h"
 node_t nodeHttpProxyClientGet(void)
 {
     const char *name = "HttpProxyClient";

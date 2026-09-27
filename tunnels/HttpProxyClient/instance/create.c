@@ -1,6 +1,6 @@
 #include "DomainResolver/interface.h"
+#include "internal.h"
 #include "loggers/network_logger.h"
-#include "structure.h"
 tunnel_t *httpproxyclientTunnelCreate(node_t *node)
 {
     tunnel_t *t = tunnelCreate(node, sizeof(hpc_tstate_t), sizeof(hpc_lstate_t));

@@ -1,4 +1,4 @@
-#include "structure.h"
+#include "internal.h"
 void httpproxyclientTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context)
 {
     discard       context;
