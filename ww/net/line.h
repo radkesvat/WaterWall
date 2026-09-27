@@ -227,6 +227,8 @@ static inline void lineDestroy(line_t *const l)
  * Valid user handles are copied into the line. When username/password are also
  * supplied, they are stored on the same auth marker so consumers such as Router
  * can match raw authenticated credentials without a users-table lookup.
+ * Credential allocation failure logs a fatal error and terminates immediately;
+ * this API never returns a partial identity or reports recoverable allocation failure.
  *
  * @param line Pointer to the line.
  * @param user_handle Optional user handle.
@@ -241,6 +243,7 @@ void lineAddUser(line_t *const line, const user_handle_t *user_handle, const cha
  * This is for protocols that authenticated a peer but do not have a
  * user_handle_t from AuthenticationClient. The credentials are stored as a new
  * marker, preserving earlier authentication layers on the same line.
+ * Credential allocation failure terminates immediately, as with lineAddUser().
  *
  * @param line Pointer to the line.
  * @param username Optional raw/resolved username; duplicated when non-NULL.
@@ -257,6 +260,7 @@ void lineSetAuthenticatedCredentials(line_t *const line, const char *username, c
  * @brief Copies all user markers from one line to a newly created companion line.
  *
  * The destination line must not already have user markers or credentials.
+ * Credential allocation failure terminates immediately, as with lineAddUser().
  *
  * @param dest Destination line.
  * @param src Source line.

@@ -143,11 +143,29 @@ static void authenticationclientAssertProfileEmpty(authenticationclient_user_pro
 // Duplicate the user's name/password into the profile. The caller must hold
 // ts->users_lock (read); user->lock guards the name/password strings, matching
 // the users_lock -> user->lock ordering used by usersToJson.
+// Shared credential duplication intentionally fails fast: never return a partial
+// identity. Recoverable status/caller plumbing requires a maintainer redesign.
 static void authenticationclientFillUserProfileLocked(authenticationclient_user_profile_t *profile, user_t *user)
 {
     rwlockReadLock(&user->lock);
-    profile->name     = (user->name != NULL && user->name[0] != '\0') ? stringDuplicate(user->name) : NULL;
-    profile->password = (user->password != NULL && user->password[0] != '\0') ? stringDuplicate(user->password) : NULL;
+    if (user->name != NULL && user->name[0] != '\0')
+    {
+        profile->name = stringDuplicate(user->name);
+        if (UNLIKELY(profile->name == NULL))
+        {
+            LOGF("AuthenticationClient: failed to allocate authenticated identity");
+            abortProgramNow(1);
+        }
+    }
+    if (user->password != NULL && user->password[0] != '\0')
+    {
+        profile->password = stringDuplicate(user->password);
+        if (UNLIKELY(profile->password == NULL))
+        {
+            LOGF("AuthenticationClient: failed to allocate authenticated identity");
+            abortProgramNow(1);
+        }
+    }
     rwlockReadUnlock(&user->lock);
 }
 

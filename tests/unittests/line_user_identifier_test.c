@@ -1,5 +1,25 @@
 #include "wwapi.h"
 
+#ifdef WW_LINE_IDENTITY_FAILURE_TEST
+#include <sys/wait.h>
+#include <unistd.h>
+
+static unsigned fail_copy_on;
+static unsigned copy_calls;
+
+char *__real_stringDuplicate(const char *source);
+char *__wrap_stringDuplicate(const char *source);
+
+char *__wrap_stringDuplicate(const char *source)
+{
+    if (fail_copy_on != 0 && ++copy_calls == fail_copy_on)
+    {
+        return NULL;
+    }
+    return __real_stringDuplicate(source);
+}
+#endif
+
 static void require(bool condition, const char *message)
 {
     if (! condition)
@@ -236,6 +256,53 @@ static void testStackedRawCredentialsRemainAddressable(void)
     testLineDestroy(line);
 }
 
+#ifdef WW_LINE_IDENTITY_FAILURE_TEST
+static void testCredentialCopyFailureTerminates(void)
+{
+    line_t *src  = testLineCreate();
+    line_t *dest = testLineCreate();
+    lineAddAuthenticatedCredentials(src, "first-user", "first-password");
+    lineAddAuthenticatedCredentials(src, "second-user", "second-password");
+
+    for (unsigned api = 0; api < 4; ++api)
+    {
+        const unsigned copies = api == 3 ? 4 : 2;
+        for (unsigned fail_on = 1; fail_on <= copies; ++fail_on)
+        {
+            pid_t child = fork();
+            require(child >= 0, "failed to fork credential allocation test");
+            if (child == 0)
+            {
+                fail_copy_on = fail_on;
+                copy_calls   = 0;
+                switch (api)
+                {
+                case 0:
+                    lineAddUser(dest, NULL, "user", "password");
+                    break;
+                case 1:
+                    lineAddAuthenticatedCredentials(dest, "user", "password");
+                    break;
+                case 2:
+                    lineSetAuthenticatedCredentials(dest, "user", "password");
+                    break;
+                case 3:
+                    lineCopyUsers(dest, src);
+                    break;
+                }
+                _Exit(99); /* Returning after a refused credential copy violates the contract. */
+            }
+            int status = 0;
+            require(waitpid(child, &status, 0) == child, "failed to wait for credential allocation test");
+            require(WIFEXITED(status) && WEXITSTATUS(status) == 1,
+                    "credential copy failure did not terminate immediately with status 1");
+        }
+    }
+    testLineDestroy(dest);
+    testLineDestroy(src);
+}
+#endif
+
 int main(void)
 {
     testAnonymousUserHandlesRemainInvalid();
@@ -244,6 +311,9 @@ int main(void)
     testLineUserCopy();
     testLineCredentialOnlyRecordingAndCopy();
     testStackedRawCredentialsRemainAddressable();
+#ifdef WW_LINE_IDENTITY_FAILURE_TEST
+    testCredentialCopyFailureTerminates();
+#endif
 
     return 0;
 }

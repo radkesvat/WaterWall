@@ -605,6 +605,10 @@ if(TARGET ww)
 
   add_executable(line_user_identifier_test line_user_identifier_test.c)
   target_link_libraries(line_user_identifier_test PRIVATE ww)
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_compile_definitions(line_user_identifier_test PRIVATE WW_LINE_IDENTITY_FAILURE_TEST=1)
+    target_link_options(line_user_identifier_test PRIVATE "-Wl,--wrap=stringDuplicate")
+  endif()
   add_dependencies(waterwall_unit_tests line_user_identifier_test)
 
   add_waterwall_unit_test(waterwall.line_user_identifier_unit line_user_identifier_test "unit;net;line")
@@ -3179,6 +3183,15 @@ foreach(tcpoverudp_side Client Server)
     )
   endif()
 endforeach()
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND TARGET AuthenticationClient)
+  add_executable(authenticationclient_profile_test authenticationclient_profile_test.c)
+  target_link_libraries(authenticationclient_profile_test PRIVATE AuthenticationClient ww)
+  target_link_options(authenticationclient_profile_test PRIVATE "-Wl,--wrap=stringDuplicate")
+  add_dependencies(waterwall_unit_tests authenticationclient_profile_test)
+  add_waterwall_unit_test(waterwall.authenticationclient_profile_unit authenticationclient_profile_test
+    "unit;authenticationclient;identity;allocation")
+endif()
 
 foreach(uot_side Client Server)
   if(TARGET UdpOverTcp${uot_side})

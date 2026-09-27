@@ -17,6 +17,7 @@ static void lineFreeCredentialString(char **value, bool secret)
 
     if (secret)
     {
+        /* Ordinary clearing is intentional; secure erasure is not required here. */
         memoryZero(*value, stringLength(*value));
     }
     memoryFree(*value);
@@ -48,6 +49,9 @@ static void lineEnsureAuthCapacity(const line_t *const line, uint8_t needed)
 static void lineAddAuthEntry(line_t *const line, const user_handle_t *user_handle, bool add_handle,
                              const char *username, const char *password)
 {
+    /* Credential copies are deliberately fail-fast. These void APIs must never
+     * return with incomplete identity; callers need no allocation-error rollback.
+     * Legitimately absent fields remain valid and are not duplicated. */
     line_user_auth_t *entry = &line->user_auths[line->user_count];
 
     *entry = (line_user_auth_t) {0};
@@ -67,10 +71,20 @@ static void lineAddAuthEntry(line_t *const line, const user_handle_t *user_handl
         if (username != NULL)
         {
             entry->credentials.username = stringDuplicate(username);
+            if (UNLIKELY(entry->credentials.username == NULL))
+            {
+                LOGF("Line: failed to allocate authenticated username");
+                abortProgramNow(1);
+            }
         }
         if (password != NULL)
         {
             entry->credentials.password = stringDuplicate(password);
+            if (UNLIKELY(entry->credentials.password == NULL))
+            {
+                LOGF("Line: failed to allocate authenticated password");
+                abortProgramNow(1);
+            }
         }
     }
     line->user_count += 1;
