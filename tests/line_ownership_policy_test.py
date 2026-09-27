@@ -170,7 +170,7 @@ CREATION_SITES = [
     # ------------------------------------------------------------------
     # Protocol clients: internal carrier lines behind a borrowed app line
     # ------------------------------------------------------------------
-    ("tunnels/Socks5Client/common/helpers.c", "createInternalLine", NORMAL_OWNER,
+    ("tunnels/Socks5Client/common/udp.c", "createInternalLine", NORMAL_OWNER,
      "the internal UDP control/relay lines; the application line is borrowed"),
     ("tunnels/TrojanClient/common/lifecycle.c", "createInternalLine", NORMAL_OWNER,
      "the internal UDP carrier line; the application line is borrowed"),
@@ -337,7 +337,7 @@ OWNER_CLOSE_SITES = [
      "an upload or download transport line the split created"),
     ("tunnels/HttpServer/common/split.c", "splitCloseMain",
      "the reconstructed main line the split created"),
-    ("tunnels/Socks5Client/common/helpers.c", "socks5clientCloseOwnedLine",
+    ("tunnels/Socks5Client/common/lifecycle.c", "socks5clientCloseOwnedLine",
      "an internal UDP control/relay line"),
     ("tunnels/TrojanClient/common/lifecycle.c", "trojanclientCloseLine",
      "an internal UDP carrier line"),

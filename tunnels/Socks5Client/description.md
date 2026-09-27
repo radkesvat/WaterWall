@@ -204,4 +204,11 @@ including reentrant input. The first retained application input pauses its sourc
 the older FIFO drains and transport pressure clears. This protocol hold does not stop handshake traffic.
 Application receive Pause does not stop the handshake's own input before readiness.
 For UDP, control and relay write pressure combine; one Resume cannot clear the other's outstanding Pause.
-The separate handshake-input buffer remains limited to 4,096 bytes.
+The 4,096-byte bound applies only to incomplete reply metadata; a completed reply
+may arrive with a larger application body. Nested reply processing is serialized,
+with response bytes kept in FIFO order. Necessary retained response input shares
+a 2 MiB / 1,024-buffer downstream budget and drains on receive Resume; ready TCP
+forwarding stays synchronous. Empty proxy TCP input is ignored, and unused TCP tails on
+an established UDP control line are discarded. Ordering queues allocate backing
+storage on first use; UDP application and relay lines do not allocate handshake
+stream storage.

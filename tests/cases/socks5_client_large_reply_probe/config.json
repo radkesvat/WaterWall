@@ -1,0 +1,67 @@
+{
+  "name": "socks5-client-large-reply",
+  "nodes": [
+    {
+      "name": "listener-noauth",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 24810,
+        "nodelay": true
+      },
+      "next": "socks-noauth"
+    },
+    {
+      "name": "socks-noauth",
+      "type": "Socks5Client",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 80,
+        "protocol": "tcp"
+      },
+      "next": "connector-noauth"
+    },
+    {
+      "name": "connector-noauth",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 24812,
+        "nodelay": true,
+        "fastopen": false
+      }
+    },
+    {
+      "name": "listener-auth",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 24811,
+        "nodelay": true
+      },
+      "next": "socks-auth"
+    },
+    {
+      "name": "socks-auth",
+      "type": "Socks5Client",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 80,
+        "protocol": "tcp",
+        "username": "u",
+        "password": "p"
+      },
+      "next": "connector-auth"
+    },
+    {
+      "name": "connector-auth",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 24812,
+        "nodelay": true,
+        "fastopen": false
+      }
+    }
+  ]
+}

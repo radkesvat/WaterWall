@@ -1,4 +1,4 @@
-#include "structure.h"
+#include "internal.h"
 
 #include "loggers/network_logger.h"
 
@@ -16,6 +16,14 @@ void socks5clientTunnelUpStreamResume(tunnel_t *t, line_t *l)
             discard lineCallWithRef(udp_l, tunnelNextUpStreamResume, t);
         }
         return;
+    }
+
+    if (ls->phase == kSocks5ClientPhaseEstablished)
+    {
+        if (! socks5clientDrainHandshakeInput(t, l, ls))
+            return;
+        if (ls->prev_paused)
+            return;
     }
 
     // Application receive pressure must not stop the SOCKS handshake itself.

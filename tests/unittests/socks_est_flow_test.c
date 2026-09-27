@@ -12,7 +12,7 @@
 #define socksTstate        socks5server_tstate_t
 #define socksLstate        socks5server_lstate_t
 #else
-#include "Socks5Client/structure.h"
+#include "Socks5Client/internal.h"
 #define socksInit          socks5clientTunnelUpStreamInit
 #define socksFinish        socks5clientTunnelUpStreamFinish
 #define socksUp            socks5clientTunnelUpStreamPayload
@@ -340,7 +340,8 @@ static void pendingBoundary(bool entries)
     ls->next_initializing = true;
     const uint32_t byte_limit = 1024U * 1024U;
 #else
-    socks5clientLinestateInitialize(ls, node, application);
+    socks5clientLinestateInitialize(
+        ls, node, application, entries ? kSocks5ClientLineKindUdpApplication : kSocks5ClientLineKindDirect);
     // Empty UDP is valid and must consume an entry even though its byte cost is zero.
     ls->kind                  = entries ? kSocks5ClientLineKindUdpApplication : kSocks5ClientLineKindDirect;
     const uint32_t byte_limit = 2U * 1024U * 1024U;

@@ -5,7 +5,12 @@ add_library(Socks5Client STATIC
                     instance/api.c
                     instance/node.c
                     instance/chain.c
-                    common/helpers.c
+                    common/protocol.c
+                    common/input.c
+                    common/flow.c
+                    common/udp.c
+                    common/lifecycle.c
+                    common/destination.c
                     common/line_state.c
                     upstream/init.c
                     upstream/fin.c

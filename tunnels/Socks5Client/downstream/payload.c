@@ -1,4 +1,4 @@
-#include "structure.h"
+#include "internal.h"
 
 #include "loggers/network_logger.h"
 
@@ -18,31 +18,24 @@ void socks5clientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
+    if (sbufGetLength(buf) == 0 ||
+        (ls->kind == kSocks5ClientLineKindUdpControl && ls->phase == kSocks5ClientPhaseEstablished))
+    {
+        lineReuseBuffer(l, buf);
+        return;
+    }
+    if (ls->input_draining || bufferqueueGetBufCount(&ls->pending_down) != 0)
+    {
+        if (socks5clientQueueReplyInput(t, l, buf) && ! ls->input_draining)
+            discard socks5clientDrainHandshakeInput(t, l, ls);
+        return;
+    }
     if (ls->phase == kSocks5ClientPhaseEstablished)
     {
-        if (ls->kind == kSocks5ClientLineKindUdpControl)
-        {
-            lineReuseBuffer(l, buf);
-            return;
-        }
-
         tunnelPrevDownStreamPayload(t, l, buf);
         return;
     }
 
     bufferstreamPush(&ls->in_stream, buf);
-
-    if (bufferstreamGetBufLen(&ls->in_stream) > kSocks5ClientMaxHandshakeBytes)
-    {
-        LOGE("Socks5Client: proxy handshake buffer overflow, size=%zu limit=%u",
-             bufferstreamGetBufLen(&ls->in_stream),
-             (unsigned int) kSocks5ClientMaxHandshakeBytes);
-        socks5clientCloseLineBidirectional(t, l);
-        return;
-    }
-
-    if (! socks5clientDrainHandshakeInput(t, l, ls))
-    {
-        return;
-    }
+    discard socks5clientDrainHandshakeInput(t, l, ls);
 }

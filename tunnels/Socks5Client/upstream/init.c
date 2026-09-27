@@ -1,4 +1,4 @@
-#include "structure.h"
+#include "internal.h"
 
 #include "loggers/network_logger.h"
 
@@ -16,10 +16,9 @@ void socks5clientTunnelUpStreamInit(tunnel_t *t, line_t *l)
     }
     assert(target->proto_tcp != target->proto_udp);
 
-    socks5clientLinestateInitialize(ls, t, l);
+    socks5clientLinestateInitialize(
+        ls, t, l, target->proto_udp ? kSocks5ClientLineKindUdpApplication : kSocks5ClientLineKindDirect);
     ls->protocol = target->proto_udp ? kSocks5ClientProtocolUdp : kSocks5ClientProtocolTcp;
-    ls->kind =
-        ls->protocol == kSocks5ClientProtocolUdp ? kSocks5ClientLineKindUdpApplication : kSocks5ClientLineKindDirect;
     addresscontextCopy(&ls->target_addr, target);
 
     if (ts->verbose)

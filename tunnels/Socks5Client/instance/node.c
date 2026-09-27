@@ -1,5 +1,5 @@
 #include "interface.h"
-#include "structure.h"
+#include "internal.h"
 
 #include "loggers/network_logger.h"
 
