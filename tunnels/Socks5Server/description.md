@@ -318,3 +318,21 @@ Transport Est and the SOCKS reply are separate obligations. Init/Est reentry can
 A paused client delays the success reply and response-body backlog, while Est still propagates promptly.
 Necessary request/reply ordering queues retain at most 1 MiB and 1,024 buffers per direction; ready direct payloads
 remain synchronous. Reply admission is published before callbacks so nested data cannot precede the reply.
+
+Control input advances in one synchronous parser scope. Nested deliveries follow
+older input; method/authentication state and identity are published before reply
+callbacks. The 4,096-byte limit applies to incomplete handshake metadata. A
+complete CONNECT header followed by application bytes is accepted like separate
+deliveries; only genuinely retained application data consumes the shared ordering
+budget. Empty TCP input is ignored. After UDP ASSOCIATE, TCP control tails are
+discarded rather than interpreted as datagrams or new CONNECT requests.
+
+An address with a zero-length domain is invalid as soon as its length byte is
+received. TCP requests receive the unsupported-address reply and close. Such UDP
+datagrams are discarded without closing the association or creating a backend.
+Truncated UDP addresses are also discarded within that datagram.
+
+UDP backends are matched by the complete original address kind, exact address or
+domain bytes, and port within their client association. Hash collisions and later
+DNS/routing changes do not merge distinct destinations or change removal identity.
+Domain spelling and case are preserved.

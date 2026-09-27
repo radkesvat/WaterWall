@@ -1,4 +1,4 @@
-#include "structure.h"
+#include "internal.h"
 
 #include "UserController/interface.h"
 

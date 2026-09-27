@@ -1,5 +1,5 @@
 #ifdef SOCKS_EST_SERVER
-#include "Socks5Server/structure.h"
+#include "Socks5Server/internal.h"
 #define socksInit          socks5serverTunnelUpStreamInit
 #define socksFinish        socks5serverTunnelUpStreamFinish
 #define socksUp            socks5serverTunnelUpStreamPayload
@@ -348,14 +348,23 @@ static void pendingBoundary(bool entries)
     const unsigned count = entries ? 1024 : 1;
     for (unsigned i = 0; i < count; ++i)
     {
-        sbuf_t *buf = bufferpoolGetBestFit(env.pool, entries ? 0 : byte_limit, 300);
-        sbufSetLength(buf, entries ? 0 : byte_limit);
+#ifdef SOCKS_EST_SERVER
+        const uint32_t length = entries ? 1 : byte_limit;
+#else
+        const uint32_t length = entries ? 0 : byte_limit;
+#endif
+        sbuf_t *buf = bufferpoolGetBestFit(env.pool, length, 300);
+        sbufSetLength(buf, length);
         socksUp(node, application, buf);
     }
     twfRequire(lineIsAlive(application) && bufferqueueGetBufCount(&ls->pending_up) == count,
                "SOCKS refused exact pending boundary");
-    twfRequire(bufferqueueGetBufLen(&ls->pending_up) == (entries ? 0 : byte_limit),
-               "SOCKS pending byte accounting changed");
+#ifdef SOCKS_EST_SERVER
+    const size_t expected_bytes = entries ? count : byte_limit;
+#else
+    const size_t expected_bytes = entries ? 0 : byte_limit;
+#endif
+    twfRequire(bufferqueueGetBufLen(&ls->pending_up) == expected_bytes, "SOCKS pending byte accounting changed");
     socksUp(node, application, bytes(application, "X", 1));
     twfRequire(! lineIsAlive(application), "SOCKS overflow left borrowed owner alive");
     twfRequireLineStateZeroed(application, node, "SOCKS overflow left protocol state alive");

@@ -1,0 +1,98 @@
+{
+  "name": "socks-connect-large-body",
+  "nodes": [
+    {
+      "name": "auth-client",
+      "type": "AuthenticationClient",
+      "settings": {
+        "name": "edge-1",
+        "secret": "trojan-auth-secret",
+        "ping-interval-ms": 0,
+        "pull-interval-ms": 0,
+        "push-interval-ms": 0,
+        "reconnect-interval-ms": 1000,
+        "request-timeout-ms": 5000,
+        "max-pending-requests": 16
+      },
+      "next": "auth-db"
+    },
+    {
+      "name": "auth-db",
+      "type": "AuthenticationServer",
+      "settings": {
+        "db-path": "users.json",
+        "file-save-rate-ms": 60000,
+        "session-idle-timeout-ms": 600000,
+        "auth-clients": [
+          {
+            "name": "edge-1",
+            "secret": "trojan-auth-secret",
+            "allow-user-pull": true,
+            "allow-stats-push": true,
+            "allow-user-write": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "listener-noauth",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 24800,
+        "nodelay": true
+      },
+      "next": "socks-noauth"
+    },
+    {
+      "name": "socks-noauth",
+      "type": "Socks5Server",
+      "settings": {
+        "connect": true,
+        "udp": false,
+        "no-auth": true
+      },
+      "next": "target-noauth"
+    },
+    {
+      "name": "target-noauth",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "dest_context->address",
+        "port": "dest_context->port",
+        "nodelay": true,
+        "fastopen": false
+      }
+    },
+    {
+      "name": "listener-auth",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 24801,
+        "nodelay": true
+      },
+      "next": "socks-auth"
+    },
+    {
+      "name": "socks-auth",
+      "type": "Socks5Server",
+      "settings": {
+        "connect": true,
+        "udp": false,
+        "auth-client-node-name": "auth-client"
+      },
+      "next": "target-auth"
+    },
+    {
+      "name": "target-auth",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "dest_context->address",
+        "port": "dest_context->port",
+        "nodelay": true,
+        "fastopen": false
+      }
+    }
+  ]
+}

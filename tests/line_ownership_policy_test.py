@@ -89,6 +89,10 @@ PAIRED_LINE_ALLOCATION = ("ww/net/pipe_tunnel.c", "pipeTo")
 # a tunnel routinely owns one role while borrowing another.
 
 CREATION_SITES = [
+    ("tests/unittests/socks5server_resources_test.c", "setup", TEST_ONLY,
+     "Resource fixture owns its client; teardown finishes SOCKS state before destroying the line."),
+    ("tests/unittests/socks5server_udp_identity_test.c", "setup", TEST_ONLY,
+     "Collision fixture models provider ownership; closeClient finishes SOCKS state and destroys the client."),
     ("tests/unittests/tlsclient_fragment_test.c", "openLine", TEST_ONLY,
      "fixture-owned source line; TlsClient and its fragment helper borrow it"),
     ("tests/unittests/streamfragmenter_test.c", "openLine", TEST_ONLY,
@@ -176,7 +180,7 @@ CREATION_SITES = [
     # ------------------------------------------------------------------
     # Protocol servers: UDP remote lines behind a borrowed client line
     # ------------------------------------------------------------------
-    ("tunnels/Socks5Server/common/helpers.c", "socks5serverGetOrCreateUdpRemoteLine", NORMAL_OWNER,
+    ("tunnels/Socks5Server/common/udp.c", "socks5serverGetOrCreateUdpRemoteLine", NORMAL_OWNER,
      "one UDP remote line per destination; the client line is borrowed"),
     ("tunnels/TrojanServer/common/udp.c", "trojanserverGetOrCreateUdpRemoteLine", NORMAL_OWNER,
      "one UDP remote line per destination; the client line is borrowed"),
@@ -339,7 +343,7 @@ OWNER_CLOSE_SITES = [
      "an internal UDP carrier line"),
     ("tunnels/VlessClient/common/lifecycle.c", "vlessclientCloseLine",
      "an internal UDP carrier line"),
-    ("tunnels/Socks5Server/common/helpers.c", "socks5serverCloseUdpRemoteLine",
+    ("tunnels/Socks5Server/common/lifecycle.c", "socks5serverCloseUdpRemoteLine",
      "a UDP remote line"),
     ("tunnels/TrojanServer/common/udp.c", "trojanserverCloseUdpRemoteLineInternal",
      "a UDP remote line"),

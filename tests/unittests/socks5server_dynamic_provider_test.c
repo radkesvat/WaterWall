@@ -1,4 +1,4 @@
-#include "Socks5Server/structure.h"
+#include "Socks5Server/internal.h"
 #include "TcpUdpListener/interface.h"
 #include "UdpListener/interface.h"
 #include "tunnel_orderly_shutdown_harness.h"
@@ -90,6 +90,8 @@ typedef struct test_env_s
     uint32_t                client_finish_calls;
 } test_env_t;
 
+static unsigned udp_reply_reentry;
+
 static void clientPeerPayloadD(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     test_env_t *test = *(test_env_t **) tunnelGetState(t);
@@ -100,6 +102,26 @@ static void clientPeerPayloadD(tunnel_t *t, line_t *l, sbuf_t *buf)
         sbufDestroy(test->last_received_payload);
     }
     test->last_received_payload = buf;
+    if (udp_reply_reentry && sbufGetLength(buf) == 10)
+    {
+        const unsigned action     = udp_reply_reentry;
+        udp_reply_reentry         = 0;
+        socks5server_lstate_t *ls = lineGetState(l, test->server);
+        twfRequire(ls->phase == kSocks5ServerPhaseUdpControl && ls->connect_reply_sent && ls->dynamic_handle.generation,
+                   "UDP reply preceded phase/handle/latch publication");
+        const uint8_t request[] = {5, 1, 0, 1, 127, 0, 0, 1, 0, 80};
+        sbuf_t       *nested    = bufferpoolGetSmallBuffer(lineGetBufferPool(l));
+        sbufSetLength(nested, sizeof(request));
+        memoryCopy(sbufGetMutablePtr(nested), request, sizeof(request));
+        socks5serverTunnelUpStreamPayload(test->server, l, nested);
+        if (action == 2)
+            socks5serverUnregisterUdpAssociation(test->server, ls);
+        if (action == 3)
+        {
+            socks5serverTunnelUpStreamFinish(test->server, l);
+            lineDestroy(l);
+        }
+    }
 }
 
 static void clientPeerFinishD(tunnel_t *t, line_t *l)
@@ -282,6 +304,29 @@ static void testUdpClientDynamicLineValidation(void)
     twfRequireEqualU32(
         valid_ls->kind, kSocks5ServerLineKindUdpClient, "valid dynamic UDP line must be accepted as UdpClient");
     twfRequireEqualU32(valid_ls->dynamic_handle.generation, gen, "dynamic handle generation must match");
+
+    /* Delimited malformed addresses are discarded, never joined across datagrams. */
+    const uint8_t malformed[][10] = {{0, 0, 0, 3, 0, 0, 80}, {0, 0, 0, 1, 127, 0, 0, 1, 0}, {0, 0, 0, 3, 3, 'a'}};
+    const size_t  lengths[]       = {7, 9, 6};
+    for (unsigned i = 0; i < 3; ++i)
+    {
+        sbuf_t *datagram = bufferpoolGetSmallBuffer(lineGetBufferPool(valid_udp_line));
+        sbufSetLength(datagram, (uint32_t) lengths[i]);
+        memoryCopy(sbufGetMutablePtr(datagram), malformed[i], lengths[i]);
+        socks5serverTunnelUpStreamPayload(test.server, valid_udp_line, datagram);
+        twfRequire(lineIsAlive(valid_udp_line) && valid_ls->kind == kSocks5ServerLineKindUdpClient &&
+                       socks5server_remote_map_t_size(&valid_ls->udp_remote_lines) == 0,
+                   "malformed address closed association or created a backend");
+    }
+
+    socks5serverTunnelUpStreamFinish(test.server, valid_udp_line);
+    lineDestroy(valid_udp_line);
+    valid_udp_line = twfLinePoolCreateLine(&test.lines);
+    addresscontextSetIpPortProtocol(
+        lineGetSourceAddressContext(valid_udp_line), &ts->udp_reply_ip, 30000, IP_PROTO_UDP);
+    lineGetRoutingContext(valid_udp_line)->local_listener_port = 25000;
+    socks5serverTunnelUpStreamInit(test.server, valid_udp_line);
+    valid_ls = lineGetState(valid_udp_line, test.server);
 
     // 2. Line with unknown / rogue generation
     line_t *rogue_udp_line = twfLinePoolCreateLine(&test.lines);
@@ -621,8 +666,41 @@ static void testWrongWorkerCallbacksAbortBeforeLineStateAccess(void)
     tosResetProcessApi(true);
 }
 
+static void testUdpReplyReentry(void)
+{
+    for (unsigned action = 1; action <= 3; ++action)
+    {
+        twfSetCase("UDP reply reentry discards TCP tail and closes exactly once");
+        test_env_t test;
+        setupTestEnv(&test);
+        line_t *line = test.control_line;
+        lineRef(line);
+        const uint8_t request[] = {5, 1, 0, 5, 3, 0, 1, 0, 0, 0, 0, 0, 0, 'T'};
+        sbuf_t       *buf       = bufferpoolGetSmallBuffer(lineGetBufferPool(line));
+        sbufSetLength(buf, sizeof(request));
+        memoryCopy(sbufGetMutablePtr(buf), request, sizeof(request));
+        udp_reply_reentry = action;
+        socks5serverTunnelUpStreamPayload(test.server, line, buf);
+        twfRequire(test.client_payload_calls == 2 && test.mock_provider.open_calls == 1,
+                   "UDP reentry repeated reply or association");
+        if (lineIsAlive(line))
+        {
+            socks5server_lstate_t *ls = lineGetState(line, test.server);
+            twfRequire(bufferstreamIsEmpty(&ls->in_stream) && bufferqueueGetBufCount(&ls->pending_up) == 0,
+                       "UDP control retained unused TCP tail");
+            socks5serverTunnelUpStreamFinish(test.server, line);
+            lineDestroy(line);
+        }
+        twfRequire(test.mock_provider.close_calls == 1, "UDP reentry did not unregister exactly once");
+        lineUnref(line);
+        test.control_line = NULL;
+        teardownTestEnv(&test);
+    }
+}
+
 int main(void)
 {
+    testUdpReplyReentry();
     testUdpAssociateSuccessFlow();
     testUdpClientDynamicLineValidation();
     testValidUdpClientAssociationOnNonzeroWorker();

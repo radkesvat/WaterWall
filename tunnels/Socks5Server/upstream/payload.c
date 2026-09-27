@@ -1,4 +1,4 @@
-#include "structure.h"
+#include "internal.h"
 
 #include "loggers/network_logger.h"
 
@@ -10,6 +10,17 @@ void socks5serverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     switch (ls->kind)
     {
     case kSocks5ServerLineKindControlTcp:
+        if (sbufGetLength(buf) == 0 || ls->phase == kSocks5ServerPhaseClosing ||
+            ls->phase == kSocks5ServerPhaseUdpControl)
+        {
+            lineReuseBuffer(l, buf);
+            return;
+        }
+        if (ls->input_draining)
+        {
+            discard socks5serverQueueControl(t, l, buf, true);
+            return;
+        }
         if ((ls->phase == kSocks5ServerPhaseTcpEstablished || ls->phase == kSocks5ServerPhaseConnectWaitEst) &&
             ! ls->next_initializing && ! ls->control_draining && bufferqueueGetBufCount(&ls->pending_up) == 0 &&
             bufferstreamIsEmpty(&ls->in_stream))
@@ -17,28 +28,14 @@ void socks5serverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             tunnelNextUpStreamPayload(t, l, buf);
             return;
         }
-
         if (ls->phase == kSocks5ServerPhaseConnectWaitEst || ls->phase == kSocks5ServerPhaseTcpEstablished)
         {
-            if (LIKELY(socks5serverQueueControl(t, l, buf, true)))
+            if (socks5serverQueueControl(t, l, buf, true))
                 discard socks5serverDrainControl(t, l);
             return;
         }
-
-        if (ls->phase == kSocks5ServerPhaseUdpControl)
-        {
-            lineReuseBuffer(l, buf);
-            return;
-        }
-
         bufferstreamPush(&ls->in_stream, buf);
-        if (bufferstreamGetBufLen(&ls->in_stream) > kSocks5ServerMaxHandshakeBytes)
-        {
-            socks5serverCloseControlLineBidirectional(t, l);
-            return;
-        }
-
-        socks5serverControlDrainInput(t, l, ls);
+        discard socks5serverControlDrainInput(t, l, ls);
         return;
 
     case kSocks5ServerLineKindUdpClient:

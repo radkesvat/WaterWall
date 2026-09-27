@@ -1,0 +1,10 @@
+{
+  "users": [
+    {
+      "id": 1001,
+      "name": "socks-user",
+      "password": "u:p",
+      "enabled": true
+    }
+  ]
+}

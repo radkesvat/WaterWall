@@ -7,7 +7,7 @@
  * outer remote callback must retain that line until it can observe the nested
  * owner close and return without a duplicate teardown or stale-state access.
  */
-#include "Socks5Server/structure.h"
+#include "Socks5Server/internal.h"
 
 #include "tunnel_orderly_shutdown_harness.h"
 
@@ -43,6 +43,15 @@ typedef struct socks5server_close_fixture_s
     bool             provider_closed;
     bool             assoc_initialized;
 } socks5server_close_fixture_t;
+
+static socks5server_remote_key_t *fixtureKey(hash_t tag)
+{
+    socks5server_remote_key_t *key = memoryAllocate(sizeof(*key));
+    *key                           = (socks5server_remote_key_t) {
+                                  .address = {.kind = kSocks5AddressIpv4, .length = 4, .bytes = {127, 0, 0, 1}, .port = (uint16_t) tag},
+                                  .hash    = tag};
+    return key;
+}
 
 static ip_addr_t fixtureIpv4(const char *text)
 {
@@ -243,7 +252,7 @@ static void fixtureSetup(socks5server_close_fixture_t *fixture)
 
     remote_ls->client_line          = fixture->client;
     remote_ls->client_line_ref_held = true;
-    remote_ls->remote_key           = kSocks5ServerCloseRemoteKey;
+    remote_ls->remote_key           = fixtureKey(kSocks5ServerCloseRemoteKey);
     lineRef(fixture->client);
     twfRequire(
         socks5server_remote_map_t_insert(&client_ls->udp_remote_lines, remote_ls->remote_key, fixture->remote).ref !=
@@ -309,10 +318,11 @@ static line_t *fixtureAddUdpRemote(socks5server_close_fixture_t *fixture, hash_t
     socks5serverLinestateInitialize(remote_ls, fixture->server, remote, kSocks5ServerLineKindUdpRemote);
     remote_ls->client_line          = fixture->client;
     remote_ls->client_line_ref_held = true;
-    remote_ls->remote_key           = remote_key;
+    remote_ls->remote_key           = fixtureKey(remote_key);
     remote_ls->dynamic_handle       = client_ls->dynamic_handle;
     lineRef(fixture->client);
-    twfRequire(socks5server_remote_map_t_insert(&client_ls->udp_remote_lines, remote_key, remote).ref != NULL,
+    twfRequire(socks5server_remote_map_t_insert(&client_ls->udp_remote_lines, remote_ls->remote_key, remote).ref !=
+                   NULL,
                "failed to register a second fixture UDP remote");
     return remote;
 }
