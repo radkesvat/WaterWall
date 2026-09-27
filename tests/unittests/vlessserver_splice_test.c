@@ -1,6 +1,6 @@
 #include "AuthenticationClient/interface.h"
 #include "VlessServer/interface.h"
-#include "VlessServer/structure.h"
+#include "VlessServer/internal.h"
 #include "fallback_finish_lifetime_fixture.h"
 
 #if WW_HAVE_SPLICE
@@ -79,6 +79,18 @@ ssize_t __wrap_read(int fd, void *out, size_t count)
 }
 #endif
 
+/* Refuse a selected node-owned snapshot copy, before shared line publication. */
+static unsigned fail_duplicate;
+static bool     bare_local_user;
+char           *__real_stringDuplicate(const char *src);
+char           *__wrap_stringDuplicate(const char *src);
+char           *__wrap_stringDuplicate(const char *src)
+{
+    if (fail_duplicate != 0 && --fail_duplicate == 0)
+        return NULL;
+    return __real_stringDuplicate(src);
+}
+
 static unsigned              auth_calls;
 static bool                  auth_available = true, auth_match = true;
 authenticationclient_state_t __wrap_authenticationclientGetState(tunnel_t *t);
@@ -120,6 +132,8 @@ typedef struct fixture_s
     uint32_t         admission_bytes;
     bool             overflow_admission;
     bool             auto_est, down_paused, database;
+    bool             source_paused, resume_input, pause_replacement, close_on_resume;
+    unsigned         source_pauses, source_resumes;
     uint8_t          up[3 * 1024 * 1024], down[3 * 1024 * 1024], replay[3 * 1024 * 1024];
     size_t           up_len, down_len, replay_len, parser_reads;
     sbuf_t          *last;
@@ -326,13 +340,41 @@ static void onEst(tunnel_t *t, line_t *l)
 }
 static void onPause(tunnel_t *t, line_t *l)
 {
-    discard t;
+    if (t == f.prev)
+    {
+        twfRequire(l == f.line, "source Pause used a remote line");
+        f.source_paused = true;
+        ++f.source_pauses;
+    }
     ++f.pauses;
     act(5, l);
 }
 static void onResume(tunnel_t *t, line_t *l)
 {
-    discard t;
+    if (t == f.prev)
+    {
+        twfRequire(l == f.line, "source Resume used a remote line");
+        f.source_paused = false;
+        ++f.source_resumes;
+        if (f.close_on_resume)
+        {
+            f.t->fnFinU(f.t, l);
+            lineDestroy(l);
+            return;
+        }
+        if (f.resume_input)
+        {
+            f.resume_input = false;
+            twfRequire(! lineIsAlive(f.remotes[0]), "source resumed before old backend was destroyed");
+            if (f.pause_replacement)
+            {
+                f.boundary = 1;
+                f.action   = 1;
+            }
+            const uint8_t wire[] = {0, 1, 'B'};
+            f.t->fnPayloadU(f.t, l, bytes(wire, sizeof(wire), true, 320));
+        }
+    }
     ++f.resumes;
     act(6, l);
 }
@@ -346,9 +388,11 @@ static void onInit(tunnel_t *t, line_t *l)
     else
     {
         ++f.inits;
-        twfRequire(
-            lineHasAuthenticatedCredentials(l, "alice", f.database ? "test" : "42424242-4242-4242-4242-424242424242"),
-            "protected branch lost credentials");
+        const char *username = f.database ? "alice" : ((vlessserver_tstate_t *) tunnelGetState(f.t))->users[0].username;
+        twfRequire(lineHasAuthenticatedCredentials(
+                       l, username, f.database ? "test" : "42424242-4242-4242-4242-424242424242") &&
+                       (username != NULL || lineGetAuthenticatedUsername(l) == NULL),
+                   "protected branch lost credentials");
         if (f.database)
             twfRequire(lineGetCurrentUser(l)->user_id == 42, "database user handle lost");
         if (l != f.line)
@@ -370,14 +414,18 @@ static void begin(bool fallback, bool database, uint32_t pool)
     moves = pipe_refusals = growth_refusals = auth_calls = 0;
     reads                                                = 0;
     auth_available = auth_match = true;
+    fail_duplicate              = 0;
     fallbackFinishResetScheduledTask();
     twfWorkerEnvSetupWithBufferSizes(&f.env, pool, 512, 320, 8192, pool);
-    f.metadata           = nodeVlessServerGet();
-    f.metadata.hash_next = 1;
-    f.metadata.next      = (char *) "next";
-    f.metadata.node_settings_json =
-        cJSON_Parse("{\"users\":[{\"username\":\"alice\",\"uuid\":\"42424242-4242-4242-4242-424242424242\"}]}");
-    f.t = vlessserverTunnelCreate(&f.metadata);
+    f.metadata                    = nodeVlessServerGet();
+    f.metadata.hash_next          = 1;
+    f.metadata.next               = (char *) "next";
+    f.metadata.node_settings_json = cJSON_Parse(
+        bare_local_user
+            ? "{\"uuid\": \"42424242-4242-4242-4242-424242424242\"}"
+            : "{\"users\": [{\"username\": \"alice\", \"uuid\": \"42424242-4242-4242-4242-424242424242\"}]}");
+    bare_local_user = false;
+    f.t             = vlessserverTunnelCreate(&f.metadata);
     twfRequire(f.t != NULL, "server construction failed");
     f.prev     = twfCreatePrevTunnel(&f.trace);
     f.next     = twfCreateNextTunnel(&f.trace);
@@ -449,6 +497,83 @@ static void datagram(uint16_t port, const void *data, uint32_t n, bool pipe)
     discard  port;
     uint32_t len = frame(wire, data, n);
     f.t->fnPayloadU(f.t, f.line, bytes(wire, len, pipe && len <= 4096, 320));
+}
+
+static void testUdpPressureRelease(void)
+{
+    twfSetCase("paused UDP backend close releases a stopped source exactly once");
+    begin(false, false, 128);
+    startUdp();
+    datagram(443, "A", 1, true);
+    f.t->fnPauseD(f.t, f.remotes[0]);
+    twfRequire(f.source_paused, "backend did not stop the source");
+    f.t->fnFinD(f.t, f.remotes[0]);
+    twfRequire(! f.source_paused && f.source_resumes == 1, "removed backend stranded the paused source");
+    if (! f.source_paused)
+        datagram(443, "B", 1, true);
+    twfRequire(f.remote_count == 2 && f.calls_up == 2 && ! memcmp(f.up, "AB", 2) && f.ests == 1 &&
+                   f.branch_finishes == 0,
+               "released source did not replace backend or reflected Finish");
+    f.t->fnResumeD(f.t, f.remotes[1]);
+    f.t->fnPauseD(f.t, f.remotes[1]);
+    f.t->fnPauseD(f.t, f.remotes[1]);
+    f.t->fnResumeD(f.t, f.remotes[1]);
+    f.t->fnResumeD(f.t, f.remotes[1]);
+    twfRequire(f.source_pauses == 2 && f.source_resumes == 2, "duplicate signals created extra holds/releases");
+    f.t->fnFinD(f.t, f.remotes[1]);
+    twfRequire(f.source_resumes == 2, "unpaused close emitted Resume");
+    end();
+
+    twfSetCase("Resume reentry can close client or install an immediately paused replacement");
+    for (unsigned mode = 0; mode < 3; ++mode)
+    {
+        begin(false, false, 128);
+        startUdp();
+        datagram(443, "A", 1, true);
+        f.t->fnPauseD(f.t, f.remotes[0]);
+        /* Receiver pressure is independent and must reach the replacement. */
+        f.t->fnPauseU(f.t, f.line);
+        f.close_on_resume   = mode == 0;
+        f.resume_input      = mode != 0;
+        f.pause_replacement = mode == 2;
+        f.t->fnFinD(f.t, f.remotes[0]);
+        twfRequire(f.source_resumes == 1 && ! lineIsAlive(f.remotes[0]), "old backend pressure was not settled");
+        if (mode == 0)
+            twfRequire(! lineIsAlive(f.line) && f.remote_count == 1, "Resume closure restarted the association");
+        else
+        {
+            vlessserver_lstate_t *ls = lineGetState(f.line, f.t);
+            twfRequire(lineIsAlive(f.line) && f.remote_count == 2 && ls->udp_remote_line == f.remotes[1] &&
+                           f.calls_up == 2 && f.ests == 1 && f.pauses == (mode == 2 ? 4 : 3) &&
+                           f.source_paused == (mode == 2),
+                       "replacement pressure or association state was overwritten");
+            f.t->fnResumeD(f.t, f.remotes[1]);
+            twfRequire(! f.source_paused, "replacement pressure could not release");
+        }
+        end();
+    }
+    twfSetCase("client teardown and shutdown suppress backend pressure restart");
+    for (unsigned shutdown = 0; shutdown < 2; ++shutdown)
+    {
+        begin(false, false, 128);
+        startUdp();
+        datagram(443, "A", 1, true);
+        f.t->fnPauseD(f.t, f.remotes[0]);
+        if (shutdown)
+        {
+            wloopCloseNormalAdmission(f.env.loop);
+            wloopQuiesceNormalWork(f.env.loop);
+            f.t->fnFinD(f.t, f.remotes[0]);
+            twfRequire(lineIsAlive(f.line), "shutdown backend close destroyed borrowed client");
+        }
+        else
+        {
+            f.t->fnFinU(f.t, f.line);
+            lineDestroy(f.line);
+        }
+        twfRequire(f.source_resumes == 0 && ! lineIsAlive(f.remotes[0]), "teardown restarted source work");
+        end();
+    }
 }
 
 static void testFirstResponse(void)
@@ -736,6 +861,67 @@ static void testFallbackLocalReplies(void)
                "source close during fallback reply was not settled once");
     end();
 }
+static void testCredentialRefusal(void)
+{
+    twfSetCase("node-owned credential snapshot refusals close without fallback or protected Init");
+    for (unsigned udp = 0; udp < 2; ++udp)
+        for (unsigned copy = 1; copy <= 2; ++copy)
+        {
+            begin(true, false, 128);
+            uint8_t  wire[320];
+            uint32_t n     = request(wire, 0, udp != 0);
+            fail_duplicate = copy;
+            /* Authenticate from the first valid delivery while the request is
+             * still incomplete; refusal must not cache a partial username. */
+            f.t->fnPayloadU(f.t, f.line, bytes(wire, 17, true, 320));
+            twfRequire(! fail_duplicate && ! lineIsAlive(f.line) && f.inits == 0 && f.fallback_inits == 0,
+                       "local snapshot refusal survived or selected fallback");
+            discard n;
+            end();
+        }
+
+    twfSetCase("bare local credential snapshot refusal and subsequent complete identity");
+    for (unsigned fail = 0; fail < 2; ++fail)
+    {
+        bare_local_user = true;
+        begin(true, false, 128);
+        uint8_t  wire[320];
+        uint32_t n     = request(wire, 0, false);
+        fail_duplicate = fail;
+        f.t->fnPayloadU(f.t, f.line, bytes(wire, n, true, 320));
+        twfRequire(! fail_duplicate && lineIsAlive(f.line) == ! fail && f.inits == ! fail && f.fallback_inits == 0,
+                   "bare credential refusal or success changed policy");
+        end();
+    }
+
+    twfSetCase("local-user constructor rejects incomplete credential snapshots");
+    for (unsigned copy = 1; copy <= 1; ++copy)
+    {
+        twf_worker_env_t env;
+        twfWorkerEnvSetup(&env, 8192, 320);
+        node_t metadata    = nodeVlessServerGet();
+        metadata.hash_next = 1;
+        metadata.next      = (char *) "next";
+        metadata.node_settings_json =
+            cJSON_Parse("{\"users\":[{\"username\":\"alice\",\"uuid\":\"42424242-4242-4242-4242-424242424242\"}]}");
+        fail_duplicate = copy;
+        tunnel_t *node = vlessserverTunnelCreate(&metadata);
+        twfRequire(! fail_duplicate && node == NULL, "constructor accepted a missing configured credential");
+        node = vlessserverTunnelCreate(&metadata);
+        twfRequire(node != NULL, "snapshot refusal broke subsequent constructor");
+        node->onDestroy(node, wwLifecycleStartupRollback());
+        cJSON_Delete(metadata.node_settings_json);
+        memoryFree(metadata.type);
+        twfWorkerEnvTeardown(&env);
+    }
+    begin(false, false, 128);
+    uint8_t  wire[320];
+    uint32_t n = request(wire, 0, false);
+    f.t->fnPayloadU(f.t, f.line, bytes(wire, n, true, 320));
+    twfRequire(lineIsAlive(f.line) && f.inits == 1, "subsequent valid flow lost its full identity");
+    end();
+}
+
 static void testAuthentication(void)
 {
     twfSetCase("first callback credentials and authenticated rejection");
@@ -1170,6 +1356,7 @@ int main(void)
     twfRequire(wCryptoGlobalInit() == kWCryptoOk, "crypto init failed");
     twfRequire(globalstateInitializeSecureRandom(), "secure random initialization failed");
     twfRequire(frandGlobalInit(), "random initialization failed");
+    testUdpPressureRelease();
     testOrdinaryResponsePadding();
     testFirstResponse();
     testResponseOrdering();
@@ -1177,6 +1364,7 @@ int main(void)
     testFallbackReceiverPressure();
     testRepresentationsAndPipePressure();
     testRequests();
+    testCredentialRefusal();
     testAuthentication();
     testUdp();
     testReentry();

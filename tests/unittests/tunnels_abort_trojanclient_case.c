@@ -1,4 +1,4 @@
-#include "TrojanClient/structure.h"
+#include "TrojanClient/internal.h"
 
 #include "tunnels_abort_runtime_cases.h"
 

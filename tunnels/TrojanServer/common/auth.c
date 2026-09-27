@@ -1,16 +1,7 @@
-#include "structure.h"
-
-#include "loggers/network_logger.h"
+#include "internal.h"
 
 #include "AuthenticationClient/interface.h"
-
-void trojanserverApplyDestinationContext(line_t *l, const address_context_t *target, bool udp)
-{
-    address_context_t *dest = lineGetDestinationAddressContext(l);
-
-    addresscontextCopy(dest, target);
-    addresscontextSetOnlyProtocol(dest, udp ? IP_PROTO_UDP : IP_PROTO_TCP);
-}
+#include "loggers/network_logger.h"
 
 static const char *trojanserverAuthClientStateName(authenticationclient_state_t state)
 {
@@ -29,8 +20,26 @@ static const char *trojanserverAuthClientStateName(authenticationclient_state_t 
     }
 }
 
-bool trojanserverAuthenticateHash(tunnel_t *t, line_t *l, const uint8_t sha224[SHA224_DIGEST_SIZE],
-                                  user_handle_t *user_handle_out)
+bool trojanserverSetCredentialSnapshot(trojanserver_lstate_t *ls, const char *username, const char *password)
+{
+    char *name_copy     = username != NULL ? stringDuplicate(username) : NULL;
+    char *password_copy = password != NULL ? stringDuplicate(password) : NULL;
+    if ((username != NULL && name_copy == NULL) || (password != NULL && password_copy == NULL))
+    {
+        memoryFree(name_copy);
+        memoryFree(password_copy);
+        return false;
+    }
+    memoryFree(ls->auth_username);
+    memoryFree(ls->auth_password);
+    ls->auth_username = name_copy;
+    ls->auth_password = password_copy;
+    return true;
+}
+
+trojanserver_auth_result_t trojanserverAuthenticateHash(tunnel_t *t, line_t *l,
+                                                        const uint8_t  sha224[SHA224_DIGEST_SIZE],
+                                                        user_handle_t *user_handle_out)
 {
     trojanserver_tstate_t *ts = tunnelGetState(t);
 
@@ -56,21 +65,13 @@ bool trojanserverAuthenticateHash(tunnel_t *t, line_t *l, const uint8_t sha224[S
             {
                 LOGW("TrojanServer: rejected local password authentication on worker %u", (unsigned int) lineGetWID(l));
             }
-            return false;
+            return kTrojanServerAuthRejected;
         }
 
-        if (ls->auth_username != NULL)
-        {
-            memoryFree(ls->auth_username);
-        }
-        ls->auth_username = matched->username != NULL ? stringDuplicate(matched->username) : NULL;
-        if (ls->auth_password != NULL)
-        {
-            memoryFree(ls->auth_password);
-        }
-        ls->auth_password = stringDuplicate(matched->password);
-        *user_handle_out  = userHandleEmpty();
-        return true;
+        if (! trojanserverSetCredentialSnapshot(ls, matched->username, matched->password))
+            return kTrojanServerAuthResourceFailure;
+        *user_handle_out = userHandleEmpty();
+        return kTrojanServerAuthAccepted;
     }
 
     authenticationclient_state_t auth_state = authenticationclientGetState(ts->auth_client_tunnel);
@@ -82,7 +83,7 @@ bool trojanserverAuthenticateHash(tunnel_t *t, line_t *l, const uint8_t sha224[S
                  (unsigned int) lineGetWID(l),
                  trojanserverAuthClientStateName(auth_state));
         }
-        return false;
+        return kTrojanServerAuthRejected;
     }
 
     user_handle_t                       handle  = userHandleEmpty();
@@ -93,7 +94,7 @@ bool trojanserverAuthenticateHash(tunnel_t *t, line_t *l, const uint8_t sha224[S
         {
             LOGW("TrojanServer: rejected authentication on worker %u", (unsigned int) lineGetWID(l));
         }
-        return false;
+        return kTrojanServerAuthRejected;
     }
 
     // Resolve the account name/password in the same locked lookup that produced
@@ -113,7 +114,7 @@ bool trojanserverAuthenticateHash(tunnel_t *t, line_t *l, const uint8_t sha224[S
     ls->auth_password = profile.password;
 
     *user_handle_out = handle;
-    return true;
+    return kTrojanServerAuthAccepted;
 }
 
 void trojanserverRecordLineUser(line_t *l, trojanserver_lstate_t *ls, const user_handle_t *user_handle)
@@ -137,22 +138,4 @@ void trojanserverRecordLineUser(line_t *l, trojanserver_lstate_t *ls, const user
     }
 
     ls->user_handle_recorded = true;
-}
-
-tunnel_t *trojanserverSelectedUpstream(tunnel_t *t, const trojanserver_lstate_t *ls)
-{
-    trojanserver_tstate_t *ts = tunnelGetState(t);
-
-    if (ls->branch == kTrojanServerBranchFallback)
-    {
-        return ts->fallback_tunnel;
-    }
-
-    return NULL;
-}
-
-bool trojanserverQueuePayload(buffer_queue_t *queue, sbuf_t **buf)
-{
-    assert(queue->budget != NULL);
-    return bufferqueueTryPushBack(queue, buf);
 }

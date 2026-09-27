@@ -1,4 +1,4 @@
-#include "structure.h"
+#include "internal.h"
 
 api_result_t vlessserverTunnelApi(tunnel_t *instance, sbuf_t *message)
 {

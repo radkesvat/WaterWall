@@ -5,7 +5,8 @@ add_library(TrojanServer STATIC
     instance/node.c
     instance/chain.c
     instance/prepair.c
-    common/helpers.c
+    common/address_codec.c
+    common/auth.c
     common/input.c
     common/fallback.c
     common/udp.c

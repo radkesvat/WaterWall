@@ -1,4 +1,4 @@
-#include "structure.h"
+#include "internal.h"
 
 #include "loggers/network_logger.h"
 
@@ -38,12 +38,4 @@ void trojanclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
 
     ls->next_started = true;
     tunnelNextUpStreamInit(t, l);
-}
-
-bool trojanclientDomainResolverPrepare(tunnel_t *resolver, tunnel_t *client, line_t *l, void *user_lstate)
-{
-    discard resolver;
-
-    discard user_lstate;
-    return trojanclientApplyTargetContext(client, l);
 }

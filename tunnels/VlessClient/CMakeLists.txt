@@ -4,7 +4,8 @@ add_library(VlessClient STATIC
                     instance/api.c
                     instance/node.c
                     instance/chain.c
-                    common/helpers.c
+                    common/destination.c
+                    common/protocol.c
                     common/input.c
                     common/flow.c
                     common/lifecycle.c

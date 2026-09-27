@@ -1,4 +1,4 @@
-#include "structure.h"
+#include "internal.h"
 
 static bool trojanserverHasUpstreamPeer(const trojanserver_lstate_t *ls)
 {

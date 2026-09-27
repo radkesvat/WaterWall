@@ -1,4 +1,4 @@
-#include "VlessServer/structure.h"
+#include "VlessServer/internal.h"
 #include "protocol_est_ordering_fixture.h"
 
 static line_t *backendLine(est_fixture_t *f)

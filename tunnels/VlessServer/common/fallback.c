@@ -1,5 +1,5 @@
+#include "internal.h"
 #include "loggers/network_logger.h"
-#include "structure.h"
 
 static size_t vlessserverFallbackPendingCount(const vlessserver_lstate_t *ls)
 {

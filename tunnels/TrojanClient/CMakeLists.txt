@@ -4,7 +4,9 @@ add_library(TrojanClient STATIC
                     instance/api.c
                     instance/node.c
                     instance/chain.c
-                    common/helpers.c
+                    common/address_codec.c
+                    common/destination.c
+                    common/protocol.c
                     common/input.c
                     common/flow.c
                     common/lifecycle.c

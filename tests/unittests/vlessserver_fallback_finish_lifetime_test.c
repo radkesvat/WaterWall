@@ -1,4 +1,4 @@
-#include "VlessServer/structure.h"
+#include "VlessServer/internal.h"
 
 #include "fallback_finish_lifetime_fixture.h"
 

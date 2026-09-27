@@ -1,4 +1,4 @@
-#include "TrojanServer/structure.h"
+#include "TrojanServer/internal.h"
 
 #include "tunnels_abort_runtime_cases.h"
 

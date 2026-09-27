@@ -1,4 +1,4 @@
-#include "structure.h"
+#include "internal.h"
 
 #include "loggers/network_logger.h"
 
@@ -11,77 +11,6 @@ static bool trojanserverDecodeSha224Hex(const uint8_t hex[kTrojanServerPasswordH
     }
 
     return true;
-}
-
-static int trojanserverParseAddressBytes(const uint8_t *buf, size_t len, address_context_t *out, size_t *consumed)
-{
-    if (UNLIKELY(len < 1))
-    {
-        return 0;
-    }
-
-    uint8_t atyp = buf[0];
-    if (atyp == kTrojanAtypIpv4)
-    {
-        if (UNLIKELY(len < 1 + 4 + 2))
-        {
-            return 0;
-        }
-
-        ip_addr_t ip      = {0};
-        uint16_t  port_be = 0;
-        ip.type           = IPADDR_TYPE_V4;
-        memoryCopy(&ip.u_addr.ip4.addr, buf + 1, 4);
-        memoryCopy(&port_be, buf + 5, sizeof(port_be));
-        addresscontextSetIpPort(out, &ip, be16toh(port_be));
-        *consumed = 1 + 4 + 2;
-        return 1;
-    }
-
-    if (atyp == kTrojanAtypIpv6)
-    {
-        if (UNLIKELY(len < 1 + 16 + 2))
-        {
-            return 0;
-        }
-
-        ip_addr_t ip      = {0};
-        uint16_t  port_be = 0;
-        ip.type           = IPADDR_TYPE_V6;
-        memoryCopy(&ip.u_addr.ip6, buf + 1, 16);
-        memoryCopy(&port_be, buf + 17, sizeof(port_be));
-        addresscontextSetIpPort(out, &ip, be16toh(port_be));
-        *consumed = 1 + 16 + 2;
-        return 1;
-    }
-
-    if (atyp == kTrojanAtypDomain)
-    {
-        if (UNLIKELY(len < 2))
-        {
-            return 0;
-        }
-
-        uint8_t domain_len = buf[1];
-        if (UNLIKELY(domain_len == 0))
-        {
-            return -1;
-        }
-
-        if (UNLIKELY(len < (size_t) (2 + domain_len + 2)))
-        {
-            return 0;
-        }
-
-        addresscontextDomainSet(out, (const char *) (buf + 2), domain_len);
-        uint16_t port_be = 0;
-        memoryCopy(&port_be, buf + 2 + domain_len, sizeof(port_be));
-        out->port = be16toh(port_be);
-        *consumed = 2 + domain_len + 2;
-        return 1;
-    }
-
-    return -1;
 }
 
 static bool trojanserverLineAuthenticated(const trojanserver_lstate_t *ls)
@@ -123,7 +52,8 @@ static bool trojanserverGatherHeader(trojanserver_lstate_t *ls, uint16_t needed)
 }
 
 /* Incomplete (0) is separate from invalid (-1) and complete (1). */
-static int trojanserverGatherAddress(trojanserver_lstate_t *ls, uint16_t base, uint16_t trailer)
+static int trojanserverGatherAddress(trojanserver_lstate_t *ls, uint16_t base, uint16_t trailer,
+                                     trojanserver_address_t *target)
 {
     if (! trojanserverGatherHeader(ls, base + 1))
         return 0;
@@ -148,8 +78,7 @@ static int trojanserverGatherAddress(trojanserver_lstate_t *ls, uint16_t base, u
     }
     if (! trojanserverGatherHeader(ls, base + length + trailer))
         return 0;
-    size_t consumed = 0;
-    return trojanserverParseAddressBytes(ls->header + base, length, &ls->frame_target, &consumed);
+    return trojanserverAddressDecode(ls->header + base, length, target);
 }
 
 void trojanserverResetHeader(trojanserver_lstate_t *ls)
@@ -160,7 +89,6 @@ void trojanserverResetHeader(trojanserver_lstate_t *ls)
     ls->frame_ready     = false;
     ls->frame_selected  = false;
     ls->selected_remote = NULL;
-    addresscontextReset(&ls->frame_target);
 }
 
 bool trojanserverRetainActiveHead(trojanserver_lstate_t *ls)
@@ -208,13 +136,17 @@ void trojanserverParseInitial(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls)
     assert(prefix >= kTrojanServerPasswordHexLen);
     if (! trojanserverLineAuthenticated(ls))
     {
-        uint8_t digest[SHA224_DIGEST_SIZE] = {0};
-        bool    authenticated              = trojanserverDecodeSha224Hex(ls->header, digest) &&
-                             trojanserverAuthenticateHash(t, l, digest, &ls->user_handle);
+        uint8_t                    digest[SHA224_DIGEST_SIZE] = {0};
+        trojanserver_auth_result_t result                     = trojanserverDecodeSha224Hex(ls->header, digest)
+                                                                    ? trojanserverAuthenticateHash(t, l, digest, &ls->user_handle)
+                                                                    : kTrojanServerAuthRejected;
         memoryZero(digest, sizeof(digest));
-        if (! authenticated)
+        if (result != kTrojanServerAuthAccepted)
         {
-            trojanserverStartFallback(t, l, ls);
+            if (result == kTrojanServerAuthResourceFailure)
+                trojanserverCloseLineBidirectional(t, l);
+            else
+                trojanserverStartFallback(t, l, ls);
             return;
         }
     }
@@ -227,7 +159,8 @@ void trojanserverParseInitial(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls)
         trojanserverCloseLineBidirectional(t, l);
         return;
     }
-    int parsed = trojanserverGatherAddress(ls, 59, 2);
+    trojanserver_address_t target;
+    int                    parsed = trojanserverGatherAddress(ls, 59, 2, &target);
     if (parsed == 0)
     {
         if (ls->input_bytes > kTrojanServerMaxInitialBytes)
@@ -235,7 +168,7 @@ void trojanserverParseInitial(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls)
         return;
     }
     if (parsed < 0 || ls->header[ls->header_needed - 2] != '\r' || ls->header[ls->header_needed - 1] != '\n' ||
-        (command == kTrojanCmdConnect && ! addresscontextHasPort(&ls->frame_target)))
+        (command == kTrojanCmdConnect && target.port == 0))
     {
         trojanserverCloseLineBidirectional(t, l);
         return;
@@ -245,11 +178,15 @@ void trojanserverParseInitial(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls)
     if (command == kTrojanCmdUdpAssociate)
     {
         ls->branch = kTrojanServerBranchTrojan;
-        ls->phase = kTrojanServerPhaseUdpWaitPacket;
+        ls->phase  = kTrojanServerPhaseUdpWaitPacket;
         trojanserverResetHeader(ls);
         return;
     }
-    trojanserverApplyDestinationContext(l, &ls->frame_target, false);
+    if (! trojanserverApplyDestinationContext(l, &target, false))
+    {
+        trojanserverCloseLineBidirectional(t, l);
+        return;
+    }
     trojanserverResetHeader(ls);
     if (! trojanserverRetainActiveHead(ls) || ls->input_bytes > kTrojanServerMaxPendingBytes ||
         ! bufferqueueTryAttachBudget(&ls->pending_up, &ls->output_budget))
@@ -318,10 +255,11 @@ bool trojanserverDecodeUdp(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls)
 {
     if (! ls->frame_ready)
     {
-        int parsed = trojanserverGatherAddress(ls, 0, 4);
+        trojanserver_address_t target;
+        int                    parsed = trojanserverGatherAddress(ls, 0, 4, &target);
         if (parsed == 0)
             return false;
-        if (parsed < 0 || ! addresscontextHasPort(&ls->frame_target) || ls->header[ls->header_needed - 2] != '\r' ||
+        if (parsed < 0 || target.port == 0 || ls->header[ls->header_needed - 2] != '\r' ||
             ls->header[ls->header_needed - 1] != '\n')
         {
             trojanserverCloseLineBidirectional(t, l);
@@ -341,7 +279,12 @@ bool trojanserverDecodeUdp(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls)
     if (! ls->frame_selected)
     {
         ls->frame_selected = true;
-        line_t *remote     = trojanserverGetOrCreateUdpRemoteLine(t, l, ls, &ls->frame_target);
+        /* Cached wire metadata outlives partial-body input without owning a domain. */
+        trojanserver_address_t        target;
+        trojanserver_address_result_t decoded = trojanserverAddressDecode(ls->header, ls->header_filled, &target);
+        assert(decoded == kTrojanServerAddressComplete);
+        discard decoded;
+        line_t *remote = trojanserverGetOrCreateUdpRemoteLine(t, l, ls, &target);
         if (UNLIKELY(! lineIsAlive(l)))
             return false;
         if (UNLIKELY(remote == NULL))
@@ -371,5 +314,35 @@ bool trojanserverDecodeUdp(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls)
         trojanserverCloseLineBidirectional(t, l);
         return false;
     }
+    return true;
+}
+
+bool trojanserverApplyDestinationContext(line_t *l, const trojanserver_address_t *target, bool udp)
+{
+    address_context_t *dest = lineGetDestinationAddressContext(l);
+    if (target->kind == kTrojanServerAddressDomain)
+    {
+        char *domain = memoryAllocate((size_t) target->length + 1);
+        if (domain == NULL)
+            return false;
+        memoryCopy(domain, target->bytes, target->length);
+        domain[target->length] = '\0';
+        addresscontextReset(dest);
+        dest->domain     = domain;
+        dest->domain_len = (uint8_t) target->length;
+        dest->type_ip    = kCCTypeDomain;
+        dest->port       = target->port;
+    }
+    else
+    {
+        ip_addr_t ip = {0};
+        ip.type      = target->kind == kTrojanServerAddressIpv4 ? IPADDR_TYPE_V4 : IPADDR_TYPE_V6;
+        if (ip.type == IPADDR_TYPE_V4)
+            memoryCopy(&ip.u_addr.ip4.addr, target->bytes, 4);
+        else
+            memoryCopy(&ip.u_addr.ip6, target->bytes, 16);
+        addresscontextSetIpPort(dest, &ip, target->port);
+    }
+    addresscontextSetOnlyProtocol(dest, udp ? IP_PROTO_UDP : IP_PROTO_TCP);
     return true;
 }

@@ -1,7 +1,7 @@
 #include "VlessClient/interface.h"
 #include "dns_strategy.h"
+#include "internal.h"
 #include "splice_buffer.h"
-#include "structure.h"
 /* Keep the normal ownership ledger while refusing one first-output allocation. */
 #define __wrap_bufferpoolTryGetBestFit trackedTryGetBestFit
 #include "tunnel_line_failure_harness.h"
@@ -116,6 +116,8 @@ typedef struct fixture_s
     unsigned         action, boundary;
     bool             udp, paused_up, paused_down, last_splice;
     bool             inject_extra;
+    bool             retention_pipe;
+    unsigned         retention_fault, retention_size;
     sbuf_t          *last;
     uint32_t         headroom;
 } fixture_t;
@@ -195,6 +197,33 @@ static void performAction(unsigned boundary)
         if (f.inject_extra)
             f.t->fnPayloadD(f.t, f.carrier, bytes("x", 1, false, 320));
         memoryFree(data);
+    }
+    if (action == 12)
+    {
+        uint8_t data[2048];
+        for (unsigned i = 0; i < 1024; ++i)
+        {
+            memset(data, (int) (i % 251), f.retention_size);
+            if (f.retention_fault == 2 && i == 1023)
+                fail_queue = true;
+            f.t->fnPayloadD(f.t, f.carrier, bytes(data, f.retention_size, f.retention_pipe, 320));
+            if (! lineIsAlive(f.application))
+            {
+                twfRequire(f.retention_fault == 2 && ! fail_queue, "exact retained entry bound was refused");
+                return;
+            }
+        }
+        vlessclient_lstate_t *ls = lineGetState(f.carrier, f.t);
+        twfRequire(bufferqueueGetBufCount(&ls->pending_down) == 1024 &&
+                       ls->receive_bytes == (size_t) 1024 * f.retention_size,
+                   "nested FIFO accounting omitted or duplicated an active buffer");
+        if (f.retention_fault == 1)
+        {
+            f.t->fnPayloadD(f.t, f.carrier, bytes("x", 1, f.retention_pipe, 320));
+            twfRequire(! lineIsAlive(f.application), "TCP retained entry overflow was accepted");
+        }
+        if (f.retention_fault == 3)
+            f.t->fnFinD(f.t, f.carrier);
     }
 }
 static void ownerFinish(tunnel_t *t, line_t *l)
@@ -615,6 +644,31 @@ static void testNestedTcpRetention(void)
         twfRequire(f.down[0] == 'A' && (extra || f.down[f.down_len - 1] == 'r'), "nested body bytes changed");
         end();
     }
+    twfSetCase("TCP nested body retention: 1024 entries, FIFO, overflow, refusal and Finish");
+    for (unsigned pipe = 0; pipe < 2; ++pipe)
+        for (unsigned size = 1; size <= 2048; size *= 2048)
+            for (unsigned fault = 0; fault < 4; ++fault)
+            {
+                begin(false, "127.0.0.1", 128, 0, false);
+                f.retention_pipe  = pipe != 0;
+                f.retention_fault = fault;
+                f.retention_size  = size;
+                f.boundary        = 5;
+                f.action          = 12;
+                f.t->fnPayloadD(f.t, f.carrier, bytes("\0\0A", 3, pipe != 0, 320));
+                twfRequire(lineIsAlive(f.application) == (fault == 0), "retained TCP settlement changed");
+                twfRequire(f.down_len == (fault ? 1U : 1U + 1024U * size), "nested TCP delivery count changed");
+                if (! fault)
+                {
+                    for (unsigned i = 0; i < 1024U * size; ++i)
+                        twfRequire(f.down[1 + i] == (i / size) % 251, "nested TCP FIFO bytes changed");
+                    vlessclient_lstate_t *ls = lineGetState(f.carrier, f.t);
+                    twfRequire(ls->receive_bytes == 0 && ls->receive_head == NULL &&
+                                   bufferqueueGetBufCount(&ls->pending_down) == 0,
+                               "TCP retention did not settle");
+                }
+                end();
+            }
 }
 
 static void testFailuresAndClose(void)
@@ -889,7 +943,7 @@ static void testFirstPayload(void)
                 sbufShiftLeft(body, 3);
                 sbufWrite(body, "pre", 3);
             }
-            unsigned length = representation == 2 ? 7 : 4;
+            unsigned length   = representation == 2 ? 7 : 4;
             bool     ordinary = ! sbufIsSplice(body);
             uint32_t expected_padding =
                 ordinary ? sbufGetLeftCapacity(body) - 26 - (udp ? 2 : 0) : bufferpoolGetLargeBufferPadding(f.env.pool);

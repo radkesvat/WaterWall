@@ -1,4 +1,4 @@
-#include "structure.h"
+#include "internal.h"
 
 bool trojanclientAssociationAlive(tunnel_t *t, line_t *next_line, line_t *prev_line)
 {

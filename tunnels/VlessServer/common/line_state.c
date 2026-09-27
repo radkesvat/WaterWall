@@ -1,4 +1,4 @@
-#include "structure.h"
+#include "internal.h"
 
 void vlessserverLinestateInitialize(vlessserver_lstate_t *ls, tunnel_t *t, line_t *l, vlessserver_line_kind_t kind)
 {

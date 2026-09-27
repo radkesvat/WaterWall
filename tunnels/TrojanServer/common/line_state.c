@@ -1,4 +1,4 @@
-#include "structure.h"
+#include "internal.h"
 
 void trojanserverLinestateInitialize(trojanserver_lstate_t *ls, tunnel_t *t, line_t *l, trojanserver_line_kind_t kind)
 {
@@ -24,7 +24,6 @@ void trojanserverReleaseBuffers(trojanserver_lstate_t *ls)
         ls->fallback_pending_up = NULL;
     }
     bufferbudgetAssertEmpty(&ls->output_budget);
-    addresscontextReset(&ls->frame_target);
     ls->selected_remote = NULL;
     ls->header_filled   = 0;
     memoryZero(ls->header, sizeof(ls->header));
@@ -34,6 +33,7 @@ void trojanserverLinestateDestroy(trojanserver_lstate_t *ls)
 {
     trojanserverReleaseBuffers(ls);
     trojanserver_remote_map_t_drop(&ls->udp_remote_lines);
+    memoryFree(ls->remote_key);
     memoryFree(ls->auth_username);
     memoryFree(ls->auth_password);
     memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(*ls)));

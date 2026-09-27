@@ -3893,6 +3893,7 @@ if(TARGET TrojanClient AND UNIX AND NOT APPLE)
     set(trojan_test trojanclient_${mode}_test)
     add_executable(${trojan_test} trojanclient_splice_test.c ${WATERWALL_LINE_FAILURE_WW_SOURCES})
     waterwall_line_failure_test_use_tunnel(${trojan_test} TrojanClient)
+    target_link_options(${trojan_test} PRIVATE "-Wl,--wrap=memoryAllocate")
     target_link_libraries(${trojan_test} PRIVATE ww)
     target_link_options(${trojan_test} PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS}
       "-Wl,--wrap=bufferqueueTryPushBack")
@@ -3913,7 +3914,9 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND TARGET TrojanServer)
     set(trojan_server_test trojanserver_${mode}_test)
     add_executable(${trojan_server_test} trojanserver_splice_test.c ${WATERWALL_LINE_FAILURE_WW_SOURCES})
     waterwall_line_failure_test_use_tunnel(${trojan_server_test} TrojanServer)
+    target_compile_definitions(${trojan_server_test} PRIVATE TROJANSERVER_TEST_CONSTANT_HASH=1)
     target_link_libraries(${trojan_server_test} PRIVATE ww)
+    target_link_options(${trojan_server_test} PRIVATE "-Wl,--wrap=stringDuplicate")
     target_link_options(${trojan_server_test} PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS}
       "-Wl,--wrap=bufferqueueTryPushBack" "-Wl,--wrap=memoryAllocate" "-Wl,--wrap=lineScheduleDelayedTask"
       "-Wl,--wrap=authenticationclientGetState" "-Wl,--wrap=authenticationclientGetUserBySHA224WithProfile")
@@ -3935,6 +3938,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND TARGET VlessServer)
     add_executable(${vless_server_test} vlessserver_splice_test.c ${WATERWALL_LINE_FAILURE_WW_SOURCES})
     waterwall_line_failure_test_use_tunnel(${vless_server_test} VlessServer)
     target_link_libraries(${vless_server_test} PRIVATE ww)
+    target_link_options(${vless_server_test} PRIVATE "-Wl,--wrap=stringDuplicate")
     target_link_options(${vless_server_test} PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS}
       "-Wl,--wrap=bufferqueueTryPushBack" "-Wl,--wrap=lineScheduleDelayedTask"
       "-Wl,--wrap=authenticationclientGetState" "-Wl,--wrap=authenticationclientGetUserByUUIDWithProfile")
@@ -4108,3 +4112,20 @@ if(LINUX AND TARGET Socks5Client)
   add_dependencies(waterwall_unit_tests socks5client_resources_test)
   add_waterwall_unit_test(waterwall.socks5client_resources_unit socks5client_resources_test "unit;socks5client;allocation;ownership")
 endif()
+
+foreach(side IN ITEMS Client Server)
+  if(TARGET Trojan${side})
+    string(TOLOWER "Trojan${side}" trojan_codec_prefix)
+    set(trojan_codec_test ${trojan_codec_prefix}_address_codec_test)
+    add_executable(${trojan_codec_test} trojan_address_codec_test.c
+      ${CMAKE_SOURCE_DIR}/tunnels/Trojan${side}/common/address_codec.c)
+    target_include_directories(${trojan_codec_test} PRIVATE
+      ${CMAKE_SOURCE_DIR}/tunnels/Trojan${side}/include
+      ${CMAKE_SOURCE_DIR}/tunnels/Trojan${side}/include/Trojan${side})
+    if(side STREQUAL "Server")
+      target_compile_definitions(${trojan_codec_test} PRIVATE TROJAN_ADDRESS_SERVER=1)
+    endif()
+    add_dependencies(waterwall_unit_tests ${trojan_codec_test})
+    add_waterwall_unit_test(waterwall.${trojan_codec_prefix}_address_codec_unit ${trojan_codec_test} "unit;trojan;codec")
+  endif()
+endforeach()

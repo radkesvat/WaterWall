@@ -1,4 +1,4 @@
-#include "structure.h"
+#include "internal.h"
 
 static void setLineProtocol(line_t *l, uint8_t protocol)
 {

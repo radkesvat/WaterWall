@@ -1,4 +1,4 @@
-#include "structure.h"
+#include "internal.h"
 
 #include "UserController/interface.h"
 
@@ -138,12 +138,21 @@ static bool trojanserverAppendPassword(trojanserver_tstate_t *ts, const char *us
         return false;
     }
 
-    ts->users = users;
+    ts->users           = users;
+    char *name_copy     = username != NULL ? stringDuplicate(username) : NULL;
+    char *password_copy = stringDuplicate(password);
+    if ((username != NULL && name_copy == NULL) || password_copy == NULL)
+    {
+        memoryFree(name_copy);
+        memoryFree(password_copy);
+        memoryZero(&digest, sizeof(digest));
+        LOGF("TrojanServer: failed to copy local user credentials");
+        return false;
+    }
     memoryCopy(ts->users[ts->user_count].sha224, digest.bytes, SHA224_DIGEST_SIZE);
-    ts->users[ts->user_count].username = username != NULL ? stringDuplicate(username) : NULL;
-    ts->users[ts->user_count].password = stringDuplicate(password);
+    ts->users[ts->user_count].username = name_copy;
+    ts->users[ts->user_count].password = password_copy;
     ts->user_count                     = (uint32_t) new_count;
-
     memoryZero(&digest, sizeof(digest));
     return true;
 }

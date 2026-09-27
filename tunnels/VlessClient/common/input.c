@@ -1,5 +1,5 @@
+#include "internal.h"
 #include "loggers/network_logger.h"
-#include "structure.h"
 
 static sbuf_t *receiveHead(vlessclient_lstate_t *ls)
 {

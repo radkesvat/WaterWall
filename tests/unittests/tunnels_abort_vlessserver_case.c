@@ -1,4 +1,4 @@
-#include "VlessServer/structure.h"
+#include "VlessServer/internal.h"
 
 #include "tunnels_abort_runtime_cases.h"
 

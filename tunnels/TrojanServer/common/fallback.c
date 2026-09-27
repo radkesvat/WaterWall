@@ -1,4 +1,4 @@
-#include "structure.h"
+#include "internal.h"
 
 static void trojanserverDelayedFallbackPayloadTask(tunnel_t *t, line_t *l);
 
@@ -267,4 +267,16 @@ void trojanserverStartFallback(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls
         if (batch != NULL)
             tunnelUpStreamPayload(ts->fallback_tunnel, l, batch);
     }
+}
+
+tunnel_t *trojanserverSelectedUpstream(tunnel_t *t, const trojanserver_lstate_t *ls)
+{
+    trojanserver_tstate_t *ts = tunnelGetState(t);
+
+    if (ls->branch == kTrojanServerBranchFallback)
+    {
+        return ts->fallback_tunnel;
+    }
+
+    return NULL;
 }

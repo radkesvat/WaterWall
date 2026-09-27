@@ -1,4 +1,4 @@
-#include "structure.h"
+#include "internal.h"
 
 /* Client -> selected branch: initial/UDP bytes enter the owned pending_up FIFO
  * for trojanserverPump() to parse through common/input.c. After CONNECT, synchronous

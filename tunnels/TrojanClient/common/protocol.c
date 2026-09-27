@@ -1,72 +1,49 @@
-#include "structure.h"
+#include "internal.h"
 
-#include "loggers/network_logger.h"
-
-static bool trojanclientWriteAddress(uint8_t *ptr, const address_context_t *ctx, size_t *offset)
+static bool trojanclientAddressFromContext(const address_context_t *ctx, trojanclient_address_t *out)
 {
+    trojanclient_address_t value = {.port = ctx->port};
     if (addresscontextIsIpType(ctx))
     {
-        if (addresscontextIsIpv4(ctx))
-        {
-            ptr[(*offset)++] = kTrojanAtypIpv4;
-            memoryCopy(ptr + *offset, &ctx->ip_address.u_addr.ip4.addr, 4);
-            *offset += 4;
-        }
-        else if (addresscontextIsIpv6(ctx))
-        {
-            ptr[(*offset)++] = kTrojanAtypIpv6;
-            memoryCopy(ptr + *offset, &ctx->ip_address.u_addr.ip6, 16);
-            *offset += 16;
-        }
-        else
-        {
+        if (! addresscontextIsIpv4(ctx) && ! addresscontextIsIpv6(ctx))
             return false;
-        }
+        value.kind   = addresscontextIsIpv4(ctx) ? kTrojanClientAddressIpv4 : kTrojanClientAddressIpv6;
+        value.length = addresscontextIsIpv4(ctx) ? 4 : 16;
+        memoryCopy(value.bytes,
+                   addresscontextIsIpv4(ctx) ? (const void *) &ctx->ip_address.u_addr.ip4.addr
+                                             : (const void *) &ctx->ip_address.u_addr.ip6,
+                   value.length);
     }
     else if (addresscontextIsDomain(ctx))
     {
-        ptr[(*offset)++] = kTrojanAtypDomain;
-        ptr[(*offset)++] = ctx->domain_len;
-        memoryCopy(ptr + *offset, ctx->domain, ctx->domain_len);
-        *offset += ctx->domain_len;
+        value.kind   = kTrojanClientAddressDomain;
+        value.length = ctx->domain_len;
+        memoryCopy(value.bytes, ctx->domain, value.length);
     }
     else
-    {
         return false;
-    }
+    *out = value;
+    return true;
+}
 
-    uint16_t port_be = htobe16(ctx->port);
-    memoryCopy(ptr + *offset, &port_be, sizeof(port_be));
-    *offset += sizeof(port_be);
+static bool trojanclientWriteAddress(uint8_t *ptr, size_t capacity, const address_context_t *ctx, size_t *offset)
+{
+    trojanclient_address_t value;
+    size_t                 written;
+    if (! trojanclientAddressFromContext(ctx, &value) || *offset > capacity ||
+        ! trojanclientAddressEncode(&value, ptr + *offset, capacity - *offset, &written))
+        return false;
+    *offset += written;
     return true;
 }
 
 static bool trojanclientAddressLength(const address_context_t *ctx, uint32_t *len_out)
 {
-    if (addresscontextIsIpType(ctx))
-    {
-        if (addresscontextIsIpv4(ctx))
-        {
-            *len_out = 1 + 4 + 2;
-            return true;
-        }
-
-        if (addresscontextIsIpv6(ctx))
-        {
-            *len_out = 1 + 16 + 2;
-            return true;
-        }
-
+    trojanclient_address_t value;
+    if (! trojanclientAddressFromContext(ctx, &value))
         return false;
-    }
-
-    if (addresscontextIsDomain(ctx))
-    {
-        *len_out = 1U + 1U + (uint32_t) ctx->domain_len + 2U;
-        return true;
-    }
-
-    return false;
+    *len_out = (uint32_t) trojanclientAddressEncodedLength(&value);
+    return true;
 }
 
 static uint8_t protocolToCommand(trojanclient_protocol_t protocol)
@@ -75,118 +52,10 @@ static uint8_t protocolToCommand(trojanclient_protocol_t protocol)
     return protocol == kTrojanClientProtocolUdp ? kTrojanCommandUdpAssociate : kTrojanCommandConnect;
 }
 
-static bool getProtocolFromContext(const address_context_t *ctx, trojanclient_protocol_t *protocol_out)
-{
-    if (ctx->proto_tcp && ! ctx->proto_udp && ! ctx->proto_icmp && ! ctx->proto_packet)
-    {
-        *protocol_out = kTrojanClientProtocolTcp;
-        return true;
-    }
-
-    if (ctx->proto_udp && ! ctx->proto_tcp && ! ctx->proto_icmp && ! ctx->proto_packet)
-    {
-        *protocol_out = kTrojanClientProtocolUdp;
-        return true;
-    }
-
-    return false;
-}
-
-static trojanclient_protocol_t resolveConfiguredProtocol(const trojanclient_tstate_t *ts,
-                                                         const address_context_t     *current_dest_ctx)
-{
-    if (ts->protocol != kTrojanClientProtocolDestContext)
-    {
-        return ts->protocol;
-    }
-
-    trojanclient_protocol_t protocol = kTrojanClientProtocolTcp;
-    if (getProtocolFromContext(current_dest_ctx, &protocol))
-    {
-        return protocol;
-    }
-
-    LOGW("TrojanClient: configured protocol is dest_context->protocol, but the destination context protocol was "
-         "missing or invalid (tcp=%u, udp=%u, icmp=%u, packet=%u); falling back to TCP",
-         (unsigned int) current_dest_ctx->proto_tcp,
-         (unsigned int) current_dest_ctx->proto_udp,
-         (unsigned int) current_dest_ctx->proto_icmp,
-         (unsigned int) current_dest_ctx->proto_packet);
-    return kTrojanClientProtocolTcp;
-}
-
 static void fillUdpAssociateRequestTarget(address_context_t *target)
 {
     discard addresscontextSetIpAddressPort(target, "0.0.0.0", 0);
     addresscontextSetOnlyProtocol(target, IP_PROTO_UDP);
-}
-
-bool trojanclientApplyTargetContext(tunnel_t *t, line_t *l)
-{
-    trojanclient_tstate_t *ts       = tunnelGetState(t);
-    address_context_t     *dest_ctx = lineGetDestinationAddressContext(l);
-    address_context_t      current  = {0};
-    bool uses_current_dest = (ts->target_addr_source != kDvsConstant) || (ts->target_port_source != kDvsConstant) ||
-                             (ts->protocol == kTrojanClientProtocolDestContext);
-
-    if (uses_current_dest)
-    {
-        addresscontextCopy(&current, dest_ctx);
-    }
-
-    trojanclient_protocol_t resolved_protocol = resolveConfiguredProtocol(ts, &current);
-
-    if (ts->target_addr_source == kDvsConstant)
-    {
-        addresscontextCopy(dest_ctx, &ts->target_addr);
-    }
-    else
-    {
-        if (UNLIKELY(! addresscontextIsValid(&current)))
-        {
-            LOGE("TrojanClient: configured to use dest_context->address, but line destination address is not set");
-            addresscontextReset(&current);
-            return false;
-        }
-
-        addresscontextCopy(dest_ctx, &current);
-    }
-
-    if (ts->target_port_source == kDvsConstant)
-    {
-        addresscontextSetPort(dest_ctx, ts->target_addr.port);
-    }
-    else
-    {
-        if (UNLIKELY(current.port == 0))
-        {
-            LOGE("TrojanClient: configured to use dest_context->port, but line destination port is not set");
-            addresscontextReset(&current);
-            return false;
-        }
-
-        addresscontextSetPort(dest_ctx, current.port);
-    }
-
-    if (resolved_protocol == kTrojanClientProtocolTcp)
-    {
-        addresscontextSetOnlyProtocol(dest_ctx, IP_PROTO_TCP);
-    }
-    else
-    {
-        addresscontextSetOnlyProtocol(dest_ctx, IP_PROTO_UDP);
-    }
-
-    if (uses_current_dest)
-    {
-        addresscontextReset(&current);
-    }
-
-    if (ts->resolve_domains)
-    {
-        addresscontextSetDomainStrategy(dest_ctx, (enum domain_strategy) ts->domain_strategy);
-    }
-    return true;
 }
 
 /* Takes ownership of body on every result. No callback occurs until the whole
@@ -235,14 +104,14 @@ bool trojanclientSendInitialRequest(tunnel_t *t, line_t *l, trojanclient_lstate_
     ptr[off++]   = '\r';
     ptr[off++]   = '\n';
     ptr[off++]   = protocolToCommand(ls->protocol);
-    bool written = trojanclientWriteAddress(ptr, target, &off);
+    bool written = trojanclientWriteAddress(ptr, header_len, target, &off);
     assert(written);
     discard written;
     ptr[off++] = '\r';
     ptr[off++] = '\n';
     if (udp_header_len != 0)
     {
-        written = trojanclientWriteAddress(ptr, &ls->target_addr, &off);
+        written = trojanclientWriteAddress(ptr, header_len + udp_header_len, &ls->target_addr, &off);
         assert(written);
         uint16_t length = htobe16((uint16_t) body_len);
         memoryCopy(ptr + off, &length, sizeof(length));
@@ -305,7 +174,7 @@ bool trojanclientWrapUdpPayload(line_t *l, sbuf_t **buf_io, const address_contex
     uint8_t *ptr = sbufGetMutablePtr(buf);
     size_t   off = 0;
 
-    if (UNLIKELY(! trojanclientWriteAddress(ptr, target, &off)))
+    if (UNLIKELY(! trojanclientWriteAddress(ptr, header_len, target, &off)))
     {
         return false;
     }

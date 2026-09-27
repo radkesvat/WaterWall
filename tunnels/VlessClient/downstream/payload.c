@@ -1,4 +1,4 @@
-#include "structure.h"
+#include "internal.h"
 
 void vlessclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
@@ -22,7 +22,14 @@ void vlessclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     size_t limit = ls->kind == kVlessClientLineKindDirect
                        ? (ls->response_complete ? kVlessClientMaxOrderBytes : kVlessClientMaxTcpWireBytes)
                        : kVlessClientMaxUdpBufferedBytes;
-    if (UNLIKELY(length > limit - ls->receive_bytes || ! bufferqueueTryPushBack(&ls->pending_down, &buf)))
+    /* A completed TCP response leaves body-ordering storage, not UDP parser
+     * fragments. Count every still-local head once; handoff removes it before
+     * callbacks can admit more input. Ready synchronous forwarding stays above. */
+    bool entries_full =
+        ls->kind == kVlessClientLineKindDirect && ls->response_complete &&
+        bufferqueueGetBufCount(&ls->pending_down) + (ls->receive_head != NULL) >= kVlessClientMaxOrderEntries;
+    if (UNLIKELY(entries_full || length > limit - ls->receive_bytes ||
+                 ! bufferqueueTryPushBack(&ls->pending_down, &buf)))
     {
         lineReuseBuffer(l, buf);
         vlessclientCloseLine(t, l, kVlessClientCloseInternal);

@@ -1,4 +1,4 @@
-#include "TrojanServer/structure.h"
+#include "TrojanServer/internal.h"
 
 #include "fallback_finish_lifetime_fixture.h"
 

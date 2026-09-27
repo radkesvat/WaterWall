@@ -184,7 +184,7 @@ CREATION_SITES = [
      "one UDP remote line per destination; the client line is borrowed"),
     ("tunnels/TrojanServer/common/udp.c", "trojanserverGetOrCreateUdpRemoteLine", NORMAL_OWNER,
      "one UDP remote line per destination; the client line is borrowed"),
-    ("tunnels/VlessServer/common/helpers.c", "vlessserverGetOrCreateUdpRemoteLine", NORMAL_OWNER,
+    ("tunnels/VlessServer/common/udp.c", "vlessserverGetOrCreateUdpRemoteLine", NORMAL_OWNER,
      "one UDP remote line per destination; the client line is borrowed"),
 
     # ------------------------------------------------------------------
@@ -347,7 +347,7 @@ OWNER_CLOSE_SITES = [
      "a UDP remote line"),
     ("tunnels/TrojanServer/common/udp.c", "trojanserverCloseUdpRemoteLineInternal",
      "a UDP remote line"),
-    ("tunnels/VlessServer/common/helpers.c", "vlessserverCloseUdpRemoteLineInternal",
+    ("tunnels/VlessServer/common/lifecycle.c", "vlessserverCloseUdpRemoteLineInternal",
      "a UDP remote line"),
     ("ww/net/pipe_tunnel.c", "pipetunnelDefaultDownStreamFin",
      "the paired line the pipe created for this worker"),

@@ -2,6 +2,16 @@
 
 #include "wwapi.h"
 
+enum
+{
+    kVlessVersion    = 0x00,
+    kVlessCmdTcp     = 0x01,
+    kVlessCmdUdp     = 0x02,
+    kVlessAtypIpv4   = 0x01,
+    kVlessAtypDomain = 0x02,
+    kVlessAtypIpv6   = 0x03
+};
+
 typedef enum vlessserver_line_kind_e
 {
     kVlessServerLineKindNone = 0,
@@ -28,6 +38,13 @@ typedef enum vlessserver_close_origin_e
     kVlessServerCloseFromPrev,
     kVlessServerCloseFromNext
 } vlessserver_close_origin_t;
+
+typedef enum vlessserver_auth_result_e
+{
+    kVlessServerAuthRejected = 0,
+    kVlessServerAuthAccepted,
+    kVlessServerAuthResourceFailure
+} vlessserver_auth_result_t;
 
 typedef struct vlessserver_user_s
 {
@@ -87,6 +104,9 @@ typedef struct vlessserver_lstate_s
     bool transport_est_sent : 1;
     bool response_dispatching : 1;
     bool response_paused : 1;
+    /* Client-side upstream permission: current backend contribution and emitted hold. */
+    bool udp_backend_paused : 1;
+    bool udp_source_pause_sent : 1;
     bool user_handle_recorded : 1;
     bool fallback_close_draining : 1;
     bool fallback_branch_finished_during_drain : 1;
@@ -111,43 +131,3 @@ enum
     kVlessServerMaxPendingBuffers      = 1024,
     kVlessServerInitialMaxReqLen       = 23 + UINT8_MAX
 };
-
-WW_EXPORT void         vlessserverTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context);
-WW_EXPORT tunnel_t    *vlessserverTunnelCreate(node_t *node);
-WW_EXPORT api_result_t vlessserverTunnelApi(tunnel_t *instance, sbuf_t *message);
-
-void vlessserverTunnelOnPrepair(tunnel_t *t);
-void vlessserverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
-
-void vlessserverTunnelUpStreamInit(tunnel_t *t, line_t *l);
-void vlessserverTunnelUpStreamFinish(tunnel_t *t, line_t *l);
-void vlessserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
-void vlessserverTunnelUpStreamPause(tunnel_t *t, line_t *l);
-void vlessserverTunnelUpStreamResume(tunnel_t *t, line_t *l);
-
-void vlessserverTunnelDownStreamEst(tunnel_t *t, line_t *l);
-void vlessserverTunnelDownStreamFinish(tunnel_t *t, line_t *l);
-void vlessserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
-void vlessserverTunnelDownStreamPause(tunnel_t *t, line_t *l);
-void vlessserverTunnelDownStreamResume(tunnel_t *t, line_t *l);
-
-void vlessserverLinestateInitialize(vlessserver_lstate_t *ls, tunnel_t *t, line_t *l, vlessserver_line_kind_t kind);
-void vlessserverLinestateDestroy(vlessserver_lstate_t *ls);
-void vlessserverTunnelstateDestroy(vlessserver_tstate_t *ts);
-
-bool vlessserverDrainInput(tunnel_t *t, line_t *l, vlessserver_lstate_t *ls, bool reject_short_password);
-void vlessserverCloseLineFromUpstream(tunnel_t *t, line_t *l);
-void vlessserverCloseLineFromDownstream(tunnel_t *t, line_t *l);
-void vlessserverCloseLineBidirectional(tunnel_t *t, line_t *l);
-bool vlessserverForwardResponse(tunnel_t *t, line_t *l, sbuf_t *buf);
-bool vlessserverDrainResponse(tunnel_t *t, line_t *l, bool admitted);
-void vlessserverOnSelectedEstablished(tunnel_t *t, line_t *l, vlessserver_lstate_t *ls);
-bool vlessserverWrapUdpPayload(line_t *l, sbuf_t **buf_io);
-bool vlessserverSendFallbackPayload(tunnel_t *t, line_t *l, vlessserver_lstate_t *ls, sbuf_t *buf);
-bool vlessserverScheduleFallbackPayloadDrain(tunnel_t *t, line_t *l, vlessserver_lstate_t *ls);
-
-bool    vlessserverGatherHeader(vlessserver_lstate_t *ls, uint16_t needed);
-bool    vlessserverRetainActiveHead(vlessserver_lstate_t *ls);
-sbuf_t *vlessserverExtractUdpBody(vlessserver_lstate_t *ls, uint16_t bytes);
-bool    vlessserverStartFallback(tunnel_t *t, line_t *l);
-void    vlessserverCloseFallbackFromUpstream(tunnel_t *t, line_t *l, vlessserver_lstate_t *ls, tunnel_t *fallback);

@@ -1,4 +1,4 @@
-#include "structure.h"
+#include "internal.h"
 
 void trojanserverTunnelDownStreamFinish(tunnel_t *t, line_t *l)
 {

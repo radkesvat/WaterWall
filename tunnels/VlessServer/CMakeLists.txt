@@ -7,7 +7,11 @@ add_library(VlessServer STATIC
     instance/prepair.c
     common/input.c
     common/fallback.c
-    common/helpers.c
+    common/auth.c
+    common/flow.c
+    common/lifecycle.c
+    common/protocol.c
+    common/udp.c
     common/line_state.c
     upstream/init.c
     upstream/fin.c

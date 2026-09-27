@@ -1,10 +1,33 @@
 #pragma once
 
+#include "address_codec.h"
 #include "wwapi.h"
 
-#define i_type trojanserver_remote_map_t // NOLINT
-#define i_key  hash_t                    // NOLINT
-#define i_val  line_t *                  // NOLINT
+/* Each remote owns its immutable key; the client map borrows it until detach.
+ * Routing context rewrites must never change lookup or removal identity. */
+typedef struct trojanserver_remote_key_s
+{
+    trojanserver_address_t address;
+    hash_t                 hash;
+} trojanserver_remote_key_t;
+
+static inline bool trojanserverRemoteKeyEqual(trojanserver_remote_key_t *const *left,
+                                              trojanserver_remote_key_t *const *right)
+{
+    const trojanserver_address_t *a = &(*left)->address, *b = &(*right)->address;
+    return a->kind == b->kind && a->port == b->port && a->length == b->length &&
+           memoryEqual(a->bytes, b->bytes, a->length);
+}
+
+#define i_type trojanserver_remote_map_t
+#define i_key  trojanserver_remote_key_t *
+#define i_val  line_t *
+#define i_eq   trojanserverRemoteKeyEqual
+#ifdef TROJANSERVER_TEST_CONSTANT_HASH
+#define i_hash(key) ((void) (key), UINT64_C(0))
+#else
+#define i_hash(key) ((*key)->hash)
+#endif
 #include "stc/hmap.h"
 
 /* Wire command and address tags shared by encoding and parsing. */
@@ -49,6 +72,13 @@ typedef enum trojanserver_close_origin_e
     kTrojanServerCloseFromPrev,
     kTrojanServerCloseFromNext
 } trojanserver_close_origin_t;
+
+typedef enum trojanserver_auth_result_e
+{
+    kTrojanServerAuthRejected = 0,
+    kTrojanServerAuthAccepted,
+    kTrojanServerAuthResourceFailure
+} trojanserver_auth_result_t;
 
 typedef struct trojanserver_user_s
 {
@@ -121,7 +151,6 @@ typedef struct trojanserver_lstate_s
     uint16_t          header_filled;
     uint16_t          header_needed;
     uint16_t          body_length;
-    address_context_t frame_target;
 
     /* The map owns backend lines; selected_remote borrows the current frame's
      * backend. Replies are framed and handed to the client synchronously. */
@@ -130,8 +159,8 @@ typedef struct trojanserver_lstate_s
     size_t                    paused_remotes;
 
     /* Backend-side association: holds a physical client reference through cleanup. */
-    line_t *client_line;
-    hash_t  remote_key;
+    line_t                    *client_line;
+    trojanserver_remote_key_t *remote_key;
 
     /* Authentication metadata; credential strings are owned and nullable. */
     user_handle_t user_handle;
@@ -159,60 +188,3 @@ enum
     kTrojanServerMaxQueuedBuffers = 1024,
     kTrojanServerMaxWireBytes     = 2 * 1024 * 1024 + 8455
 };
-
-WW_EXPORT void         trojanserverTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context);
-WW_EXPORT tunnel_t    *trojanserverTunnelCreate(node_t *node);
-WW_EXPORT api_result_t trojanserverTunnelApi(tunnel_t *instance, sbuf_t *message);
-
-void trojanserverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
-void trojanserverTunnelOnPrepair(tunnel_t *t);
-
-void trojanserverTunnelUpStreamInit(tunnel_t *t, line_t *l);
-void trojanserverTunnelUpStreamFinish(tunnel_t *t, line_t *l);
-void trojanserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
-void trojanserverTunnelUpStreamPause(tunnel_t *t, line_t *l);
-void trojanserverTunnelUpStreamResume(tunnel_t *t, line_t *l);
-
-void trojanserverTunnelDownStreamEst(tunnel_t *t, line_t *l);
-void trojanserverTunnelDownStreamFinish(tunnel_t *t, line_t *l);
-void trojanserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
-void trojanserverTunnelDownStreamPause(tunnel_t *t, line_t *l);
-void trojanserverTunnelDownStreamResume(tunnel_t *t, line_t *l);
-
-void trojanserverLinestateInitialize(trojanserver_lstate_t *ls, tunnel_t *t, line_t *l, trojanserver_line_kind_t kind);
-void trojanserverReleaseBuffers(trojanserver_lstate_t *ls);
-void trojanserverLinestateDestroy(trojanserver_lstate_t *ls);
-void trojanserverTunnelstateDestroy(trojanserver_tstate_t *ts);
-
-void trojanserverPump(tunnel_t *t, line_t *l);
-void trojanserverCloseLineFromUpstream(tunnel_t *t, line_t *l);
-void trojanserverCloseLineFromDownstream(tunnel_t *t, line_t *l);
-void trojanserverCloseLineBidirectional(tunnel_t *t, line_t *l);
-void trojanserverOnNextEstablished(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls);
-bool trojanserverWrapUdpPayload(line_t *l, sbuf_t **buf_io);
-bool trojanserverSendFallbackPayload(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls, sbuf_t *buf);
-bool trojanserverScheduleFallbackPayloadDrain(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls);
-
-bool trojanserverIsUdp(const trojanserver_lstate_t *ls);
-/* On success the queue owns *buf; on refusal the caller still owns it. */
-bool trojanserverQueuePayload(buffer_queue_t *queue, sbuf_t **buf);
-
-void trojanserverSetNextPaused(tunnel_t *t, line_t *l, bool paused);
-
-/* Shared implementation helpers; callbacks retain their directional admission. */
-void      trojanserverApplyDestinationContext(line_t *l, const address_context_t *target, bool udp);
-bool      trojanserverAuthenticateHash(tunnel_t *t, line_t *l, const uint8_t sha224[SHA224_DIGEST_SIZE],
-                                       user_handle_t *user_handle_out);
-void      trojanserverRecordLineUser(line_t *l, trojanserver_lstate_t *ls, const user_handle_t *user_handle);
-tunnel_t *trojanserverSelectedUpstream(tunnel_t *t, const trojanserver_lstate_t *ls);
-void      trojanserverResetHeader(trojanserver_lstate_t *ls);
-bool      trojanserverRetainActiveHead(trojanserver_lstate_t *ls);
-void      trojanserverParseInitial(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls);
-bool      trojanserverDecodeUdp(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls);
-void      trojanserverCloseFallbackFromUpstream(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls, tunnel_t *fallback);
-void      trojanserverStartFallback(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls);
-void      trojanserverCloseUdpRemoteLineInternal(tunnel_t *t, line_t *remote_l, bool close_next);
-void      trojanserverCloseUdpRemoteLines(tunnel_t *t, trojanserver_lstate_t *client);
-line_t   *trojanserverGetOrCreateUdpRemoteLine(tunnel_t *t, line_t *client_l, trojanserver_lstate_t *client,
-                                               const address_context_t *target);
-bool      trojanserverNotifyRemotePermission(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls);

@@ -1,4 +1,4 @@
-#include "structure.h"
+#include "internal.h"
 
 #include "UserController/interface.h"
 
@@ -127,9 +127,15 @@ static bool vlessserverAppendUuid(vlessserver_tstate_t *ts, const uint8_t uuid[k
         return false;
     }
 
-    ts->users = users;
+    ts->users       = users;
+    char *name_copy = username != NULL ? stringDuplicate(username) : NULL;
+    if (username != NULL && name_copy == NULL)
+    {
+        LOGF("VlessServer: failed to copy local user name");
+        return false;
+    }
     memoryCopy(ts->users[ts->user_count].uuid, uuid, kVlessServerUuidLen);
-    ts->users[ts->user_count].username = username != NULL ? stringDuplicate(username) : NULL;
+    ts->users[ts->user_count].username = name_copy;
     ts->user_count                     = (uint32_t) new_count;
     return true;
 }

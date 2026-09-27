@@ -1,4 +1,4 @@
-#include "structure.h"
+#include "internal.h"
 
 /* Each reply is one admitted synchronous handoff. Neither transport Est nor
  * consumer Pause creates a protocol barrier or an association output backlog. */

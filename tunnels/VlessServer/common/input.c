@@ -1,4 +1,4 @@
-#include "structure.h"
+#include "internal.h"
 
 static sbuf_t *receiveHead(vlessserver_lstate_t *ls)
 {
@@ -90,4 +90,26 @@ sbuf_t *vlessserverExtractUdpBody(vlessserver_lstate_t *ls, uint16_t bytes)
     ls->input_bytes -= 2U + bytes;
     ls->header_filled = 0;
     return result;
+}
+
+bool vlessserverDrainInput(tunnel_t *t, line_t *l, vlessserver_lstate_t *ls, bool reject_short_password)
+{
+    if (ls->phase == kVlessServerPhaseWaitInitial)
+    {
+        if (! vlessserverHandleInitialRequest(t, l, ls, reject_short_password))
+            return false;
+        if (ls->phase == kVlessServerPhaseWaitInitial && ls->input_bytes > kVlessServerMaxInitialBytes)
+        {
+            vlessserverCloseLineBidirectional(t, l);
+            return false;
+        }
+    }
+
+    if (ls->phase == kVlessServerPhaseUdpWaitPacket || ls->phase == kVlessServerPhaseUdpConnecting ||
+        ls->phase == kVlessServerPhaseUdpEstablished)
+    {
+        return vlessserverDrainUdpPackets(t, l, ls);
+    }
+
+    return true;
 }

@@ -1,83 +1,4 @@
-#include "structure.h"
-
-static int trojanclientParseAddressBytes(const uint8_t *buf, size_t len, address_context_t *out, size_t *consumed)
-{
-    if (len < 1)
-    {
-        return 0;
-    }
-
-    uint8_t atyp = buf[0];
-    size_t  need = 0;
-
-    switch (atyp)
-    {
-    case kTrojanAtypIpv4:
-        need = 1 + 4 + 2;
-        if (len < need)
-        {
-            return 0;
-        }
-
-        {
-            ip_addr_t ip = {0};
-            ip.type      = IPADDR_TYPE_V4;
-            memoryCopy(&ip.u_addr.ip4.addr, buf + 1, 4);
-            uint16_t port_be;
-            memoryCopy(&port_be, buf + 1 + 4, sizeof(port_be));
-            addresscontextSetIpPort(out, &ip, be16toh(port_be));
-        }
-        *consumed = need;
-        return 1;
-
-    case kTrojanAtypIpv6:
-        need = 1 + 16 + 2;
-        if (len < need)
-        {
-            return 0;
-        }
-
-        {
-            ip_addr_t ip = {0};
-            ip.type      = IPADDR_TYPE_V6;
-            memoryCopy(&ip.u_addr.ip6, buf + 1, 16);
-            uint16_t port_be;
-            memoryCopy(&port_be, buf + 1 + 16, sizeof(port_be));
-            addresscontextSetIpPort(out, &ip, be16toh(port_be));
-        }
-        *consumed = need;
-        return 1;
-
-    case kTrojanAtypDomain:
-        if (len < 2)
-        {
-            return 0;
-        }
-
-        if (buf[1] == 0)
-        {
-            return -1;
-        }
-
-        need = 1 + 1 + buf[1] + 2;
-        if (len < need)
-        {
-            return 0;
-        }
-
-        {
-            uint16_t port_be;
-            memoryCopy(&port_be, buf + 2 + buf[1], sizeof(port_be));
-            addresscontextDomainSet(out, (const char *) (buf + 2), buf[1]);
-            addresscontextSetPort(out, be16toh(port_be));
-        }
-        *consumed = need;
-        return 1;
-
-    default:
-        return -1;
-    }
-}
+#include "internal.h"
 
 static sbuf_t *receiveHead(trojanclient_lstate_t *ls)
 {
@@ -136,11 +57,10 @@ int trojanclientReadUdpHeader(trojanclient_lstate_t *ls)
         }
         else
         {
-            address_context_t source         = {0};
-            size_t            address_length = 0;
-            int  parsed = trojanclientParseAddressBytes(ls->header, ls->header_filled, &source, &address_length);
-            bool valid  = parsed == 1 && addresscontextHasPort(&source);
-            addresscontextReset(&source);
+            trojanclient_address_t source;
+            bool                   valid =
+                trojanclientAddressDecode(ls->header, ls->header_filled, &source) == kTrojanClientAddressComplete &&
+                source.port != 0;
             uint16_t n      = ls->header_needed;
             ls->body_length = ((uint16_t) ls->header[n - 4] << 8U) | ls->header[n - 3];
             if (! valid || ls->header[n - 2] != '\r' || ls->header[n - 1] != '\n' ||

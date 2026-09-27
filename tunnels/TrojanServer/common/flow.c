@@ -1,4 +1,4 @@
-#include "structure.h"
+#include "internal.h"
 
 /* Step results select the pump's next action, independently of success or failure. */
 typedef enum pump_step_result_e
@@ -197,4 +197,10 @@ void trojanserverSetNextPaused(tunnel_t *t, line_t *l, bool paused)
     }
     ls->next_paused = paused;
     trojanserverPump(t, l);
+}
+
+bool trojanserverQueuePayload(buffer_queue_t *queue, sbuf_t **buf)
+{
+    assert(queue->budget != NULL);
+    return bufferqueueTryPushBack(queue, buf);
 }

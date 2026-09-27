@@ -1,9 +1,20 @@
 #include "TrojanClient/interface.h"
-#include "structure.h"
+#include "internal.h"
 /* Keep the normal ownership ledger while refusing one first-output allocation. */
 #define __wrap_bufferpoolTryGetBestFit trackedTryGetBestFit
 #include "tunnel_line_failure_harness.h"
 #undef __wrap_bufferpoolTryGetBestFit
+
+static bool     count_domain_allocations;
+static unsigned domain_allocations;
+void           *__real_memoryAllocate(size_t size);
+void           *__wrap_memoryAllocate(size_t size);
+void           *__wrap_memoryAllocate(size_t size)
+{
+    if (count_domain_allocations && size == UINT8_MAX + 1U)
+        ++domain_allocations;
+    return __real_memoryAllocate(size);
+}
 
 static bool fail_initial_allocation;
 sbuf_t     *__wrap_bufferpoolTryGetBestFit(buffer_pool_t *pool, uint64_t size, uint16_t padding);
@@ -401,6 +412,26 @@ static uint32_t frame(uint8_t *out, unsigned form, const void *body, uint32_t n)
         memoryCopy(out + h, body, n);
     return h + n;
 }
+static void testDomainAddressOwnership(void)
+{
+    twfSetCase("UDP source parsing performs no transient domain allocation");
+    begin(true, "127.0.0.1", 128, 0, false);
+    uint8_t  wire[320];
+    uint32_t n         = frame(wire, 3, "X", 1);
+    domain_allocations = 0;
+    for (unsigned i = 0; i < 2; ++i)
+    {
+        sbuf_t *input            = bytes(wire, n, true, 320);
+        count_domain_allocations = true;
+        f.t->fnPayloadD(f.t, f.carrier, input);
+        count_domain_allocations = false;
+    }
+    printf("TrojanClient source-domain allocation calls: %u\n", domain_allocations);
+    twfRequire(domain_allocations == 0 && f.deliveries_down == 2 && f.down_len == 2 && ! memcmp(f.down, "XX", 2),
+               "source validation allocated a temporary domain or changed delivery");
+    end();
+}
+
 static void testTcp(bool pipe)
 {
     twfSetCase(pipe ? "TCP private pipes and establishment FIFO" : "TCP ordinary establishment FIFO");
@@ -1089,6 +1120,7 @@ static void testTimerWorker(void)
 int main(void)
 {
     twfRequire(wCryptoGlobalInit() == kWCryptoOk, "crypto initialization failed");
+    testDomainAddressOwnership();
     testFirstPayload();
     testFirstPayloadReuse();
     testInitialAllocationRefusal();

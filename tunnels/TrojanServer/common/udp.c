@@ -1,82 +1,28 @@
-#include "structure.h"
+#include "internal.h"
 
-static hash_t trojanserverCalcAddressHash(const address_context_t *ctx)
+static bool trojanserverAddressFromContext(const address_context_t *ctx, trojanserver_address_t *out)
 {
-    if (addresscontextIsIp(ctx))
-    {
-        struct
-        {
-            uint16_t   port;
-            uint8_t    ip_type;
-            uint8_t    padding[5];
-            ip4_addr_t ip4;
-            ip6_addr_t ip6;
-        } key = {0};
-
-        key.port    = ctx->port;
-        key.ip_type = ctx->ip_address.type;
-
-        if (ctx->ip_address.type == IPADDR_TYPE_V4)
-        {
-            key.ip4 = ctx->ip_address.u_addr.ip4;
-        }
-        else
-        {
-            key.ip6 = ctx->ip_address.u_addr.ip6;
-        }
-
-        return calcHashBytes(&key, sizeof(key));
-    }
-
-    struct
-    {
-        uint16_t port;
-        uint8_t  len;
-        uint8_t  bytes[UINT8_MAX];
-    } key = {0};
-
-    key.port = ctx->port;
-    key.len  = ctx->domain_len;
-    memoryCopy(key.bytes, ctx->domain, ctx->domain_len);
-    return calcHashBytes(&key, sizeof(key.port) + sizeof(key.len) + ctx->domain_len);
-}
-
-static bool trojanserverWriteAddress(uint8_t *ptr, const address_context_t *ctx, size_t *offset)
-{
+    trojanserver_address_t value = {.port = ctx->port};
     if (addresscontextIsIpType(ctx))
     {
-        if (addresscontextIsIpv4(ctx))
-        {
-            ptr[(*offset)++] = kTrojanAtypIpv4;
-            memoryCopy(ptr + *offset, &ctx->ip_address.u_addr.ip4.addr, 4);
-            *offset += 4;
-        }
-        else if (addresscontextIsIpv6(ctx))
-        {
-            ptr[(*offset)++] = kTrojanAtypIpv6;
-            memoryCopy(ptr + *offset, &ctx->ip_address.u_addr.ip6, 16);
-            *offset += 16;
-        }
-        else
-        {
+        if (! addresscontextIsIpv4(ctx) && ! addresscontextIsIpv6(ctx))
             return false;
-        }
+        value.kind   = addresscontextIsIpv4(ctx) ? kTrojanServerAddressIpv4 : kTrojanServerAddressIpv6;
+        value.length = addresscontextIsIpv4(ctx) ? 4 : 16;
+        memoryCopy(value.bytes,
+                   addresscontextIsIpv4(ctx) ? (const void *) &ctx->ip_address.u_addr.ip4.addr
+                                             : (const void *) &ctx->ip_address.u_addr.ip6,
+                   value.length);
     }
     else if (addresscontextIsDomain(ctx))
     {
-        ptr[(*offset)++] = kTrojanAtypDomain;
-        ptr[(*offset)++] = ctx->domain_len;
-        memoryCopy(ptr + *offset, ctx->domain, ctx->domain_len);
-        *offset += ctx->domain_len;
+        value.kind   = kTrojanServerAddressDomain;
+        value.length = ctx->domain_len;
+        memoryCopy(value.bytes, ctx->domain, value.length);
     }
     else
-    {
         return false;
-    }
-
-    uint16_t port_be = htobe16(ctx->port);
-    memoryCopy(ptr + *offset, &port_be, sizeof(port_be));
-    *offset += sizeof(port_be);
+    *out = value;
     return true;
 }
 
@@ -127,25 +73,10 @@ bool trojanserverWrapUdpPayload(line_t *l, sbuf_t **buf_io)
     address_context_t *addr_ctx = lineGetDestinationAddressContext(l);
     sbuf_t            *buf      = *buf_io;
     uint32_t           payload  = sbufGetLength(buf);
-    size_t             addr_len = 0;
-
-    if (UNLIKELY(payload > UINT16_MAX))
-    {
+    trojanserver_address_t address;
+    if (UNLIKELY(payload > UINT16_MAX || ! trojanserverAddressFromContext(addr_ctx, &address)))
         return false;
-    }
-
-    if (addresscontextIsIpType(addr_ctx))
-    {
-        addr_len = addresscontextIsIpv6(addr_ctx) ? (size_t) 1 + 16 + 2 : (size_t) 1 + 4 + 2;
-    }
-    else if (addresscontextIsDomain(addr_ctx))
-    {
-        addr_len = (size_t) 1 + 1 + addr_ctx->domain_len + 2;
-    }
-    else
-    {
-        return false;
-    }
+    size_t addr_len = trojanserverAddressEncodedLength(&address);
 
     size_t header_len = addr_len + 2U + kTrojanServerCrlfLen;
     if (UNLIKELY(sbufGetLeftCapacity(buf) < header_len))
@@ -168,7 +99,7 @@ bool trojanserverWrapUdpPayload(line_t *l, sbuf_t **buf_io)
 
     uint8_t *ptr = sbufGetMutablePtr(buf);
     size_t   off = 0;
-    if (UNLIKELY(! trojanserverWriteAddress(ptr, addr_ctx, &off)))
+    if (UNLIKELY(! trojanserverAddressEncode(&address, ptr, header_len, &off)))
     {
         return false;
     }
@@ -183,15 +114,24 @@ bool trojanserverWrapUdpPayload(line_t *l, sbuf_t **buf_io)
 }
 
 line_t *trojanserverGetOrCreateUdpRemoteLine(tunnel_t *t, line_t *client_l, trojanserver_lstate_t *client,
-                                             const address_context_t *target)
+                                             const trojanserver_address_t *target)
 {
-    hash_t                         key = trojanserverCalcAddressHash(target);
-    trojanserver_remote_map_t_iter it  = trojanserver_remote_map_t_find(&client->udp_remote_lines, key);
+    uint8_t wire[kTrojanServerAddressMaxEncoded];
+    size_t  written = 0;
+    bool    encoded = trojanserverAddressEncode(target, wire, sizeof(wire), &written);
+    assert(encoded);
+    discard                        encoded;
+    trojanserver_remote_key_t      lookup = {.address = *target, .hash = calcHashBytes(wire, written)};
+    trojanserver_remote_map_t_iter it     = trojanserver_remote_map_t_find(&client->udp_remote_lines, &lookup);
     if (it.ref != NULL)
         return it.ref->second;
     /* Existing backends may receive final bytes; shutdown must not create new ones. */
     if (UNLIKELY(! wloopNormalDispatchAllowed(getWorkerLoop(lineGetWID(client_l)))))
         return NULL;
+    trojanserver_remote_key_t *key = memoryAllocate(sizeof(*key));
+    if (UNLIKELY(key == NULL))
+        return NULL;
+    *key                          = lookup;
     line_t                *line   = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), lineGetWID(client_l));
     trojanserver_lstate_t *remote = lineGetState(line, t);
     trojanserverLinestateInitialize(remote, t, line, kTrojanServerLineKindUdpRemote);
@@ -202,19 +142,14 @@ line_t *trojanserverGetOrCreateUdpRemoteLine(tunnel_t *t, line_t *client_l, troj
     remote->phase       = kTrojanServerPhaseUdpConnecting;
     lineRef(client_l);
     lineGetRoutingContext(line)->local_listener_port = lineGetRoutingContext(client_l)->local_listener_port;
-    trojanserverApplyDestinationContext(line, target, true);
-    remote->auth_username = client->auth_username != NULL ? stringDuplicate(client->auth_username) : NULL;
-    remote->auth_password = client->auth_password != NULL ? stringDuplicate(client->auth_password) : NULL;
+    if (! trojanserverApplyDestinationContext(line, target, true))
+        goto unpublished;
+    if (! trojanserverSetCredentialSnapshot(remote, client->auth_username, client->auth_password))
+        goto unpublished;
     trojanserverRecordLineUser(line, remote, &remote->user_handle);
     trojanserver_remote_map_t_result result = trojanserver_remote_map_t_insert(&client->udp_remote_lines, key, line);
-    if (UNLIKELY(result.ref == NULL))
-    {
-        trojanserverLinestateDestroy(remote);
-        lineDestroy(line);
-        lineUnref(client_l);
-        trojanserverCloseLineBidirectional(t, client_l);
-        return NULL;
-    }
+    if (UNLIKELY(! result.inserted))
+        goto unpublished;
     client->selected_remote = line;
     lineRef(line);
     remote->next_initialized = true;
@@ -223,6 +158,15 @@ line_t *trojanserverGetOrCreateUdpRemoteLine(tunnel_t *t, line_t *client_l, troj
     assert(! alive || remote->client_line == client_l);
     lineUnref(line);
     return alive ? line : NULL;
+
+unpublished:
+    /* No map membership or next Init: settle only this creator's resources. */
+    remote->client_line = NULL;
+    trojanserverLinestateDestroy(remote);
+    lineDestroy(line);
+    lineUnref(client_l);
+    trojanserverCloseLineBidirectional(t, client_l);
+    return NULL;
 }
 
 /* Restart traversal after every callback: no iterator or unretained sibling

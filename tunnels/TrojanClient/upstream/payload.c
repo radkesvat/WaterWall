@@ -1,4 +1,4 @@
-#include "structure.h"
+#include "internal.h"
 
 /* Each accepted payload completes synchronously, including through Pause.
  * There is no application FIFO or Est gate: the transport owns connecting writes. */

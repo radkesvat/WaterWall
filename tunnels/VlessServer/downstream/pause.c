@@ -1,4 +1,4 @@
-#include "structure.h"
+#include "internal.h"
 
 void vlessserverTunnelDownStreamPause(tunnel_t *t, line_t *l)
 {
@@ -11,11 +11,7 @@ void vlessserverTunnelDownStreamPause(tunnel_t *t, line_t *l)
 
     if (ls->line_kind == kVlessServerLineKindUdpRemote)
     {
-        line_t *client_l = ls->client_line;
-        if (LIKELY(client_l != NULL && lineIsAlive(client_l)))
-        {
-            discard lineCallWithRef(client_l, tunnelPrevDownStreamPause, t);
-        }
+        vlessserverSetUdpBackendPaused(t, l, true);
         return;
     }
 
