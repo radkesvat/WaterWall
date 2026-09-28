@@ -2916,6 +2916,9 @@ if(TARGET TlsServer)
   target_link_options(tlsserver_line_failure_test PRIVATE
     ${WATERWALL_LINE_FAILURE_WRAPS}
     "-Wl,--wrap=wtimerAdd"
+    "-Wl,--wrap=BIO_new"
+    "-Wl,--wrap=BIO_free"
+    "-Wl,--wrap=SSL_new"
   )
   target_link_libraries(tlsserver_line_failure_test PRIVATE ww)
   add_dependencies(waterwall_unit_tests tlsserver_line_failure_test)

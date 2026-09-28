@@ -85,26 +85,25 @@ void tlsserverLinestateRelease(tlsserver_lstate_t *ls)
         SSL_free(ls->ssl);
         ls->ssl = NULL;
     }
-    else
+    /* Detached BIOs still belong to us if initialization failed before
+     * SSL_set_bio(), including when SSL_new() itself succeeded. */
+    if (ls->rbio != NULL)
     {
-        if (ls->rbio != NULL)
+        if (ls->verbose)
         {
-            if (ls->verbose)
-            {
-                LOGD("TlsServer: releasing detached read BIO");
-            }
-            BIO_free(ls->rbio);
-            ls->rbio = NULL;
+            LOGD("TlsServer: releasing detached read BIO");
         }
-        if (ls->wbio != NULL)
+        BIO_free(ls->rbio);
+        ls->rbio = NULL;
+    }
+    if (ls->wbio != NULL)
+    {
+        if (ls->verbose)
         {
-            if (ls->verbose)
-            {
-                LOGD("TlsServer: releasing detached write BIO");
-            }
-            BIO_free(ls->wbio);
-            ls->wbio = NULL;
+            LOGD("TlsServer: releasing detached write BIO");
         }
+        BIO_free(ls->wbio);
+        ls->wbio = NULL;
     }
 
     bufferqueueDestroy(&ls->pending_down);

@@ -1,5 +1,5 @@
 /*
- * TlsServer handshake-deadline timer failure injection.
+ * TlsServer TLS-object and handshake-deadline timer failure injection.
  *
  * A handshake deadline that cannot be armed is a per-line resource failure. TlsServer must destroy the TLS line
  * state it has already built and close only the previous side: neither the protected branch nor the fallback
@@ -13,7 +13,46 @@
 // wtimerAdd injection
 // ---------------------------------------------------------------------------
 
-static bool g_timer_fails = false;
+static bool     g_timer_fails = false;
+static bool     g_tls_injection;
+static bool     g_ssl_fails;
+static unsigned g_bio_calls;
+static unsigned g_bio_failure;
+static BIO     *g_detached_bios[2];
+
+BIO *__real_BIO_new(const BIO_METHOD *method);
+BIO *__wrap_BIO_new(const BIO_METHOD *method);
+int  __real_BIO_free(BIO *bio);
+int  __wrap_BIO_free(BIO *bio);
+SSL *__real_SSL_new(SSL_CTX *ctx);
+SSL *__wrap_SSL_new(SSL_CTX *ctx);
+
+BIO *__wrap_BIO_new(const BIO_METHOD *method)
+{
+    unsigned call = g_tls_injection ? ++g_bio_calls : 0;
+    if (call != 0 && call == g_bio_failure)
+        return NULL;
+    BIO *bio = __real_BIO_new(method);
+    if (call > 0 && call <= ARRAY_SIZE(g_detached_bios))
+        g_detached_bios[call - 1] = bio;
+    return bio;
+}
+
+int __wrap_BIO_free(BIO *bio)
+{
+    if (g_tls_injection)
+    {
+        for (size_t i = 0; i < ARRAY_SIZE(g_detached_bios); ++i)
+            if (g_detached_bios[i] == bio)
+                g_detached_bios[i] = NULL;
+    }
+    return __real_BIO_free(bio);
+}
+
+SSL *__wrap_SSL_new(SSL_CTX *ctx)
+{
+    return g_tls_injection && g_ssl_fails ? NULL : __real_SSL_new(ctx);
+}
 
 wtimer_t *__real_wtimerAdd(wloop_t *loop, wtimer_cb cb, uint32_t timeout_ms, uint32_t repeat);
 wtimer_t *__wrap_wtimerAdd(wloop_t *loop, wtimer_cb cb, uint32_t timeout_ms, uint32_t repeat);
@@ -129,6 +168,27 @@ static void caseHandshakeDeadlineTimerFails(void)
     fixtureTeardown(&fixture);
 }
 
+static void caseTlsAllocationFails(unsigned bio_failure, bool ssl_failure)
+{
+    twfSetCase("detached BIOs are released after partial TLS initialization");
+    tlsserver_fixture_t fixture;
+    fixtureSetup(&fixture);
+    line_t *line    = twfLineCreate(fixture.tls->lstate_size);
+    g_bio_calls     = 0;
+    g_bio_failure   = bio_failure;
+    g_ssl_fails     = ssl_failure;
+    g_tls_injection = true;
+    tlsserverTunnelUpStreamInit(fixture.tls, line);
+    g_tls_injection = false;
+    twfRequire(g_detached_bios[0] == NULL && g_detached_bios[1] == NULL,
+               "a detached BIO leaked when SSL_new or another BIO allocation failed");
+    twfRequire(fixture.trace.prev_finish == 1 && fixture.trace.next_init == 0,
+               "allocation failure must close only the initialized side");
+    twfRequireLineStateZeroed(line, fixture.tls, "partial TLS initialization retained state");
+    twfLineDestroy(line);
+    fixtureTeardown(&fixture);
+}
+
 static void caseZeroTimeoutNeedsNoTimer(void)
 {
     twfSetCase("a zero handshake timeout arms nothing and succeeds");
@@ -160,6 +220,9 @@ static void caseZeroTimeoutNeedsNoTimer(void)
 
 int main(void)
 {
+    caseTlsAllocationFails(1, false);
+    caseTlsAllocationFails(2, false);
+    caseTlsAllocationFails(0, true);
     caseHandshakeDeadlineTimerFails();
     caseZeroTimeoutNeedsNoTimer();
 
