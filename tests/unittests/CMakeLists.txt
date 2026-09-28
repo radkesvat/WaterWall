@@ -2469,6 +2469,7 @@ foreach(tls_target IN ITEMS TlsClient TlsServer)
         ${CMAKE_BINARY_DIR}/tunnels/TlsClient/boringssl/symbol_prefix_include)
       target_compile_definitions(${bio_test} PRIVATE BORINGSSL_PREFIX=WW_BSSL)
       target_link_libraries(${bio_test} PRIVATE ssl crypto)
+      target_link_options(${bio_test} PRIVATE "-Wl,--wrap=WW_BSSL_EVP_AEAD_CTX_seal_scatter")
     endif()
     add_dependencies(waterwall_unit_tests ${bio_test})
     add_waterwall_unit_test(waterwall.${tls_name}_buffer_bio_unit ${bio_test}

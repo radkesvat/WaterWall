@@ -1,6 +1,129 @@
 #include "TlsBufferBio/buffer_bio.h"
 #include "tunnel_line_failure_harness.h"
 
+#ifdef OPENSSL_IS_BORINGSSL
+#include <openssl/aead.h>
+#include <openssl/err.h>
+
+static bool fail_seal;
+
+int __real_WW_BSSL_EVP_AEAD_CTX_seal_scatter(const EVP_AEAD_CTX *ctx, uint8_t *out, uint8_t *out_tag,
+                                             size_t *out_tag_len, size_t max_out_tag_len, const uint8_t *nonce,
+                                             size_t nonce_len, const uint8_t *in, size_t in_len,
+                                             const uint8_t *extra_in, size_t extra_in_len, const uint8_t *ad,
+                                             size_t ad_len);
+
+int __wrap_WW_BSSL_EVP_AEAD_CTX_seal_scatter(const EVP_AEAD_CTX *ctx, uint8_t *out, uint8_t *out_tag,
+                                             size_t *out_tag_len, size_t max_out_tag_len, const uint8_t *nonce,
+                                             size_t nonce_len, const uint8_t *in, size_t in_len,
+                                             const uint8_t *extra_in, size_t extra_in_len, const uint8_t *ad,
+                                             size_t ad_len);
+
+int __wrap_WW_BSSL_EVP_AEAD_CTX_seal_scatter(const EVP_AEAD_CTX *ctx, uint8_t *out, uint8_t *out_tag,
+                                             size_t *out_tag_len, size_t max_out_tag_len, const uint8_t *nonce,
+                                             size_t nonce_len, const uint8_t *in, size_t in_len,
+                                             const uint8_t *extra_in, size_t extra_in_len, const uint8_t *ad,
+                                             size_t ad_len)
+{
+    if (fail_seal)
+    {
+        fail_seal = false;
+        OPENSSL_PUT_ERROR(SSL, ERR_R_INTERNAL_ERROR);
+        return 0;
+    }
+    return __real_WW_BSSL_EVP_AEAD_CTX_seal_scatter(ctx,
+                                                    out,
+                                                    out_tag,
+                                                    out_tag_len,
+                                                    max_out_tag_len,
+                                                    nonce,
+                                                    nonce_len,
+                                                    in,
+                                                    in_len,
+                                                    extra_in,
+                                                    extra_in_len,
+                                                    ad,
+                                                    ad_len);
+}
+
+typedef struct write_probe_s
+{
+    size_t   attempts;
+    size_t   commits;
+    size_t   cancels;
+    size_t   padding_calls;
+    uint8_t *last_output;
+    bool     decline;
+} write_probe_t;
+
+static uint8_t *reserveOutput(SSL *ssl, size_t capacity, size_t alignment, size_t prefix_len, void *arg)
+{
+    write_probe_t *probe = arg;
+    ++probe->attempts;
+    if (probe->decline)
+        return NULL;
+    probe->last_output = tlsbufferbioReserveWrite(SSL_get_wbio(ssl), capacity, alignment, prefix_len);
+    return probe->last_output;
+}
+
+static void finishOutput(SSL *ssl, size_t written, void *arg)
+{
+    write_probe_t *probe = arg;
+    if (written == 0)
+        ++probe->cancels;
+    else
+        ++probe->commits;
+    tlsbufferbioFinishWrite(SSL_get_wbio(ssl), written);
+}
+
+static size_t padRecord(SSL *ssl, uint8_t type, size_t length, size_t maximum, void *arg)
+{
+    discard        ssl;
+    discard        length;
+    write_probe_t *probe = arg;
+    ++probe->padding_calls;
+    return type == SSL3_RT_APPLICATION_DATA ? min(maximum, (size_t) 17) : 0;
+}
+
+static void caseOutputReservation(SSL_CTX *ctx, buffer_pool_t *pool)
+{
+    twfSetCase("reserved output identity, alignment, partial commit and cancellation");
+    BIO     *bio = tlsbufferbioNew(ctx, pool);
+    uint8_t *out = tlsbufferbioReserveWrite(bio, 1024, 32, 5);
+    twfRequire(out != NULL && ((uintptr_t) (out + 5) & 31) == 0, "new record body is aligned");
+    twfRequire(BIO_ctrl_pending(bio) == 0, "reservation does not publish bytes");
+    memorySet(out, 0x73, 512);
+    tlsbufferbioFinishWrite(bio, 512);
+    sbuf_t *owned = tlsbufferbioTake(bio);
+    twfRequire(sbufGetRawPtr(owned) == out && sbufGetLength(owned) == 512 && sbufGetLeftCapacity(owned) >= 64,
+               "commit transfers the encryption destination with onward padding");
+
+    out = tlsbufferbioReserveWrite(bio, 123, 8, 5);
+    twfRequire(out != NULL, "new cancelable reservation");
+    tlsbufferbioFinishWrite(bio, 0);
+    twfRequire(tlsbufferbioTake(bio) == NULL && BIO_ctrl_pending(bio) == 0, "cancel removes the reserved entry");
+
+    twfRequire(BIO_write(bio, "abc", 3) == 3, "ordinary prefix before reservation");
+    out = tlsbufferbioReserveWrite(bio, 32, 8, 5);
+    twfRequire(out != NULL && BIO_ctrl_pending(bio) == 3, "tail reservation leaves prefix visible");
+    memoryCopy(out, "discarded", 9);
+    tlsbufferbioFinishWrite(bio, 0);
+    uint8_t *again = tlsbufferbioReserveWrite(bio, 32, 8, 5);
+    twfRequire(again == out, "cancellation preserves existing tail capacity");
+    memoryCopy(again, "def", 3);
+    tlsbufferbioFinishWrite(bio, 3);
+    sbuf_t *tail = tlsbufferbioTake(bio);
+    twfRequire(sbufGetLength(tail) == 6 && memoryCompare(sbufGetRawPtr(tail), "abcdef", 6) == 0,
+               "ordinary and reserved writes coalesce in order");
+    bufferpoolReuseBuffer(pool, tail);
+    BIO_free(bio);
+    for (size_t i = 0; i < 512; ++i)
+        twfRequire(((uint8_t *) sbufGetRawPtr(owned))[i] == 0x73, "owned output survives BIO destruction");
+    bufferpoolReuseBuffer(pool, owned);
+    twfRequireNoLeakedBuffers();
+}
+#endif
+
 static sbuf_t *input(buffer_pool_t *pool, const void *bytes, uint32_t length)
 {
     sbuf_t *buf = bufferpoolGetBestFit(pool, length, bufferpoolGetLargeBufferPadding(pool));
@@ -63,6 +186,10 @@ static void caseBoundsAndReset(SSL_CTX *ctx, buffer_pool_t *pool)
     twfRequire(BIO_ctrl_pending(bio) == kTlsBufferBioMaxBytes, "byte limit reached exactly");
     twfRequire(! tlsbufferbioFeed(bio, input(pool, block, 1)), "byte overflow refuses and consumes input");
     twfRequire(BIO_write(bio, block, 1) == -1 && ! BIO_should_retry(bio), "write overflow is terminal");
+#ifdef OPENSSL_IS_BORINGSSL
+    twfRequire(tlsbufferbioReserveWrite(bio, 1, 8, 5) == NULL && BIO_ctrl_pending(bio) == kTlsBufferBioMaxBytes,
+               "reservation respects the byte bound without changing the queue");
+#endif
     twfRequire(BIO_reset(bio) == 1 && BIO_ctrl_pending(bio) == 0, "reset releases full input");
     twfRequireNoLeakedBuffers();
 
@@ -70,6 +197,11 @@ static void caseBoundsAndReset(SSL_CTX *ctx, buffer_pool_t *pool)
         twfRequire(tlsbufferbioFeed(bio, input(pool, block, 1)), "entry limit accepts equality");
     twfRequire(tlsbufferbioFeed(bio, input(pool, block, 0)), "empty input consumes no entry");
     twfRequire(! tlsbufferbioFeed(bio, input(pool, block, 1)), "entry overflow refuses and consumes input");
+#ifdef OPENSSL_IS_BORINGSSL
+    twfRequire(tlsbufferbioReserveWrite(bio, bufferpoolGetLargeBufferSize(pool) + 64U, 8, 5) == NULL &&
+                   BIO_ctrl_pending(bio) == kTlsBufferBioMaxBuffers,
+               "reservation needing another entry respects the entry bound");
+#endif
     twfRequire(BIO_read(bio, block, kTlsBufferBioMaxBuffers) == kTlsBufferBioMaxBuffers,
                "one read spans all tiny input fragments");
     for (size_t i = 0; i < kTlsBufferBioMaxBuffers; ++i)
@@ -134,6 +266,11 @@ static void caseTlsRoundtrip(buffer_pool_t *pool, int version)
     SSL_set_bio(server, tlsbufferbioNew(server_ctx, pool), tlsbufferbioNew(server_ctx, pool));
     SSL_set_connect_state(client);
     SSL_set_accept_state(server);
+#ifdef OPENSSL_IS_BORINGSSL
+    write_probe_t probe = {0};
+    SSL_set_record_write_buffer_callbacks(client, reserveOutput, finishOutput, &probe);
+    tlsbufferbioEnableDirectWrite(server);
+#endif
     for (unsigned step = 0; step < 20 && (! SSL_is_init_finished(client) || ! SSL_is_init_finished(server)); ++step)
     {
         handshakeStep(client);
@@ -142,6 +279,10 @@ static void caseTlsRoundtrip(buffer_pool_t *pool, int version)
         transfer(SSL_get_wbio(server), SSL_get_rbio(client), pool, true);
     }
     twfRequire(SSL_is_init_finished(client) && SSL_is_init_finished(server), "fragmented handshake completes");
+#ifdef OPENSSL_IS_BORINGSSL
+    twfRequire(probe.attempts == 0, "handshake output uses the ordinary path");
+    twfRequire(SSL_set_tls13_record_padding_callback(client, padRecord, &probe, 64) == 1, "install record padding");
+#endif
 
     uint8_t plaintext[65536];
     uint8_t recovered[sizeof(plaintext)];
@@ -162,9 +303,97 @@ static void caseTlsRoundtrip(buffer_pool_t *pool, int version)
         }
         twfRequire(memoryCompare(plaintext, recovered, sizeof(plaintext)) == 0, "TLS roundtrip preserves bytes");
     }
+#ifdef OPENSSL_IS_BORINGSSL
+    twfRequire(probe.commits == 4 && probe.cancels == 0, "each client application record reserves and commits");
+    twfRequire(probe.padding_calls == (version == TLS1_3_VERSION ? 4U : 0U), "padding callback runs once per record");
+
+    const size_t committed = probe.commits;
+    probe.decline          = true;
+    twfRequire(SSL_write(client, plaintext, 33) == 33 && probe.commits == committed,
+               "declined reservation copies normally");
+    twfRequire(probe.padding_calls == (version == TLS1_3_VERSION ? 5U : 0U), "fallback seals only once");
+    transfer(SSL_get_wbio(client), SSL_get_rbio(server), pool, false);
+    twfRequire(SSL_read(server, recovered, sizeof(recovered)) == 33 && memoryCompare(plaintext, recovered, 33) == 0,
+               "declined reservation preserves application bytes");
+    probe.decline = false;
+
+    /* A tiny BIO pair forces partial transport writes. Declining the hook must
+     * keep BoringSSL's pending-ciphertext retry, without resealing or reserving
+     * again when SSL_write is retried with the original plaintext. */
+    BIO *saved_wbio = SSL_get_wbio(client);
+    BIO *pair_write = NULL;
+    BIO *pair_read  = NULL;
+    twfRequire(BIO_up_ref(saved_wbio) == 1 && BIO_new_bio_pair(&pair_write, 32, &pair_read, 32) == 1,
+               "create bounded transport for write retries");
+    SSL_set0_wbio(client, pair_write);
+    probe.decline          = true;
+    const size_t attempts  = probe.attempts;
+    const size_t pad_calls = probe.padding_calls;
+    int          written   = -1;
+    for (unsigned step = 0; step < 32 && written < 0; ++step)
+    {
+        written = SSL_write(client, plaintext, 257);
+        if (written < 0)
+            twfRequire(SSL_get_error(client, written) == SSL_ERROR_WANT_WRITE, "bounded transport requests retry");
+        uint8_t wire[32];
+        int     n;
+        while ((n = BIO_read(pair_read, wire, sizeof(wire))) > 0)
+            twfRequire(tlsbufferbioFeed(SSL_get_rbio(server), input(pool, wire, (uint32_t) n)),
+                       "transfer partial write");
+    }
+    twfRequire(written == 257 && probe.attempts == attempts + 1 &&
+                   probe.padding_calls == pad_calls + (version == TLS1_3_VERSION ? 1U : 0U),
+               "write retries reuse the sealed record and do not rerun reservation or padding");
+    twfRequire(SSL_read(server, recovered, sizeof(recovered)) == 257 && memoryCompare(plaintext, recovered, 257) == 0,
+               "partial transport writes decrypt exactly once");
+    SSL_set0_wbio(client, saved_wbio);
+    BIO_free(pair_read);
+    probe.decline = false;
+
+    if (version == TLS1_3_VERSION)
+    {
+        size_t key_update_attempts = probe.attempts;
+        twfRequire(SSL_key_update(client, SSL_KEY_UPDATE_REQUESTED) == 1, "queue KeyUpdate");
+        twfRequire(SSL_write(client, plaintext, 97) == 97 && probe.attempts == key_update_attempts,
+                   "pending KeyUpdate and application data retain their ordinary ordered path");
+        transfer(SSL_get_wbio(client), SSL_get_rbio(server), pool, false);
+        twfRequire(SSL_read(server, recovered, sizeof(recovered)) == 97 && memoryCompare(plaintext, recovered, 97) == 0,
+                   "decrypt after KeyUpdate");
+        twfRequire(SSL_write(server, plaintext, 17) == 17, "flush KeyUpdate acknowledgement with application data");
+        transfer(SSL_get_wbio(server), SSL_get_rbio(client), pool, false);
+        twfRequire(SSL_read(client, recovered, sizeof(recovered)) == 17 && memoryCompare(plaintext, recovered, 17) == 0,
+                   "decrypt after acknowledged KeyUpdate");
+    }
+
+    twfRequire(SSL_write(client, plaintext, 29) == 29, "reserved output retained by caller");
+    sbuf_t *first = tlsbufferbioTake(SSL_get_wbio(client));
+    twfRequire(first != NULL && sbufGetRawPtr(first) == probe.last_output, "SSL encrypted directly into owned output");
+    twfRequire(SSL_write(client, plaintext, 71) == 71, "next write while caller retains previous output");
+    sbuf_t *second = tlsbufferbioTake(SSL_get_wbio(client));
+    twfRequire(second != NULL && second != first && sbufGetRawPtr(second) == probe.last_output,
+               "SSL does not reuse transferred output storage");
+
+    const uint32_t live = g_twf_buffers.live_count;
+    fail_seal           = true;
+    twfRequire(SSL_write(client, plaintext, 11) < 0 && ! fail_seal && probe.cancels == 1,
+               "encryption failure cancels its reservation without falling back");
+    twfRequire(BIO_ctrl_pending(SSL_get_wbio(client)) == 0 && g_twf_buffers.live_count == live,
+               "failed encryption immediately releases unpublished output");
+    SSL_free(client);
+    client = NULL;
+    twfRequire(tlsbufferbioFeed(SSL_get_rbio(server), first) && tlsbufferbioFeed(SSL_get_rbio(server), second),
+               "retained ciphertext survives SSL destruction");
+    twfRequire(SSL_read(server, recovered, sizeof(recovered)) == 29 && memoryCompare(plaintext, recovered, 29) == 0,
+               "first retained record authenticates after SSL destruction");
+    twfRequire(SSL_read(server, recovered, sizeof(recovered)) == 71 && memoryCompare(plaintext, recovered, 71) == 0,
+               "second retained record authenticates after SSL destruction");
+    twfRequire(SSL_shutdown(server) == 0 && BIO_ctrl_pending(SSL_get_wbio(server)) > 0,
+               "close-notify remains on the ordinary output path");
+#else
     /* Leave unread ciphertext behind to exercise SSL-owned BIO cleanup. */
     twfRequire(SSL_write(client, plaintext, 29) == 29, "final retained record");
     transfer(SSL_get_wbio(client), SSL_get_rbio(server), pool, true);
+#endif
     SSL_free(client);
     SSL_free(server);
     SSL_CTX_free(client_ctx);
@@ -180,6 +409,9 @@ int main(void)
     twfRequire(ctx != NULL, "create method-owning context");
     caseOwnedBuffers(ctx, env.pool);
     caseBoundsAndReset(ctx, env.pool);
+#ifdef OPENSSL_IS_BORINGSSL
+    caseOutputReservation(ctx, env.pool);
+#endif
     SSL_CTX_free(ctx);
     caseTlsRoundtrip(env.pool, TLS1_2_VERSION);
     caseTlsRoundtrip(env.pool, TLS1_3_VERSION);

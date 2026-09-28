@@ -2714,6 +2714,15 @@ int SSL_set_tls13_record_padding_callback(
   return 1;
 }
 
+void SSL_set_record_write_buffer_callbacks(
+    SSL *ssl, ssl_record_write_reserve_func reserve,
+    ssl_record_write_finish_func finish, void *arg) {
+  assert(ssl != nullptr && (reserve == nullptr) == (finish == nullptr));
+  ssl->record_write_reserve = reserve;
+  ssl->record_write_finish = finish;
+  ssl->record_write_arg = reserve != nullptr ? arg : nullptr;
+}
+
 void SSL_CTX_set_keylog_callback(SSL_CTX *ctx,
                                  void (*cb)(const SSL *ssl, const char *line)) {
   ctx->keylog_callback = cb;

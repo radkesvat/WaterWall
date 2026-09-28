@@ -4061,6 +4061,11 @@ struct ssl_st {
   void *tls13_record_padding_callback_arg = nullptr;
   size_t tls13_record_padding_max = 0;
 
+  // WaterWall's optional synchronous application-record transport reservation.
+  ssl_record_write_reserve_func record_write_reserve = nullptr;
+  ssl_record_write_finish_func record_write_finish = nullptr;
+  void *record_write_arg = nullptr;
+
   // session info
 
   // initial_timeout_duration_ms is the default DTLS timeout duration in

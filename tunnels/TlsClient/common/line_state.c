@@ -115,6 +115,8 @@ bool tlsclientLinestateInitializeWithShaping(tlsclient_lstate_t *ls, SSL_CTX *sc
         return false;
     }
 
+    tlsbufferbioEnableDirectWrite(ls->ssl);
+
     if (record_shaping->enabled && ! SSL_set_tls13_record_padding_callback(
                                        ls->ssl, tlsclientRecordPaddingCallback, ls, kTlsRecordShapingMaxPaddingBytes))
     {

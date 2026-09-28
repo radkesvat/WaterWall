@@ -191,6 +191,30 @@ static int do_tls_write(SSL *ssl, size_t *out_bytes_written, uint8_t type,
     return 1;
   }
 
+  // A reserved transport buffer accepts the complete record without a second
+  // copy. Decline before sealing: sealing advances the record sequence and may
+  // invoke a stateful padding callback, so a sealed record must not be retried.
+  if (ssl->record_write_reserve != nullptr &&
+      type == SSL3_RT_APPLICATION_DATA && !in.empty() &&
+      pending_flight.empty() && SSL_is_init_finished(ssl) &&
+      ssl_protocol_version(ssl) >= TLS1_2_VERSION) {
+    uint8_t *out = ssl->record_write_reserve(ssl, max_out, SSL3_ALIGN_PAYLOAD,
+                                             tls_seal_align_prefix_len(ssl),
+                                             ssl->record_write_arg);
+    if (out != nullptr) {
+      size_t ciphertext_len;
+      if (!tls_seal_record(ssl, out, &ciphertext_len, max_out, type, in.data(),
+                           in.size())) {
+        ssl->record_write_finish(ssl, 0, ssl->record_write_arg);
+        return -1;
+      }
+      ssl->record_write_finish(ssl, ciphertext_len, ssl->record_write_arg);
+      ssl->s3->key_update_pending = false;
+      *out_bytes_written = in.size();
+      return 1;
+    }
+  }
+
   if (!buf->EnsureCap(pending_flight.size() + tls_seal_align_prefix_len(ssl),
                       max_out)) {
     return -1;

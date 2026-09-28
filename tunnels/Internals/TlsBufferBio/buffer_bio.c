@@ -11,13 +11,27 @@ typedef struct tls_buffer_bio_s
     ww_sbuffer_queue_t buffers;
     size_t             pending;
     int                eof_return;
+#ifdef OPENSSL_IS_BORINGSSL
+    sbuf_t *reserved;
+    size_t  reserved_capacity;
+    bool    reserved_new;
+#endif
 } tls_buffer_bio_t;
+
+static void tlsbufferbioAssertIdle(const tls_buffer_bio_t *state)
+{
+    discard state;
+#ifdef OPENSSL_IS_BORINGSSL
+    assert(state->reserved == NULL);
+#endif
+}
 
 /* Unlike BufferStream, this FIFO never coalesces admitted input. It exclusively
  * owns every entry, so partial reads can advance the first entry and BIO writes
  * can append to the last without moving unread bytes or invalidating aliases. */
 static sbuf_t *tlsbufferbioPop(tls_buffer_bio_t *state)
 {
+    tlsbufferbioAssertIdle(state);
     if (ww_sbuffer_queue_t_is_empty(&state->buffers))
         return NULL;
 
@@ -28,6 +42,7 @@ static sbuf_t *tlsbufferbioPop(tls_buffer_bio_t *state)
 
 static void tlsbufferbioClear(tls_buffer_bio_t *state)
 {
+    tlsbufferbioAssertIdle(state);
     sbuf_t *buf;
     while ((buf = tlsbufferbioPop(state)) != NULL)
         bufferpoolReuseBuffer(state->pool, buf);
@@ -49,6 +64,7 @@ static int tlsbufferbioDestroy(BIO *bio)
 static int tlsbufferbioRead(BIO *bio, char *out, int length)
 {
     tls_buffer_bio_t *state = BIO_get_data(bio);
+    tlsbufferbioAssertIdle(state);
     BIO_clear_retry_flags(bio);
     if (UNLIKELY(length <= 0))
         return 0;
@@ -81,6 +97,7 @@ static int tlsbufferbioRead(BIO *bio, char *out, int length)
 static int tlsbufferbioWrite(BIO *bio, const char *data, int length)
 {
     tls_buffer_bio_t *state = BIO_get_data(bio);
+    tlsbufferbioAssertIdle(state);
     BIO_clear_retry_flags(bio);
     if (UNLIKELY(length <= 0))
         return 0;
@@ -200,8 +217,9 @@ BIO *tlsbufferbioNew(SSL_CTX *ctx, buffer_pool_t *pool)
 bool tlsbufferbioFeed(BIO *bio, sbuf_t *buf)
 {
     assert(bio != NULL && buf != NULL && ! sbufIsSplice(buf));
-    tls_buffer_bio_t *state  = BIO_get_data(bio);
-    const size_t      length = sbufGetLength(buf);
+    tls_buffer_bio_t *state = BIO_get_data(bio);
+    tlsbufferbioAssertIdle(state);
+    const size_t length = sbufGetLength(buf);
     if (UNLIKELY(length == 0))
     {
         bufferpoolReuseBuffer(state->pool, buf);
@@ -240,3 +258,82 @@ size_t tlsbufferbioPeek(BIO *bio, void *out, size_t length)
     }
     return copied;
 }
+
+#ifdef OPENSSL_IS_BORINGSSL
+uint8_t *tlsbufferbioReserveWrite(BIO *bio, size_t capacity, size_t alignment, size_t prefix_len)
+{
+    assert(bio != NULL && capacity > 0 && alignment > 0 && (alignment & (alignment - 1)) == 0);
+    tls_buffer_bio_t *state = BIO_get_data(bio);
+    tlsbufferbioAssertIdle(state);
+    if (UNLIKELY(capacity > kTlsBufferBioMaxBytes - state->pending || alignment - 1 > UINT32_MAX - capacity))
+        return NULL;
+
+    sbuf_t *buf = ww_sbuffer_queue_t_is_empty(&state->buffers) ? NULL : *ww_sbuffer_queue_t_back(&state->buffers);
+    bool    new_buffer = buf == NULL || capacity > sbufGetMaximumWriteableSize(buf) - sbufGetLength(buf);
+    if (new_buffer)
+    {
+        if (UNLIKELY(ww_sbuffer_queue_t_size(&state->buffers) >= kTlsBufferBioMaxBuffers))
+            return NULL;
+
+        buf                   = bufferpoolGetLargeBuffer(state->pool);
+        buf                   = sbufReserveSpace(buf, (uint32_t) (capacity + alignment - 1));
+        const uint32_t offset = (uint32_t) ((0 - (uintptr_t) sbufGetMutablePtr(buf) - prefix_len) & (alignment - 1));
+        /* Advance an empty cursor without spending the chain's left padding. */
+        sbufSetLength(buf, offset);
+        sbufShiftRight(buf, offset);
+        /* Allocate the queue slot before encryption; publishing length later
+         * must not fail after the TLS record sequence number has advanced. */
+        if (UNLIKELY(ww_sbuffer_queue_t_push_back(&state->buffers, buf) == NULL))
+        {
+            bufferpoolReuseBuffer(state->pool, buf);
+            return NULL;
+        }
+    }
+
+    state->reserved          = buf;
+    state->reserved_capacity = capacity;
+    state->reserved_new      = new_buffer;
+    BIO_clear_retry_flags(bio);
+    return (uint8_t *) sbufGetMutablePtr(buf) + sbufGetLength(buf);
+}
+
+void tlsbufferbioFinishWrite(BIO *bio, size_t written)
+{
+    assert(bio != NULL);
+    tls_buffer_bio_t *state = BIO_get_data(bio);
+    sbuf_t           *buf   = state->reserved;
+    assert(buf != NULL && written <= state->reserved_capacity);
+    if (written == 0 && state->reserved_new)
+    {
+        assert(*ww_sbuffer_queue_t_back(&state->buffers) == buf);
+        ww_sbuffer_queue_t_pop_back(&state->buffers);
+        bufferpoolReuseBuffer(state->pool, buf);
+    }
+    else
+    {
+        sbufSetLength(buf, sbufGetLength(buf) + (uint32_t) written);
+        state->pending += written;
+    }
+    state->reserved          = NULL;
+    state->reserved_capacity = 0;
+    state->reserved_new      = false;
+}
+
+static uint8_t *tlsbufferbioSslReserve(SSL *ssl, size_t capacity, size_t alignment, size_t prefix_len, void *arg)
+{
+    discard arg;
+    return tlsbufferbioReserveWrite(SSL_get_wbio(ssl), capacity, alignment, prefix_len);
+}
+
+static void tlsbufferbioSslFinish(SSL *ssl, size_t written, void *arg)
+{
+    discard arg;
+    tlsbufferbioFinishWrite(SSL_get_wbio(ssl), written);
+}
+
+void tlsbufferbioEnableDirectWrite(SSL *ssl)
+{
+    assert(ssl != NULL);
+    SSL_set_record_write_buffer_callbacks(ssl, tlsbufferbioSslReserve, tlsbufferbioSslFinish, NULL);
+}
+#endif

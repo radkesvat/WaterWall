@@ -1,0 +1,114 @@
+diff --git a/include/openssl/ssl.h b/include/openssl/ssl.h
+index 1836b6e08..b8c5b151d 100644
+--- a/include/openssl/ssl.h
++++ b/include/openssl/ssl.h
+@@ -4771,6 +4771,38 @@ OPENSSL_EXPORT int SSL_set_tls13_record_padding_callback(
+     SSL *ssl, ssl_tls13_record_padding_callback_func callback, void *arg,
+     size_t max_padding);
+
++// ssl_record_write_reserve_func optionally reserves |capacity| bytes of
++// writable transport storage. Returning NULL declines without changing
++// transport state; SSL then uses its ordinary buffered write path. The storage
++// must not alias the plaintext. |alignment| is a power of two and |prefix_len|
++// is the offset of the ciphertext body; aligning that body is a performance
++// hint, not a requirement.
++typedef uint8_t *(*ssl_record_write_reserve_func)(SSL *ssl, size_t capacity,
++                                                  size_t alignment,
++                                                  size_t prefix_len, void *arg);
++
++// ssl_record_write_finish_func completes a successful reservation. A positive
++// |written| commits that many bytes to the transport in order, without
++// allocation or failure. Zero cancels the reservation after an encryption
++// error. SSL calls finish exactly once, synchronously, before returning from
++// the SSL operation, and retains no pointer to the storage afterward.
++typedef void (*ssl_record_write_finish_func)(SSL *ssl, size_t written,
++                                             void *arg);
++
++// SSL_set_record_write_buffer_callbacks installs an optional transport-storage
++// hook for nonempty TLS 1.2/1.3 application writes after the handshake, when no
++// control flight or write retry is pending. Other writes still use BIO_write.
++// Both callbacks must be non-NULL, or both NULL to disable the hook. The caller
++// owns |arg|. Callbacks, including message/padding callbacks during a
++// reservation, must not perform SSL I/O, change its BIOs or these callbacks,
++// or consume/mutate the reserved transport storage. Committing only queues
++// output; externally reentrant delivery must wait until the SSL operation
++// returns. The hook bypasses BIO_write, including its byte counters. Configure
++// it only with a compatible, serialized transport.
++OPENSSL_EXPORT void SSL_set_record_write_buffer_callbacks(
++    SSL *ssl, ssl_record_write_reserve_func reserve,
++    ssl_record_write_finish_func finish, void *arg);
++
+ // SSL_CTX_set_keylog_callback configures a callback to log key material. This
+ // is intended for debugging use with tools like Wireshark. The |cb| function
+ // should log |line| followed by a newline, synchronizing with any concurrent
+diff --git a/ssl/internal.h b/ssl/internal.h
+index e4cfed8e6..42fe24893 100644
+--- a/ssl/internal.h
++++ b/ssl/internal.h
+@@ -4061,6 +4061,11 @@ struct ssl_st {
+   void *tls13_record_padding_callback_arg = nullptr;
+   size_t tls13_record_padding_max = 0;
+
++  // WaterWall's optional synchronous application-record transport reservation.
++  ssl_record_write_reserve_func record_write_reserve = nullptr;
++  ssl_record_write_finish_func record_write_finish = nullptr;
++  void *record_write_arg = nullptr;
++
+   // session info
+
+   // initial_timeout_duration_ms is the default DTLS timeout duration in
+diff --git a/ssl/s3_pkt.cc b/ssl/s3_pkt.cc
+index 0f9c93fbc..ec7b99245 100644
+--- a/ssl/s3_pkt.cc
++++ b/ssl/s3_pkt.cc
+@@ -191,6 +191,30 @@ static int do_tls_write(SSL *ssl, size_t *out_bytes_written, uint8_t type,
+     return 1;
+   }
+
++  // A reserved transport buffer accepts the complete record without a second
++  // copy. Decline before sealing: sealing advances the record sequence and may
++  // invoke a stateful padding callback, so a sealed record must not be retried.
++  if (ssl->record_write_reserve != nullptr &&
++      type == SSL3_RT_APPLICATION_DATA && !in.empty() &&
++      pending_flight.empty() && SSL_is_init_finished(ssl) &&
++      ssl_protocol_version(ssl) >= TLS1_2_VERSION) {
++    uint8_t *out = ssl->record_write_reserve(ssl, max_out, SSL3_ALIGN_PAYLOAD,
++                                             tls_seal_align_prefix_len(ssl),
++                                             ssl->record_write_arg);
++    if (out != nullptr) {
++      size_t ciphertext_len;
++      if (!tls_seal_record(ssl, out, &ciphertext_len, max_out, type, in.data(),
++                           in.size())) {
++        ssl->record_write_finish(ssl, 0, ssl->record_write_arg);
++        return -1;
++      }
++      ssl->record_write_finish(ssl, ciphertext_len, ssl->record_write_arg);
++      ssl->s3->key_update_pending = false;
++      *out_bytes_written = in.size();
++      return 1;
++    }
++  }
++
+   if (!buf->EnsureCap(pending_flight.size() + tls_seal_align_prefix_len(ssl),
+                       max_out)) {
+     return -1;
+diff --git a/ssl/ssl_lib.cc b/ssl/ssl_lib.cc
+index 42450a670..bd1bb598b 100644
+--- a/ssl/ssl_lib.cc
++++ b/ssl/ssl_lib.cc
+@@ -2714,6 +2714,15 @@ int SSL_set_tls13_record_padding_callback(
+   return 1;
+ }
+
++void SSL_set_record_write_buffer_callbacks(
++    SSL *ssl, ssl_record_write_reserve_func reserve,
++    ssl_record_write_finish_func finish, void *arg) {
++  assert(ssl != nullptr && (reserve == nullptr) == (finish == nullptr));
++  ssl->record_write_reserve = reserve;
++  ssl->record_write_finish = finish;
++  ssl->record_write_arg = reserve != nullptr ? arg : nullptr;
++}
++
+ void SSL_CTX_set_keylog_callback(SSL_CTX *ctx,
+                                  void (*cb)(const SSL *ssl, const char *line)) {
+   ctx->keylog_callback = cb;

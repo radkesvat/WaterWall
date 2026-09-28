@@ -4771,6 +4771,38 @@ OPENSSL_EXPORT int SSL_set_tls13_record_padding_callback(
     SSL *ssl, ssl_tls13_record_padding_callback_func callback, void *arg,
     size_t max_padding);
 
+// ssl_record_write_reserve_func optionally reserves |capacity| bytes of
+// writable transport storage. Returning NULL declines without changing
+// transport state; SSL then uses its ordinary buffered write path. The storage
+// must not alias the plaintext. |alignment| is a power of two and |prefix_len|
+// is the offset of the ciphertext body; aligning that body is a performance
+// hint, not a requirement.
+typedef uint8_t *(*ssl_record_write_reserve_func)(SSL *ssl, size_t capacity,
+                                                  size_t alignment,
+                                                  size_t prefix_len, void *arg);
+
+// ssl_record_write_finish_func completes a successful reservation. A positive
+// |written| commits that many bytes to the transport in order, without
+// allocation or failure. Zero cancels the reservation after an encryption
+// error. SSL calls finish exactly once, synchronously, before returning from
+// the SSL operation, and retains no pointer to the storage afterward.
+typedef void (*ssl_record_write_finish_func)(SSL *ssl, size_t written,
+                                             void *arg);
+
+// SSL_set_record_write_buffer_callbacks installs an optional transport-storage
+// hook for nonempty TLS 1.2/1.3 application writes after the handshake, when no
+// control flight or write retry is pending. Other writes still use BIO_write.
+// Both callbacks must be non-NULL, or both NULL to disable the hook. The caller
+// owns |arg|. Callbacks, including message/padding callbacks during a
+// reservation, must not perform SSL I/O, change its BIOs or these callbacks,
+// or consume/mutate the reserved transport storage. Committing only queues
+// output; externally reentrant delivery must wait until the SSL operation
+// returns. The hook bypasses BIO_write, including its byte counters. Configure
+// it only with a compatible, serialized transport.
+OPENSSL_EXPORT void SSL_set_record_write_buffer_callbacks(
+    SSL *ssl, ssl_record_write_reserve_func reserve,
+    ssl_record_write_finish_func finish, void *arg);
+
 // SSL_CTX_set_keylog_callback configures a callback to log key material. This
 // is intended for debugging use with tools like Wireshark. The |cb| function
 // should log |line| followed by a newline, synchronizing with any concurrent
