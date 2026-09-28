@@ -194,7 +194,7 @@ enum ram_profiles_e
 #define SPLICE_BUFFER_STORAGE_SIZE 32
 #define kMaxAllowedPacketLength 1500
 
-/* Ordinary TCP reads use best-fit storage capped at the large tier; UDP requests whole datagrams.
+/* Ordinary TCP reads use the large tier directly; UDP requests whole datagrams.
  * Medium buffers also serve framing and retained queues. Cache counts follow the memory profile. */
 
 // Depending on memory profile, we can choose which is the best buffer size (core.json typically)

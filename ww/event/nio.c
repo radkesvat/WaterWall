@@ -413,7 +413,6 @@ read_ordinary:
 
     switch (io->io_type)
     {
-    case WIO_TYPE_TCP:
     case WIO_TYPE_UDP:
 #if defined(OS_LINUX)
     {
@@ -421,18 +420,16 @@ read_ordinary:
         if (ioctl(wioGetFD(io), FIONREAD, &queued_bytes) == 0 && queued_bytes > 0)
         {
             buffer_pool_t *pool = io->loop->bufpool;
-            // TCP can leave unread bytes queued; UDP must fit the entire next datagram.
-            const uint32_t requested = io->io_type == WIO_TYPE_TCP
-                                           ? min((uint32_t) queued_bytes, bufferpoolGetLargeBufferSize(pool))
-                                           : (uint32_t) queued_bytes;
-            buf                      = bufferpoolGetBestFit(pool, requested, bufferpoolGetLargeBufferPadding(pool));
+            // UDP must fit the entire next datagram.
+            buf = bufferpoolGetBestFit(pool, (uint32_t) queued_bytes, bufferpoolGetLargeBufferPadding(pool));
             break;
         }
-        // A failed/zero hint still needs a receive: EOF, transient readiness, and empty UDP are distinct.
+        // A failed/zero hint still needs a receive: empty UDP and transient readiness are distinct.
     }
 #endif
         buf = bufferpoolGetLargeBuffer(io->loop->bufpool);
         break;
+    case WIO_TYPE_TCP:
     default:
         buf = bufferpoolGetLargeBuffer(io->loop->bufpool);
         break;

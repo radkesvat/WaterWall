@@ -24,6 +24,22 @@ typedef struct test_env_s
     wloop_t                   *loop;
 } test_env_t;
 
+static int          read_test_fd = -1;
+static unsigned int socket_read_queries;
+int                 __real_ioctl(int fd, unsigned long request, ...);
+int                 __wrap_ioctl(int fd, unsigned long request, ...);
+
+int __wrap_ioctl(int fd, unsigned long request, ...)
+{
+    va_list args;
+    va_start(args, request);
+    void *arg = va_arg(args, void *);
+    va_end(args);
+    if (fd == read_test_fd && request == FIONREAD)
+        ++socket_read_queries;
+    return __real_ioctl(fd, request, arg);
+}
+
 #if WW_HAVE_SPLICE
 static unsigned int splice_reuse_checks;
 bool                __real_sbufSpliceIsReusable(const sbuf_t *buf);
@@ -121,26 +137,11 @@ int __wrap_fcntl(int fd, int command, ...)
     }
 }
 
-static int          read_test_fd      = -1, splice_read_error;
+static int          splice_read_error;
 static size_t       splice_read_limit = SIZE_MAX;
 static bool         splice_read_eof;
 static unsigned int splice_read_calls;
 static size_t       splice_read_requested;
-static unsigned int socket_read_queries;
-int                 __real_ioctl(int fd, unsigned long request, ...);
-int                 __wrap_ioctl(int fd, unsigned long request, ...);
-
-int __wrap_ioctl(int fd, unsigned long request, ...)
-{
-    va_list args;
-    va_start(args, request);
-    void *arg = va_arg(args, void *);
-    va_end(args);
-    if (fd == read_test_fd && request == FIONREAD)
-        ++socket_read_queries;
-    return __real_ioctl(fd, request, arg);
-}
-
 static int          last_splice_read_pipe = -1;
 static wloop_t     *quiesce_after_splice_read;
 static int          pipe_read_fd    = -1, pipe_read_error;
@@ -815,8 +816,8 @@ static void spliceRead(wio_t *io, sbuf_t *buf)
     ++probe->calls;
     if (probe->kind == kSpliceDisabled || (probe->kind == kSplicePipeFallback && probe->calls == 1))
     {
-        require(buf->flags == 0 && count <= bufferpoolGetLargeBufferSize(pool) &&
-                    count <= probe->length - probe->received &&
+        require(buf->flags == 0 && sbufGetTotalCapacityNoPadding(buf) == bufferpoolGetLargeBufferSize(pool) &&
+                    count <= bufferpoolGetLargeBufferSize(pool) && count <= probe->length - probe->received &&
                     memoryEqual(sbufGetRawPtr(buf), probe->data + probe->received, count),
                 "ordinary read did not deliver the expected bytes");
         probe->received += count;
@@ -2026,45 +2027,62 @@ typedef struct ordinary_read_probe_s
     uint32_t       received;
 } ordinary_read_probe_t;
 
-static void bestFitRead(wio_t *io, sbuf_t *buf)
+static void ordinaryLargeRead(wio_t *io, sbuf_t *buf)
 {
     ordinary_read_probe_t *probe = weventGetUserdata(io);
-    require(! wioIsSpliceEnabled(io) && buf->flags == 0, "best-fit read used splice");
+    require(! wioIsSpliceEnabled(io) && buf->flags == 0, "ordinary large-buffer read used splice");
     require(sbufGetTotalCapacityNoPadding(buf) == probe->expected_capacity && buf->curpos == 64,
-            "best-fit read chose the wrong tier or padding");
+            "ordinary TCP read did not use the large tier with its reserved padding");
+    require(sbufGetLength(buf) > 0, "ordinary TCP read delivered an empty payload");
     const uint8_t *payload = sbufGetRawPtr(buf);
     for (uint32_t i = 0; i < sbufGetLength(buf); ++i)
-        require(payload[i] == 0x5A, "best-fit read corrupted payload");
+        require(payload[i] == (uint8_t) (probe->received + i), "ordinary TCP read corrupted payload order");
     probe->received += sbufGetLength(buf);
     bufferpoolReuseBuffer(probe->pool, buf);
 }
 
-static void testOrdinaryBestFitRead(void)
+static void testOrdinaryLargeRead(void)
 {
-    const uint32_t lengths[]    = {512, 4096, 65537, 512};
-    const uint32_t capacities[] = {
-        1024, MEDIUM_BUFFER_SIZE_RAM_HIGH, LARGE_BUFFER_SIZE_RAM_HIGH, LARGE_BUFFER_SIZE_RAM_HIGH};
-    uint8_t payload[65537];
-    memset(payload, 0x5A, sizeof(payload));
-    for (size_t i = 0; i < ARRAY_SIZE(lengths); ++i)
+    const uint32_t lengths[]     = {512, 4096, 65537};
+    const uint32_t large_sizes[] = {LARGE_BUFFER_SIZE_RAM_LOW, LARGE_BUFFER_SIZE_RAM_HIGH};
+    uint8_t        payload[65537];
+    for (uint32_t i = 0; i < sizeof(payload); ++i)
+        payload[i] = (uint8_t) i;
+    for (size_t profile = 0; profile < ARRAY_SIZE(large_sizes); ++profile)
     {
-        test_env_t env;
-        setupWithBufferSize(&env, LARGE_BUFFER_SIZE_RAM_HIGH);
-        // Smaller tiers with insufficient headroom must not replace the large read buffer.
-        bufferpoolUpdateAllocationPaddings(env.buffers, 64, i == 3 ? 0 : 64, i == 3 ? 32 : 64, 64);
-        int                   sockets[2];
-        wio_t                *io    = socketIO(&env, sockets);
-        ordinary_read_probe_t probe = {.pool = env.buffers, .expected_capacity = capacities[i]};
-        weventSetUserData(io, &probe);
-        wioSetCallBackRead(io, bestFitRead);
-        require(wioRead(io) == 0 && send(sockets[1], payload, lengths[i], 0) == (ssize_t) lengths[i],
-                "failed to supply ordinary best-fit input");
-        require(wloopProcessEvents(env.loop, 0) >= 0 && probe.received == lengths[i],
-                "ordinary best-fit read failed to deliver the payload");
-        close(sockets[1]);
-        require(wloopProcessEvents(env.loop, 0) >= 0 && wioIsClosed(io),
-                "zero available bytes prevented ordinary EOF handling");
-        teardown(&env);
+        for (size_t i = 0; i < ARRAY_SIZE(lengths); ++i)
+        {
+            test_env_t env;
+            setupWithBufferSize(&env, large_sizes[profile]);
+            bufferpoolUpdateAllocationPaddings(env.buffers, 64, 64, 64, 64);
+            int                   sockets[2];
+            wio_t                *io    = socketIO(&env, sockets);
+            ordinary_read_probe_t probe = {.pool = env.buffers, .expected_capacity = large_sizes[profile]};
+            weventSetUserData(io, &probe);
+            wioSetCallBackRead(io, ordinaryLargeRead);
+            require(wioRead(io) == 0, "failed to start ordinary TCP reads");
+            read_test_fd        = sockets[0];
+            socket_read_queries = 0;
+
+            // Transient readiness must still attempt recv without querying queued bytes.
+            io->revents = WW_READ;
+            EVENT_PENDING(io);
+            require(wloopProcessEvents(env.loop, 0) >= 0 && probe.received == 0 && wioIsOpened(io),
+                    "empty TCP receive fabricated payload or closed a live socket");
+            require(socket_read_queries == 0, "ordinary TCP read queried socket availability");
+
+            require(send(sockets[1], payload, lengths[i], 0) == (ssize_t) lengths[i],
+                    "failed to supply ordinary TCP input");
+            for (unsigned int attempt = 0; attempt < 4 && probe.received < lengths[i]; ++attempt)
+                require(wloopProcessEvents(env.loop, 0) >= 0, "ordinary TCP read dispatch failed");
+            require(probe.received == lengths[i], "ordinary TCP reads did not drain all queued bytes");
+            close(sockets[1]);
+            require(wloopProcessEvents(env.loop, 0) >= 0 && wioIsClosed(io),
+                    "large-buffer TCP receive did not handle EOF");
+            require(socket_read_queries == 0, "ordinary TCP payload or EOF read queried socket availability");
+            read_test_fd = -1;
+            teardown(&env);
+        }
     }
 }
 
@@ -2312,7 +2330,7 @@ int main(void)
 {
     testSharedBudget();
     testBufferQueueCharge();
-    testOrdinaryBestFitRead();
+    testOrdinaryLargeRead();
     testPrimaryDescriptorZero();
     testPipeDescriptorZero();
     testPendingDescriptorReuse();

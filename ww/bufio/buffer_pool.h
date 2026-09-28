@@ -68,7 +68,7 @@ void bufferpoolDestroy(buffer_pool_t *pool);
 sbuf_t *bufferpoolGetLargeBuffer(buffer_pool_t *pool);
 
 /** Retrieve a medium helper buffer (32 KiB in S1/S2, 64 KiB in higher profiles).
- * Cache counts follow the pool width. Linux NIO ordinary TCP/UDP reads may also
+ * Cache counts follow the pool width. Linux NIO UDP reads may also
  * select this tier through best-fit allocation. */
 sbuf_t  *bufferpoolGetMediumBuffer(buffer_pool_t *pool);
 uint32_t bufferpoolGetMediumBufferSize(buffer_pool_t *pool);
