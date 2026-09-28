@@ -25,7 +25,7 @@ bool tlsserverLinestateInitialize(tlsserver_lstate_t *ls, SSL_CTX *ssl_ctx, buff
     ls->wbio = tlsbufferbioNew(ssl_ctx, pool);
     ls->ssl  = SSL_new(ssl_ctx);
 
-    if (ls->rbio == NULL || ls->wbio == NULL || ls->ssl == NULL)
+    if (UNLIKELY(ls->rbio == NULL || ls->wbio == NULL || ls->ssl == NULL))
     {
         LOGE("TlsServer: failed to allocate per-line TLS objects (rbio=%p, wbio=%p, ssl=%p)",
              (void *) ls->rbio,

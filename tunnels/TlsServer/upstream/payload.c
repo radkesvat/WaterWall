@@ -365,7 +365,7 @@ void tlsserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         }
     }
 
-    if (sbufGetLength(buf) == 0)
+    if (UNLIKELY(sbufGetLength(buf) == 0))
     {
         lineReuseBuffer(l, buf);
         lineUnref(l);
@@ -374,13 +374,13 @@ void tlsserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     /* Admission owns the wire bytes before any callback. Fallback replay above
      * retains its independent transcript until routing has committed. */
-    if (! tlsbufferbioFeed(SSL_get_rbio(ls->ssl), buf))
+    if (UNLIKELY(! tlsbufferbioFeed(SSL_get_rbio(ls->ssl), buf)))
     {
         LOGW("TlsServer: TLS input BIO admission failed");
         goto failed;
     }
 
-    while (! ls->handshake_completed)
+    while (UNLIKELY(! ls->handshake_completed))
     {
         int handshake_result = tlsserverPerformHandshake(t, l, ls);
 
@@ -391,14 +391,14 @@ void tlsserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             return;
         }
 
-        if (handshake_result == kTlsServerHandshakeFatal)
+        if (UNLIKELY(handshake_result == kTlsServerHandshakeFatal))
             goto failed;
 
         if (handshake_result == kTlsServerHandshakeWantMore)
             break;
     }
 
-    if (ls->handshake_completed && ! tlsserverReadDecryptedData(t, l, ls))
+    if (LIKELY(ls->handshake_completed) && UNLIKELY(! tlsserverReadDecryptedData(t, l, ls)))
         goto failed;
     lineUnref(l);
     return;

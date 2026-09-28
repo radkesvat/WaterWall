@@ -108,7 +108,7 @@ bool tlsclientLinestateInitializeWithShaping(tlsclient_lstate_t *ls, SSL_CTX *sc
     ls->wbio = tlsbufferbioNew(sctx, pool);
     ls->ssl  = SSL_new(sctx);
 
-    if (ls->rbio == NULL || ls->wbio == NULL || ls->ssl == NULL)
+    if (UNLIKELY(ls->rbio == NULL || ls->wbio == NULL || ls->ssl == NULL))
     {
         LOGE("Failed to allocate TlsClient BoringSSL line state");
         tlsclientLinestateReleasePartial(ls);

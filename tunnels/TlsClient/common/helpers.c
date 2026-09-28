@@ -70,7 +70,7 @@ bool tlsclientDrainBioToBuffer(buffer_pool_t *pool, BIO *bio, sbuf_t **out)
 
     sbuf_t *buf = tlsbufferbioTake(bio);
     assert(buf != NULL);
-    if (sbufGetLength(buf) == pending)
+    if (LIKELY(sbufGetLength(buf) == pending))
     {
         *out = buf;
         return true;
@@ -782,7 +782,7 @@ tlsclient_post_handshake_result_t tlsclientTunnelConsumePostHandshakeRecord(tunn
     bool admitted = tlsbufferbioFeed(ls->rbio, record);
     record = NULL;
 
-    if (! admitted)
+    if (UNLIKELY(! admitted))
     {
         ls->post_handshake_consume_in_progress = false;
         lineUnref(l);

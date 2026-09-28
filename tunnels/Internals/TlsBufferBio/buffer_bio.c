@@ -50,7 +50,7 @@ static int tlsbufferbioRead(BIO *bio, char *out, int length)
 {
     tls_buffer_bio_t *state = BIO_get_data(bio);
     BIO_clear_retry_flags(bio);
-    if (length <= 0)
+    if (UNLIKELY(length <= 0))
         return 0;
     if (state->pending == 0)
     {
@@ -65,7 +65,7 @@ static int tlsbufferbioRead(BIO *bio, char *out, int length)
     {
         sbuf_t        *buf = *ww_sbuffer_queue_t_front(&state->buffers);
         const uint32_t n   = (uint32_t) min(wanted - copied, (size_t) sbufGetLength(buf));
-        memoryCopy(out + copied, sbufGetRawPtr(buf), n);
+        memoryCopyLarge(out + copied, sbufGetRawPtr(buf), n);
         sbufShiftRight(buf, n);
         state->pending -= n;
         copied += n;
@@ -82,29 +82,29 @@ static int tlsbufferbioWrite(BIO *bio, const char *data, int length)
 {
     tls_buffer_bio_t *state = BIO_get_data(bio);
     BIO_clear_retry_flags(bio);
-    if (length <= 0)
+    if (UNLIKELY(length <= 0))
         return 0;
-    if ((size_t) length > kTlsBufferBioMaxBytes - state->pending)
+    if (UNLIKELY((size_t) length > kTlsBufferBioMaxBytes - state->pending))
         return -1;
 
     sbuf_t *buf = ww_sbuffer_queue_t_is_empty(&state->buffers) ? NULL : *ww_sbuffer_queue_t_back(&state->buffers);
     if (buf != NULL && (uint32_t) length <= sbufGetMaximumWriteableSize(buf) - sbufGetLength(buf))
     {
         const uint32_t previous = sbufGetLength(buf);
-        memoryCopy(sbufGetMutablePtr(buf) + previous, data, (size_t) length);
+        memoryCopyLarge(sbufGetMutablePtr(buf) + previous, data, (size_t) length);
         sbufSetLength(buf, previous + (uint32_t) length);
         state->pending += (size_t) length;
         return length;
     }
 
-    if (ww_sbuffer_queue_t_size(&state->buffers) >= kTlsBufferBioMaxBuffers)
+    if (UNLIKELY(ww_sbuffer_queue_t_size(&state->buffers) >= kTlsBufferBioMaxBuffers))
         return -1;
 
     buf = bufferpoolGetLargeBuffer(state->pool);
     buf = sbufReserveSpace(buf, (uint32_t) length);
-    sbufWrite(buf, data, (uint32_t) length);
+    sbufWriteLarge(buf, data, (uint32_t) length);
     sbufSetLength(buf, (uint32_t) length);
-    if (ww_sbuffer_queue_t_push_back(&state->buffers, buf) == NULL)
+    if (UNLIKELY(ww_sbuffer_queue_t_push_back(&state->buffers, buf) == NULL))
     {
         bufferpoolReuseBuffer(state->pool, buf);
         return -1;
@@ -162,18 +162,19 @@ BIO *tlsbufferbioNew(SSL_CTX *ctx, buffer_pool_t *pool)
 {
     assert(ctx != NULL && pool != NULL);
     wonce(&tlsbufferbioMethodOnce, tlsbufferbioMethodIndexInit);
-    if (tlsbufferbioMethodIndex < 0)
+    if (UNLIKELY(tlsbufferbioMethodIndex < 0))
         return NULL;
 
     BIO_METHOD *method = SSL_CTX_get_ex_data(ctx, tlsbufferbioMethodIndex);
     if (method == NULL)
     {
         method = BIO_meth_new(BIO_TYPE_SOURCE_SINK, "WaterWall owned buffers");
-        if (method == NULL)
+        if (UNLIKELY(method == NULL))
             return NULL;
-        if (! BIO_meth_set_read(method, tlsbufferbioRead) || ! BIO_meth_set_write(method, tlsbufferbioWrite) ||
-            ! BIO_meth_set_ctrl(method, tlsbufferbioCtrl) || ! BIO_meth_set_destroy(method, tlsbufferbioDestroy) ||
-            ! SSL_CTX_set_ex_data(ctx, tlsbufferbioMethodIndex, method))
+        if (UNLIKELY(! BIO_meth_set_read(method, tlsbufferbioRead) || ! BIO_meth_set_write(method, tlsbufferbioWrite) ||
+                     ! BIO_meth_set_ctrl(method, tlsbufferbioCtrl) ||
+                     ! BIO_meth_set_destroy(method, tlsbufferbioDestroy) ||
+                     ! SSL_CTX_set_ex_data(ctx, tlsbufferbioMethodIndex, method)))
         {
             BIO_meth_free(method);
             return NULL;
@@ -181,10 +182,10 @@ BIO *tlsbufferbioNew(SSL_CTX *ctx, buffer_pool_t *pool)
     }
 
     BIO *bio = BIO_new(method);
-    if (bio == NULL)
+    if (UNLIKELY(bio == NULL))
         return NULL;
     tls_buffer_bio_t *state = OPENSSL_zalloc(sizeof(*state));
-    if (state == NULL)
+    if (UNLIKELY(state == NULL))
     {
         BIO_free(bio);
         return NULL;
@@ -201,14 +202,14 @@ bool tlsbufferbioFeed(BIO *bio, sbuf_t *buf)
     assert(bio != NULL && buf != NULL && ! sbufIsSplice(buf));
     tls_buffer_bio_t *state  = BIO_get_data(bio);
     const size_t      length = sbufGetLength(buf);
-    if (length == 0)
+    if (UNLIKELY(length == 0))
     {
         bufferpoolReuseBuffer(state->pool, buf);
         return true;
     }
-    if (length > kTlsBufferBioMaxBytes - state->pending ||
-        ww_sbuffer_queue_t_size(&state->buffers) >= kTlsBufferBioMaxBuffers ||
-        ww_sbuffer_queue_t_push_back(&state->buffers, buf) == NULL)
+    if (UNLIKELY(length > kTlsBufferBioMaxBytes - state->pending ||
+                 ww_sbuffer_queue_t_size(&state->buffers) >= kTlsBufferBioMaxBuffers ||
+                 ww_sbuffer_queue_t_push_back(&state->buffers, buf) == NULL))
     {
         bufferpoolReuseBuffer(state->pool, buf);
         return false;

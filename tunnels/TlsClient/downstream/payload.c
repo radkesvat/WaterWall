@@ -188,7 +188,7 @@ static void processTakeoverHandshakePayload(tunnel_t *t, line_t *l, tlsclient_ls
             goto failed;
         }
 
-        if (! tlsbufferbioFeed(ls->rbio, record))
+        if (UNLIKELY(! tlsbufferbioFeed(ls->rbio, record)))
         {
             goto failed;
         }
@@ -313,7 +313,7 @@ void tlsclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
-    if (sbufGetLength(buf) == 0)
+    if (UNLIKELY(sbufGetLength(buf) == 0))
     {
         lineReuseBuffer(l, buf);
         return;
@@ -322,14 +322,14 @@ void tlsclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     lineRef(l);
     /* Admission transfers the entire input before a handshake/output callback
      * can reenter. BIO reads advance the owned input without staging a copy. */
-    if (! tlsbufferbioFeed(ls->rbio, buf))
+    if (UNLIKELY(! tlsbufferbioFeed(ls->rbio, buf)))
         goto failed;
 
-    while (! ls->handshake_completed)
+    while (UNLIKELY(! ls->handshake_completed))
     {
         int handshake_result = performHandshake(t, l, ls);
 
-        if (handshake_result == -1)
+        if (UNLIKELY(handshake_result == -1))
             goto failed;
 
         if (handshake_result == 0)
@@ -342,7 +342,8 @@ void tlsclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         }
     }
 
-    if (! processEncryptedData(t, l, ls) || ! readDecryptedData(t, l, ls) || ! flushSslProtocolMessages(t, l, ls))
+    if (UNLIKELY(! processEncryptedData(t, l, ls) || ! readDecryptedData(t, l, ls) ||
+                 ! flushSslProtocolMessages(t, l, ls)))
         goto failed;
 
     lineUnref(l);
