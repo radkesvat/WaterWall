@@ -54,7 +54,7 @@ def payload(connection, direction, offset, length):
     return hashlib.shake_256(seed).digest(length)
 
 
-def transfer(sock, connection, direction, length, deadline, sending):
+def transfer(sock, connection, direction, length, deadline, sending, receive_delay=0):
     for offset in range(0, length, CHUNK_SIZE):
         expected = payload(connection, direction, offset, min(CHUNK_SIZE, length - offset))
         if sending:
@@ -63,6 +63,8 @@ def transfer(sock, connection, direction, length, deadline, sending):
             raise RuntimeError(
                 f"connection {connection}: direction {direction} payload mismatch at offset {offset}"
             )
+        if not sending and receive_delay:
+            time.sleep(receive_delay)
 
 
 def serve_connection(sock, args, deadline, barrier, seen, seen_lock):
@@ -76,7 +78,7 @@ def serve_connection(sock, args, deadline, barrier, seen, seen_lock):
                     raise RuntimeError(f"duplicate connection index {connection}")
                 seen.add(connection)
             barrier.wait(remaining(deadline))
-            transfer(sock, connection, 0, args.bytes, deadline, sending=False)
+            transfer(sock, connection, 0, args.bytes, deadline, sending=False, receive_delay=args.receive_delay)
             transfer(sock, connection, 1, args.bytes, deadline, sending=True)
             if receive(sock, len(ACK), deadline) != ACK:
                 raise RuntimeError(f"connection {connection}: missing download verification ACK")
@@ -122,7 +124,7 @@ def connect_one(connection, args, deadline, barrier):
             barrier.wait(remaining(deadline))
             send(sock, HEADER.pack(MAGIC, connection, args.bytes), deadline)
             transfer(sock, connection, 0, args.bytes, deadline, sending=True)
-            transfer(sock, connection, 1, args.bytes, deadline, sending=False)
+            transfer(sock, connection, 1, args.bytes, deadline, sending=False, receive_delay=args.receive_delay)
             send(sock, ACK, deadline)
             expect_eof(sock, deadline)
             sock.shutdown(socket.SHUT_WR)
@@ -152,7 +154,10 @@ def main():
     parser.add_argument("--bind", default="0.0.0.0")
     parser.add_argument("--source-port", type=int, default=40000)
     parser.add_argument("--timeout", type=float, default=30)
+    parser.add_argument("--receive-delay", type=float, default=0)
     args = parser.parse_args()
+    if not math.isfinite(args.receive_delay) or not 0 <= args.receive_delay <= .1:
+        parser.error("--receive-delay must be between 0 and .1 seconds")
     if not 1 <= args.connections <= 16:
         parser.error("--connections must be between 1 and 16")
     if not 1 <= args.bytes <= 32 * 1024 * 1024:

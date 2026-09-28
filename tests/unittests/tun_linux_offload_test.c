@@ -1,3 +1,4 @@
+#include "devices/tun/tun_linux_gso_write.h"
 #include "devices/tun/tun_linux_offload.h"
 
 #include "wchecksum.h"
@@ -663,8 +664,118 @@ static void testTrustedTransport(void)
     }
 }
 
+static sbuf_t *makeWriteSegment(unsigned ordinal, unsigned payload, unsigned options, unsigned flags)
+{
+    const uint8_t  tcp_options[12] = {1, 1, 8, 10, 0, 0, 0, 7, 0, 0, 0, 9};
+    const unsigned length          = makeTcp(payload, NULL, 0, tcp_options, options, flags);
+    putBe16(packet + 4, (uint16_t) (65534U + ordinal));
+    putBe32(packet + 24, kFirstSequence + ordinal * 101U);
+    putBe16(packet + 10, oracleChecksum(packet, 20, 0, 10));
+    putBe16(packet + 36, oracleChecksum(packet + 20, length - 20, tcpPseudoSum(packet, packet + 16, length - 20), 16));
+    sbuf_t *buf = sbufCreate(length);
+    memcpy(sbufGetMutablePtr(buf), packet, length);
+    sbufSetLength(buf, length);
+    return buf;
+}
+
+static void testGsoWriteBuilder(void)
+{
+    sbuf_t *bufs[64];
+    for (unsigned i = 0; i < 4; ++i)
+        bufs[i] = makeWriteSegment(i, i == 2 ? 19 : 101, 12, i == 2 ? 0x18 : 0x10);
+    tun_linux_gso_write_t record;
+    require(tunLinuxGsoBuildWrite(bufs, 4, 1500, &record) == 3, "short PSH must close aggregate");
+    const uint8_t expected[10] = {1, 1, 52, 0, 101, 0, 20, 0, 16, 0};
+    require(memcmp(record.metadata, expected, 10) == 0 && record.count == 5 && record.length == 283,
+            "aggregate metadata/length mismatch");
+    require(readBe16(record.header + 10) == oracleChecksum(record.header, 20, 0, 10), "aggregate IP checksum");
+    require(readBe16(record.header + 36) == foldSum(tcpPseudoSum(record.header, record.header + 16, 253)),
+            "aggregate seed must cover complete transport length");
+    /* Independent software segmentation: rebuild each ordinary packet from
+     * private header and borrowed payload. Compare every byte to its original. */
+    uint32_t offset = 0;
+    for (unsigned i = 0; i < 3; ++i)
+    {
+        const uint8_t *original = sbufGetRawPtr(bufs[i]);
+        const unsigned length   = sbufGetLength(bufs[i]);
+        require(record.iov[i + 2].iov_base == original + 52 && record.iov[i + 2].iov_len == length - 52,
+                "GSO copied payload instead of borrowing original span");
+        memcpy(segment, record.header, 52);
+        memcpy(segment + 52, record.iov[i + 2].iov_base, record.iov[i + 2].iov_len);
+        putBe16(segment + 2, length);
+        putBe16(segment + 4, (uint16_t) (65534U + i));
+        putBe32(segment + 24, kFirstSequence + offset);
+        segment[33] = i == 2 ? 0x18 : 0x10;
+        putBe16(segment + 10, oracleChecksum(segment, 20, 0, 10));
+        putBe16(segment + 36,
+                oracleChecksum(segment + 20, length - 20, tcpPseudoSum(segment, segment + 16, length - 20), 16));
+        require(memcmp(segment, original, length) == 0, "segmented packet semantics changed");
+        offset += length - 52;
+    }
+    /* Each stable field and unsupported shape independently splits the prefix. */
+    static const struct
+    {
+        unsigned offset;
+        uint8_t  mask;
+    } changes[] = {{0, 1},     {1, 1},     {2, 1},     {4, 1},     {6, 0x20}, {6, 0x40}, {6, 0x80},
+                   {7, 1},     {8, 1},     {9, 0x17},  {12, 1},    {16, 1},   {20, 1},   {22, 1},
+                   {24, 1},    {28, 1},    {32, 1},    {32, 0x40}, {33, 1},   {33, 2},   {33, 4},
+                   {33, 0x10}, {33, 0x20}, {33, 0x40}, {33, 0x80}, {34, 1},   {38, 1},   {44, 1}};
+    uint8_t saved[153];
+    memcpy(saved, sbufGetRawPtr(bufs[1]), sizeof(saved));
+    for (unsigned i = 0; i < ARRAY_SIZE(changes); ++i)
+    {
+        uint8_t *ip = sbufGetMutablePtr(bufs[1]);
+        memcpy(ip, saved, sizeof(saved));
+        ip[changes[i].offset] ^= changes[i].mask;
+        putBe16(ip + 10, oracleChecksum(ip, 20, 0, 10));
+        require(tunLinuxGsoBuildWrite(bufs, 3, 1500, &record) == 1, "incompatible packet coalesced");
+    }
+    memcpy(sbufGetMutablePtr(bufs[1]), saved, sizeof(saved));
+    uint8_t *second = sbufGetMutablePtr(bufs[1]);
+    sbufSetLength(bufs[1], 154);
+    putBe16(second + 2, 154);
+    putBe16(second + 10, oracleChecksum(second, 20, 0, 10));
+    require(tunLinuxGsoBuildWrite(bufs, 3, 1500, &record) == 1, "larger second segment aggregated");
+    sbufSetLength(bufs[1], 52);
+    putBe16(second + 2, 52);
+    putBe16(second + 10, oracleChecksum(second, 20, 0, 10));
+    require(tunLinuxGsoBuildWrite(bufs, 3, 1500, &record) == 1, "pure ACK aggregated");
+    sbufSetLength(bufs[1], 153);
+    memcpy(second, saved, sizeof(saved));
+    second[33] = 0x18;
+    require(tunLinuxGsoBuildWrite(bufs, 3, 1500, &record) == 2, "full PSH did not close aggregate");
+    memcpy(second, saved, sizeof(saved));
+    second[10] ^= 1;
+    require(tunLinuxGsoBuildWrite(bufs, 3, 1500, &record) == 1, "invalid header checksum aggregated");
+    memcpy(second, saved, sizeof(saved));
+    require(tunLinuxGsoBuildWrite(bufs, 1, 1500, &record) == 1, "singleton aggregated");
+    require(tunLinuxGsoBuildWrite(bufs, 3, 152, &record) == 1, "original MTU bypassed");
+    ((uint8_t *) sbufGetMutablePtr(bufs[0]))[33] |= 8;
+    require(tunLinuxGsoBuildWrite(bufs, 3, 1500, &record) == 1, "PSH first packet extended");
+    for (unsigned i = 0; i < 4; ++i)
+        sbufDestroy(bufs[i]);
+
+    for (unsigned i = 0; i < 64; ++i)
+    {
+        bufs[i] = makeWriteSegment(i, 1460, 0, 0x10);
+        putBe32((uint8_t *) sbufGetMutablePtr(bufs[i]) + 24, kFirstSequence + i * 1460U);
+    }
+    require(tunLinuxGsoBuildWrite(bufs, 64, 1500, &record) == 44 && record.length == 64290,
+            "aggregate IPv4 maximum not enforced");
+    for (unsigned i = 0; i < 64; ++i)
+        sbufDestroy(bufs[i]);
+    for (unsigned i = 0; i < 64; ++i)
+        bufs[i] = makeWriteSegment(i, 101, 0, 0x10);
+    require(tunLinuxGsoBuildWrite(bufs, 64, 1500, &record) == 64 && record.count == 66,
+            "bounded full batch not aggregated");
+    for (unsigned i = 0; i < 64; ++i)
+        sbufDestroy(bufs[i]);
+}
+
 int main(void)
 {
+    testGsoWriteBuilder();
     const uint8_t vector[] = {0x00, 0x01, 0x02};
     require(oracleChecksum(vector, sizeof(vector), 0, SIZE_MAX) == UINT16_C(0xfdfe),
             "checksum oracle self-check failed");

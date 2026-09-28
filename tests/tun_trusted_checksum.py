@@ -71,7 +71,8 @@ def forwarding(fixture):
     command(*fixture.runtime, 'ethtool', '-K', 'wwcsout', 'tx', 'off', 'tso', 'off', 'gso', 'off')
     command(*client, 'ethtool', '-K', 'wwcspeer', 'gro', 'off', 'lro', 'off')
     features = output(*fixture.runtime, 'ethtool', '-k', 'wwcsout')
-    require('tx-checksumming: off' in features, 'egress still supports TX checksum offload')
+    for feature in ('tx-checksumming', 'tcp-segmentation-offload', 'generic-segmentation-offload'):
+        require(feature + ': off' in features, 'egress still supports ' + feature)
     (fixture.directory / 'software-egress-features.txt').write_text(features)
     ready = fixture.directory / 'capture-ready'
     capture = fixture.spawn([*client, sys.executable, str(HELPER), 'capture', '--bind', FORWARDED,
@@ -119,6 +120,18 @@ def main():
                 # UDP checksum before the real IP fragmentation/kernel path.
                 command(*fixture.runtime, sys.executable, str(HELPER), 'dns', '--bind', CLIENT,
                         '--address', SERVER, '--questions', '32', timeout=10)
+                if active and mtu == 1500:
+                    common = ['--address', SERVER, '--port', str(PORT), '--connections', '4',
+                              '--bytes', '1048576', '--receive-delay', '.02']
+                    server = fixture.spawn([*fixture.peer, sys.executable, str(TRANSFER), 'server', *common],
+                                           'slow-server.log')
+                    fixture.wait_server(server)
+                    # Keep this independent scenario out of the preceding
+                    # transfer's still-closing TCP tuples.
+                    command(*fixture.runtime, sys.executable, str(TRANSFER), 'client', *common, '--bind', CLIENT,
+                            '--source-port', str(SOURCE_PORT + 100), capture_output=True, timeout=35)
+                    server.wait(timeout=5)
+                    require(server.returncode == 0, 'slow receiver exchange failed')
                 result = forwarding(fixture) if active and mtu == 1500 else {}
                 result['gso'] = fixture.finish()
                 print(name + ': ' + json.dumps(result), flush=True)

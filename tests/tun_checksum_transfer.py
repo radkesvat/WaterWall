@@ -63,8 +63,13 @@ def capture(args):
     signal.signal(signal.SIGTERM, stop)
     counts = {'tcp': 0, 'udp': 0, 'fragments': 0}
     fragments = {}
+    sequences = {}
     errors = []
     with socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(0x0800)) as sock:
+        # Private namespace qualification already requires CAP_NET_ADMIN. Reserve
+        # enough packet-socket storage for the fixed four-MiB transfer even when
+        # Python checksum verification falls behind a burst. Verify zero drops.
+        sock.setsockopt(socket.SOL_SOCKET, 33, 16 * 1024 * 1024)  # SO_RCVBUFFORCE
         sock.bind((args.interface, 0))
         sock.settimeout(.1)
         Path(args.ready).touch()
@@ -83,6 +88,8 @@ def capture(args):
             if not 20 <= ihl <= total <= len(ip) or checksum(ip[:ihl]) != 0:
                 errors.append('IPv4 header/length checksum')
                 continue
+            if total > 1500:
+                errors.append('software segmentation exceeded MTU')
             body = ip[ihl:total]
             if bits & 0x3fff:
                 counts['fragments'] += 1
@@ -111,11 +118,45 @@ def capture(args):
                 if body[6:8] == b'\0\0':
                     errors.append('unexpected disabled UDP checksum')
                     continue
+            if ip[9] == 6:
+                header_length = (body[12] >> 4) * 4 if len(body) >= 20 else 0
+                if not 20 <= header_length <= len(body):
+                    errors.append('TCP geometry')
+                    continue
+                key = (ip[12:20], body[:4])
+                flow = sequences.setdefault(key, {'syn': None, 'fin': None, 'spans': []})
+                sequence = struct.unpack('!I', body[4:8])[0]
+                flags = body[13]
+                if flags & 2:
+                    flow['syn'] = (sequence + 1) & 0xffffffff
+                if flags & 1:
+                    flow['fin'] = sequence
+                if len(body) > header_length:
+                    flow['spans'].append((sequence, len(body) - header_length))
             pseudo = ip[12:20] + bytes((0, ip[9])) + struct.pack('!H', len(body))
             if checksum(pseudo + body) != 0:
                 errors.append('TCP/UDP wire checksum')
             counts['tcp' if ip[9] == 6 else 'udp'] += 1
-    result = {**counts, 'errors': errors, 'incomplete': len(fragments)}
+        _, dropped = struct.unpack('II', sock.getsockopt(263, 6, 8))  # SOL_PACKET / PACKET_STATISTICS
+        if dropped:
+            errors.append('capture dropped packets: %d' % dropped)
+    covered = []
+    for flow in sequences.values():
+        if flow['syn'] is None or flow['fin'] is None:
+            errors.append('missing TCP connection boundaries')
+            continue
+        end = 0
+        for sequence, length in sorted(flow['spans'], key=lambda span: (span[0] - flow['syn']) & 0xffffffff):
+            start = (sequence - flow['syn']) & 0xffffffff
+            if start > end:
+                errors.append('gap in captured TCP sequence coverage')
+            end = max(end, start + length)
+        if end != (flow['fin'] - flow['syn']) & 0xffffffff:
+            errors.append('incomplete captured TCP sequence range')
+        covered.append(end)
+    if len(covered) != 4 or any(length != 1048576 for length in covered):
+        errors.append('unexpected TCP flow/byte coverage')
+    result = {'tcp_covered_bytes': covered, **counts, 'errors': errors, 'incomplete': len(fragments)}
     print(json.dumps(result), flush=True)
     if errors or fragments or not all(counts.values()):
         raise RuntimeError('incomplete or invalid software-completed forwarding capture')

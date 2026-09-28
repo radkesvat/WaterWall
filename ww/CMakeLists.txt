@@ -603,6 +603,7 @@ elseif(UNIX AND NOT ANDROID)
     if(LINUX)
         target_sources(ww PRIVATE
             devices/tun/tun_linux_gso_limits.c
+            devices/tun/tun_linux_gso_write.c
             devices/tun/tun_linux_offload.c
             devices/capture/capture_linux.c
             devices/capture/capture_linux_io.c

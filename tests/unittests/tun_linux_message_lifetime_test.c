@@ -7,9 +7,11 @@
 #include "wwapi.h"
 
 #include "devices/tun/tun_linux_gso_limits.h"
+#include "devices/tun/tun_linux_gso_write.h"
 #include "devices/tun/tun_linux_internal.h"
 #include "devices/tun/tun_linux_offload.h"
 #include "loggers/internal_logger.h"
+#include "wchan.h"
 #include "wchecksum.h"
 #include "worker_messages.h"
 
@@ -271,6 +273,13 @@ static bool                     deliver_fragment_batch;
 static tun_device_t *in_flight_device;
 static unsigned int  in_flight_check_call;
 static unsigned int  in_flight_checks_run;
+
+static bool          writer_batch_probe, writer_batch_recycling;
+static sbuf_t       *writer_batch_buffers[130];
+static unsigned      writer_batch_settled[130], writer_batch_count, writer_batch_offset;
+static unsigned      writer_batch_calls, writer_batch_aggregates, writer_batch_max;
+static unsigned      writer_batch_fault;
+static tun_device_t *writer_batch_device;
 
 static void require(bool condition, const char *message)
 {
@@ -550,6 +559,52 @@ ssize_t __wrap_write(int fd, const void *buf, size_t count)
 
 ssize_t __wrap_writev(int fd, const struct iovec *iov, int iovcnt)
 {
+    if (fd == tun_handle_fd && writer_batch_probe)
+    {
+        ++writer_batch_calls;
+        const uint8_t *metadata = iov[0].iov_base;
+        const uint8_t *ip       = iov[1].iov_base;
+        const unsigned members  = metadata[1] == 1 ? (unsigned) iovcnt - 2 : 1;
+        size_t         total    = 0;
+        for (int i = 0; i < iovcnt; ++i)
+            total += iov[i].iov_len;
+        require(iov[0].iov_len == 10 && metadata[0] == 1 && metadata[6] == 20 && metadata[8] == 16,
+                "batch checksum metadata");
+        require(GET_BE32(ip + 24) == writer_batch_offset * 100U, "batch/lookahead reordered output");
+        if (metadata[1] == 1)
+        {
+            ++writer_batch_aggregates;
+            writer_batch_max = max(writer_batch_max, members);
+            require(iov[1].iov_len == 40 && metadata[2] == 40 && metadata[4] == 100, "batch GSO geometry");
+            require(GET_BE16(ip + 2) + 10U == total, "batch total length");
+            for (unsigned i = 0; i < members; ++i)
+            {
+                sbuf_t *buf = writer_batch_buffers[writer_batch_offset + i];
+                require(iov[i + 2].iov_base == (const uint8_t *) sbufGetRawPtr(buf) + 40 && iov[i + 2].iov_len == 100,
+                        "writer copied payload or mixed batch members");
+                require(writer_batch_settled[writer_batch_offset + i] == 0, "write used settled buffer");
+            }
+        }
+        else
+            require(iovcnt == 2 && ip == sbufGetRawPtr(writer_batch_buffers[writer_batch_offset]),
+                    "ordinary fallback lost original buffer");
+        if (writer_batch_calls == 1 && (writer_batch_fault == 1 || writer_batch_fault == 2))
+        {
+            errno = writer_batch_fault == 1 ? EINTR : EINVAL;
+            return -1;
+        }
+        writer_batch_offset += members;
+        if (writer_batch_fault == 5 || writer_batch_fault == 8 || writer_batch_offset == writer_batch_count)
+            require(tundeviceRequestStop(writer_batch_device), "batch stop request");
+        if (writer_batch_calls == 1 && (writer_batch_fault == 3 || writer_batch_fault == 6 || writer_batch_fault == 8))
+        {
+            errno = writer_batch_fault == 3 ? EAGAIN : writer_batch_fault == 8 ? EINTR : EIO;
+            return -1;
+        }
+        if (writer_batch_fault == 9)
+            return 0;
+        return writer_batch_calls == 1 && writer_batch_fault == 4 ? (ssize_t) total - 1 : (ssize_t) total;
+    }
     if (fd == tun_handle_fd)
     {
         require(iovcnt == 2 && iov[0].iov_len == 10, "GSO writer did not use one virtio-framed writev");
@@ -749,11 +804,19 @@ void __wrap_masterpoolDestroy(master_pool_t *pool)
 
 void __wrap_bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *buf)
 {
+    if (writer_batch_probe)
+    {
+        for (unsigned i = 0; i < writer_batch_count; ++i)
+            if (buf == writer_batch_buffers[i])
+                require(++writer_batch_settled[i] == 1, "batch double recycling");
+    }
+    writer_batch_recycling = true;
     if (pool == expected_reuse_pool && buf == expected_reused_buffer)
     {
         expected_reuse_count++;
     }
     __real_bufferpoolReuseBuffer(pool, buf);
+    writer_batch_recycling = false;
 
     /*
      * Recycling a buffer runs arbitrary code, which is free to leave any errno
@@ -788,6 +851,12 @@ sbuf_t *__wrap_sbufTryCreateWithPadding(uint32_t minimum_capacity, uint16_t pad_
 
 void __wrap_sbufDestroy(sbuf_t *buf)
 {
+    if (writer_batch_probe && ! writer_batch_recycling)
+    {
+        for (unsigned i = 0; i < writer_batch_count; ++i)
+            if (buf == writer_batch_buffers[i])
+                require(++writer_batch_settled[i] == 1, "batch double destruction");
+    }
     if (buf == gso_scratch_buffer)
     {
         gso_scratch_destroy_count++;
@@ -2522,6 +2591,78 @@ static void testTrustedWriterOutcomes(void)
     tundeviceDestroy(tdev);
 }
 
+bool __real_chanTryRecv(wchan_t *channel, void *element, bool *closed);
+bool __wrap_chanTryRecv(wchan_t *channel, void *element, bool *closed);
+bool __wrap_chanTryRecv(wchan_t *channel, void *element, bool *closed)
+{
+    const bool received = __real_chanTryRecv(channel, element, closed);
+    if (writer_batch_probe && writer_batch_fault == 7 && received)
+        require(tundeviceRequestStop(writer_batch_device), "stop during batch collection");
+    return received;
+}
+
+static void testWriterBatch(unsigned count, unsigned capacity, unsigned fault)
+{
+    resetShutdownRequests();
+    resetIoInjection();
+    resetGsoSetup();
+    resetFakeThreads(0);
+    tun_device_t *tdev =
+        tundeviceCreate("ww-lifetime-test", true, 1500, NULL, observeReadCallback, kDeviceFragmentPreserve);
+    require(tdev && tundeviceEnableTrustedChecksums(tdev) && tundeviceBringUp(tdev), "batch writer setup");
+    writer_batch_count  = count;
+    writer_batch_offset = writer_batch_calls = writer_batch_aggregates = writer_batch_max = 0;
+    writer_batch_fault                                                                    = fault;
+    writer_batch_device                                                                   = tdev;
+    memoryZero(writer_batch_settled, sizeof(writer_batch_settled));
+    for (unsigned i = 0; i < count; ++i)
+    {
+        sbuf_t  *buf = sbufCreate(capacity);
+        uint8_t *ip  = sbufGetMutablePtr(buf);
+        memoryZero(ip, 140);
+        ip[0]                   = 0x45;
+        ip[3]                   = 140;
+        ip[4]                   = (uint8_t) (i >> 8);
+        ip[5]                   = (uint8_t) i;
+        ip[8]                   = 64;
+        ip[9]                   = 6;
+        ip[12]                  = 10;
+        ip[16]                  = 11;
+        ip[20]                  = 10;
+        ip[22]                  = 11;
+        const uint32_t sequence = htonl(i * 100U);
+        memoryCopy(ip + 24, &sequence, 4);
+        ip[32]                  = 0x50;
+        ip[33]                  = 0x10;
+        const uint16_t checksum = calcGenericChecksum(ip, 20, 0);
+        memoryCopy(ip + 10, &checksum, 2);
+        memset(ip + 40, i, 100);
+        sbufSetLength(buf, 140);
+        writer_batch_buffers[i] = buf;
+        require(tundeviceWrite(tdev, buf), "batch queue refused fixture");
+    }
+    writer_batch_probe = true;
+    runCapturedThreadBody(kCapturedWriterThread);
+    require(tundeviceBringDown(tdev), "batch bring down");
+    for (unsigned i = 0; i < count; ++i)
+        require(writer_batch_settled[i] == 1, "batch or channel retained buffer after stop/join");
+    writer_batch_probe = false;
+    if (fault < 5)
+        require(writer_batch_offset == count, "batch lost ordered output progress");
+    if (fault == 2)
+        require(writer_batch_aggregates == 1 && writer_batch_calls == count + 1,
+                "unsupported GSO fallback replay/latch");
+    if (capacity > 128 * 1024 && fault == 0)
+        require(writer_batch_calls == count && writer_batch_aggregates == 0, "charge/lookahead limit");
+    if (count == 130 && capacity == 140 && fault == 0)
+        require(writer_batch_calls == 3 && writer_batch_max == 64, "count limit or write reduction");
+    if (fault == 5 || fault == 6 || fault == 8 || fault == 9)
+        require(writer_batch_calls == 1, "writer continued after stop/permanent failure");
+    if (fault == 7)
+        require(writer_batch_calls == 0, "writer emitted after stop during collection");
+    tundeviceDestroy(tdev);
+}
+
 static void testTrustedQueueFallback(void)
 {
     resetGsoSetup();
@@ -2646,6 +2787,14 @@ int main(void)
     testGsoWorkerPoolPaddingGrowth(&env);
     testGsoWriterFramingAndPacketOutcomes();
     testTrustedWriterOutcomes();
+    testWriterBatch(1, 140, 0);
+    testWriterBatch(3, 140, 0);
+    testWriterBatch(130, 140, 0);
+    testWriterBatch(3, 140000, 0);
+    testWriterBatch(3, 300000, 0);
+    testWriterBatch(3, 140000, 5);
+    for (unsigned fault = 1; fault <= 9; ++fault)
+        testWriterBatch(70, 140, fault);
     testTrustedQueueFallback();
     testGsoPendingAggregateSettlesOnReaderExit();
     testReaderFragmentPolicy(true);

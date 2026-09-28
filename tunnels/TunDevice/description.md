@@ -267,6 +267,15 @@ Payload callbacks validate and try the existing thread-safe writer FIFO without
 waiting for capacity or performing native I/O. This enqueue-only guarantee allows
 an immediately adjacent PTC on the packet worker to deliver its final sbuf directly.
 
+On an active direct trusted Linux pair, the writer combines compatible adjacent
+TCP data packets into bounded scatter/gather GSO records. It takes only packets
+already available, never waits to fill a batch, and retains packet order. At most
+64 packets and 256 KiB of allocation charge form a batch, with one lookahead;
+each GSO record stays within 65,535 IPv4 bytes. Original packets must still fit
+MTU. UDP, fragments, controls, incompatible TCP packets, interposed nodes and
+`gso:false` keep ordinary writes. Payload bytes are not copied into an aggregate.
+
+
 ### Direct PacketsToConnection checksums
 
 A reciprocal immediate `TunDevice -> PacketsToConnection` pair automatically

@@ -1015,6 +1015,7 @@ if(TARGET ww)
     )
     target_compile_definitions(tun_linux_message_lifetime_test PRIVATE DEVICE_WRITER_CHANNEL_TEST_HOOKS=1)
     target_link_options(tun_linux_message_lifetime_test PRIVATE
+      "-Wl,--wrap=chanTryRecv"
       "-Wl,--wrap=procRunArgvWithDeadline"
       "-Wl,--wrap=open"
       "-Wl,--wrap=ioctl"

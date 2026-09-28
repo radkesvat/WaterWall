@@ -5,6 +5,7 @@
 #include "devices/tun/tun_lifecycle.h"
 #ifdef OS_LINUX
 #include "devices/tun/tun_linux_gso_limits.h"
+#include "devices/tun/tun_linux_gso_write.h"
 #include "devices/tun/tun_linux_offload.h"
 #endif
 #include "generic_pool.h"
@@ -678,118 +679,188 @@ WTHREAD_ROUTINE(routineReadFromTun)
     return 0;
 }
 
-// Routine to write to TUN device
-WTHREAD_ROUTINE(routineWriteToTun)
+/* False ends the writer. A short packet write is never replayed as a suffix. */
+static bool tunWriteResult(tun_device_t *tdev, ssize_t written, size_t expected, int write_errno)
 {
-    tun_device_t   *tdev = userdata;
-    sbuf_t         *buf;
-    ssize_t         nwrite;
-    struct wchan_s *writer_channel = deviceWriterChannelGetConsumerChannel(&tdev->writer_channel);
-
-    while (tunLifecycleIsActive(tunLifecycleLoad(&tdev->lifecycle)))
+    if (written > 0)
     {
-        if (! chanRecv(writer_channel, (void *) &buf))
+        if ((size_t) written != expected &&
+            atomicLogRateLimiterShouldLog(&tun_write_packet_failure_log, kTunPacketFailureLogIntervalMs))
         {
-            LOGD("TunDevice: routine write will exit due to channel closed");
-            return 0;
+            LOGW("TunDevice: discarded a packet after a short device write (%zd of %zu bytes)", written, expected);
         }
-
-        if (UNLIKELY(tunDeviceMtu(tdev) < sbufGetLength(buf)))
+        return true;
+    }
+    if (written == 0)
+    {
+        LOGW("TunDevice: Exit write routine due to End Of File");
+        return false;
+    }
+    if (tunIoErrnoIsTransient(write_errno) || tunWriteErrnoIsPacketLocal(write_errno))
+    {
+        if (atomicLogRateLimiterShouldLog(&tun_write_packet_failure_log, kTunPacketFailureLogIntervalMs))
         {
-            if (atomicLogRateLimiterShouldLog(&tun_write_packet_failure_log, kTunPacketFailureLogIntervalMs))
-            {
-                LOGW("TunDevice: WriteThread: discarded a packet -> size %d exceeds device MTU %u",
-                     sbufGetLength(buf),
-                     tunDeviceMtu(tdev));
-            }
-
-            bufferpoolReuseBuffer(tdev->writer_buffer_pool, buf);
-            continue;
-        }
-
-        const size_t packet_length   = sbufGetLength(buf);
-        const size_t expected_length = packet_length + (tdev->gso_enabled ? kTunVirtioHeaderSize : 0U);
-        if (tdev->gso_enabled)
-        {
-            uint8_t virtio_header[kTunVirtioHeaderSize] = {0};
-#ifdef OS_LINUX
-            if (tdev->trusted_checksums &&
-                ! tunLinuxOffloadEncodeWrite(sbufGetMutablePtr(buf), (uint32_t) packet_length, virtio_header))
-            {
-                bufferpoolReuseBuffer(tdev->writer_buffer_pool, buf);
-                continue;
-            }
-#endif
-            struct iovec  iov[2]                              = {
-                {.iov_base = (void *) virtio_header, .iov_len = sizeof(virtio_header)},
-                {.iov_base = (void *) sbufGetRawPtr(buf), .iov_len = packet_length},
-            };
-            do
-            {
-                nwrite = writev(tdev->handle, iov, 2);
-            } while (nwrite < 0 && errno == EINTR);
-        }
-        else
-        {
-            nwrite = write(tdev->handle, sbufGetRawPtr(buf), packet_length);
-        }
-        // errno is only meaningful right here. Recycling the buffer and every
-        // logger below may overwrite it, so classification must read this copy.
-        const int write_errno = (nwrite < 0) ? errno : 0;
-        bufferpoolReuseBuffer(tdev->writer_buffer_pool, buf);
-
-        if (nwrite > 0 && (size_t) nwrite != expected_length)
-        {
-            if (atomicLogRateLimiterShouldLog(&tun_write_packet_failure_log, kTunPacketFailureLogIntervalMs))
-            {
-                LOGW("TunDevice: discarded a packet after a short device write (%zd of %zu bytes)",
-                     nwrite,
-                     expected_length);
-            }
-            continue;
-        }
-
-        if (nwrite == 0)
-        {
-            LOGW("TunDevice: Exit write routine due to End Of File");
-            return 0;
-        }
-
-        if (nwrite < 0)
-        {
-            if (tunIoErrnoIsTransient(write_errno) || tunWriteErrnoIsPacketLocal(write_errno))
-            {
-                if (atomicLogRateLimiterShouldLog(&tun_write_packet_failure_log, kTunPacketFailureLogIntervalMs))
-                {
-                    LOGW("TunDevice: discarded a packet, writing to device %s failed with errno %d (%s)",
-                         tdev->name,
-                         write_errno,
-                         strerror(write_errno));
-                }
-                continue;
-            }
-
-            if (write_errno == EMSGSIZE)
-            {
-                LOGF("TunDevice: This is related to the MTU size, please set a correct value for TunDevice "
-                     "'device-mtu'");
-            }
-
-            /*
-             * The device will not accept packets again. The buffer was already
-             * recycled above and this thread holds nothing else, so just leave
-             * the write routine through its normal exit.
-             * tundeviceNoteUnexpectedThreadExit() publishes the failure and owns
-             * the shutdown decision. Returning to the loop instead would discard
-             * every packet from here on while the device still looked usable.
-             */
-            LOGE("TunDevice: Exit write routine due to an unrecoverable write error on device %s, errno %d (%s)",
+            LOGW("TunDevice: discarded a packet, writing to device %s failed with errno %d (%s)",
                  tdev->name,
                  write_errno,
                  strerror(write_errno));
-            return 0;
         }
+        return true;
     }
+    if (write_errno == EMSGSIZE)
+    {
+        LOGF("TunDevice: This is related to the MTU size, please set a correct value for TunDevice 'device-mtu'");
+    }
+    LOGE("TunDevice: Exit write routine due to an unrecoverable write error on device %s, errno %d (%s)",
+         tdev->name,
+         write_errno,
+         strerror(write_errno));
+    return false;
+}
+
+/* Consumes exactly this packet, including validation refusal and device failure. */
+static bool tunWriteOrdinary(tun_device_t *tdev, sbuf_t *buf)
+{
+    if (UNLIKELY(tunDeviceMtu(tdev) < sbufGetLength(buf)))
+    {
+        if (atomicLogRateLimiterShouldLog(&tun_write_packet_failure_log, kTunPacketFailureLogIntervalMs))
+        {
+            LOGW("TunDevice: WriteThread: discarded a packet -> size %d exceeds device MTU %u",
+                 sbufGetLength(buf),
+                 tunDeviceMtu(tdev));
+        }
+        bufferpoolReuseBuffer(tdev->writer_buffer_pool, buf);
+        return true;
+    }
+    const size_t packet_length   = sbufGetLength(buf);
+    const size_t expected_length = packet_length + (tdev->gso_enabled ? kTunVirtioHeaderSize : 0U);
+    ssize_t      written;
+    if (tdev->gso_enabled)
+    {
+        uint8_t metadata[kTunVirtioHeaderSize] = {0};
+#ifdef OS_LINUX
+        if (tdev->trusted_checksums &&
+            ! tunLinuxOffloadEncodeWrite(sbufGetMutablePtr(buf), (uint32_t) packet_length, metadata))
+        {
+            bufferpoolReuseBuffer(tdev->writer_buffer_pool, buf);
+            return true;
+        }
+#endif
+        struct iovec iov[2] = {
+            {.iov_base = metadata, .iov_len = sizeof(metadata)},
+            {.iov_base = (void *) sbufGetRawPtr(buf), .iov_len = packet_length},
+        };
+        do
+        {
+            written = writev(tdev->handle, iov, 2);
+        } while (written < 0 && errno == EINTR && tunLifecycleIsActive(tunLifecycleLoad(&tdev->lifecycle)));
+    }
+    else
+    {
+        written = write(tdev->handle, sbufGetRawPtr(buf), packet_length);
+    }
+    const int write_errno = written < 0 ? errno : 0;
+    bufferpoolReuseBuffer(tdev->writer_buffer_pool, buf);
+    return tunWriteResult(tdev, written, expected_length, write_errno);
+}
+
+WTHREAD_ROUTINE(routineWriteToTun)
+{
+    tun_device_t   *tdev    = userdata;
+    struct wchan_s *channel = deviceWriterChannelGetConsumerChannel(&tdev->writer_channel);
+#ifdef OS_LINUX
+    bool    coalesce  = tdev->gso_enabled && tdev->trusted_checksums;
+    sbuf_t *lookahead = NULL;
+    while (tunLifecycleIsActive(tunLifecycleLoad(&tdev->lifecycle)))
+    {
+        sbuf_t  *batch[kTunWriteBatchPackets];
+        unsigned count = 1;
+        if (lookahead != NULL)
+        {
+            batch[0]  = lookahead;
+            lookahead = NULL;
+        }
+        else if (! chanRecv(channel, &batch[0]))
+            break;
+
+        size_t charge = sbufGetAllocationCharge(batch[0]);
+        while (coalesce && count < kTunWriteBatchPackets && charge < kTunWriteBatchCharge &&
+               tunLifecycleIsActive(tunLifecycleLoad(&tdev->lifecycle)))
+        {
+            bool    closed = false;
+            sbuf_t *next;
+            if (! chanTryRecv(channel, &next, &closed))
+                break;
+            const size_t next_charge = sbufGetAllocationCharge(next);
+            if (next_charge > kTunWriteBatchCharge - charge)
+            {
+                lookahead = next;
+                break;
+            }
+            batch[count++] = next;
+            charge += next_charge;
+        }
+        unsigned offset       = 0;
+        bool     keep_running = true;
+        while (offset < count && tunLifecycleIsActive(tunLifecycleLoad(&tdev->lifecycle)))
+        {
+            tun_linux_gso_write_t record;
+            const unsigned        members =
+                coalesce ? tunLinuxGsoBuildWrite(batch + offset, count - offset, tunDeviceMtu(tdev), &record) : 1;
+            if (members == 1)
+            {
+                keep_running = tunWriteOrdinary(tdev, batch[offset++]);
+            }
+            else
+            {
+                ssize_t written;
+                do
+                {
+                    written = writev(tdev->handle, record.iov, (int) record.count);
+                } while (written < 0 && errno == EINTR && tunLifecycleIsActive(tunLifecycleLoad(&tdev->lifecycle)));
+                const int write_errno = written < 0 ? errno : 0;
+                /* Linux tun_get_user rejects virtio metadata with EINVAL before
+                 * injecting any skb. Only that definitive no-record failure is
+                 * replayable; never replay a short/zero or ambiguous result.
+                 * Keep originals intact and disable aggregation for this writer.
+                 * See Linux v5.15 drivers/net/tun.c:virtio_net_hdr_to_skb. */
+                if (written < 0 && write_errno == EINVAL)
+                {
+                    coalesce = false;
+                    LOGW("TunDevice: %s rejected TCP GSO output; using ordinary packet writes", tdev->name);
+                    continue;
+                }
+                for (unsigned i = 0; i < members; ++i)
+                    bufferpoolReuseBuffer(tdev->writer_buffer_pool, batch[offset++]);
+                keep_running = tunWriteResult(tdev, written, record.length, write_errno);
+            }
+            if (! keep_running)
+                break;
+        }
+        /* Stop and permanent failures settle all local ownership here. The
+         * coordinator drains only records still in the channel after join. */
+        while (offset < count)
+            bufferpoolReuseBuffer(tdev->writer_buffer_pool, batch[offset++]);
+        if (! keep_running)
+            break;
+    }
+    if (lookahead != NULL)
+        bufferpoolReuseBuffer(tdev->writer_buffer_pool, lookahead);
+#else
+    while (tunLifecycleIsActive(tunLifecycleLoad(&tdev->lifecycle)))
+    {
+        sbuf_t *buf;
+        if (! chanRecv(channel, &buf))
+            break;
+        if (! tunLifecycleIsActive(tunLifecycleLoad(&tdev->lifecycle)))
+        {
+            bufferpoolReuseBuffer(tdev->writer_buffer_pool, buf);
+            break;
+        }
+        if (! tunWriteOrdinary(tdev, buf))
+            break;
+    }
+#endif
     return 0;
 }
 
