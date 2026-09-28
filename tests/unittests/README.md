@@ -29,6 +29,13 @@ These tests exercise small library-level behavior without launching the `Waterwa
   Verifies TlsClient's default and configured ALPN wire encoding, exact configured order, empty-list disable mode, and
   rejection of malformed or duplicate protocol lists. It also performs a real in-memory BoringSSL client/server
   handshake and proves that an HTTP/1.1-only TlsClient context negotiates `http/1.1`.
+- `waterwall.tlsclient_buffer_bio_unit`, `waterwall.tlsserver_buffer_bio_unit`
+  Verify owned ciphertext buffers, partial reads, FIFO order, padding, byte/entry limits, reset/EOF and real TLS 1.2/1.3
+  round trips over fragmented input. The BoringSSL case also verifies direct encryption into reserved pooled output,
+  independent lifetime after `SSL_free()`, partial commit and cancellation, padding callback counts, reservation
+  fallback, partial-write retries, KeyUpdate ordering, injected encryption-failure cleanup and ordinary close-notify.
+  Run these when updating BoringSSL or its local output-buffer patch; the upgrade checklist is in
+  [`tunnels/TlsClient/my notes.txt`](../../tunnels/TlsClient/my%20notes.txt).
 - `waterwall.ipmanipulator_tcpbit_unit`
   Verifies `IpManipulator` TCP-bit rewriting handles the full TCP flags byte, including downstream CWR/ECE handling and
   carried original flag restore.

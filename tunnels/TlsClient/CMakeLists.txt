@@ -12,6 +12,11 @@
 # boringssl_symbols.txt as well; that symbol-list change lives outside the
 # vendored tree and is intentionally not part of the patch. The complete porting
 # contract and post-update test checklist are at the top of `my notes.txt`.
+# The direct application-record output hook is saved separately in
+# RadkesvatPatches/record_write_buffer_callbacks.patch. Port it after the padding
+# patch on every BoringSSL update; it changes ssl/s3_pkt.cc plus the public header,
+# SSL state and API implementation. Keep SSL_set_record_write_buffer_callbacks in
+# boringssl_symbols.txt. Reapplication order and required behavior are in `my notes.txt`.
 
 # I saved original cmake file as CMakeLists.txt.original
 # and the diff of changes that I made to CMakeLists.txt is CMakeLists.txt.patch

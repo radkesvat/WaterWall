@@ -1,3 +1,86 @@
+================================================================================
+DIRECT RECORD OUTPUT / BORINGSSL UPDATE CHECKLIST (added 2026-09-28)
+================================================================================
+
+I added a local BoringSSL output-buffer hook so TlsClient can encrypt ordinary
+TLS application records directly into WaterWall's pooled output buffers. This
+removes the temporary ciphertext copy and BoringSSL output allocation for
+eligible writes. Replacing the vendored BoringSSL tree will lose this hook:
+port it again on every update, along with the existing local patches.
+
+The BoringSSL-side patch is already applied and saved here:
+
+    RadkesvatPatches/record_write_buffer_callbacks.patch
+
+It changes these four files in the BoringSSL tree:
+
+    include/openssl/ssl.h
+    ssl/internal.h
+    ssl/ssl_lib.cc
+    ssl/s3_pkt.cc
+
+This is an incremental patch on top of our existing local modifications,
+including `tls13_record_padding_callback.patch`. Apply or port the padding
+patch first, then the output-buffer patch. Do not apply either a second time
+to the current vendored tree.
+
+After replacing BoringSSL and restoring the earlier local patches, check and
+apply this patch from the WaterWall repository root:
+
+    git apply --check --directory=tunnels/TlsClient/boringssl tunnels/TlsClient/RadkesvatPatches/record_write_buffer_callbacks.patch
+    git apply --directory=tunnels/TlsClient/boringssl tunnels/TlsClient/RadkesvatPatches/record_write_buffer_callbacks.patch
+
+If the newer source has changed, port the behavior instead of forcing the old
+hunks. Regenerate this incremental patch against the new tree with the earlier
+patches already applied, so it does not accidentally include their changes.
+Recheck the actual record-write and retry paths even if the patch applies cleanly.
+
+Required API and behavior to preserve:
+
+- Keep `SSL_set_record_write_buffer_callbacks(ssl, reserve, finish, arg)` and
+  the `ssl_record_write_reserve_func` / `ssl_record_write_finish_func` types.
+  Callbacks and their argument belong to each SSL object. Both callbacks are
+  NULL by default; setting both to NULL disables the hook.
+- Use the hook for nonempty TLS 1.2/1.3 application writes after the handshake,
+  with no pending control flight or write retry. Handshake/control output and
+  pending retries retain the ordinary BoringSSL path.
+- Reserve the maximum ciphertext capacity before sealing, including the
+  configured TLS 1.3 padding allowance. A NULL reservation declines without
+  changing the BIO and permits the ordinary copying write path.
+- Use the existing record sealer. Select padding once; preserve record order,
+  KeyUpdate handling and sequence-number advancement. Never fall back to
+  encrypting the same record again after sealing has started.
+- Every successful reservation receives exactly one synchronous finish call:
+  positive length commits the actual ciphertext, zero cancels on encryption
+  error. Commit cannot allocate or fail. BoringSSL retains no output pointer
+  after finish; the destination must not alias the plaintext.
+- While reserved, callbacks may query SSL state but must not perform SSL I/O,
+  replace BIOs/output callbacks, or drain/mutate the reserved storage. Outward
+  tunnel callbacks still wait until the SSL operation has returned.
+- Direct commits bypass `BIO_write`, including its byte counters. WaterWall
+  accounts for payload using the transferred buffers. This does not remove
+  the internal plaintext copy in `SSL_read()`.
+
+WaterWall-side integration outside the vendored patch:
+
+- Keep `SSL_set_record_write_buffer_callbacks` in `boringssl_symbols.txt` so
+  the build exports/calls `WW_BSSL_SSL_set_record_write_buffer_callbacks`.
+  Regenerate the prefix headers through the normal CMake build.
+- Keep `tlsbufferbioEnableDirectWrite()` installed per SSL object in
+  `common/line_state.c`. Its write BIO must come from `tlsbufferbioNew()`.
+- The BoringSSL-specific reserve/finish implementation is in
+  `../Internals/TlsBufferBio/buffer_bio.c` and its public header. Reserve must
+  obtain any required queue slot before encryption, retain onward headroom,
+  prefer aligned ciphertext bodies in new buffers, preserve tail coalescing,
+  and respect the existing 8 MiB / 1,024-entry BIO limits.
+- Keep the focused coverage in `tests/unittests/tls_buffer_bio_test.c` and its
+  BoringSSL encryption-failure linker wrapper in the unit-test CMake file.
+  Run the shared post-update verification checklist in the next section.
+- The buffer BIO contract is documented in Developer Guide Part 3,
+  `WaterWall-Docs/docs/05-devguides/part3-buffers-and-padding.mdx`.
+
+This is an output optimization for TlsClient's BoringSSL path. TlsServer uses
+OpenSSL's ordinary BIO write path. There is no node setting for the hook.
 
 
 ================================================================================
@@ -127,29 +210,44 @@ Patch maintenance:
   `boringssl_symbols.txt`; see the architecture-specific prefix notes near the
   end of this file.
 
-Required verification after every BoringSSL update:
+Required verification after every BoringSSL update (both record patches):
+
+Run these commands from the WaterWall repository root:
 
     cmake --preset linux
-    cmake --build --preset linux --target TlsClient tlsclient_record_padding_test tls13_record_delay_lifecycle_test -j8
-    ctest --preset linux --output-on-failure -R '^waterwall\.tlsclient_record_padding_unit$'
-    ctest --preset linux --output-on-failure -R '^waterwall\.tls13_record_delay_lifecycle_unit$'
-    ctest --preset linux --output-on-failure -R 'tlsclient|tls13_record|reality'
+    cmake --build --preset linux -j8
+    cmake --preset linux-unit-tests
+    ctest --preset linux-unit-debug --output-on-failure -R 'tls|reality|streamfragmenter'
+    ctest --preset linux-unit-release --output-on-failure -R 'tls|reality|streamfragmenter'
+    bash tests/run_test_lane.sh functional build/linux Release
+
+The unit CTest entries build the selected executables automatically. They use
+the dedicated no-LTO unit tree; do not run native units from the production
+`linux` tree. Check both Debug assertions and optimized Release behavior.
 
 The focused record-padding test must continue to prove: no-callback behavior,
 zero padding, exact padding length, safe oversize capping, one callback per
-record, unchanged TLS 1.2 output, and successful decryption by an OpenSSL peer.
+record, unchanged TLS 1.2 output, and successful peer decryption.
 The common and integration tests also verify partial/coalesced BIO reads,
 metadata/record matching, delayed FIFO release, Finish ordering, and payload
 integrity.
 
-This record-shaping patch is in addition to the older local BoringSSL changes
-already recorded below and in `RadkesvatPatches/`:
+The buffer-BIO test must additionally prove direct output-buffer identity and
+lifetime after SSL_free, alignment/headroom, partial commit, new/tail cancellation,
+byte/entry bounds, TLS 1.2/1.3 transfers, single padding decisions, declined
+reservations, partial-write retries, KeyUpdate ordering, encryption-failure
+cleanup and ordinary close-notify output. Rebenchmark after porting; removing a
+copy does not establish a throughput gain on a newer library.
+
+The record-shaping and output-buffer patches are in addition to the older local
+BoringSSL changes already recorded below and in `RadkesvatPatches/`:
 
 - `CMakeLists.txt.patch` (embedded build/tool and prefix-header behavior)
 - `handshake_client.cc.patch` (Chrome-like cipher ordering)
 - `p256_64.h.patch` (Windows fiat assembly guard)
 
-Rebase and revalidate all four patch sets when replacing the vendored tree.
+Rebase and revalidate both record patches and all older patch sets when replacing
+the vendored tree.
 
 
 First , there is a full caputred client hello from my just updated chrome Version 138.0.7204.184 (Official Build) (64-bit)
