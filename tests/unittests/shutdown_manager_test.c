@@ -734,7 +734,7 @@ static void testDurableDegradedRequestAndFinalization(void)
     GSTATE                      = (ww_global_state_t) {0};
     GSTATE.flag_initialized     = true;
     GSTATE.workers              = workers;
-    GSTATE.workers_count        = ARRAY_SIZE(workers);
+    GSTATE.workers_count        = ARRAY_SIZE(workers) - 1U;
     GSTATE.application_shutdown = applicationShutdownCreate();
     require(GSTATE.application_shutdown != NULL, "failed to create durable-request controller fixture");
 

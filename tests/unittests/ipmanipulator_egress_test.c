@@ -103,7 +103,7 @@ static void envSetup(test_env_t *env)
     GSTATE.masterpool_buffer_pools_small = env->small_master;
     GSTATE.masterpool_buffer_pools_medium = env->medium_master;
     GSTATE.masterpool_buffer_pools_splice = env->splice_master;
-    GSTATE.workers_count                 = 2;
+    GSTATE.workers_count                  = 1;
     testWorkerRegistryInstall(&g_test_worker_registry);
     env->original_mtu = CORE_DEFAULT_MTU;
     CORE_DEFAULT_MTU  = 1500;

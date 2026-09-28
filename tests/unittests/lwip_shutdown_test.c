@@ -1,21 +1,19 @@
-#include "ww_lwip.h"
-#include "wwapi.h"
-
-#include "lwip_test_runtime.h"
-
+#include "engine_runtime.h"
 #include "lwip/memp.h"
 #include "lwip/priv/tcp_priv.h"
+#include "worker_messages.h"
+#include "wwapi.h"
 
 typedef struct retained_pbuf_s
 {
     struct pbuf_custom custom;
     uint8_t            payload[64];
+    wid_t              owner;
+    unsigned           freed;
 } retained_pbuf_t;
-
-static atomic_bool  initialized;
-static sigset_t     tcpip_thread_mask;
-static bool         tcpip_thread_mask_known;
-static unsigned int retained_pbuf_free_count;
+static retained_pbuf_t retained[2];
+static atomic_uint     ready;
+static atomic_uint     settled;
 
 static void require(bool condition, const char *message)
 {
@@ -25,105 +23,89 @@ static void require(bool condition, const char *message)
         exit(1);
     }
 }
-
-static void requireManagedSignalsMasked(const sigset_t *mask, bool expected_blocked, const char *context)
-{
-    const int managed_signals[] = {SIGHUP, SIGINT, SIGQUIT, SIGALRM, SIGTERM};
-
-    for (size_t i = 0; i < ARRAY_SIZE(managed_signals); ++i)
-    {
-        const int membership = sigismember(mask, managed_signals[i]);
-        if (membership < 0 || (membership == 1) != expected_blocked)
-        {
-            fprintf(stderr,
-                    "FAIL: managed signal %d was %s in %s\n",
-                    managed_signals[i],
-                    membership == 1 ? "blocked" : "unblocked",
-                    context);
-            exit(1);
-        }
-    }
-}
-
-static void initDone(void *arg)
-{
-    discard arg;
-    frandInit();
-    tcpip_thread_mask_known = pthread_sigmask(SIG_BLOCK, NULL, &tcpip_thread_mask) == 0;
-    atomicStoreExplicit(&initialized, true, memory_order_release);
-}
-
 static void freeRetainedPbuf(struct pbuf *p)
 {
-    discard p;
-    retained_pbuf_free_count++;
+    retained_pbuf_t *r = (retained_pbuf_t *) p;
+    require(currentThreadIsEventWorkerWID(r->owner), "retained pbuf freed on foreign worker");
+    require(getWorker(r->owner)->loop == NULL, "retained pbuf released before detached-message teardown");
+    ++r->freed;
 }
-
-static void installRetainedOoseqPbuf(void *userdata)
+static void pending(void *worker, void *a, void *b, void *c)
 {
-    retained_pbuf_t *retained = userdata;
-    LWIP_ASSERT_CORE_LOCKED();
-
+    (void) worker;
+    (void) a;
+    (void) b;
+    (void) c;
+    atomic_fetch_add_explicit(&settled, 1, memory_order_relaxed);
+}
+static void cancelled(void *a, void *b, void *c, worker_message_cancel_reason_e reason)
+{
+    (void) a;
+    (void) b;
+    (void) c;
+    (void) reason;
+    atomic_fetch_add_explicit(&settled, 1, memory_order_relaxed);
+}
+static void install(void *worker_ptr, void *arg, void *b, void *c)
+{
+    (void) b;
+    (void) c;
+    worker_t        *worker  = worker_ptr;
+    retained_pbuf_t *r       = arg;
+    r->owner                 = worker->wid;
+    ww_lwip_engine_t *engine = wwLwipRuntimeGet(worker->wid), *previous;
+    require(engine != NULL && wwLwipEngineEnter(engine, &previous), "owner engine unavailable");
     struct tcp_pcb *pcb = tcp_new();
-    require(pcb != NULL, "failed to allocate test TCP PCB");
+    require(pcb != NULL, "TCP PCB allocation failed");
     pcb->state = ESTABLISHED;
     TCP_REG_ACTIVE(pcb);
-
     struct tcp_seg *segment = memp_malloc(MEMP_TCP_SEG);
-    require(segment != NULL, "failed to allocate test TCP segment");
-    memoryZero(segment, sizeof(*segment));
-
-    retained->custom.custom_free_function = freeRetainedPbuf;
-    segment->p                            = pbuf_alloced_custom(
-        PBUF_RAW, sizeof(retained->payload), PBUF_REF, &retained->custom, retained->payload, sizeof(retained->payload));
-    require(segment->p != NULL, "failed to allocate custom pbuf");
-    pcb->ooseq = segment;
+    require(segment != NULL, "segment allocation failed");
+    memset(segment, 0, sizeof(*segment));
+    r->custom.custom_free_function = freeRetainedPbuf;
+    segment->p =
+        pbuf_alloced_custom(PBUF_RAW, sizeof(r->payload), PBUF_REF, &r->custom, r->payload, sizeof(r->payload));
+    require(segment->p != NULL, "custom pbuf allocation failed");
+    pcb->ooseq          = segment;
+    struct udp_pcb *udp = udp_new();
+    require(udp != NULL && udp_bind(udp, NULL, 0) == ERR_OK, "UDP setup failed");
+    wwLwipEngineLeave(engine, previous);
+    require(sendWorkerMessageForceQueueWithCleanup(worker->wid, pending, cancelled, NULL, NULL, NULL) ==
+                kWorkerMessageSubmitAccepted,
+            "pending message refused");
+    if (atomic_fetch_add_explicit(&ready, 1, memory_order_acq_rel) == 1)
+        require(requestProgramShutdown(0), "shutdown request refused");
 }
-
 int main(void)
 {
-    retained_pbuf_t retained = {0};
-    sigset_t        managed_signals;
-    sigset_t        original_mask;
-
-    require(lwipTestRuntimeInitialize(), "failed to initialize the lwIP random runtime");
-
-    buildThreadBlockedStopSignalSet(&managed_signals);
-    require(pthread_sigmask(SIG_UNBLOCK, &managed_signals, &original_mask) == 0,
-            "failed to unblock managed signals before lwIP thread creation");
-
-    tcpip_init(initDone, NULL);
-    while (! atomicLoadExplicit(&initialized, memory_order_acquire))
-    {
-        YIELD_THREAD();
-    }
-
-    require(tcpip_thread_mask_known, "failed to read the lwIP thread signal mask");
-    requireManagedSignalsMasked(&tcpip_thread_mask, true, "the lwIP thread");
-
-    sigset_t caller_mask;
-    require(pthread_sigmask(SIG_BLOCK, NULL, &caller_mask) == 0, "failed to read the caller signal mask");
-    requireManagedSignalsMasked(&caller_mask, false, "the caller after lwIP thread creation");
-    require(pthread_sigmask(SIG_SETMASK, &original_mask, NULL) == 0, "failed to restore the original signal mask");
-
-    /*
-     * Queue state creation rather than doing it under the core lock here.
-     * Shutdown cleanup must run after this already-queued work, or the retained
-     * custom pbuf would survive the tcpip thread.
-     */
-    require(tcpip_callback(installRetainedOoseqPbuf, &retained) == ERR_OK,
-            "failed to queue retained out-of-order pbuf");
-    require(wwLwipShutdown(), "lwIP shutdown failed");
-    require(retained_pbuf_free_count == 1, "shutdown did not release the retained out-of-order pbuf");
-
-    /*
-     * The port handle is cleared only after a successful join. A repeated call
-     * must therefore be harmless and must not attempt to join a stale handle.
-     */
-    require(tcpip_shutdown(NULL, NULL) == ERR_OK, "repeated tcpip shutdown was not idempotent");
-
-    lwipTestRuntimeCleanup();
-
-    puts("lwIP shutdown tests passed");
+    static char            off[]        = "OFF";
+    ww_construction_data_t data         = {0};
+    data.workers_count                  = 3;
+    data.ram_profile                    = 4;
+    data.mtu_size                       = 1500;
+    data.internal_logger_data.log_level = off;
+    data.core_logger_data.log_level     = off;
+    data.network_logger_data.log_level  = off;
+    data.dns_logger_data.log_level      = off;
+    require(wwStartupSucceeded(createGlobalState(data)), "global startup failed");
+    require(getWorkersCount() == 3 && getTotalWorkersCount() == 3, "runtime allocated an extra stack worker");
+    initTcpIpStack();
+    initTcpIpStack();
+    require(GSTATE.flag_lwip_initialized && wwLwipTestTcpIsnSecretIsInitialized(), "shared bootstrap unavailable");
+    for (wid_t i = 0; i < 2; ++i)
+        require(sendWorkerMessageForceQueueWithCleanup(i, install, NULL, &retained[i], NULL, NULL) ==
+                    kWorkerMessageSubmitAccepted,
+                "setup publication refused");
+    require(applicationShutdownCommitRuntime(), "runtime commit failed");
+    atomicStoreExplicit(&GSTATE.workers_run_flag, true, memory_order_release);
+    require(wloopRun(getWorkerLoop(0)) == kWLoopRunQuiesced, "main loop did not quiesce");
+    globalstateRunShutdownSequence();
+    require(retained[0].freed == 1 && retained[1].freed == 1, "retained pbuf not released exactly once");
+    require(atomicLoadExplicit(&settled, memory_order_relaxed) == 2, "pending messages not settled exactly once");
+    require(! GSTATE.flag_lwip_initialized && ! wwLwipTestTcpIsnSecretIsInitialized(),
+            "shared finalization left ISN secret live");
+    require(wwLwipShutdown(), "repeated finalization failed");
+    destroyGlobalState();
+    puts("production owner-engine shutdown, detached pbufs, pending settlement and final ISN erasure passed");
     return 0;
 }

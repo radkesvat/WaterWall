@@ -262,7 +262,7 @@ int main(int argc, char **argv)
     // None of these fixtures start a runtime; the worker count is the only
     // global the production invariants below read. Two total workers leave
     // exactly one event-loop worker.
-    GSTATE.workers_count = 2;
+    GSTATE.workers_count = 1;
     testWorkerRegistryInstall(&g_test_worker_registry);
 
     for (size_t i = 0; i < (sizeof(kAbortCases) / sizeof(kAbortCases[0])); ++i)

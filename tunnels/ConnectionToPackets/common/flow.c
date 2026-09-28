@@ -4,22 +4,10 @@
 
 #include "loggers/log_rate_limiter.h"
 
-/*
- * The tuple registry.
- *
- * It is guarded by its own reader/writer lock rather than by LOCK_TCPIP_CORE(),
- * because the hottest reader - the return-packet lookup in the packet line's
- * downstream callback - must not depend on a neighboring packet node's lock
- * context. PacketsToConnection now defers its publication outside the lwIP core
- * lock, but other packet neighbors are not required to share that
- * implementation detail. Keeping lookup on this independent lock preserves
- * composition and avoids a non-recursive core-lock dependency.
- *
- * Lock order where both are needed: LOCK_TCPIP_CORE() first, flows_lock second.
- * Every mutating caller here already holds the core lock for the pcb work that
- * accompanies the registry change; the lookup path holds neither and calls into
- * nothing.
- */
+/* The tuple registry has its own reader/writer lock. Packet workers copy only
+ * tuple, owner and generation; they never dereference a foreign PCB or line.
+ * Owner-engine mutation may briefly take flows_lock. Every lookup releases it
+ * before raw-stack entry, output or a neighbor callback. */
 
 enum
 {
@@ -38,6 +26,11 @@ bool ctpFlowRegistryInitialize(ctp_tstate_t *ts)
     {
         return false;
     }
+    if (! mutexTryInit(&ts->drain_lock))
+    {
+        rwlockDestroy(&ts->flows_lock);
+        return false;
+    }
     ts->flows           = ctp_flow_map_t_with_capacity(128);
     ts->next_generation = 0;
     ts->tombstones      = memoryAllocateZero(sizeof(ctp_tombstone_ref_t) * (size_t) kCtpMaxTombstones);
@@ -51,6 +44,7 @@ bool ctpFlowRegistryInitialize(ctp_tstate_t *ts)
         memoryFree(ts->tombstones);
         ts->tombstones = NULL;
         rwlockDestroy(&ts->flows_lock);
+        mutexDestroy(&ts->drain_lock);
         return false;
     }
 
@@ -70,6 +64,7 @@ void ctpFlowRegistryDestroy(ctp_tstate_t *ts)
     memoryFree(ts->tombstones);
     ts->tombstones = NULL;
     rwlockDestroy(&ts->flows_lock);
+    mutexDestroy(&ts->drain_lock);
     ts->flow_registry_initialized = false;
 }
 
@@ -119,9 +114,7 @@ static void ctpTombstonePopFrontLocked(ctp_tstate_t *ts)
  * Retires every tombstone whose grace period has elapsed.
  *
  * The ring is ordered by deadline, so this stops at the first record that is
- * still young instead of scanning the map. That matters because the callers hold
- * the global lwIP core lock: the old age-based map scan grew with the number of
- * live tombstones and ran on every registration.
+ * still young instead of scanning every live tombstone on each registration.
  */
 static void ctpTombstoneDrainExpiredLocked(ctp_tstate_t *ts, uint64_t now_ms)
 {
@@ -418,94 +411,4 @@ bool ctpFlowStillOwns(tunnel_t *t, const ctp_flow_key_t *key, uint64_t generatio
     rwlockReadUnlock(&ts->flows_lock);
 
     return valid;
-}
-
-/*
- * Stop-time teardown, called with LOCK_TCPIP_CORE() held. Detaching the
- * callbacks here is what makes a borrowed line's later Finish safe: it rechecks
- * the stopping gate under the same core lock, finds it set, and skips every pcb
- * operation.
- */
-void ctpFlowDropAllLocked(tunnel_t *t)
-{
-    ctp_tstate_t *ts = tunnelGetState(t);
-
-    /*
-     * The constructor can fail before the registry exists, and
-     * ctpFlowRegistryInitialize() destroys the lock again when its own later
-     * allocation fails. Both unwind through ctpTunnelDestroy(), so this sweep -
-     * the lowest helper that touches flows_lock - is what has to decide there is
-     * nothing to sweep. Locking a lock that was never created, or one that was
-     * already destroyed, is undefined behavior, not a recoverable error.
-     */
-    if (! ts->flow_registry_initialized)
-    {
-        return;
-    }
-
-    rwlockWriteLock(&ts->flows_lock);
-
-    c_foreach(i, ctp_flow_map_t, ts->flows)
-    {
-        ctp_flow_entry_t *entry = &i.ref->second;
-
-        /*
-         * The owning line is still alive - its worker has not drained yet - and
-         * its own copy of this pointer is about to become a freed address. Clear
-         * it here, while the registry still knows which line state that is, so a
-         * queued Payload/Est/Resume task cannot dereference it afterwards. This
-         * is safe under the core lock for the same reason every other pcb access
-         * is: the line state outlives the worker message that reaches it, and the
-         * stopping gate keeps anything from re-registering behind us.
-         */
-        if (entry->lstate != NULL)
-        {
-            entry->lstate->tcp_pcb         = NULL;
-            entry->lstate->flow_registered = false;
-            entry->lstate->generation      = 0;
-            entry->lstate                  = NULL;
-        }
-
-        if (entry->pcb == NULL)
-        {
-            continue;
-        }
-
-        if (entry->protocol == IP_PROTO_TCP)
-        {
-            struct tcp_pcb *pcb = entry->pcb;
-
-            tcp_arg(pcb, NULL);
-            tcp_recv(pcb, NULL);
-            tcp_sent(pcb, NULL);
-            tcp_poll(pcb, NULL, 0);
-            tcp_err(pcb, NULL);
-            pcb->connected = NULL;
-
-            /*
-             * Aborted, not closed. Stop is terminal: the stopping gate is already
-             * published, so this node's netif output refuses the FIN, and there is
-             * no packet side left to complete a graceful exchange over. A
-             * successful tcp_close() would still have left an established pcb
-             * sitting in FIN_WAIT on lwIP's process-global active list - outliving
-             * the netif this loop's caller is about to remove, and able to observe
-             * whatever future interface inherits that one-byte netif index.
-             */
-            tcp_abort(pcb);
-        }
-        else
-        {
-            struct udp_pcb *pcb = entry->pcb;
-
-            udp_recv(pcb, NULL, NULL);
-            udp_remove(pcb);
-        }
-
-        entry->pcb = NULL;
-    }
-
-    ctp_flow_map_t_clear(&ts->flows);
-    ts->tomb_head  = 0;
-    ts->tomb_count = 0;
-    rwlockWriteUnlock(&ts->flows_lock);
 }

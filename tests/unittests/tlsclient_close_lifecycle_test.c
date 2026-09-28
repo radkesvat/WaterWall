@@ -237,7 +237,7 @@ static void fixtureInitialize(tlsclient_lifecycle_fixture_t *fixture)
     memoryZero(fixture, sizeof(*fixture));
 
     GSTATE.flag_initialized      = true;
-    GSTATE.workers_count         = 2;
+    GSTATE.workers_count         = 1;
     fixture->large_master        = masterpoolCreateWithCapacity(8);
     fixture->small_master        = masterpoolCreateWithCapacity(8);
     fixture->medium_master       = masterpoolCreateWithCapacity(8);

@@ -98,8 +98,7 @@ get_monotonic_time(struct timespec *ts)
 
 #if SYS_LIGHTWEIGHT_PROT
 static pthread_mutex_t lwprot_mutex = PTHREAD_MUTEX_INITIALIZER;
-static pthread_t lwprot_thread = (pthread_t)0xDEAD;
-static int lwprot_count = 0;
+static WW_LWIP_THREAD_LOCAL unsigned int lwprot_count;
 #endif /* SYS_LIGHTWEIGHT_PROT */
 
 #if !NO_SYS
@@ -810,20 +809,12 @@ system.
 sys_prot_t
 sys_arch_protect(void)
 {
-    /* Note that for the UNIX port, we are using a lightweight mutex, and our
-     * own counter (which is locked by the mutex). The return code is not actually
-     * used. */
-    if (lwprot_thread != pthread_self())
+    /* Recursion belongs to this thread. Reading a shared pthread_t before
+     * acquiring its mutex races a concurrent owner's release. */
+    if (lwprot_count++ == 0)
     {
-        /* We are locking the mutex where it has not been locked before *
-        * or is being locked by another thread */
         pthread_mutex_lock(&lwprot_mutex);
-        lwprot_thread = pthread_self();
-        lwprot_count = 1;
     }
-    else
-        /* It is already locked by THIS thread */
-        lwprot_count++;
     return 0;
 }
 
@@ -838,14 +829,10 @@ void
 sys_arch_unprotect(sys_prot_t pval)
 {
     LWIP_UNUSED_ARG(pval);
-    if (lwprot_thread == pthread_self())
+    LWIP_ASSERT("balanced allocator protection", lwprot_count != 0);
+    if (--lwprot_count == 0)
     {
-        lwprot_count--;
-        if (lwprot_count == 0)
-        {
-            lwprot_thread = (pthread_t) 0xDEAD;
-            pthread_mutex_unlock(&lwprot_mutex);
-        }
+        pthread_mutex_unlock(&lwprot_mutex);
     }
 }
 #endif /* SYS_LIGHTWEIGHT_PROT */
@@ -862,3 +849,9 @@ lwip_unix_keypressed(void)
   return select(1, &fds, NULL, NULL, &tv);
 }
 #endif /* !NO_SYS */
+
+/* The Unix allocator mutex has static process lifetime and owns no heap storage. */
+void wwLwipPortCleanup(void)
+{
+    LWIP_ASSERT("allocator protection released before finalization", lwprot_count == 0);
+}

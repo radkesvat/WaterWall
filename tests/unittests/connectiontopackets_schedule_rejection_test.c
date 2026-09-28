@@ -1,5 +1,5 @@
-/* Real CTP lwIP callbacks must reconcile refused owner work without re-locking
- * the already-held core mutex or losing line/buffer ownership. */
+/* Real CTP owner-engine callbacks reconcile refused scheduled work without
+ * losing borrowed-line, pbuf or buffer ownership. */
 
 #include "ConnectionToPackets/structure.h"
 
@@ -26,6 +26,7 @@ typedef struct ctp_fixture_s
     line_t          *line;
     line_t          *packet_line;
     uint32_t         owner_finish_calls;
+    ww_lwip_engine_t *engine;
 } ctp_fixture_t;
 
 static uint32_t                 g_pool_size = 4096;
@@ -33,43 +34,34 @@ static ctp_fixture_t           *g_fixture;
 static ctp_submit_expectation_t g_submit_expectation;
 static uint32_t                 g_schedule_calls;
 static uint32_t                 g_buffer_settlements;
-static thread_local uint32_t    g_core_lock_depth;
+static ww_lwip_engine_t        *test_previous;
+static void                     enterEngine(void)
+{
+    twfRequire(wwLwipEngineEnter(g_fixture->engine, &test_previous), "test engine entry refused");
+}
+static void leaveEngine(void)
+{
+    wwLwipEngineLeave(g_fixture->engine, test_previous);
+}
 
-void                      __real_sys_lock_tcpip_core(void);
-void                      __real_sys_unlock_tcpip_core(void);
-void                      __wrap_sys_lock_tcpip_core(void);
-void                      __wrap_sys_unlock_tcpip_core(void);
 line_task_submit_result_e __wrap_lineScheduleTask(line_t *const line, LineTaskFnNoBuf task, tunnel_t *t,
                                                   LineTaskCancelFn on_cancel);
 line_task_submit_result_e __wrap_lineScheduleTaskWithBuf(line_t *const line, LineTaskFnWithBuf task, tunnel_t *t,
                                                          sbuf_t *buf, LineTaskCancelFn on_cancel);
 
-void __wrap_sys_lock_tcpip_core(void)
-{
-    twfRequire(g_core_lock_depth == 0, "ConnectionToPackets recursively acquired the lwIP core lock");
-    __real_sys_lock_tcpip_core();
-    g_core_lock_depth = 1;
-}
-
-void __wrap_sys_unlock_tcpip_core(void)
-{
-    twfRequire(g_core_lock_depth == 1, "ConnectionToPackets released an unheld lwIP core lock");
-    g_core_lock_depth = 0;
-    __real_sys_unlock_tcpip_core();
-}
-
 static uint32_t ctpTcpPcbUsedLocked(void)
 {
-    twfRequire(g_core_lock_depth == 1, "ConnectionToPackets read PCB statistics without the lwIP core lock");
+    twfRequire(wwLwipEngineCurrent() == g_fixture->engine,
+               "ConnectionToPackets read PCB statistics without the owner engine");
     twfRequire(lwip_stats.memp[MEMP_TCP_PCB] != NULL, "lwIP did not publish TCP PCB pool statistics");
     return (uint32_t) lwip_stats.memp[MEMP_TCP_PCB]->used;
 }
 
 static uint32_t ctpTcpPcbUsed(void)
 {
-    LOCK_TCPIP_CORE();
+    enterEngine();
     const uint32_t used = ctpTcpPcbUsedLocked();
-    UNLOCK_TCPIP_CORE();
+    leaveEngine();
     return used;
 }
 
@@ -82,9 +74,10 @@ line_task_submit_result_e __wrap_lineScheduleTask(line_t *const line, LineTaskFn
     twfRequire(line == fixture->line && t == fixture->ctp && task == ctpResumeWriteTask,
                "ConnectionToPackets submitted the wrong control task");
     twfRequire(on_cancel == NULL, "ConnectionToPackets requested lock-reentrant cancellation notification");
-    twfRequire(g_core_lock_depth == 1, "ConnectionToPackets control submission did not hold the lwIP core lock");
-    twfRequire(! lineIsOnCurrentEventWorker(line),
-               "ConnectionToPackets control refusal did not originate from a foreign lwIP context");
+    twfRequire(wwLwipEngineCurrent() == g_fixture->engine,
+               "ConnectionToPackets control submission did not hold the owner engine");
+    twfRequire(lineIsOnCurrentEventWorker(line),
+               "ConnectionToPackets control refusal did not originate from its owner engine");
 
     lineRef(line);
     lineUnref(line);
@@ -101,7 +94,8 @@ line_task_submit_result_e __wrap_lineScheduleTaskWithBuf(line_t *const line, Lin
     twfRequire(line == fixture->line && t == fixture->ctp && task == ctpDeliverPayloadTask,
                "ConnectionToPackets submitted the wrong buffered task");
     twfRequire(on_cancel == NULL, "ConnectionToPackets requested lock-reentrant cancellation notification");
-    twfRequire(g_core_lock_depth == 1, "ConnectionToPackets buffered submission did not hold the lwIP core lock");
+    twfRequire(wwLwipEngineCurrent() == g_fixture->engine,
+               "ConnectionToPackets buffered submission did not hold the owner engine");
     twfRequire(lineIsOnCurrentEventWorker(line),
                "ConnectionToPackets buffered delivery did not originate from the line owner");
 
@@ -136,6 +130,9 @@ static void ctpFixtureSetup(ctp_fixture_t *fixture)
                                      g_pool_size,
                                      g_pool_size);
 
+    fixture->engine = wwLwipEngineCreate(0, fixture->env.loop);
+    twfRequire(fixture->engine != NULL, "failed to create owner engine");
+
     fixture->prev = twfCreatePrevTunnel(&fixture->trace);
     fixture->ctp  = tunnelCreate(NULL, sizeof(ctp_tstate_t), sizeof(ctp_lstate_t));
     twfRequire(fixture->ctp != NULL, "failed to create the ConnectionToPackets fixture tunnel");
@@ -156,6 +153,8 @@ static void ctpFixtureSetup(ctp_fixture_t *fixture)
     ctp_tstate_t *state   = tunnelGetState(fixture->ctp);
     state->netifs_count   = 1;
     state->terminal_lines = memoryAllocateZero(sizeof(*state->terminal_lines));
+    state->owned_lines    = memoryAllocateZero(sizeof(*state->owned_lines));
+    twfRequire(state->owned_lines != NULL, "failed to allocate owner inventory");
     twfRequire(state->terminal_lines != NULL, "failed to allocate the CTP terminal registry");
     twfRequire(rwlockTryInit(&state->flows_lock), "failed to initialize the CTP flow lock");
     atomic_init(&state->stopping, false);
@@ -171,6 +170,7 @@ static void ctpFixtureSetup(ctp_fixture_t *fixture)
         ctpLinestateInitialize(lineGetState(fixture->line, fixture->ctp), fixture->ctp, fixture->line, kCtpLineKindTcp),
         "failed to initialize the CTP line state");
 
+    ((ctp_lstate_t *) lineGetState(fixture->line, fixture->ctp))->engine = fixture->engine;
     g_fixture            = fixture;
     g_submit_expectation = kCtpSubmitNone;
     g_schedule_calls     = 0;
@@ -191,6 +191,8 @@ static void ctpFixtureTeardown(ctp_fixture_t *fixture)
 
     ctp_tstate_t *state = tunnelGetState(fixture->ctp);
     rwlockDestroy(&state->flows_lock);
+    twfRequire(state->owned_lines[0] == NULL, "borrowed line inventory not empty");
+    memoryFree(state->owned_lines);
     memoryFree(state->terminal_lines);
     state->terminal_lines = NULL;
 
@@ -198,6 +200,7 @@ static void ctpFixtureTeardown(ctp_fixture_t *fixture)
     tunnelDestroy(fixture->ctp);
     tunnelDestroy(fixture->prev);
     g_fixture = NULL;
+    wwLwipEngineDestroy(fixture->engine);
     twfWorkerEnvTeardown(&fixture->env);
 }
 
@@ -205,7 +208,7 @@ static struct tcp_pcb *ctpAttachTestPcb(ctp_fixture_t *fixture, uint32_t pcb_bas
 {
     ctp_lstate_t *ls = lineGetState(fixture->line, fixture->ctp);
 
-    LOCK_TCPIP_CORE();
+    enterEngine();
     struct tcp_pcb *pcb = tcp_new_ip_type(IPADDR_TYPE_V4);
     twfRequire(pcb != NULL, "lwIP could not allocate a CTP test PCB");
     twfRequireEqualU32(
@@ -216,7 +219,7 @@ static struct tcp_pcb *ctpAttachTestPcb(ctp_fixture_t *fixture, uint32_t pcb_bas
     tcp_sent(pcb, ctpTcpSentCallback);
     tcp_poll(pcb, ctpTcpPollCallback, kCtpWritePollInterval);
     tcp_err(pcb, ctpTcpErrorCallback);
-    UNLOCK_TCPIP_CORE();
+    leaveEngine();
     return pcb;
 }
 
@@ -232,9 +235,9 @@ static void ctpCloseFixtureLine(ctp_fixture_t *fixture)
     fixture->line = NULL;
 }
 
-static void caseForeignRetryRefusalPublishesAndDrainsTerminalLine(void)
+static void caseOwnerRetryRefusalPublishesAndDrainsTerminalLine(void)
 {
-    twfSetCase("ConnectionToPackets foreign retry refusal under the lwIP core lock");
+    twfSetCase("ConnectionToPackets owner retry refusal inside its engine");
     tosResetProcessApi(true);
 
     ctp_fixture_t fixture;
@@ -247,12 +250,10 @@ static void caseForeignRetryRefusalPublishesAndDrainsTerminalLine(void)
     ls->write_poll_armed         = true;
 
     g_submit_expectation = kCtpSubmitControl;
-    testWorkerUnbindWID();
-    LOCK_TCPIP_CORE();
+    enterEngine();
     const err_t result = ctpTcpPollCallback(ls, pcb);
     twfRequireEqualU32(ctpTcpPcbUsedLocked(), pcb_baseline, "CTP retry refusal leaked its detached TCP PCB");
-    UNLOCK_TCPIP_CORE();
-    testWorkerBindWID(0);
+    leaveEngine();
     g_submit_expectation = kCtpSubmitNone;
 
     ctp_tstate_t *state = tunnelGetState(fixture.ctp);
@@ -292,7 +293,7 @@ static void caseCreditedDeliveryRefusalTransfersBufferAndRetainsPbuf(void)
     struct tcp_pcb *pcb          = ctpAttachTestPcb(&fixture, pcb_baseline);
     ctp_lstate_t   *ls           = lineGetState(fixture.line, fixture.ctp);
 
-    LOCK_TCPIP_CORE();
+    enterEngine();
     struct pbuf *p = pbuf_alloc(PBUF_RAW, 37, PBUF_RAM);
     twfRequire(p != NULL, "lwIP could not allocate the CTP test pbuf");
     memorySet(p->payload, 0x5A, p->len);
@@ -304,7 +305,7 @@ static void caseCreditedDeliveryRefusalTransfersBufferAndRetainsPbuf(void)
     twfRequireEqualU32(ctpTcpPcbUsedLocked(),
                        pcb_baseline + 1U,
                        "CTP rejected delivery released the PCB before explicit flow cleanup");
-    UNLOCK_TCPIP_CORE();
+    leaveEngine();
 
     twfRequire(result == ERR_MEM, "CTP buffered refusal did not ask lwIP to replay its pbuf");
     twfRequireEqualU32(g_schedule_calls, 1, "CTP buffered refusal submitted the wrong number of tasks");
@@ -315,11 +316,11 @@ static void caseCreditedDeliveryRefusalTransfersBufferAndRetainsPbuf(void)
     tosRequireNoProcessApiCall();
     ctpFixtureRequirePacketLineAlive(&fixture);
 
-    LOCK_TCPIP_CORE();
+    enterEngine();
     twfRequireEqualU32((uint32_t) pbuf_free(p), 1, "CTP test pbuf did not release exactly once");
     discard ctpTcpAbortFlowLocked(fixture.ctp, ls);
     twfRequireEqualU32(ctpTcpPcbUsedLocked(), pcb_baseline, "CTP buffered-case cleanup leaked its TCP PCB");
-    UNLOCK_TCPIP_CORE();
+    leaveEngine();
 
     ctpCloseFixtureLine(&fixture);
     twfRequireEqualU32(fixture.owner_finish_calls, 1, "CTP buffered-case owner did not receive one Finish");
@@ -360,32 +361,76 @@ static void casePendingBudgetAllowsOneReadOfHeadroom(uint32_t pool_size)
     g_pool_size = 4096;
 }
 
-static atomic_bool g_lwip_initialized;
-
-static void ctpLwipInitialized(void *argument)
+static void caseTerminalPayloadReentry(void)
 {
-    discard argument;
-    frandInit();
-    atomicStoreExplicit(&g_lwip_initialized, true, memory_order_release);
+    twfSetCase("CTP terminal reconciliation closes during payload continuation");
+    tosResetProcessApi(true);
+    ctp_fixture_t fixture;
+    ctpFixtureSetup(&fixture);
+    const uint32_t baseline = ctpTcpPcbUsed();
+    discard        ctpAttachTestPcb(&fixture, baseline);
+    ctp_lstate_t  *ls = lineGetState(fixture.line, fixture.ctp);
+    enterEngine();
+    twfRequire(ctpRequiredControlRefusedLocked(fixture.ctp, ls, "test refusal"), "producer not detached");
+    leaveEngine();
+    sbuf_t *buf = bufferpoolGetSmallBuffer(fixture.env.pool);
+    sbufSetLength(buf, 1);
+    /* No test reference masks the source freeing the line in the nested Finish. */
+    ctpTunnelUpStreamPayload(fixture.ctp, fixture.line, buf);
+    twfRequireEqualU32(fixture.owner_finish_calls, 1, "terminal payload did not close once");
+    fixture.line = NULL;
+    twfRequireEqualU32(ctpTcpPcbUsed(), baseline, "terminal payload leaked PCB");
+    ctpFixtureTeardown(&fixture);
+}
+
+static void caseStopOrdering(bool node_first)
+{
+    twfSetCase(node_first ? "CTP drains before borrowed-line source" : "source drains before CTP");
+    ctp_fixture_t fixture;
+    ctpFixtureSetup(&fixture);
+    const uint32_t baseline = ctpTcpPcbUsed();
+    discard        ctpAttachTestPcb(&fixture, baseline);
+    ctp_lstate_t  *ls  = lineGetState(fixture.line, fixture.ctp);
+    sbuf_t        *buf = bufferpoolGetSmallBuffer(fixture.env.pool);
+    sbufSetLength(buf, 19);
+    twfRequire(bufferqueueTryPushBack(&ls->pending_queue, &buf), "pending setup failed");
+    ctpTunnelOnQuiesceRequest(fixture.ctp, wwLifecycleProcessShutdown());
+    if (node_first)
+    {
+        ctpTunnelOnWorkerStop(fixture.ctp, 0, wwLifecycleProcessShutdown());
+        twfRequire(ls->tcp_pcb == NULL && ls->tunnel == fixture.ctp, "node drain lost borrowed state");
+        twfRequire(bufferqueueGetBufLen(&ls->pending_queue) == 19, "node drain released source-owned pending lifetime");
+        twfRequireEqualU32(ctpTcpPcbUsed(), baseline, "node drain retained PCB");
+        twfRequire(lineIsAlive(fixture.line), "node drain destroyed borrowed line");
+    }
+    lineRef(fixture.line);
+    ctpTunnelUpStreamFinish(fixture.ctp, fixture.line);
+    twfRequire(fixture.owner_finish_calls == 0, "source Finish was reflected");
+    twfRequireLineStateZeroed(fixture.line, fixture.ctp, "source Finish retained state");
+    lineDestroy(fixture.line);
+    lineUnref(fixture.line);
+    fixture.line = NULL;
+    if (! node_first)
+        ctpTunnelOnWorkerStop(fixture.ctp, 0, wwLifecycleProcessShutdown());
+    twfRequireEqualU32(ctpTcpPcbUsed(), baseline, "stop order retained PCB");
+    ctpFixtureTeardown(&fixture);
 }
 
 int main(void)
 {
     twfRequire(lwipTestRuntimeInitialize(), "failed to initialize the lwIP random runtime");
-    atomic_init(&g_lwip_initialized, false);
-    tcpip_init(ctpLwipInitialized, NULL);
-    while (! atomicLoadExplicit(&g_lwip_initialized, memory_order_acquire))
-    {
-        YIELD_THREAD();
-    }
+    wwLwipEngineSharedInit();
 
     const uint32_t headroom_pool_sizes[] = {4096, 65536, 131072, 4U * 1024U * 1024U};
     for (size_t i = 0; i < ARRAY_SIZE(headroom_pool_sizes); ++i)
         casePendingBudgetAllowsOneReadOfHeadroom(headroom_pool_sizes[i]);
-    caseForeignRetryRefusalPublishesAndDrainsTerminalLine();
+    caseTerminalPayloadReentry();
+    caseStopOrdering(true);
+    caseStopOrdering(false);
+    caseOwnerRetryRefusalPublishesAndDrainsTerminalLine();
     caseCreditedDeliveryRefusalTransfersBufferAndRetainsPbuf();
 
-    twfRequire(wwLwipShutdown(), "failed to stop the CTP fixture lwIP thread");
+    wwLwipEngineSharedCleanup();
     lwipTestRuntimeCleanup();
     puts("connectiontopackets_schedule_rejection_test: all cases passed");
     return 0;

@@ -447,7 +447,7 @@ int main(void)
     require(hook_calls == 1, "pre-init hook routing");
     checkSumInit();
     require(lwipTestRuntimeInitialize(), "random runtime init");
-    lwip_init();
+    lwipTestEngineBegin(1);
     runCases("normal startup dispatch");
 #ifdef WW_CHECKSUM_TEST_VARIANT
     checksum = checksumDefault;
@@ -476,6 +476,7 @@ int main(void)
     }
 #endif
     wwLwipTestEraseTcpIsnSecret();
+    lwipTestEngineEnd();
     lwipTestRuntimeCleanup();
     puts("lwIP checksum backend tests passed");
     return 0;

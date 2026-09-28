@@ -485,7 +485,7 @@ static void testMalformedPacketsAndSingleWorker(void)
     // One worker: a valid packet still selects worker zero, but a malformed one
     // is rejected rather than silently claimed, and the full hashes stay varied
     // so multi-line selection has something to work with.
-    GSTATE.workers_count = 2;
+    GSTATE.workers_count = 1;
     testWorkerRegistryInstall(&g_test_worker_registry);
     require(getWorkersCount() == 1, "the single-worker case did not publish exactly one worker");
     require(! deviceFlowAffineWID(garbage, sizeof(garbage), &wid),
@@ -501,7 +501,7 @@ static void testMalformedPacketsAndSingleWorker(void)
     sbufDestroy(single_b);
     sbufDestroy(single_a);
 
-    GSTATE.workers_count = 5;
+    GSTATE.workers_count = 4;
     testWorkerRegistryInstall(&g_test_worker_registry);
 }
 
@@ -676,7 +676,7 @@ static void testWidIsHashModuloWorkerCount(void)
 
     for (unsigned int i = 0; i < sizeof(worker_counts) / sizeof(worker_counts[0]); ++i)
     {
-        GSTATE.workers_count = (uint32_t) worker_counts[i] + 1U;
+        GSTATE.workers_count = (uint32_t) worker_counts[i];
         testWorkerRegistryInstall(&g_test_worker_registry);
         require(getWorkersCount() == worker_counts[i], "the fixture published the wrong worker count");
         require(affinityOf(tcp) == expected[i][0] && affinityOf(udp) == expected[i][1] &&
@@ -696,7 +696,7 @@ static void testWidIsHashModuloWorkerCount(void)
     sbufDestroy(udp);
     sbufDestroy(tcp);
 
-    GSTATE.workers_count = 5;
+    GSTATE.workers_count = 4;
     testWorkerRegistryInstall(&g_test_worker_registry);
 }
 
@@ -1183,7 +1183,7 @@ static void testMixedWorkerRefusalCleansTrackedPublications(void)
 
 int main(void)
 {
-    GSTATE.workers_count = 5;
+    GSTATE.workers_count = 4;
     testWorkerRegistryInstall(&g_test_worker_registry);
     testIpv4SymmetryAndFragments();
     testIpv6Symmetry();

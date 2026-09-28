@@ -2,6 +2,7 @@
 
 #include "wwapi.h"
 
+#include "engine_runtime.h"
 #include "quiescence_gate.h"
 
 #include "DomainResolver/interface.h"
@@ -59,20 +60,9 @@ typedef struct ctp_flow_key_s
 } ctp_flow_key_t;
 
 /*
- * A registry entry. Everything in it is read and written under `flows_lock`,
- * including from lwIP's own thread.
- *
- * The registry deliberately does *not* live under LOCK_TCPIP_CORE(). A return
- * packet is looked up inside the packet line's downstream callback, and a
- * neighboring packet node is allowed to emit that packet from inside its own
- * core-locked frame. PacketsToConnection currently defers its output, but that
- * is not a packet-chain contract and arbitrary neighbors need not do the same.
- * Taking the non-recursive core lock there would self-deadlock, so the lookup
- * path uses this lock alone and never calls into lwIP.
- *
- * Lock order where both are needed: LOCK_TCPIP_CORE() first, `flows_lock`
- * second. Every mutation site already holds the core lock for its pcb work and
- * takes this one inside it; the packet-line lookup takes only this one.
+ * A registry entry. Its fields are protected by flows_lock. Packet workers
+ * copy routing identity only; PCB/line pointers are used solely by their owner
+ * engine. Release flows_lock before stack entry, output, or worker publication.
  *
  * `pcb` is retained only while this node may still touch it. A gracefully
  * closing connected flow transfers it from line state to a node-owned closer,
@@ -271,7 +261,7 @@ enum
      * age-based sweep. Sweeping alone could not hold it: more than this many
      * flows can close inside one grace period, leaving every tombstone too young
      * to remove while each later registration scanned an ever-larger map with the
-     * global lwIP core lock held by its caller.
+     * registry lock held by its caller.
      */
     kCtpMaxTombstones = 4096,
 
@@ -490,6 +480,8 @@ struct ctp_netif_ctx_s
     tunnel_t    *tunnel;
     wid_t        wid;
     bool         added;
+    ww_lwip_engine_t *engine;
+    ctp_tcp_drain_t  *drains;
 
     /*
      * The packet worker chosen for the datagram currently being fragmented.
@@ -500,7 +492,7 @@ struct ctp_netif_ctx_s
      * workers and break any next node that pins a flow to one of them.
      *
      * ip4_frag() emits every fragment of one datagram in a single synchronous
-     * loop with the core lock held, and this netif belongs to one worker, so one
+     * loop inside the non-reentrant owner engine, and this netif belongs to one worker, so one
      * slot is enough: offset zero publishes the flow's worker here and the
      * fragments that immediately follow read it back.
      */
@@ -515,12 +507,13 @@ typedef struct ctp_tstate_s
     tunnel_t     *domain_resolver_tunnel;
     struct cJSON *domain_resolver_settings;
 
-    // [0 .. netifs_count), lazily populated, mutated only under LOCK_TCPIP_CORE()
+    // [0 .. netifs_count), lazily populated, mutated only under the owner engine
     ctp_netif_ctx_t **netifs;
     wid_t             netifs_count;
 
     /* Intrusive, allocation-free terminal handoff indexed by owner worker. */
     line_t **terminal_lines;
+    ctp_lstate_t **owned_lines;
 
     wrwlock_t      flows_lock;
     ctp_flow_map_t flows;               /* protected by flows_lock */
@@ -539,12 +532,8 @@ typedef struct ctp_tstate_s
     uint32_t             tomb_head;  /* index of the oldest record */
     uint32_t             tomb_count; /* records in the ring, <= kCtpMaxTombstones */
 
-    /*
-     * Post-Finish TCP drains, all reachable so Stop can release them. Created,
-     * walked and destroyed only under LOCK_TCPIP_CORE(), which is also the lock
-     * every lwIP callback that can reach one already holds.
-     */
-    ctp_tcp_drain_t *drains;
+    /* Worker-local netif drain lists share this short count/byte allowance. */
+    wmutex_t         drain_lock;
     uint32_t         drain_bytes;
     uint32_t         drain_count;
 
@@ -576,10 +565,14 @@ struct ctp_lstate_s
 {
     tunnel_t *tunnel;
     line_t   *line;
+    ww_lwip_engine_t *engine;
+    ctp_netif_ctx_t  *netif_ctx;
+    ctp_lstate_t     *owned_prev;
+    ctp_lstate_t     *owned_next;
 
     union {
-        struct tcp_pcb *tcp_pcb; /* protected by LOCK_TCPIP_CORE() */
-        struct udp_pcb *udp_pcb; /* protected by LOCK_TCPIP_CORE() */
+        struct tcp_pcb *tcp_pcb; /* protected by the owner engine */
+        struct udp_pcb *udp_pcb; /* protected by the owner engine */
     };
 
     // Application bytes that could not be handed to lwIP yet: either the flow is
@@ -612,7 +605,7 @@ struct ctp_lstate_s
     uint32_t read_paused_len;
 
     uint8_t kind;
-    bool    flow_registered; /* protected by LOCK_TCPIP_CORE() */
+    bool    flow_registered; /* protected by the owner engine */
     bool    connected;       // lwIP will accept payload for this flow
     bool    est_sent;        // Est was already reported toward prev
     bool    write_blocked;   // lwIP cannot take more bytes right now
@@ -623,15 +616,7 @@ struct ctp_lstate_s
     bool    read_paused;      // prev cannot accept downstream payload right now
     bool    write_poll_armed; // a tcp_poll retry is installed for a blocked write
 
-    /*
-     * A retry task is already on the owner worker's queue.
-     *
-     * Protected by LOCK_TCPIP_CORE(), which is what lets the poll callback on
-     * lwIP's timer thread and a sent callback on a foreign worker share it. The
-     * poll fires twice a second for as long as a write stays blocked, and each
-     * enqueue costs a message and a line reference; without this a stalled owner
-     * accumulates both without bound, at the advertised flow count.
-     */
+    /* Owner-local latch bounds queued retry tasks from poll and sent callbacks. */
     bool write_retry_queued;
     bool refused_retry_queued;
 };
@@ -695,13 +680,14 @@ void ctpFlowRetire(tunnel_t *t, ctp_lstate_t *ls, bool graceful);
 
 /*
  * Hands a registry entry from a line to a drain and back again. Both run under
- * LOCK_TCPIP_CORE(), where every pcb transition already happens.
+ * the owner engine, where every pcb transition already happens.
  */
 void ctpFlowMarkDrainingLocked(tunnel_t *t, ctp_lstate_t *ls);
 void ctpFlowRetireDrainLocked(tunnel_t *t, const ctp_flow_key_t *key, uint64_t generation, bool graceful);
 bool ctpFlowLookup(tunnel_t *t, const ctp_flow_key_t *key, wid_t *out_wid, uint64_t *out_generation);
 bool ctpFlowStillOwns(tunnel_t *t, const ctp_flow_key_t *key, uint64_t generation, wid_t wid);
-void ctpFlowDropAllLocked(tunnel_t *t);
+void ctpDetachWorkerLines(tunnel_t *t, wid_t wid);
+void ctpDestroyWorkerNetif(tunnel_t *t, wid_t wid);
 
 /*
  * Registry lookup for a caller that already holds `flows_lock`. Only the
@@ -873,7 +859,7 @@ bool            ctpTcpAbortFlowLocked(tunnel_t *t, ctp_lstate_t *ls);
  * for the connected states, so anything else still goes through tcp_close(),
  * where the reset rule cannot apply because no data was ever received.
  *
- * Caller holds LOCK_TCPIP_CORE(). ERR_OK means lwIP accepted the request, not
+ * Caller holds the owner engine. ERR_OK means lwIP accepted the request, not
  * necessarily that it allocated a FIN: TF_CLOSEPEND keeps the pcb in its
  * connected state until a timer retry succeeds. The closer therefore retains
  * callbacks and ownership until it observes the actual state transition.
@@ -886,7 +872,7 @@ err_t ctpTcpSentCallback(void *arg, struct tcp_pcb *tpcb, u16_t len);
 
 /*
  * The retry source for a blocked write. Installed only while one is blocked, so
- * an idle flow costs the lwIP timer thread nothing.
+ * an idle flow installs no write-retry callback.
  */
 err_t ctpTcpPollCallback(void *arg, struct tcp_pcb *tpcb);
 void  ctpTcpErrorCallback(void *arg, err_t err);
@@ -903,7 +889,7 @@ void  ctpTcpErrorCallback(void *arg, err_t err);
  * Takes over `ls`'s pcb and whatever is left in its pending queue so the bytes
  * this node already accepted still reach the peer after the line is gone.
  *
- * Called under LOCK_TCPIP_CORE() from the graceful-close path, with the queue
+ * Called under the owner engine from the graceful-close path, with the queue
  * already flushed as far as the send window allowed. The tri-state result says
  * whether no drain was needed, ownership transferred, or resource refusal
  * requires the caller to reset the flow.
@@ -921,8 +907,10 @@ typedef enum ctp_tcp_drain_adopt_result_e
 
 ctp_tcp_drain_adopt_result_t ctpTcpDrainAdoptLocked(tunnel_t *t, ctp_lstate_t *ls, bool *out_aborted);
 
-/* Stop-time release. Called under LOCK_TCPIP_CORE() after the pcbs are gone. */
-void ctpTcpDrainDestroyAllLocked(tunnel_t *t);
+/* Owner stop aborts each detached PCB and releases its aggregate allowance. */
+void ctpTcpDrainDestroyNetif(ctp_netif_ctx_t *ctx);
+bool ctpDrainBudgetReserve(ctp_tstate_t *ts, uint32_t bytes);
+void ctpDrainBudgetRelease(ctp_tstate_t *ts, uint32_t bytes);
 
 // ---------------------------------------------------------------------------
 // common/udp.c

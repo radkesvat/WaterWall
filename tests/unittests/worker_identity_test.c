@@ -78,9 +78,9 @@ static void testWorkerWIDForLog(void)
     require(workerWIDForLog(1) == 1, "workerWIDForLog(1) did not return 1");
     require(workerWIDForLog(42) == 42, "workerWIDForLog(42) did not return 42");
 
-    const wid_t lwip_wid = 99;
-    require(workerWIDForLog(lwip_wid) == (int) lwip_wid, "workerWIDForLog did not preserve lwIP WID numerically");
-    require(workerWIDForLog(lwip_wid) != -1, "workerWIDForLog mapped lwIP WID to -1");
+    const wid_t sample_wid = 99;
+    require(workerWIDForLog(sample_wid) == (int) sample_wid, "workerWIDForLog did not preserve sample WID numerically");
+    require(workerWIDForLog(sample_wid) != -1, "workerWIDForLog mapped sample WID to -1");
 
     require(workerWIDForLog(kInvalidWID) == -1, "workerWIDForLog(kInvalidWID) did not return -1");
 
@@ -147,10 +147,8 @@ static void testWorkerBindingAndPredicates(void)
     require(workerWIDIsRegistered(1), "worker 1 not registered");
     require(workerWIDIsEventWorker(1), "worker 1 not event worker");
 
-    // Check lwIP worker slot semantics
-    wid_t lwip_wid = getTotalWorkersCount() - 1;
-    require(workerWIDIsRegistered(lwip_wid), "lwIP worker not registered");
-    require(! workerWIDIsEventWorker(lwip_wid), "lwIP worker reported as event worker");
+    require(getTotalWorkersCount() == getWorkersCount(), "unexpected additional stack worker");
+    require(! workerWIDIsRegistered(getTotalWorkersCount()), "out-of-range worker was registered");
 
     // Unbind restores kInvalidWID
     workerUnbindCurrentThread();
@@ -167,9 +165,7 @@ static void testWorkerBindingAndPredicates(void)
         require(workerExitJoin(getWorker(wid)), "failed to stop a test worker");
     }
 
-    /* Worker 0 is bound to this thread and the lwIP slot has no loop thread;
-     * neither is joined above, so release both worker-owned pool families
-     * explicitly before global teardown checks their outstanding counts. */
+    /* Worker 0 is bound here; release its resources before global teardown. */
     worker_t *worker0 = getWorker(0);
     require(workerInstallApplicationQuiesceRequest(worker0, testShutdownContext()) != kWorkerQuiesceRequestUnavailable,
             "failed to install worker-0 application quiesce request");
@@ -178,7 +174,6 @@ static void testWorkerBindingAndPredicates(void)
     workerPerformDrain(worker0, testShutdownContext());
     require(workerRequestTeardown(worker0), "failed to request worker-0 teardown");
     workerPerformTeardown(worker0);
-    workerDestroyPseudoWorkerResources(getWorker(getTotalWorkersCount() - 1));
 
     destroyGlobalState();
 

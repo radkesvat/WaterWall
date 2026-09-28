@@ -102,7 +102,7 @@ int main(void)
 
     GSTATE.flag_initialized = true;
     GSTATE.workers          = workers;
-    GSTATE.workers_count    = ARRAY_SIZE(workers);
+    GSTATE.workers_count    = ARRAY_SIZE(workers) - 1U;
     GSTATE.ram_profile      = 1;
     testWorkerBindWID(0);
 

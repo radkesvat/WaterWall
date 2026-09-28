@@ -160,26 +160,26 @@ static void ptcDestroyRouteContext(interface_route_context_t *route)
     memoryFree(route);
 }
 
-void ptcDestroyRouteContexts(tunnel_t *t)
+void ptcDestroyWorkerRoute(tunnel_t *t, wid_t wid)
 {
     ptc_tstate_t *state = tunnelGetState(t);
+    assert(currentThreadIsEventWorkerWID(wid));
     if (state->routes_v4 == NULL)
-    {
         return;
-    }
-
-    for (uint32_t wid = 0; wid < state->route_worker_count; ++wid)
+    assert(wid < state->route_worker_count);
+    interface_route_context_t *route = state->routes_v4[wid];
+    state->routes_v4[wid]            = NULL;
+    if (route != NULL)
     {
-        interface_route_context_t *route = state->routes_v4[wid];
-        state->routes_v4[wid]            = NULL;
-        if (route != NULL)
-        {
-            ptcDestroyRouteContext(route);
-        }
+        ww_lwip_engine_t *engine = route->engine;
+        ww_lwip_engine_t *previous;
+        const bool        entered = wwLwipEngineEnter(engine, &previous);
+        assert(entered);
+        discard entered;
+        ptcTcpDrainDestroyRoute(route);
+        ptcDestroyRouteContext(route);
+        wwLwipEngineLeave(engine, previous);
     }
-    memoryFree(state->routes_v4);
-    state->routes_v4          = NULL;
-    state->route_worker_count = 0;
 }
 
 static interface_route_context_t **ptcRouteSlot(ptc_tstate_t *state, wid_t packet_wid)
@@ -190,6 +190,8 @@ static interface_route_context_t **ptcRouteSlot(ptc_tstate_t *state, wid_t packe
 interface_route_context_t *ptcFindOrCreateRouteContextV4(tunnel_t *t, wid_t packet_wid, const ip4_addr_t *dest_ip)
 {
     discard dest_ip;
+    assert(currentThreadIsEventWorkerWID(packet_wid));
+    wwLwipEngineAssertCurrent();
 
     ptc_tstate_t *state = tunnelGetState(t);
     if (UNLIKELY(! workerWIDIsRegistered(packet_wid) || state->routes_v4 == NULL ||
@@ -202,6 +204,7 @@ interface_route_context_t *ptcFindOrCreateRouteContextV4(tunnel_t *t, wid_t pack
     interface_route_context_t  *cur  = *slot;
     if (cur != NULL)
     {
+        assert(cur->engine == wwLwipEngineCurrent());
         return cur;
     }
 
@@ -211,6 +214,7 @@ interface_route_context_t *ptcFindOrCreateRouteContextV4(tunnel_t *t, wid_t pack
         return NULL;
     }
 
+    cur->engine     = wwLwipEngineCurrent();
     cur->tunnel     = t;
     cur->packet_wid = packet_wid;
     cur->udp_flows  = ptc_udp_flow_map_t_init();
@@ -358,24 +362,17 @@ err_t ptcNetifOutput(struct netif *netif, struct pbuf *p, const ip4_addr_t *ipad
     wid_t                      packet_wid = route_ctx->packet_wid;
     ptc_tstate_t              *state      = tunnelGetState(t);
 
-    /*
-     * Reached with the core lock held, and Stop takes that same lock to remove
-     * these routes and netifs. Refusing here is what keeps Stop's own teardown
-     * from emitting: netif_remove() and the reassembly purge behind it can both
-     * reach an output callback, and a packet published then would arrive at a
-     * neighbour that has already stopped.
-     */
+    assert(currentThreadIsEventWorkerWID(packet_wid));
+    assert(route_ctx->engine == wwLwipEngineCurrent());
+    /* Owner cleanup can emit while removing protocol objects; the closed node
+     * gate prevents publication to a neighbor that has already stopped. */
     if (UNLIKELY(ptcTunnelIsStopping(t) || ! quiescenceGateEnter(&state->output_gate)))
     {
         return ERR_IF;
     }
 
-    /*
-     * This callback is reached with lwIP's non-recursive core lock held. Always
-     * queue, including on the target worker, so no neighbouring tunnel callback
-     * runs inside that lock. The worker callback takes its own admission token;
-     * this token protects only message allocation and queue publication.
-     */
+    /* Always queue, including to this worker. No neighbor may reenter the
+     * engine while TCP input scratch is active. The delivery has its own gate. */
     ptc_packet_emit_msg_t *packet_msg = memoryAllocate(sizeof(*packet_msg) + p->tot_len);
 
     if (UNLIKELY(packet_msg == NULL))
@@ -388,8 +385,7 @@ err_t ptcNetifOutput(struct netif *netif, struct pbuf *p, const ip4_addr_t *ipad
     pbufLargeCopyToPtr(p, packet_msg->data);
 
     // A refusal releases the message through ptcEmitPacketCleanup(), which frees
-    // one global-allocator block and touches no worker-local pool - the only
-    // release that is legal from this thread.
+    // one detached allocation without touching a worker-local pool.
     const worker_message_submit_result_e queued = sendWorkerMessageForceQueueWithCleanup(
         packet_wid, (WorkerMessageCallback) ptcEmitPacketOnWorker, ptcEmitPacketCleanup, t, packet_msg, NULL);
     quiescenceGateLeave(&state->output_gate);

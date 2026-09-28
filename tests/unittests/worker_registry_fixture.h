@@ -11,12 +11,11 @@
  * lineIsOnCurrentEventWorker(), the tunnel-API helpers - refuses to run.
  *
  * This fixture publishes a table that matches the stubbed counts: slots
- * [0, getWorkersCount()) are ordinary event workers and the final slot is an
- * lwIP-style pseudo-worker, exactly as createGlobalState() lays them out.
+ * [0, getWorkersCount()) are ordinary event workers, matching production.
  *
  * Usage:
  *
- *     GSTATE.workers_count = 2;                  // 1 ordinary worker + lwIP
+ *     GSTATE.workers_count = 1;                  // 1 ordinary event worker
  *     testWorkerRegistryInstall(&env->registry); // publish the table
  *     testWorkerBindWID(0);
  *     ...
@@ -43,8 +42,7 @@ typedef struct test_worker_registry_s
  * @brief Publishes a fake worker table matching the current GSTATE.workers_count.
  *
  * Call after GSTATE.workers_count has been stubbed. Slots below
- * getWorkersCount() advertise an event loop; the last slot does not, so it
- * behaves like the lwIP pseudo-worker for the identity predicates.
+ * getWorkersCount() advertise an event loop.
  */
 static inline void testWorkerRegistryInstall(test_worker_registry_t *registry)
 {
@@ -57,16 +55,9 @@ static inline void testWorkerRegistryInstall(test_worker_registry_t *registry)
 
     const wid_t total = getTotalWorkersCount();
 
-    /*
-     * Production reserves the last slot for the lwIP pseudo-worker. A stub that
-     * declares a single slot has no lwIP worker at all, so treat that slot as an
-     * ordinary event worker rather than leaving the table with no event workers.
-     */
-    const wid_t ordinary = (total > 1) ? (wid_t) (total - 1) : total;
-
     for (wid_t wid = 0; wid < total; ++wid)
     {
-        registry->slots[wid] = (worker_t) {.wid = wid, .has_event_loop = (wid < ordinary)};
+        registry->slots[wid] = (worker_t) {.wid = wid, .has_event_loop = true};
         atomicStoreRelaxed(&registry->slots[wid].message_admission_open, false);
     }
 

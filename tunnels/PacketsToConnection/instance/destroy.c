@@ -10,13 +10,22 @@ void ptcDestroyLwipResources(tunnel_t *t)
         return;
     }
 
-    LOCK_TCPIP_CORE();
-    ptcDetachOwnedLinePcbsLocked(t);
-    ptcTcpDrainDestroyAllLocked(t);
-    ptcDestroyRouteContexts(t);
+    if (state->routes_v4 != NULL)
+    {
+        for (uint32_t wid = 0; wid < state->route_worker_count; ++wid)
+        {
+            if (state->routes_v4[wid] != NULL)
+            {
+                LOGF("PacketsToConnection: worker route survived owner drain");
+                abortProgramNow(1);
+            }
+        }
+        memoryFree(state->routes_v4);
+        state->routes_v4 = NULL;
+    }
+    assert(state->drain_count == 0 && state->drain_bytes == 0);
     ptcFakeDnsDestroy(state);
     state->lwip_resources_destroyed = true;
-    UNLOCK_TCPIP_CORE();
 }
 
 void ptcTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context)
@@ -35,6 +44,8 @@ void ptcTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context)
         state->owned_lines = NULL;
     }
     mutexDestroy(&state->owned_lines_lock);
+    mutexDestroy(&state->drain_lock);
+    mutexDestroy(&state->dns_lock);
 
     tunnelDestroy(t);
 }

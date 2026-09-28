@@ -258,7 +258,7 @@ int main(void)
     node_manager_config_t *first_cfg  = addConfig(manager, &first);
     node_manager_config_t *second_cfg = addConfig(manager, &second);
 
-    GSTATE.workers_count = 2;
+    GSTATE.workers_count = 1;
     testWorkerRegistryInstall(&g_test_worker_registry);
     testWorkerBindWID(0);
 

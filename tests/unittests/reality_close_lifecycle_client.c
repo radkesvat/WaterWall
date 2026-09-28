@@ -424,7 +424,7 @@ static void clientFixtureInitialize(client_lifecycle_fixture_t *fixture)
     memoryZero(fixture, sizeof(*fixture));
 
     GSTATE.flag_initialized = true;
-    GSTATE.workers_count    = 2;
+    GSTATE.workers_count    = 1;
     fixture->large_master   = masterpoolCreateWithCapacity(8);
     fixture->small_master   = masterpoolCreateWithCapacity(8);
     fixture->medium_master  = masterpoolCreateWithCapacity(8);
@@ -1838,7 +1838,7 @@ static void runClientSizingCase(uint16_t tls_version, const reality_v2_record_pr
     const bool      saved_initialized   = GSTATE.flag_initialized;
     const uint32_t  saved_workers_count = GSTATE.workers_count;
     GSTATE.flag_initialized             = true;
-    GSTATE.workers_count                = 2;
+    GSTATE.workers_count                = 1;
     GSTATE.shortcut_buffer_pools        = shortcut;
 
     tunnel_t *reality = tunnelCreate(NULL, sizeof(realityclient_tstate_t), sizeof(realityclient_lstate_t));

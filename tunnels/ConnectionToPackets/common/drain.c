@@ -20,10 +20,9 @@
  * a drain must not retain a line_t, a ctp_lstate_t, or a worker-local pool
  * buffer. The bytes are copied into one global-allocator block on the way in.
  *
- * Everything here runs under LOCK_TCPIP_CORE(). The drain's callbacks are lwIP's
- * own, and two of them - sent and poll - can arrive on the lwIP timer thread
- * rather than on the worker the flow started on, which is the other reason
- * nothing worker-local may be reachable from this object.
+ * PCBs and drain lists belong to the flow's owner engine. The node-wide
+ * count/byte allowance uses a short mutex, released before stack work or
+ * allocation. Line buffers are copied so the source can destroy its line.
  *
  * Nothing here ever calls a neighboring tunnel. The side that would have been
  * notified is the side that finished the line.
@@ -36,7 +35,7 @@ enum
     /*
      * tcp_poll() ticks in units of the 500 ms coarse timer. Twice a second is
      * often enough to retry a blocked write or a refused close without adding
-     * meaningful work to the timer thread.
+     * meaningful work to the owner timer dispatch.
      */
     kCtpDrainPollInterval = 1
 };
@@ -51,6 +50,7 @@ struct ctp_tcp_drain_s
     ctp_tcp_drain_t *prev;
 
     tunnel_t       *tunnel;
+    ctp_netif_ctx_t *netif_ctx;
     struct tcp_pcb *pcb;
 
     /* Copies, so the registry entry can be found again without the line. */
@@ -124,7 +124,7 @@ static void  ctpDrainErrorCallback(void *arg, err_t err);
 // list and lifetime
 // ---------------------------------------------------------------------------
 
-static void ctpDrainUnlinkLocked(ctp_tstate_t *ts, ctp_tcp_drain_t *drain)
+static void ctpDrainUnlinkLocked(ctp_tcp_drain_t *drain)
 {
     if (drain->prev != NULL)
     {
@@ -132,7 +132,7 @@ static void ctpDrainUnlinkLocked(ctp_tstate_t *ts, ctp_tcp_drain_t *drain)
     }
     else
     {
-        ts->drains = drain->next;
+        drain->netif_ctx->drains = drain->next;
     }
 
     if (drain->next != NULL)
@@ -151,10 +151,8 @@ static void ctpDrainUnlinkLocked(ctp_tstate_t *ts, ctp_tcp_drain_t *drain)
  */
 static void ctpDrainFreeLocked(ctp_tstate_t *ts, ctp_tcp_drain_t *drain)
 {
-    ctpDrainUnlinkLocked(ts, drain);
-
-    ts->drain_bytes -= drain->len;
-    --ts->drain_count;
+    ctpDrainUnlinkLocked(drain);
+    ctpDrainBudgetRelease(ts, drain->len);
     memoryFree(drain->bytes);
     memoryFree(drain);
 }
@@ -631,7 +629,7 @@ static void ctpDrainErrorCallback(void *arg, err_t err)
  * the global allocator.
  *
  * The queue's buffers belong to the line's worker pool and may not be held past
- * this call, let alone touched from the lwIP timer thread, so this copy is what
+ * this call, let alone touched from the lwIP owner timer dispatch, so this copy is what
  * severs the drain from worker-local memory.
  */
 static uint8_t *ctpDrainTakeBytes(ctp_lstate_t *ls, uint32_t total, wid_t wid)
@@ -704,7 +702,7 @@ ctp_tcp_drain_adopt_result_t ctpTcpDrainAdoptLocked(tunnel_t *t, ctp_lstate_t *l
      * traded a visible reset for a pcb and a netif index held until the process
      * exits. A reset is the honest failure.
      */
-    if (ts->drain_bytes + total > (uint32_t) kCtpMaxDrainBytesTotal || ts->drain_count >= (uint32_t) kCtpMaxDrains)
+    if (! ctpDrainBudgetReserve(ts, total))
     {
         if (atomicLogRateLimiterShouldLog(&g_drain_budget_log, kCtpDrainLogIntervalMs))
         {
@@ -722,6 +720,7 @@ ctp_tcp_drain_adopt_result_t ctpTcpDrainAdoptLocked(tunnel_t *t, ctp_lstate_t *l
 
     if (UNLIKELY(drain == NULL))
     {
+        ctpDrainBudgetRelease(ts, total);
         if (atomicLogRateLimiterShouldLog(&g_drain_alloc_log, kCtpDrainLogIntervalMs))
         {
             LOGW("ConnectionToPackets: out of memory for a closing flow's drain, %u queued byte(s) affected",
@@ -737,6 +736,7 @@ ctp_tcp_drain_adopt_result_t ctpTcpDrainAdoptLocked(tunnel_t *t, ctp_lstate_t *l
         if (UNLIKELY(drain->bytes == NULL))
         {
             memoryFree(drain);
+            ctpDrainBudgetRelease(ts, total);
             if (atomicLogRateLimiterShouldLog(&g_drain_alloc_log, kCtpDrainLogIntervalMs))
             {
                 LOGW("ConnectionToPackets: out of memory for a closing flow's %u queued byte(s)", (unsigned int) total);
@@ -745,6 +745,8 @@ ctp_tcp_drain_adopt_result_t ctpTcpDrainAdoptLocked(tunnel_t *t, ctp_lstate_t *l
         }
     }
 
+    drain->netif_ctx = ls->netif_ctx;
+    assert(drain->netif_ctx != NULL && drain->netif_ctx->engine == wwLwipEngineCurrent());
     drain->tunnel      = t;
     drain->pcb         = ls->tcp_pcb;
     drain->flow_key    = ls->flow_key;
@@ -761,18 +763,14 @@ ctp_tcp_drain_adopt_result_t ctpTcpDrainAdoptLocked(tunnel_t *t, ctp_lstate_t *l
      */
     drain->peer_finished = (drain->pcb->state == CLOSE_WAIT);
 
-    drain->next = ts->drains;
-    if (ts->drains != NULL)
-    {
-        ts->drains->prev = drain;
-    }
-    ts->drains = drain;
-    ts->drain_bytes += total;
-    ++ts->drain_count;
+    drain->next = drain->netif_ctx->drains;
+    if (drain->next != NULL)
+        drain->next->prev = drain;
+    drain->netif_ctx->drains = drain;
 
     /*
      * The pcb changes hands here. Its callbacks are repointed at the drain in
-     * the same core-locked section, so there is no window in which an lwIP
+     * the same owner-engine scope, so there is no window in which an lwIP
      * callback could still reach the line state that is about to be destroyed.
      */
     if (ls->rx_uncredited > 0)
@@ -795,24 +793,31 @@ ctp_tcp_drain_adopt_result_t ctpTcpDrainAdoptLocked(tunnel_t *t, ctp_lstate_t *l
 // shutdown
 // ---------------------------------------------------------------------------
 
-/*
- * Called from Stop, after ctpFlowDropAllLocked() has already closed or aborted
- * every registered pcb - including the draining ones - and cleared their
- * callbacks. Only the memory is left to release.
- */
-void ctpTcpDrainDestroyAllLocked(tunnel_t *t)
+void ctpTcpDrainDestroyNetif(ctp_netif_ctx_t *ctx)
 {
-    ctp_tstate_t *ts = tunnelGetState(t);
+    assert(ctx->engine == wwLwipEngineCurrent());
+    while (ctx->drains != NULL)
+        discard ctpDrainAbortLocked(ctx->drains, "owner shutdown");
+}
 
-    while (ts->drains != NULL)
+bool ctpDrainBudgetReserve(ctp_tstate_t *ts, uint32_t bytes)
+{
+    mutexLock(&ts->drain_lock);
+    const bool admitted = ts->drain_count < kCtpMaxDrains && bytes <= kCtpMaxDrainBytesTotal - ts->drain_bytes;
+    if (admitted)
     {
-        ctp_tcp_drain_t *drain = ts->drains;
-
-        // The pcb is gone or no longer ours; do not touch it.
-        drain->pcb = NULL;
-        ctpDrainFreeLocked(ts, drain);
+        ++ts->drain_count;
+        ts->drain_bytes += bytes;
     }
+    mutexUnlock(&ts->drain_lock);
+    return admitted;
+}
 
-    ts->drain_bytes = 0;
-    ts->drain_count = 0;
+void ctpDrainBudgetRelease(ctp_tstate_t *ts, uint32_t bytes)
+{
+    mutexLock(&ts->drain_lock);
+    assert(ts->drain_count > 0 && ts->drain_bytes >= bytes);
+    --ts->drain_count;
+    ts->drain_bytes -= bytes;
+    mutexUnlock(&ts->drain_lock);
 }

@@ -404,7 +404,6 @@ static void teardownGlobalState(void)
     workerPerformDrain(worker0, shutdownContext());
     require(workerRequestTeardown(worker0), "failed to request worker-0 teardown");
     workerPerformTeardown(worker0);
-    workerDestroyPseudoWorkerResources(getWorker(getTotalWorkersCount() - 1));
     destroyGlobalState();
 }
 

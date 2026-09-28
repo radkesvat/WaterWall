@@ -2,6 +2,7 @@
 
 #include "wwapi.h"
 
+#include "engine_runtime.h"
 #include "quiescence_gate.h"
 
 #include "lwip/priv/tcp_priv.h"
@@ -152,6 +153,8 @@ struct interface_route_context_s
     struct udp_pcb    *udp_pcb;
     ptc_udp_flow_map_t udp_flows;
     wid_t              packet_wid;
+    ww_lwip_engine_t  *engine;
+    ptc_tcp_drain_t   *drains;
 };
 
 struct ptc_fake_dns_entry_s
@@ -199,7 +202,8 @@ typedef struct ptc_tstate_s
     ptc_fake_dns_t              fake_dns;
     quiescence_gate_t           output_gate;
     quiescence_gate_t           next_gate;
-    ptc_tcp_drain_t            *drains;
+    wmutex_t                    drain_lock;
+    wmutex_t                    dns_lock;
     uint32_t                    drain_bytes;
     uint32_t                    drain_count;
     wmutex_t                    owned_lines_lock;
@@ -213,6 +217,7 @@ typedef struct ptc_lstate_s
 {
     tunnel_t *tunnel;
     line_t   *line;
+    ww_lwip_engine_t *engine;
 
     union {
         struct tcp_pcb *tcp_pcb;
@@ -248,7 +253,7 @@ typedef struct ptc_lstate_s
     bool               write_retry_queued;
     bool               refused_retry_queued;
     bool               owned_registered;
-    /* Set under LOCK_TCPIP_CORE() after a required owner-worker handoff is
+    /* Set inside the owner engine after required scheduled control is
      * refused. The existing owned-line registry is the allocation-free final
      * owner; the owner worker clears this flag while closing the line. */
     bool terminal_required;
@@ -314,10 +319,9 @@ void ptcLinestateDestroy(ptc_lstate_t *ls);
 
 err_t ptcNetifOutput(struct netif *netif, struct pbuf *p, const ip4_addr_t *ipaddr);
 
-/* The Stop gate. Published before Stop waits for the core lock, so every
- * core-locked path can treat it as a barrier by rechecking under that lock. */
+/* The Stop gate is published before owner-worker drain and route removal. */
 bool ptcTunnelIsStopping(tunnel_t *t);
-/* Requires LOCK_TCPIP_CORE(). Returns true only when this call aborted a TCP pcb. */
+/* Requires the current owner engine. Returns true only when this call aborted a TCP pcb. */
 bool ptcRequiredControlRefusedLocked(ptc_lstate_t *ls, const char *operation);
 void ptcDrainTerminalLinesOnCurrentWorker(tunnel_t *t, wid_t wid);
 bool ptcNextGateEnter(tunnel_t *t);
@@ -346,7 +350,7 @@ void ptcFragmentAdmissionTestSubmitPacketToStack(sbuf_t *buf, struct netif *inp)
 #endif
 
 void ptcDetachTcpPcbLocked(ptc_lstate_t *ls);
-/* All receive-credit helpers require LOCK_TCPIP_CORE(). */
+/* All receive-credit helpers require the current owner engine. */
 bool ptcReceiveCreditAccumulateLocked(ptc_lstate_t *ls, uint32_t amount);
 void ptcReceiveCreditRollbackLocked(ptc_lstate_t *ls, uint32_t amount);
 bool ptcPausedReadAccumulateLocked(ptc_lstate_t *ls, uint32_t amount);
@@ -354,7 +358,6 @@ bool ptcReturnReceiveCreditLocked(ptc_lstate_t *ls, uint32_t amount);
 void ptcDetachUdpFlowLocked(ptc_lstate_t *ls);
 void ptcOwnedLineRegister(ptc_lstate_t *ls);
 void ptcOwnedLineUnregister(ptc_lstate_t *ls);
-void ptcDetachOwnedLinePcbsLocked(tunnel_t *t);
 void ptcDrainOwnedLinesOnCurrentWorker(tunnel_t *t, wid_t wid);
 void ptcCloseLineForStop(tunnel_t *t, line_t *l);
 void ptcCloseLineFromNetwork(tunnel_t *t, line_t *l);
@@ -393,7 +396,7 @@ ptc_fake_dns_result_t ptcFakeDnsHandleIpv4UdpPacket(tunnel_t *t, line_t *packet_
 
 /*
  * Publishes one built fake-DNS reply through the worker netif, fragmenting at
- * the inherited core MTU when it does not fit. Requires LOCK_TCPIP_CORE(); the
+ * the inherited core MTU when it does not fit. Requires the current owner engine; the
  * netif output callback only queues, so no neighbour callback runs inside it.
  * Returns false when nothing was published and the caller still owns the buffer.
  */
@@ -407,7 +410,7 @@ err_t ptcEnsureTcpListener(interface_route_context_t *route_ctx, tunnel_t *t, co
 err_t ptcEnsureUdpListener(interface_route_context_t *route_ctx, tunnel_t *t, const ip_addr_t *dest_ip,
                            uint16_t dest_port);
 interface_route_context_t *ptcFindOrCreateRouteContextV4(tunnel_t *t, wid_t packet_wid, const ip4_addr_t *dest_ip);
-void                       ptcDestroyRouteContexts(tunnel_t *t);
+void                       ptcDestroyWorkerRoute(tunnel_t *t, wid_t wid);
 void                       ptcDestroyLwipResources(tunnel_t *t);
 
 // Error callback: called when something goes wrong on the connection.
@@ -430,7 +433,7 @@ void               ptcPauseQueuePushFront(ptc_lstate_t *lstate, sbuf_t *buf);
 /*
  * The only two places an acknowledgement record may enter or leave a line, so
  * `pending_bytes` stays exact without every caller remembering to adjust it.
- * Both require LOCK_TCPIP_CORE(), like the queues they maintain.
+ * Both require the current owner engine, like the queues they maintain.
  */
 void ptcAckQueuePushBack(ptc_lstate_t *lstate, sbuf_t *buf, uint32_t total);
 void ptcAckQueuePopFront(ptc_lstate_t *lstate);
@@ -446,7 +449,7 @@ bool ptcReserveWriteSlots(ptc_lstate_t *lstate);
 /*
  * Unwritten payloads occupy a contiguous suffix of `ack_queue` in `pause_queue`
  * order, so the record owning a paused buffer is found by index rather than by
- * searching. Both require LOCK_TCPIP_CORE().
+ * searching. Both require the current owner engine.
  */
 size_t      ptcFrontPauseAckIndexOf(const ptc_lstate_t *lstate);
 sbuf_ack_t *ptcPauseAckRecordAt(ptc_lstate_t *lstate, size_t index);
@@ -464,4 +467,8 @@ err_t ptcTcpSendCompleteCallback(void *arg, struct tcp_pcb *tpcb, u16_t len);
 err_t ptcTcpPollCallback(void *arg, struct tcp_pcb *tpcb);
 err_t ptcTcpSendFinLocked(struct tcp_pcb *pcb);
 ptc_tcp_drain_adopt_result_t ptcTcpDrainAdoptLocked(tunnel_t *t, ptc_lstate_t *ls, bool *out_aborted);
-void                         ptcTcpDrainDestroyAllLocked(tunnel_t *t);
+void                         ptcTcpDrainDestroyRoute(interface_route_context_t *route);
+
+/* Shared node allowance; never hold this mutex across stack work or allocation. */
+bool ptcDrainBudgetReserve(ptc_tstate_t *ts, uint32_t bytes);
+void ptcDrainBudgetRelease(ptc_tstate_t *ts, uint32_t bytes);

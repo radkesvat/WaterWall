@@ -93,7 +93,7 @@ static void envSetup(env_t *env)
     env->wio_pools[1] = env->wio_pool;
 
     env->saved_workers_count = GSTATE.workers_count;
-    GSTATE.workers_count     = 3; // two event workers plus the lwIP-style pseudo-worker
+    GSTATE.workers_count     = 2; // two ordinary event workers
     testWorkerRegistryInstall(&env->worker_registry);
     GSTATE.shortcut_wios_pools = env->wio_pools;
     testWorkerBindWID(0);

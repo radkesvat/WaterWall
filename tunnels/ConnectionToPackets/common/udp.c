@@ -22,7 +22,14 @@ bool ctpUdpOpenFlow(tunnel_t *t, line_t *l, ctp_lstate_t *ls, const ip_addr_t *d
     struct udp_pcb *pcb = NULL;
     bool            ok  = false;
 
-    LOCK_TCPIP_CORE();
+    assert(currentThreadIsEventWorkerWID(lineGetWID(l)));
+    ls->engine = wwLwipRuntimeGet(lineGetWID(l));
+    if (ls->engine == NULL)
+        return false;
+    ww_lwip_engine_t *previous;
+    const bool        entered = wwLwipEngineEnter(ls->engine, &previous);
+    assert(entered);
+    discard entered;
 
     if (UNLIKELY(atomicLoadRelaxed(&ts->stopping)))
     {
@@ -66,6 +73,7 @@ bool ctpUdpOpenFlow(tunnel_t *t, line_t *l, ctp_lstate_t *ls, const ip_addr_t *d
         goto done;
     }
 
+    ls->netif_ctx = ctx;
     ls->udp_pcb  = pcb;
     ls->flow_key = (ctp_flow_key_t) {
         .remote_addr_network = ip_2_ip4(dest_ip)->addr,
@@ -91,7 +99,7 @@ done:
     {
         udp_remove(pcb);
     }
-    UNLOCK_TCPIP_CORE();
+    wwLwipEngineLeave(ls->engine, previous);
     return ok;
 }
 
@@ -143,7 +151,10 @@ void ctpUdpSendPayload(tunnel_t *t, line_t *l, ctp_lstate_t *ls, sbuf_t *buf)
     err_t           send_result = ERR_OK;
     bool            allocated   = true;
 
-    LOCK_TCPIP_CORE();
+    ww_lwip_engine_t *previous;
+    const bool        entered = wwLwipEngineEnter(ls->engine, &previous);
+    assert(entered);
+    discard entered;
 
     if (! atomicLoadRelaxed(&ts->stopping) && ls->udp_pcb != NULL)
     {
@@ -171,7 +182,7 @@ void ctpUdpSendPayload(tunnel_t *t, line_t *l, ctp_lstate_t *ls, sbuf_t *buf)
         }
     }
 
-    UNLOCK_TCPIP_CORE();
+    wwLwipEngineLeave(ls->engine, previous);
 
     if (UNLIKELY(! allocated))
     {

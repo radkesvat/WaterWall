@@ -142,10 +142,11 @@ static void testFragmentOutputFailureStopsAndPropagates(void)
 int main(void)
 {
     require(lwipTestRuntimeInitialize(), "failed to initialize the lwIP random runtime");
-    lwip_init();
+    lwipTestEngineBegin(1);
     testProductionSettingsReachProductionNetif();
     testFragmentOutputFailureStopsAndPropagates();
     wwLwipTestEraseTcpIsnSecret();
+    lwipTestEngineEnd();
     lwipTestRuntimeCleanup();
     puts("ConnectionToPackets netif contract tests passed");
     return 0;

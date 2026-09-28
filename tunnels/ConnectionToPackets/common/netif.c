@@ -9,7 +9,7 @@
 /*
  * One emitted IPv4 packet on its way from lwIP to the chain's packet side.
  *
- * The netif output callback always runs with the lwIP core lock held, so it may
+ * The netif output callback runs inside the owner engine, so it may
  * never call a neighboring tunnel. It copies the packet into this message and
  * force-queues it to the selected packet worker instead - including when that
  * worker is the caller, so the boundary holds unconditionally.
@@ -102,7 +102,7 @@ static void ctpEmitPacketOnWorker(worker_t *worker, void *arg1, void *arg2, void
  * the copy so it hashes identically to an unfragmented packet of that flow, and
  * the fragments that follow inherit it.
  *
- * Runs with the core lock held, which is what makes the single memo slot in the
+ * Runs inside one non-reentrant owner engine, which makes the memo slot in the
  * netif context sufficient: ip4_frag() emits a whole datagram inside one
  * synchronous loop, so no other datagram can interleave on this netif.
  */
@@ -155,10 +155,12 @@ err_t ctpNetifOutput(struct netif *netif, struct pbuf *p, const ip4_addr_t *ipad
     ctp_netif_ctx_t *ctx = netif->state;
     tunnel_t        *t   = ctx->tunnel;
     ctp_tstate_t    *ts  = tunnelGetState(t);
+    assert(currentThreadIsEventWorkerWID(ctx->wid));
+    assert(ctx->engine == wwLwipEngineCurrent());
 
     /*
-     * Reached with the core lock held. Stop already detached everything it owns
-     * under that same lock, so a late output has nothing left to publish.
+     * Owner teardown may emit while detaching objects; the stopping gate
+     * prevents publication after node admission closes.
      */
     if (UNLIKELY(atomicLoadRelaxed(&ts->stopping)))
     {
@@ -214,6 +216,8 @@ static err_t ctpNetifInit(struct netif *netif)
 ctp_netif_ctx_t *ctpEnsureNetifLocked(tunnel_t *t, wid_t wid)
 {
     ctp_tstate_t *ts = tunnelGetState(t);
+    assert(currentThreadIsEventWorkerWID(wid));
+    wwLwipEngineAssertCurrent();
 
     if (UNLIKELY(ts->netifs == NULL || wid >= ts->netifs_count))
     {
@@ -222,6 +226,7 @@ ctp_netif_ctx_t *ctpEnsureNetifLocked(tunnel_t *t, wid_t wid)
 
     if (ts->netifs[wid] != NULL)
     {
+        assert(ts->netifs[wid]->engine == wwLwipEngineCurrent());
         return ts->netifs[wid];
     }
 
@@ -231,6 +236,7 @@ ctp_netif_ctx_t *ctpEnsureNetifLocked(tunnel_t *t, wid_t wid)
         return NULL;
     }
 
+    ctx->engine = wwLwipEngineCurrent();
     ctx->tunnel = t;
     ctx->wid    = wid;
 
@@ -257,78 +263,61 @@ ctp_netif_ctx_t *ctpEnsureNetifLocked(tunnel_t *t, wid_t wid)
     return ctx;
 }
 
+void ctpDestroyWorkerNetif(tunnel_t *t, wid_t wid)
+{
+    ctp_tstate_t *ts = tunnelGetState(t);
+    assert(currentThreadIsEventWorkerWID(wid));
+    if (ts->netifs == NULL)
+        return;
+    assert(wid < ts->netifs_count);
+    ctp_netif_ctx_t *ctx = ts->netifs[wid];
+    ts->netifs[wid]      = NULL;
+    if (ctx == NULL)
+        return;
+    ww_lwip_engine_t *engine = ctx->engine;
+    ww_lwip_engine_t *previous;
+    const bool        entered = wwLwipEngineEnter(engine, &previous);
+    assert(entered);
+    discard entered;
+    ctpTcpDrainDestroyNetif(ctx);
+    if (ctx->added)
+    {
+        discard ip4_reass_purge_netif(&ctx->netif);
+        netif_remove(&ctx->netif);
+        ctx->added = false;
+    }
+    memoryFree(ctx);
+    wwLwipEngineLeave(engine, previous);
+}
+
 void ctpDestroyLwipResources(tunnel_t *t)
 {
     ctp_tstate_t *ts = tunnelGetState(t);
-
     if (ts->lwip_resources_destroyed)
-    {
         return;
-    }
-
-    LOCK_TCPIP_CORE();
-
-    if (ts->flow_registry_initialized)
+    for (wid_t wid = 0; wid < ts->netifs_count; ++wid)
     {
-        ctpFlowDropAllLocked(t);
-
-        // Every draining pcb was registered, so the sweep above has already closed or
-        // aborted it and cleared its callbacks; only the drain objects are left.
-        ctpTcpDrainDestroyAllLocked(t);
-    }
-
-    if (ts->netifs != NULL)
-    {
-        for (wid_t wid = 0; wid < ts->netifs_count; ++wid)
+        if ((ts->netifs != NULL && ts->netifs[wid] != NULL) ||
+            (ts->owned_lines != NULL && ts->owned_lines[wid] != NULL))
         {
-            ctp_netif_ctx_t *ctx = ts->netifs[wid];
-            if (ctx == NULL)
-            {
-                continue;
-            }
-
-            if (ctx->added)
-            {
-                /*
-                 * Reassembly state is process-global and keyed by the netif's
-                 * one-byte index, so it has to go before netif_remove() makes
-                 * that index available to an unrelated future interface.
-                 *
-                 * netif_remove() now does this itself; the call is kept so this
-                 * teardown does not silently depend on that, and purging twice
-                 * is a walk of a list that is already empty.
-                 */
-                discard ip4_reass_purge_netif(&ctx->netif);
-            }
+            LOGF("ConnectionToPackets: node stop preceded owner drain/Finish");
+            abortProgramNow(1);
         }
     }
-
+    assert(ts->drain_bytes == 0 && ts->drain_count == 0);
     if (ts->flow_registry_initialized)
     {
+        /* Every engine's netif was purged by its owner before the Drained
+         * barrier. Only detached routing records and staged bytes remain. */
         rwlockWriteLock(&ts->flows_lock);
+        c_foreach(i, ctp_flow_map_t, ts->flows)
+        {
+            assert(i.ref->second.pcb == NULL && i.ref->second.lstate == NULL);
+        }
+        ctp_flow_map_t_clear(&ts->flows);
+        ts->tomb_head = ts->tomb_count = 0;
         ctpFragClearAfterNetifPurgeLocked(t);
         rwlockWriteUnlock(&ts->flows_lock);
     }
-
-    if (ts->netifs != NULL)
-    {
-        for (wid_t wid = 0; wid < ts->netifs_count; ++wid)
-        {
-            ctp_netif_ctx_t *ctx = ts->netifs[wid];
-            if (ctx == NULL)
-            {
-                continue;
-            }
-            if (ctx->added)
-            {
-                netif_remove(&ctx->netif);
-                ctx->added = false;
-            }
-            memoryFree(ctx);
-            ts->netifs[wid] = NULL;
-        }
-    }
-
     ts->lwip_resources_destroyed = true;
-    UNLOCK_TCPIP_CORE();
 }

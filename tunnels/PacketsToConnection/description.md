@@ -116,7 +116,7 @@ When the first datagram for a UDP flow arrives:
 - forwards datagrams with upstream `Payload`
 
 Open is required control and is queued before the intentionally lossy payload operation. If Open admission is refused,
-the node first detaches the PCB, timer, and flow-map entry under the lwIP core lock, records the owned line in its
+the node first detaches the PCB, timer, and flow-map entry inside the owner engine, records the owned line in its
 preallocated terminal-reconciliation registry, and then requests orderly shutdown as escalation. Cleanup therefore does
 not depend on the refused queue or on Stop discovering a still-registered flow. A later payload refusal is still an
 ordinary UDP drop because the timer already bounds the flow.
@@ -137,8 +137,7 @@ Important internal rules:
 - packet-line `Init` is a startup/bootstrap event, not a per-flow open
 - generated TCP/UDP Waterwall lines are owned by the packet worker that accepted the flow
 - lwIP callbacks hand work back to the owning line worker through the typed-result `lineScheduleTask()` and
-  `lineScheduleTaskWithBuf()` contract. Required control refusal makes the producer terminal while the lwIP core lock
-  still protects its registry; optional cancellation is deliberately null so cleanup cannot re-enter that lock.
+  `lineScheduleTaskWithBuf()` contract. Required control refusal makes the producer terminal on the owner engine; optional cancellation is deliberately null and cleanup stays on the owner.
   Buffered delivery transfers its copied buffer on every result
 - UDP idle close uses one cancellable owner-worker timer. The timer owns exactly one line reference while armed,
   activity resets the same timer, and close cancels it and drops the reference before line state is zeroed
@@ -149,7 +148,7 @@ Important internal rules:
   small IPv4 MTUs. PTC accepts the core's legal minimum MTU of 68 bytes. The reply is submitted as a UDP datagram
   through `ip4_output_if()`, so lwIP constructs
   the IPv4 header, allocates the shared identification value, and applies fragmentation with stack-owned offsets, MF
-  flags, per-fragment lengths, and checksums. That publication happens while `LOCK_TCPIP_CORE()` is held, which is legal
+  flags, per-fragment lengths, and checksums. That publication happens inside the owner engine, which is legal
   because the netif output callback only queues a packet message - it never calls the neighbour inline
 - packet emission is protected by an admission gate held through the previous-neighbour callback, and normal-line
   `Init`/`Payload`/`Resume`/`Finish` work uses a second gate held through the next-neighbour callback. Global shutdown
@@ -157,19 +156,18 @@ Important internal rules:
   stops, so an already-admitted callback finishes before its neighbour can stop and queued work that runs later is cancelled. A
   refused next-side ordinary work recycles anything it owns and leaves teardown to the owner path; an initialized line
   still receives its one explicit teardown `Finish` during the owner-worker drain
-- netif output is always queued, even to the same worker, so no neighbouring callback runs while lwIP's non-recursive
-  core lock is held. Under lifecycle-v2, all pending worker messages settle before component stop and destruction;
-  quiesce closes the output admission gate so queued work running during quiescence cancels cleanly without calling into
-  a stopped neighbour. Fake-DNS lookup, response construction, and submission to lwIP remain under the core lock; only
-  delivery of the queued output messages to the previous neighbour happens after the outer packet handler unlocks
+- netif output is always queued, even to the same worker, so no neighbouring callback recursively enters active
+  stack input. Quiesce closes output admission; queued work cancels without calling a stopped neighbour.
+  Fake-DNS mapping transactions and reverse-name copying use one node mutex shared across workers. No cache-entry
+  pointer escapes that scope. The mutex is released before stack output, neighbour callbacks or worker posts
 - top-level packet parsing reads only the version byte before normalizing cursor alignment. Shifted packet buffers are
   copied to aligned sbuf storage before any typed IPv4/UDP access; fake-DNS additionally validates the IPv4 header and
   any nonzero UDP checksum before it can answer or mutate its mapping cache
 - upstream packet input rejects IPv4 fragments before fake DNS, route/listener creation,
   or lwIP input. Reassembled packets follow ordinary buffer ownership; no per-buffer
   fragment settlement claim is needed
-- every generated TCP/UDP line is registered in a per-worker owner list until its one close path unlinks it. Stop first
-  detaches PCB, route-map, callback, and UDP-idle producers under the core lock, then drains each owner-worker list,
+- every generated TCP/UDP line is registered in a per-worker owner list until its one close path unlinks it.
+  `onWorkerStop` drains that worker's lines and detaches PCB, route-map, callback and UDP-idle producers in its engine; it
   preserves whether next-side `Init` completed, destroys PTC line state, sends exactly one next-side teardown `Finish`
   when required, and calls `lineDestroy()`. Configuration Stop waits for all worker drains; terminal worker
   shutdown performs the same drain locally without relying on new message admission
@@ -361,9 +359,8 @@ The key idea is that the previous side is packet-oriented, while the next side i
 - ICMP is not implemented
 - UDP pause is lossy, not queued
 - IPv4 route/netif contexts are created on demand per packet worker, not per destination IP, and are not currently exposed as a tuning surface
-- lwIP has 255 process-wide netif indices. Loopback and every lwIP-using node share them; a paired
-  `ConnectionToPackets`/`PacketsToConnection` topology can consume roughly `1 + 2 * workers` netifs. Capacity
-  exhaustion fails creation promptly rather than hanging
+- each worker engine has 255 netif indices, shared by its loopback and attached nodes. Indices may coincide across
+  engines; engine plus exact netif identifies an attachment. Capacity exhaustion refuses creation promptly
 - TCP and UDP listeners are pretend wildcard PCBs on the worker-local netif, not one listener per destination port
 - fake-DNS configuration validates its contiguous prefix, usable address range, 262144-record product cap, reserved
   name-map geometry, and record-array byte count before allocating or enabling the cache. Every multi-question response
@@ -392,3 +389,24 @@ Source-backed metadata:
 | `layer_group_prev_node` | `kNodeLayer3` |
 | `layer_group_next_node` | `kNodeLayer4` |
 | `required_padding_left` | `0` bytes |
+
+## Engine resources and lifecycle
+
+The runtime lazily creates one raw lwIP engine per ordinary event worker, shared by
+all bridge instances on that worker. There is no separate stack thread or protocol
+core mutex. PTC preserves the delivered packet worker; CTP preserves the application
+line's owner and queues return packets after tuple/generation lookup. Packet output
+and normal-line callbacks remain deferred, including same-worker delivery.
+
+Flow/payload pools remain process-wide with their existing capacities. Each active
+engine adds bounded control tables and 17 timeout records; unused workers allocate
+no engine. Automatic TCP and UDP ports use separate shared occupancy accounts,
+held through PCB reclamation, including TIME_WAIT. Generated IPv4 and IPv6 fragment
+IDs use separate shared sequences with their existing finite-width wrap behavior.
+Worker-local detached drain lists retain each node's aggregate 4,096-object and
+16 MiB allowance. Pool/quota locks never cover stack traversal or output.
+
+Worker quiescence detaches engine timers before normal-loop admission closes. Nodes
+remove their local stack roots during owner drain; runtime teardown then releases
+engines after detached messages settle and before loops and pools disappear. Shared
+pools, occupancy accounts and the process ISN secret finalize after all workers exit.

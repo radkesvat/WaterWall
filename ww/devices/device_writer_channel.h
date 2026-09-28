@@ -6,7 +6,7 @@
  * Producers select a generation with one acquire load and may use that record
  * until their send attempt returns. Stop therefore closes and retires a
  * generation but never frees it. Final Destroy may reclaim retired generations
- * only after every external producer context (workers, the lwIP pseudo-worker,
+ * only after every external producer context (workers,
  * and device callbacks) is stopped or detached.
  *
  * The lifecycle owner closes the queue, joins the writer thread, then drains and

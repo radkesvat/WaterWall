@@ -890,7 +890,7 @@ static void envSetup(test_env_t *env)
     GSTATE.masterpool_buffer_pools_splice = env->splice_master;
     GSTATE.shortcut_buffer_pools          = env->buffer_pools;
     GSTATE.shortcut_loops                 = env->loops;
-    GSTATE.workers_count                  = 2;
+    GSTATE.workers_count                  = 1;
     testWorkerRegistryInstall(&g_test_worker_registry);
     GSTATE.ram_profile = 1;
     testWorkerBindWID(0);

@@ -18,12 +18,15 @@ void ptcTunnelDownStreamResume(tunnel_t *t, line_t *l)
         return;
     }
 
-    LOCK_TCPIP_CORE();
+    ww_lwip_engine_t *previous;
+    const bool        entered = wwLwipEngineEnter(ls->engine, &previous);
+    assert(entered);
+    discard        entered;
     const uint32_t paused = ls->read_paused_len;
     if (ptcReturnReceiveCreditLocked(ls, paused))
     {
         ls->read_paused_len = 0;
         tcp_output(ls->tcp_pcb);
     }
-    UNLOCK_TCPIP_CORE();
+    wwLwipEngineLeave(ls->engine, previous);
 }

@@ -257,7 +257,7 @@ static void requireClosed(int fd)
 static void setupWithBufferSize(test_env_t *env, uint32_t large_size)
 {
     memoryZero(env, sizeof(*env));
-    GSTATE.workers_count = 2;
+    GSTATE.workers_count = 1;
     testWorkerRegistryInstall(&env->registry);
     testWorkerBindWID(0);
     for (size_t i = 0; i < ARRAY_SIZE(env->masters); ++i)

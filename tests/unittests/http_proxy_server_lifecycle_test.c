@@ -1524,7 +1524,7 @@ static void spliceRelayCases(tunnel_chain_t *chain, unsigned mode)
 static void runSuite(uint32_t large_size, uint32_t splice_limit)
 {
     GSTATE.flag_initialized = true;
-    GSTATE.workers_count    = 2;
+    GSTATE.workers_count    = 1;
     master_pool_t *large = masterpoolCreateWithCapacity(8), *small = masterpoolCreateWithCapacity(8);
     master_pool_t *medium = masterpoolCreateWithCapacity(8);
     master_pool_t *splice = masterpoolCreateWithCapacity(8);

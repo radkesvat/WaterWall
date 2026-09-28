@@ -78,7 +78,7 @@ int main(void)
     node_t            first               = {0};
     node_t            second              = {0};
 
-    GSTATE.workers_count = 2;
+    GSTATE.workers_count = 1;
     testWorkerRegistryInstall(&g_test_worker_registry);
 
     require(globalstateInitializeSecureRandom(), "the operating system random source is unavailable");

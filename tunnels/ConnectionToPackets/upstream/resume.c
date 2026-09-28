@@ -27,13 +27,16 @@ void ctpTunnelUpStreamResume(tunnel_t *t, line_t *l)
 
     // Release exactly the paused subset. The helper chunks windows larger than
     // one tcp_recved() argument and decrements the total outstanding credit.
-    LOCK_TCPIP_CORE();
+    ww_lwip_engine_t *previous;
+    const bool        entered = wwLwipEngineEnter(ls->engine, &previous);
+    assert(entered);
+    discard entered;
     if (ls->tcp_pcb != NULL)
     {
         ctpTcpReturnReceiveCreditLocked(ls, ls->read_paused_len);
         tcp_output(ls->tcp_pcb);
     }
     ls->read_paused_len = 0;
-    UNLOCK_TCPIP_CORE();
+    wwLwipEngineLeave(ls->engine, previous);
     ctpDrainTerminalLinesOnCurrentWorker(t, lineGetWID(l));
 }

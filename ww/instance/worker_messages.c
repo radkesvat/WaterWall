@@ -396,7 +396,7 @@ static void workerMessageReceived(wevent_t *ev)
  * @brief Rejects a message aimed at a WID that can never drain a queue.
  *
  * Only ordinary event workers own a message queue and a loop to wake, so the
- * lwIP pseudo-worker, kInvalidWID, and out-of-range ids are refused here rather
+ * Non-event slots, kInvalidWID, and out-of-range ids are refused here rather
  * than at an assertion inside getWorker(). Posting is fallible and reachable
  * from unregistered threads, so this runs the caller's cleanup exactly once and
  * reports failure instead of aborting.

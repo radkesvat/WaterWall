@@ -546,7 +546,7 @@ static void caseWorkerDrainIsLocal(void)
     wloop_t       *loops[2]      = {env.loop, second_loop};
     worker_t       workers[2]    = {env.worker,
                                     {.wid = 1, .buffer_pool = second_pool, .loop = second_loop, .has_event_loop = true}};
-    GSTATE.workers_count         = 3;
+    GSTATE.workers_count         = 2;
     GSTATE.workers               = workers;
     GSTATE.shortcut_buffer_pools = pools;
     GSTATE.shortcut_loops        = loops;
@@ -606,7 +606,7 @@ static void caseWorkerDrainIsLocal(void)
     masterpoolDestroy(small);
     masterpoolDestroy(medium);
     masterpoolDestroy(splice);
-    GSTATE.workers_count         = 2;
+    GSTATE.workers_count         = 1;
     GSTATE.workers               = &env.worker;
     GSTATE.shortcut_buffer_pools = env.pool_shortcut;
     GSTATE.shortcut_loops        = env.loop_shortcut;

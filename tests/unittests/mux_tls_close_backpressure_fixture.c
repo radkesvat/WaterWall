@@ -65,7 +65,7 @@ void mxbSetupEnvironment(mxb_fixture_t *fixture, uint32_t combined_lstate_size)
                  .wid = 0, .buffer_pool = env->pool, .wios_pool = env->wios_pool, .loop = env->loop, .has_event_loop = true};
 
     GSTATE.flag_initialized      = true;
-    GSTATE.workers_count         = 2;
+    GSTATE.workers_count         = 1;
     GSTATE.workers               = &env->worker;
     GSTATE.shortcut_buffer_pools = env->buffer_pools;
     GSTATE.shortcut_wios_pools   = env->wios_pools;

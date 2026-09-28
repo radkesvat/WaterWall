@@ -72,10 +72,8 @@ static void fixtureSetup(udpstateless_fixture_t *fixture, bool attach_idle_item)
     memoryZero(fixture, sizeof(*fixture));
     twfWorkerEnvSetup(&fixture->env, kTestLargeBufferSize, 0);
 
-    // udpsockGetWorkerIdleTable() checks getWID() against getWorkersCount(), which
-    // subtracts the lwIP pseudo-worker. One event-loop worker therefore has to be
-    // published as two; only slot 0 is ever indexed.
-    GSTATE.workers_count = 2;
+    // Publish the fixture's one ordinary event worker.
+    GSTATE.workers_count = 1;
     testWorkerRegistryInstall(&g_test_worker_registry);
 
     fixture->uss  = tunnelCreate(NULL, sizeof(udpstatelesssocket_tstate_t), sizeof(udpstatelesssocket_lstate_t));
@@ -229,7 +227,6 @@ static void caseSpliceOwnerDispatch(bool cancel_drain)
     twfSetCase("stateless UDP local/foreign splice disposal, cancellation and socket retirement");
     tos_worker_env_t env;
     tosWorkerEnvSetup(&env, 2, 8192, 1024);
-    env.pools[2]            = env.pools[0]; /* Chain padding also visits the fixture pseudo-worker. */
     node_t node             = nodeUdpStatelessSocketGet();
     node.hash_next          = 1;
     node.next               = (char *) "next";

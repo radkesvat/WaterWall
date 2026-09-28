@@ -44,7 +44,7 @@ int main(void)
     workers[0].has_event_loop = true;
     workers[1].wid            = 1;
     workers[1].has_event_loop = false;
-    GSTATE.workers_count      = 2;
+    GSTATE.workers_count      = 1;
     GSTATE.workers            = workers;
     GSTATE.flag_initialized   = true;
     testWorkerBindWID(0);

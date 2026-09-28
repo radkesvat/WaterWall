@@ -33,8 +33,8 @@
  * lock the registry uses, which is deliberate - resolving fragment zero needs a
  * registry lookup in the middle of a table mutation, and one lock removes any
  * question of ordering between them. Nothing in this file calls lwIP or a
- * neighboring tunnel: the packet-line caller may already be inside a foreign
- * LOCK_TCPIP_CORE() frame, so publishing is deferred until the lock is released.
+ * neighboring tunnel. Worker publication is staged until flows_lock is released,
+ * so no callback can reenter this shared registry under the lock.
  */
 
 enum

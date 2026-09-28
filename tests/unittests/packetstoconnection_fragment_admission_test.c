@@ -94,6 +94,13 @@ static void fillFragment(sbuf_t *buf, uint16_t identification, bool shifted)
     writeIpv4Checksum(packet);
 }
 
+int __wrap_wwLwipEngineInput(ww_lwip_engine_t *engine, struct pbuf *p, struct netif *netif);
+int __wrap_wwLwipEngineInput(ww_lwip_engine_t *engine, struct pbuf *p, struct netif *netif)
+{
+    require(engine == wwLwipEngineCurrent(), "storage boundary lost engine context");
+    return netif->input(p, netif);
+}
+
 static void testStorage(test_env_t *env, bool shifted, bool fail_copy, bool fail_wrapper)
 {
     input_probe_t probe = {0};
@@ -105,7 +112,6 @@ static void testStorage(test_env_t *env, bool shifted, bool fail_copy, bool fail
     ptcFragmentAdmissionTestInstallHooks(&hooks);
     recycled = 0;
     retained = NULL;
-    LOCK_TCPIP_CORE();
     ptcFragmentAdmissionTestSubmitPacketToStack(buf, &netif);
     if (fail_copy || fail_wrapper)
         require(probe.input_calls == 0 && recycled == 1, "refusal leaked or delivered");
@@ -117,7 +123,6 @@ static void testStorage(test_env_t *env, bool shifted, bool fail_copy, bool fail
         retained = NULL;
         require(recycled == 1U + (unsigned) shifted, "pbuf failed exactly-once storage release");
     }
-    UNLOCK_TCPIP_CORE();
     ptcFragmentAdmissionTestInstallHooks(NULL);
 }
 static void envSetup(test_env_t *env)
@@ -142,7 +147,7 @@ static void envSetup(test_env_t *env)
 
     env->buffer_pools[0]                 = env->worker_pool;
     env->loops[0]                        = (wloop_t *) (void *) env;
-    GSTATE.workers_count                 = 2;
+    GSTATE.workers_count                  = 1;
     GSTATE.shortcut_buffer_pools         = env->buffer_pools;
     GSTATE.shortcut_loops                = env->loops;
     GSTATE.masterpool_buffer_pools_large = env->large_master;
@@ -176,24 +181,10 @@ static void envTeardown(test_env_t *env)
     masterpoolDestroy(env->splice_master);
 }
 
-static atomic_bool lwip_initialized;
-
-static void lwipInitialized(void *argument)
-{
-    discard argument;
-    frandInit();
-    atomicStoreExplicit(&lwip_initialized, true, memory_order_release);
-}
-
 int main(void)
 {
     require(lwipTestRuntimeInitialize(), "failed to initialize the lwIP random runtime");
-    atomic_init(&lwip_initialized, false);
-    tcpip_init(lwipInitialized, NULL);
-    while (! atomicLoadExplicit(&lwip_initialized, memory_order_acquire))
-    {
-        YIELD_THREAD();
-    }
+    lwipTestEngineBegin(1);
     ptcRxWrapperPoolInitializeOnce();
 
     test_env_t env;
@@ -204,7 +195,7 @@ int main(void)
     testStorage(&env, false, false, true);
     envTeardown(&env);
 
-    require(wwLwipShutdown(), "failed to shut down the fragment-admission lwIP thread");
+    lwipTestEngineEnd();
     lwipTestRuntimeCleanup();
     puts("PacketsToConnection fragment-admission tests passed");
     return 0;

@@ -960,7 +960,7 @@ bool tlsclientCreateClientHelloFromContext(SSL_CTX *ssl_ctx, const char *sni,
     /*
      * The scratch line state and the drained ClientHello both come from the
      * calling worker's pool, so this needs an ordinary event worker. An
-     * unregistered thread or the lwIP pseudo-worker fails cleanly here instead
+     * unregistered thread fails cleanly here instead
      * of borrowing worker 0's pool.
      */
     if (! currentThreadIsEventWorker())

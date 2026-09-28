@@ -104,6 +104,23 @@ tunnel_t *ptcTunnelCreate(node_t *node)
     atomic_init(&ts->stopping, false);
     if (UNLIKELY(! mutexTryInit(&ts->owned_lines_lock)))
     {
+        ptcFakeDnsDestroy(ts);
+        tunnelDestroy(t);
+        return NULL;
+    }
+
+    if (UNLIKELY(! mutexTryInit(&ts->drain_lock)))
+    {
+        mutexDestroy(&ts->owned_lines_lock);
+        ptcFakeDnsDestroy(ts);
+        tunnelDestroy(t);
+        return NULL;
+    }
+    if (UNLIKELY(! mutexTryInit(&ts->dns_lock)))
+    {
+        mutexDestroy(&ts->drain_lock);
+        mutexDestroy(&ts->owned_lines_lock);
+        ptcFakeDnsDestroy(ts);
         tunnelDestroy(t);
         return NULL;
     }

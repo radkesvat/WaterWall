@@ -628,7 +628,7 @@ int main(void)
     CORE_DEFAULT_MTU                   = 1500;
     const uint32_t saved_workers_count = GSTATE.workers_count;
 
-    GSTATE.workers_count = 2;
+    GSTATE.workers_count = 1;
     testWorkerRegistryInstall(&g_test_worker_registry);
 
     require(globalstateInitializeSecureRandom(), "the operating system random source is unavailable");

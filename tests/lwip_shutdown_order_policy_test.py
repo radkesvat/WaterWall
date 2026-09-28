@@ -53,9 +53,8 @@ def main():
             "globalstateRequireWorkerPhase(kWorkerLifecycleExited)",
             "workerJoin(worker)",
             "wwLwipShutdown()",
-            "workerDestroyPseudoWorkerResources(getWorker(getTotalWorkersCount() - 1))",
         ),
-        "the controller must quiesce, drain, stop, tear down, and join workers before lwIP destruction",
+        "the controller must join all owners before shared lwIP finalization",
     )
 
     structure = read_source("tunnels/PacketsToConnection/include/PacketsToConnection/structure.h")
@@ -68,37 +67,32 @@ def main():
     if "atomicStoreRelaxed(&state->stopping, true)" not in quiesce_body:
         raise AssertionError("PacketsToConnection does not close its stopping gate during quiesce")
 
-    stop_body = function_body("tunnels/PacketsToConnection/instance/stop.c", "ptcTunnelOnStop")
-    if "ptcDestroyLwipResources(t)" not in stop_body:
-        raise AssertionError("PacketsToConnection does not release lwIP resources during component stop")
+    worker_quiesce = function_body("ww/instance/worker.c", "workerPerformQuiesce")
+    require_order(worker_quiesce,
+                  ("wwLwipRuntimeQuiesceWorker(worker->wid)", "wloopQuiesceNormalWork(worker->loop)"),
+                  "engine timers must detach before normal work is discarded")
+    worker_teardown = function_body("ww/instance/worker.c", "workerPerformTeardown")
+    require_order(worker_teardown,
+                  ("workerMessagesCloseAdmissionAndDetach", "workerMessagesDestroyDetached(queue)",
+                   "wwLwipRuntimeDestroyWorker(worker->wid)", "wloopDestroy(&loop)", "workerDestroyPools(worker)"),
+                  "engine release requires settled messages and live saved loop/pools")
+    shared = function_body("ww/lwip/ww_lwip.c", "wwLwipShutdown")
+    require_order(shared, ("wwLwipRuntimeFinalize()", "wwLwipEraseProtocolState()"),
+                  "ISN secret must outlive every engine")
 
-    payload_body = function_body(
-        "tunnels/PacketsToConnection/upstream/payload.c", "ptcTunnelUpStreamPayload"
-    )
-    require_order(
-        payload_body,
-        (
-            "atomicLoadRelaxed(&state->stopping)",
-            "LOCK_TCPIP_CORE()",
-            "atomicLoadRelaxed(&state->stopping)",
-            "processV4(t, l, buf)",
-        ),
-        "PacketsToConnection must recheck stopping after acquiring the route-creation lock",
-    )
-
-    destroy_body = function_body(
-        "tunnels/PacketsToConnection/instance/destroy.c", "ptcDestroyLwipResources"
-    )
-    require_order(
-        destroy_body,
-        (
-            "LOCK_TCPIP_CORE()",
-            "ptcDestroyRouteContexts(t)",
-            "state->lwip_resources_destroyed = true",
-            "UNLOCK_TCPIP_CORE()",
-        ),
-        "PacketsToConnection cleanup completion must be published under the core lock",
-    )
+    payload_body = function_body("tunnels/PacketsToConnection/upstream/payload.c", "ptcTunnelUpStreamPayload")
+    require_order(payload_body,
+                  ("atomicLoadRelaxed(&state->stopping)", "wwLwipRuntimeGet(lineGetWID(l))",
+                   "wwLwipEngineEnter(engine, &previous)", "atomicLoadRelaxed(&state->stopping)",
+                   "processV4(t, l, buf)"),
+                  "PTC admission requires its delivered packet owner's engine")
+    ptc_stop = function_body("tunnels/PacketsToConnection/instance/stop.c", "ptcTunnelOnWorkerStop")
+    require_order(ptc_stop, ("ptcDrainOwnedLinesOnCurrentWorker(t, wid)", "ptcDestroyWorkerRoute(t, wid)"),
+                  "PTC must finish owned lines before removing their route")
+    ctp_stop = function_body("tunnels/ConnectionToPackets/instance/stop.c", "ctpTunnelOnWorkerStop")
+    require_order(ctp_stop, ("ctpDrainTerminalLinesOnCurrentWorker(t, wid)", "ctpDetachWorkerLines(t, wid)",
+                            "ctpDestroyWorkerNetif(t, wid)"),
+                  "CTP must detach borrowed-line PCBs before removing their netif")
 
     print("lwIP shutdown ordering policy passed.")
 

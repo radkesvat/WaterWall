@@ -92,7 +92,7 @@ The contract is enforced at both ends:
   resolving to an address this node then has to reject
 - a destination that is nonetheless IPv6 closes that one line with an explicit error
 
-Global lwIP IPv6 support is untouched: the stack is shared with every other lwIP-using node in the process.
+Enabled lwIP IPv6 support is unchanged. Nodes on one worker share its engine; this bridge still accepts only IPv4.
 
 ## Checksum Finalization Boundary
 
@@ -253,30 +253,25 @@ queued without bound.
   and the line allocation behind it alive for the whole configured timeout, up to the ~49.7 days a `uint32_t`
   millisecond count can express.
 - A generation counter stops a *queued* packet of an old flow from being injected into a new flow that reused its tuple
-  between lookup and delivery, and it is revalidated under the lwIP core lock immediately before injection. It cannot
+  between lookup and delivery, and it is revalidated on the original owner engine with exact netif identity immediately before injection. It cannot
   identify a packet that arrives from the network after a tuple was retired and reused, because an IP packet carries no
   generation. Tombstones reduce that late-network-packet window but cannot eliminate it.
 - `onQuiesceRequest()` publishes stopping, closes new admission through the previous-side, next-side, and
   packet-classification/publication gates, and requests callback detachment without waiting.
-  `onQuiesceWait()` then proves already-admitted callbacks have returned. Under lifecycle-v2, all pending worker messages
-  settle before component stop and destruction. After worker-owned lines drain, `onStop()` detaches every PCB, flow, netif, and staged
-  fragment under the lwIP core
-  lock. TCP PCBs are **aborted** there rather than closed: Stop is terminal, the gate already refuses this node's netif
-  output, and a successful close would have left an established PCB sitting in `FIN_WAIT` on lwIP's process-global
-  active list - outliving the netif removed moments later, and able to observe whichever future interface inherits that
-  one-byte netif index. It also clears each live line's copy of its PCB pointer so a worker that has not drained yet
-  cannot dereference a released PCB. Publishing `stopping` is not treated as proof that this sweep already happened:
-  a close that acquired the core lock during the quiesce-request window performs the real idempotent
-  PCB/callback/registry detach.
+  `onQuiesceWait()` proves already-admitted callbacks have returned. `onWorkerStop()` detaches that worker's
+  PCB callbacks, flow registrations, deadlines, drains and netif inside its engine. Terminal TCP cleanup aborts
+  PCBs so they cannot outlive the removed interface. Stack pointers are cleared before release. Borrowed line state,
+  pending buffers and references remain until the real source's Finish, including when CTP drains before its source.
+  Main `onStop()` checks completed owner barriers and releases shared registries; it never traverses foreign PCBs.
+  Publishing `stopping` alone does not detach a PCB: close performs the real idempotent owner-side cleanup.
   Every queued task enters the relevant gate, so a rejected task suppresses its data and lifecycle events
   toward either neighbour, while close paths stay live so borrowed lines can still be released by their owners.
 - Creation publishes no partially usable bridge: the per-worker netif array, initial flow and fragment map capacities,
   and fixed tombstone ring are mandatory. If any allocation is unavailable, initialized pieces
   are unwound and node creation returns failure before a flow callback can run.
-- If lwIP replays refused receive data from its real timer thread, the callback leaves the original pbuf retained,
-  latches one retry, and queues `tcp_process_refused_data()` to the flow's owner worker. Owner-pool access and delivery
-  therefore remain worker-correct, including a data-plus-FIN replay. A required control enqueue refusal first detaches
-  the exact PCB callbacks and route under the lwIP core lock and publishes the borrowed line in the preallocated
+- lwIP replays refused receive data from its owner-loop timer. Delivery retains the existing pbuf/credit and queued
+  callback contract, including data-plus-FIN replay. A required control enqueue refusal first detaches
+  the exact PCB callbacks and route inside the owner engine and publishes the borrowed line in the preallocated
   owner-worker terminal registry. Orderly process shutdown is escalation after that terminal handoff; cleanup does not
   depend on the refused queue or on Stop rediscovering the flow.
 - Borrowed lines are finished and destroyed later by their real owners.
@@ -313,15 +308,14 @@ reference pbufs; TCP may retain those pbufs for out-of-order delivery.
 target and a fixed reserve. Per-PCB `TCP_OOSEQ_MAX_PBUFS` limits bound one TCP
 peer's retained input. This change does not resize the shared pools.
 
-These pools are static. With the documented defaults a Linux release build has roughly **9.6 MB total BSS**, about an
-**8.6 MB increase** over the earlier development-sized pools' roughly 1.0 MB. Lower the cache variables to trade
-concurrency back for memory on a constrained target; a value large enough to overflow lwIP's `u16_t` pool counters
-fails the build instead of silently truncating.
+These pools are static and shared across workers. Lower the cache variables to trade concurrency for memory;
+a value large enough to overflow lwIP's `u16_t` pool counters fails the build instead of silently truncating.
+The shared TCP/UDP occupancy arrays add 512 KiB of fixed control storage. Engine tables and timeout records
+are separate allocations for active workers. Pool capacity, executable BSS and runtime RSS are distinct measures.
 
-lwIP also has a process-wide namespace of 255 simultaneous netif indices. The loopback interface and every other
-lwIP-using node count against it. A paired `ConnectionToPackets`/`PacketsToConnection` topology can consume roughly
-`1 + 2 * workers` netifs, so other lwIP nodes may make the practical worker limit lower. Exhaustion now fails netif
-creation promptly and sheds the affected flow instead of hanging in `netif_add()`.
+Each worker engine has its own 255-index netif namespace, including its loopback and every node attached on
+that worker. Equal indices in different engines do not identify the same interface: routing validates the engine
+and exact netif. Exhaustion refuses attachment promptly and sheds the affected flow.
 
 Pool exhaustion always closes or sheds the affected flow, with a rate-limited diagnostic; it never aborts the process.
 
@@ -344,3 +338,24 @@ Source-backed metadata:
 | `layer_group_prev_node` | `kNodeLayer4` |
 | `layer_group_next_node` | `kNodeLayer3` |
 | `required_padding_left` | `0` bytes |
+
+## Engine resources and lifecycle
+
+The runtime lazily creates one raw lwIP engine per ordinary event worker, shared by
+all bridge instances on that worker. There is no separate stack thread or protocol
+core mutex. PTC preserves the delivered packet worker; CTP preserves the application
+line's owner and queues return packets after tuple/generation lookup. Packet output
+and normal-line callbacks remain deferred, including same-worker delivery.
+
+Flow/payload pools remain process-wide with their existing capacities. Each active
+engine adds bounded control tables and 17 timeout records; unused workers allocate
+no engine. Automatic TCP and UDP ports use separate shared occupancy accounts,
+held through PCB reclamation, including TIME_WAIT. Generated IPv4 and IPv6 fragment
+IDs use separate shared sequences with their existing finite-width wrap behavior.
+Worker-local detached drain lists retain each node's aggregate 4,096-object and
+16 MiB allowance. Pool/quota locks never cover stack traversal or output.
+
+Worker quiescence detaches engine timers before normal-loop admission closes. Nodes
+remove their local stack roots during owner drain; runtime teardown then releases
+engines after detached messages settle and before loops and pools disappear. Shared
+pools, occupancy accounts and the process ISN secret finalize after all workers exit.

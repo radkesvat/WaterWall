@@ -267,8 +267,7 @@ tunnel_t *ctpTunnelCreate(node_t *node)
     quiescenceGateInit(&ts->next_gate);
     quiescenceGateInit(&ts->packet_ingress_gate);
 
-    // Brought up before anything that could fail, so every teardown path below
-    // and in onDestroy() can take the core lock unconditionally.
+    // Shared bootstrap precedes worker traffic; individual engines stay lazy.
     initTcpIpStack();
 
     /*
@@ -285,7 +284,8 @@ tunnel_t *ctpTunnelCreate(node_t *node)
     ts->netifs_count   = getWorkersCount();
     ts->netifs         = memoryAllocateZero(sizeof(*ts->netifs) * ts->netifs_count);
     ts->terminal_lines = memoryAllocateZero(sizeof(*ts->terminal_lines) * ts->netifs_count);
-    if (UNLIKELY(ts->netifs == NULL || ts->terminal_lines == NULL))
+    ts->owned_lines    = memoryAllocateZero(sizeof(*ts->owned_lines) * ts->netifs_count);
+    if (UNLIKELY(ts->netifs == NULL || ts->terminal_lines == NULL || ts->owned_lines == NULL))
     {
         ctpTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;

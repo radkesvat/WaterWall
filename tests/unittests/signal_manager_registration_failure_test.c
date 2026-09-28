@@ -44,7 +44,7 @@ int main(void)
 
         GSTATE                  = (ww_global_state_t) {0};
         GSTATE.flag_initialized = true;
-        GSTATE.workers_count    = 2;
+        GSTATE.workers_count    = 1;
         GSTATE.shortcut_loops   = loops;
         GSTATE.main_thread_id   = (uint64_t) getTID();
         force_wread_failure     = true;

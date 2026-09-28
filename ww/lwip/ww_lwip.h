@@ -14,7 +14,7 @@
 #include "lwip/netif.h"
 #include "lwip/pbuf.h"
 #include "lwip/prot/tcp.h"
-#include "lwip/tcpip.h"
+#include "lwip/sys.h"
 
 #include "lwip/tcp.h"
 #include "lwip/udp.h"
@@ -92,19 +92,13 @@ enum
 #define ip6AddrNetworkToAddress ip6addr_ntoa
 
 // ------------------------------------------------------------------------
-// TCP/IP Stack Initialization Macro
+// Shared protocol lifetime
 // ------------------------------------------------------------------------
-#define tcpipInit tcpip_init
-
-/*
- * Releases retained transport state and detaches netifs, then cooperatively
- * stops and joins lwIP's real tcpip thread. Call only after node Stop has
- * detached application callbacks and before any worker-local pools or tunnel
- * state are destroyed.
- */
+/* Finalize shared engine services and erase the ISN secret after every owner
+ * engine is destroyed and all event workers are joined. */
 bool wwLwipShutdown(void);
 
-/* Prepare the immutable process-lifetime TCP ISN secret before tcpip_init(). */
+/* Prepare the immutable process-lifetime TCP ISN secret before publication. */
 void wwLwipInitializeProtocolState(void);
 
 /* Platform-neutral LWIP_RAND() implementation backed by the fast CSPRNG. */

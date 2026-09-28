@@ -218,7 +218,7 @@ static void installCreateWorkerContext(void)
 
     GSTATE.flag_initialized = true;
     GSTATE.workers          = g_workers;
-    GSTATE.workers_count    = ARRAY_SIZE(g_workers);
+    GSTATE.workers_count    = ARRAY_SIZE(g_workers) - 1U;
     testWorkerBindWID(0);
 }
 

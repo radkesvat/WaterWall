@@ -28,9 +28,15 @@ void ctpTunnelUpStreamFinish(tunnel_t *t, line_t *l)
      * The line is borrowed - prev created it and prev destroys it - so
      * lineDestroy() is never called here.
      */
-    LOCK_TCPIP_CORE();
-    ctpDetachFlowLocked(t, ls, true);
-    UNLOCK_TCPIP_CORE();
+    if (ls->engine != NULL)
+    {
+        ww_lwip_engine_t *previous;
+        const bool        entered = wwLwipEngineEnter(ls->engine, &previous);
+        assert(entered);
+        discard entered;
+        ctpDetachFlowLocked(t, ls, true);
+        wwLwipEngineLeave(ls->engine, previous);
+    }
 
     ctpLinestateDestroy(ls);
 }

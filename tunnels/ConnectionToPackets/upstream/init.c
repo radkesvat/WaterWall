@@ -129,9 +129,12 @@ void ctpTunnelUpStreamInit(tunnel_t *t, line_t *l)
          * has to go back before the line state does.
          */
         LOGE("ConnectionToPackets: could not arm the connect deadline timer, refusing the flow");
-        LOCK_TCPIP_CORE();
+        ww_lwip_engine_t *previous;
+        const bool        entered = wwLwipEngineEnter(ls->engine, &previous);
+        assert(entered);
+        discard entered;
         ctpDetachFlowLocked(t, ls, false);
-        UNLOCK_TCPIP_CORE();
+        wwLwipEngineLeave(ls->engine, previous);
         ctpRejectLine(t, l, ls);
     }
 }

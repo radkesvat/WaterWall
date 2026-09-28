@@ -15,7 +15,7 @@ static atomic_log_rate_limiter_t udp_oversize_log;
 static atomic_log_rate_limiter_t udp_send_error_log;
 static atomic_log_rate_limiter_t tcp_over_limit_log;
 
-/* What the caller still owes after a core-locked write attempt. */
+/* What the caller still owes after a owner-engine write attempt. */
 typedef enum ptc_write_outcome_e
 {
     /* lwIP or the acknowledgement queue owns the buffer; nothing further. */
@@ -52,7 +52,7 @@ static ptc_write_outcome_t ptcQueueForRetryLocked(ptc_lstate_t *ls, struct tcp_p
 }
 
 /*
- * Requires LOCK_TCPIP_CORE(). Admission runs before the acknowledgement record
+ * Requires the current owner engine. Admission runs before the acknowledgement record
  * exists, so a refusal leaves every queue exactly as it found them and the
  * caller still owns `buf`.
  */
@@ -128,7 +128,7 @@ static ptc_write_outcome_t ptcTcpWriteLocked(ptc_tstate_t *ts, ptc_lstate_t *ls,
     return kPtcWriteReuse;
 }
 
-/* Requires LOCK_TCPIP_CORE(). UDP retains nothing, so it needs no admission. */
+/* Requires the current owner engine. UDP retains nothing, so it needs no admission. */
 static ptc_write_outcome_t ptcUdpSendLocked(ptc_lstate_t *ls, sbuf_t *buf, uint32_t buf_len)
 {
     if (ls->udp_pcb == NULL)
@@ -207,10 +207,13 @@ void ptcTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
-    LOCK_TCPIP_CORE();
+    ww_lwip_engine_t *previous;
+    const bool        entered = wwLwipEngineEnter(ls->engine, &previous);
+    assert(entered);
+    discard                   entered;
     const ptc_write_outcome_t outcome =
         (ls->kind == kPtcLineKindTcp) ? ptcTcpWriteLocked(ts, ls, buf, buf_len) : ptcUdpSendLocked(ls, buf, buf_len);
-    UNLOCK_TCPIP_CORE();
+    wwLwipEngineLeave(ls->engine, previous);
 
     if (outcome == kPtcWriteReuse || outcome == kPtcWriteReuseAndPause || outcome == kPtcWriteOverLimit ||
         outcome == kPtcWriteNoMemory)

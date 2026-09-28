@@ -17,6 +17,7 @@ void lwipThreadPtcTcpConnectionErrorCallback(void *arg, err_t err)
     }
 
     ls->tcp_pcb = NULL;
+    ls->route_ctx = NULL;
 
     if (lineIsAlive(ls->line))
     {
@@ -204,6 +205,8 @@ err_t lwipThreadPtcTcpAccptCallback(void *arg, struct tcp_pcb *newpcb, err_t err
         tcp_abort(newpcb);
         return ERR_ABRT;
     }
+
+    ls->route_ctx = route_ctx;
 
     addresscontextSetIpPortProtocol(
         lineGetSourceAddressContext(l), &newpcb->remote_ip, newpcb->remote_port, IP_PROTO_TCP);

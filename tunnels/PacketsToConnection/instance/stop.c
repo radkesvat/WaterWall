@@ -14,4 +14,5 @@ void ptcTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t 
     discard context;
     assert(currentThreadIsEventWorkerWID(wid));
     ptcDrainOwnedLinesOnCurrentWorker(t, wid);
+    ptcDestroyWorkerRoute(t, wid);
 }

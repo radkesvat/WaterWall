@@ -105,10 +105,20 @@ void ctpTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
-    LOCK_TCPIP_CORE();
+    ww_lwip_engine_t *previous;
+    const bool        entered = wwLwipEngineEnter(ls->engine, &previous);
+    assert(entered);
+    discard                  entered;
     const ctp_flush_result_t flushed = ctpFlushPendingLocked(ls);
-    UNLOCK_TCPIP_CORE();
+    wwLwipEngineLeave(ls->engine, previous);
+    lineRef(l);
     ctpDrainTerminalLinesOnCurrentWorker(t, lineGetWID(l));
+    const bool alive = lineIsAlive(l);
+    lineUnref(l);
+    if (! alive)
+    {
+        return;
+    }
 
     if (UNLIKELY(flushed == kCtpFlushTerminal))
     {

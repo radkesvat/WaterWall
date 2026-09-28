@@ -1,6 +1,7 @@
 #include "worker.h"
 #include "application_shutdown.h"
 #include "context.h"
+#include "engine_runtime.h"
 #include "global_state.h"
 #include "managers/node_manager.h"
 #include "managers/signal_manager.h"
@@ -275,6 +276,7 @@ void workerPerformQuiesce(worker_t *worker, const ww_lifecycle_context_t *contex
         socketmanagerCloseListenersForLoop(worker->loop);
     }
     socketmanagerQuiesceWorker(worker->wid);
+    wwLwipRuntimeQuiesceWorker(worker->wid);
     nodemanagerQuiesceWorker(worker->wid, context);
     asyncdnsCleanup(&worker->dns_resolver);
     workerMessagesCleanupPending(worker);
@@ -337,12 +339,13 @@ void workerPerformTeardown(worker_t *worker)
     worker_message_queue_t *queue = NULL;
     workerMessagesCloseAdmissionAndDetach(worker, &loop, &queue);
     workerMessagesDestroyDetached(queue);
+    wwLwipRuntimeDestroyWorker(worker->wid);
     wloopDestroy(&loop);
     workerDestroyPools(worker);
     workerPublishLifecycle(worker, kWorkerLifecycleExited);
 }
 
-void workerDestroyPseudoWorkerResources(worker_t *worker)
+void workerDestroyNonEventResources(worker_t *worker)
 {
     assert(worker != NULL);
     assert(! worker->has_event_loop);
@@ -462,7 +465,7 @@ static void workerRollbackInitialization(worker_t *worker)
     }
     else
     {
-        workerDestroyPseudoWorkerResources(worker);
+        workerDestroyNonEventResources(worker);
     }
 }
 

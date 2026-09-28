@@ -327,7 +327,7 @@ static void setupEnv(test_env_t *env)
     env->workers[2].wid = 2;
     env->line           = env->lines[0];
 
-    GSTATE.workers_count                 = 3;
+    GSTATE.workers_count                  = 2;
     GSTATE.shortcut_buffer_pools         = env->buffer_pools;
     GSTATE.shortcut_loops                = env->loops;
     GSTATE.shortcut_wios_pools            = env->wios_pools;

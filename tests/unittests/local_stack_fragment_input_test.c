@@ -27,27 +27,13 @@ static void require(bool condition, const char *message)
     }
 }
 
-static atomic_bool lwip_ready;
-
-static void lwipReady(void *arg)
-{
-    discard arg;
-    frandInit();
-    atomicStoreExplicit(&lwip_ready, true, memory_order_release);
-}
-
-/* Each child owns a fresh runtime; no live lwIP thread is inherited by fork. */
+/* Each child owns a fresh runtime; no live worker thread is inherited by fork. */
 static void runInput(uint16_t fragments, uint8_t protocol, bool shifted, uint32_t length)
 {
     require(createNetworkLogger(NULL, true) != NULL, "logger creation failed");
     require(createInternalLogger(NULL, true) != NULL, "internal logger creation failed");
     require(lwipTestRuntimeInitialize(), "lwIP random runtime initialization failed");
     checkSumInit();
-    atomic_init(&lwip_ready, false);
-    tcpip_init(lwipReady, NULL);
-    while (! atomicLoadExplicit(&lwip_ready, memory_order_acquire))
-        YIELD_THREAD();
-
     master_pool_t *large  = masterpoolCreateWithCapacity(8);
     master_pool_t *medium = masterpoolCreateWithCapacity(8);
     master_pool_t *small  = masterpoolCreateWithCapacity(8);
@@ -55,7 +41,7 @@ static void runInput(uint16_t fragments, uint8_t protocol, bool shifted, uint32_
     buffer_pool_t *pool   = bufferpoolCreate(large, medium, small, splice, 8, 4096, 2048, 1024, 4096, 4096);
     require(pool != NULL, "buffer pool creation failed");
     buffer_pool_t *pools[]          = {pool};
-    GSTATE.workers_count            = 2;
+    GSTATE.workers_count            = 1;
     GSTATE.shortcut_buffer_pools    = pools;
     test_worker_registry_t registry = {0};
     testWorkerRegistryInstall(&registry);

@@ -167,7 +167,7 @@ static application_shutdown_request_result_e applicationShutdownRequestInternal(
         return kApplicationShutdownRequestAlreadyAccepted;
     }
 
-    if (! GSTATE.flag_initialized || WORKERS == NULL || WORKERS_COUNT <= WORKER_ADDITIONS)
+    if (! GSTATE.flag_initialized || WORKERS == NULL || WORKERS_COUNT == 0)
     {
         mutexUnlock(&controller->mutex);
         return kApplicationShutdownRequestUnavailable;

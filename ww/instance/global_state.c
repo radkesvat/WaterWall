@@ -3,6 +3,7 @@
 #include "buffer_pool.h"
 #include "bufio/buffer_pool.h"
 #include "bufio/master_pool.h"
+#include "engine_runtime.h"
 #include "global_state_internal.h"
 #include "loggers/core_logger.h"
 #include "loggers/dns_logger.h"
@@ -163,15 +164,6 @@ static bool initializeShortCuts(void)
     return true;
 }
 
-static void tcpipInitDone(void *arg)
-{
-    discard arg;
-    GSTATE.lwip_process_v4_hook = wwDefaultInternalLwipIpv4Hook;
-    GSTATE.lwip_wid             = getTotalWorkersCount() - 1;
-    workerBindCurrentThread(getWorker(GSTATE.lwip_wid));
-    frandInit();
-}
-
 // --- Public API functions ---
 
 // could be declared in lwipopts.h
@@ -304,6 +296,12 @@ static void globalstateRollbackConstruction(wid_t constructed_workers, bool ares
     signalmanagerDestroy();
     applicationShutdownDestroy();
 
+    if (GSTATE.flag_lwip_initialized)
+    {
+        discard wwLwipShutdown();
+        GSTATE.flag_lwip_initialized = 0;
+    }
+
     if (worker_bound)
     {
         workerUnbindCurrentThread();
@@ -327,7 +325,7 @@ static void globalstateRollbackConstruction(wid_t constructed_workers, bool ares
             }
             else
             {
-                workerDestroyPseudoWorkerResources(worker);
+                workerDestroyNonEventResources(worker);
             }
         }
         contvarDestroy(&worker->control_condition);
@@ -423,6 +421,7 @@ ww_startup_result_t createGlobalState(const ww_construction_data_t init_data)
 
     GSTATE                       = (ww_global_state_t) {0};
     GSTATE.flag_initialized      = true;
+    GSTATE.lwip_wid              = kInvalidWID;
     GSTATE.main_thread_id        = (uint64_t) getTID();
     GSTATE.dns_options           = init_data.dns_options;
     GSTATE.domain_strategy       = init_data.domain_strategy;
@@ -523,8 +522,7 @@ ww_startup_result_t createGlobalState(const ww_construction_data_t init_data)
 
     // workers and pools creation
     {
-        _Static_assert((MAX_ORDINARY_WORKERS + WORKER_ADDITIONS) <= kInvalidWID,
-                       "Max workers count must not reach kInvalidWID");
+        _Static_assert(MAX_ORDINARY_WORKERS < kInvalidWID, "Max workers count must not reach kInvalidWID");
 
         WORKERS_COUNT         = init_data.workers_count;
         GSTATE.ram_profile    = init_data.ram_profile;
@@ -537,7 +535,6 @@ ww_startup_result_t createGlobalState(const ww_construction_data_t init_data)
                  MAX_ORDINARY_WORKERS);
             WORKERS_COUNT = MAX_ORDINARY_WORKERS;
         }
-        WORKERS_COUNT += WORKER_ADDITIONS;
 
         size_t worker_bytes;
         if (UNLIKELY(! checkedSizeProduct((size_t) WORKERS_COUNT, sizeof(worker_t), &worker_bytes)))
@@ -571,15 +568,6 @@ ww_startup_result_t createGlobalState(const ww_construction_data_t init_data)
             }
             constructed_workers = i + 1;
         }
-
-        // WORKER_ADDITIONS 1 : lwip worker dose not have event loop
-        if (UNLIKELY(! workerInit(getWorker(getTotalWorkersCount() - 1), getTotalWorkersCount() - 1, false)))
-        {
-            constructed_workers = getTotalWorkersCount();
-            startupFailureRecord(1);
-            goto rollback;
-        }
-        constructed_workers = getTotalWorkersCount();
 
         worker_t *worker0 = getWorker(0);
         workerBindCurrentThread(worker0);
@@ -630,6 +618,12 @@ ww_startup_result_t createGlobalState(const ww_construction_data_t init_data)
         GSTATE.splice_disabled                  = init_data.splice_disabled;
     }
 
+    /* Initialize shared stack services before spawned workers can read the
+     * adjacent startup bitfields. Engines themselves remain owner-lazy. */
+    initTcpIpStack();
+    if (! GSTATE.flag_lwip_initialized)
+        goto rollback;
+
     // Spawn all workers except main worker which is current thread
     {
         worker_t *worker0 = getWorker(0);
@@ -646,8 +640,7 @@ ww_startup_result_t createGlobalState(const ww_construction_data_t init_data)
         // signal delivery on the main thread and out of the worker event loops.
         signalmanagerBlockHandledSignalsForCurrentThread();
 
-        // lwip worker dose not need spawn, it runs its own eventloop
-        for (unsigned int i = 1; i < WORKERS_COUNT - WORKER_ADDITIONS; ++i)
+        for (unsigned int i = 1; i < WORKERS_COUNT; ++i)
         {
             wthread_error_t error = workerSpawn(&WORKERS[i]);
             if (UNLIKELY(error != kWThreadErrorNone))
@@ -785,12 +778,11 @@ void globalstateRunShutdownSequence(void)
     {
         if (! wwLwipShutdown())
         {
-            LOGF("Failed to quiesce and join the lwIP tcpip thread");
+            LOGF("Failed to finalize shared lwIP resources");
             abortProgramNow(1);
         }
         GSTATE.flag_lwip_initialized = 0;
     }
-    workerDestroyPseudoWorkerResources(getWorker(getTotalWorkersCount() - 1));
 
     signalmanagerRunExitObservers();
     if (GSTATE.application_finalizer != NULL)
@@ -864,9 +856,16 @@ void initTcpIpStack(void)
     {
         return;
     }
+    assert((uint64_t) getTID() == GSTATE.main_thread_id);
+    if (! wwLwipRuntimeInitialize(getWorkersCount()))
+    {
+        LOGF("lwIP: failed to allocate worker engine slots");
+        startupFailureRecord(1);
+        return;
+    }
     wwLwipInitializeProtocolState();
+    GSTATE.lwip_process_v4_hook  = wwDefaultInternalLwipIpv4Hook;
     GSTATE.flag_lwip_initialized = 1;
-    tcpipInit(tcpipInitDone, NULL);
 }
 
 extern void call_freeres(void);
@@ -875,6 +874,11 @@ WW_EXPORT void destroyGlobalState(void)
 {
     socketmanagerDestroy();
     nodemanagerDestroy();
+    if (GSTATE.flag_lwip_initialized)
+    {
+        discard wwLwipShutdown();
+        GSTATE.flag_lwip_initialized = 0;
+    }
 #if defined(OS_WIN)
 #ifdef WW_HAVE_WINDIVERT
     windivertManagerShutdown();

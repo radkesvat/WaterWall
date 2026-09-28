@@ -37,7 +37,14 @@ static tunnel_t *create(const char *json)
 static void destroy(tunnel_t *t)
 {
     ptc_tstate_t *ts = tunnelGetState(t);
-    ptcDestroyRouteContexts(t);
+    for (wid_t wid = 0; wid < ts->route_worker_count; ++wid)
+    {
+        lwipTestEngineSelect(wid);
+        ptcDestroyWorkerRoute(t, wid);
+    }
+    memoryFree(ts->routes_v4);
+    mutexDestroy(&ts->drain_lock);
+    mutexDestroy(&ts->dns_lock);
     mutexDestroy(&ts->owned_lines_lock);
     tunnelDestroy(t);
 }
@@ -63,9 +70,9 @@ static void checkResponse(struct netif *netif)
 int main(void)
 {
     require(lwipTestRuntimeInitialize(), "random runtime initialization failed");
-    lwip_init();
+    lwipTestEngineBegin(2);
     test_worker_registry_t registry = {0};
-    GSTATE.workers_count            = 3;
+    GSTATE.workers_count            = 2;
     testWorkerRegistryInstall(&registry);
     GSTATE.flag_lwip_initialized = 1;
     const uint16_t saved         = CORE_DEFAULT_MTU;
@@ -110,7 +117,7 @@ int main(void)
         require(ts->routes_v4 != NULL, "route slots allocation failed");
         for (wid_t wid = 0; wid < 2; ++wid)
         {
-            testWorkerBindWID(wid);
+            lwipTestEngineSelect(wid);
             interface_route_context_t *route = ptcFindOrCreateRouteContextV4(instances[i], wid, NULL);
             require(route != NULL && route->netif.mtu == expected[i], "lazy netif did not use its instance snapshot");
             checkResponse(&route->netif);
@@ -123,6 +130,7 @@ int main(void)
     testWorkerRegistryRestore(&registry);
     GSTATE.workers_count = 0;
     wwLwipTestEraseTcpIsnSecret();
+    lwipTestEngineEnd();
     lwipTestRuntimeCleanup();
     return 0;
 }

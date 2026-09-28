@@ -82,7 +82,7 @@ typedef struct ww_global_state_s
     asyncdns_options_t   dns_options;
     enum domain_strategy domain_strategy;
     uint64_t             main_thread_id;
-    wid_t                lwip_wid;
+    wid_t                lwip_wid; // Reserved ABI slot; always kInvalidWID.
     atomic_wid_t         distribute_wid;
     uint16_t             buffer_allocation_padding;
     uint16_t             capturedevice_queue_start_number;
@@ -132,13 +132,11 @@ extern ww_global_state_t global_ww_state;
 #define RAM_PROFILE          global_ww_state.ram_profile
 #define WORKERS              global_ww_state.workers
 #define WORKERS_COUNT        global_ww_state.workers_count
-#define WORKER_ADDITIONS     1 // 1 for lwip thread (included in workers_count)
-#define MAX_ORDINARY_WORKERS (kInvalidWID - WORKER_ADDITIONS)
+#define MAX_ORDINARY_WORKERS 254
 
 /*!
  * @brief Get the number of total workers.
- *        This includes additional threads that is created during startup
- *        but they may not have an event loop instance!
+ *        Every registered production worker owns an event loop.
  *
  *        note that threads that tunnels may create are not counted as workers (eg TunDevice node)
  * @return The number of workers.
@@ -155,7 +153,7 @@ static inline wid_t getTotalWorkersCount(void)
  */
 static inline wid_t getWorkersCount(void)
 {
-    return (wid_t) WORKERS_COUNT - WORKER_ADDITIONS;
+    return (wid_t) WORKERS_COUNT;
 }
 
 /*!
@@ -264,8 +262,7 @@ WW_EXPORT _Noreturn void globalstateAbortNotEventWorker(const char *accessor);
  *
  * Use this in internal callbacks whose contract already guarantees an ordinary
  * event worker (event-loop/timer/wio callbacks, worker-message callbacks, tunnel
- * payload handlers). It never falls back to worker 0: an unregistered thread or
- * the lwIP pseudo-worker aborts instead.
+ * payload handlers). It never falls back to worker 0: a caller without an event-worker context aborts instead.
  *
  * Externally reachable or otherwise fallible code must branch on
  * currentThreadIsEventWorker()/tryGetCurrentEventWorker() and fail cleanly
@@ -287,7 +284,7 @@ static inline worker_t *getCurrentEventWorker(void)
  * @brief Nullable form of getCurrentEventWorker(), for fallible callers.
  *
  * @return The current thread's worker, or NULL when the caller is unregistered,
- *         is the lwIP pseudo-worker, or runs before/after worker storage exists.
+ *         owns no event loop, or runs before/after worker storage exists.
  */
 static inline worker_t *tryGetCurrentEventWorker(void)
 {
@@ -425,7 +422,7 @@ static inline wid_t getNextDistributionWID(void)
 {
     wid_t wid = atomicAddExplicit(&GSTATE.distribute_wid, 1, memory_order_relaxed);
 
-    // we dont consider lwip thread
+    // Only registered event workers participate.
     if (wid >= getWorkersCount())
     {
         atomicStoreRelaxed(&GSTATE.distribute_wid, 1);
@@ -486,7 +483,7 @@ WW_EXPORT void globalstateStopSystemLoadSampler(void);
 WW_EXPORT void globalstateUpdateAllocationPadding(uint16_t padding);
 
 /*!
- * @brief Initializes the Lwip worker and spawn it.
+ * @brief Initializes shared lwIP infrastructure before worker publication; creates no thread.
  */
 WW_EXPORT void initTcpIpStack(void);
 
@@ -499,7 +496,7 @@ WW_EXPORT void destroyGlobalState(void);
  * Recycles a buffer into the **current event worker's** pool.
  *
  * This is only correct when the calling thread owns the buffer's pool, which is
- * why it rejects unregistered threads and the lwIP pseudo-worker instead of
+ * why it rejects callers without an event-worker context instead of
  * indexing a shortcut array. Cross-worker cleanup paths must not be converted to
  * it: use lineReuseBuffer()/bufferpoolReuseBuffer() with the owning pool when the
  * owner is known, or sbufDestroy() when it is not.

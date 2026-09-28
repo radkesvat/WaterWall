@@ -279,7 +279,7 @@ static void begin(bool udp, const char *target, uint32_t pool_size, unsigned ini
     twfWorkerEnvSetupWithBufferSizes(&f.env, pool_size, 512, 352, 8192, pool_size);
     if (test_wid != 0)
     {
-        GSTATE.workers_count         = 3;
+        GSTATE.workers_count         = 2;
         f.workers[0]                 = f.env.worker;
         f.workers[1]                 = f.env.worker;
         f.workers[1].wid             = test_wid;
@@ -363,7 +363,7 @@ static void end(void)
     memoryFree(f.node.type);
     if (test_wid != 0)
     {
-        GSTATE.workers_count         = 2;
+        GSTATE.workers_count         = 1;
         GSTATE.workers               = &f.env.worker;
         GSTATE.shortcut_buffer_pools = f.env.pool_shortcut;
         GSTATE.shortcut_loops        = f.env.loop_shortcut;

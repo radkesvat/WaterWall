@@ -666,7 +666,7 @@ static void testRejectionAndMalformedPackets(void)
 int main(void)
 {
     const uint32_t saved_workers_count = GSTATE.workers_count;
-    GSTATE.workers_count               = 3;
+    GSTATE.workers_count               = 2;
 
     require(globalstateInitializeSecureRandom(), "the operating-system random source is unavailable");
     require(frandGlobalInit(), "fast random initialization failed");

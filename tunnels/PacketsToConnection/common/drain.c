@@ -6,8 +6,8 @@
 /*
  * A post-line TCP closer.  The normal line may be destroyed as soon as Finish
  * returns, so this object owns only a PCB and a global-allocator copy of bytes
- * that tcp_write() had not yet accepted.  All access is under the lwIP core
- * lock, including callbacks from the timer thread.
+ * that tcp_write() had not yet accepted. Lists and PCBs belong to one worker
+ * engine. Only the aggregate node allowance takes the short drain mutex.
  */
 
 enum
@@ -43,6 +43,7 @@ struct ptc_tcp_drain_s
     ptc_tcp_drain_t *next;
     ptc_tcp_drain_t *prev;
     tunnel_t        *tunnel;
+    interface_route_context_t *route;
     struct tcp_pcb  *pcb;
     uint64_t         deadline_ms;
     uint8_t         *bytes;
@@ -75,7 +76,7 @@ err_t ptcTcpSendFinLocked(struct tcp_pcb *pcb)
     return tcp_shutdown(pcb, 0, 1);
 }
 
-static void ptcDrainUnlinkLocked(ptc_tstate_t *ts, ptc_tcp_drain_t *drain)
+static void ptcDrainUnlinkLocked(ptc_tcp_drain_t *drain)
 {
     if (drain->prev != NULL)
     {
@@ -83,7 +84,7 @@ static void ptcDrainUnlinkLocked(ptc_tstate_t *ts, ptc_tcp_drain_t *drain)
     }
     else
     {
-        ts->drains = drain->next;
+        drain->route->drains = drain->next;
     }
     if (drain->next != NULL)
     {
@@ -95,9 +96,8 @@ static void ptcDrainFreeLocked(ptc_tcp_drain_t *drain)
 {
     ptc_tstate_t *ts = tunnelGetState(drain->tunnel);
 
-    ptcDrainUnlinkLocked(ts, drain);
-    ts->drain_bytes -= drain->len;
-    --ts->drain_count;
+    ptcDrainUnlinkLocked(drain);
+    ptcDrainBudgetRelease(ts, drain->len);
     memoryFree(drain->bytes);
     memoryFree(drain);
 }
@@ -420,14 +420,8 @@ ptc_tcp_drain_adopt_result_t ptcTcpDrainAdoptLocked(tunnel_t *t, ptc_lstate_t *l
     }
 
     const size_t queued = bufferqueueGetBufLen(&ls->pause_queue);
-    if (queued > UINT32_MAX || ts->drain_bytes + queued > kPtcMaxDrainBytesTotal || ts->drain_count >= kPtcMaxDrains)
-    {
-        if (atomicLogRateLimiterShouldLog(&g_ptc_drain_budget_log, kPtcDrainLogIntervalMs))
-        {
-            LOGW("PacketsToConnection: resetting a closing flow because the bounded closer budget is full");
-        }
+    if (queued > UINT32_MAX)
         return kPtcTcpDrainFailed;
-    }
 
     if (! ptcPausedReadAccumulateLocked(ls, 0) ||
         (ls->rx_uncredited > 0 && ! ptcReturnReceiveCreditLocked(ls, ls->rx_uncredited)))
@@ -436,9 +430,17 @@ ptc_tcp_drain_adopt_result_t ptcTcpDrainAdoptLocked(tunnel_t *t, ptc_lstate_t *l
     }
     ls->read_paused_len = 0;
 
+    if (! ptcDrainBudgetReserve(ts, (uint32_t) queued))
+    {
+        if (atomicLogRateLimiterShouldLog(&g_ptc_drain_budget_log, kPtcDrainLogIntervalMs))
+            LOGW("PacketsToConnection: resetting a closing flow because the bounded closer budget is full");
+        return kPtcTcpDrainFailed;
+    }
+
     ptc_tcp_drain_t *drain = memoryAllocateZero(sizeof(*drain));
     if (drain == NULL)
     {
+        ptcDrainBudgetRelease(ts, (uint32_t) queued);
         if (atomicLogRateLimiterShouldLog(&g_ptc_drain_alloc_log, kPtcDrainLogIntervalMs))
         {
             LOGW("PacketsToConnection: out of memory for a closing TCP flow");
@@ -453,24 +455,23 @@ ptc_tcp_drain_adopt_result_t ptcTcpDrainAdoptLocked(tunnel_t *t, ptc_lstate_t *l
         if (drain->bytes == NULL)
         {
             memoryFree(drain);
+            ptcDrainBudgetRelease(ts, total);
             return kPtcTcpDrainFailed;
         }
     }
 
+    drain->route = ls->route_ctx;
+    assert(drain->route != NULL && drain->route->engine == wwLwipEngineCurrent());
     drain->tunnel        = t;
     drain->pcb           = ls->tcp_pcb;
     drain->len           = total;
     drain->deadline_ms   = ptcDrainNowMs() + (uint64_t) kPtcDrainTimeoutMs;
     drain->peer_finished = drain->pcb->state == CLOSE_WAIT;
 
-    drain->next = ts->drains;
-    if (ts->drains != NULL)
-    {
-        ts->drains->prev = drain;
-    }
-    ts->drains = drain;
-    ts->drain_bytes += total;
-    ++ts->drain_count;
+    drain->next = drain->route->drains;
+    if (drain->next != NULL)
+        drain->next->prev = drain;
+    drain->route->drains = drain;
 
     tcp_output(ls->tcp_pcb);
 
@@ -480,12 +481,12 @@ ptc_tcp_drain_adopt_result_t ptcTcpDrainAdoptLocked(tunnel_t *t, ptc_lstate_t *l
     return kPtcTcpDrainAdopted;
 }
 
-void ptcTcpDrainDestroyAllLocked(tunnel_t *t)
+void ptcTcpDrainDestroyRoute(interface_route_context_t *route)
 {
-    ptc_tstate_t *ts = tunnelGetState(t);
-    while (ts->drains != NULL)
+    assert(route->engine == wwLwipEngineCurrent());
+    while (route->drains != NULL)
     {
-        ptc_tcp_drain_t *drain = ts->drains;
+        ptc_tcp_drain_t *drain = route->drains;
         struct tcp_pcb  *pcb   = ptcDrainDetachPcbLocked(drain);
         if (pcb != NULL)
         {
@@ -493,4 +494,26 @@ void ptcTcpDrainDestroyAllLocked(tunnel_t *t)
         }
         ptcDrainFreeLocked(drain);
     }
+}
+
+bool ptcDrainBudgetReserve(ptc_tstate_t *ts, uint32_t bytes)
+{
+    mutexLock(&ts->drain_lock);
+    const bool admitted = ts->drain_count < kPtcMaxDrains && bytes <= kPtcMaxDrainBytesTotal - ts->drain_bytes;
+    if (admitted)
+    {
+        ++ts->drain_count;
+        ts->drain_bytes += bytes;
+    }
+    mutexUnlock(&ts->drain_lock);
+    return admitted;
+}
+
+void ptcDrainBudgetRelease(ptc_tstate_t *ts, uint32_t bytes)
+{
+    mutexLock(&ts->drain_lock);
+    assert(ts->drain_count > 0 && ts->drain_bytes >= bytes);
+    --ts->drain_count;
+    ts->drain_bytes -= bytes;
+    mutexUnlock(&ts->drain_lock);
 }

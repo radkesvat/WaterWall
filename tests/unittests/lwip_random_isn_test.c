@@ -1,7 +1,5 @@
 #include "lwip_test_runtime.h"
 
-static atomic_bool g_tcpip_initialized;
-
 static const uint8_t kFastRandomKey[32] = {
     0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
     0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F,
@@ -26,13 +24,6 @@ static ip_addr_t parseAddress(const char *text)
     ip_addr_t address;
     require(ipaddr_aton(text, &address) != 0, "failed to parse a test address");
     return address;
-}
-
-static void tcpipInitialized(void *argument)
-{
-    discard argument;
-    frandInit();
-    atomicStoreExplicit(&g_tcpip_initialized, true, memory_order_release);
 }
 
 static void caseLwipRandUsesCachedFastStream(void)
@@ -122,7 +113,7 @@ static void caseTcpIsnInputsAndClockAreBound(void)
 int main(void)
 {
     require(lwipTestRuntimeInitialize(), "failed to initialize the lwIP random runtime");
-    require(wwLwipTestTcpIsnSecretIsInitialized(), "TCP ISN secret was absent before tcpip_init");
+    require(wwLwipTestTcpIsnSecretIsInitialized(), "TCP ISN secret was absent before engine creation");
 
     caseTcpIsnCanonicalVectors();
     caseTcpIsnInputsAndClockAreBound();
@@ -132,14 +123,8 @@ int main(void)
     require(! wwLwipTestTcpIsnSecretIsInitialized(), "test erasure left the TCP ISN secret initialized");
     wwLwipTestSetTcpIsnSecret(kIsnSecret);
 
-    atomic_init(&g_tcpip_initialized, false);
-    tcpip_init(tcpipInitialized, NULL);
-    while (! atomicLoadExplicit(&g_tcpip_initialized, memory_order_acquire))
-    {
-        YIELD_THREAD();
-    }
-    require(wwLwipShutdown(), "failed to join the lwIP thread");
-    require(! wwLwipTestTcpIsnSecretIsInitialized(), "joined lwIP shutdown did not erase the TCP ISN secret");
+    require(wwLwipShutdown(), "failed to finalize lwIP protocol state");
+    require(! wwLwipTestTcpIsnSecretIsInitialized(), "lwIP finalization did not erase the TCP ISN secret");
 
     lwipTestRuntimeCleanup();
     puts("lwip_random_isn_test: all cases passed");

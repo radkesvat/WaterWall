@@ -32,7 +32,7 @@ static void fixtureCreate(worker_t workers[2], wloop_t *loop)
     GSTATE                      = (ww_global_state_t) {0};
     GSTATE.flag_initialized     = true;
     GSTATE.workers              = workers;
-    GSTATE.workers_count        = 2;
+    GSTATE.workers_count        = 1;
     GSTATE.application_shutdown = applicationShutdownCreate();
     GSTATE.signal_manager       = signalmanagerCreate();
     require(GSTATE.application_shutdown != NULL && GSTATE.signal_manager != NULL,

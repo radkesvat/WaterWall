@@ -36,6 +36,13 @@
 
 #include <stdint.h>
 
+#define WW_LWIP_WORKER_ENGINES 1
+#if defined(_MSC_VER)
+#define WW_LWIP_THREAD_LOCAL __declspec(thread)
+#else
+#define WW_LWIP_THREAD_LOCAL _Thread_local
+#endif
+
 #ifdef __cplusplus
 extern "C"
 {
@@ -65,10 +72,10 @@ extern "C"
 #define LWIP_IPV4 1
 #define LWIP_IPV6 1
 
-#define NO_SYS         0
-#define LWIP_SOCKET    (NO_SYS == 0)
-#define LWIP_NETCONN   (NO_SYS == 0)
-#define LWIP_NETIF_API (NO_SYS == 0)
+#define NO_SYS         1
+#define LWIP_SOCKET    0
+#define LWIP_NETCONN   0
+#define LWIP_NETIF_API 0
 
 #define LWIP_IGMP LWIP_IPV4
 #define LWIP_ICMP LWIP_IPV4
@@ -94,7 +101,7 @@ extern "C"
 #define LWIP_SO_RCVTIMEO    1
 #define LWIP_SO_RCVBUF      1
 
-#define LWIP_TCPIP_CORE_LOCKING 1
+#define LWIP_TCPIP_CORE_LOCKING 0
 
 #define LWIP_NETIF_LINK_CALLBACK       1
 #define LWIP_NETIF_STATUS_CALLBACK     1
@@ -277,9 +284,9 @@ a lot of data that needs to be copied, this should be set high. */
  * for certain critical regions during buffer allocation, deallocation and memory
  * allocation and deallocation.
  */
-#define SYS_LIGHTWEIGHT_PROT        (NO_SYS == 0)
+#define SYS_LIGHTWEIGHT_PROT        1
 
-/* ---------- TCP options ---------- */
+    /* ---------- TCP options ---------- */
 #define LWIP_TCP                    1
 #define TCP_TTL                     255
 
@@ -487,11 +494,21 @@ a lot of data that needs to be copied, this should be set high. */
 
 /* The following defines must be done even in OPTTEST mode: */
 
-#if ! defined(NO_SYS) || ! NO_SYS /* default is 0 */
-void sys_check_core_locking(void);
-#define LWIP_ASSERT_CORE_LOCKED() sys_check_core_locking()
-#endif
-
+void wwLwipEngineAssertCurrent(void);
+void wwLwipEngineAssertOwner(const void *owner);
+#define LWIP_ASSERT_CORE_LOCKED() wwLwipEngineAssertCurrent()
+#define WW_LWIP_ASSERT_PCB_OWNER(pcb)                                                                                  \
+    do                                                                                                                 \
+    {                                                                                                                  \
+        if ((pcb) != NULL)                                                                                             \
+            wwLwipEngineAssertOwner((pcb)->ww_engine);                                                                 \
+    } while (0)
+#define WW_LWIP_ASSERT_NETIF_OWNER(netif)                                                                              \
+    do                                                                                                                 \
+    {                                                                                                                  \
+        if ((netif) != NULL)                                                                                           \
+            wwLwipEngineAssertOwner((netif)->ww_engine);                                                               \
+    } while (0)
 #ifndef LWIP_PLATFORM_ASSERT
 /* Define LWIP_PLATFORM_ASSERT to something to catch missing stdio.h includes */
 void lwip_example_app_platform_assert(const char *msg, int line, const char *file);
@@ -505,7 +522,7 @@ void lwip_example_app_platform_assert(const char *msg, int line, const char *fil
 // #define MEM_CUSTOM_CALLOC(n, sz) memoryAllocateZero((size_t) ((n) * (sz)))
 // #define MEM_CUSTOM_ALLOCATOR     1
 
-#define LWIP_TCPIP_CORE_LOCKING_INPUT 1
+#define LWIP_TCPIP_CORE_LOCKING_INPUT 0
 
 #define MEMP_USE_CUSTOM_POOLS         1
 #define MEM_USE_POOLS                 1

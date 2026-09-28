@@ -75,7 +75,9 @@
 static LARGE_INTEGER freq, sys_start_time;
 #define SYS_INITIALIZED() (freq.QuadPart != 0)
 
+#if ! NO_SYS
 static DWORD netconn_sem_tls_index;
+#endif
 
 static void
 sys_init_timing(void)
@@ -84,20 +86,21 @@ sys_init_timing(void)
   QueryPerformanceCounter(&sys_start_time);
 }
 
-static LONGLONG
-sys_get_ms_longlong(void)
+static LONGLONG sys_get_ms_longlong(void)
 {
-  LONGLONG ret;
-  LARGE_INTEGER now;
-#if NO_SYS
-  if (!SYS_INITIALIZED()) {
-    sys_init();
-    LWIP_ASSERT("initialization failed", SYS_INITIALIZED());
-  }
+    LONGLONG      ret;
+    LARGE_INTEGER now;
+#if NO_SYS && ! WW_LWIP_WORKER_ENGINES
+    if (! SYS_INITIALIZED())
+    {
+        sys_init();
+        LWIP_ASSERT("initialization failed", SYS_INITIALIZED());
+    }
 #endif /* NO_SYS */
-  QueryPerformanceCounter(&now);
-  ret = now.QuadPart-sys_start_time.QuadPart;
-  return (u32_t)(((ret)*1000)/freq.QuadPart);
+    LWIP_ASSERT("clock initialized before worker publication", SYS_INITIALIZED());
+    QueryPerformanceCounter(&now);
+    ret = now.QuadPart - sys_start_time.QuadPart;
+    return (u32_t) (((ret) * 1000) / freq.QuadPart);
 }
 
 u32_t
@@ -127,23 +130,24 @@ InitSysArchProtect(void)
   InitializeCriticalSection(&critSec);
 }
 
-sys_prot_t
-sys_arch_protect(void)
+sys_prot_t sys_arch_protect(void)
 {
-#if NO_SYS
-  if (!SYS_INITIALIZED()) {
-    sys_init();
-    LWIP_ASSERT("initialization failed", SYS_INITIALIZED());
-  }
+#if NO_SYS && ! WW_LWIP_WORKER_ENGINES
+    if (! SYS_INITIALIZED())
+    {
+        sys_init();
+        LWIP_ASSERT("initialization failed", SYS_INITIALIZED());
+    }
 #endif
-  EnterCriticalSection(&critSec);
+    LWIP_ASSERT("protection initialized before worker publication", SYS_INITIALIZED());
+    EnterCriticalSection(&critSec);
 #if LWIP_SYS_ARCH_CHECK_NESTED_PROTECT
-  LWIP_ASSERT("nested SYS_ARCH_PROTECT", protection_depth == 0);
+    LWIP_ASSERT("nested SYS_ARCH_PROTECT", protection_depth == 0);
 #endif
 #if LWIP_WIN32_SYS_ARCH_ENABLE_PROTECT_COUNTER
-  protection_depth++;
+    protection_depth++;
 #endif
-  return 0;
+    return 0;
 }
 
 void
@@ -176,13 +180,14 @@ sys_arch_check_not_protected(void)
 #define sys_arch_check_not_protected()
 #endif
 
-static void
-msvc_sys_init(void)
+static void msvc_sys_init(void)
 {
-  sys_init_timing();
-  InitSysArchProtect();
-  netconn_sem_tls_index = TlsAlloc();
-  LWIP_ASSERT("TlsAlloc failed", netconn_sem_tls_index != TLS_OUT_OF_INDEXES);
+    sys_init_timing();
+    InitSysArchProtect();
+#if ! NO_SYS
+    netconn_sem_tls_index = TlsAlloc();
+    LWIP_ASSERT("TlsAlloc failed", netconn_sem_tls_index != TLS_OUT_OF_INDEXES);
+#endif
 }
 
 void
@@ -789,4 +794,13 @@ lwip_win32_platform_diag(const char *format, ...)
      vsnprintf here */
   vprintf(format, ap);
   va_end(ap);
+}
+
+/* Called exclusively after all worker engines and retained buffers have settled. */
+void wwLwipPortCleanup(void)
+{
+    LWIP_ASSERT("allocator protection released before finalization", protection_depth == 0);
+    DeleteCriticalSection(&critSec);
+    freq.QuadPart           = 0;
+    sys_start_time.QuadPart = 0;
 }

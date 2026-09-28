@@ -302,7 +302,7 @@ static void envSetup(test_env_t *env)
     env->buffer_pools[0]    = env->worker_buffer_pool;
 
     GSTATE.flag_initialized = true;
-    GSTATE.workers_count    = 2;
+    GSTATE.workers_count    = 1;
     testWorkerRegistryInstall(&g_test_worker_registry);
     GSTATE.shortcut_buffer_pools = env->buffer_pools;
     GSTATE.ram_profile           = 1;

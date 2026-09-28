@@ -150,7 +150,7 @@ static inline void genericpoolReuseItem(generic_pool_t *pool, pool_item_t *b)
 /**
  * Return an item through the shared master pool without touching worker-local
  * storage. This is the terminal path for a pooled object whose final reference
- * is released by a foreign or pseudo-worker thread.
+ * is released by a foreign or unregistered thread.
  */
 void genericpoolReuseItemShared(generic_pool_t *pool, pool_item_t *item);
 

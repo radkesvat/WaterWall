@@ -1,5 +1,5 @@
-/* Real PTC lwIP callbacks must reconcile refused owner work without re-locking
- * the already-held core mutex or losing credit, pbuf, line, or buffer ownership. */
+/* Real PTC callbacks must reconcile refused scheduled work inside their owner
+ * engine without losing credit, pbuf, line, or buffer ownership. */
 
 #include "PacketsToConnection/structure.h"
 
@@ -14,6 +14,7 @@ typedef enum ptc_submit_expectation_e
     kPtcSubmitNone = 0,
     kPtcSubmitControl,
     kPtcSubmitBufferedDelivery,
+    kPtcSubmitErrorClose,
 } ptc_submit_expectation_t;
 
 typedef struct ptc_fixture_s
@@ -25,6 +26,7 @@ typedef struct ptc_fixture_s
     tunnel_chain_t  *chain;
     line_t          *line;
     line_t          *packet_line;
+    ww_lwip_engine_t *engine;
 } ptc_fixture_t;
 
 static uint32_t                 g_pool_size = 4096;
@@ -32,43 +34,34 @@ static ptc_fixture_t           *g_fixture;
 static ptc_submit_expectation_t g_submit_expectation;
 static uint32_t                 g_schedule_calls;
 static uint32_t                 g_buffer_settlements;
-static thread_local uint32_t    g_core_lock_depth;
+static ww_lwip_engine_t        *test_previous;
+static void                     enterEngine(void)
+{
+    twfRequire(wwLwipEngineEnter(g_fixture->engine, &test_previous), "test engine entry refused");
+}
+static void leaveEngine(void)
+{
+    wwLwipEngineLeave(g_fixture->engine, test_previous);
+}
 
-void                      __real_sys_lock_tcpip_core(void);
-void                      __real_sys_unlock_tcpip_core(void);
-void                      __wrap_sys_lock_tcpip_core(void);
-void                      __wrap_sys_unlock_tcpip_core(void);
 line_task_submit_result_e __wrap_lineScheduleTask(line_t *const line, LineTaskFnNoBuf task, tunnel_t *t,
                                                   LineTaskCancelFn on_cancel);
 line_task_submit_result_e __wrap_lineScheduleTaskWithBuf(line_t *const line, LineTaskFnWithBuf task, tunnel_t *t,
                                                          sbuf_t *buf, LineTaskCancelFn on_cancel);
 
-void __wrap_sys_lock_tcpip_core(void)
-{
-    twfRequire(g_core_lock_depth == 0, "PacketsToConnection recursively acquired the lwIP core lock");
-    __real_sys_lock_tcpip_core();
-    g_core_lock_depth = 1;
-}
-
-void __wrap_sys_unlock_tcpip_core(void)
-{
-    twfRequire(g_core_lock_depth == 1, "PacketsToConnection released an unheld lwIP core lock");
-    g_core_lock_depth = 0;
-    __real_sys_unlock_tcpip_core();
-}
-
 static uint32_t ptcTcpPcbUsedLocked(void)
 {
-    twfRequire(g_core_lock_depth == 1, "PacketsToConnection read PCB statistics without the lwIP core lock");
+    twfRequire(wwLwipEngineCurrent() == g_fixture->engine,
+               "PacketsToConnection read PCB statistics without the owner engine");
     twfRequire(lwip_stats.memp[MEMP_TCP_PCB] != NULL, "lwIP did not publish TCP PCB pool statistics");
     return (uint32_t) lwip_stats.memp[MEMP_TCP_PCB]->used;
 }
 
 static uint32_t ptcTcpPcbUsed(void)
 {
-    LOCK_TCPIP_CORE();
+    enterEngine();
     const uint32_t used = ptcTcpPcbUsedLocked();
-    UNLOCK_TCPIP_CORE();
+    leaveEngine();
     return used;
 }
 
@@ -76,14 +69,17 @@ line_task_submit_result_e __wrap_lineScheduleTask(line_t *const line, LineTaskFn
                                                   LineTaskCancelFn on_cancel)
 {
     ptc_fixture_t *fixture = g_fixture;
-    twfRequire(fixture != NULL && g_submit_expectation == kPtcSubmitControl,
+    twfRequire(fixture != NULL &&
+                   (g_submit_expectation == kPtcSubmitControl || g_submit_expectation == kPtcSubmitErrorClose),
                "PacketsToConnection submitted an unexpected no-buffer task");
-    twfRequire(line == fixture->line && t == fixture->ptc && task == ptcWriteRetryTask,
+    twfRequire(line == fixture->line && t == fixture->ptc &&
+                   task == (g_submit_expectation == kPtcSubmitErrorClose ? ptcCloseLineTask : ptcWriteRetryTask),
                "PacketsToConnection submitted the wrong control task");
     twfRequire(on_cancel == NULL, "PacketsToConnection requested lock-reentrant cancellation notification");
-    twfRequire(g_core_lock_depth == 1, "PacketsToConnection control submission did not hold the lwIP core lock");
-    twfRequire(! lineIsOnCurrentEventWorker(line),
-               "PacketsToConnection control refusal did not originate from a foreign lwIP context");
+    twfRequire(wwLwipEngineCurrent() == g_fixture->engine,
+               "PacketsToConnection control submission did not hold the owner engine");
+    twfRequire(lineIsOnCurrentEventWorker(line),
+               "PacketsToConnection control refusal did not originate from its owner engine");
 
     lineRef(line);
     lineUnref(line);
@@ -100,7 +96,8 @@ line_task_submit_result_e __wrap_lineScheduleTaskWithBuf(line_t *const line, Lin
     twfRequire(line == fixture->line && t == fixture->ptc && task == ptcDeliverPayloadTask,
                "PacketsToConnection submitted the wrong buffered task");
     twfRequire(on_cancel == NULL, "PacketsToConnection requested lock-reentrant cancellation notification");
-    twfRequire(g_core_lock_depth == 1, "PacketsToConnection buffered submission did not hold the lwIP core lock");
+    twfRequire(wwLwipEngineCurrent() == g_fixture->engine,
+               "PacketsToConnection buffered submission did not hold the owner engine");
     twfRequire(lineIsOnCurrentEventWorker(line),
                "PacketsToConnection buffered delivery did not originate from the line owner");
 
@@ -121,6 +118,9 @@ static void ptcFixtureSetup(ptc_fixture_t *fixture)
                                      0,
                                      g_pool_size,
                                      g_pool_size);
+
+    fixture->engine = wwLwipEngineCreate(0, fixture->env.loop);
+    twfRequire(fixture->engine != NULL, "failed to create owner engine");
 
     fixture->ptc  = tunnelCreate(NULL, sizeof(ptc_tstate_t), sizeof(ptc_lstate_t));
     fixture->next = twfCreateNextTunnel(&fixture->trace);
@@ -182,12 +182,13 @@ static void ptcFixtureTeardown(ptc_fixture_t *fixture)
     tunnelDestroy(fixture->next);
     tunnelDestroy(fixture->ptc);
     g_fixture = NULL;
+    wwLwipEngineDestroy(fixture->engine);
     twfWorkerEnvTeardown(&fixture->env);
 }
 
 static struct tcp_pcb *ptcAttachTestPcb(ptc_fixture_t *fixture, uint32_t pcb_baseline)
 {
-    LOCK_TCPIP_CORE();
+    enterEngine();
     struct tcp_pcb *pcb = tcp_new_ip_type(IPADDR_TYPE_V4);
     twfRequire(pcb != NULL, "lwIP could not allocate a PTC test PCB");
     twfRequireEqualU32(
@@ -200,13 +201,13 @@ static struct tcp_pcb *ptcAttachTestPcb(ptc_fixture_t *fixture, uint32_t pcb_bas
     tcp_sent(pcb, ptcTcpSendCompleteCallback);
     tcp_poll(pcb, ptcTcpPollCallback, kPtcWritePollInterval);
     tcp_err(pcb, lwipThreadPtcTcpConnectionErrorCallback);
-    UNLOCK_TCPIP_CORE();
+    leaveEngine();
     return pcb;
 }
 
-static void caseForeignRetryRefusalPublishesAndDrainsOwnedLine(void)
+static void caseOwnerRetryRefusalPublishesAndDrainsOwnedLine(void)
 {
-    twfSetCase("PacketsToConnection foreign retry refusal under the lwIP core lock");
+    twfSetCase("PacketsToConnection owner retry refusal inside its engine");
     tosResetProcessApi(true);
 
     ptc_fixture_t fixture;
@@ -218,12 +219,10 @@ static void caseForeignRetryRefusalPublishesAndDrainsOwnedLine(void)
     ls->next_init_sent           = true;
 
     g_submit_expectation = kPtcSubmitControl;
-    testWorkerUnbindWID();
-    LOCK_TCPIP_CORE();
+    enterEngine();
     const err_t result = ptcTcpPollCallback(ls, pcb);
     twfRequireEqualU32(ptcTcpPcbUsedLocked(), pcb_baseline, "PTC retry refusal leaked its detached TCP PCB");
-    UNLOCK_TCPIP_CORE();
-    testWorkerBindWID(0);
+    leaveEngine();
     g_submit_expectation = kPtcSubmitNone;
 
     ptc_tstate_t *state = tunnelGetState(fixture.ptc);
@@ -234,7 +233,7 @@ static void caseForeignRetryRefusalPublishesAndDrainsOwnedLine(void)
     twfRequire(ls->tcp_pcb == NULL && ls->terminal_required,
                "PTC retry refusal did not detach and publish the terminal owner line");
     twfRequire(state->owned_lines[0] == fixture.line, "PTC owner registry lost the refused line");
-    twfRequire(lineIsAlive(fixture.line), "PTC destroyed its owned line from the foreign lwIP callback");
+    twfRequire(lineIsAlive(fixture.line), "PTC destroyed its owned line inside the protocol callback");
     tosRequireAcceptedRequest(1);
     ptcFixtureRequirePacketLineAlive(&fixture);
 
@@ -252,6 +251,35 @@ static void caseForeignRetryRefusalPublishesAndDrainsOwnedLine(void)
     ptcFixtureTeardown(&fixture);
 }
 
+static void caseErrorClearsRouteBeforeTerminalClose(void)
+{
+    twfSetCase("PTC error clears its route before refused terminal reconciliation");
+    tosResetProcessApi(true);
+    ptc_fixture_t fixture;
+    ptcFixtureSetup(&fixture);
+    const uint32_t            baseline = ptcTcpPcbUsed();
+    struct tcp_pcb           *pcb      = ptcAttachTestPcb(&fixture, baseline);
+    ptc_lstate_t             *ls       = lineGetState(fixture.line, fixture.ptc);
+    interface_route_context_t route    = {.engine = fixture.engine};
+    ls->route_ctx                      = &route;
+    g_submit_expectation               = kPtcSubmitErrorClose;
+    enterEngine();
+    tcp_abort(pcb);
+    leaveEngine();
+    g_submit_expectation = kPtcSubmitNone;
+    twfRequire(ls->tcp_pcb == NULL && ls->route_ctx == NULL && ls->terminal_required,
+               "PTC error retained a stack attachment");
+    twfRequireEqualU32(ptcTcpPcbUsed(), baseline, "PTC error leaked its PCB");
+    tosRequireAcceptedRequest(1);
+    lineRef(fixture.line);
+    ptcDrainTerminalLinesOnCurrentWorker(fixture.ptc, 0);
+    twfRequire(! lineIsAlive(fixture.line), "PTC error left its owned line alive");
+    twfRequireLineStateZeroed(fixture.line, fixture.ptc, "PTC error left line state alive");
+    lineUnref(fixture.line);
+    fixture.line = NULL;
+    ptcFixtureTeardown(&fixture);
+}
+
 static void caseCreditedDeliveryRefusalRollsBackCreditAndRetainsPbuf(void)
 {
     twfSetCase("PacketsToConnection credited TCP delivery refusal");
@@ -263,7 +291,7 @@ static void caseCreditedDeliveryRefusalRollsBackCreditAndRetainsPbuf(void)
     struct tcp_pcb *pcb          = ptcAttachTestPcb(&fixture, pcb_baseline);
     ptc_lstate_t   *ls           = lineGetState(fixture.line, fixture.ptc);
 
-    LOCK_TCPIP_CORE();
+    enterEngine();
     struct pbuf *p = pbuf_alloc(PBUF_RAW, 41, PBUF_RAM);
     twfRequire(p != NULL, "lwIP could not allocate the PTC test pbuf");
     memorySet(p->payload, 0xA6, p->len);
@@ -275,7 +303,7 @@ static void caseCreditedDeliveryRefusalRollsBackCreditAndRetainsPbuf(void)
     twfRequireEqualU32(ptcTcpPcbUsedLocked(),
                        pcb_baseline + 1U,
                        "PTC rejected delivery released the PCB before explicit owner cleanup");
-    UNLOCK_TCPIP_CORE();
+    leaveEngine();
 
     twfRequire(result == ERR_MEM, "PTC buffered refusal did not ask lwIP to replay its pbuf");
     twfRequireEqualU32(g_schedule_calls, 1, "PTC buffered refusal submitted the wrong number of tasks");
@@ -286,9 +314,9 @@ static void caseCreditedDeliveryRefusalRollsBackCreditAndRetainsPbuf(void)
     tosRequireNoProcessApiCall();
     ptcFixtureRequirePacketLineAlive(&fixture);
 
-    LOCK_TCPIP_CORE();
+    enterEngine();
     twfRequireEqualU32((uint32_t) pbuf_free(p), 1, "PTC test pbuf did not release exactly once");
-    UNLOCK_TCPIP_CORE();
+    leaveEngine();
 
     line_t *line = fixture.line;
     lineRef(line);
@@ -350,22 +378,22 @@ static void caseResumeWaitsForDeliveryHeadroom(void)
     discard        ptcAttachTestPcb(&fixture, baseline);
     ptc_tstate_t  *ts = tunnelGetState(fixture.ptc);
     ptc_lstate_t  *ls = lineGetState(fixture.line, fixture.ptc);
-    LOCK_TCPIP_CORE();
+    enterEngine();
     twfRequire(ptcReserveWriteSlots(ls), "PTC could not reserve a test ACK record");
     ptcAckQueuePushBack(ls, NULL, ts->max_pending_bytes + 1);
     ls->write_paused = true;
     twfRequire(ptcFlushWriteQueue(ls) == kPtcFlushRetryable && ls->write_paused,
                "PTC resumed with charged ACK bytes still using delivery headroom");
-    UNLOCK_TCPIP_CORE();
+    leaveEngine();
     ptcResumeUpstreamTask(fixture.ptc, fixture.line);
     twfRequire(fixture.trace.len == 0, "a stale PTC Resume bypassed renewed pressure");
-    LOCK_TCPIP_CORE();
+    enterEngine();
     sbuf_ack_t *ack = sbuf_ack_queue_t_front_mut(&ls->ack_queue);
     ack->written    = ack->total;
     ptcAckQueuePopFront(ls);
     twfRequire(ptcFlushWriteQueue(ls) == kPtcFlushComplete && ! ls->write_paused,
                "PTC failed to resume after ACK records released the budget");
-    UNLOCK_TCPIP_CORE();
+    leaveEngine();
     ptcResumeUpstreamTask(fixture.ptc, fixture.line);
     twfRequire(stringCompare(fixture.trace.seq, "R") == 0,
                "PTC did not publish Resume after headroom became available");
@@ -378,34 +406,21 @@ static void caseResumeWaitsForDeliveryHeadroom(void)
     ptcFixtureTeardown(&fixture);
 }
 
-static atomic_bool g_lwip_initialized;
-
-static void ptcLwipInitialized(void *argument)
-{
-    discard argument;
-    frandInit();
-    atomicStoreExplicit(&g_lwip_initialized, true, memory_order_release);
-}
-
 int main(void)
 {
     twfRequire(lwipTestRuntimeInitialize(), "failed to initialize the lwIP random runtime");
-    atomic_init(&g_lwip_initialized, false);
-    tcpip_init(ptcLwipInitialized, NULL);
-    while (! atomicLoadExplicit(&g_lwip_initialized, memory_order_acquire))
-    {
-        YIELD_THREAD();
-    }
+    wwLwipEngineSharedInit();
     ptcRxWrapperPoolInitializeOnce();
 
     const uint32_t headroom_pool_sizes[] = {4096, 65536, 131072, 4U * 1024U * 1024U};
     for (size_t i = 0; i < ARRAY_SIZE(headroom_pool_sizes); ++i)
         casePendingBudgetAllowsOneReadOfHeadroom(headroom_pool_sizes[i]);
     caseResumeWaitsForDeliveryHeadroom();
-    caseForeignRetryRefusalPublishesAndDrainsOwnedLine();
+    caseOwnerRetryRefusalPublishesAndDrainsOwnedLine();
+    caseErrorClearsRouteBeforeTerminalClose();
     caseCreditedDeliveryRefusalRollsBackCreditAndRetainsPbuf();
 
-    twfRequire(wwLwipShutdown(), "failed to stop the PTC fixture lwIP thread");
+    wwLwipEngineSharedCleanup();
     lwipTestRuntimeCleanup();
     puts("packetstoconnection_schedule_rejection_test: all cases passed");
     return 0;

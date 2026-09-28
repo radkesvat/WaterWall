@@ -49,6 +49,9 @@ void ctpTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context)
         ts->terminal_lines = NULL;
     }
 
+    memoryFree(ts->owned_lines);
+    ts->owned_lines = NULL;
+
     if (ts->netifs != NULL)
     {
         memoryFree(ts->netifs);

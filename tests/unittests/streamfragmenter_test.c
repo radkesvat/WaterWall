@@ -1257,7 +1257,7 @@ static void tlsHelloSplice(void)
 int main(void)
 {
     GSTATE.flag_initialized = true;
-    GSTATE.workers_count    = 2;
+    GSTATE.workers_count    = 1;
     GSTATE.splice_disabled  = WW_HAVE_SPLICE == 0;
     master_pool_t *large = masterpoolCreateWithCapacity(8), *medium = masterpoolCreateWithCapacity(8),
                   *small = masterpoolCreateWithCapacity(8), *splice = masterpoolCreateWithCapacity(8),

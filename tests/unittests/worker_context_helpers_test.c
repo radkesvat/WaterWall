@@ -1,6 +1,6 @@
 /*
  * Focused coverage for the checked worker-context helpers and for the
- * worker-message bridge that unregistered, foreign and pseudo-worker threads
+ * worker-message bridge that unregistered and foreign threads
  * depend on.
  *
  * The rule under test: nothing except the actual owning event worker may reach
@@ -77,14 +77,11 @@ static void shutdownTestGlobalState(void)
      * Worker 0 is bound to this test thread and is therefore never joined.
      * Release its event-loop resources explicitly so the c-ares channel is
      * cleaned before destroyGlobalState() tears down the global library.
-     * The lwIP pseudo-worker has no loop, but still owns pools and a message
-     * queue that follow the same worker-resource lifetime contract.
      */
     if (! atomicLoadExplicit(&getWorker(0)->resources_destroyed, memory_order_relaxed))
     {
         teardownCurrentWorker(getWorker(0));
     }
-    workerDestroyPseudoWorkerResources(getWorker(getTotalWorkersCount() - 1));
     destroyGlobalState();
 }
 
@@ -156,28 +153,29 @@ static void testWorkerTimerPools(void)
                 GSTATE.masterpool_timers->cap == 4 * RAM_PROFILE,
             "timer pool sizes do not follow the memory profile");
     require(getWorker(1)->timer_pool != worker->timer_pool, "workers share a local timer pool");
-    require(getWorker(getTotalWorkersCount() - 1)->timer_pool == NULL, "pseudo-worker has an unused timer pool");
+    require(getTotalWorkersCount() == getWorkersCount(), "unexpected extra worker slot");
 }
 
-static void testPredicatesRejectUnregisteredAndLwip(void)
+static void testPredicatesRejectUnregisteredAndOutOfRange(void)
 {
-    const wid_t lwip_wid = getTotalWorkersCount() - 1;
+    const wid_t unregistered_wid = getTotalWorkersCount();
 
     testWorkerUnbindWID();
     require(tryGetCurrentEventWorker() == NULL, "unregistered thread got an event worker");
     require(! currentThreadIsEventWorker(), "unregistered thread reported event worker role");
     require(! currentThreadIsEventWorkerWID(0), "unregistered thread claimed to own worker 0");
 
-    testWorkerBindWID(lwip_wid);
-    require(currentThreadHasRegisteredWID(), "lwIP pseudo-worker is not registered");
-    require(! currentThreadIsEventWorker(), "lwIP pseudo-worker reported event worker role");
-    require(tryGetCurrentEventWorker() == NULL, "lwIP pseudo-worker got an event worker");
-    require(! currentThreadIsEventWorkerWID(0), "lwIP pseudo-worker claimed to own worker 0");
-    require(! currentThreadIsEventWorkerWID(lwip_wid), "lwIP pseudo-worker passed an event-worker check");
+    testWorkerBindWID(unregistered_wid);
+    require(! currentThreadHasRegisteredWID(), "out-of-range identity was registered");
+    require(! currentThreadIsEventWorker(), "out-of-range identity reported event worker role");
+    require(tryGetCurrentEventWorker() == NULL, "out-of-range identity got an event worker");
+    require(! currentThreadIsEventWorkerWID(0), "out-of-range identity claimed to own worker 0");
+    require(! currentThreadIsEventWorkerWID(unregistered_wid), "out-of-range identity passed an event-worker check");
     require(workerWIDForLog(0) == 0, "workerWIDForLog(0) did not return 0");
     require(workerWIDForLog(1) == 1, "workerWIDForLog(1) did not return 1");
-    require(workerWIDForLog(lwip_wid) == (int) lwip_wid, "workerWIDForLog did not preserve lwIP WID numerically");
-    require(workerWIDForLog(lwip_wid) != -1, "workerWIDForLog mapped lwIP WID to -1");
+    require(workerWIDForLog(unregistered_wid) == (int) unregistered_wid,
+            "workerWIDForLog did not preserve unregistered WID numerically");
+    require(workerWIDForLog(unregistered_wid) != -1, "workerWIDForLog mapped unregistered WID to -1");
     require(workerWIDForLog(kInvalidWID) == -1, "workerWIDForLog(kInvalidWID) did not return -1");
 
     testWorkerBindWID(0);
@@ -1688,11 +1686,11 @@ static void testAdmissionOpenIsOneWayAndChecked(void)
 
     require(! workerMessagesOpenAdmission(&incomplete), "message admission opened before loop/queue readiness");
     require(! atomicLoadRelaxed(&incomplete.message_admission_open), "failed open changed the admission gate");
+    incomplete.has_event_loop = false;
+    require(! workerMessagesOpenAdmission(&incomplete), "non-event worker admission was accepted");
     mutexDestroy(&incomplete.control_mutex);
 
     require(! workerMessagesOpenAdmission(getWorker(0)), "duplicate message-admission open was accepted");
-    require(! workerMessagesOpenAdmission(getWorker(getTotalWorkersCount() - 1)),
-            "pseudo-worker message admission was accepted");
 }
 
 static int probeRuns(void)
@@ -1746,23 +1744,23 @@ static void testUnregisteredThreadQueues(void)
     require(probeCleanups() == 0, "queued message from an unregistered thread ran its cleanup");
 }
 
-static void testLwipPseudoWorkerQueues(void)
+static void testOutOfRangeCallerQueues(void)
 {
     probeReset();
 
-    testWorkerBindWID(getTotalWorkersCount() - 1);
+    testWorkerBindWID(getTotalWorkersCount());
     sendWorkerMessageWithCleanup(0, (WorkerMessageCallback) probeCallback, probeCleanup, NULL, NULL, NULL);
     testWorkerBindWID(0);
 
-    require(probeRuns() == 0, "lwIP pseudo-worker executed a worker message inline");
+    require(probeRuns() == 0, "out-of-range identity executed a worker message inline");
     require(probeCleanups() == 0, "message queued from lwIP ran its cleanup");
 }
 
 static void testInvalidTargetsCleanUpExactlyOnce(void)
 {
-    const wid_t lwip_wid = getTotalWorkersCount() - 1;
+    const wid_t unregistered_wid = getTotalWorkersCount();
 
-    const wid_t bad_targets[] = {kInvalidWID, (wid_t) getTotalWorkersCount(), lwip_wid};
+    const wid_t bad_targets[] = {kInvalidWID, unregistered_wid};
 
     for (size_t i = 0; i < ARRAY_SIZE(bad_targets); ++i)
     {
@@ -1801,7 +1799,7 @@ typedef struct line_refusal_poster_s
     line_t                   *line;
     sbuf_t                   *buf;
     bool                      with_buffer;
-    bool                      bind_lwip;
+    bool                      bind_out_of_range;
     line_task_submit_result_e result;
 } line_refusal_poster_t;
 
@@ -1889,9 +1887,9 @@ static WTHREAD_ROUTINE(lineRefusalPosterRoutine)
 {
     line_refusal_poster_t *poster = userdata;
     require(getWID() == kInvalidWID, "line-refusal poster inherited a worker identity");
-    if (poster->bind_lwip)
+    if (poster->bind_out_of_range)
     {
-        testWorkerBindWID(getTotalWorkersCount() - 1);
+        testWorkerBindWID(getTotalWorkersCount());
     }
 
     if (poster->with_buffer)
@@ -1903,7 +1901,7 @@ static WTHREAD_ROUTINE(lineRefusalPosterRoutine)
         poster->result = lineScheduleTask(poster->line, refusedLineTask, NULL, NULL);
     }
 
-    if (poster->bind_lwip)
+    if (poster->bind_out_of_range)
     {
         testWorkerUnbindWID();
     }
@@ -1934,11 +1932,11 @@ static void exerciseForeignFinalLineReleaseDuringDetach(void)
             "event-worker final release did not return to the local line pool");
 
     line_t           *plain_line = lineCreateForWorker(0, pools, 0);
-    line_t           *lwip_line  = lineCreateForWorker(1, pools, 0);
+    line_t           *unregistered_line = lineCreateForWorker(1, pools, 0);
     lineAddUser(plain_line, NULL, "plain-user", "plain-password");
-    lineAddUser(lwip_line, NULL, "lwip-user", "lwip-password");
+    lineAddUser(unregistered_line, NULL, "lwip-user", "lwip-password");
     plain_line->routing_context.dest_ctx.domain = stringDuplicate("plain.example");
-    lwip_line->routing_context.dest_ctx.domain  = stringDuplicate("lwip.example");
+    unregistered_line->routing_context.dest_ctx.domain = stringDuplicate("lwip.example");
 
     line_buffer_lifetime_t lifetime = {0};
     atomic_init(&lifetime.releases, 0);
@@ -1947,28 +1945,29 @@ static void exerciseForeignFinalLineReleaseDuringDetach(void)
     watchBufferDisposal(buf, &lifetime.releases);
 
     line_refusal_poster_t plain = {.line = plain_line};
-    line_refusal_poster_t lwip  = {.line = lwip_line, .buf = buf, .with_buffer = true, .bind_lwip = true};
+    line_refusal_poster_t lwip  = {
+         .line = unregistered_line, .buf = buf, .with_buffer = true, .bind_out_of_range = true};
     configureRaceSeam(0, kWorkerMessageEnqueueBeforeLifetimeLock);
 
     wthread_t plain_thread;
-    wthread_t lwip_thread;
+    wthread_t unregistered_thread;
     require(threadCreate(&plain_thread, lineRefusalPosterRoutine, &plain) == kWThreadErrorNone,
             "failed to create plain line-refusal poster");
-    require(threadCreate(&lwip_thread, lineRefusalPosterRoutine, &lwip) == kWThreadErrorNone,
-            "failed to create lwIP line-refusal poster");
+    require(threadCreate(&unregistered_thread, lineRefusalPosterRoutine, &lwip) == kWThreadErrorNone,
+            "failed to create out-of-range line-refusal poster");
     waitForEnqueueSeamHits(2, "line-refusal posters did not both retain their lines before detach");
 
-    require(atomicLoadU32Relaxed(&plain_line->refc) == 2 && atomicLoadU32Relaxed(&lwip_line->refc) == 2,
+    require(atomicLoadU32Relaxed(&plain_line->refc) == 2 && atomicLoadU32Relaxed(&unregistered_line->refc) == 2,
             "line-refusal posters did not hold exactly one scheduling reference");
     lineDestroy(plain_line);
-    lineDestroy(lwip_line);
-    require(! lineIsAlive(plain_line) && ! lineIsAlive(lwip_line),
+    lineDestroy(unregistered_line);
+    require(! lineIsAlive(plain_line) && ! lineIsAlive(unregistered_line),
             "owner destruction did not make both refused-task lines logically dead");
 
     teardownCurrentWorker(getWorker(0));
     atomicStoreExplicit(&g_enqueue_seam_release, true, memory_order_release);
     require(threadJoin(plain_thread) == 0, "failed to join plain line-refusal poster");
-    require(threadJoin(lwip_thread) == 0, "failed to join lwIP line-refusal poster");
+    require(threadJoin(unregistered_thread) == 0, "failed to join out-of-range line-refusal poster");
     clearRaceSeam();
 
     require(plain.result == kLineTaskSubmitRejectedSettled && lwip.result == kLineTaskSubmitRejectedSettled,
@@ -1979,7 +1978,7 @@ static void exerciseForeignFinalLineReleaseDuringDetach(void)
     require(genericpoolGetInUse(other_pool) == 0,
             "cross-local-pool line migration corrupted family-wide outstanding accounting");
     require(atomicLoadExplicit(&master->len, memory_order_acquire) == 2,
-            "plain/lwIP final releases did not return exactly two lines through the shared master pool");
+            "plain/out-of-range final releases did not return exactly two lines through the shared master pool");
 
     genericpoolDestroy(pool);
     genericpoolDestroy(other_pool);
@@ -2074,9 +2073,9 @@ static void testTunnelApiHelpersRejectNonEventWorkers(void)
     message = sbufCreateWithPadding(64, 0);
     require(message != NULL, "failed to allocate a standalone API message");
 
-    testWorkerBindWID(getTotalWorkersCount() - 1);
+    testWorkerBindWID(getTotalWorkersCount());
     result = tunnelapiRecycleMessage(message);
-    require(result.result_code == kApiResultError, "tunnel API helper accepted the lwIP pseudo-worker");
+    require(result.result_code == kApiResultError, "tunnel API helper accepted the out-of-range identity");
     testWorkerBindWID(0);
 
     // On the owning event worker the buffer goes back to that worker's pool.
@@ -2137,12 +2136,12 @@ static void testResolverRejectsForeignCallers(void)
     require(workerResolveDomainAsync(1, "example.invalid", probeDnsResult, NULL) == ARES_ENOTINITIALIZED,
             "resolver accepted a foreign worker id");
 
-    // Out of range, and the lwIP pseudo-worker which has no resolver at all.
+    // Out of range, and the out-of-range identity which has no resolver at all.
     require(workerResolveDomainAsync(kInvalidWID, "example.invalid", probeDnsResult, NULL) == ARES_ENOTINITIALIZED,
             "resolver accepted kInvalidWID");
-    require(workerResolveDomainAsync(getTotalWorkersCount() - 1, "example.invalid", probeDnsResult, NULL) ==
+    require(workerResolveDomainAsync(getTotalWorkersCount(), "example.invalid", probeDnsResult, NULL) ==
                 ARES_ENOTINITIALIZED,
-            "resolver accepted the lwIP pseudo-worker");
+            "resolver accepted the out-of-range identity");
 
     // An unregistered thread must be rejected without touching worker 0.
     atomic_int rc;
@@ -2166,12 +2165,12 @@ static void testLineResolverRejectsForeignCallers(void)
             "line resolver accepted a foreign worker");
     require(atomicLoadU32Relaxed(&foreign_line.refc) == 1, "rejected line resolve leaked a line reference");
 
-    line_t lwip_line = {.wid = (wid_t) (getTotalWorkersCount() - 1), .alive = true};
-    atomicStoreU32Relaxed(&lwip_line.refc, 1);
-    require(lineResolveDomainAsync(&lwip_line, "example.invalid", probeLineDnsResult, NULL, NULL) ==
+    line_t unregistered_line = {.wid = (wid_t) (getTotalWorkersCount()), .alive = true};
+    atomicStoreU32Relaxed(&unregistered_line.refc, 1);
+    require(lineResolveDomainAsync(&unregistered_line, "example.invalid", probeLineDnsResult, NULL, NULL) ==
                 ARES_ENOTINITIALIZED,
-            "line resolver accepted a line owned by the lwIP pseudo-worker");
-    require(atomicLoadU32Relaxed(&lwip_line.refc) == 1, "rejected line resolve leaked a line reference");
+            "line resolver accepted a line owned by the out-of-range identity");
+    require(atomicLoadU32Relaxed(&unregistered_line.refc) == 1, "rejected line resolve leaked a line reference");
 }
 
 static line_t *allocateLineForTunnel(tunnel_t *owner, wid_t wid)
@@ -2200,13 +2199,13 @@ static void testPipeToRejectsBadWorkers(void)
     line_t *owned_line = allocateLineForTunnel(pipe_tunnel, 0);
 
     /*
-     * Self-target, the lwIP pseudo-worker and an out-of-range slot must all be
+     * Self-target, the out-of-range identity and an out-of-range slot must all be
      * refused. In a release build these used to be unchecked, and pipeTo() would
      * go on to create a pair line for a worker that cannot own it.
      */
     require(! pipeTo(child, owned_line, 0), "pipeTo accepted the current worker as its target");
-    require(! pipeTo(child, owned_line, (wid_t) (getTotalWorkersCount() - 1)),
-            "pipeTo accepted the lwIP pseudo-worker as its target");
+    require(! pipeTo(child, owned_line, (wid_t) (getTotalWorkersCount())),
+            "pipeTo accepted the out-of-range identity as its target");
     require(! pipeTo(child, owned_line, kInvalidWID), "pipeTo accepted kInvalidWID as its target");
     require(! pipeTo(child, owned_line, (wid_t) getTotalWorkersCount()),
             "pipeTo accepted an out-of-range target worker");
@@ -2799,7 +2798,7 @@ typedef enum
     kAbortCaseUnregisteredPool = 0,
     kAbortCaseUnregisteredLoop,
     kAbortCaseUnregisteredReuseBuffer,
-    kAbortCaseLwipPool,
+    kAbortCaseOutOfRangePool,
     kAbortCaseCount
 } abort_case_e;
 
@@ -2821,8 +2820,8 @@ static void runAbortCase(abort_case_e which)
         reuseBuffer(buf);
         break;
     }
-    case kAbortCaseLwipPool:
-        testWorkerBindWID(getTotalWorkersCount() - 1);
+    case kAbortCaseOutOfRangePool:
+        testWorkerBindWID(getTotalWorkersCount());
         discard getCurrentEventWorkerBufferPool();
         break;
     case kAbortCaseCount:
@@ -2837,7 +2836,7 @@ static void testCheckedAccessorsAbortOffEventWorkers(void)
         "getCurrentEventWorkerBufferPool() from an unregistered thread",
         "getCurrentEventWorkerLoop() from an unregistered thread",
         "reuseBuffer() from an unregistered thread",
-        "getCurrentEventWorkerBufferPool() from the lwIP pseudo-worker",
+        "getCurrentEventWorkerBufferPool() from the out-of-range identity",
     };
 
     for (int which = 0; which < (int) kAbortCaseCount; ++which)
@@ -2882,13 +2881,13 @@ int main(int argc, char **argv)
 
     testAccessorsOnOwningWorker();
     testWorkerTimerPools();
-    testPredicatesRejectUnregisteredAndLwip();
+    testPredicatesRejectUnregisteredAndOutOfRange();
 
     testOwningWorkerOutsideCallbackQueues();
     testTransactionalEnqueueFailureStages();
     testOtherEventWorkerQueues();
     testUnregisteredThreadQueues();
-    testLwipPseudoWorkerQueues();
+    testOutOfRangeCallerQueues();
     testInvalidTargetsCleanUpExactlyOnce();
     testAdmissionOpenIsOneWayAndChecked();
     testMessageAdmissionRacesWorkerTeardown();

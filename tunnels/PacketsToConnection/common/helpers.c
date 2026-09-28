@@ -48,6 +48,7 @@ void ptcDetachTcpPcbLocked(ptc_lstate_t *ls)
     ls->write_retry_queued   = false;
     ls->refused_retry_queued = false;
     ls->tcp_pcb              = NULL;
+    ls->route_ctx            = NULL;
 }
 
 void ptcDetachUdpFlowLocked(ptc_lstate_t *ls)
@@ -141,39 +142,6 @@ void ptcOwnedLineUnregister(ptc_lstate_t *ls)
     ls->owned_prev       = NULL;
     ls->owned_next       = NULL;
     ls->owned_registered = false;
-    mutexUnlock(&state->owned_lines_lock);
-}
-
-/* Called with lwIP's core lock held after both callback gates are closed. */
-void ptcDetachOwnedLinePcbsLocked(tunnel_t *t)
-{
-    ptc_tstate_t *state = tunnelGetState(t);
-
-    if (state->owned_lines == NULL)
-    {
-        return;
-    }
-
-    mutexLock(&state->owned_lines_lock);
-    for (uint32_t wid = 0; wid < state->owned_worker_count; ++wid)
-    {
-        for (line_t *line = state->owned_lines[wid]; line != NULL;)
-        {
-            ptc_lstate_t *ls = lineGetState(line, t);
-            line             = ls->owned_next;
-
-            if (ls->kind == kPtcLineKindTcp && ls->tcp_pcb != NULL)
-            {
-                struct tcp_pcb *pcb = ls->tcp_pcb;
-                ptcDetachTcpPcbLocked(ls);
-                tcp_abort(pcb);
-            }
-            else if (ls->kind == kPtcLineKindUdp)
-            {
-                ptcDetachUdpFlowLocked(ls);
-            }
-        }
-    }
     mutexUnlock(&state->owned_lines_lock);
 }
 
@@ -309,7 +277,7 @@ bool ptcRequiredControlRefusedLocked(ptc_lstate_t *ls, const char *operation)
     ptc_tstate_t *state   = tunnelGetState(t);
     bool          aborted = false;
 
-    /* The caller already owns lwIP's core lock. Stop the exact producer before
+    /* The caller is executing inside the owner engine. Stop the exact producer before
      * publishing the allocation-free owner-worker reconciliation. */
     if (ls->kind == kPtcLineKindTcp)
     {
@@ -713,17 +681,23 @@ void ptcDeliverPayloadTask(tunnel_t *t, line_t *l, sbuf_t *buf)
     {
         if (ls->read_paused)
         {
-            LOCK_TCPIP_CORE();
+            ww_lwip_engine_t *previous;
+            const bool        entered = wwLwipEngineEnter(ls->engine, &previous);
+            assert(entered);
+            discard    entered;
             const bool accumulated = ptcPausedReadAccumulateLocked(ls, tcp_read);
-            UNLOCK_TCPIP_CORE();
+            wwLwipEngineLeave(ls->engine, previous);
             ptcNextGateLeave(t);
             discard accumulated;
             return;
         }
 
-        LOCK_TCPIP_CORE();
+        ww_lwip_engine_t *previous;
+        const bool        entered = wwLwipEngineEnter(ls->engine, &previous);
+        assert(entered);
+        discard entered;
         discard ptcReturnReceiveCreditLocked(ls, tcp_read);
-        UNLOCK_TCPIP_CORE();
+        wwLwipEngineLeave(ls->engine, previous);
     }
     ptcNextGateLeave(t);
 }
@@ -739,7 +713,10 @@ static void ptcCloseOwnedLine(tunnel_t *t, line_t *l, bool graceful_tcp, bool fi
 
     ptc_lstate_t *ls = lineGetState(l, t);
 
-    LOCK_TCPIP_CORE();
+    ww_lwip_engine_t *previous;
+    const bool        entered = wwLwipEngineEnter(ls->engine, &previous);
+    assert(entered);
+    discard entered;
     if (ls->kind == kPtcLineKindTcp && ls->tcp_pcb != NULL)
     {
         bool                               drain_aborted = false;
@@ -761,7 +738,7 @@ static void ptcCloseOwnedLine(tunnel_t *t, line_t *l, bool graceful_tcp, bool fi
     {
         ptcDetachUdpFlowLocked(ls);
     }
-    UNLOCK_TCPIP_CORE();
+    wwLwipEngineLeave(ls->engine, previous);
 
     const bool send_finish = finish_next && ls->next_init_sent;
     ptcLinestateDestroy(ls);
@@ -834,7 +811,10 @@ void ptcWriteRetryTask(tunnel_t *t, line_t *l)
     }
 
     ls = lineGetState(l, t);
-    LOCK_TCPIP_CORE();
+    ww_lwip_engine_t *previous;
+    const bool        entered = wwLwipEngineEnter(ls->engine, &previous);
+    assert(entered);
+    discard entered;
     ls->write_retry_queued = false;
     if (ls->tcp_pcb != NULL)
     {
@@ -846,7 +826,7 @@ void ptcWriteRetryTask(tunnel_t *t, line_t *l)
             tcp_abort(pcb);
         }
     }
-    UNLOCK_TCPIP_CORE();
+    wwLwipEngineLeave(ls->engine, previous);
 
     if (result == kPtcFlushTerminal)
     {
@@ -867,13 +847,16 @@ void ptcRefusedDataRetryTask(tunnel_t *t, line_t *l)
     }
 
     ptc_lstate_t *ls = lineGetState(l, t);
-    LOCK_TCPIP_CORE();
+    ww_lwip_engine_t *previous;
+    const bool        entered = wwLwipEngineEnter(ls->engine, &previous);
+    assert(entered);
+    discard entered;
     ls->refused_retry_queued = false;
     if (ls->kind == kPtcLineKindTcp && ls->tcp_pcb != NULL && ! ptcTunnelIsStopping(t))
     {
         discard tcp_process_refused_data(ls->tcp_pcb);
     }
-    UNLOCK_TCPIP_CORE();
+    wwLwipEngineLeave(ls->engine, previous);
 }
 
 void ptcCloseLineForStop(tunnel_t *t, line_t *l)
@@ -951,7 +934,7 @@ void ptcDrainTerminalLinesOnCurrentWorker(tunnel_t *t, wid_t wid)
             return;
         }
 
-        /* The producer PCB/map was already detached under the core lock. The
+        /* The producer PCB/map was already detached inside the owner engine. The
          * owner now performs line-state teardown, directionally legal Finish
          * (only if Init was sent), and the owner-only lineDestroy(). */
         ptcCloseLineForStop(t, terminal);

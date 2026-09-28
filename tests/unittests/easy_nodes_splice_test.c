@@ -206,7 +206,6 @@ int main(void)
     workerPerformDrain(worker, context);
     easyRequire(workerRequestTeardown(worker), "request teardown");
     workerPerformTeardown(worker);
-    workerDestroyPseudoWorkerResources(getWorker(getTotalWorkersCount() - 1));
     destroyGlobalState();
     puts("easy node ordinary/splice payload tests passed");
 }

@@ -296,7 +296,7 @@ int main(void)
         g_large_master, g_medium_master, g_small_master, g_splice_master, 8, 65536, 32768, 4096, 65536, 65536);
     require(g_pool != NULL, "failed to create the buffer pool");
 
-    GSTATE.workers_count = 5;
+    GSTATE.workers_count = 4;
     bufferpoolUpdateAllocationPaddings(g_pool, 64, 64, 64, 64);
     testCompletion();
     testRejectionAndRetirement();

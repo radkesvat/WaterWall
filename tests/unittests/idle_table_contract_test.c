@@ -100,7 +100,7 @@ static void contractEnvSetup(contract_env_t *env)
 
     GSTATE.flag_initialized      = true;
     GSTATE.workers               = env->workers;
-    GSTATE.workers_count         = kContractWorkers + 1U;
+    GSTATE.workers_count         = kContractWorkers;
     GSTATE.shortcut_buffer_pools = env->pools;
     GSTATE.shortcut_loops        = env->loops;
     GSTATE.shortcut_wios_pools   = env->wios_pools;

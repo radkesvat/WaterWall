@@ -585,6 +585,7 @@ static int ptcFakeDnsBuildResponse(ptc_tstate_t *ts, const uint8_t *query, uint3
     }
 
     uint8_t mapping_count = 0;
+    mutexLock(&ts->dns_lock);
     if (ptcFakeDnsCommitQuestions(&ts->fake_dns, questions, question_count, mappings, &mapping_count))
     {
         for (int i = 0; i < question_count; ++i)
@@ -601,6 +602,8 @@ static int ptcFakeDnsBuildResponse(ptc_tstate_t *ts, const uint8_t *query, uint3
             }
         }
     }
+
+    mutexUnlock(&ts->dns_lock);
 
     /* Only answered questions carry an answer record, so this cannot exceed dns_len. */
     const uint32_t answered_len = offset + ((uint32_t) answer_count * kPtcDnsAnswerALen);
@@ -1086,7 +1089,7 @@ ptc_fake_dns_result_t ptcFakeDnsHandleIpv4UdpPacket(tunnel_t *t, line_t *packet_
  *
  * Going through ip4_output_if() makes lwIP construct the IPv4 header, allocate
  * the identification value, and apply MTU fragmentation. It is safe
- * under the core lock because the netif output callback only queues detached
+ * inside the owner engine because the netif output callback only queues detached
  * packet messages; it never calls the neighbour chain inline.
  *
  * Consumes `response` on every path. The PBUF_REF is synchronous through the
@@ -1134,15 +1137,21 @@ bool ptcFakeDnsApplyMappedDestination(tunnel_t *t, address_context_t *dest_ctx, 
         return false;
     }
 
-    ptc_tstate_t         *ts    = tunnelGetState(t);
+    ptc_tstate_t *ts = tunnelGetState(t);
+    char          domain[256];
+    uint8_t       length = 0;
+    mutexLock(&ts->dns_lock);
     ptc_fake_dns_entry_t *entry = ptcFakeDnsLookupByIp(&ts->fake_dns, &ip->u_addr.ip4);
-
-    if (entry == NULL)
+    if (entry != NULL)
     {
-        return false;
+        length = entry->domain_len;
+        memoryCopy(domain, entry->domain, length);
     }
+    mutexUnlock(&ts->dns_lock);
+    if (length == 0)
+        return false;
 
-    addresscontextDomainSet(dest_ctx, entry->domain, entry->domain_len);
+    addresscontextDomainSet(dest_ctx, domain, length);
     addresscontextSetPort(dest_ctx, port);
     addresscontextSetOnlyProtocol(dest_ctx, protocol);
     addresscontextSetDomainStrategy(dest_ctx, kDsPreferIpV4);

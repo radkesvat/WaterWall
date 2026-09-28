@@ -381,7 +381,7 @@ static inline wid_t lineGetWID(const line_t *const line)
  *
  * This is the affinity question to ask before touching line-owned state: it is
  * true only when the caller is a registered ordinary event worker *and* its WID
- * equals the line owner. An unregistered thread and the lwIP pseudo-worker can
+ * equals the line owner. Callers without an event-worker context can
  * never pass it, which a raw `lineGetWID(line) == getWID()` comparison cannot
  * guarantee.
  *

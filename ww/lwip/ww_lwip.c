@@ -1,4 +1,5 @@
 #include "ww_lwip.h"
+#include "engine_runtime.h"
 
 #include "loggers/network_logger.h"
 #include "lwip/memp.h"
@@ -164,85 +165,11 @@ void wwLwipTestSerializeTcpIsnTuple(uint8_t output[kWwLwipTcpIsnTupleSize], cons
      : ((proto) == IP_PROTO_IGMP) ? "IGMP"                                                                             \
                                   : "UNKNOWN")
 
-static void wwLwipAbandonTcpPcb(struct tcp_pcb *pcb)
-{
-    /*
-     * tcp_abandon() releases segment queues but not data retained after an
-     * application receive callback returned ERR_MEM.
-     */
-    if (pcb->refused_data != NULL)
-    {
-        pbuf_free(pcb->refused_data);
-        pcb->refused_data = NULL;
-    }
-    tcp_abandon(pcb, 0);
-}
-
-static void wwLwipReleaseProtocolState(void *userdata)
-{
-    discard userdata;
-    LWIP_ASSERT_CORE_LOCKED();
-    assert(tcp_input_pcb == NULL);
-    if (tcp_input_pcb != NULL)
-    {
-        LOGF("wwLwipReleaseProtocolState: active TCP input PCB (tcp_input_pcb != NULL) during protocol release");
-        abortProgramNow(1);
-    }
-
-    /*
-     * tcp_abandon(reset=0) releases queued segments, including custom pbufs in
-     * TCP out-of-order queues, without trying to emit reset packets through
-     * netifs that node Stop has already detached.
-     */
-    while (tcp_active_pcbs != NULL)
-    {
-        wwLwipAbandonTcpPcb(tcp_active_pcbs);
-    }
-    while (tcp_tw_pcbs != NULL)
-    {
-        wwLwipAbandonTcpPcb(tcp_tw_pcbs);
-    }
-    while (tcp_bound_pcbs != NULL)
-    {
-        wwLwipAbandonTcpPcb(tcp_bound_pcbs);
-    }
-    while (tcp_listen_pcbs.pcbs != NULL)
-    {
-        err_t close_result = tcp_close(tcp_listen_pcbs.pcbs);
-        assert(close_result == ERR_OK);
-        if (close_result != ERR_OK)
-        {
-            LOGF("wwLwipReleaseProtocolState: failed to close listen PCB (close_result != ERR_OK, result=%d)",
-                 (int) close_result);
-            abortProgramNow(1);
-        }
-    }
-    while (udp_pcbs != NULL)
-    {
-        udp_remove(udp_pcbs);
-    }
-    while (netif_list != NULL)
-    {
-        netif_remove(netif_list);
-    }
-    frandThreadCleanup();
-}
-
 bool wwLwipShutdown(void)
 {
-    /*
-     * Cleanup runs from the shutdown callback after all previously queued work.
-     * That closes the last window in which packet input could recreate retained
-     * protocol state after it had already been released.
-     */
-    if (tcpip_shutdown(wwLwipReleaseProtocolState, NULL) != ERR_OK)
-    {
-        return false;
-    }
-
-    /* tcpip_shutdown() has joined the thread here, and the release callback
-     * has already removed every TCP PCB. The process-lifetime ISN key is no
-     * longer reachable by lwIP and can now be erased. */
+    /* The controller has joined every event worker. No engine or callback may
+     * still reach shared storage or the process ISN secret. */
+    wwLwipRuntimeFinalize();
     wwLwipEraseProtocolState();
     return true;
 }

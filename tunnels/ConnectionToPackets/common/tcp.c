@@ -4,7 +4,7 @@
 
 /*
  * Clears every callback lwIP could still use to reach this line state. Once this
- * has run under the core lock, no in-flight or future lwIP callback can observe
+ * has run under the owner engine, no in-flight or future lwIP callback can observe
  * `ls`, which is what makes destroying the line state afterwards safe.
  */
 struct tcp_pcb *ctpTcpDetachCallbacksLocked(ctp_lstate_t *ls)
@@ -80,7 +80,7 @@ void ctpTcpReturnReceiveCreditLocked(ctp_lstate_t *ls, uint32_t amount)
 
 /*
  * A terminal active-flow transition. The registry is cleared before tcp_abort()
- * can free the pcb, and both operations happen inside the caller's one core-lock
+ * can free the pcb, and both operations happen inside the caller's one owner-engine
  * section, so Stop can never observe a freed pcb through the registry.
  */
 bool ctpTcpAbortFlowLocked(tunnel_t *t, ctp_lstate_t *ls)
@@ -103,12 +103,16 @@ bool ctpTcpOpenFlow(tunnel_t *t, line_t *l, ctp_lstate_t *ls, const ip_addr_t *d
     struct tcp_pcb *pcb = NULL;
     bool            ok  = false;
 
-    LOCK_TCPIP_CORE();
+    assert(currentThreadIsEventWorkerWID(lineGetWID(l)));
+    ls->engine = wwLwipRuntimeGet(lineGetWID(l));
+    if (ls->engine == NULL)
+        return false;
+    ww_lwip_engine_t *previous;
+    const bool        entered = wwLwipEngineEnter(ls->engine, &previous);
+    assert(entered);
+    discard entered;
 
-    /*
-     * Stop may have won the core lock first. Rechecking the gate under the same
-     * lock that serializes flow creation makes that cleanup a stable barrier.
-     */
+    /* Main quiescence may publish stopping during this owner's stack work. */
     if (UNLIKELY(atomicLoadRelaxed(&ts->stopping)))
     {
         goto done;
@@ -145,6 +149,7 @@ bool ctpTcpOpenFlow(tunnel_t *t, line_t *l, ctp_lstate_t *ls, const ip_addr_t *d
         goto done;
     }
 
+    ls->netif_ctx = ctx;
     ls->tcp_pcb  = pcb;
     ls->flow_key = (ctp_flow_key_t) {
         .remote_addr_network = ip_2_ip4(dest_ip)->addr,
@@ -185,7 +190,7 @@ done:
             tcp_abort(pcb);
         }
     }
-    UNLOCK_TCPIP_CORE();
+    wwLwipEngineLeave(ls->engine, previous);
     return ok;
 }
 
@@ -204,7 +209,7 @@ ctp_flush_result_t ctpFlushPendingLocked(ctp_lstate_t *ls)
     ctp_flush_result_t result    = kCtpFlushProgressed;
 
     /*
-     * Every core-locked write to a pcb funnels through here, so this is where
+     * Every owner-engineed write to a pcb funnels through here, so this is where
      * the stopping gate has to be rechecked: drain closes the pcb and clears
      * ls->tcp_pcb under this same lock, and a task that took the lock first
      * would otherwise still be holding the pre-quiesce pointer.
@@ -288,21 +293,9 @@ ctp_flush_result_t ctpFlushPendingLocked(ctp_lstate_t *ls)
     return result;
 }
 
-/*
- * Queues one write retry on the owner worker, and only one.
- *
- * Both wakeup sources land here: the 500 ms poll on lwIP's timer thread and a
- * sent callback that arrived on the wrong worker. Neither may flush - they would
- * be touching a buffer pool that belongs to somebody else - so both can do
- * nothing but ask the owner, and an owner that is slow to answer would otherwise
- * collect one message and one line reference per source per half-second.
- *
- * The caller holds the core lock, which is what makes the flag a mutual
- * exclusion between those two threads. A refused required enqueue clears the
- * optimistic flag, detaches the exact producer and publishes the line through
- * the preallocated owner-worker terminal registry; there is no later retry for
- * that flow.
- */
+/* Poll and sent callbacks execute in this engine. One owner-local latch
+ * bounds scheduled write retries. Required refusal detaches the producer and
+ * records the terminal line for owner reconciliation. */
 static bool ctpQueueWriteRetryLocked(ctp_lstate_t *ls)
 {
     if (ls->write_retry_queued || ! lineIsAlive(ls->line))
@@ -322,13 +315,8 @@ static bool ctpQueueWriteRetryLocked(ctp_lstate_t *ls)
     return false;
 }
 
-/*
- * The retry source for a write that lwIP could not take.
- *
- * It runs on the lwIP timer thread, which may not touch this line's buffer pool,
- * so it never flushes here - it hands the work to the owner worker. `ls` stays
- * valid because every detach path clears this callback under the core lock.
- */
+/* Preserve the scheduled callback boundary even though poll runs on the
+ * owner loop: flushing here could lead to a neighboring Resume inside lwIP. */
 err_t ctpTcpPollCallback(void *arg, struct tcp_pcb *tpcb)
 {
     ctp_lstate_t *ls = arg;
@@ -456,7 +444,7 @@ err_t ctpTcpRecvCallback(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t 
          * A clean remote FIN is only a receive-side half-close: the peer may
          * keep reading. Move every accepted outbound byte and the PCB to the
          * graceful closer synchronously, while this callback still owns the
-         * core lock. The owner close task may be refused or delayed, and it is
+         * owner engine. The owner close task may be refused or delayed, and it is
          * only responsible for the borrowed line and the report toward prev;
          * it cannot be allowed to decide whether the peer gets bytes we have
          * already accepted.
@@ -484,7 +472,7 @@ err_t ctpTcpRecvCallback(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t 
         /*
          * The read buffer would have to come from the owner's pool, which this
          * thread may not touch. Injection is always posted to the owner, so this
-         * only happens if lwIP replayed refused data from its timer thread.
+         * is an unsupported foreign callback and cannot borrow the local pool.
          */
         if (! ls->refused_retry_queued)
         {
@@ -537,7 +525,7 @@ err_t ctpTcpRecvCallback(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t 
         return aborted ? ERR_ABRT : ERR_OK;
     }
     /*
-     * Delivery has to leave the core lock first, so it is handed to the owner
+     * Delivery has to leave the owner engine first, so it is handed to the owner
      * worker as a line task instead of calling prev from inside lwIP.
      */
     if (! lineIsAlive(l))
@@ -592,7 +580,7 @@ err_t ctpTcpSentCallback(void *arg, struct tcp_pcb *tpcb, u16_t len)
     {
         /*
          * Nothing will ever take these bytes. Finish with the pcb here, inside
-         * the one core-locked section that already owns it, rather than leaving
+         * the one owner-engineed section that already owns it, rather than leaving
          * it registered for the owner task to rediscover: that route would let
          * the close path adopt a closer for a pcb whose writes are already
          * failing, only to abort it a moment later.
@@ -620,7 +608,7 @@ err_t ctpTcpSentCallback(void *arg, struct tcp_pcb *tpcb, u16_t len)
 
     if (! ls->write_blocked && ls->write_paused && lineIsAlive(ls->line))
     {
-        // Still inside lwIP with the core lock held, so the Resume toward prev
+        // Still inside lwIP with the owner engine held, so the Resume toward prev
         // has to be scheduled rather than called here.
         if (ctpQueueWriteRetryLocked(ls))
         {

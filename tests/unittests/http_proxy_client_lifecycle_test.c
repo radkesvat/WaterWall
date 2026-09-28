@@ -935,7 +935,7 @@ int main(void)
 {
     discard representation;
     GSTATE.flag_initialized = true;
-    GSTATE.workers_count    = 2;
+    GSTATE.workers_count    = 1;
     master_pool_t *large = masterpoolCreateWithCapacity(8), *medium = masterpoolCreateWithCapacity(8),
                   *small = masterpoolCreateWithCapacity(8), *splice = masterpoolCreateWithCapacity(8),
                   *ios  = masterpoolCreateWithCapacity(8);

@@ -50,7 +50,7 @@ static inline bool tunnelapiReleaseMessage(sbuf_t *message)
     if (UNLIKELY(! currentThreadIsEventWorker()))
     {
         /*
-         * An unregistered thread or the lwIP pseudo-worker owns no worker-local
+         * A caller without an event-worker context owns no worker-local
          * pool, and the buffer's real owner is not knowable from here, so free
          * it rather than pushing it into a pool this thread does not own.
          */

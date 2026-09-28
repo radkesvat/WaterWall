@@ -32,7 +32,6 @@ typedef struct udp_dispatch_fixture_s
     atomic_bool      completed;
 } udp_dispatch_fixture_t;
 
-static atomic_bool tcpip_initialized;
 
 static void require(bool condition, const char *message)
 {
@@ -59,13 +58,6 @@ static bool fixtureExpect(udp_dispatch_fixture_t *fixture, bool condition, const
         return false;
     }
     return true;
-}
-
-static void tcpipInitialized(void *argument)
-{
-    discard argument;
-    frandInit();
-    atomicStoreExplicit(&tcpip_initialized, true, memory_order_release);
 }
 
 static void inputPbufFree(struct pbuf *p)
@@ -402,21 +394,10 @@ int main(void)
     udp_dispatch_fixture_t fixture = {0};
 
     require(lwipTestRuntimeInitialize(), "failed to initialize the lwIP random runtime");
-    atomic_init(&tcpip_initialized, false);
+    lwipTestEngineBegin(1);
     atomic_init(&fixture.completed, false);
-    tcpip_init(tcpipInitialized, NULL);
-    while (! atomicLoadExplicit(&tcpip_initialized, memory_order_acquire))
-    {
-        YIELD_THREAD();
-    }
-
-    require(tcpip_callback(runFixture, &fixture) == ERR_OK, "failed to schedule the lwIP fixture");
-    while (! atomicLoadExplicit(&fixture.completed, memory_order_acquire))
-    {
-        YIELD_THREAD();
-    }
-
-    require(wwLwipShutdown(), "failed to shut down the lwIP thread");
+    runFixture(&fixture);
+    lwipTestEngineEnd();
     require(fixture.failure == NULL, fixture.failure != NULL ? fixture.failure : "fixture failed without a diagnostic");
     lwipTestRuntimeCleanup();
     puts("lwIP pretend UDP dispatch tests passed");

@@ -158,6 +158,7 @@ add_library(ww STATIC
     
     # LWIP integration
     lwip/ww_lwip.c
+    lwip/engine_runtime.c
     
     # Node builder
     node_builder/config_file.c
@@ -1164,8 +1165,23 @@ set(WW_LWIP_PATCH_RECIPE "${CMAKE_CURRENT_SOURCE_DIR}/lwip/pretend_patch.cmake")
 set(WW_LWIP_PATCH_STAMP "${LWIP_DIR}/.waterwall-lwip-patch-stamp")
 file(SHA256 "${WW_LWIP_PATCH_RECIPE}" WW_LWIP_PATCH_RECIPE_SHA256)
 include("${WW_LWIP_PATCH_RECIPE}")
+set(WW_LWIP_ENGINE_RECIPE "${CMAKE_CURRENT_SOURCE_DIR}/lwip/engine_patch.cmake")
+file(SHA256 "${WW_LWIP_ENGINE_RECIPE}" WW_LWIP_ENGINE_RECIPE_SHA256)
+include("${WW_LWIP_ENGINE_RECIPE}")
+set(WW_LWIP_POOLS_RECIPE "${CMAKE_CURRENT_SOURCE_DIR}/lwip/shared_pools_patch.cmake")
+file(SHA256 "${WW_LWIP_POOLS_RECIPE}" WW_LWIP_POOLS_RECIPE_SHA256)
+include("${WW_LWIP_POOLS_RECIPE}")
+set(WW_LWIP_PORTS_RECIPE "${CMAKE_CURRENT_SOURCE_DIR}/lwip/port_registry_patch.cmake")
+file(SHA256 "${WW_LWIP_PORTS_RECIPE}" WW_LWIP_PORTS_RECIPE_SHA256)
+include("${WW_LWIP_PORTS_RECIPE}")
+set(WW_LWIP_TIMER_RECIPE "${CMAKE_CURRENT_SOURCE_DIR}/lwip/timer_patch.cmake")
+file(SHA256 "${WW_LWIP_TIMER_RECIPE}" WW_LWIP_TIMER_RECIPE_SHA256)
+include("${WW_LWIP_TIMER_RECIPE}")
+set(WW_LWIP_LIFECYCLE_RECIPE "${CMAKE_CURRENT_SOURCE_DIR}/lwip/lifecycle_patch.cmake")
+file(SHA256 "${WW_LWIP_LIFECYCLE_RECIPE}" WW_LWIP_LIFECYCLE_RECIPE_SHA256)
+include("${WW_LWIP_LIFECYCLE_RECIPE}")
 set(WW_LWIP_EXPECTED_PATCH_STAMP
-    "revision=${WW_LWIP_REVISION}\nrecipe-sha256=${WW_LWIP_PATCH_RECIPE_SHA256}\n")
+    "revision=${WW_LWIP_REVISION}\nrecipe-sha256=${WW_LWIP_PATCH_RECIPE_SHA256}\nengine-sha256=${WW_LWIP_ENGINE_RECIPE_SHA256}\npools-sha256=${WW_LWIP_POOLS_RECIPE_SHA256}\nports-sha256=${WW_LWIP_PORTS_RECIPE_SHA256}\ntimer-sha256=${WW_LWIP_TIMER_RECIPE_SHA256}\nlifecycle-sha256=${WW_LWIP_LIFECYCLE_RECIPE_SHA256}\n")
 
 set(WW_LWIP_REBUILD TRUE)
 if(EXISTS "${WW_LWIP_PATCH_STAMP}")
@@ -1183,6 +1199,11 @@ if(WW_LWIP_REBUILD)
     file(MAKE_DIRECTORY "${LWIP_DIR}")
     file(COPY "${LWIP_ORIGINAL_DIR}/" DESTINATION "${LWIP_DIR}" PATTERN ".git" EXCLUDE)
     ww_apply_lwip_pretend_patch("${LWIP_DIR}")
+    ww_apply_lwip_engine_patch("${LWIP_DIR}")
+    ww_apply_lwip_shared_pools_patch("${LWIP_DIR}")
+    ww_apply_lwip_ports_patch("${LWIP_DIR}")
+    ww_apply_lwip_timer_patch("${LWIP_DIR}")
+    ww_apply_lwip_lifecycle_patch("${LWIP_DIR}")
     file(WRITE "${WW_LWIP_PATCH_STAMP}" "${WW_LWIP_EXPECTED_PATCH_STAMP}")
 endif()
 
@@ -1300,7 +1321,29 @@ endif()
 include(${LWIP_DIR}/src/Filelists.cmake)
 include(${LWIP_CONTRIB_DIR}/Filelists.cmake)
 
-add_library(ww_lwip STATIC ${lwipnoapps_SRCS})
+add_library(ww_lwip STATIC ${lwipnoapps_SRCS} lwip/engine.c lwip/shared_pools.c lwip/port_registry.c)
+# Source-local engine modules must not merge their private macro namespaces.
+set_target_properties(ww_lwip PROPERTIES UNITY_BUILD OFF)
+
+# Private small-capacity raw build for shared-limit and concurrency regression tests.
+if(WW_BUILD_UNIT_TESTS AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_library(ww_lwip_engine_test STATIC EXCLUDE_FROM_ALL
+        ${lwipnoapps_SRCS} lwip/engine.c lwip/shared_pools.c lwip/port_registry.c
+        ${LWIP_CONTRIB_DIR}/ports/unix/port/sys_arch.c)
+    target_include_directories(ww_lwip_engine_test PUBLIC ${LWIP_INCLUDE_DIRS})
+    target_include_directories(ww_lwip_engine_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/base ${CMAKE_CURRENT_SOURCE_DIR}/libc)
+    set(ww_lwip_engine_test_definitions ${LWIP_DEFINITIONS})
+    list(FILTER ww_lwip_engine_test_definitions EXCLUDE REGEX "^WW_LWIP_MAX_")
+    target_compile_definitions(ww_lwip_engine_test PUBLIC ${ww_lwip_engine_test_definitions}
+        WW_LWIP_MAX_TCP_FLOWS=16 WW_LWIP_MAX_UDP_FLOWS=8
+        WW_LWIP_MAX_TCP_LISTENERS=4 WW_LWIP_MAX_REASS_DATAGRAMS=2
+        TCP_LOCAL_PORT_RANGE_START=49152 TCP_LOCAL_PORT_RANGE_END=49160
+        UDP_LOCAL_PORT_RANGE_START=49152 UDP_LOCAL_PORT_RANGE_END=49159
+        $<$<CONFIG:Debug>:LWIP_DEBUG=1>)
+    set_target_properties(ww_lwip_engine_test PROPERTIES UNITY_BUILD OFF)
+    target_link_libraries(ww_lwip_engine_test PUBLIC waterwall_runtime_options)
+endif()
 
 target_compile_definitions(ww_lwip PUBLIC $<$<CONFIG:Debug>:LWIP_DEBUG=1>)
 # The config directory arrives first via LWIP_INCLUDE_DIRS, so ww_lwip resolves
@@ -1674,6 +1717,10 @@ if(ENABLE_ASAN)
     target_link_options(ww PUBLIC $<$<CONFIG:Debug>:-fsanitize=address>)
 endif()
 if(ENABLE_TSAN)
+    if(TARGET ww_lwip_engine_test)
+        target_compile_options(ww_lwip_engine_test PUBLIC $<$<CONFIG:Debug>:-fsanitize=thread>)
+        target_link_options(ww_lwip_engine_test PUBLIC $<$<CONFIG:Debug>:-fsanitize=thread>)
+    endif()
     target_compile_options(ww PUBLIC $<$<CONFIG:Debug>:-fsanitize=thread>)
     target_compile_options(ww_lwip PRIVATE $<$<CONFIG:Debug>:-fsanitize=thread>)
     target_link_options(ww PUBLIC $<$<CONFIG:Debug>:-fsanitize=thread>)

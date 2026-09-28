@@ -54,11 +54,9 @@ static void my_pbuf_free_custom(struct pbuf *p)
     my_custom_pbuf_t *custombuf = (my_custom_pbuf_t *) p;
 
     /*
-     * TCP may retain this pbuf in its out-of-order queue and release it later
-     * from the lwIP timer thread. Never infer ownership from the freeing
-     * thread: that would return the buffer to the pseudo-worker's pool. A
-     * foreign thread also cannot mutate the originating worker-local pool, so
-     * it destroys the standalone allocation instead.
+     * TCP may retain this pbuf across owner-loop timer work and node shutdown.
+     * Keep the originating pool identity explicit. A detached foreign free
+     * destroys the standalone allocation instead of borrowing that pool.
      */
     if (currentThreadIsEventWorkerWID(custombuf->origin_wid))
     {
@@ -153,7 +151,7 @@ static bool ptcReadFragmentKey(const sbuf_t *buf, ptc_fragment_key_t *out)
 }
 
 /* Remove any incomplete prefix when stack input cannot accept this fragment.
- * Called under the lwIP core lock. Non-device fragment sources still need this. */
+ * Requires the current owner engine; lower-level fragment tests use this path. */
 static void ptcPurgeRefusedFragmentLocked(const ptc_fragment_key_t *key, struct netif *inp)
 {
     discard ip4_reass_purge(inp, &key->source, &key->destination, key->protocol, key->identification);
@@ -162,7 +160,7 @@ static void ptcPurgeRefusedFragmentLocked(const ptc_fragment_key_t *key, struct 
 static void ptcSubmitPacketToStack(sbuf_t *buf, struct netif *inp)
 {
     // Runs on the packet line's event worker; record that identity with the
-    // pbuf so a later lwIP-thread free knows whose pool the sbuf came from.
+    // pbuf so a later deferred free knows whose pool the sbuf came from.
     const wid_t    origin_wid  = getCurrentEventWorkerWID();
     buffer_pool_t *origin_pool = getWorkerBufferPool(origin_wid);
 
@@ -255,7 +253,7 @@ static void ptcSubmitPacketToStack(sbuf_t *buf, struct netif *inp)
     }
 
     /* Input may synchronously free the custom pbuf and its sbuf. */
-    if (inp->input(p, inp) != ERR_OK)
+    if (wwLwipEngineInput(wwLwipEngineCurrent(), p, inp) != ERR_OK)
     {
         if (is_fragment)
         {
@@ -354,10 +352,10 @@ static void processV4(tunnel_t *t, line_t *l, sbuf_t *buf)
         if (dns_result.handled)
         {
             /*
-             * Published here rather than returned for emission after the unlock:
+             * Published through the current engine:
              * the reply has to leave through the worker netif so lwIP fragments
              * it at the configured MTU. That output callback only queues, so it
-             * is legal while the core lock is held.
+             * never reenters packet input or a neighboring tunnel.
              */
             if (dns_result.response != NULL)
             {
@@ -452,6 +450,8 @@ static void processV4(tunnel_t *t, line_t *l, sbuf_t *buf)
 
 void ptcTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
+    assert(currentThreadIsEventWorkerWID(lineGetWID(l)));
+    assert(tunnelchainIsWorkerPacketLine(tunnelGetChain(t), l));
     ptc_tstate_t *state                = tunnelGetState(t);
     const bool    recalculate_checksum = packettunnelTakeChecksumRequest(l);
 
@@ -498,22 +498,25 @@ void ptcTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             abortProgramNow(1);
         }
 
-        LOCK_TCPIP_CORE();
-
-        /*
-         * Stop may have won the core lock after our optimistic check and
-         * removed every route. Recheck under the same lock that serializes
-         * route creation so cleanup is a stable barrier.
-         */
+        ww_lwip_engine_t *engine = wwLwipRuntimeGet(lineGetWID(l));
+        if (engine == NULL)
+        {
+            lineReuseBuffer(l, buf);
+            return;
+        }
+        ww_lwip_engine_t *previous;
+        const bool        entered = wwLwipEngineEnter(engine, &previous);
+        assert(entered);
+        discard entered;
         if (UNLIKELY(atomicLoadRelaxed(&state->stopping)))
         {
-            UNLOCK_TCPIP_CORE();
+            wwLwipEngineLeave(engine, previous);
             lineReuseBuffer(l, buf);
             return;
         }
 
         processV4(t, l, buf);
-        UNLOCK_TCPIP_CORE();
+        wwLwipEngineLeave(engine, previous);
         ptcDrainTerminalLinesOnCurrentWorker(t, lineGetWID(l));
         return;
     }

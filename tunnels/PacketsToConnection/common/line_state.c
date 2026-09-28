@@ -16,6 +16,8 @@ bool ptcLinestateInitialize(ptc_lstate_t *ls, tunnel_t *t, line_t *l, ptc_line_k
     memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(*ls)));
     ls->tunnel = t;
     ls->line   = l;
+    ls->engine = wwLwipEngineCurrent();
+    assert(ls->engine != NULL && currentThreadIsEventWorkerWID(lineGetWID(l)));
     ls->kind   = (uint8_t) kind;
 
     if (kind == kPtcLineKindTcp)
@@ -105,11 +107,9 @@ void ptcLinestateDestroy(ptc_lstate_t *ls)
     }
 
 #ifdef DEBUG
-    LOCK_TCPIP_CORE();
     assert(ls->tcp_pcb == NULL);
     assert(ls->udp_pcb == NULL);
     assert(ls->route_ctx == NULL);
-    UNLOCK_TCPIP_CORE();
 #endif
 
     memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(ptc_lstate_t)));

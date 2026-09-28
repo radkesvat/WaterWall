@@ -72,7 +72,7 @@ void ctpInjectMessageDestroy(void *payload)
 
 /*
  * Called by lwIP when it is finished with an injected packet, possibly from its
- * own timer thread and possibly seconds later - a fragment waiting for
+ * owner-loop timer dispatch and possibly seconds later - a fragment waiting for
  * reassembly or a segment in TCP's out-of-order queue both hold one this long.
  * The message came from the global allocator rather than a worker-local pool
  * precisely so any thread may release it.
@@ -107,17 +107,9 @@ static void ctpInjectPacketOnWorker(worker_t *worker, void *arg1, void *arg2, vo
     tunnel_t         *t   = msg->tunnel;
     ctp_tstate_t     *ts  = tunnelGetState(t);
 
-    LOCK_TCPIP_CORE();
-
-    /*
-     * Repeated under the core lock, and this is the check that actually counts.
-     * lwIP's own error callback runs on the tcpip thread and can unregister and
-     * free the pcb between the precheck above and here; injecting afterwards
-     * would make the stack answer for a flow that no longer exists. The order is
-     * the documented one - core lock outer, flows_lock inner - and it is safe
-     * because this task is always queued and so never entered under a foreign
-     * core lock.
-     */
+    assert(currentThreadIsEventWorkerWID(worker->wid) && msg->wid == worker->wid);
+    /* Lookup is repeated on the application owner. The registry lock is
+     * released before selecting the engine and delivering any packet. */
     bool handed_to_lwip  = false;
     bool exact_netif     = false;
     bool delivered       = false;
@@ -127,7 +119,8 @@ static void ctpInjectPacketOnWorker(worker_t *worker, void *arg1, void *arg2, vo
     const uint64_t       delivery_serial    = msg->delivery_serial;
 
     ctp_netif_ctx_t *ctx = (ts->netifs != NULL && worker->wid < ts->netifs_count) ? ts->netifs[worker->wid] : NULL;
-    if (ctx != NULL && ctx->added && ctx->tunnel == t && ctx->wid == worker->wid)
+    if (ctx != NULL && ctx->added && ctx->tunnel == t && ctx->wid == worker->wid &&
+        wwLwipEngineOwnerIsCurrent(worker->wid, getWorkerLoop(worker->wid)))
     {
         exact_netif = true;
     }
@@ -159,7 +152,7 @@ static void ctpInjectPacketOnWorker(worker_t *worker, void *arg1, void *arg2, vo
             msg->tunnel                    = NULL;
             handed_to_lwip                 = true;
 
-            const err_t input_result = ctx->netif.input(p, &ctx->netif);
+            const err_t input_result = (err_t) wwLwipEngineInput(ctx->engine, p, &ctx->netif);
             delivered                = input_result == ERR_OK;
             if (input_result != ERR_OK)
             {
@@ -168,7 +161,6 @@ static void ctpInjectPacketOnWorker(worker_t *worker, void *arg1, void *arg2, vo
         }
     }
 
-    UNLOCK_TCPIP_CORE();
 
     ctpDrainTerminalLinesOnCurrentWorker(t, worker->wid);
 
@@ -203,7 +195,7 @@ static ctp_frag_publish_result_t ctpInjectPublish(tunnel_t *t, const ctp_flow_ke
     /*
      * Always queued, even when the owner is this worker: injecting inline would
      * run lwIP - and any pool work its receive callback triggers - inside the
-     * packet line's own callback frame, possibly under a foreign core lock.
+     * packet line's own callback frame, possibly inside another engine.
      * The cleanup callback releases the message if the queue refuses it.
      */
     if (sendWorkerMessageForceQueueRetainOnRefusal(
@@ -235,7 +227,6 @@ static void ctpFragPurgeOnWorker(worker_t *worker, void *arg1, void *arg2, void 
     tunnel_t             *t   = msg->tunnel;
     ctp_tstate_t         *ts  = tunnelGetState(t);
 
-    LOCK_TCPIP_CORE();
 
     ctp_netif_ctx_t *ctx = (ts->netifs != NULL && worker->wid < ts->netifs_count) ? ts->netifs[worker->wid] : NULL;
 
@@ -245,11 +236,15 @@ static void ctpFragPurgeOnWorker(worker_t *worker, void *arg1, void *arg2, void 
         ip4_addr_t source      = {.addr = msg->key.remote_addr_network};
         ip4_addr_t destination = {.addr = msg->key.local_addr_network};
 
+        ww_lwip_engine_t *previous;
+        const bool        entered = wwLwipEngineEnter(ctx->engine, &previous);
+        assert(entered);
+        discard entered;
         discard ip4_reass_purge(&ctx->netif, &source, &destination, msg->key.protocol, msg->key.ident);
+        wwLwipEngineLeave(ctx->engine, previous);
         exact_absence = true;
     }
 
-    UNLOCK_TCPIP_CORE();
 
     /*
      * Reached only after every earlier injection task for this datagram has
@@ -459,10 +454,8 @@ static ctp_inject_msg_t *ctpAllocatePacketMessage(uint32_t len)
 /*
  * A return packet arriving on a worker packet line.
  *
- * Nothing here may touch lwIP. PacketsToConnection now defers publication
- * outside its core-locked frame, but an arbitrary neighboring packet node need
- * not make that promise. The tuple lookup therefore uses the registry's own
- * lock and injection is always handed to the owner worker.
+ * This callback only validates/copies bytes and consults the synchronized
+ * registry. Injection always queues to the normal line's owner engine.
  */
 void ctpTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {

@@ -107,8 +107,8 @@ api_result_t tlsclientTunnelApi(tunnel_t *instance, sbuf_t *message)
     }
 
     /*
-     * There is no per-event-worker SSL context for the lwIP pseudo-worker and no
-     * worker-local pool at all for an unregistered thread. Neither may borrow
+     * An unregistered thread has no per-event-worker SSL context or local pool.
+     * It must not borrow
      * worker 0's, so the request is destroyed rather than recycled and the call
      * fails.
      */

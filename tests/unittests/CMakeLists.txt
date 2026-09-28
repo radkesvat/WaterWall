@@ -62,6 +62,36 @@ function(add_waterwall_unit_test test_name target_name labels)
   )
 endfunction()
 
+if(TARGET ww_lwip_engine_test)
+  add_executable(lwip_engine_isolation_test lwip_engine_isolation_test.c)
+  target_link_libraries(lwip_engine_isolation_test PRIVATE ww_lwip_engine_test pthread)
+  target_link_options(lwip_engine_isolation_test PRIVATE "-Wl,--wrap=sys_now")
+  add_dependencies(waterwall_unit_tests lwip_engine_isolation_test)
+  add_waterwall_unit_test(waterwall.lwip_engine_isolation_unit lwip_engine_isolation_test "unit;net;lwip;thread")
+  add_executable(lwip_engine_pools_test lwip_engine_pools_test.c)
+  target_link_libraries(lwip_engine_pools_test PRIVATE ww_lwip_engine_test pthread)
+  target_link_options(lwip_engine_pools_test PRIVATE "-Wl,--wrap=sys_now" "-Wl,--wrap=calloc")
+  add_dependencies(waterwall_unit_tests lwip_engine_pools_test)
+  add_waterwall_unit_test(waterwall.lwip_engine_pools_unit lwip_engine_pools_test "unit;net;lwip;thread")
+  add_executable(lwip_engine_ports_test lwip_engine_ports_test.c)
+  target_link_libraries(lwip_engine_ports_test PRIVATE ww_lwip_engine_test pthread)
+  target_link_options(lwip_engine_ports_test PRIVATE "-Wl,--wrap=sys_now")
+  add_dependencies(waterwall_unit_tests lwip_engine_ports_test)
+  add_waterwall_unit_test(waterwall.lwip_engine_ports_unit lwip_engine_ports_test "unit;net;lwip;thread")
+  add_executable(lwip_engine_ids_test lwip_engine_ids_test.c)
+  target_link_libraries(lwip_engine_ids_test PRIVATE ww_lwip_engine_test pthread)
+  target_link_options(lwip_engine_ids_test PRIVATE "-Wl,--wrap=sys_now")
+  add_dependencies(waterwall_unit_tests lwip_engine_ids_test)
+  add_waterwall_unit_test(waterwall.lwip_engine_ids_unit lwip_engine_ids_test "unit;net;lwip;thread")
+  add_executable(lwip_engine_runtime_test lwip_engine_runtime_test.c ${CMAKE_SOURCE_DIR}/ww/lwip/engine_runtime.c)
+  target_link_libraries(lwip_engine_runtime_test PRIVATE ww_lwip_engine_test ww)
+  target_link_options(lwip_engine_runtime_test PRIVATE "-Wl,--wrap=sys_now" "-Wl,--wrap=calloc" "-Wl,--wrap=wtimerAdd"
+
+    "-Wl,--wrap=nodemanagerQuiesceWorker" "-Wl,--wrap=workerMessagesDestroyDetached")
+  add_dependencies(waterwall_unit_tests lwip_engine_runtime_test)
+  add_waterwall_unit_test(waterwall.lwip_engine_runtime_unit lwip_engine_runtime_test "unit;net;lwip;thread;timer;lifetime")
+endif()
+
 if(TARGET StreamFragmenter AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING)
   foreach(variant IN ITEMS normal no_splice)
     set(sf_test streamfragmenter_${variant}_test)
@@ -2561,6 +2591,23 @@ if(TARGET ConnectionToPackets)
 endif()
 
 if(TARGET PacketsToConnection)
+  if(TARGET ww_lwip_engine_test)
+    get_target_property(ptc_engine_sources PacketsToConnection SOURCES)
+    list(TRANSFORM ptc_engine_sources PREPEND "${CMAKE_SOURCE_DIR}/tunnels/PacketsToConnection/")
+    add_library(ptc_engine_test STATIC ${ptc_engine_sources})
+    target_include_directories(ptc_engine_test PUBLIC ${CMAKE_SOURCE_DIR}/tunnels/PacketsToConnection/include
+      PRIVATE ${CMAKE_SOURCE_DIR}/tunnels/PacketsToConnection/include/PacketsToConnection)
+    target_link_libraries(ptc_engine_test PUBLIC ww_lwip_engine_test ww)
+    target_compile_options(ptc_engine_test PRIVATE -Wno-address-of-packed-member)
+    add_executable(lwip_ptc_engine_test lwip_ptc_engine_test.c ${CMAKE_SOURCE_DIR}/ww/lwip/engine_runtime.c)
+    target_link_libraries(lwip_ptc_engine_test PRIVATE ptc_engine_test IpOverrider)
+    target_link_options(lwip_ptc_engine_test PRIVATE
+
+      "-Wl,--wrap=nodemanagerQuiesceWorker" "-Wl,--wrap=nodemanagerStopWorkerResources"
+      "-Wl,--wrap=workerMessagesDestroyDetached")
+    add_dependencies(waterwall_unit_tests lwip_ptc_engine_test)
+    add_waterwall_unit_test(waterwall.lwip_ptc_engine_unit lwip_ptc_engine_test "unit;net;lwip;thread;packetstoconnection")
+  endif()
   add_executable(packetstoconnection_netif_contract_test packetstoconnection_netif_contract_test.c)
   target_link_libraries(packetstoconnection_netif_contract_test PRIVATE PacketsToConnection ww)
   add_dependencies(waterwall_unit_tests packetstoconnection_netif_contract_test)
@@ -2601,6 +2648,7 @@ if(TARGET PacketsToConnection)
     )
     target_link_options(packetstoconnection_fragment_admission_test PRIVATE
       "-Wl,--wrap=bufferpoolReuseBuffer"
+      "-Wl,--wrap=wwLwipEngineInput"
     )
     target_link_libraries(packetstoconnection_fragment_admission_test PRIVATE PacketsToConnection ww)
     add_dependencies(waterwall_unit_tests packetstoconnection_fragment_admission_test)
@@ -2612,20 +2660,42 @@ if(TARGET PacketsToConnection)
   endif()
 endif()
 
+if(TARGET ww_lwip_engine_test AND TARGET ConnectionToPackets)
+  get_target_property(ctp_engine_sources ConnectionToPackets SOURCES)
+  list(TRANSFORM ctp_engine_sources PREPEND "${CMAKE_SOURCE_DIR}/tunnels/ConnectionToPackets/")
+  add_library(ctp_engine_test STATIC ${ctp_engine_sources})
+  target_include_directories(ctp_engine_test PUBLIC ${CMAKE_SOURCE_DIR}/tunnels/ConnectionToPackets/include
+    PRIVATE ${CMAKE_SOURCE_DIR}/tunnels/ConnectionToPackets/include/ConnectionToPackets)
+  target_link_libraries(ctp_engine_test PUBLIC ww_lwip_engine_test ww DomainResolver)
+  target_compile_options(ctp_engine_test PRIVATE -Wno-address-of-packed-member)
+  add_executable(lwip_ctp_roundtrip_test lwip_ctp_roundtrip_test.c
+    ${CMAKE_SOURCE_DIR}/ww/lwip/engine_runtime.c)
+  target_link_libraries(lwip_ctp_roundtrip_test PRIVATE ctp_engine_test ptc_engine_test)
+  target_link_options(lwip_ctp_roundtrip_test PRIVATE
+
+    "-Wl,--wrap=nodemanagerQuiesceWorker" "-Wl,--wrap=nodemanagerStopWorkerResources"
+    "-Wl,--wrap=workerMessagesDestroyDetached")
+  add_dependencies(waterwall_unit_tests lwip_ctp_roundtrip_test)
+  add_waterwall_unit_test(waterwall.lwip_ctp_roundtrip_unit lwip_ctp_roundtrip_test "unit;net;lwip;thread;connectiontopackets")
+
+endif()
+
 if(LINUX AND TARGET ConnectionToPackets)
   add_executable(connectiontopackets_schedule_rejection_test
     connectiontopackets_schedule_rejection_test.c
     ${WATERWALL_LINE_FAILURE_WW_SOURCES}
+
+    ${CMAKE_SOURCE_DIR}/ww/lwip/engine_runtime.c
   )
-  waterwall_line_failure_test_use_tunnel(connectiontopackets_schedule_rejection_test ConnectionToPackets)
+
   target_link_options(connectiontopackets_schedule_rejection_test PRIVATE
     ${WATERWALL_LINE_FAILURE_WRAPS}
     "-Wl,--wrap=lineScheduleTask"
     "-Wl,--wrap=lineScheduleTaskWithBuf"
-    "-Wl,--wrap=sys_lock_tcpip_core"
-    "-Wl,--wrap=sys_unlock_tcpip_core"
+
+
   )
-  target_link_libraries(connectiontopackets_schedule_rejection_test PRIVATE ww)
+  target_link_libraries(connectiontopackets_schedule_rejection_test PRIVATE ctp_engine_test)
   add_dependencies(waterwall_unit_tests connectiontopackets_schedule_rejection_test)
   add_waterwall_unit_test(
     waterwall.connectiontopackets_schedule_rejection_unit
@@ -2638,16 +2708,18 @@ if(LINUX AND TARGET PacketsToConnection)
   add_executable(packetstoconnection_schedule_rejection_test
     packetstoconnection_schedule_rejection_test.c
     ${WATERWALL_LINE_FAILURE_WW_SOURCES}
+
+    ${CMAKE_SOURCE_DIR}/ww/lwip/engine_runtime.c
   )
-  waterwall_line_failure_test_use_tunnel(packetstoconnection_schedule_rejection_test PacketsToConnection)
+
   target_link_options(packetstoconnection_schedule_rejection_test PRIVATE
     ${WATERWALL_LINE_FAILURE_WRAPS}
     "-Wl,--wrap=lineScheduleTask"
     "-Wl,--wrap=lineScheduleTaskWithBuf"
-    "-Wl,--wrap=sys_lock_tcpip_core"
-    "-Wl,--wrap=sys_unlock_tcpip_core"
+
+
   )
-  target_link_libraries(packetstoconnection_schedule_rejection_test PRIVATE ww)
+  target_link_libraries(packetstoconnection_schedule_rejection_test PRIVATE ptc_engine_test)
   add_dependencies(waterwall_unit_tests packetstoconnection_schedule_rejection_test)
   add_waterwall_unit_test(
     waterwall.packetstoconnection_schedule_rejection_unit

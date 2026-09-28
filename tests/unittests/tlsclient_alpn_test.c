@@ -96,7 +96,7 @@ static void workerEnvSetup(tlsclient_test_worker_env_t *env)
 
     env->buffer_pools[0]         = env->pool;
     GSTATE.shortcut_buffer_pools = env->buffer_pools;
-    GSTATE.workers_count         = 2;
+    GSTATE.workers_count         = 1;
     testWorkerRegistryInstall(&g_test_worker_registry);
     testWorkerBindWID(0);
 }
@@ -316,7 +316,7 @@ static void testConfiguredSniLengthBounds(void)
     char           maximum_sni[kTlsClientMaxSniLength + 1U];
     char           oversized_sni[kTlsClientMaxSniLength + 2U];
 
-    GSTATE.workers_count = 2;
+    GSTATE.workers_count = 1;
     testWorkerRegistryInstall(&g_test_worker_registry);
     fillServerName(maximum_sni, kTlsClientMaxSniLength);
     fillServerName(oversized_sni, kTlsClientMaxSniLength + 1U);
@@ -344,7 +344,7 @@ static void testConfiguredClientHelloFramingBounds(void)
 {
     const uint32_t saved_workers_count = GSTATE.workers_count;
 
-    GSTATE.workers_count = 2;
+    GSTATE.workers_count = 1;
     testWorkerRegistryInstall(&g_test_worker_registry);
 
     node_t    node     = {0};
@@ -582,19 +582,19 @@ static void testTypedClientHelloGeneration(void)
     testWorkerBindWID(0);
 
     /*
-     * The lwIP pseudo-worker is registered but owns no event loop and has no
+     * The out-of-range identity is unregistered and has no
      * slot in the getWorkersCount()-sized SSL context arrays. It must be
      * rejected outright rather than falling back to worker 0's context.
      */
-    const wid_t lwip_wid         = getTotalWorkersCount() - 1;
-    line_t      lwip_worker_line = {.wid = lwip_wid};
-    testWorkerBindWID(lwip_wid);
-    require(tlsclientTunnelGenerateClientHello(tunnel, &lwip_worker_line, hostname, (uint32_t) sizeof(hostname) - 1U) ==
-                NULL,
-            "typed generation accepted the lwIP pseudo-worker");
+    const wid_t unregistered_wid         = getTotalWorkersCount();
+    line_t      unregistered_worker_line = {.wid = unregistered_wid};
+    testWorkerBindWID(unregistered_wid);
+    require(tlsclientTunnelGenerateClientHello(
+                tunnel, &unregistered_worker_line, hostname, (uint32_t) sizeof(hostname) - 1U) == NULL,
+            "typed generation accepted the out-of-range identity");
     require(tlsclientTunnelGenerateClientHello(tunnel, &caller_line, hostname, (uint32_t) sizeof(hostname) - 1U) ==
                 NULL,
-            "typed generation let the lwIP pseudo-worker use worker 0's context");
+            "typed generation let the out-of-range identity use worker 0's context");
     testWorkerBindWID(0);
 
     tlsclientTunnelDestroy(tunnel, wwLifecycleStartupRollback());
@@ -801,7 +801,7 @@ static void testHttp11Negotiation(void)
     cJSON *settings = parseSettings("{\"sni\":\"tls.integration.test\",\"alpns\":[\"http/1.1\"],\"verify\":false}");
     node_t node     = {.node_settings_json = settings};
 
-    GSTATE.workers_count = 2; // one regular worker plus WaterWall's additional lwIP worker
+    GSTATE.workers_count = 1; // one ordinary event worker
     testWorkerRegistryInstall(&g_test_worker_registry);
 
     tunnel_t *tunnel = tlsclientTunnelCreate(&node);

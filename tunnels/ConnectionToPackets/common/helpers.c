@@ -2,14 +2,8 @@
 
 #include "loggers/network_logger.h"
 
-/*
- * One clock for every deadline this node compares.
- *
- * wloopNowMS() only exists on an event worker's thread, while tombstone,
- * fragment and drain lifetimes are also observed from lwIP's timer thread. The
- * high-resolution source is monotonic and callable from either context, so clock
- * corrections cannot extend or prematurely expire these internal lifetimes.
- */
+/* Deadlines are observed by different event workers. Use one monotonic clock,
+ * independent of each loop's cached time. */
 uint64_t ctpNowMs(void)
 {
     return (uint64_t) (getHRTimeUs() / 1000ULL);
@@ -133,7 +127,7 @@ void ctpTerminalCancel(ctp_lstate_t *ls)
 
 bool ctpRequiredControlRefusedLocked(tunnel_t *t, ctp_lstate_t *ls, const char *operation)
 {
-    /* The caller already owns LOCK_TCPIP_CORE(). Disable the exact producer
+    /* The caller already owns the owner engine. Disable the exact producer
      * before publishing the owner-worker terminal handoff. */
     const bool aborted = ctpDetachFlowLocked(t, ls, false);
     ctpTerminalEnqueue(t, ls);
@@ -304,7 +298,7 @@ bool ctpDetachFlowLocked(tunnel_t *t, ctp_lstate_t *ls, bool graceful)
     if (UNLIKELY(ts->lwip_resources_destroyed))
     {
         /*
-         * Stop detached every pcb and cleared the registry under this same lock,
+         * Stop detached every pcb and cleared the registry on this owner,
          * so the retained pointers are stale by construction. Only the local
          * bookkeeping is cleared here; touching lwIP would be a use-after-free.
          */
@@ -433,9 +427,23 @@ static void ctpCloseLineTowardPrevInternal(tunnel_t *t, line_t *l, bool graceful
 
     const bool callback_admitted = ctpPrevGateEnter(t);
 
-    LOCK_TCPIP_CORE();
-    discard ctpDetachFlowLocked(t, ls, graceful);
-    UNLOCK_TCPIP_CORE();
+    if (ls->engine != NULL)
+    {
+        ww_lwip_engine_t *previous;
+        const bool        entered = wwLwipEngineEnter(ls->engine, &previous);
+        assert(entered);
+        discard entered;
+        discard ctpDetachFlowLocked(t, ls, graceful);
+        wwLwipEngineLeave(ls->engine, previous);
+    }
+    if (! callback_admitted && ctpTunnelIsStopping(t))
+    {
+        /* The true source may drain later in this worker's node order. Keep
+         * its borrowed line state, buffers and reference until source Finish. */
+        ctpCancelConnectDeadline(ls);
+        lineUnref(l);
+        return;
+    }
 
     /*
      * Reaching here with live state is itself the proof that prev has not
@@ -512,12 +520,15 @@ static void ctpConnectDeadlineTimerCallback(wtimer_t *timer)
          * queued must not be handed to a drain: it would sit there writing into
          * a connection that is not coming up until its own deadline expired.
          */
-        LOCK_TCPIP_CORE();
+        ww_lwip_engine_t *previous;
+        const bool        entered = wwLwipEngineEnter(ls->engine, &previous);
+        assert(entered);
+        discard entered;
         if (! ctpTunnelIsStopping(t))
         {
             discard ctpTcpAbortFlowLocked(t, ls);
         }
-        UNLOCK_TCPIP_CORE();
+        wwLwipEngineLeave(ls->engine, previous);
 
         ctpCloseLineTowardPrev(t, l);
     }
@@ -621,8 +632,11 @@ void ctpDeliverPayloadTask(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
-    LOCK_TCPIP_CORE();
-    // Stop clears this pointer under the same lock, so rechecking here is what
+    ww_lwip_engine_t *previous;
+    const bool        entered = wwLwipEngineEnter(ls->engine, &previous);
+    assert(entered);
+    discard entered;
+    // Stop clears this pointer on the same owner, so rechecking here is what
     // keeps a task that raced it from crediting a released pcb.
     if (ls->tcp_pcb != NULL && ! ctpTunnelIsStopping(t))
     {
@@ -636,7 +650,7 @@ void ctpDeliverPayloadTask(tunnel_t *t, line_t *l, sbuf_t *buf)
             ctpTcpReturnReceiveCreditLocked(ls, received);
         }
     }
-    UNLOCK_TCPIP_CORE();
+    wwLwipEngineLeave(ls->engine, previous);
 }
 
 void ctpEstablishedTask(tunnel_t *t, line_t *l)
@@ -650,7 +664,10 @@ void ctpEstablishedTask(tunnel_t *t, line_t *l)
 
     ls->est_sent = true;
 
-    LOCK_TCPIP_CORE();
+    ww_lwip_engine_t *previous;
+    const bool        entered = wwLwipEngineEnter(ls->engine, &previous);
+    assert(entered);
+    discard                  entered;
     const ctp_flush_result_t flushed = ctpFlushPendingLocked(ls);
     if (UNLIKELY(flushed == kCtpFlushTerminal))
     {
@@ -662,7 +679,7 @@ void ctpEstablishedTask(tunnel_t *t, line_t *l)
          */
         discard ctpTcpAbortFlowLocked(t, ls);
     }
-    UNLOCK_TCPIP_CORE();
+    wwLwipEngineLeave(ls->engine, previous);
 
     if (UNLIKELY(flushed == kCtpFlushTerminal))
     {
@@ -670,14 +687,7 @@ void ctpEstablishedTask(tunnel_t *t, line_t *l)
         return;
     }
 
-    /*
-     * Rechecked after the lock. Waiting for the core lock is unbounded - lwIP's
-     * timer thread holds it for whole timer sweeps - so Stop can have run and
-     * returned in that window, and prev's own onStop() with it. The gate is not a
-     * strict quiescence barrier, but a callback emitted after a neighbour has
-     * stopped is a composability violation whether or not that neighbour happens
-     * to tolerate it.
-     */
+    /* Main quiescence may close admission during this owner's stack work. */
     if (ctpTunnelIsStopping(t))
     {
         return;
@@ -715,16 +725,17 @@ void ctpResumeWriteTask(tunnel_t *t, line_t *l)
      *
      * Cleared even on the stopping path below: nothing else would.
      */
-    LOCK_TCPIP_CORE();
     ls->write_retry_queued = false;
-    UNLOCK_TCPIP_CORE();
 
     if (ctpTunnelIsStopping(t))
     {
         return;
     }
 
-    LOCK_TCPIP_CORE();
+    ww_lwip_engine_t *previous;
+    const bool        entered = wwLwipEngineEnter(ls->engine, &previous);
+    assert(entered);
+    discard                  entered;
     const ctp_flush_result_t flushed = ctpFlushPendingLocked(ls);
     if (UNLIKELY(flushed == kCtpFlushTerminal))
     {
@@ -736,7 +747,7 @@ void ctpResumeWriteTask(tunnel_t *t, line_t *l)
          */
         discard ctpTcpAbortFlowLocked(t, ls);
     }
-    UNLOCK_TCPIP_CORE();
+    wwLwipEngineLeave(ls->engine, previous);
 
     if (UNLIKELY(flushed == kCtpFlushTerminal))
     {
@@ -761,13 +772,16 @@ void ctpRefusedDataRetryTask(tunnel_t *t, line_t *l)
         return;
     }
 
-    LOCK_TCPIP_CORE();
+    ww_lwip_engine_t *previous;
+    const bool        entered = wwLwipEngineEnter(ls->engine, &previous);
+    assert(entered);
+    discard entered;
     ls->refused_retry_queued = false;
     if (ls->tcp_pcb != NULL && ! ctpTunnelIsStopping(t))
     {
         discard tcp_process_refused_data(ls->tcp_pcb);
     }
-    UNLOCK_TCPIP_CORE();
+    wwLwipEngineLeave(ls->engine, previous);
 }
 
 /*
@@ -802,5 +816,29 @@ void ctpApplyWriteBackpressure(tunnel_t *t, line_t *l)
             discard lineCallWithRef(l, tunnelPrevDownStreamResume, t);
             ctpPrevGateLeave(t);
         }
+    }
+}
+
+void ctpDetachWorkerLines(tunnel_t *t, wid_t wid)
+{
+    ctp_tstate_t *ts = tunnelGetState(t);
+    assert(currentThreadIsEventWorkerWID(wid));
+    if (ts->owned_lines == NULL)
+        return;
+    assert(wid < ts->netifs_count);
+    for (ctp_lstate_t *ls = ts->owned_lines[wid]; ls != NULL; ls = ls->owned_next)
+    {
+        ctpCancelConnectDeadline(ls);
+        if (ls->engine != NULL)
+        {
+            ww_lwip_engine_t *previous;
+            const bool        entered = wwLwipEngineEnter(ls->engine, &previous);
+            assert(entered);
+            discard entered;
+            discard ctpDetachFlowLocked(t, ls, false);
+            wwLwipEngineLeave(ls->engine, previous);
+        }
+        ls->netif_ctx = NULL;
+        assert(ls->tcp_pcb == NULL && ! ls->flow_registered);
     }
 }

@@ -418,7 +418,7 @@ static void serverFixtureInitialize(server_lifecycle_fixture_t *fixture)
     memoryZero(fixture, sizeof(*fixture));
 
     GSTATE.flag_initialized = true;
-    GSTATE.workers_count    = 2;
+    GSTATE.workers_count    = 1;
     fixture->large_master   = masterpoolCreateWithCapacity(8);
     fixture->small_master   = masterpoolCreateWithCapacity(8);
     fixture->medium_master  = masterpoolCreateWithCapacity(8);
@@ -2475,7 +2475,7 @@ static void runServerSizingCase(uint16_t tls_version, const reality_v2_record_pr
     const bool      saved_initialized   = GSTATE.flag_initialized;
     const uint32_t  saved_workers_count = GSTATE.workers_count;
     GSTATE.flag_initialized             = true;
-    GSTATE.workers_count                = 2;
+    GSTATE.workers_count                = 1;
     GSTATE.shortcut_buffer_pools        = shortcut;
 
     tunnel_t *capture = tunnelCreate(NULL, sizeof(server_sizing_context_t *), 0);

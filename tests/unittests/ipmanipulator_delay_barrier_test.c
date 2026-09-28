@@ -472,7 +472,7 @@ int main(void)
     require(frandGlobalInit(), "fast random initialization failed");
     frandInit();
 
-    GSTATE.workers_count = 2; // one ordinary event worker plus the lwIP slot
+    GSTATE.workers_count = 1; // one ordinary event worker
     testWorkerRegistryInstall(&g_test_worker_registry);
     testWorkerBindWID(0);
 

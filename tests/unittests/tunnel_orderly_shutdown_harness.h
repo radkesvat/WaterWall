@@ -159,9 +159,7 @@ enum
     kTosMaxWorkers = 4
 };
 
-// One extra slot for the lwIP pseudo-worker: WORKERS_COUNT includes it, and
-// getWorkersCount() subtracts it, so a test that wants N event-loop workers has
-// to publish N + 1.
+// Publish exactly the number of ordinary event workers exercised by the fixture.
 typedef struct tos_worker_env_s
 {
     master_pool_t             *large_masters[kTosMaxWorkers];
@@ -201,7 +199,7 @@ static void tosWorkerEnvSetup(tos_worker_env_t *env, wid_t count, uint32_t large
 
     GSTATE.flag_initialized      = true;
     GSTATE.workers               = env->workers;
-    GSTATE.workers_count         = (uint32_t) count + 1U;
+    GSTATE.workers_count         = (uint32_t) count;
     GSTATE.shortcut_buffer_pools = env->pools;
     GSTATE.shortcut_loops        = env->loops;
     GSTATE.shortcut_wios_pools   = env->wios_pools;

@@ -121,7 +121,7 @@ int main(void)
     buffer_pool_t **saved_shortcuts = GSTATE.shortcut_buffer_pools;
     buffer_pool_t  *shortcuts[1]    = {pool};
     GSTATE.flag_initialized         = true;
-    GSTATE.workers_count            = 2;
+    GSTATE.workers_count            = 1;
     testWorkerRegistryInstall(&g_test_worker_registry);
     GSTATE.shortcut_buffer_pools = shortcuts;
     testWorkerBindWID(0);

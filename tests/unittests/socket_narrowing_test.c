@@ -86,7 +86,7 @@ static void test_wio_get_bounds(void)
     threadsafe_generic_pool_t *wio_pools[] = {wio_pool};
 
     GSTATE.flag_initialized = true;
-    GSTATE.workers_count    = 2;
+    GSTATE.workers_count    = 1;
     testWorkerRegistryInstall(&g_test_worker_registry);
     GSTATE.shortcut_wios_pools = wio_pools;
     testWorkerBindWID(0);

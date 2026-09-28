@@ -117,7 +117,6 @@ static void shutdownTestGlobalState(void)
     {
         teardownCurrentWorker(getWorker(0));
     }
-    workerDestroyPseudoWorkerResources(getWorker(getTotalWorkersCount() - 1));
     destroyGlobalState();
 }
 

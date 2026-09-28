@@ -134,7 +134,7 @@ static void envSetup(test_env_t *env)
 
     env->buffer_pools[0]                 = env->worker_pool;
     env->loops[0]                        = (wloop_t *) (void *) env;
-    GSTATE.workers_count                 = 2;
+    GSTATE.workers_count                  = 1;
     GSTATE.shortcut_buffer_pools         = env->buffer_pools;
     GSTATE.shortcut_loops                = env->loops;
     GSTATE.masterpool_buffer_pools_large = env->large_master;

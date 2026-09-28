@@ -132,7 +132,7 @@ void workerBindCurrentThread(worker_t *worker);
 void workerUnbindCurrentThread(void);
 
 /**
- * @brief Whether @p wid is a valid registered worker slot (including pseudo-workers).
+ * @brief Whether @p wid is a valid registered worker slot (including non-event slots).
  */
 bool workerWIDIsRegistered(wid_t wid);
 
@@ -159,9 +159,8 @@ bool currentThreadIsEventWorkerWID(wid_t wid);
 /**
  * @brief Diagnostic integer conversion for worker IDs, rendering kInvalidWID as -1.
  *
- * Diagnostic logging helper only. Preserves every valid WID (including the lwIP
- * pseudo-worker) numerically and converts kInvalidWID to -1 for formatters using %d.
- * Does not validate whether a non-sentinel WID is currently registered.
+ * Diagnostic logging helper only. Preserves every non-sentinel WID numerically and converts kInvalidWID to -1 for
+ * formatters using %d. Does not validate whether a non-sentinel WID is currently registered.
  *
  * @param wid Worker ID to convert.
  * @return Integer representation of @p wid, or -1 for kInvalidWID.
@@ -272,14 +271,13 @@ void workerPerformTeardown(worker_t *worker);
  * Ownership rules:
  *   - a worker thread calls this for itself after its loop returned;
  *   - worker 0 calls it for itself, on worker 0;
- *   - a pseudo-worker has no WaterWall event loop or workerSpawn() thread and
- *     is cleaned up by the shutdown thread only after any external thread that
- *     uses its resources (such as lwIP's tcpip_thread) has been joined.
+ *   - a non-event slot has no event loop or spawned thread; exclusive cleanup
+ *     requires all external users of its resources to have stopped.
  * It must never be called for another worker that owns a running event loop.
  *
  * @param worker Pointer to the worker structure.
  */
-void workerDestroyPseudoWorkerResources(worker_t *worker);
+void workerDestroyNonEventResources(worker_t *worker);
 
 /** Destroy an event worker whose OS thread was never created. */
 void workerDestroyUnstartedResources(worker_t *worker);
