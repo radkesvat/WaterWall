@@ -263,6 +263,10 @@ When payload reaches `TunDevice` from upstream or downstream:
 
 Both upstream and downstream payload handlers write to the same TUN device.
 
+Payload callbacks validate and try the existing thread-safe writer FIFO without
+waiting for capacity or performing native I/O. This enqueue-only guarantee allows
+an immediately adjacent PTC on the packet worker to deliver its final sbuf directly.
+
 ### Direct PacketsToConnection checksums
 
 A reciprocal immediate `TunDevice -> PacketsToConnection` pair automatically

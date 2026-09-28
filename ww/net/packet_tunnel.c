@@ -31,6 +31,15 @@ bool packettunnelTrustedChecksumsActive(const tunnel_t *t)
     return (t->node->flags & kNodeFlagTrustedPacketChecksumsActive) != 0;
 }
 
+bool packettunnelCanEnqueueDownstreamInline(const tunnel_t *producer, const line_t *packet_line)
+{
+    const tunnel_t *sink = producer->prev;
+    return sink != NULL && sink != producer && sink->next == producer && sink->chain == producer->chain &&
+           sink->node != NULL && sink->node->layer_group == kNodeLayer3 &&
+           (sink->node->flags & kNodeFlagPacketPayloadEnqueueOnly) != 0 &&
+           tunnelchainIsWorkerPacketLine(producer->chain, packet_line) && lineIsOnCurrentEventWorker(packet_line);
+}
+
 static void packettunnelDefaultUpStreamEst(tunnel_t *self, line_t *line)
 {
     assert(self->next != NULL);

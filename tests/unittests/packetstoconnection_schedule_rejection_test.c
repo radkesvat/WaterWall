@@ -406,11 +406,166 @@ static void caseResumeWaitsForDeliveryHeadroom(void)
     ptcFixtureTeardown(&fixture);
 }
 
+static bool                         output_probe, output_refuse, output_inline;
+static unsigned                     output_messages, output_deliveries, output_allocations;
+static sbuf_t                      *output_buffer;
+static WorkerMessageCallback        output_callback;
+static WorkerMessageCleanupCallback output_cleanup;
+static uint8_t                      output_bytes[257];
+
+void *__real_memoryAllocate(size_t size);
+void *__wrap_memoryAllocate(size_t size);
+void *__wrap_memoryAllocate(size_t size)
+{
+    if (output_probe)
+        ++output_allocations;
+    return __real_memoryAllocate(size);
+}
+worker_message_submit_result_e __real_sendWorkerMessageForceQueueWithCleanup(wid_t wid, WorkerMessageCallback callback,
+                                                                             WorkerMessageCleanupCallback cleanup,
+                                                                             void *a, void *b, void *c);
+worker_message_submit_result_e __wrap_sendWorkerMessageForceQueueWithCleanup(wid_t wid, WorkerMessageCallback callback,
+                                                                             WorkerMessageCleanupCallback cleanup,
+                                                                             void *a, void *b, void *c);
+worker_message_submit_result_e __wrap_sendWorkerMessageForceQueueWithCleanup(wid_t wid, WorkerMessageCallback callback,
+                                                                             WorkerMessageCleanupCallback cleanup,
+                                                                             void *a, void *b, void *c)
+{
+    if (! output_probe)
+        return __real_sendWorkerMessageForceQueueWithCleanup(wid, callback, cleanup, a, b, c);
+    twfRequire(wid == 0 && a == g_fixture->ptc && c == NULL, "wrong packet message route");
+    twfRequire(g_twf_buffers.live_count == 1 && b == g_twf_buffers.live[0], "message did not own final sbuf");
+    output_buffer   = b;
+    output_callback = callback;
+    output_cleanup  = cleanup;
+    ++output_messages;
+    if (output_refuse)
+    {
+        cleanup(a, b, c, kWorkerMessageCancelAdmissionClosed);
+        return kWorkerMessageSubmitRejectedCleanupRan;
+    }
+    return kWorkerMessageSubmitAccepted;
+}
+
+static void outputSink(tunnel_t *t, line_t *line, sbuf_t *buffer)
+{
+    discard t;
+    twfRequire(output_inline || wwLwipEngineCurrent() == NULL, "arbitrary neighbour entered active engine");
+    twfRequire(line == g_fixture->packet_line && g_twf_buffers.live_count == 1 && buffer == g_twf_buffers.live[0],
+               "delivery changed sbuf identity");
+    if (! output_inline)
+        twfRequire(buffer == output_buffer, "queue delivery copied output buffer");
+    twfRequire(sbufGetLength(buffer) == sizeof(output_bytes) &&
+                   memoryEqual(sbufGetRawPtr(buffer), output_bytes, sizeof(output_bytes)),
+               "pbuf bytes changed");
+    twfRequire(sbufGetLeftCapacity(buffer) >= 96, "packet output lost chain padding");
+    ++output_deliveries;
+    lineReuseBuffer(line, buffer);
+}
+
+static void *cancelPacketOnForeignThread(void *argument)
+{
+    output_cleanup(argument, output_buffer, NULL, kWorkerMessageCancelTeardown);
+    return NULL;
+}
+
+static void casePacketOutput(bool certified, unsigned settlement, bool chained)
+{
+    twfSetCase("PTC final output sbuf and certified inline dispatch");
+    ptc_fixture_t fixture;
+    ptcFixtureSetup(&fixture);
+    bufferpoolUpdateAllocationPaddings(fixture.env.pool, 96, 96, 96, 96);
+    /* Warm allocation before the measured output callback. */
+    lineReuseBuffer(fixture.packet_line, bufferpoolGetBestFit(fixture.env.pool, 257, 96));
+    twfBufferLedgerReset();
+    node_t    sink_node = {.layer_group = kNodeLayer3,
+                           .flags       = certified ? kNodeFlagPacketPayloadEnqueueOnly : kNodeFlagNone};
+    tunnel_t *sink      = tunnelCreate(&sink_node, 0, 0);
+    sink->chain         = fixture.chain;
+    sink->fnPayloadD    = outputSink;
+    tunnelBind(sink, fixture.ptc);
+    if (certified)
+    {
+        twfRequire(! packettunnelCanEnqueueDownstreamInline(fixture.ptc, fixture.line), "normal line inlined");
+        sink->next = NULL;
+        twfRequire(! packettunnelCanEnqueueDownstreamInline(fixture.ptc, fixture.packet_line),
+                   "one-sided edge inlined");
+        sink->next            = fixture.ptc;
+        sink_node.layer_group = kNodeLayer4;
+        twfRequire(! packettunnelCanEnqueueDownstreamInline(fixture.ptc, fixture.packet_line), "stream edge inlined");
+        sink_node.layer_group = kNodeLayer3;
+        testWorkerUnbindWID();
+        twfRequire(! packettunnelCanEnqueueDownstreamInline(fixture.ptc, fixture.packet_line),
+                   "foreign worker inlined");
+        testWorkerBindWID(0);
+    }
+    interface_route_context_t route = {.tunnel = fixture.ptc, .engine = fixture.engine, .packet_wid = 0};
+    struct netif              netif = {.state = &route};
+    for (unsigned i = 0; i < sizeof(output_bytes); ++i)
+        output_bytes[i] = (uint8_t) i;
+    struct pbuf following = {.payload = (void *) 1, .len = 100, .tot_len = 100};
+    struct pbuf tail      = {.payload = output_bytes + 17, .len = 240, .tot_len = 240, .next = &following};
+    struct pbuf empty     = {.payload = NULL, .len = 0, .tot_len = 240, .next = &tail};
+    struct pbuf head      = {
+             .payload = output_bytes, .len = chained ? 17 : 257, .tot_len = 257, .next = chained ? &empty : &following};
+    output_messages = output_deliveries = output_allocations = 0;
+    output_inline                                            = certified;
+    output_refuse                                            = settlement == 1;
+    output_probe                                             = true;
+    enterEngine();
+    err_t result = ptcNetifOutput(&netif, &head, NULL);
+    leaveEngine();
+    output_probe = false;
+    twfRequire(result == (output_refuse && ! certified ? ERR_MEM : ERR_OK), "packet output result");
+    twfRequire(output_allocations == 0 && g_twf_buffers.total_acquired == 1, "intermediate allocation retained");
+    twfRequire(output_messages == (certified ? 0 : 1), "wrong output message count");
+    if (! certified && ! output_refuse)
+    {
+        if (settlement == 2 || settlement == 3)
+        {
+            if (settlement == 3)
+            {
+                pthread_t thread;
+                twfRequire(pthread_create(&thread, NULL, cancelPacketOnForeignThread, fixture.ptc) == 0,
+                           "foreign cancellation thread creation");
+                twfRequire(pthread_join(thread, NULL) == 0, "foreign cancellation thread join");
+            }
+            else
+                output_cleanup(fixture.ptc, output_buffer, NULL, kWorkerMessageCancelQuiesced);
+        }
+        else
+        {
+            if (settlement == 4)
+                quiescenceGateClose(&((ptc_tstate_t *) tunnelGetState(fixture.ptc))->output_gate);
+            output_callback(&fixture.env.worker, fixture.ptc, output_buffer, NULL);
+        }
+    }
+    twfRequire(output_deliveries == ((certified || settlement == 0) ? 1 : 0), "wrong delivery count");
+    twfRequireNoLeakedBuffers();
+    ptc_tstate_t *state = tunnelGetState(fixture.ptc);
+    quiescenceGateClose(&state->output_gate);
+    enterEngine();
+    twfRequire(ptcNetifOutput(&netif, &head, NULL) == ERR_IF, "closed output gate accepted work");
+    leaveEngine();
+    twfRequire(g_twf_buffers.total_acquired == 1, "closed gate allocated a buffer");
+    lineDestroy(fixture.line);
+    fixture.line = NULL;
+    tunnelDestroy(sink);
+    ptcFixtureTeardown(&fixture);
+}
+
 int main(void)
 {
     twfRequire(lwipTestRuntimeInitialize(), "failed to initialize the lwIP random runtime");
     wwLwipEngineSharedInit();
     ptcRxWrapperPoolInitializeOnce();
+
+    for (unsigned chained = 0; chained < 2; ++chained)
+    {
+        casePacketOutput(true, 0, chained);
+        for (unsigned settlement = 0; settlement < 5; ++settlement)
+            casePacketOutput(false, settlement, chained);
+    }
 
     const uint32_t headroom_pool_sizes[] = {4096, 65536, 131072, 4U * 1024U * 1024U};
     for (size_t i = 0; i < ARRAY_SIZE(headroom_pool_sizes); ++i)

@@ -44,6 +44,7 @@ int main(void)
     setNetworkLogger(logger);
 
     node_t metadata = nodeTunDeviceGet();
+    require((metadata.flags & kNodeFlagPacketPayloadEnqueueOnly) != 0, "TUN must certify enqueue-only Payload");
     require(metadata.required_padding_left == kTunVirtioHeaderSize, "Linux TUN headroom does not fit virtio header");
     require((metadata.flags & kNodeFlagSupportsTrustedPacketChecksums) != 0 &&
                 (metadata.flags & kNodeFlagTrustedPacketChecksumsActive) == 0,

@@ -354,8 +354,8 @@ static void processV4(tunnel_t *t, line_t *l, sbuf_t *buf)
             /*
              * Published through the current engine:
              * the reply has to leave through the worker netif so lwIP fragments
-             * it at the configured MTU. That output callback only queues, so it
-             * never reenters packet input or a neighboring tunnel.
+             * it at the configured MTU. Output only inlines a certified
+             * enqueue-only sink and never reenters packet input.
              */
             if (dns_result.response != NULL)
             {

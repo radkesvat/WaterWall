@@ -1094,8 +1094,8 @@ ptc_fake_dns_result_t ptcFakeDnsHandleIpv4UdpPacket(tunnel_t *t, line_t *packet_
  *
  * Going through ip4_output_if() makes lwIP construct the IPv4 header, allocate
  * the identification value, and apply MTU fragmentation. It is safe
- * inside the owner engine because the netif output callback only queues detached
- * packet messages; it never calls the neighbour chain inline.
+ * inside the owner engine because netif output detaches packet bytes and only invokes a
+ * certified enqueue-only packet sink inline; arbitrary neighbours stay queued.
  *
  * Consumes `response` on every path. The PBUF_REF is synchronous through the
  * complete IPv4 output loop; once it returns, every queued output owns a detached

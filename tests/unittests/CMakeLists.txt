@@ -2726,6 +2726,8 @@ if(LINUX AND TARGET PacketsToConnection)
   )
 
   target_link_options(packetstoconnection_schedule_rejection_test PRIVATE
+    "-Wl,--wrap=sendWorkerMessageForceQueueWithCleanup"
+    "-Wl,--wrap=memoryAllocate"
     ${WATERWALL_LINE_FAILURE_WRAPS}
     "-Wl,--wrap=lineScheduleTask"
     "-Wl,--wrap=lineScheduleTaskWithBuf"

@@ -114,7 +114,11 @@ enum node_flags
     // Complete direct packet-pair checksum contract; never inherited through a node.
     kNodeFlagSupportsTrustedPacketChecksums = (1 << 7),
     // Instance-only, published during exclusive startup and immutable thereafter.
-    kNodeFlagTrustedPacketChecksumsActive = (1 << 8)
+    kNodeFlagTrustedPacketChecksumsActive = (1 << 8),
+    // Packet Payload only validates and tries a device FIFO enqueue, or drops.
+    // Never enters lwIP, pumps a loop, calls a tunnel, waits for capacity, writes
+    // the native device, or destroys the packet line. Immutable after startup.
+    kNodeFlagPacketPayloadEnqueueOnly = (1 << 9)
 };
 
 enum node_layer_group

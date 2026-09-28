@@ -2,12 +2,6 @@
 
 #include "loggers/network_logger.h"
 
-typedef struct ptc_packet_emit_msg_s
-{
-    uint32_t len;
-    uint8_t  data[];
-} ptc_packet_emit_msg_t;
-
 static void ptcEmitPacketOnWorker(worker_t *worker, void *arg1, void *arg2, void *arg3);
 
 static void ptcEmitPacketCleanup(void *arg1, void *arg2, void *arg3, worker_message_cancel_reason_e reason)
@@ -15,7 +9,7 @@ static void ptcEmitPacketCleanup(void *arg1, void *arg2, void *arg3, worker_mess
     discard reason;
     discard arg1;
     discard arg3;
-    memoryFree(arg2);
+    sbufDestroy(arg2);
 }
 
 static void ptcEmitPacketBufferAdmitted(tunnel_t *t, line_t *packet_line, sbuf_t *buf)
@@ -63,44 +57,25 @@ static void ptcEmitPacketOnWorker(worker_t *worker, void *arg1, void *arg2, void
 {
     discard arg3;
 
-    tunnel_t              *t          = arg1;
-    ptc_packet_emit_msg_t *packet_msg = arg2;
-    ptc_tstate_t          *state      = tunnelGetState(t);
+    tunnel_t     *t     = arg1;
+    sbuf_t       *buf   = arg2;
+    ptc_tstate_t *state = tunnelGetState(t);
 
-    /*
-     * Under lifecycle-v2, worker messages are settled before tunnel destruction.
-     * Local stopping/output_gate checks ensure work does not cross into a neighbour
-     * after admission has closed.
-     */
+    /* Worker messages settle before tunnel destruction. No cancellation path
+     * depends on this tunnel, its packet line, or an owner-local pool. */
     if (UNLIKELY(ptcTunnelIsStopping(t) || ! quiescenceGateEnter(&state->output_gate)))
     {
-        memoryFree(packet_msg);
+        bufferpoolReuseBuffer(worker->buffer_pool, buf);
         return;
     }
 
-    // The message was delivered to exactly one worker; take the packet line from
-    // that worker instead of re-reading TLS.
     line_t *packet_line = tunnelchainGetWorkerPacketLine(tunnelGetChain(t), worker->wid);
     if (UNLIKELY(packet_line == NULL || ptcTunnelIsStopping(t)))
     {
         quiescenceGateLeave(&state->output_gate);
-        memoryFree(packet_msg);
+        bufferpoolReuseBuffer(worker->buffer_pool, buf);
         return;
     }
-
-    buffer_pool_t *pool = lineGetBufferPool(packet_line);
-    sbuf_t        *buf  = bufferpoolGetBestFit(pool, packet_msg->len, bufferpoolGetLargeBufferPadding(pool));
-
-    if (UNLIKELY(buf == NULL))
-    {
-        quiescenceGateLeave(&state->output_gate);
-        memoryFree(packet_msg);
-        return;
-    }
-
-    sbufSetLength(buf, packet_msg->len);
-    memoryCopy(sbufGetMutablePtr(buf), packet_msg->data, packet_msg->len);
-    memoryFree(packet_msg);
 
     ptcEmitPacketBufferAdmitted(t, packet_line, buf);
     quiescenceGateLeave(&state->output_gate);
@@ -376,28 +351,54 @@ err_t ptcNetifOutput(struct netif *netif, struct pbuf *p, const ip4_addr_t *ipad
         return ERR_IF;
     }
 
-    /* Always queue, including to this worker. No neighbor may reenter the
-     * engine while TCP input scratch is active. The delivery has its o  n gate. */
-    ptc_packet_emit_msg_t *packet_msg = memoryAllocate(sizeof(*packet_msg) + p->tot_len);
-
-    if (UNLIKELY(packet_msg == NULL))
+    if (UNLIKELY(ptcTunnelIsStopping(t)))
     {
         quiescenceGateLeave(&state->output_gate);
-        return ERR_MEM;
+        return ERR_IF;
     }
 
-    packet_msg->len = p->tot_len;
-    pbufLargeCopyToPtr(p, packet_msg->data);
-
-    // A refusal releases the message through ptcEmitPacketCleanup(), which frees
-    // one detached allocation without touching a worker-local pool.
-    const worker_message_submit_result_e queued = sendWorkerMessageForceQueueWithCleanup(
-        packet_wid, (WorkerMessageCallback) ptcEmitPacketOnWorker, ptcEmitPacketCleanup, t, packet_msg, NULL);
-    quiescenceGateLeave(&state->output_gate);
-    if (queued != kWorkerMessageSubmitAccepted)
+    line_t *packet_line = tunnelchainGetWorkerPacketLine(tunnelGetChain(t), packet_wid);
+    assert(packet_line != NULL && lineIsOnCurrentEventWorker(packet_line));
+    buffer_pool_t *pool   = lineGetBufferPool(packet_line);
+    sbuf_t        *buf    = bufferpoolGetBestFit(pool, p->tot_len, bufferpoolGetLargeBufferPadding(pool));
+    const uint32_t length = p->tot_len;
+    uint32_t       copied = 0;
+    /* Stop at this packet, even if next points into a pbuf packet queue. Empty
+     * spans are legal. No lwIP storage escapes to the device writer. */
+    for (const struct pbuf *span = p; span != NULL && copied < length; span = span->next)
     {
-        return ERR_MEM;
+        const uint32_t count = min((uint32_t) span->len, length - copied);
+        if (count != 0)
+        {
+            uint8_t *destination = (uint8_t *) sbufGetMutablePtr(buf) + copied;
+            if (count < 64)
+                memoryCopy(destination, span->payload, count);
+            else
+                memoryCopyLarge(destination, span->payload, count);
+            copied += count;
+        }
+        if (span->tot_len == span->len)
+            break;
+    }
+    if (UNLIKELY(copied != length))
+    {
+        lineReuseBuffer(packet_line, buf);
+        quiescenceGateLeave(&state->output_gate);
+        return ERR_BUF;
+    }
+    sbufSetLength(buf, length);
+
+    if (packettunnelCanEnqueueDownstreamInline(t, packet_line))
+    {
+        ptcEmitPacketBufferAdmitted(t, packet_line, buf);
+        quiescenceGateLeave(&state->output_gate);
+        return ERR_OK;
     }
 
-    return ERR_OK;
+    /* Arbitrary neighbours can reenter TCP input scratch. Queue the same sbuf;
+     * synchronous refusal and foreign cancellation destroy it exactly once. */
+    const worker_message_submit_result_e queued = sendWorkerMessageForceQueueWithCleanup(
+        packet_wid, (WorkerMessageCallback) ptcEmitPacketOnWorker, ptcEmitPacketCleanup, t, buf, NULL);
+    quiescenceGateLeave(&state->output_gate);
+    return queued == kWorkerMessageSubmitAccepted ? ERR_OK : ERR_MEM;
 }

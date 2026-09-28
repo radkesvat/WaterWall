@@ -149,15 +149,17 @@ Important internal rules:
   through `ip4_output_if()`, so lwIP constructs
   the IPv4 header, allocates the shared identification value, and applies fragmentation with stack-owned offsets, MF
   flags, per-fragment lengths, and checksums. That publication happens inside the owner engine, which is legal
-  because the netif output callback only queues a packet message - it never calls the neighbour inline
+  because netif output only calls a certified enqueue-only TUN sink inline; arbitrary neighbours stay deferred
 - packet emission is protected by an admission gate held through the previous-neighbour callback, and normal-line
   `Init`/`Payload`/`Resume`/`Finish` work uses a second gate held through the next-neighbour callback. Global shutdown
   closes both gates in `onQuiesceRequest()` and waits for admitted callbacks in `onQuiesceWait()` before any component
   stops, so an already-admitted callback finishes before its neighbour can stop and queued work that runs later is cancelled. A
   refused next-side ordinary work recycles anything it owns and leaves teardown to the owner path; an initialized line
   still receives its one explicit teardown `Finish` during the owner-worker drain
-- netif output is always queued, even to the same worker, so no neighbouring callback recursively enters active
-  stack input. Quiesce closes output admission; queued work cancels without calling a stopped neighbour.
+- netif output copies each pbuf packet directly into one best-fit, padded sbuf. A reciprocal immediate TunDevice
+  that certifies enqueue-only packet delivery receives that same buffer inline on the owner packet worker;
+  other neighbours receive it through deferred delivery. No arbitrary callback can reenter stack input.
+  Quiesce closes output admission; canceled messages destroy their detached sbuf without borrowing a worker pool.
   Fake-DNS mapping transactions and reverse-name copying use one node mutex shared across workers. No cache-entry
   pointer escapes that scope. The mutex is released before stack output, neighbour callbacks or worker posts
 - top-level packet parsing reads only the version byte before normalizing cursor alignment. Shifted packet buffers are
@@ -396,8 +398,9 @@ Source-backed metadata:
 The runtime lazily creates one raw lwIP engine per ordinary event worker, shared by
 all bridge instances on that worker. There is no separate stack thread or protocol
 core mutex. PTC preserves the delivered packet worker; CTP preserves the application
-line's owner and queues return packets after tuple/generation lookup. Packet output
-and normal-line callbacks remain deferred, including same-worker delivery.
+line's owner and queues return packets after tuple/generation lookup. Normal-line callbacks and arbitrary packet neighbours remain deferred, including
+same-worker delivery. Only PTC's immediate certified enqueue-only packet sink
+has the direct-delivery exception.
 
 Flow/payload pools remain process-wide with their existing capacities. Each active
 engine adds bounded control tables and 17 timeout records; unused workers allocate

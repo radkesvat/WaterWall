@@ -396,11 +396,10 @@ ptc_fake_dns_result_t ptcFakeDnsHandleIpv4UdpPacket(tunnel_t *t, line_t *packet_
 
 /*
  * Publishes one built fake-DNS reply through the worker netif, fragmenting at
- * the inherited core MTU when it does not fit. Requires the current owner engine; the
- * netif output callback only queues, so no neighbour callback runs inside it.
- * Returns false when nothing was published and the caller still owns the buffer.
+ * instance MTU when it does not fit. Requires the current owner engine.
+ * Netif output only inlines a certified enqueue-only sink; arbitrary neighbours
+ * stay queued. Consumes response on success and failure.
  */
-/* Consumes response on success and failure. */
 bool  ptcFakeDnsPublishResponseLocked(tunnel_t *t, line_t *packet_line, sbuf_t *response, const ip4_addr_t *source,
                                       const ip4_addr_t *destination);
 bool  ptcFakeDnsApplyMappedDestination(tunnel_t *t, address_context_t *dest_ctx, const ip_addr_t *ip, uint16_t port,

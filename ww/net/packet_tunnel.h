@@ -24,6 +24,10 @@ bool packettunnelTrustedChecksumPairEligible(const tunnel_t *source, const tunne
 void packettunnelActivateTrustedChecksumPair(tunnel_t *source, tunnel_t *consumer);
 bool packettunnelTrustedChecksumsActive(const tunnel_t *t);
 
+/* Exact owner-worker packet edge to an immediate certified sink. Static topology
+ * and capability keep dispatch policy fixed throughout the route lifetime. */
+bool packettunnelCanEnqueueDownstreamInline(const tunnel_t *producer, const line_t *packet_line);
+
 typedef enum packet_lifecycle_anchor_direction_e
 {
     kPacketLifecycleAnchorPublishUpstream = 0,
