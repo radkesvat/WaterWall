@@ -38,6 +38,7 @@ typedef struct tun_linux_offload_plan_s
     uint16_t                   checksum_field;
     uint16_t                   tcp_checksum_seed;
     bool                       tcp_checksum_is_partial;
+    bool                       transport_assured;
     uint8_t                    pseudoheader_destination[4];
 } tun_linux_offload_plan_t;
 
@@ -60,3 +61,14 @@ bool tunLinuxOffloadPrepareSegment(const uint8_t *ip, const tun_linux_offload_pl
 /* Complete TCP checksum of a prepared segment on its destination worker. The
  * segment is independent of the aggregate and plan after preparation. */
 void tunLinuxOffloadCompleteSegment(uint8_t *ip, uint32_t ip_length);
+
+/* Active direct-pair admission. Retains assurance only in the private plan.
+ * Generic materialization, if still requested, is followed by ordinary validation.
+ * Unmarked complete traffic is validated after the existing reassembly path. */
+bool tunLinuxOffloadTrustInput(const uint8_t metadata[kTunVirtioHeaderSize], const uint8_t *ip,
+                               tun_linux_offload_plan_t *plan);
+bool tunLinuxOffloadValidatePacket(const uint8_t *ip, uint32_t length);
+
+/* Active writer: encode supported complete TCP/UDP; fragments/other protocols
+ * keep zero metadata. False rejects malformed packets without writing them. */
+bool tunLinuxOffloadEncodeWrite(uint8_t *ip, uint32_t length, uint8_t metadata[kTunVirtioHeaderSize]);

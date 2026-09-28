@@ -1,3 +1,4 @@
+#include "devices/tun/tun_linux_offload.h"
 #include "lwip/init.h"
 #include "lwip/priv/tcp_priv.h"
 #include "lwip/stats.h"
@@ -18,12 +19,15 @@ static const uint8_t carry_input[24] = {
     255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 1,
 };
 
-static unsigned hook_calls;
+static unsigned hook_calls, hook_non_ip_calls;
 uint16_t        __real_wwLwipChecksum(const void *data, int length);
 uint16_t        __wrap_wwLwipChecksum(const void *data, int length);
 uint16_t        __wrap_wwLwipChecksum(const void *data, int length)
 {
     ++hook_calls;
+    const uint8_t *bytes = data;
+    if (length < 20 || length > 60 || (bytes[0] >> 4U) != 4 || (bytes[0] & 15U) * 4U != (unsigned) length)
+        ++hook_non_ip_calls;
     return __real_wwLwipChecksum(data, length);
 }
 
@@ -430,12 +434,197 @@ static void testProtocols(void)
     netif_remove(&netif);
 }
 
+static uint8_t  assembled[65535];
+static uint32_t assembled_length;
+static unsigned trusted_outputs, fragmented_outputs;
+
+static err_t trustedOutput(struct netif *netif, struct pbuf *p, const ip4_addr_t *dest)
+{
+    (void) dest;
+    uint8_t bytes[2048];
+    require(p->tot_len <= sizeof(bytes), "trusted output exceeds fixture storage");
+    require(pbuf_copy_partial(p, bytes, p->tot_len, 0) == p->tot_len, "trusted output copy");
+    const unsigned ihl = (bytes[0] & 15U) * 4U;
+    require(rawOracle(bytes, ihl) == 0xffff, "trusted IPv4 checksum");
+    const uint16_t bits     = (uint16_t) ((bytes[6] << 8) | bytes[7]);
+    const unsigned offset   = (bits & 0x1fffU) * 8U;
+    const bool     fragment = (bits & 0x3fffU) != 0;
+    if (fragment)
+    {
+        ++fragmented_outputs;
+        memcpy(assembled + offset, bytes + ihl, p->tot_len - ihl);
+        if (bits & 0x2000U)
+            return ERR_OK;
+        assembled_length = offset + p->tot_len - ihl;
+    }
+    else
+    {
+        assembled_length     = p->tot_len - ihl;
+        const unsigned field = bytes[9] == IP_PROTO_TCP ? 16 : 6;
+        if (netif->ww_partial_transport_checksum)
+        {
+            require(bytes[ihl + field] == 0 && bytes[ihl + field + 1] == 0,
+                    "lwIP generated eligible transport checksum");
+            uint8_t meta[kTunVirtioHeaderSize];
+            require(tunLinuxOffloadEncodeWrite(bytes, p->tot_len, meta), "encode real lwIP output");
+            require(meta[0] == 1 && meta[6] == ihl && meta[8] == field, "real lwIP output metadata");
+            uint16_t complete = (uint16_t) ~rawOracle(bytes + ihl, assembled_length);
+            if (bytes[9] == IP_PROTO_UDP && complete == 0)
+                complete = 0xffff;
+            store16(bytes + ihl + field, complete);
+        }
+        memcpy(assembled, bytes + ihl, assembled_length);
+    }
+    ip_addr_t src, dst;
+    IP_ADDR4(&src, bytes[12], bytes[13], bytes[14], bytes[15]);
+    IP_ADDR4(&dst, bytes[16], bytes[17], bytes[18], bytes[19]);
+    require(pseudoOracle(assembled, assembled_length, (uint16_t) assembled_length, bytes[9], &src, &dst) == 0,
+            "trusted completed/reassembled transport checksum");
+    ++trusted_outputs;
+    return ERR_OK;
+}
+
+static err_t trustedNetifInit(struct netif *netif)
+{
+    netifInit(netif);
+    netif->output = trustedOutput;
+    if (netif->state != NULL)
+    {
+        netif->ww_partial_transport_checksum = 1;
+        netif->chksum_flags &= (u16_t) ~(NETIF_CHECKSUM_CHECK_TCP | NETIF_CHECKSUM_CHECK_UDP);
+    }
+    return ERR_OK;
+}
+
+static void testTrustedProtocols(void)
+{
+    const ip_addr_t local = address("192.0.2.1"), remote = address("192.0.2.2");
+    ip4_addr_t      mask, gateway;
+    IP4_ADDR(&mask, 255, 255, 255, 0);
+    ip4_addr_set_zero(&gateway);
+    struct netif trusted = {0}, ordinary = {0};
+    require(netif_add(&trusted, ip_2_ip4(&local), &mask, &gateway, &trusted, trustedNetifInit, ip4_input) != NULL,
+            "trusted netif add");
+    require(netif_add(&ordinary, ip_2_ip4(&local), &mask, &gateway, NULL, trustedNetifInit, ip4_input) != NULL,
+            "ordinary netif add");
+    netif_set_up(&trusted);
+    netif_set_link_up(&trusted);
+    netif_set_up(&ordinary);
+    netif_set_link_up(&ordinary);
+    uint8_t data[1801];
+    fill(data, sizeof(data), 3);
+    for (unsigned copy = 0; copy < 2; ++copy)
+        for (unsigned mode = 0; mode < 2; ++mode)
+        {
+            struct netif   *netif       = mode == 0 ? &trusted : &ordinary;
+            const u8_t      write_flags = copy ? TCP_WRITE_FLAG_COPY : 0;
+            struct tcp_pcb *tcp         = tcp_new();
+            require(tcp && tcp_bind_netif(tcp, netif) == ERR_OK &&
+                        tcp_bind(tcp, &local, (u16_t) (9100 + mode)) == ERR_OK,
+                    "checksum policy TCP bind");
+            tcp->remote_ip   = remote;
+            tcp->remote_port = 8100;
+            tcp->state       = ESTABLISHED;
+            tcp->snd_wnd = tcp->cwnd = 65535;
+            tcp->mss                 = 1460;
+            tcp->rcv_nxt             = 1;
+            TCP_RMV(&tcp_bound_pcbs, tcp);
+            TCP_REG_ACTIVE(tcp);
+            tcp_nagle_disable(tcp);
+            hook_calls = hook_non_ip_calls = 0;
+            require(tcp_write(tcp, data, 3, write_flags | TCP_WRITE_FLAG_MORE) == ERR_OK, "trusted odd write");
+            require(tcp_write(tcp, data + 3, 7, write_flags | TCP_WRITE_FLAG_MORE) == ERR_OK, "trusted append");
+            require(tcp_write(tcp, data + 10, 991, write_flags) == ERR_OK, "trusted oversize write");
+            require(mode ? hook_calls > 0 : hook_non_ip_calls == 0, "TCP copy checksum policy not scoped");
+            for (struct tcp_seg *seg = tcp->unsent; seg != NULL; seg = seg->next)
+                require(mode ? (seg->flags & TF_SEG_DATA_CHECKSUMMED) != 0
+                             : (seg->flags & TF_SEG_DATA_CHECKSUMMED) == 0,
+                        "invalid cached checksum validity");
+            hook_calls = hook_non_ip_calls = 0;
+            require(tcp_split_unsent_seg(tcp, 501) == ERR_OK, "odd unsent split");
+            require(mode ? hook_calls > 0 : hook_non_ip_calls == 0, "split checksum policy");
+            hook_calls = hook_non_ip_calls = 0;
+            require(tcp_output(tcp) == ERR_OK, "trusted TCP output");
+            require(mode ? hook_calls > 0 : hook_non_ip_calls == 0, "TCP output scanned eligible payload");
+            require(assembled_length >= 20 && memcmp(assembled + 20, data + 501, 500) == 0, "split output bytes");
+            hook_calls = hook_non_ip_calls = 0;
+            require(tcp_rexmit(tcp) == ERR_OK && tcp_output(tcp) == ERR_OK, "trusted retransmission");
+            require(mode ? hook_calls > 0 : hook_non_ip_calls == 0, "retransmission checksum policy");
+            /* Existing unsummed data must fall back to its actual pbuf chain when
+             * MTU shrinks before retransmission. Every fragment uses ordinary metadata. */
+            if (mode == 0)
+            {
+                netif->mtu = 200;
+                hook_calls = hook_non_ip_calls = 0;
+                unsigned before                = fragmented_outputs;
+                require(tcp_rexmit(tcp) == ERR_OK && tcp_output(tcp) == ERR_OK, "uncached full TCP fallback");
+                require(hook_calls > 0 && fragmented_outputs > before, "TCP fragment fallback not exercised");
+                netif->mtu = 1500;
+            }
+            hook_calls = hook_non_ip_calls = 0;
+            require(tcp_send_empty_ack(tcp) == ERR_OK, "trusted ACK");
+            require(tcp_keepalive(tcp) == ERR_OK, "trusted keepalive");
+            require(mode ? hook_calls > 0 : hook_non_ip_calls == 0, "control checksum policy");
+            hook_calls = hook_non_ip_calls = 0;
+            tcp_rst_netif(netif, 100, 101, &local, &remote, 9100, 8100);
+            require(mode ? hook_calls > 0 : hook_non_ip_calls == 0, "stateless RST checksum policy");
+            require(tcp_write(tcp, data, 1, write_flags) == ERR_OK, "probe pending data");
+            hook_calls = hook_non_ip_calls = 0;
+            require(tcp_zero_window_probe(tcp) == ERR_OK, "trusted zero window probe");
+            require(mode ? hook_calls > 0 : hook_non_ip_calls == 0, "probe checksum policy");
+            require(tcp_send_fin(tcp) == ERR_OK && tcp_output(tcp) == ERR_OK, "trusted FIN");
+            tcp_abort(tcp); /* RST goes through the selected netif policy. */
+
+            struct udp_pcb *udp = udp_new();
+            require(udp && udp_bind_netif(udp, netif) == ERR_OK && udp_bind(udp, &local, 9200 + mode) == ERR_OK,
+                    "trusted UDP bind");
+            udp_recv(udp, receiveUdp, NULL);
+            const unsigned lengths[] = {0, 1, 1472, 1473, 1801};
+            for (size_t i = 0; i < ARRAY_SIZE(lengths); ++i)
+            {
+                struct pbuf *p = pbuf_alloc(PBUF_TRANSPORT, (u16_t) lengths[i], PBUF_RAM);
+                require(p && pbuf_take(p, data, (u16_t) lengths[i]) == ERR_OK, "UDP trusted payload");
+                hook_calls = hook_non_ip_calls = 0;
+                require(udp_sendto_if(udp, p, &remote, 8200, netif) == ERR_OK, "UDP trusted output");
+                require(mode || lengths[i] > 1472 ? hook_calls > 0 : hook_non_ip_calls == 0,
+                        "UDP payload checksum policy");
+                require(assembled_length == lengths[i] + 8 && memcmp(assembled + 8, data, lengths[i]) == 0,
+                        "UDP fragment reassembly bytes");
+                pbuf_free(p);
+            }
+            /* An intentionally invalid checksum represents TUN-assured input only
+             * on the selected netif. The other netif must still reject it. */
+            uint8_t packet[29] = {0x45};
+            store16(packet + 2, sizeof(packet));
+            packet[8] = 64;
+            packet[9] = IP_PROTO_UDP;
+            memcpy(packet + 12, &ip_2_ip4(&remote)->addr, 4);
+            memcpy(packet + 16, &ip_2_ip4(&local)->addr, 4);
+            store16(packet + 10, (uint16_t) ~rawOracle(packet, 20));
+            store16(packet + 20, 8200);
+            store16(packet + 22, 9200 + mode);
+            store16(packet + 24, 9);
+            store16(packet + 26, 0x1234);
+            packet[28]            = 42;
+            const unsigned before = received;
+            inputPacket(netif, packet, sizeof(packet));
+            require(received == before + (mode == 0), "receive policy crossed netifs");
+            packet[10] ^= 1;
+            inputPacket(netif, packet, sizeof(packet));
+            require(received == before + (mode == 0), "trusted mode disabled IPv4 verification");
+            udp_remove(udp);
+        }
+    netif_remove(&ordinary);
+    netif_remove(&trusted);
+}
+
 static void runCases(const char *name)
 {
     printf("backend: %s\n", name);
     testSpans();
     testChains();
     testProtocols();
+    testTrustedProtocols();
     testCarrySpans();
 }
 

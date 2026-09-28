@@ -26,7 +26,7 @@ node_t nodePacketsToConnectionGet(void)
               .node_settings_json    = NULL,
               .node_manager_config   = NULL,
               .instance              = NULL,
-              .flags                 = kNodeFlagNone,
+              .flags                 = kNodeFlagNone | kNodeFlagSupportsTrustedPacketChecksums,
               .required_padding_left = 0,
               .layer_group           = kNodeLayer3 | kNodeLayer4,
               .layer_group_next_node = kNodeLayer4,

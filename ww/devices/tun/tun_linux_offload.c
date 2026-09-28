@@ -307,3 +307,139 @@ void tunLinuxOffloadCompleteSegment(uint8_t *ip, uint32_t ip_length)
     const uint16_t tcp_checksum = calcGenericChecksum(ip + tcp_offset, tcp_length, 0);
     memoryCopy(ip + tcp_offset + kTcpChecksumOffset, &tcp_checksum, sizeof(tcp_checksum));
 }
+
+static bool trustedPacketShape(const uint8_t *ip, uint32_t length, ipv4_packet_view_t *packet)
+{
+    if (! ipv4packetviewParse(ip, length, packet) || packet->ip_total_length != length ||
+        calcGenericChecksum(ip, packet->ip_header_length, 0) != 0)
+    {
+        return false;
+    }
+    if (packet->fragmented)
+    {
+        return true; /* Only the existing reassembly/fragment policy handles these. */
+    }
+    if (packet->protocol == 6)
+    {
+        return ipv4packetviewParseTcp(ip, length, packet);
+    }
+    if (packet->protocol == 17)
+    {
+        return ipv4packetviewParseUdp(ip, length, packet);
+    }
+    return true;
+}
+
+bool tunLinuxOffloadValidatePacket(const uint8_t *ip, uint32_t length)
+{
+    if (length != 0 && (ip[0] >> 4U) != 4)
+    {
+        return true; /* Preserve non-IPv4 admission; the node retains its policy. */
+    }
+    ipv4_packet_view_t packet = {0};
+    if (! trustedPacketShape(ip, length, &packet))
+    {
+        return false;
+    }
+    if (packet.fragmented || (packet.protocol != 6 && packet.protocol != 17))
+    {
+        return true;
+    }
+    uint8_t destination[4];
+    if (! selectPseudoheaderDestination(ip, packet.ip_header_length, destination))
+    {
+        return false;
+    }
+    if (packet.protocol == 17 && readNetwork16(ip + packet.transport_offset + 6) == 0)
+    {
+        return true; /* Disabled IPv4 UDP checksum, unlike TCP's valid zero. */
+    }
+    /* Match the pinned lwIP UDP checksum span: the complete IP payload, even
+     * when a shorter declared UDP length leaves a suffix. Validating only the
+     * declared prefix would certify bytes that lwIP subsequently delivers. */
+    const uint32_t sum = tcpPseudoheaderSum(ip, destination, packet.transport_length) - 6U + packet.protocol;
+    return calcGenericChecksum(ip + packet.transport_offset, packet.transport_length, sum) == 0;
+}
+
+bool tunLinuxOffloadTrustInput(const uint8_t metadata[kTunVirtioHeaderSize], const uint8_t *ip,
+                               tun_linux_offload_plan_t *plan)
+{
+    assert(metadata != NULL && ip != NULL && plan != NULL);
+    plan->transport_assured = false;
+    const bool partial      = (metadata[0] & VIRTIO_NET_HDR_F_NEEDS_CSUM) != 0;
+    const bool verified     = (metadata[0] & VIRTIO_NET_HDR_F_DATA_VALID) != 0;
+    if (partial && verified)
+    {
+        return false; /* Contradictory representations are never positive assurance. */
+    }
+    if (plan->ip_length == 0 || (ip[0] >> 4U) != 4)
+    {
+        return true;
+    }
+    ipv4_packet_view_t packet = {0};
+    if (! trustedPacketShape(ip, plan->ip_length, &packet))
+    {
+        return false;
+    }
+    if (packet.fragmented)
+    {
+        return ! partial; /* Never materialize or certify a partial IP fragment. */
+    }
+    if (packet.protocol != 6 && packet.protocol != 17)
+    {
+        return true;
+    }
+    const uint16_t offset = packet.protocol == 6 ? 16 : 6;
+    const bool     matching_partial =
+        partial && readLittle16(metadata + 6) == packet.transport_offset && readLittle16(metadata + 8) == offset;
+    plan->transport_assured = (verified || matching_partial) &&
+                              (packet.protocol != 17 || packet.udp_datagram_length == packet.transport_length);
+    if (plan->transport_assured)
+    {
+        /* Validate options without replacing a kernel-supplied partial seed. */
+        uint8_t destination[4];
+        return selectPseudoheaderDestination(ip, packet.ip_header_length, destination);
+    }
+    /* Unmarked GSO must be verified before segmentation rewrites its checksum.
+     * Ordinary input instead reaches validation after generic completion and
+     * reassembly, through tunDeliverPacket. */
+    return plan->action != kTunLinuxOffloadSegment || tunLinuxOffloadValidatePacket(ip, plan->ip_length);
+}
+
+static void writeLittle16(uint8_t *bytes, uint16_t value)
+{
+    bytes[0] = (uint8_t) value;
+    bytes[1] = (uint8_t) (value >> 8U);
+}
+
+bool tunLinuxOffloadEncodeWrite(uint8_t *ip, uint32_t length, uint8_t metadata[kTunVirtioHeaderSize])
+{
+    assert(ip != NULL && metadata != NULL);
+    memoryZero(metadata, kTunVirtioHeaderSize);
+    ipv4_packet_view_t packet = {0};
+    if (! trustedPacketShape(ip, length, &packet))
+    {
+        return false;
+    }
+    if (packet.fragmented || (packet.protocol != 6 && packet.protocol != 17))
+    {
+        return true;
+    }
+    if (packet.protocol == 17 && packet.udp_datagram_length != packet.transport_length)
+    {
+        return false; /* The partial output contract requires an exact UDP span. */
+    }
+    uint8_t destination[4];
+    if (! selectPseudoheaderDestination(ip, packet.ip_header_length, destination))
+    {
+        return false;
+    }
+    const uint16_t offset = packet.protocol == 6 ? 16 : 6;
+    const uint32_t seed   = tcpPseudoheaderSum(ip, destination, packet.transport_length) - 6U + packet.protocol;
+    /* A zero partial seed is valid even for UDP; it is not checksum-disabled. */
+    writeNetwork16(ip + packet.transport_offset + offset, foldChecksumSeed(seed));
+    metadata[0] = VIRTIO_NET_HDR_F_NEEDS_CSUM;
+    writeLittle16(metadata + 6, packet.transport_offset);
+    writeLittle16(metadata + 8, offset);
+    return true;
+}

@@ -1025,6 +1025,7 @@ if(TARGET ww)
       "-Wl,--wrap=poll"
       "-Wl,--wrap=tunLinuxGsoMaxSegmentsConfigure"
       "-Wl,--wrap=tunLinuxOffloadPrepareSegment"
+      "-Wl,--wrap=deviceReaderSessionEnableWorkerQueue"
       "-Wl,--wrap=sbufTryCreateWithPadding"
       "-Wl,--wrap=sbufDestroy"
       "-Wl,--wrap=pthread_create"
@@ -1052,6 +1053,7 @@ if(TARGET ww)
 
     add_executable(tun_linux_offload_test tun_linux_offload_test.c)
     target_link_libraries(tun_linux_offload_test PRIVATE ww)
+    target_link_options(tun_linux_offload_test PRIVATE "-Wl,--wrap=calcGenericChecksum")
     add_dependencies(waterwall_unit_tests tun_linux_offload_test)
     add_waterwall_unit_test(
       waterwall.tun_linux_offload_unit
@@ -2609,6 +2611,15 @@ if(TARGET PacketsToConnection)
       "-Wl,--wrap=workerMessagesDestroyDetached")
     add_dependencies(waterwall_unit_tests lwip_ptc_engine_test)
     add_waterwall_unit_test(waterwall.lwip_ptc_engine_unit lwip_ptc_engine_test "unit;net;lwip;thread;packetstoconnection")
+    add_executable(lwip_ptc_trusted_engine_test lwip_ptc_engine_test.c ${CMAKE_SOURCE_DIR}/ww/lwip/engine_runtime.c)
+    target_link_libraries(lwip_ptc_trusted_engine_test PRIVATE ptc_engine_test IpOverrider)
+    target_link_options(lwip_ptc_trusted_engine_test PRIVATE
+
+      "-Wl,--wrap=nodemanagerQuiesceWorker" "-Wl,--wrap=nodemanagerStopWorkerResources"
+      "-Wl,--wrap=workerMessagesDestroyDetached")
+    add_dependencies(waterwall_unit_tests lwip_ptc_trusted_engine_test)
+    add_waterwall_unit_test(waterwall.lwip_ptc_trusted_engine_unit lwip_ptc_trusted_engine_test "unit;net;lwip;thread;packetstoconnection")
+    target_compile_definitions(lwip_ptc_trusted_engine_test PRIVATE PTC_TRUSTED_FIXTURE=1)
   endif()
   add_executable(packetstoconnection_netif_contract_test packetstoconnection_netif_contract_test.c)
   target_link_libraries(packetstoconnection_netif_contract_test PRIVATE PacketsToConnection ww)

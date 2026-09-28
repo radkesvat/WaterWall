@@ -35,6 +35,17 @@ bool          tundeviceBringUp(tun_device_t *tdev);
 bool          tundeviceRequestStop(tun_device_t *tdev);
 bool          tundeviceBringDown(tun_device_t *tdev);
 bool          tundeviceIsUp(const tun_device_t *tdev);
+/* Select once while down, after creation fallbacks. False leaves ordinary mode.
+ * No caller may change the selected mode after producer startup, even on stop. */
+#ifdef OS_LINUX
+bool tundeviceEnableTrustedChecksums(tun_device_t *tdev);
+#else
+static inline bool tundeviceEnableTrustedChecksums(tun_device_t *tdev)
+{
+    (void) tdev;
+    return false;
+}
+#endif
 bool          tundeviceAssignIP(tun_device_t *tdev, const char *ip_presentation, unsigned int subnet);
 bool          tundeviceUnAssignIP(tun_device_t *tdev, const char *ip_presentation, unsigned int subnet);
 bool          tundeviceSetDnsServers(tun_device_t *tdev, const char *const *servers, size_t count);

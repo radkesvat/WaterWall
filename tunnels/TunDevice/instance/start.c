@@ -49,6 +49,14 @@ void tundeviceTunnelOnStart(tunnel_t *t)
         goto rollback;
     }
 
+    /* Final topology and actual device framing are now known. Publish before
+     * BringUp starts either producer; PTC routes read this lazily on workers. */
+    if (packettunnelTrustedChecksumPairEligible(t, t->next) && tundeviceEnableTrustedChecksums(state->tdev))
+    {
+        packettunnelActivateTrustedChecksumPair(t, t->next);
+        LOGI("TunDevice: %s enabled direct-pair trusted transport checksums", state->name);
+    }
+
     if (! tundeviceAssignIP(state->tdev, state->ip_present, (unsigned int) state->subnet_mask))
     {
         failure = "TunDevice: could not assign device IP";

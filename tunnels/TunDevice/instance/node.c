@@ -31,7 +31,7 @@ node_t nodeTunDeviceGet(void)
              .node_settings_json    = NULL,
              .node_manager_config   = NULL,
              .instance              = NULL,
-             .flags                 = kNodeFlagChainHead | kNodeFlagChainEnd,
+             .flags                 = kNodeFlagChainHead | kNodeFlagChainEnd | kNodeFlagSupportsTrustedPacketChecksums,
              .required_padding_left = kTunDeviceRequiredLeftPadding,
              .layer_group           = kNodeLayer3,
              .layer_group_next_node = kNodeLayer3,

@@ -46,6 +46,21 @@
 
 #include "tun_linux_private.h"
 
+#ifdef OS_LINUX
+bool tundeviceEnableTrustedChecksums(tun_device_t *tdev)
+{
+    assert(tdev != NULL && tunLifecycleLoad(&tdev->lifecycle) == kTunLifecycleDown);
+    assert(! tdev->reader_joinable && ! tdev->writer_joinable);
+    if (! tdev->gso_enabled)
+    {
+        return false;
+    }
+    assert(tdev->gso_scratch != NULL && tdev->reader_session->worker_queues != NULL);
+    tdev->trusted_checksums = true;
+    return true;
+}
+#endif
+
 bool tundeviceIsUp(const tun_device_t *tdev)
 {
     return tdev != NULL && tunLifecycleLoad(&tdev->lifecycle) == kTunLifecycleUp;

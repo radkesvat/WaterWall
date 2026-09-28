@@ -221,14 +221,14 @@ The actual device creation is deferred until start time because the tunnel needs
 When the TUN device produces a packet:
 
 - the packet is received on a worker
-- when Linux GSO is active, the reader completes requested deferred checksums
+- outside the direct trusted pair below, when Linux GSO is active, the reader completes requested deferred checksums
   for ordinary records and keeps their fragment handling in the reader;
   `GSO_NONE` records, including IPv6, retain the existing ordinary reader path
   without an IPv4-only preflight
 - for TCPv4 GSO, the reader validates the aggregate and transfers its buffer
   to the flow's worker; that worker allocates independent MTU-sized packets,
   copies their headers and payload, and completes IPv4 and TCP checksums before
-  normal TunDevice delivery, logging, or packet publication
+  normal TunDevice delivery, logging, or packet publication in ordinary mode
 - ordinary batches and GSO aggregates share a bounded FIFO for each worker;
   unfinished segmentation stays ahead of later packets and continues in bounded
   callbacks, preserving flow order without blocking the worker for queue capacity
@@ -262,6 +262,26 @@ When payload reaches `TunDevice` from upstream or downstream:
   packets that cannot be recalculated are dropped with a rate-limited warning
 
 Both upstream and downstream payload handlers write to the same TUN device.
+
+### Direct PacketsToConnection checksums
+
+A reciprocal immediate `TunDevice -> PacketsToConnection` pair automatically
+uses trusted IPv4 TCP/UDP transport checksums only after Linux GSO/checksum
+framing and worker storage are ready. `gso:false`, setup fallback, non-Linux
+platforms, and intervening nodes retain ordinary checksums. No new setting is
+required. IPv4 headers, parsing, fragment policy, repair requests, FIFO bounds,
+and shutdown ownership remain unchanged.
+
+Supported `NEEDS_CSUM` or verified metadata lets TUN deliver complete packets
+without completing and rechecking transport sums. Unmarked traffic is verified
+before delivery, after reassembly when necessary; corrupt traffic drops.
+Contradictory metadata and partial IP fragments are rejected. The private worker
+handoff retains assurance without adding flags to buffers or packet lines.
+
+On return, PTC omits transport sums only for complete packets that fit its MTU;
+TUN emits a pseudoheader seed and `NEEDS_CSUM` metadata for kernel delivery or
+forwarding. Oversized datagrams receive full checksums before fragmentation, and
+fragments use ordinary metadata. The selected mode remains fixed until destroy.
 
 ### Checksum behavior
 

@@ -529,6 +529,7 @@ void lwip_example_app_platform_assert(const char *msg, int line, const char *fil
 #define MEM_USE_POOLS_TRY_BIGGER_POOL 1
 #define LWIP_CHKSUM                   wwLwipChecksum
 #define LWIP_CHECKSUM_ON_COPY         1
+#define LWIP_CHECKSUM_CTRL_PER_NETIF  1
 #define TCP_OVERSIZE                  TCP_MSS
 
 // MUST BE EQUAL TO SIZEOF_STRUCT_SBUF (32)

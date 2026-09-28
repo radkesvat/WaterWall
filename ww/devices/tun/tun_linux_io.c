@@ -47,10 +47,24 @@
 
 static atomic_log_rate_limiter_t tun_write_packet_failure_log;
 
-void tunDeliverPacket(void *device, sbuf_t *buf, wid_t wid)
+static void tunDeliverPacketAssured(void *device, sbuf_t *buf, wid_t wid, bool assured)
 {
     tun_device_t *tdev = device;
+#ifdef OS_LINUX
+    if (tdev->trusted_checksums && ! assured && ! tunLinuxOffloadValidatePacket(sbufGetRawPtr(buf), sbufGetLength(buf)))
+    {
+        bufferpoolReuseBuffer(getWorkerBufferPool(wid), buf);
+        return;
+    }
+#else
+    discard assured;
+#endif
     tdev->read_event_callback(tdev, tdev->userdata, buf, wid);
+}
+
+void tunDeliverPacket(void *device, sbuf_t *buf, wid_t wid)
+{
+    tunDeliverPacketAssured(device, buf, wid, false);
 }
 
 // Hands whatever the drain cycle has already read to the reader session. Every
@@ -184,6 +198,21 @@ static bool tunGsoWorkStep(device_reader_session_t *session, void *context, wid_
     assert(currentThreadIsEventWorkerWID(wid));
     buffer_pool_t *pool    = getWorkerBufferPool(wid);
     uint32_t       emitted = 0;
+    if (work->plan.action != kTunLinuxOffloadSegment)
+    {
+        assert(work->plan.transport_assured);
+        const uint32_t length = sbufGetLength(work->aggregate);
+        if (budget->packets == 0 || budget->bytes < length)
+        {
+            return false;
+        }
+        sbuf_t *output  = work->aggregate;
+        work->aggregate = NULL;
+        --budget->packets;
+        budget->bytes -= length;
+        tunDeliverPacketAssured(session->device, output, wid, true);
+        return true;
+    }
     while (work->next_payload_offset < work->plan.payload_length && budget->packets > 0)
     {
         const uint32_t payload_length = min(work->plan.gso_size, work->plan.payload_length - work->next_payload_offset);
@@ -222,8 +251,13 @@ static bool tunGsoWorkStep(device_reader_session_t *session, void *context, wid_
             abortProgramNow(1);
         }
         sbufSetLength(output, built_length);
-        tunLinuxOffloadCompleteSegment(sbufGetMutablePtr(output), built_length);
-        session->deliver(session->device, output, wid);
+        if (! work->plan.transport_assured)
+        {
+            tunLinuxOffloadCompleteSegment(sbufGetMutablePtr(output), built_length);
+        }
+        /* Active preflight either verified the aggregate or retained positive
+         * metadata. Do not recheck an intentionally partial generated segment. */
+        tunDeliverPacketAssured(session->device, output, wid, true);
         work->next_payload_offset += payload_length;
         budget->bytes -= segment_length;
         --budget->packets;
@@ -352,11 +386,23 @@ static tun_drain_result_t tunDrainOffloadPackets(tun_device_t *tdev, tun_offload
             tunOffloadCountReject(tdev, reader, reject);
             continue;
         }
-        if (plan.action == kTunLinuxOffloadSegment)
+        if (tdev->trusted_checksums && ! tunLinuxOffloadTrustInput(metadata, ip, &plan))
+        {
+            tunOffloadCountReject(tdev, reader, kTunLinuxOffloadMalformed);
+            continue;
+        }
+        if (plan.action == kTunLinuxOffloadSegment || plan.transport_assured)
         {
             reader->pending_plan = plan;
             reader->pending      = true;
-            reader->gso_aggregates++;
+            if (plan.action == kTunLinuxOffloadSegment)
+            {
+                reader->gso_aggregates++;
+            }
+            else
+            {
+                reader->ordinary_records++;
+            }
             break;
         }
 
@@ -665,7 +711,15 @@ WTHREAD_ROUTINE(routineWriteToTun)
         const size_t expected_length = packet_length + (tdev->gso_enabled ? kTunVirtioHeaderSize : 0U);
         if (tdev->gso_enabled)
         {
-            const uint8_t virtio_header[kTunVirtioHeaderSize] = {0};
+            uint8_t virtio_header[kTunVirtioHeaderSize] = {0};
+#ifdef OS_LINUX
+            if (tdev->trusted_checksums &&
+                ! tunLinuxOffloadEncodeWrite(sbufGetMutablePtr(buf), (uint32_t) packet_length, virtio_header))
+            {
+                bufferpoolReuseBuffer(tdev->writer_buffer_pool, buf);
+                continue;
+            }
+#endif
             struct iovec  iov[2]                              = {
                 {.iov_base = (void *) virtio_header, .iov_len = sizeof(virtio_header)},
                 {.iov_base = (void *) sbufGetRawPtr(buf), .iov_len = packet_length},

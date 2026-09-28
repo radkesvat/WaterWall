@@ -24,6 +24,15 @@ static const uint32_t kFirstSequence  = UINT32_C(0xfffffffd);
 static uint8_t        packet[UINT16_MAX + 1U];
 static uint8_t        segment[2048];
 
+static unsigned checksum_calls;
+uint16_t        __real_calcGenericChecksum(const uint8_t *data, uint16_t length, uint32_t seed);
+uint16_t        __wrap_calcGenericChecksum(const uint8_t *data, uint16_t length, uint32_t seed);
+uint16_t        __wrap_calcGenericChecksum(const uint8_t *data, uint16_t length, uint32_t seed)
+{
+    ++checksum_calls;
+    return __real_calcGenericChecksum(data, length, seed);
+}
+
 static void require(bool condition, const char *message)
 {
     if (! condition)
@@ -517,12 +526,150 @@ static void testRejectedMetadataAndGeometry(void)
     expectReject(meta, length, 1500, kTunLinuxOffloadMalformed, "out-of-range checksum start accepted");
 }
 
+static void completeOracle(uint32_t length, uint32_t ihl, uint8_t protocol, const uint8_t destination[4])
+{
+    const uint16_t field = protocol == 6 ? 16 : 6;
+    const uint32_t seed  = (uint32_t) tcpPseudoSum(packet, destination, (uint16_t) (length - ihl)) - 6U + protocol;
+    uint16_t       value = oracleChecksum(packet + ihl, length - ihl, seed, field);
+    if (protocol == 17 && value == 0)
+        value = UINT16_MAX;
+    putBe16(packet + ihl + field, value);
+    putBe16(packet + 10, oracleChecksum(packet, ihl, 0, 10));
+}
+
+static void testTrustedTransport(void)
+{
+    uint8_t                  meta[kTunVirtioHeaderSize];
+    tun_linux_offload_plan_t plan;
+    for (unsigned udp = 0; udp < 2; ++udp)
+    {
+        for (unsigned payload = 0; payload < 4; ++payload)
+        {
+            uint32_t       length   = makeTcp(payload, NULL, 0, NULL, 0, kTcpAck);
+            const uint8_t  protocol = udp ? 17 : 6;
+            const uint16_t field    = udp ? 6 : 16;
+            if (udp)
+            {
+                length    = 28 + payload;
+                packet[9] = protocol;
+                putBe16(packet + 2, (uint16_t) length);
+                putBe16(packet + 24, (uint16_t) (length - 20));
+            }
+            completeOracle(length, 20, protocol, kDestination);
+            require(tunLinuxOffloadValidatePacket(packet, length), "valid ordinary checksum refused");
+            if (payload)
+            {
+                packet[length - 1] ^= 0x40;
+                require(! tunLinuxOffloadValidatePacket(packet, length), "unmarked corruption accepted");
+                packet[length - 1] ^= 0x40;
+            }
+            checksum_calls = 0;
+            require(tunLinuxOffloadEncodeWrite(packet, length, meta), "partial encoding failed");
+            require(checksum_calls == 1, "writer scanned transport payload");
+            const uint8_t expected[kTunVirtioHeaderSize] = {
+                VIRTIO_NET_HDR_F_NEEDS_CSUM, 0, 0, 0, 0, 0, 20, 0, (uint8_t) field, 0};
+            require(memcmp(meta, expected, sizeof(meta)) == 0, "incorrect virtio write bytes");
+            const uint16_t seed = foldSum(tcpPseudoSum(packet, kDestination, (uint16_t) (length - 20)) - 6U + protocol);
+            require(readBe16(packet + 20 + field) == seed, "incorrect pseudoheader seed");
+            require(tunLinuxOffloadPreflight(meta, packet, length, 1500, &plan) == kTunLinuxOffloadAccept,
+                    "ordinary partial preflight");
+            checksum_calls = 0;
+            require(tunLinuxOffloadTrustInput(meta, packet, &plan) && plan.transport_assured,
+                    "ordinary partial not assured");
+            require(checksum_calls == 1, "trusted ordinary input scanned transport");
+            uint16_t completed = oracleChecksum(packet + 20, length - 20, 0, SIZE_MAX);
+            if (udp && completed == 0)
+                completed = UINT16_MAX;
+            putBe16(packet + 20 + field, completed);
+            require(tunLinuxOffloadValidatePacket(packet, length), "independent partial completion incorrect");
+            meta[0] = VIRTIO_NET_HDR_F_DATA_VALID;
+            require(tunLinuxOffloadTrustInput(meta, packet, &plan) && plan.transport_assured, "verified input refused");
+            meta[0] |= VIRTIO_NET_HDR_F_NEEDS_CSUM;
+            require(! tunLinuxOffloadTrustInput(meta, packet, &plan), "contradictory metadata assured");
+            meta[0] = VIRTIO_NET_HDR_F_NEEDS_CSUM;
+            meta[8] = (uint8_t) (field - 2);
+            require(tunLinuxOffloadTrustInput(meta, packet, &plan) && ! plan.transport_assured,
+                    "wrong checksum coordinates assured");
+            packet[10] ^= 1;
+            require(! tunLinuxOffloadTrustInput(meta, packet, &plan), "bad IPv4 header trusted");
+            packet[10] ^= 1;
+            if (udp)
+            {
+                putBe16(packet + 26, 0);
+                require(tunLinuxOffloadValidatePacket(packet, length), "disabled UDP checksum rejected");
+                putBe16(packet + 24, (uint16_t) (length - 19));
+                require(! tunLinuxOffloadValidatePacket(packet, length), "oversized UDP length certified");
+            }
+        }
+    }
+
+    /* The pinned stack includes any IP suffix in its UDP checksum and payload.
+     * A DATA_VALID guarantee for a shorter UDP prefix cannot certify that suffix. */
+    makeTcp(0, NULL, 0, NULL, 0, kTcpAck);
+    packet[9] = 17;
+    putBe16(packet + 2, 31);
+    putBe16(packet + 24, 10);
+    completeOracle(31, 20, 17, kDestination);
+    require(tunLinuxOffloadValidatePacket(packet, 31), "lwIP-compatible UDP suffix rejected");
+    metadata(meta, VIRTIO_NET_HDR_F_DATA_VALID, VIRTIO_NET_HDR_GSO_NONE, 0, 0, 0, 0);
+    require(tunLinuxOffloadPreflight(meta, packet, 31, 1500, &plan) == kTunLinuxOffloadAccept, "suffix preflight");
+    require(tunLinuxOffloadTrustInput(meta, packet, &plan) && ! plan.transport_assured, "UDP suffix trusted as prefix");
+    require(! tunLinuxOffloadEncodeWrite(packet, 31, meta), "inexact UDP output requested offload");
+    packet[30] ^= 1;
+    require(! tunLinuxOffloadValidatePacket(packet, 31), "UDP suffix corruption skipped");
+
+    /* Options and an odd segment size; preserve the kernel's source-route seed. */
+    const uint8_t options[8]     = {131, 7, 4, 203, 0, 113, 99, 0};
+    const uint8_t final[4]       = {203, 0, 113, 99};
+    const uint8_t tcp_options[4] = {1, 1, 1, 1};
+    uint32_t      length = makeTcp(101, options, sizeof(options), tcp_options, sizeof(tcp_options), kTcpAck | kTcpPsh);
+    completeOracle(length, 28, 6, final);
+    require(tunLinuxOffloadValidatePacket(packet, length), "source-route verification");
+    metadata(meta, 0, VIRTIO_NET_HDR_GSO_TCPV4, 52, 31, 0, 0);
+    require(tunLinuxOffloadPreflight(meta, packet, length, 1500, &plan) == kTunLinuxOffloadAccept, "GSO preflight");
+    require(tunLinuxOffloadTrustInput(meta, packet, &plan) && ! plan.transport_assured, "unmarked valid aggregate");
+    packet[length - 1] ^= 1;
+    require(! tunLinuxOffloadTrustInput(meta, packet, &plan), "corrupt original aggregate certified by rewriting");
+    packet[length - 1] ^= 1;
+    require(tunLinuxOffloadEncodeWrite(packet, length, meta), "source-route writer");
+    meta[1] = VIRTIO_NET_HDR_GSO_TCPV4;
+    putLe16(meta + 4, 31);
+    require(tunLinuxOffloadPreflight(meta, packet, length, 1500, &plan) == kTunLinuxOffloadAccept,
+            "partial GSO preflight");
+    checksum_calls = 0;
+    require(tunLinuxOffloadTrustInput(meta, packet, &plan) && plan.transport_assured, "partial aggregate assurance");
+    require(checksum_calls == 1, "partial aggregate scanned transport");
+    for (uint32_t offset = 0; offset < plan.payload_length; offset += plan.gso_size)
+    {
+        uint32_t out_length;
+        checksum_calls = 0;
+        require(tunLinuxOffloadPrepareSegment(packet, &plan, offset, segment, sizeof(segment), &out_length),
+                "trusted segment");
+        require(checksum_calls == 1, "segment preparation scanned TCP payload");
+        putBe16(segment + 28 + 16, oracleChecksum(segment + 28, out_length - 28, 0, SIZE_MAX));
+        verifyChecksums(segment, 28, out_length, final);
+    }
+    /* Fragments never request partial completion, even a non-initial fragment. */
+    for (unsigned fragment = 0; fragment < 2; ++fragment)
+    {
+        putBe16(packet + 6, fragment ? 1 : 0x2000);
+        putBe16(packet + 10, oracleChecksum(packet, 28, 0, 10));
+        require(tunLinuxOffloadEncodeWrite(packet, length, meta), "ordinary fragment write");
+        const uint8_t zero[kTunVirtioHeaderSize] = {0};
+        require(memcmp(meta, zero, sizeof(meta)) == 0, "fragment requested offload");
+        plan.ip_length = length;
+        meta[0]        = VIRTIO_NET_HDR_F_NEEDS_CSUM;
+        require(! tunLinuxOffloadTrustInput(meta, packet, &plan), "partial fragment accepted");
+    }
+}
+
 int main(void)
 {
     const uint8_t vector[] = {0x00, 0x01, 0x02};
     require(oracleChecksum(vector, sizeof(vector), 0, SIZE_MAX) == UINT16_C(0xfdfe),
             "checksum oracle self-check failed");
     checkSumInit();
+    testTrustedTransport();
     testOrdinary();
     testGenericChecksum();
     testOrdinaryIpv6();

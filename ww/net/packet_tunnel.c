@@ -7,7 +7,29 @@
 #include "ipv4_packet_view.h"
 #include "line.h"
 #include "loggers/internal_logger.h"
+#include "objects/node.h"
 #include "wchecksum.h"
+
+bool packettunnelTrustedChecksumPairEligible(const tunnel_t *source, const tunnel_t *consumer)
+{
+    return source != NULL && consumer != NULL && source != consumer && source->next == consumer &&
+           consumer->prev == source && source->node != NULL && consumer->node != NULL &&
+           source->node->layer_group == kNodeLayer3 && consumer->node->layer_group == (kNodeLayer3 | kNodeLayer4) &&
+           (source->node->flags & kNodeFlagSupportsTrustedPacketChecksums) != 0 &&
+           (consumer->node->flags & kNodeFlagSupportsTrustedPacketChecksums) != 0;
+}
+
+void packettunnelActivateTrustedChecksumPair(tunnel_t *source, tunnel_t *consumer)
+{
+    assert(packettunnelTrustedChecksumPairEligible(source, consumer));
+    source->node->flags |= kNodeFlagTrustedPacketChecksumsActive;
+    consumer->node->flags |= kNodeFlagTrustedPacketChecksumsActive;
+}
+
+bool packettunnelTrustedChecksumsActive(const tunnel_t *t)
+{
+    return (t->node->flags & kNodeFlagTrustedPacketChecksumsActive) != 0;
+}
 
 static void packettunnelDefaultUpStreamEst(tunnel_t *self, line_t *line)
 {

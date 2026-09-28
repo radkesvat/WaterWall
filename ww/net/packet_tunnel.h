@@ -18,6 +18,12 @@
  */
 tunnel_t *packettunnelCreate(node_t *node, size_t tstate_size, size_t lstate_size);
 
+/* Exclusive startup only. The device initiator must establish its private
+ * checksum mode before publishing the pair, and before starting producers. */
+bool packettunnelTrustedChecksumPairEligible(const tunnel_t *source, const tunnel_t *consumer);
+void packettunnelActivateTrustedChecksumPair(tunnel_t *source, tunnel_t *consumer);
+bool packettunnelTrustedChecksumsActive(const tunnel_t *t);
+
 typedef enum packet_lifecycle_anchor_direction_e
 {
     kPacketLifecycleAnchorPublishUpstream = 0,

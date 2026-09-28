@@ -53,6 +53,7 @@ struct tun_device_s
     uint16_t                mtu;
     bool                    gso_enabled;
 #ifdef OS_LINUX
+    bool trusted_checksums;
     /* Allocated before publication so unavailable GSO storage can fall back. */
     sbuf_t *gso_scratch;
     /* Output allowance and this chain's padding, captured before publication. */

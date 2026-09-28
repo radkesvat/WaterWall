@@ -114,6 +114,11 @@ static err_t interfaceInit(struct netif *netif)
     const interface_route_context_t *route = netif->state;
     const ptc_tstate_t              *state = tunnelGetState(route->tunnel);
     netif->mtu                             = state->mtu;
+    if (packettunnelTrustedChecksumsActive(route->tunnel))
+    {
+        netif->chksum_flags &= (uint16_t) ~(NETIF_CHECKSUM_CHECK_TCP | NETIF_CHECKSUM_CHECK_UDP);
+        netif->ww_partial_transport_checksum = 1;
+    }
 
     return ERR_OK;
 }
@@ -372,7 +377,7 @@ err_t ptcNetifOutput(struct netif *netif, struct pbuf *p, const ip4_addr_t *ipad
     }
 
     /* Always queue, including to this worker. No neighbor may reenter the
-     * engine while TCP input scratch is active. The delivery has its own gate. */
+     * engine while TCP input scratch is active. The delivery has its o  n gate. */
     ptc_packet_emit_msg_t *packet_msg = memoryAllocate(sizeof(*packet_msg) + p->tot_len);
 
     if (UNLIKELY(packet_msg == NULL))

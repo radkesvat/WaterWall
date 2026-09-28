@@ -104,6 +104,9 @@ class Fixture:
             time.sleep(.02)
         raise RuntimeError("namespace holder exited during startup")
 
+    def configure(self, config):
+        config["nodes"][0]["settings"]["gso"] = self.gso
+
     def __enter__(self):
         self.directory.mkdir()
         try:
@@ -124,7 +127,7 @@ class Fixture:
             command(*self.runtime, "ip", "route", "add", "198.18.0.0/24", "dev", OUT,
                     "src", "198.18.0.1", "table", "100")
             config = json.loads((TESTS / "cases/tundevice_tcp_chain/config.json").read_text())
-            config["nodes"][0]["settings"]["gso"] = self.gso
+            self.configure(config)
             core = {
                 "log": {"path": "log/", **{
                     key: {"loglevel": "INFO", "file": key + ".log", "console": True}

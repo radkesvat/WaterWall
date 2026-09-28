@@ -997,7 +997,7 @@ ptc_fake_dns_result_t ptcFakeDnsHandleIpv4UdpPacket(tunnel_t *t, line_t *packet_
         return (ptc_fake_dns_result_t) {.handled = true};
     }
 
-    if (udphdr->chksum != 0)
+    if (! packettunnelTrustedChecksumsActive(t) && udphdr->chksum != 0)
     {
         struct pbuf udp_packet = {
             .next    = NULL,
@@ -1063,10 +1063,15 @@ ptc_fake_dns_result_t ptcFakeDnsHandleIpv4UdpPacket(tunnel_t *t, line_t *packet_
               .len     = (u16_t) response_len,
               .ref     = 1,
     };
-    rudp->chksum = inet_chksum_pseudo(&udp_packet, IP_PROTO_UDP, (u16_t) response_len, &source, &destination);
-    if (rudp->chksum == 0)
+    /* PublishResponse uses ip4_output_if without options and the route's
+     * immutable instance MTU. Complete oversized replies before fragmentation. */
+    if (! packettunnelTrustedChecksumsActive(t) || response_len + IP_HLEN > ts->mtu)
     {
-        rudp->chksum = 0xFFFF;
+        rudp->chksum = inet_chksum_pseudo(&udp_packet, IP_PROTO_UDP, (u16_t) response_len, &source, &destination);
+        if (rudp->chksum == 0)
+        {
+            rudp->chksum = 0xFFFF;
+        }
     }
 
     lineReuseBuffer(packet_line, buf);

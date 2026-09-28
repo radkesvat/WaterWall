@@ -162,7 +162,8 @@ Important internal rules:
   pointer escapes that scope. The mutex is released before stack output, neighbour callbacks or worker posts
 - top-level packet parsing reads only the version byte before normalizing cursor alignment. Shifted packet buffers are
   copied to aligned sbuf storage before any typed IPv4/UDP access; fake-DNS additionally validates the IPv4 header and
-  any nonzero UDP checksum before it can answer or mutate its mapping cache
+  any nonzero UDP checksum before it can answer or mutate its mapping cache, except
+  when an active direct TUN pair has already established transport assurance
 - upstream packet input rejects IPv4 fragments before fake DNS, route/listener creation,
   or lwIP input. Reassembled packets follow ordinary buffer ownership; no per-buffer
   fragment settlement claim is needed
@@ -410,3 +411,20 @@ Worker quiescence detaches engine timers before normal-loop admission closes. No
 remove their local stack roots during owner drain; runtime teardown then releases
 engines after detached messages settle and before loops and pools disappear. Shared
 pools, occupancy accounts and the process ISN secret finalize after all workers exit.
+
+## Direct TunDevice checksum policy
+
+An immediately preceding Linux TunDevice can publish a trusted TCP/UDP mode
+after successful GSO/checksum framing and storage setup. Each lazy worker netif
+reads that instance mode; other PTC netifs and ConnectionToPackets retain full
+checks even on the same engine. `gso:false`, an intervening node, any fallback,
+and other platforms retain ordinary behavior. There is no new JSON option.
+
+TUN validates unmarked input and retains positive offload assurance privately.
+PTC keeps IPv4/header parsing, alignment copies, fragment guards and repair
+requests, while omitting repeated TCP/UDP receive sums. Eligible output and TCP
+checksum-on-copy work are omitted; absent caches fall back to full pbuf checksums
+when required. Oversized output, including fake DNS replies, is checksummed before
+IP fragmentation. TUN writes complete packets as `NEEDS_CSUM` with the correct
+pseudoheader seed; fragments retain ordinary metadata. Mode is immutable through
+quiescence and owner-worker drain.

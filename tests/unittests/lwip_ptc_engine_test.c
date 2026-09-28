@@ -105,6 +105,21 @@ static sbuf_t *packet(line_t *line, uint8_t protocol, uint32_t destination, uint
  * line, and PTC must preserve that owner even when the new hash differs. */
 static void inject(fixture_t *f, line_t *line, sbuf_t *buf)
 {
+    if (packettunnelTrustedChecksumsActive(f->ptc))
+    {
+        /* This variant models TUN-assured partial input, including an alignment
+         * copy, without asking an intervening transform to repair the bytes. */
+        const uint32_t length = sbufGetLength(buf);
+        uint8_t       *bytes  = sbufGetMutablePtr(buf);
+        PUT_BE16(bytes + (bytes[9] == 6 ? 36 : 26), 0x1234);
+        sbuf_t *shifted = sbufCreate(length + 1);
+        sbufSetLength(shifted, length + 1);
+        sbufShiftRight(shifted, 1);
+        memcpy(sbufGetMutablePtr(shifted), bytes, length);
+        lineReuseBuffer(line, buf);
+        ptcTunnelUpStreamPayload(f->ptc, line, shifted);
+        return;
+    }
     uint8_t *raw = sbufGetMutablePtr(buf);
     uint64_t hash;
     CHECK(deviceFlowAffinityHash(raw, sbufGetLength(buf), &hash));
@@ -201,11 +216,15 @@ static uint32_t query(tunnel_t *t, line_t *line, const char *label)
     uint8_t *p   = sbufGetMutablePtr(buf);
     PUT_BE16(p + 22, 53);
     CHECK(calcFullPacketChecksum(p, sbufGetLength(buf)));
+    if (packettunnelTrustedChecksumsActive(t))
+        PUT_BE16(p + 26, 0x1234);
     ptc_fake_dns_result_t r =
         ptcFakeDnsHandleIpv4UdpPacket(t, line, buf, (struct ip_hdr *) p, (struct udp_hdr *) (p + 20));
     CHECK(r.handled && r.response);
     const uint8_t *out = sbufGetRawPtr(r.response);
     CHECK(GET_BE16(out + 8 + 6) == 1);
+    if (packettunnelTrustedChecksumsActive(t))
+        CHECK(GET_BE16(out + 6) == 0);
     uint32_t answer;
     memcpy(&answer, out + sbufGetLength(r.response) - 4, 4);
     lineReuseBuffer(line, r.response);
@@ -280,6 +299,9 @@ static void setup(void *worker_ptr, void *a, void *b, void *c)
         inject(&fixtures[i], line, packet(line, 17, fake_address, 0, 0, "world", 5));
         interface_route_context_t *route = ((ptc_tstate_t *) tunnelGetState(fixtures[i].ptc))->routes_v4[wid];
         CHECK(route && route->packet_wid == wid && route->engine == wwLwipRuntimeGet(wid));
+        const bool trusted = packettunnelTrustedChecksumsActive(fixtures[i].ptc);
+        CHECK((route->netif.ww_partial_transport_checksum != 0) == trusted);
+        CHECK(((route->netif.chksum_flags & NETIF_CHECKSUM_CHECK_TCP) == 0) == trusted);
     }
     CHECK(wtimerAdd(getWorkerLoop(wid), finishTimer, 1000, 1));
 }
@@ -330,6 +352,11 @@ int main(void)
         f->prev->chain = f->chain;
         f->next->chain = f->chain;
         ptcTunnelOnStart(f->ptc);
+#ifdef PTC_TRUSTED_FIXTURE
+        /* Publication may occur after PTC onStart; routes must read it lazily. */
+        if (i == 0)
+            nodes[i].flags |= kNodeFlagTrustedPacketChecksumsActive;
+#endif
     }
     for (wid_t i = 0; i < 2; ++i)
         CHECK(sendWorkerMessageForceQueueWithCleanup(i, setup, NULL, NULL, NULL, NULL) == kWorkerMessageSubmitAccepted);

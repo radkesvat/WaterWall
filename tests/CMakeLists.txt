@@ -1198,6 +1198,20 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING)
     "integration" "linux" "privileged" "tundevice" "gso" "tcp-chain"
     "network-isolated" "self-managed-network-namespace")
 
+  if(WATERWALL_ENABLE_PRIVILEGED_INTEGRATION_TESTS)
+    add_test(NAME waterwall.tundevice_trusted_checksum
+      COMMAND "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tun_trusted_checksum.py"
+        --binary "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>")
+    set_tests_properties(waterwall.tundevice_trusted_checksum PROPERTIES TIMEOUT 150 SKIP_RETURN_CODE 77)
+    add_waterwall_case_resource_lock(waterwall.tundevice_trusted_checksum tun_trusted_checksum)
+  else()
+    add_waterwall_skipped_integration_test(waterwall.tundevice_trusted_checksum
+      "TUN checksum integration requires enabled Linux privileged tests")
+  endif()
+  add_waterwall_test_labels(waterwall.tundevice_trusted_checksum
+    "integration" "linux" "privileged" "tundevice" "checksum"
+    "network-isolated" "self-managed-network-namespace")
+
   if(WATERWALL_ENABLE_PRIVILEGED_INTEGRATION_TESTS AND WATERWALL_ENABLE_TUN_TCP_SPEEDTEST)
     add_test(NAME waterwall.speedtest_tundevice_tcp_chain
       COMMAND "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tun_tcp_chain.py"

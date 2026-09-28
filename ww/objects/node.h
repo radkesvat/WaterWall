@@ -110,7 +110,11 @@ enum node_flags
     // this node supports splice payloads
     kNodeFlagSupportsSplice = (1 << 5),
     // explicitly disables chain splice, even when support is also advertised
-    kNodeFlagBlocksSplice = (1 << 6)
+    kNodeFlagBlocksSplice = (1 << 6),
+    // Complete direct packet-pair checksum contract; never inherited through a node.
+    kNodeFlagSupportsTrustedPacketChecksums = (1 << 7),
+    // Instance-only, published during exclusive startup and immutable thereafter.
+    kNodeFlagTrustedPacketChecksumsActive = (1 << 8)
 };
 
 enum node_layer_group

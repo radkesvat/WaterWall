@@ -45,6 +45,37 @@ int main(void)
 
     node_t metadata = nodeTunDeviceGet();
     require(metadata.required_padding_left == kTunVirtioHeaderSize, "Linux TUN headroom does not fit virtio header");
+    require((metadata.flags & kNodeFlagSupportsTrustedPacketChecksums) != 0 &&
+                (metadata.flags & kNodeFlagTrustedPacketChecksumsActive) == 0,
+            "template must advertise capability without activating it");
+    node_t   peer   = {.flags = kNodeFlagSupportsTrustedPacketChecksums, .layer_group = kNodeLayer3 | kNodeLayer4};
+    node_t   other  = {.flags = kNodeFlagSupportsTrustedPacketChecksums};
+    node_t   middle = {.flags = kNodeFlagNone};
+    tunnel_t tun = {.node = &metadata}, ptc = {.node = &peer}, interposed = {.node = &middle}, spare = {.node = &other};
+    require(! packettunnelTrustedChecksumPairEligible(&tun, NULL), "missing peer eligible");
+    tun.next = &ptc;
+    require(! packettunnelTrustedChecksumPairEligible(&tun, &ptc), "one-sided link eligible");
+    ptc.prev = &tun;
+    require(packettunnelTrustedChecksumPairEligible(&tun, &ptc), "direct pair refused");
+    peer.layer_group = kNodeLayer3;
+    require(! packettunnelTrustedChecksumPairEligible(&tun, &ptc), "two TUN nodes negotiated a bridge contract");
+    peer.layer_group = kNodeLayer3 | kNodeLayer4;
+    require(! packettunnelTrustedChecksumPairEligible(&ptc, &tun), "reverse edge eligible");
+    tun.next        = &interposed;
+    interposed.prev = &tun;
+    interposed.next = &ptc;
+    ptc.prev        = &interposed;
+    require(! packettunnelTrustedChecksumPairEligible(&tun, &ptc) &&
+                ! packettunnelTrustedChecksumPairEligible(&tun, &interposed),
+            "interposed node inherited trust");
+    tun.next = &ptc;
+    ptc.prev = &tun;
+    packettunnelActivateTrustedChecksumPair(&tun, &ptc);
+    require(packettunnelTrustedChecksumsActive(&tun) && packettunnelTrustedChecksumsActive(&ptc) &&
+                ! packettunnelTrustedChecksumsActive(&spare),
+            "pair mode escaped to another instance");
+    require((metadata.flags & (kNodeFlagChainHead | kNodeFlagChainEnd)) == (kNodeFlagChainHead | kNodeFlagChainEnd),
+            "activation overwrote other node flags");
     memoryFree(metadata.type);
 
     testGsoSetting(NULL, true, true);
