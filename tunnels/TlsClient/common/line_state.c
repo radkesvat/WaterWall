@@ -104,8 +104,8 @@ bool tlsclientLinestateInitializeWithShaping(tlsclient_lstate_t *ls, SSL_CTX *sc
         tlsrecordshapingOutputQueueInitialize(&ls->shaping_output, pool);
     }
 
-    ls->rbio = BIO_new(BIO_s_mem());
-    ls->wbio = BIO_new(BIO_s_mem());
+    ls->rbio = tlsbufferbioNew(sctx, pool);
+    ls->wbio = tlsbufferbioNew(sctx, pool);
     ls->ssl  = SSL_new(sctx);
 
     if (ls->rbio == NULL || ls->wbio == NULL || ls->ssl == NULL)

@@ -188,10 +188,7 @@ static void processTakeoverHandshakePayload(tunnel_t *t, line_t *l, tlsclient_ls
             goto failed;
         }
 
-        int expected = (int) sbufGetLength(record);
-        int written  = BIO_write(ls->rbio, sbufGetRawPtr(record), expected);
-        lineReuseBuffer(l, record);
-        if (written != expected)
+        if (! tlsbufferbioFeed(ls->rbio, record))
         {
             goto failed;
         }
@@ -297,7 +294,6 @@ void tlsclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     tlsclient_tstate_t *ts = tunnelGetState(t);
     tlsclient_lstate_t *ls = lineGetState(l, t);
-    int                 n;
 
     if (ls->upstream_finished)
     {
@@ -317,73 +313,38 @@ void tlsclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
-    lineRef(l);
-    while (sbufGetLength(buf) > 0)
+    if (sbufGetLength(buf) == 0)
     {
-        n = BIO_write(ls->rbio, sbufGetRawPtr(buf), (int) sbufGetLength(buf));
+        lineReuseBuffer(l, buf);
+        return;
+    }
 
-        if (n <= 0)
-        {
-            /* if BIO write fails, assume unrecoverable */
-            lineReuseBuffer(l, buf);
+    lineRef(l);
+    /* Admission transfers the entire input before a handshake/output callback
+     * can reenter. BIO reads advance the owned input without staging a copy. */
+    if (! tlsbufferbioFeed(ls->rbio, buf))
+        goto failed;
+
+    while (! ls->handshake_completed)
+    {
+        int handshake_result = performHandshake(t, l, ls);
+
+        if (handshake_result == -1)
             goto failed;
-        }
-        sbufShiftRight(buf, n);
 
-        while (! ls->handshake_completed)
+        if (handshake_result == 0)
+            break; // Need more data (kSslstatusWantIo)
+
+        if (handshake_result == 2)
         {
-            int handshake_result = performHandshake(t, l, ls);
-
-            if (handshake_result == -1)
-            {
-                lineReuseBuffer(l, buf);
-                goto failed;
-            }
-
-            if (handshake_result == 0)
-            {
-                break; // Need more data (kSslstatusWantIo)
-            }
-
-            if (handshake_result == 2)
-            {
-                lineReuseBuffer(l, buf);
-                lineUnref(l);
-                return;
-            }
-
-            // handshake_result == 1, continue or handshake completed
-        }
-
-        if (! processEncryptedData(t, l, ls))
-        {
-            lineReuseBuffer(l, buf);
-            goto failed;
-        }
-
-        if (! readDecryptedData(t, l, ls))
-        {
-            lineReuseBuffer(l, buf);
-            goto failed;
-        }
-
-        if (! flushSslProtocolMessages(t, l, ls))
-        {
-            lineReuseBuffer(l, buf);
-            if (! lineIsAlive(l))
-            {
-                lineUnref(l);
-                return;
-            }
             lineUnref(l);
-            LOGW("TlsClient: downstream payload failed while flushing TLS protocol output");
-            tlsclientCloseLineBidirectional(t, l);
             return;
         }
     }
 
-    // done with socket data
-    lineReuseBuffer(l, buf);
+    if (! processEncryptedData(t, l, ls) || ! readDecryptedData(t, l, ls) || ! flushSslProtocolMessages(t, l, ls))
+        goto failed;
+
     lineUnref(l);
     return;
 

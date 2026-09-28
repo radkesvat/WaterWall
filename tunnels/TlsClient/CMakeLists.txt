@@ -88,6 +88,7 @@ target_include_directories(DecompressBrotli PRIVATE
 #==============================================================================
 
 add_library(TlsClient STATIC
+    ../Internals/TlsBufferBio/buffer_bio.c
     instance/chain.c
     instance/create.c
     instance/destroy.c
@@ -113,6 +114,7 @@ add_library(TlsClient STATIC
 set_source_files_properties(instance/api.c PROPERTIES SKIP_UNITY_BUILD_INCLUSION ON)
 
 target_include_directories(TlsClient PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_include_directories(TlsClient PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../Internals/TlsBufferBio/include)
 target_include_directories(TlsClient PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/TlsClient)
 
 

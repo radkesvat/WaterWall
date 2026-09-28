@@ -68,10 +68,16 @@ bool tlsclientDrainBioToBuffer(buffer_pool_t *pool, BIO *bio, sbuf_t **out)
     }
     discard capacity;
 
-    sbuf_t *buf = bufferpoolGetLargeBuffer(pool);
+    sbuf_t *buf = tlsbufferbioTake(bio);
+    assert(buf != NULL);
+    if (sbufGetLength(buf) == pending)
+    {
+        *out = buf;
+        return true;
+    }
     buf         = sbufReserveSpace(buf, (uint32_t) pending);
 
-    size_t offset = 0;
+    size_t offset = sbufGetLength(buf);
     while (offset < pending)
     {
         const int n = BIO_read(bio, sbufGetMutablePtr(buf) + offset, (int) (pending - offset));
@@ -484,16 +490,11 @@ bool tlsclientFlushSslOutput(tunnel_t *t, line_t *l, tlsclient_lstate_t *ls)
         return true;
     }
 
-    buffer_pool_t *pool = lineGetBufferPool(l);
     while (true)
     {
-        sbuf_t *ssl_buf = bufferpoolGetLargeBuffer(pool);
-        int     avail   = (int) sbufGetMaximumWriteableSize(ssl_buf);
-        int     n       = BIO_read(wbio, sbufGetMutablePtr(ssl_buf), avail);
-
-        if (n > 0)
+        sbuf_t *ssl_buf = tlsbufferbioTake(wbio);
+        if (ssl_buf != NULL)
         {
-            sbufSetLength(ssl_buf, (uint32_t) n);
             if (shape_output)
             {
                 char queue_error[kTlsRecordShapingErrorSize];
@@ -523,11 +524,6 @@ bool tlsclientFlushSslOutput(tunnel_t *t, line_t *l, tlsclient_lstate_t *ls)
             continue;
         }
 
-        bufferpoolReuseBuffer(pool, ssl_buf);
-        if (! BIO_should_retry(wbio))
-        {
-            return false;
-        }
         break;
     }
 
@@ -783,12 +779,10 @@ tlsclient_post_handshake_result_t tlsclientTunnelConsumePostHandshakeRecord(tunn
 
     ls->post_handshake_consume_in_progress = true;
 
-    int written  = BIO_write(ls->rbio, sbufGetRawPtr(record), (int) sbufGetLength(record));
-    int expected = (int) sbufGetLength(record);
-    lineReuseBuffer(l, record);
+    bool admitted = tlsbufferbioFeed(ls->rbio, record);
     record = NULL;
 
-    if (written != expected)
+    if (! admitted)
     {
         ls->post_handshake_consume_in_progress = false;
         lineUnref(l);

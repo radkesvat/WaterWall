@@ -69,8 +69,8 @@ void tlsclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
     /* Did SSL request to write bytes? */
     if (status == kSslstatusWantIo)
     {
-        // the initial flight can be larger than any pool buffer, so the complete pending
-        // length is drained into one exactly sized buffer instead of a single BIO_read
+        // StreamFragmenter receives the complete initial flight in one owned
+        // buffer, including when the BIO needed several allocations to hold it.
         sbuf_t *buf = NULL;
         if (! tlsclientDrainBioToBuffer(lineGetBufferPool(l), ls->wbio, &buf) || buf == NULL)
         {

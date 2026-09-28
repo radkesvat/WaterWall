@@ -1,5 +1,6 @@
 
 add_library(TlsServer STATIC
+                    ../Internals/TlsBufferBio/buffer_bio.c
                     instance/create.c
                     instance/destroy.c
                     instance/api.c
@@ -24,6 +25,7 @@ add_library(TlsServer STATIC
 
 
 target_include_directories(TlsServer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_include_directories(TlsServer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../Internals/TlsBufferBio/include)
 target_include_directories(TlsServer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/TlsServer)
 
 include(CheckCSourceCompiles)

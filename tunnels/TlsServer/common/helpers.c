@@ -604,16 +604,14 @@ bool tlsserverFlushSslOutput(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls)
 
     while (true)
     {
-        sbuf_t *ssl_buf = bufferpoolGetLargeBuffer(lineGetBufferPool(l));
-        int     avail   = (int) sbufGetMaximumWriteableSize(ssl_buf);
-        int     n       = BIO_read(wbio, sbufGetMutablePtr(ssl_buf), avail);
-
-        if (n > 0)
+        sbuf_t *ssl_buf = tlsbufferbioTake(wbio);
+        if (ssl_buf != NULL)
         {
-            sbufSetLength(ssl_buf, n);
             if (ls->verbose)
             {
-                LOGD("TlsServer: worker %u flushing %d TLS bytes downstream", (unsigned int) lineGetWID(l), n);
+                LOGD("TlsServer: worker %u flushing %u TLS bytes downstream",
+                     (unsigned int) lineGetWID(l),
+                     (unsigned int) sbufGetLength(ssl_buf));
             }
             if (shape_output)
             {
@@ -645,14 +643,6 @@ bool tlsserverFlushSslOutput(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls)
             continue;
         }
 
-        lineReuseBuffer(l, ssl_buf);
-
-        if (! BIO_should_retry(wbio))
-        {
-            LOGW("TlsServer: TLS write BIO failed while flushing output");
-            tlsserverPrintSSLError();
-            return false;
-        }
         break;
     }
 

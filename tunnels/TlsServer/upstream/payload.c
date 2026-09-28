@@ -35,7 +35,9 @@ static void tlsserverLogHandshakeComplete(line_t *l, tlsserver_lstate_t *ls)
     }
 
     LOGD("TlsServer: worker %u TLS handshake complete (version=%s, cipher=%s, sni=\"%s\", alpn=<none>)",
-         (unsigned int) lineGetWID(l), SSL_get_version(ssl), SSL_get_cipher_name(ssl),
+         (unsigned int) lineGetWID(l),
+         SSL_get_version(ssl),
+         SSL_get_cipher_name(ssl),
          sni != NULL ? sni : "<none>");
 }
 
@@ -47,14 +49,11 @@ static bool tlsserverPendingOutputStartsServerHello(tlsserver_lstate_t *ls)
         return false;
     }
 
-    char *data = NULL;
-    long  len  = BIO_get_mem_data(wbio, &data);
-    if (data == NULL || len < 6)
+    uint8_t record[6];
+    if (tlsbufferbioPeek(wbio, record, sizeof(record)) != sizeof(record))
     {
         return false;
     }
-
-    const uint8_t *record = (const uint8_t *) data;
 
     return record[0] == 0x16 && record[1] == 0x03 && record[2] <= 0x04 && record[5] == 0x02;
 }
@@ -366,80 +365,53 @@ void tlsserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         }
     }
 
-    while (sbufGetLength(buf) > 0)
+    if (sbufGetLength(buf) == 0)
     {
-        int n = BIO_write(SSL_get_rbio(ls->ssl), sbufGetRawPtr(buf), (int) sbufGetLength(buf));
-
-        if (n <= 0)
-        {
-            LOGW("TlsServer: failed to write upstream TLS bytes into OpenSSL read BIO");
-            tlsserverPrintSSLError();
-            reuseBuffer(buf);
-            if (lineIsAlive(l))
-            {
-                lineUnref(l);
-                tlsserverPrintSSLState(ls->ssl);
-                tlsserverCloseLineFatal(t, l);
-                return;
-            }
-            lineUnref(l);
-            return;
-        }
-
-        sbufShiftRight(buf, n);
-        if (ls->verbose)
-        {
-            LOGD("TlsServer: worker %u fed %d TLS bytes into OpenSSL", (unsigned int) lineGetWID(l), n);
-        }
-
-        while (! ls->handshake_completed)
-        {
-            int handshake_result = tlsserverPerformHandshake(t, l, ls);
-
-            if (handshake_result == kTlsServerHandshakeFallback)
-            {
-                lineReuseBuffer(l, buf);
-                bool    alive = tlsserverStartFallback(t, l, ls);
-                discard alive;
-                lineUnref(l);
-                return;
-            }
-
-            if (handshake_result == kTlsServerHandshakeFatal)
-            {
-                reuseBuffer(buf);
-                if (lineIsAlive(l))
-                {
-                    lineUnref(l);
-                    tlsserverPrintSSLState(ls->ssl);
-                    tlsserverCloseLineFatal(t, l);
-                    return;
-                }
-                lineUnref(l);
-                return;
-            }
-
-            if (handshake_result == kTlsServerHandshakeWantMore)
-            {
-                break;
-            }
-        }
-
-        if (ls->handshake_completed && ! tlsserverReadDecryptedData(t, l, ls))
-        {
-            reuseBuffer(buf);
-            if (lineIsAlive(l))
-            {
-                lineUnref(l);
-                tlsserverPrintSSLState(ls->ssl);
-                tlsserverCloseLineFatal(t, l);
-                return;
-            }
-            lineUnref(l);
-            return;
-        }
+        lineReuseBuffer(l, buf);
+        lineUnref(l);
+        return;
     }
 
-    lineReuseBuffer(l, buf);
+    /* Admission owns the wire bytes before any callback. Fallback replay above
+     * retains its independent transcript until routing has committed. */
+    if (! tlsbufferbioFeed(SSL_get_rbio(ls->ssl), buf))
+    {
+        LOGW("TlsServer: TLS input BIO admission failed");
+        goto failed;
+    }
+
+    while (! ls->handshake_completed)
+    {
+        int handshake_result = tlsserverPerformHandshake(t, l, ls);
+
+        if (handshake_result == kTlsServerHandshakeFallback)
+        {
+            discard tlsserverStartFallback(t, l, ls);
+            lineUnref(l);
+            return;
+        }
+
+        if (handshake_result == kTlsServerHandshakeFatal)
+            goto failed;
+
+        if (handshake_result == kTlsServerHandshakeWantMore)
+            break;
+    }
+
+    if (ls->handshake_completed && ! tlsserverReadDecryptedData(t, l, ls))
+        goto failed;
+    lineUnref(l);
+    return;
+
+failed:
+    if (lineIsAlive(l))
+    {
+        ls = lineGetState(l, t);
+        if (ls->tunnel == t && ! ls->resources_released)
+        {
+            tlsserverPrintSSLState(ls->ssl);
+            tlsserverCloseLineFatal(t, l);
+        }
+    }
     lineUnref(l);
 }

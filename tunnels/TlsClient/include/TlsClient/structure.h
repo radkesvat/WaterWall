@@ -8,6 +8,8 @@
 #include <openssl/err.h>
 #include <openssl/ssl.h>
 
+#include "TlsBufferBio/buffer_bio.h"
+
 typedef struct tlsclient_tstate_s
 {
     // settings
@@ -157,11 +159,11 @@ bool tlsclientConfigureClientHelloExtensions(SSL *ssl, const uint8_t *alpn_wire,
 void tlsclientCloseLineBidirectional(tunnel_t *t, line_t *l);
 bool tlsclientTakeoverTryReadRecord(tlsclient_lstate_t *ls, sbuf_t **record, bool *invalid);
 /*
- * Drains every byte currently pending in a BIO into one buffer that is grown to
- * the exact pending length. Returns false on allocation failure, a short read or
- * unexpected remaining bytes; `*out` is left NULL and nothing is leaked. An
- * empty BIO succeeds with `*out` still NULL, so callers that require output must
- * check for it.
+ * Transfers all pending bytes from an owned-buffer BIO into one buffer. The
+ * first allocation is reused; additional entries are copied only when a complete
+ * handshake flight or takeover tail spans multiple allocations. Returns false
+ * on an unrepresentable length or an incomplete drain, leaving *out NULL. An
+ * empty BIO succeeds with *out NULL.
  */
 bool   tlsclientDrainBioToBuffer(buffer_pool_t *pool, BIO *bio, sbuf_t **out);
 bool   tlsclientFlushSslOutput(tunnel_t *t, line_t *l, tlsclient_lstate_t *ls);

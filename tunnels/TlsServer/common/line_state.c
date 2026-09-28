@@ -21,8 +21,8 @@ bool tlsserverLinestateInitialize(tlsserver_lstate_t *ls, SSL_CTX *ssl_ctx, buff
         tlsrecordshapingOutputQueueInitialize(&ls->shaping_output, pool);
     }
 
-    ls->rbio = BIO_new(BIO_s_mem());
-    ls->wbio = BIO_new(BIO_s_mem());
+    ls->rbio = tlsbufferbioNew(ssl_ctx, pool);
+    ls->wbio = tlsbufferbioNew(ssl_ctx, pool);
     ls->ssl  = SSL_new(ssl_ctx);
 
     if (ls->rbio == NULL || ls->wbio == NULL || ls->ssl == NULL)
