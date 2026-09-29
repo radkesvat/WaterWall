@@ -1,4 +1,5 @@
 #include "engine_internal.h"
+#include "pool_cache_internal.h"
 #include "port_registry.h"
 #include "shared_pools.h"
 
@@ -26,18 +27,19 @@ void wwLwipPortCleanup(void);
 
 struct ww_lwip_engine_s
 {
-    uint8_t          owner;
-    struct wloop_s  *loop;
-    unsigned         depth;
-    bool             dispatching;
-    bool             releasing;
-    bool             quiesced;
-    ww_lwip_wake_fn  wake;
-    void            *wake_argument;
-    struct stats_    stats;
-    void            *modules[kWwLwipStateCount];
-    struct sys_timeo timeouts[MEMP_NUM_SYS_TIMEOUT];
-    bool             timeout_used[MEMP_NUM_SYS_TIMEOUT];
+    uint8_t              owner;
+    struct wloop_s      *loop;
+    unsigned             depth;
+    bool                 dispatching;
+    bool                 releasing;
+    bool                 quiesced;
+    ww_lwip_wake_fn      wake;
+    void                *wake_argument;
+    struct stats_        stats;
+    void                *modules[kWwLwipStateCount];
+    struct sys_timeo     timeouts[MEMP_NUM_SYS_TIMEOUT];
+    bool                 timeout_used[MEMP_NUM_SYS_TIMEOUT];
+    ww_lwip_pool_cache_t pool_cache;
 };
 
 static WW_LWIP_THREAD_LOCAL ww_lwip_engine_t *current_engine;
@@ -116,6 +118,12 @@ size_t wwLwipEngineControlSize(void)
 ww_lwip_engine_t *wwLwipEngineCurrent(void)
 {
     return current_engine;
+}
+
+ww_lwip_pool_cache_t *wwLwipEnginePoolCache(void)
+{
+    assert(current_engine == NULL || wwLwipEngineOwnerIsCurrent(current_engine->owner, current_engine->loop));
+    return current_engine != NULL ? &current_engine->pool_cache : NULL;
 }
 
 bool wwLwipEngineIsReleasing(void)
@@ -232,6 +240,7 @@ ww_lwip_engine_t *wwLwipEngineCreate(uint8_t owner, struct wloop_s *loop)
     }
     engine->owner = owner;
     engine->loop  = loop;
+    wwLwipPoolCacheInitialize(&engine->pool_cache);
     memcpy(engine->stats.memp, shared_stats.memp, sizeof(engine->stats.memp));
     for (unsigned i = 0; i < kWwLwipStateCount; ++i)
     {
@@ -361,6 +370,7 @@ void wwLwipEngineDestroy(ww_lwip_engine_t *engine)
         netif_remove(netif_list);
     }
     wwLwipEngineLeave(engine, previous);
+    wwLwipPoolCacheDestroy(&engine->pool_cache);
     free(engine);
     SYS_ARCH_LOCKED(--live_engines);
 }

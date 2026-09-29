@@ -1,3 +1,4 @@
+#include "pool_cache.h"
 #include "structure.h"
 
 #include "loggers/network_logger.h"
@@ -42,6 +43,7 @@ static wonce_t g_rx_pool_once = WONCE_INIT;
 static void ptcRxWrapperPoolInitialize(void)
 {
     LWIP_MEMPOOL_INIT(RX_POOL);
+    wwLwipPoolCacheRegisterRxPool(&memp_RX_POOL);
 }
 
 void ptcRxWrapperPoolInitializeOnce(void)

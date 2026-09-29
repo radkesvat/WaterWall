@@ -1326,14 +1326,14 @@ endif()
 include(${LWIP_DIR}/src/Filelists.cmake)
 include(${LWIP_CONTRIB_DIR}/Filelists.cmake)
 
-add_library(ww_lwip STATIC ${lwipnoapps_SRCS} lwip/engine.c lwip/shared_pools.c lwip/port_registry.c)
+add_library(ww_lwip STATIC ${lwipnoapps_SRCS} lwip/engine.c lwip/shared_pools.c lwip/port_registry.c lwip/pool_cache.c)
 # Source-local engine modules must not merge their private macro namespaces.
 set_target_properties(ww_lwip PROPERTIES UNITY_BUILD OFF)
 
 # Private small-capacity raw build for shared-limit and concurrency regression tests.
 if(WW_BUILD_UNIT_TESTS AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_library(ww_lwip_engine_test STATIC EXCLUDE_FROM_ALL
-        ${lwipnoapps_SRCS} lwip/engine.c lwip/shared_pools.c lwip/port_registry.c
+        ${lwipnoapps_SRCS} lwip/engine.c lwip/shared_pools.c lwip/port_registry.c lwip/pool_cache.c
         ${LWIP_CONTRIB_DIR}/ports/unix/port/sys_arch.c)
     target_include_directories(ww_lwip_engine_test PUBLIC ${LWIP_INCLUDE_DIRS})
     target_include_directories(ww_lwip_engine_test PRIVATE

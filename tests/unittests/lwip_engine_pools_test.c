@@ -1,5 +1,6 @@
 #include "engine_internal.h"
 #include "lwip_engine_test_runtime.h"
+#include "pool_cache.h"
 #include "shared_pools.h"
 
 #include "lwip/autoip.h"
@@ -12,6 +13,7 @@
 #include "lwip/netif.h"
 #include "lwip/priv/memp_priv.h"
 #include "lwip/stats.h"
+#include "lwip/sys.h"
 #include "lwip/tcp.h"
 #include "lwip/udp.h"
 
@@ -20,7 +22,77 @@ static struct netif       interfaces[2];
 static _Thread_local bool fail_engine_allocation;
 static unsigned           custom_frees[2];
 
-static void *heap_handoff[2];
+static void                  *heap_handoff[2];
+static _Thread_local unsigned protection_calls;
+static void                   meet(void);
+
+LWIP_MEMPOOL_DECLARE(CACHE_RX_TEST, 33, 64, "RX cache fixture")
+
+sys_prot_t __real_sys_arch_protect(void);
+sys_prot_t __wrap_sys_arch_protect(void);
+sys_prot_t __wrap_sys_arch_protect(void)
+{
+    ++protection_calls;
+    return __real_sys_arch_protect();
+}
+
+static void cacheHotPath(void)
+{
+    if (owner == 0)
+    {
+        for (unsigned i = 0; i < (unsigned) (MEMP_POOL_LAST - MEMP_POOL_FIRST + 3); ++i)
+        {
+            const struct memp_desc *pool = i == 0   ? memp_pools[MEMP_TCP_SEG]
+                                           : i == 1 ? &memp_CACHE_RX_TEST
+                                                    : memp_pools[MEMP_POOL_FIRST + i - 2];
+            void                   *item = memp_malloc_pool(pool);
+            CHECK(item != NULL);
+            memp_free_pool(pool, item);
+            protection_calls = 0;
+            for (unsigned j = 0; j < 100; ++j)
+            {
+                item = memp_malloc_pool(pool);
+                CHECK(item != NULL);
+                memset(item, 0x5a, pool->size);
+                memp_free_pool(pool, item);
+            }
+#if WW_LWIP_POOL_CACHE_ENABLED
+            CHECK(protection_calls == 0);
+#else
+            CHECK(protection_calls > 0);
+#endif
+        }
+    }
+    meet();
+}
+
+static void concurrentCachePressure(void)
+{
+    /* Two owners compete for 33 slots while each can hold 24. Filling all
+     * payload bytes catches a duplicated allocation or a stolen live object. */
+    for (unsigned round = 0; round < 1000; ++round)
+    {
+        void               *held[24];
+        unsigned            count  = 0;
+        const unsigned char marker = (unsigned char) (round * 2 + owner);
+        while (count < 24)
+        {
+            void *item = LWIP_MEMPOOL_ALLOC(CACHE_RX_TEST);
+            if (item == NULL)
+                break;
+            memset(item, marker, 64);
+            held[count++] = item;
+        }
+        meet();
+        for (unsigned i = 0; i < count; ++i)
+        {
+            for (unsigned j = 0; j < 64; ++j)
+                CHECK(((unsigned char *) held[i])[j] == marker);
+            LWIP_MEMPOOL_FREE(CACHE_RX_TEST, held[i]);
+        }
+        meet();
+    }
+}
 
 void *__real_calloc(size_t count, size_t size);
 void *__wrap_calloc(size_t count, size_t size)
@@ -53,50 +125,50 @@ static err_t init_netif(struct netif *netif)
     return ERR_OK;
 }
 
-static void poolCapacity(memp_t type)
+static void poolCapacity(const struct memp_desc *pool)
 {
-    const unsigned capacity = memp_pools[type]->num;
+    const unsigned capacity = pool->num;
     void         **held     = calloc(capacity, sizeof(*held));
     CHECK(held != NULL && capacity > 0);
     if (owner == 0)
     {
         for (unsigned i = 0; i < capacity; ++i)
         {
-            held[i] = memp_malloc(type);
+            held[i] = memp_malloc_pool(pool);
             CHECK(held[i] != NULL);
         }
-        CHECK(memp_malloc(type) == NULL);
+        CHECK(memp_malloc_pool(pool) == NULL);
     }
     meet();
     if (owner == 1)
-        CHECK(memp_malloc(type) == NULL);
+        CHECK(memp_malloc_pool(pool) == NULL);
     meet();
     if (owner == 0)
     {
-        memp_free(type, held[0]);
+        memp_free_pool(pool, held[0]);
         held[0] = NULL;
     }
     meet();
     if (owner == 1)
     {
-        void *item = memp_malloc(type);
+        void *item = memp_malloc_pool(pool);
         CHECK(item != NULL);
-        CHECK(memp_malloc(type) == NULL);
-        memp_free(type, item);
+        CHECK(memp_malloc_pool(pool) == NULL);
+        memp_free_pool(pool, item);
     }
     meet();
     if (owner == 0)
         for (unsigned i = 1; i < capacity; ++i)
-            memp_free(type, held[i]);
+            memp_free_pool(pool, held[i]);
     free(held);
     meet();
     for (unsigned i = 0; i < 100; ++i)
     {
-        void *item = memp_malloc(type);
+        void *item = memp_malloc_pool(pool);
         /* Some small heap classes have one entry: simultaneous checkout may
          * legitimately refuse one worker until the other returns its item. */
         if (item != NULL)
-            memp_free(type, item);
+            memp_free_pool(pool, item);
     }
     meet();
 }
@@ -188,6 +260,8 @@ static void *run(void *argument)
     for (unsigned i = 0; i < timeout_count; ++i)
         wwLwipTimeoutFree(timeouts[i]);
     meet();
+    cacheHotPath();
+    concurrentCachePressure();
     const memp_t tested[] = {MEMP_TCP_PCB,
                              MEMP_TCP_PCB_LISTEN,
                              MEMP_TCP_SEG,
@@ -197,9 +271,10 @@ static void *run(void *argument)
                              MEMP_REASSDATA,
                              MEMP_IP6_REASSDATA};
     for (unsigned i = 0; i < sizeof(tested) / sizeof(tested[0]); ++i)
-        poolCapacity(tested[i]);
+        poolCapacity(memp_pools[tested[i]]);
     for (memp_t i = MEMP_POOL_FIRST; i <= MEMP_POOL_LAST; i = (memp_t) (i + 1))
-        poolCapacity(i);
+        poolCapacity(memp_pools[i]);
+    poolCapacity(&memp_CACHE_RX_TEST);
 
     struct tcp_pcb *tcp_held[MEMP_NUM_TCP_PCB];
     if (owner == 0)
@@ -324,8 +399,13 @@ static void *run(void *argument)
     netif_set_up(&allocated_clients);
     CHECK(dhcp_start(&allocated_clients) == ERR_OK);
     CHECK(autoip_start(&allocated_clients) == ERR_OK);
+    void *detached = mem_malloc(1460);
+    CHECK(detached != NULL);
     wwLwipEngineLeave(engine, previous);
     wwLwipEngineDestroy(engine);
+    /* Shared backing outlives the engine; an unscoped final free must not
+     * dereference its former owner's now-destroyed cache. */
+    mem_free(detached);
     CHECK(netif_dhcp_data(&allocated_clients) == NULL && netif_autoip_data(&allocated_clients) == NULL);
     CHECK(netif_dhcp_data(&interfaces[owner]) == NULL && netif_autoip_data(&interfaces[owner]) == NULL);
     return NULL;
@@ -334,6 +414,8 @@ static void *run(void *argument)
 int main(void)
 {
     wwLwipEngineSharedInit();
+    LWIP_MEMPOOL_INIT(CACHE_RX_TEST);
+    wwLwipPoolCacheRegisterRxPool(&memp_CACHE_RX_TEST);
     CHECK(pthread_barrier_init(&rendezvous, NULL, 2) == 0);
     pthread_t threads[2];
     for (uintptr_t i = 0; i < 2; ++i)
@@ -341,6 +423,7 @@ int main(void)
     for (unsigned i = 0; i < 2; ++i)
         CHECK(pthread_join(threads[i], NULL) == 0);
     CHECK(pthread_barrier_destroy(&rendezvous) == 0);
+    CHECK(memp_CACHE_RX_TEST.stats->used == 0);
     wwLwipEngineSharedCleanup();
     puts("shared capacities, concurrent allocation, custom free, initialization refusal and IPv4 quotas passed");
     return 0;

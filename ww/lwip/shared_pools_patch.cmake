@@ -272,4 +272,49 @@ void wwLwipReassemblyCleanup6(void) {
 }
 #endif
 ")
+    # Keep the allocator's original capacity and nullable shared primitives.
+    # Only normal pool mode uses the engine caches; allocator diagnostics retain
+    # their per-operation checks and hooks.
+    ww_lwip_replace_once("${lwip_dir}/src/core/memp.c"
+[=[#include "lwip/sys.h"]=]
+[=[#include "lwip/sys.h"
+#include "pool_cache.h"]=])
+    ww_lwip_replace_once("${lwip_dir}/src/core/memp.c"
+[=[  return do_memp_malloc_pool(desc);]=]
+[=[#if WW_LWIP_POOL_CACHE_ENABLED
+  return wwLwipPoolCacheMalloc(desc);
+#else
+  return do_memp_malloc_pool(desc);
+#endif]=])
+    ww_lwip_replace_once("${lwip_dir}/src/core/memp.c"
+[=[  memp = do_memp_malloc_pool(memp_pools[type]);]=]
+[=[#if WW_LWIP_POOL_CACHE_ENABLED
+  memp = wwLwipPoolCacheMalloc(memp_pools[type]);
+#else
+  memp = do_memp_malloc_pool(memp_pools[type]);
+#endif]=])
+    ww_lwip_replace_once("${lwip_dir}/src/core/memp.c"
+[=[  do_memp_free_pool(desc, mem);]=]
+[=[#if WW_LWIP_POOL_CACHE_ENABLED
+  wwLwipPoolCacheFree(desc, mem);
+#else
+  do_memp_free_pool(desc, mem);
+#endif]=])
+    ww_lwip_replace_once("${lwip_dir}/src/core/memp.c"
+[=[  do_memp_free_pool(memp_pools[type], mem);]=]
+[=[#if WW_LWIP_POOL_CACHE_ENABLED
+  wwLwipPoolCacheFree(memp_pools[type], mem);
+#else
+  do_memp_free_pool(memp_pools[type], mem);
+#endif]=])
+    file(APPEND "${lwip_dir}/src/core/memp.c" "
+#if WW_LWIP_POOL_CACHE_ENABLED
+void *wwLwipMempMallocShared(const struct memp_desc *pool) {
+  return do_memp_malloc_pool(pool);
+}
+void wwLwipMempFreeShared(const struct memp_desc *pool, void *item) {
+  do_memp_free_pool(pool, item);
+}
+#endif
+")
 endfunction()
