@@ -2751,13 +2751,19 @@ endif()
 if(LINUX AND TARGET PacketsToConnection)
   add_executable(packetstoconnection_receive_batch_test
     packetstoconnection_receive_batch_test.c
+    ${CMAKE_SOURCE_DIR}/tunnels/PacketsToConnection/upstream/payload.c
     ${WATERWALL_LINE_FAILURE_WW_SOURCES}
     ${CMAKE_SOURCE_DIR}/ww/lwip/engine_runtime.c
+  )
+  target_compile_definitions(packetstoconnection_receive_batch_test PRIVATE PTC_FRAGMENT_ADMISSION_TEST_HOOKS=1)
+  target_include_directories(packetstoconnection_receive_batch_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/tunnels/PacketsToConnection/include/PacketsToConnection
   )
   target_link_options(packetstoconnection_receive_batch_test PRIVATE
     ${WATERWALL_LINE_FAILURE_WRAPS}
     "-Wl,--wrap=lineScheduleTask"
     "-Wl,--wrap=lineScheduleTaskWithBuf"
+    "-Wl,--wrap=wwLwipEngineInput"
   )
   target_link_libraries(packetstoconnection_receive_batch_test PRIVATE PacketsToConnection ww)
   add_dependencies(waterwall_unit_tests packetstoconnection_receive_batch_test)

@@ -58,15 +58,54 @@ static void my_pbuf_free_custom(struct pbuf *p)
      * Keep the originating pool identity explicit. A detached foreign free
      * destroys the standalone allocation instead of borrowing that pool.
      */
-    if (currentThreadIsEventWorkerWID(custombuf->origin_wid))
+    if (custombuf->sbuf != NULL)
     {
-        bufferpoolReuseBuffer(custombuf->origin_pool, custombuf->sbuf);
-    }
-    else
-    {
-        sbufDestroy(custombuf->sbuf);
+        if (currentThreadIsEventWorkerWID(custombuf->origin_wid))
+        {
+            bufferpoolReuseBuffer(custombuf->origin_pool, custombuf->sbuf);
+        }
+        else
+        {
+            sbufDestroy(custombuf->sbuf);
+        }
     }
     LWIP_MEMPOOL_FREE(RX_POOL, custombuf);
+}
+
+my_custom_pbuf_t *ptcReusableReceiveBuffer(struct pbuf *p, buffer_pool_t *pool, wid_t owner_wid)
+{
+    assert(currentThreadIsEventWorkerWID(owner_wid));
+    if (p->next != NULL || p->ref != 1 || p->len == 0 || p->len != p->tot_len || (p->flags & PBUF_FLAG_IS_CUSTOM) == 0)
+        return NULL;
+    struct pbuf_custom *custom = (struct pbuf_custom *) p;
+    if (custom->custom_free_function != my_pbuf_free_custom)
+        return NULL;
+    my_custom_pbuf_t *rx      = (my_custom_pbuf_t *) p;
+    sbuf_t           *buf     = rx->sbuf;
+    const uint16_t    padding = bufferpoolGetLargeBufferPadding(pool);
+    if (buf == NULL || rx->origin_wid != owner_wid || rx->origin_pool != pool || sbufIsSplice(buf) ||
+        sbufGetLeftPadding(buf) < padding || sbufGetTotalCapacityNoPadding(buf) > TCP_WND)
+        return NULL;
+
+    /* Reusing a large device scratch for a tiny stream delivery would retain
+     * more storage than the existing best-fit copy. Keep that compaction. */
+    buffer_pool_fit_t fit;
+    const bool        fits = bufferpoolQueryBestFit(pool, p->tot_len, padding, &fit);
+    assert(fits);
+    discard fits;
+    if (fit.payload_capacity > TCP_WND || sbufGetTotalCapacityNoPadding(buf) > fit.payload_capacity)
+        return NULL;
+
+    /* lwIP may trim either end or point a pbuf into another chain member.
+     * Only a range wholly inside this wrapper's own packet can be transferred. */
+    const uintptr_t start   = (uintptr_t) sbufGetRawPtr(buf);
+    const uintptr_t payload = (uintptr_t) p->payload;
+    if (payload < start || payload - start > sbufGetLength(buf))
+        return NULL;
+    const uint32_t offset = (uint32_t) (payload - start);
+    if (p->len > sbufGetLength(buf) - offset || sbufGetLeftCapacity(buf) + offset < padding)
+        return NULL;
+    return rx;
 }
 
 /*

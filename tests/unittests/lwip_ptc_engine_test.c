@@ -27,6 +27,7 @@ typedef struct probe_s
     unsigned tcp, udp, init, finish, reservations;
     unsigned rewritten_hash_mismatches;
     bool     byte_reserved;
+    sbuf_t  *tcp_input[2];
 } probe_t;
 static fixture_t         fixtures[2];
 static probe_t           probes[2];
@@ -151,7 +152,10 @@ static void emit(tunnel_t *t, line_t *line, sbuf_t *buf)
         memcpy(&destination, p + 12, 4);
         uint32_t ack = GET_BE32(p + h + 4) + 1;
         lineReuseBuffer(line, buf);
-        inject(f, line, packet(line, 6, destination, TCP_ACK | TCP_PSH, ack, "hello", 5));
+        sbuf_t *input = packet(line, 6, destination, TCP_ACK | TCP_PSH, ack, "hello", 5);
+        if (! packettunnelTrustedChecksumsActive(f->ptc))
+            probe->tcp_input[f - fixtures] = input;
+        inject(f, line, input);
         return;
     }
     if (p[9] == 6 && sbufGetLength(buf) > h + (p[h + 12] >> 4) * 4U)
@@ -178,6 +182,15 @@ static void opened(tunnel_t *t, line_t *line)
 static void payload(tunnel_t *t, line_t *line, sbuf_t *buf)
 {
     CHECK(wwLwipEngineCurrent() == NULL);
+    if (lineGetDestinationAddressContext(line)->proto_tcp)
+    {
+        sbuf_t **input = &probes[lineGetWID(line)].tcp_input[fixtureFor(t) - fixtures];
+        if (*input != NULL)
+        {
+            CHECK(buf == *input);
+            *input = NULL;
+        }
+    }
     const bool close = lineGetDestinationAddressContext(line)->proto_tcp || fixtureFor(t) == &fixtures[1];
     lineRef(line);
     tunnelPrevDownStreamPayload(t, line, buf);

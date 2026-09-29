@@ -280,7 +280,7 @@ typedef enum ptc_tcp_drain_adopt_result_e
 typedef struct my_custom_pbuf
 {
     struct pbuf_custom p;
-    sbuf_t            *sbuf;
+    sbuf_t            *sbuf; /* NULL after ownership transfers to TCP receive staging. */
     buffer_pool_t     *origin_pool;
     wid_t              origin_wid;
 } my_custom_pbuf_t;
@@ -333,6 +333,10 @@ void ptcNextGateLeave(tunnel_t *t);
 
 /* RX_POOL is process-global and may retain live pbufs across node lifetimes. */
 void ptcRxWrapperPoolInitializeOnce(void);
+
+/* Borrow an eligible RX wrapper without modifying its pbuf or sbuf. The receive
+ * callback commits the transfer only after deferred delivery is admitted. */
+my_custom_pbuf_t *ptcReusableReceiveBuffer(struct pbuf *p, buffer_pool_t *pool, wid_t owner_wid);
 
 #ifdef PTC_FRAGMENT_ADMISSION_TEST_HOOKS
 /*

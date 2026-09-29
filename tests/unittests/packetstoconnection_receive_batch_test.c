@@ -20,6 +20,8 @@ typedef struct fixture_s
     bool                      close_on_init;
     bool                      close_on_payload;
     bool                      pause_on_payload;
+    uint16_t                  prepend;
+    sbuf_t                   *expected_buffer;
 } fixture_t;
 
 typedef struct queued_task_s
@@ -35,6 +37,42 @@ static fixture_t    *fixture;
 static queued_task_t tasks[1024];
 static unsigned      task_count;
 static bool          reject_task;
+static bool          custom_inputs;
+static struct pbuf  *captured_input;
+
+int __wrap_wwLwipEngineInput(ww_lwip_engine_t *engine, struct pbuf *p, struct netif *netif);
+int __wrap_wwLwipEngineInput(ww_lwip_engine_t *engine, struct pbuf *p, struct netif *netif)
+{
+    discard netif;
+    twfRequire(engine == fixture->engine && engine == wwLwipEngineCurrent(), "RX wrapping lost its owner engine");
+    twfRequire(captured_input == NULL, "RX wrapping overwrote an unclaimed packet");
+    captured_input = p;
+    return ERR_OK;
+}
+
+static struct pbuf *makeCustomInput(sbuf_t *buf, uint16_t length, uint16_t trim_left, uint16_t trim_right)
+{
+    const uint32_t header = 40 + trim_left;
+    const uint32_t total  = header + length + trim_right;
+    if (buf == NULL)
+        buf = bufferpoolGetBestFit(fixture->env.pool, total, bufferpoolGetLargeBufferPadding(fixture->env.pool));
+    twfRequire(sbufGetMaximumWriteableSize(buf) >= total && total <= UINT16_MAX, "invalid custom RX fixture");
+    sbufSetLength(buf, total);
+    uint8_t *bytes = sbufGetMutablePtr(buf);
+    memoryZero(bytes, total);
+    bytes[0] = 0x45;
+    bytes[9] = IP_PROTO_TCP;
+    PUT_BE16(bytes + 2, total);
+    for (uint32_t i = 0; i < length; ++i)
+        bytes[header + i] = (uint8_t) (fixture->submitted + i);
+    ptcFragmentAdmissionTestSubmitPacketToStack(buf, &fixture->route.netif);
+    struct pbuf *p = captured_input;
+    captured_input = NULL;
+    twfRequire(p != NULL && ((my_custom_pbuf_t *) p)->sbuf == buf, "fixture did not retain the original RX sbuf");
+    twfRequire(pbuf_remove_header(p, header) == 0, "RX fixture could not strip headers/overlap");
+    pbuf_realloc(p, length);
+    return p;
+}
 
 line_task_submit_result_e __wrap_lineScheduleTask(line_t *line, LineTaskFnNoBuf callback, tunnel_t *tunnel,
                                                   LineTaskCancelFn on_cancel);
@@ -90,6 +128,8 @@ static void runTask(void)
 
 static struct pbuf *makeInput(uint16_t length)
 {
+    if (custom_inputs)
+        return makeCustomInput(NULL, length, 0, 0);
     struct pbuf *p = pbuf_alloc(PBUF_RAW, length, PBUF_RAM);
     twfRequire(p != NULL, "receive test pbuf allocation failed");
     twfRequire(p->len == length, "receive fixture expected one contiguous pbuf");
@@ -125,7 +165,18 @@ static void onPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     discard        t;
     const uint32_t length = sbufGetLength(buf);
-    const uint8_t *bytes  = sbufGetRawPtr(buf);
+    if (fixture->expected_buffer != NULL)
+    {
+        twfRequire(buf == fixture->expected_buffer,
+                   "eligible receive copied instead of transferring the original sbuf");
+        fixture->expected_buffer = NULL;
+    }
+    twfRequire(sbufGetLeftPadding(buf) >= fixture->prepend && sbufGetLeftCapacity(buf) >= fixture->prepend,
+               "receive lost the onward padding reservation or available headroom");
+    sbufShiftLeft(buf, fixture->prepend);
+    memset(sbufGetMutablePtr(buf), 0xa5, fixture->prepend);
+    sbufShiftRight(buf, fixture->prepend);
+    const uint8_t *bytes = sbufGetRawPtr(buf);
     for (uint32_t i = 0; i < length; ++i)
         twfRequire(bytes[i] == (uint8_t) (fixture->delivered + i), "coalescing changed receive bytes or FIFO order");
     fixture->delivered += length;
@@ -335,7 +386,8 @@ static void caseRefusalThenRetry(void)
     twfRequire(first->ref == 1 && first->next == last && last->ref == 1, "refusal consumed the original pbuf chain");
     twfRequire(ls->rx_delivery == NULL && ls->rx_uncredited == 0 && task_count == 0,
                "refusal retained staged buffer, receive credit, or task");
-    twfRequireNoLeakedBuffers();
+    twfRequire(g_twf_buffers.live_count == (custom_inputs ? 2U : 0U),
+               "refusal lost or duplicated pbuf backing storage");
     reject_task = false;
     twfRequire(lwipThreadPtcTcpRecvCallback(ls, ls->tcp_pcb, first, ERR_OK) == ERR_OK, "receive replay failed");
     f.submitted = 2000;
@@ -343,6 +395,152 @@ static void caseRefusalThenRetry(void)
     runTask();
     twfRequire(f.delivered == 2000 && f.payloads == 1 && ls->rx_uncredited == 0,
                "receive replay changed bytes or credit");
+    teardown(&f);
+}
+
+static void caseReusePadding(uint16_t padding, bool grow)
+{
+    twfSetCase("PTC transfers a trimmed RX sbuf and preserves onward prepend space through batching growth");
+    fixture_t f;
+    setup(&f);
+    f.prepend = padding;
+    globalstateUpdateAllocationPadding(padding);
+    ptc_lstate_t     *ls = lineGetState(f.line, f.ptc);
+    ww_lwip_engine_t *previous;
+    twfRequire(wwLwipEngineEnter(f.engine, &previous), "reuse fixture engine entry failed");
+    struct pbuf *p        = makeCustomInput(NULL, 3000, 7, 11);
+    sbuf_t      *original = ((my_custom_pbuf_t *) p)->sbuf;
+    void        *payload  = p->payload;
+    twfRequire(lwipThreadPtcTcpRecvCallback(ls, ls->tcp_pcb, p, ERR_OK) == ERR_OK, "reusable RX input refused");
+    f.submitted = 3000;
+    twfRequire(ls->rx_delivery == original, "eligible receive copied instead of reusing its original allocation");
+    twfRequire(sbufGetRawPtr(original) == payload && sbufGetLength(original) == 3000,
+               "reuse exposed wrong payload range");
+    wwLwipEngineLeave(f.engine, previous);
+    if (grow)
+    {
+        submit(3000);
+        twfRequire(ls->rx_delivery != original, "fixture did not exercise receive-batch growth");
+    }
+    else
+        f.expected_buffer = original;
+    twfRequireEqualU32(task_count, 1, "reuse changed batching into per-packet delivery");
+    runTask();
+    twfRequire(f.delivered == f.submitted && f.payloads == 1 && ls->rx_uncredited == 0, "reuse lost bytes or credit");
+    teardown(&f);
+}
+
+static void caseReuseFallback(unsigned variant)
+{
+    static const char *names[] = {
+        "PTC copies when only stripped headers provide the requested padding",
+        "PTC copies when the payload cursor leaves insufficient headroom",
+        "PTC copies a shared RX pbuf without changing the other reference",
+        "PTC copies oversized backing storage into bounded receive storage",
+        "PTC copies a pbuf whose payload aliases storage outside its RX sbuf",
+        "PTC compacts a small payload instead of retaining a large device scratch",
+    };
+    twfSetCase(names[variant]);
+    fixture_t f;
+    setup(&f);
+    f.prepend = variant == 1 ? 512 : 16;
+    globalstateUpdateAllocationPadding(f.prepend);
+    const uint16_t padding = bufferpoolGetLargeBufferPadding(f.env.pool);
+    sbuf_t        *source  = NULL;
+    if (variant == 0)
+        source = twfTrackAcquired(sbufCreateWithPadding(4096, 0));
+    else if (variant == 1)
+    {
+        source = bufferpoolGetSmallBuffer(f.env.pool);
+        sbufShiftLeft(source, 64);
+    }
+    else if (variant == 3)
+        source = twfTrackAcquired(sbufCreateWithPadding(TCP_WND + 64, padding));
+    else if (variant == 5)
+        source = bufferpoolGetBestFit(f.env.pool, 65535, padding);
+    ww_lwip_engine_t *previous;
+    twfRequire(wwLwipEngineEnter(f.engine, &previous), "fallback fixture engine entry failed");
+    struct pbuf *p                 = makeCustomInput(source, 100, 0, 0);
+    source                         = ((my_custom_pbuf_t *) p)->sbuf;
+    const uint32_t original_cursor = source->curpos;
+    const uint32_t original_length = sbufGetLength(source);
+    uint8_t        separate[100];
+    if (variant == 4)
+    {
+        for (unsigned i = 0; i < sizeof(separate); ++i)
+            separate[i] = (uint8_t) i;
+        p->payload = separate;
+    }
+    if (variant == 2)
+        pbuf_ref(p);
+    ptc_lstate_t *ls = lineGetState(f.line, f.ptc);
+    twfRequire(lwipThreadPtcTcpRecvCallback(ls, ls->tcp_pcb, p, ERR_OK) == ERR_OK, "fallback receive refused");
+    f.submitted = 100;
+    twfRequire(ls->rx_delivery != source, "ineligible RX storage was transferred");
+    twfRequire(sbufGetTotalCapacityNoPadding(ls->rx_delivery) <= TCP_WND, "fallback retained oversized storage");
+    if (variant == 2)
+    {
+        twfRequire(p->ref == 1 && ((my_custom_pbuf_t *) p)->sbuf == source && source->curpos == original_cursor &&
+                       sbufGetLength(source) == original_length,
+                   "receive stole shared storage or changed its geometry");
+        pbuf_free(p);
+    }
+    wwLwipEngineLeave(f.engine, previous);
+    runTask();
+    twfRequire(f.delivered == 100 && ls->rx_uncredited == 0, "fallback lost data or receive credit");
+    teardown(&f);
+}
+
+static void caseReuseRefusal(void)
+{
+    twfSetCase("PTC scheduling refusal preserves an eligible RX buffer for exact replay and later adoption");
+    fixture_t f;
+    setup(&f);
+    ww_lwip_engine_t *previous;
+    twfRequire(wwLwipEngineEnter(f.engine, &previous), "adoption refusal fixture engine entry failed");
+    struct pbuf   *p       = makeCustomInput(NULL, 3000, 7, 11);
+    sbuf_t        *source  = ((my_custom_pbuf_t *) p)->sbuf;
+    const uint32_t cursor  = source->curpos;
+    const uint32_t length  = sbufGetLength(source);
+    void          *payload = p->payload;
+    ptc_lstate_t  *ls      = lineGetState(f.line, f.ptc);
+    reject_task            = true;
+    twfRequire(lwipThreadPtcTcpRecvCallback(ls, ls->tcp_pcb, p, ERR_OK) == ERR_MEM,
+               "adoption ignored scheduling refusal");
+    twfRequire(p->ref == 1 && p->payload == payload && p->len == 3000 && p->tot_len == 3000 &&
+                   ((my_custom_pbuf_t *) p)->sbuf == source && source->curpos == cursor &&
+                   sbufGetLength(source) == length,
+               "refused adoption changed lwIP's pbuf or backing storage");
+    twfRequire(ls->rx_delivery == NULL && ls->rx_uncredited == 0 && task_count == 0 && g_twf_buffers.live_count == 1,
+               "refused adoption lost ownership or retained delivery/credit");
+    reject_task = false;
+    twfRequire(lwipThreadPtcTcpRecvCallback(ls, ls->tcp_pcb, p, ERR_OK) == ERR_OK, "adoption retry failed");
+    f.submitted       = 3000;
+    f.expected_buffer = source;
+    wwLwipEngineLeave(f.engine, previous);
+    runTask();
+    twfRequire(f.delivered == 3000 && ls->rx_uncredited == 0, "adoption replay changed data or credit");
+    teardown(&f);
+}
+
+static void caseReuseCancellation(bool foreign_cancel)
+{
+    twfSetCase("PTC owner teardown settles an adopted buffer before or after foreign task cancellation");
+    fixture_t f;
+    setup(&f);
+    submit(1460);
+    ptc_lstate_t *ls    = lineGetState(f.line, f.ptc);
+    sbuf_t       *owned = ls->rx_delivery;
+    twfRequire(task_count == 1 && g_twf_buffers.live_count == 1, "adopted receive did not have one owner/task");
+    if (foreign_cancel)
+    {
+        const queued_task_t canceled = tasks[--task_count];
+        testWorkerBindWID(kInvalidWID);
+        lineUnref(canceled.line);
+        testWorkerBindWID(0);
+        twfRequire(ls->rx_delivery == owned && sbufGetLength(owned) == 1460,
+                   "foreign cancellation touched owner-held receive storage");
+    }
     teardown(&f);
 }
 
@@ -357,6 +555,21 @@ int main(void)
     caseCloseDuringDelivery(false);
     caseBoundAndCancellation();
     caseRefusalThenRetry();
+    caseReusePadding(16, false);
+    caseReusePadding(512, false);
+    caseReusePadding(512, true);
+    for (unsigned i = 0; i < 6; ++i)
+        caseReuseFallback(i);
+    caseReuseRefusal();
+    custom_inputs = true;
+    caseBatchAndPause();
+    caseReentryAndFin();
+    caseCloseDuringDelivery(true);
+    caseCloseDuringDelivery(false);
+    caseBoundAndCancellation();
+    caseRefusalThenRetry();
+    caseReuseCancellation(false);
+    caseReuseCancellation(true);
     wwLwipEngineSharedCleanup();
     lwipTestRuntimeCleanup();
     puts("packetstoconnection_receive_batch_test: all cases passed");

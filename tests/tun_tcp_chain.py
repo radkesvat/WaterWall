@@ -183,12 +183,16 @@ class Fixture:
             require("GSO reader summary" not in log, "disabled run used the GSO reader")
             return None
         match = re.search(r"GSO reader summary: ordinary=(\d+) aggregates=(\d+) generated=(\d+).*"
-                          r"malformed=(\d+) unsupported=(\d+) oversized=(\d+)", log)
+                          r"malformed=(\d+) unsupported=(\d+) oversized=(\d+) intact=(\d+)", log)
         require(match is not None, "GSO summary missing after shutdown")
-        ordinary, aggregates, segments, malformed, unsupported, oversized = map(int, match.groups())
-        require(aggregates > 0 and segments > aggregates, "enabled run did not exercise GSO segmentation")
+        ordinary, aggregates, segments, malformed, unsupported, oversized, intact = map(int, match.groups())
+        require(aggregates > 0, "enabled run did not exercise GSO input")
+        if "enabled direct-pair trusted transport checksums" in log:
+            require(intact > 0 and segments == 0, "trusted run did not deliver GSO input intact")
+        else:
+            require(intact == 0 and segments > aggregates, "ordinary run did not exercise GSO segmentation")
         require(malformed == unsupported == oversized == 0, "valid TCP workload produced rejected offload records")
-        return {"ordinary": ordinary, "aggregates": aggregates, "segments": segments}
+        return {"ordinary": ordinary, "aggregates": aggregates, "segments": segments, "intact": intact}
 
     def __exit__(self, exc_type, exc_value, traceback):
         errors = []

@@ -165,11 +165,12 @@ err_t lwipThreadPtcTcpRecvCallback(void *arg, struct tcp_pcb *tpcb, struct pbuf 
         return ERR_ABRT;
     }
 
-    const uint32_t length   = pending + p->tot_len;
-    const bool     schedule = buf == NULL;
+    const uint32_t    length   = pending + p->tot_len;
+    const bool        schedule = buf == NULL;
+    my_custom_pbuf_t *reuse    = schedule ? ptcReusableReceiveBuffer(p, pool, owner_wid) : NULL;
     if (schedule)
     {
-        buf = ptcAcquireReceiveBuffer(pool, length);
+        buf = reuse != NULL ? reuse->sbuf : ptcAcquireReceiveBuffer(pool, length);
     }
     else if (sbufGetMaximumWriteableSize(buf) < length)
     {
@@ -180,8 +181,11 @@ err_t lwipThreadPtcTcpRecvCallback(void *arg, struct tcp_pcb *tpcb, struct pbuf 
         bufferpoolReuseBuffer(pool, buf);
         buf = grown;
     }
-    pbuf_copy_partial(p, (uint8_t *) sbufGetMutablePtr(buf) + pending, p->tot_len, 0);
-    sbufSetLength(buf, length);
+    if (reuse == NULL)
+    {
+        pbuf_copy_partial(p, (uint8_t *) sbufGetMutablePtr(buf) + pending, p->tot_len, 0);
+        sbufSetLength(buf, length);
+    }
     ls->rx_delivery = buf;
 
     if (schedule)
@@ -192,13 +196,24 @@ err_t lwipThreadPtcTcpRecvCallback(void *arg, struct tcp_pcb *tpcb, struct pbuf 
             /* No task owns the staging buffer. Roll back this whole callback;
              * lwIP retains its pbuf, while owner Stop handles later cancellation. */
             ls->rx_delivery = NULL;
-            bufferpoolReuseBuffer(pool, buf);
+            if (reuse == NULL)
+                bufferpoolReuseBuffer(pool, buf);
             ptcReceiveCreditRollbackLocked(ls, p->tot_len);
             return ERR_MEM;
         }
         assert(result == kLineTaskSubmitAcceptedAsync);
     }
 
+    if (reuse != NULL)
+    {
+        /* The task is force-queued to this owner and cannot run inline. Until
+         * admission succeeds, keep lwIP's buffer and packet geometry untouched
+         * so ERR_MEM can replay the exact input. Only its wrapper is freed now. */
+        const uint32_t offset = (uint32_t) ((uintptr_t) p->payload - (uintptr_t) sbufGetRawPtr(buf));
+        reuse->sbuf           = NULL;
+        sbufShiftRight(buf, offset);
+        sbufSetLength(buf, length);
+    }
     pbuf_free(p);
     return ERR_OK;
 }

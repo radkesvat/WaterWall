@@ -2142,17 +2142,11 @@ static void observeTrustedRecord(tun_device_t *tdev, void *userdata, sbuf_t *buf
     const uint8_t *ip = sbufGetRawPtr(buf);
     require(currentThreadIsEventWorkerWID(wid), "trusted handoff used foreign worker");
     require(gsoChecksumWords(ip, 20, 0) == 0xffff, "trusted handoff changed IPv4 checksum");
-    if (callback_count < 3)
-    {
-        require(sbufGetLength(buf) == 41 && ip[40] == 'A' + callback_count, "trusted GSO FIFO order");
-        require(! gsoSegmentChecksumsValid(ip, 41), "trusted GSO completed TCP payload sum");
-    }
-    else
-    {
-        require(sbufGetLength(buf) == 43 && ip[40] == 'A', "ordinary trusted FIFO order");
-        require(gsoSegmentChecksumsValid(ip, 43) == (callback_count == 4),
-                "private assurance lost or leaked into unmarked traffic");
-    }
+    require(callback_count < 4 && sbufGetLength(buf) == 43 && memoryCompare(ip + 40, "ABC", 3) == 0,
+            "trusted aggregate/ordinary FIFO payload changed");
+    require(GET_BE32(ip + 24) == 1000 && ip[33] == 0x19, "intact handoff changed TCP sequence or flags");
+    require(gsoSegmentChecksumsValid(ip, 43) == (callback_count == 2),
+            "private assurance lost or leaked into unmarked traffic");
     ++callback_count;
     bufferpoolReuseBuffer(getWorkerBufferPool(wid), buf);
 }
@@ -2220,7 +2214,7 @@ static void testTrustedHandoff(bool cancel, bool stale)
     }
     else
     {
-        require(callback_count == 6 && prepared_gso_segments == 3, "trusted/ordinary/corrupt FIFO admission");
+        require(callback_count == 4 && prepared_gso_segments == 0, "trusted intact/ordinary/corrupt FIFO admission");
     }
     require(atomic_load_explicit(&session->output_packets, memory_order_acquire) == 0 &&
                 atomic_load_explicit(&session->output_charge, memory_order_acquire) == 0,
