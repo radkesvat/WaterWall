@@ -89,15 +89,24 @@ static ptc_write_outcome_t ptcTcpWriteLocked(ptc_tstate_t *ts, ptc_lstate_t *ls,
         return ptcQueueForRetryLocked(ls, tpcb, buf);
     }
 
-    const uint16_t write_len = (uint16_t) min((uint32_t) available, buf_len);
-    const err_t    err       = tcp_write(tpcb, sbufGetMutablePtr(buf), write_len, TCP_WRITE_FLAG_COPY);
-
-    if (err == ERR_MEM)
+    /* tcp_write() and tcp_sndbuf() expose at most UINT16_MAX bytes per
+     * call, even when the scaled send buffer has more room. Consume that room
+     * before asking the source to pause. */
+    uint32_t written = 0;
+    err_t    err     = ERR_OK;
+    while (written < buf_len)
     {
-        return ptcQueueForRetryLocked(ls, tpcb, buf);
+        const uint16_t writable = tcp_sndbuf(tpcb);
+        if (writable == 0)
+            break;
+        const uint16_t write_len = (uint16_t) min((uint32_t) writable, buf_len - written);
+        err = tcp_write(tpcb, (const uint8_t *) sbufGetRawPtr(buf) + written, write_len, TCP_WRITE_FLAG_COPY);
+        if (err != ERR_OK)
+            break;
+        written += write_len;
     }
 
-    if (err != ERR_OK)
+    if (err != ERR_OK && err != ERR_MEM)
     {
         /* The record already owns `buf`; line destruction releases it. */
         ptcDetachTcpPcbLocked(ls);
@@ -105,11 +114,12 @@ static ptc_write_outcome_t ptcTcpWriteLocked(ptc_tstate_t *ts, ptc_lstate_t *ls,
         return kPtcWriteTerminal;
     }
 
-    tcp_output(tpcb);
+    if (written != 0)
+        tcp_output(tpcb);
 
-    if (write_len != buf_len)
+    if (written != buf_len)
     {
-        sbufShiftRight(buf, write_len);
+        sbufShiftRight(buf, written);
         return ptcQueueForRetryLocked(ls, tpcb, buf);
     }
 

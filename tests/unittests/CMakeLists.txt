@@ -2727,6 +2727,7 @@ if(LINUX AND TARGET PacketsToConnection)
   )
 
   target_link_options(packetstoconnection_schedule_rejection_test PRIVATE
+    "-Wl,--wrap=tcp_write"
     "-Wl,--wrap=sendWorkerMessageForceQueueWithCleanup"
     "-Wl,--wrap=memoryAllocate"
     ${WATERWALL_LINE_FAILURE_WRAPS}
@@ -2735,12 +2736,35 @@ if(LINUX AND TARGET PacketsToConnection)
 
 
   )
-  target_link_libraries(packetstoconnection_schedule_rejection_test PRIVATE ptc_engine_test)
+  # Scaled TCP admission needs the production payload pools; the miniature
+  # engine fixture cannot hold even one 64 KiB tcp_write(COPY).
+  target_link_libraries(packetstoconnection_schedule_rejection_test PRIVATE PacketsToConnection ww)
   add_dependencies(waterwall_unit_tests packetstoconnection_schedule_rejection_test)
   add_waterwall_unit_test(
     waterwall.packetstoconnection_schedule_rejection_unit
     packetstoconnection_schedule_rejection_test
     "unit;tunnels;packetstoconnection;lwip;scheduling;rejection;credit;buffers;ownership"
+  )
+endif()
+
+
+if(LINUX AND TARGET PacketsToConnection)
+  add_executable(packetstoconnection_receive_batch_test
+    packetstoconnection_receive_batch_test.c
+    ${WATERWALL_LINE_FAILURE_WW_SOURCES}
+    ${CMAKE_SOURCE_DIR}/ww/lwip/engine_runtime.c
+  )
+  target_link_options(packetstoconnection_receive_batch_test PRIVATE
+    ${WATERWALL_LINE_FAILURE_WRAPS}
+    "-Wl,--wrap=lineScheduleTask"
+    "-Wl,--wrap=lineScheduleTaskWithBuf"
+  )
+  target_link_libraries(packetstoconnection_receive_batch_test PRIVATE PacketsToConnection ww)
+  add_dependencies(waterwall_unit_tests packetstoconnection_receive_batch_test)
+  add_waterwall_unit_test(
+    waterwall.packetstoconnection_receive_batch_unit
+    packetstoconnection_receive_batch_test
+    "unit;tunnels;packetstoconnection;lwip;scheduling;credit;buffers;ownership"
   )
 endif()
 

@@ -366,9 +366,10 @@ ptc_flush_result_t ptcFlushWriteQueue(ptc_lstate_t *ls)
         }
 
         sbufShiftRight(buf, write_len);
-        ls->write_paused = true;
         ptcPauseQueuePushFront(ls, buf);
-        break;
+        /* A 16-bit tcp_write() may leave a suffix while the scaled send
+         * buffer still has capacity. Keep this record at the FIFO head and
+         * continue until capacity or allocation actually refuses progress. */
     }
 
     if (wrote_any)

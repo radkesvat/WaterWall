@@ -227,6 +227,10 @@ typedef struct ptc_lstate_s
     interface_route_context_t *route_ctx;
     buffer_queue_t             pause_queue;
     sbuf_ack_queue_t           ack_queue;
+    /* Owner-worker receive bytes awaiting one deferred Payload. The line owns
+     * this buffer until the task detaches it; the scheduler owns only its line
+     * reference. At most TCP_WND bytes may join the pending delivery. */
+    sbuf_t *rx_delivery;
 
     wtimer_t *udp_idle_timer;
     /*

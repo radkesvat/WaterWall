@@ -35,7 +35,17 @@ static ptc_submit_expectation_t g_submit_expectation;
 static uint32_t                 g_schedule_calls;
 static uint32_t                 g_buffer_settlements;
 static ww_lwip_engine_t        *test_previous;
-static void                     enterEngine(void)
+static unsigned                 tcp_write_calls, tcp_write_fail_call;
+err_t                           __real_tcp_write(struct tcp_pcb *pcb, const void *data, u16_t length, u8_t flags);
+err_t                           __wrap_tcp_write(struct tcp_pcb *pcb, const void *data, u16_t length, u8_t flags);
+err_t                           __wrap_tcp_write(struct tcp_pcb *pcb, const void *data, u16_t length, u8_t flags)
+{
+    if (++tcp_write_calls == tcp_write_fail_call)
+        return ERR_MEM;
+    return __real_tcp_write(pcb, data, length, flags);
+}
+
+static void enterEngine(void)
 {
     twfRequire(wwLwipEngineEnter(g_fixture->engine, &test_previous), "test engine entry refused");
 }
@@ -70,16 +80,23 @@ line_task_submit_result_e __wrap_lineScheduleTask(line_t *const line, LineTaskFn
 {
     ptc_fixture_t *fixture = g_fixture;
     twfRequire(fixture != NULL &&
-                   (g_submit_expectation == kPtcSubmitControl || g_submit_expectation == kPtcSubmitErrorClose),
+                   (g_submit_expectation == kPtcSubmitControl || g_submit_expectation == kPtcSubmitErrorClose ||
+                    g_submit_expectation == kPtcSubmitBufferedDelivery),
                "PacketsToConnection submitted an unexpected no-buffer task");
     twfRequire(line == fixture->line && t == fixture->ptc &&
-                   task == (g_submit_expectation == kPtcSubmitErrorClose ? ptcCloseLineTask : ptcWriteRetryTask),
+                   (g_submit_expectation == kPtcSubmitBufferedDelivery ||
+                    task == (g_submit_expectation == kPtcSubmitErrorClose ? ptcCloseLineTask : ptcWriteRetryTask)),
                "PacketsToConnection submitted the wrong control task");
     twfRequire(on_cancel == NULL, "PacketsToConnection requested lock-reentrant cancellation notification");
     twfRequire(wwLwipEngineCurrent() == g_fixture->engine,
                "PacketsToConnection control submission did not hold the owner engine");
     twfRequire(lineIsOnCurrentEventWorker(line),
                "PacketsToConnection control refusal did not originate from its owner engine");
+    if (g_submit_expectation == kPtcSubmitBufferedDelivery)
+    {
+        ptc_lstate_t *ls = lineGetState(line, t);
+        twfRequire(ls->rx_delivery != NULL, "PTC did not publish its owned receive buffer before scheduling");
+    }
 
     lineRef(line);
     lineUnref(line);
@@ -307,7 +324,9 @@ static void caseCreditedDeliveryRefusalRollsBackCreditAndRetainsPbuf(void)
 
     twfRequire(result == ERR_MEM, "PTC buffered refusal did not ask lwIP to replay its pbuf");
     twfRequireEqualU32(g_schedule_calls, 1, "PTC buffered refusal submitted the wrong number of tasks");
-    twfRequireEqualU32(g_buffer_settlements, 1, "PTC scheduler did not settle the transferred sbuf once");
+    twfRequireEqualU32(g_buffer_settlements, 0, "PTC transferred its owned accumulator to the scheduler");
+    twfRequire(ls->rx_delivery == NULL, "PTC did not settle its receive accumulator on submission refusal");
+    twfRequireNoLeakedBuffers();
     twfRequireEqualU32(ls->rx_uncredited, 0, "PTC did not roll staged receive credit back exactly once");
     twfRequireEqualU32((uint32_t) p->ref, (uint32_t) initial_ref, "PTC consumed lwIP's replay pbuf on rejection");
     twfRequire(((const uint8_t *) p->payload)[0] == UINT8_C(0xA6), "PTC corrupted the retained replay pbuf");
@@ -403,6 +422,107 @@ static void caseResumeWaitsForDeliveryHeadroom(void)
     lineUnref(fixture.line);
     fixture.line = NULL;
     twfRequireEqualU32(ptcTcpPcbUsed(), baseline, "PTC budget test leaked its PCB");
+    ptcFixtureTeardown(&fixture);
+}
+
+static uint8_t sendByte(uint32_t offset)
+{
+    return (uint8_t) ((offset * 19U) ^ (offset >> 8U));
+}
+
+static sbuf_t *sendBuffer(ptc_fixture_t *fixture, uint32_t offset, uint32_t length)
+{
+    sbuf_t *buf = bufferpoolGetBestFit(fixture->env.pool, length, 0);
+    sbufSetLength(buf, length);
+    uint8_t *bytes = sbufGetMutablePtr(buf);
+    for (uint32_t i = 0; i < length; ++i)
+        bytes[i] = sendByte(offset + i);
+    return buf;
+}
+
+static void requireQueuedBytes(struct tcp_pcb *pcb, uint32_t expected)
+{
+    uint32_t offset = 0;
+    for (struct tcp_seg *seg = pcb->unsent; seg != NULL; seg = seg->next)
+    {
+        uint8_t bytes[TCP_MSS];
+        twfRequire(seg->len <= sizeof(bytes), "PTC queued an oversized TCP segment");
+        twfRequire(pbuf_copy_partial(seg->p, bytes, seg->len, seg->p->tot_len - seg->len) == seg->len,
+                   "could not inspect the queued TCP payload");
+        for (uint32_t i = 0; i < seg->len; ++i)
+            twfRequire(bytes[i] == sendByte(offset + i), "PTC changed, duplicated or reordered TCP bytes");
+        offset += seg->len;
+    }
+    twfRequireEqualU32(offset, expected, "PTC admitted the wrong number of bytes into lwIP");
+}
+
+static void caseScaledSendCapacity(unsigned mode)
+{
+    twfSetCase("PTC fills scaled TCP capacity across 16-bit writes and preserves a refused suffix in FIFO order");
+    const uint32_t length = 128U * 1024U;
+    ptc_fixture_t  fixture;
+    ptcFixtureSetup(&fixture);
+    const uint32_t  baseline = ptcTcpPcbUsed();
+    struct tcp_pcb *pcb      = ptcAttachTestPcb(&fixture, baseline);
+    ptc_lstate_t   *ls       = lineGetState(fixture.line, fixture.ptc);
+    enterEngine();
+    pcb->state       = ESTABLISHED;
+    pcb->mss         = TCP_MSS;
+    pcb->snd_wnd_max = TCP_WND;
+    /* No route: tcp_output leaves the real segmented bytes queued for inspection. */
+    IP_ADDR4(&pcb->remote_ip, 192, 0, 2, 1);
+    TCP_REG_ACTIVE(pcb);
+    tcp_nagle_disable(pcb);
+    if (mode == 2)
+        pcb->snd_buf = 96U * 1024U;
+    leaveEngine();
+    ls->write_paused    = mode == 1;
+    tcp_write_calls     = 0;
+    tcp_write_fail_call = mode == 3 ? 2 : 0;
+    ptcTunnelDownStreamPayload(fixture.ptc, fixture.line, sendBuffer(&fixture, 0, length));
+    tcp_write_fail_call = 0;
+
+    const uint32_t admitted = mode == 0 ? length : mode == 2 ? 96U * 1024U : mode == 3 ? UINT16_MAX : 0;
+    enterEngine();
+    requireQueuedBytes(pcb, admitted);
+    leaveEngine();
+    twfRequireEqualU32(ls->pending_bytes, length, "partial admission changed the ACK record total");
+    twfRequireEqualU32((uint32_t) sbuf_ack_queue_t_size(&ls->ack_queue), 1, "PTC split one payload's ACK record");
+    if (mode == 0)
+    {
+        twfRequire(! ls->write_paused && ! ls->write_poll_armed && fixture.trace.len == 0,
+                   "PTC paused despite available scaled TCP capacity");
+        twfRequire(sbuf_ack_queue_t_front(&ls->ack_queue)->buf == NULL, "fully copied payload retained its sbuf");
+    }
+    else
+    {
+        twfRequire(ls->write_paused && bufferqueueGetBufCount(&ls->pause_queue) == 1, "PTC lost the refused suffix");
+        const sbuf_t *suffix = sbuf_ack_queue_t_front(&ls->ack_queue)->buf;
+        twfRequire(suffix != NULL && sbufGetLength(suffix) == length - admitted,
+                   "PTC retained already copied bytes or lost its suffix");
+        const uint8_t *bytes = sbufGetRawPtr(suffix);
+        for (uint32_t i = 0; i < length - admitted; ++i)
+            twfRequire(bytes[i] == sendByte(admitted + i), "PTC shifted the refused suffix incorrectly");
+        /* A delivery already in flight must remain behind the older suffix. */
+        const uint32_t later = 3333;
+        ptcTunnelDownStreamPayload(fixture.ptc, fixture.line, sendBuffer(&fixture, length, later));
+        enterEngine();
+        if (mode == 2)
+            pcb->snd_buf += length;
+        twfRequire(ptcFlushWriteQueue(ls) == kPtcFlushComplete, "PTC stopped draining at the 16-bit API boundary");
+        requireQueuedBytes(pcb, length + later);
+        leaveEngine();
+        twfRequire(! ls->write_paused && ! ls->write_poll_armed && bufferqueueGetBufCount(&ls->pause_queue) == 0,
+                   "PTC retained pause state after admitting the complete FIFO");
+        twfRequireEqualU32(ls->pending_bytes, length + later, "draining changed pending acknowledgement totals");
+    }
+    twfRequireNoLeakedBuffers();
+    lineRef(fixture.line);
+    ptcCloseLineForStop(fixture.ptc, fixture.line);
+    twfRequire(! lineIsAlive(fixture.line), "PTC send test cleanup left its owned line alive");
+    lineUnref(fixture.line);
+    fixture.line = NULL;
+    twfRequireEqualU32(ptcTcpPcbUsed(), baseline, "PTC send test leaked its PCB");
     ptcFixtureTeardown(&fixture);
 }
 
@@ -571,6 +691,8 @@ int main(void)
     for (size_t i = 0; i < ARRAY_SIZE(headroom_pool_sizes); ++i)
         casePendingBudgetAllowsOneReadOfHeadroom(headroom_pool_sizes[i]);
     caseResumeWaitsForDeliveryHeadroom();
+    for (unsigned mode = 0; mode < 4; ++mode)
+        caseScaledSendCapacity(mode);
     caseOwnerRetryRefusalPublishesAndDrainsOwnedLine();
     caseErrorClearsRouteBeforeTerminalClose();
     caseCreditedDeliveryRefusalRollsBackCreditAndRetainsPbuf();

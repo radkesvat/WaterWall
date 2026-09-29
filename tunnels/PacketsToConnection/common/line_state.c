@@ -102,6 +102,11 @@ void ptcLinestateDestroy(ptc_lstate_t *ls)
 
     if (ls->kind == kPtcLineKindTcp)
     {
+        if (ls->rx_delivery != NULL)
+        {
+            bufferpoolReuseBuffer(pool, ls->rx_delivery);
+            ls->rx_delivery = NULL;
+        }
         ptcReleasePauseQueue(ls, pool);
         ptcReleaseAckQueue(ls, pool);
     }

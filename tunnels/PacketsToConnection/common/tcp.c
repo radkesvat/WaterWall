@@ -2,6 +2,30 @@
 
 #include "loggers/network_logger.h"
 
+static void ptcDeliverTcpReceiveTask(tunnel_t *t, line_t *l)
+{
+    ptc_lstate_t *ls  = lineGetState(l, t);
+    sbuf_t       *buf = ls->rx_delivery;
+    assert(buf != NULL);
+    /* Publish the empty slot before Init/Payload can reenter or finish this
+     * line. Later input gets its own deferred delivery and FIFO position. */
+    ls->rx_delivery = NULL;
+    ptcDeliverPayloadTask(t, l, buf);
+}
+
+static sbuf_t *ptcAcquireReceiveBuffer(buffer_pool_t *pool, uint32_t length)
+{
+    const uint16_t    padding = bufferpoolGetLargeBufferPadding(pool);
+    buffer_pool_fit_t fit;
+    const bool        fits = bufferpoolQueryBestFit(pool, length, padding, &fit);
+    assert(fits);
+    discard fits;
+    /* A custom oversized worker tier must not enlarge this bounded staging
+     * buffer. Dedicated storage still keeps the onward chain's padding. */
+    return fit.payload_capacity <= TCP_WND ? bufferpoolGetBestFit(pool, length, padding)
+                                           : sbufCreateWithPadding(length, padding);
+}
+
 void lwipThreadPtcTcpConnectionErrorCallback(void *arg, err_t err)
 {
     ptc_lstate_t *ls = arg;
@@ -121,36 +145,59 @@ err_t lwipThreadPtcTcpRecvCallback(void *arg, struct tcp_pcb *tpcb, struct pbuf 
         return ERR_MEM;
     }
 
-    buffer_pool_t *pool = lineGetBufferPool(ls->line);
-    sbuf_t        *buf  = bufferpoolGetBestFit(pool, p->tot_len, bufferpoolGetLargeBufferPadding(pool));
-
-    sbufSetLength(buf, p->tot_len);
-    pbuf_copy_partial(p, sbufGetMutablePtr(buf), p->tot_len, 0);
-
     if (! lineIsAlive(ls->line))
     {
-        /* This callback is on owner_wid and captured its pool before the
-         * logical-death check. */
-        bufferpoolReuseBuffer(pool, buf);
         return ERR_MEM;
     }
 
+    buffer_pool_t *pool    = lineGetBufferPool(ls->line);
+    sbuf_t        *buf     = ls->rx_delivery;
+    const uint32_t pending = buf != NULL ? sbufGetLength(buf) : 0;
+    assert(pending <= TCP_WND);
+    if (p->tot_len > TCP_WND - pending)
+    {
+        /* lwIP keeps this pbuf for replay; never consume a partial callback. */
+        return ERR_MEM;
+    }
     if (! ptcReceiveCreditAccumulateLocked(ls, p->tot_len))
     {
-        lineReuseBuffer(ls->line, buf);
         pbuf_free(p);
         return ERR_ABRT;
     }
 
-    const line_task_submit_result_e delivery_result =
-        lineScheduleTaskWithBuf(ls->line, ptcDeliverPayloadTask, ls->tunnel, buf, NULL);
-    if (delivery_result == kLineTaskSubmitRejectedSettled)
+    const uint32_t length   = pending + p->tot_len;
+    const bool     schedule = buf == NULL;
+    if (schedule)
     {
-        /* Scheduler cleanup owns the copied sbuf; lwIP retains and replays p. */
-        ptcReceiveCreditRollbackLocked(ls, p->tot_len);
-        return ERR_MEM;
+        buf = ptcAcquireReceiveBuffer(pool, length);
     }
-    assert(delivery_result == kLineTaskSubmitAcceptedAsync);
+    else if (sbufGetMaximumWriteableSize(buf) < length)
+    {
+        const uint32_t capacity = sbufGetMaximumWriteableSize(buf);
+        const uint32_t growth   = max(length, min((uint32_t) TCP_WND, capacity * 2U));
+        sbuf_t        *grown    = ptcAcquireReceiveBuffer(pool, growth);
+        memoryCopy(sbufGetMutablePtr(grown), sbufGetRawPtr(buf), pending);
+        bufferpoolReuseBuffer(pool, buf);
+        buf = grown;
+    }
+    pbuf_copy_partial(p, (uint8_t *) sbufGetMutablePtr(buf) + pending, p->tot_len, 0);
+    sbufSetLength(buf, length);
+    ls->rx_delivery = buf;
+
+    if (schedule)
+    {
+        const line_task_submit_result_e result = lineScheduleTask(ls->line, ptcDeliverTcpReceiveTask, ls->tunnel, NULL);
+        if (result == kLineTaskSubmitRejectedSettled)
+        {
+            /* No task owns the staging buffer. Roll back this whole callback;
+             * lwIP retains its pbuf, while owner Stop handles later cancellation. */
+            ls->rx_delivery = NULL;
+            bufferpoolReuseBuffer(pool, buf);
+            ptcReceiveCreditRollbackLocked(ls, p->tot_len);
+            return ERR_MEM;
+        }
+        assert(result == kLineTaskSubmitAcceptedAsync);
+    }
 
     pbuf_free(p);
     return ERR_OK;
