@@ -138,6 +138,7 @@ static void tunOffloadReaderInit(tun_device_t *tdev, tun_offload_reader_t *reade
 {
     reader->scratch = tdev->gso_scratch;
     atomic_store_explicit(&tdev->gso_generated_segments, 0, memory_order_relaxed);
+    atomic_store_explicit(&tdev->gso_intact_aggregates, 0, memory_order_relaxed);
     if (UNLIKELY(reader->scratch == NULL))
     {
         LOGF("TunDevice: GSO reader started without its receive scratch");
@@ -158,7 +159,7 @@ static void tunOffloadReaderCleanup(tun_device_t *tdev, tun_offload_reader_t *re
      * exclusive access only while its thread is running. */
     reader->scratch = NULL;
     LOGI("TunDevice: %s GSO reader summary: ordinary=%llu aggregates=%llu generated=%llu deferred-checksum=%llu "
-         "malformed=%llu unsupported=%llu oversized=%llu",
+         "malformed=%llu unsupported=%llu oversized=%llu intact=%llu",
          tdev->name,
          (unsigned long long) reader->ordinary_records,
          (unsigned long long) reader->gso_aggregates,
@@ -166,7 +167,8 @@ static void tunOffloadReaderCleanup(tun_device_t *tdev, tun_offload_reader_t *re
          (unsigned long long) reader->checksum_completions,
          (unsigned long long) reader->malformed_records,
          (unsigned long long) reader->unsupported_records,
-         (unsigned long long) reader->oversized_records);
+         (unsigned long long) reader->oversized_records,
+         (unsigned long long) atomic_load_explicit(&tdev->gso_intact_aggregates, memory_order_relaxed));
 }
 
 typedef struct tun_gso_work_s
@@ -199,7 +201,13 @@ static bool tunGsoWorkStep(device_reader_session_t *session, void *context, wid_
     assert(currentThreadIsEventWorkerWID(wid));
     buffer_pool_t *pool    = getWorkerBufferPool(wid);
     uint32_t       emitted = 0;
-    if (work->plan.action != kTunLinuxOffloadSegment)
+    /* The direct trusted TUN/PTC pair accepts assured TCPv4 aggregates intact.
+     * Preflight has validated an exact, unfragmented packet <= UINT16_MAX.
+     * Delivery uses the same selected worker and FIFO as segmented input. */
+    tun_device_t *device = session->device;
+    const bool    intact_tcp_gso =
+        work->plan.action == kTunLinuxOffloadSegment && device->trusted_checksums && work->plan.transport_assured;
+    if (work->plan.action != kTunLinuxOffloadSegment || intact_tcp_gso)
     {
         assert(work->plan.transport_assured);
         const uint32_t length = sbufGetLength(work->aggregate);
@@ -211,6 +219,10 @@ static bool tunGsoWorkStep(device_reader_session_t *session, void *context, wid_
         work->aggregate = NULL;
         --budget->packets;
         budget->bytes -= length;
+        if (intact_tcp_gso)
+        {
+            atomic_fetch_add_explicit(&device->gso_intact_aggregates, 1, memory_order_relaxed);
+        }
         tunDeliverPacketAssured(session->device, output, wid, true);
         return true;
     }

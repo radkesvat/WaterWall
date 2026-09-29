@@ -60,6 +60,7 @@ struct tun_device_s
     size_t               gso_output_charge[UINT8_MAX + 1U];
     uint16_t             gso_output_padding[UINT8_MAX + 1U];
     atomic_uint_fast64_t gso_generated_segments;
+    atomic_uint_fast64_t gso_intact_aggregates;
 #endif
 
     atomic_int lifecycle;
