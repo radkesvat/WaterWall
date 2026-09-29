@@ -15,6 +15,7 @@
 #include "netif/ppp/magic.h"
 #include "netif/ppp/ppp_impl.h"
 
+#include <assert.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -142,8 +143,19 @@ void wwLwipEngineAssertOwner(const void *owner)
 
 void *wwLwipModuleState(enum ww_lwip_state_module module)
 {
-    wwLwipEngineAssertCurrent();
-    LWIP_ASSERT("valid protocol state module", module < kWwLwipStateCount);
+    if (current_engine == NULL)
+    {
+        LWIP_PLATFORM_ASSERT("lwIP module access requires an active engine scope");
+    }
+    if ((unsigned) module >= kWwLwipStateCount)
+    {
+        LWIP_PLATFORM_ASSERT("valid protocol state module");
+    }
+    /* Enter validates the immutable owner and saved loop before selecting this
+     * private TLS pointer; paired Leave only restores the enclosing scope.
+     * Worker identity cannot change inside that scope. Keep the full boundary
+     * checks without repeating them for every protocol field in Release. */
+    assert(wwLwipEngineOwnerIsCurrent(current_engine->owner, current_engine->loop));
     return current_engine->modules[module];
 }
 

@@ -1,4 +1,5 @@
 #include "engine.h"
+#include "engine_internal.h"
 #include "lwip/inet_chksum.h"
 #include "lwip/ip.h"
 #include "lwip/netif.h"
@@ -7,11 +8,15 @@
 #include "lwip/udp.h"
 
 #include <pthread.h>
+#include <signal.h>
 #include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/resource.h>
+#include <sys/wait.h>
 #include <time.h>
+#include <unistd.h>
 
 #include "lwip_engine_test_runtime.h"
 
@@ -23,6 +28,34 @@ static unsigned          received[2];
 static unsigned          sent[2];
 static unsigned          timed[2];
 static ww_lwip_engine_t *engines[2];
+
+static void checkModuleAccessGuard(bool enter, enum ww_lwip_state_module module)
+{
+    /* Fork before starting workers: each expected fatal access gets a private
+     * engine copy and cannot leave the shared fixture partially initialized. */
+    pid_t child = fork();
+    CHECK(child >= 0);
+    if (child == 0)
+    {
+        struct rlimit no_core = {0, 0};
+        if (setrlimit(RLIMIT_CORE, &no_core) != 0)
+            _exit(2);
+        if (enter)
+        {
+            owner                    = 0;
+            owner_loop               = (struct wloop_s *) &interfaces[0];
+            ww_lwip_engine_t *engine = wwLwipEngineCreate(0, (struct wloop_s *) owner_loop);
+            ww_lwip_engine_t *previous;
+            if (engine == NULL || ! wwLwipEngineEnter(engine, &previous))
+                _exit(2);
+        }
+        (void) wwLwipModuleState(module);
+        _exit(1);
+    }
+    int status;
+    CHECK(waitpid(child, &status, 0) == child);
+    CHECK(WIFSIGNALED(status) && WTERMSIG(status) == SIGABRT);
+}
 
 static void meet(void)
 {
@@ -197,6 +230,9 @@ static void *run(void *arg)
 int main(void)
 {
     wwLwipEngineSharedInit();
+    checkModuleAccessGuard(false, kWwLwipState_tcp);
+    checkModuleAccessGuard(true, kWwLwipStateCount);
+    checkModuleAccessGuard(true, (enum ww_lwip_state_module) - 1);
     CHECK(pthread_barrier_init(&rendezvous, NULL, 2) == 0);
     pthread_t threads[2];
     for (uintptr_t i = 0; i < 2; ++i)
