@@ -221,10 +221,12 @@ a lot of data that needs to be copied, this should be set high. */
 #define WW_LWIP_MAX_TCP_LISTENERS 320
 #endif
 #define MEMP_NUM_TCP_PCB_LISTEN WW_LWIP_MAX_TCP_LISTENERS    // 8
-/* MEMP_NUM_TCP_SEG: the number of simultaneously queued TCP
-   segments. Sized so a meaningful share of the flows above can hold a
-   full send window at once; raising MEMP_NUM_TCP_PCB alone is useless. */
-#define MEMP_NUM_TCP_SEG        (16 * WW_LWIP_MAX_TCP_FLOWS) // 16
+    /* MEMP_NUM_TCP_SEG: the number of simultaneously queued TCP
+       segments. Sized so a meaningful share of the flows above can hold a
+       full send window at once; raising MEMP_NUM_TCP_PCB alone is useless.
+       Small flow-capacity builds still need room for one full send queue. */
+#define MEMP_NUM_TCP_SEG                                                                                               \
+    ((16 * WW_LWIP_MAX_TCP_FLOWS) < TCP_SND_QUEUELEN ? TCP_SND_QUEUELEN : (16 * WW_LWIP_MAX_TCP_FLOWS))
 /* memp stores pool counts in a u16_t, so an over-ambitious override has to fail
    at build time rather than silently truncate the pool. The lower bounds matter
    just as much: the heap classes in lwippools.h divide the flow targets down, so
@@ -300,22 +302,21 @@ a lot of data that needs to be copied, this should be set high. */
    order. Define to 0 if your device is low on memory. */
 #define TCP_QUEUE_OOSEQ      1
 
-/* Out-of-order retention is per-pcb but the pools behind it are process-global,
-   and lwIP's defaults for both of these are 0, meaning unlimited. On the
-   PacketsToConnection receive path every retained segment also pins one custom
-   pbuf wrapper, and wrapper exhaustion happens before PBUF_POOL exhaustion - so
-   it does not trigger lwIP's OOSEQ reclamation, and the drops that follow can
-   include the very in-order retransmission that would have freed the queue.
+    /* Out-of-order retention is per-pcb but the pools behind it are process-global,
+       and lwIP's defaults for both of these are 0, meaning unlimited. On the
+       PacketsToConnection receive path every retained segment also pins one custom
+       pbuf wrapper, and wrapper exhaustion happens before PBUF_POOL exhaustion - so
+       it does not trigger lwIP's OOSEQ reclamation, and the drops that follow can
+       include the very in-order retransmission that would have freed the queue.
 
-   A per-pcb ceiling is what keeps one reordering peer from spending the shared
-   reserve. It is deliberately generous relative to a normal reordering burst
-   (TCP_WND / TCP_MSS is about 14 segments) and small relative to the pool.
+       A per-pcb ceiling is what keeps one reordering peer from spending the shared
+       reserve. The 32-pbuf limit stays independent of the scaled receive window
+       and small relative to the shared pool.
 
-   The 32-pbuf limit is the effective production bound. The byte limit is a
-   future-defense guard: at four receive windows it is intentionally
-   unreachable with today's advertised TCP_WND, but remains explicit so a
-   future window-scaling change cannot silently make OOSEQ byte retention
-   unlimited. */
+       The 32-pbuf limit is the effective production bound. The byte limit is a
+       future-defense guard: at four receive windows it is intentionally
+       unreachable with today's advertised TCP_WND, but remains explicit to keep
+       OOSEQ byte retention bounded if the pbuf limit changes. */
 #define TCP_OOSEQ_MAX_PBUFS  32
 #define TCP_OOSEQ_MAX_BYTES  (4 * TCP_WND)
 
@@ -323,19 +324,22 @@ a lot of data that needs to be copied, this should be set high. */
 #define TCP_MSS              1460        // 1024
 
 /* TCP sender buffer space (bytes). */
-#define TCP_SND_BUF          (20 * 1024) // 2048
+#define TCP_SND_BUF          (256 * 1024)
 
 /* TCP sender buffer space (pbufs). This must be at least = 2 *
    TCP_SND_BUF/TCP_MSS for things to work. */
 #define TCP_SND_QUEUELEN     (16 * TCP_SND_BUF / TCP_MSS)
 
-/* TCP writable space (bytes). This must be less than or equal
-   to TCP_SND_BUF. It is the amount of space which must be
-   available in the tcp snd_buf for select to return writable */
-#define TCP_SNDLOWAT         (TCP_SND_BUF / 2)
+    /* TCP writable space (bytes). This must be less than or equal
+       to TCP_SND_BUF. It is the amount of space which must be
+       available in the tcp snd_buf for select to return writable. Clamp below
+       lwIP's 16-bit readiness limit even when the send buffer is larger. */
+#define TCP_SNDLOWAT         LWIP_MIN((TCP_SND_BUF / 2), (0xFFFF - (4 * TCP_MSS) - 1))
 
-/* TCP receive window. */
-#define TCP_WND              (20 * 1024)
+    /* TCP receive window. Scaling allows the full window when the peer supports it. */
+#define TCP_WND              (512 * 1024)
+#define LWIP_WND_SCALE       1
+#define TCP_RCV_SCALE        4
 
 /* Maximum number of retransmissions of data segments. */
 #define TCP_MAXRTX           12
