@@ -20,6 +20,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "wdef.h"
+
 /* sys.h intentionally hides this declaration for NO_SYS, but our protected
  * allocators and Windows clock still require exclusive process bootstrap. */
 void sys_init(void);
@@ -61,7 +63,7 @@ static const struct
 
 static size_t alignedSize(size_t size)
 {
-    const size_t alignment = _Alignof(max_align_t);
+    const size_t alignment = _Alignof(ww_max_align_t);
     return (size + alignment - 1) / alignment * alignment;
 }
 

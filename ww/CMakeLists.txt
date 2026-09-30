@@ -1327,6 +1327,7 @@ include(${LWIP_DIR}/src/Filelists.cmake)
 include(${LWIP_CONTRIB_DIR}/Filelists.cmake)
 
 add_library(ww_lwip STATIC ${lwipnoapps_SRCS} lwip/engine.c lwip/shared_pools.c lwip/port_registry.c lwip/pool_cache.c)
+target_include_directories(ww_lwip PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/libc)
 # Source-local engine modules must not merge their private macro namespaces.
 set_target_properties(ww_lwip PROPERTIES UNITY_BUILD OFF)
 
@@ -1391,7 +1392,6 @@ if(UNIX)
     # wrapper. Keep these implementation-only includes out of lwIP's interface.
     target_include_directories(ww_lwip PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/base
-        ${CMAKE_CURRENT_SOURCE_DIR}/libc
     )
 else()
     target_sources(ww_lwip PRIVATE ${LWIP_CONTRIB_DIR}/ports/win32/sys_arch.c)
