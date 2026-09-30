@@ -1,3 +1,6 @@
+/* Establish MSVC compatibility types before lwIP can define fallback types. */
+#include "wdef.h"
+
 #include "engine_internal.h"
 #include "pool_cache_internal.h"
 #include "port_registry.h"
@@ -19,8 +22,6 @@
 #include <assert.h>
 #include <stdlib.h>
 #include <string.h>
-
-#include "wdef.h"
 
 /* sys.h intentionally hides this declaration for NO_SYS, but our protected
  * allocators and Windows clock still require exclusive process bootstrap. */
