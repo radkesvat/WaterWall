@@ -39,6 +39,7 @@ static void require(bool condition, const char *message)
 
 static bool         fail_next_aligned_allocation;
 static unsigned int injected_aligned_failures;
+static bool         poison_aligned_allocation;
 
 void *__real_memoryAllocateAligned(size_t size, size_t alignment);
 void *__wrap_memoryAllocateAligned(size_t size, size_t alignment);
@@ -51,7 +52,57 @@ void *__wrap_memoryAllocateAligned(size_t size, size_t alignment)
         require(alignment == kSbufAllocationAlignment, "nullable sbuf used unexpected allocation alignment");
         return NULL;
     }
-    return __real_memoryAllocateAligned(size, alignment);
+    void *ptr = __real_memoryAllocateAligned(size + (poison_aligned_allocation ? 32 : 0), alignment);
+    if (poison_aligned_allocation && ptr != NULL)
+        memorySet(ptr, 0xa5, size + 32);
+    return ptr;
+}
+
+static void testAllocationPageTouches(void)
+{
+    static const uint32_t capacities[] = {0, 1, 2048, 2049, 4096, 4097, 8192, 512 * 1024};
+    static const uint16_t paddings[]   = {0, 16, 4096, 65504};
+    for (size_t i = 0; i < ARRAY_SIZE(capacities); ++i)
+    {
+        for (size_t j = 0; j < ARRAY_SIZE(paddings); ++j)
+        {
+            poison_aligned_allocation = true;
+            sbuf_t *buf               = sbufCreateWithPadding(capacities[i], paddings[j]);
+            poison_aligned_allocation = false;
+            require(buf->flags == 0 && buf->len == 0 && buf->curpos == sbufAlignLeftPadding(paddings[j]) &&
+                        buf->l_pad == buf->curpos,
+                    "allocation page touches changed buffer metadata");
+            for (size_t guard = 0; guard < 32; ++guard)
+                require(buf->buf[buf->capacity + guard] == 0xa5, "allocation touched past its physical storage");
+#ifdef DEBUG
+            for (size_t offset = 0; offset < buf->capacity; ++offset)
+                require(buf->buf[offset] == 0x55, "allocation changed the Debug diagnostic fill");
+#else
+            if (buf->capacity <= 2048)
+            {
+                for (size_t offset = 0; offset < buf->capacity; ++offset)
+                    require(buf->buf[offset] == 0xa5, "small allocation was unnecessarily prefaulted");
+            }
+            else
+            {
+                /* Check every intersecting page, independent of the allocator's
+                 * alignment and the touch loop's chosen store offsets. */
+                for (size_t offset = 0; offset < buf->capacity;)
+                {
+                    size_t count = 4096 - (((uintptr_t) buf->buf + offset) % 4096);
+                    count        = min(count, (size_t) buf->capacity - offset);
+                    bool touched = false;
+                    for (size_t byte = 0; byte < count; ++byte)
+                        touched |= buf->buf[offset + byte] == 0;
+                    require(touched, "allocation missed a page intersecting its storage");
+                    offset += count;
+                }
+                require(buf->buf[1] == 0xa5, "allocation cleared storage beyond sparse page touches");
+            }
+#endif
+            sbufDestroy(buf);
+        }
+    }
 }
 
 static void testNullablePaddedAllocation(void)
@@ -437,6 +488,7 @@ int main(void)
 {
     testRoundsUpToCacheLines();
     testPaddingIsAlignedAndAdded();
+    testAllocationPageTouches();
     testNullablePaddedAllocation();
     testSpliceCapacityAndPadding();
     testUnrepresentableRequestsAreRejected();

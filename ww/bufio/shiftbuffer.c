@@ -78,6 +78,23 @@ static sbuf_t *sbufTryAllocate(uint32_t capacity, uint16_t pad_left)
 
 #ifdef DEBUG
     memorySet(b->buf, 0x55, capacity);
+#else
+    if (capacity > 2048)
+    {
+        volatile uint8_t *bytes     = b->buf;
+        size_t            remaining = capacity;
+        /* Prefault fresh storage, including padding, with a minimum page size
+         * of 4096 bytes. Touch the last byte for a trailing unaligned page.
+         * Volatile stores keep the compiler from removing these writes. */
+        while (remaining > 4096)
+        {
+            *bytes = 0;
+            bytes += 4096;
+            remaining -= 4096;
+        }
+        bytes[0]             = 0;
+        bytes[remaining - 1] = 0;
+    }
 #endif
 
     b->flags    = 0;
