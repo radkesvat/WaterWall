@@ -668,6 +668,13 @@ if(TARGET ww)
     add_waterwall_unit_test(waterwall.tcplistener_mux_buffers_unit tcplistener_mux_buffers_test "unit;net;tcp;mux")
   endif()
 
+  if(TARGET TcpConnector)
+    add_executable(tcpconnector_mux_buffers_test tcpconnector_mux_buffers_test.c)
+    target_link_libraries(tcpconnector_mux_buffers_test PRIVATE TcpConnector ww)
+    add_dependencies(waterwall_unit_tests tcpconnector_mux_buffers_test)
+    add_waterwall_unit_test(waterwall.tcpconnector_mux_buffers_unit tcpconnector_mux_buffers_test "unit;net;tcp;mux")
+  endif()
+
   if(TARGET DomainResolver)
     add_executable(domainresolver_line_layout_test domainresolver_line_layout_test.c)
     target_link_libraries(domainresolver_line_layout_test PRIVATE DomainResolver ww)

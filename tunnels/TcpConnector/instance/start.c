@@ -12,13 +12,15 @@ void tcpconnectorTunnelOnStart(tunnel_t *t)
         return;
     }
 
+    const int buffer_size =
+        chain->mux_client_tunnel_present ? kDefaultLargeSocketBufferSize : kDefaultLargeSocketBufferSize / 16;
     if (! state->send_buffer_size_set)
     {
-        state->send_buffer_size = kDefaultLargeSocketBufferSize;
+        state->send_buffer_size = buffer_size;
     }
     if (! state->recv_buffer_size_set)
     {
-        state->recv_buffer_size = kDefaultLargeSocketBufferSize;
+        state->recv_buffer_size = buffer_size;
     }
 
     for (uint32_t i = 0; i < state->destinations_count; ++i)
