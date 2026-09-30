@@ -152,7 +152,7 @@ static bool tunLinuxGsoWaitForReply(int fd, uint32_t sequence, uint16_t expected
 
         int              remaining = (int) received;
         struct nlmsghdr *header    = (struct nlmsghdr *) reply.bytes;
-        while (NLMSG_OK(header, remaining))
+        while (remaining >= 0 && NLMSG_OK(header, (unsigned int) remaining))
         {
             if (header->nlmsg_seq == sequence)
             {
