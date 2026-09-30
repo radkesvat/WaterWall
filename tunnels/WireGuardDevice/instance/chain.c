@@ -1,7 +1,6 @@
 #include "structure.h"
 
 #include "loggers/network_logger.h"
-#include "net/node_layer_solver.h"
 
 static hash_t wireguarddeviceUserControllerTypeHash(void)
 {

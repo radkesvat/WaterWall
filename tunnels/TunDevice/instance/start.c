@@ -2,7 +2,6 @@
 
 #include "loggers/network_logger.h"
 #ifdef OS_WIN
-#include "devices/tun/tun_windows_dns.h"
 #endif
 
 void tundeviceTunnelOnStart(tunnel_t *t)

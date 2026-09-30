@@ -2,7 +2,6 @@
 
 #include "http_base64.h"
 #include "loggers/network_logger.h"
-#include "utils/sha1.h"
 
 typedef struct httpserver_h1_request_info_s
 {

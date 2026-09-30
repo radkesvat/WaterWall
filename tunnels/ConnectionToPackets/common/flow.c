@@ -2,8 +2,6 @@
 
 #include "loggers/network_logger.h"
 
-#include "loggers/log_rate_limiter.h"
-
 /* The tuple registry has its own reader/writer lock. Packet workers copy only
  * tuple, owner and generation; they never dereference a foreign PCB or line.
  * Owner-engine mutation may briefly take flows_lock. Every lookup releases it

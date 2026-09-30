@@ -2,8 +2,6 @@
 
 #include "loggers/network_logger.h"
 
-#include "devices/device_flow_hash.h"
-
 // Detects a heartbeat packet: a minimal IPv4 packet tagged with kHeartbeatProtocol whose payload
 // is filled with fill_byte. Real traffic is extremely unlikely to collide with this signature.
 bool streamtopacketsFrameMatchesFillByte(const sbuf_t *packet, uint8_t fill_byte)

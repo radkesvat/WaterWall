@@ -5,7 +5,6 @@
 // Kept in its own block below the logger: device_flow_affinity.h pulls in the
 // internal logger, and whichever logger a translation unit sees first is the
 // one every LOGx in it reports to.
-#include "devices/device_flow_affinity.h"
 
 static const uint32_t kTesterServerChunkSizes[kTesterServerChunkCount] = {
     1U,

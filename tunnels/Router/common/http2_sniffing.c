@@ -1,7 +1,5 @@
 #include "http2_sniffing.h"
 
-#include "generic_sniffer.h"
-
 #include <nghttp2/nghttp2.h>
 
 enum

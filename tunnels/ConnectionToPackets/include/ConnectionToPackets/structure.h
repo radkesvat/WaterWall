@@ -2,9 +2,6 @@
 
 #include "wwapi.h"
 
-#include "engine_runtime.h"
-#include "quiescence_gate.h"
-
 #include "DomainResolver/interface.h"
 
 #include "lwip/priv/tcp_priv.h"

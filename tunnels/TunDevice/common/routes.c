@@ -1,4 +1,3 @@
-#include "node_builder/config_policy.h"
 #include "structure.h"
 
 #include "loggers/network_logger.h"

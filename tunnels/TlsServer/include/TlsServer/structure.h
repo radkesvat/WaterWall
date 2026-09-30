@@ -4,7 +4,6 @@
 
 #include "TlsBufferBio/buffer_bio.h"
 #include "TlsRecordShapingCommon/record_shaping.h"
-#include "crypto/openssl_instance.h"
 
 typedef struct tlsserver_tstate_s
 {

@@ -3,7 +3,6 @@
 #include "wwapi.h"
 
 #include "flow_table.h"
-#include "ipv4_packet_view.h"
 
 /*
  * True when a packet line may join a retained group owned by @p owner_wid.

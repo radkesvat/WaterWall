@@ -2,10 +2,6 @@
 
 #include "loggers/network_logger.h"
 
-// Kept below the logger include: device_flow_affinity.h pulls in the internal
-// logger, and the first logger a translation unit sees owns every LOGx in it.
-#include "devices/device_flow_affinity.h"
-
 /*
  * One emitted IPv4 packet on its way from lwIP to the chain's packet side.
  *

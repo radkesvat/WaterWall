@@ -2,6 +2,8 @@
 
 #include "loggers/network_logger.h"
 
+#include <openssl/err.h>
+
 /* OpenSSL has reassembled the ClientHello, but has not negotiated or emitted TLS yet. */
 int tlsserverOnClientHello(SSL *ssl, int *ad, void *arg)
 {

@@ -2,8 +2,6 @@
 
 #include "loggers/network_logger.h"
 
-#include "loggers/log_rate_limiter.h"
-
 enum
 {
     kPtcUdpMaxPayloadLen       = UINT16_MAX - IP_HLEN - UDP_HLEN,

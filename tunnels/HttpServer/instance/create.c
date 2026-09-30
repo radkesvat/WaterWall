@@ -1,7 +1,6 @@
 #include "structure.h"
 
 #include "loggers/network_logger.h"
-#include "pipe_tunnel.h"
 
 static bool parseSplitPlacement(const char *value, httpserver_split_placement_t *out, const char *field_name)
 {

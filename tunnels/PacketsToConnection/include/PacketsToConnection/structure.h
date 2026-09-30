@@ -2,9 +2,6 @@
 
 #include "wwapi.h"
 
-#include "engine_runtime.h"
-#include "quiescence_gate.h"
-
 #include "lwip/priv/tcp_priv.h"
 
 typedef struct ptc_udp_flow_key_s

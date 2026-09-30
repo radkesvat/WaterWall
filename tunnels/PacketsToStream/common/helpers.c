@@ -2,8 +2,6 @@
 
 #include "loggers/network_logger.h"
 
-#include "devices/device_flow_hash.h"
-
 // Builds a self-contained, fully valid IPv4 heartbeat packet. Because the on-wire format is
 // now a raw concatenation of IPv4 packets (no length prefix), control frames must themselves be
 // valid IPv4 packets so the size-based extractor on the peer keeps its framing. The heartbeat is

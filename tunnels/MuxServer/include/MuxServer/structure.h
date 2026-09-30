@@ -4,8 +4,6 @@
 #include "MuxCommon/mux_parent_output.h"
 #include "MuxCommon/mux_retention.h"
 #include "MuxCommon/mux_wire.h"
-#include "local_widle_table.h"
-#include "loggers/log_rate_limiter.h"
 #include "wwapi.h"
 
 typedef struct muxserver_lstate_s muxserver_lstate_t;

@@ -1,8 +1,5 @@
 #include "TlsBufferBio/buffer_bio.h"
 
-#include "buffer_queue.h"
-#include "wmutex.h"
-
 #include <openssl/crypto.h>
 
 typedef struct tls_buffer_bio_s

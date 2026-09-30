@@ -2,7 +2,6 @@
 
 #include "loggers/network_logger.h"
 #include "modules/protocol/protocol.h"
-#include "generic_sniffer.h"
 
 #ifdef ROUTER_ENABLE_HTTP2_SNIFFING
 #include "http2_sniffing.h"

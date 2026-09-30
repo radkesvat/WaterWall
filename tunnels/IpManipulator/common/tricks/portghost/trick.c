@@ -1,7 +1,6 @@
 #include "trick.h"
 
 #include "loggers/network_logger.h"
-#include "wmath.h"
 
 enum
 {

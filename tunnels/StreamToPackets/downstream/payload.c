@@ -2,8 +2,6 @@
 
 #include "loggers/network_logger.h"
 
-#include "devices/device_flow_hash.h"
-
 /*
  * One return packet arriving from the packet chain on worker packet line @p l.
  *

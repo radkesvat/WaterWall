@@ -1,7 +1,6 @@
 #include "structure.h"
 
 #include "loggers/network_logger.h"
-#include "generic_sniffer.h"
 
 typedef enum sniffrouter_reverse_parse_e
 {

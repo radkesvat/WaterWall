@@ -1,6 +1,5 @@
 #include "loggers/network_logger.h"
 #include "structure.h"
-#include "wevent.h"
 
 local_idle_table_t *tcplistenerGetWorkerIdleTable(tcplistener_tstate_t *ts)
 {

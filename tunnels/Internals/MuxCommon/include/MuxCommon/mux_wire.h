@@ -2,7 +2,6 @@
 #define MUX_COMMON_MUX_WIRE_H_
 
 #include "MuxCommon/mux_parent_output.h"
-#include "splice_stream.h"
 #include "wwapi.h"
 
 typedef uint32_t mux_length_t;

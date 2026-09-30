@@ -2,7 +2,7 @@
 
 #include "structure.h"
 
-#include "generic_sniffer.h"
+#include "wwapi.h"
 
 /*
  * "protocol" matcher.

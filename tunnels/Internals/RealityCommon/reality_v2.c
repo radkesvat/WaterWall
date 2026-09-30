@@ -1,8 +1,5 @@
 #include "RealityCommon/reality_v2.h"
 
-#include "wcrypto.h"
-#include "wlibc.h"
-
 bool realityV2ShouldRetryAmbiguousTls13Decrypt(wcrypto_status_t status)
 {
     /* A second descriptor is an authentication ambiguity, not a backend

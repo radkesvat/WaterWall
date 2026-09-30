@@ -1,6 +1,5 @@
 #include "structure.h"
 
-#include "devices/device_flow_affinity.h"
 #include "loggers/network_logger.h"
 
 static uint8_t wireguarddeviceCountMaskBits32(uint32_t value)

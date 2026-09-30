@@ -2,8 +2,6 @@
 
 #include "loggers/network_logger.h"
 
-#include "loggers/log_rate_limiter.h"
-
 /*
  * Return-fragment association.
  *

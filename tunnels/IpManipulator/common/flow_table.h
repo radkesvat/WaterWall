@@ -2,8 +2,6 @@
 
 #include "wwapi.h"
 
-#include "loggers/log_rate_limiter.h"
-
 /*
  * A bounded, sharded IPv4/TCP flow table shared by every stateful IpManipulator
  * trick.

@@ -1,7 +1,6 @@
 #include "structure.h"
 
 #include "loggers/network_logger.h"
-#include "managers/signal_manager.h"
 
 static reverseclient_thread_box_t *reverseclientPairBox(reverseclient_pair_t *pair)
 {

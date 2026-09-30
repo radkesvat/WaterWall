@@ -1,7 +1,6 @@
 #pragma once
 
 #include "loggers/network_logger.h"
-#include "splice_stream.h"
 #include "wwapi.h"
 
 /* The BGP-like wire and logical retention policy do not depend on pool geometry. */

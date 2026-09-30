@@ -1,7 +1,6 @@
 #include "structure.h"
 
 #include "loggers/network_logger.h"
-#include "tls_client_hello.h"
 #include "tricks/protoswap/trick.h"
 
 enum

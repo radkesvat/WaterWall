@@ -1,9 +1,5 @@
 #include "quic_sniffing.h"
 
-#include "tls_client_hello.h"
-
-#include "generic_sniffer.h"
-
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
 

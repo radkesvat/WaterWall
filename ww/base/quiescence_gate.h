@@ -8,8 +8,8 @@
  * waiting for its own callback to return.
  */
 
-#include "loggers/internal_logger.h"
 #include "watomic.h"
+#include "wlibc.h"
 #include "wmutex.h"
 #include "wtime.h"
 
@@ -36,12 +36,6 @@ static inline void quiescenceGateInstallBeforeEnterCasHook(QuiescenceGateBeforeE
     quiescence_gate_before_enter_cas_context = context;
 }
 #endif
-
-enum
-{
-    kQuiescenceGateWarningWaitMs          = 2000,
-    kQuiescenceGateWarningCheckYieldCount = 256
-};
 
 #define QUIESCENCE_GATE_VALUE_BITS   ((unsigned int) (sizeof(w_atomic_uint_value_t) * CHAR_BIT))
 #define QUIESCENCE_GATE_CLOSED_SHIFT (QUIESCENCE_GATE_VALUE_BITS - 1U - W_ATOMIC_UINT_VALUE_SIGNED)
@@ -152,20 +146,11 @@ static inline bool quiescenceGateIsClosedAndQuiesced(const quiescence_gate_t *ga
     return atomicLoadRelaxed(&gate->state) == QUIESCENCE_GATE_CLOSED;
 }
 
-static inline bool quiescenceGateOpen(quiescence_gate_t *gate)
-{
-    w_atomic_uint_value_t expected = QUIESCENCE_GATE_CLOSED;
+WW_EXPORT bool quiescenceGateOpen(quiescence_gate_t *gate);
 
-    // Publishes the protected fields installed by the lifecycle owner.
-    if (atomicCompareExchangeExplicit(&gate->state, &expected, 0, memory_order_release, memory_order_relaxed))
-    {
-        return true;
-    }
-
-    LOGE("Quiescence gate open requires a closed, quiesced gate (state=%llu)", (unsigned long long) expected);
-    assert(expected == QUIESCENCE_GATE_CLOSED);
-    return false;
-}
+/* Keep rare diagnostics out of callers' logger selection and the inline fast paths. */
+WW_EXPORT void           quiescenceGateReportSaturation(void);
+WW_EXPORT _Noreturn void quiescenceGateAbortUnderflow(void);
 
 static inline bool quiescenceGateEnter(quiescence_gate_t *gate)
 {
@@ -178,7 +163,7 @@ static inline bool quiescenceGateEnter(quiescence_gate_t *gate)
         }
         if (UNLIKELY((state & QUIESCENCE_GATE_COUNT_MASK) == QUIESCENCE_GATE_COUNT_MASK))
         {
-            LOGE("Quiescence gate entry count saturated");
+            quiescenceGateReportSaturation();
             assert(! "quiescence gate entry count saturated");
             return false;
         }
@@ -212,8 +197,7 @@ static inline void quiescenceGateLeave(quiescence_gate_t *gate)
     assert((entered & QUIESCENCE_GATE_COUNT_MASK) > 0);
     if (UNLIKELY((entered & QUIESCENCE_GATE_COUNT_MASK) == 0))
     {
-        LOGF("quiescenceGateLeave: gate state count underflow");
-        abortProgramNow(1);
+        quiescenceGateAbortUnderflow();
     }
 }
 
@@ -258,35 +242,7 @@ static inline void quiescenceGateClose(quiescence_gate_t *gate)
     discard atomic_fetch_or_explicit(&gate->state, QUIESCENCE_GATE_CLOSED, memory_order_acq_rel);
 }
 
-static inline void quiescenceGateWaitQuiesced(quiescence_gate_t *gate, QuiescenceGateYieldFn yield_fn,
-                                              void *yield_context)
-{
-    assert(yield_fn != NULL);
-    assert((atomicLoadRelaxed(&gate->state) & QUIESCENCE_GATE_CLOSED) != 0);
-
-    unsigned int wait_started_at = getTickMS();
-    unsigned int yields          = 0;
-    bool         warned          = false;
-    for (;;)
-    {
-        // Acquire pairs with the final entrant's release Leave before reclamation.
-        const w_atomic_uint_value_t state     = atomicLoadExplicit(&gate->state, memory_order_acquire);
-        const w_atomic_uint_value_t in_flight = state & QUIESCENCE_GATE_COUNT_MASK;
-        if (in_flight == 0)
-        {
-            return;
-        }
-
-        yield_fn(yield_context);
-        yields++;
-        if (! warned && yields % kQuiescenceGateWarningCheckYieldCount == 0 &&
-            getTickMS() - wait_started_at >= kQuiescenceGateWarningWaitMs)
-        {
-            LOGW("Quiescence gate is still waiting for %llu in-flight operation(s)", (unsigned long long) in_flight);
-            warned = true;
-        }
-    }
-}
+WW_EXPORT void quiescenceGateWaitQuiesced(quiescence_gate_t *gate, QuiescenceGateYieldFn yield_fn, void *yield_context);
 
 static inline void quiescenceGateCloseAndQuiesce(quiescence_gate_t *gate, QuiescenceGateYieldFn yield_fn,
                                                  void *yield_context)

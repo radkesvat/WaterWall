@@ -35,6 +35,11 @@ function(_waterwall_register_portable_contract test_name target_name labels)
   endif()
 endfunction()
 
+add_executable(wwapi_header_test EXCLUDE_FROM_ALL "${_waterwall_portable_unit_dir}/wwapi_header_test.c")
+target_link_libraries(wwapi_header_test PRIVATE ww)
+set_target_properties(wwapi_header_test PROPERTIES DISABLE_PRECOMPILE_HEADERS ON)
+_waterwall_register_portable_contract(waterwall.wwapi_header_unit wwapi_header_test "unit;headers;logger;portable")
+
 add_executable(lwip_checksum_link_test EXCLUDE_FROM_ALL
   "${_waterwall_portable_unit_dir}/lwip_checksum_link_test.c")
 # Start from the standalone archive to exercise its hook dependency. Borrow only

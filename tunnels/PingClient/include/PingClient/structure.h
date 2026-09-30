@@ -3,8 +3,6 @@
 #include "PingCommon/ping_wire.h"
 #include "wwapi.h"
 
-#include "loggers/log_rate_limiter.h"
-
 typedef struct pingclient_tstate_s
 {
     ping_wire_config_t             wire;

@@ -1,9 +1,6 @@
 #include "structure.h"
 
-#include "ipv4_packet_view.h"
 #include "loggers/network_logger.h"
-
-#include "loggers/log_rate_limiter.h"
 
 enum
 {

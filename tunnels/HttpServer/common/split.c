@@ -1,7 +1,6 @@
 #include "structure.h"
 
 #include "loggers/network_logger.h"
-#include "pipe_tunnel.h"
 
 typedef struct httpserver_split_request_s
 {

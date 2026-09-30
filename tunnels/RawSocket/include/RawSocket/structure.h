@@ -2,9 +2,6 @@
 
 #include "wwapi.h"
 
-#include "devices/capture/capture.h"
-#include "devices/raw/raw.h"
-
 enum capturedevice_direction_dynamic_value_status
 {
     kDvsIncoming = kDvsFirstOption,

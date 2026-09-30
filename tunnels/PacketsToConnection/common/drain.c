@@ -1,6 +1,5 @@
 #include "structure.h"
 
-#include "loggers/log_rate_limiter.h"
 #include "loggers/network_logger.h"
 
 /*

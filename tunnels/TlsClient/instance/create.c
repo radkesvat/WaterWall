@@ -1,8 +1,6 @@
 #include "StreamFragmenter/interface.h"
 #include "structure.h"
 
-#include "utils/cacert.h"
-
 #include "loggers/network_logger.h"
 
 extern int tlsclientDecompressBrotliCert(SSL *ssl, CRYPTO_BUFFER **out, size_t uncompressed_len, const uint8_t *in,

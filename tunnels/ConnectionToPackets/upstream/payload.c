@@ -2,8 +2,6 @@
 
 #include "loggers/network_logger.h"
 
-#include "loggers/log_rate_limiter.h"
-
 static atomic_log_rate_limiter_t ctp_admission_log;
 
 /*

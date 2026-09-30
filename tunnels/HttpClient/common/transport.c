@@ -1,7 +1,6 @@
 #include "structure.h"
 
 #include "loggers/network_logger.h"
-#include "utils/sha1.h"
 
 typedef struct httpclient_h1_response_info_s
 {

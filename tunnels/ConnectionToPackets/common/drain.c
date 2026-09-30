@@ -2,8 +2,6 @@
 
 #include "loggers/network_logger.h"
 
-#include "loggers/log_rate_limiter.h"
-
 /*
  * Finishing a TCP flow that still owes the peer bytes.
  *

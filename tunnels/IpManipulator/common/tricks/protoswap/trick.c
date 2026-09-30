@@ -1,7 +1,5 @@
 #include "trick.h"
 
-#include "ipv4_packet_view.h"
-
 bool protoswapApply(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     ipmanipulator_tstate_t *state = tunnelGetState(t);
