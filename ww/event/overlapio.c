@@ -1577,6 +1577,12 @@ static bool wioSettleWriteClose(wio_t *io, bool target_callback)
     return wioCloseAsync(io) == 0;
 }
 
+int wioWriteWithHint(wio_t *io, sbuf_t *buf, bool more_after)
+{
+    discard more_after;
+    return wioWrite(io, buf);
+}
+
 int wioWrite(wio_t *io, sbuf_t *buf)
 {
     if (io->closed)

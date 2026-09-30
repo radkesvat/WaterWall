@@ -300,7 +300,7 @@ static int __nio_write(wio_t *io, const void *buf, int len, bool more)
 }
 
 // Return actual progress even when the body write fails after sending a prefix.
-static int nioWriteBuffer(wio_t *io, sbuf_t *buf, int *error)
+static int nioWriteBuffer(wio_t *io, sbuf_t *buf, bool more_after, int *error)
 {
     *error = 0;
 #if WW_HAVE_SPLICE
@@ -312,7 +312,7 @@ static int nioWriteBuffer(wio_t *io, sbuf_t *buf, int *error)
         if (prefix != 0)
         {
             // The private pipe already holds the body that follows this prefix.
-            written = __nio_write(io, sbufGetRawPtr(buf), (int) prefix, body != 0);
+            written = __nio_write(io, sbufGetRawPtr(buf), (int) prefix, body != 0 || more_after);
             if (written < 0)
             {
                 *error = socketERRNO();
@@ -331,7 +331,8 @@ static int nioWriteBuffer(wio_t *io, sbuf_t *buf, int *error)
                 LOGF("nioWriteBuffer: splice descriptor pipe must already be initialized");
                 abortProgramNow(1);
             }
-            const ssize_t moved = splice(metadata.pipefd[0], NULL, wioGetFD(io), NULL, body, SPLICE_F_NONBLOCK);
+            const unsigned int flags = SPLICE_F_NONBLOCK | (more_after ? SPLICE_F_MORE : 0);
+            const ssize_t      moved = splice(metadata.pipefd[0], NULL, wioGetFD(io), NULL, body, flags);
             if (moved <= 0)
             {
                 *error = moved < 0 ? errno : EPIPE;
@@ -342,7 +343,7 @@ static int nioWriteBuffer(wio_t *io, sbuf_t *buf, int *error)
         return written;
     }
 #endif
-    const int written = __nio_write(io, sbufGetRawPtr(buf), (int) sbufGetLength(buf), false);
+    const int written = __nio_write(io, sbufGetRawPtr(buf), (int) sbufGetLength(buf), more_after);
     if (written < 0)
     {
         *error = socketERRNO();
@@ -526,7 +527,9 @@ write:
     sbuf_t *buf = *write_queue_front(&io->write_queue);
     int     len = (int) sbufGetLength(buf);
     // char* base = pbuf->base;
-    nwrite = nioWriteBuffer(io, buf, &err);
+    // Recompute after each callback and retry; only bytes beyond this buffer count.
+    const bool more_after = io->write_bufsize > (uint32_t) len;
+    nwrite                = nioWriteBuffer(io, buf, more_after, &err);
     if (nwrite > 0)
     {
         nioConsumeWrittenBuffer(buf, (uint32_t) nwrite);
@@ -832,6 +835,11 @@ int wioWriteDatagram(wio_t *io, sbuf_t *buf, const sockaddr_u *peer_addr)
 
 int wioWrite(wio_t *io, sbuf_t *buf)
 {
+    return wioWriteWithHint(io, buf, false);
+}
+
+int wioWriteWithHint(wio_t *io, sbuf_t *buf, bool more_after)
+{
     const bool splice_buffer = sbufIsSplice(buf);
     if (splice_buffer)
     {
@@ -875,7 +883,8 @@ int wioWrite(wio_t *io, sbuf_t *buf)
     if (write_queue_empty(&io->write_queue))
     {
         //    try_write:
-        nwrite = nioWriteBuffer(io, buf, &err);
+        // The caller's hint applies only to this attempt, never to a queued remainder.
+        nwrite = nioWriteBuffer(io, buf, more_after, &err);
         if (nwrite > 0)
         {
             nioConsumeWrittenBuffer(buf, (uint32_t) nwrite);

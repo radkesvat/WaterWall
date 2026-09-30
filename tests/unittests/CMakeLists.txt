@@ -3263,7 +3263,7 @@ if(LINUX)
       else()
         target_link_options(${tcp_pause_target} PRIVATE "-Wl,--wrap=lineResolveDomainServiceAsync")
       endif()
-      target_link_options(${tcp_pause_target} PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS})
+      target_link_options(${tcp_pause_target} PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS} "-Wl,--wrap=send")
       target_link_libraries(${tcp_pause_target} PRIVATE Tcp${tcp_side} ww)
       add_dependencies(waterwall_unit_tests ${tcp_pause_target})
       add_waterwall_unit_test(

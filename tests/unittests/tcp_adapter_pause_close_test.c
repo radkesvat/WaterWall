@@ -20,6 +20,22 @@ static bool      close_on_pause;
 static uint32_t  pause_calls;
 static bool      nested_payload;
 
+static int      observed_write_fd = -1;
+static int      observed_send_flags[3];
+static unsigned observed_send_count;
+ssize_t         __real_send(int fd, const void *buf, size_t len, int flags);
+ssize_t         __wrap_send(int fd, const void *buf, size_t len, int flags);
+
+ssize_t __wrap_send(int fd, const void *buf, size_t len, int flags)
+{
+    if (fd == observed_write_fd)
+    {
+        twfRequire(observed_send_count < 3, "unexpected extra adapter drain send");
+        observed_send_flags[observed_send_count++] = flags;
+    }
+    return __real_send(fd, buf, len, flags);
+}
+
 static void submit(line_t *line, sbuf_t *buf)
 {
 #ifdef TCP_PAUSE_TEST_LISTENER
@@ -337,9 +353,10 @@ static void onDrainResume(tunnel_t *t, line_t *line)
     finishLine(line);
 }
 
-static void runWriteCompletionCase(void)
+static void runWriteCompletionCase(bool finish_queued)
 {
-    twfSetCase("TCP write completion preserves FIFO across nested Resume and Finish");
+    twfSetCase(finish_queued ? "TCP Finish flushes queued writes with bounded MORE hints"
+                             : "TCP write completion preserves FIFO across nested Resume and Finish");
     twf_worker_env_t env;
     twfWorkerEnvSetup(&env, 4096, 64);
     adapter  = tunnelCreate(NULL, sizeof(adapter_tstate_t), sizeof(adapter_lstate_t));
@@ -395,14 +412,35 @@ static void runWriteCompletionCase(void)
         sbufWrite(buf, i == 0 ? "A" : "B", 1);
         submit(line, buf);
     }
+    sbuf_t *empty = bufferpoolGetSmallBuffer(env.pool);
+    sbufSetLength(empty, 0);
+    submit(line, empty);
+    observed_write_fd   = sockets[0];
+    observed_send_count = 0;
+    if (finish_queued)
+    {
+        finishLine(line);
+    }
+    else
+    {
 #ifdef TCP_PAUSE_TEST_LISTENER
-    tcplistenerOnWriteComplete(io);
+        tcplistenerOnWriteComplete(io);
 #else
-    tcpconnectorOnWriteComplete(io);
+        tcpconnectorOnWriteComplete(io);
 #endif
+    }
+    observed_write_fd = -1;
+    twfRequire(observed_send_count == (finish_queued ? 2U : 3U), "adapter did not send each queued buffer");
+    for (unsigned i = 0; i < observed_send_count; ++i)
+    {
+        twfRequire(((observed_send_flags[i] & MSG_MORE) != 0) == (i == 0),
+                   "adapter MORE hint included an empty entry or survived the drain");
+        twfRequire((observed_send_flags[i] & MSG_NOSIGNAL) != 0, "adapter send lost SIGPIPE suppression");
+    }
     twfRequire(! lineIsAlive(line), "nested Resume Finish left line alive");
     char wire[3];
-    twfRequire(recv(sockets[1], wire, sizeof(wire), MSG_WAITALL) == sizeof(wire) && memoryEqual(wire, "ABC", 3),
+    const size_t bytes = finish_queued ? 2 : 3;
+    twfRequire(recv(sockets[1], wire, bytes, MSG_WAITALL) == (ssize_t) bytes && memoryEqual(wire, "ABC", bytes),
                "write completion reentry changed FIFO bytes");
     twfRequireLineStateZeroed(line, adapter, "nested drain close left state alive");
     twfRequireEqualU32(twfLineRefCount(line), 1, "closed line retained unexpected references");
@@ -994,7 +1032,8 @@ static void runReadPreferenceCase(void)
 int main(void)
 {
     runCapacityCase();
-    runWriteCompletionCase();
+    runWriteCompletionCase(false);
+    runWriteCompletionCase(true);
     runActiveWriteChargeCase(false);
     runActiveWriteChargeCase(true);
     runQueuedWriteFailureCase();

@@ -170,7 +170,7 @@ static size_t send_limit = SIZE_MAX, splice_limit = SIZE_MAX;
 static int    send_error, splice_error;
 static bool         observe_write_flags;
 static int          observed_send_flags[32];
-static unsigned int observed_send_count, observed_splice_count, observed_splice_flags;
+static unsigned int observed_send_count, observed_splice_count, observed_splice_flags[32];
 ssize_t       __real_send(int fd, const void *buf, size_t len, int flags);
 ssize_t       __wrap_send(int fd, const void *buf, size_t len, int flags);
 ssize_t       __real_splice(int in, off_t *in_offset, int out, off_t *out_offset, size_t len, unsigned int flags);
@@ -240,8 +240,8 @@ ssize_t __wrap_splice(int in, off_t *in_offset, int out, off_t *out_offset, size
     {
         if (observe_write_flags)
         {
-            ++observed_splice_count;
-            observed_splice_flags |= flags;
+            require(observed_splice_count < 32, "too many splices in write flag fixture");
+            observed_splice_flags[observed_splice_count++] = flags;
         }
         if (splice_error != 0)
         {
@@ -1874,8 +1874,8 @@ static void testSpliceWrite(splice_write_case_t kind)
     default:
         break;
     }
-    observed_send_count = observed_splice_count = observed_splice_flags = 0;
-    observe_write_flags                                                 = true;
+    observed_send_count = observed_splice_count = 0;
+    observe_write_flags                         = true;
     require(wioWrite(destination, buf) == first_write, "splice write returned incorrect progress");
     const bool queued = first_write < (int) strlen(expected);
     require(destination->write_bufsize == strlen(expected) - (size_t) first_write,
@@ -1944,14 +1944,20 @@ static void testSpliceWrite(splice_write_case_t kind)
         require(observed_send_count == 3, "mixed queue did not send prefix, ordinary buffer, prefix");
     for (unsigned int i = 0; i < observed_send_count; ++i)
     {
-        const bool more = body[0] != '\0' && ! (kind == kWriteMixedQueue && i == 1);
+        const bool more = body[0] != '\0';
         require(((observed_send_flags[i] & MSG_MORE) != 0) == more,
-                "TCP must hint MORE only for a prefix followed by its own pipe body, including retries");
+                "TCP must hint MORE for a following pipe body or later queued bytes, including retries");
         require((observed_send_flags[i] & MSG_NOSIGNAL) != 0, "TCP send lost SIGPIPE suppression");
     }
-    require((observed_splice_flags & SPLICE_F_MORE) == 0, "final TCP pipe body advertised unrelated future data");
-    require(observed_splice_count == 0 || (observed_splice_flags & SPLICE_F_NONBLOCK) != 0,
-            "TCP pipe body lost nonblocking splice");
+    if (kind == kWriteMixedQueue)
+        require(observed_splice_count == 3, "mixed queue did not retry its first body and send its last body");
+    for (unsigned int i = 0; i < observed_splice_count; ++i)
+    {
+        const bool more = kind == kWriteMixedQueue && i == 1;
+        require(((observed_splice_flags[i] & SPLICE_F_MORE) != 0) == more,
+                "TCP pipe body must hint MORE only when later bytes are queued");
+        require((observed_splice_flags[i] & SPLICE_F_NONBLOCK) != 0, "TCP pipe body lost nonblocking splice");
+    }
     requireClosed(source_fds[0]);
     if (kind == kWriteGracefulClose)
     {
@@ -1964,6 +1970,82 @@ static void testSpliceWrite(splice_write_case_t kind)
     send_limit = splice_limit = SIZE_MAX;
     require(send_error == 0 && splice_error == 0, "write fixture did not reach its injected error");
     teardown(&env);
+}
+
+static void testImmediateWriteHint(bool splice_input)
+{
+    for (unsigned int retry = 0; retry < 4; ++retry)
+    {
+        test_env_t env;
+        setup(&env);
+        bufferpoolUpdateAllocationPaddings(env.buffers, 64, 64, 64, 64);
+        int     source_fds[2], destination_fds[2];
+        wio_t  *source      = socketIO(&env, source_fds);
+        wio_t  *destination = socketIO(&env, destination_fds);
+        sbuf_t *buf;
+        if (splice_input)
+        {
+            require(wioEnableSplice(source) == 0, "failed to enable immediate splice hint fixture");
+            buf = makeSpliceWriteBuffer(&env, source, source_fds[1], "123456789", "HEAD");
+        }
+        else
+        {
+            buf = bufferpoolGetSmallBuffer(env.buffers);
+            sbufSetLength(buf, 4);
+            sbufWrite(buf, "HEAD", 4);
+        }
+        write_test_fd   = destination_fds[0];
+        const int error = retry == 1 ? EAGAIN : retry == 2 ? EINTR : 0;
+        if (splice_input)
+        {
+            splice_error = error;
+            splice_limit = retry == 3 ? 3 : SIZE_MAX;
+        }
+        else
+        {
+            send_error = error;
+            send_limit = retry == 3 ? 2 : SIZE_MAX;
+        }
+        const int length    = (int) sbufGetLength(buf);
+        const int progress  = error != 0 ? (splice_input ? 4 : 0) : retry == 3 ? (splice_input ? 7 : 2) : length;
+        observed_send_count = observed_splice_count = 0;
+        observe_write_flags                         = true;
+        require(wioWriteWithHint(destination, buf, true) == progress, "hinted write returned incorrect progress");
+        require(destination->write_bufsize == (uint32_t) (length - progress), "hint changed queued byte accounting");
+        send_limit = splice_limit = SIZE_MAX;
+        for (unsigned int attempt = 0; attempt < 16 && ! write_queue_empty(&destination->write_queue); ++attempt)
+            require(wloopProcessEvents(env.loop, 0) >= 0, "hinted remainder dispatch failed");
+        require(wioCheckWriteComplete(destination), "hinted remainder did not drain");
+        sbuf_t *last = bufferpoolGetSmallBuffer(env.buffers);
+        sbufSetLength(last, 6);
+        sbufWrite(last, "|LAST|", 6);
+        require(wioWrite(destination, last) == 6, "last unhinted write failed");
+        observe_write_flags = false;
+        for (unsigned int i = 0; i < observed_send_count; ++i)
+        {
+            require(((observed_send_flags[i] & MSG_MORE) != 0) == (i == 0),
+                    "caller send hint was lost or persisted across a retry/later write");
+            require((observed_send_flags[i] & MSG_NOSIGNAL) != 0, "hinted send lost SIGPIPE suppression");
+        }
+        for (unsigned int i = 0; i < observed_splice_count; ++i)
+        {
+            require(((observed_splice_flags[i] & SPLICE_F_MORE) != 0) == (i == 0),
+                    "caller splice hint was lost or persisted across a retry");
+            require((observed_splice_flags[i] & SPLICE_F_NONBLOCK) != 0, "hinted splice became blocking");
+        }
+        char        received[32];
+        const char *expected = splice_input ? "HEAD123456789|LAST|" : "HEAD|LAST|";
+        require(recv(destination_fds[1], received, sizeof(received), MSG_DONTWAIT) == (ssize_t) strlen(expected) &&
+                    memoryEqual(received, expected, strlen(expected)),
+                "write hints changed delivered bytes");
+        wioClose(source);
+        wioClose(destination);
+        close(source_fds[1]);
+        close(destination_fds[1]);
+        write_test_fd = -1;
+        require(send_error == 0 && splice_error == 0, "hint fixture did not reach its injected error");
+        teardown(&env);
+    }
 }
 
 static void testSpliceReads(void)
@@ -2383,6 +2465,8 @@ int main(void)
     testPrivateBodies();
     testPrivateCancellation();
     testSpliceReads();
+    testImmediateWriteHint(false);
+    testImmediateWriteHint(true);
     testSpliceReadConditions();
     testDeferredSpliceReads();
     for (splice_write_case_t kind = kWritePiped; kind <= kWriteSocketBackpressure; ++kind)

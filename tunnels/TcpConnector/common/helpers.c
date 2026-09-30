@@ -97,7 +97,7 @@ static bool resumeWriteQueue(tcpconnector_lstate_t *lstate)
             bufferbudgetReservationRelease(&lstate->active_write);
             continue;
         }
-        const int nwrite = wioWrite(io, buf);
+        const int nwrite = wioWriteWithHint(io, buf, bufferqueueGetBufLen(&lstate->pause_queue) != 0);
         if (UNLIKELY(! lineIsAlive(line)))
             return false;
         tcpconnectorRefreshWriteBudget(lstate);
@@ -175,7 +175,7 @@ void tcpconnectorFlushWriteQueue(tcpconnector_lstate_t *lstate)
             lineReuseBuffer(lstate->line, buf);
             continue;
         }
-        wioWrite(lstate->io, buf);
+        wioWriteWithHint(lstate->io, buf, bufferqueueGetBufLen(&lstate->pause_queue) != 0);
     }
 }
 

@@ -459,6 +459,13 @@ WW_EXPORT int wioReadRemain(wio_t *io);
 // Cancellation drains the private pipe, closing the pair on unexpected drain failure.
 WW_EXPORT int wioWrite(wio_t *io, sbuf_t *buf);
 
+// Same ownership, callback and return contracts as wioWrite. Set more_after only
+// when nonempty bytes for this same TCP socket follow in the caller's current drain.
+// Supporting NIO backends use it for the immediate send/splice attempt only. Queued
+// retries recompute the hint from later bytes in the WIO queue. Other backends and
+// non-TCP writes ignore it. No packet boundaries or reduced syscall count are promised.
+WW_EXPORT int wioWriteWithHint(wio_t *io, sbuf_t *buf, bool more_after);
+
 // Send one datagram to an explicit destination, without touching io->peeraddr.
 // Supported only for WIO_TYPE_UDP and WIO_TYPE_IP; synchronous and nonblocking,
 // the buffer is never enqueued and WW_WRITE is never registered to retry it.
