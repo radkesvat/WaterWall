@@ -5,9 +5,10 @@
 void tcplistenerTunnelOnStart(tunnel_t *t)
 {
     tcplistener_tstate_t *state   = tunnelGetState(t);
+    const tunnel_chain_t *chain   = tunnelGetChain(t);
     bool                  changed = false;
 
-    if (tunnelGetChain(t)->mux_tunnel_present)
+    if (chain->mux_client_tunnel_present || chain->mux_server_tunnel_present)
     {
         if (! state->send_buffer_size_set)
         {

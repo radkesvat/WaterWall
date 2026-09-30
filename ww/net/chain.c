@@ -10,10 +10,6 @@
 
 #include "loggers/internal_logger.h"
 
-static bool tunnelchainNodeIsMuxTunnel(const node_t *node)
-{
-    return stringCompare(node->type, "MuxClient") == 0 || stringCompare(node->type, "MuxServer") == 0;
-}
 bool tunnelchainTryComputeLineItemSize(uint32_t aggregate_lstate_size, uint32_t *item_size)
 {
     const uint64_t mask  = (uint64_t) kCpuLineCacheSize - 1U;
@@ -95,9 +91,14 @@ void tunnelchainInsertAt(tunnel_chain_t *tci, tunnel_t *t, uint16_t index)
     tci->layer_solution_ready = false;
     memoryZero(tci->resolved_prev_layer, sizeof(tci->resolved_prev_layer));
     memoryZero(tci->resolved_next_layer, sizeof(tci->resolved_next_layer));
-    if (tunnelchainNodeIsMuxTunnel(tunnelGetNode(t)))
+    const node_t *node = tunnelGetNode(t);
+    if (stringCompare(node->type, "MuxClient") == 0)
     {
-        tci->mux_tunnel_present = true;
+        tci->mux_client_tunnel_present = true;
+    }
+    else if (stringCompare(node->type, "MuxServer") == 0)
+    {
+        tci->mux_server_tunnel_present = true;
     }
 
     t->chain = tci;
@@ -451,13 +452,14 @@ void tunnelchainCombine(tunnel_chain_t *destination, tunnel_chain_t *source)
     }
 
     // Clear the source chain (tunnels are now owned by destination)
-    source->tunnels.len           = 0;
-    source->sum_padding_left      = 0;
-    source->sum_line_state_size   = 0;
-    source->contains_packet_node  = false;
-    source->mux_tunnel_present    = false;
-    source->layer_solution_ready  = false;
-    source->layer_relations_count = 0;
+    source->tunnels.len               = 0;
+    source->sum_padding_left          = 0;
+    source->sum_line_state_size       = 0;
+    source->contains_packet_node      = false;
+    source->mux_client_tunnel_present = false;
+    source->mux_server_tunnel_present = false;
+    source->layer_solution_ready      = false;
+    source->layer_relations_count     = 0;
     memoryZero(source->resolved_prev_layer, sizeof(source->resolved_prev_layer));
     memoryZero(source->resolved_next_layer, sizeof(source->resolved_next_layer));
 

@@ -655,6 +655,11 @@ if(TARGET ww)
   add_dependencies(waterwall_unit_tests chain_node_limit_test)
   add_waterwall_unit_test(waterwall.chain_node_limit_unit chain_node_limit_test "unit;net;chain;configuration")
 
+  add_executable(chain_mux_presence_test chain_mux_presence_test.c)
+  target_link_libraries(chain_mux_presence_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests chain_mux_presence_test)
+  add_waterwall_unit_test(waterwall.chain_mux_presence_unit chain_mux_presence_test "unit;net;chain;mux")
+
   if(TARGET DomainResolver)
     add_executable(domainresolver_line_layout_test domainresolver_line_layout_test.c)
     target_link_libraries(domainresolver_line_layout_test PRIVATE DomainResolver ww)
