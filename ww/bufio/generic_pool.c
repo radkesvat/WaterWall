@@ -97,7 +97,8 @@ static bool genericpoolTryComputeGeometry(uint32_t pool_width, uint32_t *capacit
  * @return generic_pool_t* Initialized pool object.
  */
 static generic_pool_t *allocateGenericPool(master_pool_t *mp, uint32_t item_size, uint32_t pool_width,
-                                           PoolItemCreateHandle create_h, PoolItemDestroyHandle destroy_h)
+                                           PoolItemCreateHandle create_h, PoolItemDestroyHandle destroy_h,
+                                           bool install_callbacks)
 {
     uint32_t capacity;
     uint32_t free_threshold;
@@ -129,7 +130,10 @@ static generic_pool_t *allocateGenericPool(master_pool_t *mp, uint32_t item_size
 #endif
 
     };
-    masterpoolInstallCallBacks(pool_ptr->mp, poolCreateItemHandle, destroy_h);
+    if (install_callbacks)
+    {
+        masterpoolInstallCallBacks(pool_ptr->mp, poolCreateItemHandle, destroy_h);
+    }
     // poolFirstCharge(pool_ptr);
     return pool_ptr;
 }
@@ -174,31 +178,46 @@ static void poolDefaultCacheAlignedDeallocator(pool_item_t *item)
 
 generic_pool_t *genericpoolCreate(master_pool_t *mp, PoolItemCreateHandle create_h, PoolItemDestroyHandle destroy_h)
 {
-    return allocateGenericPool(mp, 0, GENERIC_POOL_DEFAULT_WIDTH, create_h, destroy_h);
+    return allocateGenericPool(mp, 0, GENERIC_POOL_DEFAULT_WIDTH, create_h, destroy_h, true);
 }
 
 generic_pool_t *genericpoolCreateWithCapacity(master_pool_t *mp, uint32_t pool_width, PoolItemCreateHandle create_h,
                                               PoolItemDestroyHandle destroy_h)
 {
-    return allocateGenericPool(mp, 0, pool_width, create_h, destroy_h);
+    return allocateGenericPool(mp, 0, pool_width, create_h, destroy_h, true);
+}
+
+static pool_item_t *poolMasterAllocator(generic_pool_t *pool)
+{
+    return pool->mp->create_item_handle(NULL);
+}
+
+generic_pool_t *genericpoolCreateWithMasterPoolCallbacks(master_pool_t *mp, uint32_t pool_width)
+{
+    if (mp == NULL)
+    {
+        return NULL;
+    }
+    return allocateGenericPool(mp, 0, pool_width, poolMasterAllocator, mp->destroy_item_handle, false);
 }
 
 generic_pool_t *genericpoolCreateWithDefaultAllocator(master_pool_t *mp, uint32_t item_size)
 {
-    return allocateGenericPool(mp, item_size, GENERIC_POOL_DEFAULT_WIDTH, poolDefaultAllocator, poolDefaultDeallocator);
+    return allocateGenericPool(
+        mp, item_size, GENERIC_POOL_DEFAULT_WIDTH, poolDefaultAllocator, poolDefaultDeallocator, true);
 }
 
 generic_pool_t *genericpoolCreateWithDefaultAllocatorAndCapacity(master_pool_t *mp, uint32_t item_size,
                                                                  uint32_t pool_width)
 {
-    return allocateGenericPool(mp, item_size, pool_width, poolDefaultAllocator, poolDefaultDeallocator);
+    return allocateGenericPool(mp, item_size, pool_width, poolDefaultAllocator, poolDefaultDeallocator, true);
 }
 
 generic_pool_t *genericpoolCreateWithDefaultCacheAlignedAllocatorAndCapacity(master_pool_t *mp, uint32_t item_size,
                                                                              uint32_t pool_width)
 {
     return allocateGenericPool(
-        mp, item_size, pool_width, poolDefaultCacheAlignedAllocator, poolDefaultCacheAlignedDeallocator);
+        mp, item_size, pool_width, poolDefaultCacheAlignedAllocator, poolDefaultCacheAlignedDeallocator, true);
 }
 
 void genericpoolDestroy(generic_pool_t *pool)

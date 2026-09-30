@@ -311,6 +311,7 @@ static void workerDestroyPools(worker_t *worker)
     {
         genericpoolDestroy(worker->context_pool);
     }
+    genericpoolDestroy(worker->message_pool);
     genericpoolDestroy(worker->timer_pool);
     if (worker->buffer_pool)
     {
@@ -319,6 +320,7 @@ static void workerDestroyPools(worker_t *worker)
 
     worker->wios_pool    = NULL;
     worker->context_pool = NULL;
+    worker->message_pool = NULL;
     worker->timer_pool   = NULL;
     worker->buffer_pool  = NULL;
 }
@@ -415,20 +417,26 @@ bool workerTryCreateCorePools(worker_t *worker)
         threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(GSTATE.masterpool_wios, sizeof(wio_t), RAM_PROFILE);
     generic_pool_t *context_pool = genericpoolCreateWithDefaultAllocatorAndCapacity(
         GSTATE.masterpool_context_pools, sizeof(context_t), RAM_PROFILE);
+    generic_pool_t *message_pool =
+        worker->has_event_loop ? genericpoolCreateWithMasterPoolCallbacks(GSTATE.masterpool_messages, RAM_PROFILE)
+                               : NULL;
     generic_pool_t *timer_pool = worker->has_event_loop ? genericpoolCreateWithDefaultAllocatorAndCapacity(
                                                               GSTATE.masterpool_timers, sizeof(wtimeout_t), RAM_PROFILE)
                                                         : NULL;
 
-    if (UNLIKELY(wios_pool == NULL || context_pool == NULL || (worker->has_event_loop && timer_pool == NULL)))
+    if (UNLIKELY(wios_pool == NULL || context_pool == NULL ||
+                 (worker->has_event_loop && (message_pool == NULL || timer_pool == NULL))))
     {
         threadsafegenericpoolDestroy(wios_pool);
         genericpoolDestroy(context_pool);
+        genericpoolDestroy(message_pool);
         genericpoolDestroy(timer_pool);
         return false;
     }
 
     worker->wios_pool    = wios_pool;
     worker->context_pool = context_pool;
+    worker->message_pool = message_pool;
     worker->timer_pool   = timer_pool;
     return true;
 }
@@ -489,7 +497,7 @@ bool workerInit(worker_t *worker, wid_t wid, bool eventloop)
 
     if (UNLIKELY(! workerTryCreateCorePools(worker)))
     {
-        LOGF("Worker %d: failed to construct WIO/context/timer pool metadata", (int) wid);
+        LOGF("Worker %d: failed to construct WIO/context/message/timer pool metadata", (int) wid);
         workerRollbackInitialization(worker);
         return false;
     }

@@ -202,6 +202,15 @@ generic_pool_t *genericpoolCreateWithCapacity(master_pool_t *mp, uint32_t pool_w
                                               PoolItemDestroyHandle destroy_h);
 
 /**
+ * Create a local cache without replacing the master's installed callbacks.
+ * The master must have fixed, userdata-independent callbacks installed before
+ * construction, and every local cache in this family must use this constructor.
+ * This also permits direct master checkout with NULL userdata on foreign threads.
+ * Returns NULL on metadata allocation or geometry failure.
+ */
+generic_pool_t *genericpoolCreateWithMasterPoolCallbacks(master_pool_t *mp, uint32_t pool_width);
+
+/**
  * Creates a generic pool with a default allocator.
  * @param mp The master pool.
  * @param item_size The size of each item in the pool.

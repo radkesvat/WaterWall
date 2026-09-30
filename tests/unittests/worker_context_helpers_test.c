@@ -14,6 +14,7 @@
 #include "worker.h"
 #include "worker_message_batch.h"
 #include "worker_messages.h"
+#include "worker_messages_internal.h"
 #include "wwapi.h"
 
 #if defined(__unix__) || defined(__APPLE__) || defined(UNIX)
@@ -154,6 +155,72 @@ static void testWorkerTimerPools(void)
             "timer pool sizes do not follow the memory profile");
     require(getWorker(1)->timer_pool != worker->timer_pool, "workers share a local timer pool");
     require(getTotalWorkersCount() == getWorkersCount(), "unexpected extra worker slot");
+}
+
+static WTHREAD_ROUTINE(messagePoolForeignRoutine)
+{
+    require(! currentThreadIsEventWorker(), "foreign message-pool thread acquired a worker identity");
+    if (userdata != NULL)
+    {
+        workerMessagePoolRelease(userdata);
+    }
+    void *record = workerMessagePoolAcquire(sizeof(worker_msg_t));
+    workerMessagePoolRelease(record);
+    return 0;
+}
+
+static void testWorkerMessagePoolLocalReuse(void)
+{
+    generic_pool_t *pool = getWorker(0)->message_pool;
+    require(pool != NULL && pool->mp == GSTATE.masterpool_messages && pool->cap == 2 * RAM_PROFILE,
+            "worker message pool does not use the shared master and memory profile");
+    require(getWorker(1)->message_pool != NULL && getWorker(1)->message_pool != pool,
+            "workers do not have separate message caches");
+    void *warm = workerMessagePoolAcquire(sizeof(worker_msg_t));
+    workerMessagePoolRelease(warm);
+    const uint32_t shared      = atomicLoadExplicit(&GSTATE.masterpool_messages->len, memory_order_relaxed);
+    const size_t   checked_out = masterpoolGetCheckedOut(GSTATE.masterpool_messages);
+
+    for (unsigned int i = 0; i < 128; ++i)
+    {
+        void *record = workerMessagePoolAcquire(sizeof(worker_msg_t));
+        require(record == warm, "warm message checkout did not reuse its local record");
+        require(atomicLoadExplicit(&GSTATE.masterpool_messages->len, memory_order_relaxed) == shared,
+                "warm message checkout consumed shared master storage");
+        require(masterpoolGetCheckedOut(GSTATE.masterpool_messages) == checked_out + 1,
+                "local message checkout lost family accounting");
+        workerMessagePoolRelease(record);
+        require(atomicLoadExplicit(&GSTATE.masterpool_messages->len, memory_order_relaxed) == shared,
+                "warm message return touched shared master storage");
+    }
+    require(masterpoolGetCheckedOut(GSTATE.masterpool_messages) == checked_out,
+            "local message reuse leaked checked-out records");
+
+    const uint32_t local_len = pool->len;
+    wthread_t      thread;
+    require(threadCreate(&thread, messagePoolForeignRoutine, NULL) == kWThreadErrorNone,
+            "failed to start foreign message-pool checkout");
+    require(threadJoin(thread) == 0, "failed to join foreign message-pool checkout");
+    require(pool->len == local_len, "foreign checkout borrowed a worker-local cache");
+
+    void *foreign_return = workerMessagePoolAcquire(sizeof(worker_msg_t));
+    require(threadCreate(&thread, messagePoolForeignRoutine, foreign_return) == kWThreadErrorNone,
+            "failed to start foreign message-pool return");
+    require(threadJoin(thread) == 0, "failed to join foreign message-pool return");
+    require(pool->len == local_len - 1, "foreign return touched its source worker cache");
+
+    while (pool->len != 0)
+    {
+        genericpoolShrink(pool);
+    }
+    const uint32_t before_refill = atomicLoadExplicit(&pool->mp->len, memory_order_relaxed);
+    require(before_refill >= RAM_PROFILE, "message cache did not return its idle storage to the master");
+    void *refilled = workerMessagePoolAcquire(sizeof(worker_msg_t));
+    require(pool->len == RAM_PROFILE - 1 &&
+                atomicLoadExplicit(&pool->mp->len, memory_order_relaxed) == before_refill - RAM_PROFILE,
+            "empty message cache did not refill from the master in a batch");
+    workerMessagePoolRelease(refilled);
+    require(masterpoolGetCheckedOut(pool->mp) == checked_out, "message transfer leaked checked-out records");
 }
 
 static void testPredicatesRejectUnregisteredAndOutOfRange(void)
@@ -631,6 +698,34 @@ static void waitForAtomicBool(const atomic_bool *value, const char *message)
         wwSleepMS(1);
     }
     require(false, message);
+}
+
+static void messagePoolTransferCallback(worker_t *worker, void *arg1, void *arg2, void *arg3)
+{
+    discard         arg3;
+    generic_pool_t *pool = worker->message_pool;
+    require(currentThreadIsEventWorkerWID(1) && pool != NULL, "message record reached the wrong cache owner");
+    const uint32_t expected_len = pool->len > pool->free_threshold ? pool->len - pool->cap / 2 : pool->len;
+    workerMessagePoolRelease(arg1);
+    require(pool->len == expected_len + 1, "cross-worker return did not enter the receiving worker's cache");
+    void *reused = workerMessagePoolAcquire(sizeof(worker_msg_t));
+    require(reused == arg1, "receiving worker did not reuse the transferred message record");
+    workerMessagePoolRelease(reused);
+    atomicStoreExplicit((atomic_bool *) arg2, true, memory_order_release);
+}
+
+static void testWorkerMessagePoolCrossWorkerReturn(void)
+{
+    void          *record     = workerMessagePoolAcquire(sizeof(worker_msg_t));
+    const uint32_t source_len = getWorker(0)->message_pool->len;
+    atomic_bool    complete;
+    atomic_init(&complete, false);
+    require(sendWorkerMessageForceQueueWithCleanup(
+                1, (WorkerMessageCallback) messagePoolTransferCallback, NULL, record, &complete, NULL) ==
+                kWorkerMessageSubmitAccepted,
+            "failed to queue a pooled record to another worker");
+    waitForAtomicBool(&complete, "cross-worker message record did not settle");
+    require(getWorker(0)->message_pool->len == source_len, "receiver returned a record into its source worker's cache");
 }
 
 static void initializeRace(worker_message_race_t *race, wid_t wid, race_post_kind_e kind)
@@ -1654,6 +1749,7 @@ static void testMessageAdmissionRacesWorkerTeardown(void)
      * cannot race global allocation-padding construction. */
     testPipePublicationIsLinearizedWithPreStop();
     testPipePayloadFinishLateAndRefused();
+    testWorkerMessagePoolCrossWorkerReturn();
 #ifdef WW_TEST_HALFDUPLEX_WORKERS
     testHalfDuplexWorkers();
 #endif
@@ -2030,12 +2126,24 @@ static void testTeardownCleanupCannotReadmitMessages(void)
 {
     teardown_admission_probe_t probe;
     memoryZero(&probe, sizeof(probe));
+    void *late_owner_return   = workerMessagePoolAcquire(sizeof(worker_msg_t));
+    void *late_foreign_return = workerMessagePoolAcquire(sizeof(worker_msg_t));
 
     require(sendWorkerMessageForceQueueWithCleanup(
                 0, (WorkerMessageCallback) teardownAdmissionCallback, teardownOuterCleanup, &probe, NULL, NULL),
             "failed to queue teardown admission probe");
 
     exerciseForeignFinalLineReleaseDuringDetach();
+
+    require(getWorker(0)->message_pool == NULL, "worker teardown retained its message cache");
+    const size_t outstanding = masterpoolGetCheckedOut(GSTATE.masterpool_messages);
+    workerMessagePoolRelease(late_owner_return);
+    wthread_t thread;
+    require(threadCreate(&thread, messagePoolForeignRoutine, late_foreign_return) == kWThreadErrorNone,
+            "failed to start foreign return after source-worker teardown");
+    require(threadJoin(thread) == 0, "failed to join foreign return after source-worker teardown");
+    require(masterpoolGetCheckedOut(GSTATE.masterpool_messages) == outstanding - 2,
+            "message records did not settle after their source cache was destroyed");
 
     require(atomicLoadRelaxed(&probe.callbacks) == 0, "a teardown probe callback ran after admission closed");
     require(atomicLoadRelaxed(&probe.outer_cleanups) == 1, "pending teardown cleanup did not run exactly once");
@@ -2881,6 +2989,7 @@ int main(int argc, char **argv)
 
     testAccessorsOnOwningWorker();
     testWorkerTimerPools();
+    testWorkerMessagePoolLocalReuse();
     testPredicatesRejectUnregisteredAndOutOfRange();
 
     testOwningWorkerOutsideCallbackQueues();

@@ -4,6 +4,9 @@
  * Internal storage contract shared by worker-message-owned record types.
  * Callers acquire only records which fit the pool's explicit union geometry
  * and must return every acquired record exactly once.
+ * Checkout and return use the current event worker's local cache while it
+ * exists, otherwise the shared master. Records carry no source-pool pointer;
+ * settlement may migrate them to another worker or outlive the source cache.
  */
 
 #include "worker_messages.h"

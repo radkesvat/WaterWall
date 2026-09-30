@@ -126,6 +126,12 @@ void *workerMessagePoolAcquire(size_t record_size)
         abortProgramNow(1);
     }
 
+    worker_t *worker = tryGetCurrentEventWorker();
+    if (worker != NULL && worker->message_pool != NULL)
+    {
+        return genericpoolGetItem(worker->message_pool);
+    }
+
     void *record;
     masterpoolRecordCheckout(GSTATE.masterpool_messages);
     masterpoolGetItems(GSTATE.masterpool_messages, &record, 1, NULL);
@@ -135,6 +141,16 @@ void *workerMessagePoolAcquire(size_t record_size)
 void workerMessagePoolRelease(void *record)
 {
     assert(record != NULL);
+    /* Records have one fixed geometry and may migrate between local caches.
+     * Never retain or access the allocating worker's pool: it may already
+     * have been destroyed when another worker or a foreign thread settles. */
+    worker_t *worker = tryGetCurrentEventWorker();
+    if (worker != NULL && worker->message_pool != NULL)
+    {
+        genericpoolReuseItem(worker->message_pool, record);
+        return;
+    }
+
     masterpoolReuseItems(GSTATE.masterpool_messages, &record, 1);
     masterpoolRecordReturn(GSTATE.masterpool_messages);
 }
