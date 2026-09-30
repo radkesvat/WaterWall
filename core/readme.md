@@ -1,5 +1,5 @@
 <!--
-Documentation version: 154
+Documentation version: 155
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/01-getting-started/tutorial-part1.mdx, and both English files must keep the same documentation version. User-facing behavior changes should also update WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/01-getting-started/tutorial-part1.mdx.
 -->
 
@@ -243,6 +243,7 @@ setting nobody chose. This applies to every field in the table, not only to
 | `ram-profile` | string or integer | `"server"` | Memory sizing profile for pools and profile-aware node defaults. A number must be a whole number in `0..6`; `0` and `1` are legacy aliases for the smallest profile. |
 | `mtu` | integer | `1500` | Construction-time default for per-node MTUs. Must be a whole number in `68..65535` - RFC 791's minimum IPv4 MTU up to what the field can hold. |
 | `splice` | boolean | `true` | Allow splice on eligible stream chains. `false` disables splice for every chain. Platform support and support from every node are still required; packet chains remain ineligible. |
+| `tcp-tune` | boolean | `true` on Linux; `false` otherwise | Best-effort core startup tuning of TCP/socket buffer ceilings and backlogs, selected by memory profile. |
 | `try-enabling-bbr` | boolean | `true` on Linux; `false` otherwise | Linux-only best-effort startup attempt to enable TCP BBR. |
 | `libs-path` | string | `"libs/"` | Directory used when loading external tunnel libraries. |
 
@@ -264,6 +265,7 @@ Recommended example:
     "ram-profile": "server",
     "mtu": 1500,
     "splice": true,
+    "tcp-tune": true,
     "try-enabling-bbr": true,
     "libs-path": "libs/"
   }
@@ -284,6 +286,37 @@ requires `CAP_NET_ADMIN` in the relevant network namespace; running as root is
 the usual arrangement. Failures are reported in the core log. Waterwall does
 not install kernels, persist settings in `/etc/sysctl.conf`, or replace
 queueing disciplines already attached to network interfaces.
+
+### `tcp-tune`
+
+`tcp-tune` defaults to `true` on native Linux and `false` on other platforms,
+including Android and Cygwin. Omitted or empty `misc` blocks use the same default.
+Only a JSON boolean is accepted. Set `"tcp-tune": false` to skip this core startup
+phase; it is independent of `splice` and `try-enabling-bbr`. On other platforms,
+explicit `true` is accepted but performs no tuning.
+
+After runtime logging is ready and before loading node configurations, WaterWall
+attempts six live sysctl writes. The memory profile selects these targets:
+
+| Memory profile | `net.core.rmem_max`, `net.core.wmem_max`, TCP buffer maxima (bytes) | `net.core.netdev_max_backlog` | `net.core.somaxconn` |
+| --- | --- | --- | --- |
+| S1 / S2 | `134217728` (128 MiB) | `8000` | `65535` |
+| M1 / M2 | `268435456` (256 MiB) | `16000` | `131071` |
+| L1 / L2 | `536870912` (512 MiB) | `32000` | `262143` |
+
+`net.ipv4.tcp_rmem` is set to `4096 87380 <maximum>` and
+`net.ipv4.tcp_wmem` to `4096 65536 <maximum>`, using the maximum from the table.
+The minimum and initial sizes stay fixed across profiles. The `server` alias
+selects L2, `client` selects M1, and `client-larger` selects M2.
+
+Each failed command logs a warning, and the remaining commands are still
+attempted; permission denial or a missing `sysctl` never fails startup. Successful
+writes change the live kernel settings and are not restored on exit. WaterWall
+does not persist them in `/etc/sysctl.conf`.
+
+RawSocket has a separate tuning batch controlled by its `skip-sysctl` option.
+That batch can overwrite these values later; `tcp-tune` controls only the core
+startup phase.
 
 ### `ram-profile`
 

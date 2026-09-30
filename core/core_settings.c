@@ -21,8 +21,10 @@
 
 #if defined(OS_LINUX) && ! defined(OS_ANDROID) && ! defined(OS_CYGWIN)
 #define DEFAULT_TRY_ENABLING_BBR true
+#define DEFAULT_TCP_TUNE         true
 #else
 #define DEFAULT_TRY_ENABLING_BBR false
+#define DEFAULT_TCP_TUNE         false
 #endif
 
 #define DEFAULT_MTU_PROFILE 1500
@@ -936,6 +938,15 @@ static void parseMiscPartOfJson(cJSON *misc_obj)
         return;
     }
     getBoolFromJsonObjectOrDefault(&settings->splice_enabled, misc_obj, "splice", DEFAULT_SPLICE);
+
+    const cJSON *json_tcp_tune = cJSON_GetObjectItemCaseSensitive(misc_obj, "tcp-tune");
+    if (json_tcp_tune != NULL && ! cJSON_IsBool(json_tcp_tune))
+    {
+        printError("CoreSettings: \"misc.tcp-tune\" must be true or false\n");
+        startupFailureRecord(1);
+        return;
+    }
+    getBoolFromJsonObjectOrDefault(&settings->tcp_tune_enabled, misc_obj, "tcp-tune", DEFAULT_TCP_TUNE);
 
     if (cJSON_IsObject(misc_obj) && (misc_obj->child != NULL))
     {

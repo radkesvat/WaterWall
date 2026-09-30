@@ -9,4 +9,8 @@ void increaseFileLimit(void);
  * This changes the live system-wide soft-limit setting, never the hard limit. */
 void tryIncreasePipeLimit(void);
 
+/* Best-effort native Linux TCP/socket tuning, with ceilings selected by RAM profile.
+ * Each setting is attempted independently; failures never fail startup. */
+void tryTuneTcp(unsigned int ram_profile);
+
 void tryEnableBbr(void);

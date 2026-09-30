@@ -100,6 +100,29 @@ int main(void)
         CHECK(getCoreSettings()->splice_enabled == splice_cases[i].splice_enabled);
         destroyCoreSettings();
     }
+#if defined(OS_LINUX) && ! defined(OS_ANDROID) && ! defined(OS_CYGWIN)
+    const bool default_tcp_tune = true;
+#else
+    const bool default_tcp_tune = false;
+#endif
+    const struct
+    {
+        const char *json;
+        bool        enabled;
+    } tcp_tune_cases[] = {
+        {"{\"configs\":[\"nodes.json\"]}", default_tcp_tune},
+        {"{\"configs\":[\"nodes.json\"],\"misc\":{}}", default_tcp_tune},
+        {"{\"configs\":[\"nodes.json\"],\"misc\":{\"workers\":1}}", default_tcp_tune},
+        {"{\"configs\":[\"nodes.json\"],\"misc\":{\"splice\":false}}", default_tcp_tune},
+        {"{\"configs\":[\"nodes.json\"],\"misc\":{\"tcp-tune\":true}}", true},
+        {"{\"configs\":[\"nodes.json\"],\"misc\":{\"tcp-tune\":false}}", false},
+    };
+    for (size_t i = 0; i < ARRAY_SIZE(tcp_tune_cases); ++i)
+    {
+        CHECK(testParse(tcp_tune_cases[i].json));
+        CHECK(getCoreSettings()->tcp_tune_enabled == tcp_tune_cases[i].enabled);
+        destroyCoreSettings();
+    }
     const char *invalid[] = {"{",
                              "{\"configs\":[]}",
                              "{\"configs\":[\"nodes.json\"],\"misc\":{\"workers\":4.5}}",
@@ -110,7 +133,13 @@ int main(void)
                              "{\"configs\":[\"nodes.json\"],\"misc\":{\"splice\":1}}",
                              "{\"configs\":[\"nodes.json\"],\"misc\":{\"splice\":\"false\"}}",
                              "{\"configs\":[\"nodes.json\"],\"misc\":{\"splice\":[]}}",
-                             "{\"configs\":[\"nodes.json\"],\"misc\":{\"splice\":{}}}"};
+                             "{\"configs\":[\"nodes.json\"],\"misc\":{\"splice\":{}}}",
+                             "{\"configs\":[\"nodes.json\"],\"misc\":{\"tcp-tune\":null}}",
+                             "{\"configs\":[\"nodes.json\"],\"misc\":{\"tcp-tune\":0}}",
+                             "{\"configs\":[\"nodes.json\"],\"misc\":{\"tcp-tune\":1}}",
+                             "{\"configs\":[\"nodes.json\"],\"misc\":{\"tcp-tune\":\"false\"}}",
+                             "{\"configs\":[\"nodes.json\"],\"misc\":{\"tcp-tune\":[]}}",
+                             "{\"configs\":[\"nodes.json\"],\"misc\":{\"tcp-tune\":{}}}"};
     for (size_t i = 0; i < sizeof(invalid) / sizeof(invalid[0]); ++i)
     {
         CHECK(! testParse(invalid[i]));

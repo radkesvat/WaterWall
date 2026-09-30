@@ -1563,6 +1563,19 @@ if(TARGET ww)
       "unit;core;linux;bbr"
     )
 
+    add_executable(os_helpers_tcp_tune_test
+      os_helpers_tcp_tune_test.c
+      ${CMAKE_SOURCE_DIR}/core/os_helpers.c
+    )
+    target_include_directories(os_helpers_tcp_tune_test PRIVATE ${CMAKE_SOURCE_DIR}/core)
+    target_link_libraries(os_helpers_tcp_tune_test PRIVATE ww)
+    add_dependencies(waterwall_unit_tests os_helpers_tcp_tune_test)
+    add_waterwall_unit_test(
+      waterwall.os_helpers_tcp_tune_unit
+      os_helpers_tcp_tune_test
+      "unit;core;linux;tcp;startup"
+    )
+
     add_executable(os_helpers_pipe_limit_test
       os_helpers_pipe_limit_test.c
       ${CMAKE_SOURCE_DIR}/core/os_helpers.c

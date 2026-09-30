@@ -222,6 +222,10 @@ int waterwallInnerMain(int argc, char **argv)
 
     LOGI("Starting Waterwall version %s", TOSTRING(WATERWALL_VERSION));
     LOGI("Parsing core settings complete");
+    if (getCoreSettings()->tcp_tune_enabled)
+    {
+        tryTuneTcp(getCoreSettings()->ram_profile);
+    }
     if (getCoreSettings()->try_enabling_bbr)
     {
         tryEnableBbr();
