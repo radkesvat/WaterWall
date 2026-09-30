@@ -10,6 +10,12 @@
 
 #include "loggers/internal_logger.h"
 
+enum
+{
+    kWorkerMessageInitialQueueSlotsSmall = 512,
+    kWorkerMessageInitialQueueSlotsLarge = 2048,
+};
+
 /* Ordinary messages live by value in the target worker's deque. Delayed
  * messages need a stable address because their timer stores it in userdata. */
 typedef struct queued_worker_msg_s
@@ -55,6 +61,16 @@ static void workerMessageReceived(wevent_t *ev);
 static worker_message_init_test_failure_e    g_worker_message_init_failure;
 static worker_message_enqueue_test_failure_e g_worker_message_enqueue_failure;
 static atomic_bool                           g_worker_message_close_timer_install_admission;
+
+size_t workerMessagesTestQueueCapacity(worker_t *worker)
+{
+    assert(worker != NULL);
+    mutexLock(&worker->control_mutex);
+    assert(worker->message_queue != NULL);
+    const size_t capacity = (size_t) worker_msg_deque_t_capacity(&worker->message_queue->queued);
+    mutexUnlock(&worker->control_mutex);
+    return capacity;
+}
 
 void workerMessagesInitTestSetFailure(worker_message_init_test_failure_e failure)
 {
@@ -462,8 +478,12 @@ bool workerMessagesInit(worker_t *worker)
     };
     list_init(&queue->timed);
 
+    const uint32_t initial_slots = RAM_PROFILE >= kRamProfileL1Memory ? kWorkerMessageInitialQueueSlotsLarge
+                                                                      : kWorkerMessageInitialQueueSlotsSmall;
+    /* STC rounds capacity + 1 up to a power of two and keeps one slot empty.
+     * Reserve usable entries, independently of the callback drain batch size. */
     const bool queued_ready = ! workerMessagesInitTestRefuse(kWorkerMessageInitFailQueuedReserve) &&
-                              worker_msg_deque_t_reserve(&queue->queued, kWorkerMessageDrainBatchSize);
+                              worker_msg_deque_t_reserve(&queue->queued, initial_slots - 1);
     if (UNLIKELY(! queued_ready))
     {
         worker_msg_deque_t_drop(&queue->queued);

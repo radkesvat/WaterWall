@@ -114,6 +114,39 @@ static void testWorkerMessageConstructionTransactional(void)
     mutexDestroy(&worker.control_mutex);
 }
 
+static void testWorkerMessageInitialCapacity(void)
+{
+    const uint32_t saved_profile = RAM_PROFILE;
+    const struct
+    {
+        uint32_t profile;
+        size_t   capacity;
+    } cases[] = {
+        {kRamProfileS1Memory, 511},
+        {kRamProfileS2Memory, 511},
+        {kRamProfileM1Memory, 511},
+        {kRamProfileM2Memory, 511},
+        {kRamProfileL1Memory, 2047},
+        {kRamProfileL2Memory, 2047},
+    };
+    worker_t worker = {0};
+    mutexInit(&worker.control_mutex);
+
+    for (size_t i = 0; i < ARRAY_SIZE(cases); ++i)
+    {
+        GSTATE.ram_profile = cases[i].profile;
+        require(workerMessagesInit(&worker), "failed to reserve the profile's initial message queue");
+        require(workerMessagesTestQueueCapacity(&worker) == cases[i].capacity,
+                "initial message queue capacity does not match its RAM profile");
+        require(! atomicLoadExplicit(&worker.message_admission_open, memory_order_acquire),
+                "reserving a message queue opened admission");
+        workerMessagesDestroy(&worker);
+    }
+
+    mutexDestroy(&worker.control_mutex);
+    GSTATE.ram_profile = saved_profile;
+}
+
 // ---------------------------------------------------------------------------
 // Checked accessors
 // ---------------------------------------------------------------------------
@@ -2975,6 +3008,7 @@ int main(int argc, char **argv)
     }
 
     testWorkerMessageConstructionTransactional();
+    testWorkerMessageInitialCapacity();
 #if defined(WW_WORKER_MESSAGE_LINK_WRAP) && defined(HAS_UNIX_FORK)
     testTimedRearmRefusalInIsolatedProcess();
 #endif

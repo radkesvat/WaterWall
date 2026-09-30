@@ -13,3 +13,7 @@
 
 WW_MUST_USE void *workerMessagePoolAcquire(size_t record_size);
 void              workerMessagePoolRelease(void *record);
+
+#ifdef WW_WORKER_MESSAGE_TEST_SEAM
+size_t workerMessagesTestQueueCapacity(worker_t *worker);
+#endif
