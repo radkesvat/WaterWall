@@ -266,7 +266,7 @@ static int __nio_read(wio_t *io, void *buf, unsigned int len)
     return nread;
 }
 
-static int __nio_write(wio_t *io, const void *buf, int len)
+static int __nio_write(wio_t *io, const void *buf, int len, bool more)
 {
     int nwrite = 0;
     switch (io->io_type)
@@ -275,6 +275,14 @@ static int __nio_write(wio_t *io, const void *buf, int len)
         int flag = 0;
 #ifdef MSG_NOSIGNAL
         flag |= MSG_NOSIGNAL;
+#endif
+#ifdef MSG_MORE
+        if (more)
+        {
+            flag |= MSG_MORE;
+        }
+#else
+        discard more;
 #endif
         nwrite = send(wioGetFD(io), buf, (size_t) len, flag);
     }
@@ -303,7 +311,8 @@ static int nioWriteBuffer(wio_t *io, sbuf_t *buf, int *error)
         int            written = 0;
         if (prefix != 0)
         {
-            written = __nio_write(io, sbufGetRawPtr(buf), (int) prefix);
+            // The private pipe already holds the body that follows this prefix.
+            written = __nio_write(io, sbufGetRawPtr(buf), (int) prefix, body != 0);
             if (written < 0)
             {
                 *error = socketERRNO();
@@ -333,7 +342,7 @@ static int nioWriteBuffer(wio_t *io, sbuf_t *buf, int *error)
         return written;
     }
 #endif
-    const int written = __nio_write(io, sbufGetRawPtr(buf), (int) sbufGetLength(buf));
+    const int written = __nio_write(io, sbufGetRawPtr(buf), (int) sbufGetLength(buf), false);
     if (written < 0)
     {
         *error = socketERRNO();

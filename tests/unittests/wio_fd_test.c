@@ -24,6 +24,8 @@ typedef struct test_env_s
     wloop_t                   *loop;
 } test_env_t;
 
+static void require(bool condition, const char *message);
+
 static int          read_test_fd = -1;
 static unsigned int socket_read_queries;
 int                 __real_ioctl(int fd, unsigned long request, ...);
@@ -166,6 +168,9 @@ ssize_t             __wrap_read(int fd, void *buf, size_t count)
 static int    write_test_fd = -1;
 static size_t send_limit = SIZE_MAX, splice_limit = SIZE_MAX;
 static int    send_error, splice_error;
+static bool         observe_write_flags;
+static int          observed_send_flags[32];
+static unsigned int observed_send_count, observed_splice_count, observed_splice_flags;
 ssize_t       __real_send(int fd, const void *buf, size_t len, int flags);
 ssize_t       __wrap_send(int fd, const void *buf, size_t len, int flags);
 ssize_t       __real_splice(int in, off_t *in_offset, int out, off_t *out_offset, size_t len, unsigned int flags);
@@ -189,6 +194,11 @@ ssize_t __wrap_send(int fd, const void *buf, size_t len, int flags)
 {
     if (fd == write_test_fd)
     {
+        if (observe_write_flags)
+        {
+            require(observed_send_count < 32, "too many sends in write flag fixture");
+            observed_send_flags[observed_send_count++] = flags;
+        }
         if (send_error != 0)
         {
             errno      = send_error;
@@ -228,6 +238,11 @@ ssize_t __wrap_splice(int in, off_t *in_offset, int out, off_t *out_offset, size
     }
     if (out == write_test_fd)
     {
+        if (observe_write_flags)
+        {
+            ++observed_splice_count;
+            observed_splice_flags |= flags;
+        }
         if (splice_error != 0)
         {
             errno        = splice_error;
@@ -1779,6 +1794,7 @@ static void countWriteCallback(wio_t *io)
 typedef enum splice_write_case_e
 {
     kWritePiped,
+    kWriteOpenDataPrefix,
     kWriteEmpty,
     kWritePrefixOnly,
     kWriteShortPrefix,
@@ -1805,6 +1821,7 @@ static void testSpliceWrite(splice_write_case_t kind)
     wioSetCallBackWrite(destination, countWriteCallback);
     const char *body   = kind == kWriteEmpty || kind == kWritePrefixOnly ? "" : "123456789";
     const char *prefix = kind == kWriteEmpty || kind == kWriteBodyInterrupted ? ""
+                         : kind == kWriteOpenDataPrefix                       ? "OPENOPENDATADATA"
                          : kind == kWriteShortPrefix                          ? "HEADHEAD"
                                                                               : "HEAD";
     char        expected[64];
@@ -1857,6 +1874,8 @@ static void testSpliceWrite(splice_write_case_t kind)
     default:
         break;
     }
+    observed_send_count = observed_splice_count = observed_splice_flags = 0;
+    observe_write_flags                                                 = true;
     require(wioWrite(destination, buf) == first_write, "splice write returned incorrect progress");
     const bool queued = first_write < (int) strlen(expected);
     require(destination->write_bufsize == strlen(expected) - (size_t) first_write,
@@ -1919,6 +1938,20 @@ static void testSpliceWrite(splice_write_case_t kind)
                 "splice send changed prefix/body bytes or mixed FIFO ordering");
     }
     require(callbacks > 0, "splice write never delivered a progress callback");
+    observe_write_flags = false;
+    require(observed_send_count >= (prefix[0] != '\0'), "prefix never reached send");
+    if (kind == kWriteMixedQueue)
+        require(observed_send_count == 3, "mixed queue did not send prefix, ordinary buffer, prefix");
+    for (unsigned int i = 0; i < observed_send_count; ++i)
+    {
+        const bool more = body[0] != '\0' && ! (kind == kWriteMixedQueue && i == 1);
+        require(((observed_send_flags[i] & MSG_MORE) != 0) == more,
+                "TCP must hint MORE only for a prefix followed by its own pipe body, including retries");
+        require((observed_send_flags[i] & MSG_NOSIGNAL) != 0, "TCP send lost SIGPIPE suppression");
+    }
+    require((observed_splice_flags & SPLICE_F_MORE) == 0, "final TCP pipe body advertised unrelated future data");
+    require(observed_splice_count == 0 || (observed_splice_flags & SPLICE_F_NONBLOCK) != 0,
+            "TCP pipe body lost nonblocking splice");
     requireClosed(source_fds[0]);
     if (kind == kWriteGracefulClose)
     {
