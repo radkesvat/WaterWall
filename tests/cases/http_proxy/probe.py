@@ -84,7 +84,7 @@ class Origin:
         self.connections = 0
         self.requests = []
         self.errors = queue.Queue()
-        self.lock = threading.Lock()
+        self.lock = threading.Condition()
         self.slow_started = threading.Event()
         self.slow_release = threading.Event()
         self.slow_sent = threading.Event()
@@ -102,7 +102,13 @@ class Origin:
             with self.lock:
                 self.connections += 1
                 identity = self.connections
+                self.lock.notify_all()
             threading.Thread(target=self.serve, args=(sock, identity), daemon=True).start()
+
+    def wait_connections(self, expected):
+        with self.lock:
+            assert self.lock.wait_for(lambda: self.connections >= expected, timeout=8), "origin connection was not accepted"
+            assert self.connections == expected, "origin accepted extra connections"
 
     def serve(self, sock, identity):
         try:
@@ -461,7 +467,10 @@ def run():
             assert code == 407 and headers[b"proxy-authenticate"] == b'Basic realm="WaterWall"'
         assert a.connections == before, "auth refusal contacted destination"
         quota = b"Proxy-Authorization: Basic " + base64.b64encode(b"quota:pass") + b"\r\n"
+        before = a.connections
         assert once(request(a, extra=quota), 29081)[0] == 502
+        # The 502 can arrive before the origin thread counts the admitted connection.
+        a.wait_connections(before + 1)
         before = a.connections
         assert once(request(a, extra=quota), 29081)[0] == 407
         assert a.connections == before, "quota rejection reconnected to destination"
