@@ -1,5 +1,5 @@
 <!--
-Documentation version: 152
+Documentation version: 153
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/WireGuardDevice.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/WireGuardDevice.mdx, and all files must keep the same documentation version.
 -->
 
@@ -60,6 +60,8 @@ The supported shape with a head-only UDP socket is:
 
 - `UdpStatelessSocket` -> `WireGuardDevice` -> packet side node
 
+`UdpListener` is also chain-head-only, so it cannot follow `WireGuardDevice`. It is not a supported replacement for `UdpStatelessSocket` on the transport side: WireGuard initializes a companion transport line toward that side, while `UdpListener` rejects downstream `Init`. Use `UdpStatelessSocket` for the UDP transport in this topology.
+
 Common packet-side neighbors include:
 
 - `TunDevice`
@@ -89,6 +91,10 @@ is assembled, the layer solver determines both adjacent edge domains:
 Startup fails unless the two adjacent edges resolve to exactly one L3 side and one L4 side. There is no fallback to
 `next`. If a complex topology leaves the roles unresolved, add an explicit packet/stream bridge such as
 `PacketsToStream` or `StreamToPackets` so the layer solver can determine them.
+
+The transport edge can resolve to either `next` or `prev` when adjacent nodes permit it. Direction resolution does not
+override a neighbor's placement or callback contract; in particular, `UdpListener` cannot serve as WireGuard's
+transport adapter.
 
 ## Configuration Example
 

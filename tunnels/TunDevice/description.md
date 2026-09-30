@@ -1,5 +1,5 @@
 <!--
-Documentation version: 157
+Documentation version: 158
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/TunDevice.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/TunDevice.mdx, and all files must keep the same documentation version.
 -->
 
@@ -382,13 +382,18 @@ Source-backed metadata:
 
 | Property | Value |
 | --- | --- |
-| node flags | `kNodeFlagChainHead` &#124; `kNodeFlagChainEnd` |
+| node flags | `kNodeFlagChainHead` &#124; `kNodeFlagChainEnd` &#124; `kNodeFlagSupportsTrustedPacketChecksums` &#124; `kNodeFlagPacketPayloadEnqueueOnly` |
 | `can_have_prev` | `true` |
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayer3` |
 | `layer_group_prev_node` | `kNodeLayer3` |
 | `layer_group_next_node` | `kNodeLayer3` |
 | `required_padding_left` | 10 bytes on Linux; 0 bytes on other supported platforms |
+
+The checksum and enqueue-only bits advertise capabilities for a direct
+`TunDevice`–`PacketsToConnection` pair. Trusted-checksum handling becomes active
+only when the eligible pair completes setup; it is not implied by the static
+capability flags alone.
 
 This is the node's logical advertised left-padding requirement. Linux advertises
 it even when `"gso": false`. Allocation alignment is separate, so it does not

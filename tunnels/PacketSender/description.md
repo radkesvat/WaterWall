@@ -1,5 +1,5 @@
 <!--
-Documentation version: 153
+Documentation version: 154
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/PacketSender.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/PacketSender.mdx, and all files must keep the same documentation version.
 -->
 
@@ -18,6 +18,20 @@ packet lines during the configured duration.
 - prebuilt packet storage is capped at `8 GiB` and also must fit in the platform `size_t` address space
 - does not close or finish worker packet lines after sending
 - stops a worker's timer and send loop if the downstream side finishes that worker packet line
+
+## WireGuard Placement
+
+To send generated packets through a WireGuard packet path, connect separate
+chain-head branches with paired `Bridge` nodes:
+
+```text
+PacketSender -> Bridge A
+UdpStatelessSocket -> WireGuardDevice -> Bridge B
+```
+
+Pair `Bridge A` and `Bridge B`. Both `PacketSender` and
+`UdpStatelessSocket` are chain-head-only, so neither can follow
+`WireGuardDevice` in one linear chain.
 
 ## Example
 

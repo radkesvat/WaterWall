@@ -1,5 +1,5 @@
 <!--
-Documentation version: 156
+Documentation version: 157
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/ConnectionToPackets.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/ConnectionToPackets.mdx, and all files must keep the same documentation version.
 -->
 
@@ -45,11 +45,8 @@ TcpListener -> Socks5Server -> ConnectionToPackets
 A practical encrypted topology sends the packets through WireGuard:
 
 ```text
-local application
-  -> listener or SOCKS node
-  -> ConnectionToPackets
-  -> WireGuardDevice
-  -> UdpStatelessSocket
+local application branch: TcpListener -> Socks5Server -> ConnectionToPackets -> Bridge A
+local UDP branch:         UdpStatelessSocket -> WireGuardDevice -> Bridge B
 
 remote UdpStatelessSocket
   -> WireGuardDevice
@@ -57,6 +54,10 @@ remote UdpStatelessSocket
   -> TcpUdpConnector
   -> destination
 ```
+
+Pair `Bridge A` and `Bridge B` so the connection-to-packet branch joins the
+WireGuard packet side. `UdpStatelessSocket` is chain-head-only, so it stays at
+the head of its own branch instead of following `WireGuardDevice`.
 
 The configured virtual source address must be routable back through the packet topology. For WireGuard, the local side
 normally selects the peer with a destination route such as `0.0.0.0/0`, and the remote peer must allow the configured
