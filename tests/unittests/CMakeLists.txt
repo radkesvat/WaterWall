@@ -1417,6 +1417,12 @@ if(TARGET ww)
           target_compile_definitions(${target} PRIVATE WW_TEST_REVERSE_SERVER_SPLICE=1)
         endforeach()
       endif()
+      if(TARGET Socks5Client AND TARGET Socks5Server AND TARGET DomainResolver)
+        foreach(target IN ITEMS node_layer_validation_test node_layer_validation_no_splice_test)
+          target_link_libraries(${target} PRIVATE Socks5Client Socks5Server DomainResolver)
+          target_compile_definitions(${target} PRIVATE WW_TEST_SOCKS_SPLICE_NODES=1)
+        endforeach()
+      endif()
       add_dependencies(waterwall_unit_tests node_layer_validation_no_splice_test)
 
       add_waterwall_unit_test(

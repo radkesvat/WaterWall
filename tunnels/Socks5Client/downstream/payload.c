@@ -24,6 +24,11 @@ void socks5clientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         lineReuseBuffer(l, buf);
         return;
     }
+    // Handshake-time nested input later enters the ordinary-only parser too.
+    if (ls->phase != kSocks5ClientPhaseEstablished)
+    {
+        buf = sbufEnsureOrdinary(lineGetBufferPool(l), buf);
+    }
     if (ls->input_draining || bufferqueueGetBufCount(&ls->pending_down) != 0)
     {
         if (socks5clientQueueReplyInput(t, l, buf) && ! ls->input_draining)

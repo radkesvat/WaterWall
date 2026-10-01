@@ -4,6 +4,10 @@
 
 void socks5clientLinestateInitialize(socks5client_lstate_t *ls, tunnel_t *t, line_t *l, socks5client_line_kind_t kind)
 {
+    if (kind != kSocks5ClientLineKindDirect)
+    {
+        linePreferOrdinaryReadBoth(l);
+    }
     *ls = (socks5client_lstate_t) {
         .tunnel    = t,
         .line      = l,

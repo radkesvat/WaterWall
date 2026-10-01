@@ -4,6 +4,11 @@
  */
 
 #include "wwapi.h"
+#ifdef WW_TEST_SOCKS_SPLICE_NODES
+#include "DomainResolver/interface.h"
+#include "Socks5Client/interface.h"
+#include "Socks5Server/interface.h"
+#endif
 #ifdef WW_TEST_REVERSE_SERVER_SPLICE
 #include "Bridge/interface.h"
 #include "ReverseServer/interface.h"
@@ -1680,6 +1685,54 @@ static void testRouterSpliceCapability(void)
 }
 #endif
 
+#ifdef WW_TEST_SOCKS_SPLICE_NODES
+static void testSocksSpliceCapability(void)
+{
+    node_t nodes[]  = {nodeSocks5ClientGet(), nodeSocks5ServerGet()};
+    node_t resolver = nodeDomainResolverGet();
+    require(resolver.flags == kNodeFlagSupportsSplice, "SOCKS resolver lost splice capability");
+    for (unsigned i = 0; i < ARRAY_SIZE(nodes); ++i)
+    {
+        require(nodes[i].flags == kNodeFlagSupportsSplice && nodes[i].required_padding_left == 4 + 1 + UINT8_MAX + 2,
+                "SOCKS splice or UDP framing metadata changed");
+        for (unsigned blocked = 0; blocked < 3; ++blocked)
+        {
+            node_t   head_node   = {.type = (char *) "head", .flags = kNodeFlagSupportsSplice};
+            node_t   tail_node   = {.type = (char *) "tail", .flags = kNodeFlagSupportsSplice};
+            node_t   helper_node = resolver;
+            unsigned flags       = blocked == 0   ? kNodeFlagSupportsSplice
+                                   : blocked == 1 ? kNodeFlagNone
+                                                  : kNodeFlagBlocksSplice;
+            if (i == 0)
+                helper_node.flags = flags;
+            else
+                tail_node.flags = flags;
+            tunnel_t head   = {.node = &head_node};
+            tunnel_t helper = {.node = &helper_node};
+            tunnel_t socks  = {.node = &nodes[i]};
+            tunnel_t tail   = {.node = &tail_node};
+            bindTunnels(&head, i == 0 ? &helper : &socks);
+            if (i == 0)
+                bindTunnels(&helper, &socks);
+            bindTunnels(&socks, &tail);
+            tunnel_chain_t *chain = tunnelchainCreate(0);
+            require(chain != NULL, "create SOCKS capability chain");
+            tunnelchainInsert(chain, &head);
+            if (i == 0)
+                tunnelchainInsert(chain, &helper);
+            tunnelchainInsert(chain, &socks);
+            tunnelchainInsert(chain, &tail);
+            tunnelchainFinalize(chain);
+            require(chain->supports_splice == (WW_HAVE_SPLICE && ! GSTATE.splice_disabled && blocked == 0),
+                    "SOCKS eligibility ignored helper, neighbor, platform or misc.splice gating");
+            tunnelchainDestroy(chain);
+        }
+        memoryFree(nodes[i].type);
+    }
+    memoryFree(resolver.type);
+}
+#endif
+
 #ifdef WW_TEST_REVERSE_SERVER_SPLICE
 static void testReverseServerSpliceCapability(void)
 {
@@ -1957,6 +2010,9 @@ int main(void)
         testSolvedTopologyExpansionIsRevalidated(kNodeFlagNone, true);
         testSolvedTopologyExpansionIsRevalidated(kNodeFlagSupportsSplice, true);
         testChainSpliceCapability();
+#ifdef WW_TEST_SOCKS_SPLICE_NODES
+        testSocksSpliceCapability();
+#endif
 #ifdef WW_TEST_REVERSE_SERVER_SPLICE
         testReverseServerSpliceCapability();
 #endif

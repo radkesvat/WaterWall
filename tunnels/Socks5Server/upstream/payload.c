@@ -16,6 +16,11 @@ void socks5serverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             lineReuseBuffer(l, buf);
             return;
         }
+        // Convert before nested handshake input can join the parser's FIFO.
+        if (ls->phase != kSocks5ServerPhaseTcpEstablished)
+        {
+            buf = sbufEnsureOrdinary(lineGetBufferPool(l), buf);
+        }
         if (ls->input_draining)
         {
             discard socks5serverQueueControl(t, l, buf, true);

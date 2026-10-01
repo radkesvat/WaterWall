@@ -96,6 +96,8 @@ bool socks5clientApplyTargetContext(tunnel_t *t, line_t *l)
     else
     {
         addresscontextSetOnlyProtocol(dest_ctx, IP_PROTO_UDP);
+        // Target preparation also runs before local DNS can retain early input.
+        linePreferOrdinaryReadBoth(l);
     }
 
     if (uses_current_dest)

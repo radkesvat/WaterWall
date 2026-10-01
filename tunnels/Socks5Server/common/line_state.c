@@ -4,6 +4,10 @@
 
 void socks5serverLinestateInitialize(socks5server_lstate_t *ls, tunnel_t *t, line_t *l, socks5server_line_kind_t kind)
 {
+    if (kind == kSocks5ServerLineKindUdpClient || kind == kSocks5ServerLineKindUdpRemote)
+    {
+        linePreferOrdinaryReadBoth(l);
+    }
     *ls = (socks5server_lstate_t) {
         .tunnel           = t,
         .line             = l,

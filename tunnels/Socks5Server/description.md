@@ -300,13 +300,33 @@ The implementation follows normal Waterwall finish ordering:
 - `required_padding_left` is set for the worst-case SOCKS5 UDP header so the tunnel can prepend UDP headers without
   breaking Waterwall buffer-padding assumptions.
 
+## Splice Support
+
+Socks5Server supports splice-backed TCP CONNECT payloads. Complete client
+deliveries are materialized with `sbufEnsureOrdinary()` until the TCP setup phase
+is established, before parser or nested-input admission. Later TCP payloads and
+necessary opaque ordering queues can retain their original buffers. Success
+replies still precede backend response bodies, and existing limits remain intact.
+
+UDP client and remote lines request ordinary reads in both directions. A UDP-only
+service also requests ordinary reads on its TCP control line during Init. In a
+mixed CONNECT/UDP service, that control-line preference is set when an allowed
+UDP ASSOCIATE command is parsed. Preferences last for the exact line's lifetime
+and do not propagate between associated lines. UDP datagrams are still fully
+materialized before header decoding or framing because already-delivered or
+transformed input can remain splice-backed.
+
+The internal UserController remains splice-capable; AuthenticationClient is a
+lookup dependency rather than a payload hop. Actual splice activation requires
+an eligible finalized chain and `misc.splice`.
+
 ## Node Metadata
 
 Source-backed metadata:
 
 | Property | Value |
 | --- | --- |
-| node flags | `kNodeFlagNone` |
+| node flags | `kNodeFlagSupportsSplice` |
 | `can_have_prev` | `true` |
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayer4` |

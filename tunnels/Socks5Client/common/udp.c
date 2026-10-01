@@ -147,6 +147,7 @@ bool socks5clientStartUdpAssociation(tunnel_t *t, line_t *l, socks5client_lstate
 
 bool socks5clientForwardUdpApplicationPayload(tunnel_t *t, line_t *l, socks5client_lstate_t *ls, sbuf_t *buf)
 {
+    buf = sbufEnsureOrdinary(lineGetBufferPool(l), buf);
     if (ls->phase == kSocks5ClientPhaseEstablished && ! ls->draining_up && bufferqueueGetBufCount(&ls->pending_up) == 0)
         return socks5clientForwardUdpPayloadToRelay(t, l, ls, buf);
     return socks5clientQueuePayload(t, l, buf) && socks5clientDrainPending(t, l);
@@ -161,6 +162,7 @@ bool socks5clientHandleUdpRelayPayload(tunnel_t *t, line_t *l, socks5client_lsta
         return false;
     }
 
+    buf                = sbufEnsureOrdinary(lineGetBufferPool(l), buf);
     const uint8_t *raw = sbufGetRawPtr(buf);
     size_t         len = sbufGetLength(buf);
 

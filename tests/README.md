@@ -900,3 +900,17 @@ release, reply-before-body ordering, and byte/entry refusal. Fisher and continui
 Est fixtures cover synchronous transport notification, selection/header barriers and
 exact-line teardown. Socket cases test later TCP splice traffic after the deliberately
 materialized first request, timer fallback and shutdown while waiting.
+
+SOCKS parser fixtures also use real private pipes and resident prefixes for mixed
+handshake input, coalesced application tails, parser reentry, rejection, and FIFO
+release. Ready TCP cases check that both directions retain the original splice
+buffer. UDP cases verify complete ordinary decoding/framing and the read
+preferences of application, control, relay and backend lines, including UDP-only
+Init and mixed-service UDP ASSOCIATE selection. The eight
+`socks5{client,server}_tcp_{auth,noauth}_splice_{true,false}` integration cases use
+external socket peers, local-only client DNS, large post-negotiation transfers,
+and positive pipe-to-TCP syscall evidence; disabled cases require no successful
+splice calls.
+The two `socks5{client,server}_udp_ordinary_reads` cases exercise real UDP
+associations, including empty datagrams, with splice enabled globally and require
+that their TCP control and UDP sockets make no splice attempts.

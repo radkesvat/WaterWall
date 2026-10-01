@@ -9,6 +9,11 @@ void socks5serverTunnelUpStreamInit(tunnel_t *t, line_t *l)
     if (lineGetSourceAddressContext(l)->proto_tcp)
     {
         socks5serverLinestateInitialize(lineGetState(l, t), t, l, kSocks5ServerLineKindControlTcp);
+        socks5server_tstate_t *ts = tunnelGetState(t);
+        if (ts->allow_udp && ! ts->allow_connect)
+        {
+            linePreferOrdinaryReadBoth(l);
+        }
         return;
     }
 

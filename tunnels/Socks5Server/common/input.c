@@ -229,6 +229,7 @@ static bool socks5serverParseControlInput(tunnel_t *t, line_t *l, socks5server_l
                     return socks5serverSendReplyAndClose(t, l, kSocks5ReplyCmdNotSupported);
                 }
 
+                linePreferOrdinaryReadBoth(l);
                 if (! socks5serverRegisterUdpAssociation(t, l, &ls->user_handle, &target, &assigned_port))
                 {
                     LOGW("Socks5Server: failed to create a dynamic UDP association");

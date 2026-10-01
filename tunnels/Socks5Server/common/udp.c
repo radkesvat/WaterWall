@@ -99,6 +99,7 @@ bool socks5serverHandleUdpClientPayload(tunnel_t *t, line_t *l, socks5server_lst
     }
     ls->udp_first_payload_validated = true;
 
+    buf                = sbufEnsureOrdinary(client_pool, buf);
     const uint8_t *raw = sbufGetRawPtr(buf);
     size_t         len = sbufGetLength(buf);
 

@@ -184,13 +184,32 @@ then clears the internal marker so it cannot affect later unrelated routing.
 - `required_padding_left` is set for the worst-case SOCKS5 UDP header so UDP mode can prepend datagram headers without
   breaking Waterwall buffer-padding assumptions.
 
+## Splice Support
+
+Socks5Client supports splice-backed TCP payloads. During method, authentication
+and command negotiation, complete proxy-reply deliveries are materialized with
+`sbufEnsureOrdinary()` before parser or nested-input admission. After negotiation,
+TCP payloads and necessary opaque FIFO entries can retain their original buffers.
+The incomplete-handshake and application-backlog limits remain separate.
+
+UDP application, TCP control and UDP relay lines request ordinary reads in both
+directions for their lifetimes. UDP target preparation sets the application
+preference before local DNS can retain input. Preferences are advisory and do not
+propagate between associated lines; every UDP datagram is still materialized
+before application retention, header decoding or framing. Ordinary input passes
+through the helper unchanged. TCP CONNECT lines do not request ordinary reads.
+
+The internal DomainResolver remains splice-capable. Actual activation requires
+an eligible finalized chain and `misc.splice`; a TLS or other blocking node still
+disables splice for the entire payload chain.
+
 ## Node Metadata
 
 Source-backed metadata:
 
 | Property | Value |
 | --- | --- |
-| node flags | `kNodeFlagNone` |
+| node flags | `kNodeFlagSupportsSplice` |
 | `can_have_prev` | `true` |
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayer4` |
