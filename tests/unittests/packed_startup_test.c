@@ -51,15 +51,17 @@ static enum
     SIM_EXEC_FAIL
 } sim_failure;
 
-static int    memfd_calls;
-static int    descriptors_open;
-static int    mappings_open;
-static int    execveat_calls;
-static int    input_fd_captured;
-static size_t input_len_captured;
-static char   captured_input_bytes[1024];
-static size_t captured_input_length;
-static bool   real_cloexec_observed;
+static int         memfd_calls;
+static int         descriptors_open;
+static int         mappings_open;
+static int         execveat_calls;
+static int         input_fd_captured;
+static size_t      input_len_captured;
+static char        captured_input_bytes[1024];
+static size_t      captured_input_length;
+static bool        real_cloexec_observed;
+static bool        verbose_captured;
+static const char *expected_logging_argument;
 
 int waterwallInnerMain(int argc, char **argv);
 
@@ -119,7 +121,11 @@ long __wrap_syscall(long number, ...)
         bool has_fd = false, has_len = false, has_src = false, has_exe = false;
         for (int i = 1; argv[i] != NULL; ++i)
         {
-            if (strncmp(argv[i], "--ww-internal-fd=", sizeof("--ww-internal-fd=") - 1) == 0)
+            if (expected_logging_argument != NULL && strcmp(argv[i], expected_logging_argument) == 0)
+            {
+                verbose_captured = true;
+            }
+            else if (strncmp(argv[i], "--ww-internal-fd=", sizeof("--ww-internal-fd=") - 1) == 0)
             {
                 has_fd            = true;
                 input_fd_captured = atoi(argv[i] + sizeof("--ww-internal-fd=") - 1);
@@ -315,18 +321,20 @@ ww_xz_result_t wwXzDecode(const void *input, size_t input_size, void *output, si
 
 static void resetSimulation(void)
 {
-    memfd_calls           = 0;
-    descriptors_open      = 0;
-    mappings_open         = 0;
-    execveat_calls        = 0;
-    input_fd_captured     = -1;
-    input_len_captured    = 0;
-    captured_input_length = 0;
+    memfd_calls               = 0;
+    descriptors_open          = 0;
+    mappings_open             = 0;
+    execveat_calls            = 0;
+    input_fd_captured         = -1;
+    input_len_captured        = 0;
+    captured_input_length     = 0;
+    verbose_captured          = false;
+    expected_logging_argument = NULL;
     memset(captured_input_bytes, 0, sizeof(captured_input_bytes));
     sim_failure = SIM_OK;
 }
 
-static int runLauncherInput(const char *input, size_t length)
+static int runLauncherInput(const char *input, size_t length, char *logging_argument)
 {
     FILE *stream = tmpfile();
     CHECK(stream != NULL);
@@ -338,17 +346,18 @@ static int runLauncherInput(const char *input, size_t length)
     CHECK(dup2(fileno(stream), STDIN_FILENO) >= 0);
     clearerr(stdin);
 
-    char  program[] = "Waterwall";
-    char  option[]  = "-c:stdin";
-    char *args[]    = {program, option, NULL};
-    int   status    = waterwallInnerMain(2, args);
+    char  program[]           = "Waterwall";
+    char  option[]            = "-c:stdin";
+    char *args[]              = {program, option, logging_argument, NULL};
+    expected_logging_argument = logging_argument;
+    int status                = waterwallInnerMain(logging_argument != NULL ? 3 : 2, args);
     fclose(stream);
     return status;
 }
 
 static int runLauncherWithStdin(const char *input)
 {
-    return runLauncherInput(input, strlen(input));
+    return runLauncherInput(input, strlen(input), NULL);
 }
 
 extern long __real_syscall(long number, ...);
@@ -508,10 +517,23 @@ int main(int argc, char **argv)
         CHECK(input_len_captured == strlen(basic_successes[i]));
     }
 
+    /* Every spelling of the logging switch survives restoration into the application. */
+    {
+        char aliases[][sizeof("--debug-log")] = {
+            "--verbose", "--log", "-log", "-verbose", "--showlog", "-showlog", "--debug-log"};
+        for (size_t i = 0; i < sizeof(aliases) / sizeof(aliases[0]); ++i)
+        {
+            resetSimulation();
+            CHECK(runLauncherInput("{}", 2, aliases[i]) != 0);
+            CHECK(execveat_calls == 1 && verbose_captured);
+            CHECK(descriptors_open == 0 && mappings_open == 0);
+        }
+    }
+
     {
         const char input[] = "{}\0original bytes after NUL";
         resetSimulation();
-        CHECK(runLauncherInput(input, sizeof(input) - 1) != 0);
+        CHECK(runLauncherInput(input, sizeof(input) - 1, NULL) != 0);
         CHECK(execveat_calls == 1 && captured_input_length == sizeof(input) - 1);
         CHECK(memcmp(captured_input_bytes, input, sizeof(input) - 1) == 0);
     }

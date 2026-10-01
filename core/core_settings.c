@@ -1045,6 +1045,25 @@ struct core_settings_s *getCoreSettings(void)
     return settings;
 }
 
+void enableCoreSettingsVerboseLogging(void)
+{
+    assert(settings != NULL);
+
+    char **log_levels[] = {&settings->internal_log_level,
+                           &settings->core_log_level,
+                           &settings->network_log_level,
+                           &settings->dns_log_level};
+    for (size_t i = 0; i < ARRAY_SIZE(log_levels); ++i)
+    {
+        memoryFree(*log_levels[i]);
+        *log_levels[i] = stringDuplicate("VERBOSE");
+    }
+    settings->internal_log_console = true;
+    settings->core_log_console     = true;
+    settings->network_log_console  = true;
+    settings->dns_log_console      = true;
+}
+
 void destroyCoreSettings(void)
 {
     if (settings == NULL)

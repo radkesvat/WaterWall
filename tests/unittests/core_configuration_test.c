@@ -1,6 +1,7 @@
 #include "config_policy.h"
 #include "core_settings.h"
 #include "startup.h"
+#include "startup_options.h"
 #include "wlibc.h"
 #include <stdio.h>
 #include <string.h>
@@ -45,9 +46,92 @@ static bool testParse(const char *json)
     return ok;
 }
 
+static int testStartupOptions(void)
+{
+    char program[]       = "Waterwall";
+    char verbose[]       = "--verbose";
+    char config[]        = "--config:custom.json";
+    char restricted[]    = "--restricted-config";
+    char stdin_arg[]     = "--config:stdin";
+    char version_arg[]   = "--version";
+    char short_version[] = "-v";
+    const struct
+    {
+        int         argc;
+        char       *argv[5];
+        bool        verbose;
+        bool        restricted;
+        const char *core_input;
+    } cases[] = {
+        {1, {program, NULL}, false, false, NULL},
+        {2, {program, verbose, NULL}, true, false, NULL},
+        {3, {program, verbose, config, NULL}, true, false, "custom.json"},
+        {3, {program, config, verbose, NULL}, true, false, "custom.json"},
+        {4, {program, verbose, restricted, stdin_arg, NULL}, true, true, "stdin"},
+    };
+    waterwall_startup_options_t options = {0};
+    for (size_t i = 0; i < ARRAY_SIZE(cases); ++i)
+    {
+        CHECK(waterwallStartupOptionsParse(cases[i].argc, cases[i].argv, &options) == kWaterwallStartupArgumentsRun);
+        CHECK(options.verbose == cases[i].verbose && options.restricted_config == cases[i].restricted);
+        if (cases[i].core_input != NULL)
+        {
+            CHECK(strcmp(options.core_json_input, cases[i].core_input) == 0);
+            CHECK(options.core_json_from_stdin == (strcmp(cases[i].core_input, "stdin") == 0));
+        }
+    }
+    CHECK(waterwallStartupOptionsParse(cases[0].argc, cases[0].argv, &options) == kWaterwallStartupArgumentsRun);
+    CHECK(! options.verbose && ! options.restricted_config);
+
+    char aliases[][sizeof("--debug-log")] = {
+        "--verbose", "--log", "-log", "-verbose", "--showlog", "-showlog", "--debug-log"};
+    for (size_t i = 0; i < ARRAY_SIZE(aliases); ++i)
+    {
+        char *arguments[] = {program, aliases[i], config, NULL};
+        CHECK(waterwallStartupOptionsParse(3, arguments, &options) == kWaterwallStartupArgumentsRun);
+        CHECK(options.verbose && strcmp(options.core_json_input, "custom.json") == 0);
+        char *duplicate[] = {program, verbose, aliases[i], NULL};
+        CHECK(waterwallStartupOptionsParse(3, duplicate, &options) == kWaterwallStartupArgumentsExitFailure);
+        char *version_verbose[] = {program, version_arg, aliases[i], NULL};
+        CHECK(waterwallStartupOptionsParse(3, version_verbose, &options) == kWaterwallStartupArgumentsExitFailure);
+    }
+    char *version[] = {program, short_version, NULL};
+    CHECK(waterwallStartupOptionsParse(2, version, &options) == kWaterwallStartupArgumentsExitSuccess);
+    return 0;
+}
+
+static int testVerboseLogging(void)
+{
+    const char *json = "{\"configs\":[\"nodes.json\"],\"misc\":{\"workers\":1},\"log\":{\"path\":\"logs/\","
+                       "\"internal\":{\"loglevel\":\"SILENT\",\"console\":false,\"file\":\"\"},"
+                       "\"core\":{\"loglevel\":\"WARN\",\"console\":false,\"file\":\"core.log\"},"
+                       "\"network\":{\"loglevel\":\"ERROR\",\"console\":false,\"file\":\"network.log\"},"
+                       "\"dns\":{\"loglevel\":\"DEBUG\",\"console\":false,\"file\":\"dns.log\"}}}";
+    CHECK(testParse(json));
+    struct core_settings_s *settings = getCoreSettings();
+    CHECK(strcmp(settings->internal_log_level, "SILENT") == 0 && ! settings->internal_log_console);
+    CHECK(strcmp(settings->core_log_level, "WARN") == 0 && ! settings->core_log_console);
+    CHECK(strcmp(settings->network_log_level, "ERROR") == 0 && ! settings->network_log_console);
+    CHECK(strcmp(settings->dns_log_level, "DEBUG") == 0 && ! settings->dns_log_console);
+
+    enableCoreSettingsVerboseLogging();
+    CHECK(strcmp(settings->internal_log_level, "VERBOSE") == 0 && settings->internal_log_console);
+    CHECK(strcmp(settings->core_log_level, "VERBOSE") == 0 && settings->core_log_console);
+    CHECK(strcmp(settings->network_log_level, "VERBOSE") == 0 && settings->network_log_console);
+    CHECK(strcmp(settings->dns_log_level, "VERBOSE") == 0 && settings->dns_log_console);
+    CHECK(strcmp(settings->internal_log_file_fullpath, "logs/") == 0);
+    CHECK(strcmp(settings->core_log_file_fullpath, "logs/core.log") == 0);
+    CHECK(strcmp(settings->network_log_file_fullpath, "logs/network.log") == 0);
+    CHECK(strcmp(settings->dns_log_file_fullpath, "logs/dns.log") == 0);
+    destroyCoreSettings();
+    return 0;
+}
+
 int main(void)
 {
     initWLibc();
+    CHECK(testStartupOptions() == 0);
+    CHECK(testVerboseLogging() == 0);
 
     const char *valid = "{\"configs\":[\"nodes.json\"],\"misc\":{\"workers\":2},"
                         "\"dns\":{\"domains\":[\"example.test\"],\"servers\":\"127.0.0.1\"}}";

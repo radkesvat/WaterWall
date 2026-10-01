@@ -49,4 +49,7 @@ struct core_settings_s
 bool                    parseCoreSettings(const char *data_json, size_t length);
 struct core_settings_s *getCoreSettings(void);
 
+/* Apply after a successful parse and before runtime initialization. */
+void enableCoreSettingsVerboseLogging(void);
+
 void destroyCoreSettings(void);

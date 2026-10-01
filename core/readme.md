@@ -1,5 +1,5 @@
 <!--
-Documentation version: 155
+Documentation version: 157
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/01-getting-started/tutorial-part1.mdx, and both English files must keep the same documentation version. User-facing behavior changes should also update WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/01-getting-started/tutorial-part1.mdx.
 -->
 
@@ -196,6 +196,24 @@ VERBOSE, DEBUG, INFO, WARN, ERROR, FATAL, SILENT
 ```
 
 The logger uppercases the configured value before applying it.
+
+To show all log levels for one run, add `--verbose`:
+
+```bash
+./Waterwall --verbose
+./Waterwall --verbose --config:/etc/waterwall/core.json
+```
+
+Equivalent aliases are `--log`, `-log`, `-verbose`, `--showlog`, `-showlog`, and
+`--debug-log`. Specify only one spelling per run.
+
+This enables console output and sets `internal`, `core`, `network`, and `dns` to
+`VERBOSE`, overriding their `loglevel` and `console` settings even when logging is
+`SILENT`. Enabled log files also receive the additional messages. File paths and
+disabled file outputs still follow the configuration. The override is applied in
+memory before logger initialization and does not rewrite `core.json`. `-v` still
+prints the version. Specify `--verbose` once; it cannot be combined with a version
+or Windows recovery request.
 
 Example:
 

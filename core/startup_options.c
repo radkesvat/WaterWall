@@ -34,6 +34,13 @@ static bool isVersionArgument(const char *arg)
            strcmp(arg, "--v") == 0 || strcmp(arg, "version") == 0;
 }
 
+static bool isVerboseArgument(const char *arg)
+{
+    return strcmp(arg, "--verbose") == 0 || strcmp(arg, "--log") == 0 || strcmp(arg, "-log") == 0 ||
+           strcmp(arg, "-verbose") == 0 || strcmp(arg, "--showlog") == 0 || strcmp(arg, "-showlog") == 0 ||
+           strcmp(arg, "--debug-log") == 0;
+}
+
 static const char *configArgumentValue(const char *arg)
 {
     static const char *prefixes[] = {
@@ -90,7 +97,9 @@ static void printUsage(const char *program_name)
     fprintf(stderr,
             "Usage:\n"
             "  %s [-v|--v|-version|--version|version]\n"
-            "  %s [--restricted-config] [-c:PATH|--c:PATH|-config:PATH|--config:PATH|config:PATH]\n",
+            "  %s [--verbose] [--restricted-config] [-c:PATH|--c:PATH|-config:PATH|--config:PATH|config:PATH]\n"
+            "  --verbose: enable console output and all log levels for every logger\n"
+            "    Aliases: --log, -log, -verbose, --showlog, -showlog, --debug-log\n",
             program_name,
             program_name);
 #ifdef _WIN32
@@ -115,6 +124,7 @@ waterwall_startup_arguments_result_e waterwallStartupOptionsParse(int argc, char
     const char *cli_core_input    = NULL;
     bool        version_argument  = false;
     bool        restricted_config = false;
+    bool        verbose            = false;
     uintptr_t   stop_event         = 0;
     uintptr_t   ready_event        = 0;
     uintptr_t   controller_process = 0;
@@ -130,6 +140,17 @@ waterwall_startup_arguments_result_e waterwallStartupOptionsParse(int argc, char
             fprintf(stderr, "Invalid null command-line argument at position %d\n", i);
             printUsage(program_name);
             return kWaterwallStartupArgumentsExitFailure;
+        }
+
+        if (isVerboseArgument(arg))
+        {
+            if (verbose)
+            {
+                fprintf(stderr, "The verbose logging option may only be specified once\n");
+                return kWaterwallStartupArgumentsExitFailure;
+            }
+            verbose = true;
+            continue;
         }
 
         if (strcmp(arg, "--restricted-config") == 0)
@@ -272,6 +293,7 @@ waterwall_startup_arguments_result_e waterwallStartupOptionsParse(int argc, char
     }
 
     options->restricted_config    = restricted_config;
+    options->verbose              = verbose;
     options->stop_event           = stop_event;
     options->ready_event          = ready_event;
     options->controller_process   = controller_process;

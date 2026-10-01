@@ -155,6 +155,11 @@ int waterwallInnerMain(int argc, char **argv)
     }
     waterwallStartupHandoffCleanup(&handoff);
 
+    if (startup_options.verbose)
+    {
+        enableCoreSettingsVerboseLogging();
+    }
+
     //  [Runtime setup]
     createDirIfNotExists(getCoreSettings()->log_path);
 

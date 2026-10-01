@@ -21,6 +21,7 @@ extern "C"
         const char *core_json_input;
         bool        core_json_from_stdin;
         bool        restricted_config;
+        bool        verbose;
         uintptr_t   stop_event;
         uintptr_t   ready_event;
         uintptr_t   controller_process;
@@ -47,7 +48,9 @@ extern "C"
      *
      * CLI input overrides WW_CORE_JSON_INPUT. With neither set, core.json in the
      * process working directory is selected. Version requests are printed here and
-     * returned as an early successful exit.
+     * returned as an early successful exit. --verbose requests console output and
+     * all log levels for the runtime's four loggers. Its aliases are --log, -log,
+     * -verbose, --showlog, -showlog, and --debug-log.
      *
      * @param argc Process argument count.
      * @param argv Process argument vector.

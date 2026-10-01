@@ -9,6 +9,7 @@ from pathlib import Path
 
 
 CORE_INPUT_ENV = "WW_CORE_JSON_INPUT"
+VERBOSE_ARGUMENTS = ("--verbose", "--log", "-log", "-verbose", "--showlog", "-showlog", "--debug-log")
 UNSET = object()
 
 
@@ -169,6 +170,60 @@ def test_stdin_selection(binary, run_dir):
     expect_error(result, "standard input ended before any JSON was received", "empty stdin input")
 
 
+def test_verbose_logging(binary, run_dir):
+    startup_message = "Starting Waterwall version "
+    for level, files_enabled in (("SILENT", False), ("WARN", True)):
+        case_dir = run_dir / f"verbose-{level}"
+        case_dir.mkdir()
+        marker = f"VERBOSE_{level}_INPUT_MARKER"
+        core = json.loads(core_json_with_marker(marker))
+        core["misc"]["tcp-tune"] = False
+        core["log"] = {
+            "path": "log/",
+            **{
+                name: {"loglevel": level, "console": False,
+                       "file": f"{name}.log" if files_enabled else ""}
+                for name in ("core", "internal", "network", "dns")
+            },
+        }
+        core_text = json.dumps(core)
+        core_file = case_dir / "core.json"
+        core_file.write_text(core_text, encoding="utf-8")
+
+        result = run_waterwall(binary, case_dir)
+        require(result.returncode != 0, f"{level}: missing node config unexpectedly succeeded")
+        require(startup_message not in result.stdout and marker not in result.stdout,
+                f"{level}: console logging was not disabled\n{result.stdout}")
+
+        launches = [(arguments, "") for flag in VERBOSE_ARGUMENTS
+                    for arguments in ([flag], ["--config:core.json", flag])]
+        launches.append((["--verbose", "--restricted-config", "--config:stdin"], core_text))
+        for arguments, stdin_text in launches:
+            result = run_waterwall(binary, case_dir, arguments, stdin_text=stdin_text)
+            case_name = f"{level}: verbose logging with {arguments}"
+            if "--restricted-config" in arguments:
+                expect_error(result, 'config file "<restricted>" could not be read', case_name)
+                require(marker not in result.stdout, "verbose logging bypassed restricted path redaction")
+            else:
+                expect_selected(result, marker, case_name)
+            require(startup_message in result.stdout,
+                    f"{level}: verbose logging omitted startup messages\n{result.stdout}")
+            require(" DEBUG " in result.stdout,
+                    f"{level}: verbose logging omitted debug messages\n{result.stdout}")
+
+        log_files = list((case_dir / "log").glob("*.log"))
+        if files_enabled:
+            require(any(startup_message in path.read_text(encoding="utf-8") for path in log_files),
+                    f"{level}: verbose logging did not lower the file log level")
+        else:
+            require(not log_files, "verbose logging unexpectedly enabled disabled log files")
+        require(core_file.read_text(encoding="utf-8") == core_text, "verbose logging rewrote core.json")
+
+        result = run_waterwall(binary, case_dir)
+        require(result.returncode != 0 and startup_message not in result.stdout and marker not in result.stdout,
+                f"{level}: verbose logging persisted into a later run\n{result.stdout}")
+
+
 def test_invalid_inputs(binary, run_dir):
     missing_path = run_dir / "missing-core.json"
     invalid_json_path = run_dir / "invalid-core.json"
@@ -204,6 +259,13 @@ def test_invalid_inputs(binary, run_dir):
     result = run_waterwall(binary, run_dir, ["--version", "--config:core.json"])
     expect_error(result, "cannot be combined", "version and config combination")
 
+    for flag in VERBOSE_ARGUMENTS:
+        result = run_waterwall(binary, run_dir, ["--version", flag])
+        expect_error(result, "cannot be combined", f"version and {flag} combination")
+
+        result = run_waterwall(binary, run_dir, ["--verbose", flag])
+        expect_error(result, "may only be specified once", f"duplicate verbose option {flag}")
+
 
 def main():
     require(len(sys.argv) == 2, "usage: core_json_input_test.py <Waterwall-binary>")
@@ -216,6 +278,7 @@ def main():
         test_input_error_versions(binary, run_dir)
         test_file_selection(binary, run_dir)
         test_stdin_selection(binary, run_dir)
+        test_verbose_logging(binary, run_dir)
         test_invalid_inputs(binary, run_dir)
 
 
