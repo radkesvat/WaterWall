@@ -62,8 +62,13 @@ def run(binary, mode, enabled):
     if tracer is None:
         raise RuntimeError("strace is required for pipe-to-socket evidence")
     keepalive = mode.startswith("keepalive")
-    external_client = mode == "keepalive_client"
+    external_client = mode.startswith("keepalive_client")
     external_server = mode == "keepalive_server"
+    watchdog = mode in ("keepalive_client_watchdog", "keepalive_client_timeout")
+    timeout = mode == "keepalive_client_timeout"
+    client_settings = {"ping-interval": 50}
+    if watchdog:
+        client_settings.update({"sensitive-mode": True, "tolerance-ms": 250 if timeout else 2000})
     if mode == "keepalive":
         nodes = [listener_node("app", APP_PORT, "client"),
                  {"name": "client", "type": "KeepAliveClient", "next": "carrier",
@@ -75,7 +80,7 @@ def run(binary, mode, enabled):
     elif keepalive:
         nodes = [listener_node("app", APP_PORT, "framer"),
                  {"name": "framer", "type": "KeepAliveClient" if external_client else "KeepAliveServer",
-                  "next": "backend", **({"settings": {"ping-interval": 50}} if external_client else {})},
+                  "next": "backend", **({"settings": client_settings} if external_client else {})},
                  connector_node("backend", BACKEND_PORT)]
         prefix = b""
     else:
@@ -128,6 +133,18 @@ def run(binary, mode, enabled):
                             raise
                         time.sleep(.02)
 
+                if timeout:
+                    with client, backend.accept()[0] as conn:
+                        conn.settimeout(3)
+                        client.settimeout(3)
+                        assert exact(conn, 5) == keepalive_frame(b"", 2), "missing watchdog ping"
+                        assert conn.recv(1) == b"", "missing pong did not close peer or emitted another ping"
+                        assert client.recv(1) == b"", "watchdog did not close application connection"
+                    process.send_signal(signal.SIGTERM)
+                    assert process.wait(timeout=10) == 128 + signal.SIGTERM, "unclean watchdog shutdown"
+                    assert "KeepAliveClient: pong timed out" in (root / "stdout.log").read_text(), "missing timeout verdict"
+                    return
+
                 def peer():
                     with backend.accept()[0] as conn:
                         conn.settimeout(15)
@@ -136,6 +153,11 @@ def run(binary, mode, enabled):
                         conn.sendall(keepalive_frame(early[::-1]) if external_client else early[::-1])
                         assert read(conn, len(data)) == data, "framed upload changed"
                         conn.sendall(keepalive_frame(data[::-1]) if external_client else data[::-1])
+                        if watchdog:
+                            for _ in range(3):
+                                assert exact(conn, 5) == keepalive_frame(b"", 2), "invalid watchdog ping"
+                                conn.sendall(keepalive_frame(b"", 3))
+                            conn.sendall(keepalive_frame(b"watchdog replies received"))
                         if external_client:
                             keepalive_eof(conn)
                         else:
@@ -151,6 +173,8 @@ def run(binary, mode, enabled):
                     assert read(client, len(early)) == early[::-1], "early download changed"
                     client.sendall(keepalive_frame(data) if external_server else data)
                     assert read(client, len(data)) == data[::-1], "framed download changed"
+                    if watchdog:
+                        assert exact(client, 25) == b"watchdog replies received", "timely pong stopped watchdog pings"
                     client.shutdown(socket.SHUT_RDWR)
                     future.result(timeout=20)
                 process.send_signal(signal.SIGTERM)
@@ -181,4 +205,4 @@ def run(binary, mode, enabled):
 
 if __name__ == "__main__":
     run(str(Path(sys.argv[1]).resolve()), sys.argv[2], sys.argv[3] == "true")
-    print("Framed TCP integrity, bidirectional splice policy and orderly shutdown passed")
+    print("Framed TCP integrity, splice policy, keepalive replies and orderly shutdown passed")

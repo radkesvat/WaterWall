@@ -10,6 +10,8 @@ typedef struct keepaliveclient_tstate_s
     keepaliveclient_lstate_t *lines_head;
     wtimer_t                **worker_timers;
     uint32_t                  ping_interval_ms;
+    uint32_t                  tolerance_ms;
+    bool                      sensitive_mode;
 } keepaliveclient_tstate_t;
 
 struct keepaliveclient_lstate_s
@@ -21,6 +23,12 @@ struct keepaliveclient_lstate_s
     bool                      read_draining;
     bool                      write_draining;
     bool                      write_paused;
+    bool                      read_paused;
+    bool                      established;
+    bool                      awaiting_pong;
+    uint64_t                  next_ping_at_ms;
+    uint64_t                  pong_deadline_ms;
+    uint64_t                  pause_started_at_ms;
     line_t                   *line;
     keepaliveclient_lstate_t *tracked_prev;
     keepaliveclient_lstate_t *tracked_next;
@@ -41,7 +49,9 @@ enum
     kKeepAliveFrameKindNormal     = 1,
     kKeepAliveFrameKindPing       = 2,
     kKeepAliveFrameKindPong       = 3,
-    kKeepAliveDefaultPingMs       = 60000,
+    kKeepAliveDefaultPingMs       = 30000,
+    kKeepAliveDefaultToleranceMs  = 90000,
+    kKeepAliveWatchdogCheckMs     = 1000,
     kTunnelStateSize              = sizeof(keepaliveclient_tstate_t),
     kLineStateSize                = sizeof(keepaliveclient_lstate_t)
 };
@@ -59,8 +69,11 @@ void keepaliveclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 
 void keepaliveclientTunnelDownStreamFinish(tunnel_t *t, line_t *l);
 void keepaliveclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
+void keepaliveclientTunnelDownStreamEst(tunnel_t *t, line_t *l);
 void keepaliveclientTunnelDownStreamPause(tunnel_t *t, line_t *l);
 void keepaliveclientTunnelDownStreamResume(tunnel_t *t, line_t *l);
+void keepaliveclientTunnelUpStreamPause(tunnel_t *t, line_t *l);
+void keepaliveclientTunnelUpStreamResume(tunnel_t *t, line_t *l);
 
 void keepaliveclientLinestateInitialize(keepaliveclient_lstate_t *ls, line_t *l);
 void keepaliveclientLinestateDestroy(keepaliveclient_lstate_t *ls);

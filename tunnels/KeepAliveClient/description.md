@@ -39,19 +39,43 @@ Frame kinds are:
 - downstream payload is treated as a byte stream of framed input
 - normal downstream frames are decoded and forwarded with `tunnelPrevDownStreamPayload()`
 - downstream `ping` frames are answered with upstream `pong` frames
-- downstream `pong` frames are ignored
+- downstream empty `pong` frames acknowledge an outstanding ping in sensitive mode; otherwise they are ignored
 
 ## Keepalive Timer
 
 `KeepAliveClient` tracks each initialized line in tunnel state and starts one periodic timer per worker during
 `onStart()`.
 
-Every `ping-interval` milliseconds, the worker-local timer walks the tracked lines for that worker and sends one empty
-`ping` frame on each still-alive line.
+With sensitive mode disabled, every `ping-interval` milliseconds the worker-local timer walks the tracked lines for
+that worker and sends one empty `ping` frame on each still-alive line whose upstream output is writable.
 
 Default interval:
 
-- `60000 ms`
+- `30000 ms`
+
+## Optional Reply Watchdog
+
+`sensitive-mode` defaults to `false`. When enabled, the first ping is due one
+`ping-interval` after downstream transport `Est`. Only one ping is outstanding
+per line. An empty pong on that same line acknowledges it; application frames,
+peer pings, unknown kinds and nonempty pongs do not.
+
+`tolerance-ms` defaults to `90000` and must be an integer in `1..2147483647`.
+A missing or late pong closes the borrowed connection through its owner. This
+node does not recreate it. Deadlines use the owner event loop's monotonic clock.
+The existing worker timer checks every `min(ping-interval, tolerance-ms, 1000)`
+milliseconds in sensitive mode; ping sends still obey `ping-interval`. Expiry
+is handled on the first check at or after the deadline, or when a late pong is
+decoded.
+
+Pause in either direction suppresses new watchdog pings and suspends the reply
+countdown. Repeated and overlapping pauses count once; the countdown resumes
+only after both directions resume. An already-admitted pong can still acknowledge
+the ping during Pause. Finish clears the pending wait with the rest of line state.
+
+The tolerance includes unpaused queueing and transfer time. Pongs share the same
+ordered stream as normal frames and may wait behind a 6 MiB body, so choose a
+tolerance that allows for the path's throughput and latency.
 
 ## Finish Behavior
 
@@ -70,7 +94,9 @@ This matches Waterwall’s normal directional finish pattern and avoids touching
   "name": "keepalive-client",
   "type": "KeepAliveClient",
   "settings": {
-    "ping-interval": 60000
+    "ping-interval": 30000,
+    "sensitive-mode": false,
+    "tolerance-ms": 90000
   },
   "next": "next-node-name"
 }

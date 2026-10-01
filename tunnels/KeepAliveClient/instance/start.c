@@ -11,7 +11,10 @@ static void keepaliveclientStartWorkerTimer(void *worker_ptr, void *arg1, void *
     tunnel_t                 *t      = arg1;
     keepaliveclient_tstate_t *ts     = tunnelGetState(t);
 
-    wtimer_t *timer = wtimerAdd(worker->loop, keepaliveclientWorkerTimerCallback, ts->ping_interval_ms, INFINITE);
+    const uint32_t interval =
+        ts->sensitive_mode ? min(ts->ping_interval_ms, min(ts->tolerance_ms, (uint32_t) kKeepAliveWatchdogCheckMs))
+                           : ts->ping_interval_ms;
+    wtimer_t *timer = wtimerAdd(worker->loop, keepaliveclientWorkerTimerCallback, interval, INFINITE);
     if (timer == NULL)
     {
         LOGF("KeepAliveClient: failed to create periodic keepalive timer on worker %u", (unsigned int) worker->wid);

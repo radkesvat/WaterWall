@@ -42,6 +42,9 @@ static bool             measuring, fail_stream, fail_queue, inject_encode, injec
 static sbuf_t          *expected_identity;
 static bool             pause_output;
 static unsigned         encode_overflow;
+#ifndef TEST_KEEPALIVE_SERVER
+static bool inject_pong;
+#endif
 
 ssize_t __real_read(int fd, void *destination, size_t bytes);
 ssize_t __wrap_read(int fd, void *destination, size_t bytes);
@@ -143,6 +146,14 @@ static void captureWire(tunnel_t *t, line_t *l, sbuf_t *buf)
     wire_length += length;
     ++wire_calls;
     lineReuseBuffer(l, buf);
+#ifndef TEST_KEEPALIVE_SERVER
+    if (inject_pong)
+    {
+        inject_pong          = false;
+        const uint8_t pong[] = {0, 0, 0, 1, 3};
+        decode(node, l, ordinary(pong, sizeof(pong)));
+    }
+#endif
     if (inject_encode)
     {
         inject_encode = false;
@@ -208,7 +219,7 @@ static void capturePlain(tunnel_t *t, line_t *l, sbuf_t *buf)
         closeFromOutput(l);
 }
 
-static void setup(void)
+static void setupWithSettings(const char *settings)
 {
     twfBufferLedgerReset();
     wire_length = plain_length = measured_reads = 0;
@@ -217,8 +228,12 @@ static void setup(void)
     pause_output                                                              = false;
     encode_overflow                                                           = 0;
     expected_identity                                                         = NULL;
+#ifndef TEST_KEEPALIVE_SERVER
+    inject_pong = false;
+#endif
     twfWorkerEnvSetupWithBufferSizes(&env, 8192, 1024, 128, 65536, 65536);
-    metadata = nodeGet();
+    metadata                    = nodeGet();
+    metadata.node_settings_json = settings != NULL ? cJSON_Parse(settings) : NULL;
     twfRequire(metadata.flags == kNodeFlagSupportsSplice && metadata.required_padding_left == framePrefix,
                "incorrect KeepAlive metadata");
     node = nodeCreate(&metadata);
@@ -232,6 +247,7 @@ static void setup(void)
     node->chain           = &chain;
     prev->fnFinD = next->fnFinU = finish;
     next->fnInitU               = init;
+    prev->fnEstD                = noop;
     prev->fnPauseD = prev->fnResumeD = next->fnPauseU = next->fnResumeU = noop;
 #ifdef TEST_KEEPALIVE_SERVER
     prev->fnPayloadD = captureWire;
@@ -244,6 +260,11 @@ static void setup(void)
     line = twfLinePoolCreateLine(&lines);
     lineRef(line);
     node->fnInitU(node, line);
+}
+
+static void setup(void)
+{
+    setupWithSettings(NULL);
 }
 
 static void teardown(void)
@@ -264,11 +285,186 @@ static void teardown(void)
 #ifdef TEST_KEEPALIVE_SERVER
     tunnelDestroy(node);
 #else
+    keepaliveclientTunnelOnWorkerQuiesce(node, 0, wwLifecycleProcessShutdown());
     keepaliveclientTunnelDestroy(node, wwLifecycleProcessShutdown());
 #endif
+    cJSON_Delete(metadata.node_settings_json);
     memoryFree(metadata.type);
     twfWorkerEnvTeardown(&env);
 }
+
+#ifndef TEST_KEEPALIVE_SERVER
+static void setTime(uint64_t now)
+{
+    env.loop->cur_hrtime = now * 1000U;
+}
+
+static wtimer_t *watchdogSetup(bool establish)
+{
+    setupWithSettings("{\"ping-interval\":10,\"sensitive-mode\":true,\"tolerance-ms\":30}");
+    keepaliveclient_tstate_t *ts    = tunnelGetState(node);
+    wtimer_t                 *timer = wtimerAdd(env.loop, keepaliveclientWorkerTimerCallback, 10, INFINITE);
+    twfRequire(timer != NULL, "create watchdog fixture timer");
+    weventSetUserData(timer, node);
+    ts->worker_timers[0] = timer;
+    setTime(1000);
+    if (establish)
+        node->fnEstD(node, line);
+    return timer;
+}
+
+static void tick(wtimer_t *timer, uint64_t now)
+{
+    setTime(now);
+    keepaliveclientWorkerTimerCallback(timer);
+}
+
+static void testWatchdogTimeout(void)
+{
+    wtimer_t *timer = watchdogSetup(true);
+    tick(timer, 1010);
+    twfRequire(wire_calls == 1 && memoryCompare(wire, "\0\0\0\1\2", 5) == 0, "watchdog did not send ping");
+    const uint8_t partial[] = {0, 0, 0, 5, 1, 'A'};
+#if WW_HAVE_SPLICE
+    decode(node, line, pipeBytes(partial, sizeof(partial), 0));
+#else
+    decode(node, line, ordinary(partial, sizeof(partial)));
+#endif
+    tick(timer, 1039);
+    twfRequire(lineIsAlive(line), "watchdog expired before tolerance");
+    tick(timer, 1040);
+    twfRequire(! lineIsAlive(line) && finishes == 2, "missing pong did not close borrowed connection");
+    twfRequire(wire_calls == 1, "watchdog sent another ping while awaiting a reply");
+    teardown();
+}
+
+static void testWatchdogReplies(void)
+{
+    const uint8_t pong[] = {0, 0, 0, 1, 3};
+    wtimer_t     *timer  = watchdogSetup(true);
+    tick(timer, 1009);
+    twfRequire(wire_calls == 0, "watchdog ping escaped interval");
+    tick(timer, 1010);
+    setTime(1015);
+    for (unsigned i = 0; i < sizeof(pong); ++i)
+    {
+#if WW_HAVE_SPLICE
+        decode(node, line, i % 2 ? ordinary(pong + i, 1) : pipeBytes(pong + i, 1, 0));
+#else
+        decode(node, line, ordinary(pong + i, 1));
+#endif
+    }
+    node->fnEstD(node, line); /* Repeated Est must not postpone the next ping. */
+    tick(timer, 1019);
+    twfRequire(wire_calls == 1, "timely pong accelerated the ping interval");
+    tick(timer, 1020);
+    twfRequire(wire_calls == 2 && lineIsAlive(line), "timely pong did not release next ping");
+    const uint8_t other[] = {0, 0, 0, 2, 3, 'X', 0, 0, 0, 2, 1, 'A', 0, 0, 0, 1, 2};
+    setTime(1025);
+    decode(node, line, ordinary(other, sizeof(other)));
+    tick(timer, 1050);
+    twfRequire(! lineIsAlive(line) && finishes == 2 && plain_length == 1 && wire_calls == 3,
+               "normal traffic, peer ping or nonempty pong satisfied watchdog");
+    teardown();
+
+    timer = watchdogSetup(true);
+    tick(timer, 1010);
+    setTime(1040);
+    decode(node, line, ordinary(pong, sizeof(pong)));
+    twfRequire(! lineIsAlive(line) && finishes == 2, "late pong bypassed the reply deadline");
+    teardown();
+
+    timer       = watchdogSetup(true);
+    inject_pong = true;
+    tick(timer, 1010);
+    tick(timer, 1020);
+    twfRequire(wire_calls == 2 && lineIsAlive(line), "reentrant pong was lost before ping state was published");
+    close_output = true;
+    setTime(1025);
+    decode(node, line, ordinary(pong, sizeof(pong)));
+    tick(timer, 1030);
+    twfRequire(! lineIsAlive(line) && wire_calls == 3, "watchdog continued after ping callback closed line");
+    teardown();
+}
+
+static void testWatchdogPauseAndEst(void)
+{
+    wtimer_t *timer = watchdogSetup(false);
+    tick(timer, 2000);
+    twfRequire(wire_calls == 0 && lineIsAlive(line), "watchdog ran before transport Est");
+    node->fnEstD(node, line);
+    tick(timer, 2010);
+    twfRequire(wire_calls == 1, "watchdog did not start after Est");
+    setTime(2020);
+    node->fnPauseD(node, line);
+    setTime(2030);
+    node->fnPauseD(node, line);
+    setTime(2035);
+    node->fnPauseU(node, line);
+    tick(timer, 4000);
+    twfRequire(lineIsAlive(line) && wire_calls == 1, "watchdog expired during Pause");
+    setTime(4010);
+    node->fnResumeD(node, line);
+    tick(timer, 4015);
+    twfRequire(lineIsAlive(line) && wire_calls == 1, "one Resume cleared overlapping Pause");
+    setTime(4020);
+    node->fnResumeU(node, line);
+    tick(timer, 4039);
+    twfRequire(lineIsAlive(line), "Pause consumed remaining reply tolerance");
+    tick(timer, 4040);
+    twfRequire(! lineIsAlive(line) && finishes == 2, "watchdog did not expire after resumed tolerance");
+    teardown();
+
+    timer = watchdogSetup(true);
+    node->fnPauseU(node, line);
+    tick(timer, 2000);
+    twfRequire(wire_calls == 0, "watchdog sent ping while replies were paused");
+    node->fnResumeU(node, line);
+    tick(timer, 2001);
+    twfRequire(wire_calls == 1 && lineIsAlive(line), "watchdog failed to send after Resume");
+    node->fnPauseD(node, line);
+    const uint8_t pong[] = {0, 0, 0, 1, 3};
+    decode(node, line, ordinary(pong, sizeof(pong)));
+    tick(timer, 5000);
+    node->fnResumeD(node, line);
+    tick(timer, 5001);
+    twfRequire(wire_calls == 2 && lineIsAlive(line), "in-flight pong received during Pause was lost");
+    teardown();
+}
+
+static void testWatchdogSettings(void)
+{
+    setupWithSettings("{\"ping-interval\":10,\"tolerance-ms\":30,\"sensitive-mode\":false}");
+    const char *invalid[] = {"{\"tolerance-ms\":0}",
+                             "{\"tolerance-ms\":-1}",
+                             "{\"sensitive-mode\":\"yes\"}",
+                             "{\"tolerance-ms\":\"30\"}",
+                             "{\"tolerance-ms\":1.5}",
+                             "{\"tolerance-ms\":2147483648}"};
+    for (unsigned i = 0; i < ARRAY_SIZE(invalid); ++i)
+    {
+        node_t config             = nodeGet();
+        config.node_settings_json = cJSON_Parse(invalid[i]);
+        tunnel_t *candidate       = nodeCreate(&config);
+        twfRequire(candidate == NULL, "watchdog accepted invalid settings");
+        cJSON_Delete(config.node_settings_json);
+        memoryFree(config.type);
+    }
+    wtimer_t *timer = wtimerAdd(env.loop, keepaliveclientWorkerTimerCallback, 10, INFINITE);
+    twfRequire(timer != NULL, "create disabled watchdog timer");
+    weventSetUserData(timer, node);
+    ((keepaliveclient_tstate_t *) tunnelGetState(node))->worker_timers[0] = timer;
+    tick(timer, 1000);
+    tick(timer, 1000000);
+    twfRequire(lineIsAlive(line) && wire_calls == 2, "disabled watchdog changed existing ping behavior");
+    teardown();
+    setup();
+    const keepaliveclient_tstate_t *ts = tunnelGetState(node);
+    twfRequire(! ts->sensitive_mode && ts->tolerance_ms == 90000 && ts->ping_interval_ms == 30000,
+               "incorrect watchdog defaults");
+    teardown();
+}
+#endif
 
 static void testLargeFrameBoundaries(void)
 {
@@ -495,6 +691,12 @@ static void testLargePipeFrame(void)
 
 int main(void)
 {
+#ifndef TEST_KEEPALIVE_SERVER
+    testWatchdogTimeout();
+    testWatchdogReplies();
+    testWatchdogPauseAndEst();
+    testWatchdogSettings();
+#endif
     testLargeFrameBoundaries();
     testOrdinaryAndLarge();
     testControlAndRejection();

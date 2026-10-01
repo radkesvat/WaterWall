@@ -86,13 +86,16 @@ static void fixtureTeardown(keepaliveclient_fixture_t *fixture)
 // Category B: one worker cannot create its required timer
 // ---------------------------------------------------------------------------
 
-static void caseWorkerTimerFailure(void)
+static void caseWorkerTimerFailure(bool sensitive)
 {
     twfSetCase("keepaliveclient worker timer failure");
     tosResetProcessApi(true);
 
     keepaliveclient_fixture_t fixture;
     fixtureSetup(&fixture);
+    keepaliveclient_tstate_t *ts = tunnelGetState(fixture.keepalive);
+    ts->sensitive_mode           = sensitive;
+    ts->tolerance_ms             = 50;
 
     // Worker 1 is the one that cannot allocate.
     g_failing_loop = g_env.loops[1];
@@ -106,6 +109,8 @@ static void caseWorkerTimerFailure(void)
     tosPumpWorker(&g_env, 0);
     tosRequireNoProcessApiCall();
     twfRequire(fixture.worker_timer_slots[0] != NULL, "worker 0 must publish its timer");
+    twfRequire(((wtimeout_t *) fixture.worker_timer_slots[0])->timeout == (sensitive ? 50U : kTestPingIntervalMs),
+               "worker watchdog timer did not respect tolerance shorter than ping interval");
 
     tosPumpWorker(&g_env, 1);
 
@@ -281,7 +286,8 @@ static void caseRefusedHandoffAborts(void)
 
 int main(void)
 {
-    caseWorkerTimerFailure();
+    caseWorkerTimerFailure(false);
+    caseWorkerTimerFailure(true);
     caseTimerSnapshotRetainsEveryLineAcrossReentrantClose();
     caseRefusedHandoffAborts();
 
