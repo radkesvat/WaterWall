@@ -29,7 +29,7 @@ static inline bool socks5serverRemoteKeyEqual(socks5server_remote_key_t *const *
 #ifdef SOCKS5SERVER_TEST_CONSTANT_HASH
 #define i_hash(key) ((void) (key), UINT64_C(0))
 #else
-#define i_hash(key) ((*key)->hash)
+#define i_hash(key) ((size_t) ((*key)->hash))
 #endif
 #include "stc/hmap.h"
 
