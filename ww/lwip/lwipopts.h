@@ -276,7 +276,14 @@ a lot of data that needs to be copied, this should be set high. */
    at the previous baseline, keeps normal traffic flowing while the maximum
    number of fragments is enqueued. */
 #define WW_LWIP_REASS_PBUF_HEADROOM (3 * WW_LWIP_MAX_REASS_DATAGRAMS * IP_REASS_MAX_PBUFS_PER_DATAGRAM)
-#define PBUF_POOL_SIZE              ((WW_LWIP_REASS_PBUF_HEADROOM) > 1024 ? (WW_LWIP_REASS_PBUF_HEADROOM) : 1024) // 120
+    /* Reserve enough ordinary pbuf payload for one advertised receive window. */
+#define WW_LWIP_PBUF_PAYLOAD_BYTES                                                                                     \
+    (PBUF_POOL_BUFSIZE - PBUF_LINK_ENCAPSULATION_HLEN - PBUF_LINK_HLEN - PBUF_IP_HLEN - PBUF_TRANSPORT_HLEN)
+#define WW_LWIP_WINDOW_PBUF_HEADROOM ((TCP_WND + WW_LWIP_PBUF_PAYLOAD_BYTES - 1) / WW_LWIP_PBUF_PAYLOAD_BYTES)
+#define WW_LWIP_MIN_PBUF_POOL_SIZE   (WW_LWIP_WINDOW_PBUF_HEADROOM > 1024 ? WW_LWIP_WINDOW_PBUF_HEADROOM : 1024)
+#define PBUF_POOL_SIZE                                                                                                 \
+    (WW_LWIP_REASS_PBUF_HEADROOM > WW_LWIP_MIN_PBUF_POOL_SIZE ? WW_LWIP_REASS_PBUF_HEADROOM                            \
+                                                              : WW_LWIP_MIN_PBUF_POOL_SIZE)
 
 /* PBUF_POOL_BUFSIZE: the size of each pbuf in the pbuf pool. */
 #define PBUF_POOL_BUFSIZE           1500                                                                          // 256
@@ -337,9 +344,9 @@ a lot of data that needs to be copied, this should be set high. */
 #define TCP_SNDLOWAT         LWIP_MIN((TCP_SND_BUF / 2), (0xFFFF - (4 * TCP_MSS) - 1))
 
     /* TCP receive window. Scaling allows the full window when the peer supports it. */
-#define TCP_WND              (512 * 1024)
+#define TCP_WND              (2048 * 1024)
 #define LWIP_WND_SCALE       1
-#define TCP_RCV_SCALE        4
+#define TCP_RCV_SCALE        6
 
 /* Maximum number of retransmissions of data segments. */
 #define TCP_MAXRTX           12
