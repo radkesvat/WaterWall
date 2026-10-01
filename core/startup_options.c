@@ -11,8 +11,18 @@
 #include <sys/stat.h>
 
 #ifdef _WIN32
+#include "launcher/lazy_loader.h"
 #include "startup_windows.h"
 #include <io.h>
+
+static lazy_dll_t lazy_kernel32 = {transf_kernel32, sizeof(transf_kernel32), NULL};
+LAZY_WRAPPER(LPVOID, NULL, lazy_kernel32, MapViewOfFile,
+             (HANDLE hFileMappingObject, DWORD dwDesiredAccess, DWORD dwFileOffsetHigh, DWORD dwFileOffsetLow,
+              SIZE_T dwNumberOfBytesToMap),
+             (hFileMappingObject, dwDesiredAccess, dwFileOffsetHigh, dwFileOffsetLow, dwNumberOfBytesToMap))
+LAZY_WRAPPER(BOOL, FALSE, lazy_kernel32, UnmapViewOfFile, (LPCVOID lpBaseAddress), (lpBaseAddress))
+#define MapViewOfFile   lazy_MapViewOfFile
+#define UnmapViewOfFile lazy_UnmapViewOfFile
 #else
 #include <unistd.h>
 #endif

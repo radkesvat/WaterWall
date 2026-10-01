@@ -1,5 +1,6 @@
 #include "session_windows.h"
 #include "../../ww/devices/windows_session_effects.h"
+#include "lazy_loader.h"
 #include "lifecycle_capabilities_windows.h"
 #include <fcntl.h>
 #include <io.h>
@@ -7,6 +8,36 @@
 #include <stdio.h>
 #include <string.h>
 #include <wchar.h>
+
+static lazy_dll_t lazy_kernel32 = {transf_kernel32, sizeof(transf_kernel32), NULL};
+
+LAZY_WRAPPER(HANDLE, NULL, lazy_kernel32, CreateJobObjectW, (LPSECURITY_ATTRIBUTES lpJobAttributes, LPCWSTR lpName),
+             (lpJobAttributes, lpName))
+LAZY_WRAPPER(BOOL, FALSE, lazy_kernel32, AssignProcessToJobObject, (HANDLE hJob, HANDLE hProcess), (hJob, hProcess))
+LAZY_WRAPPER(HANDLE, NULL, lazy_kernel32, CreateFileMappingW,
+             (HANDLE hFile, LPSECURITY_ATTRIBUTES lpFileMappingAttributes, DWORD flProtect, DWORD dwMaximumSizeHigh,
+              DWORD dwMaximumSizeLow, LPCWSTR lpName),
+             (hFile, lpFileMappingAttributes, flProtect, dwMaximumSizeHigh, dwMaximumSizeLow, lpName))
+LAZY_WRAPPER(LPVOID, NULL, lazy_kernel32, MapViewOfFile,
+             (HANDLE hFileMappingObject, DWORD dwDesiredAccess, DWORD dwFileOffsetHigh, DWORD dwFileOffsetLow,
+              SIZE_T dwNumberOfBytesToMap),
+             (hFileMappingObject, dwDesiredAccess, dwFileOffsetHigh, dwFileOffsetLow, dwNumberOfBytesToMap))
+LAZY_WRAPPER(BOOL, FALSE, lazy_kernel32, UnmapViewOfFile, (LPCVOID lpBaseAddress), (lpBaseAddress))
+LAZY_WRAPPER(BOOL, FALSE, lazy_kernel32, TerminateProcess, (HANDLE hProcess, UINT uExitCode), (hProcess, uExitCode))
+LAZY_WRAPPER(HANDLE, NULL, lazy_kernel32, OpenProcess, (DWORD dwDesiredAccess, BOOL bInheritHandle, DWORD dwProcessId),
+             (dwDesiredAccess, bInheritHandle, dwProcessId))
+LAZY_WRAPPER(BOOL, FALSE, lazy_kernel32, ReadProcessMemory,
+             (HANDLE hProcess, LPCVOID lpBaseAddress, LPVOID lpBuffer, SIZE_T nSize, SIZE_T *lpNumberOfBytesRead),
+             (hProcess, lpBaseAddress, lpBuffer, nSize, lpNumberOfBytesRead))
+
+#define CreateJobObjectW         lazy_CreateJobObjectW
+#define AssignProcessToJobObject lazy_AssignProcessToJobObject
+#define CreateFileMappingW       lazy_CreateFileMappingW
+#define MapViewOfFile            lazy_MapViewOfFile
+#define UnmapViewOfFile          lazy_UnmapViewOfFile
+#define TerminateProcess         lazy_TerminateProcess
+#define OpenProcess              lazy_OpenProcess
+#define ReadProcessMemory        lazy_ReadProcessMemory
 
 /* An existing record is never reused. The containing directory must be protected
  * by the client throughout launch/recovery. All dynamic fields use Interlocked

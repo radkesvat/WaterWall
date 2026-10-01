@@ -30,10 +30,11 @@ def transform(data: bytes) -> bytes:
     return bytes(reverse_bits(b) ^ KEY for b in data)
 
 
-# Windows DLL and API names used in core/launcher/launcher_windows.c
+# Windows DLL and API names used in core/launcher
 DLL_NAMES = [
     ("kernel32", "kernel32.dll"),
     ("advapi32", "advapi32.dll"),
+    ("ntdll", "ntdll.dll"),
 ]
 
 PROC_NAMES = [
@@ -79,11 +80,15 @@ PROC_NAMES = [
     "GetExitCodeProcess",
     "TerminateProcess",
     "ExitProcess",
+    "OpenProcess",
+    "ReadProcessMemory",
     # advapi32 procedures
     "OpenProcessToken",
     "GetTokenInformation",
     "ConvertSidToStringSidW",
     "ConvertStringSecurityDescriptorToSecurityDescriptorW",
+    # ntdll procedures
+    "NtQueryObject",
 ]
 
 # Log format and operation strings used in core/launcher/launcher_windows.c

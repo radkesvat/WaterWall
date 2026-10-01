@@ -2,7 +2,7 @@
 #define _WIN32_WINNT 0x0600
 #endif
 #include "launcher.h"
-#include "lazy_names.h"
+#include "lazy_loader.h"
 #include "packed_payload.h"
 #include "session_windows.h"
 #include "startup_windows.h"
@@ -14,174 +14,9 @@
 #include <string.h>
 #include <wchar.h>
 
-#ifndef LOAD_LIBRARY_SEARCH_SYSTEM32
-#define LOAD_LIBRARY_SEARCH_SYSTEM32 0x00000800
-#endif
-
-static inline uint8_t reverse_bits(uint8_t x)
-{
-    x = (uint8_t) (((x & 0xF0) >> 4) | ((x & 0x0F) << 4));
-    x = (uint8_t) (((x & 0xCC) >> 2) | ((x & 0x33) << 2));
-    x = (uint8_t) (((x & 0xAA) >> 1) | ((x & 0x55) << 1));
-
-    return x;
-}
-
-#if defined(__GNUC__) || defined(__clang__)
-__attribute__((noinline))
-#elif defined(_MSC_VER)
-__declspec(noinline)
-#endif
-static void
-transform(uint8_t *data, size_t length)
-{
-    volatile uint8_t *d   = (volatile uint8_t *) data;
-    const uint8_t     key = 0xA5; /* 10100101 */
-
-    for (size_t i = 0; i < length; i++)
-    {
-        d[i] = reverse_bits(d[i]) ^ key;
-    }
-}
-
-/* Lazy loading subsystem conceptually modeled on Go's internal Windows syscall
- * lazy-load architecture (LazyDLL / LazyProc), resolving system libraries from
- * System32 and procedures on first demand. Names are stored transformed and
- * decrypted lazily in local stack buffers at resolution time. */
-typedef struct lazy_dll_s
-{
-    const uint8_t   *transf_name;
-    size_t           len;
-    volatile HMODULE handle;
-} lazy_dll_t;
-
-typedef struct lazy_proc_s
-{
-    lazy_dll_t    *dll;
-    const uint8_t *transf_name;
-    size_t         len;
-    void *volatile address;
-} lazy_proc_t;
-
-static void *lazyProcAddress(lazy_proc_t *proc)
-{
-    void *addr = proc->address;
-    if (addr != NULL)
-        return addr;
-
-    HMODULE module = proc->dll->handle;
-    if (module == NULL)
-    {
-        char    dll_abuf[64];
-        wchar_t dll_wbuf[64];
-        if (proc->dll->len == 0 || proc->dll->len >= sizeof(dll_abuf))
-            return NULL;
-
-        memcpy(dll_abuf, proc->dll->transf_name, proc->dll->len);
-        transform((uint8_t *) dll_abuf, proc->dll->len);
-        dll_abuf[proc->dll->len] = '\0';
-
-        for (size_t i = 0; i <= proc->dll->len; i++)
-            dll_wbuf[i] = (wchar_t) (unsigned char) dll_abuf[i];
-
-        module = GetModuleHandleW(dll_wbuf);
-        if (module == NULL)
-            module = LoadLibraryExW(dll_wbuf, NULL, LOAD_LIBRARY_SEARCH_SYSTEM32);
-        if (module == NULL)
-            module = LoadLibraryW(dll_wbuf);
-
-        SecureZeroMemory(dll_abuf, sizeof(dll_abuf));
-        SecureZeroMemory(dll_wbuf, sizeof(dll_wbuf));
-
-        if (module == NULL)
-            return NULL;
-
-        HMODULE existing =
-            (HMODULE) InterlockedCompareExchangePointer((void *volatile *) &proc->dll->handle, module, NULL);
-        if (existing != NULL && existing != module)
-        {
-            FreeLibrary(module);
-            module = existing;
-        }
-    }
-
-    char proc_abuf[128];
-    if (proc->len == 0 || proc->len >= sizeof(proc_abuf))
-        return NULL;
-
-    memcpy(proc_abuf, proc->transf_name, proc->len);
-    transform((uint8_t *) proc_abuf, proc->len);
-    proc_abuf[proc->len] = '\0';
-
-    FARPROC proc_address = GetProcAddress(module, proc_abuf);
-    SecureZeroMemory(proc_abuf, sizeof(proc_abuf));
-
-    if (proc_address == NULL)
-        return NULL;
-
-    InterlockedCompareExchangePointer(&proc->address, (void *) (uintptr_t) proc_address, NULL);
-    return (void *) (uintptr_t) proc_address;
-}
-
 static lazy_dll_t lazy_kernel32 = {transf_kernel32, sizeof(transf_kernel32), NULL};
 static lazy_dll_t lazy_advapi32 = {transf_advapi32, sizeof(transf_advapi32), NULL};
-
-typedef struct lazy_str_s
-{
-    const uint8_t *transf_data;
-    size_t         len;
-} lazy_str_t;
-
-#define LAZY_STR(name) {transf_##name, sizeof(transf_##name)}
-
-static inline const char *lazyLoadString(const uint8_t *transf_data, size_t len, char *buf, size_t buf_size)
-{
-    if (transf_data == NULL || len == 0 || len >= buf_size)
-    {
-        if (buf_size > 0)
-            buf[0] = '\0';
-        return "";
-    }
-    memcpy(buf, transf_data, len);
-    transform((uint8_t *) buf, len);
-    buf[len] = '\0';
-    return buf;
-}
-
-static inline const char *lazyStr(const lazy_str_t *str, char *buf, size_t buf_size)
-{
-    if (str == NULL)
-    {
-        if (buf_size > 0)
-            buf[0] = '\0';
-        return "";
-    }
-    return lazyLoadString(str->transf_data, str->len, buf, buf_size);
-}
-
-#define LAZY_WRAPPER(ret_type, default_ret, dll, name, params, args)                                                   \
-    static lazy_proc_t lazy_proc_##name = {&dll, transf_##name, sizeof(transf_##name), NULL};                          \
-    typedef ret_type(WINAPI *lazy_pfn_##name) params;                                                                  \
-    static inline ret_type lazy_##name params                                                                          \
-    {                                                                                                                  \
-        lazy_pfn_##name fn = (lazy_pfn_##name) lazyProcAddress(&lazy_proc_##name);                                     \
-        if (fn == NULL)                                                                                                \
-        {                                                                                                              \
-            SetLastError(ERROR_PROC_NOT_FOUND);                                                                        \
-            return default_ret;                                                                                        \
-        }                                                                                                              \
-        return fn args;                                                                                                \
-    }
-
-#define LAZY_WRAPPER_VOID(dll, name, params, args)                                                                     \
-    static lazy_proc_t lazy_proc_##name = {&dll, transf_##name, sizeof(transf_##name), NULL};                          \
-    typedef void(WINAPI * lazy_pfn_##name) params;                                                                     \
-    static inline void lazy_##name params                                                                              \
-    {                                                                                                                  \
-        lazy_pfn_##name fn = (lazy_pfn_##name) lazyProcAddress(&lazy_proc_##name);                                     \
-        if (fn != NULL)                                                                                                \
-            fn args;                                                                                                   \
-    }
+static lazy_dll_t lazy_ntdll    = {transf_ntdll, sizeof(transf_ntdll), NULL};
 
 LAZY_WRAPPER(BOOL, FALSE, lazy_kernel32, SetConsoleCtrlHandler, (PHANDLER_ROUTINE HandlerRoutine, BOOL Add),
              (HandlerRoutine, Add))
@@ -284,6 +119,11 @@ LAZY_WRAPPER(BOOL, FALSE, lazy_kernel32, GetExitCodeProcess, (HANDLE hProcess, L
              (hProcess, lpExitCode))
 LAZY_WRAPPER(BOOL, FALSE, lazy_kernel32, TerminateProcess, (HANDLE hProcess, UINT uExitCode), (hProcess, uExitCode))
 LAZY_WRAPPER_VOID(lazy_kernel32, ExitProcess, (UINT uExitCode), (uExitCode))
+LAZY_WRAPPER(HANDLE, NULL, lazy_kernel32, OpenProcess, (DWORD dwDesiredAccess, BOOL bInheritHandle, DWORD dwProcessId),
+             (dwDesiredAccess, bInheritHandle, dwProcessId))
+LAZY_WRAPPER(BOOL, FALSE, lazy_kernel32, ReadProcessMemory,
+             (HANDLE hProcess, LPCVOID lpBaseAddress, LPVOID lpBuffer, SIZE_T nSize, SIZE_T *lpNumberOfBytesRead),
+             (hProcess, lpBaseAddress, lpBuffer, nSize, lpNumberOfBytesRead))
 
 LAZY_WRAPPER(BOOL, FALSE, lazy_advapi32, OpenProcessToken,
              (HANDLE ProcessHandle, DWORD DesiredAccess, PHANDLE TokenHandle),
@@ -339,6 +179,8 @@ LAZY_WRAPPER(BOOL, FALSE, lazy_advapi32, ConvertStringSecurityDescriptorToSecuri
 #define GetExitCodeProcess                lazy_GetExitCodeProcess
 #define TerminateProcess                  lazy_TerminateProcess
 #define ExitProcess                       lazy_ExitProcess
+#define OpenProcess                       lazy_OpenProcess
+#define ReadProcessMemory                 lazy_ReadProcessMemory
 
 #define OpenProcessToken                                     lazy_OpenProcessToken
 #define GetTokenInformation                                  lazy_GetTokenInformation
@@ -844,8 +686,8 @@ done:
 int launcherExecute(char *input, size_t length, const char *source, int argc, char *const argv[],
                     const waterwall_startup_options_t *options)
 {
-    DWORD                status   = 1;
-    int                  started  = 0;
+    DWORD                status            = 1;
+    int                  started           = 0;
     bool                 creation_admitted = false;
     bool                 runtime_resumed   = false;
     DWORD                failure_error     = ERROR_SUCCESS;
@@ -1111,13 +953,13 @@ int launcherExecute(char *input, size_t length, const char *source, int argc, ch
                                     NULL,
                                     NULL))
         goto done;
-    startup.StartupInfo.cb                      = sizeof(startup);
-    startup.StartupInfo.dwFlags                 = STARTF_USESTDHANDLES;
-    startup.StartupInfo.hStdInput               = standard[0];
-    startup.StartupInfo.hStdOutput              = standard[1];
-    startup.StartupInfo.hStdError               = standard[2];
-    operation          = (lazy_str_t) LAZY_STR(op_restoring_companion_dlls);
-    wchar_t *separator = wcsrchr(original, L'\\');
+    startup.StartupInfo.cb         = sizeof(startup);
+    startup.StartupInfo.dwFlags    = STARTF_USESTDHANDLES;
+    startup.StartupInfo.hStdInput  = standard[0];
+    startup.StartupInfo.hStdOutput = standard[1];
+    startup.StartupInfo.hStdError  = standard[2];
+    operation                      = (lazy_str_t) LAZY_STR(op_restoring_companion_dlls);
+    wchar_t *separator             = wcsrchr(original, L'\\');
     if (separator == NULL)
         goto done;
     if (separator == original + 2 && original[1] == L':')
@@ -1158,8 +1000,8 @@ int launcherExecute(char *input, size_t length, const char *source, int argc, ch
     if (ResumeThread(process.hThread) == (DWORD) -1)
         goto done;
     runtime_resumed = true;
-    started   = 1;
-    operation = (lazy_str_t) LAZY_STR(op_waiting_for_child_exit);
+    started         = 1;
+    operation       = (lazy_str_t) LAZY_STR(op_waiting_for_child_exit);
     if (WaitForSingleObject(process.hProcess, INFINITE) != WAIT_OBJECT_0 ||
         ! GetExitCodeProcess(process.hProcess, &status))
     {
