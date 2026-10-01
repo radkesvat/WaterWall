@@ -58,6 +58,8 @@ def core_json_with_marker(marker):
             "misc": {
                 "workers": 1,
                 "ram-profile": "minimal",
+                "tcp-tune": False,
+                "splice": False,
                 "try-enabling-bbr": False,
             },
         }

@@ -112,6 +112,7 @@ def run(binary, mode):
             backend.listen()
             backend.settimeout(15)
             process = subprocess.Popen([binary], cwd=root, stdout=log, stderr=subprocess.STDOUT)
+            future = None
             try:
                 deadline = time.monotonic() + 10
                 while True:
@@ -159,6 +160,10 @@ def run(binary, mode):
                 process.send_signal(signal.SIGTERM)
                 assert process.wait(timeout=10) == 128 + signal.SIGTERM
             except BaseException:
+                if future is not None and future.done() and not future.cancelled():
+                    peer_error = future.exception()
+                    if peer_error is not None:
+                        print(f"TLS fragment peer failed: {peer_error!r}", file=sys.stderr)
                 log.flush()
                 print((root / "stdout.log").read_text(), file=sys.stderr)
                 raise

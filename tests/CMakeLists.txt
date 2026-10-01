@@ -634,10 +634,11 @@ add_test(
     "${CMAKE_CURRENT_SOURCE_DIR}/core_json_input_test.py"
     "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>"
 )
+# Allow sequential packed startups; each child still has a 10-second timeout.
 set_tests_properties(
   waterwall.core_json_input
   PROPERTIES
-    TIMEOUT 30
+    TIMEOUT 120
     LABELS "integration;core;startup;configuration"
 )
 add_test(

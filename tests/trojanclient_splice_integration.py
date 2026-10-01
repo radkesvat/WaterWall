@@ -17,7 +17,10 @@ import time
 def exact(sock, size):
     result = bytearray()
     while len(result) < size:
-        chunk = sock.recv(size - len(result))
+        try:
+            chunk = sock.recv(size - len(result))
+        except socket.timeout as error:
+            raise TimeoutError(f"timed out after receiving {len(result)} of {size} bytes") from error
         if not chunk:
             raise AssertionError(f"EOF after {len(result)} of {size} bytes")
         result.extend(chunk)
