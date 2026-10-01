@@ -11,6 +11,7 @@ static bool pingclientSettingIsSupported(const char *key)
         "sequence-start",
         "ttl",
         "tos",
+        "send-replies",
     };
 
     if (key == NULL)
@@ -38,7 +39,7 @@ static bool pingclientRejectLegacySettings(const cJSON *settings)
         }
 
         LOGF("PingClient: configuration uses removed Ping wire v1 setting '%s'; Ping wire v2 accepts only "
-             "local-ipv4, peer-ipv4, identifier, sequence-start, ttl, and tos",
+             "local-ipv4, peer-ipv4, identifier, sequence-start, ttl, tos, and send-replies",
              item->string != NULL ? item->string : "<unnamed>");
         return false;
     }
@@ -155,6 +156,14 @@ tunnel_t *pingclientCreate(node_t *node)
         ! pingclientLoadRequiredIpv4(&state->wire.peer_ipv4, settings, "peer-ipv4") ||
         ! pingclientLoadIdentifier(state, settings))
     {
+        pingclientDestroy(t, wwLifecycleStartupRollback());
+        return NULL;
+    }
+
+    state->send_replies = false;
+    if (jsonGetObjectBoolean(settings, "send-replies", &state->send_replies) == kJsonValueInvalid)
+    {
+        LOGF("JSON Error: PingClient->settings->send-replies (boolean field) : expected true or false");
         pingclientDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }

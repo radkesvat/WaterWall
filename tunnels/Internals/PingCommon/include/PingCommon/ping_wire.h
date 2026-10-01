@@ -41,6 +41,8 @@ typedef struct ping_wire_config_s
 
 typedef struct ping_wire_envelope_s
 {
+    /* Static diagnostic text on a rejected carrier; NULL on successful classification. */
+    const char    *error_reason;
     const uint8_t *icmp_payload;
     const uint8_t *inner_ipv4;
     uint32_t       source_ipv4;
@@ -130,6 +132,9 @@ typedef struct ping_wire_reply_id_generator_s
 
 /* Validate one exact IPv4 packet (including an inner fragment). */
 WW_EXPORT bool pingwireIsExactIpv4Packet(const uint8_t *packet, uint32_t length);
+
+/* Validate exact IPv4 framing; return a static failure reason or NULL on success. */
+WW_EXPORT const char *pingwireIpv4PacketError(const uint8_t *packet, uint32_t length);
 
 /* Resolve an explicit identifier or accept one injected random candidate. */
 WW_EXPORT bool pingwireSelectIdentifier(bool random, uint16_t configured, uint16_t random_candidate,

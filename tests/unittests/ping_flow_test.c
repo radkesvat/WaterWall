@@ -1,3 +1,5 @@
+#include "loggers/network_logger.h"
+
 #include "PingClient/structure.h"
 #include "PingServer/structure.h"
 
@@ -48,6 +50,36 @@ struct flow_fixture_s
     bool             server;
 };
 
+static char     captured_log[2048];
+static int      captured_log_level;
+static uint32_t captured_log_count;
+
+static void captureLog(int level, const char *text, int length)
+{
+    twfRequire(length > 0 && (size_t) length < sizeof(captured_log), "Ping diagnostic exceeds capture capacity");
+    memoryCopy(captured_log, text, (size_t) length);
+    captured_log[length] = '\0';
+    captured_log_level   = level;
+    ++captured_log_count;
+}
+
+static void resetDropLog(flow_fixture_t *fixture)
+{
+    captured_log[0]    = '\0';
+    captured_log_count = 0;
+    atomic_log_rate_limiter_t *limiter =
+        fixture->server ? &((pingserver_tstate_t *) tunnelGetState(fixture->endpoint))->drop_log_limiter
+                        : &((pingclient_tstate_t *) tunnelGetState(fixture->endpoint))->drop_log_limiter;
+    atomicLogRateLimiterInitialize(limiter);
+}
+
+static void requireErrorLog(const char *reason)
+{
+    twfRequireEqualU32(captured_log_count, 1, "Ping rejection did not emit exactly one diagnostic");
+    twfRequire(captured_log_level == LOG_LEVEL_ERROR, "Ping rejection diagnostic is not ERROR level");
+    twfRequire(strstr(captured_log, reason) != NULL, "Ping diagnostic omitted the specific failure reason");
+}
+
 static uint32_t ipv4Address(const char *text)
 {
     ip4_addr_t address = {0};
@@ -62,6 +94,15 @@ static ping_wire_config_t endpointConfig(const flow_fixture_t *fixture)
         return ((const pingserver_tstate_t *) tunnelGetState(fixture->endpoint))->wire;
     }
     return ((const pingclient_tstate_t *) tunnelGetState(fixture->endpoint))->wire;
+}
+
+static bool endpointSendsReplies(const flow_fixture_t *fixture)
+{
+    if (fixture->server)
+    {
+        return ((const pingserver_tstate_t *) tunnelGetState(fixture->endpoint))->send_replies;
+    }
+    return ((const pingclient_tstate_t *) tunnelGetState(fixture->endpoint))->send_replies;
 }
 
 static ping_wire_config_t peerConfig(const flow_fixture_t *fixture)
@@ -143,7 +184,24 @@ static void resetSinks(flow_fixture_t *fixture)
     fixture->event_count = 0;
 }
 
-static void fixtureSetup(flow_fixture_t *fixture, bool server)
+static cJSON *endpointSettings(bool server, const char *send_replies_json)
+{
+    const char *json     = server ? "{\"local-ipv4\":\"198.51.100.10\",\"peer-ipv4\":\"192.0.2.10\","
+                                    "\"identifier\":8738,\"sequence-start\":65535,\"ttl\":64,\"tos\":3}"
+                                  : "{\"local-ipv4\":\"192.0.2.10\",\"peer-ipv4\":\"198.51.100.10\","
+                                    "\"identifier\":4369,\"sequence-start\":65535,\"ttl\":64,\"tos\":3}";
+    cJSON      *settings = cJSON_Parse(json);
+    twfRequire(settings != NULL, "failed to parse Ping flow settings");
+    if (send_replies_json != NULL)
+    {
+        cJSON *send_replies = cJSON_Parse(send_replies_json);
+        twfRequire(send_replies != NULL && cJSON_AddItemToObject(settings, "send-replies", send_replies),
+                   "failed to add Ping reply setting");
+    }
+    return settings;
+}
+
+static void fixtureSetup(flow_fixture_t *fixture, bool server, const char *send_replies_json)
 {
     memoryZero(fixture, sizeof(*fixture));
     fixture->server = server;
@@ -158,12 +216,7 @@ static void fixtureSetup(flow_fixture_t *fixture, bool server)
                                            kPingWireEncapsulationOverhead);
     }
 
-    const char *json  = server ? "{\"local-ipv4\":\"198.51.100.10\",\"peer-ipv4\":\"192.0.2.10\","
-                                 "\"identifier\":8738,\"sequence-start\":65535,\"ttl\":64,\"tos\":3}"
-                               : "{\"local-ipv4\":\"192.0.2.10\",\"peer-ipv4\":\"198.51.100.10\","
-                                 "\"identifier\":4369,\"sequence-start\":65535,\"ttl\":64,\"tos\":3}";
-    fixture->settings = cJSON_Parse(json);
-    twfRequire(fixture->settings != NULL, "failed to parse Ping flow settings");
+    fixture->settings                = endpointSettings(server, send_replies_json);
     fixture->node.node_settings_json = fixture->settings;
 
     ww_startup_context_t startup = {0};
@@ -413,35 +466,166 @@ static void casePeerRequestReplay(flow_fixture_t *fixture)
     wire_request.length = sbufGetLength(request);
     memoryCopy(wire_request.bytes, sbufGetRawPtr(request), wire_request.length);
 
+    const bool send_replies = endpointSendsReplies(fixture);
     sendInbound(fixture, 1, request);
-    twfRequire(atomicLoadU64Relaxed(&reply_ids->last_reply_ms) == cached_ms,
+    twfRequire(atomicLoadU64Relaxed(&reply_ids->last_reply_ms) == (send_replies ? cached_ms : cached_ms - 1),
                "reply idle timing did not use the packet line's cached owner clock");
-    const char *first_order = fixture->server ? "PN" : "NP";
+    const char *first_order = send_replies ? (fixture->server ? "PN" : "NP") : (fixture->server ? "N" : "P");
     twfRequireEqualText(fixture->events, first_order, "peer request reply/delivery callback order is wrong");
-    twfRequireEqualU32(generatedReplySink(fixture)->count, 1, "peer request did not receive one reply");
+    twfRequireEqualU32(generatedReplySink(fixture)->count,
+                       send_replies ? 1U : 0U,
+                       "peer request reply emission did not honor send-replies");
     twfRequireEqualU32(decodedInnerSink(fixture)->count, 1, "peer request did not deliver one inner packet");
+    const captured_packet_t *decoded = &decodedInnerSink(fixture)->packets[0];
+    twfRequire(decoded->length == wire_request.length - kPingWireEncapsulationOverhead &&
+                   memoryEqual(decoded->bytes, wire_request.bytes + kPingWireEncapsulationOverhead, decoded->length),
+               "peer request did not preserve the complete inner packet");
 
     sendInbound(fixture, 2, bufferFromCapture(fixture->packet_lines[2], &wire_request));
-    twfRequire(atomicLoadU64Relaxed(&reply_ids->last_reply_ms) == cached_ms,
+    twfRequire(atomicLoadU64Relaxed(&reply_ids->last_reply_ms) == (send_replies ? cached_ms : cached_ms - 1),
                "older worker cache moved shared reply time backwards");
-    const char *duplicate_order = fixture->server ? "PNP" : "NPN";
+    const char *duplicate_order = send_replies ? (fixture->server ? "PNP" : "NPN") : (fixture->server ? "N" : "P");
     twfRequireEqualText(fixture->events, duplicate_order, "duplicate request callback direction is wrong");
-    twfRequireEqualU32(generatedReplySink(fixture)->count, 2, "duplicate request was not acknowledged again");
+    twfRequireEqualU32(generatedReplySink(fixture)->count,
+                       send_replies ? 2U : 0U,
+                       "duplicate request reply emission did not honor send-replies");
     twfRequireEqualU32(decodedInnerSink(fixture)->count, 1, "duplicate request delivered its inner packet twice");
 
-    const captured_packet_t *reply1 = &generatedReplySink(fixture)->packets[0];
-    const captured_packet_t *reply2 = &generatedReplySink(fixture)->packets[1];
-    const struct ip_hdr     *ip1    = (const struct ip_hdr *) reply1->bytes;
-    const struct ip_hdr     *ip2    = (const struct ip_hdr *) reply2->bytes;
-    twfRequire((uint16_t) (lwip_ntohs(IPH_ID(ip1)) + 1U) == lwip_ntohs(IPH_ID(ip2)),
-               "duplicate request replies did not use monotonic IPv4 IDs");
+    if (send_replies)
+    {
+        const captured_packet_t *reply1 = &generatedReplySink(fixture)->packets[0];
+        const captured_packet_t *reply2 = &generatedReplySink(fixture)->packets[1];
+        const struct ip_hdr     *ip1    = (const struct ip_hdr *) reply1->bytes;
+        const struct ip_hdr     *ip2    = (const struct ip_hdr *) reply2->bytes;
+        twfRequire((uint16_t) (lwip_ntohs(IPH_ID(ip1)) + 1U) == lwip_ntohs(IPH_ID(ip2)),
+                   "duplicate request replies did not use monotonic IPv4 IDs");
 
-    ping_wire_envelope_t     reply_view;
-    const ping_wire_config_t peer = peerConfig(fixture);
-    twfRequire(pingwireParseInbound(reply1->bytes, reply1->length, &peer, &reply_view) == kPingWireInboundEchoReply,
-               "generated first reply was not exact peer-facing Echo Reply traffic");
+        ping_wire_envelope_t     reply_view;
+        const ping_wire_config_t peer = peerConfig(fixture);
+        twfRequire(pingwireParseInbound(reply1->bytes, reply1->length, &peer, &reply_view) == kPingWireInboundEchoReply,
+                   "generated first reply was not exact peer-facing Echo Reply traffic");
+    }
     wloopUpdateTime(fixture->env.loops[1]);
     wloopUpdateTime(fixture->env.loops[2]);
+}
+
+static void caseUnrelatedIpv4Options(flow_fixture_t *fixture)
+{
+    twfSetCase(fixture->server ? "PingServer unrelated IPv4 options" : "PingClient unrelated IPv4 options");
+    resetSinks(fixture);
+
+    line_t                  *line   = fixture->packet_lines[1];
+    sbuf_t                  *packet = makeInnerPacket(line, 96);
+    struct ip_hdr           *ip     = (struct ip_hdr *) sbufGetMutablePtr(packet);
+    const ping_wire_config_t config = endpointConfig(fixture);
+    IPH_VHL_SET(ip, 4, 6);
+    ip->src.addr  = config.peer_ipv4;
+    ip->dest.addr = config.local_ipv4;
+    memoryZero(sbufGetMutablePtr(packet) + IP_HLEN, 4);
+    twfRequire(calcFullPacketChecksum(sbufGetMutablePtr(packet), sbufGetLength(packet)),
+               "unrelated IPv4 options checksum build failed");
+
+    captured_packet_t expected;
+    expected.length = sbufGetLength(packet);
+    memoryCopy(expected.bytes, sbufGetRawPtr(packet), expected.length);
+    sendInbound(fixture, 1, packet);
+
+    twfRequireEqualU32(generatedReplySink(fixture)->count, 0, "unrelated IPv4 packet produced an Echo Reply");
+    twfRequireEqualU32(decodedInnerSink(fixture)->count, 1, "unrelated IPv4 options packet was not forwarded");
+    const captured_packet_t *forwarded = &decodedInnerSink(fixture)->packets[0];
+    twfRequire(forwarded->length == expected.length && memoryEqual(forwarded->bytes, expected.bytes, expected.length),
+               "unrelated IPv4 options packet did not pass through unchanged");
+}
+
+static void casePacketDiagnostics(flow_fixture_t *fixture)
+{
+    twfSetCase(fixture->server ? "PingServer packet diagnostics" : "PingClient packet diagnostics");
+    resetSinks(fixture);
+    line_t            *line            = fixture->packet_lines[0];
+    const unsigned int sequence_before = atomicLoadRelaxed(nextSequence(fixture));
+
+    resetDropLog(fixture);
+    lineSetRecalculateChecksum(line, true);
+    sendLocal(fixture, 0, makeInnerPacket(line, kPingWireMaxInnerPacketLength + 1U));
+    requireErrorLog("IPv4 packet exceeds maximum inner size");
+    twfRequire(
+        strstr(captured_log, "packet-bytes=1473") != NULL && strstr(captured_log, "max-inner-bytes=1472") != NULL &&
+            strstr(captured_log, "overhead-bytes=28") != NULL && strstr(captured_log, "max-carrier-bytes=1500") != NULL,
+        "oversize diagnostic omitted sizing parameters");
+    twfRequire(! lineGetRecalculateChecksum(line), "oversize diagnostic leaked checksum scratch state");
+    /* The existing shared five-second gate suppresses immediate repeat errors. */
+    sendLocal(fixture, 0, makeInnerPacket(line, kPingWireMaxInnerPacketLength + 1U));
+    twfRequireEqualU32(captured_log_count, 1, "Ping packet diagnostics lost their rate limit");
+
+    resetDropLog(fixture);
+    sbuf_t *short_headroom = sbufCreateWithPadding(72, 0);
+    sbuf_t *source         = makeInnerPacket(line, 72);
+    sbufSetLength(short_headroom, 72);
+    memoryCopy(sbufGetMutablePtr(short_headroom), sbufGetRawPtr(source), 72);
+    lineReuseBuffer(line, source);
+    sendLocal(fixture, 0, short_headroom);
+    requireErrorLog("insufficient left headroom to prepend IPv4/ICMP headers");
+    twfRequire(strstr(captured_log, "headroom-bytes=0") != NULL &&
+                   strstr(captured_log, "required-headroom-bytes=28") != NULL,
+               "headroom diagnostic omitted available/required sizing");
+
+    resetDropLog(fixture);
+    sbuf_t *malformed = makeInnerPacket(line, 72);
+    IPH_LEN_SET((struct ip_hdr *) sbufGetMutablePtr(malformed), lwip_htons(71));
+    lineSetRecalculateChecksum(line, true);
+    sendLocal(fixture, 0, malformed);
+    requireErrorLog("IPv4 declared total length does not match received bytes");
+    twfRequire(! lineGetRecalculateChecksum(line), "malformed diagnostic leaked checksum scratch state");
+
+    resetDropLog(fixture);
+    sbuf_t *bad_ipv4 = peerRequest(fixture, line, 110);
+    sbufGetMutablePtr(bad_ipv4)[8] ^= 1U;
+    sendInbound(fixture, 0, bad_ipv4);
+    requireErrorLog("invalid outer IPv4 checksum");
+
+    resetDropLog(fixture);
+    sbuf_t *bad_icmp = peerRequest(fixture, line, 111);
+    sbufGetMutablePtr(bad_icmp)[kPingWireEncapsulationOverhead] ^= 1U;
+    sendInbound(fixture, 0, bad_icmp);
+    requireErrorLog("invalid ICMP checksum");
+
+    resetDropLog(fixture);
+    sbuf_t *fragment = peerRequest(fixture, line, 112);
+    IPH_OFFSET_SET((struct ip_hdr *) sbufGetMutablePtr(fragment), lwip_htons(IP_MF));
+    twfRequire(calcIpv4HeaderChecksum(sbufGetMutablePtr(fragment), sbufGetLength(fragment)),
+               "fragment diagnostic fixture checksum failed");
+    sendInbound(fixture, 0, fragment);
+    requireErrorLog("fragmented outer IPv4 Echo carrier");
+
+    resetDropLog(fixture);
+    sbuf_t *bad_code                                                         = peerRequest(fixture, line, 113);
+    ((struct icmp_echo_hdr *) (sbufGetMutablePtr(bad_code) + IP_HLEN))->code = 1;
+    twfRequire(calcFullPacketChecksum(sbufGetMutablePtr(bad_code), sbufGetLength(bad_code)),
+               "ICMP code diagnostic fixture checksum failed");
+    sendInbound(fixture, 0, bad_code);
+    requireErrorLog("unsupported ICMP Echo code");
+
+    resetDropLog(fixture);
+    sbuf_t *bad_type                                                         = peerRequest(fixture, line, 114);
+    ((struct icmp_echo_hdr *) (sbufGetMutablePtr(bad_type) + IP_HLEN))->type = ICMP_DUR;
+    twfRequire(calcFullPacketChecksum(sbufGetMutablePtr(bad_type), sbufGetLength(bad_type)),
+               "ICMP type diagnostic fixture checksum failed");
+    sendInbound(fixture, 0, bad_type);
+    requireErrorLog("unsupported ICMP type");
+
+    resetDropLog(fixture);
+    sbuf_t *bad_inner                                            = peerRequest(fixture, line, 115);
+    sbufGetMutablePtr(bad_inner)[kPingWireEncapsulationOverhead] = 0x60;
+    twfRequire(calcFullPacketChecksum(sbufGetMutablePtr(bad_inner), sbufGetLength(bad_inner)),
+               "inner IPv4 diagnostic fixture checksum failed");
+    sendInbound(fixture, 0, bad_inner);
+    requireErrorLog("ICMP Echo Request payload is not one complete inner IPv4 packet");
+
+    twfRequireEqualU32(atomicLoadRelaxed(nextSequence(fixture)),
+                       sequence_before,
+                       "rejected diagnostic packets consumed sequence numbers");
+    twfRequireEqualU32(
+        fixture->prev_sink->count + fixture->next_sink->count, 0, "rejected diagnostic packet escaped to a neighbor");
 }
 
 typedef struct fatal_case_s
@@ -476,13 +660,35 @@ static void caseGeneratedReplyLineSurvivalGuard(flow_fixture_t *fixture)
     twfRequire(lineIsAlive(fixture->packet_lines[0]), "fatal child altered the parent's packet line");
 }
 
-static void runEndpointCases(bool server)
+static void caseInvalidReplySettings(bool server)
+{
+    twfSetCase(server ? "PingServer invalid send-replies settings" : "PingClient invalid send-replies settings");
+    static const char *const invalid_values[] = {"null", "0", "1", "\"true\"", "[]", "{}"};
+    for (size_t i = 0; i < ARRAY_SIZE(invalid_values); ++i)
+    {
+        cJSON    *settings = endpointSettings(server, invalid_values[i]);
+        node_t    node     = {.node_settings_json = settings};
+        tunnel_t *endpoint = server ? pingserverCreate(&node) : pingclientCreate(&node);
+        twfRequire(endpoint == NULL, "Ping accepted a nonboolean send-replies setting");
+        cJSON_Delete(settings);
+    }
+}
+
+static void runEndpointCases(bool server, const char *send_replies_json)
 {
     flow_fixture_t fixture;
-    fixtureSetup(&fixture, server);
+    fixtureSetup(&fixture, server, send_replies_json);
+    const bool expected_replies = send_replies_json != NULL && stringCompare(send_replies_json, "true") == 0;
+    twfRequire(endpointSendsReplies(&fixture) == expected_replies,
+               "Ping send-replies configuration did not retain its boolean value or default");
+    casePacketDiagnostics(&fixture);
     caseCrossWorkerCorrelationAndSequence(&fixture);
+    caseUnrelatedIpv4Options(&fixture);
     casePeerRequestReplay(&fixture);
-    caseGeneratedReplyLineSurvivalGuard(&fixture);
+    if (expected_replies)
+    {
+        caseGeneratedReplyLineSurvivalGuard(&fixture);
+    }
     fixtureTeardown(&fixture);
 }
 
@@ -490,18 +696,29 @@ int main(void)
 {
     initWLibc();
     checkSumInit();
+    logger_t *logger = loggerCreate();
+    twfRequire(logger != NULL, "failed to create Ping diagnostic logger");
+    loggerSetHandler(logger, captureLog);
+    loggerSetLevel(logger, LOG_LEVEL_ERROR);
+    setNetworkLogger(logger);
     twfRequire(globalstateInitializeSecureRandom(), "secure-random initialization failed");
     twfRequire(frandGlobalInit(), "fast-random global initialization failed");
     frandInit();
     twfRequire(wCryptoGlobalInit() == kWCryptoOk, "crypto initialization failed");
 
-    runEndpointCases(false);
-    runEndpointCases(true);
+    for (unsigned int server = 0; server < 2; ++server)
+    {
+        caseInvalidReplySettings(server != 0);
+        runEndpointCases(server != 0, NULL);
+        runEndpointCases(server != 0, "false");
+        runEndpointCases(server != 0, "true");
+    }
 
     wCryptoGlobalCleanup();
     frandThreadCleanup();
     frandGlobalCleanup();
     globalstateDestroySecureRandom();
+    networkloggerDestroy();
     puts("ping_flow_test: all cases passed");
     return 0;
 }

@@ -19,20 +19,38 @@ static void pingserverValidatePacketLine(tunnel_t *t, line_t *l)
     }
 }
 
-static void pingserverDrop(tunnel_t *t, line_t *l, sbuf_t *buf, const char *reason)
+static void pingserverDrop(tunnel_t *t, line_t *l, sbuf_t *buf, const char *direction, const char *reason)
 {
     pingserver_tstate_t *state = tunnelGetState(t);
     if (atomicLogRateLimiterShouldLog(&state->drop_log_limiter, kPingServerDropLogIntervalMs))
     {
-        LOGW("PingServer: dropping packet: %s", reason);
+        LOGE("PingServer: dropping %s packet: %s (packet-bytes=%u, max-inner-bytes=%u, overhead-bytes=%u, "
+             "max-carrier-bytes=%u, headroom-bytes=%u, required-headroom-bytes=%u)",
+             direction,
+             reason,
+             (unsigned int) sbufGetLength(buf),
+             (unsigned int) kPingWireMaxInnerPacketLength,
+             (unsigned int) kPingWireEncapsulationOverhead,
+             (unsigned int) kMaxAllowedPacketLength,
+             (unsigned int) sbufGetLeftCapacity(buf),
+             (unsigned int) kPingWireEncapsulationOverhead);
     }
     lineReuseBuffer(l, buf);
 }
 
-static bool pingserverConsumeInputChecksum(line_t *l, sbuf_t *buf)
+static const char *pingserverConsumeInputChecksum(line_t *l, sbuf_t *buf)
 {
-    const bool requested = packettunnelTakeChecksumRequest(l);
-    return packettunnelFinalizeChecksumRequest(requested, sbufGetMutablePtr(buf), sbufGetLength(buf));
+    const bool  requested = packettunnelTakeChecksumRequest(l);
+    const char *error     = pingwireIpv4PacketError(sbufGetRawPtr(buf), sbufGetLength(buf));
+    if (error != NULL)
+    {
+        return error;
+    }
+    if (requested && ! calcFullPacketChecksum(sbufGetMutablePtr(buf), sbufGetLength(buf)))
+    {
+        return "requested IPv4/transport checksum repair failed";
+    }
+    return NULL;
 }
 
 void pingserverHandleDownstreamPacket(tunnel_t *t, line_t *l, sbuf_t *buf)
@@ -40,15 +58,21 @@ void pingserverHandleDownstreamPacket(tunnel_t *t, line_t *l, sbuf_t *buf)
     pingserver_tstate_t *state = tunnelGetState(t);
     pingserverValidatePacketLine(t, l);
 
-    if (! pingserverConsumeInputChecksum(l, buf))
+    const char *input_error = pingserverConsumeInputChecksum(l, buf);
+    if (input_error != NULL)
     {
-        pingserverDrop(t, l, buf, "outgoing input is not one complete IPv4 packet");
+        pingserverDrop(t, l, buf, "outgoing", input_error);
         return;
     }
 
-    if (! pingwireEchoRequestPreflight(buf))
+    if (sbufGetLength(buf) > kPingWireMaxInnerPacketLength)
     {
-        pingserverDrop(t, l, buf, "outgoing input cannot fit the IPv4/ICMP Echo carrier");
+        pingserverDrop(t, l, buf, "outgoing", "IPv4 packet exceeds maximum inner size");
+        return;
+    }
+    if (sbufGetLeftCapacity(buf) < kPingWireEncapsulationOverhead)
+    {
+        pingserverDrop(t, l, buf, "outgoing", "insufficient left headroom to prepend IPv4/ICMP headers");
         return;
     }
 
@@ -70,7 +94,7 @@ void pingserverHandleDownstreamPacket(tunnel_t *t, line_t *l, sbuf_t *buf)
                                     payload,
                                     payload_length))
     {
-        pingserverDrop(t, l, buf, "could not register the outgoing Echo Request");
+        pingserverDrop(t, l, buf, "outgoing", "failed to hash/register the outgoing Echo Request");
         return;
     }
 
@@ -83,9 +107,10 @@ void pingserverHandleUpstreamPacket(tunnel_t *t, line_t *l, sbuf_t *buf)
     pingserver_tstate_t *state = tunnelGetState(t);
     pingserverValidatePacketLine(t, l);
 
-    if (! pingserverConsumeInputChecksum(l, buf))
+    const char *input_error = pingserverConsumeInputChecksum(l, buf);
+    if (input_error != NULL)
     {
-        pingserverDrop(t, l, buf, "upstream input is not one complete IPv4 packet");
+        pingserverDrop(t, l, buf, "incoming", input_error);
         return;
     }
 
@@ -97,14 +122,10 @@ void pingserverHandleUpstreamPacket(tunnel_t *t, line_t *l, sbuf_t *buf)
         tunnelNextUpStreamPayload(t, l, buf);
         return;
     }
-    if (kind == kPingWireInboundMalformed)
+    if (kind == kPingWireInboundMalformed || kind == kPingWireInboundInvalidCarrier)
     {
-        pingserverDrop(t, l, buf, "malformed or checksum-invalid upstream carrier");
-        return;
-    }
-    if (kind == kPingWireInboundInvalidCarrier)
-    {
-        pingserverDrop(t, l, buf, "upstream packet addressed as carrier traffic is not a valid Echo envelope");
+        assert(envelope.error_reason != NULL);
+        pingserverDrop(t, l, buf, "incoming", envelope.error_reason);
         return;
     }
 
@@ -125,45 +146,52 @@ void pingserverHandleUpstreamPacket(tunnel_t *t, line_t *l, sbuf_t *buf)
     const ping_wire_replay_result_t replay = pingwireReplayMark(state->tracker, state->digest_key, &envelope);
     if (replay == kPingWireReplayError)
     {
-        pingserverDrop(t, l, buf, "could not record the incoming Echo Request");
+        pingserverDrop(
+            t, l, buf, "incoming", "failed to hash/record the incoming Echo Request for duplicate detection");
         return;
     }
 
-    /* Clone before stripping the original; replies must echo every ICMP byte exactly. */
-    sbuf_t *reply = sbufDuplicateByPool(lineGetBufferPool(l), buf);
-    if (reply == NULL)
+    if (state->send_replies)
     {
-        if (atomicLogRateLimiterShouldLog(&state->drop_log_limiter, kPingServerDropLogIntervalMs))
+        /* Clone before stripping the original; replies must echo every ICMP byte exactly. */
+        sbuf_t *reply = sbufDuplicateByPool(lineGetBufferPool(l), buf);
+        if (reply == NULL)
         {
-            LOGW("PingServer: could not allocate an Echo Reply clone; delivering the request without an "
-                 "acknowledgement");
+            if (atomicLogRateLimiterShouldLog(&state->drop_log_limiter, kPingServerDropLogIntervalMs))
+            {
+                LOGE("PingServer: could not allocate an Echo Reply clone; delivering the request without an "
+                     "acknowledgement (request-bytes=%u)",
+                     (unsigned int) sbufGetLength(buf));
+            }
         }
-    }
-    else if (! pingwireBuildEchoReply(
-                 reply,
-                 &state->wire,
-                 &envelope,
-                 pingwireReplyIdGeneratorNext(&state->reply_ids, wloopNowMonotonicMS(getWorkerLoop(lineGetWID(l))))))
-    {
-        lineReuseBuffer(l, reply);
-        reply = NULL;
-        if (atomicLogRateLimiterShouldLog(&state->drop_log_limiter, kPingServerDropLogIntervalMs))
+        else if (! pingwireBuildEchoReply(reply,
+                                          &state->wire,
+                                          &envelope,
+                                          pingwireReplyIdGeneratorNext(
+                                              &state->reply_ids, wloopNowMonotonicMS(getWorkerLoop(lineGetWID(l))))))
         {
-            LOGW("PingServer: could not build an Echo Reply clone; delivering the request without an acknowledgement");
+            lineReuseBuffer(l, reply);
+            reply = NULL;
+            if (atomicLogRateLimiterShouldLog(&state->drop_log_limiter, kPingServerDropLogIntervalMs))
+            {
+                LOGE("PingServer: could not build an Echo Reply clone; delivering the request without an "
+                     "acknowledgement (request-bytes=%u)",
+                     (unsigned int) sbufGetLength(buf));
+            }
         }
-    }
 
-    if (reply != NULL)
-    {
-        lineSetRecalculateChecksum(l, false);
-        lineRef(l);
-        tunnelPrevDownStreamPayload(t, l, reply);
-        if (UNLIKELY(! lineIsAlive(l)))
+        if (reply != NULL)
         {
-            LOGF("PingServer: worker packet line died during generated Echo Reply callback");
-            abortProgramNow(1);
+            lineSetRecalculateChecksum(l, false);
+            lineRef(l);
+            tunnelPrevDownStreamPayload(t, l, reply);
+            if (UNLIKELY(! lineIsAlive(l)))
+            {
+                LOGF("PingServer: worker packet line died during generated Echo Reply callback");
+                abortProgramNow(1);
+            }
+            lineUnref(l);
         }
-        lineUnref(l);
     }
 
     if (replay == kPingWireReplayDuplicate)
@@ -174,7 +202,7 @@ void pingserverHandleUpstreamPacket(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     if (! pingwireStripEchoRequest(buf, &envelope))
     {
-        pingserverDrop(t, l, buf, "validated Echo Request could not be decapsulated");
+        pingserverDrop(t, l, buf, "incoming", "failed to strip the validated IPv4/ICMP Echo headers");
         return;
     }
 

@@ -356,6 +356,93 @@ static void testBoundsFragmentsAndIdPolicy(void)
             "maximum idle perturbation exceeded or missed its bound");
 }
 
+static void testUnrelatedIpv4Options(void)
+{
+    const ping_wire_config_t sender = {
+        .local_ipv4 = ipv4Address("192.0.2.60"),
+        .peer_ipv4  = ipv4Address("198.51.100.60"),
+        .identifier = 0x6060,
+        .ttl        = 64,
+    };
+    const ping_wire_config_t receiver = {
+        .local_ipv4 = sender.peer_ipv4,
+        .peer_ipv4  = sender.local_ipv4,
+        .ttl        = 64,
+    };
+    sbuf_t *request = makeInnerPacket(80, 0);
+    require(pingwireBuildEchoRequest(request, &sender, 9), "options request build failed");
+
+    const uint16_t options_length = 4;
+    const uint16_t header_length  = IP_HLEN + options_length;
+    const uint16_t packet_length  = (uint16_t) sbufGetLength(request) + options_length;
+    sbuf_t        *packet         = sbufCreateWithPadding(packet_length, kPingWireEncapsulationOverhead);
+    sbufSetLength(packet, packet_length);
+    uint8_t *bytes = sbufGetMutablePtr(packet);
+    memoryCopy(bytes, sbufGetRawPtr(request), IP_HLEN);
+    /* Two NOPs, End of Option List, and padding form a valid four-byte options area. */
+    memoryCopy(bytes + IP_HLEN, (const uint8_t[]) {1, 1, 0, 0}, options_length);
+    memoryCopy(
+        bytes + header_length, (const uint8_t *) sbufGetRawPtr(request) + IP_HLEN, sbufGetLength(request) - IP_HLEN);
+    sbufDestroy(request);
+
+    struct ip_hdr *ip = (struct ip_hdr *) bytes;
+    IPH_VHL_SET(ip, 4, header_length / 4U);
+    IPH_LEN_SET(ip, lwip_htons(packet_length));
+    const struct
+    {
+        uint32_t source;
+        uint32_t destination;
+        uint8_t  protocol;
+    } unrelated[] = {
+        {ipv4Address("203.0.113.60"), receiver.local_ipv4, IP_PROTO_ICMP},
+        {receiver.peer_ipv4, ipv4Address("203.0.113.60"), IP_PROTO_ICMP},
+        {receiver.peer_ipv4, receiver.local_ipv4, kTestInnerProtocol},
+    };
+    ping_wire_envelope_t envelope = {0};
+    for (size_t i = 0; i < ARRAY_SIZE(unrelated); ++i)
+    {
+        ip->src.addr  = unrelated[i].source;
+        ip->dest.addr = unrelated[i].destination;
+        IPH_PROTO_SET(ip, unrelated[i].protocol);
+        require(calcFullPacketChecksum(bytes, packet_length), "unrelated options checksum build failed");
+        ipv4_packet_view_t view = {0};
+        require(ipv4packetviewParse(bytes, packet_length, &view) && view.ip_header_length == header_length &&
+                    inet_chksum(bytes, header_length) == 0,
+                "options fixture is not a valid complete IPv4 packet");
+        uint8_t original[kMaxAllowedPacketLength];
+        memoryCopy(original, bytes, packet_length);
+        require(pingwireParseInbound(bytes, packet_length, &receiver, &envelope) == kPingWireInboundUnrelated,
+                "valid unrelated IPv4 options packet was rejected");
+        require(memoryEqual(bytes, original, packet_length), "unrelated options packet was modified");
+    }
+
+    IPH_TTL_SET(ip, IPH_TTL(ip) ^ 1U);
+    require(pingwireParseInbound(bytes, packet_length, &receiver, &envelope) == kPingWireInboundMalformed,
+            "unrelated options packet with a bad IPv4 checksum was accepted");
+    IPH_TTL_SET(ip, IPH_TTL(ip) ^ 1U);
+    require(pingwireParseInbound(bytes, header_length - 1U, &receiver, &envelope) == kPingWireInboundMalformed,
+            "truncated options packet was accepted");
+    IPH_VHL_SET(ip, 4, IP_HLEN / 4U - 1U);
+    require(pingwireParseInbound(bytes, packet_length, &receiver, &envelope) == kPingWireInboundMalformed,
+            "malformed unrelated IPv4 header was accepted");
+    IPH_VHL_SET(ip, 4, header_length / 4U);
+
+    ip->src.addr  = receiver.peer_ipv4;
+    ip->dest.addr = receiver.local_ipv4;
+    IPH_PROTO_SET(ip, IP_PROTO_ICMP);
+    struct icmp_echo_hdr *icmp    = (struct icmp_echo_hdr *) (bytes + header_length);
+    const uint8_t         types[] = {ICMP_ECHO, ICMP_ER};
+    for (size_t i = 0; i < ARRAY_SIZE(types); ++i)
+    {
+        icmp->type = types[i];
+        require(calcFullPacketChecksum(bytes, packet_length), "carrier options checksum build failed");
+        requireValidChecksums(packet);
+        require(pingwireParseInbound(bytes, packet_length, &receiver, &envelope) == kPingWireInboundInvalidCarrier,
+                "addressed Echo carrier with IPv4 options was accepted");
+    }
+    sbufDestroy(packet);
+}
+
 static void testMalformedEnvelopeMatrix(void)
 {
     const ping_wire_config_t sender = {
@@ -432,6 +519,7 @@ int main(void)
     testRequestSequenceMatrix();
     testCorrelationAndReplay();
     testBoundsFragmentsAndIdPolicy();
+    testUnrelatedIpv4Options();
     testMalformedEnvelopeMatrix();
 
     wCryptoGlobalCleanup();

@@ -12,6 +12,7 @@ typedef struct pingclient_tstate_s
     atomic_log_rate_limiter_t      drop_log_limiter;
     uint8_t                        digest_key[WCRYPTO_BLAKE2S_MAX_KEY_SIZE];
     bool                           identifier_is_random;
+    bool                           send_replies;
     bool                           started;
 } pingclient_tstate_t;
 

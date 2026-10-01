@@ -11,6 +11,7 @@ static bool pingserverSettingIsSupported(const char *key)
         "sequence-start",
         "ttl",
         "tos",
+        "send-replies",
     };
 
     if (key == NULL)
@@ -38,7 +39,7 @@ static bool pingserverRejectLegacySettings(const cJSON *settings)
         }
 
         LOGF("PingServer: configuration uses removed Ping wire v1 setting '%s'; Ping wire v2 accepts only "
-             "local-ipv4, peer-ipv4, identifier, sequence-start, ttl, and tos",
+             "local-ipv4, peer-ipv4, identifier, sequence-start, ttl, tos, and send-replies",
              item->string != NULL ? item->string : "<unnamed>");
         return false;
     }
@@ -137,8 +138,8 @@ tunnel_t *pingserverCreate(node_t *node)
 
     t->fnPayloadD = &pingserverDownStreamPayload;
 
-    t->onPrepare  = &pingserverOnPrepair;
-    t->onStart    = &pingserverOnStart;
+    t->onPrepare = &pingserverOnPrepair;
+    t->onStart   = &pingserverOnStart;
 
     t->onDestroy = &pingserverDestroy;
 
@@ -157,6 +158,14 @@ tunnel_t *pingserverCreate(node_t *node)
         ! pingserverLoadRequiredIpv4(&state->wire.peer_ipv4, settings, "peer-ipv4") ||
         ! pingserverLoadIdentifier(state, settings))
     {
+        pingserverDestroy(t, wwLifecycleStartupRollback());
+        return NULL;
+    }
+
+    state->send_replies = false;
+    if (jsonGetObjectBoolean(settings, "send-replies", &state->send_replies) == kJsonValueInvalid)
+    {
+        LOGF("JSON Error: PingServer->settings->send-replies (boolean field) : expected true or false");
         pingserverDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }

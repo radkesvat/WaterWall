@@ -16,11 +16,50 @@ static bool pingwireIcmpChecksumIsValid(const uint8_t *packet, uint16_t length)
     return inet_chksum(packet, length) == 0;
 }
 
-bool pingwireIsExactIpv4Packet(const uint8_t *packet, uint32_t length)
+static const char *pingwireIpv4PacketErrorWithView(const uint8_t *packet, uint32_t length, ipv4_packet_view_t *view)
+{
+    if (packet == NULL || length < IP_HLEN)
+    {
+        return "truncated IPv4 header";
+    }
+    if (! ipv4packetviewParse(packet, length, view))
+    {
+        const struct ip_hdr *ip = (const struct ip_hdr *) packet;
+        if (IPH_V(ip) != 4)
+        {
+            return "unsupported IP version (IPv4 required)";
+        }
+        const uint16_t header_length = IPH_HL_BYTES(ip);
+        if (header_length < IP_HLEN || header_length > IP_HLEN_MAX)
+        {
+            return "invalid IPv4 header length";
+        }
+        if (header_length > length)
+        {
+            return "truncated IPv4 header options";
+        }
+        if (lwip_ntohs(IPH_LEN(ip)) < header_length)
+        {
+            return "IPv4 total length is smaller than its header";
+        }
+        return "IPv4 declared total length exceeds received bytes";
+    }
+    if (view->ip_total_length != length)
+    {
+        return "IPv4 declared total length does not match received bytes";
+    }
+    return NULL;
+}
+
+const char *pingwireIpv4PacketError(const uint8_t *packet, uint32_t length)
 {
     ipv4_packet_view_t view = {0};
+    return pingwireIpv4PacketErrorWithView(packet, length, &view);
+}
 
-    return packet != NULL && ipv4packetviewParse(packet, length, &view) && view.ip_total_length == length;
+bool pingwireIsExactIpv4Packet(const uint8_t *packet, uint32_t length)
+{
+    return pingwireIpv4PacketError(packet, length) == NULL;
 }
 
 bool pingwireSelectIdentifier(bool random, uint16_t configured, uint16_t random_candidate, uint16_t *identifier_out)
@@ -34,16 +73,18 @@ bool pingwireSelectIdentifier(bool random, uint16_t configured, uint16_t random_
     return true;
 }
 
-static bool pingwireOuterIpv4IsExact(const uint8_t *packet, uint32_t length, ipv4_packet_view_t *view_out)
+static const char *pingwireOuterIpv4Error(const uint8_t *packet, uint32_t length, ipv4_packet_view_t *view_out)
 {
-    if (packet == NULL || view_out == NULL || length > kMaxAllowedPacketLength ||
-        ! ipv4packetviewParse(packet, length, view_out) || view_out->ip_total_length != length ||
-        view_out->ip_header_length != kPingWireIpv4HeaderLength)
+    if (length > kMaxAllowedPacketLength)
     {
-        return false;
+        return "outer IPv4 packet exceeds maximum carrier size";
     }
-
-    return pingwireIpv4ChecksumIsValid(packet, view_out->ip_header_length);
+    const char *error = pingwireIpv4PacketErrorWithView(packet, length, view_out);
+    if (error != NULL)
+    {
+        return error;
+    }
+    return pingwireIpv4ChecksumIsValid(packet, view_out->ip_header_length) ? NULL : "invalid outer IPv4 checksum";
 }
 
 ping_wire_inbound_kind_t pingwireParseInbound(const uint8_t *packet, uint32_t length, const ping_wire_config_t *config,
@@ -56,11 +97,16 @@ ping_wire_inbound_kind_t pingwireParseInbound(const uint8_t *packet, uint32_t le
 
     if (config == NULL || packet == NULL || envelope_out == NULL)
     {
+        if (envelope_out != NULL)
+        {
+            envelope_out->error_reason = "invalid Echo parser arguments";
+        }
         return kPingWireInboundMalformed;
     }
 
-    ipv4_packet_view_t outer = {0};
-    if (! pingwireOuterIpv4IsExact(packet, length, &outer))
+    ipv4_packet_view_t outer   = {0};
+    envelope_out->error_reason = pingwireOuterIpv4Error(packet, length, &outer);
+    if (envelope_out->error_reason != NULL)
     {
         return kPingWireInboundMalformed;
     }
@@ -71,8 +117,19 @@ ping_wire_inbound_kind_t pingwireParseInbound(const uint8_t *packet, uint32_t le
         return kPingWireInboundUnrelated;
     }
 
-    if (outer.fragmented || outer.transport_length < kPingWireIcmpHeaderLength)
+    if (outer.ip_header_length != kPingWireIpv4HeaderLength)
     {
+        envelope_out->error_reason = "outer IPv4 header options are unsupported for Echo carriers";
+        return kPingWireInboundInvalidCarrier;
+    }
+    if (outer.fragmented)
+    {
+        envelope_out->error_reason = "fragmented outer IPv4 Echo carrier";
+        return kPingWireInboundInvalidCarrier;
+    }
+    if (outer.transport_length < kPingWireIcmpHeaderLength)
+    {
+        envelope_out->error_reason = "truncated ICMP Echo header";
         return kPingWireInboundInvalidCarrier;
     }
 
@@ -80,6 +137,7 @@ ping_wire_inbound_kind_t pingwireParseInbound(const uint8_t *packet, uint32_t le
     const struct icmp_echo_hdr *icmp       = (const struct icmp_echo_hdr *) icmp_bytes;
     if (! pingwireIcmpChecksumIsValid(icmp_bytes, outer.transport_length))
     {
+        envelope_out->error_reason = "invalid ICMP checksum";
         return kPingWireInboundInvalidCarrier;
     }
 
@@ -101,6 +159,7 @@ ping_wire_inbound_kind_t pingwireParseInbound(const uint8_t *packet, uint32_t le
 
     if (icmp->code != 0)
     {
+        envelope_out->error_reason = "unsupported ICMP Echo code (zero required)";
         return kPingWireInboundInvalidCarrier;
     }
 
@@ -108,6 +167,7 @@ ping_wire_inbound_kind_t pingwireParseInbound(const uint8_t *packet, uint32_t le
     {
         if (! pingwireIsExactIpv4Packet(envelope_out->inner_ipv4, envelope_out->inner_ipv4_length))
         {
+            envelope_out->error_reason = "ICMP Echo Request payload is not one complete inner IPv4 packet";
             return kPingWireInboundInvalidCarrier;
         }
         return kPingWireInboundEchoRequest;
@@ -118,6 +178,7 @@ ping_wire_inbound_kind_t pingwireParseInbound(const uint8_t *packet, uint32_t le
         return kPingWireInboundEchoReply;
     }
 
+    envelope_out->error_reason = "unsupported ICMP type (Echo Request or Echo Reply required)";
     return kPingWireInboundInvalidCarrier;
 }
 

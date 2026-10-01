@@ -1,5 +1,5 @@
 <!--
-Documentation version: 154
+Documentation version: 156
 Sync note: Keep this file aligned with WaterWall-Docs/docs/02-noderefs/PingClient.mdx.
 -->
 
@@ -25,22 +25,25 @@ each endpoint. It never puts new application data into an Echo Reply.
 
 ```text
 client data: PingClient -- Echo Request(data) --> PingServer
-             PingClient <-- Echo Reply(same bytes) -- PingServer
+             PingClient <-- optional Echo Reply(same bytes) -- PingServer
 
 server data: PingClient <-- Echo Request(data) -- PingServer
-             PingClient -- Echo Reply(same bytes) --> PingServer
+             PingClient -- optional Echo Reply(same bytes) --> PingServer
 ```
 
-An Echo Request is delivered once after the peer has built its reply. The
-request originator matches and consumes that Echo Reply as a wire
-acknowledgement, so echoed inner bytes are never delivered twice.
+An Echo Request's inner packet is delivered once. With `send-replies: true`,
+the receiver first builds and sends an exact Echo Reply. The default is `false`,
+which skips reply allocation, copying, and transmission. Each endpoint chooses
+this setting independently; request tracking and replay suppression remain
+active, and incoming correlated Echo Replies are consumed as acknowledgements
+regardless of the local setting. Data delivery does not wait for a reply.
 
 For PingClient the callback behavior is:
 
 | Event | Action |
 | --- | --- |
 | upstream plain IPv4 packet | Build an Echo Request and forward upstream. |
-| downstream peer Echo Request | Build/send its Echo Reply upstream, then decapsulate the original request downstream. |
+| downstream peer Echo Request | If `send-replies` is true, build/send its Echo Reply upstream; decapsulate the original request downstream once. |
 | downstream matching Echo Reply | Consume it as an acknowledgement. |
 
 ## Configuration
@@ -52,6 +55,7 @@ For PingClient the callback behavior is:
   "settings": {
     "local-ipv4": "198.51.100.10",
     "peer-ipv4": "203.0.113.20",
+    "send-replies": false,
     "identifier": "random",
     "sequence-start": 1,
     "ttl": 64,
@@ -65,6 +69,7 @@ For PingClient the callback behavior is:
 | --- | --- | --- | --- |
 | `local-ipv4` | yes | — | Source address for locally originated requests and replies. |
 | `peer-ipv4` | yes | — | Destination for local requests and expected source of peer carrier traffic. |
+| `send-replies` | no | `false` | Boolean. Send exact Echo Replies for received peer requests when true; false or omission skips reply generation. |
 | `identifier` | no | `"random"` | Local request-session identifier. An integer `0..65535` is a deterministic override. The random default is nonzero and stable for this node lifetime. |
 | `sequence-start` | no | `1` | First sequence number placed on the wire. Range: `0..65535`; wrap is valid. |
 | `ttl` | no | `64` | TTL for locally generated packets. |
@@ -85,8 +90,9 @@ Every local data packet becomes exactly:
 - locally generated requests use type `8`, code `0`, configured source/destination,
   configured TOS/TTL, DF set, and IPv4 ID `0`;
 - the request identifier is local and the sequence advances once per request;
-- replies use type `0`, code `0`, reverse addresses, copy request identifier,
-  sequence, ICMP payload length, and every payload byte;
+- when `send-replies` is true, generated replies use type `0`, code `0`, reverse
+  addresses, copy request identifier, sequence, ICMP payload length, and every
+  payload byte;
 - generated replies copy request TOS, use local configured TTL, clear DF and
   fragmentation bits, and use a securely seeded tuple-scoped IPv4-ID
   approximation. It is Linux-like, not a copy of host-global Linux kernel state.
@@ -111,12 +117,21 @@ from an interactive `ping` process.
   replay ring. Device worker affinity is not correlation identity: a reply or
   duplicate request may arrive on a different packet-line WID and still match.
   An old outstanding acknowledgement may be overwritten as packet loss;
-  duplicate peer requests receive another reply but deliver their inner packet
-  only once.
+  duplicate peer requests deliver their inner packet only once and receive
+  another reply only when `send-replies` is true.
 
 The node advertises `28` bytes of left padding and accepts at most `1472` bytes
 of inner IPv4 data, producing a maximum `1500`-byte carrier packet. It does not
 fragment traffic, discover PMTU, or adjust TCP MSS.
+
+Packet rejection diagnostics use the network logger at `ERROR` level and
+identify the specific validation, checksum, size, headroom, or tracking failure.
+Each drop message includes the packet length, maximum inner/carrier lengths,
+wrapper overhead, and available/required left headroom, all in bytes. Reply
+allocation/build failures also log at `ERROR` and report the request length;
+inner delivery can continue without an acknowledgement. The existing five-second
+log gate is shared by all failure reasons, directions, and workers of each node,
+so it does not emit one message per rejected packet.
 
 ## Breaking Migration From Ping Wire v1
 

@@ -1,5 +1,5 @@
 <!--
-Documentation version: 155
+Documentation version: 156
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/RawSocket.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/RawSocket.mdx, and all files must keep the same documentation version.
 -->
 
@@ -36,10 +36,12 @@ RawSocket -> PingServer -> TunDevice
 ```
 
 In first position, RawSocket forwards captured carrier packets upstream into
-PingServer. PingServer sends an exact type-0 Echo Reply back toward RawSocket
-before restoring the inner packet toward TunDevice. Plain packets from TunDevice
-return downstream as fresh type-8 Echo Requests for raw injection; they are not
-inserted into an unrelated Echo Reply.
+PingServer. PingServer restores the inner packet toward TunDevice; only with
+its `send-replies: true` setting does it first send an exact type-0 Echo Reply
+back toward RawSocket. Reply generation defaults to false on both Ping nodes
+and can be enabled independently. Plain packets from TunDevice return downstream
+as fresh type-8 Echo Requests for raw injection; they are not inserted into an
+unrelated Echo Reply.
 
 ## Configuration Example
 

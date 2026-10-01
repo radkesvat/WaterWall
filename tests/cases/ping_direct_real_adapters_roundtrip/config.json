@@ -21,6 +21,7 @@
       "settings": {
         "local-ipv4": "127.0.0.1",
         "peer-ipv4": "127.0.0.2",
+        "send-replies": true,
         "identifier": 4661,
         "sequence-start": 1,
         "ttl": 64,

@@ -416,16 +416,20 @@ There are several valid ways to run tests:
   integer connector destination port inside the listener's port range.
 - `ping_new_ip_icmp_roundtrip`
   Verifies a direct `TesterClient -> PingClient -> PingServer -> TesterServer` packet chain in both directions,
-  including fresh IPv4/ICMP Echo Requests, exact Echo Reply acknowledgements, nested synchronous reply handling,
-  and one-time inner-packet delivery.
+  including fresh IPv4/ICMP Echo Requests and one-time inner-packet delivery with `send-replies` omitted at both
+  endpoints, exercising the default without generated replies.
 - `ping_legacy_settings_rejected` / `ping_server_legacy_settings_rejected`
   Verify that both strict Ping parsers reject removed wire-v1 settings with the explicit migration diagnostic.
 - `packet_analysis_ping_roundtrip`
   Verifies PingClient's one-way fresh IPv4/ICMP Echo Request encoding over the packet analysis path.
 - `ping_direct_real_adapters_roundtrip`
   On privileged Linux hosts, injects a wrapped ICMP request through the real
-  `RawSocket -> PingServer -> TunDevice` server topology, verifies the immediate exact Echo Reply, then verifies the
-  kernel-generated response returns in a separate Echo Request followed by a matching acknowledgement.
+  `RawSocket -> PingServer -> TunDevice` server topology with `send-replies: true`, verifies the immediate exact
+  Echo Reply, then verifies the kernel-generated response returns in a separate Echo Request followed by a
+  matching acknowledgement.
+- `ping_server_packets_to_connection_alignment_roundtrip`
+  Verifies a TCP roundtrip through PingServer and PacketsToConnection with server reply generation enabled and
+  client reply generation omitted, exercising independent endpoint settings and packet alignment.
 - `ipmanipulator_tcp_custom_protocol_roundtrip`
   Verifies that `IpManipulator` can rewrite the IPv4 TCP protocol number to a non-TCP/UDP custom value.
 - `ipmanipulator_udp_custom_protocol_roundtrip`

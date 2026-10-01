@@ -82,6 +82,7 @@
       "settings": {
         "local-ipv4": "198.51.100.10",
         "peer-ipv4": "192.0.2.10",
+        "send-replies": true,
         "identifier": 4661,
         "sequence-start": 1
       },
