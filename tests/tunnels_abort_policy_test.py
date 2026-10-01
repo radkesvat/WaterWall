@@ -163,6 +163,7 @@ _CALL_PATTERNS = {
     "abortProgramNow": _ABORT_ANY_RE,
     "terminateProgram": _TERMINATE_RE,
     "requestProgramShutdown": _REQUEST_SHUTDOWN_RE,
+    "quiescenceGateAbortUnderflow": _call_re("quiescenceGateAbortUnderflow"),
 }
 
 
@@ -606,7 +607,7 @@ MANIFEST = [
      ("WireGuardDevice: unexpected Finish on worker packet line %u",
       "WireGuardDevice: Finish reached invalid transport-line storage or worker %u"),
      "runtime line-role/storage invariant: WireGuardDevice packet-line Finish or invalid transport registry access"),
-    ("ww/base/quiescence_gate.h", "quiescenceGateLeave", 1,
+    ("ww/base/quiescence_gate.c", "quiescenceGateAbortUnderflow", 1,
      ("quiescenceGateLeave: gate state count underflow",),
      "runtime reference invariant: quiescence-gate leave underflow"),
     ("ww/base/widle_table.c", "idletableReleaseMessageRef", 1,
@@ -714,6 +715,13 @@ MANIFEST = [
 # Category-C functions so it cannot be reintroduced unnoticed.
 
 EXCLUSIONS = [
+    # Leave delegates its fatal branch to a cold helper, keeping logger selection
+    # out of the public header. Pin both the helper's abort above and this call.
+    ("ww/base/quiescence_gate.h", "quiescenceGateLeave",
+     {"quiescenceGateAbortUnderflow": 1, "terminateProgram": 0,
+      "abortProgramNow": 0, "requestProgramShutdown": 0},
+     (),
+     "runtime reference invariant: quiescence-gate leave delegates fatal underflow"),
     ("tunnels/TesterClient/common/helpers.c", "testerclientFail",
      {"terminateProgram": 0, "abortProgramNow": 1, "requestProgramShutdown": 1},
      ("TesterClient: worker %u failed: %s",),

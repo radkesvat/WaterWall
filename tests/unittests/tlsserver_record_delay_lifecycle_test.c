@@ -1,6 +1,8 @@
 #include "TlsServer/structure.h"
 #include "worker_registry_fixture.h"
 
+#include <openssl/err.h>
+
 /*
  * Fake worker table for the stubbed GSTATE below. Without it the identity
  * predicates correctly report "not an event worker" and the checked

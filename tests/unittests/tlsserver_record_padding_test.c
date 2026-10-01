@@ -1,5 +1,7 @@
 #include "TlsServer/structure.h"
 
+#include <openssl/err.h>
+
 typedef struct tlsserver_padding_fixture_s
 {
     master_pool_t      *large_master;
