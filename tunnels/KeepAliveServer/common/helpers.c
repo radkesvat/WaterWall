@@ -15,7 +15,7 @@ static bool keepaliveserverSendFrame(tunnel_t *t, line_t *l, sbuf_t *buf, uint8_
     /* Only the real left padding is written, including for a private-pipe body. */
     sbufShiftLeft(buf, kKeepAliveServerFramePrefixSize);
     uint8_t *header         = sbufGetMutablePtr(buf);
-    uint16_t network_length = htons((uint16_t) (length + kKeepAliveServerFrameTypeSize));
+    uint32_t network_length = htonl(length + kKeepAliveServerFrameTypeSize);
     sbufByteCopy(header, &network_length, sizeof(network_length));
     header[kKeepAliveServerFrameLengthSize] = kind;
     return lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, buf);
@@ -105,9 +105,11 @@ bool keepaliveserverConsumeUpstreamFrames(tunnel_t *t, line_t *l)
         const uint8_t *header = splicestreamPeekHeader(ls->read_stream);
         if (header == NULL)
             break;
-        const uint32_t body_length = ((uint32_t) header[0] << 8) | header[1];
-        const uint8_t  kind        = header[2];
-        if (body_length < kKeepAliveServerFrameTypeSize)
+        uint32_t network_length;
+        sbufByteCopy(&network_length, header, sizeof(network_length));
+        const uint32_t body_length = ntohl(network_length);
+        const uint8_t  kind        = header[kKeepAliveServerFrameLengthSize];
+        if (body_length < kKeepAliveServerFrameTypeSize || body_length > kKeepAliveServerMaxFrameBodyLength)
         {
             LOGW("KeepAliveServer: invalid keepalive frame length");
             keepaliveserverCloseLineFromProtocolError(t, l);

@@ -19,14 +19,14 @@ typedef struct keepaliveserver_lstate_s
 
 enum
 {
-    kKeepAliveServerFrameLengthSize     = sizeof(uint16_t),
+    kKeepAliveServerFrameLengthSize     = sizeof(uint32_t),
     kKeepAliveServerFrameTypeSize       = sizeof(uint8_t),
     kKeepAliveServerFramePrefixSize     = kKeepAliveServerFrameLengthSize + kKeepAliveServerFrameTypeSize,
-    kKeepAliveServerMaxFrameBodyLength  = UINT16_MAX,
-    kKeepAliveServerMaxPayloadChunkSize = UINT16_MAX - 1,
-    kKeepAliveServerReadOverflowLimit   = 131074,
-    kKeepAliveServerReadChargeLimit     = 2U * 1024U * 1024U,
-    kKeepAliveServerMaxReentryBytes     = 2U * 1024U * 1024U,
+    kKeepAliveServerMaxPayloadChunkSize = 6U * 1024U * 1024U,
+    kKeepAliveServerMaxFrameBodyLength  = kKeepAliveServerMaxPayloadChunkSize + kKeepAliveServerFrameTypeSize,
+    kKeepAliveServerReadOverflowLimit   = kKeepAliveServerMaxPayloadChunkSize + kKeepAliveServerFramePrefixSize,
+    kKeepAliveServerReadChargeLimit     = 16U * 1024U * 1024U,
+    kKeepAliveServerMaxReentryBytes     = 8U * 1024U * 1024U,
     kKeepAliveServerMaxReentryBuffers   = 1024U,
     kKeepAliveServerFrameKindNormal     = 1,
     kKeepAliveServerFrameKindPing       = 2,

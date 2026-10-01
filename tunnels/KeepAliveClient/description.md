@@ -5,7 +5,7 @@ Sync note: Any change to this file must also be applied to WaterWall/WaterWall-D
 
 # KeepAliveClient Node
 
-`KeepAliveClient` is a small framing tunnel that wraps upstream payloads with a `3`-byte keepalive header and
+`KeepAliveClient` is a small framing tunnel that wraps upstream payloads with a `5`-byte keepalive header and
 periodically sends ping control frames on every live borrowed line it tracks.
 
 The purpose of this tunnel is to periodically send/recv ping-pong messages that keep the connection appearing active, preventing timeout-based middleboxes (such as NAT devices and others) from closing it.
@@ -20,10 +20,12 @@ hold protocol state alive after a clean finish.
 
 Each transmitted frame starts with:
 
-- `2` bytes: big-endian frame body length
+- `4` bytes: big-endian frame body length
 - `1` byte: frame kind
 
-Frame body length includes the `1`-byte frame kind plus any payload bytes.
+Frame body length includes the `1`-byte frame kind plus any payload bytes. Each
+frame carries at most `6 MiB` of payload. Body lengths outside `1..6,291,457`
+close the line. Both peers use the same five-byte prefix.
 
 Frame kinds are:
 
@@ -86,28 +88,28 @@ Source-backed metadata:
 | `layer_group` | `kNodeLayer4` |
 | `layer_group_prev_node` | `kNodeLayer4` |
 | `layer_group_next_node` | `kNodeLayer4` |
-| `required_padding_left` | `3` bytes |
+| `required_padding_left` | `5` bytes |
 
 ## Splice Support
 
 `KeepAliveClient` advertises `kNodeFlagSupportsSplice`. Framing continues for the
-whole connection. Upstream encoding writes only the three-byte header into real
-left padding; downstream decoding uses a three-byte `splice_stream_t` header
+whole connection. Upstream encoding writes only the five-byte header into real
+left padding; downstream decoding uses a five-byte `splice_stream_t` header
 cache. Payload bodies remain eligible for private-pipe forwarding. Payloads
-larger than 65,534 bytes are split using representation-aware range operations.
+larger than 6 MiB are split using representation-aware range operations.
 Pipe allocation or capacity pressure may select complete ordinary fallback.
-The wire format is unchanged; ping and pong frames use ordinary buffers.
+Ping and pong frames use ordinary buffers.
 
-Nested encoder input stays behind the active payload under a shared 2 MiB
+Nested encoder input stays behind the active payload under a shared 8 MiB
 logical-byte and 1,024-buffer reentry bound, counting the active suffix. The decoder serializes nested input,
-limits nested retained bytes to 2 MiB, and limits retained allocation charge to
-2 MiB, attempting beneficial ordinary compaction before refusing excess charge.
-Complete frames in an admitted delivery drain before checking the 131,074-byte
+limits nested retained bytes to 8 MiB, and limits retained allocation charge to
+16 MiB, attempting beneficial ordinary compaction before refusing excess charge.
+Complete frames in an admitted delivery drain before checking the 6 MiB + 5 byte
 incomplete-remainder limit. Pause is forwarded promptly and does not interrupt
 that synchronous batch. Timer-generated pings stop while upstream output is
 paused and resume on a later timer tick after Resume.
 
-Invalid zero-length frame bodies, admission failure and retained-storage overflow
+Zero or oversized frame body lengths, admission failure and retained-storage overflow
 close the borrowed line through its owner. Finish releases incomplete frames,
 active encoder suffixes and queued reentrant input; this node never destroys
 `line_t` itself.

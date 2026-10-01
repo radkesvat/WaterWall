@@ -29,14 +29,14 @@ struct keepaliveclient_lstate_s
 
 enum
 {
-    kKeepAliveFrameLengthSize     = sizeof(uint16_t),
+    kKeepAliveFrameLengthSize     = sizeof(uint32_t),
     kKeepAliveFrameTypeSize       = sizeof(uint8_t),
     kKeepAliveFramePrefixSize     = kKeepAliveFrameLengthSize + kKeepAliveFrameTypeSize,
-    kKeepAliveMaxFrameBodyLength  = UINT16_MAX,
-    kKeepAliveMaxPayloadChunkSize = UINT16_MAX - 1,
-    kKeepAliveReadOverflowLimit   = 131074,
-    kKeepAliveReadChargeLimit     = 2U * 1024U * 1024U,
-    kKeepAliveMaxReentryBytes     = 2U * 1024U * 1024U,
+    kKeepAliveMaxPayloadChunkSize = 6U * 1024U * 1024U,
+    kKeepAliveMaxFrameBodyLength  = kKeepAliveMaxPayloadChunkSize + kKeepAliveFrameTypeSize,
+    kKeepAliveReadOverflowLimit   = kKeepAliveMaxPayloadChunkSize + kKeepAliveFramePrefixSize,
+    kKeepAliveReadChargeLimit     = 16U * 1024U * 1024U,
+    kKeepAliveMaxReentryBytes     = 8U * 1024U * 1024U,
     kKeepAliveMaxReentryBuffers   = 1024U,
     kKeepAliveFrameKindNormal     = 1,
     kKeepAliveFrameKindPing       = 2,

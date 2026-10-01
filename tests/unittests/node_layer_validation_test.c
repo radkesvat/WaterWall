@@ -1745,7 +1745,7 @@ static void testFramedSpliceCapability(void)
     node_t nodes[] = {nodeHeaderServerGet(), nodeKeepAliveClientGet(), nodeKeepAliveServerGet()};
     for (unsigned i = 0; i < ARRAY_SIZE(nodes); ++i)
     {
-        require(nodes[i].flags == kNodeFlagSupportsSplice && nodes[i].required_padding_left == (i == 0 ? 0 : 3),
+        require(nodes[i].flags == kNodeFlagSupportsSplice && nodes[i].required_padding_left == (i == 0 ? 0 : 5),
                 "HeaderServer or KeepAlive splice metadata changed");
         for (unsigned blocked = 0; blocked < 2; ++blocked)
         {

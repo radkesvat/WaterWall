@@ -6,6 +6,8 @@
 #define nodeGet         nodeKeepAliveServerGet
 #define nodeCreate      keepaliveserverTunnelCreate
 #define nodeState       keepaliveserver_lstate_t
+#define framePrefix     kKeepAliveServerFramePrefixSize
+#define reentryBytes    kKeepAliveServerMaxReentryBytes
 #define encode(t, l, b) keepaliveserverTunnelDownStreamPayload(t, l, b)
 #define decode(t, l, b) keepaliveserverTunnelUpStreamPayload(t, l, b)
 #else
@@ -14,11 +16,18 @@
 #define nodeGet         nodeKeepAliveClientGet
 #define nodeCreate      keepaliveclientTunnelCreate
 #define nodeState       keepaliveclient_lstate_t
+#define framePrefix     kKeepAliveFramePrefixSize
+#define reentryBytes    kKeepAliveMaxReentryBytes
 #define encode(t, l, b) keepaliveclientTunnelUpStreamPayload(t, l, b)
 #define decode(t, l, b) keepaliveclientTunnelDownStreamPayload(t, l, b)
 #endif
 
 #include <unistd.h>
+
+enum
+{
+    kExpectedChunkBytes = 6U * 1024U * 1024U
+};
 
 static twf_worker_env_t env;
 static twf_line_pool_t  lines;
@@ -26,7 +35,7 @@ static node_t           metadata;
 static tunnel_t        *node, *prev, *next;
 static tunnel_chain_t   chain;
 static line_t          *line;
-static uint8_t          wire[3 * 1024 * 1024], plain[3 * 1024 * 1024];
+static uint8_t          wire[2 * kExpectedChunkBytes + 1024], plain[2 * kExpectedChunkBytes + 1024];
 static size_t           wire_length, plain_length, measured_reads;
 static unsigned         wire_calls, plain_calls, finishes, inits;
 static bool             measuring, fail_stream, fail_queue, inject_encode, inject_decode, close_output, require_splice;
@@ -146,11 +155,11 @@ static void captureWire(tunnel_t *t, line_t *l, sbuf_t *buf)
         nodeState *ls   = lineGetState(l, node);
         if (mode == 1)
         {
-            sbuf_t *pending = bufferpoolGetBestFit(env.pool, 2 * 1024 * 1024, 128);
-            sbufSetLength(pending, 2 * 1024 * 1024);
+            sbuf_t *pending = bufferpoolGetBestFit(env.pool, reentryBytes, 128);
+            sbufSetLength(pending, reentryBytes);
             memoryZero(sbufGetMutablePtr(pending), sbufGetLength(pending));
             encode(node, l, pending);
-            twfRequire(bufferqueueGetBufLen(&ls->write_reentry) == 2 * 1024 * 1024,
+            twfRequire(bufferqueueGetBufLen(&ls->write_reentry) == reentryBytes,
                        "encoder refused exact reentry byte limit");
         }
         else
@@ -192,7 +201,7 @@ static void capturePlain(tunnel_t *t, line_t *l, sbuf_t *buf)
     if (inject_decode)
     {
         inject_decode          = false;
-        const uint8_t nested[] = {0, 2, 1, 'B'};
+        const uint8_t nested[] = {0, 0, 0, 2, 1, 'B'};
         decode(node, l, ordinary(nested, sizeof(nested)));
     }
     if (close_output)
@@ -210,7 +219,7 @@ static void setup(void)
     expected_identity                                                         = NULL;
     twfWorkerEnvSetupWithBufferSizes(&env, 8192, 1024, 128, 65536, 65536);
     metadata = nodeGet();
-    twfRequire(metadata.flags == kNodeFlagSupportsSplice && metadata.required_padding_left == 3,
+    twfRequire(metadata.flags == kNodeFlagSupportsSplice && metadata.required_padding_left == framePrefix,
                "incorrect KeepAlive metadata");
     node = nodeCreate(&metadata);
     prev = tunnelCreate(NULL, 0, 0);
@@ -261,6 +270,46 @@ static void teardown(void)
     twfWorkerEnvTeardown(&env);
 }
 
+static void testLargeFrameBoundaries(void)
+{
+    const uint32_t lengths[] = {
+        kExpectedChunkBytes - 1, kExpectedChunkBytes, kExpectedChunkBytes + 1, 2 * kExpectedChunkBytes + 17};
+    for (unsigned test = 0; test < ARRAY_SIZE(lengths); ++test)
+    {
+        setup();
+        uint32_t length  = lengths[test];
+        uint8_t *payload = memoryAllocate(length);
+        for (uint32_t i = 0; i < length; ++i)
+            payload[i] = (uint8_t) (i * 31);
+        encode(node, line, ordinary(payload, length));
+        unsigned frames = (length + kExpectedChunkBytes - 1) / kExpectedChunkBytes;
+        twfRequire(wire_calls == frames, "encoder did not use the 6 MiB chunk boundary");
+        twfRequire(framePrefix == 5 && wire_length == length + 5 * frames, "incorrect large-frame prefix size");
+        size_t   offset    = 0;
+        uint32_t remaining = length;
+        while (remaining != 0)
+        {
+            uint32_t network_length;
+            memoryCopy(&network_length, wire + offset, sizeof(network_length));
+            uint32_t chunk = min(remaining, (uint32_t) kExpectedChunkBytes);
+            twfRequire(ntohl(network_length) == chunk + 1 && wire[offset + 4] == 1,
+                       "incorrect 32-bit frame length or kind");
+            offset += chunk + 5;
+            remaining -= chunk;
+        }
+        for (size_t cursor = 0; cursor < wire_length;)
+        {
+            uint32_t count = (uint32_t) min(wire_length - cursor, 128U * 1024U);
+            decode(node, line, ordinary(wire + cursor, count));
+            cursor += count;
+        }
+        twfRequire(plain_length == length && plain_calls == frames && memoryCompare(plain, payload, length) == 0,
+                   "fragmented large frames changed payload or frame boundaries");
+        memoryFree(payload);
+        teardown();
+    }
+}
+
 static void testOrdinaryAndLarge(void)
 {
     setup();
@@ -269,7 +318,7 @@ static void testOrdinaryAndLarge(void)
         payload[i] = (uint8_t) (i * 31);
     inject_encode = true;
     encode(node, line, ordinary(payload, 200000));
-    twfRequire(wire_calls == 5, "large encode or nested input lost a frame");
+    twfRequire(wire_calls == 2, "large encode or nested input lost a frame");
     inject_decode = true;
     pause_output  = true;
     decode(node, line, ordinary(wire, (uint32_t) wire_length));
@@ -284,9 +333,9 @@ static void testEncodeCloseAndLimits(void)
 {
     setup();
     close_output     = true;
-    uint8_t *payload = memoryAllocate(200000);
-    memoryZero(payload, 200000);
-    encode(node, line, ordinary(payload, 200000));
+    uint8_t *payload = memoryAllocate(kExpectedChunkBytes + 200000);
+    memoryZero(payload, kExpectedChunkBytes + 200000);
+    encode(node, line, ordinary(payload, kExpectedChunkBytes + 200000));
     memoryFree(payload);
     twfRequire(! lineIsAlive(line) && wire_calls == 1, "large encoder continued or retained suffix after close");
     teardown();
@@ -297,9 +346,9 @@ static void testEncodeCloseAndLimits(void)
         encode_overflow = mode;
         if (mode == 3)
         {
-            payload = memoryAllocate(200000);
-            memoryZero(payload, 200000);
-            encode(node, line, ordinary(payload, 200000));
+            payload = memoryAllocate(kExpectedChunkBytes + 200000);
+            memoryZero(payload, kExpectedChunkBytes + 200000);
+            encode(node, line, ordinary(payload, kExpectedChunkBytes + 200000));
             memoryFree(payload);
         }
         else
@@ -313,10 +362,10 @@ static void testEncodeCloseAndLimits(void)
 static void testControlAndRejection(void)
 {
     setup();
-    const uint8_t controls[] = {0, 1, 2, 0, 1, 3, 0, 2, 9, 'X', 0, 1, 1};
+    const uint8_t controls[] = {0, 0, 0, 1, 2, 0, 0, 0, 1, 3, 0, 0, 0, 2, 9, 'X', 0, 0, 0, 1, 1};
     for (unsigned i = 0; i < sizeof(controls); ++i)
         decode(node, line, ordinary(controls + i, 1));
-    twfRequire(plain_calls == 0 && wire_length == 3 && memoryCompare(wire, "\0\1\3", 3) == 0,
+    twfRequire(plain_calls == 0 && wire_length == 5 && memoryCompare(wire, "\0\0\0\1\3", 5) == 0,
                "ping, pong, unknown or empty normal frame changed behavior");
 #ifndef TEST_KEEPALIVE_SERVER
     node->fnPauseD(node, line);
@@ -324,7 +373,7 @@ static void testControlAndRejection(void)
     node->fnResumeD(node, line);
     twfRequire(keepaliveclientSendPingFrame(node, line) && wire_calls == 2, "timer ping did not resume");
 #endif
-    const uint8_t invalid[] = {0, 0, 1};
+    const uint8_t invalid[] = {0, 0, 0, 0, 1};
     decode(node, line, ordinary(invalid, sizeof(invalid)));
     twfRequire(! lineIsAlive(line) && finishes == 2, "invalid frame did not close both directions");
     teardown();
@@ -339,6 +388,22 @@ static void testControlAndRejection(void)
     decode(node, line, ordinary(controls, 1));
     twfRequire(! lineIsAlive(line) && finishes == 2, "read admission failure did not close the line");
     teardown();
+
+    const uint32_t rejected[] = {kExpectedChunkBytes + 2, UINT32_MAX};
+    for (unsigned i = 0; i < ARRAY_SIZE(rejected); ++i)
+    {
+        setup();
+        uint8_t  header[5];
+        uint32_t network_length = htonl(rejected[i]);
+        memoryCopy(header, &network_length, sizeof(network_length));
+        header[4] = 1;
+        decode(node, line, ordinary(header, 4));
+        twfRequire(lineIsAlive(line), "partial wide header was rejected before the kind arrived");
+        decode(node, line, ordinary(header + 4, 1));
+        twfRequire(! lineIsAlive(line) && plain_calls == 0 && finishes == 2,
+                   "oversized frame length waited for a body or escaped validation");
+        teardown();
+    }
 }
 
 #if WW_HAVE_SPLICE
@@ -352,30 +417,31 @@ static void testPipes(void)
     expected_identity          = pipeBytes(payload, sizeof(payload), 5);
     encode(node, line, expected_identity);
     expected_identity = NULL;
-    twfRequire(measured_reads == 0 && wire_length == sizeof(payload) + 3, "encode read the pipe body");
+    twfRequire(measured_reads == 0 && wire_length == sizeof(payload) + 5, "encode read the pipe body");
     measured_reads = 0;
     decode(node, line, pipeBytes(wire, (uint32_t) wire_length, 0));
-    twfRequire(measured_reads == 3 && plain_length == sizeof(payload) &&
+    twfRequire(measured_reads == 5 && plain_length == sizeof(payload) &&
                    memoryCompare(plain, payload, sizeof(payload)) == 0,
                "decoder read more than its fixed header or changed payload");
     teardown();
 
     /* Split headers and bodies alternate between ordinary and private-pipe inputs. */
     setup();
-    const uint8_t fragments[] = {0, 5, 1, 'A', 'B', 'C', 'D', 0, 2, 1, 'E'};
+    const uint8_t fragments[] = {0, 0, 0, 5, 1, 'A', 'B', 'C', 'D', 0, 0, 0, 2, 1, 'E'};
     for (unsigned i = 0; i < sizeof(fragments); ++i)
         decode(node, line, i % 2 ? ordinary(fragments + i, 1) : pipeBytes(fragments + i, 1, 0));
     twfRequire(plain_length == 5 && memoryCompare(plain, "ABCDE", 5) == 0, "mixed fragmented frames changed order");
     teardown();
 
-    /* A resident prefix plus a real body exceeds one frame without needing a huge kernel pipe. */
+    /* A 68,000-byte resident-prefix/pipe payload now fits one frame unchanged. */
     setup();
     uint8_t *large = memoryAllocate(68000);
     for (unsigned i = 0; i < 68000; ++i)
         large[i] = (uint8_t) i;
     measuring = true;
     encode(node, line, pipeBytes(large, 68000, 60000));
-    twfRequire(wire_calls == 2 && wire_length == 68006, "large splice input was not split");
+    twfRequire(wire_calls == 1 && wire_length == 68005 && measured_reads == 0,
+               "large splice input did not stay in one frame");
     /* Destination pressure may choose ordinary fallback; wire bytes must always be exact. */
     decode(node, line, ordinary(wire, (uint32_t) wire_length));
     twfRequire(plain_length == 68000 && memoryCompare(plain, large, 68000) == 0, "splice splitting changed bytes");
@@ -395,19 +461,47 @@ static void testPipes(void)
     teardown();
 
     setup();
-    decode(node, line, pipeBytes(fragments, 4, 0));
+    decode(node, line, pipeBytes(fragments, 6, 0));
     twfRequire(plain_calls == 0, "incomplete splice body escaped");
+    teardown();
+}
+
+static void testLargePipeFrame(void)
+{
+    setup();
+    uint8_t *payload = memoryAllocate(kExpectedChunkBytes);
+    for (uint32_t i = 0; i < kExpectedChunkBytes; ++i)
+        payload[i] = (uint8_t) (i * 17);
+    encode(node, line, ordinary(payload, kExpectedChunkBytes));
+    twfRequire(wire_calls == 1, "maximum payload did not produce one frame");
+    measuring = true;
+    for (size_t offset = 0; offset < wire_length;)
+    {
+        uint32_t bytes = (uint32_t) min(wire_length - offset, 8192U);
+        decode(node, line, pipeBytes(wire + offset, bytes, 0));
+        offset += bytes;
+        if (offset != wire_length)
+            twfRequire(plain_calls == 0 && lineIsAlive(line), "partial maximum pipe frame escaped or closed");
+    }
+    twfRequire(plain_calls == 1 && plain_length == kExpectedChunkBytes &&
+                   memoryCompare(plain, payload, kExpectedChunkBytes) == 0,
+               "maximum frame from many pipes changed bytes");
+    /* The fixture requests 64 KiB pipes, so a complete 6 MiB body must use ordinary fallback. */
+    twfRequire(measured_reads == wire_length, "large pipe-pressure fallback did not settle all bytes exactly once");
+    memoryFree(payload);
     teardown();
 }
 #endif
 
 int main(void)
 {
+    testLargeFrameBoundaries();
     testOrdinaryAndLarge();
     testControlAndRejection();
     testEncodeCloseAndLimits();
 #if WW_HAVE_SPLICE
     testPipes();
+    testLargePipeFrame();
 #endif
     puts("KeepAlive frame bytes, splice ownership, FIFO and close tests passed");
     return 0;

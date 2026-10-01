@@ -922,9 +922,9 @@ add_waterwall_integration_test(waterwall.http_upgrade_custom_bidirectional_round
 add_waterwall_integration_test(waterwall.http_upgrade_custom_bidirectional_tcp_loopback http_upgrade_custom_bidirectional_tcp_loopback)
 # Exercise HeaderServer modes and KeepAlive framing across real TCP sockets.
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING AND TARGET TcpListener AND TARGET TcpConnector)
-  foreach(mode IN ITEMS constant port v1 v2 keepalive)
-    if((mode STREQUAL "keepalive" AND TARGET KeepAliveClient AND TARGET KeepAliveServer)
-       OR (NOT mode STREQUAL "keepalive" AND TARGET HeaderServer))
+  foreach(mode IN ITEMS constant port v1 v2 keepalive keepalive_client keepalive_server)
+    if((mode MATCHES "^keepalive" AND TARGET KeepAliveClient AND TARGET KeepAliveServer)
+       OR (NOT mode MATCHES "^keepalive" AND TARGET HeaderServer))
       foreach(splice_mode IN ITEMS true false)
         add_waterwall_isolated_test(waterwall.framed_${mode}_splice_${splice_mode}
           "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/framed_splice_integration.py"

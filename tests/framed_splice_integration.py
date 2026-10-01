@@ -19,6 +19,34 @@ from httpproxyserver_splice_integration import successful_calls
 HOST, APP_PORT, PEER_PORT, BACKEND_PORT = "127.0.0.1", 27981, 27982, 27983
 
 
+def keepalive_frame(data, kind=1):
+    assert len(data) <= 6 * 1024 * 1024
+    return (len(data) + 1).to_bytes(4, "big") + bytes([kind]) + data
+
+
+def keepalive_exact(sock, size):
+    data = bytearray()
+    while len(data) < size:
+        header = exact(sock, 5)
+        length, kind = int.from_bytes(header[:4], "big"), header[4]
+        assert 1 <= length <= 6 * 1024 * 1024 + 1, "invalid 32-bit KeepAlive length"
+        body = exact(sock, length - 1)
+        if kind == 1:
+            assert len(data) + len(body) <= size, "KeepAlive frame crossed expected payload boundary"
+            data += body
+        else:
+            assert kind in (2, 3) and not body, "unexpected KeepAlive control"
+            if kind == 2:
+                sock.sendall(keepalive_frame(b"", 3))
+    return bytes(data)
+
+
+def keepalive_eof(sock):
+    while first := sock.recv(1):
+        header = first + exact(sock, 4)
+        assert header[:4] == b"\0\0\0\1" and header[4] in (2, 3), "unexpected trailing application frame"
+
+
 def listener_node(name, port, next_name):
     return {"name": name, "type": "TcpListener", "next": next_name,
             "settings": {"address": HOST, "port": port, "nodelay": True}}
@@ -33,13 +61,21 @@ def run(binary, mode, enabled):
     tracer = shutil.which("strace")
     if tracer is None:
         raise RuntimeError("strace is required for pipe-to-socket evidence")
-    keepalive = mode == "keepalive"
-    if keepalive:
+    keepalive = mode.startswith("keepalive")
+    external_client = mode == "keepalive_client"
+    external_server = mode == "keepalive_server"
+    if mode == "keepalive":
         nodes = [listener_node("app", APP_PORT, "client"),
                  {"name": "client", "type": "KeepAliveClient", "next": "carrier",
                   "settings": {"ping-interval": 50}}, connector_node("carrier", PEER_PORT),
                  listener_node("peer", PEER_PORT, "server"),
                  {"name": "server", "type": "KeepAliveServer", "next": "backend"},
+                 connector_node("backend", BACKEND_PORT)]
+        prefix = b""
+    elif keepalive:
+        nodes = [listener_node("app", APP_PORT, "framer"),
+                 {"name": "framer", "type": "KeepAliveClient" if external_client else "KeepAliveServer",
+                  "next": "backend", **({"settings": {"ping-interval": 50}} if external_client else {})},
                  connector_node("backend", BACKEND_PORT)]
         prefix = b""
     else:
@@ -58,7 +94,7 @@ def run(binary, mode, enabled):
                       socket.inet_aton("198.51.100.1") + b"\x04\xd2\x01\xbb")
         else:
             prefix = b""
-    data = bytes(range(256)) * 4096
+    data = bytes(range(256)) * (24576 if keepalive else 4096)
     early = data[:8192]
     with tempfile.TemporaryDirectory(prefix="waterwall-framed-splice-") as directory:
         root = Path(directory) / "run"
@@ -95,21 +131,26 @@ def run(binary, mode, enabled):
                 def peer():
                     with backend.accept()[0] as conn:
                         conn.settimeout(15)
-                        assert exact(conn, len(early)) == early, "early upload changed"
-                        conn.sendall(early[::-1])
-                        assert exact(conn, len(data)) == data, "framed upload changed"
-                        conn.sendall(data[::-1])
-                        assert conn.recv(1) == b"", "unexpected trailing application bytes"
+                        read = keepalive_exact if external_client else exact
+                        assert read(conn, len(early)) == early, "early upload changed"
+                        conn.sendall(keepalive_frame(early[::-1]) if external_client else early[::-1])
+                        assert read(conn, len(data)) == data, "framed upload changed"
+                        conn.sendall(keepalive_frame(data[::-1]) if external_client else data[::-1])
+                        if external_client:
+                            keepalive_eof(conn)
+                        else:
+                            assert conn.recv(1) == b"", "unexpected trailing application bytes"
 
                 with client, concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
                     client.settimeout(15)
                     future = executor.submit(peer)
                     if prefix:
                         client.sendall(prefix[:1])
-                    client.sendall(prefix[1:] + early)
-                    assert exact(client, len(early)) == early[::-1], "early download changed"
-                    client.sendall(data)
-                    assert exact(client, len(data)) == data[::-1], "framed download changed"
+                    client.sendall(keepalive_frame(early) if external_server else prefix[1:] + early)
+                    read = keepalive_exact if external_server else exact
+                    assert read(client, len(early)) == early[::-1], "early download changed"
+                    client.sendall(keepalive_frame(data) if external_server else data)
+                    assert read(client, len(data)) == data[::-1], "framed download changed"
                     client.shutdown(socket.SHUT_RDWR)
                     future.result(timeout=20)
                 process.send_signal(signal.SIGTERM)
