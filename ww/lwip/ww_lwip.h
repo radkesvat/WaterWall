@@ -165,12 +165,13 @@ static inline int ip6AddrNetcmp(const ip6_addr_t *a, const ip6_addr_t *b, const 
 
 /**
  * @ingroup pbuf
- * Copy (part of) the contents of a packet buffer
- * to an application supplied buffer.
+ * Copy one packet into caller storage with capacity for buf->tot_len bytes.
+ * Empty spans are allowed; following packets in a pbuf queue are not copied.
+ * Source and destination addresses need not be aligned. Storage must not overlap.
  *
  * @param buf the pbuf from which to copy data
  * @param dataptr the application supplied buffer
- * @return the number of bytes copied, or 0 on failure
+ * @return the number of bytes copied, which can be short for an incomplete chain
  */
 u16_t pbufLargeCopyToPtr(const struct pbuf *buf, void *dataptr);
 

@@ -177,13 +177,16 @@ err_t lwipThreadPtcTcpRecvCallback(void *arg, struct tcp_pcb *tpcb, struct pbuf 
         const uint32_t capacity = sbufGetMaximumWriteableSize(buf);
         const uint32_t growth   = max(length, min((uint32_t) TCP_WND, capacity * 2U));
         sbuf_t        *grown    = ptcAcquireReceiveBuffer(pool, growth);
-        memoryCopy(sbufGetMutablePtr(grown), sbufGetRawPtr(buf), pending);
+        if (pending < 64)
+            memoryCopy(sbufGetMutablePtr(grown), sbufGetRawPtr(buf), pending);
+        else
+            memoryCopyLarge(sbufGetMutablePtr(grown), sbufGetRawPtr(buf), pending);
         bufferpoolReuseBuffer(pool, buf);
         buf = grown;
     }
     if (reuse == NULL)
     {
-        pbuf_copy_partial(p, (uint8_t *) sbufGetMutablePtr(buf) + pending, p->tot_len, 0);
+        pbufLargeCopyToPtr(p, (uint8_t *) sbufGetMutablePtr(buf) + pending);
         sbufSetLength(buf, length);
     }
     ls->rx_delivery = buf;

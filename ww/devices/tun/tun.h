@@ -16,6 +16,11 @@ enum
 typedef struct sbuf_s       sbuf_t;
 typedef struct tun_device_s tun_device_t;
 
+/* Receivers take ownership on the selected event worker. TUN aims to place the
+ * first IP byte on a 32-byte boundary, independently of GSO/checksum trust,
+ * while preserving chain padding. This is best effort, not a consumer
+ * precondition: consumers must check actual addresses before aligned accesses,
+ * and later packet transforms or header removal may change the alignment. */
 typedef void (*TunReadEventHandle)(tun_device_t *tdev, void *userdata, sbuf_t *buf, uint8_t wid);
 
 typedef struct tun_default_route_s

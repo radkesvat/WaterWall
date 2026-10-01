@@ -250,7 +250,10 @@ bool tunLinuxOffloadPrepareSegment(const uint8_t *ip, const tun_linux_offload_pl
     }
 
     memoryCopy(destination, ip, plan->header_length);
-    memoryCopy(destination + plan->header_length, ip + plan->header_length + offset, payload_length);
+    if (payload_length < 64)
+        memoryCopy(destination + plan->header_length, ip + plan->header_length + offset, payload_length);
+    else
+        memoryCopyLarge(destination + plan->header_length, ip + plan->header_length + offset, payload_length);
 
     const uint32_t tcp_offset = plan->ip_header_length;
     writeNetwork16(destination + kIpv4TotalLengthOffset, (uint16_t) length);

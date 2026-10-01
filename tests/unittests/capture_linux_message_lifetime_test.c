@@ -290,8 +290,8 @@ static capture_device_t *createDevice(test_env_t *env)
     require(pipe(cdev->linux_pipe_fds) == 0, "failed to create the capture stop pipe");
     require(capturedeviceMakeStopPipeNonblocking(cdev->linux_pipe_fds[0]),
             "failed to make the capture stop pipe nonblocking");
-    require(pthread_mutex_init(&cdev->reader_state_mutex, NULL) == 0, "failed to initialize the capture reader mutex");
-    require(pthread_cond_init(&cdev->reader_state_changed, NULL) == 0,
+    require(condmutexInit(&cdev->reader_state_mutex) == 0, "failed to initialize the capture reader mutex");
+    require(condvarInit(&cdev->reader_state_changed) == 0,
             "failed to initialize the capture reader condition variable");
 
     cdev->reader_session =

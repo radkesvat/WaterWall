@@ -256,7 +256,7 @@ static void tunDeliverPacket(void *device, sbuf_t *buf, wid_t wid)
 // strands packets that were read successfully before it.
 static void tunFlushReadBatch(tun_device_t *tdev, sbuf_t **bufs, uint16_t queued_count)
 {
-    if (queued_count > 0)
+    if (LIKELY(queued_count > 0))
     {
         deviceFlowAffinityPostBatch(tdev->reader_session, bufs, queued_count);
     }
@@ -266,19 +266,24 @@ static void tunFlushReadBatch(tun_device_t *tdev, sbuf_t **bufs, uint16_t queued
 // handed to the reader session before returning, on every path.
 static tun_drain_result_t tunDrainPackets(tun_device_t *tdev)
 {
-    uint8_t  queued_count = 0;
-    sbuf_t  *bufs[kMaxReadDistributeQueueSize];
-    uint32_t read_size = (uint32_t) tunDeviceMtu(tdev) + sizeof(uint32_t);
+    uint8_t        queued_count = 0;
+    sbuf_t        *bufs[kMaxReadDistributeQueueSize];
+    const uint32_t read_size = tunDeviceMtu(tdev);
 
     for (uint32_t i = 0; i < RAM_PROFILE && queued_count < kMaxReadDistributeQueueSize; ++i)
     {
         bufs[queued_count] = bufferpoolGetSmallBuffer(tdev->reader_buffer_pool);
         bufs[queued_count] = sbufReserveSpace(bufs[queued_count], read_size);
 
+        /* Keep utun's family prefix outside the packet buffer so the first IP
+         * byte retains the pool's 32-byte alignment and full chain padding. */
+        uint32_t     family;
+        struct iovec iov[2] = {{.iov_base = &family, .iov_len = sizeof(family)},
+                               {.iov_base = sbufGetMutablePtr(bufs[queued_count]), .iov_len = read_size}};
         int nread;
         for (;;)
         {
-            nread = (int) read(tdev->handle, sbufGetMutablePtr(bufs[queued_count]), read_size);
+            nread = (int) readv(tdev->handle, iov, 2);
             if (nread < 0 && errno == EINTR)
             {
                 continue;
@@ -321,15 +326,14 @@ static tun_drain_result_t tunDrainPackets(tun_device_t *tdev)
             return kTunDrainDeviceError;
         }
 
-        if (nread <= (int) sizeof(uint32_t))
+        if (nread <= (int) sizeof(family))
         {
             LOGW("TunDevice: dropping short utun frame of size %d", nread);
             bufferpoolReuseBuffer(tdev->reader_buffer_pool, bufs[queued_count]);
             continue;
         }
 
-        sbufSetLength(bufs[queued_count], (uint32_t) nread);
-        sbufShiftRight(bufs[queued_count], sizeof(uint32_t));
+        sbufSetLength(bufs[queued_count], (uint32_t) nread - sizeof(family));
 
         if (UNLIKELY(sbufGetLength(bufs[queued_count]) > tunDeviceMtu(tdev)))
         {
@@ -1277,7 +1281,7 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void
      */
     buffer_pool_t *worker_pool = getCurrentEventWorkerBufferPool();
 
-    buffer_pool_t *reader_bpool = devicePoolCreate(worker_pool, (uint32_t) mtu + sizeof(uint32_t));
+    buffer_pool_t *reader_bpool = devicePoolCreate(worker_pool, mtu);
     if (UNLIKELY(reader_bpool == NULL))
     {
         LOGE("TunDevice: failed to construct reader buffer pool");

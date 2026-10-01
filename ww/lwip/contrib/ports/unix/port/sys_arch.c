@@ -46,6 +46,8 @@
  */
 #define _GNU_SOURCE /* pull in pthread_setname_np() on Linux */
 
+#include "wdef.h"
+#include "wmutex.h"
 #include "wthread.h"
 
 #include "lwip/debug.h"
@@ -97,7 +99,7 @@ get_monotonic_time(struct timespec *ts)
 }
 
 #if SYS_LIGHTWEIGHT_PROT
-static pthread_mutex_t lwprot_mutex = PTHREAD_MUTEX_INITIALIZER;
+static wmutex_t                          lwprot_mutex;
 static WW_LWIP_THREAD_LOCAL unsigned int lwprot_count;
 #endif /* SYS_LIGHTWEIGHT_PROT */
 
@@ -784,6 +786,10 @@ sys_jiffies(void)
 void
 sys_init(void)
 {
+#if SYS_LIGHTWEIGHT_PROT
+    /* Shared bootstrap runs before any worker or allocator caller is published. */
+    mutexInit(&lwprot_mutex);
+#endif
 #if LWIP_NETCONN_SEM_PER_THREAD
   pthread_key_create(&sys_thread_sem_key, sys_thread_sem_free);
 #endif
@@ -813,7 +819,7 @@ sys_arch_protect(void)
      * acquiring its mutex races a concurrent owner's release. */
     if (lwprot_count++ == 0)
     {
-        pthread_mutex_lock(&lwprot_mutex);
+        mutexLock(&lwprot_mutex);
     }
     return 0;
 }
@@ -832,7 +838,7 @@ sys_arch_unprotect(sys_prot_t pval)
     LWIP_ASSERT("balanced allocator protection", lwprot_count != 0);
     if (--lwprot_count == 0)
     {
-        pthread_mutex_unlock(&lwprot_mutex);
+        mutexUnlock(&lwprot_mutex);
     }
 }
 #endif /* SYS_LIGHTWEIGHT_PROT */
@@ -850,8 +856,11 @@ lwip_unix_keypressed(void)
 }
 #endif /* !NO_SYS */
 
-/* The Unix allocator mutex has static process lifetime and owns no heap storage. */
+/* Called exclusively after all worker engines and retained buffers have settled. */
 void wwLwipPortCleanup(void)
 {
+#if SYS_LIGHTWEIGHT_PROT
     LWIP_ASSERT("allocator protection released before finalization", lwprot_count == 0);
+    mutexDestroy(&lwprot_mutex);
+#endif
 }

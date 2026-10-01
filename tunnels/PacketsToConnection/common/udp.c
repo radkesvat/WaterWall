@@ -162,7 +162,7 @@ void ptcUdpReceived(void *arg, struct udp_pcb *upcb, struct pbuf *p, const ip_ad
     buffer_pool_t *pool = lineGetBufferPool(line);
     sbuf_t        *buf  = bufferpoolGetBestFit(pool, p->tot_len, bufferpoolGetLargeBufferPadding(pool));
     sbufSetLength(buf, p->tot_len);
-    pbuf_copy_partial(p, sbufGetMutablePtr(buf), p->tot_len, 0);
+    pbufLargeCopyToPtr(p, sbufGetMutablePtr(buf));
     pbuf_free(p);
 
     if (lineIsAlive(line))

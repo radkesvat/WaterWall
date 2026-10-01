@@ -51,8 +51,8 @@ struct capture_device_s
     bool queue_restartable;
     // Reader state and queue-socket ownership are synchronized by this mutex.
     // A successfully created thread remains joinable even after it exits.
-    pthread_mutex_t reader_state_mutex;
-    pthread_cond_t  reader_state_changed;
+    wcond_mutex_t   reader_state_mutex;
+    wcondvar_t      reader_state_changed;
     bool            reader_thread_joinable;
     bool            reader_ready;
     bool            reader_failed;

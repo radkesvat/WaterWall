@@ -471,6 +471,11 @@ if(TARGET ww)
 
   add_waterwall_unit_test(waterwall.wlibc_memcopy_unit wlibc_memcopy_test "unit;libc;memory")
 
+  add_executable(lwip_pbuf_copy_test lwip_pbuf_copy_test.c)
+  target_link_libraries(lwip_pbuf_copy_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests lwip_pbuf_copy_test)
+  add_waterwall_unit_test(waterwall.lwip_pbuf_copy_unit lwip_pbuf_copy_test "unit;net;lwip;buffers")
+
   add_executable(wendian_test wendian_test.c)
   target_link_libraries(wendian_test PRIVATE ww)
   add_dependencies(waterwall_unit_tests wendian_test)

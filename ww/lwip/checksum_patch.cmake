@@ -30,14 +30,14 @@ function(ww_apply_lwip_checksum_patch lwip_dir)
     tcp_seg_add_chksum(LWIP_CHKSUM_COPY(dst, src, len), \
                        len, &(seg)->chksum, &(seg)->chksum_swapped); \
   } else { \
-    MEMCPY(dst, src, len); \
+    wwLwipTcpCopyPayload(dst, src, len); \
     (seg)->flags &= (u8_t)~TF_SEG_DATA_CHECKSUMMED; \
   } } while (0)
 #define TCP_DATA_COPY2(dst, src, len, chksum, chksum_swapped) do { \
   if (ww_checksum_copy) { \
     tcp_seg_add_chksum(LWIP_CHKSUM_COPY(dst, src, len), len, chksum, chksum_swapped); \
   } else { \
-    MEMCPY(dst, src, len); \
+    wwLwipTcpCopyPayload(dst, src, len); \
   } } while (0)
 ]=])
     ww_lwip_replace_once("${lwip_dir}/src/core/tcp_out.c"

@@ -346,6 +346,8 @@ static tun_drain_result_t tunDrainOffloadPackets(tun_device_t *tdev, tun_offload
             break;
         }
 
+        /* Receive virtio metadata before the aligned IP start, in headroom.
+         * Removing it restores the pool cursor without moving packet bytes. */
         sbufReset(reader->scratch);
         sbufShiftLeft(reader->scratch, kTunVirtioHeaderSize);
         uint8_t *record = sbufGetMutablePtr(reader->scratch);
@@ -394,7 +396,7 @@ static tun_drain_result_t tunDrainOffloadPackets(tun_device_t *tdev, tun_offload
 
         tun_linux_offload_plan_t         plan   = {0};
         const tun_linux_offload_reject_t reject = tunLinuxOffloadPreflight(metadata, ip, ip_length, tdev->mtu, &plan);
-        if (reject != kTunLinuxOffloadAccept)
+        if (UNLIKELY(reject != kTunLinuxOffloadAccept))
         {
             tunOffloadCountReject(tdev, reader, reject);
             continue;

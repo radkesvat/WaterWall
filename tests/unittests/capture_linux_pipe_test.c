@@ -786,9 +786,8 @@ static void deviceSetup(capture_device_t *cdev, test_env_t *env, reader_probe_t 
             "the production helper failed to make the stop pipe read end nonblocking");
     cdev->socket = socket(AF_UNIX, SOCK_DGRAM, 0);
     require(cdev->socket >= 0, "failed to create an empty queue-socket stand-in");
-    require(pthread_mutex_init(&cdev->reader_state_mutex, NULL) == 0, "failed to initialize the reader-state mutex");
-    require(pthread_cond_init(&cdev->reader_state_changed, NULL) == 0,
-            "failed to initialize the reader-state condition variable");
+    require(condmutexInit(&cdev->reader_state_mutex) == 0, "failed to initialize the reader-state mutex");
+    require(condvarInit(&cdev->reader_state_changed) == 0, "failed to initialize the reader-state condition variable");
     cdev->reader_session =
         deviceReaderSessionCreate(16, 512, cdev, testDeliverPacket, cdev->reader_buffer_pool, kDeviceFragmentPreserve);
 }
@@ -812,8 +811,8 @@ static void deviceTeardown(capture_device_t *cdev)
     memoryFree(cdev->capture_cidrs);
     memoryFree(cdev->rule_states);
     memoryFree(cdev->name);
-    pthread_cond_destroy(&cdev->reader_state_changed);
-    pthread_mutex_destroy(&cdev->reader_state_mutex);
+    contvarDestroy(&cdev->reader_state_changed);
+    condmutexDestroy(&cdev->reader_state_mutex);
 }
 
 static capture_device_t *ownedDeviceCreate(test_env_t *env, reader_probe_t *probe)
@@ -947,8 +946,8 @@ static void testDrainReportsBrokenPipe(test_env_t *env)
     memoryFree(cdev.capture_cidrs);
     memoryFree(cdev.rule_states);
     memoryFree(cdev.name);
-    pthread_cond_destroy(&cdev.reader_state_changed);
-    pthread_mutex_destroy(&cdev.reader_state_mutex);
+    contvarDestroy(&cdev.reader_state_changed);
+    condmutexDestroy(&cdev.reader_state_mutex);
 }
 
 // ---------------------------------------------------------------------------
@@ -1051,8 +1050,8 @@ static void testDrainFailurePreventsStartup(test_env_t *env)
     memoryFree(cdev.capture_cidrs);
     memoryFree(cdev.rule_states);
     memoryFree(cdev.name);
-    pthread_cond_destroy(&cdev.reader_state_changed);
-    pthread_mutex_destroy(&cdev.reader_state_mutex);
+    contvarDestroy(&cdev.reader_state_changed);
+    condmutexDestroy(&cdev.reader_state_mutex);
 }
 
 static void testReaderExitBeforeReadinessPreventsInsertion(test_env_t *env)
@@ -1517,9 +1516,9 @@ static void testReaderDeathFailsOpenAndDestroyJoins(test_env_t *env)
     atomicStoreExplicit(&probe.exit_requested, true, memory_order_release);
     for (int waited_ms = 0; waited_ms < kWaitTimeoutMs; waited_ms += 5)
     {
-        pthread_mutex_lock(&cdev->reader_state_mutex);
+        condmutexLock(&cdev->reader_state_mutex);
         const bool failed = cdev->reader_failed;
-        pthread_mutex_unlock(&cdev->reader_state_mutex);
+        condmutexUnlock(&cdev->reader_state_mutex);
         if (failed && atomicLoadRelaxed(&shutdown_request_calls) > 0)
         {
             break;
@@ -1527,11 +1526,11 @@ static void testReaderDeathFailsOpenAndDestroyJoins(test_env_t *env)
         usleep(5000);
     }
 
-    pthread_mutex_lock(&cdev->reader_state_mutex);
+    condmutexLock(&cdev->reader_state_mutex);
     const bool reader_failed   = cdev->reader_failed;
     const bool reader_ready    = cdev->reader_ready;
     const bool reader_joinable = cdev->reader_thread_joinable;
-    pthread_mutex_unlock(&cdev->reader_state_mutex);
+    condmutexUnlock(&cdev->reader_state_mutex);
     require(reader_failed && ! reader_ready, "unexpected reader exit did not publish failed/not-ready state");
     require(! cdev->reader_stop_requested, "unexpected reader exit was misclassified as a requested stop");
     require(reader_joinable, "an exited reader stopped being joinable before lifecycle teardown");

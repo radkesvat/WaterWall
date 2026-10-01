@@ -5,6 +5,20 @@
 #include "lwip/pbuf.h"
 #include "lwip/prot/ip4.h"
 #include "lwip/tcp.h"
+#include <stdint.h>
+#include <string.h>
+
+/* Link to the runtime copy helper without importing wlibc's SIMD compilation
+ * requirements into the standalone lwIP targets. Unaligned spans are valid. */
+void wwMemoryCopyLarge(void *dest, const void *src, intmax_t n);
+
+static inline void wwLwipTcpCopyPayload(void *dest, const void *src, u16_t length)
+{
+    if (length < 64)
+        MEMCPY(dest, src, length);
+    else
+        wwMemoryCopyLarge(dest, src, length);
+}
 
 /* TCP/UDP below call ip_output_if, which generates IP_HLEN bytes and supplies
  * no IPv4 options. Pass the actual header length explicitly: callers of the

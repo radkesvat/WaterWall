@@ -3,6 +3,7 @@
 #include "engine.h"
 #include "lwip/def.h"
 #include "lwip/ip_addr.h"
+#include "trusted_checksum.h"
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdio.h>
@@ -60,6 +61,11 @@ uint16_t wwLwipChecksum(const void *data, int length)
     while (sum >> 16)
         sum = (sum & 65535) + (sum >> 16);
     return lwip_htons((uint16_t) sum);
+}
+
+void wwMemoryCopyLarge(void *dest, const void *src, intmax_t length)
+{
+    memcpy(dest, src, (size_t) length);
 }
 
 void lwip_example_app_platform_assert(const char *message, int line, const char *file)

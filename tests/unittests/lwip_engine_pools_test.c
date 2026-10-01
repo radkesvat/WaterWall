@@ -411,9 +411,23 @@ static void *run(void *argument)
     return NULL;
 }
 
+static void checkNestedProtection(void)
+{
+    const sys_prot_t outer = sys_arch_protect();
+    const sys_prot_t inner = sys_arch_protect();
+    /* Allocation/free may enter protection again. The underlying mutex is
+     * nonrecursive, so only the thread's outermost scope may acquire it. */
+    void *allocation = mem_malloc(1460);
+    CHECK(allocation != NULL);
+    mem_free(allocation);
+    sys_arch_unprotect(inner);
+    sys_arch_unprotect(outer);
+}
+
 int main(void)
 {
     wwLwipEngineSharedInit();
+    checkNestedProtection();
     LWIP_MEMPOOL_INIT(CACHE_RX_TEST);
     wwLwipPoolCacheRegisterRxPool(&memp_CACHE_RX_TEST);
     CHECK(pthread_barrier_init(&rendezvous, NULL, 2) == 0);
@@ -424,6 +438,11 @@ int main(void)
         CHECK(pthread_join(threads[i], NULL) == 0);
     CHECK(pthread_barrier_destroy(&rendezvous) == 0);
     CHECK(memp_CACHE_RX_TEST.stats->used == 0);
+    wwLwipEngineSharedCleanup();
+    /* Recreate shared synchronization after finalization; no stale semaphore
+     * state or thread-local protection depth may survive a runtime lifetime. */
+    wwLwipEngineSharedInit();
+    checkNestedProtection();
     wwLwipEngineSharedCleanup();
     puts("shared capacities, concurrent allocation, custom free, initialization refusal and IPv4 quotas passed");
     return 0;

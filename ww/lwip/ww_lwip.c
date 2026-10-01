@@ -314,41 +314,28 @@ void printTcpPacketFlagsInfo(u8_t flags)
     printDebug("\n");
 }
 
-/**
- * @ingroup pbuf
- * Copy (part of) the contents of a packet buffer
- * to an application supplied buffer.
- *
- * @param buf the pbuf from which to copy data
- * @param dataptr the application supplied buffer
- * @return the number of bytes copied, or 0 on failure
- */
 u16_t pbufLargeCopyToPtr(const struct pbuf *buf, void *dataptr)
 {
-    const struct pbuf *p;
-    u16_t              left = 0;
-    u16_t              buf_copy_len;
-    u16_t              copied_total = 0;
+    LWIP_ERROR("pbufLargeCopyToPtr: invalid buf", (buf != NULL), return 0;);
+    LWIP_ERROR("pbufLargeCopyToPtr: invalid dataptr", (dataptr != NULL), return 0;);
 
-    LWIP_ERROR("pbuf_copy_partial: invalid buf", (buf != NULL), return 0;);
-    LWIP_ERROR("pbuf_copy_partial: invalid dataptr", (dataptr != NULL), return 0;);
-
-    /* Note some systems use byte copy if dataptr or one of the pbuf payload pointers are unaligned. */
-    for (p = buf; p != NULL; p = p->next)
+    const uint32_t length = buf->tot_len;
+    uint32_t       copied = 0;
+    for (const struct pbuf *p = buf; p != NULL && copied < length; p = p->next)
     {
-
-        buf_copy_len = (p->len);
-        if (buf_copy_len < 64)
+        const uint32_t count = min((uint32_t) p->len, length - copied);
+        if (count != 0)
         {
-            memoryCopy(&((char *) dataptr)[left], &((char *) p->payload)[0], buf_copy_len);
+            uint8_t *destination = (uint8_t *) dataptr + copied;
+            if (count < 64)
+                memoryCopy(destination, p->payload, count);
+            else
+                memoryCopyLarge(destination, p->payload, count);
+            copied += count;
         }
-        else
-        {
-            /* copy the necessary parts of the buffer */
-            memoryCopyLarge(&((char *) dataptr)[left], &((char *) p->payload)[0], buf_copy_len);
-        }
-        copied_total = (u16_t) (copied_total + buf_copy_len);
-        left         = (u16_t) (left + buf_copy_len);
+        /* The final span may link to another packet in a pbuf queue. */
+        if (p->tot_len == p->len)
+            break;
     }
-    return copied_total;
+    return (u16_t) copied;
 }
