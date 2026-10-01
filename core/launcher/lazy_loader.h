@@ -55,12 +55,12 @@ typedef struct lazy_proc_s
     lazy_dll_t    *dll;
     const uint8_t *transf_name;
     size_t         len;
-    void *volatile address;
+    FARPROC volatile address;
 } lazy_proc_t;
 
-static inline void *lazyProcAddress(lazy_proc_t *proc)
+static inline FARPROC lazyProcAddress(lazy_proc_t *proc)
 {
-    void *addr = proc->address;
+    FARPROC addr = proc->address;
     if (addr != NULL)
         return addr;
 
@@ -114,8 +114,8 @@ static inline void *lazyProcAddress(lazy_proc_t *proc)
     if (proc_address == NULL)
         return NULL;
 
-    InterlockedCompareExchangePointer(&proc->address, (void *) (uintptr_t) proc_address, NULL);
-    return (void *) (uintptr_t) proc_address;
+    InterlockedCompareExchangePointer((void *volatile *) &proc->address, (void *) (uintptr_t) proc_address, NULL);
+    return proc_address;
 }
 
 #define LAZY_WRAPPER(ret_type, default_ret, dll, name, params, args)                                                   \
@@ -123,7 +123,7 @@ static inline void *lazyProcAddress(lazy_proc_t *proc)
     typedef ret_type(WINAPI *lazy_pfn_##name) params;                                                                  \
     static inline ret_type lazy_##name params                                                                          \
     {                                                                                                                  \
-        lazy_pfn_##name fn = (lazy_pfn_##name) lazyProcAddress(&lazy_proc_##name);                                     \
+        lazy_pfn_##name fn = (lazy_pfn_##name)(uintptr_t) lazyProcAddress(&lazy_proc_##name);                          \
         if (fn == NULL)                                                                                                \
         {                                                                                                              \
             SetLastError(ERROR_PROC_NOT_FOUND);                                                                        \
@@ -137,7 +137,7 @@ static inline void *lazyProcAddress(lazy_proc_t *proc)
     typedef void(WINAPI * lazy_pfn_##name) params;                                                                     \
     static inline void lazy_##name params                                                                              \
     {                                                                                                                  \
-        lazy_pfn_##name fn = (lazy_pfn_##name) lazyProcAddress(&lazy_proc_##name);                                     \
+        lazy_pfn_##name fn = (lazy_pfn_##name)(uintptr_t) lazyProcAddress(&lazy_proc_##name);                          \
         if (fn != NULL)                                                                                                \
             fn args;                                                                                                   \
     }

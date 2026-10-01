@@ -1,25 +1,9 @@
 #include "lifecycle_capabilities_windows.h"
-#include "launcher/lazy_names.h"
+#include "launcher/lazy_loader.h"
 #include <stdbool.h>
 #include <string.h>
 #include <wchar.h>
 #include <winternl.h>
-
-static inline uint8_t reverse_bits(uint8_t x)
-{
-    x = (uint8_t) (((x & 0xF0) >> 4) | ((x & 0x0F) << 4));
-    x = (uint8_t) (((x & 0xCC) >> 2) | ((x & 0x33) << 2));
-    x = (uint8_t) (((x & 0xAA) >> 1) | ((x & 0x55) << 1));
-    return x;
-}
-
-static void transform(uint8_t *data, size_t length)
-{
-    volatile uint8_t *d   = (volatile uint8_t *) data;
-    const uint8_t     key = 0xA5; /* 10100101 */
-    for (size_t i = 0; i < length; i++)
-        d[i] = reverse_bits(d[i]) ^ key;
-}
 
 bool waterwallCapabilityValidate(HANDLE handle, const wchar_t *type, ACCESS_MASK access)
 {

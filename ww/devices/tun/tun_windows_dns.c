@@ -74,14 +74,14 @@ bool tunWindowsDnsShutdown(void)
 
 static tun_windows_dns_result_e dnsCancellation(HANDLE device_stop)
 {
-    HANDLE events[2] = {startup_stop_event, device_stop};
+    HANDLE stop_events[2] = {startup_stop_event, device_stop};
     for (size_t i = 0; i < 2; ++i)
     {
-        if (events[i] == NULL)
+        if (stop_events[i] == NULL)
         {
             continue;
         }
-        DWORD wait = WaitForSingleObject(events[i], 0);
+        DWORD wait = WaitForSingleObject(stop_events[i], 0);
         if (wait == WAIT_OBJECT_0)
         {
             return kTunWindowsDnsCancelled;

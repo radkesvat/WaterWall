@@ -201,6 +201,12 @@ static void normalReturn(void)
 
 bool launcherSessionStart(waterwall_startup_options_t *options)
 {
+    /* Resolve before observer admission: deadline termination must not enter the loader. */
+    if (lazyProcAddress(&lazy_proc_TerminateProcess) == NULL)
+    {
+        SetLastError(ERROR_PROC_NOT_FOUND);
+        return false;
+    }
     if (! takeCapability(options->stop_event, &supplied_stop, L"Event", SYNCHRONIZE) ||
         ! takeCapability(options->ready_event, &supplied_ready, L"Event", EVENT_MODIFY_STATE) ||
         ! takeCapability(options->controller_process, &controller, L"Process", SYNCHRONIZE))
@@ -534,7 +540,13 @@ static bool sessionRecordRead(const session_record_t *view, session_record_t *sa
 
 int launcherSessionRecover(const char *path)
 {
-    int    result          = 2;
+    int result = 2;
+    /* Recovery needs the same loader-independent deadline path. */
+    if (lazyProcAddress(&lazy_proc_TerminateProcess) == NULL)
+    {
+        SetLastError(ERROR_PROC_NOT_FOUND);
+        return result;
+    }
     HANDLE deadline_thread = CreateThread(NULL, 0, recoveryDeadline, NULL, 0, NULL);
     if (deadline_thread == NULL)
         return result;

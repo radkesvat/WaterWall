@@ -223,7 +223,7 @@ bool tunWindowsOwnershipPrepare(const char *name, tun_windows_ownership_t *owner
 }
 
 bool tunWindowsOwnershipStartHelper(HANDLE lease, const wchar_t *executable, wchar_t *command, void *environment,
-                                    const wchar_t *directory, PROCESS_INFORMATION *child)
+                                    const wchar_t *working_directory, PROCESS_INFORMATION *child)
 {
     assert(lease != NULL);
     HANDLE inherited;
@@ -249,7 +249,7 @@ bool tunWindowsOwnershipStartHelper(HANDLE lease, const wchar_t *executable, wch
                             TRUE,
                             CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT,
                             environment,
-                            directory,
+                            working_directory,
                             &startup.StartupInfo,
                             child) != FALSE;
     }
