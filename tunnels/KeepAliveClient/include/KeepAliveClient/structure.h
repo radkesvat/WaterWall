@@ -14,7 +14,13 @@ typedef struct keepaliveclient_tstate_s
 
 struct keepaliveclient_lstate_s
 {
-    buffer_stream_t           read_stream;
+    splice_stream_t          *read_stream;
+    buffer_pool_t            *pool;
+    buffer_queue_t            write_reentry;
+    sbuf_t                   *write_active;
+    bool                      read_draining;
+    bool                      write_draining;
+    bool                      write_paused;
     line_t                   *line;
     keepaliveclient_lstate_t *tracked_prev;
     keepaliveclient_lstate_t *tracked_next;
@@ -29,6 +35,9 @@ enum
     kKeepAliveMaxFrameBodyLength  = UINT16_MAX,
     kKeepAliveMaxPayloadChunkSize = UINT16_MAX - 1,
     kKeepAliveReadOverflowLimit   = 131074,
+    kKeepAliveReadChargeLimit     = 2U * 1024U * 1024U,
+    kKeepAliveMaxReentryBytes     = 2U * 1024U * 1024U,
+    kKeepAliveMaxReentryBuffers   = 1024U,
     kKeepAliveFrameKindNormal     = 1,
     kKeepAliveFrameKindPing       = 2,
     kKeepAliveFrameKindPong       = 3,
@@ -50,6 +59,8 @@ void keepaliveclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 
 void keepaliveclientTunnelDownStreamFinish(tunnel_t *t, line_t *l);
 void keepaliveclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
+void keepaliveclientTunnelDownStreamPause(tunnel_t *t, line_t *l);
+void keepaliveclientTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
 void keepaliveclientLinestateInitialize(keepaliveclient_lstate_t *ls, line_t *l);
 void keepaliveclientLinestateDestroy(keepaliveclient_lstate_t *ls);
@@ -64,3 +75,4 @@ bool keepaliveclientConsumeDownstreamFrames(tunnel_t *t, line_t *l);
 
 void keepaliveclientCloseLineFromUpstream(tunnel_t *t, line_t *l);
 void keepaliveclientCloseLineFromDownstream(tunnel_t *t, line_t *l);
+void keepaliveclientCloseLineFromProtocolError(tunnel_t *t, line_t *l);

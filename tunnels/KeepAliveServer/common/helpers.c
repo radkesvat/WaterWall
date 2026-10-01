@@ -2,235 +2,173 @@
 
 #include "loggers/network_logger.h"
 
-typedef enum keepaliveserver_consume_result_e
-{
-    kKeepAliveServerConsumeNeedMore = 0,
-    kKeepAliveServerConsumeContinue,
-    kKeepAliveServerConsumeLineDead
-} keepaliveserver_consume_result_t;
-
 static bool keepaliveserverIsPacketLine(tunnel_t *t, line_t *l)
 {
     return tunnelchainIsWorkerPacketLine(tunnelGetChain(t), l);
 }
 
-static sbuf_t *keepaliveserverAllocFrameBuffer(buffer_pool_t *pool, uint32_t frame_len)
+static bool keepaliveserverSendFrame(tunnel_t *t, line_t *l, sbuf_t *buf, uint8_t kind)
 {
-    if (frame_len <= bufferpoolGetSmallBufferSize(pool))
-    {
-        return bufferpoolGetSmallBuffer(pool);
-    }
-
-    if (frame_len <= bufferpoolGetLargeBufferSize(pool))
-    {
-        return bufferpoolGetLargeBuffer(pool);
-    }
-
-    return sbufCreateWithPadding(frame_len, bufferpoolGetLargeBufferPadding(pool));
-}
-
-static bool keepaliveserverSendFramePrev(tunnel_t *t, line_t *l, sbuf_t *buf, uint8_t frame_kind, uint32_t payload_len)
-{
-    const uint32_t frame_body_len = payload_len + kKeepAliveServerFrameTypeSize;
-    const uint32_t frame_len      = frame_body_len + kKeepAliveServerFrameLengthSize;
-
-    if (keepaliveserverIsPacketLine(t, l) && frame_len > kMaxAllowedPacketLength)
-    {
-        LOGE("KeepAliveServer: worker packet line payload exceeds kMaxAllowedPacketLength after framing: %u > %u",
-             (unsigned int) frame_len, (unsigned int) kMaxAllowedPacketLength);
-        lineReuseBuffer(l, buf);
-        return true;
-    }
-
-    if (sbufGetLeftCapacity(buf) < kKeepAliveServerFramePrefixSize)
-    {
-        LOGW("KeepAliveServer: dropping frame because left padding is smaller than required header size");
-        lineReuseBuffer(l, buf);
-        return true;
-    }
-
-    if (sbufGetMaximumWriteableSize(buf) < frame_body_len)
-    {
-        buf = sbufReserveSpace(buf, frame_body_len);
-    }
-
+    const uint32_t length = sbufGetLength(buf);
+    assert(length <= kKeepAliveServerMaxPayloadChunkSize);
+    assert(sbufGetLeftCapacity(buf) >= kKeepAliveServerFramePrefixSize);
+    /* Only the real left padding is written, including for a private-pipe body. */
     sbufShiftLeft(buf, kKeepAliveServerFramePrefixSize);
-
-    uint8_t *frame                  = sbufGetMutablePtr(buf);
-    uint16_t frame_body_len_network = htons((uint16_t) frame_body_len);
-    sbufByteCopy(frame, &frame_body_len_network, (uint32_t) sizeof(frame_body_len_network));
-    frame[kKeepAliveServerFrameLengthSize] = frame_kind;
-
-    sbufSetLength(buf, frame_len);
+    uint8_t *header         = sbufGetMutablePtr(buf);
+    uint16_t network_length = htons((uint16_t) (length + kKeepAliveServerFrameTypeSize));
+    sbufByteCopy(header, &network_length, sizeof(network_length));
+    header[kKeepAliveServerFrameLengthSize] = kind;
     return lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, buf);
 }
 
-static bool keepaliveserverSendControlFrame(tunnel_t *t, line_t *l, uint8_t frame_kind)
+static bool keepaliveserverSendControlFrame(tunnel_t *t, line_t *l, uint8_t kind)
 {
-    if (! lineIsAlive(l))
-    {
-        return true;
-    }
-
     sbuf_t *buf = bufferpoolGetSmallBuffer(lineGetBufferPool(l));
     sbufSetLength(buf, 0);
-    return keepaliveserverSendFramePrev(t, l, buf, frame_kind, 0);
-}
-
-static keepaliveserver_consume_result_t keepaliveserverConsumeOneFrame(tunnel_t *t, line_t *l,
-                                                                       keepaliveserver_lstate_t *ls)
-{
-    if (bufferstreamGetBufLen(&ls->read_stream) < kKeepAliveServerFramePrefixSize)
-    {
-        return kKeepAliveServerConsumeNeedMore;
-    }
-
-    uint8_t header[kKeepAliveServerFrameLengthSize];
-    bufferstreamViewBytesAt(&ls->read_stream, 0, header, sizeof(header));
-
-    uint16_t frame_body_len_network;
-    sbufByteCopy(&frame_body_len_network, header, (uint32_t) sizeof(frame_body_len_network));
-    uint16_t frame_body_len = ntohs(frame_body_len_network);
-
-    if (frame_body_len < kKeepAliveServerFrameTypeSize)
-    {
-        LOGW("KeepAliveServer: invalid upstream keepalive frame length: %u", (unsigned int) frame_body_len);
-        bufferstreamEmpty(&ls->read_stream);
-        return kKeepAliveServerConsumeNeedMore;
-    }
-
-    if ((uint32_t) frame_body_len + kKeepAliveServerFrameLengthSize > (uint32_t) bufferstreamGetBufLen(&ls->read_stream))
-    {
-        return kKeepAliveServerConsumeNeedMore;
-    }
-
-    sbuf_t *frame = bufferstreamReadExact(&ls->read_stream, kKeepAliveServerFrameLengthSize + frame_body_len);
-    sbufShiftRight(frame, kKeepAliveServerFrameLengthSize);
-
-    const uint8_t  frame_kind  = sbufReadUI8(frame);
-    const uint32_t payload_len = frame_body_len - kKeepAliveServerFrameTypeSize;
-
-    switch (frame_kind)
-    {
-    case kKeepAliveServerFrameKindNormal:
-        if (payload_len == 0)
-        {
-            LOGW("KeepAliveServer: dropping empty normal frame");
-            lineReuseBuffer(l, frame);
-            return kKeepAliveServerConsumeContinue;
-        }
-
-        sbufShiftRight(frame, kKeepAliveServerFrameTypeSize);
-        if (! lineCallWithRefWithBuf(l, tunnelNextUpStreamPayload, t, frame))
-        {
-            return kKeepAliveServerConsumeLineDead;
-        }
-        return kKeepAliveServerConsumeContinue;
-
-    case kKeepAliveServerFrameKindPing:
-        lineReuseBuffer(l, frame);
-        if (! keepaliveserverSendControlFrame(t, l, kKeepAliveServerFrameKindPong))
-        {
-            return kKeepAliveServerConsumeLineDead;
-        }
-        return kKeepAliveServerConsumeContinue;
-
-    case kKeepAliveServerFrameKindPong:
-        lineReuseBuffer(l, frame);
-        return kKeepAliveServerConsumeContinue;
-
-    default:
-        LOGW("KeepAliveServer: dropping unknown frame kind %u", (unsigned int) frame_kind);
-        lineReuseBuffer(l, frame);
-        return kKeepAliveServerConsumeContinue;
-    }
+    return keepaliveserverSendFrame(t, l, buf, kind);
 }
 
 bool keepaliveserverSendNormalFrameDownstream(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    const uint32_t payload_len = sbufGetLength(buf);
-
-    if (payload_len == 0)
+    keepaliveserver_lstate_t *ls = lineGetState(l, t);
+    assert(ls->read_stream != NULL);
+    const uint32_t length = sbufGetLength(buf);
+    if (length == 0)
     {
         lineReuseBuffer(l, buf);
         return true;
     }
-
-    if (keepaliveserverIsPacketLine(t, l) && payload_len + kKeepAliveServerFramePrefixSize > kMaxAllowedPacketLength)
+    if (keepaliveserverIsPacketLine(t, l) && length > kMaxAllowedPacketLength - kKeepAliveServerFramePrefixSize)
     {
-        LOGE("KeepAliveServer: worker packet line payload exceeds kMaxAllowedPacketLength after framing: %u > %u",
-             (unsigned int) (payload_len + kKeepAliveServerFramePrefixSize), (unsigned int) kMaxAllowedPacketLength);
+        LOGE("KeepAliveServer: packet payload exceeds kMaxAllowedPacketLength after framing");
         lineReuseBuffer(l, buf);
         return true;
     }
-
-    if (payload_len > kKeepAliveServerMaxPayloadChunkSize)
+    if (ls->write_draining)
     {
-        buffer_pool_t *pool      = lineGetBufferPool(l);
-        const uint8_t *src       = sbufGetRawPtr(buf);
-        uint32_t       remaining = payload_len;
-
-        while (remaining > 0)
+        const size_t pending =
+            bufferqueueGetBufLen(&ls->write_reentry) + (ls->write_active != NULL ? sbufGetLength(ls->write_active) : 0);
+        if (pending > kKeepAliveServerMaxReentryBytes || length > kKeepAliveServerMaxReentryBytes - pending ||
+            bufferqueueGetBufCount(&ls->write_reentry) + (ls->write_active != NULL) >=
+                kKeepAliveServerMaxReentryBuffers ||
+            ! bufferqueueTryPushBack(&ls->write_reentry, &buf))
         {
-            const uint32_t chunk_len = min(remaining, (uint32_t) kKeepAliveServerMaxPayloadChunkSize);
-            sbuf_t *frame_buf = keepaliveserverAllocFrameBuffer(pool, chunk_len + kKeepAliveServerFramePrefixSize);
-
-            sbufSetLength(frame_buf, chunk_len);
-            memoryCopyLarge(sbufGetMutablePtr(frame_buf), src, chunk_len);
-
-            if (! keepaliveserverSendFramePrev(t, l, frame_buf, kKeepAliveServerFrameKindNormal, chunk_len))
-            {
-                bufferpoolReuseBuffer(pool, buf);
-                return false;
-            }
-
-            src += chunk_len;
-            remaining -= chunk_len;
+            lineReuseBuffer(l, buf);
+            keepaliveserverCloseLineFromProtocolError(t, l);
+            return false;
         }
-
-        bufferpoolReuseBuffer(pool, buf);
         return true;
     }
 
-    return keepaliveserverSendFramePrev(t, l, buf, kKeepAliveServerFrameKindNormal, payload_len);
+    buffer_pool_t *pool = lineGetBufferPool(l);
+    ls->write_draining  = true;
+    ls->write_active    = buf;
+    lineRef(l);
+    while (ls->write_active != NULL)
+    {
+        sbuf_t        *source = ls->write_active;
+        const uint32_t bytes  = min(sbufGetLength(source), (uint32_t) kKeepAliveServerMaxPayloadChunkSize);
+        sbuf_t        *frame;
+        if (bytes == sbufGetLength(source))
+        {
+            frame            = source;
+            ls->write_active = NULL;
+        }
+        else
+        {
+            sbuf_t *destination = sbufIsSplice(source) ? bufferpoolGetSpliceBuffer(pool) : NULL;
+            frame = sbufMoveRangeTo(pool, source, destination, bytes, bytes, bufferpoolGetLargeBufferPadding(pool));
+        }
+        /* The untransferred suffix is published before any reentrant callback. */
+        if (! keepaliveserverSendFrame(t, l, frame, kKeepAliveServerFrameKindNormal) || ls->read_stream == NULL)
+        {
+            lineUnref(l);
+            return false;
+        }
+        if (ls->write_active == NULL)
+            ls->write_active = bufferqueuePopFront(&ls->write_reentry);
+    }
+    ls->write_draining = false;
+    lineUnref(l);
+    return true;
 }
 
 bool keepaliveserverConsumeUpstreamFrames(tunnel_t *t, line_t *l)
 {
     keepaliveserver_lstate_t *ls = lineGetState(l, t);
-
-    if (bufferstreamGetBufLen(&ls->read_stream) > kKeepAliveServerReadOverflowLimit)
-    {
-        LOGW("KeepAliveServer: upstream framed stream overflow, size=%zu limit=%u",
-             bufferstreamGetBufLen(&ls->read_stream), (unsigned int) kKeepAliveServerReadOverflowLimit);
-        bufferstreamEmpty(&ls->read_stream);
+    if (ls->read_draining)
         return true;
-    }
-
-    while (true)
+    ls->read_draining = true;
+    lineRef(l);
+    for (;;)
     {
-        keepaliveserver_consume_result_t result = keepaliveserverConsumeOneFrame(t, l, ls);
-        if (result == kKeepAliveServerConsumeNeedMore)
+        const uint8_t *header = splicestreamPeekHeader(ls->read_stream);
+        if (header == NULL)
+            break;
+        const uint32_t body_length = ((uint32_t) header[0] << 8) | header[1];
+        const uint8_t  kind        = header[2];
+        if (body_length < kKeepAliveServerFrameTypeSize)
         {
-            return true;
+            LOGW("KeepAliveServer: invalid keepalive frame length");
+            keepaliveserverCloseLineFromProtocolError(t, l);
+            lineUnref(l);
+            return false;
         }
-        if (result == kKeepAliveServerConsumeLineDead)
+        const uint32_t bytes = body_length - kKeepAliveServerFrameTypeSize;
+        if (splicestreamBodyBytes(ls->read_stream) < bytes)
+            break;
+        buffer_pool_t *pool = lineGetBufferPool(l);
+        sbuf_t *destination = bytes != 0 && tunnelGetChain(t)->supports_splice ? bufferpoolGetSpliceBuffer(pool) : NULL;
+        sbuf_t *body        = splicestreamMoveFrame(ls->read_stream, destination, bytes);
+        bool    alive       = true;
+        if (kind == kKeepAliveServerFrameKindNormal && bytes != 0)
+            alive = lineCallWithRefWithBuf(l, tunnelNextUpStreamPayload, t, body);
+        else
         {
+            lineReuseBuffer(l, body);
+            if (kind == kKeepAliveServerFrameKindPing)
+                alive = keepaliveserverSendControlFrame(t, l, kKeepAliveServerFrameKindPong);
+        }
+        if (! alive || ls->read_stream == NULL)
+        {
+            lineUnref(l);
             return false;
         }
     }
+    /* A large delivery may contain many complete frames. Bound only what remains. */
+    if (splicestreamCharge(ls->read_stream) > kKeepAliveServerReadChargeLimit)
+        discard splicestreamCompact(ls->read_stream);
+    if (splicestreamLength(ls->read_stream) > kKeepAliveServerReadOverflowLimit ||
+        splicestreamCharge(ls->read_stream) > kKeepAliveServerReadChargeLimit)
+    {
+        LOGW("KeepAliveServer: incomplete frame storage limit exceeded");
+        keepaliveserverCloseLineFromProtocolError(t, l);
+        lineUnref(l);
+        return false;
+    }
+    ls->read_draining = false;
+    lineUnref(l);
+    return true;
 }
 
 void keepaliveserverCloseLineFromUpstream(tunnel_t *t, line_t *l)
 {
     keepaliveserverLinestateDestroy(lineGetState(l, t));
-
     tunnelNextUpStreamFinish(t, l);
 }
 
 void keepaliveserverCloseLineFromDownstream(tunnel_t *t, line_t *l)
 {
     keepaliveserverLinestateDestroy(lineGetState(l, t));
-
     tunnelPrevDownStreamFinish(t, l);
+}
+
+void keepaliveserverCloseLineFromProtocolError(tunnel_t *t, line_t *l)
+{
+    lineRef(l);
+    keepaliveserverLinestateDestroy(lineGetState(l, t));
+    tunnelNextUpStreamFinish(t, l);
+    if (lineIsAlive(l))
+        tunnelPrevDownStreamFinish(t, l);
+    lineUnref(l);
 }

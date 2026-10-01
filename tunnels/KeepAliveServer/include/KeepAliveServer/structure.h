@@ -9,7 +9,12 @@ typedef struct keepaliveserver_tstate_s
 
 typedef struct keepaliveserver_lstate_s
 {
-    buffer_stream_t read_stream;
+    splice_stream_t *read_stream;
+    buffer_pool_t   *pool;
+    buffer_queue_t   write_reentry;
+    sbuf_t          *write_active;
+    bool             read_draining;
+    bool             write_draining;
 } keepaliveserver_lstate_t;
 
 enum
@@ -20,6 +25,9 @@ enum
     kKeepAliveServerMaxFrameBodyLength  = UINT16_MAX,
     kKeepAliveServerMaxPayloadChunkSize = UINT16_MAX - 1,
     kKeepAliveServerReadOverflowLimit   = 131074,
+    kKeepAliveServerReadChargeLimit     = 2U * 1024U * 1024U,
+    kKeepAliveServerMaxReentryBytes     = 2U * 1024U * 1024U,
+    kKeepAliveServerMaxReentryBuffers   = 1024U,
     kKeepAliveServerFrameKindNormal     = 1,
     kKeepAliveServerFrameKindPing       = 2,
     kKeepAliveServerFrameKindPong       = 3,
@@ -44,3 +52,4 @@ bool keepaliveserverSendNormalFrameDownstream(tunnel_t *t, line_t *l, sbuf_t *bu
 bool keepaliveserverConsumeUpstreamFrames(tunnel_t *t, line_t *l);
 void keepaliveserverCloseLineFromUpstream(tunnel_t *t, line_t *l);
 void keepaliveserverCloseLineFromDownstream(tunnel_t *t, line_t *l);
+void keepaliveserverCloseLineFromProtocolError(tunnel_t *t, line_t *l);

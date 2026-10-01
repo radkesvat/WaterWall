@@ -6,7 +6,7 @@ Sync note: Any change to this file must also be applied to WaterWall/WaterWall-D
 # KeepAliveClient Node
 
 `KeepAliveClient` is a small framing tunnel that wraps upstream payloads with a `3`-byte keepalive header and
-periodically sends ping control frames on every live line it owns.
+periodically sends ping control frames on every live borrowed line it tracks.
 
 The purpose of this tunnel is to periodically send/recv ping-pong messages that keep the connection appearing active, preventing timeout-based middleboxes (such as NAT devices and others) from closing it.
 
@@ -80,10 +80,34 @@ Source-backed metadata:
 
 | Property | Value |
 | --- | --- |
-| node flags | `kNodeFlagNone` |
+| node flags | `kNodeFlagSupportsSplice` |
 | `can_have_prev` | `true` |
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayer4` |
 | `layer_group_prev_node` | `kNodeLayer4` |
 | `layer_group_next_node` | `kNodeLayer4` |
 | `required_padding_left` | `3` bytes |
+
+## Splice Support
+
+`KeepAliveClient` advertises `kNodeFlagSupportsSplice`. Framing continues for the
+whole connection. Upstream encoding writes only the three-byte header into real
+left padding; downstream decoding uses a three-byte `splice_stream_t` header
+cache. Payload bodies remain eligible for private-pipe forwarding. Payloads
+larger than 65,534 bytes are split using representation-aware range operations.
+Pipe allocation or capacity pressure may select complete ordinary fallback.
+The wire format is unchanged; ping and pong frames use ordinary buffers.
+
+Nested encoder input stays behind the active payload under a shared 2 MiB
+logical-byte and 1,024-buffer reentry bound, counting the active suffix. The decoder serializes nested input,
+limits nested retained bytes to 2 MiB, and limits retained allocation charge to
+2 MiB, attempting beneficial ordinary compaction before refusing excess charge.
+Complete frames in an admitted delivery drain before checking the 131,074-byte
+incomplete-remainder limit. Pause is forwarded promptly and does not interrupt
+that synchronous batch. Timer-generated pings stop while upstream output is
+paused and resume on a later timer tick after Resume.
+
+Invalid zero-length frame bodies, admission failure and retained-storage overflow
+close the borrowed line through its owner. Finish releases incomplete frames,
+active encoder suffixes and queued reentrant input; this node never destroys
+`line_t` itself.

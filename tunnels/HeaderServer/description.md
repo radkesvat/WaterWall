@@ -294,10 +294,22 @@ Source-backed metadata:
 
 | Property | Value |
 | --- | --- |
-| node flags | `kNodeFlagNone` |
+| node flags | `kNodeFlagSupportsSplice` |
 | `can_have_prev` | `true` |
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayer4` |
 | `layer_group_prev_node` | `kNodeLayer4` |
 | `layer_group_next_node` | `kNodeLayer4` |
 | `required_padding_left` | `0` bytes |
+
+## Splice Support
+
+`HeaderServer` advertises `kNodeFlagSupportsSplice`. While waiting for a WaterWall
+port header or a PROXY protocol header, it materializes the entire received
+payload with `sbufEnsureOrdinary()` before passing it to BufferStream. This also
+preserves any application bytes coalesced with the header. Once header routing
+is complete, both directions and the bounded initial-reentry queue preserve
+opaque splice buffers. Constant-port mode needs no payload inspection.
+
+It does not request ordinary reads during temporary header parsing: read
+preferences last for the whole line and would also disable later splice reads.

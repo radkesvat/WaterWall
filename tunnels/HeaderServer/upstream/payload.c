@@ -364,6 +364,7 @@ void headerserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
+    buf = sbufEnsureOrdinary(lineGetBufferPool(l), buf);
     bufferstreamPush(&ls->read_stream, buf);
 
     headerserver_header_parse_result_t result = headerserverReadConfiguredHeader(t, l);

@@ -914,3 +914,13 @@ splice calls.
 The two `socks5{client,server}_udp_ordinary_reads` cases exercise real UDP
 associations, including empty datagrams, with splice enabled globally and require
 that their TCP control and UDP sockets make no splice attempts.
+
+HeaderServer coverage includes real-pipe split port/PROXY headers, coalesced
+tails, nested initialization input and opaque established forwarding. KeepAlive
+fixtures check ordinary and pipe bodies, fixed-header-only reads, large frame
+splitting, nested FIFO, ping/pong, Pause-aware timer production and callback-close
+cleanup. Both sides also compile the actual framing and buffer sources with
+`WW_HAVE_SPLICE=0`. The ten `framed_{constant,port,v1,v2,keepalive}_splice_{true,false}`
+socket cases exercise HeaderServer modes and a TCP-connected KeepAlive pair,
+checking exact bidirectional bytes, positive endpoint pipe-to-TCP transfers,
+disabled splice and orderly shutdown.

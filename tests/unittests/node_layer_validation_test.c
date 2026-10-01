@@ -9,6 +9,12 @@
 #include "Socks5Client/interface.h"
 #include "Socks5Server/interface.h"
 #endif
+
+#ifdef WW_TEST_FRAMED_SPLICE_NODES
+#include "HeaderServer/interface.h"
+#include "KeepAliveClient/interface.h"
+#include "KeepAliveServer/interface.h"
+#endif
 #ifdef WW_TEST_REVERSE_SERVER_SPLICE
 #include "Bridge/interface.h"
 #include "ReverseServer/interface.h"
@@ -1733,6 +1739,36 @@ static void testSocksSpliceCapability(void)
 }
 #endif
 
+#ifdef WW_TEST_FRAMED_SPLICE_NODES
+static void testFramedSpliceCapability(void)
+{
+    node_t nodes[] = {nodeHeaderServerGet(), nodeKeepAliveClientGet(), nodeKeepAliveServerGet()};
+    for (unsigned i = 0; i < ARRAY_SIZE(nodes); ++i)
+    {
+        require(nodes[i].flags == kNodeFlagSupportsSplice && nodes[i].required_padding_left == (i == 0 ? 0 : 3),
+                "HeaderServer or KeepAlive splice metadata changed");
+        for (unsigned blocked = 0; blocked < 2; ++blocked)
+        {
+            node_t   head_node = {.type = (char *) "head", .flags = kNodeFlagSupportsSplice};
+            node_t   tail_node = {.type = (char *) "tail", .flags = blocked ? kNodeFlagNone : kNodeFlagSupportsSplice};
+            tunnel_t head = {.node = &head_node}, middle = {.node = &nodes[i]}, tail = {.node = &tail_node};
+            bindTunnels(&head, &middle);
+            bindTunnels(&middle, &tail);
+            tunnel_chain_t *chain = tunnelchainCreate(0);
+            require(chain != NULL, "create framed capability chain");
+            tunnelchainInsert(chain, &head);
+            tunnelchainInsert(chain, &middle);
+            tunnelchainInsert(chain, &tail);
+            tunnelchainFinalize(chain);
+            require(chain->supports_splice == (WW_HAVE_SPLICE && ! GSTATE.splice_disabled && ! blocked),
+                    "framed eligibility ignored neighbor, platform or misc.splice gating");
+            tunnelchainDestroy(chain);
+        }
+        memoryFree(nodes[i].type);
+    }
+}
+#endif
+
 #ifdef WW_TEST_REVERSE_SERVER_SPLICE
 static void testReverseServerSpliceCapability(void)
 {
@@ -2010,6 +2046,9 @@ int main(void)
         testSolvedTopologyExpansionIsRevalidated(kNodeFlagNone, true);
         testSolvedTopologyExpansionIsRevalidated(kNodeFlagSupportsSplice, true);
         testChainSpliceCapability();
+#ifdef WW_TEST_FRAMED_SPLICE_NODES
+        testFramedSpliceCapability();
+#endif
 #ifdef WW_TEST_SOCKS_SPLICE_NODES
         testSocksSpliceCapability();
 #endif

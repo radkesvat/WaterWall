@@ -56,10 +56,33 @@ Source-backed metadata:
 
 | Property | Value |
 | --- | --- |
-| node flags | `kNodeFlagNone` |
+| node flags | `kNodeFlagSupportsSplice` |
 | `can_have_prev` | `true` |
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayer4` |
 | `layer_group_prev_node` | `kNodeLayer4` |
 | `layer_group_next_node` | `kNodeLayer4` |
 | `required_padding_left` | `3` bytes |
+
+## Splice Support
+
+`KeepAliveServer` advertises `kNodeFlagSupportsSplice`. Its upstream decoder uses
+a three-byte `splice_stream_t` header cache; its downstream encoder prepends the
+same three-byte header in real left padding. Framing continues for the whole
+connection, with payload bodies eligible for private-pipe forwarding. Payloads
+larger than 65,534 bytes are split with representation-aware range operations.
+Pipe allocation or capacity pressure may select complete ordinary fallback.
+The wire format is unchanged; pong control frames use ordinary buffers.
+
+Nested encoder input stays behind the active payload under a shared 2 MiB
+logical-byte and 1,024-buffer reentry bound, counting the active suffix. The decoder serializes nested input,
+limits nested retained bytes to 2 MiB, and limits retained allocation charge to
+2 MiB, attempting beneficial ordinary compaction before refusing excess charge.
+Complete frames in an admitted delivery drain before checking the 131,074-byte
+incomplete-remainder limit. Pause is forwarded promptly and does not interrupt
+that synchronous batch.
+
+Invalid zero-length frame bodies, admission failure and retained-storage overflow
+close the borrowed line through its owner. Finish releases incomplete frames,
+active encoder suffixes and queued reentrant input; this node never destroys
+`line_t` itself.
