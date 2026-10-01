@@ -73,6 +73,9 @@ void routerTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
+    // Sniffing and pending storage use ordinary memory until the route is committed.
+    buf = sbufEnsureOrdinary(lineGetBufferPool(l), buf);
+
     routerBufferPendingPayload(l, ls, buf);
 
     router_match_ctx_t mctx = {

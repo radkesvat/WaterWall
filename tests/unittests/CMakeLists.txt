@@ -1405,6 +1405,18 @@ if(TARGET ww)
           target_compile_definitions(${target} PRIVATE WW_TEST_HALFDUPLEX_SPLICE_NODES=1)
         endforeach()
       endif()
+      if(TARGET Router AND TARGET SniffRouter)
+        foreach(target IN ITEMS node_layer_validation_test node_layer_validation_no_splice_test)
+          target_link_libraries(${target} PRIVATE Router SniffRouter)
+          target_compile_definitions(${target} PRIVATE WW_TEST_ROUTER_SPLICE_NODES=1)
+        endforeach()
+      endif()
+      if(TARGET ReverseServer AND TARGET Bridge)
+        foreach(target IN ITEMS node_layer_validation_test node_layer_validation_no_splice_test)
+          target_link_libraries(${target} PRIVATE ReverseServer Bridge)
+          target_compile_definitions(${target} PRIVATE WW_TEST_REVERSE_SERVER_SPLICE=1)
+        endforeach()
+      endif()
       add_dependencies(waterwall_unit_tests node_layer_validation_no_splice_test)
 
       add_waterwall_unit_test(
@@ -2034,6 +2046,22 @@ if(TARGET SniffRouter)
 endif()
 
 if(TARGET SniffRouter AND TARGET Router)
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_executable(router_splice_test router_splice_test.c)
+    target_include_directories(router_splice_test PRIVATE
+      ${CMAKE_SOURCE_DIR}/tunnels/Router
+      ${CMAKE_SOURCE_DIR}/tunnels/ReverseClient/include
+    )
+    target_link_libraries(router_splice_test PRIVATE SniffRouter Router ww)
+    target_link_options(router_splice_test PRIVATE "-Wl,--wrap=sbufDestroy" "-Wl,--wrap=bufferpoolReuseBuffer")
+    add_dependencies(waterwall_unit_tests router_splice_test)
+    add_waterwall_unit_test(
+      waterwall.router_splice_unit
+      router_splice_test
+      "unit;tunnels;router;sniffrouter;splice;lifetime"
+    )
+  endif()
+
   add_executable(router_chain_ownership_test router_chain_ownership_test.c)
   target_include_directories(router_chain_ownership_test PRIVATE
     ${CMAKE_SOURCE_DIR}/tunnels/SniffRouter/include
@@ -3391,6 +3419,13 @@ foreach(uot_side Client Server)
 endforeach()
 
 if(TARGET ReverseServer)
+  add_executable(reverseserver_splice_test reverseserver_splice_test.c)
+  target_link_libraries(reverseserver_splice_test PRIVATE ReverseServer ww)
+  target_include_directories(reverseserver_splice_test PRIVATE ${CMAKE_SOURCE_DIR}/tunnels/ReverseClient/include)
+  target_link_options(reverseserver_splice_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS} "-Wl,--wrap=sbufAppendMerge")
+  add_dependencies(waterwall_unit_tests reverseserver_splice_test)
+  add_waterwall_unit_test(waterwall.reverseserver_splice_unit reverseserver_splice_test "unit;tunnels;reverse;splice;lifetime")
+
   add_executable(reverseserver_large_wait_test reverseserver_large_wait_test.c)
   target_link_libraries(reverseserver_large_wait_test PRIVATE ReverseServer ww)
   target_include_directories(reverseserver_large_wait_test PRIVATE ${CMAKE_SOURCE_DIR}/tunnels/ReverseClient/include)

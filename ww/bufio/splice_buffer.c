@@ -40,6 +40,21 @@ static void spliceReadPipe(int fd, uint8_t *dest, uint32_t bytes, const char *ca
 }
 #endif
 
+sbuf_t *sbufEnsureOrdinary(buffer_pool_t *pool, sbuf_t *buf)
+{
+    assert(pool != NULL && buf != NULL);
+    if (! sbufIsSplice(buf))
+    {
+        return buf;
+    }
+
+    const uint32_t length   = sbufGetLength(buf);
+    sbuf_t        *ordinary = bufferpoolGetBestFit(pool, length, bufferpoolGetLargeBufferPadding(pool));
+    sbufSpliceReadToBuffer(buf, ordinary, length);
+    bufferpoolReuseBuffer(pool, buf);
+    return ordinary;
+}
+
 sbuf_t *sbufSpliceMaterializeToBuffer(sbuf_t *buf, sbuf_t *dest, buffer_pool_t *pool)
 {
     if (UNLIKELY(buf == NULL || ! sbufIsSplice(buf)))

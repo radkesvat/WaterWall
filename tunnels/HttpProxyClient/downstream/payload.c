@@ -50,6 +50,7 @@ bool hpcResponse(tunnel_t *t, line_t *l, sbuf_t *b)
     hpc_lstate_t *ls = lineGetState(l, t);
     hpc_tstate_t *ts = tunnelGetState(t);
     size_t        n  = sbufGetLength(b);
+    assert(n <= kHpcDeliveryLimit);
     if (! ls->header_sent)
     {
         lineReuseBuffer(l, b);
@@ -64,19 +65,7 @@ bool hpcResponse(tunnel_t *t, line_t *l, sbuf_t *b)
     }
     /* Only parsing inputs materialize. One transient complete input is bounded
      * by the delivery cap, independent of ordinary pool tier geometry. */
-    if (sbufIsSplice(b))
-    {
-        sbuf_t *ordinary = hpcBuffer(l, n);
-        if (! ordinary)
-        {
-            lineReuseBuffer(l, b);
-            hpcClose(t, l);
-            return false;
-        }
-        sbufSpliceReadToBuffer(b, ordinary, (uint32_t) n);
-        lineReuseBuffer(l, b);
-        b = ordinary;
-    }
+    b = sbufEnsureOrdinary(lineGetBufferPool(l), b);
     assert(! ls->active);
     if (! bufferbudgetTryReserve(&ls->budgets[1], b, &ls->active_cost))
     {

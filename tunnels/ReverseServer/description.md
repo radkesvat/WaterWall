@@ -152,13 +152,27 @@ Instead:
 - It is tightly coupled to `ReverseClient` through the shared handshake format.
 - Unpaired halves can be buffered temporarily, but large buffered payloads are dropped once they exceed the per-half limit.
 
+## Splice Support
+
+ReverseServer materializes each complete splice payload into ordinary memory in
+both directions while the half is unpaired. This covers handshake validation,
+handshake removal, waiting-buffer merges and replay when pairing moves to another
+worker. Handshake completion alone does not end materialization: waiting storage
+remains ordinary until pairing completes. After pairing, payloads pass through
+unchanged in both directions.
+
+The internal PipeTunnel shares ReverseServer's splice capability and transfers
+opaque payload buffers across workers. Existing waiting limits, callback mapping
+and direct `ReverseServer -> Bridge` placement still apply. Splice activation
+requires an eligible finalized chain and `misc.splice`.
+
 ## Node Metadata
 
 Source-backed metadata:
 
 | Property | Value |
 | --- | --- |
-| node flags | `kNodeFlagNone` |
+| node flags | `kNodeFlagSupportsSplice` |
 | `can_have_prev` | `true` |
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayer4` |

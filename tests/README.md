@@ -827,6 +827,40 @@ without Est, with zero and nonzero fallback delay. HttpProxyServer disables spli
 for these chains even when requested; native tests cover the same callback order
 with ordinary and real-pipe replies.
 
+### ReverseServer splice coverage
+
+`waterwall.reverseserver_splice_unit` covers split and invalid handshakes, ordinary
+waiting storage in both directions, exact replay, unchanged paired buffers,
+Pause/Resume mapping, reentrant close, incomplete-input cleanup and exact/overflow
+waiting limits with real private-pipe input. Run it in both `linux-unit-debug`
+and `linux-unit-release`, alongside `reverseserver_large_wait_unit` and
+`worker_context_helpers_unit`; the latter already covers cross-worker splice
+transfer and cancellation. Node-layer units check the internal PipeTunnel's shared
+capability flags and disabled/unsupported/blocked-chain gating.
+
+`waterwall.reverseserver_workers_{1,2}_splice_{true,false}` runs through the namespace
+harness with external user and reverse socket peers. Consecutive accepts with two
+workers exercise cross-worker pairing. The cases verify exact initial replay,
+bidirectional bulk bytes, positive pipe-to-socket transfers when enabled, no
+successful splice calls when disabled, and shutdown with retained unpaired input.
+
+### Router splice coverage
+
+`waterwall.router_splice_unit` exercises Router and SniffRouter with ordinary,
+private-pipe and resident-prefix-plus-pipe input: split sniffing, exact initial
+replay, opaque forwarding in both directions, metadata-only Init commitment,
+complete oversized headers, and Finish during retained input or branch callbacks.
+It also checks Router's internal DomainResolver capability. Run it in both
+`linux-unit-debug` and `linux-unit-release`. The existing node-layer units cover
+both routers' metadata and whole-chain eligibility, including an unselected
+blocking branch, disabled splice and unsupported builds.
+
+The native Linux `waterwall.{router_metadata,router_sniff,router_resolve,sniffrouter}_tcp_splice_{true,false}`
+cases use external loopback socket peers through the namespace harness. They
+verify target/default selection, exact setup replay, bidirectional opaque bytes
+and orderly shutdown. `strace` requires successful pipe-to-socket transfers in
+both directions when enabled and no successful splice calls when disabled.
+
 ### VlessClient splice coverage
 
 `waterwall.vlessclient_splice_unit` and `waterwall.vlessclient_no_splice_unit`

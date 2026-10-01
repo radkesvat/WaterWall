@@ -231,6 +231,8 @@ void reverseserverTunnelUpStreamPayload(tunnel_t *t, line_t *d, sbuf_t *buf)
     }
     else
     {
+        // Handshake inspection and waiting storage use ordinary memory until pairing.
+        buf = sbufEnsureOrdinary(lineGetBufferPool(d), buf);
         handleUnpairedConnectionD(t, d, dls, ts, this_tb, buf);
     }
 }

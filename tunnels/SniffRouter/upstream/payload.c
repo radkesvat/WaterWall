@@ -57,6 +57,9 @@ void sniffrouterTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
+    // Sniffing and pending storage use ordinary memory until the route is committed.
+    buf = sbufEnsureOrdinary(lineGetBufferPool(l), buf);
+
     if (ls->pending == NULL)
     {
         ls->pending = buf;

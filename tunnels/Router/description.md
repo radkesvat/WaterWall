@@ -550,13 +550,26 @@ evaluation may not fall through to a later rule or to the default route. `module
 type is: create `modules/<field>/`, then add one row to the `kRouterMatchers`
 table.
 
+## Splice Support
+
+While the route is undecided, Router materializes each complete splice payload
+into ordinary memory before buffering and sniffing. The selected branch receives
+the buffered bytes intact. After route commitment, payloads pass through unchanged
+in both directions; metadata-only routing can commit during Init and preserve
+splice buffers from the first delivery. The internal DomainResolver retains its
+splice capability when `resolve-domains` is enabled.
+
+Splice activation still requires an eligible finalized chain and `misc.splice`.
+Every configured branch and internal helper participates in that check, including
+branches not selected by a particular line.
+
 ## Node Metadata
 
 Source-backed metadata:
 
 | Property | Value |
 | --- | --- |
-| node flags | `kNodeFlagNone` |
+| node flags | `kNodeFlagSupportsSplice` |
 | `can_have_prev` | `true` |
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayer4` |

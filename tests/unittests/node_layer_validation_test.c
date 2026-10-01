@@ -4,6 +4,14 @@
  */
 
 #include "wwapi.h"
+#ifdef WW_TEST_REVERSE_SERVER_SPLICE
+#include "Bridge/interface.h"
+#include "ReverseServer/interface.h"
+#endif
+#ifdef WW_TEST_ROUTER_SPLICE_NODES
+#include "Router/interface.h"
+#include "SniffRouter/interface.h"
+#endif
 #ifdef WW_TEST_HALFDUPLEX_SPLICE_NODES
 #include "HalfDuplexClient/interface.h"
 #include "HalfDuplexServer/interface.h"
@@ -1638,6 +1646,76 @@ static void testRealTcpMuxSpliceCapability(void)
 
 #endif
 
+#ifdef WW_TEST_ROUTER_SPLICE_NODES
+static void testRouterSpliceCapability(void)
+{
+    node_t nodes[] = {nodeRouterGet(), nodeSniffRouterGet()};
+    for (unsigned i = 0; i < ARRAY_SIZE(nodes); ++i)
+    {
+        require(nodes[i].flags == kNodeFlagSupportsSplice, "router lost splice capability");
+        for (unsigned blocked = 0; blocked < 3; ++blocked)
+        {
+            node_t   default_node = {.type = (char *) "default", .flags = kNodeFlagSupportsSplice};
+            node_t   branch_node  = {.type  = (char *) "branch",
+                                     .flags = blocked == 0   ? kNodeFlagSupportsSplice
+                                              : blocked == 1 ? kNodeFlagNone
+                                                             : kNodeFlagSupportsSplice | kNodeFlagBlocksSplice};
+            tunnel_t router       = {.node = &nodes[i]};
+            tunnel_t next         = {.node = &default_node};
+            tunnel_t branch       = {.node = &branch_node};
+            bindTunnels(&router, &next);
+            branch.prev           = &router;
+            tunnel_chain_t *chain = tunnelchainCreate(0);
+            require(chain != NULL, "create router capability chain");
+            tunnelchainInsert(chain, &router);
+            tunnelchainInsert(chain, &next);
+            tunnelchainInsert(chain, &branch);
+            tunnelchainFinalize(chain);
+            require(chain->supports_splice == (WW_HAVE_SPLICE && ! GSTATE.splice_disabled && blocked == 0),
+                    "router eligibility ignored platform, misc.splice or an unselected branch");
+            tunnelchainDestroy(chain);
+        }
+        memoryFree(nodes[i].type);
+    }
+}
+#endif
+
+#ifdef WW_TEST_REVERSE_SERVER_SPLICE
+static void testReverseServerSpliceCapability(void)
+{
+    node_t node        = nodeReverseServerGet();
+    node_t bridge_node = nodeBridgeGet();
+    require(node.flags == kNodeFlagSupportsSplice, "ReverseServer lost splice capability");
+    for (unsigned blocked = 0; blocked < 2; ++blocked)
+    {
+        tunnel_t *child = tunnelCreate(&node, 0, 0);
+        tunnel_t *entry = pipetunnelCreate(child);
+        require(entry != NULL, "construct ReverseServer pipe wrapper");
+        tunnel_t        bridge  = {.node = &bridge_node};
+        node_t          blocker = {.type = (char *) "blocker", .flags = kNodeFlagBlocksSplice};
+        tunnel_t        tail    = {.node = &blocker};
+        tunnel_chain_t *chain   = tunnelchainCreate(0);
+        require(chain != NULL, "construct ReverseServer capability chain");
+        entry->onChain(entry, chain);
+        bindTunnels(child, &bridge);
+        tunnelchainInsert(chain, &bridge);
+        require(chain->tunnels.len == 3 && entry->node == child->node, "pipe wrapper lost child metadata");
+        if (blocked)
+        {
+            bindTunnels(&bridge, &tail);
+            tunnelchainInsert(chain, &tail);
+        }
+        tunnelchainFinalize(chain);
+        require(chain->supports_splice == (WW_HAVE_SPLICE && ! GSTATE.splice_disabled && ! blocked),
+                "ReverseServer expanded-chain splice gating changed");
+        tunnelchainDestroy(chain);
+        pipetunnelDestroy(entry, wwLifecycleStartupRollback());
+    }
+    memoryFree(node.type);
+    memoryFree(bridge_node.type);
+}
+#endif
+
 #ifdef WW_TEST_HALFDUPLEX_SPLICE_NODES
 static void testHalfDuplexSpliceCapability(void)
 {
@@ -1879,6 +1957,12 @@ int main(void)
         testSolvedTopologyExpansionIsRevalidated(kNodeFlagNone, true);
         testSolvedTopologyExpansionIsRevalidated(kNodeFlagSupportsSplice, true);
         testChainSpliceCapability();
+#ifdef WW_TEST_REVERSE_SERVER_SPLICE
+        testReverseServerSpliceCapability();
+#endif
+#ifdef WW_TEST_ROUTER_SPLICE_NODES
+        testRouterSpliceCapability();
+#endif
 #ifdef WW_TEST_UDP_SPLICE_NODES
         testUdpSpliceCapabilities();
 #endif

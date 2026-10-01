@@ -3,6 +3,7 @@
 #include "buffer_pool_internal.h"
 #include "splice_buffer.h"
 #if WW_HAVE_SPLICE
+#include <fcntl.h>
 #include <sys/ioctl.h>
 #endif
 
@@ -1077,10 +1078,125 @@ static sbuf_t *makeOrdinaryBytes(buffer_pool_t *pool, const uint8_t *bytes, uint
 
 #endif
 
+static void testEnsureOrdinaryPreservesResidentBuffers(void)
+{
+    pool_fixture_t fixture = poolFixtureCreate(1024, 128, 192, 64);
+    for (unsigned int mode = 0; mode < 4; ++mode)
+    {
+        sbuf_t *source = makePooledBuffer(fixture.pool, false, mode == 3 ? 0 : 32, 0, 0x40);
+        if (mode == 1)
+        {
+            sbufShiftLeft(source, 7);
+            memoryCopy(sbufGetMutablePtr(source), "prefix!", 7);
+        }
+        else if (mode == 2)
+            sbufShiftRight(source, 9);
+
+        const uint32_t cursor   = source->curpos;
+        const uint32_t capacity = source->capacity;
+        const uint32_t length   = source->len;
+        const uint16_t padding  = source->l_pad;
+        const uint16_t flags    = source->flags;
+        uint8_t        payload[64];
+        memoryCopy(payload, sbufGetRawPtr(source), length);
+        uint32_t before[4], after[4];
+        bufferpoolCachedTierCountsForTest(fixture.pool, &before[0], &before[1], &before[2], &before[3]);
+        sbuf_t *result = sbufEnsureOrdinary(fixture.pool, source);
+        bufferpoolCachedTierCountsForTest(fixture.pool, &after[0], &after[1], &after[2], &after[3]);
+        require(result == source && result->curpos == cursor && result->capacity == capacity && result->len == length &&
+                    result->l_pad == padding && result->flags == flags,
+                "ensuring ordinary storage replaced or changed an ordinary buffer");
+        require(memoryEqual(sbufGetRawPtr(result), payload, length) && memoryEqual(before, after, sizeof(before)),
+                "ensuring ordinary storage changed resident bytes or the pool caches");
+        bufferpoolReuseBuffer(fixture.pool, result);
+    }
+    poolFixtureDestroy(&fixture);
+}
+
+#if WW_HAVE_SPLICE
+static void testEnsureOrdinaryMaterializesCompletePayload(void)
+{
+    pool_fixture_t fixture = {
+        .large_master  = masterpoolCreateWithCapacity(16),
+        .small_master  = masterpoolCreateWithCapacity(16),
+        .medium_master = masterpoolCreateWithCapacity(16),
+        .splice_master = masterpoolCreateWithCapacity(16),
+    };
+    fixture.pool = bufferpoolCreate(fixture.large_master,
+                                    fixture.medium_master,
+                                    fixture.small_master,
+                                    fixture.splice_master,
+                                    8,
+                                    1024,
+                                    512,
+                                    128,
+                                    4096,
+                                    1024);
+    require(fixture.pool != NULL, "could not create ordinary-conversion test pool");
+    bufferpoolUpdateAllocationPaddings(fixture.pool, 192, 192, 64, 64);
+    static const struct
+    {
+        uint32_t prefix;
+        uint32_t body;
+        uint32_t consumed;
+        bool     uninitialized;
+    } cases[] = {{0, 0, 0, false},
+                 {7, 0, 2, false},
+                 {0, 96, 3, false},
+                 {7, 96, 3, false},
+                 {7, 96, 11, false},
+                 {0, 1537, 0, false},
+                 {0, 0, 0, true}};
+    uint8_t wire[1537];
+    for (size_t i = 0; i < sizeof(wire); ++i)
+        wire[i] = (uint8_t) (0x31U + i);
+    int descriptors[ARRAY_SIZE(cases) * 2];
+    for (size_t i = 0; i < ARRAY_SIZE(cases); ++i)
+    {
+        sbuf_t *source =
+            makeSpliceTestBuffer(fixture.pool, wire, cases[i].prefix, wire + cases[i].prefix, cases[i].body);
+        if (cases[i].uninitialized)
+            sbufSpliceClosePipe(source);
+        uint8_t consumed[16];
+        sbufReadRangeToMemory(source, consumed, cases[i].consumed);
+        require(memoryEqual(consumed, wire, cases[i].consumed), "conversion fixture consumed the wrong prefix");
+        const splice_buffer_metadata_t metadata = sbufSpliceMetadata(source);
+        const uint32_t                 length   = cases[i].prefix + cases[i].body - cases[i].consumed;
+        sbuf_t                        *result   = sbufEnsureOrdinary(fixture.pool, source);
+        requireResidentPayload(
+            result, wire + cases[i].consumed, length, "ensuring ordinary storage lost or changed splice payload bytes");
+        require(result != source && result->curpos == result->l_pad && sbufGetLeftCapacity(result) >= 192,
+                "ensuring ordinary storage did not restore onward pool padding");
+        const uint32_t capacity = sbufGetTotalCapacityNoPadding(result);
+        require(length <= 512 ? capacity == 512 : capacity >= length && capacity < 2048,
+                "ensuring ordinary storage did not choose padded best-fit storage");
+        sbuf_t *recycled = bufferpoolGetSpliceBuffer(fixture.pool);
+        require(recycled == source && sbufGetLength(recycled) == 0 && sbufSpliceIsReusable(recycled),
+                "ensuring ordinary storage failed to recycle the consumed splice source");
+        const splice_buffer_metadata_t reused_metadata = sbufSpliceMetadata(recycled);
+        require(cases[i].uninitialized || (metadata.pipefd[0] == reused_metadata.pipefd[0] &&
+                                           metadata.pipefd[1] == reused_metadata.pipefd[1]),
+                "ensuring ordinary storage replaced the source's healthy private pipe");
+        descriptors[2 * i]     = reused_metadata.pipefd[0];
+        descriptors[2 * i + 1] = reused_metadata.pipefd[1];
+        bufferpoolReuseBuffer(fixture.pool, recycled);
+        bufferpoolReuseBuffer(fixture.pool, result);
+    }
+    poolFixtureDestroy(&fixture);
+    for (size_t i = 0; i < ARRAY_SIZE(descriptors); ++i)
+        require(fcntl(descriptors[i], F_GETFD) == -1 && errno == EBADF,
+                "ordinary-conversion pool teardown leaked a private pipe");
+}
+#endif
+
 #include "splice_stream_cases.h"
 
 int main(void)
 {
+    testEnsureOrdinaryPreservesResidentBuffers();
+#if WW_HAVE_SPLICE
+    testEnsureOrdinaryMaterializesCompletePayload();
+#endif
     testSpliceStreamContracts();
     testMoveExactBytesTo();
     testMoveExactPreflight(true);

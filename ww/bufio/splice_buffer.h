@@ -46,6 +46,14 @@ static inline void sbufSpliceConsumeBody(sbuf_t *buf, uint32_t bytes)
     buf->capacity -= bytes;
 }
 
+/** Return ordinary input unchanged, or materialize the complete splice payload
+ * (resident prefix followed by private-pipe body) into best-fit ordinary storage
+ * with the pool's large-buffer padding. The caller must exclusively own buf and
+ * owns only the returned buffer; a replaced splice wrapper is recycled through
+ * pool. No callbacks occur. Allocation follows bufferpoolGetBestFit's fail-fast
+ * contract; invalid splice contents are fatal invariants. */
+sbuf_t *sbufEnsureOrdinary(buffer_pool_t *pool, sbuf_t *buf);
+
 /**
  * Replace an ordinary destination payload with the complete resident contents
  * of a splice wrapper. Real prefix bytes are copied before the private-pipe body.

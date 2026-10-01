@@ -128,6 +128,8 @@ void reverseserverTunnelDownStreamPayload(tunnel_t *t, line_t *u, sbuf_t *buf)
     }
     else
     {
+        // Waiting storage uses ordinary memory until pairing.
+        buf = sbufEnsureOrdinary(lineGetBufferPool(u), buf);
         handleUnpairedConnectionU(t, u, uls, this_tb, buf);
     }
 }

@@ -161,13 +161,26 @@ Configuration example:
 - **Why a Real Nginx TLS Fallback**: Routing default traffic to a real nginx HTTPS listener ensures unknown SNI handshakes, no-SNI handshakes, and plaintext HTTP receive authentic nginx responses and error pages (such as HTTP 400 "The plain HTTP request was sent to HTTPS port"), avoiding synthetic handshake rejection fingerprints.
 - See `tests/examples/vless_tls_sni_camouflage_server.json` for a complete server example.
 
+## Splice Support
+
+While the route is undecided, SniffRouter materializes each complete splice payload
+into ordinary memory before buffering and classification. Buffered bytes are
+replayed intact to the selected branch. After route commitment, payloads pass
+through unchanged in both directions. The sniff window keeps its existing meaning:
+complete headers are classified before the incomplete-input cutoff.
+
+Splice activation still requires an eligible finalized chain and `misc.splice`.
+Every configured route and internal helper participates in that check. A route
+containing TlsServer therefore disables splice for the entire merged chain,
+including lines taking another route.
+
 ## Node Metadata
 
 Source-backed metadata:
 
 | Property | Value |
 | --- | --- |
-| node flags | `kNodeFlagNone` |
+| node flags | `kNodeFlagSupportsSplice` |
 | `can_have_prev` | `true` |
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayer4` |

@@ -44,8 +44,6 @@ static bool routerCreateInternalDomainResolver(tunnel_t *t, node_t *node)
         LOGF("Router: failed to configure internal DomainResolver node");
         return false;
     }
-    ts->domain_resolver_node.flags = kNodeFlagNone;
-
     ts->domain_resolver_tunnel = nodemanagerCreateTunnelInstance(&ts->domain_resolver_node);
     if (ts->domain_resolver_tunnel == NULL)
     {

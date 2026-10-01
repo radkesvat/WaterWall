@@ -707,6 +707,19 @@ set_tests_properties(
 add_waterwall_integration_test(waterwall.connection_fisher_roundtrip connection_fisher_roundtrip)
 add_waterwall_integration_test(waterwall.connection_fisher_encryption_roundtrip connection_fisher_encryption_roundtrip)
 add_waterwall_integration_test(waterwall.sniffrouter_non_http_tcp_loopback sniffrouter_non_http_tcp_loopback)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING AND TARGET Router AND TARGET SniffRouter)
+  foreach(router_mode IN ITEMS router_metadata router_sniff router_resolve sniffrouter)
+    foreach(splice_mode IN ITEMS true false)
+      set(router_case waterwall.${router_mode}_tcp_splice_${splice_mode})
+      add_waterwall_isolated_test(${router_case}
+        "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/router_splice_integration.py"
+        "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>" "${router_mode}" "${splice_mode}")
+      set_tests_properties(${router_case} PROPERTIES TIMEOUT 60)
+      add_waterwall_test_labels(${router_case} "integration" "tunnels")
+      add_waterwall_case_resource_lock(${router_case} router_splice)
+    endforeach()
+  endforeach()
+endif()
 add_waterwall_integration_test(waterwall.sniffrouter_http_domain_tcp_loopback sniffrouter_http_domain_tcp_loopback)
 add_waterwall_probe_integration_test(
   waterwall.sniffrouter_tls_sni_camouflage_probe
@@ -1066,6 +1079,19 @@ add_waterwall_integration_test(
 )
 add_waterwall_integration_test(waterwall.reverse_tcp_bridge_roundtrip reverse_tcp_bridge_roundtrip)
 add_waterwall_integration_test(waterwall.reverse_custom_secret_tcp_bridge_roundtrip reverse_custom_secret_tcp_bridge_roundtrip)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING AND TARGET ReverseServer AND TARGET Bridge)
+  foreach(reverse_workers IN ITEMS 1 2)
+    foreach(splice_mode IN ITEMS true false)
+      set(reverse_case waterwall.reverseserver_workers_${reverse_workers}_splice_${splice_mode})
+      add_waterwall_isolated_test(${reverse_case}
+        "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/reverseserver_splice_integration.py"
+        "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>" "${reverse_workers}" "${splice_mode}")
+      set_tests_properties(${reverse_case} PROPERTIES TIMEOUT 60)
+      add_waterwall_test_labels(${reverse_case} "integration" "tunnels")
+      add_waterwall_case_resource_lock(${reverse_case} reverseserver_splice)
+    endforeach()
+  endforeach()
+endif()
 add_waterwall_integration_test(waterwall.wireguard_udpstateless_packet_roundtrip wireguard_udpstateless_packet_roundtrip)
 add_waterwall_wireguard_cookie_test(waterwall.wireguard_cookie_overload_roundtrip wireguard_cookie_overload_roundtrip)
 add_waterwall_packet_analysis_test(waterwall.packet_analysis_ping_roundtrip packet_analysis_ping_roundtrip)

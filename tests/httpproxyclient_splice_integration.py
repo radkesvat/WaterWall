@@ -220,7 +220,7 @@ def run(binary, mode, enabled, auth):
                     trace = trace.replace("TCPv6:", "TCP:").replace("[::1]", "127.0.0.1")
                 positive, outputs = splice_outputs(trace)
                 if not interop:
-                    expected = enabled and auth != "tls" and not branch_dns
+                    expected = enabled and auth != "tls"
                     assert positive == expected, "splice mode/topology gate"
                     assert outputs == ({"up", "down"} if expected else set()), ("missing direct body splice", outputs)
             except BaseException:
