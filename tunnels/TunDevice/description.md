@@ -279,15 +279,18 @@ MTU. UDP, fragments, controls, incompatible TCP packets, interposed nodes and
 ### Direct PacketsToConnection checksums
 
 A reciprocal immediate `TunDevice -> PacketsToConnection` pair automatically
-uses trusted IPv4 TCP/UDP transport checksums only after Linux GSO/checksum
+uses trusted IPv4 header and TCP/UDP transport checksums only after Linux GSO/checksum
 framing and worker storage are ready. `gso:false`, setup fallback, non-Linux
 platforms, and intervening nodes retain ordinary checksums. No new setting is
-required. IPv4 headers, parsing, fragment policy, repair requests, FIFO bounds,
-and shutdown ownership remain unchanged.
+required. IPv4 header checksum verification is omitted in TUN admission,
+fragment handling, PTC and trusted writes. Structural checks, fragment policy,
+repair requests, FIFO bounds and shutdown ownership remain unchanged. Generated
+and reconstructed IPv4 headers still receive valid checksums.
 
 Supported `NEEDS_CSUM` or verified metadata lets TUN deliver complete packets
-without completing and rechecking transport sums. Unmarked traffic is verified
-before delivery, after reassembly when necessary; corrupt traffic drops.
+without completing and rechecking transport sums. Unmarked transport checksums
+are verified before delivery, after reassembly when necessary; corrupt transport
+data drops.
 Contradictory metadata and partial IP fragments are rejected. The private worker
 handoff retains assurance without adding flags to buffers or packet lines.
 

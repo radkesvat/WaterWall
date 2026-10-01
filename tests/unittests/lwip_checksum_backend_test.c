@@ -491,7 +491,7 @@ static err_t trustedNetifInit(struct netif *netif)
     if (netif->state != NULL)
     {
         netif->ww_partial_transport_checksum = 1;
-        netif->chksum_flags &= (u16_t) ~(NETIF_CHECKSUM_CHECK_TCP | NETIF_CHECKSUM_CHECK_UDP);
+        netif->chksum_flags &= (u16_t) ~(NETIF_CHECKSUM_CHECK_IP | NETIF_CHECKSUM_CHECK_TCP | NETIF_CHECKSUM_CHECK_UDP);
     }
     return ERR_OK;
 }
@@ -607,11 +607,21 @@ static void testTrustedProtocols(void)
             store16(packet + 26, 0x1234);
             packet[28]            = 42;
             const unsigned before = received;
+            hook_calls            = 0;
             inputPacket(netif, packet, sizeof(packet));
             require(received == before + (mode == 0), "receive policy crossed netifs");
+            require(mode || hook_calls == 0, "trusted ingress verified a checksum");
             packet[10] ^= 1;
             inputPacket(netif, packet, sizeof(packet));
-            require(received == before + (mode == 0), "trusted mode disabled IPv4 verification");
+            require(received == before + 2 * (mode == 0), "IPv4 receive checksum trust crossed netifs");
+            /* A disabled IPv4 UDP sum isolates header verification on the
+             * ordinary interface; its rejection cannot come from UDP. */
+            store16(packet + 26, 0);
+            inputPacket(netif, packet, sizeof(packet));
+            require(received == before + 3 * (mode == 0), "ordinary netif accepted an invalid IPv4 checksum");
+            packet[10] ^= 1;
+            inputPacket(netif, packet, sizeof(packet));
+            require(received == before + 3 * (mode == 0) + 1, "valid IPv4 input rejected");
             udp_remove(udp);
         }
     netif_remove(&ordinary);

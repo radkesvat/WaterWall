@@ -2141,11 +2141,12 @@ static void observeTrustedRecord(tun_device_t *tdev, void *userdata, sbuf_t *buf
     (void) userdata;
     const uint8_t *ip = sbufGetRawPtr(buf);
     require(currentThreadIsEventWorkerWID(wid), "trusted handoff used foreign worker");
-    require(gsoChecksumWords(ip, 20, 0) == 0xffff, "trusted handoff changed IPv4 checksum");
+    require(gsoChecksumWords(ip, 20, 0) != 0xffff, "trusted handoff repaired the unverified IPv4 checksum");
     require(callback_count < 4 && sbufGetLength(buf) == 43 && memoryCompare(ip + 40, "ABC", 3) == 0,
             "trusted aggregate/ordinary FIFO payload changed");
     require(GET_BE32(ip + 24) == 1000 && ip[33] == 0x19, "intact handoff changed TCP sequence or flags");
-    require(gsoSegmentChecksumsValid(ip, 43) == (callback_count == 2),
+    const uint32_t transport_seed = gsoChecksumWords(ip + 12, 8, 0) + 6U + 23U;
+    require((gsoChecksumWords(ip + 20, 23, transport_seed) == 0xffff) == (callback_count == 2),
             "private assurance lost or leaked into unmarked traffic");
     ++callback_count;
     bufferpoolReuseBuffer(getWorkerBufferPool(wid), buf);
@@ -2165,6 +2166,7 @@ static void testTrustedHandoff(bool cancel, bool stale)
     uint8_t aggregate[kGsoFixtureRecordLength], partial[kGsoFixtureRecordLength], ordinary[kGsoFixtureRecordLength],
         corrupt[kGsoFixtureRecordLength];
     makeSmallGsoRecord(aggregate);
+    aggregate[10 + 10] ^= 1;
     require(tunLinuxOffloadEncodeWrite(aggregate + 10, 43, aggregate), "fixture partial seed");
     memoryCopy(partial, aggregate, sizeof(partial));
     aggregate[1] = VIRTIO_NET_HDR_GSO_TCPV4;

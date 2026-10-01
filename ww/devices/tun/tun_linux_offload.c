@@ -313,8 +313,8 @@ void tunLinuxOffloadCompleteSegment(uint8_t *ip, uint32_t ip_length)
 
 static bool trustedPacketShape(const uint8_t *ip, uint32_t length, ipv4_packet_view_t *packet)
 {
-    if (! ipv4packetviewParse(ip, length, packet) || packet->ip_total_length != length ||
-        calcGenericChecksum(ip, packet->ip_header_length, 0) != 0)
+    /* The active pair trusts IPv4 header checksums in both directions. */
+    if (! ipv4packetviewParse(ip, length, packet) || packet->ip_total_length != length)
     {
         return false;
     }

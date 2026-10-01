@@ -557,6 +557,7 @@ static void testTrustedTransport(void)
                 putBe16(packet + 24, (uint16_t) (length - 20));
             }
             completeOracle(length, 20, protocol, kDestination);
+            packet[10] ^= 1; /* The trusted pair does not verify the IPv4 header sum. */
             require(tunLinuxOffloadValidatePacket(packet, length), "valid ordinary checksum refused");
             if (payload)
             {
@@ -566,7 +567,7 @@ static void testTrustedTransport(void)
             }
             checksum_calls = 0;
             require(tunLinuxOffloadEncodeWrite(packet, length, meta), "partial encoding failed");
-            require(checksum_calls == 1, "writer scanned transport payload");
+            require(checksum_calls == 0, "trusted writer verified a checksum");
             const uint8_t expected[kTunVirtioHeaderSize] = {
                 VIRTIO_NET_HDR_F_NEEDS_CSUM, 0, 0, 0, 0, 0, 20, 0, (uint8_t) field, 0};
             require(memcmp(meta, expected, sizeof(meta)) == 0, "incorrect virtio write bytes");
@@ -577,7 +578,7 @@ static void testTrustedTransport(void)
             checksum_calls = 0;
             require(tunLinuxOffloadTrustInput(meta, packet, &plan) && plan.transport_assured,
                     "ordinary partial not assured");
-            require(checksum_calls == 1, "trusted ordinary input scanned transport");
+            require(checksum_calls == 0, "trusted ordinary input verified a checksum");
             uint16_t completed = oracleChecksum(packet + 20, length - 20, 0, SIZE_MAX);
             if (udp && completed == 0)
                 completed = UINT16_MAX;
@@ -591,9 +592,9 @@ static void testTrustedTransport(void)
             meta[8] = (uint8_t) (field - 2);
             require(tunLinuxOffloadTrustInput(meta, packet, &plan) && ! plan.transport_assured,
                     "wrong checksum coordinates assured");
-            packet[10] ^= 1;
-            require(! tunLinuxOffloadTrustInput(meta, packet, &plan), "bad IPv4 header trusted");
-            packet[10] ^= 1;
+            packet[0] = 0x44;
+            require(! tunLinuxOffloadTrustInput(meta, packet, &plan), "malformed IPv4 header trusted");
+            packet[0] = 0x45;
             if (udp)
             {
                 putBe16(packet + 26, 0);
@@ -625,6 +626,7 @@ static void testTrustedTransport(void)
     const uint8_t tcp_options[4] = {1, 1, 1, 1};
     uint32_t      length = makeTcp(101, options, sizeof(options), tcp_options, sizeof(tcp_options), kTcpAck | kTcpPsh);
     completeOracle(length, 28, 6, final);
+    packet[10] ^= 1;
     require(tunLinuxOffloadValidatePacket(packet, length), "source-route verification");
     metadata(meta, 0, VIRTIO_NET_HDR_GSO_TCPV4, 52, 31, 0, 0);
     require(tunLinuxOffloadPreflight(meta, packet, length, 1500, &plan) == kTunLinuxOffloadAccept, "GSO preflight");
@@ -639,7 +641,7 @@ static void testTrustedTransport(void)
             "partial GSO preflight");
     checksum_calls = 0;
     require(tunLinuxOffloadTrustInput(meta, packet, &plan) && plan.transport_assured, "partial aggregate assurance");
-    require(checksum_calls == 1, "partial aggregate scanned transport");
+    require(checksum_calls == 0, "trusted partial aggregate verified a checksum");
     for (uint32_t offset = 0; offset < plan.payload_length; offset += plan.gso_size)
     {
         uint32_t out_length;
@@ -747,7 +749,10 @@ static void testGsoWriteBuilder(void)
     require(tunLinuxGsoBuildWrite(bufs, 3, 1500, &record) == 2, "full PSH did not close aggregate");
     memcpy(second, saved, sizeof(saved));
     second[10] ^= 1;
-    require(tunLinuxGsoBuildWrite(bufs, 3, 1500, &record) == 1, "invalid header checksum aggregated");
+    checksum_calls = 0;
+    require(tunLinuxGsoBuildWrite(bufs, 3, 1500, &record) == 3, "trusted writer verified an input header checksum");
+    require(checksum_calls == 1, "trusted aggregation did more than generate its output header checksum");
+    require(readBe16(record.header + 10) == oracleChecksum(record.header, 20, 0, 10), "aggregate IP checksum");
     memcpy(second, saved, sizeof(saved));
     require(tunLinuxGsoBuildWrite(bufs, 1, 1500, &record) == 1, "singleton aggregated");
     require(tunLinuxGsoBuildWrite(bufs, 3, 152, &record) == 1, "original MTU bypassed");

@@ -68,7 +68,8 @@ static device_frag_affinity_action_t offer(device_frag_affinity_table_t *table, 
                                            device_frag_affinity_result_t *result, uint64_t now)
 {
     device_frag_view_t         view   = {0};
-    device_frag_parse_result_t parsed = deviceFragAffinityParse(sbufGetRawPtr(buf), sbufGetLength(buf), &view);
+    device_frag_parse_result_t parsed =
+        deviceFragAffinityParse(sbufGetRawPtr(buf), sbufGetLength(buf), table->trusted_ipv4_header, &view);
     *result                           = (device_frag_affinity_result_t) {0};
     if (parsed == kDeviceFragParseNotFragment)
         return kDeviceFragAffinityNotFragment;
@@ -115,6 +116,42 @@ static void testCompletion(void)
             "ordinary path used assembly");
     bufferpoolReuseBuffer(g_pool, ordinary);
 }
+static void testTrustedHeaderChecksum(void)
+{
+    for (unsigned trusted = 0; trusted < 2; ++trusted)
+    {
+        device_frag_affinity_table_t *table = deviceFragAffinityCreate(g_pool, kDeviceFragmentReassemble);
+        require(table != NULL, "fragment table allocation");
+        if (trusted)
+            deviceFragAffinityTrustIpv4HeaderChecksum(table);
+        device_frag_affinity_result_t result;
+        for (unsigned part = 0; part < 2; ++part)
+        {
+            sbuf_t *buf = makeFragment(500, part * 8, part == 0);
+            sbufGetMutablePtr(buf)[10] ^= 1;
+            const device_frag_affinity_action_t expected =
+                ! trusted ? kDeviceFragAffinityConsumedDrop
+                          : (part == 0 ? kDeviceFragAffinityStaged : kDeviceFragAffinityComplete);
+            require(deviceFragAffinityOffer(table, sbufGetRawPtr(buf), sbufGetLength(buf), buf, &result) == expected,
+                    "fragment header checksum trust crossed tables");
+        }
+        if (trusted)
+        {
+            require(result.completed != NULL && sbufGetLength(result.completed) == 148,
+                    "trusted fragments did not assemble");
+            require(deviceIpv4HeaderChecksumValid(sbufGetRawPtr(result.completed), 20),
+                    "trusted reassembly did not generate a header checksum");
+            bufferpoolReuseBuffer(g_pool, result.completed);
+        }
+        sbuf_t *malformed = makeFragment(501, 8, true);
+        sbufSetLength(malformed, 83);
+        require(deviceFragAffinityOffer(table, sbufGetRawPtr(malformed), 83, malformed, &result) ==
+                    kDeviceFragAffinityConsumedDrop,
+                "header trust bypassed fragment bounds");
+        deviceFragAffinityDestroy(table);
+    }
+}
+
 static void testRejectionAndRetirement(void)
 {
     device_frag_affinity_table_t *table = deviceFragAffinityCreate(g_pool, kDeviceFragmentReassemble);
@@ -299,6 +336,7 @@ int main(void)
     GSTATE.workers_count = 4;
     bufferpoolUpdateAllocationPaddings(g_pool, 64, 64, 64, 64);
     testCompletion();
+    testTrustedHeaderChecksum();
     testRejectionAndRetirement();
     testBounds();
     testRaw();

@@ -91,7 +91,8 @@ static err_t interfaceInit(struct netif *netif)
     netif->mtu                             = state->mtu;
     if (packettunnelTrustedChecksumsActive(route->tunnel))
     {
-        netif->chksum_flags &= (uint16_t) ~(NETIF_CHECKSUM_CHECK_TCP | NETIF_CHECKSUM_CHECK_UDP);
+        netif->chksum_flags &=
+            (uint16_t) ~(NETIF_CHECKSUM_CHECK_IP | NETIF_CHECKSUM_CHECK_TCP | NETIF_CHECKSUM_CHECK_UDP);
         netif->ww_partial_transport_checksum = 1;
     }
 

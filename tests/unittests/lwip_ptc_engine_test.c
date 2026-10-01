@@ -113,6 +113,7 @@ static void inject(fixture_t *f, line_t *line, sbuf_t *buf)
         const uint32_t length = sbufGetLength(buf);
         uint8_t       *bytes  = sbufGetMutablePtr(buf);
         PUT_BE16(bytes + (bytes[9] == 6 ? 36 : 26), 0x1234);
+        bytes[10] ^= 1;
         sbuf_t *shifted = sbufCreate(length + 1);
         sbufSetLength(shifted, length + 1);
         sbufShiftRight(shifted, 1);
@@ -230,7 +231,10 @@ static uint32_t query(tunnel_t *t, line_t *line, const char *label)
     PUT_BE16(p + 22, 53);
     CHECK(calcFullPacketChecksum(p, sbufGetLength(buf)));
     if (packettunnelTrustedChecksumsActive(t))
+    {
         PUT_BE16(p + 26, 0x1234);
+        p[10] ^= 1;
+    }
     ptc_fake_dns_result_t r =
         ptcFakeDnsHandleIpv4UdpPacket(t, line, buf, (struct ip_hdr *) p, (struct udp_hdr *) (p + 20));
     CHECK(r.handled && r.response);
@@ -315,6 +319,8 @@ static void setup(void *worker_ptr, void *a, void *b, void *c)
         const bool trusted = packettunnelTrustedChecksumsActive(fixtures[i].ptc);
         CHECK((route->netif.ww_partial_transport_checksum != 0) == trusted);
         CHECK(((route->netif.chksum_flags & NETIF_CHECKSUM_CHECK_TCP) == 0) == trusted);
+        CHECK(((route->netif.chksum_flags & NETIF_CHECKSUM_CHECK_IP) == 0) == trusted);
+        CHECK((route->netif.chksum_flags & NETIF_CHECKSUM_GEN_IP) != 0);
     }
     CHECK(wtimerAdd(getWorkerLoop(wid), finishTimer, 1000, 1));
 }

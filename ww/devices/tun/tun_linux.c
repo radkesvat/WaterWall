@@ -56,6 +56,7 @@ bool tundeviceEnableTrustedChecksums(tun_device_t *tdev)
         return false;
     }
     assert(tdev->gso_scratch != NULL && tdev->reader_session->worker_queues != NULL);
+    deviceFragAffinityTrustIpv4HeaderChecksum(tdev->reader_session->frag_affinity);
     tdev->trusted_checksums = true;
     return true;
 }

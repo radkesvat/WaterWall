@@ -35,6 +35,7 @@ struct device_frag_affinity_table_s
     buffer_pool_t               *release_pool;
     wmutex_t                     lock;
     bool                         generation_open;
+    bool                         trusted_ipv4_header;
     device_fragment_policy_t     policy;
     size_t                       retained_bytes;
     uint32_t                     staged_total;
@@ -61,7 +62,7 @@ typedef enum device_frag_parse_result_e
 } device_frag_parse_result_t;
 
 static device_frag_parse_result_t deviceFragAffinityParse(const uint8_t *packet, uint32_t length,
-                                                          device_frag_view_t *out)
+                                                          bool trusted_ipv4_header, device_frag_view_t *out)
 {
     if (packet == NULL || length < 20 || (packet[0] >> 4U) != 4)
     {
@@ -85,7 +86,7 @@ static device_frag_parse_result_t deviceFragAffinityParse(const uint8_t *packet,
     const uint32_t ip_header_len = (uint32_t) (packet[0] & 0x0FU) * 4U;
     const uint32_t ip_total_len  = GET_BE16(packet + 2);
     if (ip_header_len != 20 || ip_total_len <= ip_header_len || ip_total_len != length ||
-        ! deviceIpv4HeaderChecksumValid(packet, ip_header_len))
+        (! trusted_ipv4_header && ! deviceIpv4HeaderChecksumValid(packet, ip_header_len)))
     {
         return kDeviceFragParseInvalid;
     }
@@ -286,6 +287,15 @@ device_frag_affinity_table_t *deviceFragAffinityCreate(buffer_pool_t *pool, devi
     table->policy          = policy;
     table->generation_open = true;
     return table;
+}
+void deviceFragAffinityTrustIpv4HeaderChecksum(device_frag_affinity_table_t *table)
+{
+    assert(table != NULL);
+#ifndef NDEBUG
+    for (unsigned i = 0; i < kDeviceFragAffinityMaxEntries; ++i)
+        assert(! table->entries[i].in_use);
+#endif
+    table->trusted_ipv4_header = true;
 }
 void deviceFragAffinityBeginGeneration(device_frag_affinity_table_t *table)
 {
@@ -507,7 +517,8 @@ device_frag_affinity_action_t deviceFragAffinityOffer(device_frag_affinity_table
 {
     *out                              = (device_frag_affinity_result_t) {0};
     device_frag_view_t         view   = {0};
-    device_frag_parse_result_t parsed = deviceFragAffinityParse(packet, length, &view);
+    device_frag_parse_result_t parsed =
+        deviceFragAffinityParse(packet, length, table != NULL && table->trusted_ipv4_header, &view);
     if (parsed == kDeviceFragParseNotFragment)
         return kDeviceFragAffinityNotFragment;
     assert(table && table->release_pool);

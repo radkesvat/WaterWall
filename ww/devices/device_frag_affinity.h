@@ -31,6 +31,9 @@ typedef struct device_frag_affinity_result_s
     sbuf_t  *completed;
 } device_frag_affinity_result_t;
 device_frag_affinity_table_t *deviceFragAffinityCreate(buffer_pool_t *pool, device_fragment_policy_t policy);
+/* Only before publishing a fresh table to its reader. Trust is fixed for its
+ * lifetime; fragment shape/bounds and reconstructed header sums remain intact. */
+void                          deviceFragAffinityTrustIpv4HeaderChecksum(device_frag_affinity_table_t *table);
 void                          deviceFragAffinityDestroy(device_frag_affinity_table_t *table);
 void                          deviceFragAffinityBeginGeneration(device_frag_affinity_table_t *table);
 /* Metadata only; never recycle from the lifecycle thread before reader join. */

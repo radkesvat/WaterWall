@@ -22,8 +22,7 @@ static bool classify(const sbuf_t *buffer, uint16_t mtu, tcp_packet_t *packet)
     if (length <= 40 || length > mtu || sbufIsSplice(buffer))
         return false;
     const uint8_t *ip = sbufGetRawPtr(buffer);
-    if (ip[0] != 0x45 || GET_BE16(ip + 2) != length || ip[9] != 6 || (GET_BE16(ip + 6) & ~0x4000U) != 0 ||
-        calcGenericChecksum(ip, 20, 0) != 0)
+    if (ip[0] != 0x45 || GET_BE16(ip + 2) != length || ip[9] != 6 || (GET_BE16(ip + 6) & ~0x4000U) != 0)
         return false;
     const uint16_t header_length = 20U + (uint16_t) (ip[32] >> 4U) * 4U;
     /* NS/reserved and every flag except ACK/PSH are unsupported. */

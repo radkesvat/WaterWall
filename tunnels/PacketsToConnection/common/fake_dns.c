@@ -991,13 +991,16 @@ ptc_fake_dns_result_t ptcFakeDnsHandleIpv4UdpPacket(tunnel_t *t, line_t *packet_
     uint32_t ip_total_len  = lwip_ntohs(IPH_LEN(iphdr));
     uint32_t udp_len       = lwip_ntohs(udphdr->len);
 
-    if (udp_len < UDP_HLEN || ip_header_len + udp_len != ip_total_len || inet_chksum(iphdr, (u16_t) ip_header_len) != 0)
+    const bool trusted = packettunnelTrustedChecksumsActive(t);
+
+    if (udp_len < UDP_HLEN || ip_header_len + udp_len != ip_total_len ||
+        (! trusted && inet_chksum(iphdr, (u16_t) ip_header_len) != 0))
     {
         lineReuseBuffer(packet_line, buf);
         return (ptc_fake_dns_result_t) {.handled = true};
     }
 
-    if (! packettunnelTrustedChecksumsActive(t) && udphdr->chksum != 0)
+    if (! trusted && udphdr->chksum != 0)
     {
         struct pbuf udp_packet = {
             .next    = NULL,
