@@ -508,6 +508,11 @@ jobs:
         run: cmake --build --preset ${{ matrix.preset }} --target Waterwall
       - name: Build crypto unit tests
         run: cmake --build --preset ${{ matrix.preset }}-unit --target crypto_primitives_test aes256gcm_test
+      - name: Build Reality lifecycle unit test
+        if: matrix.sanitizer == false
+        # Its BoringSSL dependencies need a full build step, outside the native
+        # test runner's 60-second incremental-build allowance.
+        run: cmake --build --preset ${{ matrix.preset }}-unit --target reality_close_lifecycle_test -j8
       - name: Build ASan and UBSan fallback lifetime tests
         if: matrix.sanitizer == true
         run: >
