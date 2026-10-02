@@ -1,0 +1,811 @@
+/*
+ * Covers: tun linux offload; the explicit inputs, callbacks and expected results below define this
+ * suite.
+ * Setup: Real implementation entry points with the explicit substituted OS/allocation/timer boundary
+ * shown below.
+ * Cases: testOrdinary, testGenericChecksum, testOrdinaryIpv6, testMultiAndOneSegment,
+ * testSourceRouteAndPartialSeed, testZeroTcpChecksum, testDetachedCompletion, testLargeExpansion; the
+ * driver lists the remaining cases
+ * Checks: Assertion labels include: incorrect IPv4 checksum; incorrect TCP checksum; unaligned test
+ * options; oversized test options
+ * Limits: Platform/feature branches remain conditional. Component fixtures do not establish host-network
+ * or application-throughput behavior.
+ * CTest: waterwall.tun_linux_offload_unit
+ */
+#include "devices/tun/tun_linux_gso_write.h"
+
+#include "test_assert.h"
+
+#define require(condition, message) TEST_REQUIRE(TEST_FAILURE_EXIT, condition, message)
+#include "devices/tun/tun_linux_offload.h"
+
+#include "wchecksum.h"
+
+#include <linux/virtio_net.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+enum
+{
+    kIpv4BaseHeader = 20,
+    kTcpBaseHeader  = 20,
+    kTcpFin         = 0x01,
+    kTcpPsh         = 0x08,
+    kTcpAck         = 0x10,
+    kTcpEce         = 0x40,
+    kTcpCwr         = 0x80
+};
+
+static const uint8_t  kSource[4]      = {198, 51, 100, 10};
+static const uint8_t  kDestination[4] = {203, 0, 113, 20};
+static const uint32_t kFirstSequence  = UINT32_C(0xfffffffd);
+static uint8_t        packet[UINT16_MAX + 1U];
+static uint8_t        segment[2048];
+
+static unsigned checksum_calls;
+uint16_t        __real_calcGenericChecksum(const uint8_t *data, uint16_t length, uint32_t seed);
+uint16_t        __wrap_calcGenericChecksum(const uint8_t *data, uint16_t length, uint32_t seed);
+uint16_t        __wrap_calcGenericChecksum(const uint8_t *data, uint16_t length, uint32_t seed)
+{
+    ++checksum_calls;
+    return __real_calcGenericChecksum(data, length, seed);
+}
+
+
+static uint16_t readBe16(const uint8_t *bytes)
+{
+    return (uint16_t) (((uint16_t) bytes[0] << 8U) | bytes[1]);
+}
+
+static uint32_t readBe32(const uint8_t *bytes)
+{
+    return ((uint32_t) bytes[0] << 24U) | ((uint32_t) bytes[1] << 16U) | ((uint32_t) bytes[2] << 8U) | bytes[3];
+}
+
+static void putBe16(uint8_t *bytes, uint16_t value)
+{
+    bytes[0] = (uint8_t) (value >> 8U);
+    bytes[1] = (uint8_t) value;
+}
+
+static void putBe32(uint8_t *bytes, uint32_t value)
+{
+    bytes[0] = (uint8_t) (value >> 24U);
+    bytes[1] = (uint8_t) (value >> 16U);
+    bytes[2] = (uint8_t) (value >> 8U);
+    bytes[3] = (uint8_t) value;
+}
+
+static void putLe16(uint8_t *bytes, uint16_t value)
+{
+    bytes[0] = (uint8_t) value;
+    bytes[1] = (uint8_t) (value >> 8U);
+}
+
+/* Independent byte-order scalar Internet checksum oracle. */
+static uint16_t foldSum(uint64_t sum)
+{
+    while (sum >> 16U)
+    {
+        sum = (sum & UINT16_MAX) + (sum >> 16U);
+    }
+    return (uint16_t) sum;
+}
+
+static uint16_t oracleChecksum(const uint8_t *bytes, size_t length, uint64_t seed, size_t zero_field)
+{
+    uint64_t sum = seed;
+    for (size_t i = 0; i < length; i += 2U)
+    {
+        const bool    zero_first  = zero_field != SIZE_MAX && (i == zero_field || i == zero_field + 1U);
+        const bool    zero_second = zero_field != SIZE_MAX && (i + 1U == zero_field || i + 1U == zero_field + 1U);
+        const uint8_t first       = zero_first ? 0 : bytes[i];
+        const uint8_t second      = i + 1U >= length || zero_second ? 0 : bytes[i + 1U];
+        sum += ((uint16_t) first << 8U) | second;
+    }
+    return (uint16_t) ~foldSum(sum);
+}
+
+static uint64_t tcpPseudoSum(const uint8_t *ip, const uint8_t destination[4], uint16_t tcp_length)
+{
+    return (uint64_t) readBe16(ip + 12) + readBe16(ip + 14) + readBe16(destination) + readBe16(destination + 2) + 6U +
+           tcp_length;
+}
+
+static void verifyChecksums(const uint8_t *ip, uint32_t ip_header_length, uint32_t ip_length,
+                            const uint8_t pseudo_destination[4])
+{
+    require(readBe16(ip + 10) == oracleChecksum(ip, ip_header_length, 0, 10), "incorrect IPv4 checksum");
+    const uint16_t tcp_length = (uint16_t) (ip_length - ip_header_length);
+    require(readBe16(ip + ip_header_length + 16) ==
+                oracleChecksum(ip + ip_header_length, tcp_length, tcpPseudoSum(ip, pseudo_destination, tcp_length), 16),
+            "incorrect TCP checksum");
+}
+
+static void metadata(uint8_t out[kTunVirtioHeaderSize], uint8_t flags, uint8_t gso_type, uint16_t hdr_len,
+                     uint16_t gso_size, uint16_t checksum_start, uint16_t checksum_offset)
+{
+    memset(out, 0, kTunVirtioHeaderSize);
+    out[0] = flags;
+    out[1] = gso_type;
+    putLe16(out + 2, hdr_len);
+    putLe16(out + 4, gso_size);
+    putLe16(out + 6, checksum_start);
+    putLe16(out + 8, checksum_offset);
+}
+
+static uint32_t makeTcp(uint32_t payload_length, const uint8_t *ip_options, uint32_t ip_options_length,
+                        const uint8_t *tcp_options, uint32_t tcp_options_length, uint8_t flags)
+{
+    require(ip_options_length % 4U == 0 && tcp_options_length % 4U == 0, "unaligned test options");
+    require(ip_options_length <= 40 && tcp_options_length <= 40, "oversized test options");
+    const uint32_t ip_header_length  = kIpv4BaseHeader + ip_options_length;
+    const uint32_t tcp_header_length = kTcpBaseHeader + tcp_options_length;
+    const uint32_t length            = ip_header_length + tcp_header_length + payload_length;
+    require(length <= UINT16_MAX, "oversized test packet");
+
+    memset(packet, 0, length);
+    packet[0] = (uint8_t) (0x40U | ip_header_length / 4U);
+    putBe16(packet + 2, (uint16_t) length);
+    putBe16(packet + 4, UINT16_C(0xfffe));
+    putBe16(packet + 6, UINT16_C(0x4000));
+    packet[8] = 64;
+    packet[9] = 6;
+    memcpy(packet + 12, kSource, sizeof(kSource));
+    memcpy(packet + 16, kDestination, sizeof(kDestination));
+    if (ip_options_length != 0)
+    {
+        memcpy(packet + kIpv4BaseHeader, ip_options, ip_options_length);
+    }
+
+    uint8_t *tcp = packet + ip_header_length;
+    putBe16(tcp, 40000);
+    putBe16(tcp + 2, 443);
+    putBe32(tcp + 4, kFirstSequence);
+    putBe32(tcp + 8, UINT32_C(0x12345678));
+    tcp[12] = (uint8_t) ((tcp_header_length / 4U) << 4U);
+    tcp[13] = flags;
+    putBe16(tcp + 14, 4096);
+    if (tcp_options_length != 0)
+    {
+        memcpy(tcp + kTcpBaseHeader, tcp_options, tcp_options_length);
+    }
+    for (uint32_t i = 0; i < payload_length; ++i)
+    {
+        packet[ip_header_length + tcp_header_length + i] = (uint8_t) (i * 37U + 3U);
+    }
+    return length;
+}
+
+static void verifySegment(const tun_linux_offload_plan_t *plan, uint32_t offset, const uint8_t pseudo_destination[4],
+                          uint8_t input_flags)
+{
+    uint32_t length = 0;
+    require(tunLinuxOffloadPrepareSegment(packet, plan, offset, segment, sizeof(segment), &length),
+            "segment preparation failed");
+    const uint32_t payload_length =
+        plan->payload_length - offset < plan->gso_size ? plan->payload_length - offset : plan->gso_size;
+    require(length == plan->header_length + payload_length, "wrong segment length");
+    require(readBe16(segment + 2) == length, "wrong segment IPv4 length");
+    require(readBe16(segment + 4) == (uint16_t) (plan->ip_identification + offset / plan->gso_size),
+            "wrong segment IPv4 ID");
+    require(readBe32(segment + plan->ip_header_length + 4) == kFirstSequence + offset, "wrong TCP sequence");
+    uint8_t expected_flags = input_flags;
+    if (offset + payload_length < plan->payload_length)
+    {
+        expected_flags &= (uint8_t) ~(kTcpFin | kTcpPsh);
+    }
+    if (offset != 0)
+    {
+        expected_flags &= (uint8_t) ~kTcpCwr;
+    }
+    require(segment[plan->ip_header_length + 13] == expected_flags, "wrong segment TCP flags");
+    require(memcmp(segment + plan->header_length, packet + plan->header_length + offset, payload_length) == 0,
+            "segment payload did not cover input bytes exactly");
+    require(memcmp(segment + 12, packet + 12, 8) == 0, "segment addresses changed");
+    require(memcmp(segment + 20, packet + 20, plan->ip_header_length - 20U) == 0, "IPv4 options changed");
+    require(memcmp(segment + plan->ip_header_length + 20,
+                   packet + plan->ip_header_length + 20,
+                   plan->header_length - plan->ip_header_length - 20U) == 0,
+            "TCP options changed");
+    const uint16_t tcp_length = (uint16_t) (length - plan->ip_header_length);
+    uint64_t       expected_seed;
+    if (plan->tcp_checksum_is_partial)
+    {
+        const uint16_t aggregate_tcp_length = (uint16_t) (plan->ip_length - plan->ip_header_length);
+        expected_seed = (uint64_t) plan->tcp_checksum_seed + (uint16_t) ~aggregate_tcp_length + tcp_length;
+    }
+    else
+    {
+        expected_seed = tcpPseudoSum(segment, pseudo_destination, tcp_length);
+    }
+    require(readBe16(segment + plan->ip_header_length + 16) == foldSum(expected_seed),
+            "prepared segment did not contain the folded TCP pseudoheader seed");
+    require(readBe16(segment + 10) == oracleChecksum(segment, plan->ip_header_length, 0, 10),
+            "IPv4 checksum was not completed during preparation");
+    tunLinuxOffloadCompleteSegment(segment, length);
+    verifyChecksums(segment, plan->ip_header_length, length, pseudo_destination);
+}
+
+static void testOrdinary(void)
+{
+    const uint32_t length = makeTcp(13, NULL, 0, NULL, 0, kTcpAck);
+    uint8_t        before[128];
+    memcpy(before, packet, length);
+    uint8_t meta[kTunVirtioHeaderSize];
+    metadata(meta, VIRTIO_NET_HDR_F_DATA_VALID, VIRTIO_NET_HDR_GSO_NONE, 0, 0, 0, 0);
+    tun_linux_offload_plan_t plan = {0};
+    require(tunLinuxOffloadPreflight(meta, packet, length, 1500, &plan) == kTunLinuxOffloadAccept &&
+                plan.action == kTunLinuxOffloadOrdinary,
+            "ordinary packet was rejected or changed action");
+    require(memcmp(before, packet, length) == 0, "ordinary preflight changed bytes");
+
+    metadata(meta, 0, VIRTIO_NET_HDR_GSO_NONE, 0, 0, 0, 0);
+    require(tunLinuxOffloadPreflight(meta, packet, length, 1500, &plan) == kTunLinuxOffloadAccept &&
+                plan.action == kTunLinuxOffloadOrdinary,
+            "ordinary packet without DATA_VALID was rejected");
+    require(memcmp(before, packet, length) == 0, "ordinary packet changed without NEEDS_CSUM");
+
+    const uint8_t control_flags[] = {0x02, 0x04, kTcpAck | 0x20}; /* SYN, RST, and URG. */
+    for (size_t i = 0; i < sizeof(control_flags); ++i)
+    {
+        const uint32_t control_length = makeTcp(0, NULL, 0, NULL, 0, control_flags[i]);
+        if ((control_flags[i] & 0x20U) != 0)
+        {
+            putBe16(packet + 20 + 18, 1);
+        }
+        memcpy(before, packet, control_length);
+        require(tunLinuxOffloadPreflight(meta, packet, control_length, 1500, &plan) == kTunLinuxOffloadAccept &&
+                    plan.action == kTunLinuxOffloadOrdinary && memcmp(before, packet, control_length) == 0,
+                "ordinary TCP control/urgent packet was filtered or changed");
+    }
+
+    static const uint8_t md5_option[20] = {19, 18, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 1, 1};
+    const uint32_t       auth_length    = makeTcp(0, NULL, 0, md5_option, sizeof(md5_option), kTcpAck);
+    memcpy(before, packet, auth_length);
+    require(tunLinuxOffloadPreflight(meta, packet, auth_length, 1500, &plan) == kTunLinuxOffloadAccept &&
+                plan.action == kTunLinuxOffloadOrdinary && memcmp(before, packet, auth_length) == 0,
+            "ordinary authenticated TCP option was filtered or changed");
+
+    memset(packet, 0, 28);
+    packet[0] = 0x45;
+    putBe16(packet + 2, 28);
+    packet[8] = 64;
+    packet[9] = 17;
+    putBe16(packet + 20 + 4, 8);
+    memcpy(before, packet, 28);
+    require(tunLinuxOffloadPreflight(meta, packet, 28, 1500, &plan) == kTunLinuxOffloadAccept &&
+                plan.action == kTunLinuxOffloadOrdinary && memcmp(before, packet, 28) == 0 &&
+                readBe16(packet + 20 + 6) == 0,
+            "ordinary UDP packet with disabled checksum changed");
+}
+
+static void testGenericChecksum(void)
+{
+    uint8_t                  meta[kTunVirtioHeaderSize];
+    tun_linux_offload_plan_t plan = {0};
+    memset(packet, 0, 33);
+    packet[0] = 0x45;
+    putBe16(packet + 2, 33);
+    packet[8] = 64;
+    packet[9] = 253;
+    for (uint32_t i = 20; i < 33; ++i)
+    {
+        packet[i] = (uint8_t) (i * 11U);
+    }
+    putBe16(packet + 26, UINT16_C(0x1234));
+    metadata(meta, VIRTIO_NET_HDR_F_NEEDS_CSUM, VIRTIO_NET_HDR_GSO_NONE, 0, 0, 21, 5);
+    const uint16_t expected = oracleChecksum(packet + 21, 12, 0, SIZE_MAX);
+    require(tunLinuxOffloadPreflight(meta, packet, 33, 1500, &plan) == kTunLinuxOffloadAccept &&
+                plan.action == kTunLinuxOffloadChecksum,
+            "generic NEEDS_CSUM was rejected");
+    tunLinuxOffloadCompleteChecksum(packet, &plan);
+    require(readBe16(packet + 26) == expected, "generic seeded checksum did not match independent oracle");
+
+    memset(packet, 0, 24);
+    packet[0] = 0x45;
+    putBe16(packet + 2, 24);
+    packet[8] = 64;
+    packet[9] = 253;
+    putBe16(packet + 20, UINT16_MAX);
+    metadata(meta, VIRTIO_NET_HDR_F_NEEDS_CSUM, VIRTIO_NET_HDR_GSO_NONE, 0, 0, 20, 0);
+    require(tunLinuxOffloadPreflight(meta, packet, 24, 1500, &plan) == kTunLinuxOffloadAccept,
+            "zero-result checksum fixture was rejected");
+    require(oracleChecksum(packet + 20, 4, 0, SIZE_MAX) == 0, "zero-result fixture is invalid");
+    tunLinuxOffloadCompleteChecksum(packet, &plan);
+    require(readBe16(packet + 20) == UINT16_MAX, "zero Internet checksum was not transmitted as all ones");
+}
+
+static void testOrdinaryIpv6(void)
+{
+    uint8_t                  meta[kTunVirtioHeaderSize];
+    tun_linux_offload_plan_t plan = {0};
+    uint8_t                  before[48];
+
+    memset(packet, 0, sizeof(before));
+    packet[0] = 0x60;
+    putBe16(packet + 4, 8);
+    packet[6]  = 58; /* ICMPv6 Router Solicitation. */
+    packet[7]  = 255;
+    packet[8]  = 0xfe;
+    packet[9]  = 0x80;
+    packet[23] = 1;
+    packet[24] = 0xff;
+    packet[25] = 2;
+    packet[39] = 2;
+    packet[40] = 133;
+    memcpy(before, packet, sizeof(before));
+    metadata(meta, VIRTIO_NET_HDR_F_DATA_VALID, VIRTIO_NET_HDR_GSO_NONE, 0, 0, 0, 0);
+    require(tunLinuxOffloadPreflight(meta, packet, sizeof(before), 1500, &plan) == kTunLinuxOffloadAccept &&
+                plan.action == kTunLinuxOffloadOrdinary && memcmp(before, packet, sizeof(before)) == 0,
+            "ordinary IPv6 record was rejected or changed");
+
+    packet[6] = 17; /* IPv6 UDP with kernel-provided partial checksum seed. */
+    putBe16(packet + 40, 12345);
+    putBe16(packet + 42, 53);
+    putBe16(packet + 44, 8);
+    putBe16(packet + 46, UINT16_C(0x1357));
+    const uint16_t expected = oracleChecksum(packet + 40, 8, 0, SIZE_MAX);
+    metadata(meta, VIRTIO_NET_HDR_F_NEEDS_CSUM, VIRTIO_NET_HDR_GSO_NONE, 0, 0, 40, 6);
+    require(tunLinuxOffloadPreflight(meta, packet, sizeof(before), 1500, &plan) == kTunLinuxOffloadAccept &&
+                plan.action == kTunLinuxOffloadChecksum,
+            "ordinary IPv6 NEEDS_CSUM record was rejected");
+    tunLinuxOffloadCompleteChecksum(packet, &plan);
+    require(readBe16(packet + 46) == expected, "IPv6 deferred checksum did not match scalar oracle");
+}
+
+static void testMultiAndOneSegment(void)
+{
+    const uint8_t  flags  = kTcpAck | kTcpFin | kTcpPsh | kTcpCwr;
+    const uint32_t length = makeTcp(17, NULL, 0, NULL, 0, flags);
+    uint8_t        meta[kTunVirtioHeaderSize];
+    metadata(meta, 0, VIRTIO_NET_HDR_GSO_TCPV4, 43, 6, 0, 0);
+    tun_linux_offload_plan_t plan = {0};
+    require(tunLinuxOffloadPreflight(meta, packet, length, 46, &plan) == kTunLinuxOffloadAccept &&
+                plan.action == kTunLinuxOffloadSegment && plan.segment_count == 3,
+            "multi-segment GSO preflight failed");
+    verifySegment(&plan, 0, kDestination, flags);
+    verifySegment(&plan, 6, kDestination, flags);
+    verifySegment(&plan, 12, kDestination, flags);
+    require(! tunLinuxOffloadPrepareSegment(packet, &plan, 1, segment, sizeof(segment), &(uint32_t) {0}),
+            "unaligned segment offset accepted");
+    require(! tunLinuxOffloadPrepareSegment(packet, &plan, 0, segment, 1, &(uint32_t) {0}),
+            "undersized destination accepted");
+
+    const uint8_t  ecn_flags  = kTcpAck | kTcpEce | kTcpCwr;
+    const uint32_t ecn_length = makeTcp(12, NULL, 0, NULL, 0, ecn_flags);
+    metadata(meta, 0, VIRTIO_NET_HDR_GSO_TCPV4 | VIRTIO_NET_HDR_GSO_ECN, 40, 6, 0, 0);
+    require(tunLinuxOffloadPreflight(meta, packet, ecn_length, 46, &plan) == kTunLinuxOffloadAccept &&
+                plan.segment_count == 2,
+            "Linux TCPv4 ECN GSO modifier was rejected");
+    verifySegment(&plan, 0, kDestination, ecn_flags);
+    verifySegment(&plan, 6, kDestination, ecn_flags);
+
+    /* Linux MPTCP DSS MAP64 for 17 bytes, followed by an unknown length-4 option. */
+    uint8_t tcp_options[24] = {30, 18, 0x20, 0x0c, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 17, 76, 4, 0xaa, 0xbb, 1, 1};
+    const uint32_t option_length = makeTcp(17, NULL, 0, tcp_options, sizeof(tcp_options), flags);
+    metadata(meta, 0, VIRTIO_NET_HDR_GSO_TCPV4, 64, 6, 0, 0);
+    require(tunLinuxOffloadPreflight(meta, packet, option_length, 70, &plan) == kTunLinuxOffloadAccept &&
+                plan.segment_count == 3,
+            "MPTCP and unknown options were rejected in a multi-segment template");
+    verifySegment(&plan, 0, kDestination, flags);
+    verifySegment(&plan, 6, kDestination, flags);
+    verifySegment(&plan, 12, kDestination, flags);
+
+    tcp_options[17]           = 5;
+    const uint32_t one_length = makeTcp(5, NULL, 0, tcp_options, sizeof(tcp_options), flags);
+    metadata(meta, 0, VIRTIO_NET_HDR_GSO_TCPV4, 64, 10, 0, 0);
+    require(tunLinuxOffloadPreflight(meta, packet, one_length, 69, &plan) == kTunLinuxOffloadAccept &&
+                plan.segment_count == 1,
+            "single segment with MPTCP and unknown option was rejected");
+    verifySegment(&plan, 0, kDestination, flags);
+}
+
+static void testSourceRouteAndPartialSeed(void)
+{
+    static const uint8_t     route_option[8]      = {131, 7, 4, 203, 0, 113, 77, 0};
+    static const uint8_t     final_destination[4] = {203, 0, 113, 77};
+    const uint8_t            flags                = kTcpAck | kTcpPsh;
+    const uint32_t           length               = makeTcp(12, route_option, sizeof(route_option), NULL, 0, flags);
+    uint8_t                  meta[kTunVirtioHeaderSize];
+    tun_linux_offload_plan_t plan = {0};
+
+    const uint16_t whole_tcp_length = (uint16_t) (length - 28U);
+    const uint16_t partial_seed     = foldSum(tcpPseudoSum(packet, final_destination, whole_tcp_length));
+    putBe16(packet + 28 + 16, partial_seed);
+    metadata(meta, VIRTIO_NET_HDR_F_NEEDS_CSUM, VIRTIO_NET_HDR_GSO_TCPV4, 48, 5, 28, 16);
+    require(tunLinuxOffloadPreflight(meta, packet, length, 53, &plan) == kTunLinuxOffloadAccept &&
+                plan.tcp_checksum_is_partial && plan.segment_count == 3,
+            "source-route partial-seed GSO was rejected");
+    verifySegment(&plan, 0, final_destination, flags);
+    verifySegment(&plan, 5, final_destination, flags);
+    verifySegment(&plan, 10, final_destination, flags);
+
+    putBe16(packet + 28 + 16, 0);
+    metadata(meta, 0, VIRTIO_NET_HDR_GSO_TCPV4, 48, 5, 0, 0);
+    require(tunLinuxOffloadPreflight(meta, packet, length, 53, &plan) == kTunLinuxOffloadAccept &&
+                ! plan.tcp_checksum_is_partial,
+            "source-route fully checksummed GSO was rejected");
+    verifySegment(&plan, 0, final_destination, flags);
+}
+
+static void testZeroTcpChecksum(void)
+{
+    const uint32_t length     = makeTcp(2, NULL, 0, NULL, 0, kTcpAck);
+    const uint16_t tcp_length = (uint16_t) (length - kIpv4BaseHeader);
+    putBe16(packet + 40, 0);
+    putBe16(packet + 40,
+            oracleChecksum(packet + kIpv4BaseHeader, tcp_length, tcpPseudoSum(packet, kDestination, tcp_length), 16));
+    require(oracleChecksum(packet + kIpv4BaseHeader, tcp_length, tcpPseudoSum(packet, kDestination, tcp_length), 16) ==
+                0,
+            "zero TCP checksum fixture is invalid");
+
+    uint8_t                  meta[kTunVirtioHeaderSize];
+    tun_linux_offload_plan_t plan = {0};
+    metadata(meta, 0, VIRTIO_NET_HDR_GSO_TCPV4, 40, 2, 0, 0);
+    require(tunLinuxOffloadPreflight(meta, packet, length, 42, &plan) == kTunLinuxOffloadAccept &&
+                plan.segment_count == 1,
+            "zero TCP checksum segment was rejected");
+    verifySegment(&plan, 0, kDestination, kTcpAck);
+    require(readBe16(segment + kIpv4BaseHeader + 16) == 0, "valid zero TCP checksum was mangled");
+}
+
+static void testDetachedCompletion(void)
+{
+    const uint32_t length = makeTcp(7, NULL, 0, NULL, 0, kTcpAck);
+    uint8_t        meta[kTunVirtioHeaderSize];
+    metadata(meta, 0, VIRTIO_NET_HDR_GSO_TCPV4, 40, 7, 0, 0);
+    tun_linux_offload_plan_t plan = {0};
+    require(tunLinuxOffloadPreflight(meta, packet, length, 47, &plan) == kTunLinuxOffloadAccept,
+            "detached-completion preflight failed");
+    uint32_t segment_length = 0;
+    require(tunLinuxOffloadPrepareSegment(packet, &plan, 0, segment, sizeof(segment), &segment_length),
+            "detached-completion preparation failed");
+    const uint16_t tcp_length = (uint16_t) (segment_length - kIpv4BaseHeader);
+    require(oracleChecksum(
+                segment + kIpv4BaseHeader, tcp_length, tcpPseudoSum(segment, kDestination, tcp_length), SIZE_MAX) != 0,
+            "prepared TCP segment was already checksummed");
+    memset(packet, 0, length);
+    memset(&plan, 0, sizeof(plan));
+    tunLinuxOffloadCompleteSegment(segment, segment_length);
+    verifyChecksums(segment, kIpv4BaseHeader, segment_length, kDestination);
+}
+
+static void testLargeExpansion(void)
+{
+    const uint32_t length = makeTcp(1000, NULL, 0, NULL, 0, kTcpAck);
+    uint8_t        meta[kTunVirtioHeaderSize];
+    metadata(meta, 0, VIRTIO_NET_HDR_GSO_TCPV4, 40, 1, 0, 0);
+    tun_linux_offload_plan_t plan = {0};
+    require(tunLinuxOffloadPreflight(meta, packet, length, 1500, &plan) == kTunLinuxOffloadAccept &&
+                plan.segment_count == 1000,
+            "small-MSS expansion was capped or miscounted");
+    uint32_t covered = 0;
+    for (uint32_t offset = 0; offset < plan.payload_length; offset += plan.gso_size)
+    {
+        verifySegment(&plan, offset, kDestination, kTcpAck);
+        covered += plan.gso_size;
+    }
+    require(covered == plan.payload_length, "large expansion lost payload coverage");
+}
+
+static void expectReject(const uint8_t meta[kTunVirtioHeaderSize], uint32_t length, uint16_t mtu,
+                         tun_linux_offload_reject_t expected, const char *message)
+{
+    tun_linux_offload_plan_t plan = {0};
+    require(tunLinuxOffloadPreflight(meta, packet, length, mtu, &plan) == expected, message);
+}
+
+static void testRejectedMetadataAndGeometry(void)
+{
+    const uint32_t length = makeTcp(12, NULL, 0, NULL, 0, kTcpAck);
+    uint8_t        meta[kTunVirtioHeaderSize];
+    metadata(meta, 0, VIRTIO_NET_HDR_GSO_TCPV4, 40, 6, 0, 0);
+    expectReject(meta, UINT16_MAX + 1U, 1500, kTunLinuxOffloadOversized, "oversized representation accepted");
+    expectReject(meta, 19, 1500, kTunLinuxOffloadMalformed, "short IPv4 record accepted");
+    expectReject(meta, length + 1U, 1500, kTunLinuxOffloadMalformed, "trailing IP bytes accepted");
+    meta[0] = 0x80;
+    expectReject(meta, length, 1500, kTunLinuxOffloadUnsupported, "unnegotiated flag accepted");
+    metadata(meta, 0, VIRTIO_NET_HDR_GSO_UDP, 40, 6, 0, 0);
+    expectReject(meta, length, 1500, kTunLinuxOffloadUnsupported, "unnegotiated GSO type accepted");
+    metadata(meta, 0, VIRTIO_NET_HDR_GSO_TCPV4, 40, 0, 0, 0);
+    expectReject(meta, length, 1500, kTunLinuxOffloadMalformed, "zero GSO size accepted");
+    metadata(meta, VIRTIO_NET_HDR_F_NEEDS_CSUM, VIRTIO_NET_HDR_GSO_TCPV4, 40, 6, 21, 16);
+    expectReject(meta, length, 1500, kTunLinuxOffloadMalformed, "incorrect TCP checksum coordinates accepted");
+    metadata(meta, 0, VIRTIO_NET_HDR_GSO_TCPV4, (uint16_t) (length + 1U), 6, 0, 0);
+    expectReject(meta, length, 1500, kTunLinuxOffloadMalformed, "oversized metadata hdr_len accepted");
+    metadata(meta, 0, VIRTIO_NET_HDR_GSO_TCPV4, 40, 6, 0, 0);
+    expectReject(meta, length, 45, kTunLinuxOffloadOversized, "MTU-incompatible GSO record accepted");
+    putBe16(packet + 6, UINT16_C(0x2000));
+    expectReject(meta, length, 1500, kTunLinuxOffloadMalformed, "fragmented GSO record accepted");
+    putBe16(packet + 6, UINT16_C(0x4000));
+    packet[20 + 12] = 0x10;
+    expectReject(meta, length, 1500, kTunLinuxOffloadMalformed, "invalid TCP data offset accepted");
+    packet[20 + 12] = 0x50;
+    packet[0]       = 0x65;
+    expectReject(meta, length, 1500, kTunLinuxOffloadMalformed, "invalid IP version accepted");
+    packet[0] = 0x44;
+    expectReject(meta, length, 1500, kTunLinuxOffloadMalformed, "invalid IPv4 header length accepted");
+    packet[0] = 0x45;
+    putBe16(packet + 2, (uint16_t) (length - 1U));
+    expectReject(meta, length, 1500, kTunLinuxOffloadMalformed, "inexact IPv4 total length accepted");
+    putBe16(packet + 2, (uint16_t) length);
+    metadata(meta, 0, VIRTIO_NET_HDR_GSO_NONE, 0, 0, 0, 0);
+    expectReject(meta, length, 40, kTunLinuxOffloadOversized, "oversized ordinary record accepted");
+    metadata(meta, VIRTIO_NET_HDR_F_NEEDS_CSUM, VIRTIO_NET_HDR_GSO_NONE, 0, 0, (uint16_t) length, 0);
+    expectReject(meta, length, 1500, kTunLinuxOffloadMalformed, "out-of-range checksum start accepted");
+}
+
+static void completeOracle(uint32_t length, uint32_t ihl, uint8_t protocol, const uint8_t destination[4])
+{
+    const uint16_t field = protocol == 6 ? 16 : 6;
+    const uint32_t seed  = (uint32_t) tcpPseudoSum(packet, destination, (uint16_t) (length - ihl)) - 6U + protocol;
+    uint16_t       value = oracleChecksum(packet + ihl, length - ihl, seed, field);
+    if (protocol == 17 && value == 0)
+        value = UINT16_MAX;
+    putBe16(packet + ihl + field, value);
+    putBe16(packet + 10, oracleChecksum(packet, ihl, 0, 10));
+}
+
+static void testTrustedTransport(void)
+{
+    uint8_t                  meta[kTunVirtioHeaderSize];
+    tun_linux_offload_plan_t plan;
+    for (unsigned udp = 0; udp < 2; ++udp)
+    {
+        for (unsigned payload = 0; payload < 4; ++payload)
+        {
+            uint32_t       length   = makeTcp(payload, NULL, 0, NULL, 0, kTcpAck);
+            const uint8_t  protocol = udp ? 17 : 6;
+            const uint16_t field    = udp ? 6 : 16;
+            if (udp)
+            {
+                length    = 28 + payload;
+                packet[9] = protocol;
+                putBe16(packet + 2, (uint16_t) length);
+                putBe16(packet + 24, (uint16_t) (length - 20));
+            }
+            completeOracle(length, 20, protocol, kDestination);
+            packet[10] ^= 1; /* The trusted pair does not verify the IPv4 header sum. */
+            require(tunLinuxOffloadValidatePacket(packet, length), "valid ordinary checksum refused");
+            if (payload)
+            {
+                packet[length - 1] ^= 0x40;
+                require(! tunLinuxOffloadValidatePacket(packet, length), "unmarked corruption accepted");
+                packet[length - 1] ^= 0x40;
+            }
+            checksum_calls = 0;
+            require(tunLinuxOffloadEncodeWrite(packet, length, meta), "partial encoding failed");
+            require(checksum_calls == 0, "trusted writer verified a checksum");
+            const uint8_t expected[kTunVirtioHeaderSize] = {
+                VIRTIO_NET_HDR_F_NEEDS_CSUM, 0, 0, 0, 0, 0, 20, 0, (uint8_t) field, 0};
+            require(memcmp(meta, expected, sizeof(meta)) == 0, "incorrect virtio write bytes");
+            const uint16_t seed = foldSum(tcpPseudoSum(packet, kDestination, (uint16_t) (length - 20)) - 6U + protocol);
+            require(readBe16(packet + 20 + field) == seed, "incorrect pseudoheader seed");
+            require(tunLinuxOffloadPreflight(meta, packet, length, 1500, &plan) == kTunLinuxOffloadAccept,
+                    "ordinary partial preflight");
+            checksum_calls = 0;
+            require(tunLinuxOffloadTrustInput(meta, packet, &plan) && plan.transport_assured,
+                    "ordinary partial not assured");
+            require(checksum_calls == 0, "trusted ordinary input verified a checksum");
+            uint16_t completed = oracleChecksum(packet + 20, length - 20, 0, SIZE_MAX);
+            if (udp && completed == 0)
+                completed = UINT16_MAX;
+            putBe16(packet + 20 + field, completed);
+            require(tunLinuxOffloadValidatePacket(packet, length), "independent partial completion incorrect");
+            meta[0] = VIRTIO_NET_HDR_F_DATA_VALID;
+            require(tunLinuxOffloadTrustInput(meta, packet, &plan) && plan.transport_assured, "verified input refused");
+            meta[0] |= VIRTIO_NET_HDR_F_NEEDS_CSUM;
+            require(! tunLinuxOffloadTrustInput(meta, packet, &plan), "contradictory metadata assured");
+            meta[0] = VIRTIO_NET_HDR_F_NEEDS_CSUM;
+            meta[8] = (uint8_t) (field - 2);
+            require(tunLinuxOffloadTrustInput(meta, packet, &plan) && ! plan.transport_assured,
+                    "wrong checksum coordinates assured");
+            packet[0] = 0x44;
+            require(! tunLinuxOffloadTrustInput(meta, packet, &plan), "malformed IPv4 header trusted");
+            packet[0] = 0x45;
+            if (udp)
+            {
+                putBe16(packet + 26, 0);
+                require(tunLinuxOffloadValidatePacket(packet, length), "disabled UDP checksum rejected");
+                putBe16(packet + 24, (uint16_t) (length - 19));
+                require(! tunLinuxOffloadValidatePacket(packet, length), "oversized UDP length certified");
+            }
+        }
+    }
+
+    /* The pinned stack includes any IP suffix in its UDP checksum and payload.
+     * A DATA_VALID guarantee for a shorter UDP prefix cannot certify that suffix. */
+    makeTcp(0, NULL, 0, NULL, 0, kTcpAck);
+    packet[9] = 17;
+    putBe16(packet + 2, 31);
+    putBe16(packet + 24, 10);
+    completeOracle(31, 20, 17, kDestination);
+    require(tunLinuxOffloadValidatePacket(packet, 31), "lwIP-compatible UDP suffix rejected");
+    metadata(meta, VIRTIO_NET_HDR_F_DATA_VALID, VIRTIO_NET_HDR_GSO_NONE, 0, 0, 0, 0);
+    require(tunLinuxOffloadPreflight(meta, packet, 31, 1500, &plan) == kTunLinuxOffloadAccept, "suffix preflight");
+    require(tunLinuxOffloadTrustInput(meta, packet, &plan) && ! plan.transport_assured, "UDP suffix trusted as prefix");
+    require(! tunLinuxOffloadEncodeWrite(packet, 31, meta), "inexact UDP output requested offload");
+    packet[30] ^= 1;
+    require(! tunLinuxOffloadValidatePacket(packet, 31), "UDP suffix corruption skipped");
+
+    /* Options and an odd segment size; preserve the kernel's source-route seed. */
+    const uint8_t options[8]     = {131, 7, 4, 203, 0, 113, 99, 0};
+    const uint8_t final[4]       = {203, 0, 113, 99};
+    const uint8_t tcp_options[4] = {1, 1, 1, 1};
+    uint32_t      length = makeTcp(101, options, sizeof(options), tcp_options, sizeof(tcp_options), kTcpAck | kTcpPsh);
+    completeOracle(length, 28, 6, final);
+    packet[10] ^= 1;
+    require(tunLinuxOffloadValidatePacket(packet, length), "source-route verification");
+    metadata(meta, 0, VIRTIO_NET_HDR_GSO_TCPV4, 52, 31, 0, 0);
+    require(tunLinuxOffloadPreflight(meta, packet, length, 1500, &plan) == kTunLinuxOffloadAccept, "GSO preflight");
+    require(tunLinuxOffloadTrustInput(meta, packet, &plan) && ! plan.transport_assured, "unmarked valid aggregate");
+    packet[length - 1] ^= 1;
+    require(! tunLinuxOffloadTrustInput(meta, packet, &plan), "corrupt original aggregate certified by rewriting");
+    packet[length - 1] ^= 1;
+    require(tunLinuxOffloadEncodeWrite(packet, length, meta), "source-route writer");
+    meta[1] = VIRTIO_NET_HDR_GSO_TCPV4;
+    putLe16(meta + 4, 31);
+    require(tunLinuxOffloadPreflight(meta, packet, length, 1500, &plan) == kTunLinuxOffloadAccept,
+            "partial GSO preflight");
+    checksum_calls = 0;
+    require(tunLinuxOffloadTrustInput(meta, packet, &plan) && plan.transport_assured, "partial aggregate assurance");
+    require(checksum_calls == 0, "trusted partial aggregate verified a checksum");
+    for (uint32_t offset = 0; offset < plan.payload_length; offset += plan.gso_size)
+    {
+        uint32_t out_length;
+        checksum_calls = 0;
+        require(tunLinuxOffloadPrepareSegment(packet, &plan, offset, segment, sizeof(segment), &out_length),
+                "trusted segment");
+        require(checksum_calls == 1, "segment preparation scanned TCP payload");
+        putBe16(segment + 28 + 16, oracleChecksum(segment + 28, out_length - 28, 0, SIZE_MAX));
+        verifyChecksums(segment, 28, out_length, final);
+    }
+    /* Fragments never request partial completion, even a non-initial fragment. */
+    for (unsigned fragment = 0; fragment < 2; ++fragment)
+    {
+        putBe16(packet + 6, fragment ? 1 : 0x2000);
+        putBe16(packet + 10, oracleChecksum(packet, 28, 0, 10));
+        require(tunLinuxOffloadEncodeWrite(packet, length, meta), "ordinary fragment write");
+        const uint8_t zero[kTunVirtioHeaderSize] = {0};
+        require(memcmp(meta, zero, sizeof(meta)) == 0, "fragment requested offload");
+        plan.ip_length = length;
+        meta[0]        = VIRTIO_NET_HDR_F_NEEDS_CSUM;
+        require(! tunLinuxOffloadTrustInput(meta, packet, &plan), "partial fragment accepted");
+    }
+}
+
+static sbuf_t *makeWriteSegment(unsigned ordinal, unsigned payload, unsigned options, unsigned flags)
+{
+    const uint8_t  tcp_options[12] = {1, 1, 8, 10, 0, 0, 0, 7, 0, 0, 0, 9};
+    const unsigned length          = makeTcp(payload, NULL, 0, tcp_options, options, flags);
+    putBe16(packet + 4, (uint16_t) (65534U + ordinal));
+    putBe32(packet + 24, kFirstSequence + ordinal * 101U);
+    putBe16(packet + 10, oracleChecksum(packet, 20, 0, 10));
+    putBe16(packet + 36, oracleChecksum(packet + 20, length - 20, tcpPseudoSum(packet, packet + 16, length - 20), 16));
+    sbuf_t *buf = sbufCreate(length);
+    memcpy(sbufGetMutablePtr(buf), packet, length);
+    sbufSetLength(buf, length);
+    return buf;
+}
+
+static void testGsoWriteBuilder(void)
+{
+    sbuf_t *bufs[64];
+    for (unsigned i = 0; i < 4; ++i)
+        bufs[i] = makeWriteSegment(i, i == 2 ? 19 : 101, 12, i == 2 ? 0x18 : 0x10);
+    tun_linux_gso_write_t record;
+    require(tunLinuxGsoBuildWrite(bufs, 4, 1500, &record) == 3, "short PSH must close aggregate");
+    const uint8_t expected[10] = {1, 1, 52, 0, 101, 0, 20, 0, 16, 0};
+    require(memcmp(record.metadata, expected, 10) == 0 && record.count == 5 && record.length == 283,
+            "aggregate metadata/length mismatch");
+    require(readBe16(record.header + 10) == oracleChecksum(record.header, 20, 0, 10), "aggregate IP checksum");
+    require(readBe16(record.header + 36) == foldSum(tcpPseudoSum(record.header, record.header + 16, 253)),
+            "aggregate seed must cover complete transport length");
+    /* Independent software segmentation: rebuild each ordinary packet from
+     * private header and borrowed payload. Compare every byte to its original. */
+    uint32_t offset = 0;
+    for (unsigned i = 0; i < 3; ++i)
+    {
+        const uint8_t *original = sbufGetRawPtr(bufs[i]);
+        const unsigned length   = sbufGetLength(bufs[i]);
+        require(record.iov[i + 2].iov_base == original + 52 && record.iov[i + 2].iov_len == length - 52,
+                "GSO copied payload instead of borrowing original span");
+        memcpy(segment, record.header, 52);
+        memcpy(segment + 52, record.iov[i + 2].iov_base, record.iov[i + 2].iov_len);
+        putBe16(segment + 2, length);
+        putBe16(segment + 4, (uint16_t) (65534U + i));
+        putBe32(segment + 24, kFirstSequence + offset);
+        segment[33] = i == 2 ? 0x18 : 0x10;
+        putBe16(segment + 10, oracleChecksum(segment, 20, 0, 10));
+        putBe16(segment + 36,
+                oracleChecksum(segment + 20, length - 20, tcpPseudoSum(segment, segment + 16, length - 20), 16));
+        require(memcmp(segment, original, length) == 0, "segmented packet semantics changed");
+        offset += length - 52;
+    }
+    /* Each stable field and unsupported shape independently splits the prefix. */
+    static const struct
+    {
+        unsigned offset;
+        uint8_t  mask;
+    } changes[] = {{0, 1},     {1, 1},     {2, 1},     {4, 1},     {6, 0x20}, {6, 0x40}, {6, 0x80},
+                   {7, 1},     {8, 1},     {9, 0x17},  {12, 1},    {16, 1},   {20, 1},   {22, 1},
+                   {24, 1},    {28, 1},    {32, 1},    {32, 0x40}, {33, 1},   {33, 2},   {33, 4},
+                   {33, 0x10}, {33, 0x20}, {33, 0x40}, {33, 0x80}, {34, 1},   {38, 1},   {44, 1}};
+    uint8_t saved[153];
+    memcpy(saved, sbufGetRawPtr(bufs[1]), sizeof(saved));
+    for (unsigned i = 0; i < ARRAY_SIZE(changes); ++i)
+    {
+        uint8_t *ip = sbufGetMutablePtr(bufs[1]);
+        memcpy(ip, saved, sizeof(saved));
+        ip[changes[i].offset] ^= changes[i].mask;
+        putBe16(ip + 10, oracleChecksum(ip, 20, 0, 10));
+        require(tunLinuxGsoBuildWrite(bufs, 3, 1500, &record) == 1, "incompatible packet coalesced");
+    }
+    memcpy(sbufGetMutablePtr(bufs[1]), saved, sizeof(saved));
+    uint8_t *second = sbufGetMutablePtr(bufs[1]);
+    sbufSetLength(bufs[1], 154);
+    putBe16(second + 2, 154);
+    putBe16(second + 10, oracleChecksum(second, 20, 0, 10));
+    require(tunLinuxGsoBuildWrite(bufs, 3, 1500, &record) == 1, "larger second segment aggregated");
+    sbufSetLength(bufs[1], 52);
+    putBe16(second + 2, 52);
+    putBe16(second + 10, oracleChecksum(second, 20, 0, 10));
+    require(tunLinuxGsoBuildWrite(bufs, 3, 1500, &record) == 1, "pure ACK aggregated");
+    sbufSetLength(bufs[1], 153);
+    memcpy(second, saved, sizeof(saved));
+    second[33] = 0x18;
+    require(tunLinuxGsoBuildWrite(bufs, 3, 1500, &record) == 2, "full PSH did not close aggregate");
+    memcpy(second, saved, sizeof(saved));
+    second[10] ^= 1;
+    checksum_calls = 0;
+    require(tunLinuxGsoBuildWrite(bufs, 3, 1500, &record) == 3, "trusted writer verified an input header checksum");
+    require(checksum_calls == 1, "trusted aggregation did more than generate its output header checksum");
+    require(readBe16(record.header + 10) == oracleChecksum(record.header, 20, 0, 10), "aggregate IP checksum");
+    memcpy(second, saved, sizeof(saved));
+    require(tunLinuxGsoBuildWrite(bufs, 1, 1500, &record) == 1, "singleton aggregated");
+    require(tunLinuxGsoBuildWrite(bufs, 3, 152, &record) == 1, "original MTU bypassed");
+    ((uint8_t *) sbufGetMutablePtr(bufs[0]))[33] |= 8;
+    require(tunLinuxGsoBuildWrite(bufs, 3, 1500, &record) == 1, "PSH first packet extended");
+    for (unsigned i = 0; i < 4; ++i)
+        sbufDestroy(bufs[i]);
+
+    for (unsigned i = 0; i < 64; ++i)
+    {
+        bufs[i] = makeWriteSegment(i, 1460, 0, 0x10);
+        putBe32((uint8_t *) sbufGetMutablePtr(bufs[i]) + 24, kFirstSequence + i * 1460U);
+    }
+    require(tunLinuxGsoBuildWrite(bufs, 64, 1500, &record) == 44 && record.length == 64290,
+            "aggregate IPv4 maximum not enforced");
+    for (unsigned i = 0; i < 64; ++i)
+        sbufDestroy(bufs[i]);
+    for (unsigned i = 0; i < 64; ++i)
+        bufs[i] = makeWriteSegment(i, 101, 0, 0x10);
+    require(tunLinuxGsoBuildWrite(bufs, 64, 1500, &record) == 64 && record.count == 66,
+            "bounded full batch not aggregated");
+    for (unsigned i = 0; i < 64; ++i)
+        sbufDestroy(bufs[i]);
+}
+
+int main(void)
+{
+    testCaseSet("tun_linux_offload_test");
+    testGsoWriteBuilder();
+    const uint8_t vector[] = {0x00, 0x01, 0x02};
+    require(oracleChecksum(vector, sizeof(vector), 0, SIZE_MAX) == UINT16_C(0xfdfe),
+            "checksum oracle self-check failed");
+    checkSumInit();
+    testTrustedTransport();
+    testOrdinary();
+    testGenericChecksum();
+    testOrdinaryIpv6();
+    testMultiAndOneSegment();
+    testSourceRouteAndPartialSeed();
+    testZeroTcpChecksum();
+    testDetachedCompletion();
+    testLargeExpansion();
+    testRejectedMetadataAndGeometry();
+    puts("Linux TUN offload converter tests passed");
+    return 0;
+}

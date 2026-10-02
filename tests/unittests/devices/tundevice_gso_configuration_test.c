@@ -1,0 +1,103 @@
+/*
+ * Covers: tundevice gso configuration; the explicit inputs, callbacks and expected results below define
+ * this suite.
+ * Setup: The included implementation/API and the deterministic inputs shown below; no integration
+ * topology is implied.
+ * Cases: testGsoSetting
+ * Checks: Assertion labels include: :1500}; GSO setting accepted or rejected incorrectly; GSO setting had
+ * the wrong default or value; TUN must certify enqueue-only Payload
+ * Limits: Platform/feature branches remain conditional. Component fixtures do not establish host-network
+ * or application-throughput behavior.
+ * CTest: waterwall.tundevice_gso_configuration_unit
+ */
+#include "TunDevice/interface.h"
+
+#include "test_assert.h"
+
+#define require(condition, message) TEST_REQUIRE(TEST_FAILURE_EXIT, condition, message)
+#include "TunDevice/structure.h"
+
+#include "loggers/network_logger.h"
+
+
+static void testGsoSetting(const char *json_value, bool valid, bool expected_request)
+{
+    cJSON *settings =
+        cJSON_Parse("{\"device-name\":\"ww-fixture\",\"device-ip\":\"192.0.2.1/24\",\"device-mtu\":1500}");
+    require(settings != NULL, "cannot parse TunDevice settings fixture");
+
+    if (json_value != NULL)
+    {
+        cJSON *value = cJSON_Parse(json_value);
+        require(value != NULL, "cannot parse GSO value fixture");
+        require(cJSON_AddItemToObject(settings, "gso", value), "cannot add GSO value fixture");
+    }
+
+    node_t    node   = {.node_settings_json = settings};
+    tunnel_t *tunnel = tundeviceTunnelCreate(&node);
+    require((tunnel != NULL) == valid, "GSO setting accepted or rejected incorrectly");
+    if (tunnel != NULL)
+    {
+        tundevice_tstate_t *state = tunnelGetState(tunnel);
+        require(state->gso_requested == expected_request, "GSO setting had the wrong default or value");
+        tundeviceTunnelDestroy(tunnel, wwLifecycleStartupRollback());
+    }
+    cJSON_Delete(settings);
+}
+
+int main(void)
+{
+    testCaseSet("tundevice_gso_configuration_test");
+    logger_t *logger = loggerCreate();
+    require(logger != NULL, "logger allocation failed");
+    setNetworkLogger(logger);
+
+    node_t metadata = nodeTunDeviceGet();
+    require((metadata.flags & kNodeFlagPacketPayloadEnqueueOnly) != 0, "TUN must certify enqueue-only Payload");
+    require(metadata.required_padding_left == kTunVirtioHeaderSize, "Linux TUN headroom does not fit virtio header");
+    require((metadata.flags & kNodeFlagSupportsTrustedPacketChecksums) != 0 &&
+                (metadata.flags & kNodeFlagTrustedPacketChecksumsActive) == 0,
+            "template must advertise capability without activating it");
+    node_t   peer   = {.flags = kNodeFlagSupportsTrustedPacketChecksums, .layer_group = kNodeLayer3 | kNodeLayer4};
+    node_t   other  = {.flags = kNodeFlagSupportsTrustedPacketChecksums};
+    node_t   middle = {.flags = kNodeFlagNone};
+    tunnel_t tun = {.node = &metadata}, ptc = {.node = &peer}, interposed = {.node = &middle}, spare = {.node = &other};
+    require(! packettunnelTrustedChecksumPairEligible(&tun, NULL), "missing peer eligible");
+    tun.next = &ptc;
+    require(! packettunnelTrustedChecksumPairEligible(&tun, &ptc), "one-sided link eligible");
+    ptc.prev = &tun;
+    require(packettunnelTrustedChecksumPairEligible(&tun, &ptc), "direct pair refused");
+    peer.layer_group = kNodeLayer3;
+    require(! packettunnelTrustedChecksumPairEligible(&tun, &ptc), "two TUN nodes negotiated a bridge contract");
+    peer.layer_group = kNodeLayer3 | kNodeLayer4;
+    require(! packettunnelTrustedChecksumPairEligible(&ptc, &tun), "reverse edge eligible");
+    tun.next        = &interposed;
+    interposed.prev = &tun;
+    interposed.next = &ptc;
+    ptc.prev        = &interposed;
+    require(! packettunnelTrustedChecksumPairEligible(&tun, &ptc) &&
+                ! packettunnelTrustedChecksumPairEligible(&tun, &interposed),
+            "interposed node inherited trust");
+    tun.next = &ptc;
+    ptc.prev = &tun;
+    packettunnelActivateTrustedChecksumPair(&tun, &ptc);
+    require(packettunnelTrustedChecksumsActive(&tun) && packettunnelTrustedChecksumsActive(&ptc) &&
+                ! packettunnelTrustedChecksumsActive(&spare),
+            "pair mode escaped to another instance");
+    require((metadata.flags & (kNodeFlagChainHead | kNodeFlagChainEnd)) == (kNodeFlagChainHead | kNodeFlagChainEnd),
+            "activation overwrote other node flags");
+    memoryFree(metadata.type);
+
+    testGsoSetting(NULL, true, true);
+    testGsoSetting("true", true, true);
+    testGsoSetting("false", true, false);
+    testGsoSetting("null", false, false);
+    testGsoSetting("0", false, false);
+    testGsoSetting("\"true\"", false, false);
+    testGsoSetting("[]", false, false);
+    testGsoSetting("{}", false, false);
+
+    networkloggerDestroy();
+    puts("TunDevice GSO configuration tests passed");
+    return 0;
+}

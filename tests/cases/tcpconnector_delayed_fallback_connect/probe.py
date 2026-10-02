@@ -1,6 +1,17 @@
+"""Queued application bytes survive delayed fallback connector establishment. Real loopback
+listener/echo and fixed connect retries; checks the complete queued payload, preserving the original
+premature-close RuntimeError. CTest: waterwall.tcpconnector_delayed_fallback_connect."""
+import sys
+from pathlib import Path
+import os
 import select
 import socket
 import time
+
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.environ.get("WATERWALL_TEST_SUPPORT_DIR",
+                                str(Path(__file__).resolve().parents[2] / "support" / "python")))
+from wwtest.sockets import exact as read_exact
 
 HOST = "127.0.0.1"
 LISTENER_PORT = 26620
@@ -21,13 +32,7 @@ def connect_listener():
 
 
 def receive_exact(sock, size):
-    received = b""
-    while len(received) < size:
-        data = sock.recv(size - len(received))
-        if not data:
-            raise RuntimeError("connection closed before the queued payload arrived")
-        received += data
-    return received
+    return read_exact(sock, size, timeout_context=False, eof_error=lambda: RuntimeError('connection closed before the queued payload arrived'))
 
 
 def main():

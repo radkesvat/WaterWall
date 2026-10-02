@@ -20,7 +20,8 @@ Deletes generated test-runner artifacts ignored by git:
   - tests/cases/*/{core.json,stdout.log,log/,packet-receiver-report.txt,users.json.backup}
   - generated probe cert/key copies in probe case directories
   - tests/speedtests/*/{core.json,stdout.log,log/,server.crt,server.key}, excluding _shared
-  - tests/unittests/log/
+  - build/*/test-runs/<configuration>/ (retained native runs; use only in idle trees)
+  - tests/unittests/log/ (legacy logs)
 EOF
 }
 
@@ -91,6 +92,16 @@ for speedtest_dir in "$script_dir"/speedtests/*; do
   remove_path "$speedtest_dir/log"
   remove_path "$speedtest_dir/server.crt"
   remove_path "$speedtest_dir/server.key"
+done
+
+# The cooperative lock is outside test-runs and must never be removed here.
+# Only generated run directories are selected, not build artifacts or evidence.
+for build_tree in "$repo_root"/build/*; do
+  [[ -d "$build_tree" ]] || continue
+  for run_config in "$build_tree"/test-runs/*; do
+    [[ -d "$run_config" && ! -L "$run_config" ]] || continue
+    remove_path "$run_config"
+  done
 done
 
 remove_path "$script_dir/unittests/log"

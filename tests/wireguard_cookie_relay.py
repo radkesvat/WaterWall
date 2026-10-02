@@ -1,4 +1,15 @@
 #!/usr/bin/env python3
+"""Relay and verify the WireGuard overload-cookie integration exchange.
+
+The owner, tests/run_wireguard_cookie_case.sh, starts this loopback UDP relay,
+runs WaterWall with forced system load, then invokes --verify on its JSONL trace.
+The relay drops each side's first cookie-protected retry and repeats its valid
+cookie. Verification requires ordered cookie exchanges, preserved handshake
+indices/MAC1/body, exact repeated retries, and subsequent data in both directions.
+This helper checks the recorded packet sequence; the owner supplies the runtime
+case verdict, and this is not an independent cryptographic or throughput test.
+CTest: waterwall.wireguard_cookie_overload_roundtrip.
+"""
 
 import argparse
 import json

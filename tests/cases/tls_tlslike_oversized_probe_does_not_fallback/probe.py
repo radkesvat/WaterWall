@@ -1,3 +1,13 @@
+"""Check that oversized TLS-looking input closes without reaching fallback.
+
+The namespace probe runner starts the adjacent configuration, and this probe
+owns a loopback fallback sentinel. It sends the fixed oversized TLS record below
+and requires EOF/reset within the bounded read window, with neither a fallback
+connection nor sentinel bytes. A send failure is allowed if rejection closes
+early; unlike the invalid-handshake case, this case does not require a TLS alert.
+CTest: waterwall.tls_tlslike_oversized_probe_does_not_fallback.
+"""
+
 import socket
 import sys
 import threading

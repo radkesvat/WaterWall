@@ -1,15 +1,22 @@
 #!/usr/bin/env python3
-"""Real direct-pair, interposed, raw-IP and software-forwarding checksum cases."""
+"""Direct trusted pairs versus raw/interposed/TCP-UDP bridge checks, MTU1500/576, slow receiver, DNS
+and real software-forwarded wire checksums. Fresh TUN/runtime/peer namespaces and four 1MiB
+connections; explicit GSO counters and exact transport checks. Linux root/TUN/namespaces/ethtool;
+missing capability is skip77. CTest: waterwall.tundevice_trusted_checksum."""
 import argparse
 import json
 import os
 import shutil
 import subprocess
 import sys
-import tempfile
 import time
 from pathlib import Path
-from tun_tcp_chain import (Fixture, Unavailable, preflight, require, command, output, stop,
+
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.environ.get("WATERWALL_TEST_SUPPORT_DIR",
+                                str(Path(__file__).resolve().parent / "support" / "python")))
+from wwtest.run_directory import RunDirectory
+from wwtest.fixtures.tun_tcp import (Fixture, Unavailable, preflight, require, command, output, stop,
                            integration, TRANSFER, CLIENT, SERVER, PORT, SOURCE_PORT)
 
 HELPER = Path(__file__).with_name('tun_checksum_transfer.py')
@@ -96,12 +103,14 @@ def main():
     parser.add_argument('--binary', type=Path, required=True)
     args = parser.parse_args()
     directory = None
+    run_directory = None
     success = False
     try:
         preflight('integration')
         if shutil.which('ethtool') is None:
             raise Unavailable('software forwarding qualification requires ethtool')
-        directory = Path(tempfile.mkdtemp(prefix='waterwall-tun-checksum-'))
+        run_directory = RunDirectory('waterwall-tun-checksum-')
+        directory = run_directory.create()
         print('Artifacts: ' + str(directory), flush=True)
         for gso, interposed, mtu in ((False, False, 1500), (True, True, 1500),
                                     (True, False, 1500), (True, False, 576)):
@@ -144,8 +153,8 @@ def main():
         print('FAIL: ' + str(error), file=sys.stderr, flush=True)
         return 1
     finally:
-        if success and directory and os.environ.get('WATERWALL_TEST_KEEP_RUN_DIR') != '1':
-            shutil.rmtree(directory)
+        if run_directory is not None:
+            run_directory.finish(0 if success else 1)
 
 
 if __name__ == '__main__':

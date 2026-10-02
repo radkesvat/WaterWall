@@ -1,14 +1,19 @@
 #!/usr/bin/env python3
-"""Pin the ordering barriers that make process-level lwIP teardown safe."""
+"""Pin the ordering barriers that make process-level lwIP teardown safe. CTest:
+waterwall.lwip_shutdown_order_policy."""
 
 import os
 import re
 import sys
+from pathlib import Path
 
 sys.dont_write_bytecode = True
+sys.path.insert(0, os.environ.get("WATERWALL_TEST_SUPPORT_DIR",
+                                str(Path(__file__).resolve().parent / "support" / "python")))
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from tunnels_abort_policy_test import ROOT, analyze, resolve_function  # noqa: E402
+from wwtest.source_policy import ROOT, analyze, resolve_function  # noqa: E402
 
 
 def read_source(rel_path):

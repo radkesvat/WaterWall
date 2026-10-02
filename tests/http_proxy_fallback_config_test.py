@@ -1,18 +1,28 @@
 #!/usr/bin/env python3
-"""Startup acceptance for the HTTP authentication fallback topology (namespace only)."""
+"""HTTP authenticated fallback topology validation: absence/inert noauth, duplicate/invalid names,
+cycles, conflicting previous and missing next. Namespace loopback listeners with BlackHole
+substitutes; startup marker and rejection status, not payload forwarding. CTest:
+waterwall.http_proxy_fallback_config."""
 import copy
 import json
 from pathlib import Path
-import subprocess
 import sys
-import tempfile
+import signal
+import os
 import time
 
-from reality_config_validation_test import core_config, stop_process, STARTED_MARKER
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.environ.get("WATERWALL_TEST_SUPPORT_DIR",
+                                str(Path(__file__).resolve().parent / "support" / "python")))
+from wwtest.process import Process, install_termination_handler
+from wwtest.run_directory import RunDirectory
+
+from wwtest.config import core_config, STARTED_MARKER
+from wwtest.process import stop_process
 
 
 def run(binary, name, config, valid, duplicate=False):
-    with tempfile.TemporaryDirectory(prefix="hps-fallback-") as directory:
+    with RunDirectory(prefix="hps-fallback-") as directory:
         directory = Path(directory)
         (directory / "core.json").write_text(json.dumps(core_config()))
         text = json.dumps(config)
@@ -21,8 +31,7 @@ def run(binary, name, config, valid, duplicate=False):
                                 '"fallback-node-name": "fallback", "fallback-node-name": "fallback"')
         (directory / "config.json").write_text(text)
         with (directory / "output").open("w+") as output:
-            process = subprocess.Popen([str(binary)], cwd=directory, stdout=output, stderr=subprocess.STDOUT)
-            try:
+            with Process([str(binary)], cwd=directory, log=output, cleanup_signal=signal.SIGTERM) as process:
                 deadline = time.monotonic() + 10
                 while time.monotonic() < deadline:
                     output.seek(0)
@@ -33,8 +42,6 @@ def run(binary, name, config, valid, duplicate=False):
                 assert (STARTED_MARKER in log) == valid, (name, log)
                 if not valid:
                     assert process.wait(timeout=3) != 0, (name, log)
-            finally:
-                stop_process(process)
 
 
 def main():
@@ -74,4 +81,5 @@ def main():
 
 
 if __name__ == "__main__":
+    install_termination_handler()
     main()

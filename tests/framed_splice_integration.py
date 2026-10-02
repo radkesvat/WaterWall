@@ -1,5 +1,19 @@
 #!/usr/bin/env python3
-"""HeaderServer and a TCP-connected KeepAlive pair inside the namespace harness."""
+"""Paired framed transforms (Header/KeepAlive/HTTP and related families) with real loopback peers.
+Checks protocol framing, staged first/ready exchange, exact reverse echo, endpoint splice and
+shutdown143; requires strace/network namespaces. KeepAlive heartbeat/EOF decoding remains
+protocol-specific. CTest: waterwall.framed_constant_splice_false,
+waterwall.framed_constant_splice_true, waterwall.framed_keepalive_client_splice_false,
+waterwall.framed_keepalive_client_splice_true,
+waterwall.framed_keepalive_client_timeout_splice_false,
+waterwall.framed_keepalive_client_timeout_splice_true,
+waterwall.framed_keepalive_client_watchdog_splice_false,
+waterwall.framed_keepalive_client_watchdog_splice_true,
+waterwall.framed_keepalive_server_splice_false, waterwall.framed_keepalive_server_splice_true,
+waterwall.framed_keepalive_splice_false, waterwall.framed_keepalive_splice_true,
+waterwall.framed_port_splice_false, waterwall.framed_port_splice_true,
+waterwall.framed_v1_splice_false, waterwall.framed_v1_splice_true, waterwall.framed_v2_splice_false,
+waterwall.framed_v2_splice_true."""
 import concurrent.futures
 import json
 from pathlib import Path
@@ -7,14 +21,20 @@ import re
 import shutil
 import signal
 import socket
-import subprocess
 import sys
-import tempfile
+import os
 import time
 
 sys.dont_write_bytecode = True
-from trojanclient_splice_integration import exact
-from httpproxyserver_splice_integration import successful_calls
+sys.path.insert(0, os.environ.get("WATERWALL_TEST_SUPPORT_DIR",
+                                str(Path(__file__).resolve().parent / "support" / "python")))
+from wwtest.sockets import configure_listener, connect_when_ready
+from wwtest.config import core_config
+from wwtest.run_directory import RunDirectory
+from wwtest.process import Process, close_on_error, install_termination_handler
+
+from wwtest.sockets import exact
+from wwtest.trace import successful_calls
 
 HOST, APP_PORT, PEER_PORT, BACKEND_PORT = "127.0.0.1", 27981, 27982, 27983
 
@@ -101,37 +121,22 @@ def run(binary, mode, enabled):
             prefix = b""
     data = bytes(range(256)) * (24576 if keepalive else 4096)
     early = data[:8192]
-    with tempfile.TemporaryDirectory(prefix="waterwall-framed-splice-") as directory:
+    with RunDirectory("waterwall-framed-splice-") as directory:
         root = Path(directory) / "run"
         root.mkdir()
         (root / "config.json").write_text(json.dumps({"name": "framed-splice", "nodes": nodes}))
         (root / "core.json").write_text(json.dumps({
             "configs": ["config.json"],
-            "log": {"path": "log/", **{name: {"loglevel": "DEBUG", "file": name + ".log", "console": True}
-                                      for name in ("internal", "core", "network", "dns")}},
+            "log": core_config()["log"],
             "misc": {"workers": 1, "splice": enabled, "ram-profile": "minimal", "mtu": 1500,
                      "try-enabling-bbr": False, "tcp-tune": False},
         }))
         with socket.socket() as backend, (root / "stdout.log").open("w+") as log:
-            backend.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            backend.bind((HOST, BACKEND_PORT))
-            backend.listen()
-            backend.settimeout(15)
-            process = subprocess.Popen([tracer, "-D", "-f", "-yy", "-e", "trace=splice", "-o",
-                                        str(root / "splice.log"), binary], cwd=root,
-                                       stdout=log, stderr=subprocess.STDOUT)
-            try:
+            configure_listener(backend, (HOST, BACKEND_PORT), timeout=15)
+            with Process([tracer, '-D', '-f', '-yy', '-e', 'trace=splice', '-o', str(root / 'splice.log'), binary], cwd=root, log=log) as process:
                 deadline = time.monotonic() + 15
-                while True:
-                    if process.poll() is not None:
-                        raise AssertionError(f"WaterWall startup exited {process.returncode}")
-                    try:
-                        client = socket.create_connection((HOST, APP_PORT), timeout=1)
-                        break
-                    except ConnectionRefusedError:
-                        if time.monotonic() >= deadline:
-                            raise
-                        time.sleep(.02)
+                client = connect_when_ready(process, (HOST, APP_PORT), deadline=deadline,
+                    failure=lambda: AssertionError(f'WaterWall startup exited {process.returncode}'), timeout=1, pause=0.02)
 
                 if timeout:
                     with client, backend.accept()[0] as conn:
@@ -163,7 +168,7 @@ def run(binary, mode, enabled):
                         else:
                             assert conn.recv(1) == b"", "unexpected trailing application bytes"
 
-                with client, concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                with client, concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor, close_on_error(client):
                     client.settimeout(15)
                     future = executor.submit(peer)
                     if prefix:
@@ -193,16 +198,9 @@ def run(binary, mode, enabled):
                     assert outputs == {"up", "down"}, f"missing endpoint splice outputs: {outputs}"
                 else:
                     assert not calls, "disabled chain used successful splice I/O"
-            except BaseException:
-                log.flush()
-                print((root / "stdout.log").read_text(), file=sys.stderr)
-                raise
-            finally:
-                if process.poll() is None:
-                    process.kill()
-                    process.wait()
 
 
 if __name__ == "__main__":
+    install_termination_handler()
     run(str(Path(sys.argv[1]).resolve()), sys.argv[2], sys.argv[3] == "true")
     print("Framed TCP integrity, splice policy, keepalive replies and orderly shutdown passed")

@@ -1,3 +1,13 @@
+"""Check that an invalid TLS-looking handshake stays on the TLS rejection path.
+
+The namespace probe runner starts the adjacent configuration, and this probe
+owns a loopback fallback sentinel. A malformed TLS handshake record must produce
+a TLS alert prefix and close within the bounded read window, without contacting
+fallback or returning sentinel bytes. This covers the fixed invalid record below,
+not all malformed TLS inputs or successful fallback traffic.
+CTest: waterwall.tls_tlslike_invalid_probe_does_not_fallback.
+"""
+
 import socket
 import sys
 import threading

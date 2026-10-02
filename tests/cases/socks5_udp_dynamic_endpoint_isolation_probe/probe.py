@@ -1,9 +1,21 @@
 #!/usr/bin/env python3
+"""Dynamic UDP associations stay isolated by control line, relay source and target identity. Real
+namespace loopback datagrams/control streams; exact replies, wrong-target/source rejection and
+bounded waits. No extra UDP readiness association. CTest:
+waterwall.socks5_udp_dynamic_endpoint_isolation_probe."""
 
+import sys
+from pathlib import Path
+import os
 import socket
 import struct
 import threading
 import time
+
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.environ.get("WATERWALL_TEST_SUPPORT_DIR",
+                                str(Path(__file__).resolve().parents[2] / "support" / "python")))
+from wwtest.sockets import exact as read_exact
 
 
 HOST = "127.0.0.1"
@@ -17,13 +29,7 @@ def fail(message):
 
 
 def recv_exact(sock, length):
-    data = bytearray()
-    while len(data) < length:
-        chunk = sock.recv(length - len(data))
-        if not chunk:
-            fail("SOCKS control connection closed while reading a reply")
-        data.extend(chunk)
-    return bytes(data)
+    return read_exact(sock, length, timeout_context=False, eof_error=lambda: fail('SOCKS control connection closed while reading a reply'))
 
 
 def connect_with_retry():

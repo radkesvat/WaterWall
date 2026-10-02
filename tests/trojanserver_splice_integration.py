@@ -1,20 +1,33 @@
 #!/usr/bin/env python3
-"""Native Linux TrojanServer socket peers; run through the namespace harness."""
+"""Local/database authentication and connection limits, TCP/fallback replay and local OPTIONS response;
+UDP two-target empty/boundary preservation. Fixed loopback peers, positive splice and shutdown143;
+requires strace/network namespaces. CTest: waterwall.trojanserver_fallback_http_splice_false,
+waterwall.trojanserver_fallback_http_splice_true, waterwall.trojanserver_fallback_splice_false,
+waterwall.trojanserver_fallback_splice_true, waterwall.trojanserver_tcp_db_splice_false,
+waterwall.trojanserver_tcp_db_splice_true, waterwall.trojanserver_tcp_splice_false,
+waterwall.trojanserver_tcp_splice_true, waterwall.trojanserver_udp_splice_false,
+waterwall.trojanserver_udp_splice_true."""
 import concurrent.futures
 import hashlib
 import json
 from pathlib import Path
-import re
 import shutil
 import signal
 import socket
-import subprocess
 import sys
-import tempfile
+import os
 import time
 
 sys.dont_write_bytecode = True
-from trojanclient_splice_integration import exact
+sys.path.insert(0, os.environ.get("WATERWALL_TEST_SUPPORT_DIR",
+                                str(Path(__file__).resolve().parent / "support" / "python")))
+from wwtest.sockets import connect_when_ready
+from wwtest.config import core_config
+from wwtest.trace import positive_splice_counts
+from wwtest.run_directory import RunDirectory
+from wwtest.process import Process, close_on_error, install_termination_handler
+
+from wwtest.sockets import exact
 
 
 def address(port):
@@ -39,7 +52,7 @@ def run(binary, mode, enabled, fallback_delay=7):
     udp = mode == "udp"
     local_fallback = mode == "fallback_http"
     fallback = mode == "fallback" or local_fallback
-    with tempfile.TemporaryDirectory(prefix="waterwall-trojanserver-splice-") as directory:
+    with RunDirectory("waterwall-trojanserver-splice-") as directory:
         root = Path(directory)
         settings = {"users": [{"username": "alice", "password": "test"}], "connect": True, "udp": True}
         if fallback:
@@ -71,8 +84,7 @@ def run(binary, mode, enabled, fallback_delay=7):
                           "settings": {"address": "127.0.0.1", "port": 27962, "fastopen": False}})
         (root / "config.json").write_text(json.dumps({"name": "trojan-server-splice", "nodes": nodes}))
         (root / "core.json").write_text(json.dumps({
-            "log": {"path": "log/", **{name: {"loglevel": "DEBUG", "file": name + ".log", "console": True}
-                                      for name in ("internal", "core", "network", "dns")}},
+            "log": core_config()["log"],
             "configs": ["config.json"],
             "misc": {"workers": 1, "splice": enabled, "ram-profile": "minimal", "mtu": 1500,
                      "try-enabling-bbr": False},
@@ -85,20 +97,10 @@ def run(binary, mode, enabled, fallback_delay=7):
             if not udp:
                 backend.listen()
             with (root / "stdout.log").open("w+") as log:
-                process = subprocess.Popen([tracer, "-D", "-f", "-e", "trace=splice", "-o", str(root / "splice.log"), binary],
-                                           cwd=root, stdout=log, stderr=subprocess.STDOUT)
-                try:
+                with Process([tracer, '-D', '-f', '-e', 'trace=splice', '-o', str(root / 'splice.log'), binary], cwd=root, log=log) as process:
                     deadline = time.monotonic() + 10
-                    while True:
-                        if process.poll() is not None:
-                            raise AssertionError(f"startup exited {process.returncode}")
-                        try:
-                            client = socket.create_connection(("127.0.0.1", 27961), timeout=1)
-                            break
-                        except ConnectionRefusedError:
-                            if time.monotonic() >= deadline:
-                                raise
-                            time.sleep(0.02)
+                    client = connect_when_ready(process, ('127.0.0.1', 27961), deadline=deadline,
+                        failure=lambda: AssertionError(f'startup exited {process.returncode}'), timeout=1, pause=0.02)
                     with client:
                         client.settimeout(15)
                         if database:
@@ -149,7 +151,7 @@ def run(binary, mode, enabled, fallback_delay=7):
                                     conn.sendall(data[::-1])
                                     assert conn.recv(1) == b"", "unexpected bytes during shutdown"
 
-                            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor, close_on_error(client):
                                 result = executor.submit(peer)
                                 client.sendall(probe if fallback else header)
                                 assert exact(client, 12) == b"server-first"
@@ -176,18 +178,13 @@ def run(binary, mode, enabled, fallback_delay=7):
                         if udp:
                             assert client.recv(1) == b"", "carrier survived server shutdown"
                     trace = (root / "splice.log").read_text()
-                    successful = re.findall(r"(?:splice\(.*|<\.\.\. splice resumed>.*)\s= ([1-9][0-9]*)", trace)
+                    successful = positive_splice_counts(trace)
                     # HttpProxyServer materializes its local OPTIONS input on the splice-capable chain.
                     assert bool(successful) == enabled, "server chain used unexpected splice mode"
-                except BaseException:
-                    log.flush(); print((root / "stdout.log").read_text(), file=sys.stderr)
-                    raise
-                finally:
-                    if process.poll() is None:
-                        process.kill(); process.wait()
 
 
 if __name__ == "__main__":
+    install_termination_handler()
     for delay in (0, 7) if sys.argv[2] == "fallback_http" else (7,):
         run(str(Path(sys.argv[1]).resolve()), sys.argv[2], sys.argv[3] == "true", delay)
     print("TrojanServer socket integrity, actual splice transfers and orderly shutdown passed")

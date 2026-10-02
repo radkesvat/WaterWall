@@ -1,5 +1,12 @@
 #!/usr/bin/env bash
 
+# Covers: real namespace-local firewall ownership, stale/crashed owners, injected command failures
+# and deliberately TERM-ignoring descendants. Setup: root/network namespace and bounded wrappers,
+# tracked runtime PIDs. Limits: hostile command/process-group behavior remains local; shared
+# support only settles direct PIDs/artifacts. CTest:
+# waterwall.socket_manager_iptables_crash_recovery; prerequisites skip77.
+
+
 set -euo pipefail
 
 readonly SKIP_STATUS=77
@@ -45,8 +52,10 @@ fi
 
 real_iptables=${WATERWALL_REAL_IPTABLES:?}
 real_ip6tables=${WATERWALL_REAL_IP6TABLES:?}
+source "$(dirname "$(realpath "$0")")/support/shell/runner.lib.sh"
 original_path=$PATH
-temp_dir=$(mktemp -d)
+temp_dir=$(mktemp -d "${TMPDIR:-/tmp}/waterwall-iptables-XXXXXX")
+echo "Run artifacts: $temp_dir" >&2
 trace_path="$temp_dir/iptables.trace"
 failure_path="$temp_dir/fail-delete-jump"
 hang_inspect_path="$temp_dir/hang-inspect"
@@ -59,6 +68,7 @@ mkdir -p "$wrapper_dir" "$disabled_path"
 process_ids=()
 
 cleanup() {
+  local cleanup_status=$?
   local pid
   for pid in "${process_ids[@]}"; do
     if kill -0 "$pid" 2>/dev/null; then
@@ -66,9 +76,10 @@ cleanup() {
     fi
   done
   for pid in "${process_ids[@]}"; do
-    wait "$pid" 2>/dev/null || true
+    ww_test_stop_child "$pid" || true
   done
-  rm -rf "$temp_dir"
+  ww_test_finish_directory "$temp_dir" "$cleanup_status"
+  exit "$cleanup_status"
 }
 trap cleanup EXIT
 

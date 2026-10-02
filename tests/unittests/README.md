@@ -1,101 +1,74 @@
-# Waterwall Unit Tests
+# Native tests
 
-These tests exercise small library-level behavior without launching the `Waterwall` process or the integration harness.
+Native tests range from pure library checks to runtime/component fixtures with
+workers, callbacks, OS seams and subprocesses. Each executable source's opening
+comment describes the actual contract, important scenarios, limitations and
+CTest selections. Auxiliary modules refer to their owning driver.
 
-## Current Tests
+| Directory | Owning contract |
+| --- | --- |
+| `base/` | Utilities, codecs, portability, system/load observations and standalone headers. |
+| `crypto/` | Crypto/checksum vectors, dispatch and failure boundaries. |
+| `bufio/` | Buffers, pools, views and splice representation/stream behavior. |
+| `net/` | Lines, chains, sockets, timers, event backends and worker scheduling. |
+| `net/worker/` | Explicit worker-suite driver, separate accessor/message/teardown/pipe/HalfDuplex modules and the required shared runtime fixture. |
+| `core/` | Settings, startup, node/identity indexes, signals and application lifecycle. |
+| `devices/` | TUN/capture/raw device boundaries, reader/writer lifetime and platform variants. |
+| `lwip/` | Packet stack, worker engines and protocol/checksum fixtures. |
+| `tunnels/<family>/` | Protocol and transform contracts; platform/no-splice variants stay beside their family. |
+| `fixtures/` | Immutable QUIC vectors and their generator, retained together without regeneration. |
 
-- `waterwall.aes256gcm_unit`
-  Verifies the `aes256gcm` wrapper through successful encryption/decryption, empty associated data, wrong-key failure,
-  wrong-associated-data failure, and tampered-ciphertext failure. If the selected crypto backend or CPU does not expose
-  AES256-GCM, the test exits successfully after reporting that the AES-specific cases were skipped.
-- `waterwall.crypto_primitives_unit`
-  Verifies generic `wcrypto` BLAKE2s, X25519, ChaCha20-Poly1305, and XChaCha20-Poly1305 vectors.
-- `waterwall.capture_linux_nfqueue_unit`
-  Verifies the Linux NFQUEUE netlink parser with synthetic messages, including capture-length byte order,
-  malformed attributes, payload cursor exposure, and truncated-prefix packet-id recovery.
-- `waterwall.select_fd_range_unit`
-  Verifies the POSIX select backend rejects descriptors outside `fd_set` bounds while accepting the highest valid
-  descriptor.
-- `waterwall.select_registration_failure_unit`
-  Verifies select registration failures close owned reads, listeners, and connections, roll back connection state, and
-  release borrowed event wrappers without closing their descriptors.
-- `waterwall.tcp_over_udp_fec_unit`
-  Verifies the TCP-over-UDP Reed-Solomon FEC helper directly, including one missing data shard recovery, encoder reset
-  after a failed parity emit callback, and malformed packet rejection.
-- `waterwall.nghttp2_large_recv_unit`
-  Verifies the bundled nghttp2 can consume one contiguous HTTP/2 input buffer larger than 32 KiB while preserving DATA
-  callbacks. The Waterwall HTTP tunnels still feed nghttp2 in smaller slices defensively.
-- `waterwall.tlsclient_alpn_unit`
-  Verifies TlsClient's default and configured ALPN wire encoding, exact configured order, empty-list disable mode, and
-  rejection of malformed or duplicate protocol lists. It also performs a real in-memory BoringSSL client/server
-  handshake and proves that an HTTP/1.1-only TlsClient context negotiates `http/1.1`.
-- `waterwall.tlsclient_buffer_bio_unit`, `waterwall.tlsserver_buffer_bio_unit`
-  Verify owned ciphertext buffers, partial reads, FIFO order, padding, byte/entry limits, reset/EOF and real TLS 1.2/1.3
-  round trips over fragmented input. The BoringSSL case also verifies direct encryption into reserved pooled output,
-  independent lifetime after `SSL_free()`, partial commit and cancellation, padding callback counts, reservation
-  fallback, partial-write retries, KeyUpdate ordering, injected encryption-failure cleanup and ordinary close-notify.
-  Run these when updating BoringSSL or its local output-buffer patch; the upgrade checklist is in
-  [`tunnels/TlsClient/my notes.txt`](../../tunnels/TlsClient/my%20notes.txt).
-- `waterwall.ipmanipulator_tcpbit_unit`
-  Verifies `IpManipulator` TCP-bit rewriting handles the full TCP flags byte, including downstream CWR/ECE handling and
-  carried original flag restore.
-- `waterwall.ipoverrider_node_gate_unit`
-  Verifies the root-level `IpOverrider` `chance` and `only120` gates control the complete source/destination rewrite
-  action in both directions, including the exact 120-byte boundary, unchanged forwarding, and round-robin cursor
-  behavior when either gate rejects a packet.
-- `waterwall.router_sniffing_unit`
-  Verifies Router sniffing config, Host/:authority/SNI classification behavior, protocol bits, HTTP upgrade attributes,
-  cleartext HTTP/2 authority sniffing, and protected QUIC/HTTP3 Initial SNI vectors when Router QUIC sniffing is compiled
-  in. The QUIC vector generator is kept at `tests/unittests/fixtures/router_quic_sni/gen_quic_sni_vectors.go`; generated
-  binary vectors are checked in under `tests/unittests/fixtures/router_quic_sni/vectors`.
+Shared reusable fixtures live under [support/c/fixtures](../support/README.md).
+Scenario-only helpers remain beside their suite. Public CMake execution and
+portable/Windows registration entry files keep their paths in this directory;
+[cmake/native](../cmake/README.md) contains the explicit registration bodies.
 
-## Running Unit Tests
+Configure and exercise both complementary configurations:
 
-Unit tests use a dedicated multi-configuration no-LTO build tree. Release retains
-normal optimization, `NDEBUG`, ABI, and feature definitions; Debug enables
-assertions and other Debug guardrails. The production Release tree remains
-IPO/LTO-enabled and must not be reused for native unit tests. These configurations
-are complementary: Debug is preferred first during behavioral iteration, while
-Release proves the optimized behavior that ships.
-
-Build and run the complete unit suite in both configurations:
-
-```sh
+```bash
 cmake --preset linux-unit-tests
-cmake --build --preset linux-unit-release
-ctest --preset linux-unit-release --output-on-failure
+cmake --build --preset linux-unit-debug -j8
+ctest --preset linux-unit-debug --output-on-failure --no-tests=error
+cmake --build --preset linux-unit-release -j8
+ctest --preset linux-unit-release --output-on-failure --no-tests=error
 
-cmake --build --preset linux-unit-debug
-ctest --preset linux-unit-debug --output-on-failure
+ctest --preset linux-unit-debug -N -R '^waterwall\.base64_unit$'
+ctest --preset linux-unit-debug --output-on-failure --no-tests=error -R '^waterwall\.base64_unit$'
+ctest --preset linux-unit-release --output-on-failure --no-tests=error -R '^waterwall\.base64_unit$'
 ```
 
-The registered no-LTO policy is intentionally small. It checks the configured
-unit-tree options, the reachable compile/link commands, and representative
-artifacts from WaterWall, lwIP, and TlsClient. It is a regression check for the
-property that caused the slow links; it is not a toolchain attestation or a
-reproducible-build system.
+Focused native CTest auto-builds the selected target through
+[run_unit_test.cmake](run_unit_test.cmake), using the accepted per-tree lock and
+bounded lock/build/child waits. Runs use private CWDs under
+`<build>/test-runs/<configuration>/<test-name>/<invocation>/`; source/fixture
+roots are explicit inputs. Build and executable diagnostics remain separate.
+Failure/interruption/timeout/initialized skip retains artifacts; success removes
+them unless `WATERWALL_TEST_KEEP_RUN_DIR=1`. Keep the production LTO tree separate
+and do not build units there. Platform configurations use
+`waterwall_platform_unit_tests`; cross-compilation proves building, not execution.
 
-For a focused behavioral change, run the relevant test selection in Debug first so
-assertions fail close to the violated contract, then repeat it in Release. Broad or
-shared changes run both complete presets. Debug does not replace Release,
-AddressSanitizer, UndefinedBehaviorSanitizer, or ThreadSanitizer coverage.
+For a new unit, use [base64](base/base64_test.c) for small ordered cases,
+[atomic_u32](base/atomic_u32_test.c) for portable/thread variants, or
+[HeaderServer Est](tunnels/header/headerserver_est_ordering_test.c) for explicit
+fixture composition. Link `ww_test_support` privately only when used. Its
+requirements stay active under `NDEBUG`, evaluate operands once, and keep one
+case context per executable. Publish a static case name before admitting work
+and leave it unchanged until all workers/callbacks quiesce. `TEST_CHECK` reports
+and returns a Boolean for existing accumulating/sentinel-return suites; those
+callers retain their own continuation and final status. Deliberate product
+assert/death tests keep their original sentinel, exit/signal and subprocess rules.
+Standalone compile/link probes keep their dependency boundary.
 
-The unit CTest entries run through `run_unit_test.cmake`, which brings the requested unit executable up to date for the
-active CTest configuration before running it. A complete validation also builds
-the normal production Release lane and runs its integration, smoke, and policy
-coverage against the IPO/LTO-enabled `Waterwall` executable.
+Register sources explicitly with the [shared creation/registration helpers](../cmake/TestHelpers.cmake).
+Keep source substitutions, wrapper symbols, feature definitions, Unity/PCH
+exclusions and real `WW_HAVE_SPLICE=0` implementation builds visible beside the
+target. Ordered drivers keep setup, stimulus, observations and successful
+teardown in ordinary source. The worker driver keeps its initial fork cases
+before shared initialization and live pipe/HalfDuplex/pool/batch cases before
+teardown races. Final accessor death checks run after shared shutdown; the
+`--line-refcount-publication-only` selection remains independent.
 
-The exhaustive network-runner source/workflow analyzer runs in the production
-lane and is not repeated in the unit tree.
-
-On macOS and Windows, `waterwall_platform_unit_tests` is the corresponding
-native aggregate. CI builds that aggregate, runs the same direct no-LTO policy,
-and then executes the registered tests carrying the `unit` label.
-
-## Adding A Unit Test
-
-1. Add the source file under `tests/unittests`.
-2. Add an executable and a matching `add_test` entry in `tests/unittests/CMakeLists.txt`.
-3. Add the executable as a dependency of `waterwall_unit_tests`.
-4. Give the CTest entry the `unit` label plus any focused labels that help selection.
-5. Document the new test in this file.
+Format changed C/header ranges with portable `clang-format --style=file`, run
+focused Debug then Release coverage, and use the broader matrix for shared
+changes. [Developer Guide Part 6](../../WaterWall-Docs/docs/05-devguides/part6-build-test-review.mdx)
+is canonical for validation scope, sanitizer commands and lane timings.

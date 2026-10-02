@@ -1,4 +1,8 @@
-"""Direct payload identification, roundtrip and publication regression checks."""
+"""PE32/PE32+ identification, permitted debug metadata versus symbols, payload corruption/roundtrip and
+exclusive publication. Small generated binaries and the real payload tool, including paths with
+spaces; deterministic seeds/bytes and existing concurrency stay. Compilation/format evidence does
+not establish native Windows startup. CTest: direct CLI/support fixture; called by the registered
+owning suite."""
 import argparse
 from concurrent.futures import ThreadPoolExecutor
 import lzma
@@ -7,10 +11,15 @@ import random
 import struct
 import subprocess
 import sys
-import tempfile
+import os
 import unittest
 
-from packed_build_target_test import check_windows_launcher
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.environ.get("WATERWALL_TEST_SUPPORT_DIR",
+                                str(Path(__file__).resolve().parent / "support" / "python")))
+from wwtest.run_directory import RunDirectory
+
+from wwtest.packed_launcher import check_windows_launcher
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -97,7 +106,7 @@ class PackedLauncherTest(unittest.TestCase):
 
 class PayloadTest(unittest.TestCase):
     def validate(self, data, target, valid=True):
-        with tempfile.TemporaryDirectory(prefix='payload identification ') as temporary:
+        with RunDirectory(prefix='payload identification ') as temporary:
             path = Path(temporary) / 'application'
             path.write_bytes(data)
             result = subprocess.run([PAYLOAD_TOOL, 'validate', target, str(path)],
@@ -142,7 +151,7 @@ class PayloadTest(unittest.TestCase):
         self.validate(image, 'windows-x86', valid=False)
 
     def test_publication(self):
-        with tempfile.TemporaryDirectory(prefix='packed paths with spaces ') as temporary:
+        with RunDirectory(prefix='packed paths with spaces ') as temporary:
             root = Path(temporary)
             executable = root / 'private application.exe'
             # An incompressible overlay exercises the emitter's 64 KiB reads.
@@ -224,7 +233,7 @@ class PayloadTest(unittest.TestCase):
             self.assertFalse(out.exists())
 
     def test_embedding_preserves_existing_files(self):
-        with tempfile.TemporaryDirectory(prefix='payload exclusive output ') as temporary:
+        with RunDirectory(prefix='payload exclusive output ') as temporary:
             root = Path(temporary)
             executable = root / 'application.exe'
             executable.write_bytes(pe_image())

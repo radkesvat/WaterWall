@@ -1,12 +1,23 @@
 #!/usr/bin/env python3
+"""Privileged SocketManager wildcard/specific listener routing (single/range TCP or UDP) against
+distinct marker backends. Real loopback/TUN destinations; exact selected markers and joined
+peer-error accounting. Requires Linux root/TUN/network namespaces. Marker wake-up
+connections/datagrams remain intentional. CTest:
+waterwall.socket_manager_udp_range_socket_wildcard_specific_tun."""
 
 import pathlib
 import sys
+from pathlib import Path
+import os
+
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.environ.get("WATERWALL_TEST_SUPPORT_DIR",
+                                str(Path(__file__).resolve().parents[2] / "support" / "python")))
 
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
-from socket_manager_privileged_common import MarkerServers, UdpMarkerServer, expect_udp_marker
+from wwtest.fixtures.socket_manager import MarkerServers, UdpMarkerServer, expect_udp_marker
 
 
 LISTEN_PORT = 65535

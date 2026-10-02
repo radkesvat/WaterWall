@@ -1,16 +1,25 @@
 #!/usr/bin/env python3
+"""RealityClient/RealityServer/TlsClient constructor acceptance and diagnostic rejection across valid
+and invalid settings. Isolated loopback listener with passive substitutes; startup
+marker/diagnostics and bounded teardown, no public network or protocol handshake proof. CTest:
+waterwall.reality_config_startup."""
 
 import copy
 import json
 import signal
-import subprocess
 import sys
-import tempfile
+import os
 import time
 from pathlib import Path
 
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.environ.get("WATERWALL_TEST_SUPPORT_DIR",
+                                str(Path(__file__).resolve().parent / "support" / "python")))
+from wwtest.config import core_config, STARTED_MARKER
+from wwtest.process import stop_process, Process, install_termination_handler
+from wwtest.run_directory import RunDirectory
 
-STARTED_MARKER = "Core: starting workers ..."
+
 CONFIGURATION_TEST_PORT = 29900
 
 
@@ -72,23 +81,6 @@ def make_config(kind, settings):
     return {"name": f"reality-configuration-{kind}", "nodes": nodes}
 
 
-def core_config():
-    return {
-        "log": {
-            "path": "log/",
-            "internal": {"loglevel": "DEBUG", "file": "internal.log", "console": True},
-            "core": {"loglevel": "DEBUG", "file": "core.log", "console": True},
-            "network": {"loglevel": "DEBUG", "file": "network.log", "console": True},
-            "dns": {"loglevel": "DEBUG", "file": "dns.log", "console": True},
-        },
-        "configs": ["config.json"],
-        "misc": {
-            "workers": 1,
-            "ram-profile": "client",
-            "mtu": 1500,
-            "try-enabling-bbr": False,
-        },
-    }
 
 
 def read_output(path):
@@ -98,37 +90,21 @@ def read_output(path):
         return ""
 
 
-def stop_process(process):
-    if process.poll() is not None:
-        return
-    process.send_signal(signal.SIGTERM)
-    try:
-        process.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        process.kill()
-        process.wait(timeout=5)
 
 
 def run_case(binary, case_name, kind, settings, expected_error=None):
-    with tempfile.TemporaryDirectory(prefix="waterwall-reality-config-") as temp_dir:
+    with RunDirectory(prefix="waterwall-reality-config-") as temp_dir:
         run_dir = Path(temp_dir)
         (run_dir / "core.json").write_text(json.dumps(core_config()), encoding="utf-8")
         (run_dir / "config.json").write_text(json.dumps(make_config(kind, settings)), encoding="utf-8")
         output_path = run_dir / "output.log"
 
-        with output_path.open("w", encoding="utf-8") as output:
-            process = subprocess.Popen(
-                [str(binary)],
-                cwd=run_dir,
-                stdout=output,
-                stderr=subprocess.STDOUT,
-                text=True,
-            )
+        with Process([str(binary)], cwd=run_dir, log_path=output_path,
+                     cleanup_signal=signal.SIGTERM, terminate_timeout=5, text=True) as process:
 
-        timeout = 30 if expected_error is None else 15
-        deadline = time.monotonic() + timeout
-        output = ""
-        try:
+            timeout = 30 if expected_error is None else 15
+            deadline = time.monotonic() + timeout
+            output = ""
             while time.monotonic() < deadline:
                 output = read_output(output_path)
                 if expected_error is None and STARTED_MARKER in output:
@@ -149,8 +125,6 @@ def run_case(binary, case_name, kind, settings, expected_error=None):
                 expected_error in output,
                 f"{case_name}: missing diagnostic {expected_error!r}\n{output}",
             )
-        finally:
-            stop_process(process)
 
 
 def with_value(base, key, value):
@@ -445,6 +419,7 @@ def main():
 
 
 if __name__ == "__main__":
+    install_termination_handler()
     try:
         sys.exit(main())
     except AssertionError as error:

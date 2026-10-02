@@ -1,62 +1,44 @@
-if(NOT DEFINED UNIT_TEST_TARGET OR UNIT_TEST_TARGET STREQUAL "")
-  message(FATAL_ERROR "UNIT_TEST_TARGET is required")
+# Auto-build and execute one native test in an isolated build-tree directory.
+# Inputs are explicit registration data; no generated state belongs in source.
+foreach(required IN ITEMS TARGET EXECUTABLE BUILD_DIR NAME SOURCE_DIR FIXTURE_DIR)
+  if(NOT DEFINED UNIT_TEST_${required} OR "${UNIT_TEST_${required}}" STREQUAL "")
+    message(FATAL_ERROR "UNIT_TEST_${required} is required")
+  endif()
+endforeach()
+set(WW_RUN_BUILD_DIR "${UNIT_TEST_BUILD_DIR}")
+set(WW_RUN_CONFIG "${UNIT_TEST_CONFIG}")
+set(WW_RUN_NAME "${UNIT_TEST_NAME}")
+set(WW_RUN_SOURCE_DIR "${UNIT_TEST_SOURCE_DIR}")
+set(WW_RUN_FIXTURE_DIR "${UNIT_TEST_FIXTURE_DIR}")
+foreach(stage IN ITEMS LOCK BUILD)
+  if(DEFINED UNIT_TEST_${stage}_TIMEOUT)
+    set(WW_RUN_${stage}_TIMEOUT "${UNIT_TEST_${stage}_TIMEOUT}")
+  endif()
+endforeach()
+if(NOT DEFINED UNIT_TEST_TIMEOUT)
+  set(UNIT_TEST_TIMEOUT 120)
 endif()
 
-if(NOT DEFINED UNIT_TEST_EXECUTABLE OR UNIT_TEST_EXECUTABLE STREQUAL "")
-  message(FATAL_ERROR "UNIT_TEST_EXECUTABLE is required")
-endif()
-
-if(NOT DEFINED UNIT_TEST_BUILD_DIR OR UNIT_TEST_BUILD_DIR STREQUAL "")
-  message(FATAL_ERROR "UNIT_TEST_BUILD_DIR is required")
-endif()
-
-set(build_args --build "${UNIT_TEST_BUILD_DIR}" --target "${UNIT_TEST_TARGET}")
-if(DEFINED UNIT_TEST_CONFIG AND NOT UNIT_TEST_CONFIG STREQUAL "")
-  list(APPEND build_args --config "${UNIT_TEST_CONFIG}")
-endif()
-
-execute_process(
-  COMMAND "${CMAKE_COMMAND}" ${build_args}
-  RESULT_VARIABLE build_result
-)
-
-if(NOT build_result EQUAL 0)
-  message(FATAL_ERROR "Failed to build ${UNIT_TEST_TARGET}")
-endif()
-
+include("${CMAKE_CURRENT_LIST_DIR}/../cmake/NativeRun.cmake")
+ww_native_run_begin()
+ww_native_run_build("${UNIT_TEST_TARGET}")
 if(NOT EXISTS "${UNIT_TEST_EXECUTABLE}")
+  ww_native_run_finish("missing executable")
   message(FATAL_ERROR "Unit-test executable is missing after build: ${UNIT_TEST_EXECUTABLE}")
 endif()
-
-set(unit_log_dir "${CMAKE_CURRENT_LIST_DIR}/log")
-set(unit_stdout_log "${unit_log_dir}/${UNIT_TEST_TARGET}.stdout.log")
-set(unit_stderr_log "${unit_log_dir}/${UNIT_TEST_TARGET}.stderr.log")
-
-file(MAKE_DIRECTORY "${unit_log_dir}")
-file(REMOVE "${unit_stdout_log}" "${unit_stderr_log}")
-
-execute_process(
-  COMMAND "${UNIT_TEST_EXECUTABLE}"
-  WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}"
-  OUTPUT_FILE "${unit_stdout_log}"
-  ERROR_FILE "${unit_stderr_log}"
-  RESULT_VARIABLE test_result
-)
-
-if(NOT test_result EQUAL 0)
-  if(EXISTS "${unit_stdout_log}")
-    file(READ "${unit_stdout_log}" unit_stdout)
-    if(NOT unit_stdout STREQUAL "")
-      message(STATUS "===== ${UNIT_TEST_TARGET}.stdout.log =====\n${unit_stdout}")
-    endif()
-  endif()
-
-  if(EXISTS "${unit_stderr_log}")
-    file(READ "${unit_stderr_log}" unit_stderr)
-    if(NOT unit_stderr STREQUAL "")
-      message(STATUS "===== ${UNIT_TEST_TARGET}.stderr.log =====\n${unit_stderr}")
-    endif()
-  endif()
-
-  message(FATAL_ERROR "${UNIT_TEST_TARGET} failed with exit code ${test_result}")
+ww_native_run_execute(child "${UNIT_TEST_TIMEOUT}" "${UNIT_TEST_EXECUTABLE}" ${UNIT_TEST_ARGUMENTS})
+if(DEFINED UNIT_TEST_RESULT_FILE)
+  # Auxiliary Python callers use this receipt without buffering the artifact
+  # announcement. Their CTest process can still return the original skip code.
+  file(WRITE "${UNIT_TEST_RESULT_FILE}" "${WW_RUN_CHILD_RESULT}\n")
+endif()
+if(DEFINED UNIT_TEST_SKIP_CODE AND "${WW_RUN_CHILD_RESULT}" STREQUAL "${UNIT_TEST_SKIP_CODE}")
+  ww_native_run_dump(child)
+  ww_native_run_finish("skipped (exit ${WW_RUN_CHILD_RESULT})")
+elseif(NOT "${WW_RUN_CHILD_RESULT}" STREQUAL "0")
+  ww_native_run_dump(child)
+  ww_native_run_finish("execution failed: ${WW_RUN_CHILD_RESULT}")
+  message(FATAL_ERROR "${UNIT_TEST_TARGET} execution failed: ${WW_RUN_CHILD_RESULT}")
+else()
+  ww_native_run_finish(passed)
 endif()

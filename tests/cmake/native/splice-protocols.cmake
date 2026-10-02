@@ -1,0 +1,156 @@
+# Explicit native registrations; included in dependency order by unittests/CMakeLists.txt.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND TARGET HeaderClient AND TARGET Bridge AND TARGET BlackHole
+   AND TARGET UserController AND TARGET JunkDatagramSender)
+  waterwall_add_native_executable(easy_nodes_splice_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/easy/easy_nodes_splice_test.c ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/easy/easy_nodes_splice_header.c ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/easy/easy_nodes_splice_bridge.c
+    ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/easy/easy_nodes_splice_user.c ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/easy/easy_nodes_splice_junk.c)
+  target_link_libraries(easy_nodes_splice_test PRIVATE HeaderClient Bridge BlackHole UserController AuthenticationClient JunkDatagramSender ww)
+  target_link_options(easy_nodes_splice_test PRIVATE
+    "-Wl,--wrap=sbufDestroy" "-Wl,--wrap=bufferpoolReuseBuffer" "-Wl,--wrap=snprintf" "-Wl,--wrap=__snprintf_chk"
+    "-Wl,--wrap=authenticationclientUserAccountTraffic" "-Wl,--wrap=authenticationclientUserReleaseConnection")
+  add_dependencies(waterwall_unit_tests easy_nodes_splice_test)
+  add_waterwall_unit_test(waterwall.easy_nodes_splice_unit easy_nodes_splice_test "unit;tunnels;splice;buffers;ownership")
+endif()
+
+if(TARGET TrojanClient AND UNIX AND NOT APPLE)
+  foreach(mode IN ITEMS splice no_splice)
+    set(trojan_test trojanclient_${mode}_test)
+    waterwall_add_native_executable(${trojan_test} SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/trojan/trojanclient_splice_test.c ${WATERWALL_LINE_FAILURE_WW_SOURCES})
+    waterwall_line_failure_test_use_tunnel(${trojan_test} TrojanClient)
+    target_link_options(${trojan_test} PRIVATE "-Wl,--wrap=memoryAllocate")
+    target_link_libraries(${trojan_test} PRIVATE ww)
+    target_link_options(${trojan_test} PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS}
+      "-Wl,--wrap=bufferqueueTryPushBack")
+    if(mode STREQUAL "no_splice")
+      target_compile_definitions(${trojan_test} PRIVATE WW_HAVE_SPLICE=0)
+    else()
+      target_link_options(${trojan_test} PRIVATE "-Wl,--wrap=pipe2" "-Wl,--wrap=fcntl"
+        "-Wl,--wrap=read" "-Wl,--wrap=splice")
+    endif()
+    add_dependencies(waterwall_unit_tests ${trojan_test})
+    add_waterwall_unit_test(waterwall.trojanclient_${mode}_unit ${trojan_test}
+      "unit;tunnels;trojan;splice;framing;lifetime")
+  endforeach()
+endif()
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND TARGET TrojanServer)
+  foreach(mode IN ITEMS splice no_splice)
+    set(trojan_server_test trojanserver_${mode}_test)
+    waterwall_add_native_executable(${trojan_server_test} SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/trojan/trojanserver_splice_test.c ${WATERWALL_LINE_FAILURE_WW_SOURCES})
+    waterwall_line_failure_test_use_tunnel(${trojan_server_test} TrojanServer)
+    target_compile_definitions(${trojan_server_test} PRIVATE TROJANSERVER_TEST_CONSTANT_HASH=1)
+    target_link_libraries(${trojan_server_test} PRIVATE ww)
+    target_link_options(${trojan_server_test} PRIVATE "-Wl,--wrap=stringDuplicate")
+    target_link_options(${trojan_server_test} PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS}
+      "-Wl,--wrap=bufferqueueTryPushBack" "-Wl,--wrap=memoryAllocate" "-Wl,--wrap=lineScheduleDelayedTask"
+      "-Wl,--wrap=authenticationclientGetState" "-Wl,--wrap=authenticationclientGetUserBySHA224WithProfile")
+    if(mode STREQUAL "no_splice")
+      target_compile_definitions(${trojan_server_test} PRIVATE WW_HAVE_SPLICE=0)
+    else()
+      target_link_options(${trojan_server_test} PRIVATE "-Wl,--wrap=pipe2" "-Wl,--wrap=fcntl"
+        "-Wl,--wrap=read" "-Wl,--wrap=splice")
+    endif()
+    add_dependencies(waterwall_unit_tests ${trojan_server_test})
+    add_waterwall_unit_test(waterwall.trojanserver_${mode}_unit ${trojan_server_test}
+      "unit;tunnels;trojanserver;splice;authentication;fallback;framing;lifetime")
+  endforeach()
+endif()
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND TARGET VlessServer)
+  foreach(mode IN ITEMS splice no_splice)
+    set(vless_server_test vlessserver_${mode}_test)
+    waterwall_add_native_executable(${vless_server_test} SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/vless/vlessserver_splice_test.c ${WATERWALL_LINE_FAILURE_WW_SOURCES})
+    waterwall_line_failure_test_use_tunnel(${vless_server_test} VlessServer)
+    target_link_libraries(${vless_server_test} PRIVATE ww)
+    target_link_options(${vless_server_test} PRIVATE "-Wl,--wrap=stringDuplicate")
+    target_link_options(${vless_server_test} PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS}
+      "-Wl,--wrap=bufferqueueTryPushBack" "-Wl,--wrap=lineScheduleDelayedTask"
+      "-Wl,--wrap=authenticationclientGetState" "-Wl,--wrap=authenticationclientGetUserByUUIDWithProfile")
+    if(mode STREQUAL "no_splice")
+      target_compile_definitions(${vless_server_test} PRIVATE WW_HAVE_SPLICE=0)
+    else()
+      target_link_options(${vless_server_test} PRIVATE "-Wl,--wrap=pipe2" "-Wl,--wrap=fcntl"
+        "-Wl,--wrap=read" "-Wl,--wrap=splice")
+    endif()
+    add_dependencies(waterwall_unit_tests ${vless_server_test})
+    add_waterwall_unit_test(waterwall.vlessserver_${mode}_unit ${vless_server_test}
+      "unit;tunnels;vlessserver;splice;authentication;fallback;framing;lifetime")
+  endforeach()
+endif()
+
+if(TARGET VlessClient AND UNIX AND NOT APPLE)
+  foreach(mode IN ITEMS splice no_splice)
+    set(vless_test vlessclient_${mode}_test)
+    waterwall_add_native_executable(${vless_test} SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/vless/vlessclient_splice_test.c ${WATERWALL_LINE_FAILURE_WW_SOURCES})
+    waterwall_line_failure_test_use_tunnel(${vless_test} VlessClient)
+    target_link_libraries(${vless_test} PRIVATE ww)
+    target_link_options(${vless_test} PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS}
+      "-Wl,--wrap=bufferqueueTryPushBack")
+    if(mode STREQUAL "no_splice")
+      target_compile_definitions(${vless_test} PRIVATE WW_HAVE_SPLICE=0)
+    else()
+      target_link_options(${vless_test} PRIVATE "-Wl,--wrap=pipe2" "-Wl,--wrap=fcntl"
+        "-Wl,--wrap=read" "-Wl,--wrap=splice")
+    endif()
+    add_dependencies(waterwall_unit_tests ${vless_test})
+    add_waterwall_unit_test(waterwall.vlessclient_${mode}_unit ${vless_test}
+      "unit;tunnels;vless;splice;framing;lifetime")
+  endforeach()
+endif()
+
+if(LINUX)
+  foreach(socks_side Client Server)
+    if(TARGET Socks5${socks_side})
+      string(TOLOWER "${socks_side}" socks_lower)
+      set(socks_est_target "socks5${socks_lower}_est_flow_test")
+      waterwall_add_native_executable(${socks_est_target} SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/socks/socks_est_flow_test.c)
+      if(socks_side STREQUAL "Server")
+        target_compile_definitions(${socks_est_target} PRIVATE SOCKS_EST_SERVER=1)
+        target_include_directories(${socks_est_target} PRIVATE
+          ${CMAKE_SOURCE_DIR}/tunnels/TcpUdpListener/include
+          ${CMAKE_SOURCE_DIR}/tunnels/UdpListener/include)
+
+      endif()
+      target_link_options(${socks_est_target} PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS})
+      target_link_libraries(${socks_est_target} PRIVATE Socks5${socks_side} ww)
+      add_dependencies(waterwall_unit_tests ${socks_est_target})
+      add_waterwall_unit_test(waterwall.socks5${socks_lower}_est_flow_unit ${socks_est_target} "unit;tunnels;socks;flow;lifetime")
+    endif()
+  endforeach()
+endif()
+
+if(LINUX AND TARGET DomainResolver)
+  waterwall_add_native_executable(domainresolver_flow_test SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/domainresolver/domainresolver_flow_test.c)
+  target_link_options(domainresolver_flow_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS} "-Wl,--wrap=lineResolveDomainServiceAsync")
+  target_link_libraries(domainresolver_flow_test PRIVATE DomainResolver ww)
+  add_dependencies(waterwall_unit_tests domainresolver_flow_test)
+  add_waterwall_unit_test(waterwall.domainresolver_flow_unit domainresolver_flow_test "unit;tunnels;dns;flow;lifetime")
+endif()
+
+if(LINUX AND TARGET ConnectionFisherServer)
+  waterwall_add_native_executable(connectionfisherserver_est_reentry_test SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/connectionfisher/connectionfisherserver_est_reentry_test.c ${WATERWALL_LINE_FAILURE_WW_SOURCES})
+  waterwall_line_failure_test_use_tunnel(connectionfisherserver_est_reentry_test ConnectionFisherServer)
+  target_link_options(connectionfisherserver_est_reentry_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS})
+  target_link_libraries(connectionfisherserver_est_reentry_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests connectionfisherserver_est_reentry_test)
+  add_waterwall_unit_test(waterwall.connectionfisherserver_est_reentry_unit connectionfisherserver_est_reentry_test "unit;tunnels;connectionfisherserver;est;reentrant;lifetime;ownership")
+endif()
+
+if(LINUX)
+  foreach(est_entry "HeaderServer|header" "SoftIpLimiter|softiplimiter" "VlessServer|vless")
+    string(REPLACE "|" ";" est_fields "${est_entry}")
+    list(GET est_fields 0 est_node)
+    list(GET est_fields 1 est_family)
+    if(TARGET ${est_node})
+      string(TOLOWER "${est_node}" est_lower)
+      set(est_target "${est_lower}_est_ordering_test")
+      waterwall_add_native_executable(${est_target} SOURCES "${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/${est_family}/${est_target}.c" ${WATERWALL_LINE_FAILURE_WW_SOURCES})
+      waterwall_line_failure_test_use_tunnel(${est_target} ${est_node})
+      target_link_options(${est_target} PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS})
+      target_link_libraries(${est_target} PRIVATE ww)
+      add_dependencies(waterwall_unit_tests ${est_target})
+      add_waterwall_unit_test(waterwall.${est_lower}_est_ordering_unit ${est_target} "unit;tunnels;${est_lower};lifecycle;reentry")
+    endif()
+  endforeach()
+endif()
+
+# Keep ordinary HalfDuplex behavior covered when splice APIs are unavailable.

@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
 
+# Real default-GSO versus explicitly disabled TUN, including frame limits, kernel wire comparison
+# and TCP/MPTCP/MD5 paths. Namespace/veth/TUN/ioctl setup and independent packet checks stay
+# local; fixed workloads/worker overrides and deadlines are unchanged. Requires Linux
+# root/TUN/iproute2; unavailable prerequisites stay skip77.
+
+
 # Two WaterWall runs share one private network namespace. The first relies on
 # TunDevice's default GSO setting; the second explicitly disables it. Logs are
 # inspected after each shutdown, when the reader prints its aggregate count.
@@ -22,6 +28,7 @@ case_dir=$(realpath "$2")
 python_path=$3
 tests_dir=$(dirname "$(dirname "$case_dir")")
 source "$tests_dir/case_run_dir.lib.sh"
+source "$tests_dir/support/shell/runner.lib.sh"
 
 if [[ "$(uname -s)" != Linux || $(id -u) != 0 || ! -c /dev/net/tun ]]; then
   echo "TUN GSO live test requires Linux, root/CAP_NET_ADMIN and /dev/net/tun"
@@ -35,20 +42,21 @@ fi
 
 pid=""
 cleanup() {
+  local cleanup_status=$?
   if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
-    kill -TERM "$pid" 2>/dev/null || true
-    sleep 0.1
-    kill -KILL "$pid" 2>/dev/null || true
-    wait "$pid" 2>/dev/null || true
+    ww_test_stop_child "$pid" 1 0.1 || true
   fi
   ip rule delete fwmark "$MARK" lookup "$ROUTE_TABLE" priority 100 >/dev/null 2>&1 || true
   ip route flush table "$ROUTE_TABLE" >/dev/null 2>&1 || true
   ip link delete "$VETH_OUT" >/dev/null 2>&1 || true
   ip link delete "$TUN_NAME" >/dev/null 2>&1 || true
   ip link delete wwgsoinj0 >/dev/null 2>&1 || true
-  remove_case_run_dir
+  remove_case_run_dir "$cleanup_status"
+  exit "$cleanup_status"
 }
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 prepare_case_run_dir "$case_dir"
 run_dir=$case_run_dir
@@ -119,8 +127,7 @@ PY
 
   if ! "$python_path" "$run_dir/probe.py" "$mode" "$probe_path"; then
     if kill -0 "$pid" 2>/dev/null; then
-      kill -TERM "$pid" 2>/dev/null || true
-      wait "$pid" 2>/dev/null || true
+      ww_test_stop_child "$pid" || true
       pid=""
     fi
     cat "$log_path" >&2
@@ -133,9 +140,8 @@ PY
     return 1
   fi
 
-  kill -TERM "$pid"
   set +e
-  wait "$pid"
+  ww_test_stop_child "$pid"
   status=$?
   set -e
   pid=""

@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
 
+# Covers: a real runtime plus a case probe, explicit probe status, early runtime exit, deadline124
+# and final0/143. Setup: private inputs/core/logs and two owned PIDs; cleanup settles probe before
+# runtime. CTest: add_waterwall_probe_integration_test cases; namespace/privilege wrappers provide
+# prerequisites.
+
+
 set -euo pipefail
 shopt -s nullglob
 
@@ -21,8 +27,11 @@ timeout_seconds=$3
 python_path=$4
 
 source "$(dirname "$(realpath "$0")")/case_run_dir.lib.sh"
+source "$(dirname "$(realpath "$0")")/support/shell/runner.lib.sh"
 
-trap remove_case_run_dir EXIT
+trap 'status=$?; remove_case_run_dir "$status"; exit "$status"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 prepare_case_run_dir "$case_dir"
 run_dir=$case_run_dir
 generated_core_json="$run_dir/core.json"
@@ -30,44 +39,15 @@ pid=""
 probe_pid=""
 
 dump_logs() {
-  local path
-  local paths=(
-    "$run_dir/stdout.log"
-    "$run_dir"/log/internal*.log
-    "$run_dir"/log/core*.log
-    "$run_dir"/log/network*.log
-    "$run_dir"/log/dns*.log
-  )
-
-  for path in "${paths[@]}"; do
-    if [[ -f "$path" ]]; then
-      echo "===== $(basename "$path") =====" >&2
-      cat "$path" >&2
-    fi
-  done
+  ww_test_dump_logs "$run_dir/stdout.log" "$run_dir"/log/internal*.log "$run_dir"/log/core*.log "$run_dir"/log/network*.log "$run_dir"/log/dns*.log
 }
 
 terminate_child() {
-  local child_pid=$1
-  local i
-
-  if kill -0 "$child_pid" 2>/dev/null; then
-    kill -TERM "$child_pid" 2>/dev/null || true
-    for ((i = 0; i < CHILD_TERMINATION_GRACE_CHECKS; i++)); do
-      if ! kill -0 "$child_pid" 2>/dev/null; then
-        break
-      fi
-      sleep "$CHILD_TERMINATION_GRACE_POLL_SECONDS"
-    done
-    if kill -0 "$child_pid" 2>/dev/null; then
-      kill -KILL "$child_pid" 2>/dev/null || true
-    fi
-  fi
-
-  wait "$child_pid" 2>/dev/null || true
+  ww_test_stop_child "$1" "$CHILD_TERMINATION_GRACE_CHECKS" "$CHILD_TERMINATION_GRACE_POLL_SECONDS" || true
 }
 
 cleanup() {
+  local cleanup_status=$?
   if [[ -n "$probe_pid" ]]; then
     terminate_child "$probe_pid"
     probe_pid=""
@@ -80,7 +60,8 @@ cleanup() {
 
   # Generated core.json, logs and fixtures live in the private run directory,
   # so removing it is the whole cleanup.
-  remove_case_run_dir
+  remove_case_run_dir "$cleanup_status"
+  exit "$cleanup_status"
 }
 
 trap cleanup EXIT
@@ -107,27 +88,7 @@ if [[ "$test_splice" != true && "$test_splice" != false ]]; then
   exit 2
 fi
 
-cat >"$generated_core_json" <<EOF
-{
-  "log": {
-    "path": "log/",
-    "internal": { "loglevel": "DEBUG", "file": "internal.log", "console": true },
-    "core":     { "loglevel": "DEBUG", "file": "core.log",     "console": true },
-    "network":  { "loglevel": "DEBUG", "file": "network.log",  "console": true },
-    "dns":      { "loglevel": "DEBUG", "file": "dns.log",      "console": true }
-  },
-  "configs": [
-    "config.json"
-  ],
-  "misc": {
-    "workers": $test_workers,
-    "splice": $test_splice,
-    "ram-profile": "$TEST_RAM_PROFILE",
-    "mtu": 1500,
-    "try-enabling-bbr": false
-  }
-}
-EOF
+ww_test_write_core "$generated_core_json" "$test_workers" "$TEST_RAM_PROFILE" true "$test_splice"
 
 (
   cd "$run_dir"
@@ -187,9 +148,8 @@ if ! kill -0 "$pid" 2>/dev/null; then
   exit 1
 fi
 
-kill -TERM "$pid" 2>/dev/null || true
 set +e
-wait "$pid"
+ww_test_stop_child "$pid"
 status=$?
 set -e
 pid=""

@@ -1,7 +1,18 @@
+"""Reality protected handoff rejects replay while valid traffic reaches the protected sink. Real
+loopback recording relay and event synchronization; exact TLS records and sink accounting. EOF
+returns None intentionally, preserving protocol closure handling. CTest:
+waterwall.reality_v2_replay_protection."""
 import socket
 import sys
+from pathlib import Path
+import os
 import threading
 import time
+
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.environ.get("WATERWALL_TEST_SUPPORT_DIR",
+                                str(Path(__file__).resolve().parents[2] / "support" / "python")))
+from wwtest.sockets import exact as read_exact
 
 
 HOST = "127.0.0.1"
@@ -19,15 +30,7 @@ def fail(message):
 
 
 def recv_exact(sock, length):
-    chunks = []
-    remaining = length
-    while remaining:
-        chunk = sock.recv(remaining)
-        if not chunk:
-            return None
-        chunks.append(chunk)
-        remaining -= len(chunk)
-    return b"".join(chunks)
+    return read_exact(sock, length, timeout_context=False, eof_returns_none=True)
 
 
 def recv_tls_record(sock):

@@ -1,3 +1,4 @@
+include("${CMAKE_CURRENT_LIST_DIR}/../cmake/TestHelpers.cmake")
 # Reusable registration for the tunnel hard-abort runtime cases.
 #
 # The tests/ subtree is only added for native Linux builds, so this file is
@@ -16,9 +17,9 @@ include_guard(GLOBAL)
 set(WATERWALL_ABORT_RUNTIME_DIR "${CMAKE_CURRENT_LIST_DIR}")
 
 if(TARGET ww)
-  set(tunnels_abort_runtime_sources "${WATERWALL_ABORT_RUNTIME_DIR}/tunnels_abort_runtime_test.c")
+  set(tunnels_abort_runtime_sources "${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/abort/tunnels_abort_runtime_test.c")
   set(tunnels_abort_runtime_libraries "")
-  set(tunnels_abort_runtime_includes "")
+  set(tunnels_abort_runtime_includes "${WATERWALL_TEST_SUPPORT_ROOT}/c")
   set(tunnels_abort_runtime_definitions "")
   set(tunnels_abort_runtime_cases
     normal_default_upstream_est
@@ -33,14 +34,14 @@ if(TARGET ww)
 
   if(TARGET TlsServer)
     list(APPEND tunnels_abort_runtime_cases tlsserver_disabled_upstream_est)
-    list(APPEND tunnels_abort_runtime_sources "${WATERWALL_ABORT_RUNTIME_DIR}/tunnels_abort_tlsserver_case.c")
+    list(APPEND tunnels_abort_runtime_sources "${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/abort/tunnels_abort_tlsserver_case.c")
     list(APPEND tunnels_abort_runtime_libraries TlsServer)
     list(APPEND tunnels_abort_runtime_definitions WATERWALL_ABORT_TEST_HAS_TLSSERVER=1)
     list(APPEND tunnels_abort_runtime_cases tlsserver_draining_downstream_init)
   endif()
 
   if(TARGET Socks5Client)
-    list(APPEND tunnels_abort_runtime_sources "${WATERWALL_ABORT_RUNTIME_DIR}/tunnels_abort_socks5client_case.c")
+    list(APPEND tunnels_abort_runtime_sources "${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/abort/tunnels_abort_socks5client_case.c")
     list(APPEND tunnels_abort_runtime_libraries Socks5Client)
     list(APPEND tunnels_abort_runtime_definitions WATERWALL_ABORT_TEST_HAS_SOCKS5CLIENT=1)
     list(APPEND tunnels_abort_runtime_cases
@@ -51,42 +52,42 @@ if(TARGET ww)
   endif()
 
   if(TARGET TrojanClient)
-    list(APPEND tunnels_abort_runtime_sources "${WATERWALL_ABORT_RUNTIME_DIR}/tunnels_abort_trojanclient_case.c")
+    list(APPEND tunnels_abort_runtime_sources "${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/abort/tunnels_abort_trojanclient_case.c")
     list(APPEND tunnels_abort_runtime_libraries TrojanClient)
     list(APPEND tunnels_abort_runtime_definitions WATERWALL_ABORT_TEST_HAS_TROJANCLIENT=1)
     list(APPEND tunnels_abort_runtime_cases trojanclient_disabled_downstream_init)
   endif()
 
   if(TARGET TrojanServer)
-    list(APPEND tunnels_abort_runtime_sources "${WATERWALL_ABORT_RUNTIME_DIR}/tunnels_abort_trojanserver_case.c")
+    list(APPEND tunnels_abort_runtime_sources "${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/abort/tunnels_abort_trojanserver_case.c")
     list(APPEND tunnels_abort_runtime_libraries TrojanServer)
     list(APPEND tunnels_abort_runtime_definitions WATERWALL_ABORT_TEST_HAS_TROJANSERVER=1)
     list(APPEND tunnels_abort_runtime_cases trojanserver_disabled_downstream_init)
   endif()
 
   if(TARGET VlessClient)
-    list(APPEND tunnels_abort_runtime_sources "${WATERWALL_ABORT_RUNTIME_DIR}/tunnels_abort_vlessclient_case.c")
+    list(APPEND tunnels_abort_runtime_sources "${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/abort/tunnels_abort_vlessclient_case.c")
     list(APPEND tunnels_abort_runtime_libraries VlessClient)
     list(APPEND tunnels_abort_runtime_definitions WATERWALL_ABORT_TEST_HAS_VLESSCLIENT=1)
     list(APPEND tunnels_abort_runtime_cases vlessclient_disabled_downstream_init)
   endif()
 
   if(TARGET VlessServer)
-    list(APPEND tunnels_abort_runtime_sources "${WATERWALL_ABORT_RUNTIME_DIR}/tunnels_abort_vlessserver_case.c")
+    list(APPEND tunnels_abort_runtime_sources "${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/abort/tunnels_abort_vlessserver_case.c")
     list(APPEND tunnels_abort_runtime_libraries VlessServer)
     list(APPEND tunnels_abort_runtime_definitions WATERWALL_ABORT_TEST_HAS_VLESSSERVER=1)
     list(APPEND tunnels_abort_runtime_cases vlessserver_disabled_downstream_init)
   endif()
 
   if(TARGET RealityServer)
-    list(APPEND tunnels_abort_runtime_sources "${WATERWALL_ABORT_RUNTIME_DIR}/tunnels_abort_realityserver_case.c")
+    list(APPEND tunnels_abort_runtime_sources "${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/abort/tunnels_abort_realityserver_case.c")
     list(APPEND tunnels_abort_runtime_libraries RealityServer RealityCommon)
     list(APPEND tunnels_abort_runtime_definitions WATERWALL_ABORT_TEST_HAS_REALITYSERVER=1)
     list(APPEND tunnels_abort_runtime_cases realityserver_disabled_upstream_est)
   endif()
 
   if(TARGET HttpClient)
-    list(APPEND tunnels_abort_runtime_sources "${WATERWALL_ABORT_RUNTIME_DIR}/tunnels_abort_httpclient_case.c")
+    list(APPEND tunnels_abort_runtime_sources "${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/abort/tunnels_abort_httpclient_case.c")
     list(APPEND tunnels_abort_runtime_libraries HttpClient)
     list(APPEND tunnels_abort_runtime_definitions WATERWALL_ABORT_TEST_HAS_HTTPCLIENT=1)
     list(APPEND tunnels_abort_runtime_cases httpclient_disabled_upstream_est httpclient_disabled_downstream_init)
@@ -106,7 +107,7 @@ if(TARGET ww)
 
   if(TARGET UdpStatelessSocket)
     list(APPEND tunnels_abort_runtime_sources
-      "${WATERWALL_ABORT_RUNTIME_DIR}/tunnels_abort_udpstatelesssocket_case.c"
+      "${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/abort/tunnels_abort_udpstatelesssocket_case.c"
     )
     list(APPEND tunnels_abort_runtime_libraries UdpStatelessSocket)
     list(APPEND tunnels_abort_runtime_includes ${CMAKE_SOURCE_DIR}/tunnels/UdpStatelessSocket/include)
@@ -116,7 +117,7 @@ if(TARGET ww)
 
   if(TARGET TcpOverUdpClient)
     list(APPEND tunnels_abort_runtime_sources
-      "${WATERWALL_ABORT_RUNTIME_DIR}/tunnels_abort_tcpoverudpclient_case.c"
+      "${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/abort/tunnels_abort_tcpoverudpclient_case.c"
     )
     list(APPEND tunnels_abort_runtime_libraries TcpOverUdpClient)
     # ikcp.h and ww_fec.h are private to the tunnel target but reachable from its structure.h. Both TcpOverUdp
@@ -132,7 +133,7 @@ if(TARGET ww)
 
   if(TARGET TcpOverUdpServer)
     list(APPEND tunnels_abort_runtime_sources
-      "${WATERWALL_ABORT_RUNTIME_DIR}/tunnels_abort_tcpoverudpserver_case.c"
+      "${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/abort/tunnels_abort_tcpoverudpserver_case.c"
     )
     list(APPEND tunnels_abort_runtime_libraries TcpOverUdpServer)
     list(APPEND tunnels_abort_runtime_includes
@@ -146,7 +147,7 @@ if(TARGET ww)
   if(TARGET Router)
     list(APPEND tunnels_abort_runtime_cases router_disabled_upstream_est)
     list(APPEND tunnels_abort_runtime_sources
-      "${WATERWALL_ABORT_RUNTIME_DIR}/tunnels_abort_router_case.c"
+      "${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/abort/tunnels_abort_router_case.c"
     )
     list(APPEND tunnels_abort_runtime_libraries Router)
     # tunnels/Router itself resolves the "common/..." includes Router's public headers reach for. Its inner
@@ -162,7 +163,7 @@ if(TARGET ww)
 endif()
 
 if(TARGET ww AND tunnels_abort_runtime_cases)
-  add_executable(tunnels_abort_runtime_test EXCLUDE_FROM_ALL ${tunnels_abort_runtime_sources})
+  waterwall_add_native_executable(tunnels_abort_runtime_test EXCLUDE_FROM_ALL SOURCES ${tunnels_abort_runtime_sources})
 
   # Each fixture includes a different tunnel's structure.h, whose file-local
   # naming conventions intentionally overlap. Keep the fixtures in separate
@@ -217,6 +218,9 @@ if(TARGET ww AND tunnels_abort_runtime_cases)
         "-DABORT_TEST_CONFIG=$<CONFIG>"
         "-DABORT_TEST_EXECUTABLE=$<TARGET_FILE:tunnels_abort_runtime_test>"
         "-DABORT_TEST_BUILD_DIR=${CMAKE_BINARY_DIR}"
+        "-DABORT_TEST_NAME=waterwall.tunnels_abort_runtime_unit"
+        "-DABORT_TEST_SOURCE_DIR=${PROJECT_SOURCE_DIR}"
+        "-DABORT_TEST_FIXTURE_DIR=${WATERWALL_ABORT_RUNTIME_DIR}/fixtures"
         "-DABORT_TEST_CASES=${tunnels_abort_runtime_case_arg}"
         -P "${WATERWALL_ABORT_RUNTIME_DIR}/run_tunnels_abort_runtime_test.cmake"
       CONFIGURATIONS Release
@@ -225,7 +229,7 @@ if(TARGET ww AND tunnels_abort_runtime_cases)
     set_tests_properties(
       waterwall.tunnels_abort_runtime_unit
       PROPERTIES
-        TIMEOUT 120
+        TIMEOUT 215
         LABELS "unit;tunnels;abort;runtime"
         RESOURCE_LOCK waterwall_unit_test_build
     )

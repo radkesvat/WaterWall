@@ -1,0 +1,468 @@
+/*
+ * Covers: Verifies the Linux NFQUEUE netlink parser with synthetic messages, including capture-length
+ * byte order, malformed attributes, payload cursor exposure, and truncated-prefix packet-id recovery.
+ * Setup: The included implementation/API and the deterministic inputs shown below; no integration
+ * topology is implied.
+ * Cases: testValidPayload, testExposePayloadView, testCaptureLengthDiscard,
+ * testPayloadAbovePolicyDiscarded, testDuplicateAttributesRejected, testShortAttributesRejected,
+ * testMalformedBoundsRejected, testCaptureLengthLessThanPayloadRejected; the driver lists the remaining
+ * cases
+ * Checks: Assertion labels include: builder overflow; valid payload was not accepted; valid payload did not
+ * expose packet id; packet id byte order changed
+ * Limits: Platform/feature branches remain conditional. Component fixtures do not establish host-network
+ * or application-throughput behavior.
+ * CTest: waterwall.capture_linux_nfqueue_unit
+ */
+#include "wwapi.h"
+
+#include "test_assert.h"
+
+#define require(condition, message) TEST_REQUIRE(TEST_FAILURE_EXIT, condition, message)
+
+#include "devices/capture/capture_linux_checksum.h"
+#include "devices/capture/capture_linux_internal.h"
+#include "devices/device_packet_checksum.h"
+
+#include <arpa/inet.h>
+#include <linux/netfilter/nfnetlink.h>
+#include <linux/netfilter/nfnetlink_queue.h>
+#include <linux/netlink.h>
+#include <sys/socket.h>
+
+enum
+{
+    kTestPacketId = 0x10203040U
+};
+
+typedef struct nfqueue_message_builder_s
+{
+    uint8_t         *data;
+    size_t           capacity;
+    struct nlmsghdr *nlh;
+} nfqueue_message_builder_t;
+
+
+static size_t nfqueueAttrOffset(void)
+{
+    return (size_t) NLMSG_HDRLEN + (size_t) NLMSG_ALIGN(sizeof(struct nfgenmsg));
+}
+
+static void nfqueueBuilderInit(nfqueue_message_builder_t *builder, uint8_t *data, size_t capacity)
+{
+    memoryZero(data, capacity);
+    builder->data     = data;
+    builder->capacity = capacity;
+    builder->nlh      = (struct nlmsghdr *) data;
+
+    builder->nlh->nlmsg_len   = (uint32_t) NLMSG_LENGTH(sizeof(struct nfgenmsg));
+    builder->nlh->nlmsg_type  = (uint16_t) ((NFNL_SUBSYS_QUEUE << 8) | NFQNL_MSG_PACKET);
+    builder->nlh->nlmsg_flags = 0;
+    builder->nlh->nlmsg_seq   = 0;
+    builder->nlh->nlmsg_pid   = 0;
+
+    struct nfgenmsg *gen = (struct nfgenmsg *) NLMSG_DATA(builder->nlh);
+    gen->nfgen_family    = AF_UNSPEC;
+    gen->version         = NFNETLINK_V0;
+    gen->res_id          = 0;
+}
+
+static struct nfattr *nfqueueBuilderAppendAttr(nfqueue_message_builder_t *builder, uint16_t type, const void *payload,
+                                               uint16_t payload_len)
+{
+    size_t offset     = (size_t) NLMSG_ALIGN(builder->nlh->nlmsg_len);
+    size_t attr_len   = (size_t) NFA_LENGTH(payload_len);
+    size_t attr_space = (size_t) NFA_ALIGN(attr_len);
+
+    require(offset <= builder->capacity && attr_space <= builder->capacity - offset, "builder overflow");
+
+    struct nfattr *attr = (struct nfattr *) (void *) (builder->data + offset);
+    memoryZero(attr, attr_space);
+    attr->nfa_type = type;
+    attr->nfa_len  = (uint16_t) attr_len;
+    if (payload_len > 0 && payload != NULL)
+    {
+        memoryCopy(NFA_DATA(attr), payload, payload_len);
+    }
+
+    builder->nlh->nlmsg_len = (uint32_t) (offset + attr_space);
+    return attr;
+}
+
+static void fillPayload(uint8_t *payload, uint32_t len)
+{
+    for (uint32_t i = 0; i < len; ++i)
+    {
+        payload[i] = (uint8_t) ((i * 17U) + 3U);
+    }
+}
+
+static struct nfattr *nfqueueBuilderAppendPacketHeader(nfqueue_message_builder_t *builder)
+{
+    struct nfqnl_msg_packet_hdr packet_hdr;
+    memoryZero(&packet_hdr, sizeof(packet_hdr));
+    packet_hdr.packet_id   = htonl(kTestPacketId);
+    packet_hdr.hw_protocol = htons(0x0800U);
+    packet_hdr.hook        = 0;
+
+    return nfqueueBuilderAppendAttr(builder, NFQA_PACKET_HDR, &packet_hdr, (uint16_t) sizeof(packet_hdr));
+}
+
+static struct nfattr *nfqueueBuilderAppendPayload(nfqueue_message_builder_t *builder, const uint8_t *payload,
+                                                  uint16_t payload_len)
+{
+    return nfqueueBuilderAppendAttr(builder, NFQA_PAYLOAD, payload, payload_len);
+}
+
+static struct nfattr *nfqueueBuilderAppendCaptureLength(nfqueue_message_builder_t *builder, uint32_t cap_len)
+{
+    uint32_t wire_cap_len = htonl(cap_len);
+    return nfqueueBuilderAppendAttr(builder, NFQA_CAP_LEN, &wire_cap_len, (uint16_t) sizeof(wire_cap_len));
+}
+
+static size_t nfqueueBuilderLen(const nfqueue_message_builder_t *builder)
+{
+    return (size_t) builder->nlh->nlmsg_len;
+}
+
+static netfilter_packet_parse_result_t parseBuilt(nfqueue_message_builder_t *builder, netfilter_packet_view_t *view)
+{
+    return captureLinuxNetfilterParsePacket(builder->data, nfqueueBuilderLen(builder), view);
+}
+
+static void testValidPayload(uint32_t payload_len)
+{
+    uint8_t                   message[kCaptureLinuxNetfilterReadBufferSize];
+    uint8_t                   payload[kMaxAllowedPacketLength];
+    nfqueue_message_builder_t builder;
+    netfilter_packet_view_t   view;
+
+    fillPayload(payload, payload_len);
+    nfqueueBuilderInit(&builder, message, sizeof(message));
+    nfqueueBuilderAppendPacketHeader(&builder);
+    nfqueueBuilderAppendPayload(&builder, payload, (uint16_t) payload_len);
+
+    require(parseBuilt(&builder, &view) == kNetfilterPacketParseReady, "valid payload was not accepted");
+    require(view.has_packet_id, "valid payload did not expose packet id");
+    require(view.packet_id == htonl(kTestPacketId), "packet id byte order changed");
+    require(! view.has_capture_length, "ordinary packet unexpectedly had capture length");
+    require(view.payload_length == payload_len, "valid payload length mismatch");
+    require(memoryCompare(view.payload, payload, payload_len) == 0, "valid payload bytes changed");
+}
+
+static void testExposePayloadView(void)
+{
+    uint8_t                   payload[64];
+    nfqueue_message_builder_t builder;
+    netfilter_packet_view_t   view;
+    sbuf_t                   *buf = sbufCreate(kCaptureLinuxNetfilterReadBufferSize);
+
+    fillPayload(payload, sizeof(payload));
+    nfqueueBuilderInit(&builder, sbufGetMutablePtr(buf), sbufGetMaximumWriteableSize(buf));
+    nfqueueBuilderAppendPacketHeader(&builder);
+    nfqueueBuilderAppendPayload(&builder, payload, (uint16_t) sizeof(payload));
+
+    require(parseBuilt(&builder, &view) == kNetfilterPacketParseReady, "sbuf view packet was not accepted");
+    captureLinuxNetfilterExposePacket(buf, builder.data, &view);
+    require(sbufGetRawPtr(buf) == view.payload, "sbuf cursor does not point at payload");
+    require(sbufGetLength(buf) == sizeof(payload), "sbuf payload length mismatch");
+    require(memoryCompare(sbufGetRawPtr(buf), payload, sizeof(payload)) == 0, "sbuf payload bytes changed");
+
+    sbufDestroy(buf);
+}
+
+static void testCaptureLengthDiscard(uint32_t cap_len)
+{
+    uint8_t                   message[kCaptureLinuxNetfilterReadBufferSize];
+    uint8_t                   payload[kMaxAllowedPacketLength];
+    nfqueue_message_builder_t builder;
+    netfilter_packet_view_t   view;
+
+    fillPayload(payload, sizeof(payload));
+    nfqueueBuilderInit(&builder, message, sizeof(message));
+    nfqueueBuilderAppendPacketHeader(&builder);
+    nfqueueBuilderAppendPayload(&builder, payload, (uint16_t) sizeof(payload));
+    nfqueueBuilderAppendCaptureLength(&builder, cap_len);
+
+    require(parseBuilt(&builder, &view) == kNetfilterPacketParseDiscarded, "capture length was not discarded");
+    require(view.has_capture_length, "discarded capture length was not decoded");
+    require(view.capture_length == cap_len, "capture length was not decoded with ntohl");
+}
+
+static void testPayloadAbovePolicyDiscarded(void)
+{
+    uint8_t                   message[kCaptureLinuxNetfilterReadBufferSize];
+    uint8_t                   payload[kMaxAllowedPacketLength + 1U];
+    nfqueue_message_builder_t builder;
+    netfilter_packet_view_t   view;
+
+    fillPayload(payload, sizeof(payload));
+    nfqueueBuilderInit(&builder, message, sizeof(message));
+    nfqueueBuilderAppendPacketHeader(&builder);
+    nfqueueBuilderAppendPayload(&builder, payload, (uint16_t) sizeof(payload));
+
+    require(parseBuilt(&builder, &view) == kNetfilterPacketParseDiscarded,
+            "payload above packet policy was not discarded");
+}
+
+static void testDuplicateAttributesRejected(void)
+{
+    uint8_t                   message[kCaptureLinuxNetfilterReadBufferSize];
+    uint8_t                   payload[16];
+    nfqueue_message_builder_t builder;
+    netfilter_packet_view_t   view;
+
+    fillPayload(payload, sizeof(payload));
+
+    nfqueueBuilderInit(&builder, message, sizeof(message));
+    nfqueueBuilderAppendPacketHeader(&builder);
+    nfqueueBuilderAppendPacketHeader(&builder);
+    nfqueueBuilderAppendPayload(&builder, payload, (uint16_t) sizeof(payload));
+    require(parseBuilt(&builder, &view) == kNetfilterPacketParseMalformed, "duplicate packet header accepted");
+    require(view.has_packet_id, "duplicate packet header lost the first packet id");
+
+    nfqueueBuilderInit(&builder, message, sizeof(message));
+    nfqueueBuilderAppendPacketHeader(&builder);
+    nfqueueBuilderAppendPayload(&builder, payload, (uint16_t) sizeof(payload));
+    nfqueueBuilderAppendPayload(&builder, payload, (uint16_t) sizeof(payload));
+    require(parseBuilt(&builder, &view) == kNetfilterPacketParseMalformed, "duplicate payload accepted");
+    require(view.has_packet_id, "duplicate payload lost packet id");
+
+    nfqueueBuilderInit(&builder, message, sizeof(message));
+    nfqueueBuilderAppendPacketHeader(&builder);
+    nfqueueBuilderAppendPayload(&builder, payload, (uint16_t) sizeof(payload));
+    nfqueueBuilderAppendCaptureLength(&builder, sizeof(payload));
+    nfqueueBuilderAppendCaptureLength(&builder, sizeof(payload));
+    require(parseBuilt(&builder, &view) == kNetfilterPacketParseMalformed, "duplicate capture length accepted");
+    require(view.has_packet_id, "duplicate capture length lost packet id");
+}
+
+static void testShortAttributesRejected(void)
+{
+    uint8_t                     message[kCaptureLinuxNetfilterReadBufferSize];
+    uint8_t                     payload[16];
+    nfqueue_message_builder_t   builder;
+    netfilter_packet_view_t     view;
+    struct nfqnl_msg_packet_hdr packet_hdr;
+    uint32_t                    cap_len = htonl((uint32_t) sizeof(payload));
+
+    fillPayload(payload, sizeof(payload));
+    memoryZero(&packet_hdr, sizeof(packet_hdr));
+    packet_hdr.packet_id = htonl(kTestPacketId);
+
+    nfqueueBuilderInit(&builder, message, sizeof(message));
+    nfqueueBuilderAppendAttr(&builder, NFQA_PACKET_HDR, &packet_hdr, (uint16_t) (sizeof(packet_hdr) - 1U));
+    nfqueueBuilderAppendPayload(&builder, payload, (uint16_t) sizeof(payload));
+    require(parseBuilt(&builder, &view) == kNetfilterPacketParseMalformed, "short packet header accepted");
+    require(! view.has_packet_id, "short packet header produced a packet id");
+
+    nfqueueBuilderInit(&builder, message, sizeof(message));
+    nfqueueBuilderAppendPacketHeader(&builder);
+    nfqueueBuilderAppendPayload(&builder, payload, (uint16_t) sizeof(payload));
+    nfqueueBuilderAppendAttr(&builder, NFQA_CAP_LEN, &cap_len, (uint16_t) (sizeof(cap_len) - 1U));
+    require(parseBuilt(&builder, &view) == kNetfilterPacketParseMalformed, "short capture length accepted");
+    require(view.has_packet_id, "short capture length lost packet id");
+}
+
+static void testMalformedBoundsRejected(void)
+{
+    uint8_t                   message[kCaptureLinuxNetfilterReadBufferSize];
+    uint8_t                   payload[16];
+    nfqueue_message_builder_t builder;
+    netfilter_packet_view_t   view;
+    struct nfattr            *payload_attr;
+    size_t                    original_len;
+
+    fillPayload(payload, sizeof(payload));
+
+    nfqueueBuilderInit(&builder, message, sizeof(message));
+    nfqueueBuilderAppendPacketHeader(&builder);
+    payload_attr          = nfqueueBuilderAppendPayload(&builder, payload, (uint16_t) sizeof(payload));
+    payload_attr->nfa_len = (uint16_t) NFA_LENGTH(200);
+    require(parseBuilt(&builder, &view) == kNetfilterPacketParseMalformed,
+            "attribute extending beyond message accepted");
+    require(view.has_packet_id, "oversized attribute lost packet id");
+
+    nfqueueBuilderInit(&builder, message, sizeof(message));
+    nfqueueBuilderAppendPacketHeader(&builder);
+    payload_attr           = nfqueueBuilderAppendPayload(&builder, payload, (uint16_t) sizeof(payload));
+    original_len           = nfqueueBuilderLen(&builder);
+    builder.nlh->nlmsg_len = (uint32_t) (original_len - 4U);
+    discard payload_attr;
+    require(parseBuilt(&builder, &view) == kNetfilterPacketParseMalformed,
+            "payload extending beyond nlmsg_len accepted");
+    require(view.has_packet_id, "short nlmsg_len lost packet id");
+
+    nfqueueBuilderInit(&builder, message, sizeof(message));
+    nfqueueBuilderAppendPacketHeader(&builder);
+    nfqueueBuilderAppendPayload(&builder, payload, (uint16_t) sizeof(payload));
+    builder.nlh->nlmsg_len += 2U;
+    require(parseBuilt(&builder, &view) == kNetfilterPacketParseMalformed, "trailing malformed bytes accepted");
+    require(view.has_packet_id, "trailing malformed bytes lost packet id");
+}
+
+static void testCaptureLengthLessThanPayloadRejected(void)
+{
+    uint8_t                   message[kCaptureLinuxNetfilterReadBufferSize];
+    uint8_t                   payload[32];
+    nfqueue_message_builder_t builder;
+    netfilter_packet_view_t   view;
+
+    fillPayload(payload, sizeof(payload));
+    nfqueueBuilderInit(&builder, message, sizeof(message));
+    nfqueueBuilderAppendPacketHeader(&builder);
+    nfqueueBuilderAppendPayload(&builder, payload, (uint16_t) sizeof(payload));
+    nfqueueBuilderAppendCaptureLength(&builder, 31U);
+
+    require(parseBuilt(&builder, &view) == kNetfilterPacketParseMalformed,
+            "capture length smaller than payload accepted");
+    require(view.has_packet_id, "cap_len < payload_len lost packet id");
+}
+
+static void testPrefixPacketIdRecovery(void)
+{
+    uint8_t                   message[kCaptureLinuxNetfilterReadBufferSize];
+    uint8_t                   payload[512];
+    nfqueue_message_builder_t builder;
+    uint32_t                  packet_id = 0;
+
+    fillPayload(payload, sizeof(payload));
+    nfqueueBuilderInit(&builder, message, sizeof(message));
+    nfqueueBuilderAppendPacketHeader(&builder);
+    nfqueueBuilderAppendPayload(&builder, payload, (uint16_t) sizeof(payload));
+    builder.nlh->nlmsg_len = kCaptureLinuxNetfilterReadBufferSize + 128U;
+
+    size_t complete_packet_header_prefix =
+        nfqueueAttrOffset() + (size_t) NFA_ALIGN(NFA_LENGTH(sizeof(struct nfqnl_msg_packet_hdr)));
+    require(captureLinuxNetfilterTryReadPacketIdFromPrefix(message, complete_packet_header_prefix, &packet_id),
+            "complete prefix did not recover packet id");
+    require(packet_id == htonl(kTestPacketId), "prefix packet id byte order changed");
+
+    packet_id = 0;
+    require(! captureLinuxNetfilterTryReadPacketIdFromPrefix(
+                message, nfqueueAttrOffset() + sizeof(struct nfattr) + 1U, &packet_id),
+            "incomplete packet header prefix produced a packet id");
+}
+
+static void makeIpv4Packet(uint8_t *packet, uint32_t length, uint8_t protocol)
+{
+    fillPayload(packet, length);
+    memoryZero(packet, 20);
+    packet[0] = 0x45;
+    packet[8] = 64;
+    packet[9] = protocol;
+    PUT_BE16(packet + 2, (uint16_t) length);
+    PUT_BE32(packet + 12, UINT32_C(0xC0000201));
+    PUT_BE32(packet + 16, UINT32_C(0xC0000202));
+}
+
+static void requirePacketPreserved(uint8_t *packet, uint32_t length, bool has_skb_info, uint32_t skb_info)
+{
+    uint8_t original[128];
+    require(length <= sizeof(original), "packet fixture exceeds snapshot storage");
+    memoryCopy(original, packet, length);
+    require(captureLinuxPreparePacket(packet, length, has_skb_info, skb_info),
+            "capture rejected opaque transport bytes or an invalid checksum");
+    require(memoryCompare(packet, original, length) == 0, "capture changed opaque packet bytes");
+}
+
+static void testOpaqueCapturePayload(void)
+{
+    uint8_t packet[64];
+    makeIpv4Packet(packet, sizeof(packet), IP_PROTO_TCP);
+    packet[32] = 0x50;
+    packet[33] = 0xFF; // Deliberately unusual TCP flags; checksums are invalid.
+    requirePacketPreserved(packet, sizeof(packet), false, 0);
+    requirePacketPreserved(packet, sizeof(packet), true, 0);
+    requirePacketPreserved(packet, sizeof(packet), false, NFQA_SKB_CSUMNOTREADY);
+
+    for (uint32_t i = 20; i < sizeof(packet); ++i)
+    {
+        packet[i] ^= 0xA5; // Includes the TCP data offset and checksum.
+    }
+    requirePacketPreserved(packet, sizeof(packet), true, 0);
+    requirePacketPreserved(packet, sizeof(packet), true, NFQA_SKB_CSUMNOTREADY);
+
+    makeIpv4Packet(packet, 21, IP_PROTO_TCP); // Too short to contain a TCP header.
+    requirePacketPreserved(packet, 21, true, 0);
+    requirePacketPreserved(packet, 21, true, NFQA_SKB_CSUMNOTREADY);
+
+    makeIpv4Packet(packet, sizeof(packet), IP_PROTO_UDP);
+    PUT_BE16(packet + 24, 1); // Deliberately invalid UDP length.
+    requirePacketPreserved(packet, sizeof(packet), false, 0);
+    requirePacketPreserved(packet, sizeof(packet), true, NFQA_SKB_CSUMNOTREADY);
+
+    makeIpv4Packet(packet, sizeof(packet), IP_PROTO_TCP);
+    packet[0] = 0x4F; // Bounded IPv4 options, followed by just four transport bytes.
+    requirePacketPreserved(packet, sizeof(packet), false, 0);
+
+    makeIpv4Packet(packet, sizeof(packet), IP_PROTO_TCP);
+    PUT_BE16(packet + 6, 0x2000); // Fragment validation belongs to the affinity layer.
+    requirePacketPreserved(packet, sizeof(packet), true, NFQA_SKB_CSUMNOTREADY);
+}
+
+static void testCaptureOffloadCompletion(void)
+{
+    uint8_t       packet[64];
+    const uint8_t protocols[] = {IP_PROTO_TCP, IP_PROTO_UDP};
+    for (size_t i = 0; i < sizeof(protocols) / sizeof(protocols[0]); ++i)
+    {
+        makeIpv4Packet(packet, sizeof(packet), protocols[i]);
+        if (protocols[i] == IP_PROTO_TCP)
+        {
+            packet[32] = 0x50;
+        }
+        else
+        {
+            PUT_BE16(packet + 24, sizeof(packet) - 20);
+        }
+        require(captureLinuxPreparePacket(packet, sizeof(packet), true, NFQA_SKB_CSUMNOTREADY),
+                "capture rejected a packet with pending kernel checksum offload");
+        const device_packet_checksum_validity_t validity = deviceIpv4ChecksumValidity(packet, sizeof(packet));
+        require(validity.ipv4 && (protocols[i] == IP_PROTO_TCP ? validity.tcp : validity.udp),
+                "capture failed to finish explicitly pending IPv4/transport checksum offload");
+    }
+}
+
+static void testCaptureIpv4Bounds(void)
+{
+    uint8_t packet[40];
+    makeIpv4Packet(packet, sizeof(packet), IP_PROTO_TCP);
+    require(! captureLinuxPreparePacket(packet, 19, false, 0), "capture accepted a short IPv4 header");
+    packet[0] = 0x65;
+    require(! captureLinuxPreparePacket(packet, sizeof(packet), false, 0), "capture accepted IPv6");
+    packet[0] = 0x44;
+    require(! captureLinuxPreparePacket(packet, sizeof(packet), false, 0), "capture accepted an undersized IHL");
+    packet[0] = 0x4F;
+    require(! captureLinuxPreparePacket(packet, sizeof(packet), false, 0), "capture accepted IHL beyond storage");
+    packet[0]                        = 0x45;
+    const uint16_t invalid_lengths[] = {19, sizeof(packet) - 1, sizeof(packet) + 1};
+    for (size_t i = 0; i < sizeof(invalid_lengths) / sizeof(invalid_lengths[0]); ++i)
+    {
+        PUT_BE16(packet + 2, invalid_lengths[i]);
+        require(! captureLinuxPreparePacket(packet, sizeof(packet), false, 0),
+                "capture accepted an inconsistent IPv4 total length");
+    }
+}
+
+int main(void)
+{
+    testCaseSet("capture_linux_nfqueue_test");
+    checkSumInit();
+    testValidPayload(1U);
+    testValidPayload(kMaxAllowedPacketLength - 1U);
+    testValidPayload(kMaxAllowedPacketLength);
+    testExposePayloadView();
+    testCaptureLengthDiscard(kMaxAllowedPacketLength + 1U);
+    testCaptureLengthDiscard(65536U);
+    testPayloadAbovePolicyDiscarded();
+    testDuplicateAttributesRejected();
+    testShortAttributesRejected();
+    testMalformedBoundsRejected();
+    testCaptureLengthLessThanPayloadRejected();
+    testPrefixPacketIdRecovery();
+    testOpaqueCapturePayload();
+    testCaptureOffloadCompletion();
+    testCaptureIpv4Bounds();
+
+    return 0;
+}

@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Exercise Linux TUN offload and raw-IP compatibility in an isolated namespace."""
+"""Real default-GSO versus explicitly disabled TUN, including frame limits, kernel wire comparison and
+TCP/MPTCP/MD5 paths. Namespace/veth/TUN/ioctl setup and independent packet checks stay local; fixed
+workloads/worker overrides and deadlines are unchanged. Requires Linux root/TUN/iproute2;
+unavailable prerequisites stay skip77. CTest: waterwall.tundevice_gso_live."""
 
 import errno
 import fcntl
@@ -12,9 +15,15 @@ import socket
 import struct
 import subprocess
 import sys
+from pathlib import Path
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.environ.get("WATERWALL_TEST_SUPPORT_DIR",
+                                str(Path(__file__).resolve().parents[2] / "support" / "python")))
+from wwtest.process import kill_and_reap
 
 
 TUN_NAME = "wwgsolive0"
@@ -314,31 +323,38 @@ def open_injector():
 class PeerNamespace:
     def __enter__(self):
         self.holder = subprocess.Popen(["unshare", "-n", "--", "sleep", "120"])
-        original = os.readlink("/proc/self/ns/net")
-        deadline = time.monotonic() + 3
-        while time.monotonic() < deadline:
-            if self.holder.poll() is not None:
-                raise RuntimeError("peer namespace holder exited")
-            if os.readlink(f"/proc/{self.holder.pid}/ns/net") != original:
-                break
-            time.sleep(0.01)
-        else:
-            raise RuntimeError("peer namespace was not entered")
+        try:
+            original = os.readlink("/proc/self/ns/net")
+            deadline = time.monotonic() + 3
+            while time.monotonic() < deadline:
+                if self.holder.poll() is not None:
+                    raise RuntimeError("peer namespace holder exited")
+                if os.readlink(f"/proc/{self.holder.pid}/ns/net") != original:
+                    break
+                time.sleep(0.01)
+            else:
+                raise RuntimeError("peer namespace was not entered")
 
-        run("ip", "link", "add", VETH_OUT, "type", "veth", "peer", "name", VETH_PEER)
-        run("ip", "link", "set", VETH_PEER, "netns", str(self.holder.pid))
-        run("ip", "addr", "add", f"{VETH_OUT_IP}/30", "dev", VETH_OUT)
-        run("ip", "link", "set", VETH_OUT, "up")
-        self.peer_run("ip", "link", "set", "lo", "up")
-        self.peer_run("ip", "addr", "add", f"{VETH_PEER_IP}/30", "dev", VETH_PEER)
-        self.peer_run("ip", "addr", "add", f"{DESTINATION_IP}/32", "dev", VETH_PEER)
-        self.peer_run("ip", "link", "set", VETH_PEER, "up")
-        self.peer_run("ip", "route", "add", f"{LOCAL_IP}/32", "via", VETH_OUT_IP, "dev", VETH_PEER)
-        run("ip", "route", "add", f"{DESTINATION_IP}/32", "via", VETH_PEER_IP, "dev", VETH_OUT,
-            "table", "100")
-        run("sysctl", "-qw", "net.ipv4.conf.all.rp_filter=0")
-        run("sysctl", "-qw", f"net.ipv4.conf.{VETH_OUT}.rp_filter=0")
-        return self
+            run("ip", "link", "add", VETH_OUT, "type", "veth", "peer", "name", VETH_PEER)
+            run("ip", "link", "set", VETH_PEER, "netns", str(self.holder.pid))
+            run("ip", "addr", "add", f"{VETH_OUT_IP}/30", "dev", VETH_OUT)
+            run("ip", "link", "set", VETH_OUT, "up")
+            self.peer_run("ip", "link", "set", "lo", "up")
+            self.peer_run("ip", "addr", "add", f"{VETH_PEER_IP}/30", "dev", VETH_PEER)
+            self.peer_run("ip", "addr", "add", f"{DESTINATION_IP}/32", "dev", VETH_PEER)
+            self.peer_run("ip", "link", "set", VETH_PEER, "up")
+            self.peer_run("ip", "route", "add", f"{LOCAL_IP}/32", "via", VETH_OUT_IP, "dev", VETH_PEER)
+            run("ip", "route", "add", f"{DESTINATION_IP}/32", "via", VETH_PEER_IP, "dev", VETH_OUT,
+                "table", "100")
+            run("sysctl", "-qw", "net.ipv4.conf.all.rp_filter=0")
+            run("sysctl", "-qw", f"net.ipv4.conf.{VETH_OUT}.rp_filter=0")
+            return self
+        except BaseException:
+            try:
+                kill_and_reap(self.holder)
+            except BaseException as cleanup_error:
+                print(f"Namespace cleanup also failed: {cleanup_error}", file=sys.stderr)
+            raise
 
     def peer_run(self, *args):
         run("nsenter", "-t", str(self.holder.pid), "-n", *args)
@@ -401,8 +417,7 @@ def transfer_tcp(peer, protocol, port, amount, capture_tun, md5=False, start_bar
     ready, _, _ = select.select([server.stdout], [], [], 5)
     if not ready or server.stdout.readline().strip() != "READY":
         stderr = server.stderr.read() if server.poll() is not None else "server did not announce readiness"
-        server.kill()
-        server.wait()
+        kill_and_reap(server)
         raise AssertionError(stderr)
     try:
         if start_barrier is not None:
@@ -436,8 +451,7 @@ def transfer_tcp(peer, protocol, port, amount, capture_tun, md5=False, start_bar
         raise
     finally:
         if server.poll() is None:
-            server.kill()
-            server.wait()
+            kill_and_reap(server)
 
     oversized = 0
     mptcp_seen = False

@@ -1,4 +1,15 @@
 #!/usr/bin/env python3
+"""Check TlsClient's direct transport-close behavior through a recording relay.
+
+The namespace probe runner starts the adjacent WaterWall listeners; this probe
+owns TLS 1.2 peers with local certificates and relays that capture wire records.
+Cases cover normal application close, peer close_notify while withholding TCP
+FIN, a corrupted server record, and certificate-verification failure. They check
+the expected response or prompt protected-side close, peer/relay completion, and
+absence of client TLS alert records. Coverage is deliberately TLS 1.2 and these
+four close paths, not general TLS interoperability or throughput.
+CTest: waterwall.tlsclient_direct_close_probe.
+"""
 
 import select
 import socket

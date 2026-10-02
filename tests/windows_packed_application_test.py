@@ -1,8 +1,8 @@
-"""Compare ordinary and packed Windows startup and an existing worker/TLS case.
-
-The TLS case is entirely in-process. Optional TCP coverage reuses the namespace
-harness's fixed loopback workload and requires an isolated/controlled runner.
-"""
+"""Ordinary versus packed startup/settings errors and existing in-process TLS/optional controlled TCP
+workload. Exact bytes/status/output equivalence, finalized size and worker success markers. Native
+Windows or explicit Wine runner; existing failure receipts, diagnostics copy and replay format
+remain local. CTest: waterwall.windows_packed_application (native Windows production)."""
+import sys
 import argparse
 from contextlib import contextmanager
 import json
@@ -11,7 +11,11 @@ import re
 from pathlib import Path
 import shutil
 import subprocess
-import tempfile
+
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.environ.get("WATERWALL_TEST_SUPPORT_DIR",
+                                str(Path(__file__).resolve().parent / "support" / "python")))
+from wwtest.run_directory import RunDirectory
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--launcher', type=Path, required=True)
@@ -33,7 +37,7 @@ assert metadata is not None and binaries[1].stat().st_size < int(metadata[1]), '
 
 @contextmanager
 def comparison_directory():
-    with tempfile.TemporaryDirectory(prefix='Waterwall application comparison ') as temporary:
+    with RunDirectory(prefix='Waterwall application comparison ') as temporary:
         try:
             yield Path(temporary)
         except BaseException:

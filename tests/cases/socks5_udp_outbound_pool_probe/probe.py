@@ -1,9 +1,21 @@
 #!/usr/bin/env python3
+"""SOCKS UDP outbound pooling preserves per-target association and domain replies. Namespace loopback
+targets/control streams; expected relay sources, payloads/ports and shutdown boundaries. Keeps
+original control-EOF failure and datagram readiness semantics. CTest:
+waterwall.socks5_udp_outbound_pool_probe."""
 
+import sys
+from pathlib import Path
+import os
 import socket
 import struct
 import threading
 import time
+
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.environ.get("WATERWALL_TEST_SUPPORT_DIR",
+                                str(Path(__file__).resolve().parents[2] / "support" / "python")))
+from wwtest.sockets import exact as read_exact
 
 HOST = "127.0.0.1"
 PROXY_PORT = 24710
@@ -18,13 +30,7 @@ def fail(message):
 
 
 def recv_exact(sock, length):
-    data = bytearray()
-    while len(data) < length:
-        chunk = sock.recv(length - len(data))
-        if not chunk:
-            fail("SOCKS control connection closed unexpectedly")
-        data.extend(chunk)
-    return bytes(data)
+    return read_exact(sock, length, timeout_context=False, eof_error=lambda: fail('SOCKS control connection closed unexpectedly'))
 
 
 def connect_with_retry():

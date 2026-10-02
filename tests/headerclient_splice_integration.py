@@ -1,30 +1,37 @@
 #!/usr/bin/env python3
-"""HeaderClient TCP bytes against an external PROXY-aware peer, inside the namespace harness."""
+"""HeaderClient emits exact PROXY TCP4 prefix before a 1MiB upload and reverse echo. One worker and
+loopback socket peer, both splice settings, EOF and shutdown143; namespace only. The read cap65536
+and raw timeout semantics are preserved; this case does not use strace. CTest:
+waterwall.headerclient_tcp_splice_false, waterwall.headerclient_tcp_splice_true."""
 import concurrent.futures
 import json
 from pathlib import Path
 import signal
 import socket
-import subprocess
 import sys
-import tempfile
+import os
 import time
+
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.environ.get("WATERWALL_TEST_SUPPORT_DIR",
+                                str(Path(__file__).resolve().parent / "support" / "python")))
+from wwtest.sockets import configure_listener, connect_when_ready
+from wwtest.config import core_config
+from wwtest.sockets import exact as read_exact
+from wwtest.run_directory import RunDirectory
+from wwtest.process import Process, close_on_error, install_termination_handler
+
+
 
 
 def receive_exact(sock, size):
-    chunks = bytearray()
-    while len(chunks) < size:
-        chunk = sock.recv(min(65536, size - len(chunks)))
-        if not chunk:
-            raise AssertionError(f"EOF after {len(chunks)} of {size} bytes")
-        chunks.extend(chunk)
-    return bytes(chunks)
+    return read_exact(sock, size, max_chunk=65536, timeout_context=False)
 
 
 def run(binary, enabled):
     payload = bytes(range(256)) * 4096
     response = payload[::-1]
-    with tempfile.TemporaryDirectory(prefix="waterwall-header-splice-") as directory:
+    with RunDirectory("waterwall-header-splice-") as directory:
         root = Path(directory)
         nodes = [
             {"name": "listen", "type": "TcpListener", "next": "header",
@@ -36,30 +43,17 @@ def run(binary, enabled):
         ]
         (root / "config.json").write_text(json.dumps({"name": "header-splice", "nodes": nodes}))
         (root / "core.json").write_text(json.dumps({
-            "log": {"path": "log/", **{name: {"loglevel": "DEBUG", "file": name + ".log", "console": True}
-                                      for name in ("internal", "core", "network", "dns")}},
+            "log": core_config()["log"],
             "configs": ["config.json"],
             "misc": {"workers": 1, "splice": enabled, "ram-profile": "minimal", "mtu": 1500,
                      "try-enabling-bbr": False},
         }))
         with socket.socket() as listener, (root / "stdout.log").open("w+") as log:
-            listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            listener.bind(("127.0.0.1", 27942))
-            listener.listen()
-            listener.settimeout(15)
-            process = subprocess.Popen([binary], cwd=root, stdout=log, stderr=subprocess.STDOUT)
-            try:
+            configure_listener(listener, ('127.0.0.1', 27942), timeout=15)
+            with Process([binary], cwd=root, log=log) as process:
                 deadline = time.monotonic() + 10
-                while True:
-                    if process.poll() is not None:
-                        raise AssertionError(f"WaterWall startup exited {process.returncode}")
-                    try:
-                        client = socket.create_connection(("127.0.0.1", 27941), timeout=1)
-                        break
-                    except ConnectionRefusedError:
-                        if time.monotonic() >= deadline:
-                            raise
-                        time.sleep(0.02)
+                client = connect_when_ready(process, ('127.0.0.1', 27941), deadline=deadline,
+                    failure=lambda: AssertionError(f'WaterWall startup exited {process.returncode}'), timeout=1, pause=0.02)
                 with client:
                     client.settimeout(15)
                     source_port = client.getsockname()[1]
@@ -74,7 +68,7 @@ def run(binary, enabled):
                             # Keep the peer open until the client has consumed all response bytes.
                             assert conn.recv(1) == b"", "unexpected bytes after payload"
 
-                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor, close_on_error(client):
                         result = executor.submit(peer)
                         client.sendall(payload)
                         assert receive_exact(client, len(response)) == response, "downstream bytes differ"
@@ -82,16 +76,9 @@ def run(binary, enabled):
                         result.result(timeout=20)
                 process.send_signal(signal.SIGTERM)
                 assert process.wait(timeout=10) == 128 + signal.SIGTERM, "unclean WaterWall shutdown"
-            except BaseException:
-                log.flush()
-                print((root / "stdout.log").read_text(), file=sys.stderr)
-                raise
-            finally:
-                if process.poll() is None:
-                    process.kill()
-                    process.wait()
 
 
 if __name__ == "__main__":
+    install_termination_handler()
     run(str(Path(sys.argv[1]).resolve()), sys.argv[2] == "true")
     print("HeaderClient bidirectional TCP integrity and orderly shutdown passed")

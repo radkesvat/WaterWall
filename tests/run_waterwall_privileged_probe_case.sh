@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
 
+# Privileged TUN preflight for the waterwall.socket_manager_*_tun CTest probes.
+# Run inside the registered private network namespace: checks require Linux,
+# root, /dev/net/tun, iproute2 and successful TUN creation, otherwise exit 77.
+# Cleans the preflight and configured TUN names, then delegates runtime/probe
+# execution, artifacts and the verdict to run_waterwall_probe_case.sh.
+
 set -euo pipefail
 
 readonly SKIP_STATUS=77

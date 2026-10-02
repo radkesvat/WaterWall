@@ -1,19 +1,29 @@
 #!/usr/bin/env python3
-"""ReverseServer pairing and splice transfers with namespace-isolated socket peers."""
+"""Waiting users pair with authenticated reverse peers, including cross-worker pairing. Fixed
+secret/handshake bytes, replay/opaque echo and a retained unpaired half during shutdown143; endpoint
+splice in both modes. Requires strace/network namespaces. CTest:
+waterwall.reverseserver_workers_1_splice_false, waterwall.reverseserver_workers_1_splice_true,
+waterwall.reverseserver_workers_2_splice_false, waterwall.reverseserver_workers_2_splice_true."""
 import json
 from pathlib import Path
 import re
 import shutil
 import signal
 import socket
-import subprocess
 import sys
-import tempfile
+import os
 import time
 
 sys.dont_write_bytecode = True
-from trojanclient_splice_integration import exact
-from httpproxyserver_splice_integration import successful_calls
+sys.path.insert(0, os.environ.get("WATERWALL_TEST_SUPPORT_DIR",
+                                str(Path(__file__).resolve().parent / "support" / "python")))
+from wwtest.sockets import connect_when_ready
+from wwtest.config import core_config
+from wwtest.run_directory import RunDirectory
+from wwtest.process import Process, close_on_error, install_termination_handler
+
+from wwtest.sockets import exact
+from wwtest.trace import successful_calls
 
 
 def run(binary, workers, enabled):
@@ -24,7 +34,7 @@ def run(binary, workers, enabled):
     secret = settings.get("reverse-secret", "").encode()
     handshake = bytes(0xff ^ (secret[i % len(secret)] if secret else 0)
                       for i in range(settings.get("reverse-secret-length", 640)))
-    with tempfile.TemporaryDirectory(prefix="waterwall-reverse-splice-") as directory:
+    with RunDirectory("waterwall-reverse-splice-") as directory:
         root = Path(directory)
         nodes = [
             {"name": "peers", "type": "TcpListener", "next": "reverse",
@@ -38,27 +48,15 @@ def run(binary, workers, enabled):
         (root / "config.json").write_text(json.dumps({"name": "reverse-splice", "nodes": nodes}))
         (root / "core.json").write_text(json.dumps({
             "configs": ["config.json"],
-            "log": {"path": "log/", **{name: {"loglevel": "DEBUG", "file": name + ".log", "console": True}
-                                      for name in ("internal", "core", "network", "dns")}},
+            "log": core_config()["log"],
             "misc": {"workers": workers, "splice": enabled, "ram-profile": "minimal", "mtu": 1500,
                      "try-enabling-bbr": False, "tcp-tune": False},
         }))
         with (root / "stdout.log").open("w+") as log:
-            process = subprocess.Popen([tracer, "-D", "-f", "-yy", "-e", "trace=splice", "-o",
-                                        str(root / "splice.log"), binary], cwd=root,
-                                       stdout=log, stderr=subprocess.STDOUT)
-            try:
+            with Process([tracer, '-D', '-f', '-yy', '-e', 'trace=splice', '-o', str(root / 'splice.log'), binary], cwd=root, log=log) as process:
                 deadline = time.monotonic() + 10
-                while True:
-                    if process.poll() is not None:
-                        raise AssertionError("WaterWall exited during startup")
-                    try:
-                        client = socket.create_connection(("127.0.0.1", 27982), timeout=1)
-                        break
-                    except ConnectionRefusedError:
-                        if time.monotonic() >= deadline:
-                            raise
-                        time.sleep(.02)
+                client = connect_when_ready(process, ('127.0.0.1', 27982), deadline=deadline,
+                    failure=lambda: AssertionError('WaterWall exited during startup'), timeout=1, pause=0.02)
                 with client:
                     client.settimeout(15)
                     client.sendall(b"local-first")
@@ -101,16 +99,9 @@ def run(binary, workers, enabled):
                     assert any("127.0.0.1:27982->" in call for call in outputs), "local user writes did not splice"
                 else:
                     assert not calls, "splice occurred with misc.splice disabled"
-            except BaseException:
-                log.flush()
-                print((root / "stdout.log").read_text(), file=sys.stderr)
-                raise
-            finally:
-                if process.poll() is None:
-                    process.kill()
-                    process.wait()
 
 
 if __name__ == "__main__":
+    install_termination_handler()
     run(str(Path(sys.argv[1]).resolve()), int(sys.argv[2]), sys.argv[3] == "true")
     print("ReverseServer waiting, pairing, splice and shutdown passed")

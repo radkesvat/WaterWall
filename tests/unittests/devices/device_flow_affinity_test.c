@@ -1,0 +1,1220 @@
+/*
+ * Covers: device flow affinity; the explicit inputs, callbacks and expected results below define this
+ * suite.
+ * Setup: Real implementation entry points with the explicit substituted OS/allocation/timer boundary
+ * shown below.
+ * Cases: testIpv4SymmetryAndFragments, testIpv6Symmetry, testMalformedPacketsAndSingleWorker,
+ * testDeclaredLengthIsEnforced, testPortlessProtocolsAreStableAndSymmetric,
+ * testWidIsHashModuloWorkerCount, testBalancedDistribution, testBucketedDispatch; the driver lists the
+ * remaining cases
+ * Checks: Assertion labels include: tracked-resource array overflow; a mixed-worker refusal buffer was
+ * returned more than once; captured-post array overflow; captured buffer bucket is too large
+ * Limits: Platform/feature branches remain conditional. Component fixtures do not establish host-network
+ * or application-throughput behavior.
+ * CTest: waterwall.device_flow_affinity_unit
+ * Organization: Flow hashing and bucketed dispatch use one packet builder and tracked-publication
+ * oracle. Dispatch cases extend the same worker-affinity result through admission/refusal boundaries.
+ */
+#include "devices/device_flow_affinity.h"
+
+#include "test_assert.h"
+
+#define require(condition, message) TEST_REQUIRE(TEST_FAILURE_EXIT, condition, message)
+#include "fixtures/worker_registry_fixture.h"
+#include "wwapi.h"
+
+#ifdef DEVICE_FLOW_AFFINITY_TEST_WIREGUARD
+#include "WireGuardDevice/structure.h"
+#endif
+
+/*
+ * Fake worker table for the stubbed GSTATE below. Without it the identity
+ * predicates correctly report "not an event worker" and the checked
+ * current-worker accessors reject this test.
+ */
+static test_worker_registry_t g_test_worker_registry;
+
+enum
+{
+    kMaxCapturedPosts   = 256,
+    kMaxCapturedBuffers = 512
+};
+
+typedef struct captured_post_s
+{
+    wid_t        wid;
+    unsigned int          count;
+    sbuf_t               *bufs[kMaxCapturedBuffers];
+    size_t                charges[kMaxCapturedBuffers];
+    bool                  reserved;
+    DeviceReaderPrepareFn prepare;
+} captured_post_t;
+
+static captured_post_t captured_posts[kMaxCapturedPosts];
+static unsigned int    captured_post_count;
+static int             refused_post_index = -1;
+static unsigned int    post_attempt_count;
+static size_t          released_reserved_charge;
+static unsigned int    released_reserved_packets;
+
+#ifdef DEVICE_FLOW_AFFINITY_TEST_TRACKING
+typedef struct tracked_resource_s
+{
+    sbuf_t      *buf;
+    unsigned int reuse_count;
+} tracked_resource_t;
+
+static tracked_resource_t tracked_resources[kMaxCapturedBuffers];
+static unsigned int       tracked_resource_count;
+static buffer_pool_t     *tracked_reuse_pool;
+
+void                          __real_bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *buf);
+void                          __wrap_bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *buf);
+device_frag_affinity_action_t __real_deviceFragAffinityOffer(device_frag_affinity_table_t *table, const uint8_t *packet,
+                                                             uint32_t length, sbuf_t *buf,
+                                                             device_frag_affinity_result_t *out);
+device_frag_affinity_action_t __wrap_deviceFragAffinityOffer(device_frag_affinity_table_t *table, const uint8_t *packet,
+                                                             uint32_t length, sbuf_t *buf,
+                                                             device_frag_affinity_result_t *out);
+#endif
+
+
+#ifdef DEVICE_FLOW_AFFINITY_TEST_TRACKING
+static tracked_resource_t *findTrackedResourceByBuffer(sbuf_t *buf)
+{
+    for (unsigned int i = 0; i < tracked_resource_count; ++i)
+    {
+        if (tracked_resources[i].buf == buf)
+        {
+            return &tracked_resources[i];
+        }
+    }
+    return NULL;
+}
+
+static void trackResource(sbuf_t *buf)
+{
+    if (tracked_reuse_pool == NULL || findTrackedResourceByBuffer(buf) != NULL)
+    {
+        return;
+    }
+
+    require(tracked_resource_count < ARRAY_SIZE(tracked_resources), "tracked-resource array overflow");
+    tracked_resources[tracked_resource_count++] = (tracked_resource_t) {
+        .buf = buf,
+    };
+}
+
+static void resetResourceTracking(buffer_pool_t *pool)
+{
+    memoryZero(tracked_resources, sizeof(tracked_resources));
+    tracked_resource_count = 0;
+    tracked_reuse_pool     = pool;
+}
+
+void __wrap_bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *buf)
+{
+    if (pool == tracked_reuse_pool)
+    {
+        tracked_resource_t *tracked = findTrackedResourceByBuffer(buf);
+        if (tracked != NULL)
+        {
+            ++tracked->reuse_count;
+            require(tracked->reuse_count == 1, "a mixed-worker refusal buffer was returned more than once");
+        }
+    }
+    __real_bufferpoolReuseBuffer(pool, buf);
+}
+
+device_frag_affinity_action_t __wrap_deviceFragAffinityOffer(device_frag_affinity_table_t *table, const uint8_t *packet,
+                                                             uint32_t length, sbuf_t *buf,
+                                                             device_frag_affinity_result_t *out)
+{
+    const device_frag_affinity_action_t action = __real_deviceFragAffinityOffer(table, packet, length, buf, out);
+    if (action == kDeviceFragAffinityDispatch && out != NULL)
+    {
+        trackResource(buf);
+    }
+    return action;
+}
+#else
+static void trackResource(sbuf_t *buf)
+{
+    discard buf;
+}
+
+static void resetResourceTracking(buffer_pool_t *pool)
+{
+    discard pool;
+}
+#endif
+
+static bool capturePost(wid_t target_wid, sbuf_t **bufs, unsigned int count)
+{
+    require(captured_post_count < kMaxCapturedPosts, "captured-post array overflow");
+    require(count <= kMaxCapturedBuffers, "captured buffer bucket is too large");
+
+    captured_post_t *post = &captured_posts[captured_post_count++];
+    post->wid             = target_wid;
+    post->count           = count;
+    for (unsigned int i = 0; i < count; ++i)
+    {
+        post->bufs[i]         = bufs[i];
+        trackResource(post->bufs[i]);
+    }
+    return true;
+}
+
+bool deviceReaderSessionPost(device_reader_session_t *session, wid_t target_wid, sbuf_t **bufs, unsigned int count)
+{
+    for (unsigned i = 0; i < count; ++i)
+        trackResource(bufs[i]);
+    if (refused_post_index >= 0 && post_attempt_count++ == (unsigned) refused_post_index)
+    {
+        for (unsigned i = 0; i < count; ++i)
+            bufferpoolReuseBuffer(session->reader_buffer_pool, bufs[i]);
+        return false;
+    }
+    return capturePost(target_wid, bufs, count);
+}
+
+void deviceReaderSessionReleaseOutput(device_reader_session_t *session, size_t exact_charge)
+{
+    discard session;
+    released_reserved_charge += exact_charge;
+    released_reserved_packets++;
+}
+
+bool deviceReaderSessionPostReserved(device_reader_session_t *session, wid_t target_wid, sbuf_t **bufs,
+                                     const size_t *charges, unsigned int count, DeviceReaderPrepareFn prepare)
+{
+    for (unsigned int i = 0; i < count; ++i)
+    {
+        require(charges[i] == sbufGetAllocationCharge(bufs[i]), "GSO dispatch changed a packet's reservation charge");
+    }
+    if (! deviceReaderSessionPost(session, target_wid, bufs, count))
+    {
+        for (unsigned int i = 0; i < count; ++i)
+        {
+            deviceReaderSessionReleaseOutput(session, charges[i]);
+        }
+        return false;
+    }
+    captured_post_t *post = &captured_posts[captured_post_count - 1];
+    post->reserved        = true;
+    post->prepare         = prepare;
+    for (unsigned int i = 0; i < count; ++i)
+    {
+        post->charges[i] = charges[i];
+    }
+    return true;
+}
+
+static void prepareGsoProbe(sbuf_t *buf)
+{
+    discard buf;
+}
+
+void deviceReaderSessionEnd(device_reader_session_t *session)
+{
+    discard session;
+}
+
+static sbuf_t *makeIpv4Packet(uint32_t src, uint16_t src_port, uint32_t dst, uint16_t dst_port, uint8_t proto,
+                              uint16_t fragment_offset)
+{
+    uint32_t packet_len = 24;
+    sbuf_t  *buf        = sbufCreate(packet_len);
+    require(buf != NULL, "failed to allocate IPv4 packet");
+    sbufSetLength(buf, packet_len);
+
+    uint8_t *packet = sbufGetMutablePtr(buf);
+    memoryZero(packet, packet_len);
+    packet[0] = 0x45;
+    packet[9] = proto;
+    // The declared total length is part of what makes a packet well formed, so a
+    // fixture that left it zero would be feeding the hash malformed input.
+    PUT_BE16(packet + 2, (uint16_t) packet_len);
+    PUT_BE16(packet + 6, fragment_offset);
+    PUT_BE32(packet + 12, src);
+    PUT_BE32(packet + 16, dst);
+    PUT_BE16(packet + 20, src_port);
+    PUT_BE16(packet + 22, dst_port);
+    return buf;
+}
+
+static void writeIpv4Checksum(uint8_t *packet)
+{
+    uint32_t sum = 0;
+    PUT_BE16(packet + 10, 0);
+    for (uint32_t offset = 0; offset < 20; offset += 2)
+    {
+        sum += GET_BE16(packet + offset);
+    }
+    while ((sum >> 16U) != 0)
+    {
+        sum = (sum & UINT32_C(0xFFFF)) + (sum >> 16U);
+    }
+    PUT_BE16(packet + 10, (uint16_t) ~sum);
+}
+
+static sbuf_t *makeTrackedIpv4Fragment(buffer_pool_t *pool, uint32_t serial)
+{
+    enum
+    {
+        kPayloadBytes = 64,
+        kPacketBytes  = 20 + kPayloadBytes,
+    };
+
+    sbuf_t *buf = bufferpoolGetSmallBuffer(pool);
+    sbufSetLength(buf, kPacketBytes);
+
+    uint8_t *packet = sbufGetMutablePtr(buf);
+    memoryZero(packet, kPacketBytes);
+    packet[0] = 0x45;
+    packet[8] = 64;
+    packet[9] = 17;
+    PUT_BE16(packet + 2, kPacketBytes);
+    PUT_BE16(packet + 4, (uint16_t) serial);
+    PUT_BE16(packet + 6, UINT16_C(0x2000));
+    PUT_BE32(packet + 12, UINT32_C(0x0A000000) | (serial & UINT32_C(0x00FFFFFF)));
+    PUT_BE32(packet + 16, UINT32_C(0xC0000201));
+    PUT_BE16(packet + 20, (uint16_t) (20000U + (serial % 20000U)));
+    PUT_BE16(packet + 22, 53);
+    writeIpv4Checksum(packet);
+    return buf;
+}
+
+static wid_t wholeFragmentWID(sbuf_t *buf)
+{
+    uint8_t       *packet = sbufGetMutablePtr(buf);
+    const uint16_t saved  = GET_BE16(packet + 6);
+    wid_t          target = kInvalidWID;
+    PUT_BE16(packet + 6, 0);
+    require(deviceFlowAffineWID(packet, sbufGetLength(buf), &target),
+            "could not hash an otherwise valid first fragment as a whole packet");
+    PUT_BE16(packet + 6, saved);
+    return target;
+}
+
+static sbuf_t *makeTrackedFragmentForWID(buffer_pool_t *pool, wid_t target_wid, uint32_t serial_base)
+{
+    for (uint32_t offset = 0; offset < 512; ++offset)
+    {
+        sbuf_t *buf = makeTrackedIpv4Fragment(pool, serial_base + offset);
+        if (wholeFragmentWID(buf) == target_wid)
+        {
+            return buf;
+        }
+        bufferpoolReuseBuffer(pool, buf);
+    }
+    require(false, "could not construct a tracked fragment for the requested worker bucket");
+    return NULL;
+}
+
+static sbuf_t *makeIpv6Packet(const uint8_t src[16], uint16_t src_port, const uint8_t dst[16], uint16_t dst_port,
+                              uint8_t next_header)
+{
+    uint32_t packet_len = 44;
+    sbuf_t  *buf        = sbufCreate(packet_len);
+    require(buf != NULL, "failed to allocate IPv6 packet");
+    sbufSetLength(buf, packet_len);
+
+    uint8_t *packet = sbufGetMutablePtr(buf);
+    memoryZero(packet, packet_len);
+    packet[0] = 0x60;
+    packet[6] = next_header;
+    PUT_BE16(packet + 4, (uint16_t) (packet_len - 40U));
+    memoryCopy(packet + 8, src, 16);
+    memoryCopy(packet + 24, dst, 16);
+    PUT_BE16(packet + 40, src_port);
+    PUT_BE16(packet + 42, dst_port);
+    return buf;
+}
+
+static wid_t affinityOf(const sbuf_t *buf)
+{
+    wid_t wid = UINT8_MAX;
+    require(deviceFlowAffineWID(sbufGetRawPtr(buf), sbufGetLength(buf), &wid), "expected parseable IP packet");
+    return wid;
+}
+
+static uint64_t fullHashOf(const sbuf_t *buf)
+{
+    uint64_t hash = 0;
+    require(deviceFlowAffinityHash(sbufGetRawPtr(buf), sbufGetLength(buf), &hash), "expected parseable IP packet");
+    return hash;
+}
+
+/*
+ * The worker index must be nothing more than the full hash reduced modulo the
+ * worker count: line selection reads the same hash, so a second reduction path
+ * would silently split the two decisions.
+ */
+static void requireWidIsHashModWorkers(const sbuf_t *buf, const char *message)
+{
+    require((uint64_t) affinityOf(buf) == fullHashOf(buf) % getWorkersCount(), message);
+}
+
+#ifdef DEVICE_FLOW_AFFINITY_TEST_WIREGUARD
+static void requireWireGuardAffinityMatches(const sbuf_t *buf)
+{
+    wid_t expected = affinityOf(buf);
+
+    for (wid_t current_wid = 0; current_wid < getWorkersCount(); ++current_wid)
+    {
+        wid_t target_wid = kInvalidWID;
+        bool  should_hop =
+            wireguarddeviceInnerPacketTargetWID(sbufGetRawPtr(buf), sbufGetLength(buf), current_wid, &target_wid);
+
+        require(target_wid == expected, "WireGuard selected a different flow-affine worker");
+        require(should_hop == (target_wid != current_wid), "WireGuard made the wrong same-worker decision");
+    }
+}
+
+static void requireWireGuardKeepsMalformedHere(const uint8_t *packet, uint32_t length)
+{
+    wid_t target_wid = kInvalidWID;
+
+    require(! wireguarddeviceInnerPacketTargetWID(packet, length, 2, &target_wid),
+            "WireGuard tried to hop an unparseable inner packet");
+    require(target_wid == 2, "WireGuard changed the worker for an unparseable inner packet");
+}
+#endif
+
+static void testIpv4SymmetryAndFragments(void)
+{
+    sbuf_t *forward = makeIpv4Packet(0x0A000001, 12345, 0xC0000201, 443, 6, 0);
+    sbuf_t *reverse = makeIpv4Packet(0xC0000201, 443, 0x0A000001, 12345, 6, 0);
+    require(affinityOf(forward) == affinityOf(reverse), "IPv4 TCP flow was not symmetric");
+    require(fullHashOf(forward) == fullHashOf(reverse), "IPv4 TCP full flow hash was not symmetric");
+
+#ifdef DEVICE_FLOW_AFFINITY_TEST_WIREGUARD
+    requireWireGuardAffinityMatches(forward);
+    requireWireGuardAffinityMatches(reverse);
+#endif
+
+    sbuf_t *udp_forward = makeIpv4Packet(0x0A000002, 5353, 0xC6336401, 53, 17, 0);
+    sbuf_t *udp_reverse = makeIpv4Packet(0xC6336401, 53, 0x0A000002, 5353, 17, 0);
+    require(affinityOf(udp_forward) == affinityOf(udp_reverse), "IPv4 UDP flow was not symmetric");
+    require(fullHashOf(udp_forward) == fullHashOf(udp_reverse), "IPv4 UDP full flow hash was not symmetric");
+
+#ifdef DEVICE_FLOW_AFFINITY_TEST_WIREGUARD
+    requireWireGuardAffinityMatches(udp_forward);
+    requireWireGuardAffinityMatches(udp_reverse);
+#endif
+
+    sbuf_t *first_fragment = makeIpv4Packet(0x0A000003, 1000, 0xCB007101, 2000, 6, 0x2000);
+    sbuf_t *later_fragment = makeIpv4Packet(0x0A000003, 9999, 0xCB007101, 8888, 6, 185);
+    PUT_BE16(sbufGetMutablePtr(first_fragment) + 4, 0xBEEF);
+    PUT_BE16(sbufGetMutablePtr(later_fragment) + 4, 0xBEEF);
+    require(affinityOf(first_fragment) == affinityOf(later_fragment),
+            "first and later IPv4 fragments of one datagram selected different workers");
+    require(fullHashOf(first_fragment) == fullHashOf(later_fragment),
+            "first and later IPv4 fragments of one datagram produced different full hashes");
+
+#ifdef DEVICE_FLOW_AFFINITY_TEST_WIREGUARD
+    requireWireGuardAffinityMatches(first_fragment);
+    requireWireGuardAffinityMatches(later_fragment);
+#endif
+
+    sbuf_t *fragment_forward = makeIpv4Packet(0x0A000003, 1000, 0xCB007101, 2000, 6, 1);
+    sbuf_t *fragment_reverse = makeIpv4Packet(0xCB007101, 9999, 0x0A000003, 8888, 6, 1);
+    require(affinityOf(fragment_forward) == affinityOf(fragment_reverse),
+            "non-initial IPv4 fragments incorrectly depended on payload bytes");
+    require(fullHashOf(fragment_forward) == fullHashOf(fragment_reverse),
+            "non-initial IPv4 fragment full hashes incorrectly depended on payload bytes");
+
+#ifdef DEVICE_FLOW_AFFINITY_TEST_WIREGUARD
+    requireWireGuardAffinityMatches(fragment_forward);
+    requireWireGuardAffinityMatches(fragment_reverse);
+#endif
+
+    sbufDestroy(fragment_reverse);
+    sbufDestroy(fragment_forward);
+    sbufDestroy(later_fragment);
+    sbufDestroy(first_fragment);
+    sbufDestroy(udp_reverse);
+    sbufDestroy(udp_forward);
+    sbufDestroy(reverse);
+    sbufDestroy(forward);
+}
+
+static void testIpv6Symmetry(void)
+{
+    static const uint8_t src[16] = {0x20, 0x01, 0x0D, 0xB8, 0, 1, 0, 2, 0, 3, 0, 4, 0, 5, 0, 6};
+    static const uint8_t dst[16] = {0x20, 0x01, 0x0D, 0xB8, 0, 7, 0, 8, 0, 9, 0, 10, 0, 11, 0, 12};
+
+    sbuf_t *tcp_forward = makeIpv6Packet(src, 23456, dst, 443, 6);
+    sbuf_t *tcp_reverse = makeIpv6Packet(dst, 443, src, 23456, 6);
+    require(affinityOf(tcp_forward) == affinityOf(tcp_reverse), "IPv6 TCP flow was not symmetric");
+    require(fullHashOf(tcp_forward) == fullHashOf(tcp_reverse), "IPv6 TCP full flow hash was not symmetric");
+
+#ifdef DEVICE_FLOW_AFFINITY_TEST_WIREGUARD
+    requireWireGuardAffinityMatches(tcp_forward);
+    requireWireGuardAffinityMatches(tcp_reverse);
+#endif
+
+    sbuf_t *udp_forward = makeIpv6Packet(src, 5353, dst, 53, 17);
+    sbuf_t *udp_reverse = makeIpv6Packet(dst, 53, src, 5353, 17);
+    require(affinityOf(udp_forward) == affinityOf(udp_reverse), "IPv6 UDP flow was not symmetric");
+    require(fullHashOf(udp_forward) == fullHashOf(udp_reverse), "IPv6 UDP full flow hash was not symmetric");
+
+#ifdef DEVICE_FLOW_AFFINITY_TEST_WIREGUARD
+    requireWireGuardAffinityMatches(udp_forward);
+    requireWireGuardAffinityMatches(udp_reverse);
+#endif
+
+    sbufDestroy(udp_reverse);
+    sbufDestroy(udp_forward);
+    sbufDestroy(tcp_reverse);
+    sbufDestroy(tcp_forward);
+}
+
+static void testMalformedPacketsAndSingleWorker(void)
+{
+    uint8_t  truncated_ipv4[19] = {0x45};
+    uint8_t  truncated_ipv6[39] = {0x60};
+    uint8_t  garbage[20]        = {0x10};
+    wid_t    wid                = UINT8_MAX;
+    uint64_t hash               = UINT64_C(0xA5A5A5A5A5A5A5A5);
+
+    require(! deviceFlowAffineWID(truncated_ipv4, sizeof(truncated_ipv4), &wid), "truncated IPv4 packet parsed");
+    require(! deviceFlowAffineWID(truncated_ipv6, sizeof(truncated_ipv6), &wid), "truncated IPv6 packet parsed");
+    require(! deviceFlowAffineWID(garbage, sizeof(garbage), &wid), "non-IP packet parsed");
+
+    require(! deviceFlowAffinityHash(truncated_ipv4, sizeof(truncated_ipv4), &hash), "truncated IPv4 packet hashed");
+    require(! deviceFlowAffinityHash(truncated_ipv6, sizeof(truncated_ipv6), &hash), "truncated IPv6 packet hashed");
+    require(! deviceFlowAffinityHash(garbage, sizeof(garbage), &hash), "non-IP packet hashed");
+    require(! deviceFlowAffinityHash(NULL, 40, &hash), "a NULL packet was hashed");
+    require(hash == UINT64_C(0xA5A5A5A5A5A5A5A5), "a rejected packet modified the output hash");
+
+#ifdef DEVICE_FLOW_AFFINITY_TEST_WIREGUARD
+    requireWireGuardKeepsMalformedHere(truncated_ipv4, sizeof(truncated_ipv4));
+    requireWireGuardKeepsMalformedHere(truncated_ipv6, sizeof(truncated_ipv6));
+    requireWireGuardKeepsMalformedHere(garbage, sizeof(garbage));
+#endif
+
+    // One worker: a valid packet still selects worker zero, but a malformed one
+    // is rejected rather than silently claimed, and the full hashes stay varied
+    // so multi-line selection has something to work with.
+    GSTATE.workers_count = 1;
+    testWorkerRegistryInstall(&g_test_worker_registry);
+    require(getWorkersCount() == 1, "the single-worker case did not publish exactly one worker");
+    require(! deviceFlowAffineWID(garbage, sizeof(garbage), &wid),
+            "a single worker must not bypass the malformed-packet contract");
+
+    sbuf_t  *single_a      = makeIpv4Packet(0x0A000101, 1111, 0xC0000201, 443, 6, 0);
+    sbuf_t  *single_b      = makeIpv4Packet(0x0A000102, 2222, 0xC0000201, 443, 6, 0);
+    uint64_t single_hash_a = fullHashOf(single_a);
+    uint64_t single_hash_b = fullHashOf(single_b);
+
+    require(affinityOf(single_a) == 0 && affinityOf(single_b) == 0, "a single worker must select worker zero");
+    require(single_hash_a != single_hash_b, "the single-worker path collapsed distinct flows to one hash");
+    sbufDestroy(single_b);
+    sbufDestroy(single_a);
+
+    GSTATE.workers_count = 4;
+    testWorkerRegistryInstall(&g_test_worker_registry);
+}
+
+/*
+ * The declared length, not the buffer length, is what bounds a packet. A buffer
+ * that is merely large enough is not proof of a well-formed packet, and reading
+ * transport bytes from beyond the declared length would let unrelated trailing
+ * bytes decide a flow's identity.
+ */
+static void testDeclaredLengthIsEnforced(void)
+{
+    uint64_t hash = UINT64_C(0x5A5A5A5A5A5A5A5A);
+
+    // IPv4 total length of zero: what an unset fixture field looks like.
+    sbuf_t *no_total_length = makeIpv4Packet(0x0A000001, 12345, 0xC0000201, 443, 6, 0);
+    PUT_BE16(sbufGetMutablePtr(no_total_length) + 2, 0);
+    require(! deviceFlowAffinityHash(sbufGetRawPtr(no_total_length), sbufGetLength(no_total_length), &hash),
+            "an IPv4 packet declaring zero total length was hashed");
+
+    // Shorter than its own header.
+    sbuf_t *below_header = makeIpv4Packet(0x0A000001, 12345, 0xC0000201, 443, 6, 0);
+    PUT_BE16(sbufGetMutablePtr(below_header) + 2, 19);
+    require(! deviceFlowAffinityHash(sbufGetRawPtr(below_header), sbufGetLength(below_header), &hash),
+            "an IPv4 packet declaring less than its header length was hashed");
+
+    // Longer than the buffer that carries it.
+    sbuf_t *truncated = makeIpv4Packet(0x0A000001, 12345, 0xC0000201, 443, 6, 0);
+    PUT_BE16(sbufGetMutablePtr(truncated) + 2, 25);
+    require(! deviceFlowAffinityHash(sbufGetRawPtr(truncated), sbufGetLength(truncated), &hash),
+            "an IPv4 packet declaring more bytes than the buffer holds was hashed");
+
+    require(hash == UINT64_C(0x5A5A5A5A5A5A5A5A), "a rejected packet modified the output hash");
+
+    /*
+     * A header-only packet followed by four trailing bytes that happen to look
+     * like ports. Those bytes are outside the datagram, so they must not reach
+     * the hash: two packets that differ only there are the same flow.
+     */
+    sbuf_t *trailing_a = makeIpv4Packet(0x0A000001, 12345, 0xC0000201, 443, 6, 0);
+    sbuf_t *trailing_b = makeIpv4Packet(0x0A000001, 60000, 0xC0000201, 9999, 6, 0);
+    PUT_BE16(sbufGetMutablePtr(trailing_a) + 2, 20);
+    PUT_BE16(sbufGetMutablePtr(trailing_b) + 2, 20);
+    require(fullHashOf(trailing_a) == fullHashOf(trailing_b),
+            "bytes beyond the declared IPv4 total length changed the flow hash");
+
+    // IPv6 payload length longer than the buffer.
+    static const uint8_t src[16] = {0x20, 0x01, 0x0D, 0xB8, 0, 1, 0, 2, 0, 3, 0, 4, 0, 5, 0, 6};
+    static const uint8_t dst[16] = {0x20, 0x01, 0x0D, 0xB8, 0, 7, 0, 8, 0, 9, 0, 10, 0, 11, 0, 12};
+
+    sbuf_t *ipv6_truncated = makeIpv6Packet(src, 23456, dst, 443, 6);
+    PUT_BE16(sbufGetMutablePtr(ipv6_truncated) + 4, 5);
+    require(! deviceFlowAffinityHash(sbufGetRawPtr(ipv6_truncated), sbufGetLength(ipv6_truncated), &hash),
+            "an IPv6 packet declaring more payload than the buffer holds was hashed");
+
+    /*
+     * A zero IPv6 payload length is the RFC 2675 jumbogram marker, and the real
+     * size lives in a Hop-by-Hop Jumbo Payload option this parser does not walk.
+     * It cannot be told apart from a malformed header, so both are rejected.
+     */
+    sbuf_t *zero_payload = makeIpv6Packet(src, 23456, dst, 443, 6);
+    PUT_BE16(sbufGetMutablePtr(zero_payload) + 4, 0);
+    require(! deviceFlowAffinityHash(sbufGetRawPtr(zero_payload), sbufGetLength(zero_payload), &hash),
+            "an IPv6 packet declaring a zero payload length was hashed");
+
+    // Not even with a Hop-by-Hop next header, which is what a real one carries.
+    sbuf_t *hop_by_hop = makeIpv6Packet(src, 23456, dst, 443, 0);
+    PUT_BE16(sbufGetMutablePtr(hop_by_hop) + 4, 0);
+    require(! deviceFlowAffinityHash(sbufGetRawPtr(hop_by_hop), sbufGetLength(hop_by_hop), &hash),
+            "an unvalidated IPv6 jumbogram was hashed");
+
+    require(hash == UINT64_C(0x5A5A5A5A5A5A5A5A), "a rejected packet modified the output hash");
+
+    // A payload too short to hold ports is still a well-formed packet.
+    sbuf_t *short_payload_a = makeIpv6Packet(src, 23456, dst, 443, 6);
+    sbuf_t *short_payload_b = makeIpv6Packet(src, 1, dst, 2, 6);
+    PUT_BE16(sbufGetMutablePtr(short_payload_a) + 4, 3);
+    PUT_BE16(sbufGetMutablePtr(short_payload_b) + 4, 3);
+    require(fullHashOf(short_payload_a) == fullHashOf(short_payload_b),
+            "bytes beyond a short IPv6 payload length changed the flow hash");
+
+    sbufDestroy(short_payload_b);
+    sbufDestroy(short_payload_a);
+    sbufDestroy(hop_by_hop);
+    sbufDestroy(zero_payload);
+    sbufDestroy(ipv6_truncated);
+    sbufDestroy(trailing_b);
+    sbufDestroy(trailing_a);
+    sbufDestroy(truncated);
+    sbufDestroy(below_header);
+    sbufDestroy(no_total_length);
+}
+
+/*
+ * Protocols with no ports still need one stable, symmetric flow identity, which
+ * is what keeps an ICMP error on the same worker as its peer's replies.
+ */
+static void testPortlessProtocolsAreStableAndSymmetric(void)
+{
+    // The port arguments are payload bytes here, not ports, so they must not matter.
+    sbuf_t *icmp_forward = makeIpv4Packet(0x0A000001, 0x0800, 0xC0000201, 0x1234, 1, 0);
+    sbuf_t *icmp_reverse = makeIpv4Packet(0xC0000201, 0x0000, 0x0A000001, 0x9999, 1, 0);
+
+    require(fullHashOf(icmp_forward) == fullHashOf(icmp_reverse), "an ICMP exchange was not symmetric");
+    require(affinityOf(icmp_forward) == affinityOf(icmp_reverse), "an ICMP exchange split across workers");
+
+    // A different protocol between the same hosts is a different flow.
+    sbuf_t *esp = makeIpv4Packet(0x0A000001, 0x0800, 0xC0000201, 0x1234, 50, 0);
+    require(fullHashOf(esp) != fullHashOf(icmp_forward), "two protocols between one host pair collapsed to one flow");
+
+    // A protocol that does carry ports must still use them.
+    sbuf_t *tcp_a = makeIpv4Packet(0x0A000001, 1111, 0xC0000201, 443, 6, 0);
+    sbuf_t *tcp_b = makeIpv4Packet(0x0A000001, 2222, 0xC0000201, 443, 6, 0);
+    require(fullHashOf(tcp_a) != fullHashOf(tcp_b), "two TCP flows between one host pair collapsed to one flow");
+
+    // SCTP is the third port-carrying protocol this parser reads.
+    sbuf_t *sctp_forward = makeIpv4Packet(0x0A000004, 5000, 0xC0000204, 6000, 132, 0);
+    sbuf_t *sctp_reverse = makeIpv4Packet(0xC0000204, 6000, 0x0A000004, 5000, 132, 0);
+    sbuf_t *sctp_other   = makeIpv4Packet(0x0A000004, 5001, 0xC0000204, 6000, 132, 0);
+
+    require(fullHashOf(sctp_forward) == fullHashOf(sctp_reverse), "an SCTP association was not symmetric");
+    require(affinityOf(sctp_forward) == affinityOf(sctp_reverse), "an SCTP association split across workers");
+    require(fullHashOf(sctp_forward) != fullHashOf(sctp_other), "two SCTP associations collapsed to one flow");
+
+    // IPv6 without ports: the same address-pair-and-next-header identity.
+    static const uint8_t v6_src[16] = {0x20, 0x01, 0x0D, 0xB8, 0, 1, 0, 2, 0, 3, 0, 4, 0, 5, 0, 6};
+    static const uint8_t v6_dst[16] = {0x20, 0x01, 0x0D, 0xB8, 0, 7, 0, 8, 0, 9, 0, 10, 0, 11, 0, 12};
+
+    // ICMPv6; the port arguments are payload bytes and must not matter.
+    sbuf_t *icmpv6_forward = makeIpv6Packet(v6_src, 0x8000, v6_dst, 0x1234, 58);
+    sbuf_t *icmpv6_reverse = makeIpv6Packet(v6_dst, 0x8100, v6_src, 0x9999, 58);
+    sbuf_t *ipv6_esp       = makeIpv6Packet(v6_src, 0x8000, v6_dst, 0x1234, 50);
+
+    require(fullHashOf(icmpv6_forward) == fullHashOf(icmpv6_reverse), "an ICMPv6 exchange was not symmetric");
+    require(affinityOf(icmpv6_forward) == affinityOf(icmpv6_reverse), "an ICMPv6 exchange split across workers");
+    require(fullHashOf(ipv6_esp) != fullHashOf(icmpv6_forward),
+            "two IPv6 protocols between one host pair collapsed to one flow");
+
+    sbufDestroy(ipv6_esp);
+    sbufDestroy(icmpv6_reverse);
+    sbufDestroy(icmpv6_forward);
+    sbufDestroy(sctp_other);
+    sbufDestroy(sctp_reverse);
+    sbufDestroy(sctp_forward);
+    sbufDestroy(tcp_b);
+    sbufDestroy(tcp_a);
+    sbufDestroy(esp);
+    sbufDestroy(icmp_reverse);
+    sbufDestroy(icmp_forward);
+}
+
+/*
+ * The same packet must land on hash % workers for every configured worker count,
+ * and its full hash must not depend on that count at all.
+ */
+static void testWidIsHashModuloWorkerCount(void)
+{
+    static const wid_t worker_counts[] = {1, 2, 4, 5};
+
+    sbuf_t *tcp      = makeIpv4Packet(0x0A00000A, 40000, 0xC0A80001, 80, 6, 0);
+    sbuf_t *udp      = makeIpv4Packet(0x0A00000B, 5353, 0xC6336401, 53, 17, 0);
+    sbuf_t *fragment = makeIpv4Packet(0x0A00000C, 1000, 0xCB007101, 2000, 6, 0x2000);
+
+    const uint64_t tcp_hash      = fullHashOf(tcp);
+    const uint64_t udp_hash      = fullHashOf(udp);
+    const uint64_t fragment_hash = fullHashOf(fragment);
+
+    /* Fixed results from an independent integer reference, not this parser. */
+    require(tcp_hash == UINT64_C(0xBAA6D71CF72B3817) && udp_hash == UINT64_C(0xAA33EE0BE20E2A1F) &&
+                fragment_hash == UINT64_C(0xDD5DA16A06B78649),
+            "flow hash vectors changed");
+    const wid_t expected[][3] = {{0, 0, 0}, {1, 1, 1}, {3, 3, 1}, {4, 3, 2}};
+
+    for (unsigned int i = 0; i < sizeof(worker_counts) / sizeof(worker_counts[0]); ++i)
+    {
+        GSTATE.workers_count = (uint32_t) worker_counts[i];
+        testWorkerRegistryInstall(&g_test_worker_registry);
+        require(getWorkersCount() == worker_counts[i], "the fixture published the wrong worker count");
+        require(affinityOf(tcp) == expected[i][0] && affinityOf(udp) == expected[i][1] &&
+                    affinityOf(fragment) == expected[i][2],
+                "fixed worker mapping changed");
+
+        requireWidIsHashModWorkers(tcp, "IPv4 TCP worker selection is not the full hash modulo the worker count");
+        requireWidIsHashModWorkers(udp, "IPv4 UDP worker selection is not the full hash modulo the worker count");
+        requireWidIsHashModWorkers(fragment,
+                                   "IPv4 fragment worker selection is not the full hash modulo the worker count");
+
+        require(fullHashOf(tcp) == tcp_hash && fullHashOf(udp) == udp_hash && fullHashOf(fragment) == fragment_hash,
+                "the full flow hash changed with the worker count");
+    }
+
+    sbufDestroy(fragment);
+    sbufDestroy(udp);
+    sbufDestroy(tcp);
+
+    GSTATE.workers_count = 4;
+    testWorkerRegistryInstall(&g_test_worker_registry);
+}
+
+static void testBalancedDistribution(void)
+{
+    uint32_t counts[4] = {0};
+
+    for (uint32_t flow = 0; flow < 4096; ++flow)
+    {
+        sbuf_t *buf = makeIpv4Packet(0x0A000001U + flow, (uint16_t) (1024U + flow), 0xCB007101, 443, 6, 0);
+        counts[affinityOf(buf)]++;
+        sbufDestroy(buf);
+    }
+
+    for (uint32_t wid = 0; wid < 4; ++wid)
+    {
+        require(counts[wid] > 800 && counts[wid] < 1250, "flow hash distribution is unexpectedly imbalanced");
+    }
+}
+
+static void testBucketedDispatch(void)
+{
+    enum
+    {
+        kPacketCount = 17
+    };
+
+    sbuf_t *packets[kPacketCount];
+    wid_t   expected[kPacketCount];
+    bool    seen[kPacketCount];
+    int     last_source_by_wid[4] = {-1, -1, -1, -1};
+    memoryZero(seen, sizeof(seen));
+    memoryZero(captured_posts, sizeof(captured_posts));
+    captured_post_count = 0;
+
+    for (uint32_t i = 0; i < kPacketCount - 1; ++i)
+    {
+        packets[i]  = makeIpv4Packet(0x0A000001U + i, (uint16_t) (2000U + i), 0xC0000201, 443, 6, 0);
+        expected[i] = affinityOf(packets[i]);
+    }
+
+    packets[kPacketCount - 1] = sbufCreate(8);
+    sbufSetLength(packets[kPacketCount - 1], 8);
+    memoryZero(sbufGetMutablePtr(packets[kPacketCount - 1]), 8);
+    expected[kPacketCount - 1] = UINT8_MAX;
+
+    // A real session object, because dispatch reads its fragment-affinity
+    // table. Leaving that table NULL keeps this case about bucketing alone.
+    device_reader_session_t session;
+    memoryZero(&session, sizeof(session));
+    session.batch_capacity = kMaxCapturedBuffers;
+
+    deviceFlowAffinityPostBatch(&session, packets, kPacketCount);
+
+    unsigned int delivered = 0;
+    for (unsigned int pi = 0; pi < captured_post_count; ++pi)
+    {
+        captured_post_t *post = &captured_posts[pi];
+        delivered += post->count;
+
+        for (unsigned int bi = 0; bi < post->count; ++bi)
+        {
+            bool found = false;
+            for (uint32_t source = 0; source < kPacketCount; ++source)
+            {
+                if (packets[source] != post->bufs[bi])
+                {
+                    continue;
+                }
+
+                require(! seen[source], "buffer was posted more than once");
+                seen[source] = true;
+                found        = true;
+                if (expected[source] != UINT8_MAX)
+                {
+                    require(post->wid == expected[source], "buffer was posted to the wrong affinity bucket");
+                    require((int) source > last_source_by_wid[post->wid],
+                            "stable mixed-worker dispatch reordered one worker's packets");
+                    last_source_by_wid[post->wid] = (int) source;
+                }
+                break;
+            }
+            require(found, "posted buffer did not belong to the source batch");
+        }
+    }
+
+    require(delivered == kPacketCount, "not every buffer was posted");
+    for (uint32_t i = 0; i < kPacketCount; ++i)
+    {
+        require(seen[i], "source buffer was not posted");
+        sbufDestroy(packets[i]);
+    }
+}
+
+static void testGsoDispatchPreservesAffinityAndReservations(void)
+{
+    enum
+    {
+        kPacketCount = 513
+    };
+    sbuf_t *packets[kPacketCount];
+    size_t  charges[kPacketCount];
+    wid_t   expected[kPacketCount];
+    bool    seen[kPacketCount]    = {0};
+    int     last_source_by_wid[5] = {-1, -1, -1, -1, -1};
+    memoryZero(captured_posts, sizeof(captured_posts));
+    captured_post_count = 0;
+    refused_post_index  = -1;
+
+    for (unsigned int i = 0; i < kPacketCount; ++i)
+    {
+        packets[i]  = makeIpv4Packet(0x0A000001U + i, (uint16_t) (2000U + i), 0xC0000201U, 443, 6, 0);
+        charges[i]  = sbufGetAllocationCharge(packets[i]);
+        expected[i] = affinityOf(packets[i]);
+    }
+
+    device_reader_session_t session;
+    memoryZero(&session, sizeof(session));
+    session.batch_capacity = kMaxCapturedBuffers;
+    deviceFlowAffinityPostGsoBatch(&session, packets, charges, kPacketCount, prepareGsoProbe);
+
+    unsigned int delivered = 0;
+    for (unsigned int pi = 0; pi < captured_post_count; ++pi)
+    {
+        captured_post_t *post = &captured_posts[pi];
+        require(post->reserved && post->prepare == prepareGsoProbe,
+                "GSO dispatch omitted reserved posting or worker preparation");
+        delivered += post->count;
+        for (unsigned int bi = 0; bi < post->count; ++bi)
+        {
+            bool found = false;
+            for (unsigned int source = 0; source < kPacketCount; ++source)
+            {
+                if (packets[source] != post->bufs[bi])
+                {
+                    continue;
+                }
+                require(! seen[source], "GSO dispatch posted a packet more than once");
+                require(post->wid == expected[source], "GSO dispatch changed the packet's worker");
+                require((int) source > last_source_by_wid[post->wid], "GSO dispatch reordered one worker's packets");
+                require(post->charges[bi] == charges[source], "GSO dispatch detached a reservation from its packet");
+                last_source_by_wid[post->wid] = (int) source;
+                seen[source]                  = true;
+                found                         = true;
+                break;
+            }
+            require(found, "GSO dispatch posted a packet outside the source batch");
+        }
+    }
+    require(delivered == kPacketCount, "GSO dispatch lost a packet across the 512 boundary");
+    for (unsigned int i = 0; i < kPacketCount; ++i)
+    {
+        require(seen[i], "GSO dispatch did not post every packet");
+        sbufDestroy(packets[i]);
+    }
+}
+
+static void testGsoRefusalSettlesEveryUnpostedReservation(void)
+{
+    enum
+    {
+        kPacketCount = 5
+    };
+    master_pool_t *large_master  = masterpoolCreateWithCapacity(8);
+    master_pool_t *small_master  = masterpoolCreateWithCapacity(8);
+    master_pool_t *medium_master = masterpoolCreateWithCapacity(8);
+    master_pool_t *splice_master = masterpoolCreateWithCapacity(8);
+    buffer_pool_t *pool          = bufferpoolCreate(
+        large_master, medium_master, small_master, splice_master, 8, 256, MEDIUM_BUFFER_SIZE_RAM_HIGH, 64, 256, 256);
+    require(pool != NULL, "failed to create GSO dispatch-refusal pool");
+
+    sbuf_t *template = makeIpv4Packet(0x0A000001U, 2000, 0xC0000201U, 443, 6, 0);
+    sbuf_t *packets[kPacketCount];
+    size_t  charges[kPacketCount];
+    for (unsigned int i = 0; i < kPacketCount; ++i)
+    {
+        packets[i] = bufferpoolGetSmallBuffer(pool);
+        sbufSetLength(packets[i], sbufGetLength(template));
+        memoryCopy(sbufGetMutablePtr(packets[i]), sbufGetRawPtr(template), sbufGetLength(template));
+        charges[i] = sbufGetAllocationCharge(packets[i]);
+    }
+    sbufDestroy(template);
+
+    device_reader_session_t session;
+    memoryZero(&session, sizeof(session));
+    session.batch_capacity     = 2;
+    session.reader_buffer_pool = pool;
+    memoryZero(captured_posts, sizeof(captured_posts));
+    captured_post_count       = 0;
+    post_attempt_count        = 0;
+    refused_post_index        = 1;
+    released_reserved_charge  = 0;
+    released_reserved_packets = 0;
+
+    deviceFlowAffinityPostGsoBatch(&session, packets, charges, kPacketCount, prepareGsoProbe);
+    require(captured_post_count == 1 && captured_posts[0].count == 2,
+            "GSO dispatch continued posting after a refused chunk");
+    require(released_reserved_packets == 3 && released_reserved_charge == 3 * charges[0],
+            "GSO refusal did not settle refused and later reservations exactly once");
+    for (unsigned int i = 0; i < captured_posts[0].count; ++i)
+    {
+        bufferpoolReuseBuffer(pool, captured_posts[0].bufs[i]);
+        deviceReaderSessionReleaseOutput(&session, captured_posts[0].charges[i]);
+    }
+    require(released_reserved_packets == kPacketCount && released_reserved_charge == 5 * charges[0],
+            "GSO accepted and refused outputs did not balance reservations");
+    refused_post_index = -1;
+
+    bufferpoolDestroy(pool);
+    masterpoolMakeEmpty(large_master);
+    masterpoolMakeEmpty(small_master);
+    masterpoolMakeEmpty(medium_master);
+    masterpoolMakeEmpty(splice_master);
+    masterpoolDestroy(large_master);
+    masterpoolDestroy(small_master);
+    masterpoolDestroy(medium_master);
+    masterpoolDestroy(splice_master);
+}
+
+static void testEmptyAndSingletonDispatch(void)
+{
+    sbuf_t                 *no_buffers[1] = {NULL};
+    device_reader_session_t session;
+    memoryZero(&session, sizeof(session));
+    session.batch_capacity = 1;
+
+    memoryZero(captured_posts, sizeof(captured_posts));
+    captured_post_count = 0;
+    deviceFlowAffinityPostBatch(&session, no_buffers, 0);
+    require(captured_post_count == 0, "an empty dispatch submitted a worker message");
+
+    sbuf_t     *packet   = makeIpv4Packet(0x0A000011, 32123, 0xC0000201, 443, 6, 0);
+    const wid_t expected = affinityOf(packet);
+    deviceFlowAffinityPostBatch(&session, &packet, 1);
+    require(captured_post_count == 1 && captured_posts[0].wid == expected && captured_posts[0].count == 1 &&
+                captured_posts[0].bufs[0] == packet,
+            "a singleton dispatch did not post the original packet directly");
+    sbufDestroy(packet);
+}
+
+static void testDispatchBucketsAreSplitAtSessionCapacity(void)
+{
+    enum
+    {
+        kPacketCount = 3
+    };
+    sbuf_t *packets[kPacketCount];
+    for (unsigned int i = 0; i < kPacketCount; ++i)
+    {
+        packets[i] = makeIpv4Packet(0x0A000001, 6500, 0xC0000201, 443, 6, 0);
+    }
+
+    memoryZero(captured_posts, sizeof(captured_posts));
+    captured_post_count = 0;
+    device_reader_session_t session;
+    memoryZero(&session, sizeof(session));
+    session.batch_capacity = 1;
+
+    deviceFlowAffinityPostBatch(&session, packets, kPacketCount);
+    require(captured_post_count == kPacketCount, "capacity-one dispatch was not split into legal posts");
+    for (unsigned int i = 0; i < kPacketCount; ++i)
+    {
+        require(captured_posts[i].count == 1, "a split post exceeded the session capacity");
+        require(captured_posts[i].bufs[0] == packets[i], "split posts did not preserve per-worker order");
+        sbufDestroy(packets[i]);
+    }
+}
+
+static void testLargeDispatchBoundaries(void)
+{
+    static const uint16_t capacities[] = {128, 512};
+
+    for (unsigned int ci = 0; ci < ARRAY_SIZE(capacities); ++ci)
+    {
+        const uint16_t capacity = capacities[ci];
+        const uint16_t count    = (uint16_t) (capacity + 1U);
+        sbuf_t       **packets  = memoryAllocate((size_t) count * sizeof(*packets));
+        require(packets != NULL, "failed to allocate the boundary dispatch fixture");
+
+        for (uint16_t i = 0; i < count; ++i)
+        {
+            packets[i] = makeIpv4Packet(0x0A000001, 6501, 0xC0000201, 443, 6, 0);
+        }
+
+        memoryZero(captured_posts, sizeof(captured_posts));
+        captured_post_count = 0;
+        device_reader_session_t session;
+        memoryZero(&session, sizeof(session));
+        session.batch_capacity = capacity;
+
+        deviceFlowAffinityPostBatch(&session, packets, count);
+        require(captured_post_count == 2, "one-over-capacity dispatch did not produce exactly two posts");
+        require(captured_posts[0].count == capacity && captured_posts[1].count == 1,
+                "one-over-capacity dispatch used illegal chunk sizes");
+        for (uint16_t i = 0; i < count; ++i)
+        {
+            captured_post_t *post = i < capacity ? &captured_posts[0] : &captured_posts[1];
+            const uint16_t   slot = i < capacity ? i : 0;
+            require(post->bufs[slot] == packets[i], "large split posts did not preserve per-worker order");
+            sbufDestroy(packets[i]);
+        }
+        memoryFree(packets);
+    }
+}
+
+static void testSameTargetRefusalCleansLaterChunks(void)
+{
+    enum
+    {
+        kPacketCount = 5,
+        kChunkSize   = 2,
+    };
+
+    master_pool_t *large_master  = masterpoolCreateWithCapacity(8);
+    master_pool_t *small_master  = masterpoolCreateWithCapacity(8);
+    master_pool_t *medium_master = masterpoolCreateWithCapacity(8);
+    master_pool_t *splice_master = masterpoolCreateWithCapacity(8);
+    buffer_pool_t *pool          = bufferpoolCreate(
+        large_master, medium_master, small_master, splice_master, 8, 256, MEDIUM_BUFFER_SIZE_RAM_HIGH, 64, 256, 256);
+    require(large_master != NULL && small_master != NULL && pool != NULL,
+            "failed to create the dispatch-refusal buffer pool");
+
+    for (unsigned int refused = 0; refused < 2; ++refused)
+    {
+        sbuf_t *packets[kPacketCount];
+        for (unsigned int i = 0; i < ARRAY_SIZE(packets); ++i)
+        {
+            packets[i] = makeIpv4Packet(0x0A000001, 6502, 0xC0000201, 443, 6, 0);
+        }
+
+        memoryZero(captured_posts, sizeof(captured_posts));
+        captured_post_count = 0;
+        refused_post_index  = (int) refused;
+        post_attempt_count  = 0;
+
+        device_reader_session_t session;
+        memoryZero(&session, sizeof(session));
+        session.batch_capacity     = kChunkSize;
+        session.reader_buffer_pool = pool;
+
+        deviceFlowAffinityPostBatch(&session, packets, ARRAY_SIZE(packets));
+
+        require(captured_post_count == refused, "same-target dispatch posted a chunk after the selected refusal");
+        for (unsigned int post = 0; post < captured_post_count; ++post)
+        {
+            require(captured_posts[post].count == kChunkSize,
+                    "same-target dispatch changed the size of an admitted chunk");
+            for (unsigned int item = 0; item < captured_posts[post].count; ++item)
+            {
+                require(captured_posts[post].bufs[item] == packets[post * kChunkSize + item],
+                        "same-target dispatch changed admitted FIFO order before refusal");
+                bufferpoolReuseBuffer(pool, captured_posts[post].bufs[item]);
+            }
+        }
+    }
+
+    refused_post_index = -1;
+    bufferpoolDestroy(pool);
+    masterpoolMakeEmpty(large_master);
+    masterpoolMakeEmpty(small_master);
+    masterpoolMakeEmpty(medium_master);
+    masterpoolMakeEmpty(splice_master);
+    masterpoolDestroy(large_master);
+    masterpoolDestroy(small_master);
+    masterpoolDestroy(medium_master);
+    masterpoolDestroy(splice_master);
+}
+
+static void settleAndReuseCapturedPosts(device_reader_session_t *session, buffer_pool_t *pool)
+{
+    discard session;
+    for (unsigned int post = 0; post < captured_post_count; ++post)
+    {
+        for (unsigned int item = 0; item < captured_posts[post].count; ++item)
+        {
+            bufferpoolReuseBuffer(pool, captured_posts[post].bufs[item]);
+        }
+    }
+}
+
+/*
+ * The sorted path must stop exactly at a refused chunk: earlier buckets stay
+ * FIFO, the session consumes that chunk, and only never-submitted later work is
+ * cleaned by the dispatcher.  Real fragment publications make the assertion
+ * cover both buffer and association ownership instead of synthetic tokens.
+ */
+static void testMixedWorkerRefusalCleansTrackedPublications(void)
+{
+    enum
+    {
+        kPacketCount = 7,
+        kBucketCount = 3,
+        kChunkSize   = 2,
+    };
+    static const wid_t source_bucket[kPacketCount] = {1, 0, 2, 1, 0, 2, 1};
+    static const int   refused_attempts[]          = {0, 2};
+
+    master_pool_t *large_master  = masterpoolCreateWithCapacity(16);
+    master_pool_t *small_master  = masterpoolCreateWithCapacity(16);
+    master_pool_t *medium_master = masterpoolCreateWithCapacity(16);
+    master_pool_t *splice_master = masterpoolCreateWithCapacity(16);
+    buffer_pool_t *pool          = bufferpoolCreate(
+        large_master, medium_master, small_master, splice_master, 16, 256, MEDIUM_BUFFER_SIZE_RAM_HIGH, 128, 256, 256);
+    require(large_master != NULL && small_master != NULL && pool != NULL,
+            "failed to create mixed-worker refusal buffer pool");
+    require(getWorkersCount() >= kBucketCount, "mixed-worker refusal fixture needs three worker buckets");
+
+    for (unsigned int run = 0; run < ARRAY_SIZE(refused_attempts); ++run)
+    {
+        sbuf_t      *packets[kPacketCount];
+        sbuf_t      *by_bucket[kBucketCount][kPacketCount];
+        unsigned int bucket_counts[kBucketCount] = {0};
+        memoryZero(captured_posts, sizeof(captured_posts));
+        captured_post_count = 0;
+        refused_post_index  = refused_attempts[run];
+        post_attempt_count  = 0;
+        resetResourceTracking(pool);
+
+        device_reader_session_t session;
+        memoryZero(&session, sizeof(session));
+        session.batch_capacity     = kChunkSize;
+        session.reader_buffer_pool = pool;
+        session.frag_affinity      = deviceFragAffinityCreate(pool, kDeviceFragmentPreserve);
+        require(session.frag_affinity != NULL, "failed to create mixed-worker refusal fragment table");
+
+        for (unsigned int source = 0; source < kPacketCount; ++source)
+        {
+            const wid_t target = source_bucket[source];
+            packets[source]    = makeTrackedFragmentForWID(pool, target, 31000U + source * 1024U);
+            by_bucket[target][bucket_counts[target]++] = packets[source];
+        }
+        require(bucket_counts[0] == 2 && bucket_counts[1] == 3 && bucket_counts[2] == 2,
+                "mixed-worker refusal fixture did not fill its intended buckets");
+
+        deviceFlowAffinityPostBatch(&session, packets, ARRAY_SIZE(packets));
+
+        if (run == 0)
+        {
+            require(captured_post_count == 0, "first mixed-worker post refusal allowed a later bucket to submit");
+        }
+        else
+        {
+            require(captured_post_count == 2, "middle mixed-worker chunk refusal submitted work after the refusal");
+            require(captured_posts[0].wid == 0 && captured_posts[0].count == 2,
+                    "earlier mixed-worker bucket was not submitted as one legal chunk");
+            require(captured_posts[0].bufs[0] == by_bucket[0][0] && captured_posts[0].bufs[1] == by_bucket[0][1],
+                    "earlier mixed-worker bucket lost stable FIFO order");
+            require(captured_posts[1].wid == 1 && captured_posts[1].count == 2,
+                    "middle mixed-worker bucket did not split at the session capacity");
+            require(captured_posts[1].bufs[0] == by_bucket[1][0] && captured_posts[1].bufs[1] == by_bucket[1][1],
+                    "middle mixed-worker bucket lost FIFO order before its refused chunk");
+        }
+
+        settleAndReuseCapturedPosts(&session, pool);
+
+#ifdef DEVICE_FLOW_AFFINITY_TEST_TRACKING
+        require(tracked_resource_count == kPacketCount,
+                "mixed-worker fixture did not observe every real fragment publication");
+        for (unsigned int resource = 0; resource < tracked_resource_count; ++resource)
+        {
+            const tracked_resource_t *tracked = &tracked_resources[resource];
+            require(tracked->reuse_count == 1,
+                    "mixed-worker refusal did not return each refused or never-posted buffer exactly once");
+        }
+#endif
+
+        deviceFragAffinityDestroy(session.frag_affinity);
+    }
+
+    refused_post_index = -1;
+#ifdef DEVICE_FLOW_AFFINITY_TEST_TRACKING
+    tracked_reuse_pool = NULL;
+#endif
+    bufferpoolDestroy(pool);
+    masterpoolMakeEmpty(large_master);
+    masterpoolMakeEmpty(small_master);
+    masterpoolMakeEmpty(medium_master);
+    masterpoolMakeEmpty(splice_master);
+    masterpoolDestroy(large_master);
+    masterpoolDestroy(small_master);
+    masterpoolDestroy(medium_master);
+    masterpoolDestroy(splice_master);
+}
+
+int main(void)
+{
+    testCaseSet("device_flow_affinity_test");
+    GSTATE.workers_count = 4;
+    testWorkerRegistryInstall(&g_test_worker_registry);
+    testIpv4SymmetryAndFragments();
+    testIpv6Symmetry();
+    testMalformedPacketsAndSingleWorker();
+    testDeclaredLengthIsEnforced();
+    testPortlessProtocolsAreStableAndSymmetric();
+    testWidIsHashModuloWorkerCount();
+    testBalancedDistribution();
+    testEmptyAndSingletonDispatch();
+    testBucketedDispatch();
+    testGsoDispatchPreservesAffinityAndReservations();
+    testGsoRefusalSettlesEveryUnpostedReservation();
+    testDispatchBucketsAreSplitAtSessionCapacity();
+    testLargeDispatchBoundaries();
+    testSameTargetRefusalCleansLaterChunks();
+    testMixedWorkerRefusalCleansTrackedPublications();
+    GSTATE.workers_count = 0;
+    testWorkerRegistryRestore(&g_test_worker_registry);
+    return 0;
+}

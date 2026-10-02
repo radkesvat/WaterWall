@@ -1,8 +1,14 @@
 #!/usr/bin/env bash
 
+# Covers: serial/parallel lane dispatch, filters, job counts and host-serial fallback using a
+# copied runner/fake wrapper and CTest. Setup: private stubs/receipts; no runtime/benchmark
+# workload. CTest: waterwall.test_lane_runner.
+
+
 # Regression harness test for tests/run_test_lane.sh
 
 set -euo pipefail
+source "$(dirname "$(realpath "$0")")/support/shell/runner.lib.sh"
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 runner_source="${1:-${script_dir}/run_test_lane.sh}"
@@ -18,7 +24,9 @@ if [[ ! -x "${runner_source}" ]]; then
 fi
 
 tmp_dir=$(mktemp -d "/tmp/waterwall_lane_test_XXXXXX")
-trap 'rm -rf "${tmp_dir}"' EXIT
+echo "Run artifacts: $tmp_dir" >&2
+
+trap 'status=$?; ww_test_finish_directory "$tmp_dir" "$status"; exit "$status"' EXIT
 
 # Run an exact copy beside a fake namespace wrapper so this harness also works
 # in a build explicitly configured for host-serial fallback because unshare is

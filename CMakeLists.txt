@@ -136,6 +136,8 @@ else()
 endif()
 message(STATUS "IPO policy: requested=${WW_ENABLE_IPO}; Release effective=${WW_EFFECTIVE_RELEASE_IPO}")
 
+include("${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/TestHelpers.cmake")
+
 # Linux owns the comprehensive aggregate in tests/unittests. Other native
 # platforms register their portable/runtime tests from this root file, so give
 # those configurations an equivalent build aggregate. Production trees never
@@ -147,7 +149,7 @@ if(WW_BUILD_UNIT_TESTS AND NOT (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE
     if(NOT TARGET ${target_name})
       message(FATAL_ERROR "platform native-unit target is missing: ${target_name}")
     endif()
-    add_dependencies(waterwall_platform_unit_tests ${target_name})
+    waterwall_native_aggregate(${target_name} waterwall_platform_unit_tests)
   endfunction()
 endif()
 
@@ -1382,6 +1384,10 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT ANDROID
     TIMEOUT 30 LABELS "policy;build;linking")
 endif()
 
+if(BUILD_TESTING AND WW_BUILD_UNIT_TESTS)
+  add_subdirectory(tests/support)
+endif()
+
 if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING)
   target_compile_definitions(${WATERWALL_APPLICATION_TARGET} PRIVATE WATERWALL_SYSTEM_LOAD_TEST_HOOKS=1)
   add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tests)
@@ -1421,213 +1427,7 @@ if(BUILD_TESTING AND WW_BUILD_UNIT_TESTS AND
   include("${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests/portable_contract_tests.cmake")
 endif()
 
-# A direct consumer verifies that XZ needs neither ww nor its public headers.
-if(BUILD_TESTING AND WW_BUILD_UNIT_TESTS)
-  add_executable(xz_embedded_test tests/unittests/xz_embedded_test.c)
-  target_link_libraries(xz_embedded_test PRIVATE XZEmbedded::XZEmbedded)
-  set_target_properties(xz_embedded_test PROPERTIES DISABLE_PRECOMPILE_HEADERS ON)
-  add_test(NAME waterwall.xz_embedded_unit COMMAND xz_embedded_test)
-  set_tests_properties(waterwall.xz_embedded_unit PROPERTIES
-    TIMEOUT 30 LABELS "unit;vendor;xz;portable")
-  if(TARGET waterwall_unit_tests)
-    add_dependencies(waterwall_unit_tests xz_embedded_test)
-  elseif(TARGET waterwall_platform_unit_tests)
-    add_dependencies(waterwall_platform_unit_tests xz_embedded_test)
-  endif()
-endif()
-
-# Windows does not add the tests/ subtree, so register the focused interface-name
-# test here as well. The test remains build-on-demand through its CTest runner.
-if(BUILD_TESTING AND WW_BUILD_UNIT_TESTS AND WIN32)
-  set(WATERWALL_SOURCE_DIR "${PROJECT_SOURCE_DIR}")
-  include("${PROJECT_SOURCE_DIR}/tests/unittests/windows_packed_startup.cmake")
-  include("${PROJECT_SOURCE_DIR}/tests/unittests/windows_driver_artifacts.cmake")
-  include("${PROJECT_SOURCE_DIR}/tests/unittests/tundevice_policy_cleanup.cmake")
-  add_executable(tun_windows_dns_test tests/unittests/tun_windows_dns_test.c)
-  target_include_directories(tun_windows_dns_test PRIVATE "${PROJECT_SOURCE_DIR}/ww/devices/tun")
-  set_target_properties(tun_windows_dns_test PROPERTIES DISABLE_PRECOMPILE_HEADERS ON UNITY_BUILD OFF)
-  add_test(NAME waterwall.tun_windows_dns_unit COMMAND tun_windows_dns_test)
-  set_tests_properties(waterwall.tun_windows_dns_unit PROPERTIES TIMEOUT 30 LABELS "unit;devices;windows;dns")
-  if(TARGET waterwall_platform_unit_tests)
-    add_dependencies(waterwall_platform_unit_tests tun_windows_dns_test)
-  endif()
-  add_executable(tun_windows_dns_identity_test tests/unittests/tun_windows_dns_identity_test.c)
-  target_include_directories(tun_windows_dns_identity_test PRIVATE
-    "${PROJECT_SOURCE_DIR}/ww/devices/tun" "${PROJECT_SOURCE_DIR}/ww/vendor/wintun")
-  target_link_libraries(tun_windows_dns_identity_test PRIVATE ww)
-  if(MINGW)
-    target_link_options(tun_windows_dns_identity_test PRIVATE -static)
-    target_link_options(tundevice_policy_cleanup_test PRIVATE -static)
-  endif()
-  set_target_properties(tun_windows_dns_identity_test PROPERTIES DISABLE_PRECOMPILE_HEADERS ON UNITY_BUILD OFF)
-  add_test(NAME waterwall.tun_windows_dns_identity_unit COMMAND tun_windows_dns_identity_test)
-  set_tests_properties(waterwall.tun_windows_dns_identity_unit PROPERTIES
-    TIMEOUT 30 LABELS "unit;devices;windows;dns;identity")
-  if(TARGET waterwall_platform_unit_tests)
-    add_dependencies(waterwall_platform_unit_tests tun_windows_dns_identity_test)
-  endif()
-  add_executable(windows_lifecycle_test EXCLUDE_FROM_ALL
-    tests/unittests/windows_lifecycle_test.c
-    core/lifecycle_windows.c
-    core/lifecycle_capabilities_windows.c
-    core/startup_options.c)
-  target_include_directories(windows_lifecycle_test PRIVATE "${PROJECT_SOURCE_DIR}/core")
-  target_compile_definitions(windows_lifecycle_test PRIVATE WATERWALL_LIFECYCLE_TEST_HOOKS=1)
-  target_link_libraries(windows_lifecycle_test PRIVATE ww)
-  if(MINGW)
-    target_link_options(windows_lifecycle_test PRIVATE -static)
-  endif()
-  set_target_properties(windows_lifecycle_test PROPERTIES
-    DISABLE_PRECOMPILE_HEADERS ON UNITY_BUILD OFF INTERPROCEDURAL_OPTIMIZATION OFF)
-  add_test(NAME waterwall.windows_lifecycle_unit
-    COMMAND "${CMAKE_COMMAND}"
-      "-DUNIT_TEST_TARGET=windows_lifecycle_test"
-      "-DUNIT_TEST_CONFIG=$<CONFIG>"
-      "-DUNIT_TEST_EXECUTABLE=$<TARGET_FILE:windows_lifecycle_test>"
-      "-DUNIT_TEST_BUILD_DIR=${CMAKE_BINARY_DIR}"
-      -P "${PROJECT_SOURCE_DIR}/tests/unittests/run_unit_test.cmake")
-  set_tests_properties(waterwall.windows_lifecycle_unit PROPERTIES
-    TIMEOUT 120 LABELS "unit;core;host;shutdown;windows" RESOURCE_LOCK waterwall_unit_test_build)
-  waterwall_register_platform_native_unit(waterwall.windows_lifecycle_unit windows_lifecycle_test
-    "unit;core;host;shutdown;windows")
-  target_compile_definitions(ww PUBLIC SIGNAL_MANAGER_TEST_HOOKS=1)
-  add_executable(windows_console_shutdown_test EXCLUDE_FROM_ALL
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests/windows_console_shutdown_test.c)
-  set_target_properties(windows_console_shutdown_test PROPERTIES
-    INTERPROCEDURAL_OPTIMIZATION OFF
-    INTERPROCEDURAL_OPTIMIZATION_DEBUG OFF
-    INTERPROCEDURAL_OPTIMIZATION_RELEASE OFF
-    INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO OFF
-    INTERPROCEDURAL_OPTIMIZATION_MINSIZEREL OFF
-  )
-  target_compile_definitions(windows_console_shutdown_test PRIVATE SIGNAL_MANAGER_TEST_HOOKS=1)
-  target_link_libraries(windows_console_shutdown_test PRIVATE ww)
-  add_test(
-    NAME waterwall.windows_console_shutdown_unit
-    COMMAND
-      "${CMAKE_COMMAND}"
-      "-DUNIT_TEST_TARGET=windows_console_shutdown_test"
-      "-DUNIT_TEST_CONFIG=$<CONFIG>"
-      "-DUNIT_TEST_EXECUTABLE=$<TARGET_FILE:windows_console_shutdown_test>"
-      "-DUNIT_TEST_BUILD_DIR=${CMAKE_BINARY_DIR}"
-      -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests/run_unit_test.cmake"
-  )
-  set_tests_properties(waterwall.windows_console_shutdown_unit PROPERTIES
-    TIMEOUT 120
-    LABELS "unit;signal-manager;shutdown;windows"
-    RESOURCE_LOCK waterwall_unit_test_build)
-  waterwall_register_platform_native_unit(
-    waterwall.windows_console_shutdown_unit
-    windows_console_shutdown_test
-    "unit;signal-manager;shutdown;windows")
-
-  add_executable(wtime_epoch_test EXCLUDE_FROM_ALL
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests/wtime_epoch_test.c)
-  set_target_properties(wtime_epoch_test PROPERTIES
-    INTERPROCEDURAL_OPTIMIZATION OFF
-    INTERPROCEDURAL_OPTIMIZATION_DEBUG OFF
-    INTERPROCEDURAL_OPTIMIZATION_RELEASE OFF
-    INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO OFF
-    INTERPROCEDURAL_OPTIMIZATION_MINSIZEREL OFF
-  )
-  target_link_libraries(wtime_epoch_test PRIVATE ww)
-  add_test(
-    NAME waterwall.wtime_epoch_unit
-    COMMAND
-      "${CMAKE_COMMAND}"
-      "-DUNIT_TEST_TARGET=wtime_epoch_test"
-      "-DUNIT_TEST_CONFIG=$<CONFIG>"
-      "-DUNIT_TEST_EXECUTABLE=$<TARGET_FILE:wtime_epoch_test>"
-      "-DUNIT_TEST_BUILD_DIR=${CMAKE_BINARY_DIR}"
-      -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests/run_unit_test.cmake"
-  )
-  set_tests_properties(waterwall.wtime_epoch_unit PROPERTIES
-    TIMEOUT 120
-    LABELS "unit;libc;time;epoch;overflow;windows"
-    RESOURCE_LOCK waterwall_unit_test_build)
-  waterwall_register_platform_native_unit(
-    waterwall.wtime_epoch_unit wtime_epoch_test "unit;libc;time;epoch;overflow;windows")
-
-  add_executable(wsocket_windows_interface_test EXCLUDE_FROM_ALL
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests/wsocket_windows_interface_test.c)
-  set_target_properties(wsocket_windows_interface_test PROPERTIES
-    INTERPROCEDURAL_OPTIMIZATION OFF
-    INTERPROCEDURAL_OPTIMIZATION_DEBUG OFF
-    INTERPROCEDURAL_OPTIMIZATION_RELEASE OFF
-    INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO OFF
-    INTERPROCEDURAL_OPTIMIZATION_MINSIZEREL OFF
-  )
-  target_link_libraries(wsocket_windows_interface_test PRIVATE ww)
-  add_test(
-    NAME waterwall.wsocket_windows_interface_unit
-    COMMAND
-      "${CMAKE_COMMAND}"
-      "-DUNIT_TEST_TARGET=wsocket_windows_interface_test"
-      "-DUNIT_TEST_CONFIG=$<CONFIG>"
-      "-DUNIT_TEST_EXECUTABLE=$<TARGET_FILE:wsocket_windows_interface_test>"
-      "-DUNIT_TEST_BUILD_DIR=${CMAKE_BINARY_DIR}"
-      -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests/run_unit_test.cmake"
-  )
-  set_tests_properties(waterwall.wsocket_windows_interface_unit PROPERTIES
-    TIMEOUT 120
-    LABELS "unit;net;socket;windows;interface"
-    RESOURCE_LOCK waterwall_unit_test_build)
-  waterwall_register_platform_native_unit(
-    waterwall.wsocket_windows_interface_unit wsocket_windows_interface_test "unit;net;socket;windows;interface")
-endif()
-
-# Native-IOCP-only tests. The Linux tests/ subdirectory is not added on Windows,
-# so the native IOCP backend registers its own test executable here, and only
-# when that backend is actually selected (windows-iocp preset).
-if(BUILD_TESTING AND WW_BUILD_UNIT_TESTS AND WIN32 AND WITH_NATIVE_IOCP)
-  # Narrow AcceptEx fault-injection seam. PUBLIC so the ww static library and the
-  # test executable agree on the declaration; it stays out of production builds
-  # because this block only runs for a testing-enabled native IOCP configuration.
-  target_compile_definitions(ww PUBLIC WATERWALL_IOCP_TEST_HOOKS=1)
-
-  add_executable(iocp_native_test EXCLUDE_FROM_ALL
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests/iocp_native_test.c)
-  set_target_properties(iocp_native_test PROPERTIES
-    INTERPROCEDURAL_OPTIMIZATION OFF
-    INTERPROCEDURAL_OPTIMIZATION_DEBUG OFF
-    INTERPROCEDURAL_OPTIMIZATION_RELEASE OFF
-    INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO OFF
-    INTERPROCEDURAL_OPTIMIZATION_MINSIZEREL OFF
-  )
-  target_link_libraries(iocp_native_test PRIVATE ww ws2_32 mswsock)
-  add_test(
-    NAME waterwall.iocp_native
-    COMMAND
-      "${CMAKE_COMMAND}"
-      "-DUNIT_TEST_TARGET=iocp_native_test"
-      "-DUNIT_TEST_CONFIG=$<CONFIG>"
-      "-DUNIT_TEST_EXECUTABLE=$<TARGET_FILE:iocp_native_test>"
-      "-DUNIT_TEST_BUILD_DIR=${CMAKE_BINARY_DIR}"
-      -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests/run_unit_test.cmake"
-  )
-  set_tests_properties(waterwall.iocp_native PROPERTIES
-    TIMEOUT 120
-    LABELS "unit;net;iocp;windows;native"
-    RESOURCE_LOCK waterwall_unit_test_build)
-  waterwall_register_platform_native_unit(
-    waterwall.iocp_native iocp_native_test "unit;net;iocp;windows;native")
-endif()
-
-if(TARGET waterwall_platform_unit_tests AND WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 8)
-  # Compile the actual reader session with pointer-width Windows atomics even
-  # when the compiler normally selects C11. Never link this diagnostic object
-  # into the runtime, whose atomic representation may differ.
-  add_library(device_reader_session_windows_fallback_compile OBJECT EXCLUDE_FROM_ALL
-    tests/unittests/device_reader_session_windows_fallback_compile.c
-    ww/devices/device_reader_session.c
-    ww/devices/device_reader_budget.c
-    ww/devices/device_reader_dispatch.c)
-  target_link_libraries(device_reader_session_windows_fallback_compile PRIVATE ww)
-  target_compile_definitions(device_reader_session_windows_fallback_compile PRIVATE WW_HAVE_C11_ATOMICS=0)
-  set_target_properties(device_reader_session_windows_fallback_compile PROPERTIES
-    DISABLE_PRECOMPILE_HEADERS ON UNITY_BUILD OFF INTERPROCEDURAL_OPTIMIZATION OFF)
-  add_dependencies(waterwall_platform_unit_tests device_reader_session_windows_fallback_compile)
-endif()
+include("${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/native/platform.cmake")
 
 if(TARGET waterwall_platform_unit_tests)
   set(waterwall_platform_lto_artifacts "")

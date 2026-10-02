@@ -1,5 +1,31 @@
 #!/usr/bin/env python3
-"""Namespace-only client wire tests, staged body ranges, and proxy interoperability."""
+"""CONNECT/fixed/chunked/EOF responses, auth and TLS/proxy interoperability; loopback origin/proxy DNS
+including pending cancellation. Staged body integrity, framing, read endpoints and shutdown143;
+strace/namespaces plus openssl for TLS. Scenario DNS/readiness stays explicit. CTest:
+waterwall.httpproxyclient_chunked_splice_false, waterwall.httpproxyclient_chunked_splice_true,
+waterwall.httpproxyclient_connect_splice_false, waterwall.httpproxyclient_connect_splice_true,
+waterwall.httpproxyclient_fixed_splice_false, waterwall.httpproxyclient_fixed_splice_true,
+waterwall.httpproxyclient_local_chunked_false, waterwall.httpproxyclient_local_chunked_true,
+waterwall.httpproxyclient_local_connect_false, waterwall.httpproxyclient_local_connect_true,
+waterwall.httpproxyclient_local_fixed_false, waterwall.httpproxyclient_local_fixed_true,
+waterwall.httpproxyclient_noauth_chunked_false, waterwall.httpproxyclient_noauth_chunked_true,
+waterwall.httpproxyclient_noauth_connect_false, waterwall.httpproxyclient_noauth_connect_true,
+waterwall.httpproxyclient_noauth_fixed_false, waterwall.httpproxyclient_noauth_fixed_true,
+waterwall.httpproxyclient_pending_dns_shutdown,
+waterwall.httpproxyclient_resolve_branch_splice_false,
+waterwall.httpproxyclient_resolve_branch_splice_true,
+waterwall.httpproxyclient_resolve_dynamic_splice_false,
+waterwall.httpproxyclient_resolve_dynamic_splice_true,
+waterwall.httpproxyclient_resolve_fixed_splice_false,
+waterwall.httpproxyclient_resolve_fixed_splice_true,
+waterwall.httpproxyclient_response_chunked_splice_false,
+waterwall.httpproxyclient_response_chunked_splice_true,
+waterwall.httpproxyclient_response_eof_splice_false,
+waterwall.httpproxyclient_response_eof_splice_true, waterwall.httpproxyclient_tls_splice_false,
+waterwall.httpproxyclient_tls_splice_true, waterwall.httpproxyclient_tracked_chunked_false,
+waterwall.httpproxyclient_tracked_chunked_true, waterwall.httpproxyclient_tracked_connect_false,
+waterwall.httpproxyclient_tracked_connect_true, waterwall.httpproxyclient_tracked_fixed_false,
+waterwall.httpproxyclient_tracked_fixed_true."""
 import concurrent.futures
 import json
 from pathlib import Path
@@ -8,12 +34,20 @@ import signal
 import socket
 import subprocess
 import sys
-import tempfile
+import os
 import threading
 import time
 
 sys.dont_write_bytecode = True
-from httpproxyserver_splice_integration import exact, header, splice_outputs
+sys.path.insert(0, os.environ.get("WATERWALL_TEST_SUPPORT_DIR",
+                                str(Path(__file__).resolve().parent / "support" / "python")))
+from wwtest.sockets import configure_listener, connect_when_ready
+from wwtest.config import core_config
+from wwtest.run_directory import RunDirectory
+from wwtest.process import Process, close_on_error, install_termination_handler
+
+from wwtest.sockets import exact
+from wwtest.fixtures.http_proxy import header, splice_outputs
 
 
 def read_chunked(sock, size):
@@ -55,7 +89,7 @@ def run(binary, mode, enabled, auth):
         settings["domain-strategy"] = "resolve-domains-and-use-only-ipv4"
         if dynamic_dns:
             settings.update({"target-address": "dest_context->address", "port": "dest_context->port"})
-    with tempfile.TemporaryDirectory(prefix="waterwall-http-client-") as directory:
+    with RunDirectory("waterwall-http-client-") as directory:
         root = Path(directory)
         nodes = [
             {"name": "listen", "type": "TcpListener", "next": "client",
@@ -107,8 +141,7 @@ def run(binary, mode, enabled, auth):
             ])
         (root / "config.json").write_text(json.dumps({"name": "http-client", "nodes": nodes}))
         (root / "core.json").write_text(json.dumps({
-            "log": {"path": "log/", **{name: {"loglevel": "DEBUG", "file": name + ".log", "console": True}
-                                      for name in ("internal", "core", "network", "dns")}},
+            "log": core_config()["log"],
             "configs": ["config.json"],
             **({"dns": {"lookups": "f", "hosts-path": str(root / "hosts")}} if local_dns else {}),
             "misc": {"workers": 1, "splice": enabled, "ram-profile": "minimal", "mtu": 1500,
@@ -116,127 +149,109 @@ def run(binary, mode, enabled, auth):
         }))
         staged = threading.Event()
         with socket.socket(socket.AF_INET6 if local_dns else socket.AF_INET) as backend, (root / "stdout.log").open("w+") as log:
-            backend.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            backend.bind(("::1" if local_dns else "127.0.0.1", 27972))
-            backend.listen()
-            backend.settimeout(15)
-            process = subprocess.Popen([tracer, "-D", "-f", "-yy", "-e", "trace=splice", "-o", str(root / "splice.log"), binary],
-                                       cwd=root, stdout=log, stderr=subprocess.STDOUT)
-            try:
-                deadline = time.monotonic() + 15
-                if auth == "tracked":
-                    while "AuthenticationClient: pulled 1 users" not in (root / "stdout.log").read_text():
-                        if process.poll() is not None or time.monotonic() >= deadline:
-                            raise AssertionError("authentication did not become ready")
-                        time.sleep(.02)
-                while True:
-                    if process.poll() is not None:
-                        raise AssertionError(f"startup exited {process.returncode}")
-                    try:
-                        client = socket.create_connection(("127.0.0.1", 27971), timeout=1)
-                        break
-                    except ConnectionRefusedError:
-                        if time.monotonic() >= deadline:
-                            raise
-                        time.sleep(.02)
+            configure_listener(backend, ('::1' if local_dns else '127.0.0.1', 27972), timeout=15)
+            with Process([tracer, '-D', '-f', '-yy', '-e', 'trace=splice', '-o', str(root / 'splice.log'), binary], cwd=root, log=log) as process:
+                try:
+                    deadline = time.monotonic() + 15
+                    if auth == "tracked":
+                        while "AuthenticationClient: pulled 1 users" not in (root / "stdout.log").read_text():
+                            if process.poll() is not None or time.monotonic() >= deadline:
+                                raise AssertionError("authentication did not become ready")
+                            time.sleep(.02)
+                    client = connect_when_ready(process, ('127.0.0.1', 27971), deadline=deadline,
+                        failure=lambda: AssertionError(f'startup exited {process.returncode}'), timeout=1, pause=0.02)
 
-                if dynamic_dns:
-                    client.sendall(b"CONNECT origin.example:27972 HTTP/1.1\r\nHost: origin.example:27972\r\n\r\n")
-                    assert header(client).startswith(b"HTTP/1.1 200 ")
+                    if dynamic_dns:
+                        client.sendall(b"CONNECT origin.example:27972 HTTP/1.1\r\nHost: origin.example:27972\r\n\r\n")
+                        assert header(client).startswith(b"HTTP/1.1 200 ")
 
-                def peer():
-                    with backend.accept()[0] as conn:
-                        conn.settimeout(15)
-                        if not (connect and interop):
-                            request = header(conn)
-                            wire_origin = "127.0.0.20" if local_dns else origin
-                            target = f"{wire_origin}:27972" if connect else (
-                                "/upload?q=%2F" if interop else f"http://{origin}:27972/upload?q=%2F")
-                            method = "CONNECT" if connect else "POST"
-                            assert request.startswith(f"{method} {target} HTTP/1.1\r\n".encode()), request
-                            assert f"Host: {wire_origin}:27972\r\n".encode() in request, request
-                            assert (b"Proxy-Authorization: Basic dXNlcjpwYXNz\r\n" in request) == (auth in ("direct", "tls")), request
-                            if not connect:
+                    def peer():
+                        with backend.accept()[0] as conn:
+                            conn.settimeout(15)
+                            if not (connect and interop):
+                                request = header(conn)
+                                wire_origin = "127.0.0.20" if local_dns else origin
+                                target = f"{wire_origin}:27972" if connect else (
+                                    "/upload?q=%2F" if interop else f"http://{origin}:27972/upload?q=%2F")
+                                method = "CONNECT" if connect else "POST"
+                                assert request.startswith(f"{method} {target} HTTP/1.1\r\n".encode()), request
+                                assert f"Host: {wire_origin}:27972\r\n".encode() in request, request
+                                assert (b"Proxy-Authorization: Basic dXNlcjpwYXNz\r\n" in request) == (auth in ("direct", "tls")), request
+                                if not connect:
+                                    if not interop:
+                                        assert b"Connection: close\r\n" in request, request
+                                    if chunked:
+                                        assert b"Transfer-Encoding: chunked\r\n" in request, request
+                                    else:
+                                        assert f"Content-Length: {len(data)}\r\n".encode() in request, request
+                            if interop and not connect:
+                                uploaded = read_chunked(conn, len(data)) if chunked else exact(conn, len(data))
+                                assert uploaded == data, "interoperable upload changed"
+                            if connect:
                                 if not interop:
-                                    assert b"Connection: close\r\n" in request, request
-                                if chunked:
-                                    assert b"Transfer-Encoding: chunked\r\n" in request, request
-                                else:
-                                    assert f"Content-Length: {len(data)}\r\n".encode() in request, request
-                        if interop and not connect:
-                            uploaded = read_chunked(conn, len(data)) if chunked else exact(conn, len(data))
-                            assert uploaded == data, "interoperable upload changed"
-                        if connect:
-                            if not interop:
-                                conn.sendall(b"HTTP/1.1 200 Established\r\nContent-Length: 0\r\n\r\n")
-                            conn.sendall(b"ready")
-                        else:
-                            framing = (b"Transfer-Encoding: chunked\r\n" if mode == "response_chunked" else
-                                       b"" if mode == "response_eof" else f"Content-Length: {5 + len(data)}\r\n".encode())
-                            conn.sendall(b"HTTP/1.1 200 OK\r\n" + framing + b"\r\n" +
-                                         (f"{5 + len(data):x}\r\n".encode() if mode == "response_chunked" else b"") + b"ready")
-                        # The application's receipt of the marker proves that the
-                        # response header/chunk size has left the client's parser.
-                        assert staged.wait(10), "response header did not progress"
-                        if not interop or connect:
-                            uploaded = read_chunked(conn, len(data)) if chunked else exact(conn, len(data))
-                            assert uploaded == data, "upload framing/content changed"
-                        conn.sendall(data[::-1])
-                        if mode == "response_chunked":
-                            conn.sendall(b"\r\n0\r\nX-Check: yes\r\n\r\n")
-                        if mode == "response_eof":
-                            conn.shutdown(socket.SHUT_WR)
-                        if connect:
-                            assert conn.recv(1) == b"", "extra CONNECT bytes"
-                        else:
-                            # The finite response closes the exchange even though
-                            # this peer otherwise keeps its write direction open.
-                            assert conn.recv(1) == b"", "extra request after response completion"
+                                    conn.sendall(b"HTTP/1.1 200 Established\r\nContent-Length: 0\r\n\r\n")
+                                conn.sendall(b"ready")
+                            else:
+                                framing = (b"Transfer-Encoding: chunked\r\n" if mode == "response_chunked" else
+                                           b"" if mode == "response_eof" else f"Content-Length: {5 + len(data)}\r\n".encode())
+                                conn.sendall(b"HTTP/1.1 200 OK\r\n" + framing + b"\r\n" +
+                                             (f"{5 + len(data):x}\r\n".encode() if mode == "response_chunked" else b"") + b"ready")
+                            # The application's receipt of the marker proves that the
+                            # response header/chunk size has left the client's parser.
+                            assert staged.wait(10), "response header did not progress"
+                            if not interop or connect:
+                                uploaded = read_chunked(conn, len(data)) if chunked else exact(conn, len(data))
+                                assert uploaded == data, "upload framing/content changed"
+                            conn.sendall(data[::-1])
+                            if mode == "response_chunked":
+                                conn.sendall(b"\r\n0\r\nX-Check: yes\r\n\r\n")
+                            if mode == "response_eof":
+                                conn.shutdown(socket.SHUT_WR)
+                            if connect:
+                                assert conn.recv(1) == b"", "extra CONNECT bytes"
+                            else:
+                                # The finite response closes the exchange even though
+                                # this peer otherwise keeps its write direction open.
+                                assert conn.recv(1) == b"", "extra request after response completion"
 
-                with client, concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                    client.settimeout(15)
-                    future = executor.submit(peer)
-                    if interop and not connect:
-                        # HttpProxyServer cancels incomplete uploads on a final
-                        # response. Send the body first, but keep chunked upload
-                        # open: no WaterWall half-close or terminal chunk needed.
-                        client.sendall(data)
-                    assert exact(client, 5) == b"ready", "immediate headers or early response stalled"
+                    with client, concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor, close_on_error(client, staged.set):
+                        client.settimeout(15)
+                        future = executor.submit(peer)
+                        if interop and not connect:
+                            # HttpProxyServer cancels incomplete uploads on a final
+                            # response. Send the body first, but keep chunked upload
+                            # open: no WaterWall half-close or terminal chunk needed.
+                            client.sendall(data)
+                        assert exact(client, 5) == b"ready", "immediate headers or early response stalled"
+                        staged.set()
+                        if not interop or connect:
+                            client.sendall(data)
+                        assert exact(client, len(data)) == data[::-1], "decoded response changed"
+                        if connect:
+                            client.shutdown(socket.SHUT_RDWR)
+                        else:
+                            assert client.recv(1) == b"", "finite response did not close"
+                        future.result(timeout=15)
+                    process.send_signal(signal.SIGTERM)
+                    assert process.wait(timeout=10) == 128 + signal.SIGTERM, "unclean shutdown"
+                    trace = (root / "splice.log").read_text()
+                    if local_dns:
+                        # The shared decoder recognizes IPv4 loopback endpoints;
+                        # normalize this fixture's IPv6 loopback socket annotation.
+                        trace = trace.replace("TCPv6:", "TCP:").replace("[::1]", "127.0.0.1")
+                    positive, outputs = splice_outputs(trace)
+                    if not interop:
+                        expected = enabled and auth != "tls"
+                        assert positive == expected, "splice mode/topology gate"
+                        assert outputs == ({"up", "down"} if expected else set()), ("missing direct body splice", outputs)
+                except BaseException:
                     staged.set()
-                    if not interop or connect:
-                        client.sendall(data)
-                    assert exact(client, len(data)) == data[::-1], "decoded response changed"
-                    if connect:
-                        client.shutdown(socket.SHUT_RDWR)
-                    else:
-                        assert client.recv(1) == b"", "finite response did not close"
-                    future.result(timeout=15)
-                process.send_signal(signal.SIGTERM)
-                assert process.wait(timeout=10) == 128 + signal.SIGTERM, "unclean shutdown"
-                trace = (root / "splice.log").read_text()
-                if local_dns:
-                    # The shared decoder recognizes IPv4 loopback endpoints;
-                    # normalize this fixture's IPv6 loopback socket annotation.
-                    trace = trace.replace("TCPv6:", "TCP:").replace("[::1]", "127.0.0.1")
-                positive, outputs = splice_outputs(trace)
-                if not interop:
-                    expected = enabled and auth != "tls"
-                    assert positive == expected, "splice mode/topology gate"
-                    assert outputs == ({"up", "down"} if expected else set()), ("missing direct body splice", outputs)
-            except BaseException:
-                staged.set()
-                log.flush()
-                print((root / "stdout.log").read_text(), file=sys.stderr)
-                raise
-            finally:
-                if process.poll() is None:
-                    process.kill()
-                    process.wait()
+                    raise
 
 
 def pending_shutdown(binary):
     """A real outstanding async DNS request must settle during process shutdown."""
-    with tempfile.TemporaryDirectory(prefix="waterwall-http-client-pending-") as directory:
+    with RunDirectory("waterwall-http-client-pending-") as directory:
         root = Path(directory)
         nodes = [
             {"name": "listen", "type": "TcpListener", "next": "client",
@@ -260,8 +275,7 @@ def pending_shutdown(binary):
             backend.listen()
             backend.settimeout(.1)
             with (root / "stdout.log").open("w+") as log:
-                process = subprocess.Popen([binary], cwd=root, stdout=log, stderr=subprocess.STDOUT)
-                try:
+                with Process([binary], cwd=root, log=log) as process:
                     deadline = time.monotonic() + 10
                     while True:
                         try:
@@ -284,17 +298,10 @@ def pending_shutdown(binary):
                         else:
                             conn.close()
                             raise AssertionError("transport started before origin DNS")
-                except BaseException:
-                    log.flush()
-                    print((root / "stdout.log").read_text(), file=sys.stderr)
-                    raise
-                finally:
-                    if process.poll() is None:
-                        process.kill()
-                        process.wait()
 
 
 if __name__ == "__main__":
+    install_termination_handler()
     if sys.argv[2] == "pending_shutdown":
         pending_shutdown(str(Path(sys.argv[1]).resolve()))
     else:

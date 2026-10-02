@@ -1,0 +1,219 @@
+/* Base64 standard/URL encoding contracts: RFC vectors, malformed/padded input, capacity and overflow. No runtime setup;
+ * always-active exit(1) checks. CTest: waterwall.base64_unit. */
+
+#include "wwapi.h"
+
+#include "test_assert.h"
+
+#define require(condition, message) TEST_REQUIRE(TEST_FAILURE_EXIT, condition, message)
+
+typedef struct base64_vector_s
+{
+    const char *plain;
+    const char *encoded;
+    const char *padded;
+} base64_vector_t;
+
+static const base64_vector_t kVectors[] = {
+    {"", "", ""},
+    {"f", "Zg", "Zg=="},
+    {"fo", "Zm8", "Zm8="},
+    {"foo", "Zm9v", "Zm9v"},
+    {"foob", "Zm9vYg", "Zm9vYg=="},
+    {"fooba", "Zm9vYmE", "Zm9vYmE="},
+    {"foobar", "Zm9vYmFy", "Zm9vYmFy"},
+};
+
+
+static void testEncodedSizes(void)
+{
+    for (size_t i = 0; i < ARRAY_SIZE(kVectors); ++i)
+    {
+        size_t encoded_size = SIZE_MAX;
+        require(wwBase64UrlEncodedSizeNoPadding(stringLength(kVectors[i].plain), &encoded_size),
+                "valid encoded-size calculation failed");
+        TEST_EQUAL_SIZE(
+            TEST_FAILURE_EXIT, encoded_size, stringLength(kVectors[i].encoded), "encoded-size calculation is wrong");
+    }
+
+    size_t unchanged = 123U;
+    require(! wwBase64UrlEncodedSizeNoPadding(SIZE_MAX, &unchanged), "SIZE_MAX input did not overflow");
+    TEST_EQUAL_SIZE(
+        TEST_FAILURE_EXIT, unchanged, 123U, "overflowing encoded-size calculation modified its destination");
+    require(! wwBase64UrlEncodedSizeNoPadding(SIZE_MAX - 1U, &unchanged), "near-SIZE_MAX input did not overflow");
+    require(! wwBase64UrlEncodedSizeNoPadding(1, NULL), "NULL encoded-size destination was accepted");
+}
+
+static void testBase64UrlEncode(void)
+{
+    char output[32];
+
+    for (size_t i = 0; i < ARRAY_SIZE(kVectors); ++i)
+    {
+        const size_t plain_length  = stringLength(kVectors[i].plain);
+        size_t       output_length = SIZE_MAX;
+        memorySet(output, 0xA5, sizeof(output));
+
+        require(wwBase64UrlEncodeNoPadding(
+                    (const uint8_t *) kVectors[i].plain, plain_length, output, sizeof(output), &output_length),
+                "RFC Base64URL encode vector failed");
+        TEST_EQUAL_SIZE(TEST_FAILURE_EXIT,
+                        output_length,
+                        stringLength(kVectors[i].encoded),
+                        "RFC encode vector returned the wrong length");
+        TEST_EQUAL_TEXT(TEST_FAILURE_EXIT, output, kVectors[i].encoded, "RFC encode vector returned the wrong bytes");
+    }
+
+    const uint8_t url_input[] = {0xfb, 0xff, 0xbf};
+    size_t        output_length;
+    require(wwBase64UrlEncodeNoPadding(url_input, sizeof(url_input), output, sizeof(output), &output_length),
+            "URL alphabet encode failed");
+    require(output_length == 4 && stringCompare(output, "-_-_") == 0, "URL alphabet encode returned wrong bytes");
+
+    char exact[2] = {'x', 'x'};
+    require(wwBase64UrlEncodeNoPadding((const uint8_t *) "f", 1, exact, sizeof(exact), &output_length),
+            "exact non-terminated capacity was rejected");
+    require(output_length == sizeof(exact) && memoryCompare(exact, "Zg", sizeof(exact)) == 0,
+            "exact non-terminated encode is wrong");
+
+    char terminated[3] = {'x', 'x', 'x'};
+    require(wwBase64UrlEncodeNoPadding((const uint8_t *) "f", 1, terminated, sizeof(terminated), &output_length),
+            "terminated capacity was rejected");
+    TEST_EQUAL_TEXT(TEST_FAILURE_EXIT, terminated, "Zg", "encoder did not write the optional terminator");
+
+    output_length = 99;
+    require(! wwBase64UrlEncodeNoPadding((const uint8_t *) "f", 1, output, 1, &output_length),
+            "one-byte-short encode capacity was accepted");
+    TEST_EQUAL_SIZE(TEST_FAILURE_EXIT, output_length, 0, "failed encode did not clear output length");
+
+    output_length = 99;
+    require(! wwBase64UrlEncodeNoPadding(NULL, 1, output, sizeof(output), &output_length),
+            "NULL non-empty input was accepted");
+    require(! wwBase64UrlEncodeNoPadding((const uint8_t *) "f", 1, NULL, sizeof(output), &output_length),
+            "NULL output was accepted");
+
+    uint8_t dummy = 0;
+    require(! wwBase64UrlEncodeNoPadding(&dummy, SIZE_MAX, output, sizeof(output), &output_length),
+            "overflowing encode length was accepted");
+    TEST_EQUAL_SIZE(TEST_FAILURE_EXIT, output_length, 0, "overflowing encode did not clear output length");
+}
+
+static void requireDecode(const char *encoded, const char *expected)
+{
+    uint8_t output[32];
+    size_t  output_length = SIZE_MAX;
+
+    require(wwBase64UrlDecode(encoded, stringLength(encoded), output, sizeof(output), &output_length),
+            "valid Base64URL input was rejected");
+    TEST_EQUAL_SIZE(
+        TEST_FAILURE_EXIT, output_length, stringLength(expected), "valid Base64URL input returned the wrong length");
+    TEST_EQUAL_BYTES(
+        TEST_FAILURE_EXIT, output, expected, output_length, "valid Base64URL input returned the wrong bytes");
+}
+
+static void requireDecodeFailure(const char *encoded)
+{
+    uint8_t output[32];
+    size_t  output_length = 99;
+
+    require(! wwBase64UrlDecode(encoded, stringLength(encoded), output, sizeof(output), &output_length),
+            "malformed Base64URL input was accepted");
+    TEST_EQUAL_SIZE(TEST_FAILURE_EXIT, output_length, 0, "failed decode did not clear output length");
+}
+
+static void testBase64UrlDecode(void)
+{
+    for (size_t i = 0; i < ARRAY_SIZE(kVectors); ++i)
+    {
+        requireDecode(kVectors[i].encoded, kVectors[i].plain);
+        requireDecode(kVectors[i].padded, kVectors[i].plain);
+    }
+
+    const char url_bytes[] = {(char) 0xfb, (char) 0xff, (char) 0xbf, '\0'};
+    requireDecode("-_-_", url_bytes);
+
+    requireDecodeFailure("A");
+    requireDecodeFailure("YQ=");
+    requireDecodeFailure("Y=Q=");
+    requireDecodeFailure("=YQ=");
+    requireDecodeFailure("YQ===");
+    requireDecodeFailure("YQ==A");
+    requireDecodeFailure("YQ+");
+    requireDecodeFailure("YQ/");
+    requireDecodeFailure("Y Q");
+    requireDecodeFailure("YQ\n");
+
+    uint8_t output[4];
+    size_t  output_length = 99;
+    require(! wwBase64UrlDecode("Zm8", 3, output, 1, &output_length), "insufficient decode capacity was accepted");
+    TEST_EQUAL_SIZE(TEST_FAILURE_EXIT, output_length, 0, "capacity failure did not clear output length");
+
+    require(! wwBase64UrlDecode(NULL, 1, output, sizeof(output), &output_length),
+            "NULL non-empty decode input was accepted");
+    require(! wwBase64UrlDecode("Zg", 2, NULL, 1, &output_length), "NULL decode output was accepted");
+}
+
+static void testCanonicalDecode(void)
+{
+    uint8_t output[32];
+    for (size_t i = 0; i < ARRAY_SIZE(kVectors); ++i)
+    {
+        size_t       expected = stringLength(kVectors[i].plain);
+        unsigned int length   = (unsigned int) stringLength(kVectors[i].padded);
+        memorySet(output, 0xa5, sizeof(output));
+        int decoded = wwBase64DecodeCanonical(kVectors[i].padded, length, output, expected);
+        require(decoded == (int) expected && memoryEqual(output, kVectors[i].plain, expected),
+                "canonical standard Base64 vector failed");
+        require(output[expected] == 0xa5, "exact-capacity decode wrote a terminator or exceeded capacity");
+        if (expected != 0)
+        {
+            memorySet(output, 0xa5, sizeof(output));
+            TEST_EQUAL_INT(TEST_FAILURE_EXIT,
+                           wwBase64DecodeCanonical(kVectors[i].padded, length, output, expected - 1),
+                           -1,
+                           "canonical decode accepted insufficient capacity");
+            for (size_t j = 0; j < sizeof(output); ++j)
+                require(output[j] == 0xa5, "capacity refusal wrote output");
+        }
+    }
+    TEST_EQUAL_INT(TEST_FAILURE_EXIT, wwBase64DecodeCanonical(NULL, 0, NULL, 0), 0, "empty canonical decode failed");
+    const char *invalid[] = {"A",
+                             "Zg",
+                             "Zg=",
+                             "Zm8",
+                             "====",
+                             "=g==",
+                             "Z===",
+                             "Zg=A",
+                             "Zg==AAAA",
+                             "Zm8=AAAA",
+                             "Zg==\n",
+                             "Z g=",
+                             "-_-_",
+                             "Z\xff==",
+                             "Zh==",
+                             "Zm9="};
+    for (size_t i = 0; i < ARRAY_SIZE(invalid); ++i)
+    {
+        memorySet(output, 0xa5, sizeof(output));
+        require(wwBase64DecodeCanonical(invalid[i], (unsigned int) stringLength(invalid[i]), output, 8) == -1,
+                "canonical decode accepted malformed input or nonzero pad bits");
+        require(output[8] == 0xa5, "malformed input exceeded capacity");
+    }
+    // The permissive API's existing pad-bit behavior remains independent of the canonical API.
+    require(wwBase64Decode("Zh==", 4, output) == 1 && output[0] == 'f', "permissive decode behavior changed");
+    const uint8_t binary[] = {0xfb, 0xff, 0xbf};
+    require(wwBase64DecodeCanonical("+/+/", 4, output, sizeof(binary)) == sizeof(binary) &&
+                memoryEqual(output, binary, sizeof(binary)),
+            "canonical decoder rejected the standard alphabet or binary output");
+}
+
+int main(void)
+{
+    TEST_RUN_CASE(testCanonicalDecode);
+    TEST_RUN_CASE(testEncodedSizes);
+    TEST_RUN_CASE(testBase64UrlEncode);
+    TEST_RUN_CASE(testBase64UrlDecode);
+    puts("base64_test: all cases passed");
+    return 0;
+}

@@ -1,3 +1,7 @@
+# Explicit portable native contracts, using the shared registration helpers.
+# Standalone archive/header probes retain their link boundaries; runtime fixtures
+# opt into private support and join the existing Linux or platform aggregate.
+include("${CMAKE_CURRENT_LIST_DIR}/../cmake/TestHelpers.cmake")
 include_guard(GLOBAL)
 
 if(NOT WW_BUILD_UNIT_TESTS OR NOT BUILD_TESTING)
@@ -12,36 +16,20 @@ set(_waterwall_portable_unit_runner "${CMAKE_CURRENT_LIST_DIR}/run_unit_test.cma
 target_compile_definitions(ww PUBLIC WW_IDLE_TABLE_TEST_SEAM=1 WW_SYSINFO_TEST_SEAM=1)
 
 function(_waterwall_register_portable_contract test_name target_name labels)
-  add_test(
-    NAME ${test_name}
-    COMMAND
-      "${CMAKE_COMMAND}"
-      "-DUNIT_TEST_TARGET=${target_name}"
-      "-DUNIT_TEST_CONFIG=$<CONFIG>"
-      "-DUNIT_TEST_EXECUTABLE=$<TARGET_FILE:${target_name}>"
-      "-DUNIT_TEST_BUILD_DIR=${CMAKE_BINARY_DIR}"
-      -P "${_waterwall_portable_unit_runner}"
-  )
-  set_tests_properties(${test_name} PROPERTIES
-    TIMEOUT 120
-    LABELS "${labels}"
-    RESOURCE_LOCK waterwall_unit_test_build
-  )
-
   if(TARGET waterwall_unit_tests)
-    add_dependencies(waterwall_unit_tests ${target_name})
+    set(aggregate waterwall_unit_tests)
   else()
-    waterwall_register_platform_native_unit(${test_name} ${target_name} "${labels}")
+    set(aggregate waterwall_platform_unit_tests)
   endif()
+  waterwall_register_native_test(${test_name} ${target_name} "${labels}" AGGREGATE ${aggregate})
 endfunction()
 
-add_executable(wwapi_header_test EXCLUDE_FROM_ALL "${_waterwall_portable_unit_dir}/wwapi_header_test.c")
+waterwall_add_native_executable(wwapi_header_test EXCLUDE_FROM_ALL SOURCES "${WATERWALL_UNIT_SOURCE_ROOT}/base/wwapi_header_test.c")
 target_link_libraries(wwapi_header_test PRIVATE ww)
 set_target_properties(wwapi_header_test PROPERTIES DISABLE_PRECOMPILE_HEADERS ON)
 _waterwall_register_portable_contract(waterwall.wwapi_header_unit wwapi_header_test "unit;headers;logger;portable")
 
-add_executable(lwip_checksum_link_test EXCLUDE_FROM_ALL
-  "${_waterwall_portable_unit_dir}/lwip_checksum_link_test.c")
+waterwall_add_native_executable(lwip_checksum_link_test EXCLUDE_FROM_ALL SOURCES "${WATERWALL_UNIT_SOURCE_ROOT}/lwip/lwip_checksum_link_test.c")
 # Start from the standalone archive to exercise its hook dependency. Borrow only
 # its lwIP configuration headers; ww's headers and PCH stay out of this consumer.
 target_include_directories(lwip_checksum_link_test PRIVATE "$<TARGET_PROPERTY:lwipcore,INCLUDE_DIRECTORIES>")
@@ -49,41 +37,40 @@ target_link_libraries(lwip_checksum_link_test PRIVATE lwipcore)
 set_target_properties(lwip_checksum_link_test PROPERTIES DISABLE_PRECOMPILE_HEADERS ON)
 _waterwall_register_portable_contract(waterwall.lwip_checksum_link_unit lwip_checksum_link_test "unit;net;checksum;portable")
 
-add_executable(buffer_budget_test EXCLUDE_FROM_ALL "${_waterwall_portable_unit_dir}/buffer_budget_test.c")
+waterwall_add_native_executable(buffer_budget_test SUPPORT EXCLUDE_FROM_ALL SOURCES "${WATERWALL_UNIT_SOURCE_ROOT}/bufio/buffer_budget_test.c")
 target_link_libraries(buffer_budget_test PRIVATE ww)
 set_target_properties(buffer_budget_test PROPERTIES DISABLE_PRECOMPILE_HEADERS ON)
 _waterwall_register_portable_contract(waterwall.buffer_budget_unit buffer_budget_test "unit;buffer;portable")
 
-add_executable(atomic_u32_test EXCLUDE_FROM_ALL "${_waterwall_portable_unit_dir}/atomic_u32_test.c")
-target_link_libraries(atomic_u32_test PRIVATE ww)
+waterwall_add_native_executable(atomic_u32_test SUPPORT EXCLUDE_FROM_ALL SOURCES "${WATERWALL_UNIT_SOURCE_ROOT}/base/atomic_u32_test.c")
+target_link_libraries(atomic_u32_test PRIVATE ww ww_test_support)
 set_target_properties(atomic_u32_test PROPERTIES DISABLE_PRECOMPILE_HEADERS ON)
 _waterwall_register_portable_contract(waterwall.atomic_u32_unit atomic_u32_test "unit;atomic;portable")
 
-add_executable(timer_pool_test EXCLUDE_FROM_ALL "${_waterwall_portable_unit_dir}/timer_pool_test.c")
+waterwall_add_native_executable(timer_pool_test SUPPORT EXCLUDE_FROM_ALL SOURCES "${WATERWALL_UNIT_SOURCE_ROOT}/net/timer_pool_test.c")
+  target_link_libraries(timer_pool_test PRIVATE ww_test_support)
 target_link_libraries(timer_pool_test PRIVATE ww)
 set_target_properties(timer_pool_test PROPERTIES DISABLE_PRECOMPILE_HEADERS ON)
 _waterwall_register_portable_contract(waterwall.timer_pool_unit timer_pool_test "unit;timer;pool;lifetime;portable")
 
 if(WIN32)
-  add_executable(atomic_u32_fallback_test EXCLUDE_FROM_ALL "${_waterwall_portable_unit_dir}/atomic_u32_test.c")
+  waterwall_add_native_executable(atomic_u32_fallback_test SUPPORT EXCLUDE_FROM_ALL SOURCES "${WATERWALL_UNIT_SOURCE_ROOT}/base/atomic_u32_test.c")
   target_compile_definitions(atomic_u32_fallback_test PRIVATE WW_HAVE_C11_ATOMICS=0)
-  target_link_libraries(atomic_u32_fallback_test PRIVATE ww)
+  target_link_libraries(atomic_u32_fallback_test PRIVATE ww ww_test_support)
   set_target_properties(atomic_u32_fallback_test PROPERTIES DISABLE_PRECOMPILE_HEADERS ON)
   _waterwall_register_portable_contract(
     waterwall.atomic_u32_fallback_unit atomic_u32_fallback_test "unit;atomic;windows")
 endif()
 
 if(TARGET HttpProxyClient AND NOT TARGET http_proxy_client_lifecycle_test)
-  add_executable(http_proxy_client_lifecycle_test EXCLUDE_FROM_ALL
-    "${_waterwall_portable_unit_dir}/http_proxy_client_lifecycle_test.c")
+  waterwall_add_native_executable(http_proxy_client_lifecycle_test SUPPORT EXCLUDE_FROM_ALL SOURCES "${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/http_proxy/http_proxy_client_lifecycle_test.c")
   target_link_libraries(http_proxy_client_lifecycle_test PRIVATE HttpProxyClient ww)
   _waterwall_register_portable_contract(
     waterwall.http_proxy_client_lifecycle_unit http_proxy_client_lifecycle_test "unit;http;proxy;portable;lifetime")
 endif()
 
 if(TARGET StreamFragmenter)
-  add_executable(streamfragmenter_tls_hello_test EXCLUDE_FROM_ALL
-    "${_waterwall_portable_unit_dir}/streamfragmenter_tls_hello_test.c")
+  waterwall_add_native_executable(streamfragmenter_tls_hello_test SUPPORT EXCLUDE_FROM_ALL SOURCES "${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/streamfragmenter/streamfragmenter_tls_hello_test.c")
   target_include_directories(streamfragmenter_tls_hello_test PRIVATE
     "${CMAKE_SOURCE_DIR}/tunnels/Internals/StreamFragmenter/include")
   target_link_libraries(streamfragmenter_tls_hello_test PRIVATE StreamFragmenter ww)
@@ -92,8 +79,7 @@ if(TARGET StreamFragmenter)
 endif()
 
 if(TARGET HttpProxyCommon AND NOT TARGET http_proxy_common_parser_test)
-  add_executable(http_proxy_common_parser_test EXCLUDE_FROM_ALL
-    "${_waterwall_portable_unit_dir}/http_proxy_common_parser_test.c")
+  waterwall_add_native_executable(http_proxy_common_parser_test SUPPORT EXCLUDE_FROM_ALL SOURCES "${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/http_proxy/http_proxy_common_parser_test.c")
   target_link_libraries(http_proxy_common_parser_test PRIVATE HttpProxyCommon ww)
   _waterwall_register_portable_contract(
     waterwall.http_proxy_common_parser_unit http_proxy_common_parser_test "unit;http;proxy;portable")
@@ -101,16 +87,15 @@ endif()
 
 if(TARGET HttpProxyServer AND NOT TARGET http_proxy_server_parser_test)
   foreach(kind IN ITEMS parser lifecycle)
-    add_executable(http_proxy_server_${kind}_test EXCLUDE_FROM_ALL
-      "${_waterwall_portable_unit_dir}/http_proxy_server_${kind}_test.c")
+    waterwall_add_native_executable(http_proxy_server_${kind}_test SUPPORT EXCLUDE_FROM_ALL SOURCES "${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/http_proxy/http_proxy_server_${kind}_test.c")
     target_link_libraries(http_proxy_server_${kind}_test PRIVATE HttpProxyServer AuthenticationClient ww)
     _waterwall_register_portable_contract(
       waterwall.http_proxy_server_${kind}_unit http_proxy_server_${kind}_test "unit;http;proxy;portable")
   endforeach()
 endif()
 
-add_executable(idle_table_contract_test EXCLUDE_FROM_ALL
-  "${_waterwall_portable_unit_dir}/idle_table_contract_test.c")
+waterwall_add_native_executable(idle_table_contract_test SUPPORT EXCLUDE_FROM_ALL SOURCES "${WATERWALL_UNIT_SOURCE_ROOT}/net/idle_table_contract_test.c")
+  target_link_libraries(idle_table_contract_test PRIVATE ww_test_support)
 target_link_libraries(idle_table_contract_test PRIVATE ww)
 _waterwall_register_portable_contract(
   waterwall.idle_table_contract_unit
@@ -118,8 +103,8 @@ _waterwall_register_portable_contract(
   "unit;idle-table;local-idle;contract;lifetime;tsan"
 )
 
-add_executable(system_memory_snapshot_test EXCLUDE_FROM_ALL
-  "${_waterwall_portable_unit_dir}/system_memory_snapshot_test.c")
+waterwall_add_native_executable(system_memory_snapshot_test SUPPORT EXCLUDE_FROM_ALL SOURCES "${WATERWALL_UNIT_SOURCE_ROOT}/base/system_memory_snapshot_test.c")
+  target_link_libraries(system_memory_snapshot_test PRIVATE ww_test_support)
 target_link_libraries(system_memory_snapshot_test PRIVATE ww)
 _waterwall_register_portable_contract(
   waterwall.system_memory_snapshot_unit
@@ -128,8 +113,7 @@ _waterwall_register_portable_contract(
 )
 
 if(TARGET MuxServer AND TARGET MuxClient)
-  add_executable(muxserver_admission_limit_test EXCLUDE_FROM_ALL
-    "${_waterwall_portable_unit_dir}/muxserver_admission_limit_test.c")
+  waterwall_add_native_executable(muxserver_admission_limit_test SUPPORT EXCLUDE_FROM_ALL SOURCES "${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/mux/muxserver_admission_limit_test.c")
   target_include_directories(muxserver_admission_limit_test PRIVATE
     "${CMAKE_SOURCE_DIR}/tunnels/MuxServer/include"
     "${CMAKE_SOURCE_DIR}/tunnels/MuxClient/include"
@@ -144,8 +128,7 @@ if(TARGET MuxServer AND TARGET MuxClient)
 endif()
 
 if(TARGET MuxClient)
-  add_executable(muxclient_cid_index_test EXCLUDE_FROM_ALL
-    "${_waterwall_portable_unit_dir}/muxclient_cid_index_test.c")
+  waterwall_add_native_executable(muxclient_cid_index_test SUPPORT EXCLUDE_FROM_ALL SOURCES "${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/mux/muxclient_cid_index_test.c")
   target_include_directories(muxclient_cid_index_test PRIVATE
     "${CMAKE_SOURCE_DIR}/tunnels/MuxClient/include"
     "${CMAKE_SOURCE_DIR}/tunnels/Internals/MuxCommon/include"

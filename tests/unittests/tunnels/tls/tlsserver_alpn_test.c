@@ -1,0 +1,217 @@
+/*
+ * Covers: tlsserver alpn; the explicit inputs, callbacks and expected results below define this suite.
+ * Setup: The included implementation/API and the deterministic inputs shown below; no integration
+ * topology is implied.
+ * Cases: testOpenSslRuntimeInitialization, testLegacyAlpnUsesConfiguredPreference,
+ * testSelectAlpnUsesConfiguredPreference, testDefaultHttp11ProfileSelectsHttp11,
+ * testDefaultHttp11ProfileContinuesH2OnlyWithoutAlpn, testSelectAlpnNoOverlapContinuesWithoutAlpn,
+ * testLegacyAlpnNoOverlapContinuesWithoutAlpn
+ * Checks: Assertion labels include: ALPN selection returned NULL; ALPN selection length changed; ALPN
+ * selection value changed; ALPN no-overlap selected a protocol
+ * Limits: Platform/feature branches remain conditional. Component fixtures do not establish host-network
+ * or application-throughput behavior.
+ * CTest: waterwall.tlsserver_alpn_unit
+ */
+#include "TlsServer/structure.h"
+
+#include "test_assert.h"
+
+#define require(condition, message) TEST_REQUIRE(TEST_FAILURE_EXIT, condition, message)
+
+static void requireSelected(const unsigned char *out, unsigned char outlen, const char *expected)
+{
+    size_t expected_len = stringLength(expected);
+
+    require(out != NULL, "ALPN selection returned NULL");
+    require(outlen == expected_len, "ALPN selection length changed");
+    require(memoryEqual(out, expected, expected_len), "ALPN selection value changed");
+}
+
+static void requireNoSelection(int ret, const unsigned char *out, unsigned char outlen, const char *message)
+{
+    require(ret == SSL_TLSEXT_ERR_NOACK, message);
+    require(out == NULL, "ALPN no-overlap selected a protocol");
+    require(outlen == 0, "ALPN no-overlap changed output length");
+}
+
+static void testOpenSslRuntimeInitialization(void)
+{
+    require(wCryptoGlobalInit() == kWCryptoOk, "crypto global initialization failed");
+    require(GSTATE.flag_openssl_initialized != 0, "crypto initialization did not initialize OpenSSL");
+
+    SSL_CTX *ssl_ctx = sslCtxNew(NULL);
+    require(ssl_ctx != NULL, "OpenSSL context construction failed after crypto initialization");
+    SSL_CTX_free(ssl_ctx);
+
+    wCryptoGlobalCleanup();
+    require(GSTATE.flag_openssl_initialized == 0, "crypto cleanup did not clean up OpenSSL");
+}
+
+static void testLegacyAlpnUsesConfiguredPreference(void)
+{
+    char h2[]     = "h2";
+    char http11[] = "http/1.1";
+
+    struct tlsserver_alpn_item_s alpns[] = {
+        {.name = h2, .name_length = 2},
+        {.name = http11, .name_length = 8},
+    };
+    tlsserver_tstate_t ts = {.alpns = alpns, .alpns_length = ARRAY_SIZE(alpns)};
+
+    const unsigned char client_offer[] = {
+        8,
+        'h',
+        't',
+        't',
+        'p',
+        '/',
+        '1',
+        '.',
+        '1',
+        2,
+        'h',
+        '2',
+    };
+    const unsigned char *out    = NULL;
+    unsigned char        outlen = 0;
+
+    int ret = tlsserverOnAlpnSelect(NULL, &out, &outlen, client_offer, sizeof(client_offer), &ts);
+
+    require(ret == SSL_TLSEXT_ERR_OK, "legacy ALPN selection failed");
+    requireSelected(out, outlen, "h2");
+}
+
+static void testSelectAlpnUsesConfiguredPreference(void)
+{
+    char h2[]     = "h2";
+    char http11[] = "http/1.1";
+
+    struct tlsserver_alpn_item_s alpns[] = {
+        {.name = h2, .name_length = 2},
+        {.name = http11, .name_length = 8},
+    };
+    tlsserver_tstate_t ts = {.select_alpns = alpns, .select_alpns_length = ARRAY_SIZE(alpns)};
+
+    const unsigned char client_offer[] = {
+        8,
+        'h',
+        't',
+        't',
+        'p',
+        '/',
+        '1',
+        '.',
+        '1',
+        2,
+        'h',
+        '2',
+    };
+    const unsigned char *out    = NULL;
+    unsigned char        outlen = 0;
+
+    int ret = tlsserverOnAlpnSelect(NULL, &out, &outlen, client_offer, sizeof(client_offer), &ts);
+
+    require(ret == SSL_TLSEXT_ERR_OK, "select ALPN selection failed");
+    requireSelected(out, outlen, "h2");
+}
+
+static void testDefaultHttp11ProfileSelectsHttp11(void)
+{
+    char http11[] = "http/1.1";
+
+    struct tlsserver_alpn_item_s alpns[] = {
+        {.name = http11, .name_length = 8},
+    };
+    tlsserver_tstate_t ts = {.select_alpns = alpns, .select_alpns_length = ARRAY_SIZE(alpns)};
+
+    const unsigned char client_offer[] = {
+        2,
+        'h',
+        '2',
+        8,
+        'h',
+        't',
+        't',
+        'p',
+        '/',
+        '1',
+        '.',
+        '1',
+    };
+    const unsigned char *out    = NULL;
+    unsigned char        outlen = 0;
+
+    int ret = tlsserverOnAlpnSelect(NULL, &out, &outlen, client_offer, sizeof(client_offer), &ts);
+
+    require(ret == SSL_TLSEXT_ERR_OK, "HTTP/1.1 default profile selection failed");
+    requireSelected(out, outlen, "http/1.1");
+}
+
+static void testDefaultHttp11ProfileContinuesH2OnlyWithoutAlpn(void)
+{
+    char http11[] = "http/1.1";
+
+    struct tlsserver_alpn_item_s alpns[] = {
+        {.name = http11, .name_length = 8},
+    };
+    tlsserver_tstate_t ts = {.select_alpns = alpns, .select_alpns_length = ARRAY_SIZE(alpns)};
+
+    const unsigned char  client_offer[] = {2, 'h', '2'};
+    const unsigned char *out            = NULL;
+    unsigned char        outlen         = 0;
+
+    int ret = tlsserverOnAlpnSelect(NULL, &out, &outlen, client_offer, sizeof(client_offer), &ts);
+
+    requireNoSelection(ret, out, outlen, "HTTP/1.1 default profile did not continue h2-only without ALPN");
+}
+
+static void testSelectAlpnNoOverlapContinuesWithoutAlpn(void)
+{
+    char h2[]     = "h2";
+    char http11[] = "http/1.1";
+
+    struct tlsserver_alpn_item_s alpns[] = {
+        {.name = h2, .name_length = 2},
+        {.name = http11, .name_length = 8},
+    };
+    tlsserver_tstate_t ts = {.select_alpns = alpns, .select_alpns_length = ARRAY_SIZE(alpns)};
+
+    const unsigned char  client_offer[] = {3, 'f', 'o', 'o'};
+    const unsigned char *out            = NULL;
+    unsigned char        outlen         = 0;
+
+    int ret = tlsserverOnAlpnSelect(NULL, &out, &outlen, client_offer, sizeof(client_offer), &ts);
+
+    requireNoSelection(ret, out, outlen, "select ALPN no-overlap did not continue without ALPN");
+}
+
+static void testLegacyAlpnNoOverlapContinuesWithoutAlpn(void)
+{
+    char h2[] = "h2";
+
+    struct tlsserver_alpn_item_s alpns[] = {
+        {.name = h2, .name_length = 2},
+    };
+    tlsserver_tstate_t ts = {.alpns = alpns, .alpns_length = ARRAY_SIZE(alpns)};
+
+    const unsigned char  client_offer[] = {8, 'h', 't', 't', 'p', '/', '1', '.', '1'};
+    const unsigned char *out            = NULL;
+    unsigned char        outlen         = 0;
+
+    int ret = tlsserverOnAlpnSelect(NULL, &out, &outlen, client_offer, sizeof(client_offer), &ts);
+
+    requireNoSelection(ret, out, outlen, "legacy ALPN no-overlap did not continue without ALPN");
+}
+
+int main(void)
+{
+    testCaseSet("tlsserver_alpn_test");
+    testOpenSslRuntimeInitialization();
+    testLegacyAlpnUsesConfiguredPreference();
+    testSelectAlpnUsesConfiguredPreference();
+    testDefaultHttp11ProfileSelectsHttp11();
+    testDefaultHttp11ProfileContinuesH2OnlyWithoutAlpn();
+    testSelectAlpnNoOverlapContinuesWithoutAlpn();
+    testLegacyAlpnNoOverlapContinuesWithoutAlpn();
+    return 0;
+}

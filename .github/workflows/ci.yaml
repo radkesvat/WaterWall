@@ -53,6 +53,16 @@ jobs:
           TSAN_OPTIONS: halt_on_error=1
         run: ctest --preset linux-tsan-unit --output-on-failure
 
+      - name: Upload native test failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: Waterwall-linux-tsan-test-diagnostics
+          path: |
+            build/linux-tsan-unit/test-runs/
+            build/linux-tsan-unit/Testing/Temporary/
+          if-no-files-found: warn
+
   windows-shutdown:
     name: windows-shutdown
     runs-on: windows-2025-vs2026
@@ -90,6 +100,16 @@ jobs:
         run: >
           ctest --test-dir build/windows-iocp-unit -C Release --no-tests=error --output-on-failure
           -L unit
+
+      - name: Upload native test failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: Waterwall-windows-shutdown-test-diagnostics
+          path: |
+            build/windows-iocp-unit/test-runs/
+            build/windows-iocp-unit/Testing/Temporary/
+          if-no-files-found: warn
 
   android:
     env:
@@ -425,6 +445,16 @@ jobs:
         run: cmake --build --preset ${{ matrix.preset }} -j8
       - name: Run Unit Tests
         run: ctest --preset ${{ matrix.preset }} --output-on-failure
+
+      - name: Upload native test failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: Waterwall-${{ matrix.preset }}-test-diagnostics
+          path: |
+            build/linux-unit-tests/test-runs/
+            build/linux-unit-tests/Testing/Temporary/
+          if-no-files-found: warn
       - name: Show ccache statistics
         run: ccache -sv
 
@@ -501,6 +531,16 @@ jobs:
         run: >
           ctest --preset ${{ matrix.preset }}-unit --no-tests=error --output-on-failure
           -R '^waterwall\.(aes256gcm_unit|crypto_primitives_unit|vlessserver_fallback_finish_lifetime_unit|trojanserver_fallback_finish_lifetime_unit|tlsserver_fallback_finish_lifetime_unit|muxserver_vless_fallback_finish_unit)$'
+
+      - name: Upload native test failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: Waterwall-${{ matrix.preset }}-unit-test-diagnostics
+          path: |
+            build/${{ matrix.preset }}-unit/test-runs/
+            build/${{ matrix.preset }}-unit/Testing/Temporary/
+          if-no-files-found: warn
       - name: Show ccache statistics
         run: ccache -sv
 
@@ -565,6 +605,16 @@ jobs:
         run: >
           ctest --test-dir build/macos-unit-tests -C Release --no-tests=error --output-on-failure
           -L unit
+
+      - name: Upload native test failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: Waterwall-macos-${{ matrix.arch }}-test-diagnostics
+          path: |
+            build/macos-unit-tests/test-runs/
+            build/macos-unit-tests/Testing/Temporary/
+          if-no-files-found: warn
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6
@@ -786,6 +836,7 @@ jobs:
             build/${{ matrix.preset }}/Release/waterwall_application.exe.map
             build/${{ matrix.preset }}/Testing/Temporary/
             build/${{ matrix.preset }}/CMakeFiles/CMakeConfigureLog.yaml
+            build/windows-launcher-native/test-runs/
             build/windows-launcher-native/Testing/Temporary/
             build/windows-launcher-native/CMakeFiles/CMakeConfigureLog.yaml
             build/ci-diagnostics/

@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Exercise real capture/conntrack rules inside run_in_network_namespace.sh."""
+"""Exercise real capture/conntrack rules inside run_in_network_namespace.sh. CTest:
+waterwall.capture_linux_conntrack_enabled, waterwall.capture_linux_notrack,
+waterwall.capture_linux_protocols_bypass, waterwall.capture_linux_protocols_tracked."""
 
 import argparse
 import json
@@ -7,18 +9,21 @@ from pathlib import Path
 import re
 import socket
 import struct
-import subprocess
 import sys
-import tempfile
+import signal
+import os
 import time
 
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.environ.get("WATERWALL_TEST_SUPPORT_DIR",
+                                str(Path(__file__).resolve().parent / "support" / "python")))
+from wwtest.run_directory import RunDirectory
+from wwtest.process import Process, install_termination_handler
+from wwtest.linux_commands import command, iptables
 
-def command(*args):
-    return subprocess.check_output(args, text=True, stderr=subprocess.STDOUT, timeout=10)
 
 
-def iptables(*args):
-    return command("iptables", "-w", "5", *args)
+
 
 
 def counters(chain="WWCAP_TEST_CT"):
@@ -185,8 +190,7 @@ def run(binary, directory, bypass_conntrack, exclude_protocols):
         expect_counters((0, 1))
 
         with (directory / "stdout.log").open("w") as log:
-            process = subprocess.Popen([binary], cwd=directory, stdout=log, stderr=subprocess.STDOUT)
-            try:
+            with Process([binary], cwd=directory, log=log, cleanup_signal=signal.SIGTERM, terminate_timeout=15) as process:
                 deadline = time.monotonic() + 10
                 while "CaptureDevice: device notrack-test is now up" not in (directory / "stdout.log").read_text():
                     if process.poll() is not None or time.monotonic() >= deadline:
@@ -228,14 +232,6 @@ def run(binary, directory, bypass_conntrack, exclude_protocols):
                 send_packet(sender, "127.0.0.2", "127.0.0.1", port, b"restored", 6)
                 assert receiver.recv(65535) == b"restored"
                 expect_counters((2, 4) if bypass_conntrack else (0, 6))
-            finally:
-                if process.poll() is None:
-                    process.terminate()
-                    try:
-                        process.wait(timeout=15)
-                    except subprocess.TimeoutExpired:
-                        process.kill()
-                        process.wait(timeout=5)
 
 
 def main():
@@ -245,7 +241,7 @@ def main():
     parser.add_argument("--exclude-protocols", action="store_true", help="exclude ICMP, TCP, and protocol-byte boundaries")
     args = parser.parse_args()
     binary = str(Path(args.binary).resolve())
-    with tempfile.TemporaryDirectory(prefix="waterwall-capture-notrack-") as temporary:
+    with RunDirectory(prefix="waterwall-capture-notrack-") as temporary:
         directory = Path(temporary)
         try:
             run(binary, directory, not args.tracked, args.exclude_protocols)
@@ -258,4 +254,5 @@ def main():
 
 
 if __name__ == "__main__":
+    install_termination_handler()
     main()

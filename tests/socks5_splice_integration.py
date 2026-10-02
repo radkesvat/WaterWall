@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""SOCKS5 TCP splice transfers and ordinary UDP roles with namespace-only peers."""
+"""Client/server authentication, CONNECT and UDP association/relay framing with fixed socket peers.
+Checks exact response bytes, target endpoints, real positive splice and shutdown143 in both modes;
+requires strace and network namespaces. UDP admission never uses a readiness datagram. CTest:
+waterwall.socks5client_tcp_auth_splice_false, waterwall.socks5client_tcp_auth_splice_true,
+waterwall.socks5client_tcp_noauth_splice_false, waterwall.socks5client_tcp_noauth_splice_true,
+waterwall.socks5client_udp_ordinary_reads, waterwall.socks5server_tcp_auth_splice_false,
+waterwall.socks5server_tcp_auth_splice_true, waterwall.socks5server_tcp_noauth_splice_false,
+waterwall.socks5server_tcp_noauth_splice_true, waterwall.socks5server_udp_ordinary_reads."""
 import concurrent.futures
 import json
 from pathlib import Path
@@ -7,15 +14,20 @@ import re
 import shutil
 import signal
 import socket
-import subprocess
 import sys
-import tempfile
+import os
 import threading
 import time
 
 sys.dont_write_bytecode = True
-from trojanclient_splice_integration import exact
-from httpproxyserver_splice_integration import successful_calls
+sys.path.insert(0, os.environ.get("WATERWALL_TEST_SUPPORT_DIR",
+                                str(Path(__file__).resolve().parent / "support" / "python")))
+from wwtest.config import core_config
+from wwtest.run_directory import RunDirectory
+from wwtest.process import Process, close_on_error, install_termination_handler
+
+from wwtest.sockets import exact
+from wwtest.trace import successful_calls
 
 HOST, LISTEN_PORT, PEER_PORT = "127.0.0.1", 27961, 27962
 REPLY = b"\x05\x00\x00\x01" + bytes(6)
@@ -86,7 +98,7 @@ def run(binary, side, enabled, authenticated):
         else:
             settings = {"connect": True, "udp": False, "auth-client-node-name": "auth-client"}
     # Keep the runtime's parent directory small and controlled as well as its CWD.
-    with tempfile.TemporaryDirectory(prefix="waterwall-socks5-splice-") as directory:
+    with RunDirectory("waterwall-socks5-splice-") as directory:
         root = Path(directory) / "run"
         root.mkdir()
         nodes = [
@@ -110,8 +122,7 @@ def run(binary, side, enabled, authenticated):
         (root / "config.json").write_text(json.dumps({"name": "socks5-splice", "nodes": nodes}))
         (root / "core.json").write_text(json.dumps({
             "configs": ["config.json"],
-            "log": {"path": "log/", **{name: {"loglevel": "DEBUG", "file": name + ".log", "console": True}
-                                      for name in ("internal", "core", "network", "dns")}},
+            "log": core_config()["log"],
             **({"dns": {"lookups": "f", "hosts-path": str(root / "hosts")}} if is_client and not udp else {}),
             "misc": {"workers": 1, "splice": enabled, "ram-profile": "minimal", "mtu": 1500,
                      "try-enabling-bbr": False, "tcp-tune": False},
@@ -127,10 +138,7 @@ def run(binary, side, enabled, authenticated):
             if not (udp and not is_client):
                 backend.listen()
             backend.settimeout(15)
-            process = subprocess.Popen([tracer, "-D", "-f", "-yy", "-e", "trace=splice", "-o",
-                                        str(root / "splice.log"), binary], cwd=root,
-                                       stdout=log, stderr=subprocess.STDOUT)
-            try:
+            with Process([tracer, '-D', '-f', '-yy', '-e', 'trace=splice', '-o', str(root / 'splice.log'), binary], cwd=root, log=log) as process:
                 deadline = time.monotonic() + 15
                 if authenticated and not is_client:
                     while "AuthenticationClient: pulled 1 users" not in (root / "stdout.log").read_text():
@@ -182,7 +190,7 @@ def run(binary, side, enabled, authenticated):
                         conn.sendall(data[::-1])
                         assert conn.recv(1) == b"", "unexpected trailing bytes"
 
-                with client, concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                with client, concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor, close_on_error(client):
                     client.settimeout(15)
                     future = executor.submit(peer)
                     if is_client:
@@ -214,17 +222,9 @@ def run(binary, side, enabled, authenticated):
                     assert any(f"127.0.0.1:{LISTEN_PORT}->" in call for call in outputs), "opaque download did not splice"
                 else:
                     assert not calls, "splice occurred with misc.splice disabled"
-            except BaseException:
-                log.flush()
-                print((root / "stdout.log").read_text(), file=sys.stderr)
-                raise
-            finally:
-                staged.set()
-                if process.poll() is None:
-                    process.kill()
-                    process.wait()
 
 
 if __name__ == "__main__":
+    install_termination_handler()
     run(str(Path(sys.argv[1]).resolve()), sys.argv[2], sys.argv[3] == "true", sys.argv[4] == "auth")
     print("SOCKS5 setup, socket roundtrip and splice policy passed")

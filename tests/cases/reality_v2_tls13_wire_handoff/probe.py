@@ -1,7 +1,17 @@
+"""Reality TLS13 REQUEST/ACK/CONFIRM handoff preserves wire epochs and protected application bytes.
+Fixed relay/sink sequence and exact TLS record/event checks; intentional None-at-EOF decoding.
+Namespace harness owns the runtime. CTest: waterwall.reality_v2_tls13_wire_handoff."""
 import socket
 import sys
+from pathlib import Path
+import os
 import threading
 import time
+
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.environ.get("WATERWALL_TEST_SUPPORT_DIR",
+                                str(Path(__file__).resolve().parents[2] / "support" / "python")))
+from wwtest.sockets import exact as read_exact
 
 
 HOST = "127.0.0.1"
@@ -26,14 +36,7 @@ def fail(message):
 
 
 def recv_exact(sock, length):
-    chunks = []
-    while length:
-        chunk = sock.recv(length)
-        if not chunk:
-            return None
-        chunks.append(chunk)
-        length -= len(chunk)
-    return b"".join(chunks)
+    return read_exact(sock, length, timeout_context=False, eof_returns_none=True)
 
 
 def recv_tls_record(sock):

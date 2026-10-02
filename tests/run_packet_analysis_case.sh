@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
 
+# Covers: runtime exit0 plus every expected packet-report line, and no stdout report leak. Setup:
+# private report/core/logs, two default workers and owned runtime PID. Limits: report expectations
+# belong to the case; runtime deadline unchanged. CTest: packet-analysis cases via
+# add_waterwall_packet_analysis_test.
+
+
 set -euo pipefail
 shopt -s nullglob
 
@@ -13,31 +19,22 @@ case_dir=$(realpath "$2")
 timeout_seconds=$3
 
 source "$(dirname "$(realpath "$0")")/case_run_dir.lib.sh"
+source "$(dirname "$(realpath "$0")")/support/shell/runner.lib.sh"
 
-trap remove_case_run_dir EXIT
+trap 'status=$?; remove_case_run_dir "$status"; exit "$status"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 prepare_case_run_dir "$case_dir"
 run_dir=$case_run_dir
 generated_core_json="$run_dir/core.json"
 pid=""
 
 dump_logs() {
-  local path
-  for path in "$run_dir/stdout.log" "$run_dir"/log/*.log; do
-    [[ -f "$path" ]] || continue
-    echo "===== $(basename "$path") =====" >&2
-    cat "$path" >&2
-  done
+  ww_test_dump_logs "$run_dir/stdout.log" "$run_dir"/log/*.log
 }
 
 show_stdout_on_success() {
-  case "${WATERWALL_TEST_SHOW_STDOUT_ON_SUCCESS:-}" in
-    1|true|TRUE|True|yes|YES|Yes|on|ON|On)
-      return 0
-      ;;
-    *)
-      return 1
-      ;;
-  esac
+  ww_test_show_stdout_on_success
 }
 
 finish_success() {
@@ -49,12 +46,13 @@ finish_success() {
 }
 
 cleanup() {
+  local cleanup_status=$?
   if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
-    kill -TERM "$pid" 2>/dev/null || true
-    wait "$pid" 2>/dev/null || true
+    ww_test_stop_child "$pid" || true
   fi
 
-  remove_case_run_dir
+  remove_case_run_dir "$cleanup_status"
+  exit "$cleanup_status"
 }
 
 trap cleanup EXIT
@@ -72,30 +70,11 @@ if [[ -f "$run_dir/workers.txt" ]]; then
   fi
 fi
 
-cat >"$generated_core_json" <<EOF
-{
-  "log": {
-    "path": "log/",
-    "internal": { "loglevel": "DEBUG", "file": "internal.log", "console": false },
-    "core":     { "loglevel": "DEBUG", "file": "core.log",     "console": false },
-    "network":  { "loglevel": "DEBUG", "file": "network.log",  "console": false },
-    "dns":      { "loglevel": "DEBUG", "file": "dns.log",      "console": false }
-  },
-  "configs": [
-    "config.json"
-  ],
-  "misc": {
-    "workers": $workers,
-    "ram-profile": "client",
-    "mtu": 1500,
-    "try-enabling-bbr": false
-  }
-}
-EOF
+ww_test_write_core "$generated_core_json" "$workers" client false omit
 
 (
   cd "$run_dir"
-  "$binary_path" >stdout.log 2>&1
+  exec "$binary_path" >stdout.log 2>&1
 ) &
 pid=$!
 

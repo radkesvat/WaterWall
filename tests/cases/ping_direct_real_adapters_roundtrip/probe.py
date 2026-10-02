@@ -1,4 +1,14 @@
 #!/usr/bin/env python3
+"""Exercise RawSocket -> PingServer -> TunDevice with real ICMP adapters.
+
+The privileged namespace runner starts the adjacent multiworker configuration;
+this probe waits for its TUN interface and sends crafted loopback IPv4/ICMP
+packets. It checks exact inner Echo payloads, checksums, reply ordering, TOS/TTL
+and fragmentation policy, duplicate acknowledgements without duplicate inner
+delivery, advancing reply IDs, and server request sequences. Raw-socket and TUN
+privileges are required; the case uses no external network and measures no speed.
+CTest: waterwall.ping_direct_real_adapters_roundtrip.
+"""
 
 import ipaddress
 import socket

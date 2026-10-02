@@ -1,21 +1,25 @@
 #!/usr/bin/env python3
-"""Mock proxy sends large CONNECT reply tails through the real Socks5Client."""
+"""Large SOCKS reply extension fields are consumed before the application response. Fixed loopback
+peers and fragmented control reads; exact bytes/EOF, with the original unexpected-EOF failure
+policy. CTest: waterwall.socks5_client_large_reply_probe."""
+import sys
+from pathlib import Path
+import os
 import socket
 import threading
 import time
+
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.environ.get("WATERWALL_TEST_SUPPORT_DIR",
+                                str(Path(__file__).resolve().parents[2] / "support" / "python")))
+from wwtest.sockets import exact as read_exact
 
 BODY = bytes(range(256)) * 32
 errors = []
 
 
 def exact(sock, length):
-    result = bytearray()
-    while len(result) < length:
-        chunk = sock.recv(length - len(result))
-        if not chunk:
-            raise AssertionError("unexpected EOF")
-        result.extend(chunk)
-    return bytes(result)
+    return read_exact(sock, length, timeout_context=False, eof_error=lambda: AssertionError('unexpected EOF'))
 
 
 def proxy(listener):

@@ -1,8 +1,15 @@
 #!/usr/bin/env bash
 
+# Covers: exact permitted nonzero status and required diagnostic, rejecting
+# signal/reserved/hard-abort/clean/wrong-diagnostic results. Setup: retained capture and explicit
+# receipt for the underlying private run; enclosing verdict owns cleanup. CTest: negative
+# integration registrations and waterwall.expected_failure_runner.
+
+
 # Run an integration case that must fail for one specific, observable reason.
 
 set -euo pipefail
+source "$(dirname "$(realpath "$0")")/support/shell/runner.lib.sh"
 
 readonly MIN_SIGNAL_EXIT_STATUS=128
 readonly FIRST_RESERVED_EXIT_STATUS=125
@@ -20,7 +27,6 @@ case_dir=$3
 timeout_seconds=$4
 expected_output=$5
 expected_failure_exit_status=${6:-1}
-captured_output=$(mktemp)
 
 if [[ ! "$expected_failure_exit_status" =~ ^[1-9][0-9]*$ ||
       $expected_failure_exit_status -ge $MIN_SIGNAL_EXIT_STATUS ||
@@ -30,13 +36,28 @@ if [[ ! "$expected_failure_exit_status" =~ ^[1-9][0-9]*$ ||
   exit 2
 fi
 
+source "$(dirname "$(realpath "$0")")/case_run_dir.lib.sh"
+capture_dir=$(mktemp -d "${TMPDIR:-/tmp}/waterwall-expected-XXXXXX")
+captured_output="$capture_dir/output.log"
+run_root_file="$capture_dir/run-root.txt"
+printf "Run artifacts: %s\n" "$capture_dir" >&2
+
 cleanup() {
-  rm -f "$captured_output"
+  local status=$?
+  if [[ -s "$run_root_file" ]]; then
+    case_run_root=$(<"$run_root_file")
+    remove_case_run_dir "$status"
+  fi
+  ww_test_finish_directory "$capture_dir" "$status"
+  exit "$status"
 }
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 set +e
-"$case_runner" "$binary_path" "$case_dir" "$timeout_seconds" >"$captured_output" 2>&1
+WATERWALL_TEST_RUN_ROOT_FILE="$run_root_file" \
+  "$case_runner" "$binary_path" "$case_dir" "$timeout_seconds" >"$captured_output" 2>&1
 status=$?
 set -e
 

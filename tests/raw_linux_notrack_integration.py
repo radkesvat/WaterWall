@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Exercise RawSocket output through real raw sockets in a private network namespace."""
+"""Exercise RawSocket output through real raw sockets in a private network namespace. CTest:
+waterwall.raw_linux_notrack."""
 
 import contextlib
 import json
@@ -7,12 +8,18 @@ from pathlib import Path
 import re
 import socket
 import struct
-import subprocess
 import sys
-import tempfile
+import signal
+import os
 import time
 
-from capture_linux_notrack_integration import command, iptables
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.environ.get("WATERWALL_TEST_SUPPORT_DIR",
+                                str(Path(__file__).resolve().parent / "support" / "python")))
+from wwtest.run_directory import RunDirectory
+from wwtest.process import Process, install_termination_handler
+
+from wwtest.linux_commands import command, iptables
 
 
 def packets(port, payload, ident, fragmented=False):
@@ -108,8 +115,7 @@ def run(binary, directory):
             listener.close()
 
         with (directory / "stdout.log").open("w") as log:
-            process = subprocess.Popen([binary], cwd=directory, stdout=log, stderr=subprocess.STDOUT)
-            try:
+            with Process([binary], cwd=directory, log=log, cleanup_signal=signal.SIGTERM, terminate_timeout=15) as process:
                 deadline = time.monotonic() + 15
                 while not all(f"RawDevice: device {name} is now up" in (directory / "stdout.log").read_text()
                               for name in names):
@@ -146,19 +152,11 @@ def run(binary, directory):
                 remaining = iptables("-t", "raw", "-S", "OUTPUT")
                 assert "WWRAW_NOTRACK_" not in remaining and "foreign-notrack" in remaining, remaining
                 assert "WWCAP" not in iptables("-t", "raw", "-S", "PREROUTING")
-            finally:
-                if process.poll() is None:
-                    process.terminate()
-                    try:
-                        process.wait(timeout=15)
-                    except subprocess.TimeoutExpired:
-                        process.kill()
-                        process.wait(timeout=5)
 
 
 def main():
     binary = str(Path(sys.argv[1]).resolve())
-    with tempfile.TemporaryDirectory(prefix="waterwall-raw-notrack-") as temporary:
+    with RunDirectory(prefix="waterwall-raw-notrack-") as temporary:
         directory = Path(temporary)
         try:
             run(binary, directory)
@@ -171,4 +169,5 @@ def main():
 
 
 if __name__ == "__main__":
+    install_termination_handler()
     main()

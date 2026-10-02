@@ -1,56 +1,45 @@
 #!/usr/bin/env python3
 """Line-ownership source policy checker.
 
-`lineDestroy()` may only be called by the component that created the exact
-`line_t`, and an owner's `Finish` handler for a normal line may not return while
-that line is still logically alive. Both rules are architectural: nothing in the
-type system distinguishes a line a tunnel created from one merely passing
-through it. This checker pins the parts of that contract that are decidable from
-the source:
+Only the component that created the exact normal line may call lineDestroy(),
+and an owner's Finish handler must return with that line logically dead. This
+checker pins source-decidable parts of that contract:
 
-    every production lineCreate()/lineCreateForWorker() site is classified as a
-      normal owner, a packet-line allocation, a cross-worker paired-line
-      allocation, or an approved test-only allocation;
-    a classification is only accepted where that kind of allocation is allowed
-      (a packet line may only come from tunnelchainFinalize(), a paired line only
-      from pipeTo());
-    no area calls lineDestroy() unless it also creates lines, which is the
-      "a borrowed-line tunnel never destroys" rule;
-    every registered owner close path really does destroy its line;
-    every registered packet-lifecycle anchoring Finish handler hard-aborts and
-      never destroys the packet line, including dual-role handlers that also see
-      a normal line;
-    no Finish handler anywhere in tunnels/ absorbs its callback without a written
-      reason, so a lost propagation or a lost owner close cannot look like a no-op;
-    the local re-entrancy hardening the owner contract does not replace stays in
-      place;
-    the focused unit tests that prove the runtime postcondition keep their content
-      and their ctest registration.
+1. Classify each lineCreate()/lineCreateForWorker() site as a normal owner,
+   packet allocation, cross-worker paired allocation or approved test fixture.
+2. Accept each classification only at its allowed allocation sites: packet
+   lines come from tunnelchainFinalize(), paired lines from pipeTo().
+3. Reject lineDestroy() in areas that do not create lines.
+4. Require each registered owner close path to destroy its line.
+5. Require registered packet anchors to hard-abort without destroying their
+   packet line, including handlers that also serve a normal-line role.
+6. Require a written reason for any tunnel Finish handler that absorbs Finish.
+7. Retain the pinned local reentry protections and focused runtime tests with
+   their reachable CTest registrations.
 
-Runtime behaviour is not proved here - the tests named in REQUIRED_CONTRACT_TESTS
-do that. This checker's job is to fail when a new creation site or lineDestroy()
-site is added without classification, when a registered packet anchor loses its
-abort, or when any Finish handler becomes an unexplained no-op.
+This is a lexical source check, not runtime proof. REQUIRED_CONTRACT_TESTS names
+runtime coverage. Sites use a relative path and exact function name rather than
+line numbers. The wwtest.source_policy scanner masks comments and literals before
+extracting bodies, so quoted or commented-out lookalikes do not satisfy entries.
 
-Every site is identified by (relative source path, exact function name) and never
-by a line number. Function bodies are extracted with the lexical C scanner from
-tunnels_abort_policy_test.py, which blanks comments, string literals and
-character literals before anything is counted, so a commented-out or quoted
-lookalike can never satisfy an entry.
-
-Usage:
-    python3 tests/line_ownership_policy_test.py [--mutation-test|-m]
-"""
+Usage: python3 tests/line_ownership_policy_test.py [--mutation-test|-m]. Its CTest
+registration is disabled; run this checker directly when validating its policy.
+It reads sources without creating fixtures or mutating the repository; mutation
+mode changes only in-memory copies after the initial policy check passes."""
 import os
 import re
 import sys
+from pathlib import Path
+
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.environ.get("WATERWALL_TEST_SUPPORT_DIR",
+                                str(Path(__file__).resolve().parent / "support" / "python")))
 
 # Importing the sibling checker must not leave a __pycache__ directory behind in
 # the source tree when this runs from a build directory.
-sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from tunnels_abort_policy_test import (  # noqa: E402
+from wwtest.source_policy import (  # noqa: E402
     ROOT,
     analyze,
     line_of,
@@ -89,19 +78,19 @@ PAIRED_LINE_ALLOCATION = ("ww/net/pipe_tunnel.c", "pipeTo")
 # a tunnel routinely owns one role while borrowing another.
 
 CREATION_SITES = [
-    ("tests/unittests/socks5server_resources_test.c", "setup", TEST_ONLY,
+    ("tests/unittests/tunnels/socks/socks5server_resources_test.c", "setup", TEST_ONLY,
      "Resource fixture owns its client; teardown finishes SOCKS state before destroying the line."),
-    ("tests/unittests/socks5server_udp_identity_test.c", "setup", TEST_ONLY,
+    ("tests/unittests/tunnels/socks/socks5server_udp_identity_test.c", "setup", TEST_ONLY,
      "Collision fixture models provider ownership; closeClient finishes SOCKS state and destroys the client."),
-    ("tests/unittests/tlsclient_fragment_test.c", "openLine", TEST_ONLY,
+    ("tests/unittests/tunnels/tls/tlsclient_fragment_test.c", "openLine", TEST_ONLY,
      "fixture-owned source line; TlsClient and its fragment helper borrow it"),
-    ("tests/unittests/streamfragmenter_test.c", "openLine", TEST_ONLY,
+    ("tests/unittests/tunnels/streamfragmenter/streamfragmenter_test.c", "openLine", TEST_ONLY,
      "fixture-owned source line; StreamFragmenter only borrows it"),
-    ("tests/unittests/streamfragmenter_test.c", "boundaries", TEST_ONLY,
+    ("tests/unittests/tunnels/streamfragmenter/streamfragmenter_test.c", "boundaries", TEST_ONLY,
      "second fixture-owned source line proving independent fragmentation scope"),
-    ("tests/unittests/http_proxy_client_lifecycle_test.c", "openLine", TEST_ONLY,
+    ("tests/unittests/tunnels/http_proxy/http_proxy_client_lifecycle_test.c", "openLine", TEST_ONLY,
      "fixture-owned source line; HttpProxyClient only borrows it"),
-    ("tests/unittests/http_proxy_server_lifecycle_test.c", "resetClient", TEST_ONLY,
+    ("tests/unittests/tunnels/http_proxy/http_proxy_server_lifecycle_test.c", "resetClient", TEST_ONLY,
      "fixture-owned incoming client; production proxy owns its separate child"),
     ("tunnels/HttpProxyServer/common/lifecycle.c", "hpsCreateChild", NORMAL_OWNER,
      "one outbound HTTP, CONNECT or fallback child; the incoming client line remains borrowed"),
@@ -190,94 +179,94 @@ CREATION_SITES = [
     # ------------------------------------------------------------------
     # Test fixtures
     # ------------------------------------------------------------------
-    ("tests/unittests/line_state_index_test.c", "testDenseSlots", TEST_ONLY,
+    ("tests/unittests/net/line_state_index_test.c", "testDenseSlots", TEST_ONLY,
      "fixture-owned normal lines used to check dense state boundaries and pool recycling"),
-    ("tests/unittests/domainresolver_line_layout_test.c", "main", TEST_ONLY,
+    ("tests/unittests/tunnels/domainresolver/domainresolver_line_layout_test.c", "main", TEST_ONLY,
      "the fixture-owned normal line containing embedded resolver state and neighboring sentinels"),
-    ("tests/unittests/reality_close_lifecycle_server.c", "serverFixtureMoveLineToOwnerPool", TEST_ONLY,
+    ("tests/unittests/tunnels/reality/reality_close_lifecycle_server.c", "serverFixtureMoveLineToOwnerPool", TEST_ONLY,
      "a fixture line re-created in the owning worker's pool"),
-    ("tests/unittests/tunnel_line_failure_harness.h", "twfLinePoolCreateLine", TEST_ONLY,
+    ("tests/support/c/fixtures/worker_lines.h", "twfLinePoolCreateLine", TEST_ONLY,
      "the shared pool-backed fixture line the owner-postcondition cases need"),
-    ("tests/unittests/udplistener_dynamic_endpoint_test.c", "testStaticSpliceRetirement", TEST_ONLY,
+    ("tests/unittests/tunnels/udp/udplistener_dynamic_endpoint_test.c", "testStaticSpliceRetirement", TEST_ONLY,
      "one fixture-created normal peer line per worker, owned and drained by the static UdpListener"),
-    ("tests/unittests/udpconnector_socket_pool_test.c", "createFixtureNormalLine", TEST_ONLY,
+    ("tests/unittests/tunnels/udp/udpconnector_socket_pool_test.c", "createFixtureNormalLine", TEST_ONLY,
      "the owner-controlled normal lines used by the UdpConnector pool fixture"),
-    ("tests/unittests/udpconnector_socket_pool_test.c", "testCase6_WorkerAndConnectorPoolIsolation", TEST_ONLY,
+    ("tests/unittests/tunnels/udp/udpconnector_socket_pool_test.c", "testCase6_WorkerAndConnectorPoolIsolation", TEST_ONLY,
      "the explicit worker-owned lines used to prove UdpConnector pool isolation"),
-    ("tests/unittests/easy_nodes_splice_test.c", "easySetup", TEST_ONLY,
+    ("tests/unittests/tunnels/easy/easy_nodes_splice_test.c", "easySetup", TEST_ONLY,
      "the ordinary fixture line released by easyTeardown or its test endpoint"),
-    ("tests/unittests/trojanclient_splice_test.c", "begin", TEST_ONLY,
+    ("tests/unittests/tunnels/trojan/trojanclient_splice_test.c", "begin", TEST_ONLY,
      "the borrowed application fixture line on the selected worker"),
-    ("tests/unittests/vlessclient_splice_test.c", "begin", TEST_ONLY,
+    ("tests/unittests/tunnels/vless/vlessclient_splice_test.c", "begin", TEST_ONLY,
      "the borrowed application fixture line on worker zero or one"),
-    ("tests/unittests/vlessclient_splice_test.c", "testPreparedDestination", TEST_ONLY,
+    ("tests/unittests/tunnels/vless/vlessclient_splice_test.c", "testPreparedDestination", TEST_ONLY,
      "the replacement application line used to verify target preparation before DNS"),
-    ("tests/unittests/mux_tls_close_backpressure_fixture.c", "mxbCreateLine", TEST_ONLY,
+    ("tests/unittests/tunnels/mux/mux_tls_close_backpressure_fixture.c", "mxbCreateLine", TEST_ONLY,
      "the combined Mux/TLS parent and child lines used by real callback-composition fixtures"),
-    ("tests/unittests/muxclient_capacity_dispatch_test.c", "caseWorkerDrainIsLocal", TEST_ONLY,
+    ("tests/unittests/tunnels/mux/muxclient_capacity_dispatch_test.c", "caseWorkerDrainIsLocal", TEST_ONLY,
      "one inventoried MuxClient parent per exact worker for owner-drain isolation"),
-    ("tests/unittests/muxserver_idle_lifecycle_test.c", "caseWorkerDrainIsLocal", TEST_ONLY,
+    ("tests/unittests/tunnels/mux/muxserver_idle_lifecycle_test.c", "caseWorkerDrainIsLocal", TEST_ONLY,
      "one borrowed parent and one inventoried owned child per exact worker"),
-    ("tests/unittests/muxserver_admission_concurrency_test.c", "WTHREAD_ROUTINE", TEST_ONLY,
+    ("tests/unittests/tunnels/mux/muxserver_admission_concurrency_test.c", "WTHREAD_ROUTINE", TEST_ONLY,
      "one borrowed MuxServer parent fixture line created on each exact registered owner worker"),
-    ("tests/unittests/speedtestclient_orderly_shutdown_test.c", "publishLine", TEST_ONLY,
+    ("tests/unittests/tunnels/speedtest/speedtestclient_orderly_shutdown_test.c", "publishLine", TEST_ONLY,
      "the fixture lines published into SpeedTestClient's worker-owned inventory"),
-    ("tests/unittests/worker_context_helpers_test.c",
+    ("tests/unittests/net/worker/worker_teardown_cases.c",
      "testLineRefcountPublishesTeardownToFinalReleaser",
      TEST_ONLY,
      "the line whose final reference is released by a foreign thread"),
-    ("tests/unittests/worker_context_helpers_test.c",
+    ("tests/unittests/net/worker/worker_teardown_cases.c",
      "exerciseForeignFinalLineReleaseDuringDetach",
      TEST_ONLY,
      "the local, plain-thread, and lwIP-thread final-release fixture lines"),
-    ("tests/unittests/worker_context_helpers_test.c",
+    ("tests/unittests/net/worker/pipe_tunnel_cases.c",
      "testPipePublicationIsLinearizedWithPreStop",
      TEST_ONLY,
      "the borrowed source lines used across pipe publication, refusal, Finish, and drain cases"),
-    ("tests/unittests/halfduplex_worker_cases.h", "halfWorkerCreate", TEST_ONLY,
+    ("tests/unittests/net/worker/halfduplex_workers_cases.c", "halfWorkerCreate", TEST_ONLY,
      "transport half owned by its exact worker fixture; server and PipeTunnel borrow it"),
-    ("tests/unittests/worker_context_helpers_test.c", "pipeMessageCaseSetup", TEST_ONLY,
+    ("tests/unittests/net/worker/pipe_tunnel_cases.c", "pipeMessageCaseSetup", TEST_ONLY,
      "the borrowed source line for queued pipe-message settlement cases"),
-    ("tests/unittests/wireguarddevice_orderly_shutdown_test.c", "fixtureSetup", TEST_ONLY,
+    ("tests/unittests/tunnels/wireguard/wireguarddevice_orderly_shutdown_test.c", "fixtureSetup", TEST_ONLY,
      "a stand-in for the chain's worker packet line, which tunnelchainFinalize() normally allocates"),
-    ("tests/unittests/testerclient_orderly_shutdown_test.c",
+    ("tests/unittests/tunnels/tester/testerclient_orderly_shutdown_test.c",
      "caseSuccessfulDownstreamFinishClosesBeforeSweep",
      TEST_ONLY,
      "two worker-owned lines used to reproduce a completed-line Finish before the final sweep"),
-    ("tests/unittests/halfduplexserver_reentrant_init_test.c", "transportOwnerDownstreamFinish", TEST_ONLY,
+    ("tests/unittests/tunnels/halfduplex/halfduplexserver_reentrant_init_test.c", "transportOwnerDownstreamFinish", TEST_ONLY,
      "a replacement fixture line used to prove the finished transport allocation remains retained"),
-    ("tests/unittests/halfduplexserver_reentrant_init_test.c", "createTransportLine", TEST_ONLY,
+    ("tests/unittests/tunnels/halfduplex/halfduplexserver_reentrant_init_test.c", "createTransportLine", TEST_ONLY,
      "the borrowed upload and download transport fixture lines"),
-    ("tests/unittests/halfduplexserver_reentrant_init_test.c", "protocolCreateTransport", TEST_ONLY,
+    ("tests/unittests/tunnels/halfduplex/halfduplexserver_reentrant_init_test.c", "protocolCreateTransport", TEST_ONLY,
      "the borrowed upload and download lines used by the protocol-framing fixture"),
-    ("tests/unittests/tcp_adapter_pause_close_test.c", "progressSetup", TEST_ONLY,
+    ("tests/unittests/tunnels/tcp/tcp_adapter_pause_close_test.c", "progressSetup", TEST_ONLY,
      "the connector borrowed line used for partial-write and DNS admission fixtures"),
-    ("tests/unittests/tcp_adapter_pause_close_test.c", "runLateInitCase", TEST_ONLY,
+    ("tests/unittests/tunnels/tcp/tcp_adapter_pause_close_test.c", "runLateInitCase", TEST_ONLY,
      "the owner-controlled borrowed line used to reject connector Init during worker drain"),
-    ("tests/unittests/halfduplexclient_reentrant_close_test.c", "runRuntimeCase", TEST_ONLY,
+    ("tests/unittests/tunnels/halfduplex/halfduplexclient_reentrant_close_test.c", "runRuntimeCase", TEST_ONLY,
      "the borrowed main line for real client pair Init and reentrant flow cases"),
-    ("tests/unittests/halfduplexclient_framing_random_test.c", "initializePair", TEST_ONLY,
+    ("tests/unittests/tunnels/halfduplex/halfduplexclient_framing_random_test.c", "initializePair", TEST_ONLY,
      "the main, upload, and download lines used by each client-framing fixture pair"),
-    ("tests/unittests/line_task_scheduling_test.c", "createLine", TEST_ONLY,
+    ("tests/unittests/net/line_task_scheduling_test.c", "createLine", TEST_ONLY,
      "the owner-local and cross-worker lines used by the scheduler contract matrix"),
-    ("tests/unittests/connectiontopackets_schedule_rejection_test.c", "ctpFixtureSetup", TEST_ONLY,
+    ("tests/unittests/tunnels/packet_bridges/connectiontopackets_schedule_rejection_test.c", "ctpFixtureSetup", TEST_ONLY,
      "the borrowed normal line used for foreign CTP scheduler-refusal settlement"),
-    ("tests/unittests/packetstoconnection_schedule_rejection_test.c", "ptcFixtureSetup", TEST_ONLY,
+    ("tests/unittests/tunnels/packet_bridges/packetstoconnection_schedule_rejection_test.c", "ptcFixtureSetup", TEST_ONLY,
      "the owned normal line used for foreign PTC scheduler-refusal settlement"),
 ]
 
 # How many lines a site creates, where that is not one. Losing one of a pair is a
 # real ownership change, so the count is pinned rather than inferred.
 CREATION_COUNTS = {
-    ("tests/unittests/muxserver_idle_lifecycle_test.c", "caseWorkerDrainIsLocal"): 2,
+    ("tests/unittests/tunnels/mux/muxserver_idle_lifecycle_test.c", "caseWorkerDrainIsLocal"): 2,
     ("tunnels/HalfDuplexClient/upstream/init.c", "halfduplexclientTunnelUpStreamInit"): 2,
     ("tunnels/ReverseClient/common/helpers.c", "reverseclientBeginConnectMessageReceived"): 2,
     ("tunnels/HttpClient/common/split.c", "httpclientSplitUpStreamInit"): 2,
-    ("tests/unittests/worker_context_helpers_test.c", "exerciseForeignFinalLineReleaseDuringDetach"): 3,
-    ("tests/unittests/worker_context_helpers_test.c", "testPipePublicationIsLinearizedWithPreStop"): 6,
-    ("tests/unittests/halfduplexclient_framing_random_test.c", "initializePair"): 3,
-    ("tests/unittests/line_task_scheduling_test.c", "createLine"): 2,
-    ("tests/unittests/udpconnector_socket_pool_test.c", "testCase6_WorkerAndConnectorPoolIsolation"): 3,
+    ("tests/unittests/net/worker/worker_teardown_cases.c", "exerciseForeignFinalLineReleaseDuringDetach"): 3,
+    ("tests/unittests/net/worker/pipe_tunnel_cases.c", "testPipePublicationIsLinearizedWithPreStop"): 6,
+    ("tests/unittests/tunnels/halfduplex/halfduplexclient_framing_random_test.c", "initializePair"): 3,
+    ("tests/unittests/net/line_task_scheduling_test.c", "createLine"): 2,
+    ("tests/unittests/tunnels/udp/udpconnector_socket_pool_test.c", "testCase6_WorkerAndConnectorPoolIsolation"): 3,
 }
 
 # ---------------------------------------------------------------------------
@@ -505,94 +494,119 @@ DESTINATION_GUARD_CONTRACTS = [
 #
 # A test file that is still on disk but no longer built proves nothing, so each
 # entry also names the exact CMake text that puts it in front of ctest. Entries are
-# (path, source markers, ctest registrations, description); a header has no
+# (path, source markers, ctest registrations, description); fragment registrations
+# also pin their explicit include edges so an unreachable fragment cannot satisfy
+# the contract merely by retaining its registration text. A header has no
 # registration of its own and is covered by the executables that include it.
 
 UNIT_CMAKE = "tests/unittests/CMakeLists.txt"
 SUITE_CMAKE = "tests/CMakeLists.txt"
+MUX_CMAKE = "tests/cmake/native/mux.cmake"
+REENTRANT_CMAKE = "tests/cmake/native/rawsocket.cmake"
+ORDERLY_CMAKE = "tests/cmake/native/orderly-shutdown.cmake"
+ABORT_CMAKE = "tests/cmake/native/hard-abort.cmake"
+STREAM_CMAKE = "tests/cmake/integration/stream-codecs.cmake"
+TLS_REALITY_CMAKE = "tests/cmake/integration/tls-reality.cmake"
 ABORT_RUNTIME_CMAKE = "tests/unittests/tunnels_abort_runtime_test.cmake"
 
 REQUIRED_CONTRACT_TESTS = [
-    ("tests/unittests/tunnel_line_failure_harness.h",
+    ("tests/support/c/fixtures/worker_lines.h",
      ("twfRunOwnerFinish",
       "twfRequireOwnedLineReclaimed",
       "twfLinePoolCreateLine"),
      (),
      "the reusable owned-line postcondition pattern"),
-    ("tests/unittests/owned_line_finish_udpstatelesssocket_test.c",
+    ("tests/unittests/tunnels/udp/owned_line_finish_udpstatelesssocket_test.c",
      ("caseEndpointOwnerFinishKillsLine",
       "caseBorrowedLineFinishDoesNotDestroy",
       "twfRunOwnerFinish"),
-     ((UNIT_CMAKE, "add_executable(owned_line_finish_udpstatelesssocket_test"),
-      (UNIT_CMAKE, "waterwall.owned_line_finish_udpstatelesssocket_unit")),
+     ((UNIT_CMAKE, 'include("${CMAKE_SOURCE_DIR}/tests/cmake/native/mux.cmake")'),
+      (MUX_CMAKE, "waterwall_add_native_executable(owned_line_finish_udpstatelesssocket_test"),
+      (MUX_CMAKE, "waterwall.owned_line_finish_udpstatelesssocket_unit")),
      "a representative endpoint owner, owned and borrowed roles"),
-    ("tests/unittests/owned_line_finish_muxserver_test.c",
+    ("tests/unittests/tunnels/mux/owned_line_finish_muxserver_test.c",
      ("caseInternalOwnerFinishKillsChildOnly",
       "caseParentFinishKillsOwnedChildren",
       "caseNestedDestroyIsNotRepeated",
       "twfRunOwnerFinish"),
-     ((UNIT_CMAKE, "add_executable(owned_line_finish_muxserver_test"),
-      (UNIT_CMAKE, "waterwall.owned_line_finish_muxserver_unit")),
+     ((UNIT_CMAKE, 'include("${CMAKE_SOURCE_DIR}/tests/cmake/native/mux.cmake")'),
+      (MUX_CMAKE, "waterwall_add_native_executable(owned_line_finish_muxserver_test"),
+      (MUX_CMAKE, "waterwall.owned_line_finish_muxserver_unit")),
      "a representative internal owner: the owned child dies, the borrowed parent does not"),
-    ("tests/unittests/testerclient_orderly_shutdown_test.c",
+    ("tests/unittests/tunnels/tester/testerclient_orderly_shutdown_test.c",
      ("caseTerminalDownstreamFinishClosesOwnedLine",
       "caseSuccessfulDownstreamFinishClosesBeforeSweep",
       "casePacketModeFinishAborts",
       "testerclientTunnelDownStreamFinish"),
-     ((UNIT_CMAKE, '"TesterClient|testerclient_orderly_shutdown_test|testerclient|OFF"'),),
+     ((UNIT_CMAKE, 'include("${CMAKE_SOURCE_DIR}/tests/cmake/native/orderly-shutdown.cmake")'),
+      (ORDERLY_CMAKE, '"TesterClient|testerclient_orderly_shutdown_test|testerclient|OFF|'
+                     '${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/tester/testerclient_orderly_shutdown_test.c"')),
      "TesterClient's terminal Finish, normal mode and packet mode"),
-    ("tests/unittests/wireguarddevice_orderly_shutdown_test.c",
+    ("tests/unittests/tunnels/wireguard/wireguarddevice_orderly_shutdown_test.c",
      ("casePacketLineFinishAborts",
       "wireguarddeviceHandleTransportLineFinish"),
-     ((UNIT_CMAKE, '"WireGuardDevice|wireguarddevice_orderly_shutdown_test|wireguarddevice|OFF"'),),
+     ((UNIT_CMAKE, 'include("${CMAKE_SOURCE_DIR}/tests/cmake/native/orderly-shutdown.cmake")'),
+      (ORDERLY_CMAKE, '"WireGuardDevice|wireguarddevice_orderly_shutdown_test|wireguarddevice|OFF|'
+                     '${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/wireguard/wireguarddevice_orderly_shutdown_test.c"')),
      "WireGuardDevice's dual-role Finish"),
-    ("tests/unittests/tunnels_abort_runtime_test.c",
+    ("tests/unittests/tunnels/abort/tunnels_abort_runtime_test.c",
      ("casePacketLifecycleAnchorUpstreamFinish",
       "casePacketLifecycleAnchorDownstreamFinish",
       "packet_lifecycle_anchor_upstream_finish",
       "packet_lifecycle_anchor_downstream_finish"),
-     ((ABORT_RUNTIME_CMAKE, "packet_lifecycle_anchor_upstream_finish"),
+     ((UNIT_CMAKE, 'include("${CMAKE_SOURCE_DIR}/tests/cmake/native/hard-abort.cmake")'),
+      (ABORT_CMAKE, 'include("${WATERWALL_UNIT_SOURCE_ROOT}/tunnels_abort_runtime_test.cmake")'),
+      (ABORT_RUNTIME_CMAKE, "packet_lifecycle_anchor_upstream_finish"),
       (ABORT_RUNTIME_CMAKE, "packet_lifecycle_anchor_downstream_finish"),
       (ABORT_RUNTIME_CMAKE, "waterwall.tunnels_abort_runtime_unit")),
      "shared packet lifecycle anchors do not return from Finish"),
-    ("tests/unittests/httpclient_reentrant_finish_test.c",
+    ("tests/unittests/tunnels/http/httpclient_reentrant_finish_test.c",
      ("caseFinishDuringFirstFinalChunkStopsRemainingOutput",
       "finishClientFromNextOnFirstPayload"),
-     ((UNIT_CMAKE, "add_executable(httpclient_reentrant_finish_test"),
-      (UNIT_CMAKE, "waterwall.httpclient_reentrant_finish_unit")),
+     ((UNIT_CMAKE, 'include("${CMAKE_SOURCE_DIR}/tests/cmake/native/rawsocket.cmake")'),
+      (REENTRANT_CMAKE, "waterwall_add_native_executable(httpclient_reentrant_finish_test"),
+      (REENTRANT_CMAKE, "waterwall.httpclient_reentrant_finish_unit")),
      "HttpClient stops a multi-part final send after re-entrant downstream Finish"),
-    ("tests/unittests/httpserver_reentrant_finish_test.c",
+    ("tests/unittests/tunnels/http/httpserver_reentrant_finish_test.c",
      ("caseFinishDuringFirstFinalChunkStopsRemainingOutput",
       "finishServerFromPrevOnFirstPayload"),
-     ((UNIT_CMAKE, "add_executable(httpserver_reentrant_finish_test"),
-      (UNIT_CMAKE, "waterwall.httpserver_reentrant_finish_unit")),
+     ((UNIT_CMAKE, 'include("${CMAKE_SOURCE_DIR}/tests/cmake/native/rawsocket.cmake")'),
+      (REENTRANT_CMAKE, "waterwall_add_native_executable(httpserver_reentrant_finish_test"),
+      (REENTRANT_CMAKE, "waterwall.httpserver_reentrant_finish_unit")),
      "HttpServer stops a multi-part final send after re-entrant upstream Finish"),
-    ("tests/unittests/halfduplexserver_reentrant_init_test.c",
+    ("tests/unittests/tunnels/halfduplex/halfduplexserver_reentrant_init_test.c",
      ("runRejectedPairingCase",
       "rejectMainLineInit",
       "transportOwnerDownstreamFinish"),
-     ((UNIT_CMAKE, "add_executable(halfduplexserver_reentrant_init_test"),
-      (UNIT_CMAKE, "waterwall.halfduplexserver_reentrant_init_unit")),
+     ((UNIT_CMAKE, 'include("${CMAKE_SOURCE_DIR}/tests/cmake/native/rawsocket.cmake")'),
+      (REENTRANT_CMAKE, "waterwall_add_native_executable(halfduplexserver_reentrant_init_test"),
+      (REENTRANT_CMAKE, "waterwall.halfduplexserver_reentrant_init_unit")),
      "HalfDuplexServer retains both transports when main Init is rejected re-entrantly"),
-    ("tests/unittests/packetsender_orderly_shutdown_test.c",
+    ("tests/unittests/tunnels/packet_io/packetsender_orderly_shutdown_test.c",
      ("caseDownstreamFinishCancelsPendingTimer",
       "caseReentrantFinishStopsReadyBatch",
       "packetsenderTunnelDownStreamFinish"),
-     ((UNIT_CMAKE, '"PacketSender|packetsender_orderly_shutdown_test|packetsender|ON"'),),
+     ((UNIT_CMAKE, 'include("${CMAKE_SOURCE_DIR}/tests/cmake/native/orderly-shutdown.cmake")'),
+      (ORDERLY_CMAKE, '"PacketSender|packetsender_orderly_shutdown_test|packetsender|ON|'
+                     '${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/packet_io/packetsender_orderly_shutdown_test.c"')),
      "PacketSender stops its worker producer after downstream Finish"),
-    ("tests/unittests/tunnels_abort_runtime_test.c",
+    ("tests/unittests/tunnels/abort/tunnels_abort_runtime_test.c",
      ("caseTesterClientDisabledUpstreamFinish",
       "testerclient_disabled_upstream_finish"),
-     ((ABORT_RUNTIME_CMAKE, "WATERWALL_ABORT_TEST_HAS_TESTERCLIENT"),
+     ((UNIT_CMAKE, 'include("${CMAKE_SOURCE_DIR}/tests/cmake/native/hard-abort.cmake")'),
+      (ABORT_CMAKE, 'include("${WATERWALL_UNIT_SOURCE_ROOT}/tunnels_abort_runtime_test.cmake")'),
+      (ABORT_RUNTIME_CMAKE, "WATERWALL_ABORT_TEST_HAS_TESTERCLIENT"),
       (ABORT_RUNTIME_CMAKE, "testerclient_disabled_upstream_finish"),
       (ABORT_RUNTIME_CMAKE, "waterwall.tunnels_abort_runtime_unit")),
      "TesterClient's impossible upstream Finish exits through abortProgramNow(1) in Release"),
-    ("tests/unittests/tunnels_abort_runtime_test.c",
+    ("tests/unittests/tunnels/abort/tunnels_abort_runtime_test.c",
      ("caseAdapterChainHeadFinish",
       "caseAdapterChainHeadPayload",
       "caseAdapterChainEndFinish",
       "caseAdapterChainEndPayload"),
-     ((ABORT_RUNTIME_CMAKE, "adapter_chain_head_finish"),
+     ((UNIT_CMAKE, 'include("${CMAKE_SOURCE_DIR}/tests/cmake/native/hard-abort.cmake")'),
+      (ABORT_CMAKE, 'include("${WATERWALL_UNIT_SOURCE_ROOT}/tunnels_abort_runtime_test.cmake")'),
+      (ABORT_RUNTIME_CMAKE, "adapter_chain_head_finish"),
       (ABORT_RUNTIME_CMAKE, "adapter_chain_head_payload"),
       (ABORT_RUNTIME_CMAKE, "adapter_chain_end_finish"),
       (ABORT_RUNTIME_CMAKE, "adapter_chain_end_payload"),
@@ -602,8 +616,10 @@ REQUIRED_CONTRACT_TESTS = [
      ("PACKET_LINE_FINISH",
       "SILENT_FINISH_ALLOWED",
       "REQUIRED_CONTRACT_TESTS"),
-     ((SUITE_CMAKE, "waterwall.line_ownership_policy_test"),
-      (SUITE_CMAKE, "--mutation-test")),
+     ((SUITE_CMAKE, 'include("${CMAKE_SOURCE_DIR}/tests/cmake/integration/stream-codecs.cmake")'),
+      (STREAM_CMAKE, 'include("${CMAKE_SOURCE_DIR}/tests/cmake/integration/tls-reality.cmake")'),
+      (TLS_REALITY_CMAKE, "waterwall.line_ownership_policy_test"),
+      (TLS_REALITY_CMAKE, "--mutation-test")),
      "this checker, which is only worth anything while ctest runs it with mutations on"),
 ]
 

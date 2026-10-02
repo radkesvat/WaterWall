@@ -1,9 +1,19 @@
 #!/usr/bin/env python3
-"""CONNECT metadata and a large body in one write, through both auth modes."""
+"""Coalesced SOCKS CONNECT header plus a large application body, with auth/response and real echo
+peers. Exact negotiation/payload bytes and no lost tail; original unexpected-EOF policy. Runs inside
+the namespace harness. CTest: waterwall.socks5_connect_large_body_probe."""
+import sys
+from pathlib import Path
+import os
 import socket
 import struct
 import threading
 import time
+
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.environ.get("WATERWALL_TEST_SUPPORT_DIR",
+                                str(Path(__file__).resolve().parents[2] / "support" / "python")))
+from wwtest.sockets import exact as read_exact
 
 HOST = "127.0.0.1"
 TARGET = 24802
@@ -11,13 +21,7 @@ BODY = bytes(range(256)) * 32
 
 
 def exact(sock, count):
-    data = bytearray()
-    while len(data) < count:
-        chunk = sock.recv(count - len(data))
-        if not chunk:
-            raise AssertionError("unexpected EOF")
-        data.extend(chunk)
-    return bytes(data)
+    return read_exact(sock, count, timeout_context=False, eof_error=lambda: AssertionError('unexpected EOF'))
 
 
 def echo(listener):

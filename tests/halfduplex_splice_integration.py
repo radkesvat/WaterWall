@@ -1,27 +1,35 @@
 #!/usr/bin/env python3
-"""Staged HalfDuplex TCP traffic through real sockets, in the namespace harness."""
+"""HalfDuplex TCP ordering and splice evidence in a private loopback namespace. Two workers and
+client/server nodes stage first/ready before a 1 MiB reverse echo; checks exact bytes, EOF,
+bulk-only pipe-to-socket traces for both endpoints and termination 143. Requires strace and
+namespace support. Failed runs retain logs. CTest: waterwall.halfduplex_tcp_splice_{true,false}.
+CTest: waterwall.halfduplex_tcp_splice_false, waterwall.halfduplex_tcp_splice_true."""
 import concurrent.futures
 import json
 from pathlib import Path
 import shutil
 import signal
 import socket
-import subprocess
 import sys
-import tempfile
+import os
 import time
 
 sys.dont_write_bytecode = True
-from trojanclient_splice_integration import exact
-from httpproxyserver_splice_integration import successful_calls
+sys.path.insert(0, os.environ.get("WATERWALL_TEST_SUPPORT_DIR",
+                                str(Path(__file__).resolve().parent / "support" / "python")))
+from wwtest.sockets import configure_listener
+
+from wwtest.sockets import exact
+from wwtest.trace import successful_calls
+from wwtest.run_directory import RunDirectory
+from wwtest.process import Process
 
 
 def run(binary, enabled):
     tracer = shutil.which("strace")
     if tracer is None:
         raise RuntimeError("strace is required for pipe-to-socket evidence")
-    with tempfile.TemporaryDirectory(prefix="waterwall-halfduplex-") as directory:
-        root = Path(directory)
+    with RunDirectory("waterwall-halfduplex-") as root:
         nodes = [
             {"name": "in", "type": "TcpListener", "next": "client",
              "settings": {"address": "127.0.0.1", "port": 27981, "nodelay": True}},
@@ -42,18 +50,14 @@ def run(binary, enabled):
             "misc": {"workers": 2, "splice": enabled, "ram-profile": "minimal", "mtu": 1500,
                      "try-enabling-bbr": False},
         }))
-        with socket.socket() as backend, (root / "stdout.log").open("w+") as log:
-            backend.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            backend.bind(("127.0.0.1", 27983))
-            backend.listen()
-            backend.settimeout(15)
-            process = subprocess.Popen([tracer, "-D", "-f", "-yy", "-e", "trace=splice", "-o",
-                                        str(root / "splice.log"), binary], cwd=root, stdout=log, stderr=subprocess.STDOUT)
-            try:
+        with socket.socket() as backend:
+            configure_listener(backend, ('127.0.0.1', 27983), timeout=15)
+            with Process([tracer, "-D", "-f", "-yy", "-e", "trace=splice", "-o",
+                          str(root / "splice.log"), binary], cwd=root,
+                         log_path=root / "stdout.log") as process:
                 deadline = time.monotonic() + 10
                 while True:
-                    if process.poll() is not None:
-                        raise AssertionError("WaterWall exited during startup")
+                    process.check_running("WaterWall exited during startup")
                     try:
                         client = socket.create_connection(("127.0.0.1", 27981), timeout=1)
                         break
@@ -72,7 +76,9 @@ def run(binary, enabled):
                         conn.sendall(data[::-1])
                         assert conn.recv(1) == b""
 
-                with client, concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                # Close the client before joining the peer if a check fails;
+                # the existing socket deadlines bound any unfinished exchange.
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor, client:
                     client.settimeout(15)
                     task = executor.submit(peer)
                     client.sendall(b"first")
@@ -91,16 +97,15 @@ def run(binary, enabled):
                 if enabled:
                     assert any("->127.0.0.1:27983" in c for c in outputs), "server upload did not splice"
                     assert any("127.0.0.1:27981->" in c for c in outputs), "client download did not splice"
-            except BaseException:
-                log.flush()
-                print((root / "stdout.log").read_text(), file=sys.stderr)
-                raise
-            finally:
-                if process.poll() is None:
-                    process.kill()
-                    process.wait()
+
+
+
+def interrupted(signum, _frame):
+    # Let an outer timeout unwind sockets, peer joins and the owned process.
+    raise SystemExit(128 + signum)
 
 
 if __name__ == "__main__":
+    signal.signal(signal.SIGTERM, interrupted)
     run(str(Path(sys.argv[1]).resolve()), sys.argv[2] == "true")
     print("HalfDuplex staged TCP splice roundtrip passed")

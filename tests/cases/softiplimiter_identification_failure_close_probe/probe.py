@@ -1,4 +1,12 @@
 #!/usr/bin/env python3
+"""Check that SoftIpLimiter closes a malformed VLESS identity.
+
+The namespace probe runner owns WaterWall and the adjacent configuration. After
+listener readiness, this probe sends an invalid version/identity prefix over
+loopback and requires EOF or reset within the bounded close wait. It exercises
+identification-failure closure, not successful authentication or limit expiry.
+CTest: waterwall.softiplimiter_identification_failure_close_probe.
+"""
 
 import socket
 import time

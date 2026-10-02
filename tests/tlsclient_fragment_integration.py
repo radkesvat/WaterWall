@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Private TLS fragment helper: loopback TLS, branch topology and pending shutdown."""
+"""TlsClient private fragment helper with timed/no-wait/branch/TLS12/TLS13/shaped/Reality and
+pending-shutdown variants. Two workers/local TLS peer; checks ClientHello cuts, ALPN, exact reverse
+echo and shutdown143. Requires namespace isolation, SSL/local credentials. Record peeking is a
+shared named TLS fixture. CTest: waterwall.tlsclient_fragment_branch,
+waterwall.tlsclient_fragment_no_wait, waterwall.tlsclient_fragment_pending,
+waterwall.tlsclient_fragment_reality, waterwall.tlsclient_fragment_shaped,
+waterwall.tlsclient_fragment_timed, waterwall.tlsclient_fragment_tls12,
+waterwall.tlsclient_fragment_tls13."""
 import concurrent.futures
 import json
 from pathlib import Path
@@ -8,43 +15,21 @@ import socket
 import ssl
 import subprocess
 import sys
-import tempfile
+import os
 import time
 
 sys.dont_write_bytecode = True
-from trojanclient_splice_integration import exact
+sys.path.insert(0, os.environ.get("WATERWALL_TEST_SUPPORT_DIR",
+                                str(Path(__file__).resolve().parent / "support" / "python")))
+from wwtest.sockets import configure_listener
+from wwtest.config import core_config
+from wwtest.run_directory import RunDirectory
+from wwtest.process import Process, close_on_error, install_termination_handler
+from wwtest.fixtures.tls import inspect_client_hello
+
+from wwtest.sockets import exact
 
 
-def inspect_client_hello(raw, expected_cuts):
-    """Peek until complete records carry one ClientHello, without assuming TCP reads."""
-    deadline = time.monotonic() + 5
-    while time.monotonic() < deadline:
-        data = raw.recv(65536, socket.MSG_PEEK)
-        if not data:
-            raise AssertionError("TLS peer closed before ClientHello")
-        position = 0
-        handshake = bytearray()
-        lengths = []
-        while position + 5 <= len(data):
-            kind, major, minor, hi, lo = data[position:position + 5]
-            length = (hi << 8) | lo
-            if kind != 22 or major != 3 or minor not in (1, 2, 3) or not 1 <= length <= 16384:
-                raise AssertionError("invalid ClientHello TLS record")
-            if position + 5 + length > len(data):
-                break
-            lengths.append(length)
-            handshake.extend(data[position + 5:position + 5 + length])
-            position += 5 + length
-            if len(handshake) >= 4:
-                total = 4 + int.from_bytes(handshake[1:4], "big")
-                if handshake[0] != 1 or total > 65536:
-                    raise AssertionError("invalid ClientHello handshake header")
-                if len(handshake) >= total:
-                    if len(handshake) != total or lengths[:len(expected_cuts)] != expected_cuts:
-                        raise AssertionError(f"ClientHello record cuts: {lengths}")
-                    return bytes(handshake)
-        time.sleep(.002)
-    raise AssertionError("timed out inspecting complete ClientHello records")
 
 
 def run(binary, mode):
@@ -58,7 +43,7 @@ def run(binary, mode):
         fragment["cuts"] = [[250, 60000, 100]]
     if mode in ("tls12", "tls13", "shaped", "reality"):
         fragment["tls-hello-fragment"] = True
-    with tempfile.TemporaryDirectory(prefix="waterwall-tls-fragment-") as directory:
+    with RunDirectory("waterwall-tls-fragment-") as directory:
         root = Path(directory)
         if mode == "reality":
             config = json.loads((tests / "cases/reality_v2_roundtrip/config.json").read_text())
@@ -96,8 +81,7 @@ def run(binary, mode):
         (root / "config.json").write_text(json.dumps({"name": "tls-fragment", "nodes": nodes}))
         (root / "core.json").write_text(json.dumps({
             "configs": ["config.json"],
-            "log": {"path": "log/", **{name: {"loglevel": "DEBUG", "file": name + ".log", "console": True}
-                                      for name in ("internal", "core", "network", "dns")}},
+            "log": core_config()["log"],
             "misc": {"workers": 2, "splice": True, "ram-profile": "minimal", "try-enabling-bbr": False},
         }))
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
@@ -107,72 +91,64 @@ def run(binary, mode):
         context.set_alpn_protocols(["http/1.1"])
         data = bytes(range(256)) * 1024
         with socket.socket() as backend, (root / "stdout.log").open("w+") as log:
-            backend.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            backend.bind(("127.0.0.1", 28012))
-            backend.listen()
-            backend.settimeout(15)
-            process = subprocess.Popen([binary], cwd=root, stdout=log, stderr=subprocess.STDOUT)
+            configure_listener(backend, ('127.0.0.1', 28012), timeout=15)
             future = None
-            try:
-                deadline = time.monotonic() + 10
-                while True:
-                    if process.poll() is not None or time.monotonic() >= deadline:
-                        raise AssertionError("TLS fragment startup failed")
-                    try:
-                        client = socket.create_connection(("127.0.0.1", 28011), timeout=1)
-                        break
-                    except ConnectionRefusedError:
-                        time.sleep(.02)
-                with client:
-                    client.settimeout(15)
-                    if mode == "pending":
-                        client.sendall(b"plaintext held during TLS handshake")
-                        with backend.accept()[0] as peer:
-                            peer.settimeout(.2)
-                            try:
-                                peer.recv(1)
-                            except socket.timeout:
-                                pass
-                            else:
-                                raise AssertionError("delayed initial fragment escaped")
-                            process.send_signal(signal.SIGTERM)
-                            assert process.wait(timeout=10) == 128 + signal.SIGTERM
-                            peer.settimeout(3)
-                            assert peer.recv(1) == b"", "pending TLS/helper line survived shutdown"
-                        return
+            with Process([binary], cwd=root, log=log) as process:
+                try:
+                    deadline = time.monotonic() + 10
+                    while True:
+                        if process.poll() is not None or time.monotonic() >= deadline:
+                            raise AssertionError("TLS fragment startup failed")
+                        try:
+                            client = socket.create_connection(("127.0.0.1", 28011), timeout=1)
+                            break
+                        except ConnectionRefusedError:
+                            time.sleep(.02)
+                    with client:
+                        client.settimeout(15)
+                        if mode == "pending":
+                            client.sendall(b"plaintext held during TLS handshake")
+                            with backend.accept()[0] as peer:
+                                peer.settimeout(.2)
+                                try:
+                                    peer.recv(1)
+                                except socket.timeout:
+                                    pass
+                                else:
+                                    raise AssertionError("delayed initial fragment escaped")
+                                process.send_signal(signal.SIGTERM)
+                                assert process.wait(timeout=10) == 128 + signal.SIGTERM
+                                peer.settimeout(3)
+                                assert peer.recv(1) == b"", "pending TLS/helper line survived shutdown"
+                            return
 
-                    def echo():
-                        with backend.accept()[0] as raw:
-                            raw.settimeout(15)
-                            if fragment.get("tls-hello-fragment"):
-                                hello = inspect_client_hello(raw, [250, 50])
-                                assert len(hello) > 300
-                            with context.wrap_socket(raw, server_side=True) as peer:
-                                assert peer.selected_alpn_protocol() == "http/1.1"
-                                assert exact(peer, len(data)) == data
-                                peer.sendall(data[::-1])
+                        def echo():
+                            with backend.accept()[0] as raw:
+                                raw.settimeout(15)
+                                if fragment.get("tls-hello-fragment"):
+                                    hello = inspect_client_hello(raw, [250, 50])
+                                    assert len(hello) > 300
+                                with context.wrap_socket(raw, server_side=True) as peer:
+                                    assert peer.selected_alpn_protocol() == "http/1.1"
+                                    assert exact(peer, len(data)) == data
+                                    peer.sendall(data[::-1])
 
-                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                        future = executor.submit(echo)
-                        client.sendall(data)
-                        assert exact(client, len(data)) == data[::-1]
-                        future.result(timeout=20)
-                process.send_signal(signal.SIGTERM)
-                assert process.wait(timeout=10) == 128 + signal.SIGTERM
-            except BaseException:
-                if future is not None and future.done() and not future.cancelled():
-                    peer_error = future.exception()
-                    if peer_error is not None:
-                        print(f"TLS fragment peer failed: {peer_error!r}", file=sys.stderr)
-                log.flush()
-                print((root / "stdout.log").read_text(), file=sys.stderr)
-                raise
-            finally:
-                if process.poll() is None:
-                    process.kill()
-                    process.wait()
+                        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor, close_on_error(client):
+                            future = executor.submit(echo)
+                            client.sendall(data)
+                            assert exact(client, len(data)) == data[::-1]
+                            future.result(timeout=20)
+                    process.send_signal(signal.SIGTERM)
+                    assert process.wait(timeout=10) == 128 + signal.SIGTERM
+                except BaseException:
+                    if future is not None and future.done() and not future.cancelled():
+                        peer_error = future.exception()
+                        if peer_error is not None:
+                            print(f"TLS fragment peer failed: {peer_error!r}", file=sys.stderr)
+                    raise
 
 
 if __name__ == "__main__":
+    install_termination_handler()
     run(str(Path(sys.argv[1]).resolve()), sys.argv[2])
     print("TlsClient private fragment helper passed")

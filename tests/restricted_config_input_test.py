@@ -1,11 +1,19 @@
 #!/usr/bin/env python3
-"""Exercise restricted startup rejection and diagnostic secrecy without OS effects."""
+"""Restricted/ordinary parser boundaries, credential-safe diagnostics, node expansion, disabled
+external/script execution, CIDR errors and input caps. Bounded real startup commands and generated
+inputs; checks rejection plus console/log secrecy without OS/network effects. CTest:
+waterwall.restricted_config_input."""
 import json
 import os
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
+
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.environ.get("WATERWALL_TEST_SUPPORT_DIR",
+                                str(Path(__file__).resolve().parent / "support" / "python")))
+from wwtest.process import run_logged
+from wwtest.run_directory import RunDirectory
 
 SECRET = "SECRET_SENTINEL_MUST_NOT_APPEAR"
 
@@ -13,7 +21,7 @@ SECRET = "SECRET_SENTINEL_MUST_NOT_APPEAR"
 def run(binary, root, data, expected, *, restricted=True):
     env = os.environ.copy()
     env.pop("WW_CORE_JSON_INPUT", None)
-    result = subprocess.run(
+    result = run_logged(
         [str(binary), *( ["--restricted-config"] if restricted else []), "--config:stdin"],
         input=data, cwd=root, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         timeout=15, check=False,
@@ -29,7 +37,7 @@ def run(binary, root, data, expected, *, restricted=True):
 
 def main():
     binary = Path(sys.argv[1]).resolve()
-    with tempfile.TemporaryDirectory(prefix="ww-restricted-") as directory:
+    with RunDirectory(prefix="ww-restricted-") as directory:
         root = Path(directory)
         core = json.dumps({"configs": ["nodes.json"], "misc": {
             "workers": 1, "ram-profile": "minimal", "try-enabling-bbr": False}}).encode()

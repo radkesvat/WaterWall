@@ -1,5 +1,20 @@
 #!/usr/bin/env python3
-"""StreamFragmenter socket roundtrip and splice evidence; namespace harness only."""
+"""Counter/timed cut schedules, wait-for-Est, pipe extraction and TLS ClientHello
+assembly/deadline/pending shutdown. Two workers and real loopback peers; checks exact bytes/record
+cuts, endpoint splice and shutdown143. Requires namespace isolation, strace for splice modes and
+local TLS credentials. CTest: waterwall.streamfragmenter_counter_splice_false,
+waterwall.streamfragmenter_counter_splice_false_wait_est,
+waterwall.streamfragmenter_counter_splice_true,
+waterwall.streamfragmenter_counter_splice_true_wait_est,
+waterwall.streamfragmenter_timed_splice_false,
+waterwall.streamfragmenter_timed_splice_false_wait_est,
+waterwall.streamfragmenter_timed_splice_true, waterwall.streamfragmenter_timed_splice_true_wait_est,
+waterwall.streamfragmenter_tls_deadline_splice_false,
+waterwall.streamfragmenter_tls_deadline_splice_true,
+waterwall.streamfragmenter_tls_pending_splice_false,
+waterwall.streamfragmenter_tls_pending_splice_true,
+waterwall.streamfragmenter_tls_roundtrip_splice_false,
+waterwall.streamfragmenter_tls_roundtrip_splice_true."""
 import concurrent.futures
 import json
 from pathlib import Path
@@ -7,15 +22,21 @@ import shutil
 import signal
 import socket
 import ssl
-import subprocess
 import sys
-import tempfile
+import os
 import time
 
 sys.dont_write_bytecode = True
-from httpproxyserver_splice_integration import successful_calls
-from tlsclient_fragment_integration import inspect_client_hello
-from trojanclient_splice_integration import exact
+sys.path.insert(0, os.environ.get("WATERWALL_TEST_SUPPORT_DIR",
+                                str(Path(__file__).resolve().parent / "support" / "python")))
+from wwtest.sockets import configure_listener, connect_when_ready
+from wwtest.config import core_config
+from wwtest.run_directory import RunDirectory
+from wwtest.process import Process, close_on_error, install_termination_handler
+
+from wwtest.trace import successful_calls
+from wwtest.fixtures.tls import inspect_client_hello
+from wwtest.sockets import exact
 
 
 def run(binary, enabled, mode, wait_for_est=False):
@@ -25,7 +46,7 @@ def run(binary, enabled, mode, wait_for_est=False):
     settings = {"mode": mode, "bypass_chance": 0, "cuts": [[2, 2, 100], [4, 5, 100]],
                 "wait-for-est": wait_for_est}
     settings.update({"count": 1} if mode == "counter" else {"duration-ms": 1000})
-    with tempfile.TemporaryDirectory(prefix="waterwall-streamfragmenter-") as directory:
+    with RunDirectory("waterwall-streamfragmenter-") as directory:
         root = Path(directory)
         nodes = [
             {"name": "in", "type": "TcpListener", "next": "fragmenter",
@@ -37,30 +58,16 @@ def run(binary, enabled, mode, wait_for_est=False):
         (root / "config.json").write_text(json.dumps({"name": "fragmenter", "nodes": nodes}))
         (root / "core.json").write_text(json.dumps({
             "configs": ["config.json"],
-            "log": {"path": "log/", **{name: {"loglevel": "DEBUG", "file": name + ".log", "console": True}
-                                      for name in ("internal", "core", "network", "dns")}},
+            "log": core_config()["log"],
             "misc": {"workers": 2, "splice": enabled, "ram-profile": "minimal", "mtu": 1500,
                      "try-enabling-bbr": False},
         }))
         with socket.socket() as backend, (root / "stdout.log").open("w+") as log:
-            backend.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            backend.bind(("127.0.0.1", 27992))
-            backend.listen()
-            backend.settimeout(15)
-            process = subprocess.Popen([tracer, "-D", "-f", "-yy", "-e", "trace=splice", "-o",
-                                        str(root / "splice.log"), binary], cwd=root, stdout=log, stderr=subprocess.STDOUT)
-            try:
+            configure_listener(backend, ('127.0.0.1', 27992), timeout=15)
+            with Process([tracer, '-D', '-f', '-yy', '-e', 'trace=splice', '-o', str(root / 'splice.log'), binary], cwd=root, log=log) as process:
                 deadline = time.monotonic() + 10
-                while True:
-                    if process.poll() is not None:
-                        raise AssertionError("WaterWall exited during startup")
-                    try:
-                        client = socket.create_connection(("127.0.0.1", 27991), timeout=1)
-                        break
-                    except ConnectionRefusedError:
-                        if time.monotonic() >= deadline:
-                            raise
-                        time.sleep(0.02)
+                client = connect_when_ready(process, ('127.0.0.1', 27991), deadline=deadline,
+                    failure=lambda: AssertionError('WaterWall exited during startup'), timeout=1, pause=0.02)
                 data = bytes(range(256)) * 2048
 
                 def peer():
@@ -72,7 +79,7 @@ def run(binary, enabled, mode, wait_for_est=False):
                         conn.sendall(data[::-1])
                         assert conn.recv(1) == b""
 
-                with client, concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                with client, concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor, close_on_error(client):
                     client.settimeout(15)
                     task = executor.submit(peer)
                     client.sendall(b"abcdefgh")
@@ -93,14 +100,6 @@ def run(binary, enabled, mode, wait_for_est=False):
                 if enabled:
                     assert any("->127.0.0.1:27992" in call for call in outputs), "upload did not splice"
                     assert any("127.0.0.1:27991->" in call for call in outputs), "download did not splice"
-            except BaseException:
-                log.flush()
-                print((root / "stdout.log").read_text(), file=sys.stderr)
-                raise
-            finally:
-                if process.poll() is None:
-                    process.kill()
-                    process.wait()
 
 
 def run_tls(binary, enabled, mode):
@@ -108,7 +107,7 @@ def run_tls(binary, enabled, mode):
     settings = {"mode": "counter", "count": 1, "tls-hello-fragment": True,
                 "tls-hello-timeout-ms": 1000 if mode == "pending" else 50,
                 "cuts": [[100, 0, 100], [150, 0, 100]]}
-    with tempfile.TemporaryDirectory(prefix="waterwall-streamfragmenter-tls-") as directory:
+    with RunDirectory("waterwall-streamfragmenter-tls-") as directory:
         root = Path(directory)
         nodes = [
             {"name": "in", "type": "TcpListener", "next": "fragmenter",
@@ -120,8 +119,7 @@ def run_tls(binary, enabled, mode):
         (root / "config.json").write_text(json.dumps({"name": "fragmenter-tls", "nodes": nodes}))
         (root / "core.json").write_text(json.dumps({
             "configs": ["config.json"],
-            "log": {"path": "log/", **{name: {"loglevel": "DEBUG", "file": name + ".log", "console": True}
-                                      for name in ("internal", "core", "network", "dns")}},
+            "log": core_config()["log"],
             "misc": {"workers": 2, "splice": enabled, "ram-profile": "minimal", "try-enabling-bbr": False},
         }))
         server = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
@@ -133,12 +131,8 @@ def run_tls(binary, enabled, mode):
         client_context.minimum_version = client_context.maximum_version = ssl.TLSVersion.TLSv1_3
         data = bytes(range(256)) * 128
         with socket.socket() as backend, (root / "stdout.log").open("w+") as log:
-            backend.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            backend.bind(("127.0.0.1", 27992))
-            backend.listen()
-            backend.settimeout(15)
-            process = subprocess.Popen([binary], cwd=root, stdout=log, stderr=subprocess.STDOUT)
-            try:
+            configure_listener(backend, ('127.0.0.1', 27992), timeout=15)
+            with Process([binary], cwd=root, log=log) as process:
                 deadline = time.monotonic() + 10
                 while True:
                     if process.poll() is not None or time.monotonic() >= deadline:
@@ -178,7 +172,7 @@ def run_tls(binary, enabled, mode):
                                     assert exact(peer, len(data)) == data
                                     peer.sendall(data[::-1])
 
-                        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor, close_on_error(client):
                             task = executor.submit(echo)
                             with client_context.wrap_socket(client, server_hostname="tls.integration.test") as secure:
                                 secure.sendall(data)
@@ -187,17 +181,10 @@ def run_tls(binary, enabled, mode):
                 if process.poll() is None:
                     process.send_signal(signal.SIGTERM)
                     assert process.wait(timeout=10) == 128 + signal.SIGTERM
-            except BaseException:
-                log.flush()
-                print((root / "stdout.log").read_text(), file=sys.stderr)
-                raise
-            finally:
-                if process.poll() is None:
-                    process.kill()
-                    process.wait()
 
 
 if __name__ == "__main__":
+    install_termination_handler()
     if sys.argv[3].startswith("tls_"):
         run_tls(str(Path(sys.argv[1]).resolve()), sys.argv[2] == "true", sys.argv[3][4:])
     else:

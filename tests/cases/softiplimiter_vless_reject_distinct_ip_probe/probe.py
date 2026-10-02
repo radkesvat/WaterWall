@@ -1,4 +1,13 @@
 #!/usr/bin/env python3
+"""Check SoftIpLimiter admission for one VLESS identity from distinct IPs.
+
+Against the namespace runner's adjacent configuration, two sockets bind different
+loopback source addresses and send the same early VLESS identity. The second
+source must receive EOF/reset; a later send on the first source must still
+succeed. This checks early identity admission, without completing a VLESS request
+or establishing an application-data round trip or limit-expiry behavior.
+CTest: waterwall.softiplimiter_vless_reject_distinct_ip_probe.
+"""
 
 import socket
 import time
@@ -72,4 +81,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

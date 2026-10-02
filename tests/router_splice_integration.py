@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Router and SniffRouter replay and opaque TCP transfers in the namespace harness."""
+"""Metadata/resolve/sniff route selection and retained HTTP-prefix replay to selected/default socket
+peers. Two workers, staged opaque reverse echo, selected endpoint splice and shutdown143. Requires
+strace/network namespaces; actual client connections are retained as readiness. CTest:
+waterwall.router_metadata_tcp_splice_false, waterwall.router_metadata_tcp_splice_true,
+waterwall.router_resolve_tcp_splice_false, waterwall.router_resolve_tcp_splice_true,
+waterwall.router_sniff_tcp_splice_false, waterwall.router_sniff_tcp_splice_true,
+waterwall.sniffrouter_tcp_splice_false, waterwall.sniffrouter_tcp_splice_true."""
 import concurrent.futures
 import json
 from pathlib import Path
@@ -7,14 +13,20 @@ import re
 import shutil
 import signal
 import socket
-import subprocess
 import sys
-import tempfile
+import os
 import time
 
 sys.dont_write_bytecode = True
-from trojanclient_splice_integration import exact
-from httpproxyserver_splice_integration import successful_calls
+sys.path.insert(0, os.environ.get("WATERWALL_TEST_SUPPORT_DIR",
+                                str(Path(__file__).resolve().parent / "support" / "python")))
+from wwtest.sockets import configure_listener, connect_when_ready
+from wwtest.config import core_config
+from wwtest.run_directory import RunDirectory
+from wwtest.process import Process, close_on_error, install_termination_handler
+
+from wwtest.sockets import exact
+from wwtest.trace import successful_calls
 
 
 def run(binary, mode, enabled):
@@ -29,7 +41,7 @@ def run(binary, mode, enabled):
     else:
         settings = {"resolve-domains": mode == "router_resolve",
                     "rules": [{"source-port": 27991, "target": "target"}]}
-    with tempfile.TemporaryDirectory(prefix="waterwall-router-splice-") as directory:
+    with RunDirectory("waterwall-router-splice-") as directory:
         root = Path(directory)
         nodes = [
             {"name": "in", "type": "TcpListener", "next": "router",
@@ -44,35 +56,20 @@ def run(binary, mode, enabled):
         (root / "config.json").write_text(json.dumps({"name": mode, "nodes": nodes}))
         (root / "core.json").write_text(json.dumps({
             "configs": ["config.json"],
-            "log": {"path": "log/", **{name: {"loglevel": "DEBUG", "file": name + ".log", "console": True}
-                                      for name in ("internal", "core", "network", "dns")}},
+            "log": core_config()["log"],
             "misc": {"workers": 2, "splice": enabled, "ram-profile": "minimal", "mtu": 1500,
                      "try-enabling-bbr": False, "tcp-tune": False},
         }))
         with socket.socket() as target, socket.socket() as fallback, (root / "stdout.log").open("w+") as log:
             peers = {27992: target, 27993: fallback}
             for port, listener in peers.items():
-                listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                listener.bind(("127.0.0.1", port))
-                listener.listen()
-                listener.settimeout(15)
-            process = subprocess.Popen([tracer, "-D", "-f", "-yy", "-e", "trace=splice", "-o",
-                                        str(root / "splice.log"), binary], cwd=root,
-                                       stdout=log, stderr=subprocess.STDOUT)
-            try:
+                configure_listener(listener, ('127.0.0.1', port), timeout=15)
+            with Process([tracer, '-D', '-f', '-yy', '-e', 'trace=splice', '-o', str(root / 'splice.log'), binary], cwd=root, log=log) as process:
                 data = bytes(range(256)) * 4096
                 for host, port in [("route.test", 27992)] + ([("other.test", 27993)] if sniffing else []):
                     deadline = time.monotonic() + 10
-                    while True:
-                        if process.poll() is not None:
-                            raise AssertionError("WaterWall exited during startup")
-                        try:
-                            client = socket.create_connection(("127.0.0.1", 27991), timeout=1)
-                            break
-                        except ConnectionRefusedError:
-                            if time.monotonic() >= deadline:
-                                raise
-                            time.sleep(0.02)
+                    client = connect_when_ready(process, ('127.0.0.1', 27991), deadline=deadline,
+                        failure=lambda: AssertionError('WaterWall exited during startup'), timeout=1, pause=0.02)
                     request = f"GET / HTTP/1.1\r\nHost: {host}\r\n\r\ncoalesced-body".encode() if sniffing else b"first"
 
                     def peer():
@@ -84,7 +81,7 @@ def run(binary, mode, enabled):
                             conn.sendall(data[::-1])
                             assert conn.recv(1) == b"", "unexpected trailing bytes"
 
-                    with client, concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                    with client, concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor, close_on_error(client):
                         client.settimeout(15)
                         task = executor.submit(peer)
                         client.sendall(request)
@@ -104,16 +101,9 @@ def run(binary, mode, enabled):
                         assert not calls, "splice occurred with misc.splice disabled"
                 process.send_signal(signal.SIGTERM)
                 assert process.wait(timeout=10) == 128 + signal.SIGTERM, "unclean shutdown"
-            except BaseException:
-                log.flush()
-                print((root / "stdout.log").read_text(), file=sys.stderr)
-                raise
-            finally:
-                if process.poll() is None:
-                    process.kill()
-                    process.wait()
 
 
 if __name__ == "__main__":
+    install_termination_handler()
     run(str(Path(sys.argv[1]).resolve()), sys.argv[2], sys.argv[3] == "true")
     print("Router staged TCP splice roundtrip passed")

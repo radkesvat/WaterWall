@@ -1,4 +1,14 @@
 #!/usr/bin/env python3
+"""Check MuxServer child admission and idle-slot reclamation over loopback.
+
+The namespace probe runner starts the adjacent WaterWall configuration; this
+probe owns a TCP echo peer and sends explicit MUX frames on one parent. It checks
+prompt Close at the child cap, continued traffic on the admitted child, expiry of
+a silent child, reuse of its slot, and echo-peer cleanup. Pause/Resume frames are
+tracked while awaiting the exact data and Close frames. This is a bounded
+protocol/timeout case, not a throughput or general idle-table stress test.
+CTest: waterwall.muxserver_admission_idle_probe.
+"""
 
 import socket
 import socketserver

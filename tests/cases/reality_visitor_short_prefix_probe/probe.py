@@ -1,3 +1,10 @@
+"""Reality visitor classification for truncated/short TLS-looking prefixes.
+Setup: namespace loopback Reality listener and observable visitor backend.
+Checks: exact prefix replay and visitor response; socket deadlines stay fixed.
+Limits: this negative reader intentionally retries timeouts for two seconds and
+returns partial bytes; a complete-frame/EOF-None helper would change the test.
+CTest: waterwall.reality_visitor_short_prefix_probe.
+"""
 import socket
 import sys
 import time

@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""HTTP proxy socket peers and endpoint-specific splice evidence; namespace only."""
+"""CONNECT/authentication, tracked limits and fallback/blocked responses; staged wire bytes and
+ordinary-read preferences before body splice. Fixed 27971/27972 peers, both splice modes and exact
+shutdown143; requires strace/network namespaces. CTest:
+waterwall.httpproxyserver_blocked_splice_false, waterwall.httpproxyserver_blocked_splice_true,
+waterwall.httpproxyserver_fallback_splice_false, waterwall.httpproxyserver_fallback_splice_true,
+waterwall.httpproxyserver_local_splice_false, waterwall.httpproxyserver_local_splice_true,
+waterwall.httpproxyserver_noauth_splice_false, waterwall.httpproxyserver_noauth_splice_true,
+waterwall.httpproxyserver_tracked_splice_false, waterwall.httpproxyserver_tracked_splice_true."""
 import concurrent.futures
 import json
 from pathlib import Path
@@ -7,56 +14,25 @@ import re
 import shutil
 import signal
 import socket
-import subprocess
 import sys
-import tempfile
+import os
 import time
 
 sys.dont_write_bytecode = True
-from trojanclient_splice_integration import exact
+sys.path.insert(0, os.environ.get("WATERWALL_TEST_SUPPORT_DIR",
+                                str(Path(__file__).resolve().parent / "support" / "python")))
+from wwtest.sockets import configure_listener, connect_when_ready
+from wwtest.config import core_config
+from wwtest.run_directory import RunDirectory
+from wwtest.process import Process, close_on_error, install_termination_handler
+from wwtest.fixtures.http_proxy import header, splice_outputs
+
+from wwtest.sockets import exact
+from wwtest.trace import successful_calls
 
 
-def header(sock):
-    result = bytearray()
-    while not result.endswith(b"\r\n\r\n"):
-        result += exact(sock, 1)
-        assert len(result) <= 65536, "oversized HTTP header"
-    return bytes(result)
 
 
-def successful_calls(trace):
-    """Join strace's per-thread resumed calls before checking socket endpoints."""
-    pending = {}
-    for line in trace.splitlines():
-        match = re.match(r"\s*(\d+)\s+(.*)", line)
-        if not match:
-            continue
-        tid, call = match.groups()
-        if call.endswith("<unfinished ...>"):
-            pending[tid] = call.removesuffix("<unfinished ...>")
-            continue
-        resumed = re.match(r"<\.\.\. \w+ resumed>(.*)", call)
-        if resumed:
-            call = pending.pop(tid, "") + resumed.group(1)
-        if re.search(r"\)\s+= [1-9]\d*", call):
-            yield call
-
-
-def splice_outputs(trace):
-    outputs = set()
-    positive = False
-    for call in successful_calls(trace):
-        if not call.startswith("splice("):
-            continue
-        positive = True
-        match = re.match(r"splice\(\d+<pipe:\[\d+\]>, NULL, \d+<TCP:\[([^]]+)\]>, NULL,", call)
-        if match:
-            endpoints = match.group(1)
-            if endpoints.endswith("->127.0.0.1:27972"):
-                outputs.add("up")
-            if endpoints.startswith("127.0.0.1:27971->"):
-                outputs.add("down")
-    return positive, outputs
 
 
 def check_http_reads(trace, client_port, origin_port):
@@ -88,7 +64,7 @@ def run(binary, mode, enabled):
         settings = {"auth-client-node-name": "auth-client"}
     elif mode in ("local", "fallback", "blocked"):
         settings = {"users": [{"username": "user", "password": "pass"}]}
-    with tempfile.TemporaryDirectory(prefix="waterwall-http-splice-") as directory:
+    with RunDirectory("waterwall-http-splice-") as directory:
         root = Path(directory)
         nodes = [
             {"name": "listen", "type": "TcpListener", "next": "proxy",
@@ -112,31 +88,17 @@ def run(binary, mode, enabled):
                           "settings": {"address": "127.0.0.1", "port": 27972, "fastopen": False}})
         (root / "config.json").write_text(json.dumps({"name": "http-splice", "nodes": nodes}))
         (root / "core.json").write_text(json.dumps({
-            "log": {"path": "log/", **{name: {"loglevel": "DEBUG", "file": name + ".log", "console": True}
-                                      for name in ("internal", "core", "network", "dns")}},
+            "log": core_config()["log"],
             "configs": ["config.json"],
             "misc": {"workers": 1, "splice": enabled, "ram-profile": "minimal", "mtu": 1500,
                      "try-enabling-bbr": False},
         }))
         with socket.socket() as backend, (root / "stdout.log").open("w+") as log:
-            backend.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            backend.bind(("127.0.0.1", 27972))
-            backend.listen()
-            backend.settimeout(10)
-            process = subprocess.Popen([tracer, "-D", "-f", "-yy", "-e", "trace=splice,recvfrom", "-o", str(root / "splice.log"), binary],
-                                       cwd=root, stdout=log, stderr=subprocess.STDOUT)
-            try:
+            configure_listener(backend, ('127.0.0.1', 27972), timeout=10)
+            with Process([tracer, '-D', '-f', '-yy', '-e', 'trace=splice,recvfrom', '-o', str(root / 'splice.log'), binary], cwd=root, log=log) as process:
                 deadline = time.monotonic() + 10
-                while True:
-                    if process.poll() is not None:
-                        raise AssertionError(f"startup exited {process.returncode}")
-                    try:
-                        client = socket.create_connection(("127.0.0.1", 27971), timeout=1)
-                        break
-                    except ConnectionRefusedError:
-                        if time.monotonic() >= deadline:
-                            raise
-                        time.sleep(.02)
+                client = connect_when_ready(process, ('127.0.0.1', 27971), deadline=deadline,
+                    failure=lambda: AssertionError(f'startup exited {process.returncode}'), timeout=1, pause=0.02)
                 with client:
                     client.settimeout(10)
                     if tracked:
@@ -159,7 +121,7 @@ def run(binary, mode, enabled):
                             conn.sendall(data[::-1])
                             assert conn.recv(1) == b"", "extra relay bytes"
 
-                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor, close_on_error(client):
                         result = executor.submit(peer)
                         client.sendall(request)
                         if not fallback:
@@ -205,16 +167,9 @@ def run(binary, mode, enabled):
                 expect = enabled and not blocked
                 assert positive == expect, ("unexpected chain eligibility", trace)
                 assert outputs == ({"up", "down"} if expect else set()), ("missing bidirectional pipe-to-socket output", trace)
-            except BaseException:
-                log.flush()
-                print((root / "stdout.log").read_text(), file=sys.stderr)
-                raise
-            finally:
-                if process.poll() is None:
-                    process.kill()
-                    process.wait()
 
 
 if __name__ == "__main__":
+    install_termination_handler()
     run(str(Path(sys.argv[1]).resolve()), sys.argv[2], sys.argv[3] == "true")
     print("HTTP proxy integrity, bidirectional pipe-to-socket output and orderly shutdown passed")

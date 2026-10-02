@@ -1,8 +1,19 @@
+"""Reality TLS13 post-handshake records/cover traffic do not bypass protected handoff policy. Fixed
+cover/recording peers, cipher epochs and protected sink/event accounting; exact records and
+intentional None-at-EOF handling. Requires local TLS fixture credentials and namespace isolation.
+CTest: waterwall.reality_v2_tls13_post_handshake."""
 import socket
 import ssl
 import sys
+from pathlib import Path
+import os
 import threading
 import time
+
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.environ.get("WATERWALL_TEST_SUPPORT_DIR",
+                                str(Path(__file__).resolve().parents[2] / "support" / "python")))
+from wwtest.sockets import exact as read_exact
 
 
 HOST = "127.0.0.1"
@@ -23,14 +34,7 @@ def fail(message):
 
 
 def recv_exact(sock, length):
-    chunks = []
-    while length:
-        chunk = sock.recv(length)
-        if not chunk:
-            return None
-        chunks.append(chunk)
-        length -= len(chunk)
-    return b"".join(chunks)
+    return read_exact(sock, length, timeout_context=False, eof_returns_none=True)
 
 
 def recv_tls_record(sock):

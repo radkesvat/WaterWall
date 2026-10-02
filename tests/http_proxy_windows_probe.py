@@ -1,4 +1,9 @@
-"""Run the loopback HTTP probe through the public Windows ready/stop capabilities."""
+"""Native restricted startup/readiness/public-stop via inherited Win32 event handles, loopback HTTP
+traffic, local users and invalid setting/missing-next/occupied-listener rejection. Exact statuses
+and secret-safe diagnostics; requires native Windows and controlled loopback. Win32 capability
+shutdown stays explicit rather than using a POSIX process group. CTest: native Windows HTTP proxy
+workflow probe; direct --launcher CLI."""
+import sys
 import argparse
 import ctypes
 from ctypes import wintypes
@@ -8,8 +13,14 @@ import os
 import shutil
 import socket
 import subprocess
-import tempfile
 import time
+
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.environ.get("WATERWALL_TEST_SUPPORT_DIR",
+                                str(Path(__file__).resolve().parent / "support" / "python")))
+from wwtest.process import run_logged
+from wwtest.process import kill_and_reap
+from wwtest.run_directory import RunDirectory
 
 
 def main():
@@ -32,7 +43,7 @@ def main():
     info.lpAttributeList = {"handle_list": handles}
     repo = Path(__file__).resolve().parents[1]
     try:
-        with tempfile.TemporaryDirectory(prefix="WaterWall HTTP proxy ") as temporary:
+        with RunDirectory(prefix="WaterWall HTTP proxy ") as temporary:
             root = Path(temporary)
             shutil.copytree(repo / "tests/cases/http_proxy", root, dirs_exist_ok=True)
             core = {"log": {"path": "log/"}, "configs": ["config.json"],
@@ -46,7 +57,8 @@ def main():
                 try:
                     assert kernel.WaitForSingleObject(ready, 60000) == 0, "startup did not signal readiness"
                     assert process.poll() is None, "runtime exited during startup"
-                    env = dict(os.environ, HTTP_PROXY_STOP_PROBE="1")
+                    env = dict(os.environ, HTTP_PROXY_STOP_PROBE="1",
+                               WATERWALL_TEST_SUPPORT_DIR=str(repo / "tests/support/python"))
                     probe = subprocess.Popen([os.sys.executable, "probe.py"], cwd=root, env=env,
                                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                                              creationflags=subprocess.CREATE_NO_WINDOW)
@@ -64,23 +76,35 @@ def main():
                         assert probe.returncode == 0, stderr
                     finally:
                         if probe.poll() is None:
-                            probe.kill()
-                            probe.wait()
+                            kill_and_reap(probe)
                 except BaseException:
                     kernel.SetEvent(stop)
-                    process.wait(timeout=25)
+                    try:
+                        process.wait(timeout=25)
+                    except subprocess.TimeoutExpired:
+                        try:
+                            kill_and_reap(process)
+                        except BaseException as cleanup_error:
+                            print(f"Windows child cleanup also failed: {cleanup_error}", file=sys.stderr)
                     print((root / "stdout.log").read_text(errors="replace")[-12000:])
                     for path in (root / "log").glob("*.log"):
                         print(path.name, path.read_text(errors="replace")[-8000:])
                     raise
                 finally:
+                    body_failed = sys.exc_info()[0] is not None
                     kernel.SetEvent(stop)
                     try:
                         process.wait(timeout=25)
                     except subprocess.TimeoutExpired:
-                        process.kill()
-                        process.wait()
-                        raise AssertionError("public stop did not terminate within its deadline")
+                        try:
+                            kill_and_reap(process)
+                        except BaseException as cleanup_error:
+                            if not body_failed:
+                                raise
+                            print(f"Windows child cleanup also failed: {cleanup_error}", file=sys.stderr)
+                        if not body_failed:
+                            raise AssertionError("public stop did not terminate within its deadline")
+                        print("Public stop deadline also failed during cleanup", file=sys.stderr)
                 assert process.returncode == 0, process.returncode
                 print("Native Windows restricted startup, readiness, proxy traffic, and public stop passed")
             original = json.loads((root / "config.json").read_text())
@@ -96,15 +120,28 @@ def main():
                                            stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT)
                 try:
                     assert kernel.WaitForSingleObject(ready, 60000) == 0 and process.poll() is None
-                    result = subprocess.run([os.sys.executable, "probe.py"], cwd=example,
-                                            env=dict(os.environ, HTTP_PROXY_LOCAL_EXAMPLE="1"),
+                    result = run_logged([os.sys.executable, "probe.py"], cwd=example,
+                                            env=dict(os.environ, HTTP_PROXY_LOCAL_EXAMPLE="1",
+                                                     WATERWALL_TEST_SUPPORT_DIR=str(repo / "tests/support/python")),
                                             capture_output=True, text=True, timeout=20,
                                             creationflags=subprocess.CREATE_NO_WINDOW)
                     assert result.returncode == 0, result.stderr
                     print(result.stdout, end="")
                 finally:
+                    body_failed = sys.exc_info()[0] is not None
                     kernel.SetEvent(stop)
-                    process.wait(timeout=25)
+                    try:
+                        process.wait(timeout=25)
+                    except subprocess.TimeoutExpired:
+                        try:
+                            kill_and_reap(process)
+                        except BaseException as cleanup_error:
+                            if not body_failed:
+                                raise
+                            print(f"Windows child cleanup also failed: {cleanup_error}", file=sys.stderr)
+                        if not body_failed:
+                            raise AssertionError("public stop did not terminate within its deadline")
+                        print("Public stop deadline also failed during cleanup", file=sys.stderr)
                 assert process.returncode == 0
             assert not (example / "users.json").exists(), "local example created an account database"
             invalid_settings = [
@@ -139,14 +176,14 @@ def main():
                 config = json.loads(json.dumps(original))
                 next(node for node in config["nodes"] if node["name"] == "http-proxy")["settings"] = settings
                 (root / "config.json").write_text(json.dumps(config), encoding="utf-8")
-                result = subprocess.run([str(args.launcher.resolve()), "--restricted-config", "--console:hidden"],
+                result = run_logged([str(args.launcher.resolve()), "--restricted-config", "--console:hidden"],
                                         cwd=root, timeout=30, capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
                 assert result.returncode != 0, settings
             print(f"Native restricted startup rejected all {len(invalid_settings)} invalid settings cases")
             config = json.loads(json.dumps(original))
             next(node for node in config["nodes"] if node["name"] == "http-proxy").pop("next")
             (root / "config.json").write_text(json.dumps(config), encoding="utf-8")
-            result = subprocess.run([str(args.launcher.resolve()), "--restricted-config", "--console:hidden"],
+            result = run_logged([str(args.launcher.resolve()), "--restricted-config", "--console:hidden"],
                                     cwd=root, timeout=30, capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
             assert result.returncode != 0, "missing next was accepted"
             (root / "config.json").write_text(json.dumps(original), encoding="utf-8")
@@ -154,7 +191,7 @@ def main():
                 occupied.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
                 occupied.bind(("127.0.0.1", 29080))
                 occupied.listen(1)
-                result = subprocess.run([str(args.launcher.resolve()), "--restricted-config", "--console:hidden"],
+                result = run_logged([str(args.launcher.resolve()), "--restricted-config", "--console:hidden"],
                                         cwd=root, timeout=30, capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
                 assert result.returncode != 0, "occupied proxy listener did not fail startup"
             print("Native missing-next and occupied-listener startup rejection passed")

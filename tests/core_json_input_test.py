@@ -1,11 +1,20 @@
 #!/usr/bin/env python3
+"""CLI/environment/stdin config selection and aliases, verbose modes, input-error version ordering and
+malformed/duplicate options. Bounded real startup commands in private inputs; selected diagnostics
+and exact statuses, no live network workload. Complete captured outputs are retained. CTest:
+waterwall.core_json_input."""
 
 import json
 import os
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
+
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.environ.get("WATERWALL_TEST_SUPPORT_DIR",
+                                str(Path(__file__).resolve().parent / "support" / "python")))
+from wwtest.process import run_logged
+from wwtest.run_directory import RunDirectory
 
 
 CORE_INPUT_ENV = "WW_CORE_JSON_INPUT"
@@ -24,7 +33,7 @@ def run_waterwall(binary, working_directory, arguments=(), environment_input=UNS
     if environment_input is not UNSET:
         environment[CORE_INPUT_ENV] = environment_input
 
-    return subprocess.run(
+    return run_logged(
         [str(binary), *arguments],
         cwd=working_directory,
         env=environment,
@@ -274,7 +283,7 @@ def main():
     binary = Path(sys.argv[1]).resolve()
     require(binary.is_file(), f"Waterwall binary does not exist: {binary}")
 
-    with tempfile.TemporaryDirectory(prefix="waterwall-core-input-") as temp_dir:
+    with RunDirectory(prefix="waterwall-core-input-") as temp_dir:
         run_dir = Path(temp_dir)
         test_version_arguments(binary, run_dir)
         test_input_error_versions(binary, run_dir)

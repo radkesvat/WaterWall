@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
 
+# Covers: TesterClient/TesterServer marker plus exact exit policy (0/143 after success;
+# early/missing marker/timeout fail). Setup: one private case copy/core/log set and owned runtime
+# PID. Limits: case decides bytes; readiness and 0.5s success grace remain explicit. CTest:
+# roundtrip registrations via add_waterwall_integration_test.
+
+
 # Low-level Waterwall integration-case runner.
 #
 # Purpose:
@@ -44,8 +50,11 @@ case_dir=$(realpath "$2")
 timeout_seconds=$3
 
 source "$(dirname "$(realpath "$0")")/case_run_dir.lib.sh"
+source "$(dirname "$(realpath "$0")")/support/shell/runner.lib.sh"
 
-trap remove_case_run_dir EXIT
+trap 'status=$?; remove_case_run_dir "$status"; exit "$status"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 prepare_case_run_dir "$case_dir"
 run_dir=$case_run_dir
 generated_core_json="$run_dir/core.json"
@@ -73,32 +82,11 @@ if ! success_exit_grace_checks=$(calculate_success_exit_grace_checks "$success_e
 fi
 
 dump_logs() {
-  local path
-  local paths=(
-    "$run_dir/stdout.log"
-    "$run_dir"/log/internal*.log
-    "$run_dir"/log/core*.log
-    "$run_dir"/log/network*.log
-    "$run_dir"/log/dns*.log
-  )
-
-  for path in "${paths[@]}"; do
-    if [[ -f "$path" ]]; then
-      echo "===== $(basename "$path") =====" >&2
-      cat "$path" >&2
-    fi
-  done
+  ww_test_dump_logs "$run_dir/stdout.log" "$run_dir"/log/internal*.log "$run_dir"/log/core*.log "$run_dir"/log/network*.log "$run_dir"/log/dns*.log
 }
 
 show_stdout_on_success() {
-  case "${WATERWALL_TEST_SHOW_STDOUT_ON_SUCCESS:-}" in
-    1|true|TRUE|True|yes|YES|Yes|on|ON|On)
-      return 0
-      ;;
-    *)
-      return 1
-      ;;
-  esac
+  ww_test_show_stdout_on_success
 }
 
 finish_success() {
@@ -140,14 +128,15 @@ wait_for_success_graceful_exit() {
 }
 
 cleanup() {
+  local cleanup_status=$?
   if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
-    kill -TERM "$pid" 2>/dev/null || true
-    wait "$pid" 2>/dev/null || true
+    ww_test_stop_child "$pid" || true
   fi
 
   # The run directory is a private copy, so files Waterwall mutates in place
   # (users.json and its backup) die with it and never touch the case directory.
-  remove_case_run_dir
+  remove_case_run_dir "$cleanup_status"
+  exit "$cleanup_status"
 }
 
 trap cleanup EXIT
@@ -167,27 +156,7 @@ if [[ "$test_splice" != true && "$test_splice" != false ]]; then
   exit 2
 fi
 
-cat >"$generated_core_json" <<EOF
-{
-  "log": {
-    "path": "log/",
-    "internal": { "loglevel": "DEBUG", "file": "internal.log", "console": true },
-    "core":     { "loglevel": "DEBUG", "file": "core.log",     "console": true },
-    "network":  { "loglevel": "DEBUG", "file": "network.log",  "console": true },
-    "dns":      { "loglevel": "DEBUG", "file": "dns.log",      "console": true }
-  },
-  "configs": [
-    "config.json"
-  ],
-  "misc": {
-    "workers": $test_workers,
-    "splice": $test_splice,
-    "ram-profile": "$TEST_RAM_PROFILE",
-    "mtu": 1500,
-    "try-enabling-bbr": false
-  }
-}
-EOF
+ww_test_write_core "$generated_core_json" "$test_workers" "$TEST_RAM_PROFILE" true "$test_splice"
 
 (
   cd "$run_dir"
@@ -248,9 +217,8 @@ done
 
 wait_for_success_graceful_exit
 
-kill -TERM "$pid" 2>/dev/null || true
 set +e
-wait "$pid"
+ww_test_stop_child "$pid"
 status=$?
 set -e
 pid=""

@@ -73,7 +73,7 @@ WaterWall-side integration outside the vendored patch:
   obtain any required queue slot before encryption, retain onward headroom,
   prefer aligned ciphertext bodies in new buffers, preserve tail coalescing,
   and respect the existing 8 MiB / 1,024-entry BIO limits.
-- Keep the focused coverage in `tests/unittests/tls_buffer_bio_test.c` and its
+- Keep the focused coverage in `tests/unittests/tunnels/tls/tls_buffer_bio_test.c` and its
   BoringSSL encryption-failure linker wrapper in the unit-test CMake file.
   Run the shared post-update verification checklist in the next section.
 - The buffer BIO contract is documented in Developer Guide Part 3,

@@ -1,27 +1,35 @@
 #!/usr/bin/env python3
-"""VlessClient against a socket peer, with real TCP/UDP ingress in a private namespace."""
+"""UUID request/response and addon framing; TCP early, nested, server-first and cancellable idle waits;
+UDP distinct frames. One worker/loopback peer, positive bulk splice and shutdown143. Requires strace
+and namespace isolation; raw socket timeout behavior is retained. CTest:
+waterwall.vlessclient_tcp_splice_false, waterwall.vlessclient_tcp_splice_true,
+waterwall.vlessclient_udp_splice_false, waterwall.vlessclient_udp_splice_true."""
 import concurrent.futures
 import uuid
 import json
 from pathlib import Path
-import re
 import shutil
 import signal
 import socket
-import subprocess
 import sys
-import tempfile
+import os
 import time
+
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.environ.get("WATERWALL_TEST_SUPPORT_DIR",
+                                str(Path(__file__).resolve().parent / "support" / "python")))
+from wwtest.sockets import configure_listener, connect_when_ready
+from wwtest.config import core_config
+from wwtest.trace import positive_splice_counts
+from wwtest.sockets import exact as read_exact
+from wwtest.run_directory import RunDirectory
+from wwtest.process import Process, close_on_error, install_termination_handler
+
+
 
 
 def exact(sock, size):
-    result = bytearray()
-    while len(result) < size:
-        chunk = sock.recv(size - len(result))
-        if not chunk:
-            raise AssertionError(f"EOF after {len(result)} of {size} bytes")
-        result.extend(chunk)
-    return bytes(result)
+    return read_exact(sock, size, timeout_context=False)
 
 
 def udp_frame(payload):
@@ -34,7 +42,7 @@ def run(binary, udp, enabled, timeout=None, nested=False, waiting=False):
     if tracer is None:
         raise RuntimeError("strace is required to verify actual splice I/O")
     payloads = [b"a", bytes(range(256)) * 128, b"end"]
-    with tempfile.TemporaryDirectory(prefix="waterwall-vless-splice-") as directory:
+    with RunDirectory("waterwall-vless-splice-") as directory:
         root = Path(directory)
         nodes = [
             {"name": "listen", "type": "UdpListener" if udp else "TcpListener", "next": "vless",
@@ -58,22 +66,16 @@ def run(binary, udp, enabled, timeout=None, nested=False, waiting=False):
             nodes.insert(2, inner)
         (root / "config.json").write_text(json.dumps({"name": "vless-splice", "nodes": nodes}))
         (root / "core.json").write_text(json.dumps({
-            "log": {"path": "log/", **{name: {"loglevel": "DEBUG", "file": name + ".log", "console": True}
-                                      for name in ("internal", "core", "network", "dns")}},
+            "log": core_config()["log"],
             "configs": ["config.json"],
             "misc": {"workers": 1, "splice": enabled, "ram-profile": "minimal", "mtu": 1500,
                      "try-enabling-bbr": False},
         }))
         with socket.socket() as listener, (root / "stdout.log").open("w+") as log:
-            listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            listener.bind(("127.0.0.1", 27952))
-            listener.listen()
-            listener.settimeout(15)
+            configure_listener(listener, ('127.0.0.1', 27952), timeout=15)
             # -D leaves the tracee as our direct child, so orderly SIGTERM and
             # wait observe WaterWall's status rather than the tracer's status.
-            process = subprocess.Popen([tracer, "-D", "-f", "-e", "trace=splice", "-o", str(root / "splice.log"), binary],
-                                       cwd=root, stdout=log, stderr=subprocess.STDOUT)
-            try:
+            with Process([tracer, '-D', '-f', '-e', 'trace=splice', '-o', str(root / 'splice.log'), binary], cwd=root, log=log) as process:
                 deadline = time.monotonic() + 10
                 if udp:
                     # Wait for the actual listener publication, without probing
@@ -85,16 +87,8 @@ def run(binary, udp, enabled, timeout=None, nested=False, waiting=False):
                     client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                     client.connect(("127.0.0.1", 27951))
                 else:
-                    while True:
-                        if process.poll() is not None:
-                            raise AssertionError(f"startup exited {process.returncode}")
-                        try:
-                            client = socket.create_connection(("127.0.0.1", 27951), timeout=1)
-                            break
-                        except ConnectionRefusedError:
-                            if time.monotonic() >= deadline:
-                                raise
-                            time.sleep(0.02)
+                    client = connect_when_ready(process, ('127.0.0.1', 27951), deadline=deadline,
+                        failure=lambda: AssertionError(f'startup exited {process.returncode}'), timeout=1, pause=0.02)
                 with client:
                     client.settimeout(15)
                     request = b"\0" + uuid.UUID("5783a3e7-e373-51cd-8642-c83782b807c5").bytes
@@ -144,7 +138,7 @@ def run(binary, udp, enabled, timeout=None, nested=False, waiting=False):
                                 conn.sendall(data[::-1])
                                 assert conn.recv(1) == b"", "unexpected trailing TCP bytes"
 
-                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor, close_on_error(client):
                         result = executor.submit(peer)
                         if udp:
                             for index, payload in enumerate(payloads):
@@ -179,19 +173,12 @@ def run(binary, udp, enabled, timeout=None, nested=False, waiting=False):
                     process.send_signal(signal.SIGTERM)
                     assert process.wait(timeout=10) == 128 + signal.SIGTERM, "unclean shutdown"
                 trace = (root / "splice.log").read_text()[trace_boundary:]
-                successful = re.findall(r"(?:splice\(.*|<\.\.\. splice resumed>.*)\s= ([1-9][0-9]*)", trace)
+                successful = positive_splice_counts(trace)
                 assert bool(successful) == enabled, f"later traffic splice evidence disagrees with enabled={enabled}"
-            except BaseException:
-                log.flush()
-                print((root / "stdout.log").read_text(), file=sys.stderr)
-                raise
-            finally:
-                if process.poll() is None:
-                    process.kill()
-                    process.wait()
 
 
 if __name__ == "__main__":
+    install_termination_handler()
     binary = str(Path(sys.argv[1]).resolve())
     udp, enabled = sys.argv[2] == "udp", sys.argv[3] == "true"
     run(binary, udp, enabled)

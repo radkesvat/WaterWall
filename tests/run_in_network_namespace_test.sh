@@ -1,8 +1,15 @@
 #!/usr/bin/env bash
 
+# Covers: namespace wrapper command/loopback behavior, non-root mapping, fixed-port concurrent
+# isolation and unavailable-tool diagnostics. Setup: real/fake wrapper commands and private
+# readiness receipts. Limits: unavailable host namespaces remain explicit. CTest: namespace
+# wrapper harness registration.
+
+
 # Harness test for run_in_network_namespace.sh
 
 set -euo pipefail
+source "$(dirname "$(realpath "$0")")/support/shell/runner.lib.sh"
 
 if [[ $# -ne 2 ]]; then
   echo "usage: $0 <wrapper-script> <python3>" >&2
@@ -107,7 +114,9 @@ except OSError:
 # 6. Two concurrent wrappers can bind the same fixed port without collision
 test_port=47891
 tmp_dir=$(mktemp -d)
-trap 'rm -rf "$tmp_dir"' EXIT
+echo "Run artifacts: $tmp_dir" >&2
+
+trap 'status=$?; ww_test_finish_directory "$tmp_dir" "$status"; exit "$status"' EXIT
 
 ready1="$tmp_dir/ready1"
 ready2="$tmp_dir/ready2"

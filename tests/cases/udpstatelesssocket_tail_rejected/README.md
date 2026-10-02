@@ -1,0 +1,21 @@
+# Udpstatelesssocket tail rejected
+
+
+Exercises the udpstatelesssocket tail rejected scenario with the topology in this directory.
+
+Configured nodes and onward edges (`next`; listeners/connectors form the OS transport boundaries):
+
+- `tester`: `TesterClient` → `udp`
+- `udp`: `UdpStatelessSocket` (terminal or independently bound endpoint)
+
+CTest selections and overrides:
+
+- `waterwall.udpstatelesssocket_tail_rejected` — default runner settings.
+
+Prerequisites: The production build and Linux user/network namespace support. Loopback endpoints live inside the namespace harness.
+
+Success: The runtime must exit with status `1` and include the diagnostic `only chain-head placement is supported`. Signals, hard aborts, and missing or different diagnostics fail; the accepted expected failure counts as a successful enclosing test.
+
+Discover properties with `ctest --preset linux -N -V -R '^waterwall\.udpstatelesssocket_tail_rejected$'`. Execute through the [lane wrapper](../../run_test_lane.sh) using the registered lane; privileged/external and speed cases keep their own prerequisites/serialization.
+
+Generated core settings, logs and mutable inputs belong to the private run directory. Failures/skips retain initialized artifacts; `WATERWALL_TEST_KEEP_RUN_DIR=1` also retains success. See the [test workflow](../../README.md).

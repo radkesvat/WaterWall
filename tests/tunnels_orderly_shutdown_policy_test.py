@@ -1,35 +1,35 @@
 #!/usr/bin/env python3
 """Category-B orderly-shutdown source policy checker.
 
-Category D (tests/tunnels_abort_policy_test.py) pins the failures that must kill
-the process immediately. This checker pins the opposite policy: a runtime
-failure that leaves the process structurally valid but unable to continue
-correctly must
+Category D (tests/tunnels_abort_policy_test.py) pins the failures that must kill the process
+immediately. This checker pins the opposite policy: a runtime failure that leaves the process
+structurally valid but unable to continue correctly must
 
-    release caller-owned buffers, handles and locks;
-    call requestProgramShutdown(1);
-    fall back to abortProgramNow(1) only if the worker-0 handoff was refused;
-    return through the current callback without doing any further work.
+    release caller-owned buffers, handles and locks;     call requestProgramShutdown(1);     fall
+back to abortProgramNow(1) only if the worker-0 handoff was refused;     return through the current
+callback without doing any further work.
 
-Every site is identified by (relative source path, exact function name) and
-never by a line number. Function bodies are extracted with the lexical C scanner
-from tunnels_abort_policy_test.py, which blanks comments, string literals and
-character literals before any call is counted, so a commented-out or quoted
-lookalike can never satisfy a candidate.
+Every site is identified by (relative source path, exact function name) and never by a line number.
+Function bodies are extracted with the lexical C scanner in wwtest.source_policy, which blanks
+comments, string literals and character literals before any call is counted, so a commented-out or
+quoted lookalike can never satisfy a candidate.
 
-Usage:
-    python3 tests/tunnels_orderly_shutdown_policy_test.py [--mutation-test|-m]
-"""
+Usage:     python3 tests/tunnels_orderly_shutdown_policy_test.py [--mutation-test|-m] CTest:
+waterwall.tunnels_orderly_shutdown_policy_test."""
 import os
 import re
 import sys
+from pathlib import Path
+
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.environ.get("WATERWALL_TEST_SUPPORT_DIR",
+                                str(Path(__file__).resolve().parent / "support" / "python")))
 
 # Importing the sibling checker must not leave a __pycache__ directory behind in
 # the source tree when this runs from a build directory.
-sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from tunnels_abort_policy_test import (  # noqa: E402
+from wwtest.source_policy import (  # noqa: E402
     ROOT,
     analyze,
     count_calls,

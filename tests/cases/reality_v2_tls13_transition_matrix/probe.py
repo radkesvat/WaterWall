@@ -1,9 +1,20 @@
+"""Reality TLS13 transition matrix across staged cover/handoff/application records. Indexed loopback
+peers, deterministic record sequencing and role/connection/event accounting; exact TLS frames and
+intentional None EOF. Runtime and credentials are owned by the namespace case harness. CTest:
+waterwall.reality_v2_tls13_transition_matrix."""
 from collections import Counter
 import socket
 import ssl
 import sys
+from pathlib import Path
+import os
 import threading
 import time
+
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.environ.get("WATERWALL_TEST_SUPPORT_DIR",
+                                str(Path(__file__).resolve().parents[2] / "support" / "python")))
+from wwtest.sockets import exact as read_exact
 
 
 HOST = "127.0.0.1"
@@ -102,14 +113,7 @@ def fail(message):
 
 
 def recv_exact(sock, length):
-    chunks = []
-    while length:
-        chunk = sock.recv(length)
-        if not chunk:
-            return None
-        chunks.append(chunk)
-        length -= len(chunk)
-    return b"".join(chunks)
+    return read_exact(sock, length, timeout_context=False, eof_returns_none=True)
 
 
 def recv_tls_record(sock):

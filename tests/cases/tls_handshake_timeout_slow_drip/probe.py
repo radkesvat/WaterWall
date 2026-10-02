@@ -1,3 +1,13 @@
+"""Check that TLS handshake expiry survives a slow drip of TLS-looking bytes.
+
+The namespace probe runner starts the adjacent WaterWall configuration. This
+probe owns a loopback fallback sentinel and drips an incomplete TLS record into
+the listener. It requires closure between 0.35 and 2.2 seconds and no fallback
+connection or sentinel response. The case tests the configured deadline under
+incremental input; it does not complete a TLS handshake or measure throughput.
+CTest: waterwall.tls_handshake_timeout_slow_drip.
+"""
+
 import socket
 import sys
 import threading

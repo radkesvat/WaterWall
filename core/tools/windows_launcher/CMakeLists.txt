@@ -83,7 +83,8 @@ target_link_libraries(windows_tun_ownership_test PRIVATE advapi32 bcrypt setupap
 add_test(NAME waterwall.windows_tun_ownership_unit COMMAND windows_tun_ownership_test)
 set_tests_properties(waterwall.windows_tun_ownership_unit PROPERTIES TIMEOUT 30)
 
-add_executable(windows_tun_dns_test "${WATERWALL_SOURCE_DIR}/tests/unittests/tun_windows_dns_test.c")
+add_executable(windows_tun_dns_test "${WATERWALL_SOURCE_DIR}/tests/unittests/devices/tun_windows_dns_test.c")
+target_link_libraries(windows_tun_dns_test PRIVATE ww_test_support)
 target_include_directories(windows_tun_dns_test PRIVATE "${WATERWALL_SOURCE_DIR}/ww/devices/tun")
 target_compile_definitions(windows_tun_dns_test PRIVATE _WIN32_WINNT=0x0600)
 add_test(NAME waterwall.windows_tun_dns_unit COMMAND windows_tun_dns_test)
