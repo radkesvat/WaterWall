@@ -261,7 +261,7 @@ setting nobody chose. This applies to every field in the table, not only to
 | `ram-profile` | string or integer | `"server"` | Memory sizing profile for pools and profile-aware node defaults. A number must be a whole number in `0..6`; `0` and `1` are legacy aliases for the smallest profile. |
 | `mtu` | integer | `1500` | Construction-time default for per-node MTUs. Must be a whole number in `68..65535` - RFC 791's minimum IPv4 MTU up to what the field can hold. |
 | `splice` | boolean | `true` | Allow splice on eligible stream chains. `false` disables splice for every chain. Platform support and support from every node are still required; packet chains remain ineligible. |
-| `tcp-tune` | boolean | `true` on Linux; `false` otherwise | Best-effort core startup tuning of TCP/socket buffer ceilings and backlogs, selected by memory profile. |
+| `tcp-tune` | boolean | `true` on Linux; `false` otherwise | Best-effort core startup tuning of socket ceilings and backlogs by memory profile, with fixed TCP buffer maxima. |
 | `try-enabling-bbr` | boolean | `true` on Linux; `false` otherwise | Linux-only best-effort startup attempt to enable TCP BBR. |
 | `libs-path` | string | `"libs/"` | Directory used when loading external tunnel libraries. |
 
@@ -316,16 +316,16 @@ explicit `true` is accepted but performs no tuning.
 After runtime logging is ready and before loading node configurations, WaterWall
 attempts six live sysctl writes. The memory profile selects these targets:
 
-| Memory profile | `net.core.rmem_max`, `net.core.wmem_max`, TCP buffer maxima (bytes) | `net.core.netdev_max_backlog` | `net.core.somaxconn` |
+| Memory profile | `net.core.rmem_max`, `net.core.wmem_max` (bytes) | `net.core.netdev_max_backlog` | `net.core.somaxconn` |
 | --- | --- | --- | --- |
 | S1 / S2 | `134217728` (128 MiB) | `8000` | `65535` |
 | M1 / M2 | `268435456` (256 MiB) | `16000` | `131071` |
 | L1 / L2 | `536870912` (512 MiB) | `32000` | `262143` |
 
-`net.ipv4.tcp_rmem` is set to `4096 87380 <maximum>` and
-`net.ipv4.tcp_wmem` to `4096 65536 <maximum>`, using the maximum from the table.
-The minimum and initial sizes stay fixed across profiles. The `server` alias
-selects L2, `client` selects M1, and `client-larger` selects M2.
+`net.ipv4.tcp_rmem` is set to `4096 87380 134217728` and
+`net.ipv4.tcp_wmem` to `4096 65536 134217728`. Both TCP maxima are fixed at
+128 MiB for every memory profile. The minimum and initial sizes stay fixed.
+The `server` alias selects L2, `client` selects M1, and `client-larger` selects M2.
 
 Each failed command logs a warning, and the remaining commands are still
 attempted; permission denial or a missing `sysctl` never fails startup. Successful

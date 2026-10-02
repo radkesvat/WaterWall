@@ -72,10 +72,8 @@ static void testProfile(unsigned int profile, unsigned int buffer_max, unsigned 
     snprintf(expected,
              sizeof(expected),
              "net.core.rmem_max=%u\nnet.core.wmem_max=%u\n"
-             "net.ipv4.tcp_rmem=4096 87380 %u\nnet.ipv4.tcp_wmem=4096 65536 %u\n"
+             "net.ipv4.tcp_rmem=4096 87380 134217728\nnet.ipv4.tcp_wmem=4096 65536 134217728\n"
              "net.core.netdev_max_backlog=%u\nnet.core.somaxconn=%u\n",
-             buffer_max,
-             buffer_max,
              buffer_max,
              buffer_max,
              backlog,

@@ -130,6 +130,7 @@ void tryTuneTcp(unsigned int ram_profile)
 #if ! defined(OS_ANDROID) && ! defined(OS_CYGWIN)
     const unsigned int scale = ram_profile >= kRamProfileL1Memory ? 4U : ram_profile >= kRamProfileM1Memory ? 2U : 1U;
     const unsigned int buffer_max = 128U * 1024U * 1024U * scale;
+    const unsigned int tcp_buffer_max = 128U * 1024U * 1024U;
     const struct
     {
         const char  *format;
@@ -137,8 +138,8 @@ void tryTuneTcp(unsigned int ram_profile)
     } commands[] = {
         {"sysctl -w net.core.rmem_max=%u 2>&1", buffer_max},
         {"sysctl -w net.core.wmem_max=%u 2>&1", buffer_max},
-        {"sysctl -w net.ipv4.tcp_rmem=\"4096 87380 %u\" 2>&1", buffer_max},
-        {"sysctl -w net.ipv4.tcp_wmem=\"4096 65536 %u\" 2>&1", buffer_max},
+        {"sysctl -w net.ipv4.tcp_rmem=\"4096 87380 %u\" 2>&1", tcp_buffer_max},
+        {"sysctl -w net.ipv4.tcp_wmem=\"4096 65536 %u\" 2>&1", tcp_buffer_max},
         {"sysctl -w net.core.netdev_max_backlog=%u 2>&1", 8000U * scale},
         {"sysctl -w net.core.somaxconn=%u 2>&1", 65536U * scale - 1U},
     };
