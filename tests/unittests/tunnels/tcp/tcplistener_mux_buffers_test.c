@@ -52,7 +52,7 @@ static void testBuffers(bool client, bool server, unsigned send_option, unsigned
 
     const int  expected_send   = send_option != 0 ? configured_sizes[send_option] : default_size;
     const int  expected_recv   = recv_option != 0 ? configured_sizes[recv_option] : default_size;
-    const bool expected_update = (client || server) && (send_option == 0 || recv_option == 0);
+    const bool expected_update = server && (send_option == 0 || recv_option == 0);
     require(state->send_buffer_size == expected_send, "incorrect listener send-buffer size");
     require(state->recv_buffer_size == expected_recv, "incorrect listener receive-buffer size");
     require(update_calls == (unsigned) expected_update, "incorrect socket-filter update count");
@@ -68,8 +68,7 @@ static void testBuffers(bool client, bool server, unsigned send_option, unsigned
 int main(void)
 {
     testCaseSet("tcplistener_mux_buffers_test");
-    const int default_sizes[] = {
-        0, kDefaultLargeSocketBufferSize / 16, kDefaultLargeSocketBufferSize, kDefaultLargeSocketBufferSize};
+    const int default_sizes[] = {0, 0, kDefaultLargeSocketBufferSize, kDefaultLargeSocketBufferSize};
     for (unsigned mux = 0; mux < 4; ++mux)
     {
         for (unsigned send_option = 0; send_option < 4; ++send_option)

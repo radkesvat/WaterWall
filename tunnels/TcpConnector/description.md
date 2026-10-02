@@ -164,12 +164,12 @@ This node behaves like a chain end. Its downstream entry callbacks are disabled 
 - `large-send-buffer` `(boolean or positive integer)`
   Sets `SO_SNDBUF` on outbound sockets.
   `true` uses WaterWall's default large socket buffer size, currently `4194304` bytes. `false` leaves the kernel default unchanged. A positive integer sets the requested byte size directly.
-  Default: `false`, or `true` when this option is omitted and the chain contains `MuxClient` or `MuxServer`.
+  Default: `false`, or `true` when this option is omitted and the chain contains `MuxClient`.
 
 - `large-recv-buffer` `(boolean or positive integer)`
   Sets `SO_RCVBUF` on outbound sockets.
   `true` uses WaterWall's default large socket buffer size, currently `4194304` bytes. `false` leaves the kernel default unchanged. A positive integer sets the requested byte size directly.
-  Default: `false`, or `true` when this option is omitted and the chain contains `MuxClient` or `MuxServer`.
+  Default: `false`, or `true` when this option is omitted and the chain contains `MuxClient`.
 
 - `fwmark` `(integer)`
   Linux-style socket mark.
@@ -204,7 +204,7 @@ This node behaves like a chain end. Its downstream entry callbacks are disabled 
   - `4`: only IPv6
 
 When `addresses` is used, these optional fields can be set at the top level as defaults and overridden independently by each address object.
-For `large-send-buffer` and `large-recv-buffer`, an omitted top-level value becomes `true` automatically when the finalized chain contains `MuxClient` or `MuxServer`. A per-address omitted value inherits the effective top-level value. Explicit `false` still disables explicit socket buffer sizing.
+For `large-send-buffer` and `large-recv-buffer`, an omitted top-level value becomes `true` automatically when the finalized chain contains `MuxClient`. A per-address omitted value inherits the effective top-level value. Explicit `false` still disables explicit socket buffer sizing.
 
 ## Detailed Behavior
 

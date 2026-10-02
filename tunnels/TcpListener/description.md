@@ -93,12 +93,12 @@ One of `port` or `port-range` is required.
 - `large-send-buffer` `(boolean or positive integer)`
   Sets `SO_SNDBUF` on accepted TCP sockets.
   `true` uses WaterWall's default large socket buffer size, currently `4194304` bytes. `false` leaves the kernel default unchanged. A positive integer sets the requested byte size directly.
-  Default: `false`, or `true` when this option is omitted and the chain contains `MuxClient` or `MuxServer`.
+  Default: `false`, or `true` when this option is omitted and the chain contains `MuxServer`.
 
 - `large-recv-buffer` `(boolean or positive integer)`
   Sets `SO_RCVBUF` on accepted TCP sockets.
   `true` uses WaterWall's default large socket buffer size, currently `4194304` bytes. `false` leaves the kernel default unchanged. A positive integer sets the requested byte size directly.
-  Default: `false`, or `true` when this option is omitted and the chain contains `MuxClient` or `MuxServer`.
+  Default: `false`, or `true` when this option is omitted and the chain contains `MuxServer`.
 
 - `interface` `(string)`
   Restricts the listener to a local network interface.

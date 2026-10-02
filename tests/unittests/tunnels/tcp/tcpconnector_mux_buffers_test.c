@@ -66,8 +66,7 @@ static void testBuffers(bool client, bool server, unsigned send_option, unsigned
 int main(void)
 {
     testCaseSet("tcpconnector_mux_buffers_test");
-    const int default_sizes[] = {
-        0, kDefaultLargeSocketBufferSize, kDefaultLargeSocketBufferSize / 16, kDefaultLargeSocketBufferSize};
+    const int default_sizes[] = {0, kDefaultLargeSocketBufferSize, 0, kDefaultLargeSocketBufferSize};
     for (unsigned mux = 0; mux < 4; ++mux)
     {
         for (unsigned send_option = 0; send_option < 4; ++send_option)
