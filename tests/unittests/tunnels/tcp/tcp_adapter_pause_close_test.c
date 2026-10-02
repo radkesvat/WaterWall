@@ -828,8 +828,8 @@ static bool prepareLateInit(tunnel_t *resolver, tunnel_t *owner, line_t *line, v
     discard                                resolver;
     discard                                owner;
     discard                                line;
-    tcpconnector_domain_resolver_lstate_t *ls = user_lstate;
-    ls->socket_options.fwmark                 = kFwMarkInvalid;
+    tcpconnector_prepared_connection_t    *prepared = user_lstate;
+    prepared->socket_options.fwmark                 = kFwMarkInvalid;
     return true;
 }
 
@@ -854,7 +854,7 @@ static void runLateInitCase(void)
         tunnel_t *resolver      = resolver_node.createHandle(&resolver_node);
         twfRequire(adapter != NULL && neighbor != NULL && resolver != NULL, "late Init fixture creation failed");
         domainresolverTunnelSetPrepareHook(
-            resolver, adapter, sizeof(tcpconnector_domain_resolver_lstate_t), prepareLateInit, NULL);
+            resolver, adapter, sizeof(tcpconnector_prepared_connection_t), prepareLateInit, NULL);
         tunnelBind(neighbor, resolver);
         tunnelBind(resolver, adapter);
         adapter->fnInitU              = tcpconnectorTunnelUpStreamInit;

@@ -155,17 +155,18 @@ static bool bindSourceIpIfNeeded(int sockfd, int addr_type, const tcpconnector_s
     return true;
 }
 
-static bool tcpconnectorBeginConnect(tunnel_t *t, line_t *l, tcpconnector_lstate_t *ls, uint64_t outbound_ip_range,
-                                     const tcpconnector_socket_options_t *socket_options)
+static bool tcpconnectorBeginConnect(tunnel_t *t, line_t *l, tcpconnector_lstate_t *ls,
+                                     const tcpconnector_prepared_connection_t *prepared)
 {
-    tcpconnector_tstate_t *ts       = tunnelGetState(t);
-    address_context_t     *dest_ctx = &(l->routing_context.dest_ctx);
-    int                    sockfd   = -1;
+    tcpconnector_tstate_t               *ts             = tunnelGetState(t);
+    address_context_t                   *dest_ctx       = &(l->routing_context.dest_ctx);
+    int                                  sockfd         = -1;
+    const tcpconnector_socket_options_t *socket_options = &prepared->socket_options;
 
     // apply free bind if needed
-    if (outbound_ip_range > 0)
+    if (prepared->outbound_ip_range > 0)
     {
-        if (! tcpconnectorApplyFreeBindRandomDestIp(dest_ctx, outbound_ip_range))
+        if (! tcpconnectorApplyFreeBindRandomDestIp(dest_ctx, prepared->outbound_ip_range))
         {
             goto fail;
         }
@@ -288,7 +289,7 @@ static bool tcpconnectorBeginConnect(tunnel_t *t, line_t *l, tcpconnector_lstate
     wioSetConnectTimeout(io, kConnectTimeoutMs);
     // wioSetReadTimeout(lstate->io, kReadWriteTimeoutMs);
 
-    // issue connect on the socket
+    // Prepared settings are consumed before connect can trigger callbacks.
     if (UNLIKELY(wioConnect(io) != 0))
     {
         return false;
@@ -306,8 +307,8 @@ bool tcpconnectorDomainResolverPrepare(tunnel_t *resolver, tunnel_t *connector, 
 {
     discard resolver;
 
-    tcpconnector_tstate_t                 *ts = tunnelGetState(connector);
-    tcpconnector_domain_resolver_lstate_t *ls = user_lstate;
+    tcpconnector_tstate_t              *ts       = tunnelGetState(connector);
+    tcpconnector_prepared_connection_t *prepared = user_lstate;
 
     // findout how to deal with destination address
     address_context_t                *dest_ctx             = &(l->routing_context.dest_ctx);
@@ -343,17 +344,17 @@ bool tcpconnectorDomainResolverPrepare(tunnel_t *resolver, tunnel_t *connector, 
         return false;
     }
 
-    ls->outbound_ip_range = outbound_ip_range;
-    ls->socket_options    = socket_options;
+    prepared->outbound_ip_range = outbound_ip_range;
+    prepared->socket_options    = socket_options;
 
     return true;
 }
 
 void tcpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
 {
-    tcpconnector_tstate_t                 *ts = tunnelGetState(t);
-    tcpconnector_lstate_t                 *ls = lineGetState(l, t);
-    tcpconnector_domain_resolver_lstate_t *resolver_ls =
+    tcpconnector_tstate_t                    *ts = tunnelGetState(t);
+    tcpconnector_lstate_t                    *ls = lineGetState(l, t);
+    const tcpconnector_prepared_connection_t *prepared =
         domainresolverTunnelGetUserLineState(ts->domain_resolver_tunnel, l);
     address_context_t *dest_ctx = lineGetDestinationAddressContext(l);
 
@@ -362,17 +363,15 @@ void tcpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
      * Refuse its late Init before recreating sockets or the worker idle table. */
     if (UNLIKELY(! wloopNormalDispatchAllowed(getWorkerLoop(lineGetWID(l)))))
         goto fail;
-    if (UNLIKELY(resolver_ls == NULL))
+    if (UNLIKELY(prepared == NULL))
     {
-        LOGF("TcpConnector: internal DomainResolver prepare state is missing");
+        LOGF("TcpConnector: prepared connection settings are missing");
         abortProgramNow(1);
     }
 
-    ls->tunnel            = t;
-    ls->line              = l;
-    ls->write_paused      = true;
-    ls->outbound_ip_range = resolver_ls->outbound_ip_range;
-    ls->socket_options    = resolver_ls->socket_options;
+    ls->tunnel       = t;
+    ls->line         = l;
+    ls->write_paused = true;
 
     if (! addresscontextCanConvertToSockAddr(dest_ctx) || ! addresscontextHasPort(dest_ctx))
     {
@@ -380,7 +379,7 @@ void tcpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
         goto fail;
     }
 
-    if (! tcpconnectorBeginConnect(t, l, ls, ls->outbound_ip_range, &ls->socket_options))
+    if (! tcpconnectorBeginConnect(t, l, ls, prepared))
     {
         return;
     }

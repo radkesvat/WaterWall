@@ -15,11 +15,12 @@ typedef struct tcpconnector_socket_options_s
     const char *source_ip;
 } tcpconnector_socket_options_t;
 
-typedef struct tcpconnector_domain_resolver_lstate_s
+/* Connector settings retained in the resolver's prepare-hook storage across DNS. */
+typedef struct tcpconnector_prepared_connection_s
 {
     uint64_t                      outbound_ip_range;
     tcpconnector_socket_options_t socket_options;
-} tcpconnector_domain_resolver_lstate_t;
+} tcpconnector_prepared_connection_t;
 
 typedef struct tcpconnector_tstate_s
 {
@@ -78,8 +79,6 @@ typedef struct tcpconnector_lstate_s
     line_t                       *line;        // reference to the line
     wio_t                        *io;          // IO handle for the connection (socket)
     local_idle_item_t            *idle_handle; // reference to the idle item for this connection
-    uint64_t                      outbound_ip_range;
-    tcpconnector_socket_options_t socket_options;
     // These fields are used internally for the queue implementation for TCP
     buffer_queue_t pause_queue;
     // Combined adapter/WIO retention: active allocation remains charged until write completion.
