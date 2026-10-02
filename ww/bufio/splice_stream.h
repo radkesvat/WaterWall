@@ -46,6 +46,8 @@ bool splicestreamCompact(splice_stream_t *stream);
  * NULL requests ordinary fallback. Return is the sole owned result, which may
  * replace/recycle destination. Full pool onward padding is preserved. Next
  * header refills only after the body completes. bytes=0 still consumes a frame.
+ * Resident-only body ranges return ordinary storage, including real prefixes
+ * of splice wrappers; pipe bytes outside the requested range do not select splice.
  */
 sbuf_t *splicestreamMoveFrame(splice_stream_t *stream, sbuf_t *destination, uint32_t bytes);
 

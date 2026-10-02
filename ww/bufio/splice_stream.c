@@ -189,10 +189,12 @@ static sbuf_t *streamMoveBody(splice_stream_t *s, sbuf_t *dest, uint32_t bytes)
 sbuf_t *splicestreamMoveFrame(splice_stream_t *s, sbuf_t *dest, uint32_t bytes)
 {
     streamAssertFrame(s, dest, bytes);
-    const uint16_t padding = bufferpoolGetLargeBufferPadding(s->pool);
-    sbuf_t        *head    = streamHead(s);
+    const uint16_t padding    = bufferpoolGetLargeBufferPadding(s->pool);
+    sbuf_t        *head       = streamHead(s);
+    const uint32_t head_bytes = head == NULL ? 0 : min(bytes, sbufGetLength(head));
+    bool           has_pipe   = head != NULL && head_bytes > sbufGetResidentPrefixLength(head);
     if (bytes != 0 && head != NULL && sbufGetLength(head) == bytes && sbufGetLeftCapacity(head) >= padding &&
-        (! sbufIsSplice(head) || (dest != NULL && sbufIsSplice(dest))))
+        (! sbufIsSplice(head) || (has_pipe && dest != NULL && sbufIsSplice(dest))))
     {
         if (dest != NULL)
             bufferpoolReuseBuffer(s->pool, dest);
@@ -200,14 +202,14 @@ sbuf_t *splicestreamMoveFrame(splice_stream_t *s, sbuf_t *dest, uint32_t bytes)
         streamFinishFrame(s, bytes);
         return dest;
     }
-    bool   has_pipe = head != NULL && sbufIsSplice(head);
-    size_t range    = head == NULL ? 0 : sbufGetLength(head);
+    uint32_t remaining = bytes - head_bytes;
     c_foreach(i, ww_sbuffer_queue_t, s->pending.q)
     {
-        if (range >= bytes)
+        if (remaining == 0 || has_pipe)
             break;
-        has_pipe |= sbufIsSplice(*i.ref);
-        range += sbufGetLength(*i.ref);
+        const uint32_t count = min(remaining, sbufGetLength(*i.ref));
+        has_pipe             = count > sbufGetResidentPrefixLength(*i.ref);
+        remaining -= count;
     }
     if (dest != NULL && sbufIsSplice(dest))
     {

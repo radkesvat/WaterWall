@@ -203,8 +203,44 @@ static void testSpliceStreamDiscard(buffer_pool_t *pool)
 #endif
 }
 
+#if WW_HAVE_SPLICE
+static void testSpliceStreamResidentRanges(void)
+{
+    /* Extra splice padding keeps the whole-wrapper fast path eligible even
+     * when every requested byte is in a resident prefix. */
+    pool_fixture_t f      = poolFixtureCreate(32768, 4096, 64, 128);
+    const uint8_t  wire[] = "HEADordinaryPIPE";
+    for (uint32_t leading = 0; leading <= 4; leading += 4)
+        for (uint32_t pipe_bytes = 0; pipe_bytes <= 4; pipe_bytes += 4)
+            for (uint32_t count = 0; count <= leading + 8 + pipe_bytes; ++count)
+            {
+                splice_stream_t *s = splicestreamCreate(f.pool, 0);
+                if (leading != 0)
+                    require(splicestreamPush(s, streamTestBytes(f.pool, wire, leading)), "resident head push failed");
+                require(splicestreamPush(s, makeSpliceTestBuffer(f.pool, wire + 4, 8, wire + 12, pipe_bytes)),
+                        "resident prefix push failed");
+                sbuf_t *body = splicestreamMoveFrame(s, bufferpoolGetSpliceBuffer(f.pool), count);
+                require(sbufIsSplice(body) == (count > leading + 8),
+                        "frame representation used pipe bytes outside the requested range");
+                streamCheckBytes(f.pool, body, wire + 4 - leading, count);
+                streamCheckCharge(s);
+                const uint32_t remaining = leading + 8 + pipe_bytes - count;
+                require(splicestreamLength(s) == remaining, "resident extraction consumed its suffix");
+                streamCheckBytes(
+                    f.pool, splicestreamMoveFrame(s, NULL, remaining), wire + 4 - leading + count, remaining);
+                require(splicestreamLength(s) == 0 && splicestreamCharge(s) == 0,
+                        "resident extraction left bytes or charge");
+                splicestreamDestroy(s);
+            }
+    poolFixtureDestroy(&f);
+}
+#endif
+
 static void testSpliceStreamContracts(void)
 {
+#if WW_HAVE_SPLICE
+    testSpliceStreamResidentRanges();
+#endif
     pool_fixture_t f = poolFixtureCreate(32768, 4096, 64, 64);
     testSpliceStreamDiscard(f.pool);
 
