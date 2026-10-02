@@ -13,6 +13,13 @@ void muxclientTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_c
         abortProgramNow(1);
     }
     ts->worker_states[wid].quiescing = true;
+    wtimer_t *timer                  = ts->worker_states[wid].keepalive_timer;
+    if (timer != NULL)
+    {
+        ts->worker_states[wid].keepalive_timer = NULL;
+        weventSetUserData(timer, NULL);
+        wtimerDelete(timer);
+    }
 }
 
 void muxclientTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context)

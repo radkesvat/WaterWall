@@ -1128,6 +1128,9 @@ static void caseDetachedConfiguration(void)
         tunnel_t *mux = muxclientTunnelCreate(&node);
         twfRequire(mux != NULL, "profile-derived detached MuxClient settings were rejected");
         muxclient_tstate_t *ts = tunnelGetState(mux);
+        twfRequire(ts->keepalive, "MuxClient keepalive must default on");
+        twfRequireEqualU32(ts->ping_interval_ms, 15000, "default Ping interval changed");
+        twfRequireEqualU32(ts->pong_timeout_ms, 45000, "default Pong tolerance changed");
         twfRequireEqualU32(
             ts->detached_buffer_limit, profiles[i].buffer_limit, "profile-derived MuxClient byte limit drifted");
         twfRequireEqualU32(
@@ -1196,6 +1199,46 @@ static void caseDetachedConfiguration(void)
         cJSON_Delete(settings);
     }
 
+    const char *keys[]   = {"ping-interval", "tolerance-ms"};
+    const char *values[] = {"1", "15000", "2147483647", "0", "-1", "1.5", "\"1000\"", "true", "null", "2147483648"};
+    for (size_t k = 0; k < ARRAY_SIZE(keys); ++k)
+        for (size_t i = 0; i < ARRAY_SIZE(values); ++i)
+        {
+            char json[160];
+            snprintf(
+                json, sizeof(json), "{\"mode\":\"counter\",\"connection-capacity\":1,\"%s\":%s}", keys[k], values[i]);
+            settings = cJSON_Parse(json);
+            twfRequire(settings != NULL, "failed to construct keepalive settings");
+            node.node_settings_json = settings;
+            mux                     = muxclientTunnelCreate(&node);
+            twfRequire((mux != NULL) == (i < 3), "invalid keepalive interval acceptance");
+            if (mux != NULL)
+            {
+                ts = tunnelGetState(mux);
+                twfRequire((k == 0 ? ts->ping_interval_ms : ts->pong_timeout_ms) ==
+                               (uint32_t) strtoul(values[i], NULL, 10),
+                           "keepalive interval override changed");
+                muxclientTunnelDestroy(mux, wwLifecycleProcessShutdown());
+            }
+            cJSON_Delete(settings);
+        }
+    const char *booleans[] = {"true", "false", "0", "1", "null", "\"false\""};
+    for (size_t i = 0; i < ARRAY_SIZE(booleans); ++i)
+    {
+        char json[128];
+        snprintf(json, sizeof(json), "{\"mode\":\"counter\",\"connection-capacity\":1,\"keepalive\":%s}", booleans[i]);
+        settings                = cJSON_Parse(json);
+        node.node_settings_json = settings;
+        mux                     = muxclientTunnelCreate(&node);
+        twfRequire((mux != NULL) == (i < 2), "invalid keepalive switch acceptance");
+        if (mux != NULL)
+        {
+            ts = tunnelGetState(mux);
+            twfRequire(ts->keepalive == (i == 0), "keepalive switch not honored");
+            muxclientTunnelDestroy(mux, wwLifecycleProcessShutdown());
+        }
+        cJSON_Delete(settings);
+    }
     GSTATE.ram_profile = previous_ram_profile;
 }
 

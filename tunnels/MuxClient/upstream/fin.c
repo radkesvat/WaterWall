@@ -10,6 +10,14 @@ void muxclientTunnelUpStreamFinish(tunnel_t *t, line_t *child_l)
 
     assert(child_ls->is_child);
 
+    // The source can finish re-entrantly while parent selection is still
+    // opening or retiring transports. No parent association exists yet.
+    if (child_ls->parent == NULL && child_ls->close_state == kMuxClientChildCloseOpen)
+    {
+        muxclientLinestateDestroy(child_ls);
+        return;
+    }
+
     if (child_ls->close_state == kMuxClientChildCloseParentGoneDraining)
     {
         // The previous side sent Finish, so release retained data without reflecting Finish back to it.

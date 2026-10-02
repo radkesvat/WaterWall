@@ -124,6 +124,14 @@ tunnel_t *muxserverTunnelCreate(node_t *node)
     uint32_t                       memory_low_watermark          = 0;
     uint32_t                       memory_reserve                = 0;
 
+    ts->keepalive = true;
+    if (jsonGetObjectBoolean(settings, "keepalive", &ts->keepalive) == kJsonValueInvalid)
+    {
+        LOGF("MuxServer: keepalive must be boolean");
+        tunnelDestroy(t);
+        return NULL;
+    }
+
     if (! muxserverReadParentWriteSettings(settings, ts))
     {
         tunnelDestroy(t);

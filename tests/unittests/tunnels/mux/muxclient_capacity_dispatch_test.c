@@ -114,9 +114,7 @@ static void fixtureSetup(muxclient_capacity_fixture_t *fixture, uint8_t mode, ui
     if (mode == kConcurrencyModeFixedConnectionsCount)
     {
         ts->fixed_parent_lines        = memoryAllocateZero(sizeof(*ts->fixed_parent_lines) * fixed_count);
-        ts->fixed_next_parent_indexes = memoryAllocateZero(sizeof(*ts->fixed_next_parent_indexes));
-        twfRequire(ts->fixed_parent_lines != NULL && ts->fixed_next_parent_indexes != NULL,
-                   "failed to allocate MuxClient fixed-parent selection state");
+        twfRequire(ts->fixed_parent_lines != NULL, "failed to allocate MuxClient fixed-parent selection state");
     }
 
     fixture->chain                      = tunnelchainCreate(1);
@@ -162,11 +160,11 @@ static void fixtureTeardown(muxclient_capacity_fixture_t *fixture)
     twfRequireEqualU32(ts->detached_child_counts[0], 0, "MuxClient fixture retained detached children");
     twfRequire(ts->detached_queued_charge[0] == 0, "MuxClient fixture retained detached bytes");
     muxclientTunnelOnWorkerStop(fixture->mux, 0, wwLifecycleProcessShutdown());
+    twfRequire(ts->worker_states[0].stall_retired_parents == 0, "shutdown retained stalled-parent accounting");
 
     twfRequireNoLeakedBuffers();
     tunnelchainDestroy(fixture->chain);
     memoryFree(ts->fixed_parent_lines);
-    memoryFree(ts->fixed_next_parent_indexes);
     memoryFree(ts->worker_states);
     memoryFree(ts->detached_child_counts);
     memoryFree(ts->detached_queued_charge);
@@ -326,7 +324,7 @@ static void caseFixedParentsBalanceRejectAndReuse(void)
         twfRequire(parent_l != NULL, "fixed mode left a configured parent slot empty");
         muxclient_lstate_t *parent_ls = lineGetState(parent_l, fixture.mux);
         twfRequireEqualU32(
-            parent_ls->children_count, 2, "fixed mode did not balance children across least-loaded parents");
+            parent_ls->children_count, 2, "fixed mode did not fill every eligible parent before refusing");
     }
 
     line_t *rejected = fixtureOpenChild(&fixture);
@@ -343,7 +341,7 @@ static void caseFixedParentsBalanceRejectAndReuse(void)
     line_t             *replacement    = fixtureOpenChild(&fixture);
     muxclient_lstate_t *replacement_ls = lineGetState(replacement, fixture.mux);
     twfRequire(replacement_ls->parent->l == released_parent,
-               "fixed mode did not choose the uniquely least-loaded parent");
+               "fixed mode did not choose the only parent below its child cap");
     twfRequireEqualU32(released_parent_ls->children_count, 2, "fixed mode did not reuse released child capacity");
     twfRequireEqualU32(fixture.trace.next_init, 3, "fixed capacity reuse created another parent");
     fixtureTeardown(&fixture);
@@ -553,6 +551,8 @@ static void caseShutdownInventory(uint8_t mode, unsigned order, unsigned reentra
     fixture.prev->fnFinD         = shutdownSourceFinish;
     muxclient_tstate_t *ts       = tunnelGetState(fixture.mux);
     ts->concurrency_capacity     = 1;
+    if (mode == kConcurrencyModeFixedConnectionsCount)
+        ts->max_children = 1; // This ownership case requires two distinct parents.
     line_t             *first    = fixtureOpenChild(&fixture);
     muxclient_lstate_t *first_ls = lineGetState(first, fixture.mux);
     line_t             *parent_a = first_ls->parent->l;
@@ -829,8 +829,24 @@ static void caseIdleParentWaitsForOutput(uint8_t mode, bool stop)
     fixtureTeardown(&f);
 }
 
+#include "muxclient_health_cases.h"
+
 int main(void)
 {
+    caseParentProbeDiscoveryAndPause();
+    caseParentProbeSnapshotReentrancy();
+    caseParentProbeOtherModes(kConcurrencyModeCounter);
+    caseParentProbeOtherModes(kConcurrencyModeTimer);
+    caseParentHealthClockAndSelection();
+    caseParentSoftReplacement(false);
+    caseParentSoftReplacement(true);
+    caseIdleStalledParent(0);
+    caseIdleStalledParent(1);
+    caseIdleStalledParent(2);
+    caseIdleStalledParent(3);
+    caseParentHealthDisabled();
+    caseParentHealthReentrantReply();
+    caseSpliceBatchHealth();
     caseNewChildInheritsOutputGate(false, false, true);
     caseNewChildInheritsOutputGate(false, false, false);
     caseNewChildInheritsOutputGate(false, true, true);

@@ -265,7 +265,55 @@ Each child line gets a 32-bit connection id (`cid`). That id is used inside MUX 
 
 In timer and counter modes, `MuxClient` keeps one current reusable parent line per worker. The code calls this the unsatisfied line. As long as that parent is still allowed to accept more children, new child lines will join it. If another child arrives while the parent is at `max-children`, the parent is selection-retired, remains alive for current children, and closes after the last child leaves and pending output is handed off; the arriving child uses a new parent.
 
-In fixed connection count mode, `MuxClient` keeps a fixed-size parent pool per worker. When a worker first needs a mux parent, it opens `per-worker-connections-count` parent transport lines for that worker. New child lines are assigned to the least-loaded non-finishing parent below `max-children`, with a round-robin tie break. If every fixed parent is full, the new borrowed child receives Finish immediately; no extra parent or unbounded wait queue is created. Capacity is reusable when a parent drops below the live cap.
+In fixed connection count mode, `MuxClient` keeps `per-worker-connections-count` selectable parent slots per worker. It first prefers non-suspect parents below `max-children`, then uses rendezvous hashing within that health group. Each new child receives a worker-local selection key; each parent has a stable identity for its lifetime. Child count is a hard eligibility cap, not a ranking score. Existing children retain their original parent. If all eligible parents are suspect, selection still uses rendezvous among them. If every selectable parent is full or finishing, the new borrowed child receives Finish; no unbounded wait queue is created.
+
+### Parent keepalive and soft replacement
+
+Keepalive is enabled by default in all modes. Optional `settings`:
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `keepalive` | `true` | Send probes, acknowledge replies and allow health-based replacement. `false` disables all three. |
+| `ping-interval` | `15000` | Milliseconds between probes. |
+| `tolerance-ms` | `45000` | Unpaused milliseconds allowed for a matching Pong. |
+
+The switch must be boolean; both durations must be integers in `1..2147483647`,
+even when disabled. Fixed-mode rendezvous remains active when disabled.
+
+One timer per worker probes established selectable parents, not children. Its
+period is `min(ping-interval, tolerance-ms, 1000)` ms. The first probe is due at
+the first tick after transport Est; later probes obey `ping-interval`. Only one
+probe is outstanding per parent. Ping/Pong has zero payload and uses CID bytes
+as a 32-bit token. Only a complete matching Pong on that parent acknowledges it;
+Data, partial frames and wrong tokens do not. The first matching reply confirms
+peer support. Before that, unanswered discovery is retried without suspicion or
+replacement. This permits a disabled MuxServer responder, but means a parent
+that never answers its first probe has no health-based recovery.
+
+A probe waits while parent output is paused, pumping or queued. Transport Pause
+freezes the outstanding countdown; Resume excludes paused time, without double
+counting repeated signals. Child FlowPause does not suspend the parent watchdog.
+All timestamps use the owner's monotonic clock. Queuing in later nodes and wire
+transfer still consume unpaused tolerance. A permanently paused transport can
+defer detection indefinitely. Idle connections and one-way uploads do not require
+application replies: the Mux peer answers independently.
+
+At one quarter of tolerance (rounded down, at least 1 ms; 11250 ms by default),
+fixed selection prefers non-suspect parents. At full tolerance, the next child
+selection may softly retire a parent and refill its slot. A late matching Pong
+restores a still-selectable parent. A retired parent never rejoins selection;
+its existing children stay attached and continue working until their normal
+finish. It closes after its last child leaves and final output drains. A timed-out
+selectable parent with no children closes through normal parent-loss cleanup,
+including blocked final output.
+
+Per worker, at most `per-worker-connections-count` keepalive-retired parents
+remain in fixed mode, or one in timer/counter modes. Pending final output still
+counts. At the bound, occupied unresponsive parents remain selectable until
+retirement capacity is released; empty ones can still be replaced. Existing
+counter/timer rotation continues independently. Timers only probe: replacement
+runs on a new-child request, with no forced termination of active children.
+Adapter and peer timeouts remain independent.
 
 ### When a new parent connection is opened
 
@@ -274,11 +322,11 @@ When a child line arrives:
 - if there is no reusable parent line for that worker, a new parent line is created
 - if the current parent line is exhausted, a new parent line is created
 - the new parent line is initialized through the next node
-- the child line is then attached to that parent and an internal `Open` frame is sent
+- the child line is then attached to that parent and downstream establishment is reported
 
-Once the `Open` frame is sent successfully, `MuxClient` immediately reports downstream establishment to the child line.
+The first child payload submits `Open` followed by Data. A child that finishes before sending data submits `Open` and `Close`. Transport establishment does not wait for that first payload.
 
-In fixed connection count mode, the first child on a worker creates that worker's fixed parent pool. Later child lines reuse those parents instead of creating more. If a parent slot is closed by the transport side, a later child can recreate that slot, but the active pool size for the worker is still capped by `per-worker-connections-count`.
+In fixed connection count mode, closed or softly retired slots are refilled on new-child selection. The selectable pool remains capped by `per-worker-connections-count`; softly retired parents have the separate bound described above.
 
 ### Exhaustion rules
 
@@ -287,7 +335,7 @@ The current parent line becomes exhausted in one of these ways:
 - timer mode: its age becomes greater than `connection-duration-ms`
 - counter mode: its opened child stream count reaches `connection-capacity`
 - all modes: its concurrent live child count reaches `max-children`
-- fixed connection count mode: age and cumulative counter do not retire parents, but the live cap still applies
+- fixed connection count mode: cumulative age and CID count do not rotate parents; the live cap and keepalive policy apply
 - absolute hard limit: the parent connection id reaches `4294967295`
 
 An exhausted parent line is not closed immediately. It simply stops accepting new child lines. Existing child streams continue using it until they finish.
@@ -330,6 +378,8 @@ Frame flags:
 - `2`: `FlowPause`
 - `3`: `FlowResume`
 - `4`: `Data`
+- `5`: `Ping` (empty parent control; CID is the probe token)
+- `6`: `Pong` (empty parent control; CID echoes the probe token)
 
 Payload length is the framed data length after the header.
 
@@ -427,7 +477,7 @@ incoming child queues retain their separate detached-drain behavior.
 An exhausted timer/counter parent with no remaining children stays in MuxClient's
 owned-parent inventory until its queued final frames have been handed off and no
 send is active. It is retired from new-child selection while waiting. Fixed
-parents remain reusable under their existing policy. Worker Stop discards pending
+parents remain reusable unless softly retired. Worker Stop discards pending
 output and closes all owned parents, including retired parents with no children.
 
 A peer `Close` is ordered after earlier `Data` for the same `cid`. If the local child destination is paused,

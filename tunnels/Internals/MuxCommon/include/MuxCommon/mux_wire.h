@@ -32,6 +32,8 @@ enum
     kMuxFlagFlowPause          = 2,
     kMuxFlagFlowResume         = 3,
     kMuxFlagData               = 4,
+    kMuxFlagPing               = 5, // Empty parent control; CID carries the probe token.
+    kMuxFlagPong               = 6,
     kMuxFrameLength            = sizeof(mux_wire_header_t),
     kMuxMaxDataFrameLength     = 1024U * 1024U, // Payload only; independent of pool and pipe geometry.
     kMuxMaxBufferedFrameLength = kMuxMaxDataFrameLength + kMuxFrameLength,

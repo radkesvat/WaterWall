@@ -212,6 +212,27 @@ static void processParentPayload(tunnel_t *t, line_t *parent_l, sbuf_t *buf)
             break;
         }
 
+        if (frame.flags == kMuxFlagPing || frame.flags == kMuxFlagPong)
+        {
+            sbuf_t *control = muxReadFrameBody(parent_ls->parent_state->read_stream, &frame, false);
+            if (! ts->keepalive || frame.flags == kMuxFlagPong)
+            {
+                lineReuseBuffer(parent_l, control);
+                continue;
+            }
+            if (frame.length != 0)
+            {
+                lineReuseBuffer(parent_l, control);
+                LOGW("MuxServer: keepalive Ping must have an empty body");
+                muxserverHandleParentLoss(t, parent_l, true);
+                return;
+            }
+            muxMakeMuxFrame(control, frame.cid, kMuxFlagPong);
+            if (! muxserverSendParentOutput(t, parent_l, control, NULL, kMuxFlagPong))
+                return;
+            continue;
+        }
+
         muxserver_lstate_t *child_ls =
             frame.flags == kMuxFlagOpen ? NULL : muxserverFindChildByConnectionId(parent_ls, frame.cid);
         const bool retain = frame.flags == kMuxFlagData && child_ls != NULL && child_ls->paused &&

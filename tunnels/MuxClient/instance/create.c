@@ -21,14 +21,13 @@ static bool muxclientReadMaxChildren(const cJSON *settings, uint32_t *value)
 }
 
 static bool muxclientComputeFixedStorageGeometry(size_t workers_count, uint32_t fixed_connections_count,
-                                                 size_t *parents_bytes_out, size_t *indexes_bytes_out)
+                                                 size_t *parents_bytes_out)
 {
-    if (parents_bytes_out == NULL || indexes_bytes_out == NULL)
+    if (parents_bytes_out == NULL)
     {
         return false;
     }
     *parents_bytes_out = 0;
-    *indexes_bytes_out = 0;
 
     if (workers_count == 0 || fixed_connections_count == 0 || workers_count > SIZE_MAX / fixed_connections_count)
     {
@@ -37,15 +36,12 @@ static bool muxclientComputeFixedStorageGeometry(size_t workers_count, uint32_t 
 
     const size_t slots = workers_count * fixed_connections_count;
     size_t       parents_bytes;
-    size_t       indexes_bytes;
-    if (! memoryTryComputeArraySize(slots, sizeof(line_t *), &parents_bytes) ||
-        ! memoryTryComputeArraySize(workers_count, sizeof(uint32_t), &indexes_bytes))
+    if (! memoryTryComputeArraySize(slots, sizeof(line_t *), &parents_bytes))
     {
         return false;
     }
 
     *parents_bytes_out = parents_bytes;
-    *indexes_bytes_out = indexes_bytes;
     return true;
 }
 
@@ -132,6 +128,7 @@ tunnel_t *muxclientTunnelCreate(node_t *node)
     t->fnResumeD  = &muxclientTunnelDownStreamResume;
 
     t->onWorkerQuiesce = &muxclientTunnelOnWorkerQuiesce;
+    t->onStart         = &muxclientTunnelOnStart;
     t->onWorkerStop = &muxclientTunnelOnWorkerStop;
     t->onDestroy    = &muxclientTunnelDestroy;
 
@@ -157,6 +154,20 @@ tunnel_t *muxclientTunnelCreate(node_t *node)
         tunnelDestroy(t);
         return NULL;
     }
+
+    ts->keepalive         = true;
+    int64_t ping_interval = kMuxDefaultPingIntervalMs;
+    int64_t pong_timeout  = kMuxDefaultPongTimeoutMs;
+    if (jsonGetObjectBoolean(settings, "keepalive", &ts->keepalive) == kJsonValueInvalid ||
+        jsonGetObjectIntegerInRange(settings, "ping-interval", 1, INT_MAX, &ping_interval) == kJsonValueInvalid ||
+        jsonGetObjectIntegerInRange(settings, "tolerance-ms", 1, INT_MAX, &pong_timeout) == kJsonValueInvalid)
+    {
+        LOGF("MuxClient: keepalive must be boolean; ping-interval and tolerance-ms must be integers in [1, INT_MAX]");
+        tunnelDestroy(t);
+        return NULL;
+    }
+    ts->ping_interval_ms = (uint32_t) ping_interval;
+    ts->pong_timeout_ms  = (uint32_t) pong_timeout;
 
     getIntFromJsonObjectOrDefault(&child_buffer_limit, settings, "child-buffer-limit", kMuxDefaultChildBufferLimit);
     getIntFromJsonObjectOrDefault(&child_buffer_resume_threshold,
@@ -291,7 +302,6 @@ tunnel_t *muxclientTunnelCreate(node_t *node)
 
     muxclient_worker_state_t *staged_workers              = memoryAllocateZero(worker_bytes);
     line_t                  **staged_fixed_parent_lines   = NULL;
-    uint32_t                 *staged_fixed_parent_indexes = NULL;
     uint32_t                 *staged_detached_counts      = memoryAllocateZero(detached_count_bytes);
     size_t                   *staged_detached_charge      = memoryAllocateZero(detached_charge_bytes);
 
@@ -307,9 +317,7 @@ tunnel_t *muxclientTunnelCreate(node_t *node)
     if (staged_fixed_connections != 0)
     {
         size_t fixed_parent_bytes;
-        size_t fixed_index_bytes;
-        if (! muxclientComputeFixedStorageGeometry(
-                (size_t) wc, staged_fixed_connections, &fixed_parent_bytes, &fixed_index_bytes))
+        if (! muxclientComputeFixedStorageGeometry((size_t) wc, staged_fixed_connections, &fixed_parent_bytes))
         {
             LOGF("MuxClient: \"per-worker-connections-count\" is too large: %u", staged_fixed_connections);
             memoryFree(staged_workers);
@@ -319,16 +327,11 @@ tunnel_t *muxclientTunnelCreate(node_t *node)
             return NULL;
         }
         staged_fixed_parent_lines = memoryAllocateZero(fixed_parent_bytes);
-        if (staged_fixed_parent_lines != NULL)
-        {
-            staged_fixed_parent_indexes = memoryAllocateZero(fixed_index_bytes);
-        }
     }
 
-    if (staged_fixed_connections != 0 && (staged_fixed_parent_lines == NULL || staged_fixed_parent_indexes == NULL))
+    if (staged_fixed_connections != 0 && staged_fixed_parent_lines == NULL)
     {
         memoryFree(staged_fixed_parent_lines);
-        memoryFree(staged_fixed_parent_indexes);
         memoryFree(staged_workers);
         memoryFree(staged_detached_counts);
         memoryFree(staged_detached_charge);
@@ -339,7 +342,6 @@ tunnel_t *muxclientTunnelCreate(node_t *node)
     ts->worker_states             = staged_workers;
     ts->fixed_connections_count   = staged_fixed_connections;
     ts->fixed_parent_lines        = staged_fixed_parent_lines;
-    ts->fixed_next_parent_indexes = staged_fixed_parent_indexes;
     ts->detached_child_counts     = staged_detached_counts;
     ts->detached_queued_charge    = staged_detached_charge;
 

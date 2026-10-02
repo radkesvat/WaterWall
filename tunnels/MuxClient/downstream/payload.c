@@ -125,6 +125,24 @@ static void processParentPayload(tunnel_t *t, line_t *parent_l, sbuf_t *buf)
             break;
         }
 
+        if (frame.flags == kMuxFlagPing || frame.flags == kMuxFlagPong)
+        {
+            lineReuseBuffer(parent_l, muxReadFrameBody(parent_ls->parent_state->read_stream, &frame, false));
+            if (ts->keepalive && frame.length != 0)
+            {
+                LOGW("MuxClient: keepalive control must have an empty body");
+                muxclientHandleParentLoss(t, parent_l, true);
+                return;
+            }
+            muxclient_parent_state_t *state = parent_ls->parent_state;
+            if (ts->keepalive && frame.flags == kMuxFlagPong && state->awaiting_pong && frame.cid == state->ping_token)
+            {
+                state->peer_keepalive = true;
+                state->awaiting_pong  = false;
+            }
+            continue;
+        }
+
         muxclient_lstate_t *child_ls = muxclientFindChildByConnectionId(parent_ls, frame.cid);
         const bool          retain   = frame.flags == kMuxFlagData && child_ls != NULL && child_ls->paused &&
                             child_ls->close_state == kMuxClientChildCloseOpen;

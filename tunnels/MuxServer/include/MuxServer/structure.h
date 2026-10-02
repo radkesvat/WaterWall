@@ -84,6 +84,7 @@ typedef struct muxserver_tstate_s
     uint32_t memory_reserve;
     uint32_t workers_count;
     bool     log_main_line_stats;
+    bool     keepalive;
 
     atomic_uint               live_children_count;
     atomic_ullong             memory_admission_state;

@@ -901,6 +901,7 @@ static void caseDetachedConfiguration(void)
         tunnel_t *mux = muxserverTunnelCreate(&node);
         twfRequire(mux != NULL, "profile-derived detached MuxServer settings were rejected");
         muxserver_tstate_t *ts = tunnelGetState(mux);
+        twfRequire(ts->keepalive, "MuxServer keepalive must default on");
         twfRequireEqualU32(
             ts->detached_buffer_limit, profiles[i].buffer_limit, "profile-derived MuxServer byte limit drifted");
         twfRequireEqualU32(
@@ -987,6 +988,24 @@ static void caseDetachedConfiguration(void)
         twfRequire(settings != NULL, "failed to create invalid MuxServer admission settings");
         node.node_settings_json = settings;
         twfRequire(muxserverTunnelCreate(&node) == NULL, "invalid MuxServer admission relationship was accepted");
+        cJSON_Delete(settings);
+    }
+
+    const char *booleans[] = {"true", "false", "0", "1", "null", "\"false\""};
+    for (size_t i = 0; i < ARRAY_SIZE(booleans); ++i)
+    {
+        char json[64];
+        snprintf(json, sizeof(json), "{\"keepalive\":%s}", booleans[i]);
+        settings                = cJSON_Parse(json);
+        node.node_settings_json = settings;
+        mux                     = muxserverTunnelCreate(&node);
+        twfRequire((mux != NULL) == (i < 2), "invalid server keepalive switch acceptance");
+        if (mux != NULL)
+        {
+            ts = tunnelGetState(mux);
+            twfRequire(ts->keepalive == (i == 0), "server keepalive switch not honored");
+            muxserverTunnelDestroy(mux, wwLifecycleProcessShutdown());
+        }
         cJSON_Delete(settings);
     }
 
@@ -1127,8 +1146,85 @@ static void caseFragmentedPausedFrameKeepsCarrierRemainder(void)
 
 #include "mux_parent_output_cases.h"
 
+static void caseKeepaliveReply(bool enabled, bool paused)
+{
+    twfSetCase("parent Ping replies are optional, fragmented, CID-independent, and ordered behind paused output");
+    muxserver_fixture_t f;
+    fixtureSetup(&f, 128);
+    muxserver_tstate_t *ts = tunnelGetState(f.mux);
+    ts->keepalive          = enabled;
+    if (paused)
+        muxserverTunnelUpStreamPause(f.mux, f.parent_l);
+    const uint32_t tokens[] = {kTestChildCid, UINT32_MAX, 0};
+    for (size_t i = 0; i < ARRAY_SIZE(tokens); ++i)
+    {
+        mux_wire_header_t header;
+        muxSetMuxFrameHeader(&header, 0, tokens[i], kMuxFlagPing);
+        for (unsigned part = 0; part < 2; ++part)
+        {
+            sbuf_t *buf = bufferpoolGetSmallBuffer(f.env.pool);
+            sbufSetLength(buf, 4);
+            sbufWrite(buf, header.bytes + part * 4, 4);
+            muxserverTunnelUpStreamPayload(f.mux, f.parent_l, buf);
+        }
+    }
+    twfRequire(f.trace.next_payload == 0 && f.trace.next_init == 0, "parent Ping reached a child");
+    if (paused)
+    {
+        twfRequire(f.trace.capture_len == 0, "Pong escaped paused parent output");
+        muxserverTunnelUpStreamResume(f.mux, f.parent_l);
+    }
+    frame_view_t frames[3];
+    twfRequireEqualU32(parseFrames(f.capture, f.trace.capture_len, frames, 3),
+                       enabled ? 3 : 0,
+                       "server keepalive switch did not control replies");
+    if (enabled)
+        for (unsigned i = 0; i < 3; ++i)
+            twfRequire(frames[i].flags == kMuxFlagPong && frames[i].length == 0 && frames[i].cid == tokens[i],
+                       "Pong did not echo its exact token in FIFO order");
+    fixtureTeardown(&f);
+}
+
+static tunnel_t *keepalive_reply_mux;
+
+static void keepaliveReplyFinishesParent(tunnel_t *prev, line_t *parent, sbuf_t *buf)
+{
+    twfPrevPayload(prev, parent, buf);
+    muxserverTunnelUpStreamFinish(keepalive_reply_mux, parent);
+}
+
+static void caseKeepaliveTerminalReply(bool malformed)
+{
+    twfSetCase("Ping protocol error and reentrant Pong Finish settle parent and owned children");
+    muxserver_fixture_t f;
+    fixtureSetup(&f, 16);
+    ((muxserver_tstate_t *) tunnelGetState(f.mux))->keepalive = true;
+    keepalive_reply_mux                                       = f.mux;
+    if (! malformed)
+        f.prev->fnPayloadD = keepaliveReplyFinishesParent;
+    sbuf_t *buf = bufferpoolGetSmallBuffer(f.env.pool);
+    sbufSetLength(buf, kMuxFrameLength + (malformed ? 1U : 0U));
+    writeFrameHeader(sbufGetMutablePtr(buf), malformed ? 1U : 0U, kMuxFlagPing, kTestChildCid);
+    if (malformed)
+        sbufGetMutablePtr(buf)[kMuxFrameLength] = 0;
+    lineRef(f.child_l);
+    muxserverTunnelUpStreamPayload(f.mux, f.parent_l, buf);
+    twfRequire(! lineIsAlive(f.child_l), "terminal Ping retained owned child");
+    twfRequireEqualU32(f.trace.prev_finish, malformed ? 1 : 0, "Pong callback reflected Finish to its sender");
+    twfRequireLineStateZeroed(f.parent_l, f.mux, "terminal Ping retained parent state");
+    twfRequireOwnedLineReclaimed(f.child_l, "terminal Ping child cleanup");
+    f.child_l = NULL;
+    fixtureTeardown(&f);
+}
+
 int main(void)
 {
+    caseKeepaliveTerminalReply(false);
+    caseKeepaliveTerminalReply(true);
+    caseKeepaliveReply(true, false);
+    caseKeepaliveReply(true, true);
+    caseKeepaliveReply(false, false);
+    caseKeepaliveReply(false, true);
     runParentOutputCases();
     caseFragmentedPausedFrameKeepsCarrierRemainder();
     caseUnpausedFrameKeepsReceiveAllocation();

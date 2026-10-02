@@ -28,12 +28,24 @@ typedef struct muxclient_parent_state_s
     muxclient_child_map_t child_map;
     muxclient_lstate_t   *owner_prev;
     muxclient_lstate_t   *owner_next;
+    uint64_t              selection_id; // Stable rendezvous identity within the owner worker.
+    uint64_t              ping_sent_at_ms;
+    uint64_t              next_ping_at_ms;
+    uint64_t              pause_started_at_ms;
+    uint32_t              ping_token;
+    bool                  awaiting_pong;
+    bool                  peer_keepalive;
+    bool                  stall_retired;
     bool                  owned;
 } muxclient_parent_state_t;
 
 typedef struct muxclient_worker_state_s
 {
     muxclient_lstate_t *owned_parents;
+    uint64_t            next_parent_id;
+    uint64_t            next_child_key;
+    uint32_t            stall_retired_parents;
+    wtimer_t           *keepalive_timer;
     bool                quiescing;
 } muxclient_worker_state_t;
 
@@ -43,6 +55,9 @@ typedef struct muxclient_tstate_s
     uint32_t concurrency_duration;
     uint32_t concurrency_capacity;
     uint32_t fixed_connections_count;
+    uint32_t ping_interval_ms;
+    uint32_t pong_timeout_ms;
+    bool     keepalive;
     uint32_t child_buffer_limit;
     uint32_t child_buffer_resume_threshold;
     uint32_t parent_buffer_limit;
@@ -57,7 +72,6 @@ typedef struct muxclient_tstate_s
 
     muxclient_worker_state_t *worker_states;
     line_t                  **fixed_parent_lines;
-    uint32_t                 *fixed_next_parent_indexes;
     uint32_t                 *detached_child_counts;
     size_t                   *detached_queued_charge;
 
@@ -104,11 +118,14 @@ struct muxclient_lstate_s
     bool parent_write_paused : 1; // child: local hold registry membership (writer or aggregate pressure)
     bool parent_finishing : 1;                      // parent: main FIN is being handled, suppress parent writes
     bool                      open_frame_submitted : 1; // child: Open has entered ordered parent output for this cid
-    bool selection_retired : 1;                     // non-fixed parent: never selected for another child
+    bool                      selection_retired : 1;    // Never selected for another child, in any mode.
 };
 
 enum
 {
+    kMuxDefaultPingIntervalMs             = 15000,
+    kMuxDefaultPongTimeoutMs              = 45000,
+    kMuxKeepaliveCheckMs                  = 1000,
     kTunnelStateSize                      = sizeof(muxclient_tstate_t),
     kLineStateSize                        = sizeof(muxclient_lstate_t),
     kConcurrencyModeTimer                 = kDvsFirstOption,
@@ -127,6 +144,9 @@ WW_EXPORT tunnel_t    *muxclientTunnelCreate(node_t *node);
 WW_EXPORT api_result_t muxclientTunnelApi(tunnel_t *instance, sbuf_t *message);
 
 void muxclientTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);
+void     muxclientTunnelOnStart(tunnel_t *t);
+void     muxclientKeepaliveWorkerTick(tunnel_t *t, wid_t wid);
+uint64_t muxclientUnansweredPingMS(const muxclient_tstate_t *ts, const muxclient_parent_state_t *state, uint64_t now);
 
 void muxclientTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void muxclientTunnelUpStreamFinish(tunnel_t *t, line_t *l);

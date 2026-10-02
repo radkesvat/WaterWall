@@ -350,6 +350,12 @@ void muxclientRegisterParent(muxclient_tstate_t *ts, muxclient_lstate_t *ls)
     muxclient_worker_state_t *worker = &ts->worker_states[lineGetWID(ls->l)];
     muxclient_parent_state_t *state  = ls->parent_state;
     assert(! state->owned);
+    if (UNLIKELY(++worker->next_parent_id == 0))
+    {
+        LOGF("MuxClient: parent selection identity exhausted");
+        abortProgramNow(1);
+    }
+    state->selection_id = worker->next_parent_id;
     state->owner_next = worker->owned_parents;
     if (state->owner_next != NULL)
     {
@@ -364,6 +370,16 @@ void muxclientUnregisterParent(muxclient_tstate_t *ts, muxclient_lstate_t *ls)
     muxclient_worker_state_t *worker = &ts->worker_states[lineGetWID(ls->l)];
     muxclient_parent_state_t *state  = ls->parent_state;
     assert(state->owned);
+    if (state->stall_retired)
+    {
+        if (UNLIKELY(worker->stall_retired_parents == 0))
+        {
+            LOGF("MuxClient: stalled-parent retirement count underflow");
+            abortProgramNow(1);
+        }
+        --worker->stall_retired_parents;
+        state->stall_retired = false;
+    }
     if (state->owner_prev != NULL)
     {
         state->owner_prev->parent_state->owner_next = state->owner_next;
@@ -426,58 +442,112 @@ void muxclientCloseIdleExhaustedParentLine(tunnel_t *t, muxclient_tstate_t *ts, 
     lineUnref(parent_l);
 }
 
+static void muxclientRetireUnresponsiveParent(tunnel_t *t, muxclient_tstate_t *ts, wid_t wid, line_t **slot)
+{
+    if (*slot == NULL)
+        return;
+    muxclient_lstate_t       *parent = lineGetState(*slot, t);
+    muxclient_worker_state_t *worker = &ts->worker_states[wid];
+    const uint64_t age = muxclientUnansweredPingMS(ts, parent->parent_state, wloopNowMonotonicMS(getWorkerLoop(wid)));
+    if (parent->parent_finishing || ! ts->keepalive || age < ts->pong_timeout_ms)
+        return;
+    if (parent->children_count == 0)
+    {
+        LOGW("MuxClient: closing idle parent after missing Pong wid=%u unanswered-ms=%llu",
+             (unsigned int) wid,
+             (unsigned long long) age);
+        muxclientHandleParentLoss(t, *slot, true);
+    }
+    else
+    {
+        const uint32_t limit =
+            ts->concurrency_mode == kConcurrencyModeFixedConnectionsCount ? ts->fixed_connections_count : 1;
+        if (worker->stall_retired_parents >= limit)
+            return;
+        LOGW("MuxClient: retiring parent after missing Pong wid=%u children=%u unanswered-ms=%llu",
+             (unsigned int) wid,
+             parent->children_count,
+             (unsigned long long) age);
+        parent->selection_retired           = true;
+        parent->parent_state->stall_retired = true;
+        ++worker->stall_retired_parents;
+        *slot = NULL;
+    }
+}
+
+static uint64_t muxclientMix64(uint64_t value)
+{
+    value ^= value >> 30U;
+    value *= UINT64_C(0xBF58476D1CE4E5B9);
+    value ^= value >> 27U;
+    value *= UINT64_C(0x94D049BB133111EB);
+    return value ^ (value >> 31U);
+}
+
 static line_t *muxclientGetFixedParentLineForNewChild(tunnel_t *t, muxclient_tstate_t *ts, wid_t wid)
 {
     assert(ts->fixed_connections_count > 0);
+    muxclient_worker_state_t *worker = &ts->worker_states[wid];
+    if (worker->quiescing)
+        return NULL;
+    if (UNLIKELY(++worker->next_child_key == 0))
+    {
+        LOGF("MuxClient: child selection identity exhausted");
+        abortProgramNow(1);
+    }
+    const uint64_t child_key = worker->next_child_key;
 
     for (uint32_t i = 0; i < ts->fixed_connections_count; ++i)
     {
         line_t **slot = muxclientFixedParentSlot(ts, wid, i);
-        if (*slot != NULL)
-        {
-            continue;
-        }
+        muxclientRetireUnresponsiveParent(t, ts, wid, slot);
 
-        if (! muxclientCreateParentLine(t, wid, slot))
+        // Finish/Init may re-enter selection, close another slot, or quiesce.
+        if (worker->quiescing)
+            return NULL;
+        if (*slot == NULL && ! muxclientCreateParentLine(t, wid, slot))
         {
             return NULL;
         }
     }
+    if (worker->quiescing)
+        return NULL;
 
-    uint32_t start_index = ts->fixed_next_parent_indexes[wid] % ts->fixed_connections_count;
-    uint32_t best_index  = start_index;
-    uint32_t best_count  = UINT32_MAX;
-    bool     found       = false;
+    const uint64_t now          = wloopNowMonotonicMS(getWorkerLoop(wid));
+    line_t        *best         = NULL;
+    uint64_t       best_score   = 0;
+    uint64_t       best_id      = 0;
+    bool           best_suspect = true;
 
     for (uint32_t i = 0; i < ts->fixed_connections_count; ++i)
     {
-        uint32_t idx      = (start_index + i) % ts->fixed_connections_count;
-        line_t  *parent_l = *muxclientFixedParentSlot(ts, wid, idx);
-        assert(parent_l != NULL);
+        line_t *parent_l = *muxclientFixedParentSlot(ts, wid, i);
+        if (parent_l == NULL)
+            continue;
 
         muxclient_lstate_t *parent_ls = lineGetState(parent_l, t);
         assert(parent_ls->is_child == false);
 
-        if (parent_ls->parent_finishing || muxclientCheckConnectionIsExhausted(ts, parent_ls))
+        if (parent_ls->parent_finishing || parent_ls->selection_retired ||
+            muxclientCheckConnectionIsExhausted(ts, parent_ls))
         {
             continue;
         }
 
-        if (! found || parent_ls->children_count < best_count)
+        const muxclient_parent_state_t *state = parent_ls->parent_state;
+        const bool                      suspect =
+            ts->keepalive && muxclientUnansweredPingMS(ts, state, now) >= max(1U, ts->pong_timeout_ms / 4U);
+        const uint64_t score = muxclientMix64(child_key ^ muxclientMix64(state->selection_id));
+        if (best == NULL || (best_suspect && ! suspect) ||
+            (suspect == best_suspect && (score > best_score || (score == best_score && state->selection_id > best_id))))
         {
-            best_index = idx;
-            best_count = parent_ls->children_count;
-            found      = true;
+            best         = parent_l;
+            best_score   = score;
+            best_id      = state->selection_id;
+            best_suspect = suspect;
         }
     }
-
-    if (! found)
-    {
-        return NULL;
-    }
-
-    ts->fixed_next_parent_indexes[wid] = (best_index + 1U) % ts->fixed_connections_count;
-    return *muxclientFixedParentSlot(ts, wid, best_index);
+    return best;
 }
 
 line_t *muxclientGetParentLineForNewChild(tunnel_t *t, line_t *child_l)
@@ -489,6 +559,12 @@ line_t *muxclientGetParentLineForNewChild(tunnel_t *t, line_t *child_l)
     {
         return muxclientGetFixedParentLineForNewChild(t, ts, wid);
     }
+
+    if (ts->worker_states[wid].quiescing)
+        return NULL;
+    muxclientRetireUnresponsiveParent(t, ts, wid, &ts->unsatisfied_lines[wid]);
+    if (ts->worker_states[wid].quiescing)
+        return NULL;
 
     line_t *candidate_parent_l = ts->unsatisfied_lines[wid];
     if (candidate_parent_l != NULL)
@@ -507,6 +583,9 @@ line_t *muxclientGetParentLineForNewChild(tunnel_t *t, line_t *child_l)
             }
         }
     }
+
+    if (ts->worker_states[wid].quiescing)
+        return NULL;
 
     if (ts->unsatisfied_lines[wid] == NULL)
     {

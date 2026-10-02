@@ -61,6 +61,20 @@ A common layout is:
 
 There are no required tunnel-specific settings in the current implementation.
 
+### Parent keepalive replies
+
+`keepalive` is an optional boolean setting, default `true`. MuxServer answers
+complete empty Pings with empty Pongs carrying the same 32-bit token in the CID
+field. These parent controls never create or look up children, or refresh child
+idle deadlines. MuxServer starts no probes or health timer. Set the probe interval
+and tolerance on MuxClient (defaults: 15000 ms and 45000 ms).
+
+`"keepalive": false` consumes these controls without sending replies. MuxClient
+requires a matching Pong to confirm support before enforcing timeouts, so a
+disabled responder does not cause repeated replacements. Pongs share the bounded
+parent output FIFO and wait for transport Resume. With replies enabled, a
+nonempty Ping closes its parent through normal protocol-error cleanup.
+
 ### Parent write buffering
 
 Each parent has a lazy FIFO of encoded outgoing buffers, shared by its children.
@@ -305,6 +319,8 @@ Frame flags:
 - `2`: `FlowPause`
 - `3`: `FlowResume`
 - `4`: `Data`
+- `5`: `Ping` (empty parent control; CID is the probe token)
+- `6`: `Pong` (empty parent control; CID echoes the probe token)
 
 One MUX `Data` frame carries at most `1,048,576` payload bytes. The shared encoder
 splits a larger downstream child payload into consecutive `Data` frames in byte

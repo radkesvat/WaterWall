@@ -92,9 +92,7 @@ static void caseUdpSourceDrainsBeforeMuxWorkerStop(uint8_t mode)
     {
         ts->fixed_connections_count   = 1;
         ts->fixed_parent_lines        = memoryAllocateZero(sizeof(*ts->fixed_parent_lines));
-        ts->fixed_next_parent_indexes = memoryAllocateZero(sizeof(*ts->fixed_next_parent_indexes));
-        twfRequire(ts->fixed_parent_lines != NULL && ts->fixed_next_parent_indexes != NULL,
-                   "failed to allocate fixed Mux selection storage");
+        twfRequire(ts->fixed_parent_lines != NULL, "failed to allocate fixed Mux selection storage");
         ts->fixed_parent_lines[0] = parent;
     }
     else
@@ -140,7 +138,6 @@ static void caseUdpSourceDrainsBeforeMuxWorkerStop(uint8_t mode)
     twfRequireNoLeakedBuffers();
 
     memoryFree(ts->fixed_parent_lines);
-    memoryFree(ts->fixed_next_parent_indexes);
     memoryFree(ts->worker_states);
     memoryFree(ts->detached_child_counts);
     memoryFree(ts->detached_queued_charge);
