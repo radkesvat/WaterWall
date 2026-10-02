@@ -32,8 +32,10 @@ void __wrap_socketacceptorUpdateBufferOptions(tunnel_t *tunnel, int send_buffer_
     updated_recv_size = recv_buffer_size;
 }
 
-static void testBuffers(bool client, bool server, unsigned send_option, unsigned recv_option, int default_size)
+static void testBuffers(bool tune_enabled, bool client, bool server, unsigned send_option, unsigned recv_option,
+                        int default_size)
 {
+    GSTATE.tcp_tune_enabled = tune_enabled;
     /* Zero is omitted; the remaining values model explicit false, true and an integer. */
     const int      configured_sizes[] = {0, 0, kDefaultLargeSocketBufferSize, 131072};
     node_t         node               = {.type = (char *) "TcpListener"};
@@ -52,7 +54,7 @@ static void testBuffers(bool client, bool server, unsigned send_option, unsigned
 
     const int  expected_send   = send_option != 0 ? configured_sizes[send_option] : default_size;
     const int  expected_recv   = recv_option != 0 ? configured_sizes[recv_option] : default_size;
-    const bool expected_update = server && (send_option == 0 || recv_option == 0);
+    const bool expected_update = ! tune_enabled && (client || server) && (send_option == 0 || recv_option == 0);
     require(state->send_buffer_size == expected_send, "incorrect listener send-buffer size");
     require(state->recv_buffer_size == expected_recv, "incorrect listener receive-buffer size");
     require(update_calls == (unsigned) expected_update, "incorrect socket-filter update count");
@@ -68,16 +70,26 @@ static void testBuffers(bool client, bool server, unsigned send_option, unsigned
 int main(void)
 {
     testCaseSet("tcplistener_mux_buffers_test");
-    const int default_sizes[] = {0, 0, kDefaultLargeSocketBufferSize, kDefaultLargeSocketBufferSize};
-    for (unsigned mux = 0; mux < 4; ++mux)
+    const int default_sizes[] = {
+        0, kDefaultLargeSocketBufferSize, kDefaultLargeSocketBufferSize, kDefaultLargeSocketBufferSize};
+    for (unsigned tune = 0; tune < 2; ++tune)
     {
-        for (unsigned send_option = 0; send_option < 4; ++send_option)
+        for (unsigned mux = 0; mux < 4; ++mux)
         {
-            for (unsigned recv_option = 0; recv_option < 4; ++recv_option)
+            for (unsigned send_option = 0; send_option < 4; ++send_option)
             {
-                testBuffers((mux & 1U) != 0, (mux & 2U) != 0, send_option, recv_option, default_sizes[mux]);
+                for (unsigned recv_option = 0; recv_option < 4; ++recv_option)
+                {
+                    testBuffers(tune != 0,
+                                (mux & 1U) != 0,
+                                (mux & 2U) != 0,
+                                send_option,
+                                recv_option,
+                                tune ? 0 : default_sizes[mux]);
+                }
             }
         }
     }
+    GSTATE.tcp_tune_enabled = false;
     return 0;
 }

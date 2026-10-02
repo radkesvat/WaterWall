@@ -616,6 +616,7 @@ ww_startup_result_t createGlobalState(const ww_construction_data_t init_data)
         GSTATE.capturedevice_queue_start_number = fastRand() % 2000;
         GSTATE.mtu_size                         = init_data.mtu_size;
         GSTATE.splice_disabled                  = init_data.splice_disabled;
+        GSTATE.tcp_tune_enabled                 = init_data.tcp_tune_enabled;
     }
 
     /* Initialize shared stack services before spawned workers can read the

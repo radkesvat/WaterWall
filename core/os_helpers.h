@@ -9,9 +9,9 @@ void increaseFileLimit(void);
  * This changes the live system-wide soft-limit setting, never the hard limit. */
 void tryIncreasePipeLimit(void);
 
-/* Best-effort native Linux TCP/socket tuning: TCP buffer maxima stay at 128 MiB,
- * while socket ceilings and backlogs follow the RAM profile.
+/* Best-effort native Linux TCP/socket tuning: fixed 16 MiB socket ceilings and
+ * 8 MiB TCP autotuning maxima, independent of the RAM profile.
  * Each setting is attempted independently; failures never fail startup. */
-void tryTuneTcp(unsigned int ram_profile);
+void tryTuneTcp(void);
 
 void tryEnableBbr(void);

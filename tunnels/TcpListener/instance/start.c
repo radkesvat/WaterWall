@@ -8,7 +8,7 @@ void tcplistenerTunnelOnStart(tunnel_t *t)
     const tunnel_chain_t *chain   = tunnelGetChain(t);
     bool                  changed = false;
 
-    if (chain->mux_server_tunnel_present)
+    if (! GSTATE.tcp_tune_enabled && (chain->mux_client_tunnel_present || chain->mux_server_tunnel_present))
     {
         if (! state->send_buffer_size_set)
         {

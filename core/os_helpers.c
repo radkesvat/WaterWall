@@ -125,30 +125,20 @@ static bool readPipeLimitValue(const char **cursor, unsigned long *value)
 }
 #endif
 
-void tryTuneTcp(unsigned int ram_profile)
+void tryTuneTcp(void)
 {
 #if ! defined(OS_ANDROID) && ! defined(OS_CYGWIN)
-    const unsigned int scale = ram_profile >= kRamProfileL1Memory ? 4U : ram_profile >= kRamProfileM1Memory ? 2U : 1U;
-    const unsigned int buffer_max = 128U * 1024U * 1024U * scale;
-    const unsigned int tcp_buffer_max = 128U * 1024U * 1024U;
-    const struct
-    {
-        const char  *format;
-        unsigned int value;
-    } commands[] = {
-        {"sysctl -w net.core.rmem_max=%u 2>&1", buffer_max},
-        {"sysctl -w net.core.wmem_max=%u 2>&1", buffer_max},
-        {"sysctl -w net.ipv4.tcp_rmem=\"4096 87380 %u\" 2>&1", tcp_buffer_max},
-        {"sysctl -w net.ipv4.tcp_wmem=\"4096 65536 %u\" 2>&1", tcp_buffer_max},
-        {"sysctl -w net.core.netdev_max_backlog=%u 2>&1", 8000U * scale},
-        {"sysctl -w net.core.somaxconn=%u 2>&1", 65536U * scale - 1U},
+    const char *commands[] = {
+        "sysctl -w net.core.rmem_max=16777216 2>&1",
+        "sysctl -w net.core.wmem_max=16777216 2>&1",
+        "sysctl -w net.ipv4.tcp_rmem=\"4096 131072 8388608\" 2>&1",
+        "sysctl -w net.ipv4.tcp_wmem=\"4096 16384 8388608\" 2>&1",
     };
 
     size_t applied = 0;
     for (size_t i = 0; i < ARRAY_SIZE(commands); ++i)
     {
-        char command[128];
-        snprintf(command, sizeof(command), commands[i].format, commands[i].value);
+        const char  *command = commands[i];
         cmd_result_t result = execCmd(command);
         if (result.exit_code != 0)
         {
@@ -161,8 +151,6 @@ void tryTuneTcp(unsigned int ram_profile)
         ++applied;
     }
     LOGI("Core: TCP tuning applied %zu/%zu settings", applied, ARRAY_SIZE(commands));
-#else
-    discard ram_profile;
 #endif
 }
 
@@ -322,9 +310,8 @@ void tryEnableBbr(void)
 
 #else
 
-void tryTuneTcp(unsigned int ram_profile)
+void tryTuneTcp(void)
 {
-    discard ram_profile;
 }
 
 void tryIncreasePipeLimit(void)

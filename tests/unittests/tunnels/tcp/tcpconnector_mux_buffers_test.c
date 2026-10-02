@@ -16,8 +16,10 @@
 
 #define require(condition, message) TEST_REQUIRE(TEST_FAILURE_EXIT, condition, message)
 
-static void testBuffers(bool client, bool server, unsigned send_option, unsigned recv_option, int default_size)
+static void testBuffers(bool tune_enabled, bool client, bool server, unsigned send_option, unsigned recv_option,
+                        int default_size)
 {
+    GSTATE.tcp_tune_enabled = tune_enabled;
     /* Zero is omitted; the remaining values model explicit false, true and an integer. */
     const int      configured_sizes[]  = {0, 0, kDefaultLargeSocketBufferSize, 131072};
     const int      destination_sizes[] = {0, 0, kDefaultLargeSocketBufferSize, 65536};
@@ -66,16 +68,26 @@ static void testBuffers(bool client, bool server, unsigned send_option, unsigned
 int main(void)
 {
     testCaseSet("tcpconnector_mux_buffers_test");
-    const int default_sizes[] = {0, kDefaultLargeSocketBufferSize, 0, kDefaultLargeSocketBufferSize};
-    for (unsigned mux = 0; mux < 4; ++mux)
+    const int default_sizes[] = {
+        0, kDefaultLargeSocketBufferSize, kDefaultLargeSocketBufferSize, kDefaultLargeSocketBufferSize};
+    for (unsigned tune = 0; tune < 2; ++tune)
     {
-        for (unsigned send_option = 0; send_option < 4; ++send_option)
+        for (unsigned mux = 0; mux < 4; ++mux)
         {
-            for (unsigned recv_option = 0; recv_option < 4; ++recv_option)
+            for (unsigned send_option = 0; send_option < 4; ++send_option)
             {
-                testBuffers((mux & 1U) != 0, (mux & 2U) != 0, send_option, recv_option, default_sizes[mux]);
+                for (unsigned recv_option = 0; recv_option < 4; ++recv_option)
+                {
+                    testBuffers(tune != 0,
+                                (mux & 1U) != 0,
+                                (mux & 2U) != 0,
+                                send_option,
+                                recv_option,
+                                tune ? 0 : default_sizes[mux]);
+                }
             }
         }
     }
+    GSTATE.tcp_tune_enabled = false;
     return 0;
 }

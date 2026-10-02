@@ -16,6 +16,7 @@
 #include "test_assert.h"
 
 #define require(condition, message) TEST_REQUIRE(TEST_FAILURE_EXIT, condition, message)
+#include "global_state.h"
 #include "os_helpers.h"
 #include <sys/stat.h>
 #include <unistd.h>
@@ -54,13 +55,13 @@ static void createFakeSysctl(void)
             "could not install isolated sysctl fixture");
 }
 
-static void testProfile(unsigned int profile, unsigned int buffer_max, unsigned int backlog, unsigned int somaxconn,
-                        const char *fail_key)
+static void testProfile(unsigned int profile, const char *fail_key)
 {
     unlink(log_path);
     warnings = 0;
     require(setenv("WW_TCP_TUNE_TEST_FAIL_KEY", fail_key, 1) == 0, "could not select failing setting");
-    tryTuneTcp(profile);
+    GSTATE.ram_profile = profile;
+    tryTuneTcp();
 
     FILE *log = fopen(log_path, "r");
     require(log != NULL, "TCP tuning did not invoke sysctl");
@@ -68,16 +69,8 @@ static void testProfile(unsigned int profile, unsigned int buffer_max, unsigned 
     const size_t length         = fread(commands, 1, sizeof(commands) - 1, log);
     require(! ferror(log) && length < sizeof(commands) - 1, "could not read complete command log");
     fclose(log);
-    char expected[1024];
-    snprintf(expected,
-             sizeof(expected),
-             "net.core.rmem_max=%u\nnet.core.wmem_max=%u\n"
-             "net.ipv4.tcp_rmem=4096 87380 134217728\nnet.ipv4.tcp_wmem=4096 65536 134217728\n"
-             "net.core.netdev_max_backlog=%u\nnet.core.somaxconn=%u\n",
-             buffer_max,
-             buffer_max,
-             backlog,
-             somaxconn);
+    const char *expected = "net.core.rmem_max=16777216\nnet.core.wmem_max=16777216\n"
+                           "net.ipv4.tcp_rmem=4096 131072 8388608\nnet.ipv4.tcp_wmem=4096 16384 8388608\n";
     require(strcmp(commands, expected) == 0, "incorrect tuning values, argument quoting or continuation after failure");
     require(warnings == (fail_key[0] == '\0' ? 0U : 1U), "failed tuning did not log exactly one warning");
 }
@@ -90,28 +83,23 @@ int main(void)
     require(logger != NULL, "failed to create core logger");
     loggerSetHandler(logger, captureLog);
 
-    testProfile(kRamProfileS1Memory, 134217728U, 8000U, 65535U, "");
-    testProfile(kRamProfileS2Memory, 134217728U, 8000U, 65535U, "");
-    testProfile(kRamProfileM1Memory, 268435456U, 16000U, 131071U, "");
-    testProfile(kRamProfileM2Memory, 268435456U, 16000U, 131071U, "");
-    testProfile(kRamProfileL1Memory, 536870912U, 32000U, 262143U, "");
-    testProfile(kRamProfileL2Memory, 536870912U, 32000U, 262143U, "");
-    const char *keys[] = {"net.core.rmem_max",
-                          "net.core.wmem_max",
-                          "net.ipv4.tcp_rmem",
-                          "net.ipv4.tcp_wmem",
-                          "net.core.netdev_max_backlog",
-                          "net.core.somaxconn"};
+    testProfile(kRamProfileS1Memory, "");
+    testProfile(kRamProfileS2Memory, "");
+    testProfile(kRamProfileM1Memory, "");
+    testProfile(kRamProfileM2Memory, "");
+    testProfile(kRamProfileL1Memory, "");
+    testProfile(kRamProfileL2Memory, "");
+    const char *keys[] = {"net.core.rmem_max", "net.core.wmem_max", "net.ipv4.tcp_rmem", "net.ipv4.tcp_wmem"};
     for (size_t i = 0; i < ARRAY_SIZE(keys); ++i)
-        testProfile(kRamProfileS2Memory, 134217728U, 8000U, 65535U, keys[i]);
+        testProfile(kRamProfileS2Memory, keys[i]);
 
     char script_path[PATH_MAX];
     snprintf(script_path, sizeof(script_path), "%s/sysctl", test_dir);
     require(unlink(script_path) == 0, "could not remove fake sysctl");
     unlink(log_path);
     warnings = 0;
-    tryTuneTcp(kRamProfileS2Memory);
-    require(warnings == 6 && access(log_path, F_OK) != 0, "missing sysctl was not a nonfatal best-effort failure");
+    tryTuneTcp();
+    require(warnings == 4 && access(log_path, F_OK) != 0, "missing sysctl was not a nonfatal best-effort failure");
     coreloggerDestroy();
     rmdir(test_dir);
     return 0;

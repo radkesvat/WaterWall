@@ -261,7 +261,7 @@ setting nobody chose. This applies to every field in the table, not only to
 | `ram-profile` | string or integer | `"server"` | Memory sizing profile for pools and profile-aware node defaults. A number must be a whole number in `0..6`; `0` and `1` are legacy aliases for the smallest profile. |
 | `mtu` | integer | `1500` | Construction-time default for per-node MTUs. Must be a whole number in `68..65535` - RFC 791's minimum IPv4 MTU up to what the field can hold. |
 | `splice` | boolean | `true` | Allow splice on eligible stream chains. `false` disables splice for every chain. Platform support and support from every node are still required; packet chains remain ineligible. |
-| `tcp-tune` | boolean | `true` on Linux; `false` otherwise | Best-effort core startup tuning of socket ceilings and backlogs by memory profile, with fixed TCP buffer maxima. |
+| `tcp-tune` | boolean | `true` on Linux; `false` otherwise | Best-effort core startup tuning with fixed 16 MiB socket ceilings and 8 MiB TCP autotuning maxima. |
 | `try-enabling-bbr` | boolean | `true` on Linux; `false` otherwise | Linux-only best-effort startup attempt to enable TCP BBR. |
 | `libs-path` | string | `"libs/"` | Directory used when loading external tunnel libraries. |
 
@@ -314,18 +314,22 @@ phase; it is independent of `splice` and `try-enabling-bbr`. On other platforms,
 explicit `true` is accepted but performs no tuning.
 
 After runtime logging is ready and before loading node configurations, WaterWall
-attempts six live sysctl writes. The memory profile selects these targets:
+attempts exactly four live sysctl writes, independent of the memory profile:
 
-| Memory profile | `net.core.rmem_max`, `net.core.wmem_max` (bytes) | `net.core.netdev_max_backlog` | `net.core.somaxconn` |
-| --- | --- | --- | --- |
-| S1 / S2 | `134217728` (128 MiB) | `8000` | `65535` |
-| M1 / M2 | `268435456` (256 MiB) | `16000` | `131071` |
-| L1 / L2 | `536870912` (512 MiB) | `32000` | `262143` |
+| Setting | Value |
+| --- | --- |
+| `net.core.rmem_max` | `16777216` (16 MiB) |
+| `net.core.wmem_max` | `16777216` (16 MiB) |
+| `net.ipv4.tcp_rmem` | `4096 131072 8388608` |
+| `net.ipv4.tcp_wmem` | `4096 16384 8388608` |
 
-`net.ipv4.tcp_rmem` is set to `4096 87380 134217728` and
-`net.ipv4.tcp_wmem` to `4096 65536 134217728`. Both TCP maxima are fixed at
-128 MiB for every memory profile. The minimum and initial sizes stay fixed.
-The `server` alias selects L2, `client` selects M1, and `client-larger` selects M2.
+This phase does not change `net.core.netdev_max_backlog` or `net.core.somaxconn`.
+With `tcp-tune: true`, TcpListener and TcpConnector leave omitted socket-buffer
+options to the kernel. With `tcp-tune: false`, a chain containing either MuxClient
+or MuxServer activates their 4 MiB send/receive defaults for omitted options.
+Explicit `large-send-buffer` and `large-recv-buffer` settings always take precedence,
+including connector destination overrides. This selection follows the configured
+`tcp-tune` flag, even if a sysctl write fails.
 
 Each failed command logs a warning, and the remaining commands are still
 attempted; permission denial or a missing `sysctl` never fails startup. Successful

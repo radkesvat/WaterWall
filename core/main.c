@@ -164,12 +164,13 @@ int waterwallInnerMain(int argc, char **argv)
     createDirIfNotExists(getCoreSettings()->log_path);
 
     ww_construction_data_t runtime_data = {
-        .workers_count   = getCoreSettings()->workers_count,
-        .ram_profile     = getCoreSettings()->ram_profile,
-        .mtu_size        = getCoreSettings()->mtu_size,
-        .splice_disabled = ! getCoreSettings()->splice_enabled,
-        .dns_options     = getCoreSettings()->dns_options,
-        .domain_strategy = getCoreSettings()->domain_strategy,
+        .workers_count    = getCoreSettings()->workers_count,
+        .ram_profile      = getCoreSettings()->ram_profile,
+        .mtu_size         = getCoreSettings()->mtu_size,
+        .splice_disabled  = ! getCoreSettings()->splice_enabled,
+        .tcp_tune_enabled = getCoreSettings()->tcp_tune_enabled,
+        .dns_options      = getCoreSettings()->dns_options,
+        .domain_strategy  = getCoreSettings()->domain_strategy,
         .internal_logger_data =
             (logger_construction_data_t) {.log_file_path = getCoreSettings()->internal_log_file_fullpath,
                                           .log_level     = getCoreSettings()->internal_log_level,
@@ -229,7 +230,7 @@ int waterwallInnerMain(int argc, char **argv)
     LOGI("Parsing core settings complete");
     if (getCoreSettings()->tcp_tune_enabled)
     {
-        tryTuneTcp(getCoreSettings()->ram_profile);
+        tryTuneTcp();
     }
     if (getCoreSettings()->try_enabling_bbr)
     {

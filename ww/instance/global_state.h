@@ -104,6 +104,7 @@ typedef struct ww_global_state_s
     uint32_t    tun_egress_pin_refs;
 
     bool splice_disabled; // Startup policy; prevents chains from enabling splice.
+    bool tcp_tune_enabled; // Startup policy; suppresses automatic per-socket Mux buffer sizing.
 
 } ww_global_state_t;
 
@@ -121,6 +122,7 @@ typedef struct
     void (*application_finalizer)(void);
 
     bool splice_disabled; // Opt-out: zero-initialized construction settings permit splice.
+    bool tcp_tune_enabled; // The application requests TCP tuning; independent of sysctl success.
 
 } ww_construction_data_t;
 
