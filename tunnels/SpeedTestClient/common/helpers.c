@@ -68,6 +68,10 @@ uint16_t speedtestclientBaseFlags(const speedtestclient_tstate_t *state)
     {
         flags |= kSpeedTestClientFlagJson;
     }
+    if (state->verify_payload)
+    {
+        flags |= kSpeedTestClientFlagVerifyPayload;
+    }
     return flags;
 }
 
@@ -564,14 +568,21 @@ void speedtestclientSendTask(tunnel_t *t, line_t *l)
             return;
         }
 
-        speedtestclientFillPattern(
-            sbufGetMutablePtr(buf) + kSpeedTestClientFrameHeaderSize, payload_size, ls->stream_id, sequence, flags);
+        if (state->verify_payload)
+        {
+            speedtestclientFillPattern(
+                sbufGetMutablePtr(buf) + kSpeedTestClientFrameHeaderSize, payload_size, ls->stream_id, sequence, flags);
+        }
+        else
+        {
+            memoryZero(sbufGetMutablePtr(buf) + kSpeedTestClientFrameHeaderSize, payload_size);
+        }
 
         if (! warmup)
         {
             ls->sender.bytes += payload_size;
             ls->sender.packets += 1U;
-            ls->sender.valid_packets += 1U;
+            ls->sender.valid_packets += state->verify_payload ? 1U : 0U;
         }
         ls->paced_bytes += payload_size;
         burst += 1;
@@ -699,13 +710,16 @@ static void speedtestclientUpdateJitter(speedtestclient_stats_t *stats, speedtes
 
 static void speedtestclientHandleData(tunnel_t *t, line_t *l, const speedtestclient_frame_t *frame)
 {
-    discard                   t;
+    speedtestclient_tstate_t *state = tunnelGetState(t);
     speedtestclient_lstate_t *ls = lineGetState(l, t);
 
     if (frame->flags & kSpeedTestClientFlagWarmup)
     {
-        discard speedtestclientVerifyPattern(
-            frame->payload, frame->payload_len, frame->stream_id, frame->sequence, frame->flags);
+        if (state->verify_payload)
+        {
+            discard speedtestclientVerifyPattern(
+                frame->payload, frame->payload_len, frame->stream_id, frame->sequence, frame->flags);
+        }
         return;
     }
 
@@ -727,14 +741,17 @@ static void speedtestclientHandleData(tunnel_t *t, line_t *l, const speedtestcli
 
     ls->receiver.bytes += frame->payload_len;
     ls->receiver.packets += 1U;
-    if (speedtestclientVerifyPattern(
-            frame->payload, frame->payload_len, frame->stream_id, frame->sequence, frame->flags))
+    if (state->verify_payload)
     {
-        ls->receiver.valid_packets += 1U;
-    }
-    else
-    {
-        ls->receiver.validation_errors += 1U;
+        if (speedtestclientVerifyPattern(
+                frame->payload, frame->payload_len, frame->stream_id, frame->sequence, frame->flags))
+        {
+            ls->receiver.valid_packets += 1U;
+        }
+        else
+        {
+            ls->receiver.validation_errors += 1U;
+        }
     }
 
     speedtestclientUpdateJitter(&ls->receiver, ls, frame);
@@ -866,11 +883,24 @@ static void speedtestclientHandleFrame(tunnel_t *t, line_t *l, const speedtestcl
     }
 }
 
-static bool speedtestclientProcessFrameBuffer(tunnel_t *t, line_t *l, sbuf_t *frame_buf)
+static bool speedtestclientProcessFrame(tunnel_t *t, line_t *l, const speedtestclient_frame_t *frame, sbuf_t *payload)
+{
+    lineRef(l);
+    speedtestclientHandleFrame(t, l, frame);
+    if (payload != NULL)
+    {
+        lineReuseBuffer(l, payload);
+    }
+    bool alive = lineIsAlive(l);
+    lineUnref(l);
+    return alive;
+}
+
+static void speedtestclientProcessDatagram(tunnel_t *t, line_t *l, sbuf_t *frame_buf)
 {
     speedtestclient_frame_t frame;
 
-    lineRef(l);
+    frame_buf = sbufEnsureOrdinary(lineGetBufferPool(l), frame_buf);
 
     if (! speedtestclientReadHeader(sbufGetRawPtr(frame_buf), sbufGetLength(frame_buf), &frame) ||
         ! speedtestclientFramePayloadLengthValid(t, l, &frame) ||
@@ -878,16 +908,10 @@ static bool speedtestclientProcessFrameBuffer(tunnel_t *t, line_t *l, sbuf_t *fr
     {
         lineReuseBuffer(l, frame_buf);
         speedtestclientFailLine(t, l, "received an invalid speed-test frame");
-        bool alive = lineIsAlive(l);
-        lineUnref(l);
-        return alive;
+        return;
     }
 
-    speedtestclientHandleFrame(t, l, &frame);
-    lineReuseBuffer(l, frame_buf);
-    bool alive = lineIsAlive(l);
-    lineUnref(l);
-    return alive;
+    discard speedtestclientProcessFrame(t, l, &frame, frame_buf);
 }
 
 void speedtestclientProcessIncoming(tunnel_t *t, line_t *l, sbuf_t *buf)
@@ -897,35 +921,60 @@ void speedtestclientProcessIncoming(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     if (state->mode == kSpeedTestClientModeUdp)
     {
-        discard speedtestclientProcessFrameBuffer(t, l, buf);
+        speedtestclientProcessDatagram(t, l, buf);
         return;
     }
 
-    bufferstreamPush(&ls->recv_stream, buf);
-
-    while (bufferstreamGetBufLen(&ls->recv_stream) >= kSpeedTestClientFrameHeaderSize)
+    if (! splicestreamPush(ls->recv_stream, buf))
     {
-        uint8_t                 header[kSpeedTestClientFrameHeaderSize];
-        speedtestclient_frame_t frame;
-        bufferstreamViewBytesAt(&ls->recv_stream, 0, header, sizeof(header));
+        speedtestclientFailLine(t, l, "failed to retain stream input");
+        return;
+    }
 
-        if (! speedtestclientReadHeader(header, sizeof(header), &frame) ||
+    const uint8_t *header;
+    while ((header = splicestreamPeekHeader(ls->recv_stream)) != NULL)
+    {
+        speedtestclient_frame_t frame;
+
+        if (! speedtestclientReadHeader(header, kSpeedTestClientFrameHeaderSize, &frame) ||
             ! speedtestclientFramePayloadLengthValid(t, l, &frame))
         {
             speedtestclientFailLine(t, l, "received an invalid stream frame header");
             return;
         }
 
-        const size_t full_len = (size_t) kSpeedTestClientFrameHeaderSize + frame.payload_len;
-        if (bufferstreamGetBufLen(&ls->recv_stream) < full_len)
+        if (splicestreamBodyBytes(ls->recv_stream) < frame.payload_len)
+        {
+            break;
+        }
+
+        /* Consuming a frame refills the borrowed header cache. Keep decoded
+         * metadata locally and never expose that cache as a payload pointer. */
+        sbuf_t *payload = NULL;
+        frame.payload   = NULL;
+        if (frame.type == kSpeedTestClientFrameData && ! state->verify_payload)
+        {
+            splicestreamDiscardFrame(ls->recv_stream, frame.payload_len);
+        }
+        else
+        {
+            payload       = splicestreamMoveFrame(ls->recv_stream, NULL, frame.payload_len);
+            frame.payload = sbufGetRawPtr(payload);
+        }
+        if (! speedtestclientProcessFrame(t, l, &frame, payload))
         {
             return;
         }
+    }
 
-        sbuf_t *frame_buf = bufferstreamReadExact(&ls->recv_stream, full_len);
-        if (! speedtestclientProcessFrameBuffer(t, l, frame_buf))
+    /* Only an incomplete frame remains. A byte bound alone would allow many
+     * almost-empty private pipes to retain excessive capacity and descriptors. */
+    if (splicestreamCharge(ls->recv_stream) > kSpeedTestClientMaxRetainedCharge)
+    {
+        discard splicestreamCompact(ls->recv_stream);
+        if (splicestreamCharge(ls->recv_stream) > kSpeedTestClientMaxRetainedCharge)
         {
-            return;
+            speedtestclientFailLine(t, l, "receive stream exceeds retained storage limit");
         }
     }
 }
@@ -986,14 +1035,15 @@ static void speedtestclientLogAggregate(tunnel_t *t, bool success)
     {
         LOGI("SpeedTestClient: json-summary "
              "{\"success\":%s,\"streams\":%u,\"failed\":%u,\"sent_bytes\":%llu,\"received_bytes\":%llu,\"lost_"
-             "packets\":%llu,\"validation_errors\":%llu}",
+             "packets\":%llu,\"validation_errors\":%llu,\"verification_enabled\":%s}",
              boolToTrueFalse(success),
              (unsigned int) state->connection_count,
              (unsigned int) atomicLoadRelaxed(&state->failed_streams),
              (unsigned long long) state->aggregate_sender.bytes,
              (unsigned long long) state->aggregate_receiver.bytes,
              (unsigned long long) state->aggregate_receiver.lost_packets,
-             (unsigned long long) state->aggregate_receiver.validation_errors);
+             (unsigned long long) state->aggregate_receiver.validation_errors,
+             boolToTrueFalse(state->verify_payload));
     }
 }
 

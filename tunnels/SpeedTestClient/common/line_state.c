@@ -8,7 +8,7 @@ void speedtestclientLinestateInitialize(speedtestclient_lstate_t *ls, tunnel_t *
     const uint64_t            now_ms = speedtestclientNowMs();
 
     *ls = (speedtestclient_lstate_t) {
-        .recv_stream                     = bufferstreamCreate(lineGetBufferPool(l), 0),
+        .recv_stream                     = splicestreamCreate(lineGetBufferPool(l), kSpeedTestClientFrameHeaderSize),
         .tunnel                          = t,
         .line                            = l,
         .stream_id                       = stream_id,
@@ -43,14 +43,16 @@ void speedtestclientLinestateInitialize(speedtestclient_lstate_t *ls, tunnel_t *
         .line_complete                   = false,
         .failed                          = false,
     };
+    if (ls->recv_stream == NULL)
+    {
+        LOGF("SpeedTestClient: failed to allocate receive stream");
+        abortProgramNow(1);
+    }
 }
 
 void speedtestclientLinestateDestroy(speedtestclient_lstate_t *ls)
 {
-    if (ls->recv_stream.pool != NULL)
-    {
-        bufferstreamDestroy(&ls->recv_stream);
-    }
+    splicestreamDestroy(ls->recv_stream);
 
     memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(*ls)));
 }

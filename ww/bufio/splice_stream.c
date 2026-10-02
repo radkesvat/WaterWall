@@ -1,6 +1,11 @@
 #include "splice_stream.h"
 #include "loggers/internal_logger.h"
 
+#if WW_HAVE_SPLICE
+#include <fcntl.h>
+#include <unistd.h>
+#endif
+
 splice_stream_t *splicestreamCreate(buffer_pool_t *pool, uint32_t header_size)
 {
     if (UNLIKELY((uint64_t) header_size + sizeof(splice_stream_t) > SIZE_MAX))
@@ -10,6 +15,7 @@ splice_stream_t *splicestreamCreate(buffer_pool_t *pool, uint32_t header_size)
         return NULL;
     s->pool        = pool;
     s->header_size = header_size;
+    s->discard_fd  = -1;
     bufferqueueInitEmpty(&s->pending);
     return s;
 }
@@ -228,6 +234,80 @@ void splicestreamMoveFrameToOrdinary(splice_stream_t *s, sbuf_t *dest, uint32_t 
     discard streamMoveBody(s, dest, bytes);
 }
 
+static void streamDiscardPipe(splice_stream_t *s, sbuf_t *source, uint32_t bytes)
+{
+#if WW_HAVE_SPLICE
+    if (s->discard_fd == -1)
+    {
+        do
+            s->discard_fd = open("/dev/null", O_WRONLY | O_CLOEXEC);
+        while (s->discard_fd < 0 && errno == EINTR);
+        if (s->discard_fd < 0)
+            s->discard_fd = -2;
+    }
+    const splice_buffer_metadata_t metadata = sbufSpliceMetadata(source);
+    while (bytes != 0 && s->discard_fd >= 0)
+    {
+        const ssize_t result = splice(metadata.pipefd[0], NULL, s->discard_fd, NULL, bytes, SPLICE_F_NONBLOCK);
+        if (result > 0)
+        {
+            sbufSpliceConsumeBody(source, (uint32_t) result);
+            bytes -= (uint32_t) result;
+            continue;
+        }
+        const int error = result < 0 ? errno : 0;
+        if (result < 0 && error == EINTR)
+            continue;
+        if (result < 0 && (error == EINVAL || error == ENOSYS || error == EOPNOTSUPP || error == EPERM))
+        {
+            close(s->discard_fd);
+            s->discard_fd = -2;
+            break;
+        }
+        /* A read fallback handles temporary splice refusal, and still fails
+         * fatally if the exclusively owned pipe lacks any claimed bytes. */
+        if (result < 0 && (error == EAGAIN || error == ENOMEM))
+            break;
+        LOGF("SpliceStream: invalid discard pipe (result=%lld errno=%d)", (long long) result, error);
+        abortProgramNow(1);
+    }
+    if (bytes != 0)
+    {
+        uint8_t scratch[4096];
+        do
+        {
+            const uint32_t count = min(bytes, (uint32_t) sizeof(scratch));
+            sbufReadRangeToMemory(source, scratch, count);
+            bytes -= count;
+        } while (bytes != 0);
+    }
+#else
+    discard s;
+    discard source;
+    discard bytes;
+    LOGF("SpliceStream: pipe source on unsupported build");
+    abortProgramNow(1);
+#endif
+}
+
+void splicestreamDiscardFrame(splice_stream_t *s, uint32_t bytes)
+{
+    streamAssertFrame(s, NULL, bytes);
+    uint32_t remaining = bytes;
+    while (remaining != 0)
+    {
+        sbuf_t        *source = streamHead(s);
+        const uint32_t count  = min(remaining, sbufGetLength(source));
+        const uint32_t prefix = min(count, sbufGetResidentPrefixLength(source));
+        sbufShiftRight(source, prefix);
+        if (count != prefix)
+            streamDiscardPipe(s, source, count - prefix);
+        remaining -= count;
+        streamRecycleEmptyHead(s);
+    }
+    streamFinishFrame(s, bytes);
+}
+
 void splicestreamDestroy(splice_stream_t *s)
 {
     if (s == NULL)
@@ -236,5 +316,9 @@ void splicestreamDestroy(splice_stream_t *s)
         bufferpoolReuseBuffer(s->pool, streamDetachHead(s));
     bufferqueueDestroy(&s->pending);
     assert(s->charge == 0);
+#if WW_HAVE_SPLICE
+    if (s->discard_fd >= 0)
+        close(s->discard_fd);
+#endif
     memoryFree(s);
 }

@@ -12,7 +12,7 @@ Configured nodes and onward edges (`next`; listeners/connectors form the OS tran
 - `tou-server`: `TcpOverUdpServer` → `speedtest-server`
 - `speedtest-server`: `SpeedTestServer` (terminal or independently bound endpoint)
 
-Scenario choices: `speedtest-client.mode="tcp"`, `speedtest-client.direction="bidirectional"`, `speedtest-client.duration-ms=2000`, `speedtest-client.warmup-ms=250`, `speedtest-client.connection-count=1`, `speedtest-client.payload-size=32768`, `speedtest-client.json-summary=true`, `speedtest-client.terminate-on-complete=true`, `udp-connector.balance-mode="packet"`, `speedtest-server.json-summary=true`. These values define the workload/edge case and are not tuning advice.
+Scenario choices: `speedtest-client.verify-payload=true`, `speedtest-client.mode="tcp"`, `speedtest-client.direction="bidirectional"`, `speedtest-client.duration-ms=2000`, `speedtest-client.warmup-ms=250`, `speedtest-client.connection-count=1`, `speedtest-client.payload-size=32768`, `speedtest-client.json-summary=true`, `speedtest-client.terminate-on-complete=true`, `udp-connector.balance-mode="packet"`, `speedtest-server.json-summary=true`. These values define the workload/edge case and are not tuning advice.
 
 CTest selections and overrides:
 

@@ -14,6 +14,7 @@
 static bool     streamProbe;
 static unsigned streamTransferFault;
 static size_t   streamReadBytes;
+static size_t   streamSpliceBytes;
 ssize_t         __real_read(int fd, void *buffer, size_t count);
 ssize_t         __wrap_read(int fd, void *buffer, size_t count);
 ssize_t __real_splice(int source, off_t *source_offset, int target, off_t *target_offset, size_t count, unsigned flags);
@@ -39,9 +40,23 @@ ssize_t __wrap_splice(int source, off_t *source_offset, int target, off_t *targe
         errno               = EAGAIN;
         return -1;
     }
+    if (streamProbe && streamTransferFault == 4)
+    {
+        streamTransferFault = 0;
+        errno               = EINVAL;
+        return -1;
+    }
+    if (streamProbe && streamTransferFault == 5)
+    {
+        streamTransferFault = 4;
+        count               = min(count, (size_t) 1);
+    }
     if (streamProbe && streamTransferFault == 2)
         count = min(count, (size_t) 1);
-    return __real_splice(source, source_offset, target, target_offset, count, flags);
+    const ssize_t n = __real_splice(source, source_offset, target, target_offset, count, flags);
+    if (streamProbe && n > 0)
+        streamSpliceBytes += (size_t) n;
+    return n;
 }
 #endif
 
@@ -77,9 +92,121 @@ static void streamCheckCharge(const splice_stream_t *s)
     require(charge == splicestreamCharge(s), "active-head mutation left stale stream charge");
 }
 
+static void testSpliceStreamDiscard(buffer_pool_t *pool)
+{
+    const uint8_t wire[] = "HEADER01bodyHEADER02tailHEADER03";
+    for (unsigned mode = 0; mode < (WW_HAVE_SPLICE ? 4U : 1U); ++mode)
+        for (uint32_t split = 0; split < sizeof(wire); ++split)
+        {
+            splice_stream_t *s = splicestreamCreate(pool, 8);
+            for (unsigned part = 0; part < 2; ++part)
+            {
+                const uint32_t offset = part ? split : 0;
+                const uint32_t count  = part ? sizeof(wire) - 1U - split : split;
+                sbuf_t        *input;
+#if WW_HAVE_SPLICE
+                if (mode == 1 || mode == 2 || (mode == 3 && part != 0))
+                {
+                    const uint32_t prefix = mode == 2 ? min(count, 11U) : 0;
+                    input = makeSpliceTestBuffer(pool, wire + offset, prefix, wire + offset + prefix, count - prefix);
+                }
+                else
+#endif
+                    input = streamTestBytes(pool, wire + offset, count);
+                require(splicestreamPush(s, input), "discard stream push refused");
+            }
+            splicestreamDiscardFrame(s, 4);
+            streamCheckCharge(s);
+            require(splicestreamLength(s) == 20 && memoryEqual(splicestreamPeekHeader(s), "HEADER02", 8),
+                    "discard consumed the next frame's header or body");
+            streamCheckBytes(pool, splicestreamMoveFrame(s, NULL, 4), "tail", 4);
+            require(memoryEqual(splicestreamPeekHeader(s), "HEADER03", 8), "discard lost a later header");
+            splicestreamDiscardFrame(s, 0);
+            require(splicestreamLength(s) == 0 && splicestreamCharge(s) == 0,
+                    "zero-body discard left frame bytes or charge");
+            splicestreamDestroy(s);
+        }
+
+#if WW_HAVE_SPLICE
+    /* Exact pipe ranges must stay in the kernel, even after short progress and
+     * EINTR. Reading the suffix independently detects over-discard. */
+    for (unsigned fault = 0; fault < 6; ++fault)
+    {
+        if (fault == 2)
+            continue;
+        splice_stream_t *s         = splicestreamCreate(pool, 0);
+        sbuf_t          *source    = makeSpliceTestBuffer(pool, NULL, 0, (const uint8_t *) "abcdef", 6);
+        const int        source_fd = sbufSpliceMetadata(source).pipefd[0];
+        require(splicestreamPush(s, source), "discard source push failed");
+        streamProbe         = true;
+        streamTransferFault = fault;
+        streamReadBytes     = 0;
+        streamSpliceBytes   = 0;
+        splicestreamDiscardFrame(s, 3);
+        streamProbe                = false;
+        streamTransferFault        = 0;
+        const size_t expected_read = fault == 5 ? 2U : (fault >= 3 ? 3U : 0U);
+        require(streamReadBytes == expected_read && streamSpliceBytes == 3U - expected_read,
+                "discard used the wrong fast/fallback path");
+        streamCheckCharge(s);
+        require(splicestreamLength(s) == 3 && splicestreamCharge(s) == sbufGetQueueCharge(source),
+                "partial discard corrupted stream length or charge");
+        sbuf_t *suffix = splicestreamMoveFrame(s, bufferpoolGetSpliceBuffer(pool), 3);
+        require(suffix == source && sbufSpliceMetadata(suffix).pipefd[0] == source_fd,
+                "partial discard replaced its source pipe");
+        const int discard_fd = s->discard_fd;
+        if (discard_fd >= 0)
+            require((fcntl(discard_fd, F_GETFD) & FD_CLOEXEC) != 0, "discard descriptor is not close-on-exec");
+        splicestreamDestroy(s);
+        if (discard_fd >= 0)
+            require(fcntl(discard_fd, F_GETFD) == -1 && errno == EBADF, "discard descriptor leaked at destroy");
+        streamCheckBytes(pool, suffix, "def", 3);
+    }
+
+    /* Fully consumed wrappers keep their now-empty pipes reusable. A following
+     * frame/header in another pipe is preserved while only its header is read. */
+    splice_stream_t *s      = splicestreamCreate(pool, 8);
+    sbuf_t          *source = makeSpliceTestBuffer(pool, (const uint8_t *) "HEADER01a", 9, (const uint8_t *) "bcd", 3);
+    const int        source_fd = sbufSpliceMetadata(source).pipefd[0];
+    require(splicestreamPush(s, source), "full discard source push failed");
+    require(splicestreamPush(s, makeSpliceTestBuffer(pool, NULL, 0, (const uint8_t *) "HEADER02tail", 12)),
+            "next discard frame push failed");
+    streamProbe       = true;
+    streamReadBytes   = 0;
+    streamSpliceBytes = 0;
+    splicestreamDiscardFrame(s, 4);
+    streamProbe = false;
+    require(streamSpliceBytes == 3 && streamReadBytes == 8, "discard materialized body bytes or skipped next header");
+    int queued_bytes = -1;
+    require(ioctl(source_fd, FIONREAD, &queued_bytes) == 0 && queued_bytes == 0,
+            "full discard did not preserve an empty reusable source pipe");
+    streamCheckBytes(pool, splicestreamMoveFrame(s, NULL, 4), "tail", 4);
+    splicestreamDestroy(s);
+
+    /* Claimed bytes are already owned by a private pipe; absent bytes must not
+     * turn into an incomplete frame that is silently accepted. */
+    const pid_t child = fork();
+    require(child >= 0, "failed to fork discard invariant child");
+    if (child == 0)
+    {
+        s      = splicestreamCreate(pool, 0);
+        source = makeSpliceTestBuffer(pool, NULL, 0, (const uint8_t *) "ab", 2);
+        source->len += 1;
+        source->capacity += 1;
+        require(splicestreamPush(s, source), "incomplete discard pipe push failed");
+        splicestreamDiscardFrame(s, 3);
+        _Exit(kChildReturned);
+    }
+    int status = 0;
+    require(waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 1,
+            "discard accepted missing private-pipe bytes");
+#endif
+}
+
 static void testSpliceStreamContracts(void)
 {
     pool_fixture_t f = poolFixtureCreate(32768, 4096, 64, 64);
+    testSpliceStreamDiscard(f.pool);
 
     const uint8_t wire[] = "HEADER01bodyNEXTHEADtail";
     for (unsigned mode = 0; mode < (WW_HAVE_SPLICE ? 3U : 1U); ++mode)

@@ -11,7 +11,7 @@ Configured nodes and onward edges (`next`; listeners/connectors form the OS tran
 - `speedtest-server`: `SpeedTestServer` (terminal or independently bound endpoint)
 - `google-visitor`: `TcpConnector` (terminal or independently bound endpoint)
 
-Scenario choices: `speedtest-client.mode="tcp"`, `speedtest-client.direction="bidirectional"`, `speedtest-client.duration-ms=2000`, `speedtest-client.warmup-ms=250`, `speedtest-client.connection-count=16`, `speedtest-client.payload-size=32768`, `speedtest-client.json-summary=true`, `speedtest-client.terminate-on-complete=true`, `reality-client.sni="google.com"`, `speedtest-server.json-summary=true`. These values define the workload/edge case and are not tuning advice.
+Scenario choices: `speedtest-client.verify-payload=true`, `speedtest-client.mode="tcp"`, `speedtest-client.direction="bidirectional"`, `speedtest-client.duration-ms=2000`, `speedtest-client.warmup-ms=250`, `speedtest-client.connection-count=16`, `speedtest-client.payload-size=32768`, `speedtest-client.json-summary=true`, `speedtest-client.terminate-on-complete=true`, `reality-client.sni="google.com"`, `speedtest-server.json-summary=true`. These values define the workload/edge case and are not tuning advice.
 
 CTest selections and overrides:
 

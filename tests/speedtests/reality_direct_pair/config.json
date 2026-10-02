@@ -13,7 +13,8 @@
         "connection-count": 16,
         "payload-size": 32768,
         "json-summary": true,
-        "terminate-on-complete": true
+        "terminate-on-complete": true,
+        "verify-payload": true
       },
       "next": "reality-client"
     },

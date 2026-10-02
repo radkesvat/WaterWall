@@ -1,5 +1,5 @@
 {
-  "name": "speedtest-tls-direct-pair",
+  "name": "speedtest-tcp-loopback-unverified",
   "nodes": [
     {
       "name": "speedtest-client",
@@ -13,27 +13,27 @@
         "connection-count": 16,
         "payload-size": 32768,
         "json-summary": true,
-        "terminate-on-complete": true,
-        "verify-payload": true
+        "terminate-on-complete": true
       },
-      "next": "tls-client"
+      "next": "tcp-connector"
     },
     {
-      "name": "tls-client",
-      "type": "TlsClient",
+      "name": "tcp-connector",
+      "type": "TcpConnector",
       "settings": {
-        "sni": "tls.integration.test",
-        "verify": false
-      },
-      "next": "tls-server"
+        "address": "127.0.0.1",
+        "port": 27250,
+        "nodelay": true,
+        "fastopen": false
+      }
     },
     {
-      "name": "tls-server",
-      "type": "TlsServer",
+      "name": "tcp-listener",
+      "type": "TcpListener",
       "settings": {
-        "cert-file": "server.crt",
-        "key-file": "server.key",
-        "sni": "tls.integration.test"
+        "address": "127.0.0.1",
+        "port": 27250,
+        "nodelay": true
       },
       "next": "speedtest-server"
     },
@@ -43,7 +43,7 @@
       "settings": {
         "report-interval-ms": 1000,
         "json-summary": true,
-        "quiet": false
+        "quiet": true
       }
     }
   ]

@@ -19,7 +19,7 @@ line tunnel. Pair it with `SpeedTestServer` on the other side of a TCP or UDP tr
 - sends an upstream `Init` to the next tunnel for each generated line
 - waits for downstream `Est` before sending speed-test frames
 - sends a protocol `HELLO`, optional upload `DATA`, `END`, and expects server reports
-- optionally receives download `DATA` from the server and validates the deterministic payload pattern
+- optionally receives download `DATA` from the server and checks payload bytes when verification is enabled
 - prints interval sender/receiver reports and an aggregate final summary
 - exits WaterWall when all streams complete unless `terminate-on-complete=false`
 
@@ -184,7 +184,7 @@ Server side:
   Default: `10000`
 
 - `warmup-ms` `(integer)`
-  Time before the measured interval starts. Warmup data is sent and validated but excluded from byte totals.
+  Time before the measured interval starts. Warmup data is sent and optionally validated but excluded from byte totals.
   Default: `0`
 
 - `report-interval-ms` `(integer)`
@@ -226,6 +226,9 @@ Server side:
 
   Only one of `target-bits-per-sec`, `udp-target-bits-per-sec`, and `target-megabits-per-sec` may be configured.
 
+- `verify-payload` `(boolean)`
+  Generate and verify deterministic payload bytes at both endpoints. Default: `false`.
+
 - `json-summary` `(boolean)`
   Prints a compact final JSON-style summary in addition to normal logs.
   Default: `false`
@@ -259,6 +262,7 @@ After downstream `Est`, the client sends a `HELLO` frame that tells the server:
 - payload size
 - target bandwidth
 - total stream count
+- payload verification policy
 - stream id
 
 In UDP mode, the client waits for the server `ACK` before sending data. While waiting, it retransmits `HELLO` at a short
@@ -266,8 +270,8 @@ interval so a lost datagram does not stall the test.
 
 ### Data and reports
 
-Upload data is sent upstream as `DATA` frames. Download data is received downstream from the server. Payload bytes use a
-deterministic pattern keyed by stream id, sequence number, and direction.
+Upload data is sent upstream as `DATA` frames. Download data is received downstream from the server. When `verify-payload=true`, payload bytes use a
+deterministic pattern keyed by stream id, sequence number, and direction; otherwise bodies are zero-filled.
 
 The receiver tracks:
 
@@ -292,13 +296,36 @@ download. The client completes a stream only after all expected final reports ar
   header.
 - The tunnel is a benchmark/test generator, not an application proxy.
 
+## Payload verification and splice
+
+`verify-payload` on `SpeedTestClient` defaults to `false` and selects the policy
+for both endpoints through the HELLO flags. Set it to `true` to generate and check
+the deterministic payload pattern. With verification disabled, senders generate
+initialized zero-filled bodies and receivers count their lengths without checking
+payload bytes. Frame headers, lengths, stream IDs, sequence accounting and final
+reports are still processed. `valid_packets` and payload `validation_errors` stay
+zero when verification is disabled; JSON summaries include `verification_enabled`.
+
+Both nodes support splice on eligible TCP chains when `misc.splice=true`.
+The receiver caches the 48-byte header, returns immediately for incomplete frames,
+and discards unchecked DATA bodies from their private pipes through `/dev/null`
+on Linux without copying the body into userspace. Unavailable sink/splice support
+falls back to bounded ordinary reads. Control bodies and verified DATA bodies are
+materialized when needed. UDP retains per-datagram handling. Generated output is
+ordinary memory; enabling splice does not make payload generation zero-copy.
+
+Each line bounds retained incomplete-frame storage to `2 * (16 MiB + 48)` charged
+bytes, compacting before refusing excess storage. This is a queue accounting bound,
+not a limit on total process or kernel memory. Send tasks respect Pause and yield
+after at most 32 frames; pacing uses scheduled tasks rather than blocking sleeps.
+
 ## Node Metadata
 
 Source-backed metadata:
 
 | Property | Value |
 | --- | --- |
-| node flags | `kNodeFlagChainHead` |
+| node flags | `kNodeFlagChainHead` + `kNodeFlagSupportsSplice` |
 | `can_have_prev` | `false` |
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayer4` |

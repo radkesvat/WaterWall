@@ -68,6 +68,10 @@ uint16_t speedtestserverBaseFlags(const speedtestserver_lstate_t *ls)
     {
         flags |= kSpeedTestServerFlagJson;
     }
+    if (ls->verify_payload)
+    {
+        flags |= kSpeedTestServerFlagVerifyPayload;
+    }
     return flags;
 }
 
@@ -541,14 +545,24 @@ void speedtestserverSendTask(tunnel_t *t, line_t *l)
             speedtestserverFailLine(t, l, "failed to allocate data frame");
             return;
         }
-        speedtestserverFillPattern(
-            sbufGetMutablePtr(buf) + kSpeedTestServerFrameHeaderSize, ls->payload_size, ls->stream_id, sequence, flags);
+        uint8_t *payload = sbufGetMutablePtr(buf) + kSpeedTestServerFrameHeaderSize;
+        if (ls->verify_payload)
+        {
+            speedtestserverFillPattern(payload, ls->payload_size, ls->stream_id, sequence, flags);
+        }
+        else
+        {
+            memoryZero(payload, ls->payload_size);
+        }
 
         if (! warmup)
         {
             ls->sender.bytes += ls->payload_size;
             ls->sender.packets += 1U;
-            ls->sender.valid_packets += 1U;
+            if (ls->verify_payload)
+            {
+                ls->sender.valid_packets += 1U;
+            }
         }
         ls->paced_bytes += ls->payload_size;
         burst += 1;
@@ -683,8 +697,11 @@ static void speedtestserverHandleData(tunnel_t *t, line_t *l, const speedtestser
 
     if (frame->flags & kSpeedTestServerFlagWarmup)
     {
-        discard speedtestserverVerifyPattern(
-            frame->payload, frame->payload_len, frame->stream_id, frame->sequence, frame->flags);
+        if (ls->verify_payload)
+        {
+            discard speedtestserverVerifyPattern(
+                frame->payload, frame->payload_len, frame->stream_id, frame->sequence, frame->flags);
+        }
         return;
     }
 
@@ -706,14 +723,17 @@ static void speedtestserverHandleData(tunnel_t *t, line_t *l, const speedtestser
 
     ls->receiver.bytes += frame->payload_len;
     ls->receiver.packets += 1U;
-    if (speedtestserverVerifyPattern(
-            frame->payload, frame->payload_len, frame->stream_id, frame->sequence, frame->flags))
+    if (ls->verify_payload)
     {
-        ls->receiver.valid_packets += 1U;
-    }
-    else
-    {
-        ls->receiver.validation_errors += 1U;
+        if (speedtestserverVerifyPattern(
+                frame->payload, frame->payload_len, frame->stream_id, frame->sequence, frame->flags))
+        {
+            ls->receiver.valid_packets += 1U;
+        }
+        else
+        {
+            ls->receiver.validation_errors += 1U;
+        }
     }
     speedtestserverUpdateJitter(&ls->receiver, ls, frame);
 }
@@ -762,6 +782,7 @@ static void speedtestserverHandleHello(tunnel_t *t, line_t *l, const speedtestse
     ls->upload       = (frame->flags & kSpeedTestServerFlagUpload) != 0;
     ls->download     = (frame->flags & kSpeedTestServerFlagDownload) != 0;
     ls->json_summary = (frame->flags & kSpeedTestServerFlagJson) != 0;
+    ls->verify_payload = (frame->flags & kSpeedTestServerFlagVerifyPayload) != 0;
 
     if (! ls->upload && ! ls->download)
     {
@@ -878,17 +899,33 @@ static bool speedtestserverProcessFrameBuffer(tunnel_t *t, line_t *l, sbuf_t *fr
     return alive;
 }
 
+static void speedtestserverBoundReceiveStorage(tunnel_t *t, line_t *l, speedtestserver_lstate_t *ls)
+{
+    if (splicestreamCharge(ls->recv_stream) <= kSpeedTestServerMaxRecvCharge)
+    {
+        return;
+    }
+
+    discard splicestreamCompact(ls->recv_stream);
+    if (splicestreamCharge(ls->recv_stream) > kSpeedTestServerMaxRecvCharge)
+    {
+        speedtestserverFailLine(t, l, "receive storage limit exceeded");
+    }
+}
+
 void speedtestserverProcessIncoming(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     speedtestserver_lstate_t *ls = lineGetState(l, t);
 
     if (ls->mode == kSpeedTestServerModeUdp)
     {
+        buf = sbufEnsureOrdinary(lineGetBufferPool(l), buf);
         discard speedtestserverProcessFrameBuffer(t, l, buf);
         return;
     }
 
-    if (! ls->hello_received && sbufGetLength(buf) >= kSpeedTestServerFrameHeaderSize)
+    if (! ls->hello_received && splicestreamLength(ls->recv_stream) == 0 && ! sbufIsSplice(buf) &&
+        sbufGetLength(buf) >= kSpeedTestServerFrameHeaderSize)
     {
         speedtestserver_frame_t probe;
         if (speedtestserverReadHeader(sbufGetRawPtr(buf), sbufGetLength(buf), &probe) &&
@@ -899,29 +936,56 @@ void speedtestserverProcessIncoming(tunnel_t *t, line_t *l, sbuf_t *buf)
         }
     }
 
-    bufferstreamPush(&ls->recv_stream, buf);
-
-    while (bufferstreamGetBufLen(&ls->recv_stream) >= kSpeedTestServerFrameHeaderSize)
+    if (! splicestreamPush(ls->recv_stream, buf))
     {
-        uint8_t                 header[kSpeedTestServerFrameHeaderSize];
-        speedtestserver_frame_t frame;
+        speedtestserverFailLine(t, l, "failed to queue received frame bytes");
+        return;
+    }
 
-        bufferstreamViewBytesAt(&ls->recv_stream, 0, header, sizeof(header));
-        if (! speedtestserverReadHeader(header, sizeof(header), &frame) ||
+    for (;;)
+    {
+        const uint8_t *header = splicestreamPeekHeader(ls->recv_stream);
+        if (header == NULL)
+        {
+            speedtestserverBoundReceiveStorage(t, l, ls);
+            return;
+        }
+
+        speedtestserver_frame_t frame;
+        if (! speedtestserverReadHeader(header, kSpeedTestServerFrameHeaderSize, &frame) ||
             ! speedtestserverFramePayloadLengthValid(t, l, &frame))
         {
             speedtestserverFailLine(t, l, "received an invalid stream frame header");
             return;
         }
 
-        const size_t full_len = (size_t) kSpeedTestServerFrameHeaderSize + frame.payload_len;
-        if (bufferstreamGetBufLen(&ls->recv_stream) < full_len)
+        if (splicestreamBodyBytes(ls->recv_stream) < frame.payload_len)
         {
+            speedtestserverBoundReceiveStorage(t, l, ls);
             return;
         }
 
-        sbuf_t *frame_buf = bufferstreamReadExact(&ls->recv_stream, full_len);
-        if (! speedtestserverProcessFrameBuffer(t, l, frame_buf))
+        sbuf_t *body = NULL;
+        if (frame.type == kSpeedTestServerFrameData && ! ls->verify_payload)
+        {
+            splicestreamDiscardFrame(ls->recv_stream, frame.payload_len);
+            frame.payload = NULL;
+        }
+        else
+        {
+            body          = splicestreamMoveFrame(ls->recv_stream, NULL, frame.payload_len);
+            frame.payload = sbufGetRawPtr(body);
+        }
+
+        lineRef(l);
+        speedtestserverHandleFrame(t, l, &frame);
+        if (body != NULL)
+        {
+            lineReuseBuffer(l, body);
+        }
+        const bool alive = lineIsAlive(l);
+        lineUnref(l);
+        if (! alive)
         {
             return;
         }
@@ -967,9 +1031,11 @@ static void speedtestserverCloseLineInternal(tunnel_t *t, line_t *l, bool count_
     if (ls->json_summary && speedtestserverLogsEnabled(t))
     {
         LOGI("SpeedTestServer: json-summary "
-             "{\"stream\":%u,\"sent_bytes\":%llu,\"received_bytes\":%llu,\"lost_packets\":%llu,\"validation_errors\":%"
+             "{\"stream\":%u,\"verification_enabled\":%s,\"sent_bytes\":%llu,\"received_bytes\":%llu,\"lost_packets\":%"
+             "llu,\"validation_errors\":%"
              "llu}",
              (unsigned int) ls->stream_id,
+             ls->verify_payload ? "true" : "false",
              (unsigned long long) ls->sender.bytes,
              (unsigned long long) ls->receiver.bytes,
              (unsigned long long) ls->receiver.lost_packets,

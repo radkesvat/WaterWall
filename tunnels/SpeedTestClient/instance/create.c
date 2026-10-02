@@ -204,6 +204,7 @@ tunnel_t *speedtestclientTunnelCreate(node_t *node)
         return NULL;
     }
     getBoolFromJsonObjectOrDefault(&state->json_summary, settings, "json-summary", false);
+    getBoolFromJsonObjectOrDefault(&state->verify_payload, settings, "verify-payload", false);
     getBoolFromJsonObjectOrDefault(&state->terminate_on_complete, settings, "terminate-on-complete", true);
 
     if (! speedtestclientParseMode(state, settings) || ! speedtestclientParseDirection(state, settings) ||

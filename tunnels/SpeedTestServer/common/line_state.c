@@ -7,7 +7,7 @@ void speedtestserverLinestateInitialize(speedtestserver_lstate_t *ls, tunnel_t *
     speedtestserver_tstate_t *state = tunnelGetState(t);
 
     *ls = (speedtestserver_lstate_t) {
-        .recv_stream                = bufferstreamCreate(lineGetBufferPool(l), 0),
+        .recv_stream                = splicestreamCreate(lineGetBufferPool(l), kSpeedTestServerFrameHeaderSize),
         .tunnel                     = t,
         .line                       = l,
         .stream_id                  = 0,
@@ -21,6 +21,7 @@ void speedtestserverLinestateInitialize(speedtestserver_lstate_t *ls, tunnel_t *
         .upload                     = false,
         .download                   = false,
         .json_summary               = state->json_summary,
+        .verify_payload             = false,
         .start_ms                   = 0,
         .measure_start_ms           = 0,
         .measure_end_ms             = 0,
@@ -48,10 +49,7 @@ void speedtestserverLinestateInitialize(speedtestserver_lstate_t *ls, tunnel_t *
 
 void speedtestserverLinestateDestroy(speedtestserver_lstate_t *ls)
 {
-    if (ls->recv_stream.pool != NULL)
-    {
-        bufferstreamDestroy(&ls->recv_stream);
-    }
+    splicestreamDestroy(ls->recv_stream);
 
     memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(*ls)));
 }

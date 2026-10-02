@@ -16,6 +16,7 @@ enum
     kSpeedTestClientDefaultUdpPayloadSize  = 3800U,
     kSpeedTestClientDefaultUdpBandwidthBps = 10U * 1000U * 1000U,
     kSpeedTestClientMaxPayloadSize         = 16U * 1024U * 1024U,
+    kSpeedTestClientMaxRetainedCharge      = 2U * (kSpeedTestClientMaxPayloadSize + kSpeedTestClientFrameHeaderSize),
     kSpeedTestClientMaxUdpPayloadSize      = 65000U - kSpeedTestClientFrameHeaderSize,
     kSpeedTestClientMaxBurstFrames         = 32,
     kSpeedTestClientUdpFinalRepeats        = 3
@@ -46,7 +47,8 @@ enum speedtestclient_frame_flags_e
     kSpeedTestClientFlagWarmup   = 1U << 4U,
     kSpeedTestClientFlagSender   = 1U << 5U,
     kSpeedTestClientFlagReceiver = 1U << 6U,
-    kSpeedTestClientFlagJson     = 1U << 7U
+    kSpeedTestClientFlagJson          = 1U << 7U,
+    kSpeedTestClientFlagVerifyPayload = 1U << 8U
 };
 
 typedef struct speedtestclient_stats_s
@@ -89,6 +91,7 @@ typedef struct speedtestclient_tstate_s
     bool     upload;
     bool     download;
     bool     json_summary;
+    bool     verify_payload;
     bool     terminate_on_complete;
 
     atomic_bool             stopping;
@@ -104,7 +107,7 @@ typedef struct speedtestclient_tstate_s
 
 typedef struct speedtestclient_lstate_s
 {
-    buffer_stream_t         recv_stream;
+    splice_stream_t        *recv_stream;
     tunnel_t               *tunnel;
     line_t                 *line;
     uint32_t                stream_id;

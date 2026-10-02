@@ -15,6 +15,7 @@ typedef struct splice_stream_s
     size_t         charge;
     uint32_t       header_size;
     uint32_t       header_filled;
+    int            discard_fd; // -1 unopened, -2 unavailable; otherwise an owned /dev/null descriptor.
     uint8_t        header[];
 } splice_stream_t;
 
@@ -53,3 +54,11 @@ sbuf_t *splicestreamMoveFrame(splice_stream_t *stream, sbuf_t *destination, uint
  * never grows/replaces destination.
  */
 void splicestreamMoveFrameToOrdinary(splice_stream_t *stream, sbuf_t *destination, uint32_t bytes);
+
+/* Consume the cached header AND exactly bytes body bytes without retaining output.
+ * Same complete-header/body preconditions as MoveFrame. Resident bytes are skipped;
+ * pipe bodies are discarded with nonblocking splice when available, otherwise
+ * bounded scratch reads. Missing claimed pipe bytes remain fatal invariants.
+ * Only after the complete body is consumed may the next header refill.
+ */
+void splicestreamDiscardFrame(splice_stream_t *stream, uint32_t bytes);

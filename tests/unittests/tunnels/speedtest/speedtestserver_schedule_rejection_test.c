@@ -1,9 +1,10 @@
 /*
- * Covers: speedtestserver schedule rejection; the explicit inputs, callbacks and expected results below
+ * Covers: SpeedTestServer scheduling, fragmented splice input and optional payload verification;
  * define this suite.
  * Setup: Real runtime/component code with the explicit worker/line/neighbour fixture and any linker
  * seams shown below. Line and buffer settlement remains the scenario owner's responsibility.
- * Cases: caseHelloStopsAfterSendAdmissionClosesLine, caseReportRejectionFinishesRealOwner
+ * Cases: schedule refusals, mixed ordinary/pipe fragments, coalesced frames, UDP verification modes,
+ * malformed lengths and borrowed-line cleanup.
  * Checks: Assertion labels include: SpeedTestServer scheduled Report after Send refusal closed the line;
  * SpeedTestServer finished an unexpected borrowed line; SpeedTestServer Hello exceeded test buffer; Send
  * refusal did not close the borrowed server line
@@ -20,6 +21,8 @@
 enum
 {
     kSpeedServerTestBufferSize = 4096,
+    kSpeedServerTestPayloadSize = 256,
+    kSpeedServerTestFrameSize   = kSpeedTestServerFrameHeaderSize + kSpeedServerTestPayloadSize,
 };
 
 typedef struct speedtestserver_fixture_s
@@ -211,10 +214,173 @@ static void caseReportRejectionFinishesRealOwner(void)
     fixtureTeardownAfterClose(&fixture);
 }
 
+static speedtestserver_lstate_t *fixturePrepareReceiver(speedtestserver_fixture_t *fixture, bool verify, bool udp)
+{
+    speedtestserver_lstate_t *ls = lineGetState(fixture->line, fixture->speed);
+    ls->hello_received           = true;
+    ls->upload                   = true;
+    ls->receiver_finished        = false;
+    ls->payload_size             = kSpeedServerTestPayloadSize;
+    ls->stream_id                = 7;
+    ls->verify_payload           = verify;
+    ls->mode                     = udp ? kSpeedTestServerModeUdp : kSpeedTestServerModeTcp;
+    return ls;
+}
+
+static sbuf_t *makeInputBytes(speedtestserver_fixture_t *fixture, const uint8_t *bytes, uint32_t length, bool pipe_body)
+{
+    if (pipe_body)
+    {
+#if WW_HAVE_SPLICE
+        sbuf_t *buf = bufferpoolGetSpliceBuffer(fixture->env.pool);
+        twfRequire(buf != NULL && length <= kSpeedServerTestBufferSize, "invalid SpeedTestServer pipe fixture");
+        twfRequire(write(sbufSpliceMetadata(buf).pipefd[1], bytes, length) == (ssize_t) length,
+                   "failed to populate SpeedTestServer pipe fragment");
+        buf->capacity = buf->l_pad + length;
+        sbufSetLength(buf, length);
+        return buf;
+#else
+        twfRequire(false, "pipe fixture requested without splice support");
+#endif
+    }
+
+    sbuf_t *buf = bufferpoolGetSmallBuffer(fixture->env.pool);
+    twfRequire(length <= sbufGetMaximumWriteableSize(buf), "SpeedTestServer ordinary fixture is too large");
+    memoryCopy(sbufGetMutablePtr(buf), bytes, length);
+    sbufSetLength(buf, length);
+    return buf;
+}
+
+static void makeDataBytes(uint8_t *bytes, uint64_t sequence, bool udp, bool corrupt)
+{
+    const uint16_t flags = kSpeedTestServerFlagUpload | (udp ? kSpeedTestServerFlagUdp : kSpeedTestServerFlagTcp);
+    speedtestserverWriteHeader(
+        bytes, kSpeedTestServerFrameData, flags, 7, kSpeedServerTestPayloadSize, sequence, 0, 0, 0);
+    speedtestserverFillPattern(
+        bytes + kSpeedTestServerFrameHeaderSize, kSpeedServerTestPayloadSize, 7, sequence, flags);
+    if (corrupt)
+    {
+        bytes[kSpeedTestServerFrameHeaderSize + 17] ^= 0xFF;
+    }
+}
+
+static void fixtureCloseReceiver(speedtestserver_fixture_t *fixture)
+{
+    speedtestserverTunnelUpStreamFinish(fixture->speed, fixture->line);
+    twfRequireLineStateZeroed(fixture->line, fixture->speed, "receive cleanup retained SpeedTestServer state");
+    lineDestroy(fixture->line);
+    fixture->line = NULL;
+    fixtureTeardownAfterClose(fixture);
+}
+
+static void requireReceivedPair(const speedtestserver_lstate_t *ls, bool verify)
+{
+    twfRequire(ls->receiver.bytes == 2U * kSpeedServerTestPayloadSize && ls->receiver.packets == 2,
+               "SpeedTestServer did not count both DATA frames exactly once");
+    twfRequire(ls->receiver.valid_packets == (verify ? 1U : 0U),
+               "SpeedTestServer reported verification without checking the payload");
+    twfRequire(ls->receiver.validation_errors == (verify ? 1U : 0U),
+               "SpeedTestServer corruption accounting did not follow the verification setting");
+    twfRequire(ls->receiver.lost_packets == 0 && ls->receiver.duplicate_packets == 0 && ls->expected_recv_sequence == 2,
+               "SpeedTestServer lost frame order while consuming DATA");
+    twfRequire(splicestreamLength(ls->recv_stream) == 0 && splicestreamCharge(ls->recv_stream) == 0,
+               "SpeedTestServer retained bytes after complete frames");
+    twfRequireNoLeakedBuffers();
+}
+
+#if WW_HAVE_SPLICE
+static void caseFragmentedSpliceReceive(bool verify)
+{
+    twfSetCase(verify ? "SpeedTestServer verifies fragmented splice frames"
+                      : "SpeedTestServer discards unverified fragmented splice frames");
+    speedtestserver_fixture_t fixture;
+    fixtureSetup(&fixture);
+    speedtestserver_lstate_t *ls = fixturePrepareReceiver(&fixture, verify, false);
+    uint8_t                   frames[2 * kSpeedServerTestFrameSize];
+    makeDataBytes(frames, 0, false, false);
+    makeDataBytes(frames + kSpeedServerTestFrameSize, 1, false, true);
+
+    speedtestserverTunnelUpStreamPayload(fixture.speed, fixture.line, makeInputBytes(&fixture, frames, 13, true));
+    twfRequire(ls->receiver.packets == 0 && splicestreamLength(ls->recv_stream) == 13,
+               "SpeedTestServer did not retain its incomplete splice header");
+
+    const uint32_t partial_length = kSpeedTestServerFrameHeaderSize + 17;
+    speedtestserverTunnelUpStreamPayload(
+        fixture.speed, fixture.line, makeInputBytes(&fixture, frames + 13, partial_length - 13, false));
+    twfRequire(ls->receiver.packets == 0 && splicestreamBodyBytes(ls->recv_stream) == 17,
+               "SpeedTestServer consumed an incomplete DATA body");
+
+    speedtestserverTunnelUpStreamPayload(
+        fixture.speed,
+        fixture.line,
+        makeInputBytes(&fixture, frames + partial_length, (uint32_t) sizeof(frames) - partial_length, true));
+    requireReceivedPair(ls, verify);
+    fixtureCloseReceiver(&fixture);
+}
+#endif
+
+static void caseOrdinaryUdpReceive(bool verify)
+{
+    twfSetCase(verify ? "SpeedTestServer verifies ordinary UDP frames"
+                      : "SpeedTestServer accepts unverified ordinary UDP frames");
+    speedtestserver_fixture_t fixture;
+    fixtureSetup(&fixture);
+    speedtestserver_lstate_t *ls = fixturePrepareReceiver(&fixture, verify, true);
+    uint8_t                   frame[kSpeedServerTestFrameSize];
+    makeDataBytes(frame, 0, true, false);
+    speedtestserverTunnelUpStreamPayload(
+        fixture.speed, fixture.line, makeInputBytes(&fixture, frame, sizeof(frame), false));
+    makeDataBytes(frame, 1, true, true);
+    speedtestserverTunnelUpStreamPayload(
+        fixture.speed, fixture.line, makeInputBytes(&fixture, frame, sizeof(frame), false));
+    requireReceivedPair(ls, verify);
+    fixtureCloseReceiver(&fixture);
+}
+
+static void caseMalformedFrameLength(bool pipe_body)
+{
+    twfSetCase(pipe_body ? "SpeedTestServer rejects oversized splice DATA length"
+                         : "SpeedTestServer rejects oversized ordinary DATA length");
+    speedtestserver_fixture_t fixture;
+    fixtureSetup(&fixture);
+    discard fixturePrepareReceiver(&fixture, false, false);
+    uint8_t header[kSpeedTestServerFrameHeaderSize];
+    speedtestserverWriteHeader(header,
+                               kSpeedTestServerFrameData,
+                               kSpeedTestServerFlagUpload | kSpeedTestServerFlagTcp,
+                               7,
+                               kSpeedServerTestPayloadSize + 1,
+                               0,
+                               0,
+                               0,
+                               0);
+
+    lineRef(fixture.line);
+    speedtestserverTunnelUpStreamPayload(
+        fixture.speed, fixture.line, makeInputBytes(&fixture, header, sizeof(header), pipe_body));
+    twfRequire(! lineIsAlive(fixture.line), "oversized DATA length did not close the borrowed line");
+    twfRequireLineStateZeroed(fixture.line, fixture.speed, "oversized DATA length retained receive state");
+    twfRequireEqualU32(fixture.trace.prev_finish, 1, "oversized DATA length did not Finish the real owner once");
+    twfRequireEqualU32(fixture.trace.next_finish, 0, "oversized DATA length reflected Finish away from the owner");
+    twfRequireEqualU32(twfLineRefCount(fixture.line), 1, "oversized DATA length leaked a line reference");
+    twfRequireNoLeakedBuffers();
+    lineUnref(fixture.line);
+    fixture.line = NULL;
+    fixtureTeardownAfterClose(&fixture);
+}
+
 int main(void)
 {
     caseHelloStopsAfterSendAdmissionClosesLine();
     caseReportRejectionFinishesRealOwner();
+    caseOrdinaryUdpReceive(false);
+    caseOrdinaryUdpReceive(true);
+    caseMalformedFrameLength(false);
+#if WW_HAVE_SPLICE
+    caseFragmentedSpliceReceive(false);
+    caseFragmentedSpliceReceive(true);
+    caseMalformedFrameLength(true);
+#endif
     puts("speedtestserver_schedule_rejection_test: all cases passed");
     return 0;
 }

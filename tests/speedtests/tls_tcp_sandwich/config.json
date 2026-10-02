@@ -14,7 +14,8 @@
         "payload-size": 32768,
         "target-megabits-per-sec": 20,
         "json-summary": true,
-        "terminate-on-complete": true
+        "terminate-on-complete": true,
+        "verify-payload": true
       },
       "next": "tls-client"
     },

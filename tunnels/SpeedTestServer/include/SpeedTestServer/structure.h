@@ -12,6 +12,7 @@ enum
     kSpeedTestServerDefaultIntervalMs = 1000,
     kSpeedTestServerMaxPayloadSize    = 16U * 1024U * 1024U,
     kSpeedTestServerMaxUdpPayloadSize = 65000U - kSpeedTestServerFrameHeaderSize,
+    kSpeedTestServerMaxRecvCharge     = 2U * (kSpeedTestServerMaxPayloadSize + kSpeedTestServerFrameHeaderSize),
     kSpeedTestServerMaxBurstFrames    = 32,
     kSpeedTestServerUdpFinalRepeats   = 3
 };
@@ -41,7 +42,8 @@ enum speedtestserver_frame_flags_e
     kSpeedTestServerFlagWarmup   = 1U << 4U,
     kSpeedTestServerFlagSender   = 1U << 5U,
     kSpeedTestServerFlagReceiver = 1U << 6U,
-    kSpeedTestServerFlagJson     = 1U << 7U
+    kSpeedTestServerFlagJson          = 1U << 7U,
+    kSpeedTestServerFlagVerifyPayload = 1U << 8U
 };
 
 typedef struct speedtestserver_stats_s
@@ -83,7 +85,7 @@ typedef struct speedtestserver_tstate_s
 
 typedef struct speedtestserver_lstate_s
 {
-    buffer_stream_t         recv_stream;
+    splice_stream_t        *recv_stream;
     tunnel_t               *tunnel;
     line_t                 *line;
     uint32_t                stream_id;
@@ -97,6 +99,7 @@ typedef struct speedtestserver_lstate_s
     bool                    upload;
     bool                    download;
     bool                    json_summary;
+    bool                    verify_payload;
     uint64_t                start_ms;
     uint64_t                measure_start_ms;
     uint64_t                measure_end_ms;

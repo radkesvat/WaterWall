@@ -5,10 +5,12 @@
  * seams shown below. Line and buffer settlement remains the scenario owner's responsibility.
  * Cases: caseWorkerStopDrainsOnlyItsPublishedSlots, caseRequiredStartupFailuresPropagateStartupStatus,
  * caseAcceptedQueuedTimerAdmissionClosureUsesCleanup, caseEstStopsAfterSendAdmissionClosesLine,
- * caseReportRejectionClosesOwnedLine, caseAcceptedReportCancellationLeavesOwnerDrainSafe
+ * caseReportRejectionClosesOwnedLine, caseAcceptedReportCancellationLeavesOwnerDrainSafe,
+ * caseFragmentedReceiverFrames, caseDatagramReceiverVerification, caseMalformedReceiverLengthClosesLine
  * Checks: Assertion labels include: SpeedTestClient teardown found a live owner slot; worker 0 did not
  * clear its slot before close; worker 0 drained another worker's slot; a line that never published Init
- * emitted Finish
+ * emitted Finish; fragmented ordinary/private-pipe frames preserve boundaries and statistics; payload
+ * checking is optional while malformed protocol lengths still close the owned line
  * Limits: Platform/feature branches remain conditional. Component fixtures do not establish host-network
  * or application-throughput behavior.
  * CTest: waterwall.speedtestclient_orderly_shutdown_test_unit
@@ -369,6 +371,142 @@ static void caseAcceptedReportCancellationLeavesOwnerDrainSafe(void)
     fixtureTeardown(&fixture);
 }
 
+static line_t *prepareReceiver(speedtestclient_fixture_t *fixture, bool verify_payload, uint8_t mode)
+{
+    tosResetProcessApi(true);
+    fixtureSetup(fixture);
+    speedtestclient_tstate_t *state = tunnelGetState(fixture->speed);
+    state->connection_count         = 1;
+    state->duration_ms              = 1000;
+    state->payload_size             = 256;
+    state->mode                     = mode;
+    state->download                 = true;
+    state->verify_payload           = verify_payload;
+    state->terminate_on_complete    = false;
+    return publishLine(fixture, 0, true);
+}
+
+static sbuf_t *receiverInput(line_t *line, const uint8_t *bytes, uint32_t length, bool splice)
+{
+    twfRequire(length <= kTestBufferSize, "receiver fixture input exceeds one small pipe write");
+    buffer_pool_t *pool = lineGetBufferPool(line);
+#if WW_HAVE_SPLICE
+    if (splice)
+    {
+        sbuf_t *buf = bufferpoolGetSpliceBuffer(pool);
+        twfRequire(buf != NULL, "failed to create receiver fixture private pipe");
+        twfRequire(write(sbufSpliceMetadata(buf).pipefd[1], bytes, length) == (ssize_t) length,
+                   "failed to populate receiver fixture private pipe");
+        buf->capacity = buf->l_pad + length;
+        sbufSetLength(buf, length);
+        return buf;
+    }
+#else
+    twfRequire(! splice, "splice receiver fixture selected on an unsupported build");
+#endif
+    sbuf_t *buf = bufferpoolGetLargeBuffer(pool);
+    memoryCopy(sbufGetMutablePtr(buf), bytes, length);
+    sbufSetLength(buf, length);
+    return buf;
+}
+
+static uint32_t receiverDataFrame(uint8_t *bytes, uint32_t length, uint64_t sequence, bool correct_pattern,
+                                  uint8_t mode)
+{
+    const uint16_t flags = kSpeedTestClientFlagDownload |
+                           (mode == kSpeedTestClientModeUdp ? kSpeedTestClientFlagUdp : kSpeedTestClientFlagTcp);
+    speedtestclientWriteHeader(bytes, kSpeedTestClientFrameData, flags, 0, length, sequence, 0, 0, 0);
+    speedtestclientFillPattern(bytes + kSpeedTestClientFrameHeaderSize, length, 0, sequence, flags);
+    if (! correct_pattern)
+    {
+        bytes[kSpeedTestClientFrameHeaderSize] ^= 0x80U;
+    }
+    return kSpeedTestClientFrameHeaderSize + length;
+}
+
+static void requireReceiverStats(speedtestclient_lstate_t *ls, bool verify_payload)
+{
+    twfRequire(ls->receiver.bytes == 54 && ls->receiver.packets == 2,
+               "receiver did not count both complete DATA frames exactly once");
+    twfRequire(ls->receiver.valid_packets == (verify_payload ? 1U : 0U),
+               "receiver claimed unchecked or corrupt payload was verified");
+    twfRequire(ls->receiver.validation_errors == (verify_payload ? 1U : 0U),
+               "receiver did not honor the configured payload verification policy");
+    twfRequire(ls->expected_recv_sequence == 2 && ls->receiver.lost_packets == 0 && ls->receiver.duplicate_packets == 0,
+               "receiver changed sequence accounting while consuming frame bodies");
+}
+
+static void caseFragmentedReceiverFrames(bool verify_payload, bool splice)
+{
+    twfSetCase(splice ? "SpeedTestClient mixed ordinary/private-pipe receive frames"
+                      : "SpeedTestClient fragmented ordinary receive frames");
+    speedtestclient_fixture_t fixture;
+    line_t                   *line = prepareReceiver(&fixture, verify_payload, kSpeedTestClientModeTcp);
+    speedtestclient_lstate_t *ls   = lineGetState(line, fixture.speed);
+    uint8_t                   wire[2 * kSpeedTestClientFrameHeaderSize + 54];
+    uint32_t                  first = receiverDataFrame(wire, 23, 0, true, kSpeedTestClientModeTcp);
+    uint32_t                  total = first + receiverDataFrame(wire + first, 31, 1, false, kSpeedTestClientModeTcp);
+
+    speedtestclientProcessIncoming(fixture.speed, line, receiverInput(line, wire, 7, false));
+    twfRequire(lineIsAlive(line) && ls->receiver.packets == 0,
+               "an incomplete DATA header closed the line or counted a packet");
+    const uint32_t partial = kSpeedTestClientFrameHeaderSize + 12;
+    speedtestclientProcessIncoming(fixture.speed, line, receiverInput(line, wire + 7, partial - 7, splice));
+    twfRequire(lineIsAlive(line) && ls->receiver.packets == 0,
+               "an incomplete DATA body closed the line or counted a packet");
+
+    /* This delivery completes frame one and contains all of frame two. Header
+     * cache refill must not change the first frame's decoded metadata. */
+    speedtestclientProcessIncoming(fixture.speed, line, receiverInput(line, wire + partial, total - partial, splice));
+    twfRequire(lineIsAlive(line), "DATA reception unexpectedly closed the line");
+    requireReceiverStats(ls, verify_payload);
+    twfRequire(splicestreamLength(ls->recv_stream) == 0, "receiver retained consumed frame bytes");
+    twfRequireNoLeakedBuffers();
+    drainWorker(&fixture, 0);
+    tosRequireNoProcessApiCall();
+    fixtureTeardown(&fixture);
+}
+
+static void caseDatagramReceiverVerification(bool verify_payload)
+{
+    twfSetCase("SpeedTestClient datagram payload verification policy");
+    speedtestclient_fixture_t fixture;
+    line_t                   *line = prepareReceiver(&fixture, verify_payload, kSpeedTestClientModeUdp);
+    uint8_t                   wire[kSpeedTestClientFrameHeaderSize + 31];
+    uint32_t                  length = receiverDataFrame(wire, 23, 0, true, kSpeedTestClientModeUdp);
+    speedtestclientProcessIncoming(fixture.speed, line, receiverInput(line, wire, length, false));
+    length = receiverDataFrame(wire, 31, 1, false, kSpeedTestClientModeUdp);
+    speedtestclientProcessIncoming(fixture.speed, line, receiverInput(line, wire, length, false));
+    twfRequire(lineIsAlive(line), "datagram reception unexpectedly closed the line");
+    requireReceiverStats(lineGetState(line, fixture.speed), verify_payload);
+    twfRequireNoLeakedBuffers();
+    drainWorker(&fixture, 0);
+    tosRequireNoProcessApiCall();
+    fixtureTeardown(&fixture);
+}
+
+static void caseMalformedReceiverLengthClosesLine(bool splice)
+{
+    twfSetCase("SpeedTestClient rejects malformed DATA length with verification disabled");
+    speedtestclient_fixture_t fixture;
+    line_t                   *line  = prepareReceiver(&fixture, false, kSpeedTestClientModeTcp);
+    speedtestclient_tstate_t *state = tunnelGetState(fixture.speed);
+    uint8_t                   header[kSpeedTestClientFrameHeaderSize];
+    speedtestclientWriteHeader(
+        header, kSpeedTestClientFrameData, kSpeedTestClientFlagDownload, 0, state->payload_size + 1U, 0, 0, 0, 0);
+    lineRef(line);
+    speedtestclientProcessIncoming(fixture.speed, line, receiverInput(line, header, sizeof(header), splice));
+    twfRequire(! lineIsAlive(line) && state->owned_lines[0] == NULL,
+               "malformed DATA length left the owned line alive or published");
+    twfRequireLineStateZeroed(line, fixture.speed, "malformed DATA length retained parser state");
+    twfRequireEqualU32(fixture.trace.next_finish, 1, "malformed DATA length did not finish transport once");
+    lineUnref(line);
+    twfRequireNoLeakedBuffers();
+    drainWorker(&fixture, 0);
+    tosRequireNoProcessApiCall();
+    fixtureTeardown(&fixture);
+}
+
 int main(void)
 {
     caseWorkerStopDrainsOnlyItsPublishedSlots();
@@ -377,6 +515,16 @@ int main(void)
     caseEstStopsAfterSendAdmissionClosesLine();
     caseReportRejectionClosesOwnedLine();
     caseAcceptedReportCancellationLeavesOwnerDrainSafe();
+    caseFragmentedReceiverFrames(false, false);
+    caseFragmentedReceiverFrames(true, false);
+    caseDatagramReceiverVerification(false);
+    caseDatagramReceiverVerification(true);
+    caseMalformedReceiverLengthClosesLine(false);
+#if WW_HAVE_SPLICE
+    caseFragmentedReceiverFrames(false, true);
+    caseFragmentedReceiverFrames(true, true);
+    caseMalformedReceiverLengthClosesLine(true);
+#endif
     puts("SpeedTestClient orderly shutdown tests passed");
     return 0;
 }

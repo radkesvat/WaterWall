@@ -14,7 +14,8 @@
         "payload-size": 3800,
         "target-megabits-per-sec": 300,
         "json-summary": true,
-        "terminate-on-complete": true
+        "terminate-on-complete": true,
+        "verify-payload": true
       },
       "next": "uot-client"
     },
