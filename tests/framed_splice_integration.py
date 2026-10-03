@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Paired framed transforms (Header/KeepAlive/HTTP and related families) with real loopback peers.
+"""Header/KeepAlive transforms and SoftIpLimiter/SpeedLimit with real loopback peers.
 Checks protocol framing, staged first/ready exchange, exact reverse echo, endpoint splice and
 shutdown143; requires strace/network namespaces. KeepAlive heartbeat/EOF decoding remains
 protocol-specific. CTest: waterwall.framed_constant_splice_false,
@@ -13,7 +13,10 @@ waterwall.framed_keepalive_server_splice_false, waterwall.framed_keepalive_serve
 waterwall.framed_keepalive_splice_false, waterwall.framed_keepalive_splice_true,
 waterwall.framed_port_splice_false, waterwall.framed_port_splice_true,
 waterwall.framed_v1_splice_false, waterwall.framed_v1_splice_true, waterwall.framed_v2_splice_false,
-waterwall.framed_v2_splice_true."""
+waterwall.framed_v2_splice_true. Limiter variants:
+waterwall.framed_softiplimiter_{vless,trojan}_splice_{false,true} and
+waterwall.framed_speedlimit_{line,worker,all}_splice_{false,true}; identity replay,
+token-limited TCP integrity, pipe-to-pipe splitting and endpoint splice policy."""
 import concurrent.futures
 import json
 from pathlib import Path
@@ -82,6 +85,8 @@ def run(binary, mode, enabled):
     if tracer is None:
         raise RuntimeError("strace is required for pipe-to-socket evidence")
     keepalive = mode.startswith("keepalive")
+    softiplimiter = mode.startswith("softiplimiter_")
+    speedlimit = mode.startswith("speedlimit_")
     external_client = mode.startswith("keepalive_client")
     external_server = mode == "keepalive_server"
     watchdog = mode in ("keepalive_client_watchdog", "keepalive_client_timeout")
@@ -89,7 +94,18 @@ def run(binary, mode, enabled):
     client_settings = {"ping-interval": 50}
     if watchdog:
         client_settings.update({"sensitive-mode": True, "tolerance-ms": 250 if timeout else 2000})
-    if mode == "keepalive":
+    if softiplimiter or speedlimit:
+        settings = ({"identifier": mode.removeprefix("softiplimiter_"), "simultaneous-user-limit": 1,
+                     "tolerance-ms": 30000} if softiplimiter else
+                    {"mega-bytes-per-sec": 1, "work-mode": "pause",
+                     "limit-mode": {"line": "per-line", "worker": "per-worker", "all": "all-lines"}[
+                         mode.removeprefix("speedlimit_")]})
+        nodes = [listener_node("app", APP_PORT, "limiter"),
+                 {"name": "limiter", "type": "SoftIpLimiter" if softiplimiter else "SpeedLimit",
+                  "next": "backend", "settings": settings}, connector_node("backend", BACKEND_PORT)]
+        prefix = (b"\0" + bytes(range(16)) if mode == "softiplimiter_vless" else
+                  bytes(range(28)).hex().encode() + b"\r\n" if softiplimiter else b"")
+    elif mode == "keepalive":
         nodes = [listener_node("app", APP_PORT, "client"),
                  {"name": "client", "type": "KeepAliveClient", "next": "carrier",
                   "settings": {"ping-interval": 50}}, connector_node("carrier", PEER_PORT),
@@ -119,7 +135,7 @@ def run(binary, mode, enabled):
                       socket.inet_aton("198.51.100.1") + b"\x04\xd2\x01\xbb")
         else:
             prefix = b""
-    data = bytes(range(256)) * (24576 if keepalive else 4096)
+    data = bytes(range(256)) * (24576 if keepalive else 8192 if speedlimit else 4096)
     early = data[:8192]
     with RunDirectory("waterwall-framed-splice-") as directory:
         root = Path(directory) / "run"
@@ -154,6 +170,8 @@ def run(binary, mode, enabled):
                     with backend.accept()[0] as conn:
                         conn.settimeout(15)
                         read = keepalive_exact if external_client else exact
+                        if softiplimiter:
+                            assert exact(conn, len(prefix)) == prefix, "identity wire prefix changed"
                         assert read(conn, len(early)) == early, "early upload changed"
                         conn.sendall(keepalive_frame(early[::-1]) if external_client else early[::-1])
                         assert read(conn, len(data)) == data, "framed upload changed"
@@ -196,6 +214,9 @@ def run(binary, mode, enabled):
                             outputs.add("down")
                 if enabled:
                     assert outputs == {"up", "down"}, f"missing endpoint splice outputs: {outputs}"
+                    if speedlimit:
+                        assert any(re.match(r"splice\(\d+<pipe:\[\d+\]>, NULL, \d+<pipe:", call)
+                                   for call in calls), "throttling never split a private pipe"
                 else:
                     assert not calls, "disabled chain used successful splice I/O"
 

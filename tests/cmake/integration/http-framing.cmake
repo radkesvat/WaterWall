@@ -29,11 +29,14 @@ add_waterwall_integration_test(waterwall.http_websocket_bidirectional_roundtrip 
 add_waterwall_integration_test(waterwall.http_websocket_bidirectional_tcp_loopback http_websocket_bidirectional_tcp_loopback)
 add_waterwall_integration_test(waterwall.http_upgrade_custom_bidirectional_roundtrip http_upgrade_custom_bidirectional_roundtrip)
 add_waterwall_integration_test(waterwall.http_upgrade_custom_bidirectional_tcp_loopback http_upgrade_custom_bidirectional_tcp_loopback)
-# Exercise HeaderServer modes and KeepAlive framing across real TCP sockets.
+# Exercise framed transforms and limiters across real TCP sockets.
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING AND TARGET TcpListener AND TARGET TcpConnector)
-  foreach(mode IN ITEMS constant port v1 v2 keepalive keepalive_client keepalive_server keepalive_client_watchdog keepalive_client_timeout)
+  foreach(mode IN ITEMS constant port v1 v2 keepalive keepalive_client keepalive_server keepalive_client_watchdog keepalive_client_timeout
+      softiplimiter_vless softiplimiter_trojan speedlimit_line speedlimit_worker speedlimit_all)
     if((mode MATCHES "^keepalive" AND TARGET KeepAliveClient AND TARGET KeepAliveServer)
-       OR (NOT mode MATCHES "^keepalive" AND TARGET HeaderServer))
+       OR (mode MATCHES "^(constant|port|v1|v2)$" AND TARGET HeaderServer)
+       OR (mode MATCHES "^softiplimiter" AND TARGET SoftIpLimiter)
+       OR (mode MATCHES "^speedlimit" AND TARGET SpeedLimit))
       foreach(splice_mode IN ITEMS true false)
         add_waterwall_isolated_test(waterwall.framed_${mode}_splice_${splice_mode}
           "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/framed_splice_integration.py"

@@ -20,11 +20,17 @@ static void speedlimitDrainDownstream(speedlimit_lstate_t *ls)
         return;
     }
 
+    if (ls->next_side_externally_paused)
+    {
+        // The queued obligation remains; Resume arms its next drain without polling.
+        return;
+    }
+
     sbuf_t *front = (sbuf_t *) bufferqueueFront(&ls->down_queue);
     assert(front != NULL);
 
     size_t grant_bytes = speedlimitGrantBytes(t, l, sbufGetLength(front), true);
-    if (grant_bytes == 0)
+    if (grant_bytes == 0 && sbufGetLength(front) != 0)
     {
         if (! speedlimitScheduleDownstreamDrain(ls, speedlimitGetRetryDelayMs(t, l)))
         {
@@ -38,8 +44,21 @@ static void speedlimitDrainDownstream(speedlimit_lstate_t *ls)
     sbuf_t *send_buf   = queued_buf;
     if (grant_bytes < sbufGetLength(queued_buf))
     {
-        send_buf = sbufSlice(queued_buf, (uint32_t) grant_bytes);
-        bufferqueuePushFront(&ls->down_queue, queued_buf);
+        buffer_pool_t *pool        = lineGetBufferPool(l);
+        sbuf_t        *destination = sbufIsSplice(queued_buf) ? bufferpoolGetSpliceBuffer(pool) : NULL;
+        send_buf                   = sbufMoveRangeTo(pool,
+                                   queued_buf,
+                                   destination,
+                                   (uint32_t) grant_bytes,
+                                   (uint32_t) grant_bytes,
+                                   bufferpoolGetLargeBufferPadding(pool));
+        // Publish the older remainder and its reduced charge before forwarding the slice.
+        if (! bufferqueueTryPushFront(&ls->down_queue, &queued_buf))
+        {
+            lineReuseBuffer(l, queued_buf);
+            speedlimitCloseLineOnDrainFailure(ls, send_buf);
+            return;
+        }
     }
 
     if (bufferqueueGetBufCount(&ls->down_queue) > 0)
@@ -94,15 +113,21 @@ void speedlimitTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
-    if (bufferqueueGetBufCount(&ls->down_queue) == 0 &&
+    if (! ls->next_side_externally_paused && bufferqueueGetBufCount(&ls->down_queue) == 0 &&
         speedlimitGrantBytes(t, l, sbufGetLength(buf), false) == sbufGetLength(buf))
     {
         tunnelPrevDownStreamPayload(t, l, buf);
         return;
     }
 
-    bufferqueuePushBack(&ls->down_queue, buf);
+    if (! bufferqueueTryPushBack(&ls->down_queue, &buf))
+    {
+        LOGW("SpeedLimit: downstream retention limit or queue allocation refusal, closing connection");
+        speedlimitCloseLineOnDrainFailure(ls, buf);
+        return;
+    }
 
+    if (! ls->next_side_externally_paused)
     {
         uint32_t delay_ms = (speedlimitPeekAvailableUnits(t, l) >= kSpeedLimitUnitsPerByte)
                                 ? kSpeedLimitImmediateMs

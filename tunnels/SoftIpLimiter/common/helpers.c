@@ -667,6 +667,7 @@ void softiplimiterHandleInitialPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     softiplimiter_tstate_t *ts = tunnelGetState(t);
     softiplimiter_lstate_t *ls = lineGetState(l, t);
 
+    buf = sbufEnsureOrdinary(lineGetBufferPool(l), buf);
     bufferstreamPush(&ls->in_stream, buf);
 
     hash_t                         identifier = 0;

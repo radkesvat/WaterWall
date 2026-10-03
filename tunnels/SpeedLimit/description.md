@@ -227,6 +227,28 @@ If there are not enough tokens for that packet or datagram chunk, it drops that 
 - `Finish` clears any queued payload owned by this tunnel before forwarding the Waterwall finish callback
 - `required_padding_left` is `0`, because this tunnel does not prepend protocol bytes
 
+## Splice support and bounded retention
+
+Each direction has a separate FIFO bounded by 16 MiB of logical payload, 32 MiB of
+retained buffer capacity charge, and 1,024 buffers. Empty buffers still count toward
+the charge and entry limits. Admission refusal closes the affected TCP connection
+and releases both queues; accepted TCP bytes are never silently dropped.
+
+A consumer Pause stops the corresponding timer drain. The queued data stays owned
+by this node, without repeated timer polling while paused. Resume rearms the drain,
+but the source remains paused until both the local queue hold and external pressure
+have cleared. Notification callbacks can close the line safely.
+
+The node advertises `kNodeFlagSupportsSplice`. Whole-buffer forwarding and queued
+payloads preserve private pipes. In `pause` mode, partial grants use `sbufMoveRangeTo()`
+to move exactly the granted bytes into an independent pipe, with ordinary fallback
+if pipe allocation or transfer cannot complete. The older remainder stays ahead of
+nested input. Token accounting includes resident prefixes and pipe bodies. `drop`
+mode makes its whole-buffer decision without reading payload bytes.
+
+Splice I/O still requires support throughout the finalized stream chain. Packet
+chains and unsupported platforms use ordinary buffers.
+
 ## Notes And Caveats
 
 - `pause` mode can temporarily hold extra data in memory while the sender waits.
@@ -242,7 +264,7 @@ Source-backed metadata:
 
 | Property | Value |
 | --- | --- |
-| node flags | `kNodeFlagNone` |
+| node flags | `kNodeFlagSupportsSplice` |
 | `can_have_prev` | `true` |
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayerAnything` |

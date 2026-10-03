@@ -1,4 +1,34 @@
 # Explicit native registrations; included in dependency order by unittests/CMakeLists.txt.
+if(LINUX)
+  foreach(limiter_entry "SoftIpLimiter|softiplimiter" "SpeedLimit|speedlimit")
+    string(REPLACE "|" ";" limiter_fields "${limiter_entry}")
+    list(GET limiter_fields 0 limiter_node)
+    list(GET limiter_fields 1 limiter_family)
+    if(TARGET ${limiter_node})
+      foreach(mode IN ITEMS splice no_splice)
+        set(limiter_target "${limiter_family}_${mode}_test")
+        waterwall_add_native_executable(${limiter_target} SUPPORT SOURCES
+          "${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/${limiter_family}/${limiter_family}_splice_test.c"
+          ${WATERWALL_LINE_FAILURE_WW_SOURCES})
+        waterwall_line_failure_test_use_tunnel(${limiter_target} ${limiter_node})
+        target_link_libraries(${limiter_target} PRIVATE ww)
+        target_link_options(${limiter_target} PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS})
+        if(mode STREQUAL "no_splice")
+          target_compile_definitions(${limiter_target} PRIVATE WW_HAVE_SPLICE=0)
+        else()
+          target_link_options(${limiter_target} PRIVATE "-Wl,--wrap=read")
+          if(limiter_node STREQUAL "SpeedLimit")
+            target_link_options(${limiter_target} PRIVATE "-Wl,--wrap=pipe2")
+          endif()
+        endif()
+        add_dependencies(waterwall_unit_tests ${limiter_target})
+        add_waterwall_unit_test(waterwall.${limiter_family}_${mode}_unit ${limiter_target}
+          "unit;tunnels;${limiter_family};splice;flow;lifetime")
+      endforeach()
+    endif()
+  endforeach()
+endif()
+
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND TARGET HeaderClient AND TARGET Bridge AND TARGET BlackHole
    AND TARGET UserController AND TARGET JunkDatagramSender)
   waterwall_add_native_executable(easy_nodes_splice_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/easy/easy_nodes_splice_test.c ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/easy/easy_nodes_splice_header.c ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/easy/easy_nodes_splice_bridge.c

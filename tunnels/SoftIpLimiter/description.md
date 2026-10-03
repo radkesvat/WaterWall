@@ -420,6 +420,14 @@ Raw VLESS UUIDs and raw Trojan SHA224 values are not logged.
 
 ## Operational Notes
 
+The node advertises `kNodeFlagSupportsSplice`. While identifying the connection,
+it materializes each complete incoming delivery through `sbufEnsureOrdinary()`
+before its ordinary identity parser reads it. After admission or passthrough is
+selected, both directions forward splice buffers unchanged; nested initial input
+stays in the existing FIFO behind the original identity replay. Temporary identity
+inspection does not request permanent ordinary reads. Splice I/O still requires
+support across the complete finalized chain, so a TLS node in that chain disables it.
+
 - `SoftIpLimiter` is not an authentication node. It only gates early traffic before the real protocol server parses it.
 - `SoftIpLimiter` can run before a local `VlessServer`/`TrojanServer` or before a `TcpConnector` that relays to an
   upstream VLESS/Trojan server.
@@ -454,7 +462,7 @@ Source-backed metadata:
 
 | Property | Value |
 | --- | --- |
-| node flags | `kNodeFlagNone` |
+| node flags | `kNodeFlagSupportsSplice` |
 | `can_have_prev` | `true` |
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayer4` |

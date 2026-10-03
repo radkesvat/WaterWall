@@ -34,6 +34,8 @@ typedef struct speedlimit_lstate_s
     line_t             *line;
     buffer_queue_t      up_queue;
     buffer_queue_t      down_queue;
+    buffer_budget_t     up_budget;
+    buffer_budget_t     down_budget;
     wtimer_t           *up_timer;
     wtimer_t           *down_timer;
     speedlimit_bucket_t line_bucket;
@@ -45,12 +47,15 @@ typedef struct speedlimit_lstate_s
 
 enum
 {
-    kTunnelStateSize         = sizeof(speedlimit_tstate_t),
-    kLineStateSize           = sizeof(speedlimit_lstate_t),
-    kSpeedLimitQueueCap      = 4,
-    kSpeedLimitImmediateMs   = 1,
-    kSpeedLimitDefaultTickMs = 10,
-    kSpeedLimitUnitsPerByte  = 1000
+    kTunnelStateSize           = sizeof(speedlimit_tstate_t),
+    kLineStateSize             = sizeof(speedlimit_lstate_t),
+    kSpeedLimitQueueCap        = 4,
+    kSpeedLimitMaxQueueBytes   = 16U * 1024U * 1024U,
+    kSpeedLimitMaxQueueCharge  = 32U * 1024U * 1024U,
+    kSpeedLimitMaxQueueBuffers = 1024,
+    kSpeedLimitImmediateMs     = 1,
+    kSpeedLimitDefaultTickMs   = 10,
+    kSpeedLimitUnitsPerByte    = 1000
 };
 
 enum speedlimit_limit_mode_e
@@ -90,10 +95,10 @@ bool     speedlimitScheduleUpstreamDrain(speedlimit_lstate_t *ls, uint32_t delay
 bool     speedlimitScheduleDownstreamDrain(speedlimit_lstate_t *ls, uint32_t delay_ms);
 
 /**
- * Close an already fully initialized line after a drain timer could not be armed.
+ * Close an already fully initialized line after retention or drain failure.
  *
  * @param ls           line state of the failing line, destroyed by this call.
- * @param detached_buf buffer that was removed from a queue but never forwarded, or NULL.
+ * @param detached_buf still locally owned buffer that will not be forwarded, or NULL.
  */
 void speedlimitCloseLineOnDrainFailure(speedlimit_lstate_t *ls, sbuf_t *detached_buf);
 

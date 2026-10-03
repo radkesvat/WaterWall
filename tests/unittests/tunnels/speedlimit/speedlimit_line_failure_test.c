@@ -4,7 +4,7 @@
  * Setup: Real runtime/component code with the explicit worker/line/neighbour fixture and any linker
  * seams shown below. Line and buffer settlement remains the scenario owner's responsibility.
  * Cases: caseFirstUpstreamScheduleFails, caseFirstDownstreamScheduleFails,
- * caseRescheduleAfterPartialSliceFails, caseFinalResumeTickFails
+ * caseRescheduleAfterPartialSliceFails, caseFinalResumeTickFails, caseResumeScheduleFails
  * Checks: Assertion labels include: the sibling line did not reach the next tunnel; the sibling line was
  * closed even though its timers were fine; the sibling line state was not zeroed; the failing line did
  * not close upstream first, downstream second
@@ -19,7 +19,7 @@
  * per-line resource failure: SpeedLimit must recycle everything the line owned, close the line upstream first and
  * downstream second, and leave the process and every other line untouched.
  *
- * All four scheduling points are covered:
+ * The four initial/drain scheduling points and both Resume rearm paths are covered:
  *   1. the first upstream schedule, with every byte still in the queue;
  *   2. the first downstream schedule, same ownership state;
  *   3. a reschedule after a partial slice, with a detached send buffer in flight;
@@ -364,12 +364,56 @@ static void caseFinalResumeTickFails(void)
     fixtureTeardown(&fixture);
 }
 
+static void caseResumeScheduleFails(bool upstream)
+{
+    twfSetCase("consumer Resume cannot arm queued drain");
+    speedlimit_fixture_t fixture;
+    fixtureSetup(&fixture);
+    line_t *l = twfLineCreate(fixture.speedlimit->lstate_size);
+    timerInjectionReset(0);
+    speedlimitTunnelUpStreamInit(fixture.speedlimit, l);
+    drainLineTokens(&fixture, l);
+    if (upstream)
+        speedlimitTunnelUpStreamPayload(fixture.speedlimit, l, makePayload(&fixture, 8));
+    else
+        speedlimitTunnelDownStreamPayload(fixture.speedlimit, l, makePayload(&fixture, 8));
+    speedlimit_lstate_t *ls      = lineGetState(l, fixture.speedlimit);
+    wtimer_t            *pending = upstream ? ls->up_timer : ls->down_timer;
+    if (upstream)
+    {
+        speedlimitTunnelDownStreamPause(fixture.speedlimit, l);
+        speedlimitUpstreamDrainTimerCallback(pending);
+    }
+    else
+    {
+        speedlimitTunnelUpStreamPause(fixture.speedlimit, l);
+        speedlimitDownstreamDrainTimerCallback(pending);
+    }
+    releaseOrphanedTimer();
+    twfRequire(fixture.trace.next_payload == 0 && fixture.trace.prev_payload == 0,
+               "paused drain sent payload before Resume failure");
+    timerInjectionReset(1);
+    if (upstream)
+        speedlimitTunnelDownStreamResume(fixture.speedlimit, l);
+    else
+        speedlimitTunnelUpStreamResume(fixture.speedlimit, l);
+    twfRequireEqualText(fixture.trace.seq,
+                        upstream ? "IuFf" : "IUFf",
+                        "Resume timer failure did not close both directions without releasing source");
+    twfRequireLineStateZeroed(l, fixture.speedlimit, "Resume timer failure retained queued state");
+    requireSiblingLineStillWorks(&fixture);
+    twfLineDestroy(l);
+    fixtureTeardown(&fixture);
+}
+
 int main(void)
 {
     caseFirstUpstreamScheduleFails();
     caseFirstDownstreamScheduleFails();
     caseRescheduleAfterPartialSliceFails();
     caseFinalResumeTickFails();
+    caseResumeScheduleFails(true);
+    caseResumeScheduleFails(false);
 
     printf("speedlimit_line_failure_test: all cases passed\n");
     return 0;

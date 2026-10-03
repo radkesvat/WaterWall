@@ -17,6 +17,16 @@ void speedlimitLinestateInitialize(speedlimit_lstate_t *ls, tunnel_t *t, line_t 
                                  .next_side_externally_paused = false,
                                  .prev_side_locally_paused    = false,
                                  .next_side_locally_paused    = false};
+
+    const buffer_budget_cost_t limits = {
+        kSpeedLimitMaxQueueBytes, kSpeedLimitMaxQueueCharge, kSpeedLimitMaxQueueBuffers};
+    bufferbudgetInit(&ls->up_budget, limits);
+    bufferbudgetInit(&ls->down_budget, limits);
+    const bool up_attached   = bufferqueueTryAttachBudget(&ls->up_queue, &ls->up_budget);
+    const bool down_attached = bufferqueueTryAttachBudget(&ls->down_queue, &ls->down_budget);
+    assert(up_attached && down_attached);
+    discard up_attached;
+    discard down_attached;
 }
 
 void speedlimitLinestateDestroy(speedlimit_lstate_t *ls)
@@ -37,6 +47,8 @@ void speedlimitLinestateDestroy(speedlimit_lstate_t *ls)
 
     bufferqueueDestroy(&ls->up_queue);
     bufferqueueDestroy(&ls->down_queue);
+    bufferbudgetAssertEmpty(&ls->up_budget);
+    bufferbudgetAssertEmpty(&ls->down_budget);
 
     memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(speedlimit_lstate_t)));
 }

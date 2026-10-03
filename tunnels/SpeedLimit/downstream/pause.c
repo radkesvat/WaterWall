@@ -4,7 +4,9 @@
 
 void speedlimitTunnelDownStreamPause(tunnel_t *t, line_t *l)
 {
-    speedlimit_lstate_t *ls = lineGetState(l, t);
+    speedlimit_lstate_t *ls         = lineGetState(l, t);
+    bool                 was_paused = ls->prev_side_externally_paused || ls->prev_side_locally_paused;
     ls->prev_side_externally_paused = true;
-    tunnelPrevDownStreamPause(t, l);
+    if (! was_paused)
+        tunnelPrevDownStreamPause(t, l);
 }
