@@ -1604,7 +1604,7 @@ static void testChainSpliceCapability(void)
         for (uint16_t i = 0; i < kMaxChainLen; ++i)
         {
             nodes[i].type  = (char *) "SpliceTest";
-            nodes[i].flags = i == cases[test].index ? cases[test].flags : kNodeFlagNone | kNodeFlagSupportsSplice;
+            nodes[i].flags = i == cases[test].index ? cases[test].flags : kNodeFlagSupportsSplice;
             tunnels[i]     = tunnelCreate(&nodes[i], 0, 0);
             require(tunnels[i] != NULL, "failed to create splice-capability tunnel");
             tunnelchainInsert(chain, tunnels[i]);
@@ -1862,16 +1862,16 @@ static void testEasyNodeSpliceCapability(void)
                               nodeBlackHoleGet(),
                               nodeReverseClientGet(),
                               nodeJunkDatagramSenderGet()};
-    const unsigned flags[] = {kNodeFlagNone,
-                              kNodeFlagChainHead | kNodeFlagChainEnd,
-                              kNodeFlagNone,
-                              kNodeFlagChainEnd | kNodeFlagNoChain,
-                              kNodeFlagNone,
-                              kNodeFlagNone};
+    const unsigned flags[] = {kNodeFlagSupportsSplice,
+                              kNodeFlagChainHead | kNodeFlagChainEnd | kNodeFlagSupportsSplice,
+                              kNodeFlagSupportsSplice,
+                              kNodeFlagChainEnd | kNodeFlagNoChain | kNodeFlagSupportsSplice,
+                              kNodeFlagSupportsSplice,
+                              kNodeFlagSupportsSplice};
     for (unsigned i = 0; i < sizeof(nodes) / sizeof(nodes[0]); ++i)
     {
         node_t *node = &nodes[i];
-        require(node->flags == (flags[i] | kNodeFlagSupportsSplice), "easy node placement/splice flags changed");
+        require(node->flags == flags[i], "easy node placement/splice flags changed");
         require(node->required_padding_left == (i == 0 ? 108 : 0), "easy node padding changed");
         const bool dual = i == 1 || i == 3 || i == 5;
         require(node->layer_group == (dual ? kNodeLayerAnything : kNodeLayer4), "easy node layer changed");

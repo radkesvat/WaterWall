@@ -245,7 +245,7 @@ This node explicitly disables splice for the entire chain through
 
 | Property | Value |
 | --- | --- |
-| node flags | `kNodeFlagNone` &#124; `kNodeFlagBlocksSplice` |
+| node flags | `kNodeFlagBlocksSplice` |
 | `can_have_prev` | `true` |
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayer4` |

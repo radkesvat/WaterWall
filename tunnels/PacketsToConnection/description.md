@@ -385,7 +385,7 @@ Source-backed metadata:
 
 | Property | Value |
 | --- | --- |
-| node flags | `kNodeFlagNone` &#124; `kNodeFlagSupportsTrustedPacketChecksums` |
+| node flags | `kNodeFlagSupportsTrustedPacketChecksums` |
 | `can_have_prev` | `true` |
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayer3` &#124; `kNodeLayer4` |
