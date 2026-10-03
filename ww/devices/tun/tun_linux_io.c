@@ -10,6 +10,7 @@
 #endif
 #include "generic_pool.h"
 #include "global_state.h"
+#include "ipv4_packet_view.h"
 #include "loggers/internal_logger.h"
 #include "loggers/log_rate_limiter.h"
 #include "tun.h"
@@ -158,7 +159,7 @@ static void tunOffloadReaderCleanup(tun_device_t *tdev, tun_offload_reader_t *re
     /* The device retains scratch through a later BringUp; the reader has
      * exclusive access only while its thread is running. */
     reader->scratch = NULL;
-    LOGI("TunDevice: %s GSO reader summary: ordinary=%llu aggregates=%llu generated=%llu deferred-checksum=%llu "
+    LOGI("TunDevice: %s GSO reader summary: ordinary=%llu aggregates=%llu generated=%llu reader-checksum=%llu "
          "malformed=%llu unsupported=%llu oversized=%llu intact=%llu",
          tdev->name,
          (unsigned long long) reader->ordinary_records,
@@ -209,11 +210,15 @@ static bool tunGsoWorkStep(device_reader_session_t *session, void *context, wid_
         work->plan.action == kTunLinuxOffloadSegment && device->trusted_checksums && work->plan.transport_assured;
     if (work->plan.action != kTunLinuxOffloadSegment || intact_tcp_gso)
     {
-        assert(work->plan.transport_assured);
+        assert(work->plan.transport_assured || work->plan.action == kTunLinuxOffloadChecksum);
         const uint32_t length = sbufGetLength(work->aggregate);
         if (budget->packets == 0 || budget->bytes < length)
         {
             return false;
+        }
+        if (work->plan.action == kTunLinuxOffloadChecksum && ! work->plan.transport_assured)
+        {
+            tunLinuxOffloadCompleteChecksum(sbufGetMutablePtr(work->aggregate), &work->plan);
         }
         sbuf_t *output  = work->aggregate;
         work->aggregate = NULL;
@@ -223,7 +228,7 @@ static bool tunGsoWorkStep(device_reader_session_t *session, void *context, wid_
         {
             atomic_fetch_add_explicit(&device->gso_intact_aggregates, 1, memory_order_relaxed);
         }
-        tunDeliverPacketAssured(session->device, output, wid, true);
+        tunDeliverPacketAssured(session->device, output, wid, work->plan.transport_assured);
         return true;
     }
     while (work->next_payload_offset < work->plan.payload_length && budget->packets > 0)
@@ -287,21 +292,65 @@ static bool tunGsoWorkStep(device_reader_session_t *session, void *context, wid_
     return true;
 }
 
+/* Only complete TCP/UDP records with ordinary transport checksum coordinates
+ * bypass reader fragment handling. Completion cannot change their flow key.
+ * Other metadata retains generic reader-side completion before affinity. */
+static bool tunOffloadCanDeferChecksum(const uint8_t *ip, const tun_linux_offload_plan_t *plan)
+{
+    assert(plan->action == kTunLinuxOffloadChecksum && ! plan->transport_assured);
+    if ((ip[0] >> 4U) == 4)
+    {
+        ipv4_packet_view_t packet = {0};
+        if (! ipv4packetviewParse(ip, plan->ip_length, &packet) || packet.ip_total_length != plan->ip_length ||
+            packet.fragmented)
+        {
+            return false;
+        }
+        const bool tcp = packet.protocol == 6 && ipv4packetviewParseTcp(ip, plan->ip_length, &packet);
+        const bool udp = packet.protocol == 17 && ipv4packetviewParseUdp(ip, plan->ip_length, &packet);
+        return (tcp || udp) && plan->checksum_start == packet.transport_offset &&
+               plan->checksum_field == packet.transport_offset + (tcp ? 16U : 6U);
+    }
+    /* Plain IPv6 TCP/UDP has no fragment/extension header to normalize. */
+    if ((ip[0] >> 4U) == 6 && plan->ip_length >= 48 && GET_BE16(ip + 4) + 40U == plan->ip_length)
+    {
+        const uint32_t transport_length = plan->ip_length - 40U;
+        const bool     tcp              = ip[6] == 6 && transport_length >= 20 && (ip[52] >> 4U) >= 5 &&
+                         (uint32_t) (ip[52] >> 4U) * 4U <= transport_length;
+        const bool udp = ip[6] == 17 && GET_BE16(ip + 44) >= 8 && GET_BE16(ip + 44) <= transport_length;
+        return (tcp || udp) && plan->checksum_start == 40 && plan->checksum_field == 40U + (tcp ? 16U : 6U);
+    }
+    return false;
+}
+
 /* Preserve one unadmitted record in scratch when the input budget is full.
- * Successful admission transfers scratch itself, avoiding an aggregate copy;
- * the replacement stays device-owned through reader join/restart. */
+ * GSO/assured admission transfers scratch itself. Ordinary checksum work copies
+ * into compact packet storage and leaves scratch available for batched reads. */
 static void tunOffloadPostPending(tun_device_t *tdev, tun_offload_reader_t *reader)
 {
     wid_t wid;
     if (UNLIKELY(! deviceFlowAffineWID(sbufGetRawPtr(reader->scratch), sbufGetLength(reader->scratch), &wid)))
     {
-        LOGF("TunDevice: preflighted TCPv4 aggregate has no flow identity");
+        LOGF("TunDevice: preflighted offload work has no flow identity");
         abortProgramNow(1);
     }
-    const size_t output_charge   = tdev->gso_output_charge[wid];
-    const size_t charge          = sbufGetAllocationCharge(reader->scratch) + sizeof(tun_gso_work_t) + output_charge;
+    const bool checksum_only =
+        reader->pending_plan.action == kTunLinuxOffloadChecksum && ! reader->pending_plan.transport_assured;
+    buffer_pool_fit_t input_fit = {0};
+    if (checksum_only && ! bufferpoolQueryBestFit(tdev->reader_buffer_pool,
+                                                  reader->pending_plan.ip_length,
+                                                  bufferpoolGetSmallBufferPadding(tdev->reader_buffer_pool),
+                                                  &input_fit))
+    {
+        LOGF("TunDevice: ordinary checksum work has unrepresentable buffer geometry");
+        abortProgramNow(1);
+    }
+    const size_t output_charge = checksum_only ? 0 : tdev->gso_output_charge[wid];
+    const size_t input_charge  = checksum_only ? input_fit.allocation_charge : sbufGetAllocationCharge(reader->scratch);
+    const size_t charge        = input_charge + sizeof(tun_gso_work_t) + output_charge;
+    const unsigned slots       = checksum_only ? 1 : 2;
     reader->waiting_for_capacity = false;
-    if (! deviceReaderSessionTryReserveWork(tdev->reader_session, charge, 2))
+    if (! deviceReaderSessionTryReserveWork(tdev->reader_session, charge, slots))
     {
         reader->waiting_for_capacity = true;
         return;
@@ -309,7 +358,7 @@ static void tunOffloadPostPending(tun_device_t *tdev, tun_offload_reader_t *read
     tun_gso_work_t *work = memoryAllocate(sizeof(*work));
     if (UNLIKELY(work == NULL))
     {
-        deviceReaderSessionReleaseWork(tdev->reader_session, charge, 2);
+        deviceReaderSessionReleaseWork(tdev->reader_session, charge, slots);
         LOGF("TunDevice: failed to allocate reserved GSO work metadata");
         abortProgramNow(1);
     }
@@ -317,17 +366,32 @@ static void tunOffloadPostPending(tun_device_t *tdev, tun_offload_reader_t *read
                               .plan          = reader->pending_plan,
                               .output_charge = output_charge,
                               .padding       = tdev->gso_output_padding[wid]};
-    const uint16_t padding =
-        max(bufferpoolGetLargeBufferPadding(tdev->reader_buffer_pool), (uint16_t) kTunVirtioHeaderSize);
-    reader->scratch = bufferpoolGetBestFit(tdev->reader_buffer_pool, kTunGsoPacketStorageCapacity, padding);
-    if (UNLIKELY(reader->scratch == NULL))
+    if (checksum_only)
     {
-        LOGF("TunDevice: failed to replace handed-off GSO receive storage");
-        abortProgramNow(1);
+        work->aggregate = bufferpoolGetBestFit(tdev->reader_buffer_pool, work->plan.ip_length, input_fit.left_padding);
+        if (UNLIKELY(work->aggregate == NULL || sbufGetAllocationCharge(work->aggregate) != input_charge))
+        {
+            LOGF("TunDevice: ordinary checksum storage violated its reservation");
+            abortProgramNow(1);
+        }
+        memoryCopy(sbufGetMutablePtr(work->aggregate), sbufGetRawPtr(reader->scratch), work->plan.ip_length);
+        sbufSetLength(work->aggregate, work->plan.ip_length);
     }
-    tdev->gso_scratch = reader->scratch;
-    reader->pending   = false;
-    discard deviceReaderSessionPostWork(tdev->reader_session, wid, work, tunGsoWorkStep, tunGsoWorkCleanup, charge, 2);
+    else
+    {
+        const uint16_t padding =
+            max(bufferpoolGetLargeBufferPadding(tdev->reader_buffer_pool), (uint16_t) kTunVirtioHeaderSize);
+        reader->scratch = bufferpoolGetBestFit(tdev->reader_buffer_pool, kTunGsoPacketStorageCapacity, padding);
+        if (UNLIKELY(reader->scratch == NULL))
+        {
+            LOGF("TunDevice: failed to replace handed-off GSO receive storage");
+            abortProgramNow(1);
+        }
+        tdev->gso_scratch = reader->scratch;
+    }
+    reader->pending = false;
+    discard deviceReaderSessionPostWork(
+        tdev->reader_session, wid, work, tunGsoWorkStep, tunGsoWorkCleanup, charge, slots);
 }
 
 /* One bounded read drain. A GSO record stops this batch; the outer reader
@@ -423,6 +487,23 @@ static tun_drain_result_t tunDrainOffloadPackets(tun_device_t *tdev, tun_offload
 
         if (plan.action == kTunLinuxOffloadChecksum)
         {
+            if (tunOffloadCanDeferChecksum(ip, &plan))
+            {
+                /* Publish older ordinary packets before this FIFO work item.
+                 * Successful admission keeps this read drain batched; only
+                 * capacity exhaustion retains the current record in scratch. */
+                tunFlushReadBatch(tdev, bufs, queued_count);
+                queued_count         = 0;
+                reader->pending_plan = plan;
+                reader->pending      = true;
+                reader->ordinary_records++;
+                tunOffloadPostPending(tdev, reader);
+                if (reader->pending)
+                {
+                    break;
+                }
+                continue;
+            }
             tunLinuxOffloadCompleteChecksum(ip, &plan);
             reader->checksum_completions++;
         }

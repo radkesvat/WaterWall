@@ -4,6 +4,8 @@
  * Setup: Real implementation entry points with the explicit substituted OS/allocation/timer boundary
  * shown below.
  * Cases: testGsoNegotiationAndRawFallback, testGsoScratchAllocationFallsBackToRaw,
+ * testOrdinaryChecksumWorkerHandoff, testOrdinaryChecksumMixedFifo,
+ * testOrdinaryChecksumBudget, testOrdinaryChecksumReaderFallback,
  * testTunWriterRefusalClassesUseFreshTlsState, testQueuedCleanupOutlivesDevice,
  * testClosedAndStaleDeliveriesDoNotTouchDevice, testBringUpRollsBackThreadCreationFailures,
  * testThreadExitDuringStartupRollsBack, testThreadExitsDuringStartupAreNotPublishedAsUp; the driver
@@ -288,6 +290,8 @@ static unsigned int             prepared_gso_segments;
 static unsigned int             prepared_gso_bytes;
 static unsigned int             gso_expected_segments = 3;
 static unsigned int             ordinary_after_gso_deliveries;
+static unsigned int             ordinary_worker_checksums;
+static unsigned int             ordinary_reader_checksums;
 static device_reader_session_t *gso_probe_session;
 static sbuf_t                  *gso_scratch_buffer;
 static unsigned int             gso_scratch_destroy_count;
@@ -321,6 +325,22 @@ bool __wrap_tunLinuxOffloadPrepareSegment(const uint8_t *ip, const tun_linux_off
         prepared_gso_bytes += *length;
     }
     return prepared;
+}
+
+void __real_tunLinuxOffloadCompleteChecksum(uint8_t *ip, const tun_linux_offload_plan_t *plan);
+void __wrap_tunLinuxOffloadCompleteChecksum(uint8_t *ip, const tun_linux_offload_plan_t *plan);
+void __wrap_tunLinuxOffloadCompleteChecksum(uint8_t *ip, const tun_linux_offload_plan_t *plan)
+{
+    if (currentThreadIsEventWorkerWID(0))
+    {
+        ordinary_worker_checksums++;
+    }
+    else
+    {
+        require(! currentThreadHasRegisteredWID(), "ordinary checksum ran on the wrong worker");
+        ordinary_reader_checksums++;
+    }
+    __real_tunLinuxOffloadCompleteChecksum(ip, plan);
 }
 
 static void captureTunLog(int log_level, const char *buf, int len)
@@ -678,7 +698,8 @@ int __wrap_poll(struct pollfd *fds, nfds_t nfds, int timeout)
         if ((fds[2].events & POLLIN) != 0)
         {
             require(gso_probe_session != NULL &&
-                        atomic_load_explicit(&gso_probe_session->output_packets, memory_order_acquire) == 2 &&
+                        atomic_load_explicit(&gso_probe_session->output_packets, memory_order_acquire) ==
+                            gso_probe_session->output_packet_limit &&
                         atomic_load_explicit(&gso_probe_session->output_charge, memory_order_acquire) <=
                             gso_probe_session->output_charge_limit,
                     "pending GSO output exceeded its packet or allocation budget");
@@ -932,6 +953,8 @@ static void resetIoInjection(void)
     prepared_gso_bytes             = 0;
     gso_expected_segments          = 3;
     ordinary_after_gso_deliveries  = 0;
+    ordinary_worker_checksums      = 0;
+    ordinary_reader_checksums      = 0;
     gso_probe_session              = NULL;
     gso_scratch_buffer             = NULL;
     gso_scratch_destroy_count      = 0;
@@ -2112,6 +2135,334 @@ static bool gsoSegmentChecksumsValid(const uint8_t *ip, size_t length)
     return gsoChecksumWords(ip + 20, length - 20, sum) == UINT16_MAX;
 }
 
+typedef struct ordinary_checksum_fixture_s
+{
+    uint8_t  packets[8][80];
+    uint32_t lengths[8];
+    unsigned count;
+    unsigned delivered;
+} ordinary_checksum_fixture_t;
+
+static void observeOrdinaryChecksum(tun_device_t *tdev, void *userdata, sbuf_t *buf, wid_t wid)
+{
+    discard                      tdev;
+    ordinary_checksum_fixture_t *fixture = userdata;
+    require(currentThreadIsEventWorkerWID(wid), "ordinary checksum delivery used a foreign worker");
+    require(fixture->delivered < fixture->count, "unexpected ordinary checksum delivery");
+    const unsigned index = fixture->delivered++;
+    require(sbufGetLength(buf) == fixture->lengths[index] &&
+                memoryEqual(sbufGetRawPtr(buf), fixture->packets[index], fixture->lengths[index]),
+            "ordinary/GSO FIFO changed packet bytes, checksum, or order");
+    require(sbufGetAllocationCharge(buf) < 65536, "ordinary checksum retained GSO-sized packet storage");
+    bufferpoolReuseBuffer(getWorkerBufferPool(wid), buf);
+}
+
+static void expectOrdinaryChecksum(ordinary_checksum_fixture_t *fixture, const uint8_t *record, uint32_t length)
+{
+    const unsigned index = fixture->count++;
+    require(index < ARRAY_SIZE(fixture->packets) && length <= sizeof(fixture->packets[index]),
+            "ordinary checksum fixture overflow");
+    fixture->lengths[index] = length;
+    memoryCopy(fixture->packets[index], record + 10, length);
+    if ((record[0] & VIRTIO_NET_HDR_F_NEEDS_CSUM) != 0)
+    {
+        const uint16_t start    = (uint16_t) (record[6] | ((uint16_t) record[7] << 8U));
+        const uint16_t field    = start + (uint16_t) (record[8] | ((uint16_t) record[9] << 8U));
+        uint16_t       checksum = (uint16_t) ~gsoChecksumWords(record + 10 + start, length - start, 0);
+        PUT_BE16(fixture->packets[index] + field, checksum == 0 ? UINT16_MAX : checksum);
+    }
+}
+
+static void testOrdinaryChecksumWorkerHandoff(bool cancel, bool stale)
+{
+    resetShutdownRequests();
+    resetIoInjection();
+    resetCapturedMessages();
+    resetGsoSetup();
+    resetFakeThreads(0);
+    ordinary_checksum_fixture_t fixture = {0};
+    tun_device_t               *tdev =
+        tundeviceCreate("ww-lifetime-test", true, 1500, &fixture, observeOrdinaryChecksum, kDeviceFragmentReassemble);
+    require(tdev && tundeviceBringUp(tdev), "ordinary checksum device setup");
+    uint8_t record[kGsoFixtureRecordLength];
+    makeSmallGsoRecord(record);
+    require(tunLinuxOffloadEncodeWrite(record + 10, kGsoFixtureIpLength, record), "ordinary partial fixture seed");
+    expectOrdinaryChecksum(&fixture, record, kGsoFixtureIpLength);
+    const injected_io_result_t reads[] = {
+        {.result = sizeof(record), .bytes = record}, {.result = -1, .error = EAGAIN}, {.result = -1, .error = EIO}};
+    armDeviceReads(reads, ARRAY_SIZE(reads));
+    inject_gso_reader_poll       = true;
+    gso_deliver_after_read_calls = cancel || stale ? 100 : 2;
+    gso_probe_session            = tunLinuxReaderSession(tdev);
+    runCapturedThreadBody(kCapturedReaderThread);
+    require(ordinary_reader_checksums == 0, "ordinary NEEDS_CSUM completion still ran on the reader");
+    device_reader_session_t *session = gso_probe_session;
+    if (cancel || stale)
+    {
+        require(fixture.delivered == 0 && ordinary_worker_checksums == 0 && captured_message_count == 1,
+                "ordinary pending checksum completed before worker admission");
+        resetIoInjection();
+        require(tundeviceBringDown(tdev), "ordinary pending checksum stop");
+        if (stale)
+        {
+            require(tundeviceBringUp(tdev), "ordinary pending checksum restart");
+            worker_t worker = {.wid = 0};
+            deliverMessage(0, &worker);
+        }
+        else
+        {
+            deviceReaderSessionRef(session);
+            tundeviceDestroy(tdev);
+            tdev = NULL;
+            testWorkerUnbindWID();
+            cleanupMessage(0);
+            testWorkerBindWID(0);
+        }
+        require(fixture.delivered == 0 && ordinary_worker_checksums == 0,
+                "cancelled/stale ordinary work performed checksum or delivery");
+    }
+    else
+    {
+        require(fixture.delivered == 1 && ordinary_worker_checksums == 1,
+                "ordinary checksum did not complete once on the destination worker");
+    }
+    require(atomic_load_explicit(&session->output_packets, memory_order_acquire) == 0 &&
+                atomic_load_explicit(&session->output_charge, memory_order_acquire) == 0,
+            "ordinary checksum reservation leak");
+    if (cancel)
+    {
+        deviceReaderSessionUnref(session);
+    }
+    resetIoInjection();
+    if (tdev != NULL)
+    {
+        require(tundeviceBringDown(tdev), "ordinary checksum final stop");
+        tundeviceDestroy(tdev);
+    }
+    resetCapturedMessages();
+}
+
+static void testOrdinaryChecksumMixedFifo(void)
+{
+    resetShutdownRequests();
+    resetIoInjection();
+    resetCapturedMessages();
+    resetGsoSetup();
+    resetFakeThreads(0);
+    GSTATE.ram_profile                  = 8;
+    ordinary_checksum_fixture_t fixture = {0};
+    tun_device_t               *tdev =
+        tundeviceCreate("ww-lifetime-test", true, 1500, &fixture, observeOrdinaryChecksum, kDeviceFragmentReassemble);
+    require(tdev && tundeviceBringUp(tdev), "mixed ordinary checksum device setup");
+    uint8_t ordinary[kGsoFixtureRecordLength], partial[kGsoFixtureRecordLength], aggregate[kGsoFixtureRecordLength];
+    makeSmallGsoRecord(ordinary);
+    PUT_BE32(ordinary + 10 + 24, 2000);
+    require(tunLinuxOffloadEncodeWrite(ordinary + 10, kGsoFixtureIpLength, ordinary), "ordinary fixture seed");
+    expectOrdinaryChecksum(&fixture, ordinary, kGsoFixtureIpLength);
+    memoryCopy(ordinary + 10, fixture.packets[0], kGsoFixtureIpLength);
+    memoryZero(ordinary, 10);
+    makeSmallGsoRecord(partial);
+    PUT_BE32(partial + 10 + 24, 3000);
+    require(tunLinuxOffloadEncodeWrite(partial + 10, kGsoFixtureIpLength, partial), "mixed partial fixture seed");
+    expectOrdinaryChecksum(&fixture, partial, kGsoFixtureIpLength);
+    makeSmallGsoRecord(aggregate);
+    for (unsigned part = 0; part < 3; ++part)
+    {
+        uint8_t  segment[51] = {0};
+        uint8_t *ip          = segment + 10;
+        memoryCopy(ip, aggregate + 10, 40);
+        PUT_BE16(ip + 2, 41);
+        PUT_BE16(ip + 4, 0x1234U + part);
+        PUT_BE32(ip + 24, 1000U + part);
+        ip[33] = part == 2 ? 0x19 : 0x10;
+        ip[40] = (uint8_t) ('A' + part);
+        PUT_BE16(ip + 10, 0);
+        PUT_BE16(ip + 10, (uint16_t) ~gsoChecksumWords(ip, 20, 0));
+        uint32_t seed = gsoChecksumWords(ip + 12, 8, 0) + 6U + 21U;
+        PUT_BE16(ip + 36, (uint16_t) seed);
+        segment[0] = VIRTIO_NET_HDR_F_NEEDS_CSUM;
+        segment[6] = 20;
+        segment[8] = 16;
+        expectOrdinaryChecksum(&fixture, segment, 41);
+    }
+    uint8_t  udp[41] = {0};
+    uint8_t *ip      = udp + 10;
+    memoryCopy(ip, aggregate + 10, 20);
+    PUT_BE16(ip + 2, 31);
+    ip[9] = 17;
+    PUT_BE16(ip + 20, 1234);
+    PUT_BE16(ip + 22, 53);
+    PUT_BE16(ip + 24, 11);
+    memoryCopy(ip + 28, "XYZ", 3);
+    PUT_BE16(ip + 10, 0);
+    PUT_BE16(ip + 10, (uint16_t) ~gsoChecksumWords(ip, 20, 0));
+    require(tunLinuxOffloadEncodeWrite(ip, 31, udp), "UDP partial fixture seed");
+    expectOrdinaryChecksum(&fixture, udp, 31);
+    uint8_t ipv6[73] = {0};
+    ip               = ipv6 + 10;
+    ip[0]            = 0x60;
+    PUT_BE16(ip + 4, 23);
+    ip[6]  = 6;
+    ip[7]  = 64;
+    ip[23] = 1;
+    ip[39] = 2;
+    memoryCopy(ip + 40, partial + 10 + 20, 20);
+    memoryCopy(ip + 60, "UVW", 3);
+    PUT_BE16(ip + 56, (uint16_t) (gsoChecksumWords(ip + 8, 32, 0) + 23U + 6U));
+    ipv6[0] = VIRTIO_NET_HDR_F_NEEDS_CSUM;
+    ipv6[6] = 40;
+    ipv6[8] = 16;
+    expectOrdinaryChecksum(&fixture, ipv6, 63);
+    const injected_io_result_t reads[] = {{.result = sizeof(ordinary), .bytes = ordinary},
+                                          {.result = sizeof(partial), .bytes = partial},
+                                          {.result = sizeof(aggregate), .bytes = aggregate},
+                                          {.result = sizeof(udp), .bytes = udp},
+                                          {.result = sizeof(ipv6), .bytes = ipv6},
+                                          {.result = -1, .error = EAGAIN},
+                                          {.result = -1, .error = EIO}};
+    armDeviceReads(reads, ARRAY_SIZE(reads));
+    inject_gso_reader_poll       = true;
+    gso_deliver_after_read_calls = 6;
+    gso_probe_session            = tunLinuxReaderSession(tdev);
+    runCapturedThreadBody(kCapturedReaderThread);
+    require(fixture.delivered == 7 && ordinary_worker_checksums == 3 && ordinary_reader_checksums == 0 &&
+                prepared_gso_segments == 3 && captured_message_count == 1 && gso_device_ready_polls == 3,
+            "mixed FIFO lost checksum work, batching, or coalesced worker dispatch");
+    require(atomic_load_explicit(&gso_probe_session->output_packets, memory_order_acquire) == 0 &&
+                atomic_load_explicit(&gso_probe_session->output_charge, memory_order_acquire) == 0,
+            "mixed ordinary checksum reservation leak");
+    resetIoInjection();
+    require(tundeviceBringDown(tdev), "mixed ordinary checksum stop");
+    tundeviceDestroy(tdev);
+    resetCapturedMessages();
+    GSTATE.ram_profile = 1;
+}
+
+static void testOrdinaryChecksumBudget(void)
+{
+    resetShutdownRequests();
+    resetIoInjection();
+    resetCapturedMessages();
+    resetGsoSetup();
+    resetFakeThreads(0);
+    ordinary_checksum_fixture_t fixture = {0};
+    tun_device_t               *tdev =
+        tundeviceCreate("ww-lifetime-test", true, 1500, &fixture, observeOrdinaryChecksum, kDeviceFragmentReassemble);
+    require(tdev && tundeviceBringUp(tdev), "ordinary checksum budget device setup");
+    gso_probe_session                      = tunLinuxReaderSession(tdev);
+    gso_probe_session->output_packet_limit = 1;
+    uint8_t record[kGsoFixtureRecordLength];
+    makeSmallGsoRecord(record);
+    require(tunLinuxOffloadEncodeWrite(record + 10, kGsoFixtureIpLength, record), "budget partial fixture seed");
+    expectOrdinaryChecksum(&fixture, record, kGsoFixtureIpLength);
+    expectOrdinaryChecksum(&fixture, record, kGsoFixtureIpLength);
+    const injected_io_result_t reads[] = {{.result = sizeof(record), .bytes = record},
+                                          {.result = sizeof(record), .bytes = record},
+                                          {.result = -1, .error = EAGAIN},
+                                          {.result = -1, .error = EIO}};
+    armDeviceReads(reads, ARRAY_SIZE(reads));
+    inject_gso_reader_poll       = true;
+    gso_deliver_after_read_calls = 3;
+    runCapturedThreadBody(kCapturedReaderThread);
+    require(fixture.delivered == 2 && ordinary_worker_checksums == 2 && ordinary_reader_checksums == 0 &&
+                gso_budget_wake_polls == 1,
+            "ordinary pending checksum did not resume after one-slot budget pressure");
+    require(atomic_load_explicit(&gso_probe_session->output_packets, memory_order_acquire) == 0 &&
+                atomic_load_explicit(&gso_probe_session->output_charge, memory_order_acquire) == 0,
+            "ordinary checksum budget reservation leak");
+    resetIoInjection();
+    require(tundeviceBringDown(tdev), "ordinary checksum budget stop");
+    tundeviceDestroy(tdev);
+    resetCapturedMessages();
+}
+
+static void testOrdinaryChecksumReaderFallback(bool reassemble)
+{
+    resetShutdownRequests();
+    resetIoInjection();
+    resetCapturedMessages();
+    resetGsoSetup();
+    resetFakeThreads(0);
+    ordinary_checksum_fixture_t fixture = {0};
+    tun_device_t               *tdev    = tundeviceCreate("ww-lifetime-test",
+                                         true,
+                                         1500,
+                                         &fixture,
+                                         observeOrdinaryChecksum,
+                                         reassemble ? kDeviceFragmentReassemble : kDeviceFragmentPreserve);
+    require(tdev && tundeviceBringUp(tdev), "ordinary checksum fallback device setup");
+    uint8_t  generic[43] = {0};
+    uint8_t *ip          = generic + 10;
+    ip[0]                = 0x45;
+    ip[8]                = 64;
+    ip[9]                = 253;
+    PUT_BE16(ip + 2, 33);
+    PUT_BE32(ip + 12, 0x0a000001);
+    PUT_BE32(ip + 16, 0x0a000002);
+    memoryCopy(ip + 20, "ABCDEFGHIJKLM", 13);
+    generic[0] = VIRTIO_NET_HDR_F_NEEDS_CSUM;
+    generic[6] = 21;
+    generic[8] = 5;
+    expectOrdinaryChecksum(&fixture, generic, 33);
+    uint8_t fragments[2][46] = {{0}};
+    for (unsigned part = 0; part < 2; ++part)
+    {
+        ip = fragments[part] + 10;
+        memoryCopy(ip, generic + 10, 20);
+        PUT_BE16(ip + 2, 36);
+        PUT_BE16(ip + 4, 42);
+        PUT_BE16(ip + 6, part == 0 ? 0x2000 : 2);
+        ip[9] = 17;
+        for (unsigned byte = 0; byte < 16; ++byte)
+        {
+            ip[20 + byte] = (uint8_t) (part * 16 + byte);
+        }
+        PUT_BE16(ip + 10, 0);
+        PUT_BE16(ip + 10, (uint16_t) ~gsoChecksumWords(ip, 20, 0));
+    }
+    fragments[0][0] = VIRTIO_NET_HDR_F_NEEDS_CSUM;
+    fragments[0][6] = 20;
+    fragments[0][8] = 6;
+    if (reassemble)
+    {
+        ordinary_checksum_fixture_t first = {0};
+        expectOrdinaryChecksum(&first, fragments[0], 36);
+        uint8_t assembled[62] = {0};
+        ip                    = assembled + 10;
+        memoryCopy(ip, first.packets[0], 36);
+        memoryCopy(ip + 36, fragments[1] + 10 + 20, 16);
+        PUT_BE16(ip + 2, 52);
+        PUT_BE16(ip + 6, 0);
+        PUT_BE16(ip + 10, 0);
+        PUT_BE16(ip + 10, (uint16_t) ~gsoChecksumWords(ip, 20, 0));
+        expectOrdinaryChecksum(&fixture, assembled, 52);
+    }
+    else
+    {
+        expectOrdinaryChecksum(&fixture, fragments[1], 36);
+        expectOrdinaryChecksum(&fixture, fragments[0], 36);
+    }
+    const injected_io_result_t reads[] = {{.result = sizeof(generic), .bytes = generic},
+                                          {.result = sizeof(fragments[1]), .bytes = fragments[1]},
+                                          {.result = sizeof(fragments[0]), .bytes = fragments[0]},
+                                          {.result = -1, .error = EAGAIN},
+                                          {.result = -1, .error = EIO}};
+    armDeviceReads(reads, ARRAY_SIZE(reads));
+    inject_gso_reader_poll       = true;
+    gso_deliver_after_read_calls = 4;
+    gso_probe_session            = tunLinuxReaderSession(tdev);
+    runCapturedThreadBody(kCapturedReaderThread);
+    require(fixture.delivered == fixture.count && ordinary_worker_checksums == 0 && ordinary_reader_checksums == 2,
+            "generic/fragment checksum fallback changed reader completion or fragment policy");
+    require(atomic_load_explicit(&gso_probe_session->output_packets, memory_order_acquire) == 0 &&
+                atomic_load_explicit(&gso_probe_session->output_charge, memory_order_acquire) == 0,
+            "ordinary checksum fallback reservation leak");
+    resetIoInjection();
+    require(tundeviceBringDown(tdev), "ordinary checksum fallback stop");
+    tundeviceDestroy(tdev);
+    resetCapturedMessages();
+}
+
 static void observeGsoSegment(tun_device_t *tdev, void *userdata, sbuf_t *buf, uint8_t wid)
 {
     discard        tdev;
@@ -2791,6 +3142,13 @@ int main(void)
     testGsoNegotiationAndRawFallback();
     testGsoScratchAllocationFallsBackToRaw();
     testGsoReaderResumesPendingWithoutTunReadiness();
+    testOrdinaryChecksumWorkerHandoff(false, false);
+    testOrdinaryChecksumWorkerHandoff(true, false);
+    testOrdinaryChecksumWorkerHandoff(false, true);
+    testOrdinaryChecksumMixedFifo();
+    testOrdinaryChecksumBudget();
+    testOrdinaryChecksumReaderFallback(true);
+    testOrdinaryChecksumReaderFallback(false);
     testTrustedHandoff(false, false);
     testTrustedHandoff(true, false);
     testTrustedHandoff(false, true);

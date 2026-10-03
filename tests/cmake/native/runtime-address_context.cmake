@@ -371,6 +371,7 @@
       "-Wl,--wrap=poll"
       "-Wl,--wrap=tunLinuxGsoMaxSegmentsConfigure"
       "-Wl,--wrap=tunLinuxOffloadPrepareSegment"
+      "-Wl,--wrap=tunLinuxOffloadCompleteChecksum"
       "-Wl,--wrap=deviceReaderSessionEnableWorkerQueue"
       "-Wl,--wrap=sbufTryCreateWithPadding"
       "-Wl,--wrap=sbufDestroy"
