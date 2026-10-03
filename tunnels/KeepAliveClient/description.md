@@ -47,7 +47,7 @@ Frame kinds are:
 `onStart()`.
 
 With sensitive mode disabled, every `ping-interval` milliseconds the worker-local timer walks the tracked lines for
-that worker and sends one empty `ping` frame on each still-alive line whose upstream output is writable.
+that worker and sends one empty `ping` frame on each still-alive line, including during Pause.
 
 Default interval:
 
@@ -68,12 +68,12 @@ milliseconds in sensitive mode; ping sends still obey `ping-interval`. Expiry
 is handled on the first check at or after the deadline, or when a late pong is
 decoded.
 
-Pause in either direction suppresses new watchdog pings and suspends the reply
-countdown. Repeated and overlapping pauses count once; the countdown resumes
-only after both directions resume. An already-admitted pong can still acknowledge
-the ping during Pause. Finish clears the pending wait with the rest of line state.
+Pause in either direction leaves periodic pings and the reply deadline running.
+The watchdog closes an expired line on its next check without waiting for Resume.
+An already-admitted pong can still acknowledge a timely ping during Pause.
+Finish clears the pending wait with the rest of line state.
 
-The tolerance includes unpaused queueing and transfer time. Pongs share the same
+The tolerance includes paused time, queueing and transfer time. Pongs share the same
 ordered stream as normal frames and may wait behind a 6 MiB body, so choose a
 tolerance that allows for the path's throughput and latency.
 
@@ -132,8 +132,8 @@ limits nested retained bytes to 8 MiB, and limits retained allocation charge to
 16 MiB, attempting beneficial ordinary compaction before refusing excess charge.
 Complete frames in an admitted delivery drain before checking the 6 MiB + 5 byte
 incomplete-remainder limit. Pause is forwarded promptly and does not interrupt
-that synchronous batch. Timer-generated pings stop while upstream output is
-paused and resume on a later timer tick after Resume.
+that synchronous batch. Timer-generated pings continue while either direction
+is paused; Pause and Resume never postpone an outstanding reply deadline.
 
 Zero or oversized frame body lengths, admission failure and retained-storage overflow
 close the borrowed line through its owner. Finish releases incomplete frames,

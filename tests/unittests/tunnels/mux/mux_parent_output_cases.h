@@ -108,7 +108,7 @@ void           *__wrap_memoryAllocate(size_t size)
 static pq_fixture_t *pqFixture;
 static unsigned      pqPauses, pqResumes, pqDeliveries;
 static bool          pqTransportPaused;
-static unsigned      pqPauseAt, pqNestedAt, pqToggleAt;
+static unsigned      pqPauseAt, pqNestedAt, pqToggleAt, pqKeepaliveAt, pqLossAt;
 static bool          pqReblockOnResume, pqResumeInPause;
 static line_t       *pqRemoveOnPause;
 static bool          pqCloseSelfOnPause;
@@ -128,13 +128,26 @@ static void pqParentResume(pq_fixture_t *f)
 
 static void pqSink(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    twfRequire(! pqTransportPaused, "strict parent received output while paused");
+    const uint8_t flag = ((const uint8_t *) sbufGetRawPtr(buf))[3];
+    twfRequire(! pqTransportPaused || flag == kMuxFlagPing || flag == kMuxFlagPong,
+               "strict parent received ordinary output while paused");
     ++pqDeliveries;
     pqCapture(t, l, buf);
+    if (pqDeliveries == pqLossAt)
+    {
+        pqLoss(pqFixture->mux, l, true);
+        return;
+    }
     if (pqDeliveries == pqNestedAt)
         pqSend(pqFixture->mux, pqFixture->child_l, makePatternPayload(pqFixture, 4));
     if (pqDeliveries == pqPauseAt)
         pqParentPause(pqFixture);
+    if (pqDeliveries == pqKeepaliveAt)
+    {
+        pq_state_t *parent = lineGetState(pqFixture->parent_l, pqFixture->mux);
+        discard     pqControl(pqFixture->mux, pqFixture->parent_l, parent, pqFixture->child_l, 91, kMuxFlagPong);
+        discard     pqControl(pqFixture->mux, pqFixture->parent_l, parent, pqFixture->child_l, 92, kMuxFlagPong);
+    }
     if (pqDeliveries == pqToggleAt)
     {
         pqParentPause(pqFixture);
@@ -195,7 +208,7 @@ static void pqSetup(pq_fixture_t *f)
     fixtureSetup(f, 4096);
     pqFixture = f;
     pqPauses = pqResumes = pqDeliveries = 0;
-    pqPauseAt = pqNestedAt = pqToggleAt = 0;
+    pqPauseAt = pqNestedAt = pqToggleAt = pqKeepaliveAt = pqLossAt = 0;
     pqTransportPaused = pqReblockOnResume = pqResumeInPause = false;
     pqRemoveOnPause                                         = NULL;
     pqCloseSelfOnPause                                      = false;
@@ -209,6 +222,60 @@ static mux_parent_output_t *pqOutput(pq_fixture_t *f)
 {
     pq_state_t *parent = lineGetState(f->parent_l, f->mux);
     return &parent->parent_state->output;
+}
+
+static void caseKeepaliveParentPause(void)
+{
+    twfSetCase("keepalive controls bypass paused output in token order without interrupting a frame or draining Data");
+    pq_fixture_t f;
+    pqSetup(&f);
+    pqPauseAt = pqKeepaliveAt = 1;
+    pqSend(f.mux, f.child_l, makePatternPayload(&f, 1));
+    twfRequire(pqTransportPaused && pqDeliveries == 3 && pqOutput(&f)->charge == 0,
+               "reentrant paused Pong replies did not drain or settle their charge");
+    frame_view_t   frames[16];
+    const uint32_t count = parseFrames(f.capture, f.trace.capture_len, frames, 16);
+    twfRequire(count >= 3 && frames[count - 2].flags == kMuxFlagPong && frames[count - 2].cid == 91 &&
+                   frames[count - 1].flags == kMuxFlagPong && frames[count - 1].cid == 92,
+               "priority control output interrupted a frame or reversed Pong tokens");
+    pqSend(f.mux, f.child_l, makePatternPayload(&f, 2));
+    const size_t charge = pqOutput(&f)->charge;
+    twfRequire(charge != 0 && pqDeliveries == 3, "ordinary output escaped Pause");
+    pq_state_t *parent = lineGetState(f.parent_l, f.mux);
+    discard     pqControl(f.mux, f.parent_l, parent, f.child_l, 93, kMuxFlagPing);
+    twfRequire(pqDeliveries == 4 && pqOutput(&f)->charge == charge,
+               "paused Ping waited behind or drained queued application bytes");
+    pqParentResume(&f);
+    twfRequire(pqDeliveries == 5 && pqOutput(&f)->charge == 0, "Resume lost the ordinary output backlog");
+    fixtureTeardown(&f);
+}
+
+static void caseKeepaliveParentLoss(void)
+{
+    twfSetCase("terminal keepalive callback settles queued controls and paused application output");
+    pq_fixture_t f;
+    pqSetup(&f);
+    pqPauseAt = pqNestedAt = pqKeepaliveAt = 1;
+    pqLossAt                               = 2;
+    lineRef(f.parent_l);
+    lineRef(f.child_l);
+    pqSend(f.mux, f.child_l, makePatternPayload(&f, 1));
+    twfRequire(pqDeliveries == 2, "terminal Pong delivered later control or application frames");
+    twfRequireLineStateZeroed(f.parent_l, f.mux, "terminal Pong retained parent queues");
+    twfRequireLineStateZeroed(f.child_l, f.mux, "terminal Pong retained child state");
+#ifdef MUX_OUTPUT_CLIENT
+    twfRequire(! lineIsAlive(f.parent_l), "terminal Pong left owned parent alive");
+    lineUnref(f.parent_l);
+    f.parent_l = NULL;
+    lineUnref(f.child_l);
+#else
+    twfRequire(! lineIsAlive(f.child_l), "terminal Pong left owned child alive");
+    lineUnref(f.child_l);
+    f.child_l = NULL;
+    lineUnref(f.parent_l);
+#endif
+    twfRequireNoLeakedBuffers();
+    fixtureTeardown(&f);
 }
 
 static void caseParentPumpReentrancy(void)
@@ -2150,6 +2217,8 @@ static void runParentOutputCases(void)
     caseParentQueuedChildClose(true);
     caseParentAdmissionArithmeticAndDirect();
     caseParentPumpReentrancy();
+    caseKeepaliveParentPause();
+    caseKeepaliveParentLoss();
     caseParentGate(2000, false);
     caseParentGate(3, true);
     caseParentGateMutation();

@@ -23,6 +23,7 @@ void muxclientLinestateInitialize(tunnel_t *t, muxclient_lstate_t *ls, line_t *l
             abortProgramNow(1);
         }
         bufferqueueInitEmpty(&parent_state->output.pending);
+        bufferqueueInitEmpty(&parent_state->output.keepalive_pending);
         parent_state->child_map = muxclient_child_map_t_init();
     }
     *ls = (muxclient_lstate_t) {.l                          = l,

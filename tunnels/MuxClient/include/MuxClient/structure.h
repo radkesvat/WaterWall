@@ -31,7 +31,6 @@ typedef struct muxclient_parent_state_s
     uint64_t              selection_id; // Stable rendezvous identity within the owner worker.
     uint64_t              ping_sent_at_ms;
     uint64_t              next_ping_at_ms;
-    uint64_t              pause_started_at_ms;
     uint32_t              ping_token;
     bool                  awaiting_pong;
     bool                  peer_keepalive;
@@ -147,6 +146,7 @@ void muxclientTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_cont
 void     muxclientTunnelOnStart(tunnel_t *t);
 void     muxclientKeepaliveWorkerTick(tunnel_t *t, wid_t wid);
 uint64_t muxclientUnansweredPingMS(const muxclient_tstate_t *ts, const muxclient_parent_state_t *state, uint64_t now);
+void     muxclientRetireUnresponsiveParent(tunnel_t *t, muxclient_tstate_t *ts, wid_t wid, line_t **slot);
 
 void muxclientTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void muxclientTunnelUpStreamFinish(tunnel_t *t, line_t *l);

@@ -415,34 +415,29 @@ static void testWatchdogPauseAndEst(void)
     node->fnPauseD(node, line);
     setTime(2035);
     node->fnPauseU(node, line);
-    tick(timer, 4000);
-    twfRequire(lineIsAlive(line) && wire_calls == 1, "watchdog expired during Pause");
-    setTime(4010);
-    node->fnResumeD(node, line);
-    tick(timer, 4015);
-    twfRequire(lineIsAlive(line) && wire_calls == 1, "one Resume cleared overlapping Pause");
-    setTime(4020);
-    node->fnResumeU(node, line);
-    tick(timer, 4039);
-    twfRequire(lineIsAlive(line), "Pause consumed remaining reply tolerance");
-    tick(timer, 4040);
-    twfRequire(! lineIsAlive(line) && finishes == 2, "watchdog did not expire after resumed tolerance");
+    tick(timer, 2039);
+    twfRequire(lineIsAlive(line) && wire_calls == 1, "paused watchdog expired before its deadline");
+    tick(timer, 2040);
+    twfRequire(! lineIsAlive(line) && finishes == 2, "Pause postponed the watchdog deadline");
     teardown();
 
     timer = watchdogSetup(true);
+    setTime(1005);
     node->fnPauseU(node, line);
-    tick(timer, 2000);
-    twfRequire(wire_calls == 0, "watchdog sent ping while replies were paused");
-    node->fnResumeU(node, line);
-    tick(timer, 2001);
-    twfRequire(wire_calls == 1 && lineIsAlive(line), "watchdog failed to send after Resume");
     node->fnPauseD(node, line);
+    tick(timer, 1010);
+    twfRequire(wire_calls == 1 && lineIsAlive(line), "Pause suppressed a due watchdog ping");
     const uint8_t pong[] = {0, 0, 0, 1, 3};
+    setTime(1015);
     decode(node, line, ordinary(pong, sizeof(pong)));
-    tick(timer, 5000);
+    tick(timer, 1020);
+    twfRequire(wire_calls == 2 && lineIsAlive(line), "paused watchdog lost Pong or stopped its ping interval");
+    setTime(1030);
     node->fnResumeD(node, line);
-    tick(timer, 5001);
-    twfRequire(wire_calls == 2 && lineIsAlive(line), "in-flight pong received during Pause was lost");
+    tick(timer, 1049);
+    twfRequire(lineIsAlive(line), "partial Resume shortened the watchdog deadline");
+    tick(timer, 1050);
+    twfRequire(! lineIsAlive(line) && finishes == 2, "overlapping Pause or Resume extended the watchdog deadline");
     teardown();
 }
 
@@ -468,9 +463,11 @@ static void testWatchdogSettings(void)
     twfRequire(timer != NULL, "create disabled watchdog timer");
     weventSetUserData(timer, node);
     ((keepaliveclient_tstate_t *) tunnelGetState(node))->worker_timers[0] = timer;
+    node->fnPauseU(node, line);
+    node->fnPauseD(node, line);
     tick(timer, 1000);
     tick(timer, 1000000);
-    twfRequire(lineIsAlive(line) && wire_calls == 2, "disabled watchdog changed existing ping behavior");
+    twfRequire(lineIsAlive(line) && wire_calls == 2, "Pause suppressed pings with the reply watchdog disabled");
     teardown();
     setup();
     const keepaliveclient_tstate_t *ts = tunnelGetState(node);
@@ -579,9 +576,9 @@ static void testControlAndRejection(void)
                "ping, pong, unknown or empty normal frame changed behavior");
 #ifndef TEST_KEEPALIVE_SERVER
     node->fnPauseD(node, line);
-    twfRequire(keepaliveclientSendPingFrame(node, line) && wire_calls == 1, "timer ping escaped Pause");
+    twfRequire(keepaliveclientSendPingFrame(node, line) && wire_calls == 2, "Pause suppressed the timer ping");
     node->fnResumeD(node, line);
-    twfRequire(keepaliveclientSendPingFrame(node, line) && wire_calls == 2, "timer ping did not resume");
+    twfRequire(keepaliveclientSendPingFrame(node, line) && wire_calls == 3, "Resume changed regular ping behavior");
 #endif
     const uint8_t invalid[] = {0, 0, 0, 0, 1};
     decode(node, line, ordinary(invalid, sizeof(invalid)));

@@ -22,13 +22,10 @@ struct keepaliveclient_lstate_s
     sbuf_t                   *write_active;
     bool                      read_draining;
     bool                      write_draining;
-    bool                      write_paused;
-    bool                      read_paused;
     bool                      established;
     bool                      awaiting_pong;
     uint64_t                  next_ping_at_ms;
     uint64_t                  pong_deadline_ms;
-    uint64_t                  pause_started_at_ms;
     line_t                   *line;
     keepaliveclient_lstate_t *tracked_prev;
     keepaliveclient_lstate_t *tracked_next;

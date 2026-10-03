@@ -275,12 +275,12 @@ Keepalive is enabled by default in all modes. Optional `settings`:
 | --- | --- | --- |
 | `keepalive` | `true` | Send probes, acknowledge replies and allow health-based replacement. `false` disables all three. |
 | `ping-interval` | `15000` | Milliseconds between probes. |
-| `tolerance-ms` | `45000` | Unpaused milliseconds allowed for a matching Pong. |
+| `tolerance-ms` | `45000` | Elapsed milliseconds allowed for a matching Pong, including Pause. |
 
 The switch must be boolean; both durations must be integers in `1..2147483647`,
 even when disabled. Fixed-mode rendezvous remains active when disabled.
 
-One timer per worker probes established selectable parents, not children. Its
+One timer per worker checks and probes established selectable parents, not children. Its
 period is `min(ping-interval, tolerance-ms, 1000)` ms. The first probe is due at
 the first tick after transport Est; later probes obey `ping-interval`. Only one
 probe is outstanding per parent. Ping/Pong has zero payload and uses CID bytes
@@ -290,29 +290,31 @@ peer support. Before that, unanswered discovery is retried without suspicion or
 replacement. This permits a disabled MuxServer responder, but means a parent
 that never answers its first probe has no health-based recovery.
 
-A probe waits while parent output is paused, pumping or queued. Transport Pause
-freezes the outstanding countdown; Resume excludes paused time, without double
-counting repeated signals. Child FlowPause does not suspend the parent watchdog.
-All timestamps use the owner's monotonic clock. Queuing in later nodes and wire
-transfer still consume unpaused tolerance. A permanently paused transport can
-defer detection indefinitely. Idle connections and one-way uploads do not require
-application replies: the Mux peer answers independently.
+Probes and reply deadlines continue through parent transport Pause and child
+FlowPause. Complete Ping/Pong controls may precede paused application output;
+reentrant controls wait only for the current frame callback and retain FIFO token
+order under the same parent charge limit. Ordinary queued frames remain paused.
+All timestamps use the owner's monotonic clock. Queuing in later nodes, local
+Pause and wire transfer consume tolerance. Idle connections and one-way uploads
+do not require application replies: the Mux peer answers independently.
 
 At one quarter of tolerance (rounded down, at least 1 ms; 11250 ms by default),
-fixed selection prefers non-suspect parents. At full tolerance, the next child
-selection may softly retire a parent and refill its slot. A late matching Pong
+fixed selection prefers non-suspect parents. At full tolerance, the worker timer
+or a new-child request may softly retire a parent, including during Pause.
+A replacement is created only on a new-child request. A late matching Pong
 restores a still-selectable parent. A retired parent never rejoins selection;
 its existing children stay attached and continue working until their normal
-finish. It closes after its last child leaves and final output drains. A timed-out
-selectable parent with no children closes through normal parent-loss cleanup,
-including blocked final output.
+finish. It closes after its last child leaves, discarding blocked final output
+without waiting for Resume. A timed-out selectable parent with no children closes
+through normal parent-loss cleanup, including blocked final output.
 
 Per worker, at most `per-worker-connections-count` keepalive-retired parents
 remain in fixed mode, or one in timer/counter modes. Pending final output still
 counts. At the bound, occupied unresponsive parents remain selectable until
 retirement capacity is released; empty ones can still be replaced. Existing
-counter/timer rotation continues independently. Timers only probe: replacement
-runs on a new-child request, with no forced termination of active children.
+counter/timer rotation continues independently. Timers probe and apply expiry;
+replacement creation runs on a new-child request, with no forced termination of
+active children.
 Adapter and peer timeouts remain independent.
 
 ### When a new parent connection is opened
@@ -433,8 +435,10 @@ positive allocation charge and therefore advances every applicable hard queue bu
 The queue-capacity charge is a policy budget, not exact kernel memory or whole-process RSS. Allocator caches, queue-ring
 storage, and the buffer pools' fixed baseline may remain allocated outside a particular live queue's charge.
 
-Parent transport `Pause` immediately stops every parent-bound Payload callback,
-including controls and Close replies. A child submitting Data while transport is
+Parent transport `Pause` stops ordinary parent-bound Payload, including Open,
+Close and flow controls. Empty Ping/Pong controls continue at complete frame
+boundaries, with reentrant controls using a FIFO under the same parent charge
+limit. A child submitting Data while transport is
 blocked acquires an individual local producer hold after its complete payload or
 splice batch is admitted. A direct submission that leaves transport paused also
 holds its writer before returning. A transient Pause followed by Resume uses the
@@ -624,8 +628,9 @@ after partial transfer. Nominal 1 MiB capacity does not prove available slots.
 Best-fit fallback preserves headroom and may exceed a low-profile large tier.
 Pool sizes, pipe targets, protocol limits and JSON defaults remain unchanged.
 
-Pause stops the output pump; Resume preserves FIFO. Nested output and child Close
-follow admitted Data. Child death does not release parent-owned output. Parent
+Pause stops ordinary output; Resume preserves its FIFO. Empty Ping/Pong controls
+continue between complete frame callbacks. Nested application output and child
+Close follow admitted Data. Child death does not release parent-owned output. Parent
 loss discards incoming/output ownership and transfers eligible blocked child
 queues to detached accounting. Pop, transfer and discard settle scalar charges
 before callbacks; final owner cleanup settles every queue. HTTP and ordinary

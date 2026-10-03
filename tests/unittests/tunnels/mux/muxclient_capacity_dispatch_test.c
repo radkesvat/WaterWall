@@ -837,6 +837,7 @@ int main(void)
     caseParentProbeSnapshotReentrancy();
     caseParentProbeOtherModes(kConcurrencyModeCounter);
     caseParentProbeOtherModes(kConcurrencyModeTimer);
+    caseIdleParentTimeoutWhilePaused();
     caseParentHealthClockAndSelection();
     caseParentSoftReplacement(false);
     caseParentSoftReplacement(true);

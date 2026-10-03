@@ -112,9 +112,9 @@ These guardrails do not replace the mandatory guide reading:
 9. Every autonomous normal-line owner must inventory and drain its lines while the
    required loops, chains, tunnel state, and pools remain alive. Termination has one
    coordinator; a shutdown request is not cleanup.
-10. Pause stops new source work and backlog drains. Transforms relay it and may
-    complete bounded admitted input. Follow Part 2 for FIFO admission, receiver
-    tolerance and protocol-storage bounds.
+10. Pause stops application source work and backlog drains. Transforms relay it
+    and may finish bounded input. Part 2 defines FIFO/storage bounds and the
+    Mux/KeepAlive Ping/Pong exception; watchdog deadlines run during Pause.
 11. Tunnel constructors may return `NULL`; check before assigning callbacks or
     accessing state. External callback roots must close admission and quiesce before
     their reachable state is reclaimed.

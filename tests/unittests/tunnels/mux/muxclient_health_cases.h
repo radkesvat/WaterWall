@@ -132,14 +132,8 @@ static void caseParentSoftReplacement(bool blocked_output)
     if (blocked_output)
         muxclientTunnelDownStreamPause(f.mux, old_parent);
     fixtureFinishChild(&f, first);
-    if (blocked_output)
-    {
-        twfRequire(lineIsAlive(old_parent) && ts->worker_states[0].stall_retired_parents == 1,
-                   "retired parent lost pending final output or its resource charge");
-        muxclientTunnelDownStreamResume(f.mux, old_parent);
-    }
     twfRequire(! lineIsAlive(old_parent) && ts->worker_states[0].stall_retired_parents == 0,
-               "retired parent did not settle after its final child/output drained");
+               "expired retired parent waited for Resume after its final child left");
     lineUnref(old_parent);
     line_t *fourth = fixtureOpenChild(&f);
     twfRequire(((muxclient_lstate_t *) lineGetState(fourth, f.mux))->parent->l != replacement,
@@ -330,22 +324,35 @@ static void caseParentProbeDiscoveryAndPause(void)
     twfRequire(! state->awaiting_pong, "ping interval ignored");
     healthTime(&f, 11000);
     muxclientKeepaliveWorkerTick(f.mux, 0);
-    const uint32_t active_token = state->ping_token;
+    sendParentFrame(&f, parent->l, state->ping_token, kMuxFlagPong, 0);
     healthTime(&f, 12000);
     muxclientTunnelDownStreamPause(f.mux, parent->l);
-    healthTime(&f, 112000);
+    healthSend(&f, child);
+    const size_t   queued      = bufferqueueGetBufCount(&state->output.pending);
+    const uint32_t before_ping = f.trace.next_payload;
+    muxclientKeepaliveWorkerTick(f.mux, 0);
+    twfRequire(state->awaiting_pong && f.trace.next_payload == before_ping + 1 &&
+                   bufferqueueGetBufCount(&state->output.pending) == queued && queued != 0,
+               "paused parent blocked its probe or drained application output");
+    const uint32_t active_token = state->ping_token;
+    healthTime(&f, 21999);
     muxclientTunnelDownStreamPause(f.mux, parent->l);
     muxclientKeepaliveWorkerTick(f.mux, 0);
-    twfRequire(state->ping_token == active_token, "paused parent emitted another probe");
-    twfRequire(muxclientUnansweredPingMS(ts, state, 112000) == 1000, "Pause did not freeze elapsed time");
-    twfRequire(healthProbe(&f) == parent->l, "Pause caused parent retirement");
-    muxclientTunnelDownStreamResume(f.mux, parent->l);
-    muxclientTunnelDownStreamResume(f.mux, parent->l);
-    twfRequire(muxclientUnansweredPingMS(ts, state, 112000) == 1000, "Resume double-counted Pause");
-    healthTime(&f, 121000);
-    twfRequire(muxclientUnansweredPingMS(ts, state, 121000) == 10000, "unpaused deadline changed");
+    twfRequire(state->ping_token == active_token && ! parent->selection_retired,
+               "paused parent duplicated its probe or retired before the deadline");
+    twfRequire(muxclientUnansweredPingMS(ts, state, 21999) == 9999, "Pause froze the reply deadline");
+    healthTime(&f, 22000);
+    const uint32_t before_init = f.trace.next_init;
+    muxclientKeepaliveWorkerTick(f.mux, 0);
+    twfRequire(parent->selection_retired && ts->fixed_parent_lines[0] == NULL && lineIsAlive(child) &&
+                   f.trace.next_init == before_init && state->output.transport_paused,
+               "timer did not retire a paused parent without replacing it or killing its child");
     sendParentFrame(&f, parent->l, active_token, kMuxFlagPong, 0);
-    twfRequire(healthProbe(&f) == parent->l, "late matching Pong failed to recover unretired parent");
+    twfRequire(parent->selection_retired && ! state->awaiting_pong,
+               "late matching Pong restored a retired parent to selection");
+    muxclientTunnelDownStreamResume(f.mux, parent->l);
+    muxclientTunnelDownStreamResume(f.mux, parent->l);
+    twfRequire(parent->selection_retired, "Resume restored an expired parent to selection");
     fixtureTeardown(&f);
 }
 
@@ -398,7 +405,13 @@ static void caseParentProbeOtherModes(uint8_t mode)
     line_t             *child  = fixtureOpenChild(&f);
     muxclient_lstate_t *parent = ((muxclient_lstate_t *) lineGetState(child, f.mux))->parent;
     healthStartPing(&f, parent);
+    muxclientTunnelDownStreamPause(f.mux, parent->l);
     healthTime(&f, 10000);
+    const uint32_t before_init = f.trace.next_init;
+    muxclientKeepaliveWorkerTick(f.mux, 0);
+    twfRequire(parent->selection_retired && ts->unsatisfied_lines[0] == NULL && lineIsAlive(child) &&
+                   f.trace.next_init == before_init,
+               "paused non-fixed parent did not retire on the worker timer");
     line_t             *second      = fixtureOpenChild(&f);
     muxclient_lstate_t *replacement = ((muxclient_lstate_t *) lineGetState(second, f.mux))->parent;
     twfRequire(replacement != parent && parent->selection_retired && lineIsAlive(child),
@@ -407,5 +420,35 @@ static void caseParentProbeOtherModes(uint8_t mode)
     healthTime(&f, 20000);
     twfRequire(healthProbe(&f) == replacement->l && ts->worker_states[0].stall_retired_parents == 1,
                "non-fixed recovery exceeded its bound");
+    fixtureTeardown(&f);
+}
+
+static void caseIdleParentTimeoutWhilePaused(void)
+{
+    twfSetCase("worker timer closes an idle expired parent and blocked final output without Resume");
+    muxclient_capacity_fixture_t f;
+    fixtureSetup(&f, kConcurrencyModeFixedConnectionsCount, 1);
+    muxclient_tstate_t *ts = tunnelGetState(f.mux);
+    ts->keepalive          = true;
+    ts->ping_interval_ms   = 1000;
+    ts->pong_timeout_ms    = 10000;
+    healthTime(&f, 1000);
+    line_t             *child    = fixtureOpenChild(&f);
+    muxclient_lstate_t *parent   = ((muxclient_lstate_t *) lineGetState(child, f.mux))->parent;
+    line_t             *parent_l = parent->l;
+    lineRef(parent_l);
+    healthStartPing(&f, parent);
+    muxclientTunnelDownStreamPause(f.mux, parent_l);
+    fixtureFinishChild(&f, child);
+    twfRequire(lineIsAlive(parent_l) && bufferqueueGetBufCount(&parent->parent_state->output.pending) != 0,
+               "idle timeout fixture lost its paused final output");
+    healthTime(&f, 10999);
+    muxclientKeepaliveWorkerTick(f.mux, 0);
+    twfRequire(lineIsAlive(parent_l), "idle parent closed before its reply deadline");
+    healthTime(&f, 11000);
+    muxclientKeepaliveWorkerTick(f.mux, 0);
+    twfRequire(! lineIsAlive(parent_l) && ts->fixed_parent_lines[0] == NULL && f.trace.next_init == 1,
+               "idle expired parent waited for Resume or created a timer-owned replacement");
+    lineUnref(parent_l);
     fixtureTeardown(&f);
 }

@@ -21,6 +21,7 @@ void muxserverLinestateInitialize(tunnel_t *t, muxserver_lstate_t *ls, line_t *l
             abortProgramNow(1);
         }
         bufferqueueInitEmpty(&parent_state->output.pending);
+        bufferqueueInitEmpty(&parent_state->output.keepalive_pending);
         parent_state->child_map               = muxserver_child_map_t_init();
         parent_state->rejection_bucket.tokens = kMuxServerRejectedOpenBurst;
     }

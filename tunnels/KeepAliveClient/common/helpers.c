@@ -30,9 +30,8 @@ static bool keepaliveclientSendControlFrame(tunnel_t *t, line_t *l, uint8_t kind
 
 static bool keepaliveclientCheckPongDeadline(tunnel_t *t, line_t *l, uint64_t now)
 {
-    keepaliveclient_lstate_t *ls         = lineGetState(l, t);
-    const uint64_t            active_now = ls->write_paused || ls->read_paused ? ls->pause_started_at_ms : now;
-    if (ls->awaiting_pong && active_now >= ls->pong_deadline_ms)
+    keepaliveclient_lstate_t *ls = lineGetState(l, t);
+    if (ls->awaiting_pong && now >= ls->pong_deadline_ms)
     {
         keepaliveclient_tstate_t *ts = tunnelGetState(t);
         LOGW("KeepAliveClient: pong timed out (tolerance=%u ms), closing connection", ts->tolerance_ms);
@@ -308,15 +307,13 @@ bool keepaliveclientSendPingFrame(tunnel_t *t, line_t *l)
         const uint64_t now = wloopNowMonotonicMS(getWorkerLoop(lineGetWID(l)));
         if (! keepaliveclientCheckPongDeadline(t, l, now))
             return false;
-        if (ls->write_paused || ls->read_paused || ls->awaiting_pong || now < ls->next_ping_at_ms)
+        if (ls->awaiting_pong || now < ls->next_ping_at_ms)
             return true;
         /* Publish before sending: the callback can deliver its pong inline. */
         ls->awaiting_pong    = true;
         ls->pong_deadline_ms = now + ts->tolerance_ms;
         ls->next_ping_at_ms  = now + ts->ping_interval_ms;
     }
-    else if (ls->write_paused)
-        return true;
     return keepaliveclientSendControlFrame(t, l, kKeepAliveFrameKindPing);
 }
 
@@ -332,53 +329,23 @@ void keepaliveclientTunnelDownStreamEst(tunnel_t *t, line_t *l)
     tunnelPrevDownStreamEst(t, l);
 }
 
-static void keepaliveclientUpdatePause(tunnel_t *t, line_t *l, bool was_paused)
-{
-    keepaliveclient_tstate_t *ts     = tunnelGetState(t);
-    keepaliveclient_lstate_t *ls     = lineGetState(l, t);
-    const bool                paused = ls->write_paused || ls->read_paused;
-    if (! ts->sensitive_mode || was_paused == paused)
-        return;
-    const uint64_t now = wloopNowMonotonicMS(getWorkerLoop(lineGetWID(l)));
-    if (paused)
-        ls->pause_started_at_ms = now;
-    else if (ls->awaiting_pong)
-        ls->pong_deadline_ms += now - ls->pause_started_at_ms;
-}
-
 void keepaliveclientTunnelDownStreamPause(tunnel_t *t, line_t *l)
 {
-    keepaliveclient_lstate_t *ls         = lineGetState(l, t);
-    const bool                was_paused = ls->write_paused || ls->read_paused;
-    ls->write_paused                     = true;
-    keepaliveclientUpdatePause(t, l, was_paused);
     tunnelPrevDownStreamPause(t, l);
 }
 
 void keepaliveclientTunnelDownStreamResume(tunnel_t *t, line_t *l)
 {
-    keepaliveclient_lstate_t *ls         = lineGetState(l, t);
-    const bool                was_paused = ls->write_paused || ls->read_paused;
-    ls->write_paused                     = false;
-    keepaliveclientUpdatePause(t, l, was_paused);
     tunnelPrevDownStreamResume(t, l);
 }
 
 void keepaliveclientTunnelUpStreamPause(tunnel_t *t, line_t *l)
 {
-    keepaliveclient_lstate_t *ls         = lineGetState(l, t);
-    const bool                was_paused = ls->write_paused || ls->read_paused;
-    ls->read_paused                      = true;
-    keepaliveclientUpdatePause(t, l, was_paused);
     tunnelNextUpStreamPause(t, l);
 }
 
 void keepaliveclientTunnelUpStreamResume(tunnel_t *t, line_t *l)
 {
-    keepaliveclient_lstate_t *ls         = lineGetState(l, t);
-    const bool                was_paused = ls->write_paused || ls->read_paused;
-    ls->read_paused                      = false;
-    keepaliveclientUpdatePause(t, l, was_paused);
     tunnelNextUpStreamResume(t, l);
 }
 

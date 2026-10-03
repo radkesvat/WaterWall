@@ -6,8 +6,7 @@ uint64_t muxclientUnansweredPingMS(const muxclient_tstate_t *ts, const muxclient
 {
     if (! ts->keepalive || ! state->peer_keepalive || ! state->awaiting_pong)
         return 0;
-    const uint64_t active_now = state->output.transport_paused ? state->pause_started_at_ms : now;
-    return active_now >= state->ping_sent_at_ms ? active_now - state->ping_sent_at_ms : 0;
+    return now >= state->ping_sent_at_ms ? now - state->ping_sent_at_ms : 0;
 }
 
 static void muxclientProbeParent(tunnel_t *t, line_t *l)
@@ -19,9 +18,6 @@ static void muxclientProbeParent(tunnel_t *t, line_t *l)
     if (parent->parent_state == NULL || parent->parent_finishing || parent->selection_retired)
         return;
     muxclient_parent_state_t *state = parent->parent_state;
-    // This timer is an independent producer. Never enqueue a probe behind local backlog.
-    if (state->output.transport_paused || state->output.pumping || bufferqueueGetBufCount(&state->output.pending))
-        return;
     const uint64_t now = wloopNowMonotonicMS(getWorkerLoop(lineGetWID(l)));
     if (state->awaiting_pong)
     {
@@ -77,7 +73,10 @@ void muxclientKeepaliveWorkerTick(tunnel_t *t, wid_t wid)
     {
         if (snapshot[i] != NULL)
         {
-            muxclientProbeParent(t, snapshot[i]);
+            if (lineIsAlive(snapshot[i]) && slots[i] == snapshot[i])
+                muxclientRetireUnresponsiveParent(t, ts, wid, &slots[i]);
+            if (lineIsAlive(snapshot[i]))
+                muxclientProbeParent(t, snapshot[i]);
             lineUnref(snapshot[i]);
         }
     }

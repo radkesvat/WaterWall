@@ -6,9 +6,6 @@ void muxclientTunnelDownStreamResume(tunnel_t *t, line_t *parent_l)
     muxclient_lstate_t *parent = lineGetState(parent_l, t);
     if (ts->worker_states[lineGetWID(parent_l)].quiescing || parent->parent_finishing)
         return;
-    if (parent->parent_state->output.transport_paused && parent->parent_state->awaiting_pong)
-        parent->parent_state->ping_sent_at_ms +=
-            wloopNowMonotonicMS(getWorkerLoop(lineGetWID(parent_l))) - parent->parent_state->pause_started_at_ms;
     parent->parent_state->output.transport_paused = false;
     muxclientDrainParentOutput(t, parent_l);
 }
