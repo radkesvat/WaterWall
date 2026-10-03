@@ -16,15 +16,20 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, os.environ.get("WATERWALL_TEST_SUPPORT_DIR",
                                 str(Path(__file__).resolve().parent / "support" / "python")))
 from wwtest.run_directory import RunDirectory
+from windows_packed_application_debug import run_with_gdb
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--launcher', type=Path, required=True)
 parser.add_argument('--application', type=Path, required=True)
 parser.add_argument('--wine')
+parser.add_argument('--debugger', default=os.environ.get('WW_WINDOWS_TEST_DEBUGGER'),
+                    help='Run the ordinary TLS workload under native GDB from its first launch')
 parser.add_argument('--tcp-loopback', action='store_true')
 parser.add_argument('--diagnostics-dir', type=Path,
                     default=os.environ.get('WW_WINDOWS_TEST_DIAGNOSTICS'))
 args = parser.parse_args()
+if args.wine and args.debugger:
+    parser.error('The native GDB runner cannot trace Wine children')
 repo = Path(__file__).resolve().parents[1]
 binaries = [args.application.resolve(), args.launcher.resolve()]
 prefix = [args.wine] if args.wine else []
@@ -50,18 +55,25 @@ def comparison_directory():
             raise
 
 
-def run_recorded(command, *, cwd, **kwargs):
+def run_recorded(command, *, cwd, debugger=None, **kwargs):
     # Keep the exact command and complete output before an assertion can remove
     # its temporary fixture. Do not dump the environment (it can contain CI secrets).
     record = {'command': command, 'cwd': str(cwd.relative_to(root)),
               'timeout': kwargs['timeout']}
+    if debugger:
+        record['debugger'] = debugger
+        record['debugger_log'] = str((cwd/'gdb.log').relative_to(root))
     if 'input' in kwargs:
         (root/'stdin.bin').write_bytes(kwargs['input'])
         record['stdin'] = 'stdin.bin'
     record_path = root/'failure.json'
     record_path.write_text(json.dumps(record, indent=2), encoding='utf-8')
     try:
-        result = subprocess.run(command, cwd=cwd, **kwargs)
+        if debugger:
+            result = run_with_gdb(command, cwd=cwd, env=kwargs['env'],
+                                  timeout=kwargs['timeout'], debugger=debugger)
+        else:
+            result = subprocess.run(command, cwd=cwd, **kwargs)
     except subprocess.TimeoutExpired as error:
         record['timed_out'] = True
         (root/'stdout.log').write_bytes(error.stdout or b'')
@@ -95,15 +107,19 @@ with comparison_directory() as temporary:
         assert results[0] == results[1], results
 
     cases = ['tls_roundtrip'] + (['tcp_loopback'] if args.tcp_loopback else [])
-    for binary in binaries:
+    workloads = [(binaries[0], args.debugger)] if args.debugger else []
+    # Debugging can change timing; keep both original direct-execution checks.
+    workloads += [(binary, None) for binary in binaries]
+    for binary, debugger in workloads:
         for case in cases:
-            run = root / (binary.name + '-' + case)
+            run = root / (binary.name + '-' + case + ('-debugger' if debugger else ''))
             shutil.copytree(repo/'tests/cases'/case, run)
             core = {'log': {'path': 'log/'}, 'configs': ['config.json'],
                     'misc': {'workers': 4, 'ram-profile': 'client', 'mtu': 1500, 'try-enabling-bbr': False}}
             (run/'core.json').write_text(json.dumps(core), encoding='utf-8')
             result = run_recorded(prefix+[str(binary)], cwd=run, env=env,
-                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=60)
+                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=60,
+                                    debugger=debugger)
             logs = b'\n'.join(path.read_bytes() for path in (run/'log').glob('*.log'))
             assert result.returncode == 0 and b'worker lines completed successfully' in logs, (
                 binary, case, result.returncode, result.stdout[-4000:], logs[-4000:])

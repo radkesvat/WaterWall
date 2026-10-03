@@ -77,8 +77,14 @@ to establish the full application's size reduction: compare the final launcher
 against its matched finalized embedded application instead.
 
 Windows x86/x64 CI uploads the packed `Waterwall.exe` under the existing artifact
-names after the bootstrap checks and full application comparison pass. ARM64
-remains ordinary; development presets retain their defaults. The launcher uses
+names after the bootstrap checks and full application comparison pass. MSYS jobs
+set `WW_WINDOWS_TEST_DEBUGGER=gdb` to capture the ordinary TLS workload on its first
+execution; GDB preserves child exit status and writes fatal backtraces into the
+retained fixture. Both ordinary and packed validation still run directly afterward,
+with one failure-only replay when no first-run trace exists. Diagnostic artifacts
+stay separate from release archives, which contain only the final executable.
+ARM64 remains ordinary; development
+presets retain their defaults. The launcher uses
 temporary extraction and a separate child process. Read Developer Guide Parts 6
 and 7 for deployment and lifetime limitations, including local ACL-capable
 temporary storage, incompatible jobs,

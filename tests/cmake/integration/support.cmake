@@ -1,4 +1,9 @@
 # Explicit integration registrations; preserve namespace and family variants.
+add_test(NAME waterwall.ci_artifacts_and_debugger
+  COMMAND "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/ci_artifacts_and_debugger_test.py")
+set_tests_properties(waterwall.ci_artifacts_and_debugger PROPERTIES
+  TIMEOUT 90 LABELS "unit;test-harness;ci;release;debugger")
+
 add_test(
   NAME waterwall.application_shutdown_authority_policy
   COMMAND "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/application_shutdown_authority_policy_test.py"

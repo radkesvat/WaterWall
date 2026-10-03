@@ -168,7 +168,8 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: Waterwall-android-${{ matrix.arch }}
-          path: ${{ github.workspace }}/build/${{ matrix.preset }}/Release/
+          path: ${{ github.workspace }}/build/${{ matrix.preset }}/Release/Waterwall
+          if-no-files-found: error
 
       - name: Show ccache statistics
         run: ccache -sv
@@ -234,6 +235,7 @@ jobs:
         with:
           name: Waterwall-${{ matrix.names }}
           path: ${{ github.workspace }}/build/Waterwall
+          if-no-files-found: error
 
   ios:
     strategy:
@@ -308,7 +310,7 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: Waterwall-${{ matrix.artifact }}
-          path: ${{ github.workspace }}/artifacts/${{ matrix.preset }}/
+          path: ${{ github.workspace }}/artifacts/${{ matrix.preset }}/Waterwall
           if-no-files-found: error
       - name: Show ccache statistics
         run: ccache -sv
@@ -403,7 +405,7 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: Waterwall-${{ matrix.preset }}
-          path: ${{ github.workspace }}/build/${{ matrix.preset }}/Release/${{ matrix.pack_runtime == 'ON' && 'Waterwall' || '' }}
+          path: ${{ github.workspace }}/build/${{ matrix.preset }}/Release/Waterwall
           if-no-files-found: error
       - name: Show ccache statistics
         run: ccache -sv
@@ -625,7 +627,7 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: Waterwall-macos-${{ matrix.arch }}
-          path: ${{ github.workspace }}/build/${{ matrix.preset }}/Release/
+          path: ${{ github.workspace }}/build/${{ matrix.preset }}/Release/Waterwall
           if-no-files-found: error
 
       - name: Show ccache statistics
@@ -677,6 +679,7 @@ jobs:
             ccache:p
             cmake:p
             gcc:p
+            gdb:p
             make:p
             nasm:p
             ninja:p
@@ -708,6 +711,7 @@ jobs:
             ccache:p
             cmake:p
             gcc:p
+            gdb:p
             make:p
             nasm:p
             ninja:p
@@ -737,6 +741,7 @@ jobs:
             ccache:p
             cmake:p
             gcc:p
+            gdb:p
             make:p
             nasm:p
             ninja:p
@@ -780,6 +785,7 @@ jobs:
         id: packed_application
         env:
           WW_WINDOWS_TEST_DIAGNOSTICS: ${{ github.workspace }}/build/ci-diagnostics/packed-application
+          WW_WINDOWS_TEST_DEBUGGER: gdb
         run: >
           ctest --test-dir build/${{ matrix.preset }} -C Release --no-tests=error --output-on-failure
           -R '^waterwall.windows_packed_application$'
@@ -790,11 +796,9 @@ jobs:
         timeout-minutes: 5
         run: |
           set -o pipefail
-          {
-            pacman -S --needed --noconfirm "${MINGW_PACKAGE_PREFIX}-gdb" &&
-            python tests/windows_packed_application_debug.py \
-              --diagnostics-dir build/ci-diagnostics/packed-application
-          } 2>&1 | tee build/ci-diagnostics/debugger-setup.log
+          python tests/windows_packed_application_debug.py \
+            --diagnostics-dir build/ci-diagnostics/packed-application \
+            2>&1 | tee build/ci-diagnostics/debugger-setup.log
 
       - name: Collect Windows failure events
         if: failure()
@@ -945,7 +949,7 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: Waterwall-${{ matrix.preset }}
-          path: ${{ github.workspace }}/build/${{ matrix.preset }}/Release/${{ matrix.pack_runtime == 'ON' && 'Waterwall.exe' || '' }}
+          path: ${{ github.workspace }}/build/${{ matrix.preset }}/Release/Waterwall.exe
           if-no-files-found: error
 
       - name: Show ccache statistics
@@ -974,6 +978,7 @@ jobs:
         - name: Download artifacts
           uses: actions/download-artifact@v7
           with:
+            pattern: Waterwall-*
             path: downloaded_artifacts
 
         - name: Extract version
@@ -1003,16 +1008,7 @@ jobs:
 
         - name: Zip release files
           if: steps.check_tag.outputs.exists == 'false'
-          run: |
-            ls -ln downloaded_artifacts
-            mkdir -p zipped_artifacts
-            for dir in downloaded_artifacts/*; do
-              if [ -d "$dir" ]; then
-                base=$(basename "$dir")
-                cd "$dir" && zip -r "../../zipped_artifacts/${base}.zip" .
-                cd ../..
-              fi
-            done
+          run: python3 tests/package_release_artifacts.py downloaded_artifacts zipped_artifacts
 
 
         - name: Create GitHub Release
