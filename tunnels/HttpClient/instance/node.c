@@ -19,7 +19,7 @@ node_t nodeHttpClientGet(void)
              .node_settings_json    = NULL,
              .node_manager_config   = NULL,
              .instance              = NULL,
-             .flags                 = kNodeFlagNone,
+             .flags                 = kNodeFlagBlocksSplice,
              .required_padding_left = kHttpClientRequiredPaddingLeft,
              .layer_group           = kNodeLayer4,
              .layer_group_next_node = kNodeLayer4,
