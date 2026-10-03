@@ -44,6 +44,47 @@ static void healthStartPing(muxclient_capacity_fixture_t *f, muxclient_lstate_t 
     twfRequire(parent->parent_state->awaiting_pong, "probe was not sent");
 }
 
+static void caseParentFirstProbeWaitsForInterval(bool marked_by_next)
+{
+    twfSetCase("first probe waits a full interval after Est without stalling the parent");
+    muxclient_capacity_fixture_t f;
+    fixtureSetup(&f, kConcurrencyModeFixedConnectionsCount, 1);
+    muxclient_tstate_t *ts = tunnelGetState(f.mux);
+    ts->keepalive          = true;
+    ts->ping_interval_ms   = 10000;
+    ts->pong_timeout_ms    = 1000;
+    healthTime(&f, 1000);
+    line_t                   *child  = fixtureOpenChild(&f);
+    muxclient_lstate_t       *parent = ((muxclient_lstate_t *) lineGetState(child, f.mux))->parent;
+    muxclient_parent_state_t *state  = parent->parent_state;
+    /* A downstream junction may mark its shared line before forwarding Est. */
+    if (marked_by_next)
+        lineMarkEstablished(parent->l);
+    healthTime(&f, 100000);
+    muxclientKeepaliveWorkerTick(f.mux, 0);
+    twfRequire(! state->awaiting_pong, "first probe ran before transport Est");
+    muxclientTunnelDownStreamEst(f.mux, parent->l);
+    muxclientKeepaliveWorkerTick(f.mux, 0);
+    twfRequire(state->ping_token == 0 && ! state->awaiting_pong, "Est triggered an immediate first probe");
+    healthTime(&f, 105000);
+    twfRequire(healthProbe(&f) == parent->l && muxclientUnansweredPingMS(ts, state, 105000) == 0 &&
+                   ! parent->selection_retired && lineIsAlive(child),
+               "waiting for the first probe stalled the parent or blocked new children");
+    muxclientTunnelDownStreamPause(f.mux, parent->l);
+    muxclientTunnelDownStreamEst(f.mux, parent->l);
+    const uint32_t before_ping = f.trace.next_payload;
+    healthTime(&f, 109999);
+    muxclientKeepaliveWorkerTick(f.mux, 0);
+    twfRequire(f.trace.next_payload == before_ping && ! state->awaiting_pong && ! parent->selection_retired,
+               "first probe escaped its interval or its unsent deadline retired the parent");
+    healthTime(&f, 110000);
+    muxclientKeepaliveWorkerTick(f.mux, 0);
+    twfRequire(f.trace.next_payload == before_ping + 1 && state->awaiting_pong && state->ping_sent_at_ms == 110000 &&
+                   ! parent->selection_retired && lineIsAlive(child),
+               "first probe was postponed by repeated Est or Pause");
+    fixtureTeardown(&f);
+}
+
 static void caseParentHealthClockAndSelection(void)
 {
     twfSetCase("selection uses matching Pong and monotonic time, not user traffic or child count");
@@ -243,10 +284,12 @@ static void caseParentHealthReentrantReply(void)
     ts->keepalive              = true;
     ts->ping_interval_ms       = 1000;
     ts->pong_timeout_ms        = 10000;
+    healthTime(&f, 0);
     line_t             *child  = fixtureOpenChild(&f);
     muxclient_lstate_t *parent = ((muxclient_lstate_t *) lineGetState(child, f.mux))->parent;
     f.next->fnPayloadU         = healthImmediateReply;
     muxclientTunnelDownStreamEst(f.mux, parent->l);
+    healthTime(&f, 1000);
     muxclientKeepaliveWorkerTick(f.mux, 0);
     twfRequire(! parent->parent_state->awaiting_pong && parent->parent_state->peer_keepalive,
                "inline Pong failed to confirm support or clear the probe");
@@ -306,12 +349,14 @@ static void caseParentProbeDiscoveryAndPause(void)
     muxclientKeepaliveWorkerTick(f.mux, 0);
     twfRequire(! state->awaiting_pong, "probe sent before transport Est");
     muxclientTunnelDownStreamEst(f.mux, parent->l);
+    healthTime(&f, 1000);
     muxclientKeepaliveWorkerTick(f.mux, 0);
     const uint32_t first = state->ping_token;
-    healthTime(&f, 9999);
+    twfRequire(state->awaiting_pong, "first discovery probe missed its interval");
+    healthTime(&f, 10999);
     muxclientKeepaliveWorkerTick(f.mux, 0);
     twfRequire(state->ping_token == first, "more than one probe outstanding");
-    healthTime(&f, 10000);
+    healthTime(&f, 11000);
     twfRequire(healthProbe(&f) == parent->l, "unsupported peer was replaced");
     muxclientKeepaliveWorkerTick(f.mux, 0);
     twfRequire(state->ping_token != first && ! state->peer_keepalive, "discovery did not retry");
@@ -319,13 +364,13 @@ static void caseParentProbeDiscoveryAndPause(void)
     twfRequire(state->awaiting_pong && ! state->peer_keepalive, "stale discovery Pong accepted");
     sendParentFrame(&f, parent->l, state->ping_token, kMuxFlagPong, 0);
     twfRequire(state->peer_keepalive && ! state->awaiting_pong, "matching Pong failed discovery");
-    healthTime(&f, 10999);
+    healthTime(&f, 11999);
     muxclientKeepaliveWorkerTick(f.mux, 0);
     twfRequire(! state->awaiting_pong, "ping interval ignored");
-    healthTime(&f, 11000);
+    healthTime(&f, 12000);
     muxclientKeepaliveWorkerTick(f.mux, 0);
     sendParentFrame(&f, parent->l, state->ping_token, kMuxFlagPong, 0);
-    healthTime(&f, 12000);
+    healthTime(&f, 13000);
     muxclientTunnelDownStreamPause(f.mux, parent->l);
     healthSend(&f, child);
     const size_t   queued      = bufferqueueGetBufCount(&state->output.pending);
@@ -335,13 +380,13 @@ static void caseParentProbeDiscoveryAndPause(void)
                    bufferqueueGetBufCount(&state->output.pending) == queued && queued != 0,
                "paused parent blocked its probe or drained application output");
     const uint32_t active_token = state->ping_token;
-    healthTime(&f, 21999);
+    healthTime(&f, 22999);
     muxclientTunnelDownStreamPause(f.mux, parent->l);
     muxclientKeepaliveWorkerTick(f.mux, 0);
     twfRequire(state->ping_token == active_token && ! parent->selection_retired,
                "paused parent duplicated its probe or retired before the deadline");
-    twfRequire(muxclientUnansweredPingMS(ts, state, 21999) == 9999, "Pause froze the reply deadline");
-    healthTime(&f, 22000);
+    twfRequire(muxclientUnansweredPingMS(ts, state, 22999) == 9999, "Pause froze the reply deadline");
+    healthTime(&f, 23000);
     const uint32_t before_init = f.trace.next_init;
     muxclientKeepaliveWorkerTick(f.mux, 0);
     twfRequire(parent->selection_retired && ts->fixed_parent_lines[0] == NULL && lineIsAlive(child) &&
@@ -379,11 +424,13 @@ static void caseParentProbeSnapshotReentrancy(void)
     ts->keepalive          = true;
     ts->ping_interval_ms   = 1000;
     ts->pong_timeout_ms    = 10000;
+    healthTime(&f, 0);
     discard fixtureOpenChild(&f);
     for (unsigned i = 0; i < 2; ++i)
         muxclientTunnelDownStreamEst(f.mux, ts->fixed_parent_lines[i]);
     health_other_parent = ts->fixed_parent_lines[1];
     f.next->fnPayloadU  = healthCloseSnapshot;
+    healthTime(&f, 1000);
     muxclientKeepaliveWorkerTick(f.mux, 0);
     twfRequire(ts->worker_states[0].owned_parents == NULL, "snapshot retained closed parents");
     f.next->fnPayloadU = twfNextPayload;

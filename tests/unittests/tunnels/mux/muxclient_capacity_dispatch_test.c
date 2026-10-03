@@ -833,6 +833,8 @@ static void caseIdleParentWaitsForOutput(uint8_t mode, bool stop)
 
 int main(void)
 {
+    caseParentFirstProbeWaitsForInterval(false);
+    caseParentFirstProbeWaitsForInterval(true);
     caseParentProbeDiscoveryAndPause();
     caseParentProbeSnapshotReentrancy();
     caseParentProbeOtherModes(kConcurrencyModeCounter);

@@ -198,6 +198,12 @@ static void snapshotNextPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     }
 }
 
+static void snapshotOwnerEst(tunnel_t *t, line_t *l)
+{
+    discard t;
+    discard l;
+}
+
 static void caseTimerSnapshotRetainsEveryLineAcrossReentrantClose(void)
 {
     twfSetCase("keepaliveclient timer snapshot retains later lines across re-entrant close");
@@ -216,6 +222,7 @@ static void caseTimerSnapshotRetainsEveryLineAcrossReentrantClose(void)
     twfRequire(owner != NULL && keepalive != NULL && next != NULL, "failed to create timer snapshot tunnels");
 
     owner->fnFinD     = snapshotOwnerFinish;
+    owner->fnEstD     = snapshotOwnerEst;
     keepalive->fnFinD = keepaliveclientTunnelDownStreamFinish;
     next->fnPayloadU  = snapshotNextPayload;
     tunnelBind(owner, keepalive);
@@ -223,6 +230,7 @@ static void caseTimerSnapshotRetainsEveryLineAcrossReentrantClose(void)
 
     keepaliveclient_tstate_t *ts = tunnelGetState(keepalive);
     mutexInit(&ts->lines_mutex);
+    ts->ping_interval_ms = kTestPingIntervalMs;
 
     twf_line_pool_t line_pool;
     twfLinePoolSetup(&line_pool, keepalive->lstate_size, 4);
@@ -234,6 +242,8 @@ static void caseTimerSnapshotRetainsEveryLineAcrossReentrantClose(void)
     keepaliveclientTrackLine(keepalive, later_line);
     keepaliveclientLinestateInitialize(lineGetState(first_line, keepalive), first_line);
     keepaliveclientTrackLine(keepalive, first_line);
+    keepaliveclientTunnelDownStreamEst(keepalive, later_line);
+    keepaliveclientTunnelDownStreamEst(keepalive, first_line);
 
     keepaliveclient_snapshot_owner_state_t *owner_state = tunnelGetState(owner);
     owner_state->must_be_retained                       = later_line;
@@ -246,6 +256,7 @@ static void caseTimerSnapshotRetainsEveryLineAcrossReentrantClose(void)
     twfRequire(timer != NULL, "failed to create timer snapshot fixture timer");
     weventSetUserData(timer, keepalive);
 
+    g_env.loops[0]->cur_hrtime += (uint64_t) kTestPingIntervalMs * 1000U;
     keepaliveclientWorkerTimerCallback(timer);
 
     twfRequireEqualU32(next_state->payload_count, 1, "the timer pinged a line that was closed re-entrantly");

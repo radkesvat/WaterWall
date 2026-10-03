@@ -333,6 +333,44 @@ static void tick(wtimer_t *timer, uint64_t now)
     keepaliveclientWorkerTimerCallback(timer);
 }
 
+static void testFirstPingInterval(bool sensitive)
+{
+    setupWithSettings(sensitive ? "{\"ping-interval\":100,\"sensitive-mode\":true,\"tolerance-ms\":10}"
+                                : "{\"ping-interval\":100,\"sensitive-mode\":false,\"tolerance-ms\":10}");
+    keepaliveclient_tstate_t *ts    = tunnelGetState(node);
+    keepaliveclient_lstate_t *ls    = lineGetState(line, node);
+    wtimer_t                 *timer = wtimerAdd(env.loop, keepaliveclientWorkerTimerCallback, 100, INFINITE);
+    twfRequire(timer != NULL, "create first-ping fixture timer");
+    weventSetUserData(timer, node);
+    ts->worker_timers[0] = timer;
+    tick(timer, 2000);
+    twfRequire(wire_calls == 0 && lineIsAlive(line), "first ping ran before transport Est");
+    node->fnEstD(node, line);
+    tick(timer, 2000);
+    twfRequire(wire_calls == 0 && ! ls->awaiting_pong, "Est triggered an immediate first ping");
+    encode(node, line, ordinary("A", 1));
+    twfRequire(wire_calls == 1 && lineIsAlive(line), "waiting for the first ping blocked application data");
+    setTime(2050);
+    node->fnPauseU(node, line);
+    node->fnPauseD(node, line);
+    node->fnEstD(node, line);
+    tick(timer, 2099);
+    twfRequire(wire_calls == 1 && ! ls->awaiting_pong && ls->pong_deadline_ms == 0 && lineIsAlive(line),
+               "first ping escaped its interval or its unsent deadline closed the line");
+    tick(timer, 2100);
+    twfRequire(wire_calls == 2 && ls->awaiting_pong == sensitive && lineIsAlive(line) &&
+                   memoryCompare(wire + wire_length - 5, "\0\0\0\1\2", 5) == 0,
+               "first ping was postponed by repeated Est or Pause");
+    if (! sensitive)
+    {
+        tick(timer, 2199);
+        twfRequire(wire_calls == 2, "regular ping interval was shortened");
+        tick(timer, 2200);
+        twfRequire(wire_calls == 3 && lineIsAlive(line), "regular pings stopped with the watchdog disabled");
+    }
+    teardown();
+}
+
 static void testWatchdogTimeout(void)
 {
     wtimer_t *timer = watchdogSetup(true);
@@ -463,9 +501,11 @@ static void testWatchdogSettings(void)
     twfRequire(timer != NULL, "create disabled watchdog timer");
     weventSetUserData(timer, node);
     ((keepaliveclient_tstate_t *) tunnelGetState(node))->worker_timers[0] = timer;
+    setTime(1000);
+    node->fnEstD(node, line);
     node->fnPauseU(node, line);
     node->fnPauseD(node, line);
-    tick(timer, 1000);
+    tick(timer, 1010);
     tick(timer, 1000000);
     twfRequire(lineIsAlive(line) && wire_calls == 2, "Pause suppressed pings with the reply watchdog disabled");
     teardown();
@@ -575,9 +615,14 @@ static void testControlAndRejection(void)
     twfRequire(plain_calls == 0 && wire_length == 5 && memoryCompare(wire, "\0\0\0\1\3", 5) == 0,
                "ping, pong, unknown or empty normal frame changed behavior");
 #ifndef TEST_KEEPALIVE_SERVER
+    setTime(1000);
+    node->fnEstD(node, line);
     node->fnPauseD(node, line);
+    setTime(31000);
     twfRequire(keepaliveclientSendPingFrame(node, line) && wire_calls == 2, "Pause suppressed the timer ping");
     node->fnResumeD(node, line);
+    twfRequire(keepaliveclientSendPingFrame(node, line) && wire_calls == 2, "Resume accelerated the next ping");
+    setTime(61000);
     twfRequire(keepaliveclientSendPingFrame(node, line) && wire_calls == 3, "Resume changed regular ping behavior");
 #endif
     const uint8_t invalid[] = {0, 0, 0, 0, 1};
@@ -703,6 +748,8 @@ static void testLargePipeFrame(void)
 int main(void)
 {
 #ifndef TEST_KEEPALIVE_SERVER
+    testFirstPingInterval(false);
+    testFirstPingInterval(true);
     testWatchdogTimeout();
     testWatchdogReplies();
     testWatchdogPauseAndEst();

@@ -12,12 +12,14 @@ uint64_t muxclientUnansweredPingMS(const muxclient_tstate_t *ts, const muxclient
 static void muxclientProbeParent(tunnel_t *t, line_t *l)
 {
     muxclient_tstate_t *ts = tunnelGetState(t);
-    if (! lineIsAlive(l) || ! lineIsEstablished(l) || ts->worker_states[lineGetWID(l)].quiescing)
+    if (! lineIsAlive(l) || ts->worker_states[lineGetWID(l)].quiescing)
         return;
     muxclient_lstate_t *parent = lineGetState(l, t);
     if (parent->parent_state == NULL || parent->parent_finishing || parent->selection_retired)
         return;
     muxclient_parent_state_t *state = parent->parent_state;
+    if (! state->transport_established)
+        return;
     const uint64_t now = wloopNowMonotonicMS(getWorkerLoop(lineGetWID(l)));
     if (state->awaiting_pong)
     {

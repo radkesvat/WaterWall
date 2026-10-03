@@ -46,8 +46,14 @@ Frame kinds are:
 `KeepAliveClient` tracks each initialized line in tunnel state and starts one periodic timer per worker during
 `onStart()`.
 
-With sensitive mode disabled, every `ping-interval` milliseconds the worker-local timer walks the tracked lines for
-that worker and sends one empty `ping` frame on each still-alive line, including during Pause.
+In both modes, the first ping is due one `ping-interval` after downstream transport
+`Est`. The worker timer sends it on the first check at or after that deadline.
+Application traffic can flow during this wait; a reply deadline starts only when
+a ping is sent in sensitive mode.
+
+With sensitive mode disabled, the worker-local timer checks every `ping-interval`
+milliseconds and sends one empty `ping` frame on each still-alive line whose ping
+is due. Pause does not suppress these control frames.
 
 Default interval:
 
@@ -55,8 +61,7 @@ Default interval:
 
 ## Optional Reply Watchdog
 
-`sensitive-mode` defaults to `false`. When enabled, the first ping is due one
-`ping-interval` after downstream transport `Est`. Only one ping is outstanding
+`sensitive-mode` defaults to `false`. When enabled, only one ping is outstanding
 per line. An empty pong on that same line acknowledges it; application frames,
 peer pings, unknown kinds and nonempty pongs do not.
 

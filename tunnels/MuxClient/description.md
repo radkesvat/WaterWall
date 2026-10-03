@@ -281,8 +281,10 @@ The switch must be boolean; both durations must be integers in `1..2147483647`,
 even when disabled. Fixed-mode rendezvous remains active when disabled.
 
 One timer per worker checks and probes established selectable parents, not children. Its
-period is `min(ping-interval, tolerance-ms, 1000)` ms. The first probe is due at
-the first tick after transport Est; later probes obey `ping-interval`. Only one
+period is `min(ping-interval, tolerance-ms, 1000)` ms. The first probe is due one
+`ping-interval` after transport Est and is sent on the first tick at or after that
+deadline. Waiting for it does not make the parent suspect or block new children.
+Later probes obey `ping-interval`, and reply timing starts when a probe is sent. Only one
 probe is outstanding per parent. Ping/Pong has zero payload and uses CID bytes
 as a 32-bit token. Only a complete matching Pong on that parent acknowledges it;
 Data, partial frames and wrong tokens do not. The first matching reply confirms

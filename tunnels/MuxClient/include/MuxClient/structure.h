@@ -32,6 +32,7 @@ typedef struct muxclient_parent_state_s
     uint64_t              ping_sent_at_ms;
     uint64_t              next_ping_at_ms;
     uint32_t              ping_token;
+    bool                  transport_established;
     bool                  awaiting_pong;
     bool                  peer_keepalive;
     bool                  stall_retired;

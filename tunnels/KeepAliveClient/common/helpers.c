@@ -300,19 +300,24 @@ bool keepaliveclientSendPingFrame(tunnel_t *t, line_t *l)
 {
     keepaliveclient_tstate_t *ts = tunnelGetState(t);
     keepaliveclient_lstate_t *ls = lineGetState(l, t);
+    if (! ls->established)
+        return true;
+    const uint64_t now = wloopNowMonotonicMS(getWorkerLoop(lineGetWID(l)));
     if (ts->sensitive_mode)
     {
-        if (! ls->established)
-            return true;
-        const uint64_t now = wloopNowMonotonicMS(getWorkerLoop(lineGetWID(l)));
         if (! keepaliveclientCheckPongDeadline(t, l, now))
             return false;
-        if (ls->awaiting_pong || now < ls->next_ping_at_ms)
+        if (ls->awaiting_pong)
             return true;
+    }
+    if (now < ls->next_ping_at_ms)
+        return true;
+    ls->next_ping_at_ms = now + ts->ping_interval_ms;
+    if (ts->sensitive_mode)
+    {
         /* Publish before sending: the callback can deliver its pong inline. */
         ls->awaiting_pong    = true;
         ls->pong_deadline_ms = now + ts->tolerance_ms;
-        ls->next_ping_at_ms  = now + ts->ping_interval_ms;
     }
     return keepaliveclientSendControlFrame(t, l, kKeepAliveFrameKindPing);
 }
