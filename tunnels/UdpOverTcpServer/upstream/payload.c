@@ -2,142 +2,73 @@
 
 #include "loggers/network_logger.h"
 
-static sbuf_t *tryReadCompletePacket(buffer_stream_t *stream)
-{
-    if (bufferstreamGetBufLen(stream) < kHeaderSize + 1)
-    {
-        return NULL;
-    }
-
-    uint8_t packet_first_bytes[kHeaderSize];
-    bufferstreamViewBytesAt(stream, 0, packet_first_bytes, kHeaderSize);
-
-    uint16_t total_packet_size_network;
-    sbufByteCopy(&total_packet_size_network, packet_first_bytes, (uint32_t) sizeof(total_packet_size_network));
-    uint16_t total_packet_size = ntohs(total_packet_size_network);
-
-    // Validate packet size (minimum IP header size, maximum reasonable size)
-    if (total_packet_size < 1 || ((uint32_t) (total_packet_size  + kHeaderSize)) > (uint32_t) bufferstreamGetBufLen(stream))
-    {
-        return NULL;
-    }
-
-    // Read the complete packet (header + payload)
-    sbuf_t *packet_buffer = bufferstreamReadExact(stream, kHeaderSize + total_packet_size);
-    sbufShiftRight(packet_buffer, kHeaderSize);
-
-    return packet_buffer;
-}
-
-static void setDestinationProtocol(line_t *l, uint8_t protocol)
-{
-    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(l), protocol);
-}
-
-static bool initializeUpstream(tunnel_t *t, line_t *l, udpovertcpserver_lstate_t *ls, uint8_t protocol)
-{
-    setDestinationProtocol(l, protocol);
-    ls->upstream_initialized = true;
-    ls->tcp_mode             = protocol == IP_PROTO_TCP;
-    return lineCallWithRef(l, tunnelNextUpStreamInit, t);
-}
-
-static bool consumeProtocolMarker(tunnel_t *t, line_t *l, udpovertcpserver_lstate_t *ls)
-{
-    if (bufferstreamGetBufLen(&ls->read_stream) < kProtocolMarkerSize)
-    {
-        return true;
-    }
-
-    uint8_t protocol = bufferstreamViewByteAt(&ls->read_stream, kHeaderSize);
-    sbuf_t *marker   = bufferstreamReadExact(&ls->read_stream, kProtocolMarkerSize);
-    lineReuseBuffer(l, marker);
-
-    if (protocol != IP_PROTO_TCP && protocol != IP_PROTO_UDP)
-    {
-        LOGW("UdpOverTcpServer: invalid protocol marker: %u", (unsigned int) protocol);
-        bufferstreamEmpty(&ls->read_stream);
-        return false;
-    }
-
-    return initializeUpstream(t, l, ls, protocol);
-}
-
-static bool ensureUpstreamInitialized(tunnel_t *t, line_t *l, udpovertcpserver_lstate_t *ls)
-{
-    if (ls->upstream_initialized)
-    {
-        return true;
-    }
-
-    if (bufferstreamGetBufLen(&ls->read_stream) < kHeaderSize)
-    {
-        return true;
-    }
-
-    uint8_t packet_first_bytes[kHeaderSize];
-    bufferstreamViewBytesAt(&ls->read_stream, 0, packet_first_bytes, kHeaderSize);
-
-    uint16_t total_packet_size_network;
-    sbufByteCopy(&total_packet_size_network, packet_first_bytes, (uint32_t) sizeof(total_packet_size_network));
-    uint16_t total_packet_size = ntohs(total_packet_size_network);
-
-    if (total_packet_size == 0)
-    {
-        return consumeProtocolMarker(t, l, ls);
-    }
-
-    return initializeUpstream(t, l, ls, IP_PROTO_UDP);
-}
-
-static bool isOverFlow(buffer_stream_t *read_stream)
-{
-    if (bufferstreamGetBufLen(read_stream) > (uint32_t) (kMaxAllowedUDPPacketLength * 2))
-    {
-        LOGW("UdpOverTcpServer: UpStreamPayload: Read stream overflow, size: %zu, limit: %zu",
-             bufferstreamGetBufLen(read_stream), (uint32_t) (kMaxAllowedUDPPacketLength * 2));
-        return true; // Return true when overflow IS detected
-    }
-    return false; // Return false when no overflow
-}
-
 void udpovertcpserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     udpovertcpserver_lstate_t *ls = lineGetState(l, t);
-
-    bufferstreamPush(&(ls->read_stream), buf);
-
-    if (! ensureUpstreamInitialized(t, l, ls))
+    assert(ls->read_stream != NULL);
+    if (sbufGetLength(buf) == 0)
     {
+        lineReuseBuffer(l, buf);
         return;
     }
-
-    while (true)
+    if (ls->read_draining)
     {
-        if (! ensureUpstreamInitialized(t, l, ls))
+        const size_t bytes  = splicestreamLength(ls->read_stream);
+        const size_t charge = splicestreamCharge(ls->read_stream);
+        if (bytes > kMaxReentryBytes || sbufGetLength(buf) > kMaxReentryBytes - bytes || charge > kReadChargeLimit ||
+            sbufGetQueueCharge(buf) > kReadChargeLimit - charge)
         {
+            lineReuseBuffer(l, buf);
+            LOGW("UdpOverTcpServer: decoder reentry limit exceeded");
+            udpovertcpserverCloseLine(t, l);
             return;
         }
-        if (! ls->upstream_initialized)
-        {
-            break;
-        }
-
-        sbuf_t *packet_buffer = tryReadCompletePacket(&(ls->read_stream));
-
-        if (! packet_buffer)
-        {
-            break; // No complete packet available, exit the loop
-        }
-
-        if (! lineCallWithRefWithBuf(l, tunnelNextUpStreamPayload, t, packet_buffer))
-        {
-            return; // Exit if the line is no longer alive
-        }
     }
-
-    if (isOverFlow(&(ls->read_stream)))
+    if (! splicestreamPush(ls->read_stream, buf))
     {
-        bufferstreamEmpty(&(ls->read_stream));
+        udpovertcpserverCloseLine(t, l);
+        return;
     }
+    if (ls->read_draining)
+        return;
+    ls->read_draining = true;
+    lineRef(l);
+    for (;;)
+    {
+        const uint8_t *header = splicestreamPeekHeader(ls->read_stream);
+        if (header == NULL)
+            break;
+        uint16_t network_length;
+        sbufByteCopy(&network_length, header, kHeaderSize);
+        const uint32_t length = ntohs(network_length);
+        if (length == 0)
+        {
+            LOGW("UdpOverTcpServer: invalid zero-length data frame");
+            udpovertcpserverCloseLine(t, l);
+            lineUnref(l);
+            return;
+        }
+        if (splicestreamBodyBytes(ls->read_stream) < length)
+            break;
+        sbuf_t *destination = tunnelGetChain(t)->supports_splice ? bufferpoolGetSpliceBuffer(ls->pool) : NULL;
+        sbuf_t *body        = splicestreamMoveFrame(ls->read_stream, destination, length);
+        if (! lineCallWithRefWithBuf(l, tunnelNextUpStreamPayload, t, body) || ls->read_stream == NULL)
+        {
+            lineUnref(l);
+            return;
+        }
+    }
+    /* Drain complete coalesced frames before bounding the incomplete suffix. */
+    if (splicestreamCharge(ls->read_stream) > kReadChargeLimit)
+        discard splicestreamCompact(ls->read_stream);
+    if (splicestreamLength(ls->read_stream) > kReadOverflowLimit ||
+        splicestreamCharge(ls->read_stream) > kReadChargeLimit)
+    {
+        LOGW("UdpOverTcpServer: incomplete frame storage limit exceeded");
+        udpovertcpserverCloseLine(t, l);
+        lineUnref(l);
+        return;
+    }
+    ls->read_draining = false;
+    lineUnref(l);
 }

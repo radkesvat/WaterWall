@@ -30,3 +30,9 @@ Generated core settings, logs and mutable inputs belong to the private run direc
 
 Contract exercised: Verifies that the same UDP-origin sandwich preserves iperf-sized UDP datagrams larger than the 1500-byte small-buffer
   path.
+
+The request producer spaces its split sends by 5 ms so loopback carrier setup can
+progress between sends. UdpListener intentionally drops new datagrams while the
+connecting TcpConnector has propagated Pause; sending another request in that
+window would test that drop policy instead of frame integrity. All nine chunks,
+the 22,000-byte payload limit and the byte/order checks remain unchanged.

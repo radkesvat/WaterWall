@@ -14,9 +14,19 @@ add_waterwall_expected_failure_integration_test(
 add_waterwall_integration_test(waterwall.ping_server_packets_to_connection_alignment_roundtrip ping_server_packets_to_connection_alignment_roundtrip)
 add_waterwall_integration_test(waterwall.tcpudp_listener_connector_tcp_sandwich_roundtrip tcpudp_listener_connector_tcp_sandwich_roundtrip)
 add_waterwall_integration_test(waterwall.tcpudp_listener_connector_udp_sandwich_roundtrip tcpudp_listener_connector_udp_sandwich_roundtrip)
-add_waterwall_integration_test(waterwall.tcpudp_udp_over_tcp_tcp_roundtrip tcpudp_udp_over_tcp_tcp_roundtrip)
 add_waterwall_integration_test(waterwall.tcpudp_udp_over_tcp_udp_roundtrip tcpudp_udp_over_tcp_udp_roundtrip)
 add_waterwall_integration_test(waterwall.tcpudp_udp_over_tcp_large_udp_roundtrip tcpudp_udp_over_tcp_large_udp_roundtrip)
+if(LINUX AND NOT CMAKE_CROSSCOMPILING AND TARGET UdpOverTcpClient AND TARGET UdpOverTcpServer
+   AND TARGET UdpListener AND TARGET UdpConnector AND TARGET TcpListener AND TARGET TcpConnector)
+  foreach(splice_mode IN ITEMS true false)
+    add_waterwall_isolated_test(waterwall.udpovertcp_udp_splice_${splice_mode}
+      "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/udp_over_tcp_splice_integration.py"
+      "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>" "${splice_mode}")
+    set_tests_properties(waterwall.udpovertcp_udp_splice_${splice_mode} PROPERTIES TIMEOUT 60)
+    add_waterwall_test_labels(waterwall.udpovertcp_udp_splice_${splice_mode} "integration" "tunnels" "splice" "udp")
+    add_waterwall_case_resource_lock(waterwall.udpovertcp_udp_splice_${splice_mode} udpovertcp_udp_splice)
+  endforeach()
+endif()
 add_waterwall_packet_analysis_test(waterwall.udp_connector_listener_packet_loss_multiworker udp_connector_listener_packet_loss_multiworker)
 add_waterwall_packet_analysis_test(waterwall.udp_listener_connector_packet_loss_multiworker udp_listener_connector_packet_loss_multiworker)
 add_waterwall_packet_analysis_test(waterwall.udp_listener_multiport_socket_packet_loss_multiworker udp_listener_multiport_socket_packet_loss_multiworker)

@@ -2,66 +2,74 @@
 
 #include "loggers/network_logger.h"
 
-static sbuf_t *tryReadCompletePacket(buffer_stream_t *stream)
-{
-    if (bufferstreamGetBufLen(stream) < kHeaderSize + 1)
-    {
-        return NULL;
-    }
-
-    uint8_t packet_first_bytes[kHeaderSize];
-    bufferstreamViewBytesAt(stream, 0, packet_first_bytes, kHeaderSize);
-
-    uint16_t total_packet_size_network;
-    sbufByteCopy(&total_packet_size_network, packet_first_bytes, (uint32_t) sizeof(total_packet_size_network));
-    uint16_t total_packet_size = ntohs(total_packet_size_network);
-
-    if (total_packet_size < 1 || ((uint32_t) (total_packet_size  + kHeaderSize)) > (uint32_t) bufferstreamGetBufLen(stream))
-    {
-        return NULL;
-    }
-
-    // Read the complete packet (header + payload)
-    sbuf_t *packet_buffer = bufferstreamReadExact(stream, kHeaderSize + total_packet_size);
-    sbufShiftRight(packet_buffer, kHeaderSize);
-
-    return packet_buffer;
-}
-
-static bool isOverFlow(buffer_stream_t *read_stream)
-{
-    if (bufferstreamGetBufLen(read_stream) > (uint32_t) (kMaxAllowedUDPPacketLength * 2))
-    {
-        LOGW("UdpOverTcpClient: DownStreamPayload: Read stream overflow, size: %zu, limit: %zu",
-             bufferstreamGetBufLen(read_stream), (uint32_t) (kMaxAllowedUDPPacketLength * 2));
-        return true; // Return true when overflow IS detected
-    }
-    return false; // Return false when no overflow
-}
-
 void udpovertcpclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     udpovertcpclient_lstate_t *ls = lineGetState(l, t);
-
-    bufferstreamPush(&(ls->read_stream), buf);
-
-    while (true)
+    assert(ls->read_stream != NULL);
+    if (sbufGetLength(buf) == 0)
     {
-        sbuf_t *packet_buffer = tryReadCompletePacket(&(ls->read_stream));
-
-        if (! packet_buffer)
+        lineReuseBuffer(l, buf);
+        return;
+    }
+    if (ls->read_draining)
+    {
+        const size_t bytes  = splicestreamLength(ls->read_stream);
+        const size_t charge = splicestreamCharge(ls->read_stream);
+        if (bytes > kMaxReentryBytes || sbufGetLength(buf) > kMaxReentryBytes - bytes || charge > kReadChargeLimit ||
+            sbufGetQueueCharge(buf) > kReadChargeLimit - charge)
         {
-            break; // No complete packet available, exit the loop
-        }
-
-        if (! lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, packet_buffer))
-        {
-            return; // Exit if the line is no longer alive
+            lineReuseBuffer(l, buf);
+            LOGW("UdpOverTcpClient: decoder reentry limit exceeded");
+            udpovertcpclientCloseLine(t, l);
+            return;
         }
     }
-
-    if (isOverFlow(&(ls->read_stream)))
+    if (! splicestreamPush(ls->read_stream, buf))
     {
-        bufferstreamEmpty(&(ls->read_stream));
+        udpovertcpclientCloseLine(t, l);
+        return;
     }
+    if (ls->read_draining)
+        return;
+    ls->read_draining = true;
+    lineRef(l);
+    for (;;)
+    {
+        const uint8_t *header = splicestreamPeekHeader(ls->read_stream);
+        if (header == NULL)
+            break;
+        uint16_t network_length;
+        sbufByteCopy(&network_length, header, kHeaderSize);
+        const uint32_t length = ntohs(network_length);
+
+        if (length == 0)
+        {
+            LOGW("UdpOverTcpClient: invalid zero-length data frame");
+            udpovertcpclientCloseLine(t, l);
+            lineUnref(l);
+            return;
+        }
+        if (splicestreamBodyBytes(ls->read_stream) < length)
+            break;
+        sbuf_t *destination = tunnelGetChain(t)->supports_splice ? bufferpoolGetSpliceBuffer(ls->pool) : NULL;
+        sbuf_t *body        = splicestreamMoveFrame(ls->read_stream, destination, length);
+        if (! lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, body) || ls->read_stream == NULL)
+        {
+            lineUnref(l);
+            return;
+        }
+    }
+    /* Drain complete coalesced frames before bounding the incomplete suffix. */
+    if (splicestreamCharge(ls->read_stream) > kReadChargeLimit)
+        discard splicestreamCompact(ls->read_stream);
+    if (splicestreamLength(ls->read_stream) > kReadOverflowLimit ||
+        splicestreamCharge(ls->read_stream) > kReadChargeLimit)
+    {
+        LOGW("UdpOverTcpClient: incomplete frame storage limit exceeded");
+        udpovertcpclientCloseLine(t, l);
+        lineUnref(l);
+        return;
+    }
+    ls->read_draining = false;
+    lineUnref(l);
 }

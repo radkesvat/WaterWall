@@ -2,7 +2,9 @@
 
 #include "loggers/network_logger.h"
 
-static void something(void)
+void udpovertcpserverCloseLine(tunnel_t *t, line_t *l)
 {
-    // This function is not implemented yet
+    udpovertcpserverLinestateDestroy(lineGetState(l, t));
+    if (lineCallWithRef(l, tunnelNextUpStreamFinish, t))
+        tunnelPrevDownStreamFinish(t, l);
 }

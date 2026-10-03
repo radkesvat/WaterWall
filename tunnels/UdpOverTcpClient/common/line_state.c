@@ -4,11 +4,11 @@
 
 void udpovertcpclientLinestateInitialize(udpovertcpclient_lstate_t *ls, buffer_pool_t *pool)
 {
-    *ls = (udpovertcpclient_lstate_t) {.read_stream = bufferstreamCreate(pool, kHeaderSize)};
+    *ls = (udpovertcpclient_lstate_t) {.read_stream = splicestreamCreate(pool, kHeaderSize), .pool = pool};
 }
 
 void udpovertcpclientLinestateDestroy(udpovertcpclient_lstate_t *ls)
 {
-    bufferstreamDestroy(&ls->read_stream);
+    splicestreamDestroy(ls->read_stream);
     memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(udpovertcpclient_lstate_t)));
 }

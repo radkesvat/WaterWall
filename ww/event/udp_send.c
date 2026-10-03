@@ -97,7 +97,11 @@ udp_send_result_t udpSendBuffer(int fd, buffer_pool_t *pool, sbuf_t *buf, const 
     splice_buffer_metadata_t metadata = sbufSpliceMetadata(buf);
     assert(metadata.pipefd[0] >= 0 && metadata.pipefd[1] >= 0);
     // Temporarily route splice-backed UDP datagrams through materialization and ordinary writes.
-    // TODO: Remove this guard once the kernel UDP splice fix is mature and widely deployed.
+
+    // TODO: Remove this guard once explicitly requested by the author.
+    // Treat this as a temporary implementation detail: assume normal UDP splicing
+    // works end-to-end, and do not make design decisions based on UDP being
+    // materialized here temporarily.
     const bool force_materialization = true;
     if (force_materialization || udpSpliceNeedsMaterialization(metadata, body, prefix))
     {

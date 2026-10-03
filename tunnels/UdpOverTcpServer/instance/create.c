@@ -13,8 +13,6 @@ tunnel_t *udpovertcpserverTunnelCreate(node_t *node)
     t->fnInitU    = &udpovertcpserverTunnelUpStreamInit;
     t->fnFinU     = &udpovertcpserverTunnelUpStreamFinish;
     t->fnPayloadU = &udpovertcpserverTunnelUpStreamPayload;
-    t->fnPauseU   = &udpovertcpserverTunnelUpStreamPause;
-    t->fnResumeU  = &udpovertcpserverTunnelUpStreamResume;
     t->fnFinD     = &udpovertcpserverTunnelDownStreamFinish;
     t->fnPayloadD = &udpovertcpserverTunnelDownStreamPayload;
 

@@ -5,7 +5,7 @@ Sync note: Any change to this file must also be applied to WaterWall/WaterWall-D
 
 # UdpOverTcpServer Node
 
-`UdpOverTcpServer` is the server-side peer of `UdpOverTcpClient`. It accepts a framed byte stream from the previous node, reconstructs discrete packets, and forwards those packets to the next node.
+`UdpOverTcpServer` is the server-side peer of `UdpOverTcpClient`. It accepts a framed byte stream from the previous node, reconstructs UDP datagrams, and forwards those packets to the next node.
 
 In practice, this node is used together with `UdpOverTcpClient` on the other side of the stream transport.
 
@@ -25,7 +25,7 @@ A common layout is:
 
 - a stream-facing transport before `UdpOverTcpServer`
 - `UdpOverTcpServer`
-- UDP-facing or packet-oriented nodes after it
+- UDP-facing nodes after it
 
 It should usually sit opposite `UdpOverTcpClient`.
 
@@ -91,15 +91,15 @@ Incoming bytes are buffered until a complete frame is available. Then the 2-byte
 
 Replies from the next node are handled in the opposite direction: each packet gets a 2-byte big-endian length prefix before being written back to the previous side.
 
+Each payload callback on the datagram-facing side represents one UDP datagram. These nodes always carry
+UDP payloads; the source protocol metadata does not change their framing. Mixed listeners must route TCP
+traffic through a separate path before the client.
+
 ### Packet size limits
 
-The current maximum accepted packet size is:
-
-- `65535 - 20 - 8 - 2`
-
-UDP datagrams larger than that limit are dropped on the send-back path. For a
-negotiated TCP line, larger payloads are split into consecutive frames within
-this limit and emitted in one onward callback, preserving TCP byte order.
+The maximum outbound UDP datagram size is `65535 - 20 - 8 - 2 = 65505` bytes.
+Larger datagrams are dropped intact. Empty outbound payloads violate the existing Debug invariant;
+Release drops them. Incoming zero-length frames are invalid and close the carrier.
 
 ### Data flow direction
 
@@ -108,27 +108,40 @@ this limit and emitted in one onward callback, preserving TCP byte order.
 
 ### Stream buffering behavior
 
-Incoming stream bytes are stored in a read stream until one or more full packets can be extracted.
+Incoming stream bytes wait in a read stream until complete datagrams can be extracted.
+The incomplete suffix limit is `2 * kMaxAllowedUDPPacketLength = 131010` bytes.
 
-Current overflow limit:
-
-- `2 * kMaxAllowedUDPPacketLength`
-
-If the buffered data grows beyond that limit, the implementation empties the read stream buffer.
+Complete frames drain before the incomplete suffix is checked. Retained buffer charge is capped at 4 MiB,
+with beneficial compaction attempted first. Malformed frames, allocation refusal or exhausted storage close
+the carrier through its owner. Decoder reentry shares a 2 MiB byte limit and 4 MiB charge limit with its
+retained stream. The parser never discards arbitrary stream bytes to continue.
 
 ### Lifecycle behavior
 
-When the line starts, `UdpOverTcpServer` creates the read buffer state and initializes the next node.
+When the line is initialized, the server creates its framing state, sets the destination protocol to UDP,
+and immediately initializes the next node. Transport Est, Pause and Resume are forwarded promptly.
 
-When the line finishes from either direction, it destroys the read buffer state and forwards finish to the matching side.
+When either side sends Finish, the node destroys its own framing state and forwards Finish away from the
+sender. It borrows the normal line and does not call `lineDestroy()`.
 
 ## Notes And Caveats
 
 - `UdpOverTcpServer` is intended to be paired with `UdpOverTcpClient`.
 - There are no tunnel-specific JSON settings today.
-- Oversized packets are dropped.
-- If the inbound framed stream exceeds the internal overflow threshold, the read buffer is emptied instead of closing the line.
+- Each datagram-facing payload callback must contain exactly one UDP datagram.
+- Invalid zero-length frames and exhausted parser storage close the carrier through its owner.
 - `UpStreamEst` and `DownStreamInit` are disabled in the current implementation.
+
+## Splice Support
+
+Both nodes accept ordinary buffers and private-pipe bodies. Each outbound UDP datagram keeps its body,
+gains a resident two-byte length prefix, and is forwarded in one callback. Oversized datagrams are dropped
+intact. The decoder caches only the two-byte length header and extracts each complete datagram as one owned
+buffer, with ordinary fallback when pipe resources are unavailable.
+
+UDP datagram boundaries remain intact, and the TCP carrier remains eligible for splice. Any UDP socket
+materialization fallback belongs to the UDP sender. Complete frames in an admitted stream input continue
+after Pause; Finish or admission refusal stops processing.
 
 ## Node Metadata
 
@@ -136,7 +149,7 @@ Source-backed metadata:
 
 | Property | Value |
 | --- | --- |
-| node flags | `kNodeFlagNone` |
+| node flags | `kNodeFlagSupportsSplice` |
 | `can_have_prev` | `true` |
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayer4` |

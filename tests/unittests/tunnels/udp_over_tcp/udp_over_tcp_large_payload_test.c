@@ -4,13 +4,13 @@
  * Setup: Real runtime/component code with the explicit worker/line/neighbour fixture and any linker
  * seams shown below. Line and buffer settlement remains the scenario owner's responsibility.
  * Cases: testPayload
- * Checks: Assertion labels include: UOT emitted an incomplete header; UOT emitted an invalid data frame
- * length; UOT changed TCP byte order or content; UOT changed the total payload length
+ * Checks: One length-prefixed callback per accepted datagram, exact content and length, oversized input
+ * dropped intact, and UDP destination setup independent of source protocol metadata.
  * Limits: Platform/feature branches remain conditional. Component fixtures do not establish host-network
  * or application-throughput behavior.
  * CTest: waterwall.udpovertcpclient_large_payload_unit; waterwall.udpovertcpserver_large_payload_unit
  */
-/* TCP callbacks may exceed a UDP frame; UDP callbacks remain one datagram. */
+/* Source protocol metadata never changes datagram framing or size limits. */
 #ifdef TEST_UOT_SERVER
 #include "UdpOverTcpServer/structure.h"
 #define createUot       udpovertcpserverTunnelCreate
@@ -24,8 +24,8 @@ typedef udpovertcpclient_lstate_t uot_lstate_t;
 #endif
 #include "fixtures/failure/tunnel_line_failure_harness.h"
 
-static uint32_t         expected_length;
-static uint32_t         payload_calls;
+static uint32_t expected_length;
+static uint32_t payload_calls;
 
 static uint8_t payloadByte(uint32_t index)
 {
@@ -36,30 +36,19 @@ static void encodedSink(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     discard t;
     ++payload_calls;
-    const uint8_t *wire     = sbufGetRawPtr(buf);
-    uint32_t       offset   = 0;
-    uint32_t       consumed = 0;
-    while (offset < sbufGetLength(buf))
-    {
-        twfRequire(sbufGetLength(buf) - offset >= kHeaderSize, "UOT emitted an incomplete header");
-        uint16_t network_length;
-        memoryCopy(&network_length, wire + offset, kHeaderSize);
-        const uint32_t length = ntohs(network_length);
-        offset += kHeaderSize;
-        twfRequire(length > 0 && length <= kMaxAllowedUDPPacketLength && length <= sbufGetLength(buf) - offset,
-                   "UOT emitted an invalid data frame length");
-        for (uint32_t i = 0; i < length; ++i)
-            twfRequire(wire[offset + i] == payloadByte(consumed + i), "UOT changed TCP byte order or content");
-        consumed += length;
-        offset += length;
-    }
-    twfRequire(consumed == expected_length, "UOT changed the total payload length");
+    const uint8_t *wire = sbufGetRawPtr(buf);
+    twfRequire(sbufGetLength(buf) == expected_length + kHeaderSize, "UOT changed the total payload length");
+    uint16_t network_length;
+    memoryCopy(&network_length, wire, kHeaderSize);
+    twfRequire(ntohs(network_length) == expected_length, "UOT changed the datagram length");
+    for (uint32_t i = 0; i < expected_length; ++i)
+        twfRequire(wire[kHeaderSize + i] == payloadByte(i), "UOT changed datagram content");
     lineReuseBuffer(l, buf);
 }
 
-static void testPayload(bool tcp, uint32_t length)
+static void testPayload(uint8_t source_protocol, uint32_t length)
 {
-    twfSetCase(tcp ? "UOT fragments large TCP payloads in one callback" : "UOT preserves UDP datagram limits");
+    twfSetCase("UOT frames one UDP datagram per callback and drops oversized input regardless of source metadata");
     twf_worker_env_t env;
     twfWorkerEnvSetup(&env, LARGE_BUFFER_SIZE_RAM_HIGH, 32);
     twf_trace_t trace = {0};
@@ -70,35 +59,29 @@ static void testPayload(bool tcp, uint32_t length)
     tunnelBind(prev, uot);
     tunnelBind(uot, next);
     line_t *line = twfLineCreate(uot->lstate_size);
-    addresscontextSetOnlyProtocol(lineGetSourceAddressContext(line), tcp ? IP_PROTO_TCP : IP_PROTO_UDP);
+    addresscontextSetOnlyProtocol(lineGetSourceAddressContext(line), source_protocol);
     uot->fnInitU(uot, line);
 #ifdef TEST_UOT_SERVER
-    sbuf_t  *marker = bufferpoolGetSmallBuffer(env.pool);
-    uint8_t *bytes  = sbufGetMutablePtr(marker);
-    bytes[0]        = 0;
-    bytes[1]        = 0;
-    bytes[2]        = tcp ? IP_PROTO_TCP : IP_PROTO_UDP;
-    sbufSetLength(marker, kProtocolMarkerSize);
-    uot->fnPayloadU(uot, line, marker);
+    twfRequire(lineGetDestinationAddressContext(line)->proto_udp && ! lineGetDestinationAddressContext(line)->proto_tcp,
+               "UOT server did not initialize UDP destination");
     prev->fnPayloadD = encodedSink;
 #else
     next->fnPayloadU = encodedSink;
 #endif
-    uot_lstate_t *ls = lineGetState(line, uot);
-    twfRequire(ls->tcp_mode == tcp, "UOT did not preserve its negotiated payload mode");
-    sbuf_t  *input = bufferpoolGetLargeBuffer(env.pool);
-    uint8_t *raw   = sbufGetMutablePtr(input);
+    uot_lstate_t *ls    = lineGetState(line, uot);
+    sbuf_t       *input = bufferpoolGetLargeBuffer(env.pool);
+    uint8_t      *raw   = sbufGetMutablePtr(input);
     for (uint32_t i = 0; i < length; ++i)
         raw[i] = payloadByte(i);
     sbufSetLength(input, length);
-    expected_length          = length;
-    payload_calls            = 0;
+    expected_length = length;
+    payload_calls   = 0;
 #ifdef TEST_UOT_SERVER
     uot->fnPayloadD(uot, line, input);
 #else
     uot->fnPayloadU(uot, line, input);
 #endif
-    const bool accepted = tcp || length <= kMaxAllowedUDPPacketLength;
+    const bool accepted = length <= kMaxAllowedUDPPacketLength;
     twfRequire(payload_calls == (accepted ? 1U : 0U),
                "UOT emitted multiple callbacks or accepted an oversized datagram");
     destroyUotState(ls);
@@ -112,10 +95,13 @@ static void testPayload(bool tcp, uint32_t length)
 
 int main(void)
 {
-    testPayload(true, kMaxAllowedUDPPacketLength);
-    testPayload(true, kMaxAllowedUDPPacketLength + 1);
-    testPayload(true, LARGE_BUFFER_SIZE_RAM_HIGH);
-    testPayload(false, kMaxAllowedUDPPacketLength);
-    testPayload(false, kMaxAllowedUDPPacketLength + 1);
+    const uint8_t source_protocols[] = {IP_PROTO_UDP, IP_PROTO_TCP, 0};
+    for (unsigned i = 0; i < sizeof(source_protocols); ++i)
+    {
+        testPayload(source_protocols[i], 1);
+        testPayload(source_protocols[i], kMaxAllowedUDPPacketLength);
+        testPayload(source_protocols[i], kMaxAllowedUDPPacketLength + 1);
+        testPayload(source_protocols[i], LARGE_BUFFER_SIZE_RAM_HIGH);
+    }
     return 0;
 }

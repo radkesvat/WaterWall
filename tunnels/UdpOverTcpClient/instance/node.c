@@ -7,20 +7,21 @@ node_t nodeUdpOverTcpClientGet(void)
 {
     const char *type_name     = "UdpOverTcpClient";
     node_t      node_udpovertcpclient = {
-             .name                  = NULL,
-             .type                  = stringDuplicate(type_name),
-             .next                  = NULL,
-             .hash_name             = 0,
-             .hash_type             = calcHashBytes(type_name, stringLength(type_name)),
-             .hash_next             = 0,
-             .version               = 0001,
-             .createHandle          = udpovertcpclientTunnelCreate,
-             .node_json             = NULL,
-             .node_settings_json    = NULL,
-             .node_manager_config   = NULL,
-             .instance              = NULL,
-             .flags                 = kNodeFlagNone,
-             .required_padding_left = 2, // to append the length of the payload (should not be changed) (must same kHeaderSize)
+             .name                = NULL,
+             .type                = stringDuplicate(type_name),
+             .next                = NULL,
+             .hash_name           = 0,
+             .hash_type           = calcHashBytes(type_name, stringLength(type_name)),
+             .hash_next           = 0,
+             .version             = 0001,
+             .createHandle        = udpovertcpclientTunnelCreate,
+             .node_json           = NULL,
+             .node_settings_json  = NULL,
+             .node_manager_config = NULL,
+             .instance            = NULL,
+             .flags               = kNodeFlagSupportsSplice,
+             .required_padding_left =
+            2, // to append the length of the payload (should not be changed) (must same kHeaderSize)
              .layer_group           = kNodeLayer4,
              .layer_group_next_node = kNodeLayer4,
              .layer_group_prev_node = kNodeLayer4,

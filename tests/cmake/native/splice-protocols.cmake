@@ -1,5 +1,34 @@
 # Explicit native registrations; included in dependency order by unittests/CMakeLists.txt.
 if(LINUX)
+  foreach(uot_side Client Server)
+    if(TARGET UdpOverTcp${uot_side})
+      string(TOLOWER "${uot_side}" uot_lower)
+      foreach(mode IN ITEMS splice no_splice)
+        set(uot_target "udpovertcp${uot_lower}_${mode}_test")
+        waterwall_add_native_executable(${uot_target} SUPPORT SOURCES
+          "${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/udp_over_tcp/udp_over_tcp_splice_test.c"
+          ${WATERWALL_LINE_FAILURE_WW_SOURCES})
+        waterwall_line_failure_test_use_tunnel(${uot_target} UdpOverTcp${uot_side})
+        target_link_libraries(${uot_target} PRIVATE ww)
+        target_link_options(${uot_target} PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS}
+          "-Wl,--wrap=read" "-Wl,--wrap=splicestreamCreate" "-Wl,--wrap=bufferqueueReserveExtra")
+        if(uot_side STREQUAL "Server")
+          target_compile_definitions(${uot_target} PRIVATE TEST_UOT_SERVER=1)
+        endif()
+        if(mode STREQUAL "no_splice")
+          target_compile_definitions(${uot_target} PRIVATE WW_HAVE_SPLICE=0)
+        else()
+          target_link_options(${uot_target} PRIVATE "-Wl,--wrap=pipe2")
+        endif()
+        add_dependencies(waterwall_unit_tests ${uot_target})
+        add_waterwall_unit_test(waterwall.udpovertcp${uot_lower}_${mode}_unit ${uot_target}
+          "unit;tunnels;udpovertcp;splice;framing;udp;tcp;lifetime")
+      endforeach()
+    endif()
+  endforeach()
+endif()
+
+if(LINUX)
   foreach(limiter_entry "SoftIpLimiter|softiplimiter" "SpeedLimit|speedlimit")
     string(REPLACE "|" ";" limiter_fields "${limiter_entry}")
     list(GET limiter_fields 0 limiter_node)

@@ -22,5 +22,5 @@ Discover properties with `ctest --preset linux -N -V -R '^waterwall\.udp_over_tc
 
 Generated core settings, logs and mutable inputs belong to the private run directory. Failures/skips retain initialized artifacts; `WATERWALL_TEST_KEEP_RUN_DIR=1` also retains success. See the [test workflow](../../README.md).
 
-Contract exercised: Verifies that `UdpOverTcpClient` and `UdpOverTcpServer` preserve end-to-end byte stream integrity through their
+Contract exercised: Verifies that `UdpOverTcpClient` and `UdpOverTcpServer` preserve UDP datagram contents through their
   length-prefixed framing.
