@@ -107,18 +107,31 @@ Full-route example with local ranges excluded:
   Default: global MTU size used by WaterWall.
 
 - `gso` `(boolean)`
-  Request Linux TCPv4 GSO reception and software segmentation. The default is
-  `true`; `false` uses ordinary TUN framing. Invalid types, including `null`,
-  are rejected. If the platform or kernel cannot enable the complete offload
-  mode, startup logs the reason and continues with ordinary TUN framing.
-  The configured device MTU still limits each packet emitted by segmentation.
-  Linux's TCPv4 GSO ECN modifier is supported when it appears in a record.
+  Request Linux TCPv4 segmentation offload. The default remains `true`;
+  `false` disables segmentation while every fresh Linux device still attempts
+  checksum offload. Invalid types, including `null`, are rejected. No separate
+  checksum setting is needed. Startup logs the final active mode:
+
+  | Active mode | Framing | Features |
+  | --- | --- | --- |
+  | Raw fallback | IP bytes | No offload |
+  | Checksum only | 10-byte little-endian virtio header + IP | `TUN_F_CSUM` |
+  | Checksum and TCPv4 GSO | Same virtio framing | `TUN_F_CSUM \| TUN_F_TSO4` |
+
+  Linux negotiates checksum support first, then upgrades to GSO when requested.
+  A rejected GSO upgrade retains checksum-only mode. Unavailable checksum/framing
+  support or common receive resources select raw fallback. Non-Linux platforms
+  retain their existing ordinary framing. The configured device MTU still limits
+  each packet emitted by segmentation. Linux's TCPv4 GSO ECN modifier is supported
+  when it appears in a record on an active GSO device.
 
   > **Pre-created Linux interfaces:** Requested GSO requires a new interface
   > name. Deployments that attach to a pre-created TUN must explicitly set
   > `"gso": false` to retain ordinary attachment behavior, including when the
   > setting was previously omitted. Automatic fallback for unavailable offload
-  > facilities does not silently accept an interface-name conflict.
+  > facilities does not silently accept an interface-name conflict. The checksum
+  > probe is exclusive; a pre-created raw interface is attached in raw framing
+  > without negotiating offload on that existing interface.
 
 - `route-table` `(string)`
   Controls native system route installation.
@@ -221,10 +234,12 @@ The actual device creation is deferred until start time because the tunnel needs
 When the TUN device produces a packet:
 
 - the packet is received on a worker
-- outside the direct trusted pair below, when Linux GSO is active, the reader completes requested deferred checksums
-  for ordinary records and keeps their fragment handling in the reader;
-  `GSO_NONE` records, including IPv6, retain the existing ordinary reader path
-  without an IPv4-only preflight
+- outside the direct trusted pair below, in either Linux offload mode, ordinary
+  unfragmented TCP/UDP records with matching deferred-checksum metadata complete
+  their checksum on the destination worker before publication; this includes
+  plain IPv6 TCP/UDP without extension headers. Other metadata and fragment
+  handling retain the reader path; `GSO_NONE` records, including IPv6, retain
+  their existing admission policy without an IPv4-only preflight
 - for TCPv4 GSO, the reader validates the aggregate and transfers its buffer
   to the flow's worker; that worker allocates independent MTU-sized packets,
   copies their headers and payload, and completes IPv4 and TCP checksums before
@@ -267,22 +282,26 @@ Payload callbacks validate and try the existing thread-safe writer FIFO without
 waiting for capacity or performing native I/O. This enqueue-only guarantee allows
 an immediately adjacent PTC on the packet worker to deliver its final sbuf directly.
 
-On an active direct trusted Linux pair, the writer combines compatible adjacent
+On an active GSO device with a direct trusted Linux pair, the writer combines compatible adjacent
 TCP data packets into bounded scatter/gather GSO records. It takes only packets
 already available, never waits to fill a batch, and retains packet order. At most
 64 packets and 256 KiB of allocation charge form a batch, with one lookahead;
 each GSO record stays within 65,535 IPv4 bytes. Original packets must still fit
 MTU. UDP, fragments, controls, incompatible TCP packets, interposed nodes and
-`gso:false` keep ordinary writes. Payload bytes are not copied into an aggregate.
+`gso:false` keep individual packet writes. Checksum-only writes still include the
+virtio header: ordinary untrusted packets use zero metadata and complete bytes;
+trusted TCP/UDP packets may carry a partial seed and `NEEDS_CSUM` with `GSO_NONE`.
+Checksum-only input rejects every non-`GSO_NONE` record. Payload bytes are not
+copied into an aggregate.
 
 
 ### Direct PacketsToConnection checksums
 
 A reciprocal immediate `TunDevice -> PacketsToConnection` pair automatically
-uses trusted IPv4 header and TCP/UDP transport checksums only after Linux GSO/checksum
-framing and worker storage are ready. `gso:false`, setup fallback, non-Linux
-platforms, and intervening nodes retain ordinary checksums. No new setting is
-required. IPv4 header checksum verification is omitted in TUN admission,
+uses trusted IPv4 header and TCP/UDP transport checksums after Linux checksum/virtio
+framing and worker storage are ready, including checksum-only mode with `gso:false`.
+Raw fallback, non-Linux platforms, and intervening nodes retain ordinary checksums.
+No new setting is required. IPv4 header checksum verification is omitted in TUN admission,
 fragment handling, PTC and trusted writes. Structural checks, fragment policy,
 repair requests, FIFO bounds and shutdown ownership remain unchanged. Generated
 and reconstructed IPv4 headers still receive valid checksums.

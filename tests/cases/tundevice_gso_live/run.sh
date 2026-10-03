@@ -35,8 +35,8 @@ if [[ "$(uname -s)" != Linux || $(id -u) != 0 || ! -c /dev/net/tun ]]; then
   exit "$SKIP_STATUS"
 fi
 
-if ! command -v ip >/dev/null 2>&1 || ! command -v nsenter >/dev/null 2>&1; then
-  echo "TUN GSO live test requires iproute2 and nsenter"
+if ! command -v ip >/dev/null 2>&1 || ! command -v nsenter >/dev/null 2>&1 || ! command -v ethtool >/dev/null 2>&1; then
+  echo "TUN GSO live test requires iproute2, nsenter and ethtool"
   exit "$SKIP_STATUS"
 fi
 
@@ -160,22 +160,27 @@ log_path, probe_path, mode = sys.argv[1:]
 log = open(log_path, encoding="utf-8", errors="replace").read()
 result = json.load(open(probe_path, encoding="utf-8"))
 if mode == "default":
-    assert "configured framing: TCPv4 GSO (GSO requested: yes)" in log, "default GSO was not enabled"
+    assert "configured framing: TCPv4 GSO with checksum offload (GSO requested: yes)" in log, "default GSO was not enabled"
     verified_limit = "kernel GSO max segments set to 2048" in log
     warned_limit = "could not set/verify kernel GSO max segments 2048" in log
     assert verified_limit != warned_limit, "kernel GSO limit result was not logged exactly once"
     if verified_limit:
         assert result["interface_gso_max_segs"] == 2048, "interface readback disagrees with successful setup"
     result["gso_limit_result"] = "verified" if verified_limit else "warning"
-    summary = re.search(r"GSO reader summary: ordinary=(\d+) aggregates=(\d+) generated=(\d+)", log)
-    assert summary, "GSO reader summary missing"
+    summary = re.search(r"offload reader summary: ordinary=(\d+) aggregates=(\d+) generated=(\d+)", log)
+    assert summary, "offload reader summary missing"
     ordinary, aggregates, generated = map(int, summary.groups())
     assert aggregates > 0 and generated > 2048, (ordinary, aggregates, generated)
     assert "malformed=0 unsupported=0 oversized=0" in log, "valid test packets were rejected"
     result.update({"ordinary_records": ordinary, "gso_aggregates": aggregates, "generated_segments": generated})
 else:
-    assert "configured framing: raw IP (GSO requested: no)" in log, "explicitly disabled mode was not used"
-    assert "GSO reader summary" not in log, "raw-IP mode used the GSO reader"
+    assert "configured framing: checksum-only offload (GSO requested: no)" in log, "checksum-only mode was not used"
+    summary = re.search(r"offload reader summary: ordinary=(\d+) aggregates=(\d+) generated=(\d+)", log)
+    assert summary, "checksum-only reader summary missing"
+    ordinary, aggregates, generated = map(int, summary.groups())
+    assert ordinary > 0 and aggregates == generated == 0, "checksum-only mode admitted GSO work"
+    assert "malformed=0 unsupported=0 oversized=0 intact=0" in log, "checksum-only mode rejected valid input"
+    result.update({"ordinary_records": ordinary, "gso_aggregates": aggregates, "generated_segments": generated})
 print(json.dumps(result, sort_keys=True), flush=True)
 PY
 

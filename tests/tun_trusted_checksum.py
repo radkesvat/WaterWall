@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Direct trusted pairs versus raw/interposed/TCP-UDP bridge checks, MTU1500/576, slow receiver, DNS
+"""Direct trusted pairs versus interposed TCP-UDP bridge checks in both offload modes, MTU1500/576, slow receiver, DNS
 and real software-forwarded wire checksums. Fresh TUN/runtime/peer namespaces and four 1MiB
 connections; explicit GSO counters and exact transport checks. Linux root/TUN/namespaces/ethtool;
 missing capability is skip77. CTest: waterwall.tundevice_trusted_checksum."""
@@ -112,15 +112,15 @@ def main():
         run_directory = RunDirectory('waterwall-tun-checksum-')
         directory = run_directory.create()
         print('Artifacts: ' + str(directory), flush=True)
-        for gso, interposed, mtu in ((False, False, 1500), (True, True, 1500),
-                                    (True, False, 1500), (True, False, 576)):
-            name = 'raw' if not gso else 'interposed' if interposed else 'trusted'
+        for gso, interposed, mtu in ((False, False, 1500), (False, True, 1500), (False, False, 576),
+                                    (True, True, 1500), (True, False, 1500), (True, False, 576)):
+            name = ('gso-' if gso else 'checksum-') + ('interposed' if interposed else 'trusted')
             if mtu != 1500:
                 name += '-mtu' + str(mtu)
             with ChecksumFixture(args.binary.resolve(), directory / name, gso, interposed, mtu) as fixture:
                 log = (fixture.directory / 'waterwall.log').read_text()
                 active = 'enabled direct-pair trusted transport checksums' in log
-                require(active == (gso and not interposed), 'incorrect pair activation')
+                require(active == (fixture.checksum_enabled and not interposed), 'incorrect pair activation')
                 integration(fixture)
                 udp_exchange(fixture, fixture.runtime, CLIENT, 'local')
                 command(*fixture.runtime, sys.executable, str(HELPER), 'dns', '--bind', CLIENT,
@@ -141,8 +141,8 @@ def main():
                             '--source-port', str(SOURCE_PORT + 100), capture_output=True, timeout=35)
                     server.wait(timeout=5)
                     require(server.returncode == 0, 'slow receiver exchange failed')
-                result = forwarding(fixture) if active and mtu == 1500 else {}
-                result['gso'] = fixture.finish()
+                result = forwarding(fixture) if mtu == 1500 else {}
+                result['offload'] = fixture.finish()
                 print(name + ': ' + json.dumps(result), flush=True)
         success = True
         return 0

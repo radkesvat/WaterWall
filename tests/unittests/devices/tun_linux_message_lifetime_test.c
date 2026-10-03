@@ -103,6 +103,13 @@ static unsigned int       raw_setiff_calls;
 static unsigned int       gso_header_size_calls;
 static unsigned int       gso_byte_order_calls;
 static unsigned int       gso_offload_calls;
+static unsigned long      offload_masks[8];
+static unsigned long      active_offload_mask;
+static unsigned long      fail_offload_mask;
+static unsigned int       fail_offload_call;
+static unsigned int       fail_feature_check;
+static unsigned int       tun_open_calls, fail_tun_open_call;
+static bool               fail_nonblocking;
 static unsigned int       gso_limit_calls;
 static unsigned long      fail_gso_ioctl_request;
 static int                fail_gso_ioctl_errno;
@@ -157,6 +164,8 @@ typedef struct tun_selected_closed_probe_s
 int     __real_open(const char *path, int flags, ...);
 int     __wrap_open(const char *path, int flags, ...);
 int     __wrap_ioctl(int fd, unsigned long request, ...);
+int     __real_fcntl(int fd, int command, ...);
+int     __wrap_fcntl(int fd, int command, ...);
 int     __real_socket(int domain, int type, int protocol);
 int     __wrap_socket(int domain, int type, int protocol);
 ssize_t __real_read(int fd, void *buf, size_t count);
@@ -264,6 +273,31 @@ static unsigned int             injected_write_count;
 static unsigned int             observed_write_calls;
 static unsigned int             observed_writev_calls;
 static bool                     expect_trusted_write, fail_worker_queue_once;
+static bool                     fail_worker_gso_once, fail_output_budget_once;
+static unsigned                 output_budget_calls;
+bool                            __real_tunConfigureWorkerGso(tun_device_t *tdev);
+bool                            __wrap_tunConfigureWorkerGso(tun_device_t *tdev);
+bool                            __wrap_tunConfigureWorkerGso(tun_device_t *tdev)
+{
+    if (fail_worker_gso_once)
+    {
+        fail_worker_gso_once = false;
+        return false;
+    }
+    return __real_tunConfigureWorkerGso(tdev);
+}
+bool __real_deviceReaderSessionConfigureOutputBudget(device_reader_session_t *session, size_t charge, uint32_t packets);
+bool __wrap_deviceReaderSessionConfigureOutputBudget(device_reader_session_t *session, size_t charge, uint32_t packets);
+bool __wrap_deviceReaderSessionConfigureOutputBudget(device_reader_session_t *session, size_t charge, uint32_t packets)
+{
+    ++output_budget_calls;
+    if (fail_output_budget_once)
+    {
+        fail_output_budget_once = false;
+        return false;
+    }
+    return __real_deviceReaderSessionConfigureOutputBudget(session, charge, packets);
+}
 bool                            __real_deviceReaderSessionEnableWorkerQueue(device_reader_session_t *session);
 bool                            __wrap_deviceReaderSessionEnableWorkerQueue(device_reader_session_t *session);
 bool                            __wrap_deviceReaderSessionEnableWorkerQueue(device_reader_session_t *session)
@@ -422,6 +456,12 @@ int __wrap_open(const char *path, int flags, ...)
 
     if (strcmp(path, "/dev/net/tun") == 0)
     {
+        active_offload_mask = 0;
+        if (++tun_open_calls == fail_tun_open_call)
+        {
+            errno = EACCES;
+            return -1;
+        }
         // Remembered so error injection can target the device handle only, and
         // never the stop pipe the reader also read()s from.
         tun_handle_fd = __real_open("/dev/null", O_RDWR);
@@ -435,6 +475,22 @@ int __wrap_open(const char *path, int flags, ...)
     return __real_open(path, flags);
 }
 
+int __wrap_fcntl(int fd, int command, ...)
+{
+    if (command == F_GETFL || command == F_GETFD || command == F_GETPIPE_SZ)
+        return __real_fcntl(fd, command);
+    va_list args;
+    va_start(args, command);
+    const int argument = va_arg(args, int);
+    va_end(args);
+    if (fd == tun_handle_fd && command == F_SETFL && fail_nonblocking)
+    {
+        errno = EIO;
+        return -1;
+    }
+    return __real_fcntl(fd, command, argument);
+}
+
 int __wrap_ioctl(int fd, unsigned long request, ...)
 {
     discard fd;
@@ -445,13 +501,15 @@ int __wrap_ioctl(int fd, unsigned long request, ...)
     {
         const unsigned long flags = va_arg(args, unsigned long);
         va_end(args);
-        gso_offload_calls++;
-        require(flags == (TUN_F_CSUM | TUN_F_TSO4), "GSO setup advertised unexpected offload flags");
-        if (fail_gso_ioctl_request == request)
+        require(gso_offload_calls < ARRAY_SIZE(offload_masks), "too many offload setup calls");
+        offload_masks[gso_offload_calls++] = flags;
+        require(flags == TUN_F_CSUM || flags == (TUN_F_CSUM | TUN_F_TSO4), "unexpected offload mask");
+        if (fail_gso_ioctl_request == request || flags == fail_offload_mask || gso_offload_calls == fail_offload_call)
         {
             errno = fail_gso_ioctl_errno;
             return -1;
         }
+        active_offload_mask = flags;
         return 0;
     }
     void *argument = va_arg(args, void *);
@@ -460,6 +518,11 @@ int __wrap_ioctl(int fd, unsigned long request, ...)
     if (request == TUNGETFEATURES)
     {
         gso_feature_checks++;
+        if (gso_feature_checks == fail_feature_check)
+        {
+            errno = EOPNOTSUPP;
+            return -1;
+        }
         *(unsigned int *) argument = gso_feature_available ? IFF_VNET_HDR : 0;
     }
     else if (request == TUNSETIFF)
@@ -470,6 +533,11 @@ int __wrap_ioctl(int fd, unsigned long request, ...)
             gso_setiff_calls++;
             memoryCopy(gso_attach_name, ifr->ifr_name, IFNAMSIZ);
             require((ifr->ifr_flags & IFF_TUN_EXCL) != 0, "GSO setup omitted exclusive TUN attach");
+            if (existing_interface)
+            {
+                errno = EBUSY;
+                return -1;
+            }
         }
         else
         {
@@ -965,6 +1033,17 @@ static void resetIoInjection(void)
 
 static void resetGsoSetup(void)
 {
+    memoryZero(offload_masks, sizeof(offload_masks));
+    active_offload_mask     = 0;
+    fail_offload_mask       = 0;
+    fail_offload_call       = 0;
+    fail_feature_check      = 0;
+    tun_open_calls          = 0;
+    fail_tun_open_call      = 0;
+    fail_nonblocking        = false;
+    fail_worker_gso_once    = false;
+    fail_output_budget_once = false;
+    output_budget_calls     = 0;
     gso_feature_checks     = 0;
     gso_setiff_calls       = 0;
     raw_setiff_calls       = 0;
@@ -1081,9 +1160,21 @@ static void runCapturedThreadBody(unsigned int index)
     runAuxiliaryThreadBody(captured_thread_routines[index], captured_thread_args[index]);
 }
 
+/* Raw lifecycle fixtures explicitly reject virtio support; GSO false by itself
+ * selects checksum-only framing on a capable fresh device. */
+static tun_device_t *createRawDevice(const char *name, bool gso_requested, uint16_t mtu, void *userdata,
+                                     TunReadEventHandle callback, device_fragment_policy_t policy)
+{
+    const bool available  = gso_feature_available;
+    gso_feature_available = false;
+    tun_device_t *tdev    = tundeviceCreate(name, gso_requested, mtu, userdata, callback, policy);
+    gso_feature_available = available;
+    return tdev;
+}
+
 static tun_device_t *createRunningDevice(void)
 {
-    tun_device_t *tdev = tundeviceCreate("ww-lifetime-test", false, 1500, NULL, NULL, kDeviceFragmentPreserve);
+    tun_device_t *tdev = createRawDevice("ww-lifetime-test", false, 1500, NULL, NULL, kDeviceFragmentPreserve);
     require(tdev != NULL, "production tundeviceCreate failed");
     require(tundeviceBringUp(tdev), "production tundeviceBringUp failed");
     return tdev;
@@ -1100,47 +1191,68 @@ static void observeReadCallback(tun_device_t *tdev, void *userdata, sbuf_t *buf,
 static tun_device_t *createRunningReaderDevice(void)
 {
     tun_device_t *tdev =
-        tundeviceCreate("ww-lifetime-test", false, 1500, NULL, observeReadCallback, kDeviceFragmentPreserve);
+        createRawDevice("ww-lifetime-test", false, 1500, NULL, observeReadCallback, kDeviceFragmentPreserve);
     require(tdev != NULL, "production reader-device create failed");
     require(tundeviceBringUp(tdev), "production reader-device bring-up failed");
     return tdev;
 }
 
-static tun_device_t *createRunningGsoReaderDevice(TunReadEventHandle callback)
+static tun_device_t *createRunningOffloadReaderDevice(TunReadEventHandle callback, bool gso_requested)
 {
     resetFakeThreads(0);
     resetGsoSetup();
-    tun_device_t *tdev = tundeviceCreate("ww-lifetime-test", true, 1500, NULL, callback, kDeviceFragmentPreserve);
+    tun_device_t *tdev =
+        tundeviceCreate("ww-lifetime-test", gso_requested, 1500, NULL, callback, kDeviceFragmentPreserve);
     require(tdev != NULL, "GSO reader-device create failed");
     require(deviceReaderSessionOutputWakeFd(tunLinuxReaderSession(tdev)) >= 0,
             "GSO reader-device was not configured with output credits");
     require(gso_feature_checks == 1 && gso_setiff_calls == 1 && raw_setiff_calls == 0 && gso_header_size_calls == 1 &&
-                gso_byte_order_calls == 1 && gso_offload_calls == 1 && gso_limit_calls == 1,
+                gso_byte_order_calls == 1 && gso_offload_calls == (gso_requested ? 2U : 1U) &&
+                gso_limit_calls == (gso_requested ? 1U : 0U),
             "GSO setup skipped or repeated one negotiated descriptor step");
     require(tundeviceBringUp(tdev), "GSO reader-device bring-up failed");
     return tdev;
 }
 
+static void testChecksumOnlyNegotiation(void)
+{
+    resetFakeThreads(0);
+    resetGsoSetup();
+    tun_device_t *tdev = tundeviceCreate("ww-lifetime-test", false, 1500, NULL, NULL, kDeviceFragmentPreserve);
+    require(tdev != NULL, "checksum-only device create failed");
+    require(gso_feature_checks == 1 && gso_setiff_calls == 1 && raw_setiff_calls == 0 && gso_header_size_calls == 1 &&
+                gso_byte_order_calls == 1 && gso_offload_calls == 1 && gso_limit_calls == 0,
+            "GSO false did not negotiate checksum-only virtio framing");
+    require(tundeviceEnableTrustedChecksums(tdev), "checksum-only setup did not retain direct-pair trust");
+    require(offload_masks[0] == TUN_F_CSUM && active_offload_mask == TUN_F_CSUM,
+            "checksum-only setup enabled segmentation");
+    require(deviceReaderSessionOutputWakeFd(tunLinuxReaderSession(tdev)) >= 0,
+            "checksum-only setup omitted worker admission resources");
+    tundeviceDestroy(tdev);
+}
+
 static void testGsoNegotiationAndRawFallback(void)
 {
     const unsigned long failing_requests[] = {TUNGETFEATURES, TUNSETIFF, TUNSETVNETHDRSZ, TUNSETVNETLE, TUNSETOFFLOAD};
-    for (unsigned int i = 0; i < ARRAY_SIZE(failing_requests); ++i)
-    {
-        resetFakeThreads(0);
-        resetGsoSetup();
-        resetTunLogCapture();
-        fail_gso_ioctl_request = failing_requests[i];
-        tun_device_t *tdev     = tundeviceCreate("ww-lifetime-test", true, 1500, NULL, NULL, kDeviceFragmentPreserve);
-        require(tdev != NULL, "GSO setup failure did not fall back to a raw-IP descriptor");
-        require(! tundeviceEnableTrustedChecksums(tdev), "fallback activated trust");
-        require(deviceReaderSessionOutputWakeFd(tunLinuxReaderSession(tdev)) < 0,
-                "raw-IP fallback incorrectly configured GSO output credits");
-        require(raw_setiff_calls == 1 && gso_feature_checks == 1,
-                "GSO fallback did not retry exactly one raw descriptor");
-        require(countTunLogSubstring("falling back to raw-IP TUN") == 1,
-                "GSO setup fallback did not emit one runtime diagnostic");
-        tundeviceDestroy(tdev);
-    }
+    for (unsigned mode = 0; mode < 2; ++mode)
+        for (unsigned int i = 0; i < ARRAY_SIZE(failing_requests); ++i)
+        {
+            resetFakeThreads(0);
+            resetGsoSetup();
+            resetTunLogCapture();
+            fail_gso_ioctl_request = failing_requests[i];
+            tun_device_t *tdev =
+                tundeviceCreate("ww-lifetime-test", mode != 0, 1500, NULL, NULL, kDeviceFragmentPreserve);
+            require(tdev != NULL, "GSO setup failure did not fall back to a raw-IP descriptor");
+            require(! tundeviceEnableTrustedChecksums(tdev), "fallback activated trust");
+            require(deviceReaderSessionOutputWakeFd(tunLinuxReaderSession(tdev)) < 0,
+                    "raw-IP fallback incorrectly configured GSO output credits");
+            require(raw_setiff_calls == 1 && gso_feature_checks == 1,
+                    "GSO fallback did not retry exactly one raw descriptor");
+            require(countTunLogSubstring("falling back to raw-IP TUN") == 1,
+                    "GSO setup fallback did not emit one runtime diagnostic");
+            tundeviceDestroy(tdev);
+        }
 
     resetFakeThreads(0);
     resetGsoSetup();
@@ -1157,19 +1269,124 @@ static void testGsoNegotiationAndRawFallback(void)
                 deviceReaderSessionOutputWakeFd(tunLinuxReaderSession(active)) >= 0,
             "supported GSO descriptor did not activate offload mode");
     require(gso_feature_checks == 1 && gso_setiff_calls == 1 && raw_setiff_calls == 0 && gso_header_size_calls == 1 &&
-                gso_byte_order_calls == 1 && gso_offload_calls == 1 && gso_limit_calls == 1,
+                gso_byte_order_calls == 1 && gso_offload_calls == 2 && gso_limit_calls == 1,
             "supported GSO setup did not complete every descriptor step exactly once");
+    require(offload_masks[0] == TUN_F_CSUM && offload_masks[1] == (TUN_F_CSUM | TUN_F_TSO4) &&
+                active_offload_mask == offload_masks[1],
+            "GSO upgrade did not retain CSUM in the replacement mask");
     tundeviceDestroy(active);
+
+    resetGsoSetup();
+    fail_offload_mask = TUN_F_CSUM | TUN_F_TSO4;
+    active            = tundeviceCreate("ww-lifetime-test", true, 1500, NULL, NULL, kDeviceFragmentPreserve);
+    require(active && tundeviceEnableTrustedChecksums(active) && active_offload_mask == TUN_F_CSUM &&
+                tun_open_calls == 1 && gso_offload_calls == 2 && gso_limit_calls == 0 && raw_setiff_calls == 0,
+            "rejected TSO upgrade did not retain checksum-only mode on the same descriptor");
+    tundeviceDestroy(active);
+
+    for (unsigned mode = 0; mode < 2; ++mode)
+    {
+        resetGsoSetup();
+        gso_feature_available = false;
+        active = tundeviceCreate("ww-lifetime-test", mode != 0, 1500, NULL, NULL, kDeviceFragmentPreserve);
+        require(active && ! tundeviceEnableTrustedChecksums(active) && raw_setiff_calls == 1 && gso_setiff_calls == 0,
+                "missing virtio feature did not select raw fallback");
+        tundeviceDestroy(active);
+
+        resetGsoSetup();
+        existing_interface = true;
+        active             = tundeviceCreate("ww-lifetime-test", mode != 0, 1500, NULL, NULL, kDeviceFragmentPreserve);
+        if (mode == 0)
+        {
+            require(active && raw_setiff_calls == 2 && ! raw_attach_exclusive && gso_offload_calls == 0 &&
+                        ! tundeviceEnableTrustedChecksums(active),
+                    "GSO false lost pre-existing raw attachment");
+            tundeviceDestroy(active);
+        }
+        else
+            require(active == NULL && raw_setiff_calls == 0, "GSO request attached a pre-existing interface");
+        existing_interface = false;
+    }
+
+    const unsigned long serious_failures[] = {
+        TUNGETFEATURES, TUNSETIFF, TUNSETVNETHDRSZ, TUNSETVNETLE, TUNSETOFFLOAD, SIOCSIFMTU};
+    for (unsigned mode = 0; mode < 2; ++mode)
+    {
+        for (unsigned i = 0; i < ARRAY_SIZE(serious_failures); ++i)
+        {
+            resetGsoSetup();
+            fail_gso_ioctl_request = serious_failures[i];
+            fail_gso_ioctl_errno   = EIO;
+            active = tundeviceCreate("ww-lifetime-test", mode != 0, 1500, NULL, NULL, kDeviceFragmentPreserve);
+            require(active == NULL && raw_setiff_calls == 0 && tun_open_calls == 1,
+                    "genuine construction failure was treated as optional capability rejection");
+        }
+        resetGsoSetup();
+        fail_tun_open_call = 1;
+        require(tundeviceCreate("ww-lifetime-test", mode != 0, 1500, NULL, NULL, kDeviceFragmentPreserve) == NULL &&
+                    tun_open_calls == 1,
+                "open failure retried optional capability fallback");
+        resetGsoSetup();
+        fail_nonblocking = true;
+        require(tundeviceCreate("ww-lifetime-test", mode != 0, 1500, NULL, NULL, kDeviceFragmentPreserve) == NULL &&
+                    tun_open_calls == 1 && raw_setiff_calls == 0,
+                "nonblocking failure entered capability fallback");
+    }
 }
 
-static void testGsoScratchAllocationFallsBackToRaw(void)
+static void testOffloadResourceFallbacks(void)
+{
+    for (unsigned mode = 0; mode < 2; ++mode)
+        for (unsigned failure = 0; failure < 2; ++failure)
+        {
+            resetGsoSetup();
+            resetFakeThreads(0);
+            fail_output_budget_once = failure == 0;
+            fail_worker_queue_once  = failure == 1;
+            tun_device_t *tdev =
+                tundeviceCreate("ww-lifetime-test", mode != 0, 1500, NULL, NULL, kDeviceFragmentPreserve);
+            require(tdev && ! tundeviceEnableTrustedChecksums(tdev) && active_offload_mask == 0 &&
+                        raw_setiff_calls == 1 && output_budget_calls == 1,
+                    "common resource failure did not roll back into usable raw mode");
+            require(tundeviceBringUp(tdev) && tundeviceBringDown(tdev),
+                    "partially configured session lost raw usability");
+            tundeviceDestroy(tdev);
+        }
+    for (unsigned failure = 0; failure < 4; ++failure)
+    {
+        resetGsoSetup();
+        resetFakeThreads(0);
+        resetTunLogCapture();
+        fail_worker_gso_once = true;
+        fail_offload_call    = failure == 0 ? 0 : 3;
+        fail_feature_check   = failure == 2 ? 2 : 0;
+        fail_tun_open_call   = failure == 3 ? 2 : 0;
+        tun_device_t *tdev   = tundeviceCreate("ww-lifetime-test", true, 1500, NULL, NULL, kDeviceFragmentPreserve);
+        require(! fail_worker_gso_once && output_budget_calls == 1, "GSO-only failure repeated common setup");
+        if (failure == 3)
+        {
+            require(tdev == NULL, "serious checksum-only reopen failure published a device");
+            continue;
+        }
+        require(tdev && active_offload_mask == (failure == 2 ? 0UL : (unsigned long) TUN_F_CSUM) &&
+                    tundeviceEnableTrustedChecksums(tdev) == (failure != 2),
+                "GSO resource downgrade disagrees with kernel features or trust");
+        require(tun_open_calls == (failure == 0 ? 1U : failure == 1 ? 2U : 3U), "unexpected downgrade reopen count");
+        require(countTunLogSubstring("configured framing: checksum-only offload") == (failure == 2 ? 0U : 1U),
+                "GSO downgrade published the wrong mode");
+        require(tundeviceBringUp(tdev) && tundeviceBringDown(tdev), "downgraded device could not start and stop");
+        tundeviceDestroy(tdev);
+    }
+}
+
+static void testGsoScratchAllocationFallsBackToRaw(bool gso_requested)
 {
     resetFakeThreads(0);
     resetGsoSetup();
     resetTunLogCapture();
     fail_gso_scratch_once = true;
 
-    tun_device_t *tdev = tundeviceCreate("ww-lifetime-test", true, 1500, NULL, NULL, kDeviceFragmentPreserve);
+    tun_device_t *tdev = tundeviceCreate("ww-lifetime-test", gso_requested, 1500, NULL, NULL, kDeviceFragmentPreserve);
     require(tdev != NULL, "GSO scratch-allocation failure did not fall back to raw TUN");
     require(! tundeviceEnableTrustedChecksums(tdev), "scratch fallback activated trust");
     require(gso_scratch_failures == 1 && ! fail_gso_scratch_once,
@@ -1179,7 +1396,7 @@ static void testGsoScratchAllocationFallsBackToRaw(void)
             "scratch failure did not reopen the same exclusive TUN name in raw mode");
     require(deviceReaderSessionOutputWakeFd(tunLinuxReaderSession(tdev)) < 0,
             "scratch failure left offload output credits active on raw TUN");
-    require(countTunLogSubstring("GSO receive scratch unavailable") == 1 &&
+    require(countTunLogSubstring("offload receive scratch unavailable") == 1 &&
                 countTunLogSubstring("falling back to raw-IP TUN") == 1,
             "scratch failure did not explain the one-time raw fallback");
     require(tundeviceBringUp(tdev), "raw TUN fallback after scratch failure did not start");
@@ -1239,7 +1456,7 @@ static void testTunWriterRefusalClassesUseFreshTlsState(void)
     /* Down reaches the actual Linux TUN device layer without a published writer
      * generation. A fresh helper starts its sparse TLS sampler at ordinal one. */
     resetFakeThreads(0);
-    tun_device_t *tdev = tundeviceCreate("ww-lifetime-test", false, 1500, NULL, NULL, kDeviceFragmentPreserve);
+    tun_device_t *tdev = createRawDevice("ww-lifetime-test", false, 1500, NULL, NULL, kDeviceFragmentPreserve);
     require(tdev != NULL, "failed to create down TUN refusal fixture");
     tun_refusal_probe_t down = {.tdev = tdev};
     resetTunLogCapture();
@@ -1386,7 +1603,7 @@ static void testBringUpRollsBackThreadCreationFailures(void)
     {
         resetFakeThreads(failed_call);
         tun_device_t *tdev =
-            tundeviceCreate("ww-lifetime-test", false, 1500, NULL, observeReadCallback, kDeviceFragmentPreserve);
+            createRawDevice("ww-lifetime-test", false, 1500, NULL, observeReadCallback, kDeviceFragmentPreserve);
         require(tdev != NULL, "thread-failure device create failed");
 
         device_reader_session_t *session           = tunLinuxReaderSession(tdev);
@@ -1427,7 +1644,7 @@ static void testThreadExitDuringStartupRollsBack(unsigned int exit_on_create_cal
     run_fake_thread_on_create_call = exit_on_create_call;
 
     tun_device_t *tdev =
-        tundeviceCreate("ww-lifetime-test", false, 1500, NULL, observeReadCallback, kDeviceFragmentPreserve);
+        createRawDevice("ww-lifetime-test", false, 1500, NULL, observeReadCallback, kDeviceFragmentPreserve);
     require(tdev != NULL, "startup-exit device create failed");
 
     if (exit_on_create_call == 1)
@@ -1494,7 +1711,7 @@ static void testUnexpectedThreadExitTakesTheDeviceDown(unsigned int which)
     resetFakeThreads(0);
     resetShutdownRequests();
     tun_device_t *tdev =
-        tundeviceCreate("ww-lifetime-test", false, 1500, NULL, observeReadCallback, kDeviceFragmentPreserve);
+        createRawDevice("ww-lifetime-test", false, 1500, NULL, observeReadCallback, kDeviceFragmentPreserve);
     require(tdev != NULL, "unexpected-exit device create failed");
 
     // Return immediately from the selected body instead of running the real loop.
@@ -1552,7 +1769,7 @@ static void testNormalStopDoesNotRequestShutdown(void)
     resetShutdownRequests();
 
     tun_device_t *tdev =
-        tundeviceCreate("ww-lifetime-test", false, 1500, NULL, observeReadCallback, kDeviceFragmentPreserve);
+        createRawDevice("ww-lifetime-test", false, 1500, NULL, observeReadCallback, kDeviceFragmentPreserve);
     require(tdev != NULL, "normal-stop device create failed");
 
     // Capture both bodies without running them, so they can return after the
@@ -1592,7 +1809,7 @@ static void testPermanentReadErrorFailsTheDevice(int io_errno, const char *label
     resetIoInjection();
 
     tun_device_t *tdev =
-        tundeviceCreate("ww-lifetime-test", false, 1500, NULL, observeReadCallback, kDeviceFragmentPreserve);
+        createRawDevice("ww-lifetime-test", false, 1500, NULL, observeReadCallback, kDeviceFragmentPreserve);
     require(tdev != NULL, "read-error device create failed");
     require(tundeviceBringUp(tdev), "read-error device bring-up failed");
     require(tundeviceIsUp(tdev), "bring-up did not publish the device as up");
@@ -1626,7 +1843,7 @@ static void testTransientReadErrorKeepsTheDeviceUp(void)
     resetIoInjection();
 
     tun_device_t *tdev =
-        tundeviceCreate("ww-lifetime-test", false, 1500, NULL, observeReadCallback, kDeviceFragmentPreserve);
+        createRawDevice("ww-lifetime-test", false, 1500, NULL, observeReadCallback, kDeviceFragmentPreserve);
     require(tdev != NULL, "transient-read device create failed");
     require(tundeviceBringUp(tdev), "transient-read device bring-up failed");
 
@@ -1966,7 +2183,7 @@ static void testHandoffFailureFallsBackToHardAbort(void)
         hard_abort_is_expected   = true;
 
         tun_device_t *tdev =
-            tundeviceCreate("ww-lifetime-test", false, 1500, NULL, observeReadCallback, kDeviceFragmentPreserve);
+            createRawDevice("ww-lifetime-test", false, 1500, NULL, observeReadCallback, kDeviceFragmentPreserve);
         if (tdev == NULL)
         {
             _Exit(70);
@@ -2042,7 +2259,7 @@ static void testReaderFragmentPolicy(bool normalized)
             sum = (sum & 65535) + (sum >> 16);
         PUT_BE16(p + 10, (uint16_t) ~sum);
     }
-    tun_device_t *tdev = tundeviceCreate("ww-fragment-test",
+    tun_device_t *tdev = createRawDevice("ww-fragment-test",
                                          false,
                                          1500,
                                          NULL,
@@ -2173,7 +2390,7 @@ static void expectOrdinaryChecksum(ordinary_checksum_fixture_t *fixture, const u
     }
 }
 
-static void testOrdinaryChecksumWorkerHandoff(bool cancel, bool stale)
+static void testOrdinaryChecksumWorkerHandoff(bool gso_requested, bool cancel, bool stale)
 {
     resetShutdownRequests();
     resetIoInjection();
@@ -2181,8 +2398,8 @@ static void testOrdinaryChecksumWorkerHandoff(bool cancel, bool stale)
     resetGsoSetup();
     resetFakeThreads(0);
     ordinary_checksum_fixture_t fixture = {0};
-    tun_device_t               *tdev =
-        tundeviceCreate("ww-lifetime-test", true, 1500, &fixture, observeOrdinaryChecksum, kDeviceFragmentReassemble);
+    tun_device_t               *tdev    = tundeviceCreate(
+        "ww-lifetime-test", gso_requested, 1500, &fixture, observeOrdinaryChecksum, kDeviceFragmentReassemble);
     require(tdev && tundeviceBringUp(tdev), "ordinary checksum device setup");
     uint8_t record[kGsoFixtureRecordLength];
     makeSmallGsoRecord(record);
@@ -2242,7 +2459,7 @@ static void testOrdinaryChecksumWorkerHandoff(bool cancel, bool stale)
     resetCapturedMessages();
 }
 
-static void testOrdinaryChecksumMixedFifo(void)
+static void testOrdinaryChecksumMixedFifo(bool gso_requested)
 {
     resetShutdownRequests();
     resetIoInjection();
@@ -2251,8 +2468,8 @@ static void testOrdinaryChecksumMixedFifo(void)
     resetFakeThreads(0);
     GSTATE.ram_profile                  = 8;
     ordinary_checksum_fixture_t fixture = {0};
-    tun_device_t               *tdev =
-        tundeviceCreate("ww-lifetime-test", true, 1500, &fixture, observeOrdinaryChecksum, kDeviceFragmentReassemble);
+    tun_device_t               *tdev    = tundeviceCreate(
+        "ww-lifetime-test", gso_requested, 1500, &fixture, observeOrdinaryChecksum, kDeviceFragmentReassemble);
     require(tdev && tundeviceBringUp(tdev), "mixed ordinary checksum device setup");
     uint8_t ordinary[kGsoFixtureRecordLength], partial[kGsoFixtureRecordLength], aggregate[kGsoFixtureRecordLength];
     makeSmallGsoRecord(ordinary);
@@ -2266,24 +2483,32 @@ static void testOrdinaryChecksumMixedFifo(void)
     require(tunLinuxOffloadEncodeWrite(partial + 10, kGsoFixtureIpLength, partial), "mixed partial fixture seed");
     expectOrdinaryChecksum(&fixture, partial, kGsoFixtureIpLength);
     makeSmallGsoRecord(aggregate);
-    for (unsigned part = 0; part < 3; ++part)
+    if (! gso_requested)
     {
-        uint8_t  segment[51] = {0};
-        uint8_t *ip          = segment + 10;
-        memoryCopy(ip, aggregate + 10, 40);
-        PUT_BE16(ip + 2, 41);
-        PUT_BE16(ip + 4, 0x1234U + part);
-        PUT_BE32(ip + 24, 1000U + part);
-        ip[33] = part == 2 ? 0x19 : 0x10;
-        ip[40] = (uint8_t) ('A' + part);
-        PUT_BE16(ip + 10, 0);
-        PUT_BE16(ip + 10, (uint16_t) ~gsoChecksumWords(ip, 20, 0));
-        uint32_t seed = gsoChecksumWords(ip + 12, 8, 0) + 6U + 21U;
-        PUT_BE16(ip + 36, (uint16_t) seed);
-        segment[0] = VIRTIO_NET_HDR_F_NEEDS_CSUM;
-        segment[6] = 20;
-        segment[8] = 16;
-        expectOrdinaryChecksum(&fixture, segment, 41);
+        require(tunLinuxOffloadEncodeWrite(aggregate + 10, kGsoFixtureIpLength, aggregate), "checksum-only FIFO seed");
+        expectOrdinaryChecksum(&fixture, aggregate, kGsoFixtureIpLength);
+    }
+    else
+    {
+        for (unsigned part = 0; part < 3; ++part)
+        {
+            uint8_t  segment[51] = {0};
+            uint8_t *ip          = segment + 10;
+            memoryCopy(ip, aggregate + 10, 40);
+            PUT_BE16(ip + 2, 41);
+            PUT_BE16(ip + 4, 0x1234U + part);
+            PUT_BE32(ip + 24, 1000U + part);
+            ip[33] = part == 2 ? 0x19 : 0x10;
+            ip[40] = (uint8_t) ('A' + part);
+            PUT_BE16(ip + 10, 0);
+            PUT_BE16(ip + 10, (uint16_t) ~gsoChecksumWords(ip, 20, 0));
+            uint32_t seed = gsoChecksumWords(ip + 12, 8, 0) + 6U + 21U;
+            PUT_BE16(ip + 36, (uint16_t) seed);
+            segment[0] = VIRTIO_NET_HDR_F_NEEDS_CSUM;
+            segment[6] = 20;
+            segment[8] = 16;
+            expectOrdinaryChecksum(&fixture, segment, 41);
+        }
     }
     uint8_t  udp[41] = {0};
     uint8_t *ip      = udp + 10;
@@ -2313,20 +2538,33 @@ static void testOrdinaryChecksumMixedFifo(void)
     ipv6[6] = 40;
     ipv6[8] = 16;
     expectOrdinaryChecksum(&fixture, ipv6, 63);
+    uint8_t ipv6_udp[61] = {0};
+    memoryCopy(ipv6_udp + 10, ipv6 + 10, 40);
+    ip = ipv6_udp + 10;
+    PUT_BE16(ip + 4, 11);
+    ip[6] = 17;
+    memoryCopy(ip + 40, udp + 30, 11);
+    PUT_BE16(ip + 46, (uint16_t) (gsoChecksumWords(ip + 8, 32, 0) + 17U + 11U));
+    ipv6_udp[0] = VIRTIO_NET_HDR_F_NEEDS_CSUM;
+    ipv6_udp[6] = 40;
+    ipv6_udp[8] = 6;
+    expectOrdinaryChecksum(&fixture, ipv6_udp, 51);
     const injected_io_result_t reads[] = {{.result = sizeof(ordinary), .bytes = ordinary},
                                           {.result = sizeof(partial), .bytes = partial},
                                           {.result = sizeof(aggregate), .bytes = aggregate},
                                           {.result = sizeof(udp), .bytes = udp},
                                           {.result = sizeof(ipv6), .bytes = ipv6},
+                                          {.result = sizeof(ipv6_udp), .bytes = ipv6_udp},
                                           {.result = -1, .error = EAGAIN},
                                           {.result = -1, .error = EIO}};
     armDeviceReads(reads, ARRAY_SIZE(reads));
     inject_gso_reader_poll       = true;
-    gso_deliver_after_read_calls = 6;
+    gso_deliver_after_read_calls = 7;
     gso_probe_session            = tunLinuxReaderSession(tdev);
     runCapturedThreadBody(kCapturedReaderThread);
-    require(fixture.delivered == 7 && ordinary_worker_checksums == 3 && ordinary_reader_checksums == 0 &&
-                prepared_gso_segments == 3 && captured_message_count == 1 && gso_device_ready_polls == 3,
+    require(fixture.delivered == (gso_requested ? 8U : 6U) && ordinary_worker_checksums == (gso_requested ? 4U : 5U) &&
+                ordinary_reader_checksums == 0 && prepared_gso_segments == (gso_requested ? 3U : 0U) &&
+                captured_message_count == 1 && gso_device_ready_polls == (gso_requested ? 3U : 2U),
             "mixed FIFO lost checksum work, batching, or coalesced worker dispatch");
     require(atomic_load_explicit(&gso_probe_session->output_packets, memory_order_acquire) == 0 &&
                 atomic_load_explicit(&gso_probe_session->output_charge, memory_order_acquire) == 0,
@@ -2338,7 +2576,7 @@ static void testOrdinaryChecksumMixedFifo(void)
     GSTATE.ram_profile = 1;
 }
 
-static void testOrdinaryChecksumBudget(void)
+static void testOrdinaryChecksumBudget(bool gso_requested)
 {
     resetShutdownRequests();
     resetIoInjection();
@@ -2346,8 +2584,8 @@ static void testOrdinaryChecksumBudget(void)
     resetGsoSetup();
     resetFakeThreads(0);
     ordinary_checksum_fixture_t fixture = {0};
-    tun_device_t               *tdev =
-        tundeviceCreate("ww-lifetime-test", true, 1500, &fixture, observeOrdinaryChecksum, kDeviceFragmentReassemble);
+    tun_device_t               *tdev    = tundeviceCreate(
+        "ww-lifetime-test", gso_requested, 1500, &fixture, observeOrdinaryChecksum, kDeviceFragmentReassemble);
     require(tdev && tundeviceBringUp(tdev), "ordinary checksum budget device setup");
     gso_probe_session                      = tunLinuxReaderSession(tdev);
     gso_probe_session->output_packet_limit = 1;
@@ -2376,7 +2614,7 @@ static void testOrdinaryChecksumBudget(void)
     resetCapturedMessages();
 }
 
-static void testOrdinaryChecksumReaderFallback(bool reassemble)
+static void testOrdinaryChecksumReaderFallback(bool gso_requested, bool reassemble)
 {
     resetShutdownRequests();
     resetIoInjection();
@@ -2385,7 +2623,7 @@ static void testOrdinaryChecksumReaderFallback(bool reassemble)
     resetFakeThreads(0);
     ordinary_checksum_fixture_t fixture = {0};
     tun_device_t               *tdev    = tundeviceCreate("ww-lifetime-test",
-                                         true,
+                                         gso_requested,
                                          1500,
                                          &fixture,
                                          observeOrdinaryChecksum,
@@ -2519,7 +2757,7 @@ static void observeTrustedRecord(tun_device_t *tdev, void *userdata, sbuf_t *buf
     bufferpoolReuseBuffer(getWorkerBufferPool(wid), buf);
 }
 
-static void testTrustedHandoff(bool cancel, bool stale)
+static void testTrustedHandoff(bool gso_requested, bool cancel, bool stale)
 {
     resetShutdownRequests();
     resetIoInjection();
@@ -2527,7 +2765,7 @@ static void testTrustedHandoff(bool cancel, bool stale)
     resetGsoSetup();
     resetFakeThreads(0);
     tun_device_t *tdev =
-        tundeviceCreate("ww-lifetime-test", true, 1500, NULL, observeTrustedRecord, kDeviceFragmentReassemble);
+        tundeviceCreate("ww-lifetime-test", gso_requested, 1500, NULL, observeTrustedRecord, kDeviceFragmentReassemble);
     require(tdev && tundeviceEnableTrustedChecksums(tdev), "trusted device setup");
     require(tundeviceBringUp(tdev), "trusted device startup");
     uint8_t aggregate[kGsoFixtureRecordLength], partial[kGsoFixtureRecordLength], ordinary[kGsoFixtureRecordLength],
@@ -2536,9 +2774,12 @@ static void testTrustedHandoff(bool cancel, bool stale)
     aggregate[10 + 10] ^= 1;
     require(tunLinuxOffloadEncodeWrite(aggregate + 10, 43, aggregate), "fixture partial seed");
     memoryCopy(partial, aggregate, sizeof(partial));
-    aggregate[1] = VIRTIO_NET_HDR_GSO_TCPV4;
-    aggregate[2] = 40;
-    aggregate[4] = 1;
+    if (gso_requested)
+    {
+        aggregate[1] = VIRTIO_NET_HDR_GSO_TCPV4;
+        aggregate[2] = 40;
+        aggregate[4] = 1;
+    }
     memoryCopy(ordinary, partial, sizeof(ordinary));
     memoryZero(ordinary, 10);
     PUT_BE16(ordinary + 10 + 36, (uint16_t) ~gsoChecksumWords(ordinary + 10 + 20, 23, 0));
@@ -2599,12 +2840,138 @@ static void testTrustedHandoff(bool cancel, bool stale)
     resetCapturedMessages();
 }
 
+static void observeTrustedOrdinary(tun_device_t *tdev, void *userdata, sbuf_t *buf, wid_t wid)
+{
+    discard                      tdev;
+    ordinary_checksum_fixture_t *fixture = userdata;
+    require(currentThreadIsEventWorkerWID(wid) && fixture->delivered < fixture->count, "trusted ordinary delivery");
+    const unsigned index = fixture->delivered++;
+    require(sbufGetLength(buf) == fixture->lengths[index] &&
+                memoryEqual(sbufGetRawPtr(buf), fixture->packets[index], fixture->lengths[index]),
+            "trusted ordinary assurance or reader fallback changed bytes/order");
+    bufferpoolReuseBuffer(getWorkerBufferPool(wid), buf);
+}
+
+static void testTrustedChecksumOnlyFallback(void)
+{
+    resetShutdownRequests();
+    resetIoInjection();
+    resetCapturedMessages();
+    resetGsoSetup();
+    resetFakeThreads(0);
+    ordinary_checksum_fixture_t fixture = {0};
+    tun_device_t               *tdev =
+        tundeviceCreate("ww-lifetime-test", false, 1500, &fixture, observeTrustedOrdinary, kDeviceFragmentReassemble);
+    require(tdev && tundeviceEnableTrustedChecksums(tdev) && tundeviceBringUp(tdev),
+            "trusted checksum-only fallback setup");
+    uint8_t tcp[kGsoFixtureRecordLength];
+    makeSmallGsoRecord(tcp);
+    uint8_t  udp[41] = {0};
+    uint8_t *ip      = udp + 10;
+    memoryCopy(ip, tcp + 10, 20);
+    ip[9] = 17;
+    PUT_BE16(ip + 2, 31);
+    PUT_BE16(ip + 20, 1234);
+    PUT_BE16(ip + 22, 53);
+    PUT_BE16(ip + 24, 11);
+    memoryCopy(ip + 28, "XYZ", 3);
+    PUT_BE16(ip + 10, 0);
+    PUT_BE16(ip + 10, (uint16_t) ~gsoChecksumWords(ip, 20, 0));
+    require(tunLinuxOffloadEncodeWrite(ip, 31, udp), "trusted UDP seed");
+    /* Matching partial metadata retains seed bytes in private assured work. */
+    fixture.lengths[fixture.count] = 31;
+    memoryCopy(fixture.packets[fixture.count++], ip, 31);
+    uint8_t valid[41];
+    memoryCopy(valid, udp, sizeof(valid));
+    expectOrdinaryChecksum(&fixture, valid, 31);
+    memoryCopy(valid + 10, fixture.packets[1], 31);
+    memoryZero(valid, 10);
+    valid[0] = VIRTIO_NET_HDR_F_DATA_VALID;
+    /* Generic coordinates must still materialize on the reader and validate. */
+    require(tunLinuxOffloadEncodeWrite(tcp + 10, 43, tcp), "trusted generic TCP seed");
+    tcp[6] = 0;
+    tcp[8] = 36;
+    expectOrdinaryChecksum(&fixture, tcp, 43);
+    uint8_t unmarked[41], corrupt[41], contradictory[41], fragment[41];
+    memoryCopy(unmarked, valid, sizeof(unmarked));
+    memoryZero(unmarked, 10);
+    expectOrdinaryChecksum(&fixture, unmarked, 31);
+    memoryCopy(corrupt, unmarked, sizeof(corrupt));
+    corrupt[40] ^= 1;
+    memoryCopy(contradictory, udp, sizeof(contradictory));
+    contradictory[0] |= VIRTIO_NET_HDR_F_DATA_VALID;
+    memoryCopy(fragment, udp, sizeof(fragment));
+    PUT_BE16(fragment + 10 + 6, 0x2000);
+    const injected_io_result_t reads[] = {{.result = sizeof(udp), .bytes = udp},
+                                          {.result = sizeof(valid), .bytes = valid},
+                                          {.result = sizeof(tcp), .bytes = tcp},
+                                          {.result = sizeof(unmarked), .bytes = unmarked},
+                                          {.result = sizeof(corrupt), .bytes = corrupt},
+                                          {.result = sizeof(contradictory), .bytes = contradictory},
+                                          {.result = sizeof(fragment), .bytes = fragment},
+                                          {.result = -1, .error = EIO}};
+    armDeviceReads(reads, ARRAY_SIZE(reads));
+    inject_gso_reader_poll       = true;
+    gso_deliver_after_read_calls = 7;
+    gso_probe_session            = tunLinuxReaderSession(tdev);
+    runCapturedThreadBody(kCapturedReaderThread);
+    require(fixture.delivered == 4 && ordinary_reader_checksums == 1 && ordinary_worker_checksums == 0 &&
+                prepared_gso_segments == 0,
+            "trusted checksum-only fallback/validation bypass");
+    require(atomic_load_explicit(&gso_probe_session->output_packets, memory_order_acquire) == 0 &&
+                atomic_load_explicit(&gso_probe_session->output_charge, memory_order_acquire) == 0,
+            "trusted checksum-only fallback reservation leak");
+    resetIoInjection();
+    require(tundeviceBringDown(tdev), "trusted checksum-only fallback stop");
+    tundeviceDestroy(tdev);
+    resetCapturedMessages();
+}
+
+static void testChecksumOnlyRejectsGso(void)
+{
+    resetShutdownRequests();
+    resetIoInjection();
+    resetCapturedMessages();
+    tun_device_t        *tdev = createRunningOffloadReaderDevice(observeReadCallback, false);
+    uint8_t              records[7][kGsoFixtureRecordLength];
+    const uint8_t        types[]  = {VIRTIO_NET_HDR_GSO_TCPV4,
+                                     VIRTIO_NET_HDR_GSO_TCPV6,
+                                     VIRTIO_NET_HDR_GSO_UDP,
+                                     5 /* UDP_L4, absent from older headers */,
+                                     VIRTIO_NET_HDR_GSO_ECN,
+                                     VIRTIO_NET_HDR_GSO_TCPV4 | VIRTIO_NET_HDR_GSO_ECN};
+    injected_io_result_t reads[8] = {0};
+    for (unsigned i = 0; i < ARRAY_SIZE(records); ++i)
+    {
+        makeSmallGsoRecord(records[i]);
+        records[i][1] = i < ARRAY_SIZE(types) ? types[i] : VIRTIO_NET_HDR_GSO_NONE;
+        reads[i]      = (injected_io_result_t) {.result = sizeof(records[i]), .bytes = records[i]};
+    }
+    reads[7] = (injected_io_result_t) {.result = -1, .error = EIO};
+    armDeviceReads(reads, ARRAY_SIZE(reads));
+    inject_gso_reader_poll       = true;
+    gso_deliver_after_read_calls = 7;
+    gso_probe_session            = tunLinuxReaderSession(tdev);
+    callback_count               = 0;
+    runCapturedThreadBody(kCapturedReaderThread);
+    require(callback_count == 1 && captured_message_count == 1 && prepared_gso_segments == 0 &&
+                ordinary_worker_checksums == 0 && ordinary_reader_checksums == 0,
+            "checksum-only reader admitted unexpected GSO work");
+    require(atomic_load_explicit(&gso_probe_session->output_packets, memory_order_acquire) == 0 &&
+                atomic_load_explicit(&gso_probe_session->output_charge, memory_order_acquire) == 0,
+            "unexpected GSO leaked admission credits");
+    resetIoInjection();
+    require(tundeviceBringDown(tdev), "checksum-only rejection cleanup");
+    tundeviceDestroy(tdev);
+    resetCapturedMessages();
+}
+
 static void testGsoWorkerSegmentationOwnsAggregate(void)
 {
     resetShutdownRequests();
     resetIoInjection();
     resetCapturedMessages();
-    tun_device_t *tdev = createRunningGsoReaderDevice(observeGsoThenOrdinary);
+    tun_device_t *tdev = createRunningOffloadReaderDevice(observeGsoThenOrdinary, true);
     uint8_t       aggregate[kGsoFixtureRecordLength];
     uint8_t       ordinary[kGsoFixtureRecordLength];
     makeSmallGsoRecord(aggregate);
@@ -2640,7 +3007,7 @@ static void testGsoReaderResumesPendingWithoutTunReadiness(void)
     resetShutdownRequests();
     resetIoInjection();
     resetCapturedMessages();
-    tun_device_t            *tdev    = createRunningGsoReaderDevice(observeGsoSegment);
+    tun_device_t            *tdev    = createRunningOffloadReaderDevice(observeGsoSegment, true);
     device_reader_session_t *session = tunLinuxReaderSession(tdev);
     session->output_packet_limit     = 2; /* One input plus its reusable output allowance. */
     uint8_t record[kGsoFixtureRecordLength];
@@ -2720,7 +3087,7 @@ static void testGsoSmallMssContinuationPreservesOrdinaryFifo(void)
     resetShutdownRequests();
     resetIoInjection();
     resetCapturedMessages();
-    tun_device_t *tdev = createRunningGsoReaderDevice(observeSmallMssThenOrdinary);
+    tun_device_t *tdev = createRunningOffloadReaderDevice(observeSmallMssThenOrdinary, true);
     uint8_t       aggregate[kSmallMssRecordLength];
     uint8_t       ordinary[kGsoFixtureRecordLength];
     makeSmallGsoRecord(ordinary);
@@ -2784,7 +3151,7 @@ static void testGsoWorkerYieldsAtByteQuantum(void)
     resetShutdownRequests();
     resetIoInjection();
     resetCapturedMessages();
-    tun_device_t *tdev = createRunningGsoReaderDevice(observeGsoByteQuantum);
+    tun_device_t *tdev = createRunningOffloadReaderDevice(observeGsoByteQuantum, true);
     uint8_t       record[10 + 65535];
     makeSmallGsoRecord(record);
     PUT_LE16(record + 4, 1460);
@@ -2847,7 +3214,7 @@ static void testGsoWorkerPoolPaddingGrowth(test_env_t *env)
     buffer_pool_fit_t initial_fit;
     require(bufferpoolQueryBestFit(isolated, 1500, 64, &initial_fit), "initial output allowance query failed");
     padding_growth_output_allowance = initial_fit.allocation_charge;
-    tun_device_t *tdev              = createRunningGsoReaderDevice(observeGsoAfterPaddingGrowth);
+    tun_device_t *tdev              = createRunningOffloadReaderDevice(observeGsoAfterPaddingGrowth, true);
     /* No allocations have populated this isolated worker pool. A later chain
      * may increase its padding after the TUN cached its own output allowance. */
     bufferpoolUpdateAllocationPaddings(isolated, 8192, 8192, 8192, 8192);
@@ -2883,12 +3250,12 @@ static void testGsoWorkerPoolPaddingGrowth(test_env_t *env)
     resetCapturedMessages();
 }
 
-static void testGsoWriterFramingAndPacketOutcomes(void)
+static void testGsoWriterFramingAndPacketOutcomes(bool gso_requested)
 {
     resetShutdownRequests();
     resetIoInjection();
     resetTunLogCapture();
-    tun_device_t  *tdev      = createRunningGsoReaderDevice(observeReadCallback);
+    tun_device_t  *tdev      = createRunningOffloadReaderDevice(observeReadCallback, gso_requested);
     const uint16_t lengths[] = {1500, 64, 64, 64};
     for (unsigned int i = 0; i < ARRAY_SIZE(lengths); ++i)
     {
@@ -2908,8 +3275,10 @@ static void testGsoWriterFramingAndPacketOutcomes(void)
 
     require(observed_writev_calls == 5 && observed_write_calls == 0 && largest_writev_packet == 1500,
             "GSO writer did not frame, retry, and bound writes as packet operations");
-    require(countTunLogSubstring("short device write") == 1,
-            "GSO writer did not diagnose its positive short packet write");
+    /* The shared limiter was already exercised by the checksum-only run. */
+    if (! gso_requested)
+        require(countTunLogSubstring("short device write") == 1,
+                "offload writer did not diagnose its positive short packet write");
     require(shutdown_request_calls == 1 && tunLinuxLifecycleState(tdev) == kTunLifecycleFailed,
             "GSO writer did not end on a permanent descriptor error");
     resetIoInjection();
@@ -2917,7 +3286,7 @@ static void testGsoWriterFramingAndPacketOutcomes(void)
     tundeviceDestroy(tdev);
 }
 
-static void testTrustedWriterOutcomes(void)
+static void testTrustedWriterOutcomes(bool gso_requested)
 {
     resetShutdownRequests();
     resetIoInjection();
@@ -2925,7 +3294,7 @@ static void testTrustedWriterOutcomes(void)
     resetGsoSetup();
     resetFakeThreads(0);
     tun_device_t *tdev =
-        tundeviceCreate("ww-lifetime-test", true, 1500, NULL, observeReadCallback, kDeviceFragmentPreserve);
+        tundeviceCreate("ww-lifetime-test", gso_requested, 1500, NULL, observeReadCallback, kDeviceFragmentPreserve);
     require(tdev && tundeviceEnableTrustedChecksums(tdev) && tundeviceBringUp(tdev), "trusted writer setup");
     for (unsigned i = 0; i < 4; ++i)
     {
@@ -2964,14 +3333,14 @@ bool __wrap_chanTryRecv(wchan_t *channel, void *element, bool *closed)
     return received;
 }
 
-static void testWriterBatch(unsigned count, unsigned capacity, unsigned fault)
+static void testWriterBatch(bool gso_requested, unsigned count, unsigned capacity, unsigned fault)
 {
     resetShutdownRequests();
     resetIoInjection();
     resetGsoSetup();
     resetFakeThreads(0);
     tun_device_t *tdev =
-        tundeviceCreate("ww-lifetime-test", true, 1500, NULL, observeReadCallback, kDeviceFragmentPreserve);
+        tundeviceCreate("ww-lifetime-test", gso_requested, 1500, NULL, observeReadCallback, kDeviceFragmentPreserve);
     require(tdev && tundeviceEnableTrustedChecksums(tdev) && tundeviceBringUp(tdev), "batch writer setup");
     writer_batch_count  = count;
     writer_batch_offset = writer_batch_calls = writer_batch_aggregates = writer_batch_max = 0;
@@ -3017,8 +3386,11 @@ static void testWriterBatch(unsigned count, unsigned capacity, unsigned fault)
                 "unsupported GSO fallback replay/latch");
     if (capacity > 128 * 1024 && fault == 0)
         require(writer_batch_calls == count && writer_batch_aggregates == 0, "charge/lookahead limit");
-    if (count == 130 && capacity == 140 && fault == 0)
+    if (gso_requested && count == 130 && capacity == 140 && fault == 0)
         require(writer_batch_calls == 3 && writer_batch_max == 64, "count limit or write reduction");
+    if (! gso_requested)
+        require(writer_batch_calls == count && writer_batch_aggregates == 0,
+                "checksum-only writer coalesced packets or emitted TSO metadata");
     if (fault == 5 || fault == 6 || fault == 8 || fault == 9)
         require(writer_batch_calls == 1, "writer continued after stop/permanent failure");
     if (fault == 7)
@@ -3034,7 +3406,7 @@ static void testTrustedQueueFallback(void)
     tun_device_t *tdev     = tundeviceCreate("ww-lifetime-test", true, 1500, NULL, NULL, kDeviceFragmentPreserve);
     require(tdev && ! fail_worker_queue_once && ! tundeviceEnableTrustedChecksums(tdev),
             "queue fallback activated trust");
-    require(gso_offload_calls == 1 && raw_setiff_calls == 1,
+    require(gso_offload_calls == 2 && raw_setiff_calls == 1,
             "queue failure did not roll back successful offload ioctl");
     tundeviceDestroy(tdev);
 }
@@ -3044,7 +3416,7 @@ static void testGsoPendingAggregateSettlesOnReaderExit(void)
     resetShutdownRequests();
     resetIoInjection();
     resetCapturedMessages();
-    tun_device_t            *tdev    = createRunningGsoReaderDevice(observeGsoSegment);
+    tun_device_t            *tdev    = createRunningOffloadReaderDevice(observeGsoSegment, true);
     device_reader_session_t *session = tunLinuxReaderSession(tdev);
     session->output_packet_limit     = 2;
     uint8_t record[kGsoFixtureRecordLength];
@@ -3099,7 +3471,7 @@ static void testDnsMutationCleanup(void)
         command_outcomes[0] = failure == 0 ? 0 : 2;
         command_outcomes[1] = 1;
         command_outcomes[2] = 0;
-        tun_device_t *tdev  = tundeviceCreate("ww-lifetime-test", false, 1500, NULL, NULL, kDeviceFragmentPreserve);
+        tun_device_t *tdev  = createRawDevice("ww-lifetime-test", false, 1500, NULL, NULL, kDeviceFragmentPreserve);
         require(tdev != NULL, "DNS fixture create");
         require(! tundeviceSetDnsServers(tdev, servers, 1) && tundeviceDnsNeedsCleanup(tdev),
                 "partial/uncertain DNS mutation lost cleanup responsibility");
@@ -3118,7 +3490,7 @@ static void testDnsMutationCleanup(void)
     }
     existing_interface = true;
     command_calls      = 0;
-    tun_device_t *tdev = tundeviceCreate("ww-lifetime-test", false, 1500, NULL, NULL, kDeviceFragmentPreserve);
+    tun_device_t *tdev = createRawDevice("ww-lifetime-test", false, 1500, NULL, NULL, kDeviceFragmentPreserve);
     require(tdev != NULL, "existing interface fixture");
     require(! raw_attach_exclusive, "raw-IP attachment to an existing interface was lost");
     /* Attached DNS snapshot/restore behavior has its own real-configuration
@@ -3138,34 +3510,45 @@ int main(void)
     loggerSetHandler(logger, captureTunLog);
     setInternalLogger(logger);
     checkSumInit();
+    testChecksumOnlyNegotiation();
     testDnsMutationCleanup();
     testGsoNegotiationAndRawFallback();
-    testGsoScratchAllocationFallsBackToRaw();
+    testGsoScratchAllocationFallsBackToRaw(false);
+    testGsoScratchAllocationFallsBackToRaw(true);
+    testOffloadResourceFallbacks();
+    testChecksumOnlyRejectsGso();
+    testTrustedChecksumOnlyFallback();
     testGsoReaderResumesPendingWithoutTunReadiness();
-    testOrdinaryChecksumWorkerHandoff(false, false);
-    testOrdinaryChecksumWorkerHandoff(true, false);
-    testOrdinaryChecksumWorkerHandoff(false, true);
-    testOrdinaryChecksumMixedFifo();
-    testOrdinaryChecksumBudget();
-    testOrdinaryChecksumReaderFallback(true);
-    testOrdinaryChecksumReaderFallback(false);
-    testTrustedHandoff(false, false);
-    testTrustedHandoff(true, false);
-    testTrustedHandoff(false, true);
+    for (unsigned mode = 0; mode < 2; ++mode)
+    {
+        const bool gso_requested = mode != 0;
+        testOrdinaryChecksumWorkerHandoff(gso_requested, false, false);
+        testOrdinaryChecksumWorkerHandoff(gso_requested, true, false);
+        testOrdinaryChecksumWorkerHandoff(gso_requested, false, true);
+        testOrdinaryChecksumMixedFifo(gso_requested);
+        testOrdinaryChecksumBudget(gso_requested);
+        testOrdinaryChecksumReaderFallback(gso_requested, true);
+        testOrdinaryChecksumReaderFallback(gso_requested, false);
+        testTrustedHandoff(gso_requested, false, false);
+        testTrustedHandoff(gso_requested, true, false);
+        testTrustedHandoff(gso_requested, false, true);
+        testGsoWriterFramingAndPacketOutcomes(gso_requested);
+        testTrustedWriterOutcomes(gso_requested);
+    }
     testGsoWorkerSegmentationOwnsAggregate();
     testGsoSmallMssContinuationPreservesOrdinaryFifo();
     testGsoWorkerYieldsAtByteQuantum();
     testGsoWorkerPoolPaddingGrowth(&env);
-    testGsoWriterFramingAndPacketOutcomes();
-    testTrustedWriterOutcomes();
-    testWriterBatch(1, 140, 0);
-    testWriterBatch(3, 140, 0);
-    testWriterBatch(130, 140, 0);
-    testWriterBatch(3, 140000, 0);
-    testWriterBatch(3, 300000, 0);
-    testWriterBatch(3, 140000, 5);
+    testWriterBatch(true, 1, 140, 0);
+    testWriterBatch(true, 3, 140, 0);
+    testWriterBatch(true, 130, 140, 0);
+    testWriterBatch(true, 3, 140000, 0);
+    testWriterBatch(true, 3, 300000, 0);
+    testWriterBatch(true, 3, 140000, 5);
     for (unsigned fault = 1; fault <= 9; ++fault)
-        testWriterBatch(70, 140, fault);
+        testWriterBatch(true, 70, 140, fault);
+    testWriterBatch(false, 3, 140, 0);
+    testWriterBatch(false, 70, 140, 0);
     testTrustedQueueFallback();
     testGsoPendingAggregateSettlesOnReaderExit();
     testReaderFragmentPolicy(true);

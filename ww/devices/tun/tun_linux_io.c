@@ -130,7 +130,7 @@ static void tunOffloadCountReject(tun_device_t *tdev, tun_offload_reader_t *read
     case kTunLinuxOffloadAccept:
         return;
     }
-    if (atomicLogRateLimiterShouldLog(&tun_offload_reject_log, kTunGsoLogIntervalMs))
+    if (atomicLogRateLimiterShouldLog(&tun_offload_reject_log, kTunOffloadLogIntervalMs))
     {
         LOGW("TunDevice: dropping %s TUN offload record on %s", tunOffloadRejectName(reject), tdev->name);
     }
@@ -138,19 +138,19 @@ static void tunOffloadCountReject(tun_device_t *tdev, tun_offload_reader_t *read
 
 static void tunOffloadReaderInit(tun_device_t *tdev, tun_offload_reader_t *reader)
 {
-    reader->scratch = tdev->gso_scratch;
+    reader->scratch = tdev->offload_scratch;
     atomic_store_explicit(&tdev->gso_generated_segments, 0, memory_order_relaxed);
     atomic_store_explicit(&tdev->gso_intact_aggregates, 0, memory_order_relaxed);
     if (UNLIKELY(reader->scratch == NULL))
     {
-        LOGF("TunDevice: GSO reader started without its receive scratch");
+        LOGF("TunDevice: offload reader started without its receive scratch");
         abortProgramNow(1);
     }
     sbufReset(reader->scratch);
     if (UNLIKELY(sbufGetLeftCapacity(reader->scratch) < kTunVirtioHeaderSize ||
-                 sbufGetMaximumWriteableSize(reader->scratch) < kTunGsoPacketStorageCapacity))
+                 sbufGetMaximumWriteableSize(reader->scratch) < kTunOffloadPacketStorageCapacity))
     {
-        LOGF("TunDevice: published GSO scratch violates required geometry");
+        LOGF("TunDevice: published offload scratch violates required geometry");
         abortProgramNow(1);
     }
 }
@@ -160,7 +160,7 @@ static void tunOffloadReaderCleanup(tun_device_t *tdev, tun_offload_reader_t *re
     /* The device retains scratch through a later BringUp; the reader has
      * exclusive access only while its thread is running. */
     reader->scratch = NULL;
-    LOGI("TunDevice: %s GSO reader summary: ordinary=%llu aggregates=%llu generated=%llu reader-checksum=%llu "
+    LOGI("TunDevice: %s offload reader summary: ordinary=%llu aggregates=%llu generated=%llu reader-checksum=%llu "
          "malformed=%llu unsupported=%llu oversized=%llu intact=%llu",
          tdev->name,
          (unsigned long long) reader->ordinary_records,
@@ -173,18 +173,18 @@ static void tunOffloadReaderCleanup(tun_device_t *tdev, tun_offload_reader_t *re
          (unsigned long long) atomic_load_explicit(&tdev->gso_intact_aggregates, memory_order_relaxed));
 }
 
-typedef struct tun_gso_work_s
+typedef struct tun_offload_work_s
 {
     sbuf_t                  *aggregate;
     tun_linux_offload_plan_t plan;
     uint32_t                 next_payload_offset;
     size_t                   output_charge;
     uint16_t                 padding;
-} tun_gso_work_t;
+} tun_offload_work_t;
 
-static void tunGsoWorkCleanup(void *context)
+static void tunOffloadWorkCleanup(void *context)
 {
-    tun_gso_work_t *work = context;
+    tun_offload_work_t *work = context;
     if (work->aggregate != NULL)
     {
         sbufDestroy(work->aggregate);
@@ -196,10 +196,10 @@ static void tunGsoWorkCleanup(void *context)
  * aggregate at its FIFO head across continuations. One prepaid output allowance
  * is sufficient because delivery transfers each segment before the next one is
  * allocated; downstream retention follows the ordinary packet-chain contract. */
-static bool tunGsoWorkStep(device_reader_session_t *session, void *context, wid_t wid,
-                           device_reader_work_budget_t *budget)
+static bool tunOffloadWorkStep(device_reader_session_t *session, void *context, wid_t wid,
+                               device_reader_work_budget_t *budget)
 {
-    tun_gso_work_t *work = context;
+    tun_offload_work_t *work = context;
     assert(currentThreadIsEventWorkerWID(wid));
     buffer_pool_t *pool    = getWorkerBufferPool(wid);
     uint32_t       emitted = 0;
@@ -207,6 +207,7 @@ static bool tunGsoWorkStep(device_reader_session_t *session, void *context, wid_
      * Preflight has validated an exact, unfragmented packet <= UINT16_MAX.
      * Delivery uses the same selected worker and FIFO as segmented input. */
     tun_device_t *device = session->device;
+    assert(work->plan.action != kTunLinuxOffloadSegment || (device->gso_enabled && work->output_charge > 0));
     const bool    intact_tcp_gso =
         work->plan.action == kTunLinuxOffloadSegment && device->trusted_checksums && work->plan.transport_assured;
     if (work->plan.action != kTunLinuxOffloadSegment || intact_tcp_gso)
@@ -335,39 +336,41 @@ static void tunOffloadPostPending(tun_device_t *tdev, tun_offload_reader_t *read
         LOGF("TunDevice: preflighted offload work has no flow identity");
         abortProgramNow(1);
     }
-    const bool checksum_only =
+    const bool compact_checksum =
         reader->pending_plan.action == kTunLinuxOffloadChecksum && ! reader->pending_plan.transport_assured;
     buffer_pool_fit_t input_fit = {0};
-    if (UNLIKELY(checksum_only && ! bufferpoolQueryBestFit(tdev->reader_buffer_pool,
-                                                           reader->pending_plan.ip_length,
-                                                           bufferpoolGetSmallBufferPadding(tdev->reader_buffer_pool),
-                                                           &input_fit)))
+    if (UNLIKELY(compact_checksum && ! bufferpoolQueryBestFit(tdev->reader_buffer_pool,
+                                                              reader->pending_plan.ip_length,
+                                                              bufferpoolGetSmallBufferPadding(tdev->reader_buffer_pool),
+                                                              &input_fit)))
     {
         LOGF("TunDevice: ordinary checksum work has unrepresentable buffer geometry");
         abortProgramNow(1);
     }
-    const size_t output_charge = checksum_only ? 0 : tdev->gso_output_charge[wid];
-    const size_t input_charge  = checksum_only ? input_fit.allocation_charge : sbufGetAllocationCharge(reader->scratch);
-    const size_t charge        = input_charge + sizeof(tun_gso_work_t) + output_charge;
-    const unsigned slots       = checksum_only ? 1 : 2;
+    assert(reader->pending_plan.action != kTunLinuxOffloadSegment || tdev->gso_enabled);
+    const size_t output_charge = compact_checksum || ! tdev->gso_enabled ? 0 : tdev->gso_output_charge[wid];
+    const size_t input_charge =
+        compact_checksum ? input_fit.allocation_charge : sbufGetAllocationCharge(reader->scratch);
+    const size_t   charge        = input_charge + sizeof(tun_offload_work_t) + output_charge;
+    const unsigned slots         = compact_checksum ? 1 : 2;
     reader->waiting_for_capacity = false;
     if (! deviceReaderSessionTryReserveWork(tdev->reader_session, charge, slots))
     {
         reader->waiting_for_capacity = true;
         return;
     }
-    tun_gso_work_t *work = memoryAllocate(sizeof(*work));
+    tun_offload_work_t *work = memoryAllocate(sizeof(*work));
     if (UNLIKELY(work == NULL))
     {
         deviceReaderSessionReleaseWork(tdev->reader_session, charge, slots);
-        LOGF("TunDevice: failed to allocate reserved GSO work metadata");
+        LOGF("TunDevice: failed to allocate reserved offload work metadata");
         abortProgramNow(1);
     }
-    *work = (tun_gso_work_t) {.aggregate     = reader->scratch,
-                              .plan          = reader->pending_plan,
-                              .output_charge = output_charge,
-                              .padding       = tdev->gso_output_padding[wid]};
-    if (checksum_only)
+    *work = (tun_offload_work_t) {.aggregate     = reader->scratch,
+                                  .plan          = reader->pending_plan,
+                                  .output_charge = output_charge,
+                                  .padding       = tdev->offload_output_padding[wid]};
+    if (compact_checksum)
     {
         work->aggregate = bufferpoolGetBestFit(tdev->reader_buffer_pool, work->plan.ip_length, input_fit.left_padding);
         if (UNLIKELY(work->aggregate == NULL || sbufGetAllocationCharge(work->aggregate) != input_charge))
@@ -382,17 +385,17 @@ static void tunOffloadPostPending(tun_device_t *tdev, tun_offload_reader_t *read
     {
         const uint16_t padding =
             max(bufferpoolGetLargeBufferPadding(tdev->reader_buffer_pool), (uint16_t) kTunVirtioHeaderSize);
-        reader->scratch = bufferpoolGetBestFit(tdev->reader_buffer_pool, kTunGsoPacketStorageCapacity, padding);
+        reader->scratch = bufferpoolGetBestFit(tdev->reader_buffer_pool, kTunOffloadPacketStorageCapacity, padding);
         if (UNLIKELY(reader->scratch == NULL))
         {
-            LOGF("TunDevice: failed to replace handed-off GSO receive storage");
+            LOGF("TunDevice: failed to replace handed-off offload receive storage");
             abortProgramNow(1);
         }
-        tdev->gso_scratch = reader->scratch;
+        tdev->offload_scratch = reader->scratch;
     }
     reader->pending = false;
     discard deviceReaderSessionPostWork(
-        tdev->reader_session, wid, work, tunGsoWorkStep, tunGsoWorkCleanup, charge, slots);
+        tdev->reader_session, wid, work, tunOffloadWorkStep, tunOffloadWorkCleanup, charge, slots);
 }
 
 /* One bounded read drain. A GSO record stops this batch; the outer reader
@@ -416,12 +419,12 @@ static tun_drain_result_t tunDrainOffloadPackets(tun_device_t *tdev, tun_offload
         sbufReset(reader->scratch);
         sbufShiftLeft(reader->scratch, kTunVirtioHeaderSize);
         uint8_t *record = sbufGetMutablePtr(reader->scratch);
-        assert(sbufGetMaximumWriteableSize(reader->scratch) >= kTunVirtioHeaderSize + kTunGsoPacketStorageCapacity);
+        assert(sbufGetMaximumWriteableSize(reader->scratch) >= kTunVirtioHeaderSize + kTunOffloadPacketStorageCapacity);
 
         ssize_t nread;
         for (;;)
         {
-            nread = read(tdev->handle, record, kTunVirtioHeaderSize + kTunGsoPacketStorageCapacity);
+            nread = read(tdev->handle, record, kTunVirtioHeaderSize + kTunOffloadPacketStorageCapacity);
             if (UNLIKELY(nread < 0 && errno == EINTR))
             {
                 continue;
@@ -438,7 +441,7 @@ static tun_drain_result_t tunDrainOffloadPackets(tun_device_t *tdev, tun_offload
             const int saved_errno = errno;
             if (! tunIoErrnoIsTransient(saved_errno))
             {
-                LOGE("TunDevice: unrecoverable GSO read error on %s, errno %d (%s)",
+                LOGE("TunDevice: unrecoverable offload read error on %s, errno %d (%s)",
                      tdev->name,
                      saved_errno,
                      strerror(saved_errno));
@@ -454,6 +457,12 @@ static tun_drain_result_t tunDrainOffloadPackets(tun_device_t *tdev, tun_offload
 
         uint8_t metadata[kTunVirtioHeaderSize];
         memoryCopy(metadata, record, sizeof(metadata));
+        /* Preflight knows wire types, not the descriptor's negotiated mode. */
+        if (! tdev->gso_enabled && metadata[1] != 0)
+        {
+            tunOffloadCountReject(tdev, reader, kTunLinuxOffloadUnsupported);
+            continue;
+        }
         sbufSetLength(reader->scratch, (uint32_t) nread);
         sbufShiftRight(reader->scratch, kTunVirtioHeaderSize);
         uint8_t       *ip        = sbufGetMutablePtr(reader->scratch);
@@ -661,7 +670,7 @@ WTHREAD_ROUTINE(routineReadFromTun)
 
 #ifdef OS_LINUX
     tun_offload_reader_t offload_reader = {0};
-    if (tdev->gso_enabled)
+    if (tdev->checksum_offload_enabled)
     {
         tunOffloadReaderInit(tdev, &offload_reader);
         fds[2].fd  = deviceReaderSessionOutputWakeFd(tdev->reader_session);
@@ -672,7 +681,7 @@ WTHREAD_ROUTINE(routineReadFromTun)
     while (tunLifecycleIsActive(tunLifecycleLoad(&tdev->lifecycle)))
     {
 #ifdef OS_LINUX
-        if (tdev->gso_enabled && offload_reader.pending && ! offload_reader.waiting_for_capacity)
+        if (tdev->checksum_offload_enabled && offload_reader.pending && ! offload_reader.waiting_for_capacity)
         {
             tunOffloadPostPending(tdev, &offload_reader);
             if (! offload_reader.pending || ! offload_reader.waiting_for_capacity)
@@ -680,8 +689,8 @@ WTHREAD_ROUTINE(routineReadFromTun)
                 continue;
             }
         }
-        fds[0].events = tdev->gso_enabled && offload_reader.waiting_for_capacity ? 0 : POLLIN;
-        if (tdev->gso_enabled)
+        fds[0].events = tdev->checksum_offload_enabled && offload_reader.waiting_for_capacity ? 0 : POLLIN;
+        if (tdev->checksum_offload_enabled)
         {
             fds[2].events = offload_reader.waiting_for_capacity ? POLLIN : 0;
         }
@@ -713,15 +722,15 @@ WTHREAD_ROUTINE(routineReadFromTun)
         }
 
 #ifdef OS_LINUX
-        if (tdev->gso_enabled && offload_reader.waiting_for_capacity && (fds[2].revents & POLLIN))
+        if (tdev->checksum_offload_enabled && offload_reader.waiting_for_capacity && (fds[2].revents & POLLIN))
         {
             deviceReaderSessionDrainOutputWake(tdev->reader_session);
             offload_reader.waiting_for_capacity = false;
             continue;
         }
-        if (UNLIKELY(tdev->gso_enabled && (fds[2].revents & (POLLERR | POLLHUP | POLLNVAL))))
+        if (UNLIKELY(tdev->checksum_offload_enabled && (fds[2].revents & (POLLERR | POLLHUP | POLLNVAL))))
         {
-            LOGE("TunDevice: GSO output-capacity notification failed");
+            LOGE("TunDevice: offload output-capacity notification failed");
             break;
         }
 #endif
@@ -737,7 +746,8 @@ WTHREAD_ROUTINE(routineReadFromTun)
         {
             tun_drain_result_t drain_res;
 #ifdef OS_LINUX
-            drain_res = tdev->gso_enabled ? tunDrainOffloadPackets(tdev, &offload_reader) : tunDrainPackets(tdev);
+            drain_res =
+                tdev->checksum_offload_enabled ? tunDrainOffloadPackets(tdev, &offload_reader) : tunDrainPackets(tdev);
 #else
             drain_res = tunDrainPackets(tdev);
 #endif
@@ -753,7 +763,7 @@ WTHREAD_ROUTINE(routineReadFromTun)
         }
 
 #ifdef OS_LINUX
-        if (tdev->gso_enabled && offload_reader.waiting_for_capacity)
+        if (tdev->checksum_offload_enabled && offload_reader.waiting_for_capacity)
         {
             continue;
         }
@@ -767,7 +777,7 @@ WTHREAD_ROUTINE(routineReadFromTun)
     }
 
 #ifdef OS_LINUX
-    if (tdev->gso_enabled)
+    if (tdev->checksum_offload_enabled)
     {
         tunOffloadReaderCleanup(tdev, &offload_reader);
     }
@@ -829,9 +839,9 @@ static bool tunWriteOrdinary(tun_device_t *tdev, sbuf_t *buf)
         return true;
     }
     const size_t packet_length   = sbufGetLength(buf);
-    const size_t expected_length = packet_length + (tdev->gso_enabled ? kTunVirtioHeaderSize : 0U);
+    const size_t expected_length = packet_length + (tdev->checksum_offload_enabled ? kTunVirtioHeaderSize : 0U);
     ssize_t      written;
-    if (tdev->gso_enabled)
+    if (tdev->checksum_offload_enabled)
     {
         uint8_t metadata[kTunVirtioHeaderSize] = {0};
 #ifdef OS_LINUX
@@ -1001,6 +1011,39 @@ bool tundeviceWrite(tun_device_t *tdev, sbuf_t *buf)
 }
 
 #ifdef OS_LINUX
+/* Both virtio modes require ordered admission and enough storage for any
+ * ordinary work item. Configuration is one-time even if later GSO setup fails. */
+bool tunConfigureWorkerOffload(tun_device_t *tdev)
+{
+    size_t         maximum_charge = sbufGetAllocationCharge(tdev->offload_scratch);
+    buffer_pool_t *pool           = tdev->reader_buffer_pool;
+    const uint16_t padding        = bufferpoolGetSmallBufferPadding(pool);
+    const uint32_t lengths[]      = {tdev->mtu,
+                                     min(bufferpoolGetSmallBufferSize(pool), (uint32_t) tdev->mtu),
+                                     min(bufferpoolGetMediumBufferSize(pool), (uint32_t) tdev->mtu),
+                                     min(bufferpoolGetLargeBufferSize(pool), (uint32_t) tdev->mtu)};
+    for (unsigned i = 0; i < sizeof(lengths) / sizeof(lengths[0]); ++i)
+    {
+        buffer_pool_fit_t fit;
+        if (! bufferpoolQueryBestFit(pool, lengths[i], padding, &fit))
+        {
+            return false;
+        }
+        maximum_charge = max(maximum_charge, fit.allocation_charge);
+    }
+    if (maximum_charge + sizeof(tun_offload_work_t) > kTunOffloadPendingChargeLimit)
+    {
+        return false;
+    }
+    for (wid_t wid = 0; wid < getWorkersCount(); ++wid)
+    {
+        tdev->offload_output_padding[wid] = bufferpoolGetSmallBufferPadding(getWorkerBufferPool(wid));
+    }
+    return deviceReaderSessionConfigureOutputBudget(
+               tdev->reader_session, kTunOffloadPendingChargeLimit, kTunOffloadPendingPacketLimit) &&
+           deviceReaderSessionEnableWorkerQueue(tdev->reader_session);
+}
+
 /* Best-fit choices change only at a tier's payload limit. Sampling those
  * limits and the MTU bounds every possible segment allocation, including tiers
  * with different padding. Later configurations may increase pool padding; the
@@ -1010,7 +1053,7 @@ bool tunConfigureWorkerGso(tun_device_t *tdev)
     for (wid_t wid = 0; wid < getWorkersCount(); ++wid)
     {
         buffer_pool_t *pool           = getWorkerBufferPool(wid);
-        const uint16_t padding        = bufferpoolGetSmallBufferPadding(pool);
+        const uint16_t padding        = tdev->offload_output_padding[wid];
         const uint32_t lengths[]      = {1,
                                          tdev->mtu,
                                          min(bufferpoolGetSmallBufferSize(pool), (uint32_t) tdev->mtu),
@@ -1026,15 +1069,14 @@ bool tunConfigureWorkerGso(tun_device_t *tdev)
             }
             maximum_charge = max(maximum_charge, fit.allocation_charge);
         }
-        if (maximum_charge + sbufGetAllocationCharge(tdev->gso_scratch) + sizeof(tun_gso_work_t) >
-            kTunGsoPendingChargeLimit)
+        if (maximum_charge + sbufGetAllocationCharge(tdev->offload_scratch) + sizeof(tun_offload_work_t) >
+            kTunOffloadPendingChargeLimit)
         {
             return false;
         }
-        tdev->gso_output_charge[wid]  = maximum_charge;
-        tdev->gso_output_padding[wid] = padding;
+        tdev->gso_output_charge[wid] = maximum_charge;
     }
-    return deviceReaderSessionEnableWorkerQueue(tdev->reader_session);
+    return true;
 }
 
 #endif

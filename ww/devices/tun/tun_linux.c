@@ -51,11 +51,12 @@ bool tundeviceEnableTrustedChecksums(tun_device_t *tdev)
 {
     assert(tdev != NULL && tunLifecycleLoad(&tdev->lifecycle) == kTunLifecycleDown);
     assert(! tdev->reader_joinable && ! tdev->writer_joinable);
-    if (! tdev->gso_enabled)
+    if (! tdev->checksum_offload_enabled)
     {
         return false;
     }
-    assert(tdev->gso_scratch != NULL && tdev->reader_session->worker_queues != NULL);
+    assert(tdev->offload_scratch != NULL && tdev->reader_session->worker_queues != NULL);
+    assert(deviceReaderSessionOutputWakeFd(tdev->reader_session) >= 0);
     deviceFragAffinityTrustIpv4HeaderChecksum(tdev->reader_session->frag_affinity);
     tdev->trusted_checksums = true;
     return true;
@@ -491,10 +492,19 @@ typedef enum tun_linux_open_result_e
     kTunLinuxOpenFailure
 } tun_linux_open_result_t;
 
-static tun_linux_open_result_t tunLinuxOpenAttempt(const char *name, bool offload, bool exclusive, uint16_t mtu,
-                                                   int *out_fd, struct ifreq *out_ifr, const char **out_reason,
-                                                   int *out_errno)
+static tun_linux_open_result_t tunLinuxCapabilityFailure(int error)
 {
+    return error == EINVAL || error == EOPNOTSUPP || error == ENOTTY || error == ENOSYS
+               ? kTunLinuxOpenOffloadUnavailable
+               : kTunLinuxOpenFailure;
+}
+
+static tun_linux_open_result_t tunLinuxOpenAttempt(const char *name, bool checksum_setup, bool gso_requested,
+                                                   bool exclusive, uint16_t mtu, int *out_fd, struct ifreq *out_ifr,
+                                                   bool *out_gso_enabled, const char **out_reason, int *out_errno)
+{
+    assert(! gso_requested || checksum_setup);
+    *out_gso_enabled = false;
     int fd = open("/dev/net/tun", O_RDWR);
     if (fd < 0)
     {
@@ -503,7 +513,7 @@ static tun_linux_open_result_t tunLinuxOpenAttempt(const char *name, bool offloa
         return kTunLinuxOpenFailure;
     }
 
-    if (offload)
+    if (checksum_setup)
     {
         unsigned int features       = 0;
         const int    feature_result = ioctl(fd, TUNGETFEATURES, &features);
@@ -512,13 +522,13 @@ static tun_linux_open_result_t tunLinuxOpenAttempt(const char *name, bool offloa
             *out_reason = "IFF_VNET_HDR capability check";
             *out_errno  = feature_result < 0 ? errno : EOPNOTSUPP;
             close(fd);
-            return kTunLinuxOpenOffloadUnavailable;
+            return tunLinuxCapabilityFailure(*out_errno);
         }
     }
 
     struct ifreq ifr;
     memoryZero(&ifr, sizeof(ifr));
-    ifr.ifr_flags = IFF_TUN | IFF_NO_PI | (offload ? IFF_VNET_HDR : 0) | (exclusive ? IFF_TUN_EXCL : 0);
+    ifr.ifr_flags = IFF_TUN | IFF_NO_PI | (checksum_setup ? IFF_VNET_HDR : 0) | (exclusive ? IFF_TUN_EXCL : 0);
     if (*name)
     {
         stringCopyN(ifr.ifr_name, name, IFNAMSIZ);
@@ -535,10 +545,10 @@ static tun_linux_open_result_t tunLinuxOpenAttempt(const char *name, bool offloa
         {
             return kTunLinuxOpenNameConflict;
         }
-        return offload ? kTunLinuxOpenOffloadUnavailable : kTunLinuxOpenFailure;
+        return checksum_setup ? tunLinuxCapabilityFailure(saved_errno) : kTunLinuxOpenFailure;
     }
 
-    if (offload)
+    if (checksum_setup)
     {
         int header_size   = kTunVirtioHeaderSize;
         int little_endian = 1;
@@ -547,23 +557,42 @@ static tun_linux_open_result_t tunLinuxOpenAttempt(const char *name, bool offloa
             *out_reason = "TUNSETVNETHDRSZ";
             *out_errno  = errno;
             close(fd);
-            return kTunLinuxOpenOffloadUnavailable;
+            return tunLinuxCapabilityFailure(*out_errno);
         }
         if (ioctl(fd, TUNSETVNETLE, &little_endian) < 0)
         {
             *out_reason = "TUNSETVNETLE";
             *out_errno  = errno;
             close(fd);
-            return kTunLinuxOpenOffloadUnavailable;
+            return tunLinuxCapabilityFailure(*out_errno);
         }
-        if (ioctl(fd, TUNSETOFFLOAD, (unsigned long) (TUN_F_CSUM | TUN_F_TSO4)) < 0)
+        if (ioctl(fd, TUNSETOFFLOAD, (unsigned long) TUN_F_CSUM) < 0)
         {
-            *out_reason = "TUNSETOFFLOAD(CSUM|TSO4)";
+            *out_reason = "TUNSETOFFLOAD(CSUM)";
             *out_errno  = errno;
             close(fd);
-            return kTunLinuxOpenOffloadUnavailable;
+            return tunLinuxCapabilityFailure(*out_errno);
         }
-
+        if (gso_requested)
+        {
+            /* Successful calls replace the mask. Linux validates an upgrade
+             * before publishing it, so rejection preserves CSUM-only mode. */
+            if (ioctl(fd, TUNSETOFFLOAD, (unsigned long) (TUN_F_CSUM | TUN_F_TSO4)) == 0)
+            {
+                *out_gso_enabled = true;
+            }
+            else
+            {
+                const int upgrade_errno = errno;
+                LOGW("TunDevice: %s TCPv4 GSO upgrade unavailable (errno %d: %s); retaining checksum-only offload",
+                     ifr.ifr_name,
+                     upgrade_errno,
+                     strerror(upgrade_errno));
+            }
+        }
+    }
+    if (*out_gso_enabled)
+    {
         uint32_t active_max_segments = 0;
         if (tunLinuxGsoMaxSegmentsConfigure(ifr.ifr_name, kTunLinuxRequestedGsoMaxSegments, &active_max_segments))
         {
@@ -603,7 +632,7 @@ static tun_linux_open_result_t tunLinuxOpenAttempt(const char *name, bool offloa
 }
 #endif
 
-tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void *userdata, TunReadEventHandle cb,
+tun_device_t *tundeviceCreate(const char *name, bool gso_requested, uint16_t mtu, void *userdata, TunReadEventHandle cb,
                               device_fragment_policy_t fragment_policy)
 {
     if (mtu <= 16)
@@ -614,7 +643,7 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void
 
     struct ifreq ifr;
 #ifdef OS_BSD
-    discard offload;
+    discard gso_requested;
     int     fd = -1;
 
     // Open the TUN device
@@ -660,39 +689,39 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void
     int                     fd                    = -1;
     bool                    interface_preexisting = false;
     bool                    gso_enabled           = false;
+    bool                    checksum_offload_enabled = false;
     const char             *reason                = NULL;
     int                     failure_errno         = 0;
-    tun_linux_open_result_t result                = kTunLinuxOpenFailure;
-    if (offload)
+    tun_linux_open_result_t result =
+        tunLinuxOpenAttempt(name, true, gso_requested, true, mtu, &fd, &ifr, &gso_enabled, &reason, &failure_errno);
+    if (result == kTunLinuxOpenOk)
     {
-        result = tunLinuxOpenAttempt(name, true, true, mtu, &fd, &ifr, &reason, &failure_errno);
-        if (result == kTunLinuxOpenOk)
-        {
-            gso_enabled = true;
-        }
-        else if (result == kTunLinuxOpenOffloadUnavailable)
-        {
-            LOGW("TunDevice: GSO setup unavailable for %s at %s (errno %d: %s); falling back to raw-IP TUN",
-                 name,
-                 reason,
-                 failure_errno,
-                 strerror(failure_errno));
-        }
+        checksum_offload_enabled = true;
     }
-    if (! gso_enabled)
+    else
     {
-        if (result == kTunLinuxOpenNameConflict || (offload && result == kTunLinuxOpenFailure))
+        if (result == kTunLinuxOpenOffloadUnavailable)
+        {
+            LOGW(
+                "TunDevice: checksum offload setup unavailable for %s at %s (errno %d: %s); falling back to raw-IP TUN",
+                name,
+                reason,
+                failure_errno,
+                strerror(failure_errno));
+        }
+        if (result == kTunLinuxOpenFailure || (gso_requested && result == kTunLinuxOpenNameConflict))
         {
             LOGE("TunDevice: cannot open %s: %s (errno %d: %s)", name, reason, failure_errno, strerror(failure_errno));
             return NULL;
         }
-        result = tunLinuxOpenAttempt(name, false, true, mtu, &fd, &ifr, &reason, &failure_errno);
-        if (! offload && result == kTunLinuxOpenNameConflict)
+        result = tunLinuxOpenAttempt(name, false, false, true, mtu, &fd, &ifr, &gso_enabled, &reason, &failure_errno);
+        if (! gso_requested && result == kTunLinuxOpenNameConflict)
         {
             /* Preserve raw-IP attachment support, but only an exclusive open
              * proves ownership of a fresh interface's resolver baseline. */
             interface_preexisting = true;
-            result                = tunLinuxOpenAttempt(name, false, false, mtu, &fd, &ifr, &reason, &failure_errno);
+            result =
+                tunLinuxOpenAttempt(name, false, false, false, mtu, &fd, &ifr, &gso_enabled, &reason, &failure_errno);
         }
         if (result != kTunLinuxOpenOk)
         {
@@ -761,9 +790,10 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void
                             .writer_buffer_pool  = writer_bpool,
                             .mtu                 = mtu,
 #ifdef OS_LINUX
-                            .gso_enabled           = gso_enabled,
-                            .gso_scratch           = NULL,
-                            .interface_preexisting = interface_preexisting
+                            .checksum_offload_enabled = checksum_offload_enabled,
+                            .gso_enabled              = gso_enabled,
+                            .offload_scratch          = NULL,
+                            .interface_preexisting    = interface_preexisting
 #else
                             .gso_enabled = false
 #endif
@@ -771,6 +801,7 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void
     atomic_init(&tdev->lifecycle, kTunLifecycleDown);
 #ifdef OS_LINUX
     atomic_init(&tdev->gso_generated_segments, 0);
+    atomic_init(&tdev->gso_intact_aggregates, 0);
 #endif
     deviceWriterChannelInit(&tdev->writer_channel);
     tdev->reader_session = deviceReaderSessionCreate(
@@ -788,55 +819,101 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void
     }
 
 #ifdef OS_LINUX
-    bool gso_fallback = false;
-    if (tdev->gso_enabled)
+    bool offload_fallback = false;
+    if (tdev->checksum_offload_enabled)
     {
+        devicePoolUpdatePadding(tdev->reader_buffer_pool, worker_pool);
         const uint16_t    padding = bufferpoolGetLargeBufferPadding(tdev->reader_buffer_pool);
         buffer_pool_fit_t scratch_fit;
         if (! bufferpoolQueryBestFit(tdev->reader_buffer_pool,
-                                     kTunGsoPacketStorageCapacity,
+                                     kTunOffloadPacketStorageCapacity,
                                      max(padding, (uint16_t) kTunVirtioHeaderSize),
                                      &scratch_fit))
         {
-            LOGW("TunDevice: GSO receive scratch geometry unavailable for %s; falling back to raw-IP TUN", tdev->name);
-            gso_fallback = true;
+            LOGW("TunDevice: offload receive scratch geometry unavailable for %s; falling back to raw-IP TUN",
+                 tdev->name);
+            offload_fallback = true;
         }
-        else if ((tdev->gso_scratch =
+        else if ((tdev->offload_scratch =
                       sbufTryCreateWithPadding(scratch_fit.payload_capacity, scratch_fit.left_padding)) == NULL)
         {
-            LOGW("TunDevice: GSO receive scratch unavailable for %s; falling back to raw-IP TUN", tdev->name);
-            gso_fallback = true;
+            LOGW("TunDevice: offload receive scratch unavailable for %s; falling back to raw-IP TUN", tdev->name);
+            offload_fallback = true;
         }
-        else if (UNLIKELY(sbufGetLeftCapacity(tdev->gso_scratch) < kTunVirtioHeaderSize ||
-                          sbufGetMaximumWriteableSize(tdev->gso_scratch) < kTunGsoPacketStorageCapacity))
+        else if (UNLIKELY(sbufGetLeftCapacity(tdev->offload_scratch) < kTunVirtioHeaderSize ||
+                          sbufGetMaximumWriteableSize(tdev->offload_scratch) < kTunOffloadPacketStorageCapacity))
         {
-            LOGF("TunDevice: GSO scratch allocation violates required geometry");
+            LOGF("TunDevice: offload scratch allocation violates required geometry");
             abortProgramNow(1);
         }
-        else if (! deviceReaderSessionConfigureOutputBudget(
-                     tdev->reader_session, kTunGsoPendingChargeLimit, kTunGsoPendingPacketLimit) ||
-                 ! tunConfigureWorkerGso(tdev))
+        else if (! tunConfigureWorkerOffload(tdev))
         {
             const int budget_errno = errno;
-            LOGW("TunDevice: GSO output-budget setup failed for %s (errno %d: %s); falling back to raw-IP TUN",
+            LOGW("TunDevice: offload worker-budget setup failed for %s (errno %d: %s); falling back to raw-IP TUN",
                  tdev->name,
                  budget_errno,
                  strerror(budget_errno));
-            gso_fallback = true;
+            offload_fallback = true;
+        }
+        else if (tdev->gso_enabled && ! tunConfigureWorkerGso(tdev))
+        {
+            LOGW("TunDevice: %s GSO output allowance unavailable; disabling TCPv4 segmentation", tdev->name);
+            if (ioctl(tdev->handle, TUNSETOFFLOAD, (unsigned long) TUN_F_CSUM) == 0)
+            {
+                tdev->gso_enabled = false;
+            }
+            else
+            {
+                const int downgrade_errno = errno;
+                LOGW("TunDevice: %s checksum-only downgrade failed (errno %d: %s); reopening device",
+                     tdev->name,
+                     downgrade_errno,
+                     strerror(downgrade_errno));
+                close(tdev->handle);
+                tdev->handle = -1;
+                result       = tunLinuxOpenAttempt(tdev->name,
+                                             true,
+                                             false,
+                                             true,
+                                             mtu,
+                                             &tdev->handle,
+                                             &ifr,
+                                             &tdev->gso_enabled,
+                                             &reason,
+                                             &failure_errno);
+                if (result == kTunLinuxOpenOffloadUnavailable)
+                {
+                    offload_fallback = true;
+                }
+                else if (result != kTunLinuxOpenOk)
+                {
+                    LOGE("TunDevice: checksum-only reopen failed for %s at %s (errno %d: %s)",
+                         tdev->name,
+                         reason,
+                         failure_errno,
+                         strerror(failure_errno));
+                    goto fail_after_session;
+                }
+            }
+            memoryZero(tdev->gso_output_charge, sizeof(tdev->gso_output_charge));
         }
     }
-    if (gso_fallback)
+    if (offload_fallback)
     {
-        if (tdev->gso_scratch != NULL)
+        if (tdev->offload_scratch != NULL)
         {
-            sbufDestroy(tdev->gso_scratch);
-            tdev->gso_scratch = NULL;
+            sbufDestroy(tdev->offload_scratch);
+            tdev->offload_scratch = NULL;
         }
-        close(tdev->handle);
+        if (tdev->handle >= 0)
+        {
+            close(tdev->handle);
+        }
         tdev->handle        = -1;
         int          raw_fd = -1;
         struct ifreq raw_ifr;
-        result = tunLinuxOpenAttempt(name, false, true, mtu, &raw_fd, &raw_ifr, &reason, &failure_errno);
+        result = tunLinuxOpenAttempt(
+            tdev->name, false, false, true, mtu, &raw_fd, &raw_ifr, &tdev->gso_enabled, &reason, &failure_errno);
         if (result != kTunLinuxOpenOk)
         {
             LOGE("TunDevice: raw-IP fallback failed for %s at %s (errno %d: %s)",
@@ -846,9 +923,10 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void
                  strerror(failure_errno));
             goto fail_after_session;
         }
-        tdev->handle      = raw_fd;
-        tdev->gso_enabled = false;
-        LOGI("TunDevice: %s opened with raw IP after GSO setup fallback", tdev->name);
+        tdev->handle                   = raw_fd;
+        tdev->gso_enabled              = false;
+        tdev->checksum_offload_enabled = false;
+        LOGI("TunDevice: %s opened with raw IP after offload setup fallback", tdev->name);
     }
 #endif
 
@@ -859,10 +937,13 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void
     }
 
 #ifdef OS_LINUX
+    assert(! tdev->gso_enabled || tdev->checksum_offload_enabled);
     LOGI("TunDevice: %s configured framing: %s (GSO requested: %s)",
          tdev->name,
-         tdev->gso_enabled ? "TCPv4 GSO" : "raw IP",
-         offload ? "yes" : "no");
+         tdev->gso_enabled                ? "TCPv4 GSO with checksum offload"
+         : tdev->checksum_offload_enabled ? "checksum-only offload"
+                                          : "raw IP",
+         gso_requested ? "yes" : "no");
 #endif
 
     return tdev;
@@ -870,9 +951,9 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void
 fail_after_session:
     memoryFree(tdev->name);
 #ifdef OS_LINUX
-    if (tdev->gso_scratch != NULL)
+    if (tdev->offload_scratch != NULL)
     {
-        sbufDestroy(tdev->gso_scratch);
+        sbufDestroy(tdev->offload_scratch);
     }
 #endif
     deviceReaderSessionRetireProducerBuffers(tdev->reader_session);
@@ -914,9 +995,9 @@ void tundeviceDestroy(tun_device_t *tdev)
     memoryFree(tdev->name);
 #ifdef OS_LINUX
     tunLinuxDnsDropSnapshot(tdev);
-    if (tdev->gso_scratch != NULL)
+    if (tdev->offload_scratch != NULL)
     {
-        sbufDestroy(tdev->gso_scratch);
+        sbufDestroy(tdev->offload_scratch);
     }
 #endif
     deviceReaderSessionRetireProducerBuffers(tdev->reader_session);

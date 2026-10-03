@@ -339,10 +339,15 @@ class PeerNamespace:
             run("ip", "link", "set", VETH_PEER, "netns", str(self.holder.pid))
             run("ip", "addr", "add", f"{VETH_OUT_IP}/30", "dev", VETH_OUT)
             run("ip", "link", "set", VETH_OUT, "up")
+            run("ethtool", "-K", VETH_OUT, "tx", "off", "tso", "off", "gso", "off")
+            egress_features = subprocess.check_output(["ethtool", "-k", VETH_OUT], text=True)
+            for feature in ("tx-checksumming", "tcp-segmentation-offload", "generic-segmentation-offload"):
+                assert feature + ": off" in egress_features, egress_features
             self.peer_run("ip", "link", "set", "lo", "up")
             self.peer_run("ip", "addr", "add", f"{VETH_PEER_IP}/30", "dev", VETH_PEER)
             self.peer_run("ip", "addr", "add", f"{DESTINATION_IP}/32", "dev", VETH_PEER)
             self.peer_run("ip", "link", "set", VETH_PEER, "up")
+            self.peer_run("ethtool", "-K", VETH_PEER, "gro", "off", "lro", "off")
             self.peer_run("ip", "route", "add", f"{LOCAL_IP}/32", "via", VETH_OUT_IP, "dev", VETH_PEER)
             run("ip", "route", "add", f"{DESTINATION_IP}/32", "via", VETH_PEER_IP, "dev", VETH_OUT,
                 "table", "100")
@@ -495,16 +500,19 @@ def wait_for_tun(mode):
     while time.monotonic() < deadline:
         result = subprocess.run(["ip", "-d", "link", "show", "dev", TUN_NAME], capture_output=True, text=True)
         if result.returncode == 0 and "UP" in result.stdout and "vnet_hdr" in result.stdout:
-            enabled = mode == "default"
-            assert f"vnet_hdr {'on' if enabled else 'off'}" in result.stdout, result.stdout
+            assert "vnet_hdr on" in result.stdout, result.stdout
+            features = subprocess.check_output(["ethtool", "-k", TUN_NAME], text=True)
+            assert "tx-checksumming: on" in features, features
+            tso = "on" if mode == "default" else "off"
+            assert "tx-tcp-segmentation: " + tso in features, features
             reported = re.search(r"\bgso_max_segs\s+(\d+)\b", result.stdout)
-            return int(reported.group(1)) if reported else None
+            return (int(reported.group(1)) if reported else None), features
         time.sleep(0.05)
     raise AssertionError("WaterWall TUN did not become ready")
 
 
 def probe_mode(peer, mode, result_path):
-    interface_gso_max_segs = wait_for_tun(mode)
+    interface_gso_max_segs, features = wait_for_tun(mode)
     benchmark = os.environ.get("WATERWALL_GSO_BENCHMARK") == "1"
     benchmark_flows = 1
     if benchmark:
@@ -536,10 +544,11 @@ def probe_mode(peer, mode, result_path):
         if capture_tun is not None:
             capture_tun.close()
 
-    result = {"mode": mode, "local_tcp": tcp, "interface_gso_max_segs": interface_gso_max_segs}
+    result = {"mode": mode, "local_tcp": tcp, "interface_gso_max_segs": interface_gso_max_segs,
+              "tun_features": features, "checksum_offload": True, "segmentation_offload": mode == "default"}
     if not benchmark:
         assert (tcp["tun_oversized_records"] > 0) == (mode == "default"), \
-            "local TCP offload did not match the selected TUN framing"
+            "local TCP aggregation did not match the active segmentation capability"
     if not benchmark:
         with packet_capture(TUN_NAME) as md5_capture:
             result["tcp_md5"] = transfer_tcp(peer, socket.IPPROTO_TCP, 24684, 64 * 1024, md5_capture, md5=True)

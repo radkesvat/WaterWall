@@ -51,7 +51,7 @@ def stop(process):
 def preflight(mode):
     if sys.platform != "linux" or os.geteuid() != 0 or not Path("/dev/net/tun").is_char_device():
         raise Unavailable("requires Linux, root and /dev/net/tun")
-    for tool in ("bash", "ip", "unshare", "nsenter", "ss", "sleep"):
+    for tool in ("bash", "ip", "unshare", "nsenter", "ss", "sleep", "ethtool"):
         if shutil.which(tool) is None:
             raise Unavailable(f"required command is missing: {tool}")
     if mode == "speed":
@@ -132,15 +132,24 @@ class Fixture:
             while True:
                 require(self.waterwall.poll() is None, "WaterWall exited during startup")
                 log = (self.directory / "waterwall.log").read_text()
-                match = re.search(r"configured framing: (TCPv4 GSO|raw IP) \(GSO requested: (yes|no)\)", log)
+                match = re.search(r"configured framing: (TCPv4 GSO with checksum offload|checksum-only offload|raw IP) "
+                                  r"\(GSO requested: (yes|no)\)", log)
                 link = subprocess.run([*self.runtime, "ip", "-d", "link", "show", TUN],
                                       text=True, capture_output=True, timeout=5)
                 if match and link.returncode == 0 and "UP" in link.stdout:
                     require(match[2] == ("yes" if self.gso else "no"), "wrong requested GSO setting")
-                    if self.gso and match[1] == "raw IP":
-                        raise Unavailable("GSO requested but WaterWall fell back to raw-IP framing; see runtime log")
-                    expected = "vnet_hdr on" if self.gso else "vnet_hdr off"
+                    self.checksum_enabled = match[1] != "raw IP"
+                    self.gso_enabled = match[1] == "TCPv4 GSO with checksum offload"
+                    if not self.checksum_enabled or (self.gso and not self.gso_enabled):
+                        raise Unavailable("requested TUN offload mode unavailable; see runtime log")
+                    require(self.gso_enabled == self.gso, "unexpected active segmentation mode")
+                    expected = "vnet_hdr on" if self.checksum_enabled else "vnet_hdr off"
                     require(expected in link.stdout, "TUN framing did not match the selected setting")
+                    features = output(*self.runtime, "ethtool", "-k", TUN)
+                    require("tx-checksumming: on" in features, "TUN checksum offload was not active")
+                    tso = "on" if self.gso_enabled else "off"
+                    require("tx-tcp-segmentation: " + tso in features, "TUN TSO4 feature disagrees with active mode")
+                    (self.directory / "tun-features.txt").write_text(features)
                     (self.directory / "tun-link.txt").write_text(link.stdout)
                     break
                 require(time.monotonic() < deadline, "TUN startup timed out")
@@ -169,17 +178,18 @@ class Fixture:
         stop(self.waterwall)
         require(self.waterwall.returncode in (0, 143), "WaterWall did not complete orderly shutdown")
         log = (self.directory / "waterwall.log").read_text()
-        if not self.gso:
-            require("GSO reader summary" not in log, "disabled run used the GSO reader")
-            return None
-        match = re.search(r"GSO reader summary: ordinary=(\d+) aggregates=(\d+) generated=(\d+).*"
+        match = re.search(r"offload reader summary: ordinary=(\d+) aggregates=(\d+) generated=(\d+).*"
                           r"malformed=(\d+) unsupported=(\d+) oversized=(\d+) intact=(\d+)", log)
-        require(match is not None, "GSO summary missing after shutdown")
+        require(match is not None, "offload summary missing after shutdown")
         ordinary, aggregates, segments, malformed, unsupported, oversized, intact = map(int, match.groups())
-        require(aggregates > 0, "enabled run did not exercise GSO input")
-        if "enabled direct-pair trusted transport checksums" in log:
+        require(ordinary > 0, "run did not exercise ordinary offload-framed input")
+        if not self.gso_enabled:
+            require(aggregates == segments == intact == 0, "checksum-only run admitted GSO input")
+        elif "enabled direct-pair trusted transport checksums" in log:
+            require(aggregates > 0, "enabled run did not exercise GSO input")
             require(intact > 0 and segments == 0, "trusted run did not deliver GSO input intact")
         else:
+            require(aggregates > 0, "enabled run did not exercise GSO input")
             require(intact == 0 and segments > aggregates, "ordinary run did not exercise GSO segmentation")
         require(malformed == unsupported == oversized == 0, "valid TCP workload produced rejected offload records")
         return {"ordinary": ordinary, "aggregates": aggregates, "segments": segments, "intact": intact}

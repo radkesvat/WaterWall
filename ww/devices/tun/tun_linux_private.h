@@ -2,7 +2,7 @@
 
 /* Backend-private state. The lifecycle coordinator owns handles, joinable
  * threads, pools and the reader-session owner reference. I/O borrows them until
- * joined. Queued GSO work owns its aggregate and session credits independently. */
+ * joined. Queued offload work owns its input and session credits independently. */
 #include "devices/device_reader_session.h"
 #include "devices/device_writer_channel.h"
 #include "devices/tun/tun_lifecycle.h"
@@ -19,10 +19,10 @@ enum
     kTunCommandTerminateGraceMs    = 250,
     kTunCommandMaxOutputBytes      = 64 * 1024,
 #ifdef OS_LINUX
-    kTunGsoPacketStorageCapacity = 65536,
-    kTunGsoPendingPacketLimit    = 512,
-    kTunGsoPendingChargeLimit    = 8 * 1024 * 1024,
-    kTunGsoLogIntervalMs         = 5000,
+    kTunOffloadPacketStorageCapacity = 65536,
+    kTunOffloadPendingPacketLimit    = 512,
+    kTunOffloadPendingChargeLimit    = 8 * 1024 * 1024,
+    kTunOffloadLogIntervalMs         = 5000,
 #endif
     kLinuxRouteFlagUp      = 0x1,
     kLinuxRouteFlagGateway = 0x2
@@ -51,14 +51,15 @@ struct tun_device_s
 
     device_writer_channel_t writer_channel;
     uint16_t                mtu;
+    bool                    checksum_offload_enabled;
     bool                    gso_enabled;
 #ifdef OS_LINUX
     bool trusted_checksums;
-    /* Allocated before publication so unavailable GSO storage can fall back. */
-    sbuf_t *gso_scratch;
+    /* Allocated before publication so unavailable offload storage can fall back. */
+    sbuf_t *offload_scratch;
     /* Output allowance and this chain's padding, captured before publication. */
     size_t               gso_output_charge[UINT8_MAX + 1U];
-    uint16_t             gso_output_padding[UINT8_MAX + 1U];
+    uint16_t             offload_output_padding[UINT8_MAX + 1U];
     atomic_uint_fast64_t gso_generated_segments;
     atomic_uint_fast64_t gso_intact_aggregates;
 #endif
@@ -93,6 +94,7 @@ void tunDeliverPacket(void *device, sbuf_t *buf, wid_t wid);
 WTHREAD_ROUTINE(routineReadFromTun);
 WTHREAD_ROUTINE(routineWriteToTun);
 #ifdef OS_LINUX
+bool tunConfigureWorkerOffload(tun_device_t *tdev);
 bool tunConfigureWorkerGso(tun_device_t *tdev);
 /* Final destruction releases snapshot storage after the policy owner attempts cleanup. */
 void tunLinuxDnsDropSnapshot(tun_device_t *tdev);

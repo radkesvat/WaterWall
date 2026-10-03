@@ -32,8 +32,10 @@ typedef struct tun_default_route_s
     char     ifname[64];
 } tun_default_route_t;
 
-/* offload requests Linux TCPv4 GSO; unsupported setup uses ordinary TUN framing. */
-tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void *userdata, TunReadEventHandle cb,
+/* gso_requested requests Linux TCPv4 segmentation. Linux independently attempts
+ * checksum offload with virtio framing, falling back to raw IP when unavailable.
+ * Other platforms retain ordinary framing regardless of this request. */
+tun_device_t *tundeviceCreate(const char *name, bool gso_requested, uint16_t mtu, void *userdata, TunReadEventHandle cb,
                               device_fragment_policy_t fragment_policy);
 void          tundeviceDestroy(tun_device_t *tdev);
 bool          tundeviceBringUp(tun_device_t *tdev);
@@ -70,8 +72,9 @@ bool tundeviceDisableReversePathFiltering(const char *ifname);
 #include "tun_windows_ownership.h"
 /* Moves a prepared reservation into the device. On an earlier failure the
  * caller retains any non-null lease and releases it during constructor rollback. */
-tun_device_t *tundeviceCreateOwned(const char *name, bool offload, uint16_t mtu, void *userdata, TunReadEventHandle cb,
-                                   device_fragment_policy_t fragment_policy, tun_windows_ownership_t *ownership);
+tun_device_t *tundeviceCreateOwned(const char *name, bool gso_requested, uint16_t mtu, void *userdata,
+                                   TunReadEventHandle cb, device_fragment_policy_t fragment_policy,
+                                   tun_windows_ownership_t *ownership);
 /* Releases the process-wide Wintun module after every device has stopped. */
 void tundevicePlatformShutdown(void);
 #endif
