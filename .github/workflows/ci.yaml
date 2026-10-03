@@ -298,11 +298,11 @@ jobs:
           fi
 
           for product_dir in "${product_dirs[@]}"; do
-            cp -R "$product_dir"/. "$artifact_dir"/
+            cp "$product_dir/Waterwall.app/Waterwall" "$artifact_dir/Waterwall"
           done
 
-          if [ -z "$(find "$artifact_dir" -mindepth 1 -maxdepth 1 -print -quit)" ]; then
-            echo "No files copied into $artifact_dir"
+          if [ ! -f "$artifact_dir/Waterwall" ]; then
+            echo "No Waterwall executable copied into $artifact_dir"
             exit 1
           fi
 

@@ -3,8 +3,10 @@ import json
 import os
 from pathlib import Path
 import shutil
+import subprocess
 import sys
 import tempfile
+import textwrap
 import unittest
 from zipfile import ZipFile
 
@@ -14,6 +16,52 @@ from windows_packed_application_debug import run_with_gdb
 
 
 class ReleaseArtifactsTest(unittest.TestCase):
+    def ios_prepare_script(self, workspace, preset):
+        workflow = (Path(__file__).resolve().parents[1]/'.github/workflows/ci.yaml').read_text()
+        ios_job = workflow.split('\n  ios:\n', 1)[1].split('\n  linux:\n', 1)[0]
+        prepare = ios_job.split('      - name: Prepare artifact\n', 1)[1]
+        prepare = prepare.split('      - name: Upload artifact\n', 1)[0]
+        script = textwrap.dedent(prepare.split('        run: |\n', 1)[1])
+        return script.replace('${{ github.workspace }}', str(workspace)).replace('${{ matrix.preset }}', preset)
+
+    def test_ios_bundle_executables_are_staged_for_release(self):
+        for preset, platform in [('ios', 'iphoneos'), ('ios_sim', 'iphonesimulator')]:
+            with self.subTest(preset=preset), tempfile.TemporaryDirectory(prefix='Waterwall iOS artifacts ') as temporary:
+                root = Path(temporary)
+                product = root/'build'/preset/f'Release-{platform}'
+                bundle = product/'Waterwall.app'
+                bundle.mkdir(parents=True)
+                payload = f'final {platform} executable'.encode()
+                (bundle/'Waterwall').write_bytes(payload)
+                (bundle/'Waterwall').chmod(0o755)
+                (bundle/'Info.plist').write_text('bundle metadata')
+                (product/'libdependency.a').write_bytes(b'static library')
+                result = subprocess.run(['bash', '-c', self.ios_prepare_script(root, preset)],
+                                        capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                staged = root/'artifacts'/preset
+                self.assertEqual(sorted(path.name for path in staged.iterdir()), ['Waterwall'])
+                self.assertEqual((staged/'Waterwall').read_bytes(), payload)
+                self.assertTrue(os.access(staged/'Waterwall', os.X_OK))
+                downloaded = root/'downloaded'/f'Waterwall-{preset}'
+                downloaded.parent.mkdir()
+                shutil.copytree(staged, downloaded)
+                output = root/'zipped'
+                package_release_artifacts(downloaded.parent, output)
+                with ZipFile(output/(downloaded.name + '.zip')) as archive:
+                    self.assertEqual(archive.namelist(), ['Waterwall'])
+                    self.assertEqual(archive.read('Waterwall'), payload)
+
+    def test_ios_missing_bundle_executable_fails_preparation(self):
+        with tempfile.TemporaryDirectory(prefix='Waterwall iOS artifacts ') as temporary:
+            root = Path(temporary)
+            product = root/'build'/'ios'/'Release-iphoneos'
+            product.mkdir(parents=True)
+            (product/'libdependency.a').write_bytes(b'static library')
+            result = subprocess.run(['bash', '-c', self.ios_prepare_script(root, 'ios')],
+                                    capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0, result.stdout)
+
     def test_release_archives_exclude_debug_and_diagnostics(self):
         with tempfile.TemporaryDirectory(prefix='Waterwall release regression ') as temporary:
             root = Path(temporary)
