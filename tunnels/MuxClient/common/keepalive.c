@@ -30,6 +30,10 @@ static void muxclientProbeParent(tunnel_t *t, line_t *l)
     }
     if (now < state->next_ping_at_ms)
         return;
+    /* Leave the due timestamp unchanged until direct handoff is possible. An
+     * unsent probe must not start a reply deadline or join the output backlog. */
+    if (state->output.transport_paused || state->output.pumping || bufferqueueGetBufCount(&state->output.pending) != 0)
+        return;
 
     sbuf_t *buf = bufferpoolGetSmallBuffer(lineGetBufferPool(l));
     sbufSetLength(buf, 0);

@@ -23,9 +23,59 @@ static bool keepaliveserverSendFrame(tunnel_t *t, line_t *l, sbuf_t *buf, uint8_
 
 static bool keepaliveserverSendControlFrame(tunnel_t *t, line_t *l, uint8_t kind)
 {
+    assert(! ((keepaliveserver_lstate_t *) lineGetState(l, t))->write_paused);
     sbuf_t *buf = bufferpoolGetSmallBuffer(lineGetBufferPool(l));
     sbufSetLength(buf, 0);
     return keepaliveserverSendFrame(t, l, buf, kind);
+}
+
+static bool keepaliveserverDrainPongs(tunnel_t *t, line_t *l)
+{
+    keepaliveserver_lstate_t *ls = lineGetState(l, t);
+    if (ls->pong_draining)
+        return true;
+    lineRef(l);
+    ls->pong_draining = true;
+    while (! ls->write_paused && ls->pending_pongs != 0)
+    {
+        --ls->pending_pongs;
+        if (! keepaliveserverSendControlFrame(t, l, kKeepAliveServerFrameKindPong) || ls->read_stream == NULL)
+        {
+            lineUnref(l);
+            return false;
+        }
+    }
+    ls->pong_draining = false;
+    lineUnref(l);
+    return true;
+}
+
+static bool keepaliveserverSendPongFrame(tunnel_t *t, line_t *l)
+{
+    keepaliveserver_lstate_t *ls = lineGetState(l, t);
+    if (ls->pending_pongs >= kKeepAliveServerMaxPendingPongs)
+    {
+        LOGW("KeepAliveServer: pending pong limit exceeded");
+        keepaliveserverCloseLineFromProtocolError(t, l);
+        return false;
+    }
+    ++ls->pending_pongs;
+    return keepaliveserverDrainPongs(t, l);
+}
+
+void keepaliveserverTunnelUpStreamPause(tunnel_t *t, line_t *l)
+{
+    ((keepaliveserver_lstate_t *) lineGetState(l, t))->write_paused = true;
+    tunnelNextUpStreamPause(t, l);
+}
+
+void keepaliveserverTunnelUpStreamResume(tunnel_t *t, line_t *l)
+{
+    ((keepaliveserver_lstate_t *) lineGetState(l, t))->write_paused = false;
+    if (! lineCallWithRef(l, tunnelNextUpStreamResume, t))
+        return;
+    if (((keepaliveserver_lstate_t *) lineGetState(l, t))->read_stream != NULL)
+        discard keepaliveserverDrainPongs(t, l);
 }
 
 bool keepaliveserverSendNormalFrameDownstream(tunnel_t *t, line_t *l, sbuf_t *buf)
@@ -129,7 +179,7 @@ bool keepaliveserverConsumeUpstreamFrames(tunnel_t *t, line_t *l)
         {
             lineReuseBuffer(l, body);
             if (kind == kKeepAliveServerFrameKindPing)
-                alive = keepaliveserverSendControlFrame(t, l, kKeepAliveServerFrameKindPong);
+                alive = keepaliveserverSendPongFrame(t, l);
         }
         if (! alive || ls->read_stream == NULL)
         {

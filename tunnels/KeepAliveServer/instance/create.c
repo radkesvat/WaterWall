@@ -13,6 +13,8 @@ tunnel_t *keepaliveserverTunnelCreate(node_t *node)
     t->fnInitU    = &keepaliveserverTunnelUpStreamInit;
     t->fnFinU     = &keepaliveserverTunnelUpStreamFinish;
     t->fnPayloadU = &keepaliveserverTunnelUpStreamPayload;
+    t->fnPauseU   = &keepaliveserverTunnelUpStreamPause;
+    t->fnResumeU  = &keepaliveserverTunnelUpStreamResume;
     t->fnFinD     = &keepaliveserverTunnelDownStreamFinish;
     t->fnPayloadD = &keepaliveserverTunnelDownStreamPayload;
 

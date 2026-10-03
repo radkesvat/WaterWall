@@ -304,9 +304,9 @@ static void muxclientParentStatsLogTask(tunnel_t *t, line_t *parent_l)
          stats.child_write_paused,
          parent_ls->pending_child_queue_charge,
          splicestreamCharge(parent_ls->parent_state->read_stream),
-         (size_t) bufferqueueGetBufLen(&output->pending) + bufferqueueGetBufLen(&output->keepalive_pending),
+         (size_t) bufferqueueGetBufLen(&output->pending),
          output->charge,
-         (size_t) bufferqueueGetBufCount(&output->pending) + bufferqueueGetBufCount(&output->keepalive_pending),
+         (size_t) bufferqueueGetBufCount(&output->pending),
          boolToYesNo(output->transport_paused),
          boolToYesNo(output->sources_throttled),
          stats.parent_write_paused,
@@ -432,8 +432,7 @@ void muxclientCloseIdleExhaustedParentLine(tunnel_t *t, muxclient_tstate_t *ts, 
     muxclientForgetParentSelection(ts, wid, parent_l);
     parent_ls->selection_retired = true;
     mux_parent_output_t *output  = &parent_ls->parent_state->output;
-    if (output->pumping || output->notifying || bufferqueueGetBufCount(&output->pending) != 0 ||
-        bufferqueueGetBufCount(&output->keepalive_pending) != 0)
+    if (output->pumping || output->notifying || bufferqueueGetBufCount(&output->pending) != 0)
     {
         return;
     }
@@ -1568,12 +1567,6 @@ void muxclientDrainParentOutput(tunnel_t *t, line_t *parent_l)
     {
         parent                      = lineGetState(parent_l, t);
         mux_parent_output_t *output = &parent->parent_state->output;
-        if (bufferqueueGetBufCount(&output->keepalive_pending) != 0)
-        {
-            sbuf_t *buf = muxParentOutputPopKeepalive(output);
-            tunnelNextUpStreamPayload(t, parent_l, buf);
-            continue;
-        }
         if (output->transport_paused)
             break;
         if (! output->notifying && output->charge <= ts->parent_write_resume_threshold)
@@ -1629,16 +1622,14 @@ bool muxclientSendParentOutput(tunnel_t *t, line_t *parent_l, sbuf_t *buf, muxcl
     if (writer_l)
         lineRef(writer_l);
     mux_parent_output_t *output = &parent->parent_state->output;
-    const bool           keepalive = flag == kMuxFlagPing || flag == kMuxFlagPong;
-    assert(! keepalive || (sbufGetLength(buf) == kMuxFrameLength && ((const uint8_t *) sbufGetRawPtr(buf))[3] == flag));
-    const bool direct = ! output->pumping &&
-                        (keepalive || (! output->transport_paused && bufferqueueGetBufCount(&output->pending) == 0 &&
-                                       bufferqueueGetBufCount(&output->keepalive_pending) == 0));
+    assert((flag != kMuxFlagPing && flag != kMuxFlagPong) ||
+           (sbufGetLength(buf) == kMuxFrameLength && ((const uint8_t *) sbufGetRawPtr(buf))[3] == flag));
+    const bool direct =
+        ! output->pumping && ! output->transport_paused && bufferqueueGetBufCount(&output->pending) == 0;
     if (! direct)
     {
         buf = muxPrepareRetainedCandidate(pool, buf, false);
-        const bool admitted = keepalive ? muxParentOutputEnqueueKeepalive(output, &buf, ts->parent_write_limit)
-                                        : muxParentOutputEnqueue(output, &buf, ts->parent_write_limit);
+        const bool admitted = muxParentOutputEnqueue(output, &buf, ts->parent_write_limit);
         if (! admitted)
         {
             const size_t candidate_charge = sbufGetQueueCharge(buf);

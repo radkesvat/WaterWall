@@ -15,6 +15,9 @@ typedef struct keepaliveserver_lstate_s
     sbuf_t          *write_active;
     bool             read_draining;
     bool             write_draining;
+    bool             write_paused;
+    bool             pong_draining;
+    uint32_t         pending_pongs;
 } keepaliveserver_lstate_t;
 
 enum
@@ -28,6 +31,7 @@ enum
     kKeepAliveServerReadChargeLimit     = 16U * 1024U * 1024U,
     kKeepAliveServerMaxReentryBytes     = 8U * 1024U * 1024U,
     kKeepAliveServerMaxReentryBuffers   = 1024U,
+    kKeepAliveServerMaxPendingPongs     = 1024U,
     kKeepAliveServerFrameKindNormal     = 1,
     kKeepAliveServerFrameKindPing       = 2,
     kKeepAliveServerFrameKindPong       = 3,
@@ -41,6 +45,8 @@ WW_EXPORT api_result_t keepaliveserverTunnelApi(tunnel_t *instance, sbuf_t *mess
 void keepaliveserverTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void keepaliveserverTunnelUpStreamFinish(tunnel_t *t, line_t *l);
 void keepaliveserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
+void keepaliveserverTunnelUpStreamPause(tunnel_t *t, line_t *l);
+void keepaliveserverTunnelUpStreamResume(tunnel_t *t, line_t *l);
 
 void keepaliveserverTunnelDownStreamFinish(tunnel_t *t, line_t *l);
 void keepaliveserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);

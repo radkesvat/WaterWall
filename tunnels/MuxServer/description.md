@@ -71,9 +71,9 @@ and tolerance on MuxClient (defaults: 15000 ms and 45000 ms).
 
 `"keepalive": false` consumes these controls without sending replies. MuxClient
 requires a matching Pong to confirm support before enforcing timeouts, so a
-disabled responder does not cause repeated replacements. Pongs bypass parent
-Pause and queued application frames at complete frame boundaries. Reentrant Pongs
-preserve token order in a control FIFO sharing the parent write charge limit. A
+disabled responder does not cause repeated replacements. Pongs wait during parent
+output Pause and share the ordinary FIFO and parent write charge limit. Resume
+preserves their token order and their order relative to application frames. A
 nonempty Ping closes its parent through normal protocol-error cleanup.
 
 ### Parent write buffering
@@ -380,10 +380,9 @@ has a positive allocation charge and advances every applicable hard queue budget
 The queue-capacity charge is a policy budget, not exact kernel memory or whole-process RSS. Allocator caches, queue-ring
 storage, and the buffer pools' fixed baseline may remain allocated outside a particular live queue's charge.
 
-Parent transport `Pause` stops ordinary parent-bound Payload, including Open,
-Close and flow controls. Empty Ping/Pong controls continue at complete frame
-boundaries, with reentrant controls using a FIFO under the same parent charge
-limit. A child submitting Data while transport is
+Parent transport `Pause` stops parent-bound Payload, including Open, Close,
+flow controls and Ping/Pong. Admitted frames share one FIFO and charge limit;
+Resume continues their original order. A child submitting Data while transport is
 blocked acquires an individual local producer hold after its complete payload or
 splice batch is admitted. A direct submission that leaves transport paused also
 holds its writer before returning. A transient Pause followed by Resume uses the
@@ -557,8 +556,8 @@ after partial transfer. Nominal 1 MiB capacity does not prove available slots.
 Best-fit fallback preserves headroom and may exceed a low-profile large tier.
 Pool sizes, pipe targets, protocol limits and JSON defaults remain unchanged.
 
-Pause stops ordinary output; Resume preserves its FIFO. Empty Ping/Pong controls
-continue between complete frame callbacks. Nested application output and child
+Pause stops output, including Ping/Pong; Resume preserves the shared FIFO.
+Nested application output and child
 Close follow admitted Data. Child death does not release parent-owned output. Parent
 loss discards incoming/output ownership and transfers eligible blocked child
 queues to detached accounting. Pop, transfer and discard settle scalar charges

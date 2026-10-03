@@ -80,7 +80,10 @@ limits nested retained bytes to 8 MiB, and limits retained allocation charge to
 16 MiB, attempting beneficial ordinary compaction before refusing excess charge.
 Complete frames in an admitted delivery drain before checking the 6 MiB + 5 byte
 incomplete-remainder limit. Pause is forwarded promptly and does not interrupt
-that synchronous batch.
+that synchronous batch. Upstream Pause delays Pong output toward `prev`; Resume
+drains at most 1,024 pending replies, stopping on reentrant Pause or Finish.
+Excess pending replies close through the normal line owner. Finish discards
+pending replies.
 
 Zero or oversized frame body lengths, admission failure and retained-storage overflow
 close the borrowed line through its owner. Finish releases incomplete frames,

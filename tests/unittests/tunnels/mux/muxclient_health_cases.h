@@ -44,6 +44,15 @@ static void healthStartPing(muxclient_capacity_fixture_t *f, muxclient_lstate_t 
     twfRequire(parent->parent_state->awaiting_pong, "probe was not sent");
 }
 
+static void healthTickDuringWrite(tunnel_t *next, line_t *parent_l, sbuf_t *buf)
+{
+    twfNextPayload(next, parent_l, buf);
+    muxclientKeepaliveWorkerTick(g_client_fixture->mux, 0);
+    muxclient_lstate_t *parent = lineGetState(parent_l, g_client_fixture->mux);
+    twfRequire(! parent->parent_state->awaiting_pong,
+               "reentrant timer started a deadline for a probe behind an active output callback");
+}
+
 static void caseParentFirstProbeWaitsForInterval(bool marked_by_next)
 {
     twfSetCase("first probe waits a full interval after Est without stalling the parent");
@@ -79,9 +88,19 @@ static void caseParentFirstProbeWaitsForInterval(bool marked_by_next)
                "first probe escaped its interval or its unsent deadline retired the parent");
     healthTime(&f, 110000);
     muxclientKeepaliveWorkerTick(f.mux, 0);
-    twfRequire(f.trace.next_payload == before_ping + 1 && state->awaiting_pong && state->ping_sent_at_ms == 110000 &&
+    healthTime(&f, 120000);
+    muxclientKeepaliveWorkerTick(f.mux, 0);
+    twfRequire(f.trace.next_payload == before_ping && ! state->awaiting_pong && ! parent->selection_retired,
+               "paused unsent probe was emitted or started a reply deadline");
+    muxclientTunnelDownStreamResume(f.mux, parent->l);
+    f.next->fnPayloadU = healthTickDuringWrite;
+    healthSend(&f, child);
+    f.next->fnPayloadU            = twfNextPayload;
+    const uint32_t before_handoff = f.trace.next_payload;
+    muxclientKeepaliveWorkerTick(f.mux, 0);
+    twfRequire(f.trace.next_payload == before_handoff + 1 && state->awaiting_pong && state->ping_sent_at_ms == 120000 &&
                    ! parent->selection_retired && lineIsAlive(child),
-               "first probe was postponed by repeated Est or Pause");
+               "Resume lost the due first probe or started its deadline before handoff");
     fixtureTeardown(&f);
 }
 
@@ -371,14 +390,16 @@ static void caseParentProbeDiscoveryAndPause(void)
     muxclientKeepaliveWorkerTick(f.mux, 0);
     sendParentFrame(&f, parent->l, state->ping_token, kMuxFlagPong, 0);
     healthTime(&f, 13000);
+    const uint32_t before_ping = f.trace.next_payload;
+    muxclientKeepaliveWorkerTick(f.mux, 0);
+    twfRequire(state->awaiting_pong && f.trace.next_payload == before_ping + 1, "due probe was not handed onward");
     muxclientTunnelDownStreamPause(f.mux, parent->l);
     healthSend(&f, child);
-    const size_t   queued      = bufferqueueGetBufCount(&state->output.pending);
-    const uint32_t before_ping = f.trace.next_payload;
+    const size_t queued = bufferqueueGetBufCount(&state->output.pending);
     muxclientKeepaliveWorkerTick(f.mux, 0);
     twfRequire(state->awaiting_pong && f.trace.next_payload == before_ping + 1 &&
                    bufferqueueGetBufCount(&state->output.pending) == queued && queued != 0,
-               "paused parent blocked its probe or drained application output");
+               "paused parent duplicated its outstanding probe or drained application output");
     const uint32_t active_token = state->ping_token;
     healthTime(&f, 22999);
     muxclientTunnelDownStreamPause(f.mux, parent->l);

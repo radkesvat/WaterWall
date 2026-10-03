@@ -1148,7 +1148,7 @@ static void caseFragmentedPausedFrameKeepsCarrierRemainder(void)
 
 static void caseKeepaliveReply(bool enabled, bool paused)
 {
-    twfSetCase("parent Ping replies are optional, fragmented, CID-independent, and independent of Pause");
+    twfSetCase("parent Ping replies are optional, fragmented, CID-independent, and obey output Pause");
     muxserver_fixture_t f;
     fixtureSetup(&f, 128);
     muxserver_tstate_t *ts = tunnelGetState(f.mux);
@@ -1171,7 +1171,7 @@ static void caseKeepaliveReply(bool enabled, bool paused)
     twfRequire(f.trace.next_payload == 0 && f.trace.next_init == 0, "parent Ping reached a child");
     if (paused)
     {
-        twfRequire(f.trace.capture_len == (enabled ? 3U * kMuxFrameLength : 0U), "Pause suppressed Pong replies");
+        twfRequire(f.trace.capture_len == 0, "Pong replies escaped Pause");
         muxserverTunnelUpStreamResume(f.mux, f.parent_l);
     }
     frame_view_t frames[3];

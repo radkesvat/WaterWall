@@ -128,9 +128,7 @@ static void pqParentResume(pq_fixture_t *f)
 
 static void pqSink(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    const uint8_t flag = ((const uint8_t *) sbufGetRawPtr(buf))[3];
-    twfRequire(! pqTransportPaused || flag == kMuxFlagPing || flag == kMuxFlagPong,
-               "strict parent received ordinary output while paused");
+    twfRequire(! pqTransportPaused, "strict parent received output while paused");
     ++pqDeliveries;
     pqCapture(t, l, buf);
     if (pqDeliveries == pqLossAt)
@@ -226,27 +224,28 @@ static mux_parent_output_t *pqOutput(pq_fixture_t *f)
 
 static void caseKeepaliveParentPause(void)
 {
-    twfSetCase("keepalive controls bypass paused output in token order without interrupting a frame or draining Data");
+    twfSetCase("keepalive controls obey Pause and share ordinary FIFO order and charge");
     pq_fixture_t f;
     pqSetup(&f);
     pqPauseAt = pqKeepaliveAt = 1;
     pqSend(f.mux, f.child_l, makePatternPayload(&f, 1));
-    twfRequire(pqTransportPaused && pqDeliveries == 3 && pqOutput(&f)->charge == 0,
-               "reentrant paused Pong replies did not drain or settle their charge");
-    frame_view_t   frames[16];
-    const uint32_t count = parseFrames(f.capture, f.trace.capture_len, frames, 16);
-    twfRequire(count >= 3 && frames[count - 2].flags == kMuxFlagPong && frames[count - 2].cid == 91 &&
-                   frames[count - 1].flags == kMuxFlagPong && frames[count - 1].cid == 92,
-               "priority control output interrupted a frame or reversed Pong tokens");
+    twfRequire(pqTransportPaused && pqDeliveries == 1 && pqOutput(&f)->charge != 0,
+               "reentrant Pong replies escaped Pause or lost their charge");
     pqSend(f.mux, f.child_l, makePatternPayload(&f, 2));
     const size_t charge = pqOutput(&f)->charge;
-    twfRequire(charge != 0 && pqDeliveries == 3, "ordinary output escaped Pause");
+    twfRequire(charge != 0 && pqDeliveries == 1, "ordinary output escaped Pause");
     pq_state_t *parent = lineGetState(f.parent_l, f.mux);
     discard     pqControl(f.mux, f.parent_l, parent, f.child_l, 93, kMuxFlagPing);
-    twfRequire(pqDeliveries == 4 && pqOutput(&f)->charge == charge,
-               "paused Ping waited behind or drained queued application bytes");
+    twfRequire(pqDeliveries == 1 && pqOutput(&f)->charge > charge, "paused Ping escaped its FIFO or lost its charge");
     pqParentResume(&f);
-    twfRequire(pqDeliveries == 5 && pqOutput(&f)->charge == 0, "Resume lost the ordinary output backlog");
+    frame_view_t   frames[16];
+    const uint32_t count = parseFrames(f.capture, f.trace.capture_len, frames, 16);
+    twfRequire(pqDeliveries == 5 && pqOutput(&f)->charge == 0 && count >= 5 &&
+                   frames[count - 4].flags == kMuxFlagPong && frames[count - 4].cid == 91 &&
+                   frames[count - 3].flags == kMuxFlagPong && frames[count - 3].cid == 92 &&
+                   frames[count - 2].flags == kMuxFlagData && frames[count - 1].flags == kMuxFlagPing &&
+                   frames[count - 1].cid == 93,
+               "Resume lost or reordered control/application frames or failed to settle charge");
     fixtureTeardown(&f);
 }
 
@@ -256,11 +255,13 @@ static void caseKeepaliveParentLoss(void)
     pq_fixture_t f;
     pqSetup(&f);
     pqPauseAt = pqNestedAt = pqKeepaliveAt = 1;
-    pqLossAt                               = 2;
+    pqLossAt                               = 3;
     lineRef(f.parent_l);
     lineRef(f.child_l);
     pqSend(f.mux, f.child_l, makePatternPayload(&f, 1));
-    twfRequire(pqDeliveries == 2, "terminal Pong delivered later control or application frames");
+    twfRequire(pqDeliveries == 1, "terminal fixture emitted queued output through Pause");
+    pqParentResume(&f);
+    twfRequire(pqDeliveries == 3, "terminal Pong delivered later control or application frames");
     twfRequireLineStateZeroed(f.parent_l, f.mux, "terminal Pong retained parent queues");
     twfRequireLineStateZeroed(f.child_l, f.mux, "terminal Pong retained child state");
 #ifdef MUX_OUTPUT_CLIENT

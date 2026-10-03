@@ -282,8 +282,8 @@ even when disabled. Fixed-mode rendezvous remains active when disabled.
 
 One timer per worker checks and probes established selectable parents, not children. Its
 period is `min(ping-interval, tolerance-ms, 1000)` ms. The first probe is due one
-`ping-interval` after transport Est and is sent on the first tick at or after that
-deadline. Waiting for it does not make the parent suspect or block new children.
+`ping-interval` after transport Est and is sent on the first eligible tick at or
+after that deadline. Waiting for it does not make the parent suspect or block new children.
 Later probes obey `ping-interval`, and reply timing starts when a probe is sent. Only one
 probe is outstanding per parent. Ping/Pong has zero payload and uses CID bytes
 as a 32-bit token. Only a complete matching Pong on that parent acknowledges it;
@@ -292,12 +292,14 @@ peer support. Before that, unanswered discovery is retried without suspicion or
 replacement. This permits a disabled MuxServer responder, but means a parent
 that never answers its first probe has no health-based recovery.
 
-Probes and reply deadlines continue through parent transport Pause and child
-FlowPause. Complete Ping/Pong controls may precede paused application output;
-reentrant controls wait only for the current frame callback and retain FIFO token
-order under the same parent charge limit. Ordinary queued frames remain paused.
-All timestamps use the owner's monotonic clock. Queuing in later nodes, local
-Pause and wire transfer consume tolerance. Idle connections and one-way uploads
+The worker timer and outstanding reply deadlines continue through parent
+transport Pause and child FlowPause. A due probe waits until parent output is
+unpaused, its active callback has returned, and its FIFO is empty. Missed ticks
+produce one due probe, not a burst. Its reply clock starts immediately before
+handoff to the next node; an unsent probe cannot make a parent suspect or retire it.
+Pong replies share the ordinary parent FIFO, charge limit and Pause gate.
+All timestamps use the owner's monotonic clock. After handoff, queuing in later
+nodes, local Pause and wire transfer consume tolerance. Idle connections and one-way uploads
 do not require application replies: the Mux peer answers independently.
 
 At one quarter of tolerance (rounded down, at least 1 ms; 11250 ms by default),
@@ -437,10 +439,9 @@ positive allocation charge and therefore advances every applicable hard queue bu
 The queue-capacity charge is a policy budget, not exact kernel memory or whole-process RSS. Allocator caches, queue-ring
 storage, and the buffer pools' fixed baseline may remain allocated outside a particular live queue's charge.
 
-Parent transport `Pause` stops ordinary parent-bound Payload, including Open,
-Close and flow controls. Empty Ping/Pong controls continue at complete frame
-boundaries, with reentrant controls using a FIFO under the same parent charge
-limit. A child submitting Data while transport is
+Parent transport `Pause` stops parent-bound Payload, including Open, Close,
+flow controls and Ping/Pong. Admitted frames share one FIFO and charge limit;
+Resume continues their original order. A child submitting Data while transport is
 blocked acquires an individual local producer hold after its complete payload or
 splice batch is admitted. A direct submission that leaves transport paused also
 holds its writer before returning. A transient Pause followed by Resume uses the
@@ -630,8 +631,8 @@ after partial transfer. Nominal 1 MiB capacity does not prove available slots.
 Best-fit fallback preserves headroom and may exceed a low-profile large tier.
 Pool sizes, pipe targets, protocol limits and JSON defaults remain unchanged.
 
-Pause stops ordinary output; Resume preserves its FIFO. Empty Ping/Pong controls
-continue between complete frame callbacks. Nested application output and child
+Pause stops output, including Ping/Pong; Resume preserves the shared FIFO.
+Nested application output and child
 Close follow admitted Data. Child death does not release parent-owned output. Parent
 loss discards incoming/output ownership and transfers eligible blocked child
 queues to detached accounting. Pop, transfer and discard settle scalar charges

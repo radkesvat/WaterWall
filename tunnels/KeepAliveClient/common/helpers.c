@@ -23,9 +23,44 @@ static bool keepaliveclientSendFrame(tunnel_t *t, line_t *l, sbuf_t *buf, uint8_
 
 static bool keepaliveclientSendControlFrame(tunnel_t *t, line_t *l, uint8_t kind)
 {
+    assert(! ((keepaliveclient_lstate_t *) lineGetState(l, t))->write_paused);
     sbuf_t *buf = bufferpoolGetSmallBuffer(lineGetBufferPool(l));
     sbufSetLength(buf, 0);
     return keepaliveclientSendFrame(t, l, buf, kind);
+}
+
+static bool keepaliveclientDrainPongs(tunnel_t *t, line_t *l)
+{
+    keepaliveclient_lstate_t *ls = lineGetState(l, t);
+    if (ls->pong_draining)
+        return true;
+    lineRef(l);
+    ls->pong_draining = true;
+    while (! ls->write_paused && ls->pending_pongs != 0)
+    {
+        --ls->pending_pongs;
+        if (! keepaliveclientSendControlFrame(t, l, kKeepAliveFrameKindPong) || ls->read_stream == NULL)
+        {
+            lineUnref(l);
+            return false;
+        }
+    }
+    ls->pong_draining = false;
+    lineUnref(l);
+    return true;
+}
+
+static bool keepaliveclientSendPongFrame(tunnel_t *t, line_t *l)
+{
+    keepaliveclient_lstate_t *ls = lineGetState(l, t);
+    if (ls->pending_pongs >= kKeepAliveMaxPendingPongs)
+    {
+        LOGW("KeepAliveClient: pending pong limit exceeded");
+        keepaliveclientCloseLineFromProtocolError(t, l);
+        return false;
+    }
+    ++ls->pending_pongs;
+    return keepaliveclientDrainPongs(t, l);
 }
 
 static bool keepaliveclientCheckPongDeadline(tunnel_t *t, line_t *l, uint64_t now)
@@ -142,7 +177,7 @@ bool keepaliveclientConsumeDownstreamFrames(tunnel_t *t, line_t *l)
         {
             lineReuseBuffer(l, body);
             if (kind == kKeepAliveFrameKindPing)
-                alive = keepaliveclientSendControlFrame(t, l, kKeepAliveFrameKindPong);
+                alive = keepaliveclientSendPongFrame(t, l);
             else if (kind == kKeepAliveFrameKindPong && bytes == 0 && ts->sensitive_mode && ls->awaiting_pong)
             {
                 const uint64_t now = wloopNowMonotonicMS(getWorkerLoop(lineGetWID(l)));
@@ -310,7 +345,8 @@ bool keepaliveclientSendPingFrame(tunnel_t *t, line_t *l)
         if (ls->awaiting_pong)
             return true;
     }
-    if (now < ls->next_ping_at_ms)
+    if (now < ls->next_ping_at_ms || ls->write_paused || ls->write_draining || ls->pong_draining ||
+        ls->pending_pongs != 0)
         return true;
     ls->next_ping_at_ms = now + ts->ping_interval_ms;
     if (ts->sensitive_mode)
@@ -336,12 +372,17 @@ void keepaliveclientTunnelDownStreamEst(tunnel_t *t, line_t *l)
 
 void keepaliveclientTunnelDownStreamPause(tunnel_t *t, line_t *l)
 {
+    ((keepaliveclient_lstate_t *) lineGetState(l, t))->write_paused = true;
     tunnelPrevDownStreamPause(t, l);
 }
 
 void keepaliveclientTunnelDownStreamResume(tunnel_t *t, line_t *l)
 {
-    tunnelPrevDownStreamResume(t, l);
+    ((keepaliveclient_lstate_t *) lineGetState(l, t))->write_paused = false;
+    if (! lineCallWithRef(l, tunnelPrevDownStreamResume, t))
+        return;
+    if (((keepaliveclient_lstate_t *) lineGetState(l, t))->read_stream != NULL)
+        discard keepaliveclientDrainPongs(t, l);
 }
 
 void keepaliveclientTunnelUpStreamPause(tunnel_t *t, line_t *l)

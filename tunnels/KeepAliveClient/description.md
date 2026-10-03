@@ -47,13 +47,15 @@ Frame kinds are:
 `onStart()`.
 
 In both modes, the first ping is due one `ping-interval` after downstream transport
-`Est`. The worker timer sends it on the first check at or after that deadline.
-Application traffic can flow during this wait; a reply deadline starts only when
-a ping is sent in sensitive mode.
+`Est`. The worker timer sends it on the first eligible check at or after that
+deadline. Outgoing Pause leaves one probe due without allocating or sending it;
+there is no burst of missed probes after Resume. Application traffic can flow
+during the initial wait. In sensitive mode, the reply deadline starts immediately
+before the ping is handed to the next node, never while it waits locally.
 
 With sensitive mode disabled, the worker-local timer checks every `ping-interval`
 milliseconds and sends one empty `ping` frame on each still-alive line whose ping
-is due. Pause does not suppress these control frames.
+is due and whose outgoing direction is unpaused.
 
 Default interval:
 
@@ -73,10 +75,14 @@ milliseconds in sensitive mode; ping sends still obey `ping-interval`. Expiry
 is handled on the first check at or after the deadline, or when a late pong is
 decoded.
 
-Pause in either direction leaves periodic pings and the reply deadline running.
-The watchdog closes an expired line on its next check without waiting for Resume.
-An already-admitted pong can still acknowledge a timely ping during Pause.
-Finish clears the pending wait with the rest of line state.
+Pause in either direction leaves the timer and any outstanding reply deadline
+running. Downstream Pause delays Ping/Pong output toward `next`; Resume permits
+pending replies and later timer checks to send. The watchdog closes an expired
+line without waiting for Resume. An already-admitted pong can still acknowledge
+a timely ping during Pause. Upstream Pause controls the opposite output direction.
+At most 1,024 Pong replies may wait locally; excess peer pings close through the
+normal owner. Resume stops draining if reentrant Pause or Finish occurs. Finish
+discards pending replies and any outstanding ping wait.
 
 The tolerance includes paused time, queueing and transfer time. Pongs share the same
 ordered stream as normal frames and may wait behind a 6 MiB body, so choose a
@@ -137,8 +143,9 @@ limits nested retained bytes to 8 MiB, and limits retained allocation charge to
 16 MiB, attempting beneficial ordinary compaction before refusing excess charge.
 Complete frames in an admitted delivery drain before checking the 6 MiB + 5 byte
 incomplete-remainder limit. Pause is forwarded promptly and does not interrupt
-that synchronous batch. Timer-generated pings continue while either direction
-is paused; Pause and Resume never postpone an outstanding reply deadline.
+that synchronous batch. Timer checks continue during Pause, but new pings and
+pending replies obey the outgoing Pause gate. Pause and Resume never postpone
+an outstanding reply deadline.
 
 Zero or oversized frame body lengths, admission failure and retained-storage overflow
 close the borrowed line through its owner. Finish releases incomplete frames,
