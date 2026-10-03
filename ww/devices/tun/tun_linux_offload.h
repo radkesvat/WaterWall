@@ -47,7 +47,11 @@ typedef struct tun_linux_offload_plan_s
 tun_linux_offload_reject_t tunLinuxOffloadPreflight(const uint8_t metadata[kTunVirtioHeaderSize], const uint8_t *ip,
                                                     uint32_t ip_length, uint16_t mtu, tun_linux_offload_plan_t *plan);
 
-/* Only a preflighted ordinary NEEDS_CSUM packet may be passed here. */
+/* Complete only a preflighted ordinary NEEDS_CSUM packet. Includes its existing
+ * checksum-field seed in the metadata-selected span. Arithmetic zero is stored
+ * as UINT16_MAX, matching Linux skb_checksum_help()/CSUM_MANGLED_0 regardless of
+ * the IP protocol. This offload-specific encoding belongs here, not in
+ * calcGenericChecksum() or checksum verification. */
 void tunLinuxOffloadCompleteChecksum(uint8_t *ip, const tun_linux_offload_plan_t *plan);
 
 /* Prepare one segment in caller-owned storage. Offset is a payload offset

@@ -92,6 +92,12 @@ bool updateIpv4TransportChecksumAddresses(uint8_t *buf, size_t available_len, ui
 /**
  * @brief Compute a generic one's-complement checksum with an initial seed.
  *
+ * Returns the arithmetic result unchanged, including zero. It does not encode
+ * protocol-specific zero values. Verification over the checksum-covered bytes,
+ * including the checksum field and any required pseudo-header seed, expects zero.
+ * Output helpers apply zero-to-all-ones encoding only when their protocol or
+ * offload contract requires it; verification and raw-sum callers must preserve zero.
+ *
  * @param data Input buffer.
  * @param len Number of bytes to include.
  * @param initial Initial running sum (pseudo-header seed, if any).
