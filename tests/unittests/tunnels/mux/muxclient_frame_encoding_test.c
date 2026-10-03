@@ -1129,6 +1129,7 @@ static void caseDetachedConfiguration(void)
         twfRequire(mux != NULL, "profile-derived detached MuxClient settings were rejected");
         muxclient_tstate_t *ts = tunnelGetState(mux);
         twfRequire(ts->keepalive, "MuxClient keepalive must default on");
+        twfRequireEqualU32(ts->child_buffer_limit, 50331648U, "default MuxClient child buffer limit must be 48 MiB");
         twfRequireEqualU32(ts->ping_interval_ms, 15000, "default Ping interval changed");
         twfRequireEqualU32(ts->pong_timeout_ms, 45000, "default Pong tolerance changed");
         twfRequireEqualU32(

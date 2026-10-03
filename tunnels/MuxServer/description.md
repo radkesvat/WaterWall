@@ -118,7 +118,7 @@ Peer FlowPause and terminal close remain independent reasons to stop a source.
 The 4 MiB hysteresis gap avoids waiting for the entire queue to drain, but does
 not promise continuous sender throughput or a faster carrier. The 128 MiB limit
 is per parent, allocated on demand, and is not an RSS, socket-buffer or FD bound.
-Already-admitted Data can still reach a peer-paused child; the default 24 MiB
+Already-admitted Data can still reach a peer-paused child; the default 48 MiB
 child and 128 MiB parent receive budgets can shed children or close that parent.
 
 With `log-main-line-stats`, five-second samples include
@@ -145,7 +145,7 @@ from `parent-buffer-limit`, which bounds incoming assembly plus attached child q
   Ordinary entries charge actual capacity (including padding), the buffer header, and alignment overhead.
   Splice entries charge logical sbuf capacity plus sbuf/alignment overhead, including reserved padding once.
 
-  Default: `25165824` (`24 MiB`).
+  Default: `50331648` (`48 MiB`).
 
 - `child-buffer-resume-threshold` `(integer, bytes, optional)`
   Logical queued-payload low-water mark for sending `FlowResume` after the local child becomes writable. The frame is
@@ -526,7 +526,7 @@ callback. Several victims may be needed. No victim or no progress closes only
 that parent through normal parent-loss cleanup. A zero parent limit disables
 this combined finite bound; it introduces no other aggregate cap.
 
-`child-buffer-limit` remains 24 MiB by default and rejects equality. Outgoing
+`child-buffer-limit` remains 48 MiB by default and rejects equality. Outgoing
 parent queues remain separate: their pause/resume thresholds are 16/12 MiB, hard limit is
 128 MiB, and hard-limit equality is permitted. Detached queues retain their
 per-worker settings and zero/unlimited meanings. The FlowResume threshold counts

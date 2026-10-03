@@ -131,7 +131,7 @@ enum
     kConcurrencyModeTimer                 = kDvsFirstOption,
     kConcurrencyModeCounter               = kDvsSecondOption,
     kConcurrencyModeFixedConnectionsCount = kDvsThirdOption,
-    kMuxDefaultChildBufferLimit           = 24 * 1024 * 1024,
+    kMuxDefaultChildBufferLimit           = 48 * 1024 * 1024,
     kMuxDefaultChildBufferResumeThreshold = 256 * 1024,
     kMuxDefaultParentBufferLimit          = 128 * 1024 * 1024,
     kMuxParentBufferLimitUnlimited        = 0,
