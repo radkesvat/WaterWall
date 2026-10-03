@@ -53,7 +53,8 @@ static void tunDeliverPacketAssured(void *device, sbuf_t *buf, wid_t wid, bool a
 {
     tun_device_t *tdev = device;
 #ifdef OS_LINUX
-    if (tdev->trusted_checksums && ! assured && ! tunLinuxOffloadValidatePacket(sbufGetRawPtr(buf), sbufGetLength(buf)))
+    if (UNLIKELY(tdev->trusted_checksums && ! assured &&
+                 ! tunLinuxOffloadValidatePacket(sbufGetRawPtr(buf), sbufGetLength(buf))))
     {
         bufferpoolReuseBuffer(getWorkerBufferPool(wid), buf);
         return;
@@ -337,10 +338,10 @@ static void tunOffloadPostPending(tun_device_t *tdev, tun_offload_reader_t *read
     const bool checksum_only =
         reader->pending_plan.action == kTunLinuxOffloadChecksum && ! reader->pending_plan.transport_assured;
     buffer_pool_fit_t input_fit = {0};
-    if (checksum_only && ! bufferpoolQueryBestFit(tdev->reader_buffer_pool,
-                                                  reader->pending_plan.ip_length,
-                                                  bufferpoolGetSmallBufferPadding(tdev->reader_buffer_pool),
-                                                  &input_fit))
+    if (UNLIKELY(checksum_only && ! bufferpoolQueryBestFit(tdev->reader_buffer_pool,
+                                                           reader->pending_plan.ip_length,
+                                                           bufferpoolGetSmallBufferPadding(tdev->reader_buffer_pool),
+                                                           &input_fit)))
     {
         LOGF("TunDevice: ordinary checksum work has unrepresentable buffer geometry");
         abortProgramNow(1);
@@ -421,13 +422,13 @@ static tun_drain_result_t tunDrainOffloadPackets(tun_device_t *tdev, tun_offload
         for (;;)
         {
             nread = read(tdev->handle, record, kTunVirtioHeaderSize + kTunGsoPacketStorageCapacity);
-            if (nread < 0 && errno == EINTR)
+            if (UNLIKELY(nread < 0 && errno == EINTR))
             {
                 continue;
             }
             break;
         }
-        if (nread == 0)
+        if (UNLIKELY(nread == 0))
         {
             result = kTunDrainEndOfStream;
             break;
@@ -445,7 +446,7 @@ static tun_drain_result_t tunDrainOffloadPackets(tun_device_t *tdev, tun_offload
             }
             break;
         }
-        if (nread < kTunVirtioHeaderSize)
+        if (UNLIKELY(nread < kTunVirtioHeaderSize))
         {
             tunOffloadCountReject(tdev, reader, kTunLinuxOffloadMalformed);
             continue;
@@ -465,7 +466,7 @@ static tun_drain_result_t tunDrainOffloadPackets(tun_device_t *tdev, tun_offload
             tunOffloadCountReject(tdev, reader, reject);
             continue;
         }
-        if (tdev->trusted_checksums && ! tunLinuxOffloadTrustInput(metadata, ip, &plan))
+        if (UNLIKELY(tdev->trusted_checksums && ! tunLinuxOffloadTrustInput(metadata, ip, &plan)))
         {
             tunOffloadCountReject(tdev, reader, kTunLinuxOffloadMalformed);
             continue;
@@ -556,14 +557,14 @@ static tun_drain_result_t tunDrainPackets(tun_device_t *tdev)
         for (;;)
         {
             nread = (int) read(tdev->handle, sbufGetMutablePtr(bufs[queued_count]), read_size);
-            if (nread < 0 && errno == EINTR)
+            if (UNLIKELY(nread < 0 && errno == EINTR))
             {
                 continue;
             }
             break;
         }
 
-        if (nread == 0)
+        if (UNLIKELY(nread == 0))
         {
             bufferpoolReuseBuffer(tdev->reader_buffer_pool, bufs[queued_count]);
             tunFlushReadBatch(tdev, bufs, queued_count);
@@ -718,7 +719,7 @@ WTHREAD_ROUTINE(routineReadFromTun)
             offload_reader.waiting_for_capacity = false;
             continue;
         }
-        if (tdev->gso_enabled && (fds[2].revents & (POLLERR | POLLHUP | POLLNVAL)))
+        if (UNLIKELY(tdev->gso_enabled && (fds[2].revents & (POLLERR | POLLHUP | POLLNVAL))))
         {
             LOGE("TunDevice: GSO output-capacity notification failed");
             break;
@@ -726,7 +727,7 @@ WTHREAD_ROUTINE(routineReadFromTun)
 #endif
 
         // Check for socket errors
-        if (fds[0].revents & (POLLERR | POLLHUP | POLLNVAL))
+        if (UNLIKELY((fds[0].revents & (POLLERR | POLLHUP | POLLNVAL)) != 0))
         {
             tunLogReaderPollError(tdev, fds[0].revents);
             break;
@@ -779,14 +780,14 @@ static bool tunWriteResult(tun_device_t *tdev, ssize_t written, size_t expected,
 {
     if (written > 0)
     {
-        if ((size_t) written != expected &&
+        if (UNLIKELY((size_t) written != expected) &&
             atomicLogRateLimiterShouldLog(&tun_write_packet_failure_log, kTunPacketFailureLogIntervalMs))
         {
             LOGW("TunDevice: discarded a packet after a short device write (%zd of %zu bytes)", written, expected);
         }
         return true;
     }
-    if (written == 0)
+    if (UNLIKELY(written == 0))
     {
         LOGW("TunDevice: Exit write routine due to End Of File");
         return false;

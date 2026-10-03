@@ -66,24 +66,24 @@ static bool selectPseudoheaderDestination(const uint8_t *ip, uint32_t ip_header_
             offset++;
             continue;
         }
-        if (ip_header_length - offset < 2)
+        if (UNLIKELY(ip_header_length - offset < 2))
         {
             return false;
         }
         const uint32_t option_length = ip[offset + 1];
-        if (option_length < 2 || option_length > ip_header_length - offset)
+        if (UNLIKELY(option_length < 2 || option_length > ip_header_length - offset))
         {
             return false;
         }
         if (kind == 131 || kind == 137) /* LSRR and SSRR. */
         {
-            if (option_length < 7 || (option_length - 3U) % 4U != 0)
+            if (UNLIKELY(option_length < 7 || (option_length - 3U) % 4U != 0))
             {
                 return false;
             }
             const uint8_t pointer = ip[offset + 2];
-            if (pointer < 4 || (pointer - 4U) % 4U != 0 || (uint32_t) pointer > option_length + 1U ||
-                ((uint32_t) pointer <= option_length && (uint32_t) pointer + 3U > option_length))
+            if (UNLIKELY(pointer < 4 || (pointer - 4U) % 4U != 0 || (uint32_t) pointer > option_length + 1U ||
+                         ((uint32_t) pointer <= option_length && (uint32_t) pointer + 3U > option_length)))
             {
                 return false;
             }
@@ -129,13 +129,13 @@ tun_linux_offload_reject_t tunLinuxOffloadPreflight(const uint8_t metadata[kTunV
     const uint16_t checksum_start  = readLittle16(metadata + 6);
     const uint16_t checksum_offset = readLittle16(metadata + 8);
 
-    if ((flags & ~(VIRTIO_NET_HDR_F_NEEDS_CSUM | VIRTIO_NET_HDR_F_DATA_VALID)) != 0)
+    if (UNLIKELY((flags & ~(VIRTIO_NET_HDR_F_NEEDS_CSUM | VIRTIO_NET_HDR_F_DATA_VALID)) != 0))
     {
         return kTunLinuxOffloadUnsupported;
     }
     /* Linux may add the ECN modifier to its negotiated TCPv4 GSO type. */
-    if (gso_type != VIRTIO_NET_HDR_GSO_NONE && gso_type != VIRTIO_NET_HDR_GSO_TCPV4 &&
-        gso_type != (VIRTIO_NET_HDR_GSO_TCPV4 | VIRTIO_NET_HDR_GSO_ECN))
+    if (UNLIKELY(gso_type != VIRTIO_NET_HDR_GSO_NONE && gso_type != VIRTIO_NET_HDR_GSO_TCPV4 &&
+                 gso_type != (VIRTIO_NET_HDR_GSO_TCPV4 | VIRTIO_NET_HDR_GSO_ECN)))
     {
         return kTunLinuxOffloadUnsupported;
     }
@@ -149,7 +149,7 @@ tun_linux_offload_reject_t tunLinuxOffloadPreflight(const uint8_t metadata[kTunV
     {
         /* Checksum offload applies to ordinary packets of any IP version.
          * Negotiating only TCPv4 GSO does not make ordinary IPv6 disappear. */
-        if (ip_length == 0)
+        if (UNLIKELY(ip_length == 0))
         {
             return kTunLinuxOffloadMalformed;
         }
@@ -160,7 +160,7 @@ tun_linux_offload_reject_t tunLinuxOffloadPreflight(const uint8_t metadata[kTunV
         if ((flags & VIRTIO_NET_HDR_F_NEEDS_CSUM) != 0)
         {
             const uint32_t field = (uint32_t) checksum_start + checksum_offset;
-            if (checksum_start >= ip_length || field > ip_length || ip_length - field < sizeof(uint16_t))
+            if (UNLIKELY(checksum_start >= ip_length || field > ip_length || ip_length - field < sizeof(uint16_t)))
             {
                 return kTunLinuxOffloadMalformed;
             }
@@ -173,18 +173,18 @@ tun_linux_offload_reject_t tunLinuxOffloadPreflight(const uint8_t metadata[kTunV
     }
 
     ipv4_packet_view_t packet = {0};
-    if (! ipv4packetviewParse(ip, ip_length, &packet) || packet.ip_total_length != ip_length)
+    if (UNLIKELY(! ipv4packetviewParse(ip, ip_length, &packet) || packet.ip_total_length != ip_length))
     {
         return kTunLinuxOffloadMalformed;
     }
 
-    if (hdr_len > ip_length || packet.fragmented || gso_size == 0 || ! ipv4packetviewParseTcp(ip, ip_length, &packet) ||
-        packet.payload_length == 0)
+    if (UNLIKELY(hdr_len > ip_length || packet.fragmented || gso_size == 0 ||
+                 ! ipv4packetviewParseTcp(ip, ip_length, &packet) || packet.payload_length == 0))
     {
         return kTunLinuxOffloadMalformed;
     }
-    if ((flags & VIRTIO_NET_HDR_F_NEEDS_CSUM) != 0 &&
-        (checksum_start != packet.transport_offset || checksum_offset != kTcpChecksumOffset))
+    if (UNLIKELY((flags & VIRTIO_NET_HDR_F_NEEDS_CSUM) != 0 &&
+                 (checksum_start != packet.transport_offset || checksum_offset != kTcpChecksumOffset)))
     {
         return kTunLinuxOffloadMalformed;
     }
@@ -224,7 +224,7 @@ void tunLinuxOffloadCompleteChecksum(uint8_t *ip, const tun_linux_offload_plan_t
 
     uint16_t checksum =
         calcGenericChecksum(ip + plan->checksum_start, (uint16_t) (plan->ip_length - plan->checksum_start), 0);
-    if (checksum == 0)
+    if (UNLIKELY(checksum == 0))
     {
         checksum = UINT16_MAX;
     }
@@ -314,7 +314,7 @@ void tunLinuxOffloadCompleteSegment(uint8_t *ip, uint32_t ip_length)
 static bool trustedPacketShape(const uint8_t *ip, uint32_t length, ipv4_packet_view_t *packet)
 {
     /* The active pair trusts IPv4 header checksums in both directions. */
-    if (! ipv4packetviewParse(ip, length, packet) || packet->ip_total_length != length)
+    if (UNLIKELY(! ipv4packetviewParse(ip, length, packet) || packet->ip_total_length != length))
     {
         return false;
     }
@@ -340,7 +340,7 @@ bool tunLinuxOffloadValidatePacket(const uint8_t *ip, uint32_t length)
         return true; /* Preserve non-IPv4 admission; the node retains its policy. */
     }
     ipv4_packet_view_t packet = {0};
-    if (! trustedPacketShape(ip, length, &packet))
+    if (UNLIKELY(! trustedPacketShape(ip, length, &packet)))
     {
         return false;
     }
@@ -371,7 +371,7 @@ bool tunLinuxOffloadTrustInput(const uint8_t metadata[kTunVirtioHeaderSize], con
     plan->transport_assured = false;
     const bool partial      = (metadata[0] & VIRTIO_NET_HDR_F_NEEDS_CSUM) != 0;
     const bool verified     = (metadata[0] & VIRTIO_NET_HDR_F_DATA_VALID) != 0;
-    if (partial && verified)
+    if (UNLIKELY(partial && verified))
     {
         return false; /* Contradictory representations are never positive assurance. */
     }
@@ -380,7 +380,7 @@ bool tunLinuxOffloadTrustInput(const uint8_t metadata[kTunVirtioHeaderSize], con
         return true;
     }
     ipv4_packet_view_t packet = {0};
-    if (! trustedPacketShape(ip, plan->ip_length, &packet))
+    if (UNLIKELY(! trustedPacketShape(ip, plan->ip_length, &packet)))
     {
         return false;
     }
@@ -420,7 +420,7 @@ bool tunLinuxOffloadEncodeWrite(uint8_t *ip, uint32_t length, uint8_t metadata[k
     assert(ip != NULL && metadata != NULL);
     memoryZero(metadata, kTunVirtioHeaderSize);
     ipv4_packet_view_t packet = {0};
-    if (! trustedPacketShape(ip, length, &packet))
+    if (UNLIKELY(! trustedPacketShape(ip, length, &packet)))
     {
         return false;
     }
