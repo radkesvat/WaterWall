@@ -15,6 +15,14 @@ void connectionfisherserverLinestateInitialize(connectionfisherserver_lstate_t *
 void connectionfisherserverLinestateDestroy(connectionfisherserver_lstate_t *ls)
 {
     bufferqueueDestroy(&ls->pending_up);
-    bufferstreamDestroy(&ls->in_stream);
+    if (ls->in_stream.pool != NULL)
+        bufferstreamDestroy(&ls->in_stream);
     memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(*ls)));
+}
+
+void connectionfisherserverRetireReadStream(connectionfisherserver_lstate_t *ls)
+{
+    assert(bufferstreamIsEmpty(&ls->in_stream));
+    bufferstreamDestroy(&ls->in_stream);
+    ls->in_stream = (buffer_stream_t) {0};
 }

@@ -21,11 +21,12 @@ void connectionfisherclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t 
             return;
         }
         if (UNLIKELY(sbufGetLength(buf) > kConnectionFisherMaxPendingUpBytes - bufferqueueGetBufLen(&ls->pending_up) ||
+                     bufferqueueGetBufCount(&ls->pending_up) >= kConnectionFisherMaxPendingBuffers ||
                      ! bufferqueueTryPushBack(&ls->pending_up, &buf)))
         {
             lineReuseBuffer(l, buf);
-            LOGW(
-                "ConnectionFisherClient: pending upstream payload exceeded its 1 MiB budget or queue admission failed");
+            LOGW("ConnectionFisherClient: pending upstream payload exceeded its byte/buffer limit or queue admission "
+                 "failed");
             connectionfisherclientCloseMainLine(t, l);
             return;
         }

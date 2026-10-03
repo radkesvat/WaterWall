@@ -69,7 +69,9 @@ bool connectionfisherclientFlushPendingToSelected(tunnel_t *t, line_t *main_l, l
     if (alive)
     {
         main_ls->pumping_up = false;
-        alive               = connectionfisherclientSyncMainSource(t, main_l) && lineIsAlive(child_l);
+        if (bufferqueueGetBufCount(&main_ls->pending_up) == 0)
+            bufferqueueDestroy(&main_ls->pending_up);
+        alive = connectionfisherclientSyncMainSource(t, main_l) && lineIsAlive(child_l);
     }
     lineUnref(child_l);
     lineUnref(main_l);
@@ -364,6 +366,8 @@ bool connectionfisherclientSelectChild(tunnel_t *t, line_t *child_l)
         if (! lineIsAlive(child_l))
             goto cleanup;
     }
+    if (child_ls->child_handshake_complete)
+        connectionfisherclientRetireReadStream(child_ls);
     main_ls->selecting_child = false;
     if (! connectionfisherclientFlushPendingToSelected(t, main_l, child_l))
         goto cleanup;
@@ -415,14 +419,22 @@ void connectionfisherclientHandleChildHandshakePayload(tunnel_t *t, line_t *chil
 {
     connectionfisherclient_lstate_t *child_ls = lineGetState(child_l, t);
 
-    bufferstreamPush(&child_ls->read_stream, buf);
-
-    if (bufferstreamGetBufLen(&child_ls->read_stream) > kConnectionFisherMaxHandshakeBytes)
+    if (sbufGetLength(buf) == 0)
     {
-        LOGW("ConnectionFisherClient: handshake buffer overflow on child line, closing the main line");
+        lineReuseBuffer(child_l, buf);
+        return;
+    }
+    const size_t limit = kConnectionFisherHandshakeLength + kConnectionFisherMaxPendingUpBytes;
+    if (sbufGetLength(buf) > limit - bufferstreamGetBufLen(&child_ls->read_stream))
+    {
+        lineReuseBuffer(child_l, buf);
+        LOGW("ConnectionFisherClient: reply and coalesced application data exceeded the pending limit");
         connectionfisherclientCloseChildLine(t, child_l, true);
         return;
     }
+
+    buf = sbufEnsureOrdinary(lineGetBufferPool(child_l), buf);
+    bufferstreamPush(&child_ls->read_stream, buf);
 
     if (bufferstreamGetBufLen(&child_ls->read_stream) < kConnectionFisherHandshakeLength)
     {

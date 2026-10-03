@@ -68,14 +68,8 @@ void connectionfisherserverHandleHandshakePayload(tunnel_t *t, line_t *l, sbuf_t
 {
     connectionfisherserver_lstate_t *ls = lineGetState(l, t);
 
+    buf = sbufEnsureOrdinary(lineGetBufferPool(l), buf);
     bufferstreamPush(&ls->in_stream, buf);
-
-    if (bufferstreamGetBufLen(&ls->in_stream) > kConnectionFisherServerMaxHandshakeBytes)
-    {
-        LOGW("ConnectionFisherServer: handshake buffer overflow, closing line");
-        connectionfisherserverCloseLineFromProtocolError(t, l);
-        return;
-    }
 
     if (bufferstreamGetBufLen(&ls->in_stream) < kConnectionFisherServerHandshakeLength)
     {
@@ -107,6 +101,7 @@ void connectionfisherserverHandleHandshakePayload(tunnel_t *t, line_t *l, sbuf_t
             return;
         }
     }
+    connectionfisherserverRetireReadStream(ls);
     ls->phase = kConnectionFisherServerPhaseWaitPayload;
     tunnelPrevDownStreamPayload(t, l, connectionfisherserverMakeReply(l));
 }

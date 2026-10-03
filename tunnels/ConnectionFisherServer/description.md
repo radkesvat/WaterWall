@@ -43,10 +43,10 @@ or any other server-side stream chain where the first `5` bytes are reserved for
 
 The body coalesced with FISH? and the first post-probe payload retain their FIFO
 position across the FISH! reply, onward Init and nested Est callbacks. Temporary
-input ordering is bounded to 1 MiB, including the body held across Init. It drains
+input ordering is bounded to 2 MiB and 1,024 buffers, including the body held across Init. It drains
 within the admitted dispatch and does not queue ready data merely for Pause or
-Est. The existing 4,096-byte probe assembly limit remains unchanged. Close during
-Init or Est releases older local input before returning.
+Est. The incomplete probe is at most four bytes; a complete probe can include an application body
+within the separate 2 MiB limit. Close during Init or Est releases older local input before returning.
 
 ## Finish And Safety Behavior
 
@@ -67,13 +67,26 @@ Init or Est releases older local input before returning.
 }
 ```
 
+## Splice Support and Setup Retirement
+
+Both nodes accept ordinary buffers and private-pipe payloads. Complete deliveries entering handshake
+or selection parsing are materialized with `sbufEnsureOrdinary()`; application FIFOs retain buffers
+opaquely. A complete five-byte marker can carry up to 2 MiB of following application data. An incomplete
+marker retains at most four bytes, and the marker does not consume the application-data allowance.
+
+After setup and FIFO drain, the nodes release their handshake streams and empty queue storage. Ready
+payloads pass through without inspection, materialization or the startup backlog limit. The client
+keeps the main-to-selected-child mapping needed for payload, pressure and Finish callbacks. Server
+backend initialization still waits for the first application payload, so losing candidates create no
+backend connection. Neither node requests ordinary reads for the established TCP stream.
+
 ## Node Metadata
 
 Source-backed metadata:
 
 | Property | Value |
 | --- | --- |
-| node flags | `kNodeFlagNone` |
+| node flags | `kNodeFlagSupportsSplice` |
 | `can_have_prev` | `true` |
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayer4` |

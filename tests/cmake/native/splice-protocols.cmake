@@ -1,5 +1,33 @@
 # Explicit native registrations; included in dependency order by unittests/CMakeLists.txt.
 if(LINUX)
+  foreach(fisher_side Client Server)
+    if(TARGET ConnectionFisher${fisher_side})
+      string(TOLOWER "${fisher_side}" fisher_lower)
+      foreach(mode IN ITEMS splice no_splice)
+        set(fisher_target "connectionfisher${fisher_lower}_${mode}_test")
+        waterwall_add_native_executable(${fisher_target} SUPPORT SOURCES
+          "${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/connectionfisher/connectionfisher_splice_test.c"
+          ${WATERWALL_LINE_FAILURE_WW_SOURCES})
+        waterwall_line_failure_test_use_tunnel(${fisher_target} ConnectionFisher${fisher_side})
+        target_link_libraries(${fisher_target} PRIVATE ww)
+        target_link_options(${fisher_target} PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS}
+          "-Wl,--wrap=read" "-Wl,--wrap=bufferqueueTryPushBack" "-Wl,--wrap=sbufAppendMerge"
+          "-Wl,--wrap=sbufDuplicate")
+        if(fisher_side STREQUAL "Server")
+          target_compile_definitions(${fisher_target} PRIVATE TEST_FISHER_SERVER=1)
+        endif()
+        if(mode STREQUAL "no_splice")
+          target_compile_definitions(${fisher_target} PRIVATE WW_HAVE_SPLICE=0)
+        endif()
+        add_dependencies(waterwall_unit_tests ${fisher_target})
+        add_waterwall_unit_test(waterwall.connectionfisher${fisher_lower}_${mode}_unit ${fisher_target}
+          "unit;tunnels;connectionfisher;splice;handshake;reentrant;lifetime")
+      endforeach()
+    endif()
+  endforeach()
+endif()
+
+if(LINUX)
   foreach(uot_side Client Server)
     if(TARGET UdpOverTcp${uot_side})
       string(TOLOWER "${uot_side}" uot_lower)

@@ -60,7 +60,7 @@ The matching server side is:
 - upstream payload received before selection is queued in a normal `buffer_queue_t`
 - once a winner is selected, the independent queued-payload drain preserves FIFO and honors child transport Pause
 
-The application backlog remains bounded to 1 MiB and admits buffers transactionally.
+The upstream application backlog is bounded to 2 MiB and 1,024 buffers and admits buffers transactionally.
 Its first retained payload publishes source Pause after FIFO ownership is settled.
 This hold combines with selected-child transport pressure; neither an unrelated
 child Resume nor selection alone releases it. It affects the application source,
@@ -69,7 +69,7 @@ Selection and Resume release it as an independent producer: Pause stops the drai
 and nested application input appends behind older retained bytes. Empty stream
 buffers need no retained entry. Main-side reply Pause is recorded before selection
 and applied to the chosen backend after its handshake, so it cannot stall FISH!.
-Temporary downstream ordering during selection also has a 1 MiB bound and keeps
+Temporary downstream ordering during selection also has a 2 MiB bound and keeps
 coalesced reply bytes before reentrant replies. Close settles all retained bytes
 and exact child/main references.
 
@@ -91,13 +91,26 @@ The child lines created by `ConnectionFisherClient` are internal bridge lines.
 
 This is why the tunnel manually bridges payload, `Est`, `Pause`, `Resume`, and `Finish` between the winning child and the original line instead of forwarding the original line directly.
 
+## Splice Support and Setup Retirement
+
+Both nodes accept ordinary buffers and private-pipe payloads. Complete deliveries entering handshake
+or selection parsing are materialized with `sbufEnsureOrdinary()`; application FIFOs retain buffers
+opaquely. A complete five-byte marker can carry up to 2 MiB of following application data. An incomplete
+marker retains at most four bytes, and the marker does not consume the application-data allowance.
+
+After setup and FIFO drain, the nodes release their handshake streams and empty queue storage. Ready
+payloads pass through without inspection, materialization or the startup backlog limit. The client
+keeps the main-to-selected-child mapping needed for payload, pressure and Finish callbacks. Server
+backend initialization still waits for the first application payload, so losing candidates create no
+backend connection. Neither node requests ordinary reads for the established TCP stream.
+
 ## Node Metadata
 
 Source-backed metadata:
 
 | Property | Value |
 | --- | --- |
-| node flags | `kNodeFlagNone` |
+| node flags | `kNodeFlagSupportsSplice` |
 | `can_have_prev` | `true` |
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayer4` |

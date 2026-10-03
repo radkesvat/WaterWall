@@ -30,8 +30,8 @@ typedef struct connectionfisherserver_lstate_s
 enum
 {
     kConnectionFisherServerHandshakeLength   = 5,
-    kConnectionFisherServerMaxHandshakeBytes = 4096,
-    kConnectionFisherServerMaxPendingBytes   = 1024 * 1024,
+    kConnectionFisherServerMaxPendingBytes   = 2 * 1024 * 1024,
+    kConnectionFisherServerMaxPendingBuffers = 1024,
     kTunnelStateSize                         = sizeof(connectionfisherserver_tstate_t),
     kLineStateSize                           = sizeof(connectionfisherserver_lstate_t)
 };
@@ -53,6 +53,7 @@ void connectionfisherserverTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
 void connectionfisherserverLinestateInitialize(connectionfisherserver_lstate_t *ls, line_t *l);
 void connectionfisherserverLinestateDestroy(connectionfisherserver_lstate_t *ls);
+void connectionfisherserverRetireReadStream(connectionfisherserver_lstate_t *ls);
 
 void connectionfisherserverCloseLineFromUpstream(tunnel_t *t, line_t *l);
 void connectionfisherserverCloseLineFromDownstream(tunnel_t *t, line_t *l);

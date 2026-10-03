@@ -12,7 +12,7 @@ bool connectionfisherclientLinestateInitializeMain(connectionfisherclient_lstate
         .open_child_count   = 0,
         .selected_child     = NULL,
         .main_line          = NULL,
-        .pending_up         = bufferqueueCreate(kConnectionFisherPendingQueueCap),
+        .pending_up         = bufferqueueCreate(kConnectionFisherPendingQueueInitialCapacity),
     };
 
     if (child_count == 0)
@@ -75,6 +75,17 @@ void connectionfisherclientLinestateDestroyChild(connectionfisherclient_lstate_t
         return;
     }
 
-    bufferstreamDestroy(&ls->read_stream);
+    if (ls->read_stream.pool != NULL)
+        bufferstreamDestroy(&ls->read_stream);
     memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(*ls)));
+}
+
+void connectionfisherclientRetireReadStream(connectionfisherclient_lstate_t *ls)
+{
+    if (ls->read_stream.pool != NULL)
+    {
+        assert(bufferstreamIsEmpty(&ls->read_stream));
+        bufferstreamDestroy(&ls->read_stream);
+        ls->read_stream = (buffer_stream_t) {0};
+    }
 }

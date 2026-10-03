@@ -55,6 +55,7 @@ void connectionfisherclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_
             connectionfisherclientCloseChildLine(t, l, true);
             return;
         }
+        buf = sbufEnsureOrdinary(lineGetBufferPool(l), buf);
         bufferstreamPush(&ls->read_stream, buf);
         return;
     }

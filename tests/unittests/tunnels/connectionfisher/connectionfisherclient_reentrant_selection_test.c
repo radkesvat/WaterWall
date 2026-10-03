@@ -612,7 +612,7 @@ static void caseCoalescedReplyPrecedesNewResponse(void)
 }
 static void casePendingBudgetBeforeSelection(void)
 {
-    twfSetCase("Fisher early application input retains the exact 1 MiB pending bound");
+    twfSetCase("Fisher early application input retains the exact 2 MiB pending bound");
     connectionfisher_selection_fixture_t fixture;
     fixtureSetup(&fixture);
     active_flow          = &fixture;

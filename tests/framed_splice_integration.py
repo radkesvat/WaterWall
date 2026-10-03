@@ -16,7 +16,8 @@ waterwall.framed_v1_splice_false, waterwall.framed_v1_splice_true, waterwall.fra
 waterwall.framed_v2_splice_true. Limiter variants:
 waterwall.framed_softiplimiter_{vless,trojan}_splice_{false,true} and
 waterwall.framed_speedlimit_{line,worker,all}_splice_{false,true}; identity replay,
-token-limited TCP integrity, pipe-to-pipe splitting and endpoint splice policy."""
+token-limited TCP integrity, pipe-to-pipe splitting and endpoint splice policy.
+ConnectionFisher: waterwall.framed_connectionfisher_splice_{false,true}; winner relay and setup retirement."""
 import concurrent.futures
 import json
 from pathlib import Path
@@ -105,6 +106,14 @@ def run(binary, mode, enabled):
                   "next": "backend", "settings": settings}, connector_node("backend", BACKEND_PORT)]
         prefix = (b"\0" + bytes(range(16)) if mode == "softiplimiter_vless" else
                   bytes(range(28)).hex().encode() + b"\r\n" if softiplimiter else b"")
+    elif mode == "connectionfisher":
+        nodes = [listener_node("app", APP_PORT, "client"),
+                 {"name": "client", "type": "ConnectionFisherClient", "next": "carrier",
+                  "settings": {"simultaneous-tries-perline": 3}}, connector_node("carrier", PEER_PORT),
+                 listener_node("peer", PEER_PORT, "server"),
+                 {"name": "server", "type": "ConnectionFisherServer", "next": "backend"},
+                 connector_node("backend", BACKEND_PORT)]
+        prefix = b""
     elif mode == "keepalive":
         nodes = [listener_node("app", APP_PORT, "client"),
                  {"name": "client", "type": "KeepAliveClient", "next": "carrier",

@@ -18,8 +18,13 @@ void connectionfisherserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t 
         lineReuseBuffer(l, buf);
         return;
     }
-    if (UNLIKELY(sbufGetLength(buf) > kConnectionFisherServerMaxPendingBytes - ls->init_payload_bytes -
-                                          bufferqueueGetBufLen(&ls->pending_up) ||
+    const size_t handshake_bytes =
+        ls->phase == kConnectionFisherServerPhaseWaitPing ? kConnectionFisherServerHandshakeLength : 0;
+    const size_t retained_bytes =
+        ls->init_payload_bytes + bufferqueueGetBufLen(&ls->pending_up) + bufferstreamGetBufLen(&ls->in_stream);
+    if (UNLIKELY(sbufGetLength(buf) > kConnectionFisherServerMaxPendingBytes + handshake_bytes - retained_bytes ||
+                 bufferqueueGetBufCount(&ls->pending_up) + (ls->init_payload_bytes != 0) >=
+                     kConnectionFisherServerMaxPendingBuffers ||
                  ! bufferqueueTryPushBack(&ls->pending_up, &buf)))
     {
         lineReuseBuffer(l, buf);
@@ -58,6 +63,10 @@ void connectionfisherserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t 
         tunnelNextUpStreamPayload(t, l, buf);
     }
     if (lineIsAlive(l) && ls->phase != kConnectionFisherServerPhaseClosing)
+    {
         ls->dispatching = false;
+        if (ls->phase == kConnectionFisherServerPhaseEstablished)
+            bufferqueueDestroy(&ls->pending_up);
+    }
     lineUnref(l);
 }

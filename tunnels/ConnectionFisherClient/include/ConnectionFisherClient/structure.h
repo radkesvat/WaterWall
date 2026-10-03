@@ -38,13 +38,13 @@ typedef struct connectionfisherclient_lstate_s
 
 enum
 {
-    kConnectionFisherHandshakeLength   = 5,
-    kConnectionFisherTimeoutMs         = 5000,
-    kConnectionFisherMaxPendingUpBytes = 1024 * 1024,
-    kConnectionFisherMaxHandshakeBytes = 4096,
-    kConnectionFisherPendingQueueCap   = 8,
-    kTunnelStateSize                   = sizeof(connectionfisherclient_tstate_t),
-    kLineStateSize                     = sizeof(connectionfisherclient_lstate_t)
+    kConnectionFisherHandshakeLength             = 5,
+    kConnectionFisherTimeoutMs                   = 5000,
+    kConnectionFisherMaxPendingUpBytes           = 2 * 1024 * 1024,
+    kConnectionFisherMaxPendingBuffers           = 1024,
+    kConnectionFisherPendingQueueInitialCapacity = 8,
+    kTunnelStateSize                             = sizeof(connectionfisherclient_tstate_t),
+    kLineStateSize                               = sizeof(connectionfisherclient_lstate_t)
 };
 
 WW_EXPORT tunnel_t    *connectionfisherclientTunnelCreate(node_t *node);
@@ -68,6 +68,7 @@ void connectionfisherclientLinestateInitializeChild(connectionfisherclient_lstat
                                                     uint32_t slot);
 void connectionfisherclientLinestateDestroyMain(connectionfisherclient_lstate_t *ls);
 void connectionfisherclientLinestateDestroyChild(connectionfisherclient_lstate_t *ls);
+void connectionfisherclientRetireReadStream(connectionfisherclient_lstate_t *ls);
 
 bool connectionfisherclientSendPing(tunnel_t *t, line_t *child_l);
 bool connectionfisherclientSelectChild(tunnel_t *t, line_t *child_l);
