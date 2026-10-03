@@ -902,14 +902,13 @@ static void caseDetachedConfiguration(void)
         twfRequire(mux != NULL, "profile-derived detached MuxServer settings were rejected");
         muxserver_tstate_t *ts = tunnelGetState(mux);
         twfRequire(ts->keepalive, "MuxServer keepalive must default on");
-        twfRequireEqualU32(ts->child_buffer_limit, 50331648U, "default MuxServer child buffer limit must be 48 MiB");
+        twfRequireEqualU32(ts->child_buffer_limit, 134217728U, "default MuxServer child buffer limit must be 128 MiB");
         twfRequireEqualU32(
             ts->detached_buffer_limit, profiles[i].buffer_limit, "profile-derived MuxServer byte limit drifted");
         twfRequireEqualU32(
             ts->detached_child_limit, profiles[i].child_limit, "profile-derived MuxServer child limit drifted");
-        twfRequireEqualU32(ts->child_buffer_resume_threshold,
-                           kMuxDefaultChildBufferResumeThreshold,
-                           "default MuxServer child resume threshold drifted");
+        twfRequireEqualU32(
+            ts->child_buffer_resume_threshold, 524288U, "default MuxServer child resume threshold must be 512 KiB");
         twfRequireEqualU32(
             ts->max_children, kMuxDefaultMaxChildrenPerParent, "default MuxServer per-parent child limit drifted");
         twfRequireEqualU32(

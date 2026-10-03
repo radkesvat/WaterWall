@@ -1079,12 +1079,12 @@ static void caseParentWriteConfiguration(void)
             twfRequire(mux != NULL, "valid parent write settings rejected");
             pq_tstate_t *ts = tunnelGetState(mux);
             twfRequire(ts->parent_write_pause_threshold == (pairs[i][0] ? pairs[i][0] : 16777216) &&
-                           ts->parent_write_limit == (pairs[i][1] ? pairs[i][1] : 134217728),
+                           ts->parent_write_limit == (pairs[i][1] ? pairs[i][1] : 536870912),
                        "parent write independent defaults drifted");
             if (i == 0)
             {
                 twfRequire(ts->parent_write_resume_threshold == 12582912, "default parent resume threshold drifted");
-                twfRequire(ts->parent_buffer_limit == 134217728, "default parent receive limit drifted");
+                twfRequire(ts->parent_buffer_limit == 536870912, "default parent receive limit drifted");
             }
             if (i == 3)
             {
@@ -1120,7 +1120,7 @@ static void caseParentWriteConfiguration(void)
                 lineUnref(f.parent_l);
 #endif
                 twfRequire(original_ts->parent_write_pause_threshold == 16777216 &&
-                               original_ts->parent_write_limit == 134217728,
+                               original_ts->parent_write_limit == 536870912,
                            "node instances shared settings");
                 f.mux = original;
                 tunnelBind(f.prev, original);

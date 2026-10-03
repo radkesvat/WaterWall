@@ -2,7 +2,7 @@
 
 Run this through `tests/run_in_network_namespace.sh`, using the existing probe
 runner. The config has one worker, one fixed TCP parent, 64/32 KiB pause/resume
-thresholds and the production 128 MiB output limit. Four hot children upload and
+thresholds and the production 512 MiB output limit. Four hot children upload and
 download sequence-tagged batches; remaining children exchange small periodic
 messages. A 0.5-second destination stall is followed by draining. A bounded
 subset reconnects every fourth exchange and sends useful bytes immediately.
@@ -45,7 +45,7 @@ both `parent-write-buffer-*threshold` settings from both mux nodes in its
 and record it before running. The default transaction geometry does not guarantee
 crossing the 16 MiB default pause threshold, so distinguish ordinary progress
 from observed throttle episodes. A large backlog is not a receive-capacity
-promise: individual and aggregate receive limits remain 24/128 MiB.
+promise: individual and aggregate receive limits are 128/512 MiB.
 
 The full plan requires three 180-second repetitions for every direction, splice
 mode and threshold profile, 30-minute scale runs in each mode, a multiworker

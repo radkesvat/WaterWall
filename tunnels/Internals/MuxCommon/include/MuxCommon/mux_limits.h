@@ -90,7 +90,7 @@ enum
 {
     kMuxDefaultParentWritePauseThreshold  = 16 * 1024 * 1024,
     kMuxDefaultParentWriteResumeThreshold = 12 * 1024 * 1024,
-    kMuxDefaultParentWriteLimit           = 128 * 1024 * 1024,
+    kMuxDefaultParentWriteLimit           = 512 * 1024 * 1024,
     kMuxMinimumDetachedBufferLimit = 32 * 1024 * 1024,
     kMuxMaximumDetachedBufferLimit = 256 * 1024 * 1024,
     kMuxMinimumDetachedChildLimit  = 4096,

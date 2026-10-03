@@ -1129,16 +1129,15 @@ static void caseDetachedConfiguration(void)
         twfRequire(mux != NULL, "profile-derived detached MuxClient settings were rejected");
         muxclient_tstate_t *ts = tunnelGetState(mux);
         twfRequire(ts->keepalive, "MuxClient keepalive must default on");
-        twfRequireEqualU32(ts->child_buffer_limit, 50331648U, "default MuxClient child buffer limit must be 48 MiB");
+        twfRequireEqualU32(ts->child_buffer_limit, 134217728U, "default MuxClient child buffer limit must be 128 MiB");
         twfRequireEqualU32(ts->ping_interval_ms, 15000, "default Ping interval changed");
         twfRequireEqualU32(ts->pong_timeout_ms, 45000, "default Pong tolerance changed");
         twfRequireEqualU32(
             ts->detached_buffer_limit, profiles[i].buffer_limit, "profile-derived MuxClient byte limit drifted");
         twfRequireEqualU32(
             ts->detached_child_limit, profiles[i].child_limit, "profile-derived MuxClient child limit drifted");
-        twfRequireEqualU32(ts->child_buffer_resume_threshold,
-                           kMuxDefaultChildBufferResumeThreshold,
-                           "default MuxClient child resume threshold drifted");
+        twfRequireEqualU32(
+            ts->child_buffer_resume_threshold, 524288U, "default MuxClient child resume threshold must be 512 KiB");
         twfRequireEqualU32(
             ts->max_children, kMuxDefaultMaxChildrenPerParent, "default MuxClient per-parent child limit drifted");
         muxclientTunnelDestroy(mux, wwLifecycleProcessShutdown());
