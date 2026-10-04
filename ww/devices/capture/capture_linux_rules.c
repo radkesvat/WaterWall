@@ -31,18 +31,14 @@
 #include "capture_linux_rules.h"
 
 // Each setting is passed to sysctl as a single argv element after `-w`, so a
-// multi-value setting such as "net.ipv4.tcp_rmem=4096 87380 134217728" arrives
+// multi-value setting such as "net.ipv4.ip_local_port_range=10000 65535" arrives
 // as one argument. No shell is involved, so no quoting variant is needed.
 typedef struct capturedevice_sysctl_setting_s
 {
     const char *argv_setting;
 } capturedevice_sysctl_setting_t;
 
-static const capturedevice_sysctl_setting_t sysctl_settings[] = {{"net.core.rmem_max=134217728"},
-                                                                 {"net.core.wmem_max=134217728"},
-                                                                 {"net.ipv4.tcp_rmem=4096 87380 134217728"},
-                                                                 {"net.ipv4.tcp_wmem=4096 65536 134217728"},
-                                                                 {"net.core.netdev_max_backlog=250000"},
+static const capturedevice_sysctl_setting_t sysctl_settings[] = {{"net.core.netdev_max_backlog=250000"},
                                                                  {"net.core.somaxconn=65535"},
                                                                  {"net.ipv4.tcp_window_scaling=1"},
                                                                  {"net.ipv4.tcp_timestamps=1"},
@@ -194,7 +190,7 @@ static capturedevice_command_status_t capturedeviceSetSysctl(const capturedevice
 // Best-effort kernel tuning: an ordinary nonzero sysctl exit only warns and the
 // batch continues. A timeout, output-limit termination, or parent-side execution
 // failure stops the remaining attempts instead: the command path is unusable, so
-// re-running it for every setting would turn one bounded failure into fourteen.
+// re-running it for every setting would repeat the same bounded failure.
 // Either way Capture creation continues. A true skip_sysctl is an explicit
 // per-device opt-out and runs none of the tuning commands.
 void capturedeviceApplySysctls(bool skip_sysctl)

@@ -257,7 +257,12 @@ and protocol zero without interpreting transport headers. Missing matcher
 support fails startup and rolls back installed rules. An empty list adds no
 protocol matcher. Windows applies the same exclusions in its WinDivert filter.
 
-By default the Linux capture backend also applies best-effort `sysctl` tuning before creating NFQUEUE resources. `"skip-sysctl": true` suppresses only that tuning batch. The netlink operations and iptables commands needed to configure NFQUEUE remain enabled.
+By default the Linux capture backend applies best-effort `sysctl` tuning for
+backlogs and other TCP parameters before creating NFQUEUE resources. The core
+`misc.tcp-tune` setting owns writes to `net.core.rmem_max`, `net.core.wmem_max`,
+`net.ipv4.tcp_rmem`, and `net.ipv4.tcp_wmem`. `"skip-sysctl": true` suppresses
+only Capture's tuning batch. The netlink operations and iptables commands
+needed to configure NFQUEUE remain enabled.
 
 When `bypass-conntrack` is enabled (the default), Linux capture installs a
 matching `CT --notrack` rule in `raw PREROUTING` for each capture source range, with the same protocol exclusions as capture.

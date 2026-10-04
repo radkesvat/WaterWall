@@ -396,6 +396,8 @@ static void testQueueSelectionAvoidsReferencedNumbers(void)
 
 static void testSysctlUsesDirectArgvWithGroupedValues(void)
 {
+    static const char *const buffer_settings[] = {
+        "net.core.rmem_max=", "net.core.wmem_max=", "net.ipv4.tcp_rmem=", "net.ipv4.tcp_wmem="};
     resetRecording(kFakeOutcomeSuccess, SIZE_MAX);
     capturedeviceApplySysctls(false);
     require(recorded_call_count > 1, "the sysctl batch must apply every setting");
@@ -412,12 +414,19 @@ static void testSysctlUsesDirectArgvWithGroupedValues(void)
         requireEqStr(call->argv[1], "-w", "sysctl must use the -w write flag");
         requireMutationOptions(call, "sysctl must use Capture's configured deadline, grace, and output cap");
 
-        if (strcmp(call->argv[2], "net.ipv4.tcp_rmem=4096 87380 134217728") == 0)
+        for (size_t setting = 0; setting < ARRAY_SIZE(buffer_settings); ++setting)
+        {
+            require(strncmp(call->argv[2], buffer_settings[setting], strlen(buffer_settings[setting])) != 0,
+                    "Capture must leave socket and TCP buffer tuning to the core tcp-tune setting");
+        }
+
+        if (strcmp(call->argv[2], "net.ipv4.ip_local_port_range=10000 65535") == 0)
         {
             found_multi_value = true;
         }
     }
     require(found_multi_value, "a multi-value sysctl setting must arrive as one argv element after -w");
+    require(recorded_call_count == 10, "Capture must retain the ten remaining sysctl settings");
 }
 
 static void testSysctlNonzeroExitStaysBestEffort(void)

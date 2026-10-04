@@ -336,9 +336,9 @@ attempted; permission denial or a missing `sysctl` never fails startup. Successf
 writes change the live kernel settings and are not restored on exit. WaterWall
 does not persist them in `/etc/sysctl.conf`.
 
-RawSocket has a separate tuning batch controlled by its `skip-sysctl` option.
-That batch can overwrite these values later; `tcp-tune` controls only the core
-startup phase.
+RawSocket's separate tuning batch, controlled by `skip-sysctl`, tunes backlogs and
+other TCP parameters. The four buffer writes above belong exclusively to the core
+`tcp-tune` phase.
 
 ### `ram-profile`
 
