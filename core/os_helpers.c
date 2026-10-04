@@ -129,10 +129,10 @@ void tryTuneTcp(void)
 {
 #if ! defined(OS_ANDROID) && ! defined(OS_CYGWIN)
     const char *commands[] = {
-        "sysctl -w net.core.rmem_max=16777216 2>&1",
-        "sysctl -w net.core.wmem_max=16777216 2>&1",
-        "sysctl -w net.ipv4.tcp_rmem=\"4096 131072 8388608\" 2>&1",
-        "sysctl -w net.ipv4.tcp_wmem=\"4096 16384 8388608\" 2>&1",
+        "sysctl -w net.core.rmem_max=534217728 2>&1",
+        "sysctl -w net.core.wmem_max=534217728 2>&1",
+        "sysctl -w net.ipv4.tcp_rmem=\"4096 87380 134217728\" 2>&1",
+        "sysctl -w net.ipv4.tcp_wmem=\"4096 87380 134217728\" 2>&1",
     };
 
     size_t applied = 0;

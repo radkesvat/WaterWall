@@ -261,7 +261,7 @@ setting nobody chose. This applies to every field in the table, not only to
 | `ram-profile` | string or integer | `"server"` | Memory sizing profile for pools and profile-aware node defaults. A number must be a whole number in `0..6`; `0` and `1` are legacy aliases for the smallest profile. |
 | `mtu` | integer | `1500` | Construction-time default for per-node MTUs. Must be a whole number in `68..65535` - RFC 791's minimum IPv4 MTU up to what the field can hold. |
 | `splice` | boolean | `true` | Allow splice on eligible stream chains. `false` disables splice for every chain. Platform support and support from every node are still required; packet chains remain ineligible. |
-| `tcp-tune` | boolean | `true` on Linux; `false` otherwise | Best-effort core startup tuning with fixed 16 MiB socket ceilings and 8 MiB TCP autotuning maxima. |
+| `tcp-tune` | boolean | `true` on Linux; `false` otherwise | Best-effort core startup tuning with socket ceilings of `534217728` bytes and 128 MiB TCP autotuning maxima. |
 | `try-enabling-bbr` | boolean | `true` on Linux; `false` otherwise | Linux-only best-effort startup attempt to enable TCP BBR. |
 | `libs-path` | string | `"libs/"` | Directory used when loading external tunnel libraries. |
 
@@ -318,18 +318,17 @@ attempts exactly four live sysctl writes, independent of the memory profile:
 
 | Setting | Value |
 | --- | --- |
-| `net.core.rmem_max` | `16777216` (16 MiB) |
-| `net.core.wmem_max` | `16777216` (16 MiB) |
-| `net.ipv4.tcp_rmem` | `4096 131072 8388608` |
-| `net.ipv4.tcp_wmem` | `4096 16384 8388608` |
+| `net.core.rmem_max` | `534217728` (about 509.47 MiB) |
+| `net.core.wmem_max` | `534217728` (about 509.47 MiB) |
+| `net.ipv4.tcp_rmem` | `4096 87380 134217728` |
+| `net.ipv4.tcp_wmem` | `4096 87380 134217728` |
 
 This phase does not change `net.core.netdev_max_backlog` or `net.core.somaxconn`.
-With `tcp-tune: true`, TcpListener and TcpConnector leave omitted socket-buffer
-options to the kernel. With `tcp-tune: false`, a chain containing either MuxClient
-or MuxServer activates their 4 MiB send/receive defaults for omitted options.
+A chain containing either MuxClient or MuxServer activates TcpListener's and
+TcpConnector's 16 MiB send/receive defaults for omitted options, independently of
+`tcp-tune` or sysctl success. Without a Mux node, omitted options use kernel defaults.
 Explicit `large-send-buffer` and `large-recv-buffer` settings always take precedence,
-including connector destination overrides. This selection follows the configured
-`tcp-tune` flag, even if a sysctl write fails.
+including connector destination overrides.
 
 Each failed command logs a warning, and the remaining commands are still
 attempted; permission denial or a missing `sysctl` never fails startup. Successful

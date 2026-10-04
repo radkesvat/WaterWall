@@ -69,8 +69,8 @@ static void testProfile(unsigned int profile, const char *fail_key)
     const size_t length         = fread(commands, 1, sizeof(commands) - 1, log);
     require(! ferror(log) && length < sizeof(commands) - 1, "could not read complete command log");
     fclose(log);
-    const char *expected = "net.core.rmem_max=16777216\nnet.core.wmem_max=16777216\n"
-                           "net.ipv4.tcp_rmem=4096 131072 8388608\nnet.ipv4.tcp_wmem=4096 16384 8388608\n";
+    const char *expected = "net.core.rmem_max=534217728\nnet.core.wmem_max=534217728\n"
+                           "net.ipv4.tcp_rmem=4096 87380 134217728\nnet.ipv4.tcp_wmem=4096 87380 134217728\n";
     require(strcmp(commands, expected) == 0, "incorrect tuning values, argument quoting or continuation after failure");
     require(warnings == (fail_key[0] == '\0' ? 0U : 1U), "failed tuning did not log exactly one warning");
 }

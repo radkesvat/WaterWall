@@ -54,7 +54,7 @@ static void testBuffers(bool tune_enabled, bool client, bool server, unsigned se
 
     const int  expected_send   = send_option != 0 ? configured_sizes[send_option] : default_size;
     const int  expected_recv   = recv_option != 0 ? configured_sizes[recv_option] : default_size;
-    const bool expected_update = ! tune_enabled && (client || server) && (send_option == 0 || recv_option == 0);
+    const bool expected_update = (client || server) && (send_option == 0 || recv_option == 0);
     require(state->send_buffer_size == expected_send, "incorrect listener send-buffer size");
     require(state->recv_buffer_size == expected_recv, "incorrect listener receive-buffer size");
     require(update_calls == (unsigned) expected_update, "incorrect socket-filter update count");
@@ -80,12 +80,8 @@ int main(void)
             {
                 for (unsigned recv_option = 0; recv_option < 4; ++recv_option)
                 {
-                    testBuffers(tune != 0,
-                                (mux & 1U) != 0,
-                                (mux & 2U) != 0,
-                                send_option,
-                                recv_option,
-                                tune ? 0 : default_sizes[mux]);
+                    testBuffers(
+                        tune != 0, (mux & 1U) != 0, (mux & 2U) != 0, send_option, recv_option, default_sizes[mux]);
                 }
             }
         }

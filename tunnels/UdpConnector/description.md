@@ -146,12 +146,12 @@ need a `next` node.
 
 - `large-send-buffer` `(boolean or positive integer)`
   Sets `SO_SNDBUF` on created UDP sockets.
-  `true` uses WaterWall's default large socket buffer size, currently `4194304` bytes. `false` leaves the kernel default unchanged. A positive integer sets the requested byte size directly.
+  `true` uses WaterWall's default large socket buffer size, currently `16777216` bytes. `false` leaves the kernel default unchanged. A positive integer sets the requested byte size directly.
   Default: `true`
 
 - `large-recv-buffer` `(boolean or positive integer)`
   Sets `SO_RCVBUF` on created UDP sockets.
-  `true` uses WaterWall's default large socket buffer size, currently `4194304` bytes. `false` leaves the kernel default unchanged. A positive integer sets the requested byte size directly.
+  `true` uses WaterWall's default large socket buffer size, currently `16777216` bytes. `false` leaves the kernel default unchanged. A positive integer sets the requested byte size directly.
   Default: `true`
 
 - `fwmark` `(integer)`

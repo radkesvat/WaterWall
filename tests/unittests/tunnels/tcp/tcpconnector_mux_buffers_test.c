@@ -78,12 +78,8 @@ int main(void)
             {
                 for (unsigned recv_option = 0; recv_option < 4; ++recv_option)
                 {
-                    testBuffers(tune != 0,
-                                (mux & 1U) != 0,
-                                (mux & 2U) != 0,
-                                send_option,
-                                recv_option,
-                                tune ? 0 : default_sizes[mux]);
+                    testBuffers(
+                        tune != 0, (mux & 1U) != 0, (mux & 2U) != 0, send_option, recv_option, default_sizes[mux]);
                 }
             }
         }

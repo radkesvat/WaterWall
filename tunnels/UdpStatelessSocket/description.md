@@ -93,12 +93,12 @@ Head-only placement is the current design decision, not a temporary restriction.
 
 - `large-send-buffer` `(boolean or positive integer)`
   Sets `SO_SNDBUF` on the UDP socket.
-  `true` uses WaterWall's default large socket buffer size, currently `4194304` bytes. `false` leaves the kernel default unchanged. A positive integer sets the requested byte size directly.
+  `true` uses WaterWall's default large socket buffer size, currently `16777216` bytes. `false` leaves the kernel default unchanged. A positive integer sets the requested byte size directly.
   Default: `true`
 
 - `large-recv-buffer` `(boolean or positive integer)`
   Sets `SO_RCVBUF` on the UDP socket.
-  `true` uses WaterWall's default large socket buffer size, currently `4194304` bytes. `false` leaves the kernel default unchanged. A positive integer sets the requested byte size directly.
+  `true` uses WaterWall's default large socket buffer size, currently `16777216` bytes. `false` leaves the kernel default unchanged. A positive integer sets the requested byte size directly.
   Default: `true`
 
 - `verbose` `(boolean)`

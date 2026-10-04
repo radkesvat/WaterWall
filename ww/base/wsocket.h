@@ -292,7 +292,7 @@ WW_INLINE void sockaddr_set_path(sockaddr_u *addr, const char *path)
 
 enum
 {
-    kDefaultLargeSocketBufferSize = 4 * 1024 * 1024
+    kDefaultLargeSocketBufferSize = 16 * 1024 * 1024
 };
 
 /**
