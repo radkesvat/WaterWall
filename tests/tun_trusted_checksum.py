@@ -17,7 +17,7 @@ sys.path.insert(0, os.environ.get("WATERWALL_TEST_SUPPORT_DIR",
                                 str(Path(__file__).resolve().parent / "support" / "python")))
 from wwtest.run_directory import RunDirectory
 from wwtest.fixtures.tun_tcp import (Fixture, Unavailable, preflight, require, command, output, stop,
-                           integration, TRANSFER, CLIENT, SERVER, PORT, SOURCE_PORT)
+                           integration, TRANSFER, TUN, CLIENT, SERVER, PORT, SOURCE_PORT)
 
 HELPER = Path(__file__).with_name('tun_checksum_transfer.py')
 FORWARDED = '198.19.1.2'
@@ -118,6 +118,10 @@ def main():
             if mtu != 1500:
                 name += '-mtu' + str(mtu)
             with ChecksumFixture(args.binary.resolve(), directory / name, gso, interposed, mtu) as fixture:
+                # Four concurrent 1 MiB uploads at MTU 576 can burst nearly
+                # 8,000 TCP packets. The default 500-entry TUN queue drops them
+                # and loss recovery can exceed the transfer's 30-second deadline.
+                command(*fixture.runtime, 'ip', 'link', 'set', 'dev', TUN, 'txqueuelen', '16384')
                 log = (fixture.directory / 'waterwall.log').read_text()
                 active = 'enabled direct-pair trusted transport checksums' in log
                 require(active == (fixture.checksum_enabled and not interposed), 'incorrect pair activation')
